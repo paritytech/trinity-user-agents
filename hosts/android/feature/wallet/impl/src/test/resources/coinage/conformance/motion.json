@@ -1,0 +1,17 @@
+{
+  "note": "step(x, v, target, dt, omega) critically damped spring (src/layout/springs.js); edgeCalm(turn); lodFor(heightPx, visibleWidthPx)",
+  "spring": [
+    {"input": [0, 0, 100, 0.016667, 12], "output": [1.752375, 196.498525]},
+    {"input": [50, -200, 0, 0.033333, 9], "output": [43.214464, -203.725066]},
+    {"input": [10, 5, 10, 0.1, 13], "output": [10.136266, -0.408798]}
+  ],
+  "edgeCalm": [
+    {"turn": 0, "calm": 0},
+    {"turn": 0.5, "calm": 0},
+    {"turn": 1.05, "calm": 0.000123},
+    {"turn": 1.2, "calm": 0.28202},
+    {"turn": 1.35, "calm": 0.776362},
+    {"turn": 1.4835, "calm": 1},
+    {"turn": 1.5708, "calm": 1}
+  ]
+}

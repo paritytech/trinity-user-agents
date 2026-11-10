@@ -21,6 +21,7 @@ dependencies {
     api(project(":common"))
     api(project(":design"))
     api(project(":bindings:bandersnatch-crypto"))
+    api(project(":bindings:truapi-host"))
     api(project(":feature:dotns:api"))
     api(project(":feature:members:api"))
     api(project(":chains"))
@@ -29,4 +30,12 @@ dependencies {
     implementation(libs.nova.substrate.serialization)
 
     testImplementation(libs.junit)
+
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.compose.ui.test.manifest)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }
+
+apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))

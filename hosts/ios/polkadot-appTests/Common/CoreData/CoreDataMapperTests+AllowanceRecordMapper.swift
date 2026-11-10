@@ -14,6 +14,28 @@ extension CoreDataMapperTests {
             facade.makeRepo(mapper: AllowanceRecordMapper())
         }
 
+        @Test(
+            "domain round-trips",
+            arguments: [AllowanceRecord.Domain.chat, .device, .product, .coinage]
+        )
+        func domainRoundTrip(domain: AllowanceRecord.Domain) async throws {
+            let original = AllowanceRecord(
+                accountId: Data(repeating: 3, count: 32),
+                allocatedAt: Date(),
+                kind: .statementStore,
+                domain: domain,
+                priority: .critical,
+                latestRenewedPeriod: 7
+            )
+
+            try await repo.saveOperation({ [original] }, { [] }).asyncExecute()
+
+            let result = try #require(
+                try await repo.fetchOperation(by: { original.identifier }, options: .init()).asyncExecute()
+            )
+            #expect(result.domain == domain)
+        }
+
         @Test("kind bridging: .statementStore (rawValue 2) round-trips correctly")
         func kindStatementStoreRoundTrip() async throws {
             let testAccountId = Data(repeating: 1, count: 32)
@@ -21,6 +43,7 @@ extension CoreDataMapperTests {
                 accountId: testAccountId,
                 allocatedAt: Date(),
                 kind: .statementStore,
+                domain: .product,
                 priority: .normal,
                 latestRenewedPeriod: nil
             )
@@ -40,6 +63,7 @@ extension CoreDataMapperTests {
                 accountId: testAccountId,
                 allocatedAt: Date(),
                 kind: nil,
+                domain: .product,
                 priority: .normal,
                 latestRenewedPeriod: nil
             )

@@ -57,11 +57,12 @@ extension CoreDataBenchmarks {
             }
             let ids = try await registration.time { try await ledger.register(registrations) }
 
-            for id in ids {
+            for (id, registered) in zip(ids, registrations) {
                 _ = try await statusSaves.time {
                     try await ledger.durable.updateTxStatus(
                         for: id,
                         expectedCurrentStatus: .pending,
+                        expectedTxHash: registered.txHash,
                         verdict: Verdict(status: .pendingSuccess, successDetectedAt: nil)
                     )
                 }
@@ -69,6 +70,7 @@ extension CoreDataBenchmarks {
                     try await ledger.durable.updateTxStatus(
                         for: id,
                         expectedCurrentStatus: .pendingSuccess,
+                        expectedTxHash: registered.txHash,
                         verdict: Verdict(status: .finalizedSuccess, successDetectedAt: nil)
                     )
                 }

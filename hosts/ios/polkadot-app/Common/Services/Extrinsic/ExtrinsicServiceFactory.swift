@@ -41,7 +41,7 @@ final class ExtrinsicServiceFactory {
     private let metadataHashOperationFactory: MetadataHashOperationFactoryProtocol
     private let customFeeEstimator: ExtrinsicCustomFeeEstimatingFactoryProtocol
     private let transactionExtensionFactory: ExtrinsicTransactionExtensionMaking
-    private let extrinsicVersion: ConcreteExtrinsicVersion
+    private let extrinsicVersion: Extrinsic.FormatVersion
     private let extensionVersionProvider: ExtrinsicExtensionVersionProviding
     private let logger: LoggerProtocol
 
@@ -50,7 +50,7 @@ final class ExtrinsicServiceFactory {
         substrateStorageFacade: StorageFacadeProtocol,
         customFeeEstimator: ExtrinsicCustomFeeEstimatingFactoryProtocol,
         transactionExtensionFactory: ExtrinsicTransactionExtensionMaking,
-        extrinsicVersion: ConcreteExtrinsicVersion = .V5,
+        extrinsicVersion: Extrinsic.FormatVersion = .V5,
         extensionVersionProvider: ExtrinsicExtensionVersionProviding = ExtrinsicExtensionVersionProvider(),
         operationQueue: OperationQueue = OperationManagerFacade.sharedDefaultQueue,
         logger: LoggerProtocol = Logger.shared
@@ -88,6 +88,8 @@ extension ExtrinsicServiceFactory: ExtrinsicServiceCreating {
         let runtimeProvider = try chainRegistry.getRuntimeProviderOrError(for: chain.chainId)
         let chainModel = try chainRegistry.getChainOrError(for: chain.chainId)
         let extrinsicVersion = resolveExtrinsicVersion(for: chain)
+
+        Logger.shared.info("Extrinsic version: \(extrinsicVersion)")
 
         let host = ExtrinsicFeeEstimatorHost(
             chain: chain,

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import SubstrateSdk
 import KeyDerivation
@@ -125,27 +126,19 @@ private extension ProductsAccountManager {
                 try await allowanceSupport.sssManager.allocate(
                     accountId: accountId,
                     policy: policy,
-                    priority: .normal
+                    priority: .normal,
+                    domain: .product
                 )
                 let privateKey = try wallet.fetchRawSecretKey()
                 return .allocated(.statementStoreAllowance(privateKey: privateKey))
-            case let .productStatementStoreAllowance(dest):
-                let accountId = try accountHolder.deriveAccount(
-                    ProductAccountId(productId: productId, derivationIndex: dest)
-                )
-                try await allowanceSupport.sssManager.allocate(
-                    accountId: accountId,
-                    policy: policy,
-                    priority: .normal
-                )
-                return .allocated(.productStatementStoreAllowance)
             case .bulletInAllowance:
                 let wallet = try accountHolder.deriveBulletInAccount(for: productId)
                 let accountId = try wallet.getRawPublicKey()
                 try await allowanceSupport.bulletInManager.allocate(
                     accountId: accountId,
                     policy: policy,
-                    priority: .normal
+                    priority: .normal,
+                    domain: .product
                 )
                 let privateKey = try wallet.fetchRawSecretKey()
                 return .allocated(.bulletInAllowance(privateKey: privateKey))
@@ -158,7 +151,8 @@ private extension ProductsAccountManager {
                 try await allowanceSupport.smartContractManager.allocate(
                     accountId: accountId,
                     policy: policy,
-                    priority: .normal
+                    priority: .normal,
+                    domain: .product
                 )
                 return .allocated(.smartContractAllowance)
             }

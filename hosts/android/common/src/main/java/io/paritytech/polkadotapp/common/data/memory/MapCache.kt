@@ -15,6 +15,8 @@ import kotlinx.coroutines.sync.withLock
 interface MapCache<K, V> {
     suspend fun getOrCompute(key: K): V
 
+    suspend fun remove(key: K)
+
     suspend fun clear()
 }
 
@@ -54,6 +56,12 @@ private class RealMapCache<K, V>(
             return compute(key).also {
                 cache[key] = it
             }
+        }
+    }
+
+    override suspend fun remove(key: K) {
+        mutex.withLock {
+            cache.remove(key)
         }
     }
 

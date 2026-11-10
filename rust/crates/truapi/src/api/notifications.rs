@@ -12,7 +12,7 @@ use crate::{
 
 /// Notification methods for locally-rendered push notifications.
 #[wire_trait(id = 8)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Notifications: Send + Sync {
 	/// Send a push notification to the user.
 	///
@@ -22,7 +22,7 @@ pub trait Notifications: Send + Sync {
 	/// persists the notification across restarts and fires it through the
 	/// platform-native scheduler. See [RFC 0019].
 	///
-	/// [RFC 0019]: https://github.com/paritytech/host-rust-core/blob/main/docs/rfcs/0019-scheduled-notifications.md
+	/// [RFC 0019]: https://github.com/paritytech/trinity-user-agents/blob/main/docs/rfcs/0019-scheduled-notifications.md
 	///
 	/// ```ts
 	/// const result = await truapi.notifications.sendPushNotification({
@@ -43,7 +43,7 @@ pub trait Notifications: Send + Sync {
 	/// Cancellation is idempotent: returns `Ok(())` whether the notification is
 	/// still pending, already fired, or was never issued. See [RFC 0019].
 	///
-	/// [RFC 0019]: https://github.com/paritytech/host-rust-core/blob/main/docs/rfcs/0019-scheduled-notifications.md
+	/// [RFC 0019]: https://github.com/paritytech/trinity-user-agents/blob/main/docs/rfcs/0019-scheduled-notifications.md
 	///
 	/// ```ts
 	/// const result = await truapi.notifications.cancelPushNotification({

@@ -291,7 +291,7 @@ See `code/di-and-lifecycle.md § AppInitializer — the only allowed startup-sid
 
 For "show snackbar / open dialog / navigate once / play a one-shot animation" — events that should fire exactly once and not survive recomposition:
 
-- Prefer a `MutableSharedFlow<Event>()` (default constructor — `replay = 0`, no extra buffer) exposed via the Contract as `SharedFlow<Event>`. Emit from a `viewModelScope.launch { _events.emit(...) }`. Project examples: `ScanQrViewModel.invalidCodeEvent`, `RecoverMnemonicViewModel.invalidMnemonicEvents`, `MobRuleBotFooterViewModel.votingFailedEvents`, `ScanAddressQrViewModel.invalidAddressEvent`.
+- Prefer a `MutableSharedFlow<Event>()` (default constructor — `replay = 0`, no extra buffer) exposed via the Contract as `SharedFlow<Event>`. Emit from a `viewModelScope.launch { _events.emit(...) }`. Project examples: `ScanQrViewModel.invalidCodeEvent`, `RecoverMnemonicViewModel.invalidMnemonicEvents`, `ScanAddressQrViewModel.invalidAddressEvent`.
 - For "must-not-drop" events (e.g. awaitable actions), expose a `Channel<Event>.receiveAsFlow()` instead. Project example: `SsoSessionsListViewModel.deleteConfirmation`.
 - **`major`** — The screen consumes one-shot events with `Flow<T>.collectAsEffect { context, event -> ... }` from `design/utils/Flows.kt`, **not** a hand-rolled `LaunchedEffect(Unit) { flow.collect { … } }`. The extension wraps `repeatOnLifecycle(STARTED)` so the collector pauses when the screen is backgrounded; hand-rolled versions leak events to a backgrounded screen. (`StateFlow` state is a separate concern — that still uses `collectAsStateWithLifecycle`.)
 

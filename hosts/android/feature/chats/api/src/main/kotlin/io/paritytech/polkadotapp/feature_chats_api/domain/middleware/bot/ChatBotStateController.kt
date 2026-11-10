@@ -12,5 +12,5 @@ interface ChatBotStateController {
 
     fun subscribeActiveBotIds(): Flow<Set<ChatExtensionId>>
 
-    suspend fun activateDefaultBots()
+    suspend fun applyDefaultBotStates()
 }

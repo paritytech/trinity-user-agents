@@ -31,4 +31,6 @@ class StatementStoreSlotAllocationLocal(
     val latestRenewedPeriod: Long,
     val sinceMillis: Long,
     val priorityLevel: Int,
+    /** Set by the consumer that allocated the slot, which finds its own rows by it. */
+    val tag: String?,
 )

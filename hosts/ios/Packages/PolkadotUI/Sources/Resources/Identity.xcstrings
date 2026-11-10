@@ -1,17 +1,6 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "games.until.membership": {
-      "extractionState": "manual",
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Games until membership"
-          }
-        }
-      }
-    },
     "rank.basic": {
       "extractionState": "manual",
       "localizations": {

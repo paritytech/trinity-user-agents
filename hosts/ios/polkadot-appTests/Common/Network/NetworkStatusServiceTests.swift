@@ -177,6 +177,7 @@ private extension NetworkStatusServiceTests {
         func getChainByGenesis(for _: ChainModel.Id) -> ChainModel? { nil }
         func getConnection(for _: ChainModel.Id) -> ChainConnection? { nil }
         func getOneShotConnection(for _: ChainModel.Id) -> JSONRPCEngine? { nil }
+        func makeChainSocket(for _: ChainModel.Id, attempt _: Int) -> ChainSocketProtocol? { nil }
         func setConnectionEnforced(_: Bool, for _: ChainModel.Id) {}
         func getRuntimeProvider(for _: ChainModel.Id) -> RuntimeProviderProtocol? { nil }
         func switchSync(mode _: ChainSyncMode, chainId _: ChainModel.Id) throws {}

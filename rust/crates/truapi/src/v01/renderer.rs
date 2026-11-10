@@ -3,6 +3,27 @@
 use alloc::{string::String, vec::Vec};
 use parity_scale_codec::{Compact, Decode, Encode, OptionBool};
 
+/// SCALE spells an optional bool as its own type; JSON spells it as an absent
+/// or present boolean, which is what the generated client describes.
+#[cfg(feature = "runtime")]
+mod option_bool_json {
+	use parity_scale_codec::OptionBool;
+	use serde::{Deserialize, Deserializer};
+
+	/// What an absent JSON field reads as: neither true nor false.
+	pub fn absent() -> OptionBool {
+		OptionBool(None)
+	}
+
+	/// Reads a present JSON boolean into the SCALE optional bool.
+	pub fn deserialize<'de, D>(deserializer: D) -> Result<OptionBool, D::Error>
+	where
+		D: Deserializer<'de>,
+	{
+		Ok(OptionBool(Option::<bool>::deserialize(deserializer)?))
+	}
+}
+
 /// A size in logical pixels, SCALE-encoded as `Compact<u64>`.
 pub type Size = Compact<u64>;
 
@@ -21,7 +42,9 @@ uniffi::custom_type!(OptionBool, Option<bool>, {
 });
 
 /// Edge dimensions. `bottom` defaults to `top` and `start` to `end` when absent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct Dimensions {
 	/// Top edge.
@@ -35,6 +58,7 @@ pub struct Dimensions {
 }
 
 /// Typography presets, resolved by the host's design system.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum TypographyStyle {
@@ -51,6 +75,7 @@ pub enum TypographyStyle {
 }
 
 /// Button emphasis.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ButtonVariant {
@@ -63,6 +88,7 @@ pub enum ButtonVariant {
 }
 
 /// Semantic color tokens, resolved by the host's theme.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ColorToken {
@@ -87,6 +113,7 @@ pub enum ColorToken {
 }
 
 /// Placement of content within a `Box`.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ContentAlignment {
@@ -111,6 +138,7 @@ pub enum ContentAlignment {
 }
 
 /// Cross-axis alignment of `Column` children.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum HorizontalAlignment {
@@ -123,6 +151,7 @@ pub enum HorizontalAlignment {
 }
 
 /// Cross-axis alignment of `Row` children.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum VerticalAlignment {
@@ -135,6 +164,7 @@ pub enum VerticalAlignment {
 }
 
 /// Main-axis distribution of children.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum Arrangement {
@@ -146,13 +176,15 @@ pub enum Arrangement {
 	Center,
 	/// Distribute with space between children.
 	SpaceBetween,
-	/// Distribute with space around each child.
+	/// Distribute with space around each child: half a gap at each end.
 	SpaceAround,
 	/// Distribute with equal space between and around children.
 	SpaceEvenly,
 }
 
 /// Outline of a background or border.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum Shape {
@@ -164,8 +196,10 @@ pub enum Shape {
 	Square,
 }
 
-/// Border styling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+/// Border styling. Drawn inside the node, so it never covers a neighbour.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct BorderStyle {
 	/// Border width.
@@ -176,8 +210,10 @@ pub struct BorderStyle {
 	pub shape: Option<Shape>,
 }
 
-/// Background styling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+/// Background styling. A shaped background also clips the node's content to its shape.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct Background {
 	/// Background color.
@@ -188,7 +224,8 @@ pub struct Background {
 
 /// How a node composites with what is behind it. The values are those common
 /// to CSS `mix-blend-mode`, SwiftUI `BlendMode` and Compose `BlendMode`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum BlendingMode {
 	/// Source over destination.
@@ -226,12 +263,14 @@ pub enum BlendingMode {
 }
 
 /// Layout and styling applied to one node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum Modifier {
 	/// Outer spacing.
 	Margin(Dimensions),
-	/// Inner spacing.
+	/// Inner spacing, around the content: a fixed or minimum size is the content's.
 	Padding(Dimensions),
 	/// Background fill.
 	Background(Background),
@@ -247,7 +286,8 @@ pub enum Modifier {
 	MinHeight(Size),
 	/// Fill the available width.
 	FillWidth(bool),
-	/// Fill the available height.
+	/// Fill the available height. In a `Row` with no height of its own, that is its tallest
+	/// child's.
 	FillHeight(bool),
 	/// 0 is transparent, 255 is opaque.
 	Opacity(u8),
@@ -256,35 +296,45 @@ pub enum Modifier {
 }
 
 /// Properties of a `Box`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct BoxProps {
-	/// Placement of content within the box.
+	/// Placement of content within the box. Top start when absent.
 	pub content_alignment: Option<ContentAlignment>,
 }
 
 /// Properties of a `Column`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct ColumnProps {
 	/// Cross-axis alignment of children.
 	pub horizontal_alignment: Option<HorizontalAlignment>,
-	/// Main-axis distribution of children.
+	/// Main-axis distribution of the height the column was given. Children
+	/// have no gap between them, and a column with no height of its own hugs them.
 	pub vertical_arrangement: Option<Arrangement>,
 }
 
 /// Properties of a `Row`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct RowProps {
 	/// Cross-axis alignment of children.
 	pub vertical_alignment: Option<VerticalAlignment>,
-	/// Main-axis distribution of children.
+	/// Main-axis distribution of the width the row was given. Children have no
+	/// gap between them, and a row with no width of its own hugs them.
 	pub horizontal_arrangement: Option<Arrangement>,
 }
 
 /// Properties of a `Text`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct TextProps {
 	/// Typography preset.
@@ -294,6 +344,8 @@ pub struct TextProps {
 }
 
 /// Properties of a `Button`.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct ButtonProps {
@@ -302,15 +354,32 @@ pub struct ButtonProps {
 	/// Button emphasis.
 	pub variant: Option<ButtonVariant>,
 	/// Whether the button accepts presses. Absent leaves the default to the host.
+	#[cfg_attr(
+		feature = "runtime",
+		serde(
+			default = "option_bool_json::absent",
+			deserialize_with = "option_bool_json::deserialize"
+		)
+	)]
 	pub enabled: OptionBool,
 	/// Whether the button shows a loading state. A loading button accepts no
 	/// presses. Absent leaves the default to the host.
+	#[cfg_attr(
+		feature = "runtime",
+		serde(
+			default = "option_bool_json::absent",
+			deserialize_with = "option_bool_json::deserialize"
+		)
+	)]
 	pub loading: OptionBool,
 	/// Action triggered on press. A button without one is inert.
 	pub click_action: Option<String>,
 }
 
 /// Where image bytes come from. The host fetches them; the tree carries no URL.
+/// The bytes are PNG, JPEG, WebP or SVG.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ImageSource {
@@ -322,10 +391,11 @@ pub enum ImageSource {
 }
 
 /// How an image meets the box its modifiers size.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ImageFit {
-	/// The image is not resized.
+	/// The image is not resized: one image pixel to a point.
 	None,
 	/// Resized to fill the container without preserving the aspect ratio.
 	Fill,
@@ -339,6 +409,8 @@ pub enum ImageFit {
 }
 
 /// Properties of an `Image`.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct ImageProps {
@@ -349,7 +421,8 @@ pub struct ImageProps {
 }
 
 /// A visual effect. Each variant names one effect and carries its parameters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum Effect {
 	/// Animated rainbow tint over the children.
@@ -357,7 +430,9 @@ pub enum Effect {
 }
 
 /// Properties of an `Effect`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct EffectProps {
 	/// The effect applied to the children.
@@ -365,6 +440,8 @@ pub struct EffectProps {
 }
 
 /// Properties of a `TextField`.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct TextFieldProps {
@@ -375,6 +452,13 @@ pub struct TextFieldProps {
 	/// Field label.
 	pub label: Option<String>,
 	/// Whether the field accepts input. Absent leaves the default to the host.
+	#[cfg_attr(
+		feature = "runtime",
+		serde(
+			default = "option_bool_json::absent",
+			deserialize_with = "option_bool_json::deserialize"
+		)
+	)]
 	pub enabled: OptionBool,
 	/// Action triggered on every value change. The action carries the new
 	/// value as UTF-8 bytes, with no length prefix.
@@ -383,6 +467,8 @@ pub struct TextFieldProps {
 
 /// A node in a product-rendered tree. Container variants recurse through
 /// `children`.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum RendererNode {
@@ -420,7 +506,8 @@ pub enum RendererNode {
 		/// Child nodes.
 		children: Vec<RendererNode>,
 	},
-	/// Flexible space.
+	/// Flexible space: shares out what its stack has left, unless sized along
+	/// the stack's axis.
 	Spacer {
 		/// Layout and styling.
 		modifiers: Vec<Modifier>,
@@ -434,7 +521,7 @@ pub enum RendererNode {
 		/// Child nodes.
 		children: Vec<RendererNode>,
 	},
-	/// Interactive button.
+	/// Interactive button, as wide as the space it is given unless sized.
 	Button {
 		/// Layout and styling.
 		modifiers: Vec<Modifier>,
@@ -450,14 +537,16 @@ pub enum RendererNode {
 		/// Text-field properties.
 		props: TextFieldProps,
 	},
-	/// Image, sized by modifiers.
+	/// Image, sized by modifiers. Without any it takes its natural size, one
+	/// image pixel to a point.
 	Image {
 		/// Layout and styling.
 		modifiers: Vec<Modifier>,
 		/// Image properties.
 		props: ImageProps,
 	},
-	/// Applies its effect to its children.
+	/// Applies its effect to its children. As large as its children, which it
+	/// places at the top start like a `Box`.
 	Effect {
 		/// Effect properties.
 		props: EffectProps,
@@ -517,101 +606,4 @@ pub struct HostRendererActionSubscribeItem {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use alloc::{string::ToString, vec};
-
-	#[derive(Encode)]
-	struct RendererWireComponent<P> {
-		modifiers: Vec<Modifier>,
-		props: P,
-		children: Vec<RendererNode>,
-	}
-
-	#[derive(Encode)]
-	enum RendererWireNode<P> {
-		#[codec(index = 3)]
-		Column(RendererWireComponent<P>),
-	}
-
-	fn renderer_node() -> RendererNode {
-		RendererNode::Column {
-			modifiers: vec![Modifier::Padding(Dimensions {
-				top: Compact(12),
-				end: Compact(8),
-				bottom: None,
-				start: Some(Compact(4)),
-			})],
-			props: ColumnProps {
-				horizontal_alignment: Some(HorizontalAlignment::Center),
-				vertical_arrangement: Some(Arrangement::SpaceBetween),
-			},
-			children: vec![
-				RendererNode::String { text: "Votes: 1".to_string() },
-				RendererNode::Button {
-					modifiers: Vec::new(),
-					props: ButtonProps {
-						text: "Vote".to_string(),
-						variant: Some(ButtonVariant::Primary),
-						enabled: OptionBool(Some(true)),
-						loading: OptionBool(None),
-						click_action: Some("vote".to_string()),
-					},
-					children: Vec::new(),
-				},
-				RendererNode::Spacer { modifiers: vec![Modifier::Opacity(128)] },
-				RendererNode::Image {
-					modifiers: vec![Modifier::Width(Compact(40))],
-					props: ImageProps {
-						source: ImageSource::Bulletin("bafy".to_string()),
-						fit: Some(ImageFit::Cover),
-					},
-				},
-				RendererNode::Effect {
-					props: EffectProps { effect: Effect::Rainbow },
-					children: vec![RendererNode::Nil],
-				},
-			],
-		}
-	}
-
-	#[test]
-	fn column_preserves_the_component_wire_shape() {
-		let node = renderer_node();
-		let RendererNode::Column { modifiers, props, children } = node.clone() else {
-			unreachable!();
-		};
-		let wire = RendererWireNode::Column(RendererWireComponent { modifiers, props, children });
-
-		assert_eq!(node.encode(), wire.encode());
-	}
-
-	#[test]
-	fn variants_encode_only_the_fields_they_carry() {
-		let spacer = RendererNode::Spacer { modifiers: Vec::new() };
-		assert_eq!(spacer.encode(), vec![5, 0]);
-
-		let effect = RendererNode::Effect {
-			props: EffectProps { effect: Effect::Rainbow },
-			children: Vec::new(),
-		};
-		assert_eq!(effect.encode(), vec![10, 0, 0]);
-	}
-
-	#[test]
-	fn tree_round_trips_through_scale() {
-		let node = renderer_node();
-		let decoded = RendererNode::decode(&mut node.encode().as_slice()).unwrap();
-		assert_eq!(decoded, node);
-	}
-
-	#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-	#[test]
-	fn tree_round_trips_through_uniffi() {
-		let node = renderer_node();
-		let ffi = <RendererNode as uniffi::Lower<crate::UniFfiTag>>::lower(node.clone());
-		let lifted = <RendererNode as uniffi::Lift<crate::UniFfiTag>>::try_lift(ffi).unwrap();
-
-		assert_eq!(lifted, node);
-	}
-}
+mod tests;

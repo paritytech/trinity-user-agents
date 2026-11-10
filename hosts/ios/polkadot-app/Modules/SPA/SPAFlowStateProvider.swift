@@ -4,6 +4,7 @@ import Products
 import ChainRegistry
 import Operation_iOS
 import Revive
+import BackgroundExecution
 
 protocol SPAFlowStateProviding: AnyObject {
     func flowState() -> SPAFlowState
@@ -55,15 +56,28 @@ final class SPAFlowStateProvider: SPAFlowStateProviding {
         )
 
         let productResolver = ProductResolver(
-            dotNsResolver: resolver,
+            metadataRepository: ProductMetadataRepository(contractApi: contractApi),
             hostProvider: hostProvider,
-            logger: Logger.shared
+            logger: Logger.shared,
+            screening: .core
+        )
+
+        let contentLoader = makeContentLoader(
+            contractApi: contractApi,
+            carFetcher: carFetcher,
+            storage: DotNsLocalStorage(content: contentStorage, contentHashes: ContentHashCache.shared),
+            hostProvider: hostProvider
         )
 
         let created = SPAFlowState(
             dotNsResolver: resolver,
+            productImages: ProductImageSources(
+                dotNsResolver: resolver,
+                ipfsGatewayBaseUrl: config.ipfsGatewayBaseUrl
+            ),
             hostProvider: hostProvider,
             productResolver: productResolver,
+            contentLoader: contentLoader,
             iconViewModelFactory: ProductIconViewModelFactory(
                 dotNsResolver: resolver,
                 iconLoader: ProductIconLoader(productResolver: productResolver)
@@ -77,5 +91,40 @@ final class SPAFlowStateProvider: SPAFlowStateProviding {
             state.flowState = created
             return created
         }
+    }
+}
+
+private extension SPAFlowStateProvider {
+    func makeContentLoader(
+        contractApi: DotNsContractApiProtocol,
+        carFetcher: CarFetcherProtocol,
+        storage: DotNsLocalStorage,
+        hostProvider: ProductHostProviding
+    ) -> ProductContentLoading {
+        let backgroundExecutor = ConnectionRetainingExecutor(provider: chainRegistry)
+        let resolverFactory = ProductResolverFactory(screening: .core, logger: Logger.shared)
+
+        return ProductContentLoader(
+            fetcher: ProductUpdateFetcher(
+                contractApi: contractApi,
+                carFetcher: carFetcher,
+                storage: storage,
+                hostProvider: hostProvider,
+                resolverFactory: resolverFactory
+            ),
+            cache: ProductContentCache(
+                store: ProductManifestFileStore(),
+                storage: storage,
+                tldProvider: DotNsTldProviderFacade.shared,
+                resolverFactory: resolverFactory,
+                logger: Logger.shared
+            ),
+            environment: ProductContentLoader.Environment(
+                pathProvider: ProductNetworkPath(),
+                backgroundExecutor: backgroundExecutor,
+                diagnostics: ProductLoadDiagnostics(reporter: IssueReportingFacade.shared)
+            ),
+            logger: Logger.shared
+        )
     }
 }

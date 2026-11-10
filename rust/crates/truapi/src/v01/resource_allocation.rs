@@ -28,7 +28,7 @@ pub enum AllocatableResource {
 }
 
 /// Outcome of allocating a single resource (RFC 0010).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum AllocationOutcome {
 	/// Resource is now available for use.
 	Allocated,

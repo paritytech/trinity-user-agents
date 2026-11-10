@@ -26,6 +26,18 @@ final class DebugSettingsWireframe: DebugSettingsWireframeProtocol {
         view?.controller.navigationController?.pushViewController(hostingController, animated: true)
     }
 
+    /// The face loop: a URL, a decode and a draw, with no worker, no manifest
+    /// and no product in the way.
+    func showPocketFacePreview(from view: ControllerBackedProtocol?) {
+        let controller = UIHostingController(rootView: DebugPocketFacePreviewView())
+        view?.controller.navigationController?.pushViewController(controller, animated: true)
+    }
+
+    func showPocketCards(from view: ControllerBackedProtocol?) {
+        let controller = UIHostingController(rootView: DebugPocketCardsView())
+        view?.controller.navigationController?.pushViewController(controller, animated: true)
+    }
+
     func showThemeSelection(from view: ControllerBackedProtocol?) {
         let themeView = DebugThemeSelectionView(
             themeManager: ThemeManager.shared,
@@ -53,6 +65,57 @@ final class DebugSettingsWireframe: DebugSettingsWireframeProtocol {
             view?.controller.present(navigationController, animated: true)
         #endif
     }
+
+    #if DEBUG
+        func showDevServer(from view: ControllerBackedProtocol?) {
+            let alert = UIAlertController(
+                title: "Open dev server",
+                message: """
+                localhost:3000 on the simulator, the Mac's address (192.168.x.x:3000) on a device. \
+                Add ?product_id=name.dot to run it as that product.
+                """,
+                preferredStyle: .alert
+            )
+
+            alert.addTextField { textField in
+                textField.placeholder = "localhost:3000"
+                textField.keyboardType = .URL
+                textField.autocapitalizationType = .none
+                textField.autocorrectionType = .no
+            }
+
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+            alert.addAction(UIAlertAction(title: "Open", style: .default) { [weak view, weak self] _ in
+                guard let self else {
+                    return
+                }
+
+                let address = alert.textFields?.first?.text ?? ""
+
+                Task { @MainActor in
+                    do {
+                        guard let spaView = try await DevServerViewFactory.createView(
+                            address: address,
+                            flowStateProvider: self.flowStateProvider
+                        ) else {
+                            return
+                        }
+
+                        view?.controller.navigationController?.pushViewController(spaView.controller, animated: true)
+                    } catch {
+                        self.present(
+                            message: DevServerViewFactory.message(for: error),
+                            title: "Cannot open",
+                            closeAction: "Close",
+                            from: view
+                        )
+                    }
+                }
+            })
+
+            view?.controller.present(alert, animated: true)
+        }
+    #endif
 
     func showDotNsBrowser(from view: ControllerBackedProtocol?) {
         let alert = UIAlertController(

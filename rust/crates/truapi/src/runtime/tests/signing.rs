@@ -115,7 +115,7 @@ fn sign_vrf_forwards_cross_product_mobile_sso_request_and_response() {
 			.lock()
 			.expect("VRF signing review list mutex poisoned"),
 		vec![crate::platform::SignVrfReview {
-			calling_product_id: "myapp.dot".to_string(),
+			calling_product_id: ProductId::for_test("myapp.dot"),
 			request: request.clone(),
 		}]
 	);
@@ -174,7 +174,7 @@ fn sign_vrf_rejects_declined_pairing_host_confirmation_before_mobile_sso() {
 			.lock()
 			.expect("VRF signing review list mutex poisoned"),
 		vec![crate::platform::SignVrfReview {
-			calling_product_id: "myapp.dot".to_string(),
+			calling_product_id: ProductId::for_test("myapp.dot"),
 			request,
 		}]
 	);
@@ -325,7 +325,7 @@ fn sign_raw_accepts_confirmation_then_returns_sso_response() {
 		vec![
 			"statement_subscribeStatement",
 			"statement_subscribeStatement",
-			"statement_submit",
+			SUBMIT_STATEMENT_METHOD,
 			"statement_unsubscribeStatement",
 			"statement_unsubscribeStatement",
 		]
@@ -564,8 +564,12 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
 	let cx = CallContext::with_request_id("create-tx-1".to_string());
 	let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
 	let response = futures::executor::block_on(host.create_transaction(&cx, request)).unwrap();
-	let HostCreateTransactionResponse::V1(inner) = response;
-	assert_eq!(inner.transaction, vec![0xca, 0xfe]);
+	assert_eq!(
+		response,
+		HostCreateTransactionResponse::V1(v01::HostCreateTransactionResponse {
+			transaction: vec![0xca, 0xfe],
+		})
+	);
 	let message = submitted_remote_message(&platform, &session);
 	assert!(matches!(
 		message.data,
@@ -575,8 +579,104 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
 	));
 }
 
-/// A `createTransaction` on a paired session whose confirmation prompt stays
-/// open until the returned sender releases it.
+/// A paired host whose first `halted_subscribes` SSO subscriptions get dotli's
+/// halt error, with a phone that signs.
+fn create_transaction_over_halted_store(
+	halted_subscribes: usize,
+) -> (Arc<StubPlatform>, ProductRuntimeHost) {
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		create_transaction_confirmed: true,
+		sso_halted_subscribes: halted_subscribes,
+		sso_response_script: Some(sso_success_response_script(
+			&session,
+			crate::host_internal::sso_messages::RemoteMessage {
+				message_id: "wallet-create-tx-halted".to_string(),
+				data: crate::host_internal::sso_messages::RemoteMessageData::V1(
+					crate::host_internal::sso_messages::v1::RemoteMessage::CreateTransactionResponse(
+						crate::host_internal::sso_messages::Response {
+							responding_to: "create-tx-halted".to_string(),
+							payload: Ok(vec![0xca, 0xfe]),
+						},
+					),
+				),
+			},
+		)),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+	install_pairing_session(&host, session);
+	(platform, host)
+}
+
+/// A halt before the request is sent is waited out, so a call the user
+/// already approved still reaches the phone.
+#[test]
+fn a_relayed_create_transaction_waits_out_a_halt_before_it_is_sent() {
+	let (platform, host) = create_transaction_over_halted_store(1);
+	let cx = CallContext::with_request_id("create-tx-halted".to_string());
+	let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
+
+	let response = futures::executor::block_on(host.create_transaction(&cx, request)).unwrap();
+
+	assert_eq!(
+		(
+			response,
+			recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"),
+			recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"),
+		),
+		(
+			HostCreateTransactionResponse::V1(v01::HostCreateTransactionResponse {
+				transaction: vec![0xca, 0xfe],
+			}),
+			3,
+			1
+		)
+	);
+}
+
+/// Cancelling during a halt returns at once and never sends the request.
+#[test]
+fn a_relayed_create_transaction_withdrawn_during_a_halt_is_never_sent() {
+	let (platform, host) = create_transaction_over_halted_store(usize::MAX);
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("create-tx-halted".to_string(), cancel.clone());
+	let request = HostCreateTransactionRequest::V1(product_tx_payload("myapp.dot"));
+	let call = std::thread::spawn(move || {
+		futures::executor::block_on(host.create_transaction(&cx, request)).unwrap_err()
+	});
+	wait_until(
+		|| recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement") == 1,
+		"the relayed request did not start subscribing",
+	);
+	let withdrawn = std::time::Instant::now();
+
+	cancel.cancel();
+
+	let err = call.join().expect("the create_transaction thread panicked");
+	assert!(
+		withdrawn.elapsed() < std::time::Duration::from_millis(500),
+		"{:?}",
+		withdrawn.elapsed()
+	);
+	assert_eq!(
+		err,
+		CallError::Domain(HostCreateTransactionError::V1(
+			v01::HostCreateTransactionError::Unknown {
+				reason: "Account authority request cancelled for create-tx-halted".to_string(),
+			}
+		))
+	);
+	assert_eq!(
+		(
+			recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"),
+			recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"),
+		),
+		(1, 0)
+	);
+}
+
 fn gated_create_transaction(
 	request_id: &str,
 ) -> (Arc<StubPlatform>, ProductRuntimeHost, CallContext, futures::channel::oneshot::Sender<()>) {
@@ -593,9 +693,6 @@ fn gated_create_transaction(
 	(platform, host, cx, release)
 }
 
-/// A person who has not answered yet must not be able to authorize a
-/// transaction the product has already withdrawn, and the product must not
-/// wait on that person to learn the call is over.
 #[test]
 fn a_create_transaction_withdrawn_at_the_prompt_never_reaches_the_phone() {
 	let (platform, host, cx, _release) = gated_create_transaction("create-tx-withdrawn");
@@ -622,10 +719,6 @@ fn a_create_transaction_withdrawn_at_the_prompt_never_reaches_the_phone() {
 	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"), 0);
 }
 
-/// An approval that lands after the withdrawal is an answer to a call that no
-/// longer exists, so it must authorize nothing. Either the prompt race or the
-/// authority call's own check is enough to hold this; the test pins that at
-/// least one of them does.
 #[test]
 fn a_create_transaction_approved_after_its_withdrawal_never_reaches_the_phone() {
 	let (platform, host, cx, release) = gated_create_transaction("create-tx-approved-late");
@@ -653,8 +746,6 @@ fn a_create_transaction_approved_after_its_withdrawal_never_reaches_the_phone() 
 	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"), 0);
 }
 
-/// A withdrawal that lands while the paired-host request is still subscribing
-/// must stop it before the request itself is published.
 #[test]
 fn a_signature_withdrawn_during_sso_setup_is_never_submitted() {
 	let (release, gate) = futures::channel::oneshot::channel();
@@ -665,7 +756,7 @@ fn a_signature_withdrawn_during_sso_setup_is_never_submitted() {
 			("statement_subscribeStatement", r#""peer-sub""#.to_string()),
 			("statement_unsubscribeStatement", "true".to_string()),
 			("statement_unsubscribeStatement", "true".to_string()),
-			("statement_submit", r#"{"status":"new"}"#.to_string()),
+			(SUBMIT_STATEMENT_METHOD, r#"{"status":"new"}"#.to_string()),
 		],
 		rpc_method_responses_gate: Arc::new(Mutex::new(Some(gate))),
 		..Default::default()
@@ -691,7 +782,7 @@ fn a_signature_withdrawn_during_sso_setup_is_never_submitted() {
 	release.send(()).unwrap();
 	call.join().expect("sign_raw thread panicked");
 
-	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_submit"), 0);
+	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD), 0);
 }
 
 #[test]
@@ -717,6 +808,29 @@ fn legacy_sign_payload_rejects_identity_account() {
 		)) => assert_eq!(reason, LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON),
 		other => panic!("expected identity account rejection, got {other:?}"),
 	}
+}
+
+#[test]
+fn legacy_sign_payload_review_names_the_product_account() {
+	let platform = Arc::new(StubPlatform::default());
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+	install_pairing_session(&host, sso_session_info());
+	let request = v01::HostSignPayloadWithLegacyAccountRequest {
+		signer: subxt::utils::AccountId32(test_product_account_public("myapp.dot", 0)).to_string(),
+		payload: sign_payload_data(),
+	};
+
+	futures::executor::block_on(host.sign_payload_with_legacy_account(
+		&CallContext::default(),
+		HostSignPayloadWithLegacyAccountRequest::V1(request.clone()),
+	))
+	.unwrap_err();
+
+	assert_eq!(
+		*platform.sign_payload_reviews.lock().unwrap(),
+		vec![SignPayloadReview::LegacyAccount { account: account_id("myapp.dot", 0), request }]
+	);
 }
 
 #[test]
@@ -780,12 +894,11 @@ fn legacy_sign_raw_accepts_derived_ss58_then_returns_sso_response() {
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
 	install_pairing_session(&host, session.clone());
 	let cx = CallContext::with_request_id("legacy-sign-raw-1".to_string());
-	let request =
-		HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {
-			signer: subxt::utils::AccountId32(test_product_account_public("myapp.dot", 0))
-				.to_string(),
-			payload: raw_payload(),
-		});
+	let legacy_request = v01::HostSignRawWithLegacyAccountRequest {
+		signer: subxt::utils::AccountId32(test_product_account_public("myapp.dot", 0)).to_string(),
+		payload: raw_payload(),
+	};
+	let request = HostSignRawWithLegacyAccountRequest::V1(legacy_request.clone());
 	let response =
 		futures::executor::block_on(host.sign_raw_with_legacy_account(&cx, request)).unwrap();
 	let HostSignRawWithLegacyAccountResponse::V1(inner) = response;
@@ -804,7 +917,7 @@ fn legacy_sign_raw_accepts_derived_ss58_then_returns_sso_response() {
 	assert_eq!(
 		request.account,
 		v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		}
 	);
@@ -813,6 +926,14 @@ fn legacy_sign_raw_accepts_derived_ss58_then_returns_sso_response() {
 		truapi::latest::RawPayload::Bytes { bytes }
 			if bytes == b"hello"
 	));
+	assert_eq!(
+		*platform.sign_raw_reviews.lock().unwrap(),
+		vec![SignRawReview::LegacyAccount {
+			account: LegacySigningAccount::Product(account_id("myapp.dot", 0)),
+			request: legacy_request,
+			watermarked: true,
+		}]
+	);
 }
 
 #[test]
@@ -854,7 +975,7 @@ fn legacy_sign_raw_accepts_derived_hex_then_returns_sso_response() {
 	assert_eq!(
 		request.account,
 		v01::ProductAccountId {
-			dot_ns_identifier: "myapp.dot".to_string(),
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
 			derivation_index: v01::DerivationIndex::Index(0),
 		}
 	);
@@ -876,11 +997,11 @@ fn legacy_sign_raw_accepts_identity_ss58_then_routes_legacy_request() {
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
 	install_pairing_session(&host, session.clone());
 	let cx = CallContext::with_request_id("identity-sign-raw-1".to_string());
-	let request =
-		HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {
-			signer: subxt::utils::AccountId32(identity).to_string(),
-			payload: raw_payload(),
-		});
+	let legacy_request = v01::HostSignRawWithLegacyAccountRequest {
+		signer: subxt::utils::AccountId32(identity).to_string(),
+		payload: raw_payload(),
+	};
+	let request = HostSignRawWithLegacyAccountRequest::V1(legacy_request.clone());
 
 	let response =
 		futures::executor::block_on(host.sign_raw_with_legacy_account(&cx, request)).unwrap();
@@ -894,6 +1015,14 @@ fn legacy_sign_raw_accepts_identity_ss58_then_routes_legacy_request() {
 		panic!("expected legacy raw signing request");
 	};
 	assert_eq!(request.account, identity);
+	assert_eq!(
+		*platform.sign_raw_reviews.lock().unwrap(),
+		vec![SignRawReview::LegacyAccount {
+			account: LegacySigningAccount::Identity,
+			request: legacy_request,
+			watermarked: true,
+		}]
+	);
 }
 
 #[test]
@@ -910,4 +1039,31 @@ fn create_transaction_rejects_invalid_product_account() {
 			v01::HostCreateTransactionError::PermissionDenied
 		))
 	));
+}
+
+/// Remembering approvals is for another product's account only. A product
+/// signing with its own account is confirmed as before, every time.
+#[test]
+fn a_products_own_signature_is_confirmed_every_time() {
+	let platform = Arc::new(StubPlatform { sign_payload_confirmed: true, ..Default::default() });
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), test_spawner());
+	install_pairing_session(&host, sso_session_info());
+
+	let cx = CallContext::default();
+	for _ in 0..2 {
+		let call = host.sign_payload(
+			&cx,
+			HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
+				account: account_id("myapp.dot", 0),
+				payload: sign_payload_data(),
+			}),
+		);
+		assert!(
+			call.now_or_never().is_none(),
+			"the user approves and the request goes to the phone",
+		);
+	}
+
+	assert_eq!(platform.sign_payload_reviews.lock().unwrap().len(), 2);
 }

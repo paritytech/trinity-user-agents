@@ -18,6 +18,7 @@ dependencies {
     implementation(project(":feature:people:api"))
     implementation(project(":feature:pgas:api"))
     implementation(project(":feature:revive:api"))
+    implementation(project(":feature:swap:api"))
     implementation(project(":feature:tokens:api"))
     implementation(project(":feature:transfers:api"))
     implementation(project(":feature:usernames:api"))

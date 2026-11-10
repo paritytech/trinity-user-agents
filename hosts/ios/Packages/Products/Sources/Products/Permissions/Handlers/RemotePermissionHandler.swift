@@ -1,8 +1,9 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 /// Handles simple remote permissions (`webRtcAccess`, `chainSubmitAccess`,
-/// `preimageSubmitAccess`, `statementSubmitAccess`, `jamPeersAccess`) with a
-/// check-or-prompt pattern. Network-access permissions are routed to
+/// `preimageSubmitAccess`, `statementSubmitAccess`) with a check-or-prompt
+/// pattern. Network-access permissions are routed to
 /// ``NetworkAccessPermissionHandler`` instead.
 public final class RemotePermissionHandler: Sendable {
     private let repository: ProductPermissionRepositoryProtocol
@@ -17,7 +18,7 @@ public final class RemotePermissionHandler: Sendable {
     }
 
     public func isGranted(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) async throws -> Bool {
         let state = try await repository.getPermissionState(
@@ -28,7 +29,7 @@ public final class RemotePermissionHandler: Sendable {
     }
 
     public func request(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) async throws -> Bool {
         let state = try await repository.getPermissionState(
@@ -53,7 +54,7 @@ public final class RemotePermissionHandler: Sendable {
 
 private extension RemotePermissionHandler {
     func promptPermission(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) async throws -> Bool {
         switch await requester.prompt(productId: productId, permission: permission) {

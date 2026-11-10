@@ -46,14 +46,6 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
             presenter?.onAddMoney()
         }
 
-        viewModel.onFundingCompleted = { [weak presenter] in
-            presenter?.onFundingCompletedAction()
-        }
-
-        viewModel.onFundingFailed = { [weak presenter] in
-            presenter?.onFundingFailedAction()
-        }
-
         viewModel.onBackupSync = { [weak presenter] in
             presenter?.onBackupSync()
         }
@@ -68,10 +60,6 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
 
         viewModel.onTopUp = { [weak presenter] in
             presenter?.onTopUp()
-        }
-
-        viewModel.onWithdraw = { [weak presenter] in
-            presenter?.onWithdraw()
         }
 
         #if TESTNET_FEATURE
@@ -118,7 +106,7 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
     }
 
     private func apply(_ brand: PaymentAssetBrand) {
-        assetLogo = brand.wideIcon
+        assetLogo = brand.squareIcon
         assetSymbol = brand.symbol
 
         guard viewModel.balanceCardModel != nil else { return }
@@ -135,18 +123,8 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
         }
     #endif
 
-    func didReceive(fundingStates: [AssetFundingStatusView.FundingState]) {
-        viewModel.fundingStates = fundingStates
-    }
-
     func didReceive(isRecoveryInProgress: Bool) {
         viewModel.isUpdating = isRecoveryInProgress
-    }
-
-    func didReceive(isAccountBackupPending: Bool) {
-        withAnimation(.easeInOut) {
-            viewModel.showsAccountBackupPending = isAccountBackupPending
-        }
     }
 
     func didShowBackupNotification() {
@@ -166,11 +144,8 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
         }
     }
 
-    func didReceive(rampLoading action: RampAction, isLoading: Bool) {
-        switch action {
-        case .topUp: viewModel.isTopUpInProgress = isLoading
-        case .withdraw: viewModel.isWithdrawInProgress = isLoading
-        }
+    func didReceive(topUpLoading isLoading: Bool) {
+        viewModel.isTopUpInProgress = isLoading
     }
 
     private func emitCardUpdate() {

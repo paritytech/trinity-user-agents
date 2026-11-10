@@ -1,3 +1,5 @@
+import { asProductId, type ProductId } from "../../../../js/packages/truapi/src/index.ts";
+
 // Cross-product storage against a real signing-host CLI.
 //
 // One product writes to its own storage and another reads it, which the manifest
@@ -26,10 +28,10 @@
 //   read-again       dim2.paseo reads once more, so a refusal above cannot be
 //                    the value having expired or gone.
 
-const OWNER = "peopl.paseo";
-const GRANTED = "dim2.paseo";
-const UNTRUSTED = "stash.paseo";
-const NO_MANIFEST = "nobody.paseo";
+const OWNER = asProductId("peopl.paseo");
+const GRANTED = asProductId("dim2.paseo");
+const UNTRUSTED = asProductId("stash.paseo");
+const NO_MANIFEST = asProductId("nobody.paseo");
 const KEY = "unwrapped";
 /// "state", as the hex the storage codec takes.
 const VALUE = "0x7374617465";
@@ -53,7 +55,7 @@ function refusalTag(error: unknown): string | null {
   return domain.value?.value?.tag ?? null;
 }
 
-function expectProduct(expected: string): void {
+function expectProduct(expected: ProductId): void {
   if (host.productId !== expected) {
     throw new Error(
       `phase expects --product-id ${expected}, host serves ${host.productId}`,
@@ -62,7 +64,7 @@ function expectProduct(expected: string): void {
 }
 
 /// Read `product`'s storage and require the standard refusal.
-async function expectRefused(product: string): Promise<void> {
+async function expectRefused(product: ProductId): Promise<void> {
   const read = await truapi.localStorage.read({ product, key: KEY });
   if (read.isOk()) {
     throw new Error(

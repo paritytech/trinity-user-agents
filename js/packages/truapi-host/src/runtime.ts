@@ -1,3 +1,4 @@
+import type { ProductId } from "@parity/truapi";
 import type {
   HostChatActionSubscribeItem,
   HostRendererActionSubscribeItem,
@@ -9,7 +10,7 @@ import { CoreStorageKey as GeneratedCoreStorageKey } from "./generated/host-call
 import type {
   CoreAdmin,
   CoreStorageKey,
-  ProductExecutionKind,
+  ExecutableKind,
 } from "./generated/host-callbacks.js";
 
 // The typed capability interfaces below come straight from the
@@ -26,24 +27,6 @@ export function encodeCoreStorageKey(key: CoreStorageKey): Uint8Array {
   return GeneratedCoreStorageKey.enc(key);
 }
 
-/** Authenticated, ready native Chat peer. Host-private; never a product directory. */
-export interface NativeChatContact {
-  /** Canonical lowercase 0x-prefixed People identity account. */
-  peerIdentity: string;
-  /** Verified roster name, absent when authorized products disagree. */
-  username?: string;
-}
-
-/** Current signing wallet's authenticated native Chat contacts, restored from storage. */
-export interface NativeChatContactsSnapshot {
-  /** Canonical lowercase 0x-prefixed root wallet public key. */
-  walletPublicKey: string;
-  /** Canonical lowercase 0x-prefixed People chain genesis hash. */
-  genesisHash: string;
-  /** Deterministically ordered, deduplicated ready peers. */
-  contacts: NativeChatContact[];
-}
-
 /**
  * Async-or-sync return. Synchronous hosts (e.g. the dotli main-thread
  * shell hitting localStorage) can return a plain value; the WASM bridge
@@ -55,26 +38,15 @@ export type Awaitable<T> = T | Promise<T>;
  * Open a JSON-RPC connection for `genesisHash`. The wasm bridge passes
  * `onResponse` so the host can push JSON-RPC replies back asynchronously.
  * Returning `null` (or throwing) tells the core no provider is available.
- * `onClosed`, when supplied, is called when the remote response stream ends
- * or fails. Local `close()` is idempotent and does not call it.
  */
 export type ChainConnect = (
   genesisHash: string,
   onResponse: (json: string) => void,
-  onClosed?: () => void,
-) => Awaitable<ChainConnection | null>;
-
-/** Open only a host-allowlisted HOP endpoint for this Bulletin chain. */
-export type HopConnect = (
-  bulletinGenesisHash: string,
-  endpoint: string,
-  onResponse: (json: string) => void,
-  onClosed?: () => void,
 ) => Awaitable<ChainConnection | null>;
 
 /**
- * Per-connection handle returned by `chainConnect` or `hopConnect`. `send`
- * forwards a JSON-RPC request string; `close` tears the connection down.
+ * Per-connection handle returned by `chainConnect`. `send` forwards a
+ * SCALE-encoded JSON-RPC request; `close` tears the connection down.
  */
 export interface ChainConnection {
   send(request: string): void;
@@ -91,9 +63,9 @@ export type LogLevel = string;
 /** Configuration for one product runtime hosted by the wasm core. */
 export interface ProductRuntimeConfig {
   /** Stable identifier used to scope product accounts, permissions, and storage. */
-  productId: string;
+  productId: ProductId;
   /** Trusted executable kind selected by the host; defaults to `App`. */
-  executionKind?: ProductExecutionKind;
+  executionKind?: ExecutableKind;
   /** Metadata describing the host application. */
   host: {
     /** Human-readable host name. */
@@ -182,7 +154,7 @@ export interface RenderSink {
  * one left, so the host may stop it.
  */
 export interface WorkerDemandChange {
-  productId: string;
+  productId: ProductId;
   wanted: boolean;
 }
 

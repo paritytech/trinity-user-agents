@@ -25,9 +25,10 @@ final class ProductStorageBackend: HostStorageBackend, @unchecked Sendable {
     }
 }
 
-/// Adapts core-private SCALE keys. Existing slots retain their UserDefaults
-/// backing; wallet-state slots use atomic, synced files outside product storage.
-/// Plain Swift errors (including ambiguous durable writes) become HostRejection.
+/// Adapts the host-global core ``TrUAPILocalStoring`` to
+/// `HostCoreStorageBackend`. Core keys are SCALE-encoded `Data`; they are
+/// hex-encoded for the underlying String-keyed store. Plain Swift errors
+/// surface as `HostRejection`.
 final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
     private let storage: TrUAPILocalStoring
 
@@ -36,23 +37,14 @@ final class CoreStorageBackend: HostCoreStorageBackend, @unchecked Sendable {
     }
 
     func read(key: Data) throws -> Data? {
-        if TrUAPIWalletStorage.owns(key) {
-            return try withHostRejection { try TrUAPIWalletStorage.shared.read(key: key) }
-        }
-        return try withHostRejection { try storage.read(key: key.toHex()) }
+        try withHostRejection { try storage.read(key: key.toHex()) }
     }
 
     func write(key: Data, value: Data) throws {
-        if TrUAPIWalletStorage.owns(key) {
-            return try withHostRejection { try TrUAPIWalletStorage.shared.write(key: key, value: value) }
-        }
         try withHostRejection { try storage.write(key: key.toHex(), value: value) }
     }
 
     func clear(key: Data) throws {
-        if TrUAPIWalletStorage.owns(key) {
-            return try withHostRejection { try TrUAPIWalletStorage.shared.clear(key: key) }
-        }
         try withHostRejection { try storage.clear(key: key.toHex()) }
     }
 }

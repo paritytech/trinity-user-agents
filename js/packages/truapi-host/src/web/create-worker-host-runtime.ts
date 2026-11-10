@@ -1,11 +1,11 @@
+import type { ProductId } from "@parity/truapi";
 import type {
   ChainConnection,
   ProductRuntimeConfig,
   LogLevel,
-  NativeChatContactsSnapshot,
   PermissionAuthorizationRequest,
   PermissionAuthorizationStatus,
-  ProductExecutionKind,
+  ExecutableKind,
   RequiredHostCallbacks,
   TrUApiProductProvider,
   WorkerDemandChange,
@@ -25,7 +25,6 @@ import {
   RendererNode as RendererNodeCodec,
 } from "@parity/truapi";
 import {
-  NativeChatPickedFile,
   PermissionAuthorizationRequest as PermissionAuthorizationRequestCodec,
   ProductContext as ProductContextCodec,
 } from "../generated/host-callbacks.js";
@@ -35,35 +34,18 @@ import { isLoopbackWsUrl } from "../worker-protocol.js";
 import type {
   CallbackName,
   HostRole,
-  LocalIdentity,
-  LocalIdentityProgress,
   MainToWorker,
   SubscriptionName,
   WorkerToMain,
 } from "../worker-protocol.js";
-import {
-  COINAGE_WALLET_CALLBACKS,
-  MAX_JSON_RPC_CONNECTIONS,
-} from "../worker-protocol.js";
-import { bytesToHex, Vector } from "@parity/truapi/scale";
+import { bytesToHex } from "@parity/truapi/scale";
 import { startRawSubscription } from "../generated/worker-callbacks.js";
 import { errorMessage, toError } from "../error.js";
-import { createBrowserNativeChatFilesHost } from "./native-chat-files.js";
-import {
-  validateAllowanceProductIds,
-  type WalletAllowanceSnapshot,
-} from "../wallet-allowances.js";
 
 export type WebWorkerHostConfig = Omit<
   ProductRuntimeConfig,
   "productId" | "executionKind"
 >;
-export type WebWorkerSigningHostConfig = WebWorkerHostConfig & {
-  /** Bare dotNS network suffix (`dot`, `paseo`, or `testnet`). */
-  networkSuffix: string;
-  /** Trusted u32 asset instance, required for instance-scoped Coinage runtimes. */
-  coinageInstanceId?: number;
-};
 
 export interface WorkerPairingHostRuntime {
   /**
@@ -76,13 +58,10 @@ export interface WorkerPairingHostRuntime {
    * should. Undefined for a core built before the export existed.
    */
   readonly coreWireSchemaHash: string | undefined;
-  createProvider(
-    product: {
-      productId: string;
-      executionKind?: ProductExecutionKind;
-    },
-    callbacks?: WebWorkerHostCallbacks,
-  ): Promise<TrUApiProductProvider>;
+  createProvider(product: {
+    productId: ProductId;
+    executionKind?: ExecutableKind;
+  }): Promise<TrUApiProductProvider>;
   disconnectSession(): Promise<void>;
   cancelPairing(): void;
   notifySessionStoreChanged(): void;
@@ -91,8 +70,6 @@ export interface WorkerPairingHostRuntime {
    * removed or blocked, so a contact handle the core cached stops resolving.
    */
   notifyContactsChanged(): void;
-  /** Host-only native roster. Pairing hosts reject as unsupported. */
-  getNativeChatContacts(): Promise<NativeChatContactsSnapshot>;
   /**
    * Restore the session persisted in the core's `AuthSession` slot. Resolves
    * once product frames may use it, so a host can await this at boot before
@@ -116,7 +93,31 @@ export interface WorkerPairingHostRuntime {
     secret: Uint8Array,
     liteUsername?: string,
   ): Promise<void>;
+  /**
+   * Answer resource allocation as granted without performing it.
+   *
+   * Test hosts only, on a core built with `test-host`. No allowance is
+   * allocated, so preimage submissions also stay in the core: the Bulletin
+   * allowance was never authorized on chain to submit with.
+   */
   setGrantAllowancesUnchecked(granted: boolean): Promise<void>;
+  /**
+   * Keep preimage submissions in the core instead of the Bulletin chain.
+   *
+   * Test hosts only, on a core built with `test-host`. For a host whose wallet
+   * answers allowances itself: that Bulletin allowance was never authorized on
+   * chain, so a real `store` is refused at dry-run. The product gets the content
+   * key back and reads the value from the core's lookup cache. A refused
+   * Bulletin allowance still refuses the submission.
+   */
+  setSubmitPreimagesLocally(local: boolean): Promise<void>;
+  /**
+   * Answer these resource tags as refused, replacing any earlier set.
+   *
+   * Withholding one resource while the rest stay granted is what lets a suite
+   * prove its product survives a refusal it cannot otherwise arrange.
+   */
+  setWithheldResources(tags: string[]): Promise<void>;
   /**
    * Drop the active paired session without notifying the peer. Rejects on a
    * disposed runtime, as
@@ -124,23 +125,25 @@ export interface WorkerPairingHostRuntime {
    */
   resetSessionState(): Promise<void>;
   getPermissionAuthorizationStatus(
-    productId: string,
+    productId: ProductId,
     request: PermissionAuthorizationRequest,
   ): Promise<PermissionAuthorizationStatus>;
   getPermissionAuthorizationStatuses(
-    productId: string,
+    productId: ProductId,
     requests: PermissionAuthorizationRequest[],
   ): Promise<PermissionAuthorizationStatus[]>;
   setPermissionAuthorizationStatus(
-    productId: string,
+    productId: ProductId,
     request: PermissionAuthorizationRequest,
     status: PermissionAuthorizationStatus,
   ): Promise<void>;
   getSessionChatIdentityKey(): Promise<Uint8Array | undefined>;
   getDeviceStatementKey(): Promise<Uint8Array | undefined>;
   getDeviceEncryptionKey(): Promise<Uint8Array>;
+  /** Validate and normalize a product identifier through the Rust core. */
+  parseProductId(value: string): Promise<ProductId>;
   getProductSubtreePublicKey(
-    productId: string,
+    productId: ProductId,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
   /**
@@ -151,9 +154,9 @@ export interface WorkerPairingHostRuntime {
    * {@link WorkerPairingHostRuntime.subscribeWorkerDemand} listeners, and the
    * host runs and stops the worker executable itself.
    */
-  acquireWorker(productId: string): void;
+  acquireWorker(productId: ProductId): void;
   /** Release one reference. Releasing with none held is a no-op. */
-  releaseWorker(productId: string): void;
+  releaseWorker(productId: ProductId): void;
   /**
    * Observe which product workers the host should run. The listener first
    * receives `wanted: true` for every product wanted right now, then each
@@ -166,36 +169,10 @@ export interface WorkerPairingHostRuntime {
   setLogLevel(level: LogLevel): void;
   dispose(): void;
 }
-export interface WorkerSigningHostRuntime extends Omit<
-  WorkerPairingHostRuntime,
-  | "cancelPairing"
-  | "notifySessionStoreChanged"
-  | "activateStoredSession"
-  | "activateExternalSession"
-  | "resetSessionState"
-> {
-  activateLocalSession(secret: Uint8Array): Promise<void>;
-  activateLocalSessionWithIdentity(
-    secret: Uint8Array,
-    liteUsername?: string,
-  ): Promise<void>;
-  /** Read dotNS ownership and install verified metadata into the native session. */
-  refreshLocalIdentity(): Promise<LocalIdentity>;
-  /** Read-only wallet-wide inspection bound to the native local activation. */
-  getWalletAllowanceSnapshot(
-    productIds: string[],
-  ): Promise<WalletAllowanceSnapshot>;
-  /** Complete native UID auth/proofs and wait for on-chain ownership confirmation. */
-  registerLocalLiteUsername(
-    baseUsername: string,
-    identityBackendBaseUrl: string,
-    onProgress?: (progress: LocalIdentityProgress) => void,
-  ): Promise<LocalIdentity>;
-}
 
 interface CoreState {
   coreId: number;
-  productId: string;
+  productId: ProductId;
   listeners: Set<(message: Uint8Array) => void>;
   closeListeners: Set<(error: Error) => void>;
   closedError: Error | null;
@@ -213,36 +190,19 @@ interface RenderEntry {
   onError: (error: Error) => void;
 }
 
-interface RpcConnectionEntry {
-  connection: ChainConnection | null;
-  closed: boolean;
-}
-
 interface RuntimeState {
   worker: Worker;
-  role: HostRole;
-  networkSuffix: string | undefined;
-  identityAccountId: string | null;
-  identityGeneration: number;
-  pendingAllowanceSnapshots: Map<number, PendingEntry<WalletAllowanceSnapshot>>;
-  pendingNativeChatContacts: Map<
-    number,
-    PendingEntry<NativeChatContactsSnapshot>
-  >;
   rawCallbacks: RawCallbacks;
-  coreCallbacks: Map<number, RawCallbacks>;
   cores: Map<number, CoreState>;
   pendingCores: Map<
     number,
     {
-      productId: string;
+      productId: ProductId;
       resolve: (provider: TrUApiProductProvider) => void;
       reject: (error: Error) => void;
     }
   >;
   subscriptionDisposers: Map<number, () => void>;
-  chatFileExports: Set<string>;
-  disposeNativeChatFiles: () => void;
   /**
    * Open `worker.beginOperation` holds. A non-empty set defers `dispose()`.
    * Worker-wide rather than per-core, since a `callbackRequest` carries no core
@@ -261,7 +221,7 @@ interface RuntimeState {
   disposeGraceTimer: ReturnType<typeof setTimeout> | undefined;
   /** How long `dispose()` waits for open operations before forcing teardown. */
   operationGraceMs: number;
-  chainConnections: Map<number, RpcConnectionEntry>;
+  chainConnections: Map<number, ChainConnection>;
   pendingDisconnects: Map<
     number,
     { resolve: () => void; reject: (error: Error) => void }
@@ -269,12 +229,6 @@ interface RuntimeState {
   pendingSessionActivations: Map<
     number,
     { resolve: () => void; reject: (error: Error) => void }
-  >;
-  pendingLocalIdentities: Map<
-    number,
-    PendingEntry<LocalIdentity> & {
-      onProgress?: (progress: LocalIdentityProgress) => void;
-    }
   >;
   pendingPermissionAuthorizationStatuses: Map<
     number,
@@ -319,6 +273,7 @@ interface RuntimeState {
       reject: (error: Error) => void;
     }
   >;
+  pendingProductIds: Map<number, PendingEntry<ProductId>>;
   /** Host-authored Chat and Renderer actions awaiting the worker's response. */
   pendingActions: Map<
     number,
@@ -327,7 +282,7 @@ interface RuntimeState {
   /** Sinks for live renders, keyed by render id. */
   renders: Map<number, RenderEntry>;
   /** Products whose worker the core currently wants, for late subscribers. */
-  wantedWorkers: Set<string>;
+  wantedWorkers: Set<ProductId>;
   workerDemandListeners: Set<(change: WorkerDemandChange) => void>;
   closedError: Error | null;
   logLevel: LogLevel;
@@ -346,10 +301,8 @@ let nextSessionChatIdentityKeyRequestId = 0;
 let nextDeviceStatementKeyRequestId = 0;
 let nextDeviceEncryptionKeyRequestId = 0;
 let nextProductSubtreePublicKeyRequestId = 0;
+let nextProductIdRequestId = 0;
 let nextSessionActivationRequestId = 0;
-let nextLocalIdentityRequestId = 0;
-let nextAllowanceSnapshotRequestId = 0;
-let nextNativeChatContactsRequestId = 0;
 let nextActionRequestId = 0;
 let nextRenderId = 0;
 
@@ -566,38 +519,12 @@ interface TrUApiDevConsole {
   getLogLevel(): LogLevel | null;
 }
 
-const NATIVE_CHAT_FILE_CALLBACKS: Partial<Record<CallbackName, true>> = {
-  pickChatFiles: true,
-  readChatFile: true,
-  releaseChatFile: true,
-  beginChatFileExport: true,
-  writeChatFileExport: true,
-  finishChatFileExport: true,
-  cancelChatFileExport: true,
-};
-
-/** Reclaim only undelivered selections; delivered sources belong to durable Host state. */
-async function discardChatFileCallback(
-  state: RuntimeState,
-  name: CallbackName,
-  value: unknown,
-): Promise<void> {
-  try {
-    if (name === "pickChatFiles" && value instanceof Uint8Array) {
-      await Promise.all(
-        Vector(NativeChatPickedFile)
-          .dec(value)
-          .map((file) => state.rawCallbacks.releaseChatFile(file.sourceId)),
-      );
-    } else if (name === "beginChatFileExport" && typeof value === "string") {
-      state.chatFileExports.delete(value);
-      await state.rawCallbacks.cancelChatFileExport(value);
-    }
-  } catch {
-    // A closed/failed backing store is unavailable; never log private handles or payloads.
-  }
-}
-
+/**
+ * Key one pending-operation hold. `OperationId` is unique per product, not per
+ * worker, so the product a `beginOperation`/`endOperation` arrived for has to be
+ * part of the key. Returns null if the encoded product will not decode, which
+ * drops the hold rather than letting it pin the worker forever.
+ */
 /**
  * Read the host-assigned id out of a `beginOperation` response. Returns null if
  * the response will not decode, so a hold that cannot be keyed is dropped
@@ -612,12 +539,6 @@ function operationIdFrom(value: unknown): number | null {
   }
 }
 
-/**
- * Key one pending-operation hold. `OperationId` is unique per product, not per
- * worker, so the product a `beginOperation`/`endOperation` arrived for has to be
- * part of the key. Returns null if the encoded product will not decode, which
- * drops the hold rather than letting it pin the worker forever.
- */
 function operationHold(encodedProduct: unknown, id: number): string | null {
   if (!(encodedProduct instanceof Uint8Array)) return null;
   try {
@@ -631,26 +552,18 @@ function handleCallbackRequest(
   state: RuntimeState,
   msg: {
     requestId: number;
-    coreId?: number;
     name: CallbackName;
     args: readonly unknown[];
   },
 ): void {
-  if (state.disposed) return;
-  const hostWalletCallback = COINAGE_WALLET_CALLBACKS[msg.name] === true;
-  const callbacks =
-    msg.coreId === undefined || hostWalletCallback
-      ? state.rawCallbacks
-      : state.coreCallbacks.get(msg.coreId);
-  const fn =
-    callbacks && Object.hasOwn(callbacks, msg.name)
-      ? (
-          callbacks as unknown as Record<
-            string,
-            (...args: readonly unknown[]) => unknown
-          >
-        )[msg.name]
-      : undefined;
+  const fn = Object.hasOwn(state.rawCallbacks, msg.name)
+    ? (
+        state.rawCallbacks as unknown as Record<
+          string,
+          (...args: readonly unknown[]) => unknown
+        >
+      )[msg.name]
+    : undefined;
   if (!fn) {
     state.worker.postMessage({
       kind: "callbackResponse",
@@ -661,22 +574,9 @@ function handleCallbackRequest(
     return;
   }
   Promise.resolve()
-    .then(() => {
-      if (state.disposed) throw new Error("Host runtime is unavailable");
-      if (
-        !hostWalletCallback &&
-        msg.coreId !== undefined &&
-        !state.coreCallbacks.has(msg.coreId)
-      )
-        throw new Error("Product callbacks are unavailable");
-      return fn(...msg.args);
-    })
+    .then(() => fn(...msg.args))
     .then(
-      async (value) => {
-        if (state.disposed) {
-          await discardChatFileCallback(state, msg.name, value);
-          return;
-        }
+      (value) => {
         // Tracked in the success arm only: a rejected begin must not leave a
         // hold that nothing will ever release.
         if (msg.name === "beginOperation") {
@@ -694,60 +594,20 @@ function handleCallbackRequest(
             teardown(state, new Error("runtime disposed"), false);
           }
         }
-        if (msg.name === "beginChatFileExport" && typeof value === "string") {
-          state.chatFileExports.add(value);
-        } else if (
-          msg.name === "finishChatFileExport" ||
-          msg.name === "cancelChatFileExport"
-        ) {
-          state.chatFileExports.delete(msg.args[0] as string);
-        }
-        try {
-          state.worker.postMessage({
-            kind: "callbackResponse",
-            requestId: msg.requestId,
-            ok: true,
-            value,
-          } satisfies MainToWorker);
-        } catch {
-          await discardChatFileCallback(state, msg.name, value);
-          if (state.disposed) return;
-          try {
-            state.worker.postMessage({
-              kind: "callbackResponse",
-              requestId: msg.requestId,
-              ok: false,
-              error: "Host callback result could not be serialized",
-            } satisfies MainToWorker);
-          } catch {
-            teardown(
-              state,
-              new Error("Host callback transport is unavailable"),
-              true,
-            );
-          }
-        }
+        state.worker.postMessage({
+          kind: "callbackResponse",
+          requestId: msg.requestId,
+          ok: true,
+          value,
+        } satisfies MainToWorker);
       },
       (err) => {
-        if (state.disposed) return;
-        try {
-          state.worker.postMessage({
-            kind: "callbackResponse",
-            requestId: msg.requestId,
-            ok: false,
-            error: hostWalletCallback
-              ? "Native Coinage wallet operation failed"
-              : NATIVE_CHAT_FILE_CALLBACKS[msg.name]
-                ? "Native Chat file operation failed"
-                : errorMessage(err),
-          } satisfies MainToWorker);
-        } catch {
-          teardown(
-            state,
-            new Error("Host callback transport is unavailable"),
-            true,
-          );
-        }
+        state.worker.postMessage({
+          kind: "callbackResponse",
+          requestId: msg.requestId,
+          ok: false,
+          error: errorMessage(err),
+        } satisfies MainToWorker);
       },
     );
 }
@@ -756,7 +616,6 @@ function handleSubscriptionStart(
   state: RuntimeState,
   msg: {
     subId: number;
-    coreId?: number;
     name: SubscriptionName;
     payload: Uint8Array | string | null;
   },
@@ -779,20 +638,15 @@ function handleSubscriptionStart(
   };
   let dispose: (() => void) | void = undefined;
   try {
-    const callbacks =
-      msg.coreId === undefined
-        ? state.rawCallbacks
-        : state.coreCallbacks.get(msg.coreId);
-    if (!callbacks) throw new Error("Product callbacks are unavailable");
     dispose = startRawSubscription(
-      callbacks,
+      state.rawCallbacks,
       msg.name,
       msg.payload,
       sendItem,
       sendError,
     );
   } catch (err) {
-    sendError({ reason: errorMessage(err) });
+    console.error(`[truapi worker] ${msg.name} threw on start:`, err);
     return;
   }
   if (typeof dispose === "function") {
@@ -816,81 +670,41 @@ function handleSubscriptionStop(
 
 async function handleChainConnectStart(
   state: RuntimeState,
-  msg: Extract<WorkerToMain, { kind: "chainConnectStart" | "hopConnectStart" }>,
+  msg: { connId: number; genesisHash: string },
 ): Promise<void> {
-  if (state.disposed) return;
-  if (
-    state.chainConnections.has(msg.connId) ||
-    state.chainConnections.size >= MAX_JSON_RPC_CONNECTIONS
-  ) {
-    state.worker.postMessage({
-      kind: "chainConnectAck",
-      connId: msg.connId,
-      ok: false,
-      error: "JSON-RPC connection limit reached or duplicate connection id",
-    } satisfies MainToWorker);
-    return;
-  }
-  const entry: RpcConnectionEntry = { connection: null, closed: false };
-  state.chainConnections.set(msg.connId, entry);
+  const chainConnect = state.rawCallbacks.chainConnect;
   const onResponse = (json: string): void => {
-    if (state.disposed || entry.closed) return;
+    if (state.disposed) return;
     state.worker.postMessage({
       kind: "chainResponse",
       connId: msg.connId,
       json,
     } satisfies MainToWorker);
   };
-  const onClosed = (): void => {
-    if (state.disposed || entry.closed) return;
-    handleChainClose(state, msg);
-    state.worker.postMessage({
-      kind: "chainClosed",
-      connId: msg.connId,
-    } satisfies MainToWorker);
-  };
   try {
-    const conn = await (msg.kind === "hopConnectStart"
-      ? state.rawCallbacks.hopConnect(
-          msg.genesisHash,
-          msg.endpoint,
-          onResponse,
-          onClosed,
-        )
-      : state.rawCallbacks.chainConnect(msg.genesisHash, onResponse, onClosed));
-    if (state.disposed || entry.closed) {
-      state.chainConnections.delete(msg.connId);
-      conn?.close();
+    const conn = await chainConnect(msg.genesisHash, onResponse);
+    if (!conn) {
+      state.worker.postMessage({
+        kind: "chainConnectAck",
+        connId: msg.connId,
+        ok: false,
+        error: `chainConnect returned null for genesisHash ${msg.genesisHash}`,
+      } satisfies MainToWorker);
       return;
     }
-    if (!conn) throw new Error(`${msg.kind} returned no connection`);
-    entry.connection = conn;
+    state.chainConnections.set(msg.connId, conn);
     state.worker.postMessage({
       kind: "chainConnectAck",
       connId: msg.connId,
       ok: true,
     } satisfies MainToWorker);
   } catch (err) {
-    state.chainConnections.delete(msg.connId);
-    const report = !state.disposed && !entry.closed;
-    entry.closed = true;
-    try {
-      entry.connection?.close();
-    } catch {
-      console.warn("[truapi worker] JSON-RPC close failed");
-    } finally {
-      if (report) {
-        state.worker.postMessage({
-          kind: "chainConnectAck",
-          connId: msg.connId,
-          ok: false,
-          error:
-            msg.kind === "hopConnectStart"
-              ? "HOP connection unavailable"
-              : errorMessage(err),
-        } satisfies MainToWorker);
-      }
-    }
+    state.worker.postMessage({
+      kind: "chainConnectAck",
+      connId: msg.connId,
+      ok: false,
+      error: errorMessage(err),
+    } satisfies MainToWorker);
   }
 }
 
@@ -898,38 +712,26 @@ function handleChainSend(
   state: RuntimeState,
   msg: { connId: number; request: string },
 ): void {
-  const entry = state.chainConnections.get(msg.connId);
-  if (!entry?.connection || entry.closed) return;
+  const conn = state.chainConnections.get(msg.connId);
+  if (!conn) return;
   try {
     if (debugLoggingEnabled(state)) {
-      console.debug("[truapi worker] chainSend", msg.connId);
+      console.debug("[truapi worker] chainSend", msg.connId, msg.request);
     }
-    entry.connection.send(msg.request);
-  } catch {
-    console.warn("[truapi worker] JSON-RPC send failed");
-    if (!entry.closed) {
-      handleChainClose(state, msg);
-      if (!state.disposed) {
-        state.worker.postMessage({
-          kind: "chainClosed",
-          connId: msg.connId,
-        } satisfies MainToWorker);
-      }
-    }
+    conn.send(msg.request);
+  } catch (err) {
+    console.warn("[truapi worker] chain send threw:", err);
   }
 }
 
 function handleChainClose(state: RuntimeState, msg: { connId: number }): void {
-  const entry = state.chainConnections.get(msg.connId);
-  if (!entry || entry.closed) return;
-  entry.closed = true;
-  // Keep a closed opening entry counted until its late handle can be closed.
-  if (!entry.connection) return;
+  const conn = state.chainConnections.get(msg.connId);
+  if (!conn) return;
   state.chainConnections.delete(msg.connId);
   try {
-    entry.connection.close();
-  } catch {
-    console.warn("[truapi worker] JSON-RPC close failed");
+    conn.close();
+  } catch (err) {
+    console.warn("[truapi worker] chain close threw:", err);
   }
 }
 
@@ -1087,9 +889,6 @@ function handleDeviceEncryptionKeyResponse(
 function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingDisconnects, error);
   rejectAll(state.pendingSessionActivations, error);
-  rejectAll(state.pendingLocalIdentities, error);
-  rejectAll(state.pendingAllowanceSnapshots, error);
-  rejectAll(state.pendingNativeChatContacts, error);
   rejectAll(state.pendingPermissionAuthorizationStatuses, error);
   rejectAll(state.pendingPermissionAuthorizationStatusBatches, error);
   rejectAll(state.pendingSetPermissionAuthorizationStatuses, error);
@@ -1097,6 +896,7 @@ function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingDeviceStatementKeys, error);
   rejectAll(state.pendingDeviceEncryptionKeys, error);
   rejectAll(state.pendingProductSubtreePublicKeys, error);
+  rejectAll(state.pendingProductIds, error);
   rejectAll(state.pendingActions, error);
   for (const renderId of [...state.renders.keys()]) {
     const sink = takeRender(state, renderId);
@@ -1137,12 +937,10 @@ function sendWorkerRequest<T>(
 function sendSessionActivationRequest(
   state: RuntimeState,
   buildMessage: (requestId: number) => MainToWorker,
-  changesIdentity = true,
 ): Promise<void> {
   if (state.disposed) {
     return Promise.reject(state.closedError ?? new Error("runtime disposed"));
   }
-  if (changesIdentity) invalidateAllowanceIdentity(state);
   return sendWorkerRequest<void>(
     state,
     state.pendingSessionActivations,
@@ -1150,158 +948,6 @@ function sendSessionActivationRequest(
     undefined,
     buildMessage,
   );
-}
-
-function sendLocalIdentityRequest(
-  state: RuntimeState,
-  buildMessage: (requestId: number) => MainToWorker,
-  onProgress?: (progress: LocalIdentityProgress) => void,
-): Promise<LocalIdentity> {
-  if (state.disposed) {
-    return Promise.reject(state.closedError ?? new Error("runtime disposed"));
-  }
-  const generation = state.identityGeneration;
-  const { promise, resolve, reject } = Promise.withResolvers<LocalIdentity>();
-  const requestId = ++nextLocalIdentityRequestId;
-  state.pendingLocalIdentities.set(requestId, {
-    resolve(identity) {
-      if (generation !== state.identityGeneration || state.disposePending) {
-        reject(new Error("local identity activation changed"));
-        return;
-      }
-      state.identityAccountId = identity.identityAccountId;
-      resolve(identity);
-    },
-    reject,
-    onProgress,
-  });
-  try {
-    state.worker.postMessage(buildMessage(requestId));
-  } catch (error) {
-    state.pendingLocalIdentities.delete(requestId);
-    reject(error);
-  }
-  return promise;
-}
-
-function invalidateAllowanceIdentity(state: RuntimeState): void {
-  state.identityGeneration++;
-  state.identityAccountId = null;
-  rejectAll(
-    state.pendingAllowanceSnapshots,
-    new Error("local identity activation changed"),
-  );
-  rejectAll(
-    state.pendingNativeChatContacts,
-    new Error("local identity activation changed"),
-  );
-}
-
-async function getWalletAllowanceSnapshot(
-  state: RuntimeState,
-  input: string[],
-): Promise<WalletAllowanceSnapshot> {
-  if (state.disposed || state.disposePending) {
-    throw state.closedError ?? new Error("runtime disposed");
-  }
-  if (
-    state.role !== "signing" ||
-    state.pendingSessionActivations.size > 0 ||
-    state.pendingDisconnects.size > 0
-  ) {
-    throw new Error(
-      "allowance inspection requires a current local signing identity",
-    );
-  }
-  const productIds = validateAllowanceProductIds(input);
-  const accountId = state.identityAccountId;
-  const generation = state.identityGeneration;
-  const requestId = ++nextAllowanceSnapshotRequestId;
-  const { promise, resolve, reject } =
-    Promise.withResolvers<WalletAllowanceSnapshot>();
-  const timeout = setTimeout(() => {
-    state.pendingAllowanceSnapshots.delete(requestId);
-    reject(new Error("wallet allowance inspection timed out after 30000ms"));
-  }, 30_000);
-  state.pendingAllowanceSnapshots.set(requestId, {
-    resolve(snapshot) {
-      clearTimeout(timeout);
-      if (
-        generation !== state.identityGeneration ||
-        snapshot?.schemaVersion !== 1 ||
-        (accountId !== null && snapshot.identityAccountId !== accountId) ||
-        snapshot.networkSuffix !== state.networkSuffix
-      ) {
-        reject(
-          new Error(
-            "wallet allowance snapshot does not match the current identity",
-          ),
-        );
-        return;
-      }
-      resolve(snapshot);
-    },
-    reject(error) {
-      clearTimeout(timeout);
-      reject(error);
-    },
-  });
-  try {
-    state.worker.postMessage({
-      kind: "getWalletAllowanceSnapshot",
-      requestId,
-      productIds,
-    } satisfies MainToWorker);
-  } catch (error) {
-    settlePending(state.pendingAllowanceSnapshots, requestId, {
-      ok: false,
-      error: errorMessage(error),
-    });
-  }
-  return promise;
-}
-
-async function getNativeChatContacts(
-  state: RuntimeState,
-): Promise<NativeChatContactsSnapshot> {
-  if (state.disposed || state.disposePending) {
-    throw state.closedError ?? new Error("runtime disposed");
-  }
-  if (
-    state.role !== "signing" ||
-    state.pendingSessionActivations.size > 0 ||
-    state.pendingDisconnects.size > 0
-  ) {
-    throw new Error(
-      "native Chat contacts require a current local signing session",
-    );
-  }
-  const generation = state.identityGeneration;
-  const requestId = ++nextNativeChatContactsRequestId;
-  const { promise, resolve, reject } =
-    Promise.withResolvers<NativeChatContactsSnapshot>();
-  state.pendingNativeChatContacts.set(requestId, {
-    resolve(snapshot) {
-      if (generation !== state.identityGeneration || state.disposePending) {
-        reject(new Error("local identity activation changed"));
-      } else {
-        resolve(snapshot);
-      }
-    },
-    reject,
-  });
-  try {
-    state.worker.postMessage({
-      kind: "getNativeChatContacts",
-      requestId,
-    } satisfies MainToWorker);
-  } catch (error) {
-    settlePending(state.pendingNativeChatContacts, requestId, {
-      ok: false,
-      error: errorMessage(error),
-    });
-  }
-  return promise;
 }
 
 function closeCoreState(core: CoreState, error: Error): void {
@@ -1330,7 +976,6 @@ function teardown(state: RuntimeState, error: Error, fault: boolean): void {
     closeCoreState(core, error);
   }
   state.cores.clear();
-  state.coreCallbacks.clear();
   for (const fn of state.subscriptionDisposers.values()) {
     try {
       fn();
@@ -1339,20 +984,14 @@ function teardown(state: RuntimeState, error: Error, fault: boolean): void {
     }
   }
   state.subscriptionDisposers.clear();
-  for (const entry of state.chainConnections.values()) {
-    entry.closed = true;
+  for (const conn of state.chainConnections.values()) {
     try {
-      entry.connection?.close();
+      conn.close();
     } catch {
       // ignore during teardown
     }
   }
   state.chainConnections.clear();
-  for (const id of state.chatFileExports) {
-    void state.rawCallbacks.cancelChatFileExport(id).catch(() => {});
-  }
-  state.chatFileExports.clear();
-  state.disposeNativeChatFiles();
   // A worker nothing can call any more is not wanted.
   for (const productId of [...state.wantedWorkers]) {
     handleWorkerDemandChanged(state, productId, false);
@@ -1371,13 +1010,9 @@ function teardown(state: RuntimeState, error: Error, fault: boolean): void {
   }
 }
 
-interface CreateWebWorkerHostRuntimeOptions {
+export interface CreateWebWorkerPairingHostRuntimeOptions {
   logLevel?: LogLevel;
-  hostConfig: WebWorkerHostConfig | WebWorkerSigningHostConfig;
-  /**
-   * Maximum inactivity during each worker startup phase. Loading the WASM and
-   * constructing the runtime each get a full interval. Defaults to 30s.
-   */
+  hostConfig: WebWorkerHostConfig;
   initTimeoutMs?: number;
   /**
    * Dev-only: a loopback `ws://` wire debugger to stream tapped frames to.
@@ -1410,14 +1045,6 @@ interface CreateWebWorkerHostRuntimeOptions {
   operationGraceMs?: number;
 }
 
-export interface CreateWebWorkerPairingHostRuntimeOptions extends CreateWebWorkerHostRuntimeOptions {
-  hostConfig: WebWorkerHostConfig;
-}
-
-export interface CreateWebWorkerSigningHostRuntimeOptions extends CreateWebWorkerHostRuntimeOptions {
-  hostConfig: WebWorkerSigningHostConfig;
-}
-
 export type WebWorkerHostCallbacks = RequiredHostCallbacks;
 
 export function createWebWorkerPairingHostRuntime(
@@ -1425,50 +1052,12 @@ export function createWebWorkerPairingHostRuntime(
   host: WebWorkerHostCallbacks,
   options: CreateWebWorkerPairingHostRuntimeOptions,
 ): Promise<WorkerPairingHostRuntime> {
-  // No role default: a host that asks for none must put exactly what it put
-  // on the wire before the field existed, and the worker reads absent as
-  // "pairing".
-  return createWebWorkerHostRuntime(worker, host, options);
-}
-
-export function createWebWorkerSigningHostRuntime(
-  worker: Worker,
-  host: WebWorkerHostCallbacks,
-  options: CreateWebWorkerSigningHostRuntimeOptions,
-): Promise<WorkerSigningHostRuntime> {
-  return createWebWorkerHostRuntime(worker, host, {
-    ...options,
-    role: options.role ?? "signing",
-  });
-}
-
-function createWebWorkerHostRuntime(
-  worker: Worker,
-  host: WebWorkerHostCallbacks,
-  options: CreateWebWorkerHostRuntimeOptions,
-): Promise<WorkerPairingHostRuntime & WorkerSigningHostRuntime> {
-  const browserFiles = host.nativeChatFiles
-    ? undefined
-    : createBrowserNativeChatFilesHost();
-  const callbacks = createWasmRawCallbacks({
-    ...host,
-    nativeChatFiles: host.nativeChatFiles ?? browserFiles!,
-  });
+  const callbacks = createWasmRawCallbacks(host);
 
   return new Promise((resolve, reject) => {
     const state: RuntimeState = {
       worker,
-      role: options.role ?? "pairing",
-      networkSuffix:
-        "networkSuffix" in options.hostConfig
-          ? options.hostConfig.networkSuffix
-          : undefined,
-      identityAccountId: null,
-      identityGeneration: 0,
-      pendingAllowanceSnapshots: new Map(),
-      pendingNativeChatContacts: new Map(),
       rawCallbacks: callbacks,
-      coreCallbacks: new Map(),
       cores: new Map(),
       pendingCores: new Map(),
       subscriptionDisposers: new Map(),
@@ -1477,16 +1066,14 @@ function createWebWorkerHostRuntime(
       disposeGraceTimer: undefined,
       operationGraceMs: options.operationGraceMs ?? 30_000,
       chainConnections: new Map(),
-      chatFileExports: new Set(),
-      disposeNativeChatFiles: () => browserFiles?.dispose(),
       pendingDisconnects: new Map(),
       pendingSessionActivations: new Map(),
-      pendingLocalIdentities: new Map(),
       pendingPermissionAuthorizationStatuses: new Map(),
       pendingPermissionAuthorizationStatusBatches: new Map(),
       pendingSetPermissionAuthorizationStatuses: new Map(),
       pendingSessionChatIdentityKeys: new Map(),
       pendingProductSubtreePublicKeys: new Map(),
+      pendingProductIds: new Map(),
       pendingDeviceStatementKeys: new Map(),
       pendingDeviceEncryptionKeys: new Map(),
       pendingActions: new Map(),
@@ -1500,8 +1087,7 @@ function createWebWorkerHostRuntime(
       coreWireSchemaHash: undefined,
     };
 
-    let runtime: (WorkerPairingHostRuntime & WorkerSigningHostRuntime) | null =
-      null;
+    let runtime: WorkerPairingHostRuntime | null = null;
 
     const notifyFault = (error: Error): void => {
       teardown(state, error, true);
@@ -1544,43 +1130,6 @@ function createWebWorkerHostRuntime(
         case "sessionActivationResponse":
           handleSessionActivationResponse(state, msg);
           break;
-        case "localIdentityProgress":
-          if (state.disposed) break;
-          try {
-            state.pendingLocalIdentities
-              .get(msg.requestId)
-              ?.onProgress?.(msg.progress);
-          } catch {
-            // UI observers cannot fail or settle an identity operation.
-          }
-          break;
-        case "localIdentityResponse":
-          settlePending(
-            state.pendingLocalIdentities,
-            msg.requestId,
-            msg.ok
-              ? { ok: true, value: msg.identity }
-              : { ok: false, error: msg.error },
-          );
-          break;
-        case "walletAllowanceSnapshotResponse":
-          settlePending(
-            state.pendingAllowanceSnapshots,
-            msg.requestId,
-            msg.ok
-              ? { ok: true, value: msg.snapshot }
-              : { ok: false, error: msg.error },
-          );
-          break;
-        case "nativeChatContactsResponse":
-          settlePending(
-            state.pendingNativeChatContacts,
-            msg.requestId,
-            msg.ok
-              ? { ok: true, value: msg.snapshot }
-              : { ok: false, error: msg.error },
-          );
-          break;
         case "permissionAuthorizationStatusResponse":
           handlePermissionAuthorizationStatusResponse(state, msg);
           break;
@@ -1601,6 +1150,9 @@ function createWebWorkerHostRuntime(
           break;
         case "productSubtreePublicKeyResponse":
           handleProductSubtreePublicKeyResponse(state, msg);
+          break;
+        case "parseProductIdResponse":
+          settlePending(state.pendingProductIds, msg.requestId, msg);
           break;
         case "workerDemandChanged":
           // Teardown has already reported every worker unwanted, so a level
@@ -1662,9 +1214,8 @@ function createWebWorkerHostRuntime(
           handleSubscriptionStop(state, msg);
           break;
         case "chainConnectStart":
-        case "hopConnectStart":
           if (debugLoggingEnabled(state)) {
-            console.debug("[truapi worker]", msg.kind, msg.connId);
+            console.debug("[truapi worker] chainConnectStart", msg.connId);
           }
           void handleChainConnectStart(state, msg);
           break;
@@ -1719,29 +1270,24 @@ function createWebWorkerHostRuntime(
       readDebuggerEnablement(options.debugger),
       options.debuggerIndicator,
     );
-    const timeoutMs = options.initTimeoutMs ?? 30_000;
-    let initPhase = "loading WASM";
-    let cancelInitTimeout = (): void => {};
 
     const onInitMessage = (ev: MessageEvent<WorkerToMain>): void => {
       const msg = ev.data;
       if (msg.kind === "loaded") {
-        initPhase = "initializing the runtime";
-        scheduleInitTimeout();
         worker.postMessage({
           kind: "init",
           logLevel: devLogLevelOverride ?? options.logLevel ?? "off",
           hostConfig: options.hostConfig,
-          role: options.role,
           capabilities: {
             chat: host.chat !== undefined,
             permissionStatus: host.permissionStatus !== undefined,
             pocket: host.pocket !== undefined,
-            identityBackend: host.identityBackend !== undefined,
-            coinageWallet: callbacks.nativeCoinage !== undefined,
+            game: host.game !== undefined,
             contacts: host.contacts !== undefined,
+            scanner: host.scanner !== undefined,
           },
           debuggerUrl: debuggerDial,
+          role: options.role,
         } satisfies MainToWorker);
       } else if (msg.kind === "ready") {
         state.coreWireSchemaHash = msg.schema;
@@ -1758,25 +1304,16 @@ function createWebWorkerHostRuntime(
     };
 
     const cleanupInit = (): void => {
-      cancelInitTimeout();
+      clearTimeout(initTimeout);
       worker.removeEventListener("error", onError);
       worker.removeEventListener("messageerror", onInitMessageError);
       worker.removeEventListener("message", onInitMessage);
     };
 
-    const scheduleInitTimeout = (): void => {
-      cancelInitTimeout();
-      const timeout = setTimeout(() => {
-        failInit(
-          new Error(
-            `worker init timed out after ${timeoutMs}ms while ${initPhase}`,
-          ),
-        );
-      }, timeoutMs);
-      cancelInitTimeout = () => clearTimeout(timeout);
-    };
-
-    scheduleInitTimeout();
+    const timeoutMs = options.initTimeoutMs ?? 30_000;
+    const initTimeout = setTimeout(() => {
+      failInit(new Error(`worker init timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
 
     worker.addEventListener("error", onError);
     worker.addEventListener("messageerror", onInitMessageError);
@@ -1812,7 +1349,6 @@ function handleCoreError(
   const pending = state.pendingCores.get(coreId);
   if (!pending) return;
   state.pendingCores.delete(coreId);
-  state.coreCallbacks.delete(coreId);
   pending.reject(new Error(error));
 }
 
@@ -1827,7 +1363,6 @@ function handleFrameError(
   const failure = new Error(`worker frame error: ${error}`);
   closeCoreState(core, failure);
   state.cores.delete(coreId);
-  state.coreCallbacks.delete(coreId);
   // Renders left registered would never settle: the worker cancels them with
   // the core, so nothing further arrives to complete the sink.
   failRendersForCore(state, coreId, failure);
@@ -1841,12 +1376,10 @@ function handleFrameError(
   }
 }
 
-function buildRuntime(
-  state: RuntimeState,
-): WorkerPairingHostRuntime & WorkerSigningHostRuntime {
-  const runtime: WorkerPairingHostRuntime & WorkerSigningHostRuntime = {
+function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
+  const runtime: WorkerPairingHostRuntime = {
     coreWireSchemaHash: state.coreWireSchemaHash,
-    createProvider(product, callbacks): Promise<TrUApiProductProvider> {
+    createProvider(product): Promise<TrUApiProductProvider> {
       if (state.disposed) {
         return Promise.reject(
           state.closedError ?? new Error("runtime disposed"),
@@ -1854,8 +1387,6 @@ function buildRuntime(
       }
       return new Promise((resolve, reject) => {
         const coreId = ++state.nextCoreId;
-        if (callbacks)
-          state.coreCallbacks.set(coreId, createWasmRawCallbacks(callbacks));
         state.pendingCores.set(coreId, {
           productId: product.productId,
           resolve,
@@ -1866,29 +1397,14 @@ function buildRuntime(
             kind: "createCore",
             coreId,
             product,
-            ...(callbacks === undefined
-              ? {}
-              : {
-                  capabilities: {
-                    chat: callbacks.chat !== undefined,
-                    contacts: callbacks.contacts !== undefined,
-                    permissionStatus: callbacks.permissionStatus !== undefined,
-                    pocket: callbacks.pocket !== undefined,
-                    identityBackend: callbacks.identityBackend !== undefined,
-                    coinageWallet:
-                      state.rawCallbacks.nativeCoinage !== undefined,
-                  },
-                }),
           } satisfies MainToWorker);
         } catch (err) {
           state.pendingCores.delete(coreId);
-          state.coreCallbacks.delete(coreId);
           reject(err instanceof Error ? err : new Error(String(err)));
         }
       });
     },
     disconnectSession(): Promise<void> {
-      invalidateAllowanceIdentity(state);
       return sendWorkerRequest<void>(
         state,
         state.pendingDisconnects,
@@ -1896,6 +1412,26 @@ function buildRuntime(
         undefined,
         (requestId) => ({ kind: "disconnectSession", requestId }),
       );
+    },
+    parseProductId(value: string): Promise<ProductId> {
+      if (state.disposed)
+        return Promise.reject(
+          state.closedError ?? new Error("runtime disposed"),
+        );
+      return new Promise((resolve, reject) => {
+        const requestId = ++nextProductIdRequestId;
+        state.pendingProductIds.set(requestId, { resolve, reject });
+        try {
+          state.worker.postMessage({
+            kind: "parseProductId",
+            requestId,
+            value,
+          } satisfies MainToWorker);
+        } catch (error) {
+          state.pendingProductIds.delete(requestId);
+          reject(error);
+        }
+      });
     },
     cancelPairing(): void {
       if (state.disposed) return;
@@ -1937,7 +1473,7 @@ function buildRuntime(
       );
     },
     getProductSubtreePublicKey(
-      productId: string,
+      productId: ProductId,
       timeoutMs?: number,
     ): Promise<Uint8Array | undefined> {
       return sendWorkerRequest<Uint8Array | undefined>(
@@ -1960,16 +1496,12 @@ function buildRuntime(
       } satisfies MainToWorker);
     },
     notifyContactsChanged(): void {
-      rejectAll(
-        state.pendingNativeChatContacts,
-        new Error("native Chat contacts changed"),
-      );
       postUnlessDisposed(state, { kind: "notifyContactsChanged" });
     },
-    acquireWorker(productId: string): void {
+    acquireWorker(productId: ProductId): void {
       postUnlessDisposed(state, { kind: "acquireWorker", productId });
     },
-    releaseWorker(productId: string): void {
+    releaseWorker(productId: ProductId): void {
       postUnlessDisposed(state, { kind: "releaseWorker", productId });
     },
     subscribeWorkerDemand(listener) {
@@ -2009,60 +1541,31 @@ function buildRuntime(
       }));
     },
     setGrantAllowancesUnchecked(granted: boolean): Promise<void> {
-      return sendSessionActivationRequest(
-        state,
-        (requestId) => ({
-          kind: "setGrantAllowancesUnchecked",
-          requestId,
-          granted,
-        }),
-        false,
-      );
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "setGrantAllowancesUnchecked",
+        requestId,
+        granted,
+      }));
+    },
+    setSubmitPreimagesLocally(local: boolean): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "setSubmitPreimagesLocally",
+        requestId,
+        local,
+      }));
+    },
+    setWithheldResources(tags: string[]): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "setWithheldResources",
+        requestId,
+        tags,
+      }));
     },
     resetSessionState(): Promise<void> {
       return sendSessionActivationRequest(state, (requestId) => ({
         kind: "resetSessionState",
         requestId,
       }));
-    },
-    activateLocalSessionWithIdentity(
-      secret: Uint8Array,
-      liteUsername?: string,
-    ): Promise<void> {
-      return sendSessionActivationRequest(state, (requestId) => ({
-        kind: "activateLocalSessionWithIdentity",
-        requestId,
-        secret,
-        liteUsername,
-      }));
-    },
-    refreshLocalIdentity(): Promise<LocalIdentity> {
-      return sendLocalIdentityRequest(state, (requestId) => ({
-        kind: "refreshLocalIdentity",
-        requestId,
-      }));
-    },
-    getWalletAllowanceSnapshot(productIds): Promise<WalletAllowanceSnapshot> {
-      return getWalletAllowanceSnapshot(state, productIds);
-    },
-    getNativeChatContacts(): Promise<NativeChatContactsSnapshot> {
-      return getNativeChatContacts(state);
-    },
-    registerLocalLiteUsername(
-      baseUsername,
-      identityBackendBaseUrl,
-      onProgress,
-    ): Promise<LocalIdentity> {
-      return sendLocalIdentityRequest(
-        state,
-        (requestId) => ({
-          kind: "registerLocalLiteUsername",
-          requestId,
-          baseUsername,
-          identityBackendBaseUrl,
-        }),
-        onProgress,
-      );
     },
     getPermissionAuthorizationStatus(productId, request) {
       return sendWorkerRequest<PermissionAuthorizationStatus>(
@@ -2116,7 +1619,6 @@ function buildRuntime(
       } satisfies MainToWorker);
     },
     dispose(): void {
-      invalidateAllowanceIdentity(state);
       devGlobalTargets.delete(runtime);
       // Let a background task (e.g. a funding transaction) finish; the last
       // endOperation runs the teardown. Fault teardown is never deferred.
@@ -2157,7 +1659,7 @@ function deliverWorkerDemand(
 /** Record one product's wanted level and fan it out to every listener. */
 function handleWorkerDemandChanged(
   state: RuntimeState,
-  productId: string,
+  productId: ProductId,
   wanted: boolean,
 ): void {
   if (wanted) state.wantedWorkers.add(productId);
@@ -2294,7 +1796,7 @@ function buildProvider(
       return bytesToHex(await runtime.getDeviceEncryptionKey());
     },
     async getProductSubtreePublicKey(
-      productId: string,
+      productId: ProductId,
       timeoutMs?: number,
     ): Promise<Bytes32 | undefined> {
       if (core.disposed) return undefined;
@@ -2318,11 +1820,7 @@ function buildProvider(
       );
     },
     setPermissionAuthorizationStatus(request, status) {
-      if (core.disposed) {
-        return Promise.reject(
-          core.closedError ?? new Error("product connection is closed"),
-        );
-      }
+      if (core.disposed) return Promise.resolve();
       return runtime.setPermissionAuthorizationStatus(
         core.productId,
         request,
@@ -2361,7 +1859,7 @@ function buildProvider(
       }
       const renderId = nextRenderId++;
       // No worker reference is taken here: the core holds the one an open
-      // render is worth and reports it through `workerDemandChanged`.
+      // render is worth and requests it through `requestWorkerTransition`.
       state.renders.set(renderId, {
         coreId: core.coreId,
         onUpdate: (node) => sink.onUpdate(node),
@@ -2392,7 +1890,6 @@ function buildProvider(
       if (core.disposed) return;
       closeCoreState(core, new Error("provider disposed"));
       state.cores.delete(core.coreId);
-      state.coreCallbacks.delete(core.coreId);
       // Renders left registered would never settle: the worker cancels them
       // with the core, so nothing further arrives to complete the sink.
       failRendersForCore(state, core.coreId, new Error("provider disposed"));

@@ -11,26 +11,7 @@ class ChatBotData private constructor(
 ) {
     companion object {
         fun sample() = ChatBotData(id = "SampleBot", name = "Sample")
-        fun polkadotPeer() = ChatBotData(id = "PolkadotPeerBot", name = "Polkadot Peer")
-        fun weeklyGame() = ChatBotData(id = "WeeklyGameBot", name = "Polkadot Prizes")
-
-        fun tattoo() = ChatBotData(id = "TattooBot", name = "Unique Peer Tattoo")
-
-        fun mobRule() = ChatBotData(id = "MobRuleBot", name = "Mob Rule")
-
         fun defaultBots() = buildList {
-            if (FeatureOption.DIM2_BOT_BY_DEFAULT.isEnabled) {
-                add(weeklyGame())
-            }
-
-            if (FeatureOption.PEER_BOT_BY_DEFAULT.isEnabled) {
-                add(polkadotPeer())
-            }
-
-            if (FeatureOption.DIM1_BOT_BY_DEFAULT.isEnabled) {
-                add(tattoo())
-            }
-
             if (FeatureOption.SAMPLE_BOT.isEnabled) {
                 add(sample())
             }

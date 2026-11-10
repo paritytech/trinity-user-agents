@@ -8,13 +8,13 @@ struct Service;
 
 #[truapi_macros::sso_service]
 impl Service {
-	async fn foo(&self, _: &SsoRequestContext, _request: Request<u32>) -> FooResponse {
-		Ok(1)
-	}
+    async fn foo(&self, _: &SsoRequestContext, _request: Request<u32>) -> FooResponse {
+        Ok(1)
+    }
 
-	async fn baz(&self, _: &SsoRequestContext, _request: Box<Request<bool>>) -> BarResponse {
-		Ok(3)
-	}
+    async fn baz(&self, _: &SsoRequestContext, _request: Box<Request<bool>>) -> BarResponse {
+        Ok(3)
+    }
 }
 
 fn main() {}

@@ -68,7 +68,7 @@ impl VoucherCryptography for HostVoucherCryptography {
 		self.check()?;
 		let domain = proof::domain_for_ring_exponent(ring_exponent)
 			.map_err(|_| "Coinage ring exponent is unsupported")?;
-		proof::ring_vrf_proof_with(&self.vrf, domain, seed.0, ring_members, context, message)
+		proof::ring_vrf_proof(&self.vrf, domain, &seed.0, ring_members, context, message)
 			.map_err(|_| "Coinage ring proof failed".into())
 	}
 }

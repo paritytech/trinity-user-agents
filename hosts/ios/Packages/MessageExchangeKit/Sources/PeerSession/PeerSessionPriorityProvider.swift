@@ -4,6 +4,7 @@ import SDKLogger
 
 protocol PeerSessionPriorityProviding: AnyObject {
     var expiry: UInt64 { get set }
+    /// - Parameter statements: our own authentic statements only; anyone can publish under our topic.
     func initialExpiry(from statements: [Statement]) -> UInt64
     func incrementedExpiry() -> UInt64
 }
@@ -27,12 +28,15 @@ extension PeerSessionPriorityProvider: PeerSessionPriorityProviding {
     func initialExpiry(from statements: [Statement]) -> UInt64 {
         let lastUsedPriority = makeExpiry(from: statements)
         let timestampPriority = priorityFactory.makeTimestampPriority()
-        return max(lastUsedPriority + 1, timestampPriority)
+        let (nextPriority, overflow) = lastUsedPriority.addingReportingOverflow(1)
+        return overflow ? .max : max(nextPriority, timestampPriority)
     }
 
+    // Saturates instead of trapping: a statement at the maximum expiry is then rejected by the store.
     func incrementedExpiry() -> UInt64 {
         let timestampPriority = priorityFactory.makeTimestampPriority()
-        let nextPriority = expiry + 1
+        let (incremented, overflow) = expiry.addingReportingOverflow(1)
+        let nextPriority = overflow ? .max : incremented
         expiry = max(nextPriority, timestampPriority)
         logger?.debug("Incremented expiry: \(expiry)")
         return expiry

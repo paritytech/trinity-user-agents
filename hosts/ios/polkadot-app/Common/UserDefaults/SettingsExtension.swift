@@ -4,25 +4,15 @@ import Keystore_iOS
 enum SettingsKey: String {
     case username = "username.v3"
     case usernameClaimed = "usernameClaimed.v3"
-    case isPerson = "isPerson.v3"
     case waitingRoomNotificationDate
-    case gameStartNotificationDate
     case registrationStartNotificationDates
     case gameAboutToStartNotificationDate
     case registrationOpenNotificationDates
-    case voucherInUseDismissed = "voucherInUseDismissed.v3"
     case playerTooltipShown
     case swipeTooltipShown
     case selectedCurrencyCode
-    case fiatOnrampSessionIds
-    case fiatOnrampTrackedTransactionIds
-    case gameAlarmId
-    case gameAlarmFireDate
-    case gameAlarmTimingSeconds
-    // Balance restored notification
+    case productGameReminders
     case deviceEncryptId = "deviceEncryptId.v3"
-    // App Group suite. The raw key predates the rename from "entropy id" and is kept so existing
-    // installs keep resolving their Keychain items.
     case installationKeyId = "io.polkadot.app.entropy.id.v3"
     case nextSyncUpdateId = "nextSyncUpdateId.v3"
     case themeSelected = "themeSelected.v3"
@@ -34,6 +24,8 @@ enum SettingsKey: String {
     case hostPlacementEnabled
     case coinageRecyclingStrategy
     case tabBarLabelsEnabled
+    case debugPocketCards
+    case issueReportGitHubUsername
     #if TESTNET_FEATURE
         case tipsResetPending
     #endif
@@ -69,10 +61,18 @@ extension SettingsManagerProtocol {
     }
 
     func set(string value: String, for key: SettingsKey) {
-        set(anyValue: value, for: key.rawValue)
+        set(string: value, for: key.rawValue)
     }
 
     func string(for key: SettingsKey) -> String? {
-        anyValue(for: key.rawValue) as? String
+        string(for: key.rawValue)
+    }
+
+    func set(string value: String, for key: String) {
+        set(anyValue: value, for: key)
+    }
+
+    func string(for key: String) -> String? {
+        anyValue(for: key) as? String
     }
 }

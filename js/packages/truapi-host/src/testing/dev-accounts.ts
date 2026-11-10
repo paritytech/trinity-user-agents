@@ -134,7 +134,11 @@ export const PASEO_ASSET_HUB = {
   tokenDecimals: 10,
 } as const;
 
-/** The chain a suite gets when it names none. */
+/**
+ * Paseo Asset Hub, for a suite that wants one chain without declaring its own.
+ * Nothing applies it: a suite that names no chain is served none, so pass it
+ * in `networks`.
+ */
 export const DEFAULT_CHAIN = PASEO_ASSET_HUB;
 
 /**
@@ -177,4 +181,21 @@ export function liveChain(chain: { rpcUrl: string; genesisHash: string }): {
     },
     runtimeConfig: { assetHub: { genesisHash } },
   };
+}
+
+/**
+ * Check a product account's derivation index, refusing one `u32` would reshape.
+ *
+ * The index is SCALE-encoded as a `u32`, which wraps: `-1` encodes as
+ * `4294967295` and `1.5` as `1`. Either names a different account than the
+ * caller asked for, and a suite meets that as an address it funded which turns
+ * out not to be the one its product signs with.
+ */
+export function checkDerivationIndex(index: number): number {
+  if (!Number.isInteger(index) || index < 0 || index > 0xff_ff_ff_ff) {
+    throw new RangeError(
+      `product account index ${index} is not a u32: a derivation index is a whole number from 0 to 4294967295.`,
+    );
+  }
+  return index;
 }

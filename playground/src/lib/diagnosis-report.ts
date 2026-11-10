@@ -57,7 +57,7 @@ export function renderReportMarkdown(
 
 // Repo that receives the pre-filled diagnosis-report issues; the
 // diagnosis-report workflow turns each into a PR under diagnosis-reports/.
-const REPORT_ISSUE_URL = "https://github.com/paritytech/host-rust-core/issues/new";
+const REPORT_ISSUE_URL = "https://github.com/paritytech/trinity-user-agents/issues/new";
 
 // GitHub / browsers reject issue URLs beyond ~8 KB. Cap the whole URL below
 // that; a report with many verbose failures can still exceed it even after

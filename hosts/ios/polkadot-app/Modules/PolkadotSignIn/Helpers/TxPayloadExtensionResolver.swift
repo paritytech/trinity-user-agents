@@ -19,6 +19,7 @@ struct CreateTransactionPayloadExtensions {
 final class CreateTransactionExtensionResolver {
     func resolve(
         extensions: [EncodedTransactionExtensionValue],
+        extensionVersion: UInt8,
         codingFactory: RuntimeCoderFactoryProtocol
     ) throws -> CreateTransactionPayloadExtensions {
         var existingParameters: CreateTransactionPayloadExtensions.ExistingParameters = []
@@ -31,15 +32,20 @@ final class CreateTransactionExtensionResolver {
             case Extrinsic.TransactionExtensionId.mortality:
                 existingParameters.insert(.mortality)
             case Extrinsic.TransactionExtensionId.verifySignature:
-                if isDisabledVerifySignature(ext: ext, codingFactory: codingFactory) {
+                if isDisabledVerifySignature(
+                    ext: ext,
+                    extensionVersion: extensionVersion,
+                    codingFactory: codingFactory
+                ) {
                     existingParameters.insert(.disabledVerifySignature)
                 }
             default:
                 break
             }
 
-            guard let coder = resolveExtensionCoder(
+            guard let coder = try resolveExtensionCoder(
                 for: ext.id,
+                extensionVersion: extensionVersion,
                 metadata: codingFactory.metadata
             ) else {
                 continue
@@ -48,6 +54,7 @@ final class CreateTransactionExtensionResolver {
             let decodedExplicit = try decodeExplicitJSON(
                 ext: ext,
                 coder: coder,
+                extensionVersion: extensionVersion,
                 codingFactory: codingFactory
             )
 
@@ -71,10 +78,12 @@ final class CreateTransactionExtensionResolver {
 private extension CreateTransactionExtensionResolver {
     func isDisabledVerifySignature(
         ext: EncodedTransactionExtensionValue,
+        extensionVersion: UInt8,
         codingFactory: RuntimeCoderFactoryProtocol
     ) -> Bool {
-        guard let coder = resolveExtensionCoder(
+        guard let coder = try? resolveExtensionCoder(
             for: ext.id,
+            extensionVersion: extensionVersion,
             metadata: codingFactory.metadata
         ) else {
             return false
@@ -83,6 +92,7 @@ private extension CreateTransactionExtensionResolver {
         guard let json = try? decodeExplicitJSON(
             ext: ext,
             coder: coder,
+            extensionVersion: extensionVersion,
             codingFactory: codingFactory
         ) else {
             return false
@@ -104,21 +114,23 @@ private extension CreateTransactionExtensionResolver {
     func decodeExplicitJSON(
         ext: EncodedTransactionExtensionValue,
         coder: TransactionExtensionCoding,
+        extensionVersion: UInt8,
         codingFactory: RuntimeCoderFactoryProtocol
     ) throws -> JSON? {
         guard !ext.explicit.isEmpty else { return nil }
 
         let decoder = try codingFactory.createDecoder(from: ext.explicit)
         var extraStore: ExtrinsicExtra = [:]
-        try coder.decodeIncludedInExtrinsic(to: &extraStore, decoder: decoder)
+        try coder.decodeIncludedInExtrinsic(to: &extraStore, extensionVersion: extensionVersion, decoder: decoder)
 
         return extraStore[ext.id]
     }
 
     func resolveExtensionCoder(
         for extensionId: String,
+        extensionVersion: UInt8,
         metadata: RuntimeMetadataProtocol
-    ) -> TransactionExtensionCoding? {
+    ) throws -> TransactionExtensionCoding? {
         switch extensionId {
         case Extrinsic.TransactionExtensionId.mortality:
             return TransactionExtension.CheckMortality.getTransactionExtensionCoder()
@@ -129,14 +141,13 @@ private extension CreateTransactionExtensionResolver {
         case Extrinsic.TransactionExtensionId.checkMetadataHash:
             return CheckMetadataHashCoder()
         default:
-            guard let typeName = metadata.getSignedExtensionType(for: extensionId) else {
+            let typeName = try metadata.getSignedExtensionType(for: extensionId, extensionVersion: extensionVersion)
+
+            guard typeName != nil else {
                 return nil
             }
 
-            return DefaultTransactionExtensionCoder(
-                txExtensionId: extensionId,
-                extensionExplicitType: typeName
-            )
+            return DefaultVersionedTransactionExtensionCoder(txExtensionId: extensionId, metadata: metadata)
         }
     }
 }

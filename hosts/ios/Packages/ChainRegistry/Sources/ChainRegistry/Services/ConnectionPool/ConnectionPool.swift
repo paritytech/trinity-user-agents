@@ -10,6 +10,9 @@ public protocol ConnectionPoolProtocol {
     func unsubscribe(_ subscriber: ConnectionStateSubscription, chainId: ChainModel.Id)
     func getOneShotConnection(for chain: ChainModel) -> JSONRPCEngine?
     func deactivateConnection(for chainId: ChainModel.Id)
+
+    /// Creates an unopened socket to the chain's node at `attempt`, wrapping around its node list.
+    func makeChainSocket(for chain: ChainModel, attempt: Int) throws -> ChainSocketProtocol
 }
 
 public protocol ConnectionStateSubscription: AnyObject {
@@ -167,6 +170,10 @@ extension ConnectionPool: ConnectionPoolProtocol {
         } else {
             return connections[chain.chainId]?.target as? JSONRPCEngine
         }
+    }
+
+    public func makeChainSocket(for chain: ChainModel, attempt: Int) throws -> ChainSocketProtocol {
+        try connectionFactory.createChainSocket(for: chain, attempt: attempt)
     }
 
     public func retainConnections(_ scope: ConnectionRetainScope) -> ConnectionRetainToken {

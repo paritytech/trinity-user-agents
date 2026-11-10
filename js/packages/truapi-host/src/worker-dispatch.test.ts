@@ -58,22 +58,28 @@ describe("worker dispatch guards", () => {
     expect(messages).toEqual([]);
   });
 
-  it("closes a failed JSON-RPC listener without exposing its private response", () => {
+  it("closes a chain connection when its WASM listener throws", () => {
     const messages: WorkerToMain[] = [];
     const listeners = new Map<number, (json: string) => void>([
       [
         11,
         () => {
-          throw new Error("private-hop-ticket");
+          throw new Error("panic");
         },
       ],
     ]);
 
-    dispatchChainResponse(11, "{}", listeners, (msg) => messages.push(msg));
+    expect(() =>
+      dispatchChainResponse(11, "{}", listeners, (msg) => messages.push(msg)),
+    ).not.toThrow();
 
     expect(listeners.has(11)).toBe(false);
-    expect(messages[0]).toEqual({ kind: "chainClose", connId: 11 });
-    expect(messages[1]?.kind).toBe("disposeError");
-    expect(JSON.stringify(messages)).not.toContain("private-hop-ticket");
+    expect(messages).toEqual([
+      { kind: "chainClose", connId: 11 },
+      {
+        kind: "disposeError",
+        error: "chain connection 11 callback failed: panic",
+      },
+    ]);
   });
 });

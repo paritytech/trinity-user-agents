@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.truapiConta
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.StateFlow
+import uniffi.truapi.ProductId
 
 interface TrUAPIContactPickContract {
     val state: StateFlow<LoadingState<TrUAPIContactPickUiState>>
@@ -10,10 +11,12 @@ interface TrUAPIContactPickContract {
     fun onContactClicked(index: Int)
 
     fun onDismissClicked()
+
+    fun onShown()
 }
 
 data class TrUAPIContactPickUiState(
-    val productId: String,
+    val productId: ProductId,
     val contacts: ImmutableList<TrUAPIContactPickRow>,
 )
 

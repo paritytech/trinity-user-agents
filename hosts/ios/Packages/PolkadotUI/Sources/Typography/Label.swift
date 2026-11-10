@@ -14,6 +14,12 @@ open class Label: UILabel {
         }
     }
 
+    public var usesMonospacedDigits = false {
+        didSet {
+            applyTypography()
+        }
+    }
+
     private var typographyRegistration: UITraitChangeRegistration?
 
     public convenience init(text: String?, textColor: UIColor) {
@@ -85,8 +91,9 @@ private extension Label {
 
         typographyRegistration = bindAppTypography { label in
             let spec = typography.resolvedSpec
+            let font = UIFont.app(typography)
             label.style = LabelStyle(
-                font: .app(typography),
+                font: label.usesMonospacedDigits ? font.monospaced() : font,
                 lineHeight: spec.lineHeight,
                 tracking: spec.tracking
             )

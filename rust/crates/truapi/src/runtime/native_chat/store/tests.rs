@@ -56,7 +56,7 @@ fn slot() -> CoreStorageKey {
 	CoreStorageKey::NativeChatDevice {
 		root_public_key: [1; 32],
 		genesis_hash: [2; 32],
-		product_id: "chat.test".into(),
+		product_id: "chat.testnet".into(),
 	}
 }
 
@@ -412,7 +412,7 @@ fn completed_attachment_chunks_release_bookkeeping_but_preserve_storage() {
 			let key = CoreStorageKey::NativeChatFileChunk {
 				root_public_key: [1; 32],
 				genesis_hash: [2; 32],
-				product_id: "chat.test".into(),
+				product_id: "chat.testnet".into(),
 				attachment_id: [7; 32],
 				chunk_index,
 			};
@@ -522,17 +522,17 @@ fn wrong_owner_network_product_entropy_and_tampering_fail_closed() {
 			CoreStorageKey::NativeChatDevice {
 				root_public_key: [4; 32],
 				genesis_hash: [2; 32],
-				product_id: "chat.test".into(),
+				product_id: "chat.testnet".into(),
 			},
 			CoreStorageKey::NativeChatDevice {
 				root_public_key: [1; 32],
 				genesis_hash: [4; 32],
-				product_id: "chat.test".into(),
+				product_id: "chat.testnet".into(),
 			},
 			CoreStorageKey::NativeChatDevice {
 				root_public_key: [1; 32],
 				genesis_hash: [2; 32],
-				product_id: "other.test".into(),
+				product_id: "other.testnet".into(),
 			},
 		] {
 			storage.replace(&key, bytes.clone());

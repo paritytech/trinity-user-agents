@@ -11,9 +11,11 @@ import kotlinx.serialization.Serializable
  *
  * @param messageType Type identifier for the custom message (used by the rendering pipeline)
  * @param data Opaque byte array - the script is responsible for encoding/decoding this data
+ * @param alt The product's one-line description, shown where the message is listed rather than drawn
  */
 @Serializable
 data class ProductsMessageContent(
     val messageType: String,
     val data: DataByteArray,
+    val alt: String? = null,
 )

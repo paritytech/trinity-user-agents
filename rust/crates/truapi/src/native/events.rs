@@ -5,21 +5,18 @@ use futures::{
 use std::{collections::HashMap, sync::Mutex};
 use truapi::v01;
 
+use super::subscribers::Subscribers;
+
 /// Fans host notifications out to the product subscriptions and chain
 /// connections that wait on them.
 #[derive(Default)]
 pub struct NativeEventBus {
-	theme_changes:
-		Mutex<Vec<mpsc::UnboundedSender<Result<v01::HostThemeSubscribeItem, v01::GenericError>>>>,
-	locale_changes:
-		Mutex<Vec<mpsc::UnboundedSender<Result<v01::HostLocaleSubscribeItem, v01::GenericError>>>>,
+	theme_changes: Mutex<Subscribers<(), Result<v01::HostThemeSubscribeItem, v01::GenericError>>>,
+	locale_changes: Mutex<Subscribers<(), Result<v01::HostLocaleSubscribeItem, v01::GenericError>>>,
 	preimage_changes: Mutex<Vec<PreimageSubscription>>,
 	storage_changes: Mutex<Vec<StorageSubscription>>,
 	chain_events: Mutex<NativeChainEvents>,
-	chat_room_changes: Mutex<Vec<mpsc::UnboundedSender<v01::HostChatListSubscribeItem>>>,
-	pocket_card_changes: Mutex<
-		Vec<mpsc::UnboundedSender<Result<v01::HostPocketListSubscribeItem, v01::GenericError>>>,
-	>,
+	chat_room_changes: Mutex<Subscribers<(), v01::HostChatListSubscribeItem>>,
 }
 
 #[derive(Default)]
@@ -48,7 +45,7 @@ impl NativeEventBus {
 		self.theme_changes
 			.lock()
 			.expect("native theme subscribers mutex poisoned")
-			.push(tx);
+			.register((), tx);
 		stream::once(async move { current }).chain(rx).boxed()
 	}
 
@@ -57,7 +54,7 @@ impl NativeEventBus {
 		self.theme_changes
 			.lock()
 			.expect("native theme subscribers mutex poisoned")
-			.retain(|tx| tx.unbounded_send(Ok(theme.clone())).is_ok());
+			.send(&(), &Ok(theme));
 	}
 
 	/// Stream the locale: `current` first, then every host change.
@@ -69,7 +66,7 @@ impl NativeEventBus {
 		self.locale_changes
 			.lock()
 			.expect("native locale subscribers mutex poisoned")
-			.push(tx);
+			.register((), tx);
 		stream::once(async move { current }).chain(rx).boxed()
 	}
 
@@ -78,7 +75,7 @@ impl NativeEventBus {
 		self.locale_changes
 			.lock()
 			.expect("native locale subscribers mutex poisoned")
-			.retain(|tx| tx.unbounded_send(Ok(locale.clone())).is_ok());
+			.send(&(), &Ok(locale));
 	}
 
 	/// Stream later host changes to the preimage stored under `key`.
@@ -172,11 +169,34 @@ impl NativeEventBus {
 
 	/// End the response stream of a connection the host closed.
 	pub fn notify_chain_closed(&self, connection_id: u32) {
-		let mut events = self.chain_events.lock().expect("native chain subscribers mutex poisoned");
-		if events.responses.remove(&connection_id).is_none() {
+		if !self.close_chain_if_registered(connection_id) {
 			// Native callbacks can close a connection before returning its ID.
-			events.early_close_generation = events.early_close_generation.wrapping_add(1);
+			self.note_early_chain_close();
 		}
+	}
+
+	/// End the response stream of `connection_id` and report whether this bus
+	/// was the one holding it.
+	///
+	/// A product execution reports a close to its own bus and to the shared
+	/// one, because either may hold the connection. Exactly one of them does,
+	/// so a miss here is routine and must not be mistaken for a close that
+	/// raced a connect: see [`Self::note_early_chain_close`].
+	pub fn close_chain_if_registered(&self, connection_id: u32) -> bool {
+		self.chain_events
+			.lock()
+			.expect("native chain subscribers mutex poisoned")
+			.responses
+			.remove(&connection_id)
+			.is_some()
+	}
+
+	/// Record that the host closed a connection whose id no bus recognised,
+	/// which is what a close arriving before `chain_connect` returns looks
+	/// like. Invalidates connects that read the generation before it.
+	pub fn note_early_chain_close(&self) {
+		let mut events = self.chain_events.lock().expect("native chain subscribers mutex poisoned");
+		events.early_close_generation = events.early_close_generation.wrapping_add(1);
 	}
 
 	/// Stop routing responses for a connection the core closed.
@@ -192,13 +212,10 @@ impl NativeEventBus {
 	/// cannot be held across the host's await the way `subscribe_pocket_cards` does.
 	pub fn chat_room_changes(&self) -> BoxStream<'static, v01::HostChatListSubscribeItem> {
 		let (tx, rx) = mpsc::unbounded();
-		let mut subscribers = self
-			.chat_room_changes
+		self.chat_room_changes
 			.lock()
-			.expect("native Chat room subscribers mutex poisoned");
-		subscribers.retain(|tx| !tx.is_closed());
-		subscribers.push(tx);
-		drop(subscribers);
+			.expect("native Chat room subscribers mutex poisoned")
+			.register((), tx);
 		rx.boxed()
 	}
 
@@ -208,78 +225,6 @@ impl NativeEventBus {
 		self.chat_room_changes
 			.lock()
 			.expect("native Chat room subscribers mutex poisoned")
-			.retain(|tx| tx.unbounded_send(item.clone()).is_ok());
-	}
-
-	/// Subscribe to the host's card collection. `snapshot` reads the host's
-	/// cards while the subscriber mutex is held, so a replacement cannot land
-	/// between the read and the registration: the snapshot is always the first
-	/// item and every later change follows it in order. `snapshot` must not
-	/// call back into [`super::NativeProductExecution::notify_pocket_cards_changed`],
-	/// which takes the same mutex.
-	pub fn subscribe_pocket_cards(
-		&self,
-		snapshot: impl FnOnce() -> Result<v01::HostPocketListSubscribeItem, v01::GenericError>,
-	) -> BoxStream<'static, Result<v01::HostPocketListSubscribeItem, v01::GenericError>> {
-		let (tx, rx) = mpsc::unbounded();
-		let mut subscribers = self
-			.pocket_card_changes
-			.lock()
-			.expect("native Pocket card subscribers mutex poisoned");
-		let current = snapshot();
-		// Subscribers are dropped when their product stops listening, and
-		// nothing else prunes them between notifications.
-		subscribers.retain(|tx| !tx.is_closed());
-		subscribers.push(tx);
-		drop(subscribers);
-		stream::once(async move { current }).chain(rx).boxed()
-	}
-
-	/// Deliver a full card-list replacement to every live Pocket subscriber.
-	pub fn notify_pocket_cards_changed(&self, cards: Vec<v01::PocketCard>) {
-		self.send_pocket_cards(Ok(v01::HostPocketListSubscribeItem { cards }));
-	}
-
-	/// Report that the host can no longer say what the collection holds. The
-	/// product reads it as a failed stream rather than as an empty collection.
-	pub fn notify_pocket_cards_failed(&self, error: v01::GenericError) {
-		self.send_pocket_cards(Err(error));
-	}
-
-	/// Send one Pocket stream item to every live subscriber, dropping closed ones.
-	pub fn send_pocket_cards(
-		&self,
-		item: Result<v01::HostPocketListSubscribeItem, v01::GenericError>,
-	) {
-		self.pocket_card_changes
-			.lock()
-			.expect("native Pocket card subscribers mutex poisoned")
-			.retain(|tx| tx.unbounded_send(item.clone()).is_ok());
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	/// A cancelled subscriber is pruned when the next one registers, so a
-	/// product that subscribes and drops repeatedly cannot grow the list
-	/// without bound between host notifications.
-	#[test]
-	fn a_cancelled_pocket_subscriber_is_pruned_on_the_next_registration() {
-		let bus = NativeEventBus::default();
-		let snapshot = || Ok(v01::HostPocketListSubscribeItem { cards: Vec::new() });
-		for _ in 0..5 {
-			drop(bus.subscribe_pocket_cards(snapshot));
-		}
-		let _live = bus.subscribe_pocket_cards(snapshot);
-
-		assert_eq!(
-			bus.pocket_card_changes
-				.lock()
-				.expect("native Pocket card subscribers mutex poisoned")
-				.len(),
-			1
-		);
+			.send(&(), &item);
 	}
 }

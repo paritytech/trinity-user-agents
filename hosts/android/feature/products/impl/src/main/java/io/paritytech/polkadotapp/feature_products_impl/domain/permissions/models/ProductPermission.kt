@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 
 import androidx.compose.runtime.Immutable
+import uniffi.truapi.ProductId
 
 @Immutable
 sealed interface ProductPermission {
@@ -46,21 +47,6 @@ sealed interface ProductPermission {
             override val typeName: String get() = TYPE_NAME
             override val key: String get() = ""
         }
-
-        /** Stored per network; [genesis] is the lowercase `0x`-prefixed genesis hash. */
-        data class JamPeersAccess(
-            val genesis: String,
-        ) : RemotePermission {
-            override val typeName: String get() = TYPE_NAME
-            override val key: String get() = genesis
-
-            /** `0x` plus the first 8 hex digits, as shown in prompts and the permissions list. */
-            val shortGenesis: String get() = genesis.take(10) + "…"
-
-            companion object {
-                const val TYPE_NAME = "jam_peers"
-            }
-        }
     }
 
     data class DeviceCapability(
@@ -75,10 +61,10 @@ sealed interface ProductPermission {
     }
 
     data class AccountAccess(
-        val targetProductId: String,
+        val targetProductId: ProductId,
     ) : ProductPermission {
         override val typeName: String get() = TYPE_NAME
-        override val key: String get() = targetProductId
+        override val key: String get() = targetProductId.value
 
         companion object {
             const val TYPE_NAME = "account_access"
@@ -97,19 +83,31 @@ sealed interface ProductPermission {
         override val key: String get() = ""
     }
 
+    /** Reading the NFT purses of another owner: a product, or the user's own account when `null`. */
+    data class NftPurseRead(
+        val ownerProductId: ProductId?,
+    ) : ProductPermission {
+        override val typeName: String get() = TYPE_NAME
+        override val key: String get() = ownerProductId?.value.orEmpty()
+
+        companion object {
+            const val TYPE_NAME = "nft_purse_read"
+        }
+    }
+
     companion object {
         fun fromLocal(typeName: String, key: String): ProductPermission {
             return when (typeName) {
                 DeviceCapability.TYPE_NAME -> DeviceCapability(DeviceCapabilityType.valueOf(key))
-                AccountAccess.TYPE_NAME -> AccountAccess(key)
+                AccountAccess.TYPE_NAME -> AccountAccess(ProductId.parse(key).getOrThrow())
                 BalanceAccess.TYPE_NAME -> BalanceAccess
                 UserIdentityAccess.TYPE_NAME -> UserIdentityAccess
+                NftPurseRead.TYPE_NAME -> NftPurseRead(key.takeIf { it.isNotEmpty() }?.let { ProductId.parse(it).getOrThrow() })
                 RemotePermission.NetworkAccess.TYPE_NAME -> RemotePermission.NetworkAccess(key)
                 RemotePermission.WebRtcAccess.TYPE_NAME -> RemotePermission.WebRtcAccess
                 RemotePermission.ChainSubmitAccess.TYPE_NAME -> RemotePermission.ChainSubmitAccess
                 RemotePermission.StatementSubmitAccess.TYPE_NAME -> RemotePermission.StatementSubmitAccess
                 RemotePermission.PreimageSubmitAccess.TYPE_NAME -> RemotePermission.PreimageSubmitAccess
-                RemotePermission.JamPeersAccess.TYPE_NAME -> RemotePermission.JamPeersAccess(key)
                 else -> error("Unknown permission type: $typeName")
             }
         }
@@ -131,4 +129,5 @@ enum class DeviceCapabilityType {
     Clipboard,
     Biometrics,
     OpenUrl,
+    Motion,
 }

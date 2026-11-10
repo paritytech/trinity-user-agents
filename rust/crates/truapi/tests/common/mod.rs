@@ -1,14 +1,9 @@
-#[cfg(target_arch = "wasm32")]
-use std::sync::Arc;
-
-use std::{
-	sync::{Condvar, Mutex},
-	time::{Duration, Instant},
-};
+mod spawner;
+pub use spawner::test_spawner;
 
 use futures::stream::{self, BoxStream};
 use truapi::{
-	frame::ProtocolMessage,
+	ProductId,
 	platform::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
 		JsonRpcConnection, LocaleHost, NativeChatFileExportRequest, NativeChatFilePickRequest,
@@ -16,61 +11,8 @@ use truapi::{
 		Permissions, PlatformInfo, PreimageHost, ProductContext, ProductOperations, ProductStorage,
 		ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
-	transport::Transport,
 	v01,
 };
-
-/// Transport stub that records every frame sent through it, for asserting
-/// what the core emits during a dispatch.
-#[derive(Default)]
-pub struct RecordingTransport {
-	/// Frames captured in send order.
-	pub sent: Mutex<Vec<ProtocolMessage>>,
-	recorded: Condvar,
-}
-
-impl RecordingTransport {
-	/// Wait until at least `count` frames have been recorded, or `timeout`
-	/// elapses. A subscription's frames are produced by the spawner, so a
-	/// dispatch that starts one returns before they are sent.
-	pub fn wait_for(&self, count: usize, timeout: Duration) {
-		let deadline = Instant::now() + timeout;
-		let mut sent = self.sent.lock().unwrap();
-		while sent.len() < count {
-			let now = Instant::now();
-			if now >= deadline {
-				break;
-			}
-			let (guard, _) = self.recorded.wait_timeout(sent, deadline - now).unwrap();
-			sent = guard;
-		}
-	}
-}
-
-impl Transport for RecordingTransport {
-	fn send(&self, message: ProtocolMessage) {
-		self.sent.lock().unwrap().push(message);
-		self.recorded.notify_all();
-	}
-	fn on_message(
-		&self,
-		_handler: Box<dyn Fn(ProtocolMessage) + Send + Sync>,
-	) -> Box<dyn FnOnce()> {
-		Box::new(|| {})
-	}
-}
-
-/// Test spawner that matches the current target.
-pub fn test_spawner() -> truapi::subscription::Spawner {
-	#[cfg(not(target_arch = "wasm32"))]
-	{
-		truapi::subscription::thread_per_subscription_spawner()
-	}
-	#[cfg(target_arch = "wasm32")]
-	{
-		Arc::new(futures::executor::block_on)
-	}
-}
 
 /// Runtime configuration shared by integration tests.
 pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
@@ -89,7 +31,7 @@ pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
-		ProductContext::new("dotli.dot".to_string()).expect("test product context is valid"),
+		ProductContext::new(ProductId::for_test("dotli.dot")),
 	)
 }
 
@@ -97,7 +39,7 @@ pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
 /// wire-shape tests that only inspect emitted frames.
 pub struct WireShapePlatform;
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl ProductStorage for WireShapePlatform {
 	async fn read(&self, _key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
 		Err(v01::HostLocalStorageReadError::Full)
@@ -120,7 +62,7 @@ impl ProductStorage for WireShapePlatform {
 	}
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl ProductOperations for WireShapePlatform {
 	async fn begin_operation(
 		&self,
@@ -138,14 +80,14 @@ impl ProductOperations for WireShapePlatform {
 	}
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl Navigation for WireShapePlatform {
 	async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
 		Ok(())
 	}
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl Notifications for WireShapePlatform {
 	async fn push_notification(
 		&self,
@@ -159,7 +101,7 @@ impl Notifications for WireShapePlatform {
 	}
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl Permissions for WireShapePlatform {
 	async fn device_permission(
 		&self,
@@ -177,7 +119,9 @@ impl Permissions for WireShapePlatform {
 	}
 }
 
-#[truapi::platform::async_trait]
+impl truapi::platform::ExtrinsicVersionHost for WireShapePlatform {}
+
+#[async_trait::async_trait]
 impl Features for WireShapePlatform {
 	async fn feature_supported(
 		&self,
@@ -207,7 +151,7 @@ impl JsonRpcConnection for DeadConnection {
 	fn close(&self) {}
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl ChainProvider for WireShapePlatform {
 	async fn connect(
 		&self,
@@ -217,12 +161,12 @@ impl ChainProvider for WireShapePlatform {
 	}
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl truapi::platform::HopProvider for WireShapePlatform {}
 
 impl AuthPresenter for WireShapePlatform {}
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl CoreStorage for WireShapePlatform {
 	async fn read_core_storage(
 		&self,
@@ -242,7 +186,7 @@ impl CoreStorage for WireShapePlatform {
 	}
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl UserConfirmation for WireShapePlatform {
 	async fn confirm_user_action(
 		&self,
@@ -271,7 +215,7 @@ impl LocaleHost for WireShapePlatform {
 impl PreimageHost for WireShapePlatform {
 	fn lookup_preimage(
 		&self,
-		_key: Vec<u8>,
+		_key: [u8; 32],
 	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
 		Box::pin(stream::empty())
 	}
@@ -281,7 +225,7 @@ fn unavailable_chat_files<T>() -> Result<T, v01::GenericError> {
 	Err(v01::GenericError { reason: "native Chat files unavailable in this fixture".into() })
 }
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl NativeChatFilesHost for WireShapePlatform {
 	async fn pick_chat_files(
 		&self,

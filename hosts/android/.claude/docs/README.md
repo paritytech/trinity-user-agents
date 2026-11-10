@@ -46,7 +46,7 @@ This tree is **lazy-loaded** by the `/architect`, `/implementer`, and `/reviewer
 | Custom origins, extrinsic submission, signed extensions | `architecture/transactions.md` |
 | Storage reads, runtime APIs, SCALE codec | `architecture/chain-integration.md` |
 | Coins, denominations, transfer planner, RFC-0006 payments | `architecture/coinage.md` |
-| Statement-store messaging, CommunicationSession, SSO / videogame / chat rendezvous | `architecture/statement-store-communication.md` |
+| Statement-store messaging, CommunicationSession, SSO / chat rendezvous | `architecture/statement-store-communication.md` |
 | WebRTC, peer channels, DataTransport, calls/games P2P | `architecture/data-transport.md` |
 | "Is this proposal clean?" / boundaries / SRP | `architecture/maintainability.md` |
 | Writing a ViewModel, derived flow, single-state pattern | `code/state-management.md` |
@@ -82,11 +82,11 @@ These terms recur as thresholds throughout the docs. Use these definitions; don'
 ## Reference material
 
 The "north star" for chat:
-**RFC-0002 Chat Extension v2** — https://raw.githubusercontent.com/paritytech/host-rust-core/517e9e23e193f2341dfaadac2f0626f7eb1d1436/docs/rfcs/0002-chat-extension-v2.md
+**RFC-0002 Chat Extension v2** — https://raw.githubusercontent.com/paritytech/trinity-user-agents/517e9e23e193f2341dfaadac2f0626f7eb1d1436/docs/rfcs/0002-chat-extension-v2.md
 Local notes on the direction live in `architecture/chat-extension.md` (§ "North star").
 
 Canonical positive examples (cited throughout docs):
 - ViewModel: `feature/sso/impl/.../presentation/pairRequest/PairRequestViewModel.kt`
 - Extrinsic submission: `feature/transactions/impl/.../data/RealExtrinsicService.kt`
-- ChatExtension: `feature/chats/impl/.../domain/payment/CoinagePaymentProcessingExtension.kt` (lightweight) and `feature/videogame/impl/.../domain/bot/WeeklyGameBot.kt` (bot)
+- ChatExtension: `feature/chats/impl/.../domain/payment/CoinagePaymentProcessingExtension.kt` (lightweight) and `feature/chats/impl/.../domain/middleware/bot/sample/SampleBot.kt` (bot)
 - Mixin / component composition: `code/state-management.md § Mixins`.

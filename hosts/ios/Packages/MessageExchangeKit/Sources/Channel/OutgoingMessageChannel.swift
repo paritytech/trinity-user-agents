@@ -10,8 +10,7 @@ final class OutgoingMessageChannel<M: MessageExchange.CodableMessage>: @unchecke
 
     private let workQueue: DispatchQueue
     private let routeContexts: PeerSessionRoute.Contexts
-    private let submitter: StatementStoreSubmitting
-    private let signer: StatementStoreSigning
+    private let submitter: PeerSessionStatementSubmitting
     private let preSendHandler: AnyPeerSessionPreSendHandler<M>
     private let priorityProvider: PeerSessionPriorityProviding
     private let requestQueue: AnyOutgoingRequestQueue<M>
@@ -24,8 +23,7 @@ final class OutgoingMessageChannel<M: MessageExchange.CodableMessage>: @unchecke
     init(
         workQueue: DispatchQueue,
         routeContexts: PeerSessionRoute.Contexts,
-        submitter: StatementStoreSubmitting,
-        signer: StatementStoreSigning,
+        submitter: PeerSessionStatementSubmitting,
         preSendHandler: AnyPeerSessionPreSendHandler<M>,
         priorityProvider: PeerSessionPriorityProviding,
         requestQueue: AnyOutgoingRequestQueue<M>,
@@ -35,7 +33,6 @@ final class OutgoingMessageChannel<M: MessageExchange.CodableMessage>: @unchecke
         self.workQueue = workQueue
         self.routeContexts = routeContexts
         self.submitter = submitter
-        self.signer = signer
         self.preSendHandler = preSendHandler
         self.priorityProvider = priorityProvider
         self.requestQueue = requestQueue
@@ -247,19 +244,17 @@ private extension OutgoingMessageChannel {
     }
 
     func sendOutgoingRequest(_ outgoingRequest: OutgoingRequest<Message>) {
-        let expiry = priorityProvider.incrementedExpiry()
         let requestId = outgoingRequest.requestId
         let route = outgoingRequest.route
+
+        let expiry = priorityProvider.incrementedExpiry()
         let routeContext = routeContexts.context(for: route)
 
-        let builder = StatementSubmitParametersBuilder(
-            signer: signer,
-            logger: logger
-        )
-        .addTopic1(routeContext.sessionId.own)
-        .addChannel(routeContext.requestChannelId)
-        .addExpiry(expiry)
-        .addScaleEncodedPayload(outgoingRequest.scaleEncodedPayload)
+        let statement = UnsignedStatement()
+            .addTopic1(routeContext.sessionId.own)
+            .addChannel(routeContext.requestChannelId)
+            .addExpiry(expiry)
+            .addScaleEncodedPayload(outgoingRequest.scaleEncodedPayload)
 
         logger?.debug("Going to send request \(requestId) with priority \(expiry)")
 
@@ -267,7 +262,7 @@ private extension OutgoingMessageChannel {
 
         submissionTasks[route] = Task { [weak self] in
             do {
-                try await self?.submitter.submitStatement(with: builder)
+                try await self?.submitter.submit(statement)
                 self?.logger?.debug("Request \(requestId) sent successfully")
 
                 self?.workQueue.async {

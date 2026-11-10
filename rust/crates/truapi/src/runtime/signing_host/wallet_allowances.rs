@@ -2,10 +2,10 @@
 
 use std::collections::HashSet;
 
-use crate::platform::normalize_product_identifier;
+use crate::{ProductId, runtime::authority::AccountHolder};
 use truapi::latest::{ChainIdentifier, GenericError};
 
-use super::{SigningHost, allowance_renewal};
+use super::SigningHost;
 use crate::{
 	host_logic::{
 		features,
@@ -29,18 +29,20 @@ fn error(reason: impl ToString) -> GenericError {
 	GenericError { reason: reason.to_string() }
 }
 
-fn validate_products(product_ids: &[String]) -> Result<(), GenericError> {
+fn validate_products(product_ids: &[String]) -> Result<Vec<ProductId>, GenericError> {
 	if product_ids.len() > MAX_PRODUCT_IDS {
 		return Err(error("wallet allowance inspection accepts at most 32 product IDs"));
 	}
 	let mut seen = HashSet::with_capacity(product_ids.len());
+	let mut parsed = Vec::with_capacity(product_ids.len());
 	for product in product_ids {
-		let normalized = normalize_product_identifier(product).map_err(error)?;
-		if normalized != *product || !seen.insert(product) {
+		let normalized = product.parse::<ProductId>().map_err(error)?;
+		if normalized.as_str() != product || !seen.insert(product) {
 			return Err(error("wallet allowance product IDs must be unique and canonical"));
 		}
+		parsed.push(normalized);
 	}
-	Ok(())
+	Ok(parsed)
 }
 
 impl SigningHost {
@@ -52,19 +54,20 @@ impl SigningHost {
 		product_ids: Vec<String>,
 	) -> Result<WalletAllowanceSnapshot, GenericError> {
 		self.check_identity_activation(activation_id)?;
-		validate_products(&product_ids)?;
+		let product_ids = validate_products(&product_ids)?;
 		let context = self.local_identity_context()?;
 		let session =
-			self.current_local_session().ok_or_else(|| error("no active local identity"))?;
-		let candidates = self.reserved_person_collection_candidates(&session).map_err(error)?;
-		let entropy = self.root_entropy().map_err(error)?;
+			self.wallet.current_session().ok_or_else(|| error("no active local identity"))?;
+		let candidates =
+			self.wallet.reserved_person_collection_candidates(&session).map_err(error)?;
+		let entropy = self.wallet.root_entropy().map_err(error)?;
 		let root = derive_root_keypair_from_entropy(&entropy).map_err(error)?;
 		let owner = root.public.to_bytes();
 		if owner != session.public_key {
 			return Err(error("local identity activation changed"));
 		}
 		let mut known_labels = AccountLabels::new();
-		let identity = self.identity_keypair().map_err(error)?.public.to_bytes();
+		let identity = self.wallet.identity_keypair().map_err(error)?.public.to_bytes();
 		known_labels.insert(identity, (None, "Wallet identity / SSO".to_string()));
 		let mut products = Vec::with_capacity(product_ids.len());
 		for product_id in &product_ids {
@@ -73,18 +76,20 @@ impl SigningHost {
 				.public
 				.to_bytes();
 			let bulletin =
-				derive_sr25519_hard_path(&entropy, &["allowance", "bulletin", product_id])
+				derive_sr25519_hard_path(&entropy, &["allowance", "bulletin", product_id.as_str()])
 					.map_err(error)?
 					.public
 					.to_bytes();
-			let statement =
-				derive_sr25519_hard_path(&entropy, &["allowance", "statement-store", product_id])
-					.map_err(error)?
-					.public
-					.to_bytes();
+			let statement = derive_sr25519_hard_path(
+				&entropy,
+				&["allowance", "statement-store", product_id.as_str()],
+			)
+			.map_err(error)?
+			.public
+			.to_bytes();
 			known_labels
 				.insert(statement, (Some(product_id.clone()), format!("Product: {product_id}")));
-			products.push(ProductAccounts { product_id: product_id.clone(), pgas, bulletin });
+			products.push(ProductAccounts { product_id: product_id.to_string(), pgas, bulletin });
 		}
 		drop(root);
 		self.check_identity_activation(activation_id)?;
@@ -92,7 +97,7 @@ impl SigningHost {
 		// The ledger is read strictly. A broken ledger cannot be silently
 		// represented as no known device/product attribution.
 		guard().map_err(error)?;
-		let labels = allowance_renewal::inspection_labels(self, &entropy, owner).await;
+		let labels = self.wallet.inspection_labels(&entropy, owner).await;
 		guard().map_err(error)?;
 		drop(entropy);
 		let labels = labels.map(|mut labels| {
@@ -113,7 +118,7 @@ impl SigningHost {
 			Err(reason) => Err(reason.clone()),
 		};
 		guard().map_err(error)?;
-		let suffix = self.network_suffix.as_bytes();
+		let suffix = self.wallet.network_suffix().as_bytes();
 		let (statement_store, pgas_claims, pgas_balances, bulletin_claims, bulletin_quotas) = futures::join!(
 			async {
 				match (&people, &memberships, &labels) {
@@ -163,8 +168,8 @@ impl SigningHost {
 		Ok(WalletAllowanceSnapshot {
 			schema_version: 1,
 			identity_account_id: context.identity_account_id,
-			network_suffix: self.network_suffix.clone(),
-			product_ids,
+			network_suffix: self.wallet.network_suffix().to_string(),
+			product_ids: product_ids.iter().map(ToString::to_string).collect(),
 			statement_store,
 			pgas_claims,
 			pgas_balances,
@@ -189,7 +194,7 @@ impl SigningHost {
 		guard: ActivationGuard<'a>,
 	) -> Result<ReadOnlyChain<'a>, String> {
 		guard()?;
-		let chains = features::supported_chains(self.platform.as_ref()).await;
+		let chains = features::supported_chains(self.services.platform.as_ref()).await;
 		guard()?;
 		let genesis = features::genesis_for(
 			&chains.map_err(|error| error.reason)?,

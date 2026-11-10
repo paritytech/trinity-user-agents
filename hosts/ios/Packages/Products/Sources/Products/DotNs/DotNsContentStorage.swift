@@ -9,6 +9,16 @@ public enum DotNsContentStorageError: Error {
     case invalidContentHash(String)
 }
 
+public struct DotNsContentLocalMetadata: Equatable, Sendable {
+    public let contentHash: String
+    public let modifiedAt: Date
+
+    public init(contentHash: String, modifiedAt: Date) {
+        self.contentHash = contentHash
+        self.modifiedAt = modifiedAt
+    }
+}
+
 public protocol DotNsContentStorageProtocol {
     func saveContent(contentHash: String, write: (CarContentWriter) throws -> Void) throws
     func getContentDirectory(contentHash: String) -> URL?
@@ -16,6 +26,7 @@ public protocol DotNsContentStorageProtocol {
     func deleteContent(contentHash: String) throws
     func loadContent(contentHash: String, relativePath: String) -> Data?
     func deleteAll() throws
+    func storedContents() -> [DotNsContentLocalMetadata]
 }
 
 public final class DotNsContentStorage: DotNsContentStorageProtocol {
@@ -86,35 +97,34 @@ public final class DotNsContentStorage: DotNsContentStorageProtocol {
         guard fileManager.fileExists(atPath: baseDirectory.path) else { return }
         try fileManager.removeItem(at: baseDirectory)
     }
+
+    public func storedContents() -> [DotNsContentLocalMetadata] {
+        let entries = (try? fileManager.contentsOfDirectory(
+            at: baseDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        )) ?? []
+
+        return entries.compactMap { entry in
+            let contentHash = entry.lastPathComponent
+
+            guard (try? contentDirectory(for: contentHash)) != nil else { return nil }
+
+            let modifiedAt = (try? entry.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? .distantPast
+
+            return DotNsContentLocalMetadata(contentHash: contentHash, modifiedAt: modifiedAt)
+        }
+    }
 }
 
 private extension DotNsContentStorage {
-    /// Rejects entry names that are absolute or contain `..` before anything touches the filesystem.
-    /// Runs ahead of `containedURL` so a malicious archive cannot plant a symlink for a later entry to follow.
-    func validateRelativePath(_ relativePath: String) throws {
-        let components = relativePath.split(separator: "/", omittingEmptySubsequences: true)
-
-        guard !relativePath.hasPrefix("/"), !components.contains("..") else {
-            throw DotNsContentStorageError.pathEscapesContentDirectory(relativePath)
-        }
-    }
-
-    /// Resolves `relativePath` against `base` and verifies the result stays inside `base`.
-    /// Both sides are symlink-resolved and standardized: on iOS the container path is reached via
-    /// the `/var` -> `/private/var` symlink, so a raw comparison would not match.
+    /// Resolves `relativePath` against `base` and verifies the result stays inside it.
     func containedURL(base: URL, relativePath: String) throws -> URL {
-        try validateRelativePath(relativePath)
-
-        let root = base.resolvingSymlinksInPath().standardizedFileURL
-        let candidate = base.appendingPathComponent(relativePath)
-            .resolvingSymlinksInPath()
-            .standardizedFileURL
-
-        guard candidate.path == root.path || candidate.path.hasPrefix(root.path + "/") else {
+        guard let contained = ContentArchivePath.inside(base, path: relativePath) else {
             throw DotNsContentStorageError.pathEscapesContentDirectory(relativePath)
         }
 
-        return candidate
+        return contained
     }
 
     /// `contentHash` is used directly as a path component, so it must be plain hex.

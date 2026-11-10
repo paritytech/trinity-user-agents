@@ -45,6 +45,21 @@ extension NSPredicate {
         return NSCompoundPredicate(andPredicateWithSubpredicates: predicates)
     }
 
+    static func localDeviceChatAcceptances() -> NSPredicate {
+        NSCompoundPredicate(andPredicateWithSubpredicates: [
+            messageByContentType(.multiChatAccepted),
+            messageByChatType(.person),
+            byCreationSource(.localDevice)
+        ])
+    }
+
+    static func newLocalDeviceChatAcceptances() -> NSPredicate {
+        NSCompoundPredicate(andPredicateWithSubpredicates: [
+            localDeviceChatAcceptances(),
+            byStatus(Chat.LocalMessage.Status.outgoing(.new))
+        ])
+    }
+
     static func incomingCoinageSendMessages() -> NSPredicate {
         let incomingNewPredicate = byStatus(Chat.LocalMessage.Status.incoming(.new))
         let incomingSeenPredicate = byStatus(Chat.LocalMessage.Status.incoming(.seen))
@@ -145,19 +160,34 @@ extension NSPredicate {
         return NSCompoundPredicate(andPredicateWithSubpredicates: [byContactId, byStatus])
     }
 
+    /// The acceptance is excluded: it stays new while its renewer keeps publishing it.
+    static func newLocalDeviceMessages(to chatId: Chat.Id) -> NSPredicate {
+        NSCompoundPredicate(andPredicateWithSubpredicates: [
+            localMessages(from: chatId),
+            byStatus(Chat.LocalMessage.Status.outgoing(.new)),
+            byCreationSource(.localDevice),
+            NSCompoundPredicate(notPredicateWithSubpredicate: messageByContentType(.multiChatAccepted))
+        ])
+    }
+
     /// Messages compacted into a blob are excluded: their delivery is tracked
     /// through the compacted parent, so they must not re-enter sync logic.
+    /// The acceptance is excluded too: it is published on the identity route, so the session never lists it.
     static func sentLocalDeviceMessages(to chatId: Chat.Id) -> NSPredicate {
         let byStatus = byStatus(Chat.LocalMessage.Status.outgoing(.sent))
         let byContactId = localMessages(from: chatId)
         let byCreationSource = byCreationSource(.localDevice)
         let withoutCompaction = withoutCompaction()
+        let withoutAcceptance = NSCompoundPredicate(
+            notPredicateWithSubpredicate: messageByContentType(.multiChatAccepted)
+        )
 
         return NSCompoundPredicate(andPredicateWithSubpredicates: [
             byContactId,
             byStatus,
             byCreationSource,
-            withoutCompaction
+            withoutCompaction,
+            withoutAcceptance
         ])
     }
 

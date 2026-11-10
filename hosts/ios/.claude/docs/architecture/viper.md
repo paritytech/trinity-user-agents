@@ -118,12 +118,12 @@ protocol {ModuleName}WireframeProtocol: AnyObject, AlertPresentable, ErrorPresen
 // GOOD: Protocol callback
 @MainActor
 protocol SomeInteractorOutputProtocol: AnyObject {
-    func didReceive(status: PersonhoodStatus)
+    func didReceive(status: AllowanceStatus)
 }
 
 // BAD: Exposing publisher on InteractorInputProtocol
 protocol SomeInteractorInputProtocol {
-    var personhoodStatus: AnyPublisher<Bool, Never> { get } // Don't do this
+    var allowanceStatus: AnyPublisher<Bool, Never> { get } // Don't do this
 }
 ```
 

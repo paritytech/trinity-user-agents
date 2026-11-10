@@ -23,6 +23,8 @@ sealed class ChatInputUiState {
 
     object UnblockUser : ChatInputUiState()
 
+    object IdentitySigningConsent : ChatInputUiState()
+
     object Hidden : ChatInputUiState()
 }
 

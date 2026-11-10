@@ -1,5 +1,6 @@
 //! Connection-scoped, host-fed action streams buffered until the product subscribes.
 
+use core::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::VecDeque, sync::Mutex};
 
 use futures::{StreamExt, channel::mpsc};
@@ -25,13 +26,20 @@ impl<Item> Default for State<Item> {
 pub struct ActionChannel<Item> {
 	state: Mutex<State<Item>>,
 	closed_reason: &'static str,
+	/// When the host last published an item, in unix seconds, or zero before
+	/// the first.
+	last_published_secs: AtomicU64,
 }
 
 impl<Item: Send + 'static> ActionChannel<Item> {
 	/// Create an empty channel; `closed_reason` names the stream in the
 	/// interrupt a late subscriber sees after `close`.
 	fn new(closed_reason: &'static str) -> Self {
-		Self { state: Mutex::new(State::default()), closed_reason }
+		Self {
+			state: Mutex::new(State::default()),
+			closed_reason,
+			last_published_secs: AtomicU64::new(0),
+		}
 	}
 
 	/// One connection's Chat action stream.
@@ -67,6 +75,8 @@ impl<Item: Send + 'static> ActionChannel<Item> {
 			return Err(ProductRuntimeError::Closed);
 		}
 		if let Some(sender) = state.subscriber.as_ref() {
+			// Stamped first, so a product reacting to the item already finds it.
+			self.note_published_now();
 			match sender.unbounded_send(item) {
 				Ok(()) => return Ok(()),
 				Err(error) => item = error.into_inner(),
@@ -77,7 +87,26 @@ impl<Item: Send + 'static> ActionChannel<Item> {
 			return Err(ProductRuntimeError::BufferFull);
 		}
 		state.buffer.push_back(item);
+		self.note_published_now();
 		Ok(())
+	}
+
+	fn note_published_now(&self) {
+		self.last_published_secs
+			.store(crate::unix_time::current_unix_secs(), Ordering::Release);
+	}
+
+	/// Whether the host published an item within the last `window_secs`.
+	pub fn published_within(&self, window_secs: u64) -> bool {
+		let published_at = self.last_published_secs.load(Ordering::Acquire);
+		published_at != 0 &&
+			crate::unix_time::current_unix_secs().saturating_sub(published_at) <= window_secs
+	}
+
+	/// Backdate the last publish to `unix_secs`.
+	#[cfg(test)]
+	pub fn note_published_at(&self, unix_secs: u64) {
+		self.last_published_secs.store(unix_secs, Ordering::Release);
 	}
 
 	/// End the current subscriber's stream while keeping buffered items for
@@ -98,85 +127,4 @@ impl<Item: Send + 'static> ActionChannel<Item> {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use futures::{StreamExt, executor::block_on};
-
-	fn channel() -> ActionChannel<String> {
-		ActionChannel::new("closed")
-	}
-
-	#[test]
-	fn buffered_actions_are_drained_in_fifo_order() {
-		let channel = channel();
-		channel.publish("first".to_string()).unwrap();
-		channel.publish("second".to_string()).unwrap();
-
-		let mut items = channel.subscribe::<truapi::latest::GenericError>();
-		assert_eq!(block_on(items.next()), Some(Ok("first".to_string())));
-		assert_eq!(block_on(items.next()), Some(Ok("second".to_string())));
-	}
-
-	#[test]
-	fn full_startup_action_buffer_is_reported() {
-		let channel = channel();
-		for index in 0..ACTION_BUFFER_CAPACITY {
-			channel.publish(index.to_string()).unwrap();
-		}
-
-		assert!(matches!(
-			channel.publish("overflow".to_string()),
-			Err(ProductRuntimeError::BufferFull)
-		));
-	}
-
-	#[test]
-	fn detach_keeps_buffered_actions_for_the_next_subscriber() {
-		let channel = channel();
-		let mut first = channel.subscribe::<truapi::latest::GenericError>();
-		channel.publish("live".to_string()).unwrap();
-		assert_eq!(block_on(first.next()), Some(Ok("live".to_string())));
-
-		channel.detach();
-		assert_eq!(block_on(first.next()), None);
-		channel.publish("buffered".to_string()).unwrap();
-
-		let mut second = channel.subscribe::<truapi::latest::GenericError>();
-		assert_eq!(block_on(second.next()), Some(Ok("buffered".to_string())));
-	}
-
-	#[test]
-	fn closing_discards_buffered_actions() {
-		let channel = channel();
-		channel.publish("discard me".to_string()).unwrap();
-		channel.close();
-
-		// Subscribing to a closed channel interrupts, so a product can
-		// tell it from a stream that ran and finished.
-		let mut items = channel.subscribe::<truapi::latest::GenericError>();
-		match block_on(items.next()) {
-			Some(Err(CallError::HostFailure { reason })) => assert_eq!(reason, "closed"),
-			other => panic!("a closed channel must interrupt, got {other:?}"),
-		}
-		assert!(matches!(
-			channel.publish("too late".to_string()),
-			Err(ProductRuntimeError::Closed)
-		));
-	}
-
-	#[test]
-	fn separate_connections_cannot_observe_each_others_actions() {
-		let first = channel();
-		let second = channel();
-		let mut first_items = first.subscribe::<truapi::latest::GenericError>();
-		let mut second_items = second.subscribe::<truapi::latest::GenericError>();
-
-		first.publish("first only".to_string()).unwrap();
-		second.publish("second only".to_string()).unwrap();
-		assert_eq!(block_on(first_items.next()), Some(Ok("first only".to_string())));
-		assert_eq!(block_on(second_items.next()), Some(Ok("second only".to_string())));
-
-		second.close();
-		assert!(matches!(second.publish("closed".to_string()), Err(ProductRuntimeError::Closed)));
-	}
-}
+mod tests;

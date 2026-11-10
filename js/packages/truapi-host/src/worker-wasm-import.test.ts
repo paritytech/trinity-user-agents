@@ -17,20 +17,12 @@ const gluePath = join(packageRoot, "dist", GLUE_SPECIFIER);
 
 // Every binding the worker reaches for through `WasmModuleShape`, and that
 // `src/wasm/web/truapi_server.d.ts` declares. `default` is the wasm-pack init.
-//
-// `WasmSigningHostRuntime` is deliberately absent here: the production `web`
-// bundle is built `--no-default-features`, so it carries no signing host and
-// the constructor is optional on `WasmModuleShape`. It is asserted against the
-// `testing` bundle below, which is the one built with `wasm-signing-host`.
 const GLUE_EXPORTS = [
   "default",
   "WasmPairingHostRuntime",
   "WasmProductRuntime",
   "setLogLevel",
 ] as const;
-
-const TESTING_GLUE_SPECIFIER = "./wasm/testing/truapi_server.js";
-const testingGluePath = join(packageRoot, "dist", TESTING_GLUE_SPECIFIER);
 
 describe("worker wasm import", () => {
   it("names the glue in a statically analysable import", () => {
@@ -65,29 +57,6 @@ describe("worker wasm import", () => {
           "function",
         );
       }
-    },
-  );
-
-  // These checks use the default build: pairing-only web plus a testing wallet.
-  // An explicitly requested --signing-host web artifact is a separate variant.
-  it.skipIf(!existsSync(testingGluePath))(
-    "keeps the default web bundle pairing-only",
-    async () => {
-      const testingGlue: Record<string, unknown> = await import(
-        pathToFileURL(testingGluePath).href
-      );
-      expect(
-        typeof testingGlue.WasmSigningHostRuntime,
-        "testing glue must export `WasmSigningHostRuntime`",
-      ).toBe("function");
-
-      const webGlue: Record<string, unknown> = await import(
-        pathToFileURL(gluePath).href
-      );
-      expect(
-        webGlue.WasmSigningHostRuntime,
-        "default `web` glue must not carry a signing host",
-      ).toBeUndefined();
     },
   );
 });

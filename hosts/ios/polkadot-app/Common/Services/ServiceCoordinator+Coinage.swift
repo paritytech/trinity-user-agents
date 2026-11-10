@@ -123,21 +123,26 @@ private extension ServiceCoordinator {
             return nil
         }
 
-        guard let lifecycle = try? CoinageLifecycle(rootEntropyManager: RootEntropyManager.shared) else {
-            logger.error("Failed to bind Coinage to the current root")
-            return nil
-        }
-
         let voucherKeypairFactory = VoucherKeypairFactory(
-            entropyManager: lifecycle
+            entropyManager: RootEntropyManager.shared
         )
 
-        let (unloadTokenResolver, viewFunctionFetcher) = createUnloadTokenDependencies(
-            chainRegistry: chainRegistry,
+        let consumedTokenChecker = ConsumedTokenChecker(
             operationQueue: operationQueue,
-            chainId: coinageChainId,
             connection: connection,
             runtimeCodingService: runtimeProvider
+        )
+        let viewFunctionFetcher = ViewFunctionFetcher(
+            executor: ViewFunctionExecutor(
+                chainRegistry: chainRegistry,
+                operationQueue: operationQueue
+            ),
+            chainId: coinageChainId
+        )
+        let unloadTokenResolver = UnloadTokenResolver(
+            runtimeCodingService: runtimeProvider,
+            viewFunctionFetcher: viewFunctionFetcher,
+            consumedTokenChecker: consumedTokenChecker
         )
 
         let coinageOriginFactory = CoinageOriginFactory(
@@ -169,11 +174,7 @@ private extension ServiceCoordinator {
         // coordinator owns the engine's lifecycle.
         let assetLedger = CoinageAssetLedgerCoreData(storageFacade: UserDataStorageFacade.shared)
 
-        let incomingPaymentSecretStore = IncomingPaymentKeychainSecretStore(
-            keychain: Keychain(),
-            logger: logger,
-            ownerId: lifecycle.ownerId(chainId: chain.chainId, instanceId: AppConfig.Coinage.instanceId)
-        )
+        let incomingPaymentSecretStore = IncomingPaymentKeychainSecretStore(keychain: Keychain(), logger: logger)
         let incomingPaymentAcknowledger = TopUpAcknowledgementPresenter()
 
         guard let installation = createInstallationDependency(
@@ -195,7 +196,7 @@ private extension ServiceCoordinator {
             durable: durable,
             chainViewFactory: chainViewFactory,
             assetLedger: assetLedger,
-            lifecycle: lifecycle,
+            rootEntropyManager: RootEntropyManager.shared,
             applicationStateStreamFactory: ApplicationStateStreamFactory(),
             externalPaymentStore: externalPaymentStore,
             incomingPaymentStore: incomingPaymentStore,
@@ -208,33 +209,6 @@ private extension ServiceCoordinator {
             installation: installation,
             logger: logger
         )
-    }
-
-    private static func createUnloadTokenDependencies(
-        chainRegistry: ChainRegistryProtocol,
-        operationQueue: OperationQueue,
-        chainId: ChainModel.Id,
-        connection: ChainConnection,
-        runtimeCodingService: RuntimeProviderProtocol
-    ) -> (resolver: UnloadTokenResolver, fetcher: ViewFunctionFetcher) {
-        let consumedTokenChecker = ConsumedTokenChecker(
-            operationQueue: operationQueue,
-            connection: connection,
-            runtimeCodingService: runtimeCodingService
-        )
-        let viewFunctionFetcher = ViewFunctionFetcher(
-            executor: ViewFunctionExecutor(
-                chainRegistry: chainRegistry,
-                operationQueue: operationQueue
-            ),
-            chainId: chainId
-        )
-        let resolver = UnloadTokenResolver(
-            runtimeCodingService: runtimeCodingService,
-            viewFunctionFetcher: viewFunctionFetcher,
-            consumedTokenChecker: consumedTokenChecker
-        )
-        return (resolver, viewFunctionFetcher)
     }
 
     /// Registration and recovery of installations run against the `AccountDataStore` contract on

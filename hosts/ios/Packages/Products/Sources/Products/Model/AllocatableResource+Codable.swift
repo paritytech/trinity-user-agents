@@ -21,9 +21,6 @@ extension AllocatableResource: Decodable {
             self = .smartContractAllowance(dest: dest)
         case "AutoSigning":
             self = .autoSigning
-        case "ProductStatementStoreAllowance":
-            let dest = try container.decode(ProductAccountSelector.self, forKey: .dest)
-            self = .productStatementStoreAllowance(dest: dest)
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .kind,
@@ -59,8 +56,7 @@ extension AllocationOutcome: Encodable {
             case let .bulletInAllowance(privateKey):
                 let account = SlotAccount(slotAccountKey: privateKey)
                 try container.encode(account, forKey: .bulletInAllowance)
-            case .smartContractAllowance,
-                 .productStatementStoreAllowance:
+            case .smartContractAllowance:
                 break
             }
         case .rejected:

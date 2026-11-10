@@ -1,8 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
-import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningContextHolder
-import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
@@ -84,9 +82,9 @@ class TrUAPIConfirmationLauncher @Inject constructor(
     // same way a native one is, decoded call and all.
     private suspend fun awaitSigningDecision(confirmation: TrUAPIConfirmation.Signing): Boolean {
         val context = TrUAPISigningContext(
-            requesterName = confirmation.requesterProductId,
+            requesterName = confirmation.requesterProductId?.value ?: "host",
             signingRequestBody = confirmation.request,
-            signingAccount = confirmation.request.signingAccount(),
+            signingAccount = confirmation.account,
         )
         signingContextHolder.set(context)
         productsRouter.openSignTransaction()
@@ -99,9 +97,4 @@ class TrUAPIConfirmationLauncher @Inject constructor(
         productsRouter.openTrUAPIConfirmation()
         return context.await()
     }
-}
-
-private fun SigningRequestBody.signingAccount(): SigningAccount = when (this) {
-    is SigningRequestBody.ProductAccountSigning -> SigningAccount.Product(account)
-    is SigningRequestBody.LegacyAccountSigning -> SigningAccount.Legacy(account)
 }

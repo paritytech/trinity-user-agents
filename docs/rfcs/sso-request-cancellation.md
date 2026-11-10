@@ -71,4 +71,4 @@ and reads the next message only after the current one is answered.
    dismissal.
 
 [cancel]: request-cancellation.md
-[478]: https://github.com/paritytech/truapi/issues/478
+[478]: https://github.com/paritytech/trinity-user-agents/issues/478

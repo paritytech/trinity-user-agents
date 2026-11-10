@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_statement_store_api.domain.IsResponded
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.MessageCompactor
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.CommunicationSessionEvent
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.EncodedMessage
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.IncomingRequestResponsePolicy
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.SessionAccount
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.SessionIdParams
 import io.paritytech.polkadotapp.feature_statement_store_api.domain.models.createSessionIdParams
@@ -38,6 +39,7 @@ class RealCommunicationSession(
     private val encryption: CommunicationEncryption,
     private val maxStatementSize: InformationSize,
     private val compactor: MessageCompactor?,
+    private val responsePolicy: IncomingRequestResponsePolicy,
     scope: CoroutineScope
 ) : CommunicationSession, CoroutineScope by scope {
     private val outgoingSessionIdParams: SessionIdParams = createSessionIdParams(localAccount, remoteAccount)
@@ -70,7 +72,9 @@ class RealCommunicationSession(
                 }
 
                 is CommunicationSideEffect.SubmitResponse -> {
-                    submitResponse(effect.response)
+                    if (responsePolicy.shouldRespond(effect.request.messages)) {
+                        submitResponse(effect.response)
+                    }
                 }
 
                 is CommunicationSideEffect.StartPolling -> {

@@ -36,7 +36,7 @@ private extension AllowancePromptViewFactory {
             title: LocalizableResource { _ in
                 String(
                     localized: .Products.allowancePromptTitle(
-                        productId: context.productId
+                        productId: context.productId.rawValue
                     )
                 )
             },
@@ -52,8 +52,7 @@ private extension AllowancePromptViewFactory {
 
     static func resourceDescription(for resource: AllocatableResource) -> String {
         switch resource {
-        case .statementStoreAllowance,
-             .productStatementStoreAllowance:
+        case .statementStoreAllowance:
             String(localized: .Products.allowanceResourceStatementStore)
         case .bulletInAllowance:
             String(localized: .Products.allowanceResourceBulletIn)

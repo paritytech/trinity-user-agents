@@ -1,0 +1,207 @@
+{
+  "tag": "Column",
+  "value": {
+    "modifiers": [
+      {
+        "tag": "FillWidth",
+        "value": true
+      },
+      {
+        "tag": "FillHeight",
+        "value": true
+      },
+      {
+        "tag": "Padding",
+        "value": {
+          "top": 20,
+          "end": 20
+        }
+      },
+      {
+        "tag": "Background",
+        "value": {
+          "color": "FgSuccess",
+          "shape": {
+            "tag": "Rounded",
+            "value": 20
+          }
+        }
+      }
+    ],
+    "props": {
+      "verticalArrangement": "SpaceBetween"
+    },
+    "children": [
+      {
+        "tag": "Row",
+        "value": {
+          "modifiers": [
+            {
+              "tag": "FillWidth",
+              "value": true
+            }
+          ],
+          "props": {
+            "verticalAlignment": "Center",
+            "horizontalArrangement": "SpaceBetween"
+          },
+          "children": [
+            {
+              "tag": "Text",
+              "value": {
+                "modifiers": [],
+                "props": {
+                  "style": "BodySmallRegular",
+                  "color": "FgTertiary"
+                },
+                "children": [
+                  {
+                    "tag": "String",
+                    "value": {
+                      "text": "Polkadot"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "tag": "Text",
+              "value": {
+                "modifiers": [],
+                "props": {
+                  "style": "BodySmallRegular",
+                  "color": "FgSecondary"
+                },
+                "children": [
+                  {
+                    "tag": "String",
+                    "value": {
+                      "text": "Devicehood"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "tag": "Row",
+        "value": {
+          "modifiers": [],
+          "props": {
+            "verticalAlignment": "Center"
+          },
+          "children": [
+            {
+              "tag": "Box",
+              "value": {
+                "modifiers": [
+                  {
+                    "tag": "Width",
+                    "value": 44
+                  },
+                  {
+                    "tag": "Height",
+                    "value": 44
+                  },
+                  {
+                    "tag": "Background",
+                    "value": {
+                      "color": "BgSurfaceContainer",
+                      "shape": {
+                        "tag": "Circle"
+                      }
+                    }
+                  }
+                ],
+                "props": {
+                  "contentAlignment": "Center"
+                },
+                "children": [
+                  {
+                    "tag": "Text",
+                    "value": {
+                      "modifiers": [],
+                      "props": {
+                        "style": "TitleMediumRegular",
+                        "color": "FgPrimary"
+                      },
+                      "children": [
+                        {
+                          "tag": "String",
+                          "value": {
+                            "text": "R"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "tag": "Spacer",
+              "value": {
+                "modifiers": [
+                  {
+                    "tag": "Width",
+                    "value": 12
+                  }
+                ]
+              }
+            },
+            {
+              "tag": "Column",
+              "value": {
+                "modifiers": [],
+                "props": {},
+                "children": [
+                  {
+                    "tag": "Text",
+                    "value": {
+                      "modifiers": [],
+                      "props": {
+                        "style": "TitleMediumRegular",
+                        "color": "FgPrimary"
+                      },
+                      "children": [
+                        {
+                          "tag": "String",
+                          "value": {
+                            "text": "remyleberre.01"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "tag": "Text",
+                    "value": {
+                      "modifiers": [],
+                      "props": {
+                        "style": "BodySmallRegular",
+                        "color": "FgSecondary"
+                      },
+                      "children": [
+                        {
+                          "tag": "String",
+                          "value": {
+                            "text": "Free card, one per phone"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "tag": "Nil"
+      }
+    ]
+  }
+}

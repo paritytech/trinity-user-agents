@@ -15,7 +15,7 @@ const config: SigningHostCliConfig = {
   cwd: "/repo",
   basePath: "/repo/.e2e-dotli/signing-host",
   network: "paseo-next-v2",
-  liteUsernamePrefix: "dotlitest",
+  session: "dotlitest",
 };
 
 describe("signing-host CLI pairing", () => {
@@ -29,7 +29,7 @@ describe("signing-host CLI pairing", () => {
         "--base-path",
         "/repo/.e2e-dotli/signing-host",
         "--auto-accept",
-        "--lite-username-prefix",
+        "--session",
         "dotlitest",
         "exec",
         "/pair polkadotapp://pair?handshake=01",
@@ -40,9 +40,9 @@ describe("signing-host CLI pairing", () => {
   it("omits managed-account flags for an explicit mnemonic", () => {
     assert.ok(
       !signingHostPairArgs(
-        { ...config, liteUsernamePrefix: undefined },
+        { ...config, session: undefined },
         "polkadotapp://pair?handshake=01",
-      ).includes("--lite-username-prefix"),
+      ).includes("--session"),
     );
   });
 

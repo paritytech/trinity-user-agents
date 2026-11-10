@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import BigInt
 import FoundationExt
@@ -7,14 +8,9 @@ import Operation_iOS
 import AsyncExtensions
 import SDKLogger
 import StateMachine
-import StructuredConcurrency
 
 /// Protocol defining the coinage facade operations.
 public protocol CoinageServicing: Actor {
-    /// Synchronously fences all new native effects. Activation fails for a replaced or locked root.
-    @discardableResult
-    nonisolated func setActive(_ active: Bool) -> Bool
-
     /// The underlying recipient service for direct use.
     nonisolated var ongoingTransferService: any OngoingTransferServicing { get }
 
@@ -70,7 +66,7 @@ public protocol CoinageServicing: Actor {
     /// Register an external payment identified by `(productId, paymentId)`.
     /// Throws `ExternalPaymentError.alreadyExists` on replay.
     func initiateExternalPayment(
-        productId: String,
+        productId: ProductId?,
         paymentId: String,
         amountInPlanks: Balance,
         destination: AccountId
@@ -79,7 +75,7 @@ public protocol CoinageServicing: Actor {
     /// Subscribe to the status of an external payment identified by `(productId, paymentId)`; the
     /// stream fails with `ExternalPaymentError.notFound` for an unknown identity.
     nonisolated func subscribeExternalPaymentStatus(
-        productId: String,
+        productId: ProductId?,
         paymentId: String
     ) -> AnyAsyncSequence<ExternalPaymentStatus>
 
@@ -90,18 +86,6 @@ public protocol CoinageServicing: Actor {
     /// Returns the memo plus the provisional handoff to commit once the memo is durable.
     /// `groupId` labels the registered transaction(s) — the transfer's message id, or `nil`.
     func executeTransfer(result: CoinSelectionResult, groupId: CoinageTxGroupId) async throws -> PreparedTransfer
-
-    /// Native custody commits recipient derivations and handoff marks atomically with registration.
-    /// Replaying an identity returns its retained memo without allocating or spending again.
-    func executeTransfer(
-        result: CoinSelectionResult,
-        groupId: CoinageTxGroupId?,
-        custodyId: String,
-        authorization: @escaping @Sendable () throws -> Void
-    ) async throws -> PreparedTransfer
-
-    /// Derives a registered native transfer's memo. Nil alone means an approved intent is safe to retry.
-    func retainedTransfer(custodyId: String) async throws -> TransferMemo?
 
     /// Where recovery of previous installations' balance stands — see ``BackupProgress``.
     nonisolated func subscribeBackupProgress() -> AnyAsyncSequence<BackupProgress>
@@ -114,6 +98,12 @@ public protocol CoinageServicing: Actor {
 
     /// Whether this installation is registered on chain — see ``CoinageAccountBackupStatus``.
     nonisolated func subscribeAccountBackupStatus() -> AnyAsyncSequence<CoinageAccountBackupStatus>
+
+    /// Whether an allocation is waiting for that registration to complete.
+    nonisolated func subscribeAwaitingInstallationBackup() -> AnyAsyncSequence<Bool>
+
+    /// The current installation once its on-chain registration has completed, as allocations get it.
+    nonisolated var backedUpInstallationProvider: any CoinageBackedUpInstallationProviding { get }
 
     /// See `TransferClaimServicing.transferCoinsFromSecretKeys`.
     func transferCoinsFromSecretKeys(
@@ -149,6 +139,7 @@ public actor CoinageService {
     private let voucherLocationService: VoucherLocationService
     private let recoveryService: any CoinageBackupRecoveryServicing
     private let installationRegistrar: any CoinageInstallationRegistering
+    private let backedUpInstallation: any CoinageBackedUpInstallationProviding
     public nonisolated let recyclingService: any CoinageRecyclingServicing
 
     // Recycling strategy evaluation — the evaluator is built lazily once the context resolves.
@@ -165,7 +156,6 @@ public actor CoinageService {
     public nonisolated let incomingPaymentService: any IncomingPaymentServicing
 
     private let contextLoader: DenominationContextLoaderProtocol
-    private nonisolated let lifecycle: CoinageLifecycle?
 
     // Balance observation — the factory builds the tracked-asset snapshot streams on demand
     private let databaseFactory: any DatabaseDependencyFactoring
@@ -211,9 +201,9 @@ public actor CoinageService {
         databaseFactory: any DatabaseDependencyFactoring,
         recoveryService: any CoinageBackupRecoveryServicing,
         installationRegistrar: any CoinageInstallationRegistering,
+        backedUpInstallation: any CoinageBackedUpInstallationProviding,
         incomingPaymentService: any IncomingPaymentServicing,
-        logger: SDKLoggerProtocol? = nil,
-        lifecycle: CoinageLifecycle? = nil
+        logger: SDKLoggerProtocol? = nil
     ) {
         self.coinService = coinService
         self.voucherService = voucherService
@@ -233,23 +223,18 @@ public actor CoinageService {
         self.databaseFactory = databaseFactory
         self.recoveryService = recoveryService
         self.installationRegistrar = installationRegistrar
+        self.backedUpInstallation = backedUpInstallation
         self.txService = txService
         self.claimCoinsService = claimCoinsService
         self.transferStatusService = transferStatusService
         self.incomingPaymentService = incomingPaymentService
         self.logger = logger
-        self.lifecycle = lifecycle
     }
 }
 
 // MARK: - CoinageServicing
 
 extension CoinageService: CoinageServicing {
-    @discardableResult
-    public nonisolated func setActive(_ active: Bool) -> Bool {
-        lifecycle?.setActive(active) ?? true
-    }
-
     // MARK: External Payment Delegation
 
     public func previewExternalPayment(for amount: BigUInt) async throws -> ExternalPaymentPreview {
@@ -263,23 +248,21 @@ extension CoinageService: CoinageServicing {
     }
 
     public func initiateExternalPayment(
-        productId: String,
+        productId: ProductId?,
         paymentId: String,
         amountInPlanks: Balance,
         destination: AccountId
     ) async throws {
-        try await withLifecycleOperation {
-            try await externalPaymentService.initiatePayment(
-                productId: productId,
-                paymentId: paymentId,
-                amountInPlanks: amountInPlanks,
-                destination: destination
-            )
-        }
+        try await externalPaymentService.initiatePayment(
+            productId: productId,
+            paymentId: paymentId,
+            amountInPlanks: amountInPlanks,
+            destination: destination
+        )
     }
 
     public nonisolated func subscribeExternalPaymentStatus(
-        productId: String,
+        productId: ProductId?,
         paymentId: String
     ) -> AnyAsyncSequence<ExternalPaymentStatus> {
         externalPaymentService.subscribePaymentStatus(productId: productId, paymentId: paymentId)
@@ -292,53 +275,54 @@ extension CoinageService: CoinageServicing {
     }
 
     public func setup(with asset: AssetProtocol) async throws {
-        try await withLifecycleOperation {
-            do {
-                let context: DenominationBreakdownContext
-                if let existing = breakdownContext {
-                    // Re-setup: update precision synchronously, no fetch needed
-                    context = existing.withChanging(asset: asset)
+        do {
+            let context: DenominationBreakdownContext
+            if let existing = breakdownContext {
+                // Re-setup: update precision synchronously, no fetch needed
+                context = existing.withChanging(asset: asset)
+            } else {
+                // First setup: create a shared task so concurrent callers
+                // await the same fetch rather than each registering a continuation.
+                let task: Task<DenominationBreakdownContext, Error>
+                if let existing = contextSetupTask, contextSetupAssetId == asset.assetId {
+                    task = existing
                 } else {
-                    // First setup: concurrent callers await the same context fetch.
-                    let task: Task<DenominationBreakdownContext, Error>
-                    if let existing = contextSetupTask, contextSetupAssetId == asset.assetId {
-                        task = existing
-                    } else {
-                        contextSubject.send(nil)
-                        task = Task { [contextLoader] in try await contextLoader.fetchContext(for: asset) }
-                        contextSetupTask = task
-                        contextSetupAssetId = asset.assetId
-                    }
-                    let fetched = try await task.value
-                    try lifecycle?.checkCurrentOperation()
-                    // Another setup may have resolved the context while this fetch was suspended.
-                    guard breakdownContext == nil else { return }
-                    context = fetched
+                    // Reset subject so subject-path waiters from a prior failed attempt
+                    // resume waiting rather than seeing a stale .failure result.
+                    contextSubject.send(nil)
+                    task = Task { [contextLoader] in try await contextLoader.fetchContext(for: asset) }
+                    contextSetupTask = task
+                    contextSetupAssetId = asset.assetId
                 }
-                try lifecycle?.checkCurrentOperation()
-                breakdownContext = context
-                contextSubject.send(.success(context))
-
-                // Child tasks inherit this setup's activation, even across serial operation queues.
-                coinStateSyncService.setup()
-                voucherLocationService.setup()
-                externalPaymentService.setup(with: context)
-                incomingPaymentService.setup(with: context)
-                ensureRecyclingEvaluator(context: context)
-
-                // Release provisional handoffs before the coordinator starts engine recovery.
-                try await txService.releaseUncommittedHandoffs()
-                try lifecycle?.checkCurrentOperation()
-
-                await startInstallationBackup()
-            } catch {
-                // A superseded setup must not erase a newer activation's context result.
-                try lifecycle?.checkCurrentOperation()
-                contextSetupTask = nil
-                contextSetupAssetId = nil
-                contextSubject.send(.failure(error))
-                throw error
+                let fetched = try await task.value
+                // Guard against reentrancy: another setup call may have set breakdownContext
+                // while we were suspended awaiting the task.
+                guard breakdownContext == nil else { return }
+                context = fetched
             }
+            breakdownContext = context
+            contextSubject.send(.success(context))
+
+            // Start sync services
+            coinStateSyncService.setup()
+            voucherLocationService.setup()
+            externalPaymentService.setup(with: context)
+            incomingPaymentService.setup(with: context)
+
+            ensureRecyclingEvaluator(context: context)
+
+            // Before the engine's first recovery pass, which the app starts once setup returns, so nothing
+            // is decided against a mark that is about to disappear.
+            try await txService.releaseUncommittedHandoffs()
+
+            await startInstallationBackup()
+
+        } catch {
+            // Reset so a subsequent setup(with:) call triggers a fresh fetch
+            contextSetupTask = nil
+            contextSetupAssetId = nil
+            contextSubject.send(.failure(error))
+            throw error
         }
     }
 
@@ -348,14 +332,12 @@ extension CoinageService: CoinageServicing {
         secretKeys: [Data],
         transferCoins: Bool
     ) async throws -> BigUInt {
-        try await withLifecycleOperation {
-            let context = try await requireContext()
-            return try await ongoingTransferService.transferCoinsFromSecretKeys(
-                secretKeys: secretKeys,
-                transferCoins: transferCoins,
-                context: context
-            )
-        }
+        let context = try await requireContext()
+        return try await ongoingTransferService.transferCoinsFromSecretKeys(
+            secretKeys: secretKeys,
+            transferCoins: transferCoins,
+            context: context
+        )
     }
 
     public func previewTransfer(for amount: BigUInt) async throws -> TransferPreview {
@@ -396,42 +378,18 @@ extension CoinageService: CoinageServicing {
         result: CoinSelectionResult,
         groupId: CoinageTxGroupId
     ) async throws -> PreparedTransfer {
-        try await withLifecycleOperation {
-            guard let denominationContext = breakdownContext else {
-                throw CoinageError.notConfigured
-            }
-
-            do {
-                return try await senderService.execute(
-                    result: result,
-                    breakdownContext: denominationContext,
-                    groupId: groupId
-                )
-            } catch {
-                throw CoinageError.transferFailed(underlying: error)
-            }
+        guard let denominationContext = breakdownContext else {
+            throw CoinageError.notConfigured
         }
-    }
 
-    public func executeTransfer(
-        result: CoinSelectionResult,
-        groupId: CoinageTxGroupId?,
-        custodyId: String,
-        authorization: @escaping @Sendable () throws -> Void
-    ) async throws -> PreparedTransfer {
-        try await withLifecycleOperation {
-            let context = try await requireContext()
+        do {
             return try await senderService.execute(
-                result: result, breakdownContext: context, groupId: groupId,
-                custodyId: custodyId, authorization: authorization
+                result: result,
+                breakdownContext: denominationContext,
+                groupId: groupId
             )
-        }
-    }
-
-    public func retainedTransfer(custodyId: String) async throws -> TransferMemo? {
-        try await withLifecycleOperation {
-            let context = try await requireContext()
-            return try await senderService.retainedTransfer(custodyId: custodyId, breakdownContext: context)?.memo
+        } catch {
+            throw CoinageError.transferFailed(underlying: error)
         }
     }
 
@@ -442,18 +400,14 @@ extension CoinageService: CoinageServicing {
         amount: BigUInt,
         externalAssetHolder: any WalletManaging
     ) async throws -> BigUInt {
-        try await withLifecycleOperation {
-            try await markStallRegion("Loading vouchers") {
-                let context = try await requireContext()
-                let vouchers = try await voucherService.load(
-                    amount: amount,
-                    externalAssetHolder: externalAssetHolder,
-                    breakdownContext: context,
-                    groupId: nil
-                )
-                return vouchers.reduce(BigUInt.zero) { $0 + context.valueInPlanks(for: $1.exponent) }
-            }
-        }
+        let context = try await requireContext()
+        let vouchers = try await voucherService.load(
+            amount: amount,
+            externalAssetHolder: externalAssetHolder,
+            breakdownContext: context,
+            groupId: nil
+        )
+        return vouchers.reduce(BigUInt.zero) { $0 + context.valueInPlanks(for: $1.exponent) }
     }
 
     public func coinageBalanceService() async throws -> CoinageBalanceServiceProtocol {
@@ -499,18 +453,24 @@ extension CoinageService: CoinageServicing {
         installationRegistrar.subscribeStatus()
     }
 
+    public nonisolated func subscribeAwaitingInstallationBackup() -> AnyAsyncSequence<Bool> {
+        backedUpInstallation.subscribeAwaitingBackup()
+    }
+
+    public nonisolated var backedUpInstallationProvider: any CoinageBackedUpInstallationProviding {
+        backedUpInstallation
+    }
+
     public func recoverSpentCoinsOnChain() async throws -> BigUInt {
-        try await withLifecycleOperation {
-            let spentCoins = try await coinService.fetchAllTrackedCoins()
-                .filter(\.isRecoverable)
-                .map(\.coin)
-            guard !spentCoins.isEmpty else { return .zero }
-            let context = try await denominationContext()
-            return try await ongoingTransferService.recoverSpentCoins(
-                spentCoins: spentCoins,
-                context: context
-            )
-        }
+        let spentCoins = try await coinService.fetchAllTrackedCoins()
+            .filter(\.isRecoverable)
+            .map(\.coin)
+        guard !spentCoins.isEmpty else { return .zero }
+        let context = try await denominationContext()
+        return try await ongoingTransferService.recoverSpentCoins(
+            spentCoins: spentCoins,
+            context: context
+        )
     }
 }
 
@@ -528,11 +488,6 @@ private extension CoinageService {
 // MARK: - Context Access
 
 private extension CoinageService {
-    func withLifecycleOperation<T>(_ body: () async throws -> T) async throws -> T {
-        guard let lifecycle else { return try await body() }
-        return try await lifecycle.withOperation(body)
-    }
-
     /// Returns context immediately if available, or suspends until setup() posts a result.
     /// Propagates setup errors. Throws CancellationError if the task is cancelled while waiting.
     func requireContext() async throws -> DenominationBreakdownContext {

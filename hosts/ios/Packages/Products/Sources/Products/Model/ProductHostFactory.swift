@@ -19,7 +19,8 @@ public protocol ProductHostProviding: Sendable {
     func resolveHost(rawString: String) async throws -> ProductHost?
 
     /// Awaits the TLD, then parses a product destination into a page.
-    func resolvePage(destination: String) async throws -> ProductPage?
+    /// Throws ``ProductPageResolutionError`` when the TLD is unknown or the destination is not on this network.
+    func resolvePage(destination: String) async throws -> ProductPage
 }
 
 public final class ProductHostFactory: ProductHostProviding {
@@ -38,7 +39,7 @@ public final class ProductHostFactory: ProductHostProviding {
     }
 
     public func host(navigationDestination: String) -> ProductHost? {
-        tldProvider.currentTld().flatMap { ProductHost.fromNavigationDestination(navigationDestination, tld: $0) }
+        tldProvider.currentTld().flatMap { ProductHost.parse(navigationDestination, tld: $0) }
     }
 
     public func page(url: URL) -> ProductPage? {
@@ -54,17 +55,30 @@ public final class ProductHostFactory: ProductHostProviding {
     }
 
     public func resolveHost(label: String) async throws -> ProductHost? {
-        let tld = try await tldProvider.resolveTld()
+        let tld = try await tldProvider.currentTldElseResolve()
         return ProductHost(name: label, root: tld)
     }
 
     public func resolveHost(rawString: String) async throws -> ProductHost? {
-        let tld = try await tldProvider.resolveTld()
+        let tld = try await tldProvider.currentTldElseResolve()
         return ProductHost.parse(rawString, tld: tld)
     }
 
-    public func resolvePage(destination: String) async throws -> ProductPage? {
-        let tld = try await tldProvider.resolveTld()
-        return ProductPage.fromNavigationDestination(destination, tld: tld)
+    public func resolvePage(destination: String) async throws -> ProductPage {
+        let tld: String
+
+        do {
+            tld = try await tldProvider.currentTldElseResolve()
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            throw ProductPageResolutionError.tldUnavailable(underlying: error)
+        }
+
+        guard let page = ProductPage.fromNavigationDestination(destination, tld: tld) else {
+            throw ProductPageResolutionError.destinationNotOnNetwork(destination: destination, tld: tld)
+        }
+
+        return page
     }
 }

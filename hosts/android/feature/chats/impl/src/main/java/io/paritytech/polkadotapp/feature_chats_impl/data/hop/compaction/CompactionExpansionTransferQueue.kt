@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.data.hop.transfer.RetryDecis
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.transfer.TerminalTransferException
 import io.paritytech.polkadotapp.feature_chats_impl.data.hop.transfer.TransferQueue
 import io.paritytech.polkadotapp.feature_chats_impl.data.repository.CompactionExpansionRepository
+import io.paritytech.polkadotapp.feature_chats_impl.domain.ChatMessagePlacement
 import io.paritytech.polkadotapp.feature_chats_impl.domain.compaction.CompactionExpansion
 import io.paritytech.polkadotapp.feature_chats_impl.domain.sessions.IncomingChatMessageProcessor
 import javax.inject.Inject
@@ -42,7 +43,7 @@ class CompactionExpansionTransferQueue @Inject constructor(
             nodeUrl = commit.nodeUrl
         ) { batchBytes ->
             val rawMessages = compactionBatchStore.decodeBatchMessages(batchBytes)
-            incomingChatMessageProcessor.processRaw(contactAccountId, rawMessages)
+            incomingChatMessageProcessor.processRaw(contactAccountId, rawMessages, ChatMessagePlacement.SameAs(item.commitId))
             repository.markContentExpanded(item.commitId)
         }
     }

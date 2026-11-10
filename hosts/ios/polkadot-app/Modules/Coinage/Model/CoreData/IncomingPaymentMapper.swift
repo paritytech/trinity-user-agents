@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import BigInt
 import Coinage
 import CoreData
@@ -27,14 +28,13 @@ final class IncomingPaymentMapper: CoreDataMapperProtocol {
 
         return try IncomingPayment(
             paymentId: paymentId,
-            productId: productId,
+            productId: ProductId(productId),
             amount: amount,
             createdAt: createdAt,
             outcome: IncomingPaymentOutcomeSerialization.outcome(
                 tag: entity.outcomeTag,
                 actualClaimed: entity.actualClaimed
-            ),
-            ownerId: entity.ownerId
+            )
         )
     }
 
@@ -45,10 +45,9 @@ final class IncomingPaymentMapper: CoreDataMapperProtocol {
     ) throws {
         entity.identifier = model.groupId
         entity.paymentId = model.paymentId
-        entity.productId = model.productId
+        entity.productId = model.productId.rawValue
         entity.amount = String(model.amount)
         entity.createdAt = model.createdAt
-        entity.ownerId = model.ownerId
 
         let serialized = IncomingPaymentOutcomeSerialization.columns(for: model.outcome)
         entity.outcomeTag = serialized.tag

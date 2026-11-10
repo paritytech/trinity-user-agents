@@ -136,6 +136,18 @@ pub trait HostSubscriptionMethod {
 	const DESCRIPTOR: MethodDescriptor;
 }
 
+/// Generated marker for a host-initiated request served by a product.
+pub trait HostRequestMethod {
+	/// Host request.
+	type Request: Decode;
+	/// Product success envelope.
+	type Response: Encode;
+	/// Domain-error envelope.
+	type Error: Encode;
+	/// Canonical method metadata.
+	const DESCRIPTOR: MethodDescriptor;
+}
+
 /// Decoded value paired with its transport request id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Decoded<T> {
@@ -302,6 +314,26 @@ pub fn is_host_subscription_stop<M: HostSubscriptionMethod>(
 	Ok(matches)
 }
 
+/// Decodes a host-initiated request for a product worker.
+pub fn decode_host_request<M: HostRequestMethod>(
+	frame: &[u8],
+) -> Result<Decoded<M::Request>, DecodeError> {
+	decode_value_frame(frame, generated_request_ids(M::DESCRIPTOR), MessageType::Request)
+}
+
+/// Encodes a product's answer to a host-initiated request.
+pub fn encode_host_response<M: HostRequestMethod>(
+	request_id: &str,
+	outcome: &Result<M::Response, CallError<M::Error>>,
+) -> Vec<u8> {
+	encode_value_frame(
+		request_id,
+		generated_request_ids(M::DESCRIPTOR),
+		MessageType::Response,
+		outcome,
+	)
+}
+
 fn generated_request_ids(descriptor: MethodDescriptor) -> MethodIds {
 	match descriptor.wire {
 		MethodWire::Request(ids) => ids,
@@ -455,7 +487,7 @@ mod tests {
 					identity_account_id: [1; 32],
 					identity_chat_public_key: [2; 32],
 					product_account: v01::ProductAccountId {
-						dot_ns_identifier: "chat.dot".into(),
+						dot_ns_identifier: "chat.dot".parse().unwrap(),
 						derivation_index: v01::DerivationIndex::Index(0),
 					},
 					account_id: [3; 32],

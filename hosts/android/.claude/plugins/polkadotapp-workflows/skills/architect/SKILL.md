@@ -41,7 +41,7 @@ If the change is a one-file localized bugfix or rename, **do not** invoke archit
    | Submitting extrinsics, custom origins, signed extensions | `architecture/transactions.md` |
    | Storage queries/subscriptions, runtime API, SCALE codec | `architecture/chain-integration.md` |
    | Coins, denominations, transfer planner, RFC-0006 payments | `architecture/coinage.md` |
-   | Statement-store messaging, CommunicationSession, SSO/videogame/chat rendezvous | `architecture/statement-store-communication.md` |
+   | Statement-store messaging, CommunicationSession, SSO/chat rendezvous | `architecture/statement-store-communication.md` |
    | WebRTC peer channels, DataTransport, calls / in-game P2P | `architecture/data-transport.md` |
    | Cross-cutting / SRP / invariants | `architecture/maintainability.md` |
 

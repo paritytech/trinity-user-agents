@@ -50,8 +50,8 @@ extension IdentityDetailsInteractor: IdentityDetailsInteractorInputProtocol {
         subscribeToProfile()
     }
 
-    func shareMessage(username: Username) -> [Any] {
-        shareFactory.createSources(username: username)
+    func shareMessage(username: Username, image: UIImage) -> [Any] {
+        shareFactory.createSources(username: username, qrImage: image)
     }
 
     func generateQrCode(for size: CGSize) {

@@ -7,7 +7,6 @@ final class ContactsListInteractor {
 
     let chatContactDataProviderFactory: ChatContactDataProviderMaking
     let chatExtensionsRegistry: ChatExtensionsRegistering
-    let networkStatusObserver: NetworkStatusObserving
     let logger: LoggerProtocol
 
     private weak var foregroundVisibilityReporter: PushForegroundVisibilityReporting?
@@ -16,13 +15,11 @@ final class ContactsListInteractor {
     init(
         chatContactDataProviderFactory: ChatContactDataProviderMaking,
         chatExtensionsRegistry: ChatExtensionsRegistering,
-        networkStatusObserver: NetworkStatusObserving,
         foregroundVisibilityReporter: PushForegroundVisibilityReporting?,
         logger: LoggerProtocol
     ) {
         self.chatContactDataProviderFactory = chatContactDataProviderFactory
         self.chatExtensionsRegistry = chatExtensionsRegistry
-        self.networkStatusObserver = networkStatusObserver
         self.foregroundVisibilityReporter = foregroundVisibilityReporter
         self.logger = logger
     }
@@ -35,7 +32,6 @@ final class ContactsListInteractor {
 extension ContactsListInteractor: ContactsListInteractorInputProtocol {
     func setup() {
         subscribeForChanges()
-        subscribeNetworkStatus()
     }
 
     func notifyViewAppeared() {
@@ -46,8 +42,8 @@ extension ContactsListInteractor: ContactsListInteractorInputProtocol {
         foregroundVisibilityReporter?.updateVisibleScreen(.other)
     }
 
-    func entryRoute(for model: ChatOpenModel) async -> ChatExtensionEntryRoute {
-        await chatExtensionsRegistry.entryRoute(for: model)
+    func entryRoute(for model: ChatOpenModel) async throws -> ChatExtensionEntryRoute {
+        try await chatExtensionsRegistry.entryRoute(for: model)
     }
 }
 
@@ -57,12 +53,6 @@ private enum ListChangeEvent {
 }
 
 private extension ContactsListInteractor {
-    func subscribeNetworkStatus() {
-        networkStatusObserver.start { [weak self] status in
-            self?.presenter?.didReceive(networkStatus: status)
-        }
-    }
-
     func subscribeForChanges() {
         task = Task { [weak self, chatContactDataProviderFactory, chatExtensionsRegistry, logger] in
             let chatsStream = chatContactDataProviderFactory.subscribeChatsWithPredicate(

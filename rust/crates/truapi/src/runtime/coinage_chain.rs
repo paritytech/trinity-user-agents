@@ -16,9 +16,10 @@ mod transaction;
 
 use crate::{
 	host_rpc_client::HostRpcClient,
-	platform::{JsonRpcConnection, Platform, async_trait},
+	platform::{JsonRpcConnection, Platform},
 	subscription::Spawner,
 };
+use async_trait::async_trait;
 use core::time::Duration;
 pub(crate) use crypto::HostVoucherCryptography;
 use futures::{StreamExt, stream::BoxStream};

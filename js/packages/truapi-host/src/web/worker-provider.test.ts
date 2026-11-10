@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, jest } from "bun:test";
+import { asProductId, type ProductId } from "@parity/truapi";
+import { afterEach, describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
 
 import {
@@ -15,34 +16,21 @@ import type {
 } from "@parity/truapi";
 
 import { createWasmRawCallbacks } from "../generated/host-callbacks-adapter.js";
-import { createWorkerRawCallbacks } from "../generated/worker-callbacks.js";
-import type {
-  OptionalCapabilities,
-  WorkerCallbackBridge,
-} from "../generated/worker-callbacks.js";
-import type { RawCallbacks } from "../generated/host-callbacks-adapter.js";
 import {
   AuthState,
   CoreStorageKey,
-  NativeChatFileExportRequest,
-  NativeChatFilePickRequest,
-  NativeCoinageRequest,
-  NativeCoinageResponse,
   ProductContext,
 } from "../generated/host-callbacks.js";
 import type {
   AuthState as AuthStateValue,
   PreimageHost,
-  NativeChatPickedFile,
 } from "../generated/host-callbacks.js";
 import type {
-  PlatformJsonRpcConnection,
   ProductRuntimeConfig,
   TrUApiProductProvider,
   WorkerDemandChange,
 } from "../runtime.js";
 import { makeHostCallbacks, settle } from "../test-support.js";
-import { MAX_JSON_RPC_CONNECTIONS } from "../worker-protocol.js";
 import {
   asWorker,
   FakeWorker,
@@ -52,16 +40,8 @@ import {
   runtimeConfig,
 } from "./worker-test-harness.js";
 import type { WorkerMessage } from "./worker-test-harness.js";
-import {
-  createWebWorkerPairingHostRuntime,
-  createWebWorkerSigningHostRuntime,
-} from "./index.js";
-import type {
-  CreateWebWorkerPairingHostRuntimeOptions,
-  CreateWebWorkerSigningHostRuntimeOptions,
-  LocalIdentityProgress,
-  WorkerSigningHostRuntime,
-} from "./index.js";
+import { createWebWorkerPairingHostRuntime } from "./index.js";
+import type { CreateWebWorkerPairingHostRuntimeOptions } from "./index.js";
 
 function renderRequest(): ProductRendererRenderRequest {
   return {
@@ -125,21 +105,6 @@ async function createProviderFromRuntime(
   };
 }
 
-async function readySigningRuntime(worker: FakeWorker) {
-  const runtimePromise = createWebWorkerSigningHostRuntime(
-    asWorker(worker),
-    makeHostCallbacks(),
-    {
-      hostConfig: {
-        ...hostConfigFromRuntimeConfig(runtimeConfig()),
-        networkSuffix: "paseo",
-      },
-    },
-  );
-  worker.emit({ kind: "loaded" });
-  worker.emit({ kind: "ready" });
-  return runtimePromise;
-}
 async function readyProvider(worker: FakeWorker, options: ReadyOptions = {}) {
   const providerPromise = createProviderFromRuntime(
     asWorker(worker),
@@ -179,16 +144,13 @@ describe("createWebWorkerPairingHostRuntime", () => {
       kind: "init",
       logLevel: "debug",
       hostConfig: hostConfigFromRuntimeConfig(config),
-      // A host that asks for no role sends none: the worker reads absent as
-      // "pairing", so the message stays what it was before the field existed.
-      role: undefined,
       capabilities: {
         chat: false,
         permissionStatus: false,
         pocket: false,
-        identityBackend: false,
-        coinageWallet: false,
+        game: false,
         contacts: false,
+        scanner: false,
       },
       // Null under `bun test`: the `import.meta.env.DEV` gate reads undefined,
       // so no dial resolves and the worker builds no tap.
@@ -201,7 +163,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     expect(createCore).toEqual({
       kind: "createCore",
       coreId: 1,
-      product: { productId: "dotli.dot" },
+      product: { productId: asProductId("dotli.dot") },
     });
     worker.emit({ kind: "coreReady", coreId: 1 });
     const provider = await providerPromise;
@@ -209,143 +171,6 @@ describe("createWebWorkerPairingHostRuntime", () => {
 
     provider.dispose();
   });
-
-  it("activates a browser-local signing session in the worker", async () => {
-    const worker = new FakeWorker();
-    const hostConfig = {
-      ...hostConfigFromRuntimeConfig(runtimeConfig()),
-      networkSuffix: "paseo",
-    } satisfies CreateWebWorkerSigningHostRuntimeOptions["hostConfig"];
-    const runtimePromise = createWebWorkerSigningHostRuntime(
-      asWorker(worker),
-      makeHostCallbacks(),
-      { hostConfig },
-    );
-
-    worker.emit({ kind: "loaded" });
-    expect(worker.messages[0]).toMatchObject({
-      kind: "init",
-      hostConfig,
-      role: "signing",
-    });
-    worker.emit({ kind: "ready" });
-    const runtime = await runtimePromise;
-
-    const secret = new Uint8Array(32).fill(7);
-    const activation = runtime.activateLocalSession(secret);
-    const request = lastMessageOfKind(worker, "activateLocalSession");
-    expect(request).toMatchObject({
-      kind: "activateLocalSession",
-      secret,
-    });
-    worker.emit({
-      kind: "sessionActivationResponse",
-      requestId: request.requestId,
-      ok: true,
-    });
-    await activation;
-    runtime.dispose();
-  });
-
-  it("scopes identity progress to pending requests and isolates observer failures", async () => {
-    const worker = new FakeWorker();
-    const runtime = await readySigningRuntime(worker);
-    const progress: LocalIdentityProgress[] = [];
-    const identity = {
-      identityAccountId: `0x${"11".repeat(32)}`,
-      liteUsername: "alice.paseo",
-    };
-    const claim = runtime.registerLocalLiteUsername(
-      "alice",
-      "https://identity.invalid",
-      (event) => {
-        progress.push(event);
-        throw new Error("observer failed");
-      },
-    );
-    const request = lastMessageOfKind(worker, "registerLocalLiteUsername");
-    let settled = false;
-    void claim.then(() => {
-      settled = true;
-    });
-    worker.emit({
-      kind: "localIdentityProgress",
-      requestId: request.requestId,
-      progress: { stage: "confirming" },
-    });
-    await settle();
-    expect(settled).toBe(false);
-    worker.emit({
-      kind: "localIdentityResponse",
-      requestId: request.requestId,
-      ok: true,
-      identity,
-    });
-    await expect(claim).resolves.toEqual(identity);
-
-    const nextProgress: LocalIdentityProgress[] = [];
-    const nextClaim = runtime.registerLocalLiteUsername(
-      "bob",
-      "https://identity.invalid",
-      (event) => nextProgress.push(event),
-    );
-    const next = lastMessageOfKind(worker, "registerLocalLiteUsername");
-    worker.emit({
-      kind: "localIdentityProgress",
-      requestId: request.requestId,
-      progress: { stage: "retrying", error: "late response" },
-    });
-    worker.emit({
-      kind: "localIdentityProgress",
-      requestId: next.requestId,
-      progress: { stage: "checking" },
-    });
-    worker.emit({
-      kind: "localIdentityResponse",
-      requestId: next.requestId,
-      ok: false,
-      error: "claim rejected",
-    });
-    await expect(nextClaim).rejects.toThrow("claim rejected");
-    worker.emit({
-      kind: "localIdentityProgress",
-      requestId: next.requestId,
-      progress: { stage: "confirming" },
-    });
-    expect(progress).toEqual([{ stage: "confirming" }]);
-    expect(nextProgress).toEqual([{ stage: "checking" }]);
-    runtime.dispose();
-  });
-
-  for (const close of ["dispose", "fault"] as const) {
-    it(`ignores late identity progress after runtime ${close}`, async () => {
-      const worker = new FakeWorker();
-      const runtime = await readySigningRuntime(worker);
-      const progress: LocalIdentityProgress[] = [];
-      const claim = runtime.registerLocalLiteUsername(
-        "alice",
-        "https://identity.invalid",
-        (event) => progress.push(event),
-      );
-      const request = lastMessageOfKind(worker, "registerLocalLiteUsername");
-      worker.emit({
-        kind: "localIdentityProgress",
-        requestId: request.requestId,
-        progress: { stage: "confirming" },
-      });
-      if (close === "dispose") runtime.dispose();
-      else worker.emitError("worker stopped");
-      await expect(claim).rejects.toThrow(
-        close === "dispose" ? "runtime disposed" : "worker stopped",
-      );
-      worker.emit({
-        kind: "localIdentityProgress",
-        requestId: request.requestId,
-        progress: { stage: "retrying", error: "late response" },
-      });
-      expect(progress).toEqual([{ stage: "confirming" }]);
-    });
-  }
 
   it("reports the chat capability to the worker when the host serves it", async () => {
     const worker = new FakeWorker();
@@ -363,9 +188,9 @@ describe("createWebWorkerPairingHostRuntime", () => {
       chat: true,
       permissionStatus: false,
       pocket: false,
-      identityBackend: false,
-      coinageWallet: false,
+      game: false,
       contacts: false,
+      scanner: false,
     });
   });
 
@@ -387,264 +212,37 @@ describe("createWebWorkerPairingHostRuntime", () => {
       chat: false,
       permissionStatus: false,
       pocket: true,
-      identityBackend: false,
-      coinageWallet: false,
+      game: false,
       contacts: false,
+      scanner: false,
     });
   });
 
-  it("preserves optional authenticated identity search through the worker boundary", async () => {
+  it("reports the game capability to the worker when the host serves it", async () => {
     const worker = new FakeWorker();
-    const account = new Uint8Array(32).fill(0x42);
-    const genesis = new Uint8Array(32).fill(0x77);
-    const runtimePromise = createWebWorkerSigningHostRuntime(
+    void createWebWorkerPairingHostRuntime(
       asWorker(worker),
       makeHostCallbacks({
-        identityBackend: {
-          identityUsernameCandidates: async (username, peopleGenesis) => {
-            if (
-              username !== "alice" ||
-              bytesToHex(peopleGenesis) !== bytesToHex(genesis)
-            ) {
-              throw new Error("authenticated search unavailable");
-            }
-            return [account];
-          },
+        game: {
+          scheduleGameReminder: async () => {},
+          cancelGameReminder: async () => {},
         },
       }),
-      {
-        hostConfig: {
-          ...hostConfigFromRuntimeConfig(runtimeConfig()),
-          networkSuffix: "paseo",
-        },
-      },
+      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
     );
-    worker.emit({ kind: "loaded" });
-    const capabilities = lastMessageOfKind(worker, "init")
-      .capabilities as OptionalCapabilities;
-    worker.emit({ kind: "ready" });
-    const runtime = await runtimePromise;
-    let requestId = 0;
-    const bridge = {
-      async callbackRequest(name, args) {
-        const id = ++requestId;
-        worker.emit({ kind: "callbackRequest", requestId: id, name, args });
-        await settle();
-        const response = worker.messages.find(
-          (message) =>
-            message.kind === "callbackResponse" && message.requestId === id,
-        );
-        if (!response) throw new Error("missing callback response");
-        if (!response.ok) throw new Error(String(response.error));
-        return response.value;
-      },
-    } satisfies Pick<WorkerCallbackBridge, "callbackRequest">;
-    const callbacks = createWorkerRawCallbacks(
-      bridge as WorkerCallbackBridge,
-      capabilities,
-    ) as unknown as RawCallbacks;
 
-    try {
-      expect(
-        await callbacks.identityUsernameCandidates!("alice", genesis),
-      ).toEqual(new Uint8Array([4, ...account]));
-      await expect(
-        callbacks.identityUsernameCandidates!("unavailable", genesis),
-      ).rejects.toThrow("authenticated search unavailable");
-    } finally {
-      runtime.dispose();
-    }
-  });
-
-  it("does not register a product wallet when the runtime uses the Rust wallet", async () => {
-    const worker = new FakeWorker();
-    const runtimePromise = createWebWorkerSigningHostRuntime(
-      asWorker(worker),
-      makeHostCallbacks(),
-      {
-        hostConfig: {
-          ...hostConfigFromRuntimeConfig(runtimeConfig()),
-          networkSuffix: "paseo",
-        },
-      },
-    );
     worker.emit({ kind: "loaded" });
-    const capabilities = lastMessageOfKind(worker, "init")
-      .capabilities as OptionalCapabilities;
-    worker.emit({ kind: "ready" });
-    const runtime = await runtimePromise;
-    let productWalletCalls = 0;
-    try {
-      const providerPromise = runtime.createProvider(
-        { productId: "chat.dot" },
-        makeHostCallbacks({
-          coinageWallet: {
-            nativeCoinage: async () => {
-              productWalletCalls++;
-              return { tag: "Done" };
-            },
-          },
-        }),
-      );
-      const productCapabilities = lastMessageOfKind(worker, "createCore")
-        .capabilities as OptionalCapabilities;
-      worker.emit({ kind: "coreReady", coreId: 1 });
-      await providerPromise;
-      const bridge = {
-        async callbackRequest() {
-          throw new Error("An absent wallet must not issue a callback");
-        },
-      } satisfies Pick<WorkerCallbackBridge, "callbackRequest">;
-      for (const registration of [capabilities, productCapabilities]) {
-        const callbacks = createWorkerRawCallbacks(
-          bridge as WorkerCallbackBridge,
-          registration,
-        ) as unknown as RawCallbacks;
-        expect(callbacks.nativeCoinage).toBeUndefined();
-      }
-      // Even a stale or forged product-scoped request cannot invoke its wallet.
-      worker.emit({
-        kind: "callbackRequest",
-        requestId: 1,
-        coreId: 1,
-        name: "nativeCoinage",
-        args: [],
-      });
-      await settle();
-      expect(lastMessageOfKind(worker, "callbackResponse").ok).toBe(false);
-      expect(productWalletCalls).toBe(0);
-    } finally {
-      runtime.dispose();
-    }
-  });
 
-  it("keeps native wallet ownership and secrets on the runtime callback route", async () => {
-    const worker = new FakeWorker();
-    const runtimePromise = createWebWorkerSigningHostRuntime(
-      asWorker(worker),
-      makeHostCallbacks({
-        coinageWallet: {
-          nativeCoinage: async (request) => {
-            if (request.operation.tag === "Denomination")
-              return { tag: "Failed", value: { reason: "Unavailable" } };
-            throw new Error("private native memo bearer material");
-          },
-        },
-      }),
-      {
-        hostConfig: {
-          ...hostConfigFromRuntimeConfig(runtimeConfig()),
-          networkSuffix: "paseo",
-        },
-      },
-    );
-    worker.emit({ kind: "loaded" });
-    const capabilities = lastMessageOfKind(worker, "init")
-      .capabilities as OptionalCapabilities;
-    worker.emit({ kind: "ready" });
-    const runtime = await runtimePromise;
-    let productWalletCalls = 0;
-    const providerPromise = runtime.createProvider(
-      { productId: "chat.dot" },
-      makeHostCallbacks({
-        coinageWallet: {
-          nativeCoinage: async () => {
-            productWalletCalls++;
-            return { tag: "Done" };
-          },
-        },
-      }),
-    );
-    worker.emit({ kind: "coreReady", coreId: 1 });
-    await providerPromise;
-    const scope = {
-      rootPublicKey: new Uint8Array(32),
-      genesisHash: new Uint8Array(32),
-    };
-    try {
-      let coreId = 1;
-      const bridge = {
-        async callbackRequest(name, args) {
-          worker.emit({
-            kind: "callbackRequest",
-            requestId: 1,
-            coreId,
-            name,
-            args,
-          });
-          await settle();
-          const response = lastMessageOfKind(worker, "callbackResponse");
-          if (!response.ok) throw new Error(String(response.error));
-          return response.value;
-        },
-      } satisfies Pick<WorkerCallbackBridge, "callbackRequest">;
-      const native = createWorkerRawCallbacks(
-        bridge as WorkerCallbackBridge,
-        capabilities,
-      ) as unknown as RawCallbacks;
-      await expect(
-        native.nativeCoinage!(
-          NativeCoinageRequest.enc({ scope, operation: { tag: "Reconcile" } }),
-        ),
-      ).rejects.toThrow();
-      worker.emit({
-        kind: "callbackRequest",
-        requestId: 2,
-        coreId: 1,
-        name: "nativeCoinage",
-        args: [
-          NativeCoinageRequest.enc({
-            scope,
-            operation: { tag: "Denomination" },
-          }),
-        ],
-      });
-      await settle();
-      expect(
-        NativeCoinageResponse.dec(
-          lastMessageOfKind(worker, "callbackResponse").value as Uint8Array,
-        ),
-      ).toEqual({ tag: "Failed", value: { reason: "Unavailable" } });
-      worker.emit({
-        kind: "callbackRequest",
-        requestId: 3,
-        name: "nativeCoinage",
-        args: [
-          NativeCoinageRequest.enc({ scope, operation: { tag: "Reconcile" } }),
-        ],
-      });
-      await settle();
-      const failure = lastMessageOfKind(worker, "callbackResponse");
-      expect(failure.ok).toBe(false);
-      expect(failure.error).not.toContain("bearer material");
-      // Recreating product execution callbacks after failure keeps the runtime owner.
-      const recreatedProvider = runtime.createProvider(
-        { productId: "chat.dot" },
-        makeHostCallbacks(),
-      );
-      const productCapabilities = lastMessageOfKind(worker, "createCore")
-        .capabilities as OptionalCapabilities;
-      coreId = 2;
-      worker.emit({ kind: "coreReady", coreId });
-      await recreatedProvider;
-      const recreated = createWorkerRawCallbacks(
-        bridge as WorkerCallbackBridge,
-        productCapabilities,
-      ) as unknown as RawCallbacks;
-      expect(
-        NativeCoinageResponse.dec(
-          await recreated.nativeCoinage!(
-            NativeCoinageRequest.enc({
-              scope,
-              operation: { tag: "Denomination" },
-            }),
-          ),
-        ),
-      ).toEqual({ tag: "Failed", value: { reason: "Unavailable" } });
-      expect(productWalletCalls).toBe(0);
-    } finally {
-      runtime.dispose();
-    }
+    // Without this the worker never builds the game callbacks, so a host that
+    // holds reminders is answered `Unsupported` anyway.
+    expect(lastMessageOfKind(worker, "init").capabilities).toEqual({
+      chat: false,
+      permissionStatus: false,
+      pocket: false,
+      game: true,
+      contacts: false,
+      scanner: false,
+    });
   });
 
   it("creates multiple product cores on one worker runtime", async () => {
@@ -661,18 +259,22 @@ describe("createWebWorkerPairingHostRuntime", () => {
     worker.emit({ kind: "ready" });
     const runtime = await runtimePromise;
 
-    const firstPromise = runtime.createProvider({ productId: "first.dot" });
-    const secondPromise = runtime.createProvider({ productId: "second.dot" });
+    const firstPromise = runtime.createProvider({
+      productId: asProductId("first.dot"),
+    });
+    const secondPromise = runtime.createProvider({
+      productId: asProductId("second.dot"),
+    });
 
     expect(worker.messages.at(-2)).toEqual({
       kind: "createCore",
       coreId: 1,
-      product: { productId: "first.dot" },
+      product: { productId: asProductId("first.dot") },
     });
     expect(worker.messages.at(-1)).toEqual({
       kind: "createCore",
       coreId: 2,
-      product: { productId: "second.dot" },
+      product: { productId: asProductId("second.dot") },
     });
 
     worker.emit({ kind: "coreReady", coreId: 1 });
@@ -725,7 +327,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     expect(createCore).toEqual({
       kind: "createCore",
       coreId: 1,
-      product: { productId: "dotli.dot", executionKind: "Worker" },
+      product: { productId: asProductId("dotli.dot"), executionKind: "Worker" },
     });
     worker.emit({ kind: "coreReady", coreId: 1 });
     (await providerPromise).dispose();
@@ -942,7 +544,10 @@ describe("createWebWorkerPairingHostRuntime", () => {
     const provider = await finishProviderReady(worker, providerPromise);
 
     const keyBytes = new Uint8Array(32).fill(0x31);
-    const pending = provider.getProductSubtreePublicKey("myapp.dot", 5000);
+    const pending = provider.getProductSubtreePublicKey(
+      asProductId("myapp.dot"),
+      5000,
+    );
     const msg = worker.messages.at(-1)!;
     expect(msg.kind).toBe("getProductSubtreePublicKey");
     expect(msg.productId).toBe("myapp.dot");
@@ -959,7 +564,10 @@ describe("createWebWorkerPairingHostRuntime", () => {
     // A wallet that never answers ends at the deadline, and that is an error
     // rather than an absent key, so a host can tell it apart from having no
     // session at all.
-    const late = provider.getProductSubtreePublicKey("slow.dot", 1);
+    const late = provider.getProductSubtreePublicKey(
+      asProductId("slow.dot"),
+      1,
+    );
     worker.emit({
       kind: "productSubtreePublicKeyResponse",
       requestId: worker.messages.at(-1)!.requestId,
@@ -1011,19 +619,6 @@ describe("createWebWorkerPairingHostRuntime", () => {
     await expect(provider.getDeviceEncryptionKey()).rejects.toThrow(
       "product connection is closed",
     );
-  });
-
-  it("rejects permission changes after the product connection closes", async () => {
-    const worker = new FakeWorker();
-    const provider = await readyProvider(worker);
-    provider.dispose();
-
-    await expect(
-      provider.setPermissionAuthorizationStatus(
-        { tag: "Device", value: "Camera" },
-        "Denied",
-      ),
-    ).rejects.toThrow();
   });
 
   it("forwards session activation calls and resolves their responses", async () => {
@@ -1266,367 +861,6 @@ describe("createWebWorkerPairingHostRuntime", () => {
     runtime.dispose();
   });
 
-  it("keeps delivered file sources durable but releases a selection lost during teardown", async () => {
-    const worker = new FakeWorker();
-    const late = Promise.withResolvers<NativeChatPickedFile[]>();
-    const owned = new Set(["delivered", "undelivered"]);
-    let calls = 0;
-    const metadata = {
-      mimeType: "application/octet-stream",
-      sizeBytes: 1,
-      kind: { tag: "File" as const },
-    };
-    const runtimePromise = createWebWorkerPairingHostRuntime(
-      asWorker(worker),
-      makeHostCallbacks({
-        nativeChatFiles: {
-          pickChatFiles: async () =>
-            ++calls === 1
-              ? [{ sourceId: "delivered", metadata }]
-              : late.promise,
-          releaseChatFile: async (id) => {
-            owned.delete(id);
-          },
-        },
-      }),
-      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
-    );
-    worker.emit({ kind: "loaded" });
-    worker.emit({ kind: "ready" });
-    const runtime = await runtimePromise;
-    const request = NativeChatFilePickRequest.enc({
-      productId: "chat.dot",
-      peerIdentity: new Uint8Array(32),
-      peerUsername: undefined,
-      maxFiles: 1,
-    });
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 1,
-      name: "pickChatFiles",
-      args: [request],
-    });
-    await settle();
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 2,
-      name: "pickChatFiles",
-      args: [request],
-    });
-    await settle();
-    runtime.dispose();
-    late.resolve([{ sourceId: "undelivered", metadata }]);
-    await settle();
-    expect([...owned]).toEqual(["delivered"]);
-    expect(
-      worker.messages
-        .filter((message) => message.kind === "callbackResponse")
-        .map((message) => message.requestId),
-    ).toEqual([1]);
-  });
-
-  it("cancels active and late file exports after a worker fault, not completed exports", async () => {
-    const worker = new FakeWorker();
-    const late = Promise.withResolvers<string | undefined>();
-    const cancelled: string[] = [];
-    let calls = 0;
-    const runtimePromise = createWebWorkerPairingHostRuntime(
-      asWorker(worker),
-      makeHostCallbacks({
-        nativeChatFiles: {
-          beginChatFileExport: async () =>
-            ["completed", "active"][calls++] ?? late.promise,
-          finishChatFileExport: async () => {},
-          cancelChatFileExport: async (id) => {
-            cancelled.push(id);
-          },
-        },
-      }),
-      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
-    );
-    worker.emit({ kind: "loaded" });
-    worker.emit({ kind: "ready" });
-    await runtimePromise;
-    const request = NativeChatFileExportRequest.enc({
-      productId: "chat.dot",
-      peerIdentity: new Uint8Array(32),
-      peerUsername: undefined,
-      metadata: {
-        mimeType: "application/octet-stream",
-        sizeBytes: 0,
-        kind: { tag: "File" },
-      },
-    });
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 1,
-      name: "beginChatFileExport",
-      args: [request],
-    });
-    await settle();
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 2,
-      name: "finishChatFileExport",
-      args: ["completed"],
-    });
-    await settle();
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 3,
-      name: "beginChatFileExport",
-      args: [request],
-    });
-    await settle();
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 4,
-      name: "beginChatFileExport",
-      args: [request],
-    });
-    await settle();
-    worker.emitError("worker stopped");
-    late.resolve("late");
-    await settle();
-    expect(cancelled.sort()).toEqual(["active", "late"]);
-    expect(
-      worker.messages
-        .filter((message) => message.kind === "callbackResponse")
-        .map((message) => message.requestId),
-    ).toEqual([1, 2, 3]);
-  });
-
-  it("preserves bigint file offsets and never returns backend private error details", async () => {
-    const worker = new FakeWorker();
-    const runtimePromise = createWebWorkerPairingHostRuntime(
-      asWorker(worker),
-      makeHostCallbacks({
-        nativeChatFiles: {
-          readChatFile: async (_id, offset) => {
-            if (offset === 0xffff_ffff_ffff_ffffn)
-              return new Uint8Array([0xa5]);
-            throw new Error("private-source-and-path");
-          },
-        },
-      }),
-      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
-    );
-    worker.emit({ kind: "loaded" });
-    worker.emit({ kind: "ready" });
-    const runtime = await runtimePromise;
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 1,
-      name: "readChatFile",
-      args: ["private-source-and-path", 0xffff_ffff_ffff_ffffn, 1],
-    });
-    await settle();
-    expect(lastMessageOfKind(worker, "callbackResponse")).toEqual({
-      kind: "callbackResponse",
-      requestId: 1,
-      ok: true,
-      value: new Uint8Array([0xa5]),
-    });
-    worker.emit({
-      kind: "callbackRequest",
-      requestId: 2,
-      name: "readChatFile",
-      args: ["private-source-and-path", 0n, 1],
-    });
-    await settle();
-    expect(lastMessageOfKind(worker, "callbackResponse")).toEqual({
-      kind: "callbackResponse",
-      requestId: 2,
-      ok: false,
-      error: "Native Chat file operation failed",
-    });
-    runtime.dispose();
-  });
-
-  for (const teardown of ["dispose", "fault", "close"] as const) {
-    it(`closes a HOP handle that opens after ${teardown}`, async () => {
-      const worker = new FakeWorker();
-      const opening = Promise.withResolvers<PlatformJsonRpcConnection>();
-      const endpoint = "wss://hop.example/rpc";
-      let closes = 0;
-      const runtimePromise = createWebWorkerPairingHostRuntime(
-        asWorker(worker),
-        makeHostCallbacks({
-          hop: {
-            allowedHopEndpoints: async () => [endpoint],
-            connectHop: () => opening.promise,
-          },
-        }),
-        { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
-      );
-      worker.emit({ kind: "loaded" });
-      worker.emit({ kind: "ready" });
-      const runtime = await runtimePromise;
-      worker.emit({
-        kind: "hopConnectStart",
-        connId: 1,
-        genesisHash: "0xab",
-        endpoint,
-      });
-      await settle();
-      if (teardown === "dispose") runtime.dispose();
-      else if (teardown === "fault") worker.emitError("worker stopped");
-      else worker.emit({ kind: "chainClose", connId: 1 });
-      const response = Promise.withResolvers<IteratorResult<string>>();
-      opening.resolve({
-        send() {},
-        responses: () => ({
-          [Symbol.asyncIterator]: () => ({ next: () => response.promise }),
-        }),
-        close() {
-          closes += 1;
-          response.resolve({ done: true, value: undefined });
-        },
-      });
-      await settle();
-      expect(closes).toBe(1);
-      expect(
-        worker.messages.filter(
-          (message) =>
-            message.kind === "chainConnectAck" ||
-            message.kind === "chainResponse",
-        ),
-      ).toEqual([]);
-      runtime.dispose();
-      expect(closes).toBe(1);
-    });
-  }
-
-  it("pumps HOP responses and releases the connection on remote closure", async () => {
-    const worker = new FakeWorker();
-    const response = Promise.withResolvers<IteratorResult<string>>();
-    const endpoint = "wss://hop.example/rpc";
-    const sent: string[] = [];
-    let closes = 0;
-    let delivered = false;
-    const runtimePromise = createWebWorkerPairingHostRuntime(
-      asWorker(worker),
-      makeHostCallbacks({
-        hop: {
-          allowedHopEndpoints: async () => [endpoint],
-          async connectHop() {
-            return {
-              send: (request) => sent.push(request),
-              responses: () => ({
-                [Symbol.asyncIterator]: () => ({
-                  async next(): Promise<IteratorResult<string>> {
-                    if (delivered) return { done: true, value: undefined };
-                    delivered = true;
-                    return response.promise;
-                  },
-                }),
-              }),
-              close() {
-                closes += 1;
-              },
-            };
-          },
-        },
-      }),
-      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
-    );
-    worker.emit({ kind: "loaded" });
-    worker.emit({ kind: "ready" });
-    const runtime = await runtimePromise;
-    worker.emit({
-      kind: "hopConnectStart",
-      connId: 7,
-      genesisHash: "0xab",
-      endpoint,
-    });
-    await settle();
-    expect(lastMessageOfKind(worker, "chainConnectAck")).toEqual({
-      kind: "chainConnectAck",
-      connId: 7,
-      ok: true,
-    });
-    worker.emit({ kind: "chainSend", connId: 7, request: '{"id":1}' });
-    response.resolve({ done: false, value: '{"id":1,"result":"ok"}' });
-    await settle();
-    expect(lastMessageOfKind(worker, "chainResponse")).toEqual({
-      kind: "chainResponse",
-      connId: 7,
-      json: '{"id":1,"result":"ok"}',
-    });
-    expect(lastMessageOfKind(worker, "chainClosed")).toEqual({
-      kind: "chainClosed",
-      connId: 7,
-    });
-    worker.emit({ kind: "chainSend", connId: 7, request: "late" });
-    worker.emit({ kind: "chainClose", connId: 7 });
-    runtime.dispose();
-    expect(sent).toEqual(['{"id":1}']);
-    expect(closes).toBe(1);
-  });
-
-  it("bounds outstanding HOP opens even when cancelled before completion", async () => {
-    const worker = new FakeWorker();
-    const opening = Promise.withResolvers<PlatformJsonRpcConnection>();
-    const endpoint = "wss://hop.example/rpc";
-    let dials = 0;
-    let closes = 0;
-    const runtimePromise = createWebWorkerPairingHostRuntime(
-      asWorker(worker),
-      makeHostCallbacks({
-        hop: {
-          allowedHopEndpoints: async () => [endpoint],
-          connectHop() {
-            dials += 1;
-            return opening.promise;
-          },
-        },
-      }),
-      { hostConfig: hostConfigFromRuntimeConfig(runtimeConfig()) },
-    );
-    worker.emit({ kind: "loaded" });
-    worker.emit({ kind: "ready" });
-    const runtime = await runtimePromise;
-    for (let connId = 1; connId <= MAX_JSON_RPC_CONNECTIONS; connId += 1) {
-      worker.emit({
-        kind: "hopConnectStart",
-        connId,
-        genesisHash: "0xab",
-        endpoint,
-      });
-      worker.emit({ kind: "chainClose", connId });
-    }
-    worker.emit({
-      kind: "hopConnectStart",
-      connId: MAX_JSON_RPC_CONNECTIONS + 1,
-      genesisHash: "0xab",
-      endpoint,
-    });
-    await settle();
-    expect(dials).toBe(MAX_JSON_RPC_CONNECTIONS);
-    expect(lastMessageOfKind(worker, "chainConnectAck")).toMatchObject({
-      connId: MAX_JSON_RPC_CONNECTIONS + 1,
-      ok: false,
-    });
-    opening.resolve({
-      send() {},
-      async *responses() {},
-      close() {
-        closes += 1;
-      },
-    });
-    await settle();
-    expect(closes).toBe(MAX_JSON_RPC_CONNECTIONS);
-    worker.emit({
-      kind: "hopConnectStart",
-      connId: MAX_JSON_RPC_CONNECTIONS + 2,
-      genesisHash: "0xab",
-      endpoint,
-    });
-    await settle();
-    expect(dials).toBe(MAX_JSON_RPC_CONNECTIONS + 1);
-    runtime.dispose();
-  });
-
   it("posts notifyContactsChanged to the worker", async () => {
     const worker = new FakeWorker();
     const config = runtimeConfig();
@@ -1781,7 +1015,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     });
 
     const product = ProductContext.enc({
-      productId: "dotli.dot",
+      productId: asProductId("dotli.dot"),
       executionKind: "Worker",
     });
 
@@ -1817,7 +1051,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     });
 
     const product = ProductContext.enc({
-      productId: "dotli.dot",
+      productId: asProductId("dotli.dot"),
       executionKind: "Worker",
     });
     worker.emit({
@@ -1853,7 +1087,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     const provider = await finishProviderReady(worker, providerPromise);
 
     const product = ProductContext.enc({
-      productId: "dotli.dot",
+      productId: asProductId("dotli.dot"),
       executionKind: "Worker",
     });
     const begin = (requestId: number) =>
@@ -1906,10 +1140,10 @@ describe("createWebWorkerPairingHostRuntime", () => {
     worker.emit({ kind: "ready" });
     const provider = await finishProviderReady(worker, providerPromise);
 
-    const productFor = (productId: string) =>
+    const productFor = (productId: ProductId) =>
       ProductContext.enc({ productId, executionKind: "Worker" });
-    const first = productFor("first.dot");
-    const second = productFor("second.dot");
+    const first = productFor(asProductId("first.dot"));
+    const second = productFor(asProductId("second.dot"));
 
     worker.emit({
       kind: "callbackRequest",
@@ -2086,57 +1320,21 @@ describe("createWebWorkerPairingHostRuntime", () => {
     provider.dispose();
   });
 
-  it("terminates the worker when WASM loading times out", async () => {
-    jest.useFakeTimers();
-    try {
-      const worker = new FakeWorker();
-      const providerPromise = createProviderFromRuntime(
-        asWorker(worker),
-        makeHostCallbacks(),
-        {
-          runtimeConfig: runtimeConfig(),
-          initTimeoutMs: 20,
-        },
-      );
-      const initErrorPromise = providerPromise.catch((error: unknown) => error);
-
-      jest.advanceTimersByTime(20);
-      const initError = await initErrorPromise;
-      expect(initError).toEqual(
-        new Error("worker init timed out after 20ms while loading WASM"),
-      );
-      expect(worker.terminated).toBe(true);
-    } finally {
-      jest.useRealTimers();
-    }
-  });
-
-  it("gives WASM loading and runtime initialization separate deadlines", async () => {
-    jest.useFakeTimers();
-    try {
-      const worker = new FakeWorker();
-      const providerPromise = createProviderFromRuntime(
-        asWorker(worker),
-        makeHostCallbacks(),
-        {
-          runtimeConfig: runtimeConfig(),
-          initTimeoutMs: 200,
-        },
-      );
-
-      jest.advanceTimersByTime(120);
-      worker.emit({ kind: "loaded" });
-      jest.advanceTimersByTime(120);
-      worker.emit({ kind: "ready" });
-      await Promise.resolve();
-      const createCore = lastMessageOfKind(worker, "createCore");
-      worker.emit({ kind: "coreReady", coreId: createCore.coreId });
-      await providerPromise;
-
-      expect(worker.terminated).toBe(false);
-    } finally {
-      jest.useRealTimers();
-    }
+  it("rejects when init times out", async () => {
+    const worker = new FakeWorker();
+    const providerPromise = createProviderFromRuntime(
+      asWorker(worker),
+      makeHostCallbacks(),
+      {
+        runtimeConfig: runtimeConfig(),
+        initTimeoutMs: 20,
+      },
+    );
+    worker.emit({ kind: "loaded" });
+    await expect(providerPromise).rejects.toThrow(
+      /worker init timed out after 20ms/,
+    );
+    expect(worker.terminated).toBe(true);
   });
 
   it("rejects on messageerror during init", async () => {
@@ -2319,7 +1517,7 @@ describe("createWebWorkerPairingHostRuntime", () => {
     const runtime = await readyRuntime(worker);
     const provider = await finishProviderReady(
       worker,
-      runtime.createProvider({ productId: "dotli.dot" }),
+      runtime.createProvider({ productId: asProductId("dotli.dot") }),
     );
     const seen: WorkerDemandChange[] = [];
     runtime.subscribeWorkerDemand((change) => seen.push(change));
@@ -2331,21 +1529,23 @@ describe("createWebWorkerPairingHostRuntime", () => {
     // The demand the core's own reference caused still reaches the host.
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "dotli.dot",
+      productId: asProductId("dotli.dot"),
       wanted: true,
     });
-    expect(seen).toEqual([{ productId: "dotli.dot", wanted: true }]);
+    expect(seen).toEqual([
+      { productId: asProductId("dotli.dot"), wanted: true },
+    ]);
 
     stop();
     expect(indexOfKind(worker, "releaseWorker")).toBe(-1);
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "dotli.dot",
+      productId: asProductId("dotli.dot"),
       wanted: false,
     });
     expect(seen).toEqual([
-      { productId: "dotli.dot", wanted: true },
-      { productId: "dotli.dot", wanted: false },
+      { productId: asProductId("dotli.dot"), wanted: true },
+      { productId: asProductId("dotli.dot"), wanted: false },
     ]);
     runtime.dispose();
   });
@@ -2440,14 +1640,14 @@ describe("worker demand", () => {
     const runtime = await readyRuntime(worker);
     const seen: WorkerDemandChange[] = [];
 
-    runtime.acquireWorker("a.dot");
+    runtime.acquireWorker(asProductId("a.dot"));
     expect(worker.messages.at(-1)).toEqual({
       kind: "acquireWorker",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
     });
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
       wanted: true,
     });
 
@@ -2455,35 +1655,35 @@ describe("worker demand", () => {
     const unsubscribe = runtime.subscribeWorkerDemand((change) =>
       seen.push(change),
     );
-    expect(seen).toEqual([{ productId: "a.dot", wanted: true }]);
+    expect(seen).toEqual([{ productId: asProductId("a.dot"), wanted: true }]);
 
-    runtime.acquireWorker("b.dot");
+    runtime.acquireWorker(asProductId("b.dot"));
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "b.dot",
+      productId: asProductId("b.dot"),
       wanted: true,
     });
 
-    runtime.releaseWorker("a.dot");
+    runtime.releaseWorker(asProductId("a.dot"));
     expect(worker.messages.at(-1)).toEqual({
       kind: "releaseWorker",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
     });
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
       wanted: false,
     });
     expect(seen).toEqual([
-      { productId: "a.dot", wanted: true },
-      { productId: "b.dot", wanted: true },
-      { productId: "a.dot", wanted: false },
+      { productId: asProductId("a.dot"), wanted: true },
+      { productId: asProductId("b.dot"), wanted: true },
+      { productId: asProductId("a.dot"), wanted: false },
     ]);
 
     unsubscribe();
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "b.dot",
+      productId: asProductId("b.dot"),
       wanted: false,
     });
     expect(seen).toHaveLength(3);
@@ -2497,19 +1697,19 @@ describe("worker demand", () => {
     runtime.subscribeWorkerDemand((change) => seen.push(change));
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
       wanted: true,
     });
 
     runtime.dispose();
     expect(seen).toEqual([
-      { productId: "a.dot", wanted: true },
-      { productId: "a.dot", wanted: false },
+      { productId: asProductId("a.dot"), wanted: true },
+      { productId: asProductId("a.dot"), wanted: false },
     ]);
 
     // Nothing is posted to a disposed worker, and a late subscriber sees nothing.
     const before = worker.messages.length;
-    runtime.acquireWorker("a.dot");
+    runtime.acquireWorker(asProductId("a.dot"));
     expect(worker.messages.length).toBe(before);
     const late: WorkerDemandChange[] = [];
     runtime.subscribeWorkerDemand((change) => late.push(change));
@@ -2524,7 +1724,7 @@ describe("worker demand", () => {
     // The worker posted this before it saw the dispose, so it lands afterwards.
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
       wanted: true,
     });
 
@@ -2545,13 +1745,13 @@ describe("worker demand", () => {
 
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
       wanted: true,
     });
 
     // The replay tells it the product is wanted; the delivery still running
     // must not tell it again.
-    expect(nested).toEqual([{ productId: "a.dot", wanted: true }]);
+    expect(nested).toEqual([{ productId: asProductId("a.dot"), wanted: true }]);
     runtime.dispose();
   });
 
@@ -2560,7 +1760,7 @@ describe("worker demand", () => {
     const runtime = await readyRuntime(worker);
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "a.dot",
+      productId: asProductId("a.dot"),
       wanted: true,
     });
 
@@ -2576,12 +1776,12 @@ describe("worker demand", () => {
     runtime.subscribeWorkerDemand((change) => seen.push(change));
     worker.emit({
       kind: "workerDemandChanged",
-      productId: "b.dot",
+      productId: asProductId("b.dot"),
       wanted: true,
     });
     expect(seen).toEqual([
-      { productId: "a.dot", wanted: true },
-      { productId: "b.dot", wanted: true },
+      { productId: asProductId("a.dot"), wanted: true },
+      { productId: asProductId("b.dot"), wanted: true },
     ]);
 
     unsubscribe();
@@ -2638,199 +1838,4 @@ describe("worker host role", () => {
     await settle();
     await finishProviderReady(worker, providerPromise).catch(() => {});
   });
-});
-
-describe("wallet allowance inspection isolation", () => {
-  const account = `0x${"11".repeat(32)}`;
-
-  async function resolvedRuntime(worker: FakeWorker) {
-    const runtime = await readySigningRuntime(worker);
-    const identity = runtime.refreshLocalIdentity();
-    worker.emit({
-      kind: "localIdentityResponse",
-      requestId: lastMessageOfKind(worker, "refreshLocalIdentity").requestId,
-      ok: true,
-      identity: { identityAccountId: account, liteUsername: "alice.paseo" },
-    });
-    await identity;
-    return runtime;
-  }
-
-  it("denies wallet-wide inspection to pairing hosts", async () => {
-    const pairingWorker = new FakeWorker();
-    const pairing = await readyRuntime(pairingWorker);
-    await expect(
-      (
-        pairing as unknown as WorkerSigningHostRuntime
-      ).getWalletAllowanceSnapshot([]),
-    ).rejects.toThrow("local signing identity");
-    expect(indexOfKind(pairingWorker, "getWalletAllowanceSnapshot")).toBe(-1);
-    pairing.dispose();
-  });
-
-  it("rejects an oversized or ambiguous product scope before dispatch", async () => {
-    const worker = new FakeWorker();
-    const runtime = await resolvedRuntime(worker);
-    for (const ids of [
-      ["a.dot", "a.dot"],
-      [""],
-      Array.from({ length: 33 }, (_, i) => `app${i}.dot`),
-    ]) {
-      await expect(runtime.getWalletAllowanceSnapshot(ids)).rejects.toThrow(
-        "product IDs",
-      );
-    }
-    expect(indexOfKind(worker, "getWalletAllowanceSnapshot")).toBe(-1);
-    runtime.dispose();
-  });
-
-  it.each(["dispose", "error", "messageerror"] as const)(
-    "settles pending reads when the worker closes through %s",
-    async (close) => {
-      const worker = new FakeWorker();
-      const runtime = await resolvedRuntime(worker);
-      const read = runtime.getWalletAllowanceSnapshot([]);
-      const rejected = read.catch((error: unknown) => error);
-      if (close === "dispose") runtime.dispose();
-      else if (close === "error") worker.emitError("worker stopped");
-      else worker.emitMessageError();
-      expect(await rejected).toBeInstanceOf(Error);
-      await expect(runtime.getWalletAllowanceSnapshot([])).rejects.toThrow();
-      runtime.dispose();
-    },
-  );
-
-  it("rejects an in-flight snapshot immediately when another wallet activates", async () => {
-    const worker = new FakeWorker();
-    const runtime = await resolvedRuntime(worker);
-    const read = runtime.getWalletAllowanceSnapshot([]);
-    const requestId = lastMessageOfKind(
-      worker,
-      "getWalletAllowanceSnapshot",
-    ).requestId;
-    const rejected = read.catch((error: unknown) => error);
-    const activation = runtime.activateLocalSession(new Uint8Array(32));
-    await expect(runtime.getWalletAllowanceSnapshot([])).rejects.toThrow(
-      "local signing identity",
-    );
-    expect(await rejected).toBeInstanceOf(Error);
-    worker.emit({
-      kind: "walletAllowanceSnapshotResponse",
-      requestId,
-      ok: true,
-      snapshot: {
-        schemaVersion: 1,
-        identityAccountId: account,
-        networkSuffix: "paseo",
-      },
-    });
-    worker.emit({
-      kind: "sessionActivationResponse",
-      requestId: lastMessageOfKind(worker, "activateLocalSession").requestId,
-      ok: true,
-    });
-    await activation;
-    runtime.dispose();
-  });
-
-  it("does not accept a late identity refresh from a different activation", async () => {
-    const worker = new FakeWorker();
-    const runtime = await readySigningRuntime(worker);
-    const identity = runtime.refreshLocalIdentity();
-    const rejected = identity.catch((error: unknown) => error);
-    const activation = runtime.activateLocalSession(new Uint8Array(32));
-    worker.emit({
-      kind: "localIdentityResponse",
-      requestId: lastMessageOfKind(worker, "refreshLocalIdentity").requestId,
-      ok: true,
-      identity: { identityAccountId: account },
-    });
-    worker.emit({
-      kind: "sessionActivationResponse",
-      requestId: lastMessageOfKind(worker, "activateLocalSession").requestId,
-      ok: true,
-    });
-    expect(await rejected).toBeInstanceOf(Error);
-    await activation;
-    runtime.dispose();
-  });
-
-  it("retains wallet binding when only the debug allocation policy changes", async () => {
-    const worker = new FakeWorker();
-    const runtime = await resolvedRuntime(worker);
-    const toggle = runtime.setGrantAllowancesUnchecked(false);
-    worker.emit({
-      kind: "sessionActivationResponse",
-      requestId: lastMessageOfKind(worker, "setGrantAllowancesUnchecked")
-        .requestId,
-      ok: true,
-    });
-    await toggle;
-    const read = runtime.getWalletAllowanceSnapshot([]);
-    worker.emit({
-      kind: "walletAllowanceSnapshotResponse",
-      requestId: lastMessageOfKind(worker, "getWalletAllowanceSnapshot")
-        .requestId,
-      ok: true,
-      snapshot: {
-        schemaVersion: 1,
-        identityAccountId: `0x${"22".repeat(32)}`,
-        networkSuffix: "paseo",
-      },
-    });
-    await expect(read).rejects.toThrow("current identity");
-    runtime.dispose();
-  });
-});
-
-describe("native Chat directory lifetime", () => {
-  it("refuses a pairing host instead of returning an empty directory", async () => {
-    const runtime = await readyRuntime(new FakeWorker());
-    await expect(runtime.getNativeChatContacts()).rejects.toThrow();
-    runtime.dispose();
-  });
-
-  it.each(["activation", "contacts", "dispose"] as const)(
-    "rejects a pending directory after %s invalidation, including a late reply",
-    async (change) => {
-      const worker = new FakeWorker();
-      const runtime = await readySigningRuntime(worker);
-      const directory = runtime.getNativeChatContacts();
-      const outcome = directory.catch((error: unknown) => error);
-      const requestId = lastMessageOfKind(
-        worker,
-        "getNativeChatContacts",
-      ).requestId;
-      let activation: Promise<void> | undefined;
-      if (change === "activation") {
-        activation = runtime.activateLocalSession(new Uint8Array(32));
-        await expect(runtime.getNativeChatContacts()).rejects.toThrow();
-      } else if (change === "contacts") {
-        runtime.notifyContactsChanged();
-      } else {
-        runtime.dispose();
-      }
-      worker.emit({
-        kind: "nativeChatContactsResponse",
-        requestId,
-        ok: true,
-        snapshot: {
-          walletPublicKey: `0x${"11".repeat(32)}`,
-          genesisHash: `0x${"22".repeat(32)}`,
-          contacts: [{ peerIdentity: `0x${"33".repeat(32)}` }],
-        },
-      });
-      expect(await outcome).toBeInstanceOf(Error);
-      if (activation) {
-        worker.emit({
-          kind: "sessionActivationResponse",
-          requestId: lastMessageOfKind(worker, "activateLocalSession")
-            .requestId,
-          ok: true,
-        });
-        await activation;
-      }
-      runtime.dispose();
-    },
-  );
 });

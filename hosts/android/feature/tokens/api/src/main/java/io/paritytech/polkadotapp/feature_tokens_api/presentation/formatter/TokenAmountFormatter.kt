@@ -40,6 +40,9 @@ interface TokenAmountFormatter {
 fun TokenAmountFormatter.formatFiat(model: TokenAmountModel): String =
     formatTokenAmount(model, RoundPrecision.FIAT)
 
+fun TokenAmountFormatter.formatFiatSigned(model: TokenAmountModel, withSymbol: Boolean = false): String =
+    CurrencyConfig.fiatSymbol + formatTokenAmount(model, RoundPrecision.FIAT, withSymbol = withSymbol)
+
 private class MockedAmountFormatter : TokenAmountFormatter {
     override fun formatTokenAmount(
         tokenAmount: TokenAmountModel,

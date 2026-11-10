@@ -13,7 +13,8 @@ public final class PeerSessionFactory<M: MessageExchange.CodableMessage> {
 
     private weak var delegate: AnyPeerSessionDelegate<M>?
     private let workQueue: DispatchQueue
-    private let submitter: StatementStoreSubmitting
+    private let statementSignerResolver: PeerSessionSignerResolving
+    private let statementStoreConnection: StatementStoreConnecting
     private let signerManager: StatementStoreSignerManaging
     private let encryptionManager: MessageExchangeEncryptionManaging
     private let deviceEncryptionKeyFactory: MessageExchangeEncryptionMaking?
@@ -21,7 +22,6 @@ public final class PeerSessionFactory<M: MessageExchange.CodableMessage> {
     private let sessionIdFactory: PeerSessionIdFactoryProtocol
     private let channelFactory: StatementChannelMaking
     private let preSendHandler: AnyPeerSessionPreSendHandler<M>
-    private let preferredRouteSelector: PeerSessionRouteSelector<M>
     private let subscriptionFactory: StatementSubscriptionFactoryProtocol
     private let maxStatementSize: Int
     private let compactorFactory: AnyMessageCompactorFactory<M>?
@@ -31,7 +31,8 @@ public final class PeerSessionFactory<M: MessageExchange.CodableMessage> {
     public init(
         delegate: AnyPeerSessionDelegate<M>,
         workQueue: DispatchQueue,
-        submitter: StatementStoreSubmitting,
+        statementSignerResolver: PeerSessionSignerResolving,
+        statementStoreConnection: StatementStoreConnecting,
         encryptionManager: MessageExchangeEncryptionManaging,
         deviceEncryptionKeyFactory: MessageExchangeEncryptionMaking?,
         messageExchangeModeProvider: MessageExchangeModeProviding,
@@ -39,7 +40,6 @@ public final class PeerSessionFactory<M: MessageExchange.CodableMessage> {
         sessionIdFactory: PeerSessionIdFactoryProtocol,
         channelFactory: StatementChannelMaking,
         preSendHandler: AnyPeerSessionPreSendHandler<M>,
-        preferredRouteSelector: PeerSessionRouteSelector<M>,
         subscriptionFactory: StatementSubscriptionFactoryProtocol,
         maxStatementSize: Int,
         compactorFactory: AnyMessageCompactorFactory<M>? = nil,
@@ -48,7 +48,8 @@ public final class PeerSessionFactory<M: MessageExchange.CodableMessage> {
     ) {
         self.delegate = delegate
         self.workQueue = workQueue
-        self.submitter = submitter
+        self.statementSignerResolver = statementSignerResolver
+        self.statementStoreConnection = statementStoreConnection
         self.encryptionManager = encryptionManager
         self.deviceEncryptionKeyFactory = deviceEncryptionKeyFactory
         self.messageExchangeModeProvider = messageExchangeModeProvider
@@ -56,7 +57,6 @@ public final class PeerSessionFactory<M: MessageExchange.CodableMessage> {
         self.sessionIdFactory = sessionIdFactory
         self.channelFactory = channelFactory
         self.preSendHandler = preSendHandler
-        self.preferredRouteSelector = preferredRouteSelector
         self.subscriptionFactory = subscriptionFactory
         self.maxStatementSize = maxStatementSize
         self.compactorFactory = compactorFactory
@@ -69,8 +69,16 @@ extension PeerSessionFactory: PeerSessionMaking {
     public func makeSession(
         for request: MessageExchange.SessionRequest
     ) -> AnyPeerSession<M>? {
+        let messageExchangeMode = messageExchangeModeProvider.mode(for: request.own)
+
+        // A device-route session has nobody to talk to until the peer has a device.
+        guard messageExchangeMode == .identity || request.hasPeerDevices else {
+            logger?.warning("Skipping session for \(request.peer.accountId.toHex()): peer has no devices")
+            return nil
+        }
+
         do {
-            let signer = try signerManager.makeSigner(for: request.own.signKeyId)
+            let identitySigner = try signerManager.makeSigner(for: request.own.signKeyId)
 
             let identityEncryptionKeyFactory = try encryptionManager
                 .makeEncryptorFactory(ownEncryptionKeyId: request.own.encryptionKeyId)
@@ -78,12 +86,7 @@ extension PeerSessionFactory: PeerSessionMaking {
             let identityEncryptor = try identityEncryptionKeyFactory
                 .makeEncryptor(remotePublicKey: request.peer.publicKey)
 
-            let messageExchangeMode = messageExchangeModeProvider.mode(for: request.own)
-
-            let routeConfiguration = makeRouteConfiguration(
-                messageExchangeMode: messageExchangeMode,
-                hasPeerDevices: request.hasPeerDevices
-            )
+            let routeConfiguration = makeRouteConfiguration(messageExchangeMode: messageExchangeMode)
 
             let outgoingSharedSecret = try deriveOutgoingSharedSecret(
                 for: request,
@@ -93,7 +96,7 @@ extension PeerSessionFactory: PeerSessionMaking {
 
             let primarySessionId = try sessionIdFactory.createSessionId(
                 for: .init(
-                    ownAccountId: signer.accountId,
+                    ownAccountId: identitySigner.accountId,
                     ownPin: request.own.pin,
                     peerAccountId: request.peer.accountId,
                     peerPin: request.peer.pin,
@@ -102,7 +105,7 @@ extension PeerSessionFactory: PeerSessionMaking {
             )
             let identitySessionId = try sessionIdFactory.createSessionId(
                 for: .init(
-                    ownAccountId: signer.accountId,
+                    ownAccountId: identitySigner.accountId,
                     ownPin: request.own.pin,
                     peerAccountId: request.peer.accountId,
                     peerPin: request.peer.pin,
@@ -119,7 +122,7 @@ extension PeerSessionFactory: PeerSessionMaking {
                 messageExchangeMode: messageExchangeMode,
                 identityEncryptor: identityEncryptor,
                 identityEncryptionKeyFactory: identityEncryptionKeyFactory,
-                signer: signer
+                ownAccountId: identitySigner.accountId
             )
 
             let routeContexts = try makeRouteContexts(
@@ -129,9 +132,15 @@ extension PeerSessionFactory: PeerSessionMaking {
 
             let sizeValidator = OutgoingRequestSizeValidator(maxStatementSize: maxStatementSize)
 
+            let statementSubmitter = ResolvingStatementSubmitter(
+                connection: statementStoreConnection,
+                signerResolver: statementSignerResolver,
+                request: request
+            )
+
             let outgoingChannel = try makeOutgoingChannel(
                 routeContexts: routeContexts,
-                signer: signer,
+                submitter: statementSubmitter,
                 priorityProvider: priorityProvider,
                 requestQueue: AnyOutgoingRequestQueue(OutgoingRequestQueue(
                     statementDataCoder: statementDataCoder,
@@ -142,7 +151,7 @@ extension PeerSessionFactory: PeerSessionMaking {
                 ))
             )
 
-            let messageCompacter = compactorFactory?.createCompactor(for: request.own.signKeyId)
+            let messageCompacter = try compactorFactory?.createCompactor()
 
             let outgoingInterface: AnyOutgoingMessageChannel<M>
             var compactionProxy: OutgoingChannelCompactionProxy<M>?
@@ -169,7 +178,7 @@ extension PeerSessionFactory: PeerSessionMaking {
 
             let incomingChannel = try makeIncomingChannel(
                 routeContexts: routeContexts,
-                signer: signer,
+                submitter: statementSubmitter,
                 priorityProvider: priorityProvider,
                 statementDataCoder: statementDataCoder
             )
@@ -179,7 +188,7 @@ extension PeerSessionFactory: PeerSessionMaking {
                 messageExchangeMode: messageExchangeMode,
                 identitySessionId: identitySessionId,
                 primarySessionId: primarySessionId,
-                signer: signer
+                ownAccountId: identitySigner.accountId
             )
 
             let peerSubscription = try makePeerSubscription(
@@ -187,7 +196,7 @@ extension PeerSessionFactory: PeerSessionMaking {
                 messageExchangeMode: messageExchangeMode,
                 identitySessionId: identitySessionId,
                 identityEncryptionKeyFactory: identityEncryptionKeyFactory,
-                signer: signer
+                identityAccountId: identitySigner.accountId
             )
 
             let sessionInitializer = PeerSessionInitializer<Message>(
@@ -242,33 +251,10 @@ private extension PeerSessionFactory {
         let effectiveRouteSelector: PeerSessionRouteSelector<Message>
     }
 
-    func makeRouteConfiguration(
-        messageExchangeMode: MessageExchangeMode,
-        hasPeerDevices: Bool
-    ) -> RouteConfiguration<Message> {
-        // When only the identity lane exists, every message must also use the
-        // identity route. The preferred selector is only valid once all selected
-        // routes have matching lanes.
-        switch messageExchangeMode {
-        case .identity:
-            identityOnlyRouteConfiguration()
-        case .multidevice:
-            if hasPeerDevices {
-                .init(
-                    supportedRoutes: [.identity, .device],
-                    effectiveRouteSelector: preferredRouteSelector
-                )
-            } else {
-                identityOnlyRouteConfiguration()
-            }
-        }
-    }
+    func makeRouteConfiguration(messageExchangeMode: MessageExchangeMode) -> RouteConfiguration<Message> {
+        let route: PeerSessionRoute = messageExchangeMode == .identity ? .identity : .device
 
-    func identityOnlyRouteConfiguration() -> RouteConfiguration<Message> {
-        .init(
-            supportedRoutes: [.identity],
-            effectiveRouteSelector: .init { _ in .identity }
-        )
+        return RouteConfiguration(supportedRoutes: [route], effectiveRouteSelector: .init { _ in route })
     }
 
     func deriveOutgoingSharedSecret(
@@ -297,7 +283,7 @@ private extension PeerSessionFactory {
         messageExchangeMode: MessageExchangeMode,
         identityEncryptor: MessageExchangeEncrypting,
         identityEncryptionKeyFactory: MessageExchangeEncryptionMaking,
-        signer: StatementStoreSigning
+        ownAccountId: AccountId
     ) throws -> StatementDataCoding {
         let identityCoder = StatementDataCoder(encryptor: identityEncryptor, logger: logger)
 
@@ -323,7 +309,7 @@ private extension PeerSessionFactory {
                 identityCoder: identityCoder,
                 identityEncryptionKeyFactory: identityEncryptionKeyFactory,
                 deviceEncryptionKeyFactory: deviceEncryptionKeyFactory,
-                signer: signer
+                ownAccountId: ownAccountId
             )
             return deviceCoder
         }
@@ -334,7 +320,7 @@ private extension PeerSessionFactory {
         identityCoder: StatementDataCoding,
         identityEncryptionKeyFactory: MessageExchangeEncryptionMaking,
         deviceEncryptionKeyFactory: MessageExchangeEncryptionMaking,
-        signer: StatementStoreSigning
+        ownAccountId: AccountId
     ) throws -> StatementDataCoding {
         let outgoingCoder = try makeMultiDeviceOutgoingCoder(
             deviceEncryptionKeyFactory: deviceEncryptionKeyFactory,
@@ -353,7 +339,7 @@ private extension PeerSessionFactory {
                 logger: logger
             ),
             recipientDevices: makeRecipientDevices(peerDevices: request.peer.devices),
-            ownStatementAccountId: signer.accountId,
+            ownStatementAccountId: ownAccountId,
             deviceKeysByAccountId: makeDeviceKeysByAccountId(peerDevices: request.peer.devices),
             logger: logger
         )
@@ -406,44 +392,29 @@ private extension PeerSessionFactory {
         messageExchangeMode: MessageExchangeMode,
         identitySessionId: MessageExchange.SessionId,
         identityEncryptionKeyFactory: MessageExchangeEncryptionMaking,
-        signer: StatementStoreSigning
+        identityAccountId: AccountId
     ) throws -> PeerSessionStatementSubscribing {
-        let identityStatementSubscription = try subscriptionFactory.createSubscription(for: .init(
-            accountId: request.peer.accountId,
-            rawSessionId: identitySessionId.peer
-        ))
-
         switch messageExchangeMode {
         case .identity:
+            let identityStatementSubscription = try subscriptionFactory.createSubscription(for: .init(
+                accountId: request.peer.accountId,
+                rawSessionId: identitySessionId.peer
+            ))
+
             return makeStatementSubscription(inputs: [
                 .init(
                     route: .identity,
+                    topicAccountId: request.peer.accountId,
                     subscription: identityStatementSubscription
                 )
             ])
         case .multidevice:
-            guard request.hasPeerDevices else {
-                return makeStatementSubscription(inputs: [
-                    .init(
-                        route: .identity,
-                        subscription: identityStatementSubscription
-                    )
-                ])
-            }
-
-            var inputs: [PeerSessionStatementSubscription.Input] = [
-                .init(
-                    route: .identity,
-                    subscription: identityStatementSubscription
-                )
-            ]
-
             let deviceInputs = try request.peer.devices.map { device in
                 let deviceEncryptor = try identityEncryptionKeyFactory
                     .makeEncryptor(remotePublicKey: device.encryptionPublicKey)
                 let deviceSessionId = try sessionIdFactory.createSessionId(
                     for: .init(
-                        ownAccountId: signer.accountId,
+                        ownAccountId: identityAccountId,
                         ownPin: request.own.pin,
                         peerAccountId: device.statementAccountId,
                         peerPin: request.peer.pin,
@@ -456,58 +427,46 @@ private extension PeerSessionFactory {
                 ))
                 return PeerSessionStatementSubscription.Input(
                     route: .device,
+                    topicAccountId: device.statementAccountId,
                     subscription: deviceStatementSubscription
                 )
             }
 
-            inputs.append(contentsOf: deviceInputs)
-
-            return makeStatementSubscription(inputs: inputs)
+            return makeStatementSubscription(inputs: deviceInputs)
         }
     }
 
     func makeOwnSubscription(
-        for request: MessageExchange.SessionRequest,
+        for _: MessageExchange.SessionRequest,
         messageExchangeMode: MessageExchangeMode,
         identitySessionId: MessageExchange.SessionId,
         primarySessionId: MessageExchange.SessionId,
-        signer: StatementStoreSigning
+        ownAccountId: AccountId
     ) throws -> PeerSessionStatementSubscribing {
-        let identityStatementSubscription = try subscriptionFactory.createSubscription(for: .init(
-            accountId: signer.accountId,
-            rawSessionId: identitySessionId.own
-        ))
-
         switch messageExchangeMode {
         case .identity:
-            return makeStatementSubscription(inputs: [
-                .init(
-                    route: .identity,
-                    subscription: identityStatementSubscription
-                )
-            ])
-        case .multidevice:
-            guard request.hasPeerDevices else {
-                return makeStatementSubscription(inputs: [
-                    .init(
-                        route: .identity,
-                        subscription: identityStatementSubscription
-                    )
-                ])
-            }
-
-            let deviceStatementSubscription = try subscriptionFactory.createSubscription(for: .init(
-                accountId: signer.accountId,
-                rawSessionId: primarySessionId.own
+            let identityStatementSubscription = try subscriptionFactory.createSubscription(for: .init(
+                accountId: ownAccountId,
+                rawSessionId: identitySessionId.own
             ))
 
             return makeStatementSubscription(inputs: [
                 .init(
                     route: .identity,
+                    topicAccountId: ownAccountId,
                     subscription: identityStatementSubscription
-                ),
+                )
+            ])
+        case .multidevice:
+            let deviceStatementSubscription = try subscriptionFactory.createSubscription(for: .init(
+                accountId: ownAccountId,
+                rawSessionId: primarySessionId.own
+            ))
+
+            return makeStatementSubscription(inputs: [
                 .init(
                     route: .device,
+                    topicAccountId: ownAccountId,
                     subscription: deviceStatementSubscription
                 )
             ])
@@ -543,7 +502,7 @@ private extension PeerSessionFactory {
 
     func makeOutgoingChannel(
         routeContexts: PeerSessionRoute.Contexts,
-        signer: StatementStoreSigning,
+        submitter: PeerSessionStatementSubmitting,
         priorityProvider: PeerSessionPriorityProviding,
         requestQueue: AnyOutgoingRequestQueue<Message>
     ) throws -> OutgoingMessageChannel<M> {
@@ -551,7 +510,6 @@ private extension PeerSessionFactory {
             workQueue: workQueue,
             routeContexts: routeContexts,
             submitter: submitter,
-            signer: signer,
             preSendHandler: preSendHandler,
             priorityProvider: priorityProvider,
             requestQueue: requestQueue,
@@ -562,7 +520,7 @@ private extension PeerSessionFactory {
 
     func makeIncomingChannel(
         routeContexts: PeerSessionRoute.Contexts,
-        signer: StatementStoreSigning,
+        submitter: PeerSessionStatementSubmitting,
         priorityProvider: PeerSessionPriorityProviding,
         statementDataCoder: StatementDataCoding
     ) throws -> IncomingMessageChannel<M> {
@@ -570,7 +528,6 @@ private extension PeerSessionFactory {
             workQueue: workQueue,
             routeContexts: routeContexts,
             submitter: submitter,
-            signer: signer,
             priorityProvider: priorityProvider,
             statementDataCoder: statementDataCoder,
             operationQueue: operationQueue,

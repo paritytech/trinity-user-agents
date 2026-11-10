@@ -1,10 +1,11 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 @testable import Products
 
 /// Cases mirror the conformance fixtures the manifest specification lists for Hosts.
 struct ProductManifestParserTests {
-    private let parser = ProductManifestParser(logger: SilentLogger())
+    private let parser = ProductManifestParser(logger: SilentLogger(), screening: .passingThrough)
 
     // MARK: - Root manifest
 
@@ -59,7 +60,7 @@ struct ProductManifestParserTests {
         let executable = parser.parseExecutable(
             Fixtures.app(),
             kind: .app,
-            identifier: "app.hackm3.dot"
+            identifier: try! ProductId("app.hackm3.dot")
         )
 
         guard case let .app(app)? = executable else {
@@ -67,7 +68,7 @@ struct ProductManifestParserTests {
             return
         }
 
-        #expect(app.identifier == "app.hackm3.dot")
+        #expect(app.identifier.rawValue == "app.hackm3.dot")
         #expect(app.appVersion == SemVer(major: 1, minor: 2, patch: 3, build: nil))
     }
 
@@ -75,7 +76,7 @@ struct ProductManifestParserTests {
         let executable = parser.parseExecutable(
             Fixtures.app(version: #"[1, 2, 3, "abc123"]"#),
             kind: .app,
-            identifier: "app.hackm3.dot"
+            identifier: try! ProductId("app.hackm3.dot")
         )
 
         guard case let .app(app)? = executable else {
@@ -96,7 +97,7 @@ struct ProductManifestParserTests {
         let executable = parser.parseExecutable(
             Fixtures.app(version: version),
             kind: .app,
-            identifier: "app.hackm3.dot"
+            identifier: try! ProductId("app.hackm3.dot")
         )
 
         #expect(executable == nil)
@@ -107,7 +108,7 @@ struct ProductManifestParserTests {
         let executable = parser.parseExecutable(
             Fixtures.app(),
             kind: .worker,
-            identifier: "worker.hackm3.dot"
+            identifier: try! ProductId("worker.hackm3.dot")
         )
 
         #expect(executable == nil)
@@ -116,19 +117,19 @@ struct ProductManifestParserTests {
     @Test func rejectsUnknownKind() {
         let raw = #"{"$v":1,"kind":"gadget","appVersion":[1,0,0]}"#
 
-        #expect(parser.parseExecutable(raw, kind: .app, identifier: "app.hackm3.dot") == nil)
+        #expect(parser.parseExecutable(raw, kind: .app, identifier: try! ProductId("app.hackm3.dot")) == nil)
     }
 
     @Test func treatsAbsentExecutableRecordAsNotProvided() {
-        #expect(parser.parseExecutable(nil, kind: .app, identifier: "app.hackm3.dot") == nil)
-        #expect(parser.parseExecutable("", kind: .app, identifier: "app.hackm3.dot") == nil)
+        #expect(parser.parseExecutable(nil, kind: .app, identifier: try! ProductId("app.hackm3.dot")) == nil)
+        #expect(parser.parseExecutable("", kind: .app, identifier: try! ProductId("app.hackm3.dot")) == nil)
     }
 
     @Test func parsesWidgetManifest() throws {
         let executable = parser.parseExecutable(
             Fixtures.widget(),
             kind: .widget,
-            identifier: "widget.hackm3.dot"
+            identifier: try! ProductId("widget.hackm3.dot")
         )
 
         guard case let .widget(widget)? = executable else {
@@ -145,7 +146,7 @@ struct ProductManifestParserTests {
         let executable = parser.parseExecutable(
             Fixtures.widget(width: nil),
             kind: .widget,
-            identifier: "widget.hackm3.dot"
+            identifier: try! ProductId("widget.hackm3.dot")
         )
 
         guard case let .widget(widget)? = executable else {
@@ -157,11 +158,15 @@ struct ProductManifestParserTests {
     }
 
     @Test func rejectsWidgetWithoutHeights() {
-        #expect(parser.parseExecutable(Fixtures.widget(heights: "[]"), kind: .widget, identifier: "w") == nil)
+        #expect(parser.parseExecutable(
+            Fixtures.widget(heights: "[]"),
+            kind: .widget,
+            identifier: try! ProductId("w.dot")
+        ) == nil)
         #expect(parser.parseExecutable(
             #"{"$v":1,"kind":"widget","appVersion":[1,0,0]}"#,
             kind: .widget,
-            identifier: "w"
+            identifier: try! ProductId("w.dot")
         ) == nil)
     }
 
@@ -169,7 +174,7 @@ struct ProductManifestParserTests {
         let executable = parser.parseExecutable(
             Fixtures.worker(),
             kind: .worker,
-            identifier: "worker.hackm3.dot"
+            identifier: try! ProductId("worker.hackm3.dot")
         )
 
         guard case let .worker(worker)? = executable else {
@@ -178,45 +183,213 @@ struct ProductManifestParserTests {
         }
 
         #expect(worker.entrypoint == "src/worker.js")
-        #expect(worker.includesChat)
-        #expect(!worker.includesPocket)
+        #expect(worker.serves(.chat))
+        #expect(!worker.serves(.pocket))
     }
 
-    /// A worker serving no user-facing surface is valid and still launches.
-    @Test func acceptsWorkerServingNoSurface() throws {
-        let executable = parser.parseExecutable(
-            Fixtures.worker(chat: "false", pocket: "false"),
-            kind: .worker,
-            identifier: "worker.hackm3.dot"
-        )
+    // MARK: - Pocket cards
 
-        guard case let .worker(worker)? = executable else {
-            Issue.record("expected a worker executable")
-            return
+    @Test func parsesPocketCardsAWorkerPublishes() throws {
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: Fixtures.cards())))
+
+        #expect(worker.pocketCards.map(\.id.value) == ["loyalty", "trophy"])
+        #expect(worker.pocketCards.map(\.title) == ["Loyalty", "Trophy"])
+        #expect(worker.pocketCards.first?.preview == .archive(path: "faces/loyalty.json"))
+    }
+
+    /// A published manifest must never make the Host fetch an address of the
+    /// product's choosing, so a preview is read as an archive path whatever it
+    /// spells.
+    @Test func readsAPreviewAsAnArchivePathEvenWhenItSpellsAUrl() throws {
+        let cards = #"[{"id":"loyalty","title":"Loyalty","preview":"https://evil.example/face.json"}]"#
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
+
+        #expect(worker.pocketCards.first?.preview == .archive(path: "https://evil.example/face.json"))
+    }
+
+    /// A stricter Host must not see a different manifest than this one, so cards
+    /// are read only behind the flag that declares them.
+    @Test func publishesNoCardsWithoutThePocketInclude() throws {
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "false", cards: Fixtures.cards())))
+
+        #expect(worker.pocketCards.isEmpty)
+    }
+
+    @Test func publishesNoCardsWhenTheWorkerDeclaresNone() throws {
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true")))
+
+        #expect(worker.pocketCards.isEmpty)
+    }
+
+    /// A defect in the cards costs the product its cards and nothing more:
+    /// failing the worker record over one would take the product's chat with it.
+    @Test func keepsTheWorkerWhenACardIsMalformed() throws {
+        let missingTitle = #"[{"id":"loyalty","preview":"faces/loyalty.json"}]"#
+        let blankPreview = #"[{"id":"loyalty","title":"Loyalty","preview":"  "}]"#
+
+        for cards in [missingTitle, blankPreview] {
+            let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
+
+            #expect(worker.serves(.chat))
+            #expect(worker.pocketCards.isEmpty)
         }
-
-        #expect(!worker.includesChat)
-        #expect(!worker.includesPocket)
     }
 
-    @Test func rejectsWorkerMissingEntrypointOrIncludes() {
+    /// A pocket section whose JSON types are wrong is the same defect as a card
+    /// the parser refuses, so it costs the same: the cards. Decoding it as part
+    /// of the executable record would instead lose the worker, and with it the
+    /// chat the product serves from the very same record.
+    @Test(arguments: [
+        #"{"cards":{"loyalty":{"title":"Loyalty","preview":"faces/loyalty.json"}}}"#,
+        #"{"cards":[{"id":7,"title":"Loyalty","preview":"faces/loyalty.json"}]}"#,
+        #"{"cards":"faces/loyalty.json"}"#,
+        #""cards""#,
+        "[]"
+    ])
+    func keepsTheWorkerWhenThePocketSectionHasTheWrongJsonTypes(_ section: String) throws {
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", pocketSection: section)))
+
+        #expect(worker.entrypoint == "src/worker.js")
+        #expect(worker.serves(.chat))
+        #expect(worker.pocketCards.isEmpty)
+    }
+
+    /// The request is the card's own, so one card asking for its face away
+    /// leaves its sibling opening with its face shown, as every card published
+    /// before the field existed does.
+    @Test func opensOnlyTheCardThatAsksWithItsFaceAway() throws {
+        let cards = """
+        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":false},
+         {"id":"trophy","title":"Trophy","preview":"faces/trophy.json"}]
+        """
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
+
+        #expect(worker.pocketCards.map(\.faceShown) == [false, true])
+    }
+
+    /// Android reads a null as the field left out, and both hosts must open the
+    /// same manifest the same way.
+    @Test func readsANullFaceShownAsLeftOut() throws {
+        let cards = #"[{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":null}]"#
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
+
+        #expect(worker.pocketCards.map(\.faceShown) == [true])
+    }
+
+    /// Guessing what a value that is not a boolean meant would open a card in
+    /// a way its publisher never tested, and Android refuses it too, so it is a
+    /// card defect like any other: the product loses its cards, not its worker.
+    /// The RFC drops every card over one invalid definition, so a valid card
+    /// beside the bad one goes with it.
+    @Test(arguments: [#""no""#, "0"])
+    func publishesNoCardsWhenFaceShownIsNotABoolean(_ faceShown: String) throws {
+        let cards = """
+        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","faceShown":\(faceShown)},
+         {"id":"trophy","title":"Trophy","preview":"faces/trophy.json"}]
+        """
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
+
+        #expect(worker.serves(.chat))
+        #expect(worker.pocketCards.isEmpty)
+    }
+
+    /// Two cards under one id would make the card a product hands out ambiguous,
+    /// so the whole set is refused rather than one of them picked.
+    @Test func publishesNoCardsWhenIdsRepeat() throws {
+        let cards = """
+        [{"id":"loyalty","title":"One","preview":"a.json"},
+         {"id":"loyalty","title":"Two","preview":"b.json"}]
+        """
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
+
+        #expect(worker.pocketCards.isEmpty)
+    }
+
+    /// The two rules are not one rule, and the core draws the line: an id is
+    /// addressed, a title is only drawn. A parser that screened both alike
+    /// would cost a product every card over a legitimate emoji in a title.
+    @Test func screensAnIdAndATitleThroughTheirOwnRules() throws {
+        let screening = PocketCardScreening(
+            id: { raw in
+                guard raw == "loyalty" else { throw ScreeningRefusal.refused }
+                return raw
+            },
+            title: { raw in
+                guard raw == "Loyalty" else { throw ScreeningRefusal.refused }
+                return raw
+            }
+        )
+        let parser = ProductManifestParser(logger: SilentLogger(), screening: screening)
+
+        let swapped = #"[{"id":"Loyalty","title":"loyalty","preview":"faces/loyalty.json"}]"#
+        #expect(parsedWorker(Fixtures.worker(pocket: "true", cards: swapped), parser: parser)?.pocketCards
+            .isEmpty == true)
+
+        let correct = #"[{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json"}]"#
+        #expect(parsedWorker(Fixtures.worker(pocket: "true", cards: correct), parser: parser)?.pocketCards.count == 1)
+    }
+
+    /// The screened value is what the card is stored and addressed under, not
+    /// the raw text, so a host comparing against the core's form still matches.
+    @Test func keepsWhatTheScreeningReturnedRatherThanTheRawText() throws {
+        let screening = PocketCardScreening(id: { _ in "screened-id" }, title: { _ in "Screened Title" })
+        let parser = ProductManifestParser(logger: SilentLogger(), screening: screening)
+
+        let cards = #"[{"id":"  raw  ","title":"  raw  ","preview":"faces/loyalty.json"}]"#
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards), parser: parser))
+
+        #expect(worker.pocketCards.map(\.id.value) == ["screened-id"])
+        #expect(worker.pocketCards.map(\.title) == ["Screened Title"])
+    }
+
+    private func parsedWorker(
+        _ manifest: String,
+        parser: ProductManifestParser? = nil
+    ) -> ProductExecutable.Worker? {
+        guard case let .worker(worker)? = (parser ?? self.parser).parseExecutable(
+            manifest,
+            kind: .worker,
+            identifier: try! ProductId("worker.hackm3.dot")
+        ) else {
+            Issue.record("expected a worker executable")
+            return nil
+        }
+        return worker
+    }
+
+    @Test func rejectsWorkerMissingEntrypoint() {
         #expect(parser.parseExecutable(
             #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"includes":{"chat":true,"pocket":false}}"#,
             kind: .worker,
-            identifier: "w"
+            identifier: try! ProductId("w.dot")
         ) == nil)
+    }
 
-        #expect(parser.parseExecutable(
+    @Test func readsAnUnlistedModalityAsNotServed() {
+        let chatOnly = parsedWorker(
+            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true}}"#
+        )
+        #expect(chatOnly?.serves(.chat) == true)
+        #expect(chatOnly?.serves(.pocket) == false)
+
+        let fundingOnly = parsedWorker(
+            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"funding":{"routes":[]}}}"#
+        )
+        #expect(fundingOnly?.modalities.isEmpty == true)
+    }
+
+    @Test func rejectsAWorkerThatServesNoModality() {
+        for manifest in [
             #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js"}"#,
-            kind: .worker,
-            identifier: "w"
-        ) == nil)
-
-        #expect(parser.parseExecutable(
-            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":true}}"#,
-            kind: .worker,
-            identifier: "w"
-        ) == nil)
+            #"{"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{}}"#,
+            Fixtures.worker(chat: "false", pocket: "false")
+        ] {
+            #expect(parser.parseExecutable(
+                manifest,
+                kind: .worker,
+                identifier: try! ProductId("worker.hackm3.dot")
+            ) == nil)
+        }
     }
 }
 
@@ -240,10 +413,26 @@ private enum Fixtures {
         """
     }
 
-    static func worker(chat: String = "true", pocket: String = "false") -> String {
-        """
+    static func worker(chat: String = "true", pocket: String = "false", cards: String? = nil) -> String {
+        worker(chat: chat, pocket: pocket, pocketSection: cards.map { "{\"cards\":\($0)}" })
+    }
+
+    static func worker(chat: String = "true", pocket: String = "false", pocketSection: String?) -> String {
+        let pocketField = pocketSection.map { ",\"pocket\":\($0)" } ?? ""
+        return """
         {"$v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"src/worker.js",
-         "includes":{"chat":\(chat),"pocket":\(pocket)}}
+         "includes":{"chat":\(chat),"pocket":\(pocket)}\(pocketField)}
         """
     }
+
+    static func cards() -> String {
+        """
+        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json"},
+         {"id":"trophy","title":"Trophy","preview":"faces/trophy.json"}]
+        """
+    }
+}
+
+private enum ScreeningRefusal: Error {
+    case refused
 }

@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::{
+	host_internal::sso_messages::PaymentTopUpError as TopUpError,
 	platform::{
 		CoinageWalletHost, NativeCoinageFailure as Failure, NativeCoinageMemo,
 		NativeCoinageOperation as Operation, NativeCoinagePaymentIntent, NativeCoinageRequest,
@@ -12,9 +13,7 @@ use crate::{
 	test_support::wait_until,
 };
 use std::sync::atomic::AtomicUsize;
-use truapi::v01::{
-	HostPaymentTopUpError as TopUpError, HostPaymentTopUpRequest, PaymentTopUpSource,
-};
+use truapi::v01::{HostPaymentTopUpRequest, PaymentTopUpSource};
 
 // Scripts own only the native service side. Rust storage remains guarded, and
 // encrypted transport acceptance/restart runs against the actual Host stores.
@@ -44,7 +43,7 @@ impl NativeService {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl CoinageWalletHost for NativeService {
 	async fn native_coinage(
 		&self,
@@ -386,6 +385,7 @@ fn top_up(keys: Vec<[u8; 64]>, amount: u128) -> HostPaymentTopUpRequest {
 		into: None,
 		amount,
 		source: PaymentTopUpSource::Coins { sr25519_secret_keys: keys },
+		id: [0; 32],
 	}
 }
 

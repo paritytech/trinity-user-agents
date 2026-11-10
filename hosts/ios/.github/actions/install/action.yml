@@ -1,5 +1,10 @@
 name: "Setup iOS Environment"
-description: "Installs Xcode"
+description: >-
+  Installs Xcode, Ruby and Python. The Swift package graph is resolved on
+  every run rather than cached. A warm resolve saves about 90 seconds per job,
+  but cloned the graph is about 2.6 GB, over a quarter of the repository's
+  10 GB cache, and holding it evicts the Rust caches every pull request
+  restores.
 inputs:
   xcode-version:
     description: "The Xcode version to install"
@@ -63,11 +68,3 @@ runs:
       uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
       with:
         python-version: "3.13"
-
-    - name: Restore SPM cache
-      uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
-      with:
-        path: hosts/ios/source_packages
-        key: ${{ runner.os }}-xcode-${{ inputs.xcode-version }}-spm-${{ hashFiles('**/Package.resolved') }}
-        restore-keys: |
-          ${{ runner.os }}-xcode-${{ inputs.xcode-version }}-spm-

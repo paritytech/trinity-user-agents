@@ -4,34 +4,24 @@ import Products
 // MARK: - Navigation & Network Access
 
 extension ProductsNativeApi {
-    // Web plus schemes that only open a system app prefilled (mail / dialer / messages / maps) — the user still
-    // confirms any action.
-    private static let allowedExternalSchemes: Set<String> = ["http", "https", "mailto", "tel", "sms", "maps"]
-
     func navigateTo(destination: String) async throws {
-        if let destinationPage = hostProvider.page(navigationDestination: destination) {
-            try await navigationRouter.navigateTo(destination: destinationPage)
+        switch navigationTargetResolver.resolve(destination: destination) {
+        case let .productPage(page):
+            try await navigationRouter.navigateTo(destination: page)
+        case let .appDeeplink(url):
+            try await navigationRouter.openExternalURL(url)
+        case let .externalURL(url):
+            guard try await permissionGuard.consumePermission(
+                productId: productId,
+                permission: .deviceCapability(.openUrl)
+            ) else {
+                throw ProductNativeApiError.permissionDenied
+            }
+
+            try await navigationRouter.openExternalURL(url)
+        case .unsupported:
             return
         }
-
-        // Non-.dot destinations: open external links in the matching system app.
-        // Allowlisted so a product can't fire arbitrary-scheme URLs (e.g. custom deep links) at the system.
-        guard
-            let url = URL(string: destination),
-            let scheme = url.scheme?.lowercased(),
-            Self.allowedExternalSchemes.contains(scheme)
-        else {
-            return
-        }
-
-        guard try await permissionGuard.consumePermission(
-            productId: productId,
-            permission: .deviceCapability(.openUrl)
-        ) else {
-            throw ProductNativeApiError.permissionDenied
-        }
-
-        try await navigationRouter.openExternalURL(url)
     }
 
     func allowNetworkAccess(url: String) async throws -> Bool {

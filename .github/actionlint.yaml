@@ -1,0 +1,5 @@
+# Labels of the Parity-hosted macOS runners, which actionlint cannot know.
+self-hosted-runner:
+  labels:
+    - parity-macos
+    - parity-macos-large

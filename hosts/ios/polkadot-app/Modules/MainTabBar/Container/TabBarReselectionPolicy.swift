@@ -12,7 +12,7 @@ enum TabBarReselectionPolicy {
         let navigation = controller as? UINavigationController
         let target = navigation?.topViewController ?? controller
 
-        guard let target, target.presentedViewController == nil else {
+        guard let target, target.presentedViewController == nil, !(target is TabBarRootStandIn) else {
             return .ignore
         }
 

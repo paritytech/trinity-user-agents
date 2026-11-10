@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 /// Permission a product can request from the host.
@@ -12,47 +13,43 @@ public enum ProductPermission: Equatable, Sendable {
     public static let preimageSubmitAccessTypeName = "preimage_submit"
     public static let balanceAccessTypeName = "balance_access"
     public static let statementSubmitAccessTypeName = "statement_submit"
-    public static let jamPeersAccessTypeName = "jam_peers"
     public static let userIdentityAccessTypeName = "user_identity_access"
-    public static let chatAuthorityTypeName = "chat_authority"
+    public static let nftPurseReadTypeName = "nft_purse_read"
 
     case deviceCapability(DeviceCapabilityType)
     case networkAccess(domain: String)
-    case accountAccess(targetProductId: String)
+    case accountAccess(targetProductId: ProductId)
     case balanceAccess
     case webRtcAccess
     case chainSubmitAccess
     case preimageSubmitAccess
     case statementSubmitAccess
-    /// Read-only peer access to the JAM network whose genesis header hash is
-    /// `genesis` (lowercase `0x`-prefixed hex).
-    case jamPeersAccess(genesis: String)
     case userIdentityAccess
-    case chatAuthority
+    /// Reading the NFT purses of another owner: a product, or the user's own account when `nil`.
+    case nftPurseRead(ownerProductId: ProductId?)
 
     /// Whether this is one of the core's `RemotePermission` cases: a product's
     /// own outbound access.
     ///
     /// The distinction exists because the core grants a first-party product
     /// every remote permission without prompting, and nothing else. Device
-    /// capabilities, account access, balance, identity disclosure and Chat
-    /// authority always prompt, whoever asks, so they must not ride along on
-    /// that trust.
+    /// capabilities, account access, balance and identity disclosure always
+    /// prompt, whoever asks, so they must not ride along on that trust.
     public var isRemoteAccess: Bool {
         switch self {
-        case .networkAccess, .webRtcAccess, .chainSubmitAccess, .preimageSubmitAccess,
-             .statementSubmitAccess, .jamPeersAccess:
+        case .networkAccess,
+             .webRtcAccess,
+             .chainSubmitAccess,
+             .preimageSubmitAccess,
+             .statementSubmitAccess:
             true
-        case .deviceCapability, .accountAccess, .balanceAccess, .userIdentityAccess,
-             .chatAuthority:
+        case .deviceCapability,
+             .accountAccess,
+             .balanceAccess,
+             .userIdentityAccess,
+             .nftPurseRead:
             false
         }
-    }
-
-    /// A JAM genesis as shown to the user: `0x`, its first 8 hex digits and `…`.
-    public static func shortGenesis(_ genesis: String) -> String {
-        let digits = genesis.hasPrefix("0x") ? genesis.dropFirst(2) : Substring(genesis)
-        return "0x\(digits.prefix(8))…"
     }
 
     public var typeName: String {
@@ -73,12 +70,10 @@ public enum ProductPermission: Equatable, Sendable {
             Self.preimageSubmitAccessTypeName
         case .statementSubmitAccess:
             Self.statementSubmitAccessTypeName
-        case .jamPeersAccess:
-            Self.jamPeersAccessTypeName
         case .userIdentityAccess:
             Self.userIdentityAccessTypeName
-        case .chatAuthority:
-            Self.chatAuthorityTypeName
+        case .nftPurseRead:
+            Self.nftPurseReadTypeName
         }
     }
 
@@ -89,16 +84,15 @@ public enum ProductPermission: Equatable, Sendable {
         case let .networkAccess(domain):
             domain
         case let .accountAccess(targetProductId):
-            targetProductId
-        case let .jamPeersAccess(genesis):
-            genesis
+            targetProductId.rawValue
+        case let .nftPurseRead(ownerProductId):
+            ownerProductId?.rawValue ?? ""
         case .balanceAccess,
              .webRtcAccess,
              .chainSubmitAccess,
              .preimageSubmitAccess,
              .statementSubmitAccess,
-             .userIdentityAccess,
-             .chatAuthority:
+             .userIdentityAccess:
             ""
         }
     }
@@ -113,7 +107,8 @@ public enum ProductPermission: Equatable, Sendable {
         case networkAccessTypeName:
             return .networkAccess(domain: key)
         case accountAccessTypeName:
-            return .accountAccess(targetProductId: key)
+            guard let target = try? ProductId(key) else { return nil }
+            return .accountAccess(targetProductId: target)
         case balanceAccessTypeName:
             return .balanceAccess
         case webRtcAccessTypeName:
@@ -124,12 +119,12 @@ public enum ProductPermission: Equatable, Sendable {
             return .preimageSubmitAccess
         case statementSubmitAccessTypeName:
             return .statementSubmitAccess
-        case jamPeersAccessTypeName:
-            return .jamPeersAccess(genesis: key)
         case userIdentityAccessTypeName:
             return .userIdentityAccess
-        case chatAuthorityTypeName:
-            return .chatAuthority
+        case nftPurseReadTypeName:
+            if key.isEmpty { return .nftPurseRead(ownerProductId: nil) }
+            guard let owner = try? ProductId(key) else { return nil }
+            return .nftPurseRead(ownerProductId: owner)
         default:
             return nil
         }

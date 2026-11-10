@@ -25,7 +25,7 @@ final class SPATabChipViewModelFactory {
 
 private extension SPATabChipViewModelFactory {
     func name(for tab: SPATab) -> String {
-        flowStateProvider.flowState().hostProvider.host(rawString: tab.dotDomain)?.name
+        flowStateProvider.flowState().hostProvider.host(rawString: tab.dotDomain.rawValue)?.name
             ?? String(localized: .Products.productTabsNotAvailable)
     }
 

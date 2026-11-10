@@ -675,12 +675,16 @@ fn emit_worker_callback_entry(method: &PlatformMethod) -> Result<String> {
 fn emit_worker_subscription_entry(method: &PlatformMethod) -> Result<String> {
 	let raw = raw_callback_name(method);
 	Ok(match worker_subscription_payload_param(method)? {
-		Some(param) => format!(
-			"    {raw}: ({param}, sendItem, sendError) =>\n      bridge.startSubscription(\"{raw}\", {param}, sendItem, sendError),\n"
-		),
-		None => format!(
-			"    {raw}: (sendItem, sendError) =>\n      bridge.startSubscription(\"{raw}\", null, sendItem, sendError),\n"
-		),
+		Some(param) => {
+			format!(
+				"    {raw}: ({param}, sendItem, sendError) =>\n      bridge.startSubscription(\"{raw}\", {param}, sendItem, sendError),\n"
+			)
+		},
+		None => {
+			format!(
+				"    {raw}: (sendItem, sendError) =>\n      bridge.startSubscription(\"{raw}\", null, sendItem, sendError),\n"
+			)
+		},
 	})
 }
 
@@ -745,7 +749,9 @@ fn worker_subscription_payload_param(method: &PlatformMethod) -> Result<Option<S
 	match method.params.as_slice() {
 		[] => Ok(None),
 		[param] => Ok(Some(to_camel_case(&param.name))),
-		_ => bail!("subscription callback `{}` has more than one payload parameter", method.name),
+		_ => {
+			bail!("subscription callback `{}` has more than one payload parameter", method.name)
+		},
 	}
 }
 
@@ -901,6 +907,9 @@ fn raw_param_ts(
 		TypeRef::Option(inner) => {
 			format!("{} | null | undefined", raw_param_ts(inner, codec_types, local_codec_types))
 		},
+		TypeRef::Primitive(p) if matches!(p.as_str(), "u64" | "u128" | "i64" | "i128") => {
+			"bigint".to_string()
+		},
 		TypeRef::Primitive(p) => raw_primitive_ts(p),
 		_ => "Uint8Array".to_string(),
 	}
@@ -983,8 +992,8 @@ fn collect_codec_imports(ty: &TypeRef, codec_types: &BTreeSet<String>, out: &mut
 }
 
 /// The call argument expression for one Rust param. Codec types arrive as
-/// `Uint8Array` and are decoded; wide integers cross as lossless JS `bigint`;
-/// everything else passes through. Arrow parameter
+/// `Uint8Array` and are decoded; everything else, including `u64`-family
+/// integers that arrive as `bigint`, passes through. Arrow parameter
 /// types are left to contextual inference from `RawCallbacks`, so only the
 /// argument expression varies.
 fn adapter_arg(
@@ -1307,7 +1316,17 @@ fn local_codec_expr_for_type(type_def: &TypeDef) -> Result<String> {
 		TypeDefKind::Struct(fields) => local_struct_codec_expr(fields, &type_def.name),
 		TypeDefKind::TupleStruct(fields) => local_tuple_codec_expr(fields),
 		TypeDefKind::Enum(variants) => {
-			if variants.iter().all(|variant| matches!(variant.fields, VariantFields::Unit)) {
+			// SCALE gives a variant without `#[codec(index = N)]` its position.
+			let discriminant = |position: usize, variant: &VariantDef| {
+				variant.codec_index.map_or(position, usize::from)
+			};
+			let has_explicit_discriminants = variants
+				.iter()
+				.enumerate()
+				.any(|(position, variant)| discriminant(position, variant) != position);
+			if !has_explicit_discriminants &&
+				variants.iter().all(|variant| matches!(variant.fields, VariantFields::Unit))
+			{
 				return Ok(format!(
 					"S.Status({})",
 					variants
@@ -1319,12 +1338,23 @@ fn local_codec_expr_for_type(type_def: &TypeDef) -> Result<String> {
 			}
 			let entries = variants
 				.iter()
-				.map(|variant| {
-					Ok(format!("{}: {}", variant.name, local_variant_codec_expr(&variant.fields)?))
+				.enumerate()
+				.map(|(position, variant)| {
+					let codec = local_variant_codec_expr(&variant.fields)?;
+					Ok(if has_explicit_discriminants {
+						let index = discriminant(position, variant);
+						format!("{}: [{index}, {codec}] as const", variant.name)
+					} else {
+						format!("{}: {codec}", variant.name)
+					})
 				})
 				.collect::<Result<Vec<_>>>()?
 				.join(", ");
-			Ok(format!("S.TaggedUnion({{{entries}}})"))
+			if has_explicit_discriminants {
+				Ok(format!("S.indexedTaggedUnion({{{entries}}})"))
+			} else {
+				Ok(format!("S.TaggedUnion({{{entries}}})"))
+			}
 		},
 	}
 }
@@ -1515,11 +1545,13 @@ fn emit_enum_type(enum_def: &TypeDef) -> Result<String> {
 fn enum_variant_type(variant: &VariantDef) -> Result<String> {
 	Ok(match &variant.fields {
 		VariantFields::Unit => format!("{{ tag: \"{}\"; value?: undefined }}", variant.name),
-		VariantFields::Unnamed(types) => format!(
-			"{{ tag: \"{}\"; value: {} }}",
-			variant.name,
-			unnamed_variant_value_type(types)?
-		),
+		VariantFields::Unnamed(types) => {
+			format!(
+				"{{ tag: \"{}\"; value: {} }}",
+				variant.name,
+				unnamed_variant_value_type(types)?
+			)
+		},
 		VariantFields::Named(fields) => {
 			format!("{{ tag: \"{}\"; value: {} }}", variant.name, inline_object_type(fields)?)
 		},
@@ -1739,118 +1771,4 @@ fn render_ts_doc_line(line: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	fn named(name: &str) -> TypeRef {
-		TypeRef::Named { name: name.to_string(), args: Vec::new() }
-	}
-
-	fn codec_types() -> BTreeSet<String> {
-		["GenericError", "HostFeatureSupportedRequest", "HostFeatureSupportedResponse"]
-			.into_iter()
-			.map(str::to_string)
-			.collect()
-	}
-
-	#[test]
-	fn local_codec_imports_external_alias_as_runtime_value() {
-		let definition = PlatformDefinition {
-			traits: Vec::new(),
-			types: vec![TypeDef {
-				name: "SessionUiInfo".to_string(),
-				module_path: vec!["truapi".to_string(), "platform".to_string()],
-				generic_params: Vec::new(),
-				kind: TypeDefKind::Struct(vec![FieldDef {
-					name: "public_key".to_string(),
-					type_ref: named("Bytes32"),
-					docs: None,
-				}]),
-				docs: None,
-			}],
-			super_trait: None,
-			optional_super_trait: None,
-		};
-		let local_codec_types = ["SessionUiInfo".to_string()].into_iter().collect();
-
-		let output = emit_host_callbacks(&definition, &local_codec_types)
-			.expect("host callbacks should render");
-
-		assert!(
-			output.contains("import {\n  Bytes32,\n} from \"@parity/truapi\";"),
-			"external aliases used by a local codec must be runtime imports: {output}"
-		);
-		assert!(!output.contains("import type {\n  Bytes32,"));
-		assert!(output.contains("S.Struct({publicKey: Bytes32})"));
-	}
-
-	fn platform_with_method(method: PlatformMethod) -> PlatformDefinition {
-		PlatformDefinition {
-			traits: vec![PlatformTrait {
-				name: "Features".to_string(),
-				docs: None,
-				methods: vec![method],
-			}],
-			types: Vec::new(),
-			super_trait: None,
-			optional_super_trait: None,
-		}
-	}
-
-	fn method_with_return(ok: TypeRef) -> PlatformMethod {
-		PlatformMethod {
-			name: "feature_supported".to_string(),
-			docs: None,
-			params: vec![PlatformParam {
-				name: "request".to_string(),
-				type_ref: named("HostFeatureSupportedRequest"),
-				borrowed: false,
-			}],
-			return_shape: PlatformReturn {
-				is_async: true,
-				inner: PlatformInner::Result { ok, err: named("GenericError") },
-			},
-			has_default: false,
-		}
-	}
-
-	fn method_with_param(param: TypeRef) -> PlatformMethod {
-		PlatformMethod {
-			name: "feature_supported".to_string(),
-			docs: None,
-			params: vec![PlatformParam {
-				name: "request".to_string(),
-				type_ref: param,
-				borrowed: false,
-			}],
-			return_shape: PlatformReturn {
-				is_async: true,
-				inner: PlatformInner::Result {
-					ok: named("HostFeatureSupportedResponse"),
-					err: named("GenericError"),
-				},
-			},
-			has_default: false,
-		}
-	}
-
-	fn assert_rejects_compound_codec(method: PlatformMethod) {
-		let definition = platform_with_method(method);
-		assert!(emit_wasm_adapter(&definition, &codec_types(), &BTreeSet::new()).is_err());
-	}
-
-	#[test]
-	fn wasm_adapter_rejects_unsupported_compound_codec_return_shapes() {
-		let codec = named("HostFeatureSupportedResponse");
-		assert_rejects_compound_codec(method_with_return(TypeRef::Option(Box::new(codec.clone()))));
-		assert_rejects_compound_codec(method_with_return(TypeRef::Tuple(vec![codec])));
-	}
-
-	#[test]
-	fn wasm_adapter_rejects_compound_codec_param_shapes() {
-		let codec = named("HostFeatureSupportedRequest");
-		assert_rejects_compound_codec(method_with_param(TypeRef::Vec(Box::new(codec.clone()))));
-		assert_rejects_compound_codec(method_with_param(TypeRef::Option(Box::new(codec.clone()))));
-		assert_rejects_compound_codec(method_with_param(TypeRef::Tuple(vec![codec])));
-	}
-}
+mod tests;

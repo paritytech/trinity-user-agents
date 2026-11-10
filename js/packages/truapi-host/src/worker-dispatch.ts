@@ -63,13 +63,9 @@ export function dispatchChainResponse(
   if (!listener) return;
   try {
     listener(json);
-  } catch {
+  } catch (err) {
     listeners.delete(connId);
     postToMain({ kind: "chainClose", connId });
-    // Response-handler errors may contain private HOP data.
-    postToMain({
-      kind: "disposeError",
-      error: `JSON-RPC connection ${connId} callback failed`,
-    });
+    reportDispatchFailure(postToMain, `chain connection ${connId}`, err);
   }
 }

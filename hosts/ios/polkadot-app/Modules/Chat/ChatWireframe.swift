@@ -6,7 +6,7 @@ import UIKitExt
 import ChainRegistry
 
 @MainActor
-final class ChatWireframe: ChatWireframeProtocol {
+final class ChatWireframe: ChatWireframeProtocol, ApplicationSettingsPresentable {
     let chainAsset: ChainAsset
     let flowState: ChatFlowState
     let documentAdapter: DocumentPreviewPresenting
@@ -55,6 +55,21 @@ final class ChatWireframe: ChatWireframeProtocol {
         let navigation = AppNavigationController(rootViewController: destination.controller)
         navigation.modalPresentationStyle = .fullScreen
         view?.controller.present(navigation, animated: true)
+    }
+
+    func presentMicrophoneAccessDenied(from view: ControllerBackedProtocol?) {
+        let viewModel = AlertPresentableViewModel(
+            title: String(localized: .chatCallMicAccessTitle),
+            message: String(localized: .chatCallMicAccessMessage),
+            actions: [
+                AlertPresentableAction(title: String(localized: .Common.openSettings)) { [weak self] in
+                    self?.openApplicationSettings()
+                }
+            ],
+            closeActionTitle: String(localized: .Common.notNow)
+        )
+
+        present(viewModel: viewModel, style: .alert, from: view)
     }
 
     func showCall(
@@ -241,10 +256,6 @@ private extension ChatWireframe {
         chatMetadata: ChatMetadata,
         delegate: ChatMoreActionsDelegate
     ) {
-        guard case .person = chatMetadata.chatId else {
-            return
-        }
-
         let leaveChatView = LeaveChatViewFactory.createView(
             username: chatMetadata.peerMetadata.name,
             onDelete: {

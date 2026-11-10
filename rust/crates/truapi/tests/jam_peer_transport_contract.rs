@@ -50,11 +50,18 @@ fn jam_peers_is_the_last_remote_permission_and_names_its_genesis() {
 		(latest::RemotePermission::ChainSubmit, 2),
 		(latest::RemotePermission::PreimageSubmit, 3),
 		(latest::RemotePermission::StatementSubmit, 4),
+		(latest::RemotePermission::BalanceAccess, 5),
+		(
+			latest::RemotePermission::NftPurseRead {
+				owner: latest::NftPurseOwner::Product("nft.dot".parse().unwrap()),
+			},
+			6,
+		),
 	] {
 		assert_eq!(permission.encode()[0], index, "{permission:?}");
 	}
 	let jam = latest::RemotePermission::JamPeers { genesis: genesis() };
-	let mut expected = vec![5u8];
+	let mut expected = vec![7u8];
 	expected.extend_from_slice(&genesis());
 	assert_eq!(jam.encode(), expected);
 	assert_eq!(latest::RemotePermission::decode(&mut &expected[..]), Ok(jam.clone()));

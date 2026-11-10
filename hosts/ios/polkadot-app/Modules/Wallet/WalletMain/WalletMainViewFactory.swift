@@ -19,30 +19,24 @@ enum WalletMainViewFactory {
         else {
             return nil
         }
-        let wireframe = WalletMainWireframe(personDataStore: context.personDataStore)
-
-        let networkStatusObserver = NetworkStatusObserver(
-            networkStatusService: context.networkStatusService,
-            chainIds: [chainAssetId.chainId],
-            logger: Logger.shared
+        let wireframe = WalletMainWireframe(
+            flowState: context.flowState
         )
 
         let interactor = WalletMainInteractor(
-            collectiblesURLProvider: CollectiblesURLProvider(
-                spaFlowState: context.flowState,
-                dotNsLabel: AppConfig.DotNs.dotNsCollectibles,
-                remoteConfig: FirebaseFacade.shared,
-                firebaseFallback: { FirebaseApplicationService.shared.asyncWaitCollectiblesFallbackURL() }
+            pocketPrewarmer: PocketPrewarmer(
+                products: context.flowState.productResolver,
+                dotNsResolver: context.flowState.dotNsResolver
             ),
-            networkStatusObserver: networkStatusObserver
+            pocket: .current,
+            tldProvider: DotNsTldProviderFacade.shared,
+            hostProvider: context.flowState.hostProvider,
+            remoteConfig: FirebaseFacade.shared
         )
 
         let presenter = WalletMainPresenter(
             interactor: interactor,
-            wireframe: wireframe,
-            titleViewModelFactory: NetworkStatusTitleViewModelFactory(
-                screenTitle: String(localized: .walletMainTitle)
-            )
+            wireframe: wireframe
         )
         interactor.presenter = presenter
 
@@ -56,8 +50,7 @@ enum WalletMainViewFactory {
             identityDetailsScene:
             IdentityDetailsViewFactory.createEmbeddedScene(
                 chainModel: chainAsset.chain,
-                wallet: wallet,
-                personDataStore: context.personDataStore
+                wallet: wallet
             )
         )
         presenter.view = view

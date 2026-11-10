@@ -132,10 +132,11 @@ fn emit_method(
 
 	let request = request_type(method, &module)?;
 	match (&method.kind, &method.return_type, method.wire.host_initiated) {
-		(MethodKind::Request, ReturnType::Result { ok, err }, false) => {
+		(MethodKind::Request, ReturnType::Result { ok, err }, host_initiated) => {
 			let response = rust_type(ok, &module)?;
 			let error = rust_type(call_error_domain(err)?, &module)?;
-			writeln!(out, "impl RequestMethod for {marker} {{")?;
+			let request_trait = if host_initiated { "HostRequestMethod" } else { "RequestMethod" };
+			writeln!(out, "impl {request_trait} for {marker} {{")?;
 			writeln!(out, "    type Request = {request};")?;
 			writeln!(out, "    type Response = {response};")?;
 			writeln!(out, "    type Error = {error};")?;

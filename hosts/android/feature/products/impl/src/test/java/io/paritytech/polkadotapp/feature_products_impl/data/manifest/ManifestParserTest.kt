@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.data.manifest
 import com.google.gson.Gson
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
-import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
@@ -12,6 +11,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.executableKindLabel
 
 private const val CID = "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
 
@@ -27,7 +28,7 @@ class ManifestParserTest {
 
     private fun rejectsExecutable(rawText: String, kind: ExecutableKind) = assertTrue(
         "expected a rejection for $rawText",
-        parser.parseExecutable(rawText, kind, host("${kind.manifestKind}.coinflip.dot")).isFailure,
+        parser.parseExecutable(rawText, kind, host("${executableKindLabel(kind)}.coinflip.dot")).isFailure,
     )
 
     /**
@@ -48,6 +49,7 @@ class ManifestParserTest {
         ).getOrNull()
 
         assertEquals("Coinflip", root?.displayName)
+        assertEquals("A game", root?.description)
         assertEquals(CID, root?.icon?.cid?.toString())
         assertEquals(ProductIcon.Format.PNG, root?.icon?.format)
     }
@@ -63,6 +65,16 @@ class ManifestParserTest {
         rejects("""{"${'$'}v":1,"displayName":"X","description":"d"}""")
         rejects("""{"${'$'}v":1,"displayName":"X","description":"d","icon":{"format":"png"}}""")
         rejects("""{"${'$'}v":1,"displayName":"X","description":"d","icon":{"cid":"not-a-cid","format":"png"}}""")
+    }
+
+    @Test
+    fun `a blank description counts as none, so a chat preview falls back past it`() {
+        val root = parser.parseRoot(
+            """{"${'$'}v":1,"displayName":"Coinflip","description":"  ","icon":{"cid":"$CID","format":"png"}}"""
+        ).getOrNull()
+
+        assertEquals("Coinflip", root?.displayName)
+        assertNull(root?.description)
     }
 
     @Test
@@ -154,6 +166,7 @@ class ManifestParserTest {
             PocketCardId("loyalty"),
             "Loyalty",
             PocketCardPreview.Archive("faces/loyalty.json"),
+            faceShown = true,
         )
         assertEquals(listOf(expected), worker?.pocketCards)
     }
@@ -202,6 +215,65 @@ class ManifestParserTest {
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"A"}]}"""))
         publishesNoCards(worker("""{"cards":[{"id":"a","title":"","preview":"a.json"}]}"""))
         publishesNoCards(worker("""{}"""))
+        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":"no"}]}"""))
+        publishesNoCards(worker("""{"cards":[{"id":"a","title":"A","preview":"a.json","faceShown":0}]}"""))
+        // The RFC drops every card over one invalid definition, so a valid card does not survive beside it.
+        publishesNoCards(
+            worker("""{"cards":[{"id":"a","title":"A","preview":"a.json"},{"id":"b","title":"B","preview":"b.json","faceShown":"no"}]}""")
+        )
+    }
+
+    private fun faceShownOf(cardJson: String): Boolean? {
+        val worker = parser.parseExecutable(
+            """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":false,"pocket":true},
+               "pocket":{"cards":[$cardJson]}}""",
+            ExecutableKind.WORKER,
+            host("worker.coinflip.dot"),
+        ).getOrNull() as? ProductExecutable.Worker
+
+        return worker?.pocketCards?.singleOrNull()?.faceShown
+    }
+
+    @Test
+    fun `a card that does not say faceShown opens with its face shown`() {
+        assertEquals(true, faceShownOf("""{"id":"a","title":"A","preview":"a.json"}"""))
+    }
+
+    // iOS decodes the field as an optional boolean, so a null there is an absent field; both hosts
+    // must publish the same cards from one manifest.
+    @Test
+    fun `a card with a null faceShown opens with its face shown, as when the field is absent`() {
+        assertEquals(true, faceShownOf("""{"id":"a","title":"A","preview":"a.json","faceShown":null}"""))
+    }
+
+    @Test
+    fun `a card can ask to open with its face away`() {
+        assertEquals(false, faceShownOf("""{"id":"a","title":"A","preview":"a.json","faceShown":false}"""))
+    }
+
+    @Test
+    fun `a card can state that its face is shown`() {
+        assertEquals(true, faceShownOf("""{"id":"a","title":"A","preview":"a.json","faceShown":true}"""))
+    }
+
+    /**
+     * A title is drawn, not matched, so it carries the core's display rules, the ones iOS applies too:
+     * a title that could reorder the text around it is refused, while the variation selector an emoji
+     * needs is kept. Screening it as an id would cost a product every card it publishes.
+     */
+    @Test
+    fun `a card title is screened by the core's display rules`() {
+        fun worker(title: String) =
+            """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"i.js","includes":{"chat":false,"pocket":true},
+               "pocket":{"cards":[{"id":"coffee","title":"$title","preview":"a.json"}]}}"""
+
+        publishesNoCards(worker("Coffee\\u202e"))
+        // NEXT LINE is not blank to Kotlin, but the core trims it away and would leave the card untitled.
+        publishesNoCards(worker("\\u0085"))
+
+        val worker = parser.parseExecutable(worker(" \\u2615\\ufe0f Coffee "), ExecutableKind.WORKER, host("worker.coinflip.dot"))
+            .getOrNull() as? ProductExecutable.Worker
+        assertEquals("☕️ Coffee", worker?.pocketCards?.single()?.title)
     }
 
     @Test

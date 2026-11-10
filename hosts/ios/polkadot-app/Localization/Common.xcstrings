@@ -111,6 +111,17 @@
         }
       }
     },
+    "chainConnectionStatusStatementStore" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Statement Store"
+          }
+        }
+      }
+    },
     "clear" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -518,17 +529,6 @@
         }
       }
     },
-    "statementStoreStatusActive" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Connection active"
-          }
-        }
-      }
-    },
     "statementStoreStatusConnecting" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -547,6 +547,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Connection unavailable"
+          }
+        }
+      }
+    },
+    "tabBarShowAccessibilityLabel" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show tab bar"
           }
         }
       }

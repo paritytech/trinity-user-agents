@@ -2,6 +2,7 @@ import Foundation
 import CommonService
 import MessageExchangeKit
 import SDKLogger
+import StatementDelivery
 import ChainStore
 
 protocol ChatRequestCoordinatorServicing: ApplicationServiceProtocol {}
@@ -40,44 +41,65 @@ extension ChatRequestCoordinatorService: ChatRequestCoordinatorServicing {
             do {
                 let discoveryService = try await serviceFactory.makeDiscoveryService()
                 let incomingRequestService = try await serviceFactory.makeIncomingChatRequestService()
-                let outgoingRequestService = try await serviceFactory.makeOutgoingChatRequestService()
+                let deliveryService = try await serviceFactory.makeChatRequestDeliveryService()
                 let incomingContext = try await serviceFactory.makeIncomingChatRequestContext()
                 let outgoingContext = try await serviceFactory.makeOutgoingChatRequestContext()
+                let acceptanceDeliveryService = try await serviceFactory.makeChatAcceptanceDeliveryService()
+                let outgoingAcceptanceContext = await serviceFactory.makeOutgoingChatAcceptanceContext()
+                let incomingAcceptanceService = try await serviceFactory.makeIncomingChatAcceptanceService()
+                let incomingAcceptanceContext = await serviceFactory.makeIncomingChatAcceptanceContext()
 
                 let allContactsStream = contactsProviderFactory.subscribeAllContacts()
 
                 logger.debug("Service started")
 
-                for try await contacts in allContactsStream {
-                    await incomingContext.update(
-                        contacts: contacts,
-                        discoverTaskBuilder: { ownKeyId in
-                            setupDiscoveryTask(
-                                using: discoveryService,
-                                ownKeyId: ownKeyId,
-                                with: incomingContext
-                            )
-                        }, incomingRequestTaskBuilder: { contacts, ownKeyId in
-                            setupIncomingRequestsTask(
-                                for: contacts,
-                                ownKeyId: ownKeyId,
-                                using: incomingRequestService,
-                                context: incomingContext
+                try await withTaskCancellationHandler {
+                    for try await contacts in allContactsStream {
+                        await incomingContext.update(
+                            contacts: contacts,
+                            discoverTaskBuilder: { ownKeyId in
+                                setupDiscoveryTask(
+                                    using: discoveryService,
+                                    ownKeyId: ownKeyId,
+                                    with: incomingContext
+                                )
+                            }, incomingRequestTaskBuilder: { contacts, ownKeyId in
+                                setupIncomingRequestsTask(
+                                    for: contacts,
+                                    ownKeyId: ownKeyId,
+                                    using: incomingRequestService,
+                                    context: incomingContext
+                                )
+                            }
+                        )
+
+                        await outgoingContext.update(contacts: contacts) {
+                            setupOutgoingRequestsTask(deliveryService: deliveryService, context: outgoingContext)
+                        }
+
+                        await incomingAcceptanceContext.update(contacts: contacts) { requests in
+                            setupIncomingAcceptancesTask(
+                                for: requests,
+                                using: incomingAcceptanceService,
+                                context: incomingAcceptanceContext
                             )
                         }
-                    )
 
-                    await outgoingContext.update(
-                        contacts: contacts,
-                        outgoingRequestTaskBuilder: {
-                            setupOutgoingRequestsTask(
-                                outgoingService: outgoingRequestService,
-                                context: outgoingContext
+                        await outgoingAcceptanceContext.update(contacts: contacts) {
+                            setupOutgoingAcceptancesTask(
+                                deliveryService: acceptanceDeliveryService,
+                                context: outgoingAcceptanceContext
                             )
                         }
-                    )
 
-                    logger.debug("Handled contacts: \(contacts.count)")
+                        logger.debug("Handled contacts: \(contacts.count)")
+                    }
+                } onCancel: {
+                    Task {
+                        await outgoingContext.cancelAll()
+                        await outgoingAcceptanceContext.cancelAll()
+                        await incomingAcceptanceContext.cancelAll()
+                    }
                 }
             } catch {
                 logger.error("Contacts subscription failed: \(error)")
@@ -152,8 +174,32 @@ private extension ChatRequestCoordinatorService {
         }
     }
 
+    func setupIncomingAcceptancesTask(
+        for requests: [MessageExchange.SessionRequest],
+        using incomingService: IncomingChatAcceptanceService,
+        context: IncomingChatAcceptanceCoordinationContext
+    ) -> Task<Void, Never> {
+        Task {
+            do {
+                for try await acceptance in incomingService.subscribe(to: requests) {
+                    do {
+                        guard try await context.handle(acceptance) != nil else { continue }
+
+                        logger.debug("Applied acceptance of \(acceptance.requestId)")
+                    } catch {
+                        logger.error("Applying acceptance of \(acceptance.requestId) failed: \(error)")
+                    }
+                }
+            } catch {
+                logger.error("Incoming acceptances subscription failed: \(error)")
+            }
+
+            logger.debug("Incoming acceptances stream ended")
+        }
+    }
+
     func setupOutgoingRequestsTask(
-        outgoingService: OutgoingChatRequestServicing,
+        deliveryService: any OutgoingStatementDelivering<OutgoingChatRequestInput>,
         context: OutgoingChatRequestCoordinationContext
     ) -> Task<Void, Never> {
         Task {
@@ -161,8 +207,10 @@ private extension ChatRequestCoordinatorService {
 
             do {
                 for try await requestMessages in outgoingRequestsStream {
-                    try await context.process(requestMessages: requestMessages) { message, peer, own in
-                        try await outgoingService.send(message: message, to: peer, ownKeyId: own)
+                    await context.process(requestMessages: requestMessages) { message, session in
+                        await deliveryService.deliverUntilPublished(
+                            OutgoingChatRequestInput(message: message, session: session)
+                        )
                     }
                 }
             } catch {
@@ -170,6 +218,29 @@ private extension ChatRequestCoordinatorService {
             }
 
             logger.debug("Outgoing requests stream ended")
+        }
+    }
+}
+
+private extension ChatRequestCoordinatorService {
+    func setupOutgoingAcceptancesTask(
+        deliveryService: any OutgoingStatementDelivering<OutgoingChatAcceptanceInput>,
+        context: OutgoingChatAcceptanceCoordinationContext
+    ) -> Task<Void, Never> {
+        Task {
+            let acceptancesStream = messageProviderFactory.subscribeMessages(with: .newLocalDeviceChatAcceptances())
+
+            do {
+                for try await acceptanceMessages in acceptancesStream {
+                    await context.process(acceptanceMessages: acceptanceMessages) { input in
+                        await deliveryService.deliverUntilPublished(input)
+                    }
+                }
+            } catch {
+                logger.error("Outgoing acceptances processing failed: \(error)")
+            }
+
+            logger.debug("Outgoing acceptances stream ended")
         }
     }
 }

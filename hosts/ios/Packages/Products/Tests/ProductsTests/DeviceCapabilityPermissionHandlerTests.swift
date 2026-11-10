@@ -1,10 +1,11 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 @testable import Products
 
 @Suite("DeviceCapabilityPermissionHandler Tests")
 struct DeviceCapabilityPermissionHandlerTests {
-    private let productId = "test-product"
+    private let productId = try! ProductId("test-product.dot")
     private let capability = DeviceCapabilityType.camera
 
     private func makeSUT(

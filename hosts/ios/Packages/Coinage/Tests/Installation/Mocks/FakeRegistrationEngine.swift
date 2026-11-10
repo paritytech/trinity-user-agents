@@ -19,8 +19,14 @@ final class FakeRegistrationEngine: DurableTxServicing, @unchecked Sendable {
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
+    private let subscriptions = AsyncCurrentValueSubject<Int>(0)
 
     var recoveryStarts: Int { state.withLock { $0.recoveryStarts } }
+
+    /// How many group subscriptions were opened so far; replays the current count.
+    func subscribeSubscriptionCount() -> AnyAsyncSequence<Int> {
+        subscriptions.eraseToAnyAsyncSequence()
+    }
 
     func current(_ group: DurableTxGroupId) -> [DurableTxEntry] {
         state.withLock { $0.groups[group] ?? [] }
@@ -58,15 +64,6 @@ final class FakeRegistrationEngine: DurableTxServicing, @unchecked Sendable {
         fatalError("installation registration never schedules")
     }
 
-    func schedule(
-        domain _: TxDomainId,
-        groupId _: DurableTxGroupId?,
-        policies _: [SubmissionPolicy],
-        onRegister _: @escaping DurableTxRegistrationHook
-    ) async throws -> [DurableTxId] {
-        fatalError("installation registration never schedules")
-    }
-
     func subscribeTransactionStatus(_: DurableTxId) -> AnyAsyncSequence<DurableTxStatus> {
         AsyncStream<DurableTxStatus> { $0.finish() }.eraseToAnyAsyncSequence()
     }
@@ -78,11 +75,12 @@ final class FakeRegistrationEngine: DurableTxServicing, @unchecked Sendable {
     func subscribeGroupEntries(domain: TxDomainId, groupId: DurableTxGroupId) -> AnyAsyncSequence<[DurableTxEntry]> {
         precondition(domain == .coinageInstallation)
         return AsyncStream<[DurableTxEntry]> { continuation in
-            let snapshot = state.withLock { state -> [DurableTxEntry] in
+            let (snapshot, count) = state.withLock { state -> ([DurableTxEntry], Int) in
                 state.observers[groupId, default: []].append(continuation)
-                return state.groups[groupId] ?? []
+                return (state.groups[groupId] ?? [], state.observers.values.map(\.count).reduce(0, +))
             }
             continuation.yield(snapshot)
+            subscriptions.send(count)
         }
         .eraseToAnyAsyncSequence()
     }

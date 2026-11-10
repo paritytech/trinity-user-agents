@@ -8,6 +8,7 @@ final class MockJSEngine: JSEngineProtocol, @unchecked Sendable {
     private(set) var deviceCapabilityHandler: JSDeviceCapabilityHandler?
     private(set) var mediaHandlerWasInstalledAtInitialization = false
     var onInitialize: (@Sendable () async -> Void)?
+    var onDestroy: (@Sendable () async -> Void)?
     private var handlers: [String: JSNativeHandler] = [:]
 
     func getState() async -> JSEngineState { .ready }
@@ -53,9 +54,23 @@ final class MockJSEngine: JSEngineProtocol, @unchecked Sendable {
 
     func destroy() async {
         destroyCallCount += 1
+        await onDestroy?()
     }
 
     func registerJSDeviceCapabilityHandler(_ handler: @escaping JSDeviceCapabilityHandler) async {
         deviceCapabilityHandler = handler
+    }
+
+    private var terminationHandler: (@Sendable () -> Void)?
+
+    func onTermination(_ handler: @escaping @Sendable () -> Void) async {
+        terminationHandler = handler
+    }
+
+    /// Dies the way a web view does when iOS kills its content process.
+    func terminate() {
+        let handler = terminationHandler
+        terminationHandler = nil
+        handler?()
     }
 }

@@ -188,4 +188,4 @@ Each handler returns its method's own error. For a call a `Cancel` frame withdre
    follow-on to this one.
 
 [0028]: 0028-wire-message-type-byte.md
-[478]: https://github.com/paritytech/truapi/issues/478
+[478]: https://github.com/paritytech/trinity-user-agents/issues/478

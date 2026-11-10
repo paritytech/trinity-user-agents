@@ -10,7 +10,9 @@ import androidx.room.PrimaryKey
     tableName = "chat_messages",
     indices = [
         Index(value = ["chatId"]),
-        Index(value = ["chatId", "timestamp"]) // For chat summary grouping and joining
+        Index(value = ["chatId", "timestamp"]),
+        Index(value = ["sortOrder"]),
+        Index(value = ["chatId", "sortOrder", "timestamp"])
     ]
 )
 class ChatMessageLocal(
@@ -19,6 +21,7 @@ class ChatMessageLocal(
     val chatId: ByteArray,
     val timestamp: Long,
     @ColumnInfo(defaultValue = "0") val updatedAt: Long,
+    @ColumnInfo(defaultValue = "$UNORDERED") val sortOrder: Long,
     @Embedded(prefix = "origin")
     val origin: Origin,
     val status: Status,
@@ -28,6 +31,10 @@ class ChatMessageLocal(
     val replyToMessageId: String? = null,
     val isInternal: Boolean
 ) {
+    companion object {
+        const val UNORDERED = 0L
+    }
+
     class Origin(
         val type: OriginType,
         val key: ByteArray?

@@ -4,6 +4,7 @@ import ExtrinsicService
 import Foundation
 import os
 import Testing
+import FoundationExtTestSupport
 @testable import Coinage
 
 /// When the gated policy builds, waits, or gives up — the part every coinage policy shares. The rebuild
@@ -231,7 +232,7 @@ private extension InputGatedSubmissionPolicyTests {
                 timing: InputWaitTiming(
                     holdOut: .seconds(60),
                     idleLimit: .seconds(60),
-                    dateProvider: StubDateProvider(now)
+                    dateProvider: FixedDateProvider(now)
                 ),
                 logger: nil
             ),
@@ -332,16 +333,8 @@ private struct StubAssetLedger: CoinageAssetLedgerProtocol {
     func registerAssets(
         _: [CoinageAssetRegistration],
         for _: [CoinageTxId],
-        custody _: NativeTransferCustody?,
-        authorization _: (@Sendable () throws -> Void)?,
         in _: any DurableTxRegistrationScope
     ) throws {}
-
-    func retainNativeTransfer(
-        _: NativeTransferCustody, authorization _: @escaping @Sendable () throws -> Void
-    ) async throws {}
-
-    func retainedNativeTransfer(custodyId _: String) async throws -> NativeTransferCustody? { nil }
 
     func getAllEntries() async throws -> [CoinageTxEntry] { [] }
     func getEntry(id _: CoinageTxId) async throws -> CoinageTxEntry? { nil }

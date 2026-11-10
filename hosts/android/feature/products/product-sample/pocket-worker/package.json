@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild src/worker.ts --bundle --outfile=dist/worker.js --format=esm --target=es2022",
+    "build": "esbuild src/worker.ts src/widget.ts --bundle --outdir=dist --format=esm --target=es2022 && cp widget/index.html dist/ && cp -r faces dist/",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

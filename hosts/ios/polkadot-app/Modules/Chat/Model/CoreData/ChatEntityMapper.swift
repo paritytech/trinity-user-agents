@@ -74,7 +74,8 @@ extension ChatModelMapper: CoreDataMapperProtocol {
                 unreadDisplayMessageCount: unreadCount,
                 hasIncomingReaction: hasIncomingReaction,
                 createdAt: entity.createdAt,
-                roomMetadata: roomMetadata
+                roomMetadata: roomMetadata,
+                roomFooter: entity.footer.flatMap(Chat.RoomFooter.init(rawValue:))
             )
         }
     }

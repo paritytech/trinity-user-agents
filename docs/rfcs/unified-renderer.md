@@ -28,6 +28,8 @@ per surface gives a product one render callback and one action stream per surfac
 
 - **Surface-neutral.** A body is drawn and its actions reported the same way on every surface.
 - **Closed.** A product names layouts and tokens from a fixed vocabulary, never markup, stylesheets or URLs.
+  [Materials](materials.md) are the one exception: shader code the host runs only inside the node's bounds, with only
+  the inputs the host supplies, never able to fetch, read or act on anything else.
 - **Correlated.** An action carries enough for the product to find the body and the handler without a registry.
 - **Live.** A product redraws a displayed body in place, and no stream is open for a body off screen.
 - **Framed.** The host draws identity, bounds and dismissal around every body and interprets the tree itself.
@@ -246,7 +248,7 @@ pub enum BlendingMode {
 pub enum Modifier {
     /// Outer spacing.
     Margin(Dimensions),
-    /// Inner spacing.
+    /// Inner spacing, around the content: a fixed or minimum size is the content's.
     Padding(Dimensions),
     Background(Background),
     Border(BorderStyle),
@@ -296,6 +298,7 @@ pub struct ButtonProps {
 }
 
 /// Where image bytes come from. The host fetches them; the tree carries no URL.
+/// The bytes are PNG, JPEG, WebP or SVG.
 pub enum ImageSource {
     /// A Bulletin chain blob, addressed by its CID.
     Bulletin(String),
@@ -305,7 +308,7 @@ pub enum ImageSource {
 }
 
 pub enum ImageFit {
-    /// The image is not resized.
+    /// The image is not resized: one image pixel to a point.
     None,
     /// Resized to fill the container without preserving the aspect ratio.
     Fill,
@@ -321,15 +324,6 @@ pub struct ImageProps {
     pub source: ImageSource,
     /// Defaults to `Fill`.
     pub fit: Option<ImageFit>,
-}
-
-/// A visual effect. Each variant names one effect and carries its parameters.
-pub enum Effect {
-    Rainbow,
-}
-
-pub struct EffectProps {
-    pub effect: Effect,
 }
 
 pub struct TextFieldProps {
@@ -369,7 +363,8 @@ pub enum RendererNode {
         props: RowProps,
         children: Vec<RendererNode>,
     },
-    /// Flexible space.
+    /// Flexible space: shares out what its stack has left, unless sized along
+    /// the stack's axis.
     Spacer {
         modifiers: Vec<Modifier>,
     },
@@ -389,14 +384,15 @@ pub enum RendererNode {
         modifiers: Vec<Modifier>,
         props: TextFieldProps,
     },
-    /// Image, sized by modifiers.
+    /// Image, sized by modifiers. Without any it takes its natural size, one
+    /// image pixel to a point.
     Image {
         modifiers: Vec<Modifier>,
         props: ImageProps,
     },
-    /// Applies its effect to its children.
-    Effect {
-        props: EffectProps,
+    /// Runs materials over its children, as [Materials](materials.md) defines.
+    Materials {
+        props: MaterialsProps,
         children: Vec<RendererNode>,
     },
 }
@@ -453,5 +449,4 @@ messages is unaffected. Hosts ship `Renderer` and the `Chat` change together.
 
 ## Open questions
 
-- The `Effect` variants beyond `Rainbow`, and the parameters each carries.
 - Whether a pocket card drawn through `Renderer` needs a viewport signal beyond the stream closing.

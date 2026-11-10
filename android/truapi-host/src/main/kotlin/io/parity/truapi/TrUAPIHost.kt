@@ -29,17 +29,18 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.ChatRoom
+import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.HostChatActionSubscribeItem
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocaleSubscribeItem
-import uniffi.truapi.PocketCard
 import uniffi.truapi.HostPushNotificationRequest
 import uniffi.truapi.HostRendererActionSubscribeItem
 import uniffi.truapi.ProductRendererRenderRequest
@@ -49,27 +50,32 @@ import uniffi.truapi.RendererNode
 import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.ThemeName
 import uniffi.truapi.ThemeVariant
-import uniffi.truapi.NativeChatFilePickRequest
-import uniffi.truapi.NativeChatPickedFile
-import uniffi.truapi.NativeChatFileExportRequest
-import uniffi.truapi.NativeCoinageRequest
-import uniffi.truapi.NativeCoinageResponse
-import uniffi.truapi.NativeCoinageCallbacks
-import uniffi.truapi.NativeCoinageCallbackResult
 import uniffi.truapi.AuthState
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.UserConfirmationReview
+import uniffi.truapi.DbStatus
 import uniffi.truapi.HostCallbacks
 import uniffi.truapi.ChatBotRegistrationStatus
 import uniffi.truapi.NativeChatCallbacks
+import uniffi.truapi.NativeCoreDatabaseException
+import uniffi.truapi.RecoveryException
+import uniffi.truapi.ImageException
+import uniffi.truapi.ImageReference
+import uniffi.truapi.LoadedImage
 import uniffi.truapi.ChatRoomRegistrationStatus
-import uniffi.truapi.NativePocketCallbacks
-import uniffi.truapi.NativePocketRemoval
+import uniffi.truapi.NativeGameCallbacks
+import uniffi.truapi.NativePocketObserver
 import uniffi.truapi.NativeRendererObserver
+import uniffi.truapi.NativeSubscription
+import uniffi.truapi.PocketAddException
+import uniffi.truapi.PocketCardRemoval
+import uniffi.truapi.PocketEntry
 import uniffi.truapi.DevicePermissionStatus
+import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.NativeProductExecution
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.NativeAnnouncedPairing
@@ -89,11 +95,25 @@ import uniffi.truapi.WsBridgeEndpoint
 import uniffi.truapi.WsBridgeStartException
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductExecutionConfig
+import uniffi.truapi.ProductId
 import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
-import uniffi.truapi.SsoRequestOutcome
+import uniffi.truapi.HostPaymentBalanceSubscribeException
+import uniffi.truapi.HostPaymentException
+import uniffi.truapi.HostPaymentRequest
+import uniffi.truapi.HostPaymentStatusSubscribeItem
+import uniffi.truapi.HostPaymentTopUpException
+import uniffi.truapi.HostPaymentTopUpRequest
+import uniffi.truapi.HostPaymentTopUpStatusSubscribeItem
+import uniffi.truapi.HostScan
+import uniffi.truapi.HostScannerScanRequest
+import uniffi.truapi.NativeBalanceCallbacks
+import uniffi.truapi.NativePaymentCallbacks
+import uniffi.truapi.NativeScannerCallbacks
+import uniffi.truapi.NativeTopUpCallbacks
+import uniffi.truapi.ExecutableKind
 
 /** Package metadata. */
 object TrUAPIHost {
@@ -137,52 +157,6 @@ interface HostCoreStorage {
 private val defaultOperationIds = AtomicInteger(0)
 
 /**
- * Host-private immutable attachment custody. Marshal trusted selection/export UI
- * to the main thread. Never expose source/export handles or bytes to a guest.
- * Empty selection/null export means user cancellation, never unavailability.
- */
-interface NativeChatFilesHost {
-    @Throws(HostRejection::class)
-    suspend fun pickChatFiles(request: NativeChatFilePickRequest): List<NativeChatPickedFile> =
-        throw HostRejection.Rejected("native Chat files unavailable")
-
-    @Throws(HostRejection::class)
-    suspend fun readChatFile(sourceId: String, offset: ULong, length: UInt): ByteArray =
-        throw HostRejection.Rejected("native Chat files unavailable")
-
-    @Throws(HostRejection::class)
-    suspend fun releaseChatFile(sourceId: String): Unit =
-        throw HostRejection.Rejected("native Chat files unavailable")
-
-    @Throws(HostRejection::class)
-    suspend fun beginChatFileExport(request: NativeChatFileExportRequest): String? =
-        throw HostRejection.Rejected("native Chat files unavailable")
-
-    @Throws(HostRejection::class)
-    suspend fun writeChatFileExport(exportId: String, offset: ULong, data: ByteArray): Unit =
-        throw HostRejection.Rejected("native Chat files unavailable")
-
-    @Throws(HostRejection::class)
-    suspend fun finishChatFileExport(exportId: String): Unit =
-        throw HostRejection.Rejected("native Chat files unavailable")
-
-    @Throws(HostRejection::class)
-    suspend fun cancelChatFileExport(exportId: String): Unit =
-        throw HostRejection.Rejected("native Chat files unavailable")
-}
-
-/**
- * Optional process-wide native custody, registered at runtime construction.
- * Omit only when the built-in Rust wallet owns custody. A registered native
- * wallet stays installed while locked or unavailable; failures never permit fallback.
- */
-interface NativeCoinageHost {
-    /** Host-private operation. Return sanitized failures; never expose bearer material. */
-    @Throws(HostRejection::class)
-    suspend fun nativeCoinage(request: NativeCoinageRequest): NativeCoinageResponse
-}
-
-/**
  * Host-side callback bundle that the Rust core invokes for capabilities the
  * native shell owns. The interface mirrors the underlying UniFFI surface but
  * keeps the permission split explicit:
@@ -200,7 +174,7 @@ interface NativeCoinageHost {
  * other TrUAPI traffic. Synchronous callbacks must return promptly. Run UI work
  * on the main thread, for example with `withContext(Dispatchers.Main) { ... }`.
  */
-interface HostBridge : NativeChatFilesHost {
+interface HostBridge {
     /** Lifecycle logger. Marker is a stable slug, detail is free-form. */
     fun onCoreLog(marker: String, detail: String) {}
 
@@ -253,6 +227,18 @@ interface HostBridge : NativeChatFilesHost {
     ): DevicePermissionStatus = DevicePermissionStatus.NOT_APPLICABLE
 
     /**
+     * Show or hide the face above this execution's expanded card. Answers
+     * [ExpandedCardFaceOutcome.NOT_PRESENTED] when the product is not under its
+     * card and [ExpandedCardFaceOutcome.USER_MOVING] while the user drags it,
+     * and returns without waiting for the animation.
+     *
+     * Defaults to [ExpandedCardFaceOutcome.UNSUPPORTED], so an app without cards
+     * says so instead of pretending it moved one.
+     */
+    suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
+        ExpandedCardFaceOutcome.UNSUPPORTED
+
+    /**
      * Prompt for a remote permission bundle [product] requested on the main
      * thread, suspending until the user decides.
      */
@@ -281,18 +267,6 @@ interface HostBridge : NativeChatFilesHost {
     /** Open a JSON-RPC chain connection and return a host-assigned id, or null if unsupported. */
     @Throws(HostRejection::class)
     fun chainConnect(genesisHash: ByteArray): UInt? = null
-
-    /** Exact WSS endpoint strings from trusted, current Bulletin configuration. */
-    @Throws(HostRejection::class)
-    suspend fun allowedHopEndpoints(bulletinGenesisHash: ByteArray): List<String> = emptyList()
-
-    /**
-     * Recheck the exact endpoint against live trusted configuration before dialing.
-     * Returns null when HOP is unavailable. The id shares chainSend/chainClose
-     * and notifyChainResponse/notifyChainClosed.
-     */
-    @Throws(HostRejection::class)
-    fun hopConnect(bulletinGenesisHash: ByteArray, endpoint: String): UInt? = null
 
     /**
      * Send one JSON-RPC request on a native chain connection. Enqueue it and
@@ -323,13 +297,6 @@ interface HostBridge : NativeChatFilesHost {
     @Throws(HostRejection::class)
     suspend fun lookupPreimage(key: ByteArray): ByteArray? = null
 
-    /** Exact-name AccountId32 candidates; core verifies dotNS ownership and the People key. */
-    @Throws(HostRejection::class)
-    suspend fun identityUsernameCandidates(
-        username: String,
-        peopleChainGenesisHash: ByteArray,
-    ): List<ByteArray> = throw HostRejection.Rejected("native identity backend unavailable")
-
     /** Return the current host theme. Hosts with no named themes report [ThemeName.Default]. */
     @Throws(HostRejection::class)
     fun currentTheme(): HostThemeSubscribeItem =
@@ -358,8 +325,16 @@ interface HostBridge : NativeChatFilesHost {
     fun supportedChains(): HostChainSet = HostChainSet(network = "", chains = emptyList())
 
     /**
-     * Observe demand on a product's worker crossing zero. `Start` means run
-     * the worker now, `Stop` that nothing wants it any more. Every transition
+     * The chains this host builds as V5 general transactions, each with its
+     * transaction extension pipeline; every other chain is built as V4. The
+     * core builds its own extrinsics the same way. Defaults to none.
+     */
+    @Throws(HostRejection::class)
+    suspend fun transactionExtensionVersions(): ExtensionVersionMap = ExtensionVersionMap(chains = emptyList())
+
+    /**
+     * Request a product worker transition. `Start` means run the worker now;
+     * `Stop` means it is no longer needed and may stop. Every transition
      * arrives here in ledger order, the ones the app asks for by taking a
      * reference of its own included.
      *
@@ -371,7 +346,15 @@ interface HostBridge : NativeChatFilesHost {
      * re-entrantly: marshal the work off rather than blocking on another
      * thread from inside it.
      */
-    fun workerDemandChanged(productId: String, transition: WorkerTransition) {}
+    fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {}
+
+    /**
+     * The product's worker crashed [crashes] times in a row while it was
+     * needed: tell the user that product is not working. The core keeps
+     * starting it again, waiting longer each time, so this needs no answer.
+     * Can arrive on any thread.
+     */
+    fun workerCrashing(productId: ProductId, crashes: UInt) {}
 
     /**
      * Begin a pending operation. [label] is a log/UI hint, empty when the
@@ -384,12 +367,12 @@ interface HostBridge : NativeChatFilesHost {
      * id.
      */
     @Throws(HostRejection::class)
-    suspend fun beginOperation(productId: String, label: String): UInt =
+    suspend fun beginOperation(productId: ProductId, label: String): UInt =
         defaultOperationIds.incrementAndGet().toUInt()
 
     /** End a pending operation. Idempotent, so a retry after an ambiguous failure is safe. */
     @Throws(HostRejection::class)
-    suspend fun endOperation(productId: String, id: UInt) {}
+    suspend fun endOperation(productId: ProductId, id: UInt) {}
 
     /**
      * A device finished pairing with this signing host.
@@ -403,6 +386,55 @@ interface HostBridge : NativeChatFilesHost {
      * announcing it inline.
      */
     fun devicePaired(device: PairedSsoPeer) {}
+
+    /**
+     * Whether the core has durable transactions still awaiting a verdict.
+     * While [pending] is true, keep a background task running that awaits
+     * [TrUAPIHostRuntime.runDurableRecovery]; false means nothing needs it.
+     * Reported on change, starting with the state the runtime finds at
+     * launch. Runtime-wide, like [requestWorkerTransition], and arrives on a core
+     * thread: marshal the work off rather than blocking.
+     */
+    fun durableWorkChanged(pending: Boolean) {}
+
+    /**
+     * The 32-byte id of the current app installation, created on first use.
+     * NFT purse item keys are derived under it, so it must be the id the host
+     * registers for recovery. Runtime-wide, like [durableWorkChanged].
+     * Defaults to a rejection for a host that keeps no installation id.
+     */
+    @Throws(HostRejection::class)
+    suspend fun currentInstallation(): ByteArray =
+        throw HostRejection.Rejected("this host keeps no installation id")
+
+    /**
+     * A value the host keeps encrypted at rest and out of backups, such as in
+     * encrypted preferences. Returns null when nothing is stored under [key],
+     * and throws when the store cannot be read or the value no longer
+     * decrypts. The core keeps secrets here that its database must not hold.
+     * Runtime-wide, like [durableWorkChanged]. Defaults to a rejection for a
+     * host with no such store, which turns off the features that need it.
+     */
+    @Throws(HostRejection::class)
+    suspend fun encryptedStorageRead(key: ByteArray): ByteArray? =
+        throw HostRejection.Rejected("this host keeps no encrypted storage")
+
+    /**
+     * Stores [value] under [key], encrypted at rest and excluded from backups,
+     * replacing any earlier value. Runtime-wide, like [durableWorkChanged].
+     * Defaults to a rejection.
+     */
+    @Throws(HostRejection::class)
+    suspend fun encryptedStorageWrite(key: ByteArray, value: ByteArray): Unit =
+        throw HostRejection.Rejected("this host keeps no encrypted storage")
+
+    /**
+     * Deletes the value stored under [key]. Deleting nothing succeeds.
+     * Runtime-wide, like [durableWorkChanged]. Defaults to a rejection.
+     */
+    @Throws(HostRejection::class)
+    suspend fun encryptedStorageDelete(key: ByteArray): Unit =
+        throw HostRejection.Rejected("this host keeps no encrypted storage")
 
     /** Product-scoped key-value storage for the Rust core. */
     val storage: HostStorage
@@ -449,9 +481,19 @@ interface ChatHostBridge {
      * must name this message for as long as the host stores it. An id arriving
      * in a `Reaction` or `ReactionRemoved` is product-chosen and untrusted: it
      * may name a message in another room, or none at all.
+     *
+     * `alt` is the product's one-line description of the message, already
+     * trimmed and screened, for places that list it without drawing it.
      */
     @Throws(HostRejection::class)
-    suspend fun postMessage(roomId: String, content: ChatMessageContent): String
+    suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String
+
+    /**
+     * Set what a product's native Chat room shows below its messages, and keep
+     * it until the product sets another.
+     */
+    @Throws(HostRejection::class)
+    suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter)
 
     /** Return the current product-scoped native Chat rooms. */
     @Throws(HostRejection::class)
@@ -459,34 +501,32 @@ interface ChatHostBridge {
 }
 
 /**
- * Native Pocket collection surface. Implement and pass to
- * [TrUAPIHostRuntime.openProductExecution] when the host has a Pocket surface;
+ * Native game-reminder surface. Implement and pass to
+ * [TrUAPIHostRuntime.openProductExecution] when the host can hold reminders;
  * hosts without one pass nothing.
  *
- * Threading: [listCards] runs inline on the core runtime shared by every
- * product execution, so it must be safe to enter concurrently and return
- * promptly. [removeCard] suspends, so it can wait on the host's storage.
+ * The host holds one reminder per product: a schedule replaces the reminder
+ * the same product already holds. The core asks for no per-product consent;
+ * the host asks the OS for what it needs, rings an alarm where the OS allows
+ * one and delivers a notification otherwise, may add the game to the
+ * calendar, keeps the reminder across app kill and reboot, and drops it once
+ * the game starts.
+ *
+ * Threading: both calls suspend, so an implementation may switch to its own
+ * dispatcher to answer; implementations must be safe to enter concurrently.
  */
-interface PocketHostBridge {
+interface GameHostBridge {
     /**
-     * Return the product's cards as this host holds them, each carrying
-     * whether the host pinned it.
+     * Hold [startsAt] (Unix milliseconds, UTC) as this product's reminder, replacing any it holds.
+     * Any exception, including an OS that allows neither alarms nor notifications, reaches the
+     * product as a host failure carrying its reason.
      */
     @Throws(HostRejection::class)
-    fun listCards(): List<PocketCard>
+    suspend fun scheduleReminder(startsAt: ULong)
 
-    /**
-     * Remove one of the product's cards and report what happened. Decide and
-     * remove together, under whatever lock this host holds, so a card cannot
-     * be pinned between the two.
-     */
+    /** Drop this product's reminder. Dropping none succeeds. */
     @Throws(HostRejection::class)
-    suspend fun removeCard(cardId: String): NativePocketRemoval
-}
-
-private class NativeCoinageCallbackAdapter(private val bridge: NativeCoinageHost) : NativeCoinageCallbacks {
-    override suspend fun nativeCoinage(request: NativeCoinageRequest): NativeCoinageCallbackResult =
-        withCoinageWalletRejection { NativeCoinageCallbackResult(bridge.nativeCoinage(request)) }
+    suspend fun cancelReminder()
 }
 
 /**
@@ -503,14 +543,36 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
-    override fun workerDemandChanged(productId: String, transition: WorkerTransition) {
-        runCatching { bridge.workerDemandChanged(productId, transition) }
+    override fun requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
+        runCatching { bridge.requestWorkerTransition(productId, transition) }
+    }
+
+    // Infallible across the FFI for the same reason `onCoreLog` is.
+    override fun workerCrashing(productId: ProductId, crashes: UInt) {
+        runCatching { bridge.workerCrashing(productId, crashes) }
     }
 
     // Infallible across the FFI for the same reason `onCoreLog` is.
     override fun devicePaired(device: PairedSsoPeer) {
         runCatching { bridge.devicePaired(device) }
     }
+
+    // Infallible across the FFI for the same reason `onCoreLog` is.
+    override fun durableWorkChanged(pending: Boolean) {
+        runCatching { bridge.durableWorkChanged(pending) }
+    }
+
+    override suspend fun currentInstallation(): ByteArray =
+        withHostRejection { bridge.currentInstallation() }
+
+    override suspend fun encryptedStorageRead(key: ByteArray): ByteArray? =
+        withHostRejection { bridge.encryptedStorageRead(key) }
+
+    override suspend fun encryptedStorageWrite(key: ByteArray, value: ByteArray) =
+        withHostRejection { bridge.encryptedStorageWrite(key, value) }
+
+    override suspend fun encryptedStorageDelete(key: ByteArray) =
+        withHostRejection { bridge.encryptedStorageDelete(key) }
 
     override suspend fun navigateTo(url: String) =
         withNavigateRejection { bridge.navigateTo(url) }
@@ -532,6 +594,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun devicePermissionStatus(
         request: HostDevicePermissionRequest,
     ): DevicePermissionStatus = withHostRejection { bridge.devicePermissionStatus(request) }
+
+    override suspend fun setExpandedCardFaceShown(shown: Boolean): ExpandedCardFaceOutcome =
+        withHostRejection { bridge.setExpandedCardFaceShown(shown) }
 
     override suspend fun remotePermission(
         product: ProductExecutionConfig,
@@ -563,38 +628,11 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override fun chainConnect(genesisHash: ByteArray): UInt? =
         withHostRejection { bridge.chainConnect(genesisHash) }
 
-    override suspend fun allowedHopEndpoints(bulletinGenesisHash: ByteArray): List<String> =
-        withHostRejection { bridge.allowedHopEndpoints(bulletinGenesisHash) }
-
-    override fun hopConnect(bulletinGenesisHash: ByteArray, endpoint: String): UInt? =
-        withHostRejection { bridge.hopConnect(bulletinGenesisHash, endpoint) }
-
     override fun chainSend(connectionId: UInt, request: String) =
         withHostRejection { bridge.chainSend(connectionId, request) }
 
     override fun chainClose(connectionId: UInt) =
         withHostRejection { bridge.chainClose(connectionId) }
-
-    override suspend fun pickChatFiles(request: NativeChatFilePickRequest): List<NativeChatPickedFile> =
-        withChatFileRejection { bridge.pickChatFiles(request) }
-
-    override suspend fun readChatFile(sourceId: String, offset: ULong, length: UInt): ByteArray =
-        withChatFileRejection { bridge.readChatFile(sourceId, offset, length) }
-
-    override suspend fun releaseChatFile(sourceId: String) =
-        withChatFileRejection { bridge.releaseChatFile(sourceId) }
-
-    override suspend fun beginChatFileExport(request: NativeChatFileExportRequest): String? =
-        withChatFileRejection { bridge.beginChatFileExport(request) }
-
-    override suspend fun writeChatFileExport(exportId: String, offset: ULong, data: ByteArray) =
-        withChatFileRejection { bridge.writeChatFileExport(exportId, offset, data) }
-
-    override suspend fun finishChatFileExport(exportId: String) =
-        withChatFileRejection { bridge.finishChatFileExport(exportId) }
-
-    override suspend fun cancelChatFileExport(exportId: String) =
-        withChatFileRejection { bridge.cancelChatFileExport(exportId) }
 
     override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
         withHostRejection { bridge.confirmUserAction(review) }
@@ -604,13 +642,6 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override suspend fun lookupPreimage(key: ByteArray): ByteArray? =
         withHostRejection { bridge.lookupPreimage(key) }
-
-    override suspend fun identityUsernameCandidates(
-        username: String,
-        peopleChainGenesisHash: ByteArray,
-    ): List<ByteArray> = withHostRejection {
-        bridge.identityUsernameCandidates(username, peopleChainGenesisHash)
-    }
 
     override fun currentTheme(): HostThemeSubscribeItem =
         withHostRejection { bridge.currentTheme() }
@@ -624,6 +655,9 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override fun supportedChains(): HostChainSet =
         withHostRejection { bridge.supportedChains() }
 
+    override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
+        withHostRejection { bridge.transactionExtensionVersions() }
+
     override suspend fun localStorageRead(key: String): ByteArray? =
         withStorageException { bridge.storage.read(key) }
 
@@ -633,10 +667,10 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun localStorageClear(key: String) =
         withStorageException { bridge.storage.clear(key) }
 
-    override suspend fun beginOperation(productId: String, label: String): UInt =
+    override suspend fun beginOperation(productId: ProductId, label: String): UInt =
         withHostRejection { bridge.beginOperation(productId, label) }
 
-    override suspend fun endOperation(productId: String, id: UInt) =
+    override suspend fun endOperation(productId: ProductId, id: UInt) =
         withHostRejection { bridge.endOperation(productId, id) }
 }
 
@@ -651,25 +685,6 @@ private fun hostRejectionReason(error: Throwable): String =
     (error.message ?: error.toString()).take(HOST_REJECTION_REASON_MAX_CHARS)
 
 private const val HOST_REJECTION_REASON_MAX_CHARS = 256
-
-private inline fun <T> withCoinageWalletRejection(operation: () -> T): T =
-    try {
-        operation()
-    } catch (cancellation: CancellationException) {
-        throw cancellation
-    } catch (error: Throwable) {
-        throw HostRejection.Rejected("Native Coinage wallet operation failed")
-    }
-
-private inline fun <T> withChatFileRejection(operation: () -> T): T =
-    try {
-        operation()
-    } catch (cancellation: CancellationException) {
-        throw cancellation
-    } catch (error: Throwable) {
-        // Provider/filesystem exceptions may contain private paths or handles.
-        throw HostRejection.Rejected("native Chat file operation unavailable or failed")
-    }
 
 private inline fun <T> withHostRejection(operation: () -> T): T =
     try {
@@ -723,16 +738,15 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
         icon: String,
     ): ChatBotRegistrationStatus = withHostRejection { bridge.registerBot(botId, name, icon) }
 
-    override suspend fun postMessage(roomId: String, content: ChatMessageContent): String =
-        withHostRejection { bridge.postMessage(roomId, content) }
+    override suspend fun postMessage(roomId: String, content: ChatMessageContent, alt: String?): String =
+        withHostRejection { bridge.postMessage(roomId, content, alt) }
+
+    override suspend fun setRoomFooter(roomId: String, footer: ChatRoomFooter) =
+        withHostRejection { bridge.setRoomFooter(roomId, footer) }
 
     override suspend fun listRooms(): List<ChatRoom> = withHostRejection { bridge.listRooms() }
 }
 
-/**
- * Adapter from the public [PocketHostBridge] surface to the generated UniFFI
- * [NativePocketCallbacks] interface.
- */
 /**
  * Native contacts surface: the user's contact list, and the picker drawn over
  * it. Install with [TrUAPIHostRuntime.setContacts], once, because the list
@@ -759,28 +773,161 @@ interface ContactsHostBridge {
      * drawing an empty overlay.
      */
     @Throws(HostRejection::class)
-    suspend fun pickContact(productId: String): HostContactPick
+    suspend fun pickContact(productId: ProductId): HostContactPick
 }
 
 private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : NativeContactsCallbacks {
     override fun contacts(lookup: HostContactLookup): HostContactMatches =
         withHostRejection { bridge.contacts(lookup) }
 
-    override suspend fun pickContact(productId: String): HostContactPick =
-        try {
-            bridge.pickContact(productId)
-        } catch (error: HostRejection) {
-            throw error
-        } catch (error: Throwable) {
-            throw HostRejection.Rejected(hostRejectionReason(error))
-        }
+    override suspend fun pickContact(productId: ProductId): HostContactPick =
+        withHostRejection { bridge.pickContact(productId) }
 }
 
-private class PocketCallbackAdapter(private val bridge: PocketHostBridge) : NativePocketCallbacks {
-    override fun listCards(): List<PocketCard> = withHostRejection { bridge.listCards() }
+/**
+ * Draws the viewfinder for `scanner.scan`, following the rules on the core's
+ * `ScannerPlatform`. Closes it when the coroutine is cancelled.
+ */
+interface ScannerHostBridge {
+    @Throws(HostRejection::class)
+    suspend fun scanCode(
+        productId: ProductId,
+        executionKind: ExecutableKind,
+        request: HostScannerScanRequest,
+    ): HostScan
+}
 
-    override suspend fun removeCard(cardId: String): NativePocketRemoval =
-        withHostRejection { bridge.removeCard(cardId) }
+private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : NativeScannerCallbacks {
+    override suspend fun scanCode(
+        productId: ProductId,
+        executionKind: ExecutableKind,
+        request: HostScannerScanRequest,
+    ): HostScan = withHostRejection { bridge.scanCode(productId, executionKind, request) }
+}
+
+/**
+ * Adapter from the public [GameHostBridge] surface to the generated UniFFI
+ * [NativeGameCallbacks] interface.
+ */
+private class GameCallbackAdapter(private val bridge: GameHostBridge) : NativeGameCallbacks {
+    override suspend fun scheduleReminder(startsAt: ULong) = withHostRejection { bridge.scheduleReminder(startsAt) }
+
+    override suspend fun cancelReminder() = withHostRejection { bridge.cancelReminder() }
+}
+
+/**
+ * Native top-up engine, which claims a source's funds into the user's balance.
+ * Install with [TrUAPIHostRuntime.setTopUp], once. A runtime without one
+ * answers top-ups with `Unsupported`.
+ *
+ * The core has already checked the session, the source keys and the amount,
+ * and hashed the product into every id it passes, so ids never collide across
+ * products. Report each status after the one [topUpStatus] answered with
+ * [TrUAPIHostRuntime.notifyTopUpStatus]; a terminal one ends the stream.
+ */
+interface TopUpHostBridge {
+    /**
+     * Start top-up [request] for [productId], returning once the host has
+     * accepted it. Its amount is a decimal string of CASH units.
+     */
+    @Throws(HostPaymentTopUpException::class)
+    suspend fun topUp(productId: ProductId, request: HostPaymentTopUpRequest)
+
+    /**
+     * The current status of [productId]'s top-up [id], or `null` when the host
+     * holds no such top-up. Runs inline on the core's thread.
+     */
+    @Throws(HostRejection::class)
+    fun topUpStatus(productId: ProductId, id: ByteArray): HostPaymentTopUpStatusSubscribeItem?
+}
+
+/**
+ * Native payment engine, which pays from the user's balance to an account.
+ * Install with [TrUAPIHostRuntime.setPayments], once. A runtime without one
+ * answers payment requests with `Unsupported`.
+ *
+ * The core hashes the product into every id it passes. Answer
+ * `InsufficientBalance` whenever the balance is short: the core turns it into
+ * `Rejected` for a product without balance access. Report each status after
+ * the one [paymentStatus] answered with [TrUAPIHostRuntime.notifyPaymentStatus].
+ */
+interface PaymentHostBridge {
+    /**
+     * Ask the user to approve payment [request] for [productId], returning once
+     * they have decided and the host took it on. Its amount is a decimal string
+     * of CASH units.
+     */
+    @Throws(HostPaymentException::class)
+    suspend fun requestPayment(productId: ProductId, request: HostPaymentRequest)
+
+    /**
+     * The current status of [productId]'s payment [id], or `null` when the host
+     * holds no such payment. Runs inline on the core's thread.
+     */
+    @Throws(HostRejection::class)
+    fun paymentStatus(productId: ProductId, id: ByteArray): HostPaymentStatusSubscribeItem?
+}
+
+/**
+ * Native balance view, which shares what a payment can spend with a product.
+ * Install with [TrUAPIHostRuntime.setBalance], once, and report each change
+ * with [TrUAPIHostRuntime.notifyBalance]. The core owns balance access, so do
+ * not prompt for it here.
+ */
+interface BalanceHostBridge {
+    /**
+     * The user's balance in [purse] (`null` for the main purse), as a decimal
+     * string of CASH units: what a payment request can spend now. It is the same
+     * for every product; [productId] only names the one asking.
+     */
+    @Throws(HostPaymentBalanceSubscribeException::class)
+    suspend fun balance(productId: ProductId, purse: UInt?): String
+}
+
+private class TopUpCallbackAdapter(private val bridge: TopUpHostBridge) : NativeTopUpCallbacks {
+    override suspend fun topUp(productId: ProductId, request: HostPaymentTopUpRequest) =
+        try {
+            bridge.topUp(productId, request)
+        } catch (error: HostPaymentTopUpException) {
+            throw error
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            throw HostPaymentTopUpException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
+        }
+
+    override fun topUpStatus(productId: ProductId, id: ByteArray): HostPaymentTopUpStatusSubscribeItem? =
+        withHostRejection { bridge.topUpStatus(productId, id) }
+}
+
+private class PaymentCallbackAdapter(private val bridge: PaymentHostBridge) : NativePaymentCallbacks {
+    override suspend fun requestPayment(productId: ProductId, request: HostPaymentRequest) =
+        try {
+            bridge.requestPayment(productId, request)
+        } catch (error: HostPaymentException) {
+            throw error
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            throw HostPaymentException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
+        }
+
+    override fun paymentStatus(productId: ProductId, id: ByteArray): HostPaymentStatusSubscribeItem? =
+        withHostRejection { bridge.paymentStatus(productId, id) }
+}
+
+private class BalanceCallbackAdapter(private val bridge: BalanceHostBridge) : NativeBalanceCallbacks {
+    override suspend fun balance(productId: ProductId, purse: UInt?): String =
+        try {
+            bridge.balance(productId, purse)
+        } catch (error: HostPaymentBalanceSubscribeException) {
+            throw error
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            throw HostPaymentBalanceSubscribeException.Unknown(hostRejectionReason(error))
+                .apply { initCause(error) }
+        }
 }
 
 /**
@@ -803,15 +950,12 @@ object LocalhostBridgeBootstrap {
 class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor(
     bridge: HostBridge,
     runtimeConfig: HostRuntimeConfig,
-    nativeWallet: NativeCoinageHost? = null,
 ) : AutoCloseable {
     // Co-owns the adapter alongside the generated FfiConverter handle map,
     // which is what actually keeps the callback object alive for the runtime.
     private val callbackRetainer: HostCallbacks = HostCallbackAdapter(bridge)
-    private val nativeWalletRetainer: NativeCoinageCallbacks? =
-        nativeWallet?.let { NativeCoinageCallbackAdapter(it) }
     private val inner: NativeTrUApiHostRuntime =
-        NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, runtimeConfig, nativeWalletRetainer)
+        NativeTrUApiHostRuntime.withRuntimeConfig(callbackRetainer, runtimeConfig)
 
     // Co-owns the contacts adapter for as long as the runtime holds it.
     private var contactsRetainer: NativeContactsCallbacks? = null
@@ -830,6 +974,19 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         return inner.setContactsCallbacks(adapter)
     }
 
+    // Co-owns the scanner adapter for as long as the runtime holds it.
+    private var scannerRetainer: NativeScannerCallbacks? = null
+
+    /**
+     * Install the host's scanner before opening any product execution.
+     * Set-once: returns whether this call installed it.
+     */
+    fun setScanner(scanner: ScannerHostBridge): Boolean {
+        val adapter = ScannerCallbackAdapter(scanner)
+        scannerRetainer = adapter
+        return inner.setScannerCallbacks(adapter)
+    }
+
     /**
      * Tell the core the host's contacts changed. Call it whenever a contact is
      * removed or blocked, so a contact handle the core cached stops resolving.
@@ -838,39 +995,92 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         inner.notifyContactsChanged()
     }
 
+    // Co-own the payment adapters for as long as the runtime holds them.
+    private var topUpRetainer: NativeTopUpCallbacks? = null
+    private var paymentRetainer: NativePaymentCallbacks? = null
+    private var balanceRetainer: NativeBalanceCallbacks? = null
+
+    /**
+     * Install the host's top-up engine. Set-once; returns whether this call
+     * installed it. Call it before opening any product execution.
+     */
+    fun setTopUp(topUp: TopUpHostBridge): Boolean {
+        val adapter = TopUpCallbackAdapter(topUp)
+        topUpRetainer = adapter
+        return inner.setTopUpCallbacks(adapter)
+    }
+
+    /** Report a later status of [productId]'s top-up [id] to the products following it. */
+    fun notifyTopUpStatus(productId: ProductId, id: ByteArray, status: HostPaymentTopUpStatusSubscribeItem) {
+        inner.notifyTopUpStatus(productId, id, status)
+    }
+
+    /**
+     * Install the host's payment engine. Set-once; returns whether this call
+     * installed it. Call it before opening any product execution.
+     */
+    fun setPayments(payments: PaymentHostBridge): Boolean {
+        val adapter = PaymentCallbackAdapter(payments)
+        paymentRetainer = adapter
+        return inner.setPaymentCallbacks(adapter)
+    }
+
+    /** Report a later status of [productId]'s payment [id] to the products following it. */
+    fun notifyPaymentStatus(productId: ProductId, id: ByteArray, status: HostPaymentStatusSubscribeItem) {
+        inner.notifyPaymentStatus(productId, id, status)
+    }
+
+    /**
+     * Install the host's balance view. Set-once; returns whether this call
+     * installed it. Call it before opening any product execution.
+     */
+    fun setBalance(balance: BalanceHostBridge): Boolean {
+        val adapter = BalanceCallbackAdapter(balance)
+        balanceRetainer = adapter
+        return inner.setBalanceCallbacks(adapter)
+    }
+
+    /**
+     * Report the new balance of [purse] (`null` for the main purse), a decimal
+     * string of CASH units, to the products following it.
+     */
+    fun notifyBalance(purse: UInt?, available: String) {
+        inner.notifyBalance(purse, available)
+    }
+
     /**
      * Open one executable connection with a host-assigned immutable context.
      * Pass [chat] to install the host's Chat adapter; hosts without the Chat
-     * modality omit it. Pass [pocket] to install the card collection, and omit
-     * that where the host has no Pocket surface.
+     * modality omit it. Pass [game] to hold game reminders, and omit it where
+     * the host cannot.
      */
     @Throws(NativeRuntimeConfigException::class)
     fun openProductExecution(
         bridge: HostBridge,
         configuration: ProductExecutionConfig,
         chat: ChatHostBridge? = null,
-        pocket: PocketHostBridge? = null,
+        game: GameHostBridge? = null,
     ): TrUAPIProductExecution {
         val adapter = HostCallbackAdapter(bridge)
         val chatAdapter = chat?.let { ChatCallbackAdapter(it) }
-        val pocketAdapter = pocket?.let { PocketCallbackAdapter(it) }
+        val gameAdapter = game?.let { GameCallbackAdapter(it) }
         val execution =
             inner.openProductExecution(
                 adapter,
                 chatAdapter,
-                pocketAdapter,
+                gameAdapter,
                 configuration,
             )
-        return TrUAPIProductExecution(execution, adapter, chatAdapter, pocketAdapter)
+        return TrUAPIProductExecution(execution, adapter, chatAdapter, gameAdapter)
     }
 
     /**
      * Take one reference on the product's worker for a modality holder that is
      * on screen or in flight. The first one reports a start transition to
-     * [HostBridge.workerDemandChanged], which is where the host starts the
+     * [HostBridge.requestWorkerTransition], which is where the host starts the
      * worker. Pair every call with one [releaseWorker].
      */
-    fun acquireWorker(productId: String) {
+    fun acquireWorker(productId: ProductId) {
         inner.acquireWorker(productId)
     }
 
@@ -878,7 +1088,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      * Release one reference. The last one reports a stop transition, after
      * which the host may stop the worker. Releasing with none held is a no-op.
      */
-    fun releaseWorker(productId: String) {
+    fun releaseWorker(productId: ProductId) {
         inner.releaseWorker(productId)
     }
 
@@ -961,19 +1171,71 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         inner.disconnect()
     }
 
+    /** Report the core database's SQLite version, schema version and file path. */
+    @Throws(NativeCoreDatabaseException::class)
+    suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
+
+    /**
+     * The image [reference] names, read from Bulletin by the core and checked against its CID and
+     * the image policy. Key a disk cache on [LoadedImage.contentKey]. Cancelling the coroutine
+     * stops the load.
+     */
+    @Throws(ImageException::class)
+    suspend fun loadImage(reference: ImageReference): LoadedImage = inner.loadImage(reference)
+
+    /**
+     * The Pocket collection, pinned cards first, now and after every change. A
+     * read that fails ends the flow with [HostRejection]; collect it again to
+     * retry.
+     */
+    fun pocketCards(): Flow<List<PocketEntry>> =
+        observedFlow {
+            inner.observePocketCards(
+                object : NativePocketObserver {
+                    // Declared infallible by the core, so a throw here would abort the process.
+                    override fun onCards(cards: List<PocketEntry>) {
+                        runCatching { trySend(cards) }
+                    }
+
+                    override fun onError(reason: String) {
+                        runCatching { close(HostRejection.Rejected(reason)) }
+                    }
+                },
+            )
+        }
+
+    /**
+     * Add a card the user approved, with the face they approved it by. An id
+     * or title a product could not use is refused with [PocketAddException].
+     */
+    @Throws(PocketAddException::class)
+    suspend fun addPocketCard(productId: ProductId, cardId: String, title: String, face: RendererNode) =
+        inner.addPocketCard(productId, cardId, title, face)
+
+    /** Remove a card on the user's behalf, unless it is pinned. */
+    @Throws(NativeCoreDatabaseException::class)
+    suspend fun removePocketCard(productId: ProductId, cardId: String): PocketCardRemoval =
+        inner.removePocketCard(productId, cardId)
+
+    /** The newest face kept for a card, if one is. */
+    @Throws(NativeCoreDatabaseException::class)
+    suspend fun pocketCardFace(productId: ProductId, cardId: String): RendererNode? =
+        inner.pocketCardFace(productId, cardId)
+
+    /**
+     * Decide durable transactions from the chain until none is live, then
+     * return. Await it from the background task [HostBridge.durableWorkChanged]
+     * asks for; a throw means recovery stopped early and the task should be
+     * retried. Cancelling the coroutine stops it.
+     */
+    @Throws(RecoveryException::class)
+    suspend fun runDurableRecovery() = inner.runDurableRecovery()
+
     /** Activate or replace the process-wide local signing session. */
     @Throws(HostRejection::class)
     fun activateLocalSession(secret: ByteArray, liteUsername: String? = null) {
         inner.activateLocalSession(secret, liteUsername)
     }
-
-    /** Handle a paired session's opaque SSO request, awaiting native user consent. */
-    @Throws(HostRejection::class)
-    suspend fun handleSsoRequest(message: ByteArray): SsoRequestOutcome =
-        inner.handleSsoRequest(message)
-
-    /** Encode the disconnect notification; the caller routes it to the ending session. */
-    fun prepareDisconnectRequest(): ByteArray = inner.prepareDisconnectRequest()
 
     /** Push a JSON-RPC response from a native chain connection into the runtime. */
     fun notifyChainResponse(connectionId: UInt, json: String) {
@@ -1054,6 +1316,20 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     }
 }
 
+/**
+ * A core stream that the observer [subscribe] installs feeds, cancelled when
+ * collection ends. Each emission replaces the last, so only the latest is kept
+ * when the collector falls behind.
+ */
+private fun <T> observedFlow(subscribe: ProducerScope<T>.() -> NativeSubscription): Flow<T> =
+    callbackFlow {
+        val subscription = subscribe()
+        awaitClose {
+            subscription.cancel()
+            subscription.close()
+        }
+    }.conflate()
+
 /** A render the product declined or could not encode. */
 class RendererStreamException(
     /** Why the product ended the render. */
@@ -1068,7 +1344,7 @@ class TrUAPIProductExecution internal constructor(
     private val inner: NativeProductExecution,
     private val callbackRetainer: HostCallbacks,
     private val chatRetainer: NativeChatCallbacks?,
-    private val pocketRetainer: NativePocketCallbacks?,
+    private val gameRetainer: NativeGameCallbacks?,
 ) : AutoCloseable {
     private val shutDown = AtomicBoolean(false)
 
@@ -1112,8 +1388,9 @@ class TrUAPIProductExecution internal constructor(
      * when the collector falls behind.
      */
     fun render(request: ProductRendererRenderRequest): Flow<RendererNode> =
-        callbackFlow {
-            val observer =
+        observedFlow {
+            inner.render(
+                request,
                 object : NativeRendererObserver {
                     // The core declares all three infallible, so uniffi has no
                     // error type to convert a throw into and panics -- which
@@ -1131,13 +1408,9 @@ class TrUAPIProductExecution internal constructor(
                     override fun onError(reason: String) {
                         runCatching { close(RendererStreamException(reason)) }
                     }
-                }
-            val subscription = inner.render(request, observer)
-            awaitClose {
-                subscription.cancel()
-                subscription.close()
-            }
-        }.conflate()
+                },
+            )
+        }
 
     /**
      * Publish one native renderer action, buffering it until the product
@@ -1146,14 +1419,6 @@ class TrUAPIProductExecution internal constructor(
     @Throws(ProductRuntimeException::class)
     fun publishRendererAction(item: HostRendererActionSubscribeItem) {
         inner.publishRendererAction(item)
-    }
-
-    /**
-     * Republish the product-scoped card list. Call it whenever the host's own
-     * collection changes, including after the user removes a card.
-     */
-    fun notifyPocketCardsChanged(cards: List<PocketCard>) {
-        inner.notifyPocketCardsChanged(cards)
     }
 
     /** Read the active session's X25519 chat identity private key, if any. */
@@ -1176,6 +1441,14 @@ class TrUAPIProductExecution internal constructor(
     @Throws(HostRejection::class)
     suspend fun authorizeRemotePermission(request: RemotePermissionRequest): Boolean =
         inner.authorizeRemotePermission(request)
+
+    /**
+     * Authorize one device capability the web view gates itself, using the
+     * product's saved, one-use, or prompted decision.
+     */
+    @Throws(HostRejection::class)
+    suspend fun authorizeDevicePermission(request: HostDevicePermissionRequest): Boolean =
+        inner.authorizeDevicePermission(request)
 
     /**
      * Update a stored permission authorization status. Passing `NotDetermined`

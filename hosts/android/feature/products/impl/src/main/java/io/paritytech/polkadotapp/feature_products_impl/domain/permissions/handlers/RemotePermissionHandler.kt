@@ -1,10 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers
 
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRequester
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission.RemotePermission
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 class RemotePermissionHandler @Inject constructor(
@@ -18,8 +18,7 @@ class RemotePermissionHandler @Inject constructor(
             is RemotePermission.WebRtcAccess,
             is RemotePermission.ChainSubmitAccess,
             is RemotePermission.StatementSubmitAccess,
-            is RemotePermission.PreimageSubmitAccess,
-            is RemotePermission.JamPeersAccess -> repository.isGranted(productId, permission)
+            is RemotePermission.PreimageSubmitAccess -> repository.isGranted(productId, permission)
         }
     }
 
@@ -29,8 +28,7 @@ class RemotePermissionHandler @Inject constructor(
             is RemotePermission.WebRtcAccess,
             is RemotePermission.ChainSubmitAccess,
             is RemotePermission.StatementSubmitAccess,
-            is RemotePermission.PreimageSubmitAccess,
-            is RemotePermission.JamPeersAccess -> requestSimple(productId, permission)
+            is RemotePermission.PreimageSubmitAccess -> requestSimple(productId, permission)
         }
     }
 
@@ -40,8 +38,7 @@ class RemotePermissionHandler @Inject constructor(
             is RemotePermission.WebRtcAccess,
             is RemotePermission.ChainSubmitAccess,
             is RemotePermission.StatementSubmitAccess,
-            is RemotePermission.PreimageSubmitAccess,
-            is RemotePermission.JamPeersAccess -> repository.revoke(productId, permission)
+            is RemotePermission.PreimageSubmitAccess -> repository.revoke(productId, permission)
         }
     }
 

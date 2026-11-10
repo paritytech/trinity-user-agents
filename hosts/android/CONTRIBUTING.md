@@ -42,6 +42,9 @@ Run the same checks CI runs locally:
 # Static analysis (Detekt, with auto-correct for fixable issues)
 ./gradlew detekt --continue
 
+# Tests for the project's own detekt rules
+./gradlew :config:detekt:rules:test
+
 # Unit tests
 ./gradlew testGpDebugUnitTest testGpReleaseUnitTest testDebugUnitTest testReleaseUnitTest
 ```

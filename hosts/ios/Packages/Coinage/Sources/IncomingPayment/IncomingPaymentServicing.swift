@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import SubstrateSdk
@@ -5,24 +6,20 @@ import SubstrateSdk
 /// Idempotent, restart-durable inbound top-ups. Instantiated and driven by the ServiceCoordinator.
 public protocol IncomingPaymentServicing: Sendable {
     /// Registers a top-up for `(productId, paymentId)` from `descriptor` and returns once
-    /// initialization has concluded — the claim is driven by `setup`'s subscription. A positive
-    /// `amount` is the minimum credit required; zero claims all and is supported only for `.coins`.
-    /// Existing ids owned by another root/chain/instance, including unbound legacy records, are
-    /// rejected without replacing their record or secret. Legacy funds require explicit recovery.
-    /// Throws `IncomingPaymentError`.
+    /// initialization has concluded — the claim is driven by `setup`'s subscription. Throws
+    /// `IncomingPaymentError`.
     func accept(
         amount: Balance,
         descriptor: IncomingPaymentSourceDescriptor,
         paymentId: IncomingPaymentId,
-        productId: String
+        productId: ProductId
     ) async throws
 
     /// Observes a payment's status, scoped to `(productId, paymentId)`. Returns the live derived
-    /// stream for an active payment, or the stored terminal verdict for a settled one. A record not
-    /// owned by this service's root/chain/instance is reported as not found.
+    /// stream for an active payment, or the stored terminal verdict for a settled one.
     func subscribeStatus(
         for paymentId: IncomingPaymentId,
-        productId: String
+        productId: ProductId
     ) async throws -> AnyAsyncSequence<IncomingPaymentStatus>
 
     /// Subscribes to active payments and (re)starts their claim tasks, using the resolved denomination

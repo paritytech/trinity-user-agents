@@ -28,7 +28,10 @@ use std::{
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use truapi::{encode_cached_root_manifest, platform::CoreStorage};
+use truapi::{
+	encode_cached_root_manifest,
+	platform::{CoreStorage, CoreStorageKey, ProductId},
+};
 
 /// The developer-authored config for one product.
 ///
@@ -36,12 +39,13 @@ use truapi::{encode_cached_root_manifest, platform::CoreStorage};
 /// the publisher, and an unknown field is not an error: this file is
 /// source-controlled by the developer and shared with tooling that will grow
 /// fields the host has no use for.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize, Debug)]
 pub struct LocalProductConfig {
 	/// The product's dotNS base name, e.g. `peopl.paseo`. The id its grants and
-	/// its storage are resolved under.
+	/// its storage are resolved under. A name that is not a product id fails
+	/// the read.
 	#[serde(rename = "productName")]
-	pub product_name: String,
+	pub product_name: ProductId,
 	/// Human-readable name, carried into the seeded manifest so what the host
 	/// resolves looks like what the publisher will write.
 	#[serde(rename = "displayName", default)]
@@ -69,7 +73,7 @@ impl LocalProductConfig {
 	fn root_manifest_json(&self) -> String {
 		let trusted = serde_json::to_string(&self.trusted_products)
 			.expect("a map of strings to strings always serializes");
-		let display = self.display_name.as_deref().unwrap_or(&self.product_name);
+		let display = self.display_name.as_deref().unwrap_or(self.product_name.as_str());
 		let display = serde_json::to_string(display).expect("a string always serializes");
 		format!(
 			r#"{{"$v":1,"displayName":{display},"description":"Served locally by truapi-host.","icon":{{"cid":"","format":"png"}},"trustedProducts":{trusted}}}"#
@@ -92,7 +96,7 @@ impl LocalProductConfig {
 }
 
 /// What [`apply`] seeded, so a caller can report it before serving anything.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct AppliedGrants {
 	/// One line per config, naming the product and what it grants.
 	pub lines: Vec<String>,
@@ -122,7 +126,7 @@ pub async fn apply(
 	for config in configs {
 		platform
 			.write_core_storage(
-				truapi::manifest_cache_key(&config.product_name),
+				CoreStorageKey::product_manifest(&config.product_name),
 				encode_cached_root_manifest(Some(&config.root_manifest_json()), now_secs),
 			)
 			.await
@@ -139,61 +143,4 @@ pub fn read_all(paths: &[PathBuf]) -> Result<Vec<LocalProductConfig>> {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	fn config(json: &str) -> LocalProductConfig {
-		serde_json::from_str(json).expect("the config parses")
-	}
-
-	#[test]
-	fn a_config_carrying_no_grants_still_reads() {
-		let parsed = config(r#"{"productName":"dim2.paseo"}"#);
-		assert_eq!(parsed.product_name, "dim2.paseo");
-		assert!(parsed.trusted_products.is_empty());
-	}
-
-	#[test]
-	fn fields_the_host_does_not_read_are_not_errors() {
-		// The publisher owns most of this file; the host reads two fields of it.
-		let parsed = config(
-			r#"{"productName":"peopl.paseo","description":"d","icon":"./icon.png",
-                "app":{"root":"./dist","appVersion":[1,0,0]},
-                "trustedProducts":{"dim2":["storage"]}}"#,
-		);
-		assert_eq!(parsed.trusted_products["dim2"], vec!["storage".to_string()]);
-	}
-
-	#[test]
-	fn the_seeded_manifest_carries_the_declared_grants() {
-		let parsed = config(
-			r#"{"productName":"peopl.paseo","displayName":"Personhood",
-                "trustedProducts":{"dim2":["storage"],"stash":["all"]}}"#,
-		);
-		let json = parsed.root_manifest_json();
-		assert!(json.contains(r#""displayName":"Personhood""#));
-		assert!(json.contains(r#""dim2":["storage"]"#));
-		assert!(json.contains(r#""stash":["all"]"#));
-		assert!(json.contains(r#""$v":1"#));
-	}
-
-	#[test]
-	fn a_scope_the_core_does_not_know_survives_into_the_manifest() {
-		// The host does not filter the developer's values. An unrecognised
-		// scope must reach the parser and be ignored there, so local behaviour
-		// matches what the same document would do on chain.
-		let parsed =
-			config(r#"{"productName":"peopl.paseo","trustedProducts":{"dim2":["storage-write"]}}"#);
-		assert!(parsed.root_manifest_json().contains(r#""dim2":["storage-write"]"#));
-	}
-
-	#[test]
-	fn the_transcript_names_the_product_and_what_it_grants() {
-		let parsed =
-			config(r#"{"productName":"peopl.paseo","trustedProducts":{"dim2":["storage"]}}"#);
-		assert_eq!(parsed.transcript_line(), "peopl.paseo: dim2 -> [storage]");
-
-		let silent = config(r#"{"productName":"dim2.paseo"}"#);
-		assert_eq!(silent.transcript_line(), "dim2.paseo: grants nothing");
-	}
-}
+mod tests;

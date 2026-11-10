@@ -10,11 +10,21 @@ struct HostBridgeDefaultsTests {
     func defaultBeginOperationNamesEachOperationSeparately() async throws {
         let bridge = StubHostBridge()
 
-        let first = try await bridge.beginOperation(productId: "test.dot", label: "funding")
-        let second = try await bridge.beginOperation(productId: "test.dot", label: "")
+        let first = try await bridge.beginOperation(productId: ProductId("test.dot"), label: "funding")
+        let second = try await bridge.beginOperation(productId: ProductId("test.dot"), label: "")
 
         #expect(first != second)
         #expect(first != 0)
         #expect(second != 0)
+    }
+
+    /// An app that never implemented cards must say so, not pretend it moved one.
+    @Test
+    func defaultExpandedCardFaceIsUnsupported() async throws {
+        let bridge: HostBridge = StubHostBridge()
+
+        let outcome = try await bridge.setExpandedCardFaceShown(shown: false)
+
+        #expect(outcome == .unsupported)
     }
 }

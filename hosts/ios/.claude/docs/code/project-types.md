@@ -58,7 +58,7 @@ When a type needs SCALE encoding across multiple call sites, implement conforman
 
 ```swift
 // GOOD: Universal, reusable
-extension GamePallet.AccountOrPerson: ScaleEncodable { ... }
+extension UsernameReservationMessage: ScaleEncodable { ... }
 
 // BAD: Ad-hoc encoding at each call site
 ```

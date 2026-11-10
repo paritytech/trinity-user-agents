@@ -62,10 +62,28 @@ final class BalanceView: ControlView<
         amountLabel.textColor = style.amountColor
     }
 
-    func bind(amount: String) {
-        amountLabel.text = amount
+    func bind(amount: String, unit: String? = nil) {
+        guard let unit, !unit.isEmpty else {
+            amountLabel.text = amount
+            setNeedsLayout()
+            return
+        }
+
+        let text = NSMutableAttributedString(string: amount + " ")
+        text.append(CashLogo.unit(
+            unit,
+            fallback: UIFont.app(.smallCapsHeadlineMedium).withSize(Constants.unitFontSize)
+        ))
+        amountLabel.attributedText = text
+        amountLabel.accessibilityLabel = amount + " " + unit
 
         setNeedsLayout()
+    }
+}
+
+private extension BalanceView {
+    enum Constants {
+        static let unitFontSize: CGFloat = 14
     }
 }
 

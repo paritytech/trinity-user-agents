@@ -1,24 +1,34 @@
 package io.paritytech.polkadotapp.app.root.presentation.root.compose.components
 
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.compose.AddContactPanel
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.search.compose.AddContactStep
 import io.paritytech.polkadotapp.feature_scan_impl.presentation.scanPanel.compose.EmbeddedQrScanner
 
 @Composable
 internal fun ScanPanel(
+    modifier: Modifier,
+    step: AddContactStep,
+    cameraActive: Boolean,
+    keyboardRequested: Boolean,
+    onSearchFieldClick: () -> Unit,
+    onScanClick: () -> Unit,
+    onClose: () -> Unit,
     onScanHandled: (navigate: (() -> Unit)?) -> Unit,
 ) {
     AddContactPanel(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(PolkadotTheme.spacings.small),
-        scanner = { modifier ->
+        modifier = modifier,
+        step = step,
+        keyboardRequested = keyboardRequested,
+        onSearchFieldClick = onSearchFieldClick,
+        onScanClick = onScanClick,
+        onClose = onClose,
+        scanner = { scannerModifier ->
             EmbeddedQrScanner(
-                modifier = modifier,
+                modifier = scannerModifier,
+                cameraActive = cameraActive,
+                recognitionArmed = cameraActive,
                 onScanHandled = onScanHandled,
             )
         },

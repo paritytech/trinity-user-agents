@@ -19,7 +19,6 @@ Central hub managing the app's long-lived services. Created in MainTabBar module
 - `signInHostCoordinator` — authentication
 - `attachmentUploadService`, `attachmentDownloadService` — file handling
 - `depositService` — deposit operations
-- `fiatOnrampService`, `fiatOnrampTrackingService`, `fiatOnrampStorage` — fiat integration
 - `polkadotHandshakeService` — protocol handshake
 - `coinageService`, `coinageBackupSyncService` — digital identity
 - `audioSessionManager` — audio management

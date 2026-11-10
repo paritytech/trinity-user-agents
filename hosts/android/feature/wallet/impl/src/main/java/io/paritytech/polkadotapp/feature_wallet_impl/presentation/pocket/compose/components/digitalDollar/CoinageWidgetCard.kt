@@ -18,6 +18,7 @@ internal fun CoinageWidgetCard(
     modifier: Modifier = Modifier,
     title: String,
     subtitle: String? = null,
+    onHeaderClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
     PolkadotSurface(
@@ -31,7 +32,7 @@ internal fun CoinageWidgetCard(
                 .padding(HoldingGeometry.containerPadding),
             verticalArrangement = Arrangement.spacedBy(HoldingGeometry.containerSpacing)
         ) {
-            Column {
+            Column(modifier = Modifier.fillMaxWidth().headingClick(onHeaderClick)) {
                 NovaText(
                     text = title,
                     style = PolkadotTheme.typography.title.medium,

@@ -14,7 +14,9 @@ use crate::{
 		raw_callback_field_name, raw_callback_name, raw_callback_wire_name, snake_case,
 		stream_item, trait_object_return_name,
 	},
-	rustdoc::{ApiDefinition, TypeDef, TypeDefKind, TypeRef, VariantFields},
+	rustdoc::{
+		ApiDefinition, TypeDef, TypeDefKind, TypeRef, VariantFields, split_versioned_type_name,
+	},
 };
 
 pub fn generate_wasm_bridge(
@@ -44,11 +46,11 @@ pub fn generate_wasm_bridge(
         use futures::stream::BoxStream;
         use js_sys::{{Function, Uint8Array}};
         use parity_scale_codec::Encode;
-        use truapi::v01;
+        use truapi::latest;
         use wasm_bindgen::JsValue;
 
         use super::{{
-            WasmPlatform, call_js_function, decode_bytes, decode_js_item, generic, get_function,
+            WasmPlatform, call_js_function, decode_bytes, decode_js_item, get_function,
             get_optional_function, invoke_bool, invoke_bytes_return, invoke_js_subscription,
             invoke_optional_bytes_return, invoke_optional_string_return, invoke_unit, missing_callback, parse_optional_bytes_item,
         }};
@@ -254,7 +256,7 @@ fn emit_trait_impl(
 ) -> Result<String> {
 	let mut out = String::new();
 	if trait_def.methods.iter().any(|method| method.return_shape.is_async) {
-		out.push_str("#[crate::platform::async_trait]\n");
+		out.push_str("#[async_trait::async_trait]\n");
 	}
 	writeln!(out, "impl crate::platform::{} for WasmPlatform {{", trait_def.name).unwrap();
 	for (idx, method) in trait_def.methods.iter().enumerate() {
@@ -293,31 +295,33 @@ fn emit_result_method(
 	let args = js_arg_vec(method, ctx)?;
 	let ret = format!("Result<{}, {}>", rust_type(ok, ctx)?, rust_type(err, ctx)?);
 	let params = rust_params(method, ctx)?;
-	let map_err = error_mapper(err, ctx)?;
-
 	let body = if is_unit(ok) {
-		await_chain(&bridge_call("invoke_unit", &method.name, &args, &[]), &map_err)
+		formatdoc! {
+			"{call}.await?;
+			Ok(())",
+			call = bridge_call("invoke_unit", &method.name, &args, &[]),
+		}
 	} else if is_bool(ok) {
-		await_chain(&bridge_call("invoke_bool", &method.name, &args, &[]), &map_err)
+		format!("Ok({}.await?)", bridge_call("invoke_bool", &method.name, &args, &[]),)
 	} else if is_bytes(ok) {
-		await_chain(&bridge_call("invoke_bytes_return", &method.name, &args, &[]), &map_err)
+		format!("Ok({}.await?)", bridge_call("invoke_bytes_return", &method.name, &args, &[]),)
 	} else if matches!(ok, TypeRef::Option(inner) if is_string(inner)) {
-		await_chain(
-			&bridge_call("invoke_optional_string_return", &method.name, &args, &[]),
-			&map_err,
+		format!(
+			"Ok({}.await?)",
+			bridge_call("invoke_optional_string_return", &method.name, &args, &[]),
 		)
 	} else if is_optional_bytes(ok) {
-		await_chain(
-			&bridge_call(
+		format!(
+			"Ok({}.await?)",
+			bridge_call(
 				"invoke_optional_bytes_return",
 				&method.name,
 				&args,
 				&[format!("{:?}", format!("{raw} must resolve to Uint8Array, null or undefined"))],
 			),
-			&map_err,
 		)
 	} else if ctx.is_api_codec(ok) || ctx.is_local_codec(ok) || is_scale_vector_result(ok) {
-		formatdoc_decode_result(method, ok, &raw, &args, &map_err, ctx)?
+		formatdoc_decode_result(method, ok, &raw, &args, ctx)?
 	} else {
 		bail!("unsupported wasm bridge result type for `{raw}`: {ok:?}");
 	};
@@ -400,16 +404,18 @@ fn formatdoc_decode_result(
 	ok: &TypeRef,
 	raw: &str,
 	args: &str,
-	map_err: &str,
 	ctx: &BridgeCtx<'_>,
 ) -> Result<String> {
 	let ty = rust_type(ok, ctx)?;
 	let call = bridge_call("invoke_bytes_return", &method.name, args, &[]);
-	let await_bytes = await_chain(&call, &format!("{map_err}?"));
-	Ok(format!(
-		"let bytes = {await_bytes};\ndecode_bytes::<{ty}>(\n    bytes,\n    {:?},\n)\n{map_err}",
-		format!("{raw} response did not decode"),
-	))
+	Ok(formatdoc! {
+		"let bytes = {call}.await?;
+        Ok(decode_bytes::<{ty}>(
+            bytes,
+            {message:?},
+        )?)",
+		message = format!("{raw} response did not decode"),
+	})
 }
 
 fn rust_params(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<String> {
@@ -461,14 +467,6 @@ fn bridge_call(name: &str, field: &str, second_arg: &str, extra_args: &[String])
 	out
 }
 
-fn await_chain(call: &str, map_err: &str) -> String {
-	if call.contains('\n') {
-		format!("{call}\n.await\n{map_err}")
-	} else {
-		format!("{call}\n    .await\n    {map_err}")
-	}
-}
-
 fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
 	match ty {
 		TypeRef::Primitive(name) if name == "String" || name == "str" => Ok("String".to_string()),
@@ -481,7 +479,7 @@ fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
 		},
 		TypeRef::Named { name, args } if ctx.api_types.contains_key(name.as_str()) => {
 			if args.is_empty() {
-				Ok(format!("v01::{name}"))
+				Ok(protocol_type_path(name))
 			} else {
 				bail!("generic API type `{name}` is not supported in wasm bridge")
 			}
@@ -547,6 +545,9 @@ fn js_arg_expr(name: &str, ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> 
 		return Ok(format!("Uint8Array::from({name}.encode().as_slice()).into()"));
 	}
 	if let Some(primitive) = ctx.alias_primitive(ty) {
+		if primitive == "str" {
+			return Ok(format!("JsValue::from_str({name}.as_str())"));
+		}
 		return numeric_js_arg(name, primitive);
 	}
 	if let TypeRef::Primitive(primitive) = ty {
@@ -560,7 +561,7 @@ fn numeric_js_arg(name: &str, primitive: &str) -> Result<String> {
 		"u8" | "u16" | "u32" | "i8" | "i16" | "i32" => {
 			Ok(format!("JsValue::from_f64(f64::from({name}))"))
 		},
-		"u64" | "i64" => Ok(format!("js_sys::BigInt::from({name}).into()")),
+		"u64" | "i64" | "u128" | "i128" => Ok(format!("js_sys::BigInt::from({name}).into()")),
 		"bool" => Ok(format!("JsValue::from_bool({name})")),
 		other => bail!("numeric callback parameter `{name}: {other}` is not JS-number safe"),
 	}
@@ -573,7 +574,9 @@ fn subscription_payload(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<
 	match method.params.as_slice() {
 		[] => Ok("None".to_string()),
 		[param] => Ok(format!("Some({})", js_arg_expr(&param.name, &param.type_ref, ctx)?)),
-		_ => bail!("subscription `{}` has more than one payload parameter", method.name),
+		_ => {
+			bail!("subscription `{}` has more than one payload parameter", method.name)
+		},
 	}
 }
 
@@ -604,15 +607,6 @@ fn stream_parser(
 		return Ok(fn_name);
 	}
 	bail!("unsupported stream item type: {ok:?}")
-}
-
-fn error_mapper(err: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
-	let name = named_type_name(err)?;
-	if name == "GenericError" {
-		return Ok(".map_err(generic)".to_string());
-	}
-	let err_ty = rust_type(err, ctx)?;
-	Ok(format!(".map_err(|reason| {err_ty}::Unknown {{ reason }})"))
 }
 
 fn validate_errors(traits: &[&PlatformTrait], ctx: &BridgeCtx<'_>) -> Result<()> {
@@ -680,8 +674,10 @@ fn validate_error_name<'a>(
 			})
 			.collect::<Vec<_>>();
 		if !versioned_payloads.is_empty() && versioned_payloads.len() == variants.len() {
+			// Each version walks its own path: two versions sharing one
+			// payload type are siblings, not a cycle.
 			for payload in versioned_payloads {
-				validate_error_name(named_type_name(payload)?, ctx, seen)?;
+				validate_error_name(named_type_name(payload)?, ctx, &mut seen.clone())?;
 			}
 			return Ok(());
 		}
@@ -702,6 +698,15 @@ fn resolve_alias_type<'a>(name: &'a str, ctx: &BridgeCtx<'a>) -> Option<&'a Type
 			TypeDefKind::Alias(TypeRef::Named { name, .. }) => current = name,
 			_ => return Some(type_def),
 		}
+	}
+}
+
+/// The Rust path of a protocol type. A `V01`-style prefix is the version the
+/// signature names explicitly, and an unprefixed name is the latest version.
+fn protocol_type_path(name: &str) -> String {
+	match split_versioned_type_name(name) {
+		Some((version, simple_name)) => format!("truapi::v{version:02}::{simple_name}"),
+		None => format!("latest::{name}"),
 	}
 }
 

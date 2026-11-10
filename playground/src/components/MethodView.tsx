@@ -13,7 +13,7 @@ const CALL_TIMEOUT_MS = 45_000;
 
 const CARGO_DOC_BASE =
   process.env.NEXT_PUBLIC_CARGO_DOC_BASE ??
-  "https://paritytech.github.io/host-rust-core/cargo_doc";
+  "https://paritytech.github.io/trinity-user-agents/cargo_doc";
 
 /** Deployed playground served inside the Polkadot Desktop Host. */
 const HOSTED_PLAYGROUND_URL = "https://truapi-playground.dot.li";

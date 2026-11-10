@@ -39,7 +39,7 @@ Application secrets come from GitHub Actions repository secrets and are passed o
 
 | Action | Purpose | Key Detail |
 |--------|---------|------------|
-| `install/` | Setup iOS build environment | Validates and configures Match authentication from a GitHub PAT when requested, installs Xcode and Ruby, restores SPM cache; does not load application secrets |
+| `install/` | Setup iOS build environment | Validates and configures Match authentication from a GitHub PAT when requested, installs Xcode, Ruby and Python; does not load application secrets |
 | `configure-google-services/` | Generate Firebase configuration | Decodes a Base64-encoded plist secret, validates it and its bundle ID, then writes the ignored `GoogleService-Info.plist` immediately before an Xcode build or test |
 | `distribute-testflight/` | Run tests, build, upload to TestFlight | Caller must run `install/` first and provide `build_number`, App Store Connect credentials, signing passwords, and both Google service plist secrets; the action generates Dev config for tests and Release config for the archive |
 | `read-build-version/` | Read Release `MARKETING_VERSION` + compute next TestFlight build number | Caller must run `install/` first and provide App Store Connect credentials; `increment_step` defaults to `1` |

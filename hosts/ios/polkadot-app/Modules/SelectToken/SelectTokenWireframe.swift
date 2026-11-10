@@ -24,17 +24,4 @@ final class SelectTokenWireframe: SelectTokenWireframeProtocol {
 
         view?.controller.present(navigation, animated: true)
     }
-
-    func proceedToFiatOnRamp(from view: SelectTokenViewProtocol?) {
-        guard let destination = FiatOnRampViewFactory.createView(context: context) else {
-            return
-        }
-        if let navigationController = view?.controller.navigationController {
-            navigationController.pushViewController(destination.controller, animated: true)
-        } else {
-            let navigation = AppNavigationController(rootViewController: destination.controller)
-            navigation.barSettings = .defaultSettings.bySettingCloseButton(false)
-            view?.controller.present(navigation, animated: true)
-        }
-    }
 }

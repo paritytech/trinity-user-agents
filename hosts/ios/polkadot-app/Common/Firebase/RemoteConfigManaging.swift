@@ -22,3 +22,12 @@ protocol RemoteConfigManaging: AnyObject {
 protocol ChainRegistryConfiguring: AnyObject {
     func set(chainRegistry: ChainRegistryProtocol)
 }
+
+/// Lets an in-process restart wait for a config fetched after it, instead of resolving with the one already applied
+/// or the one Firebase activated earlier.
+protocol AppliedConfigDiscarding: AnyObject {
+    /// Until the next successful fetch, waiters stay pending and the activated cache is not applied. The values
+    /// applied so far stay readable, so code still running against them does not trap.
+    @MainActor
+    func discardAppliedConfig()
+}

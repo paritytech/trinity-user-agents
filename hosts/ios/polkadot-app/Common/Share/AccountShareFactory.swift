@@ -1,7 +1,7 @@
-import Foundation
+import UIKit
 
 protocol AccountShareFactoryProtocol {
-    func createSources(username: Username) -> [Any]
+    func createSources(username: Username, qrImage: UIImage) -> [Any]
 }
 
 final class AccountShareFactory {
@@ -13,8 +13,8 @@ final class AccountShareFactory {
 }
 
 extension AccountShareFactory: AccountShareFactoryProtocol {
-    func createSources(username: Username) -> [Any] {
-        [makeMessage(username: username)]
+    func createSources(username: Username, qrImage: UIImage) -> [Any] {
+        [qrImage, makeMessage(username: username)]
     }
 }
 

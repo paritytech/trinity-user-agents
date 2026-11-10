@@ -18,10 +18,8 @@ actor OutgoingChatRequestCoordinationContext {
     }
 
     nonisolated let logger: LoggerProtocol
-    let messageStoreService: MessagesLocalStorageServicing
 
-    init(messageStoreService: MessagesLocalStorageServicing, logger: LoggerProtocol) {
-        self.messageStoreService = messageStoreService
+    init(logger: LoggerProtocol) {
         self.logger = logger
     }
 
@@ -58,8 +56,8 @@ actor OutgoingChatRequestCoordinationContext {
 
     func process(
         requestMessages: [Chat.LocalMessage],
-        sendMessage: @escaping (Chat.RequestMessage, MessageExchange.Peer, MessageExchange.Own) async throws -> Void
-    ) async throws {
+        deliver: @escaping @Sendable (Chat.RequestMessage, MessageExchange.SessionRequest) async -> Void
+    ) {
         let nonSendingMessages = requestMessages.filter { messageState[$0.messageId] == nil }
 
         nonSendingMessages.forEach { message in
@@ -79,15 +77,9 @@ actor OutgoingChatRequestCoordinationContext {
             }
 
             let task = Task { [weak self] in
-                do {
-                    self?.logger.debug("Sending request: \(remoteMessage.messageId)")
-                    try await sendMessage(remoteMessage, sessionRequest.peer, sessionRequest.own)
-                    try await self?.markMessageSent(for: remoteMessage.messageId)
-                    self?.logger.debug("Request sent: \(remoteMessage.messageId)")
-                } catch {
-                    self?.logger.error("Couldn't send message: \(error)")
-                    await self?.clearSendingTask(messageId: remoteMessage.messageId)
-                }
+                self?.logger.debug("Delivering request: \(remoteMessage.messageId)")
+                await deliver(remoteMessage, sessionRequest)
+                await self?.finishDelivery(of: remoteMessage.messageId)
             }
 
             messageState[remoteMessage.messageId] = .sending(task)
@@ -95,14 +87,23 @@ actor OutgoingChatRequestCoordinationContext {
     }
 }
 
-private extension OutgoingChatRequestCoordinationContext {
-    func markMessageSent(for messageId: String) async throws {
-        try await messageStoreService.markAsSent([messageId]).asyncExecute()
+extension OutgoingChatRequestCoordinationContext {
+    func cancelAll() {
+        outgoingRequestsTask?.cancel()
+        outgoingRequestsTask = nil
 
-        messageState[messageId] = .sent
+        for case let .sending(task) in messageState.values {
+            task.cancel()
+        }
+
+        messageState = [:]
+        peersWithOutgoingRequests = [:]
     }
+}
 
-    func clearSendingTask(messageId: String) {
-        messageState[messageId] = nil
+private extension OutgoingChatRequestCoordinationContext {
+    // A cancelled delivery is forgotten, so the next run picks the still unsent message up again.
+    func finishDelivery(of messageId: String) {
+        messageState[messageId] = Task.isCancelled ? nil : .sent
     }
 }

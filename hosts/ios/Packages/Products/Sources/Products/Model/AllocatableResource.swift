@@ -6,7 +6,6 @@ public enum AllocatableResource: Equatable {
     case bulletInAllowance
     case smartContractAllowance(dest: ProductAccountSelector)
     case autoSigning
-    case productStatementStoreAllowance(dest: ProductAccountSelector)
 }
 
 public enum AllocationOutcome: Equatable {
@@ -20,7 +19,6 @@ public enum AllocatedResource: Equatable {
     case statementStoreAllowance(privateKey: Data)
     case bulletInAllowance(privateKey: Data)
     case smartContractAllowance
-    case productStatementStoreAllowance
 }
 
 public enum AutoSigningSecretsError: Error, Equatable {

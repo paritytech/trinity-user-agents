@@ -12,10 +12,13 @@
     }
 
     extension AppFactoryResetInteractor: AppFactoryResetInteractorInputProtocol {
+        /// Captures the presenter strongly: by now the session is detached and the task is its only owner.
         func performReset() {
-            resetService.resetAllData()
-            MainActor.assumeIsolated {
-                presenter?.didCompleteReset()
+            let presenter = presenter
+
+            Task { [resetService] in
+                await resetService.resetAllData()
+                await presenter?.didCompleteReset()
             }
         }
     }

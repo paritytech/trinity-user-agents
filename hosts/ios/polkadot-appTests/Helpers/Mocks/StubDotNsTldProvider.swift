@@ -15,4 +15,14 @@ struct StubDotNsTldProvider: DotNsTldProviding {
     }
 
     func refresh() {}
+
+    func reset() {}
+
+    func currentTldElseResolve() async throws -> String {
+        if let tld = currentTld() {
+            return tld
+        }
+
+        return try await resolveTld()
+    }
 }

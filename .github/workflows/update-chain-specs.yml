@@ -1,9 +1,9 @@
 name: Refresh Chain Specs
 
-# Refresh the smoldot chain specs bundled in truapi-provider (fresh relay
-# lightSyncState checkpoints and genesis stateRootHash). The refresh only
-# reaches consumers after a new @parity/truapi-provider is published, so this
-# runs weekly rather than hourly.
+# Refresh the smoldot chain specs bundled in truapi-provider and the stack descriptors bundled in
+# truapi-host (how the CLI uses them: rust/crates/truapi-host-cli/SPEC.md §14.1). Consumers get a
+# refresh only after a new @parity/truapi-provider or truapi-host is published, so this runs
+# weekly rather than hourly.
 on:
   schedule:
     # Mondays at 00:00 UTC.
@@ -29,7 +29,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v6.0.0
         with:
           node-version: "22"
 
@@ -39,38 +39,71 @@ jobs:
           # The weekly refresh keeps its own bootnodes. A dispatch decides.
           SKIP_BOOTNODE_CHECK: ${{ github.event_name == 'schedule' && 'true' || inputs.skip_bootnode_check }}
 
+      # The released truapi-host bundles the stacks, so a change to what `stack bundle`
+      # compares or pins applies here one release later.
+      - name: Install truapi-host
+        id: install
+        if: ${{ !cancelled() }}
+        run: |
+          bash scripts/truapi-host-installer.sh
+          echo "TRUAPI_HOST=$TRUAPI_HOST_BIN_DIR/truapi-host" >> "$GITHUB_ENV"
+        env:
+          TRUAPI_HOST_BIN_DIR: ${{ runner.temp }}/bin
+
+      - name: Refresh stack descriptors
+        id: stacks
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: bash scripts/update-stacks.sh
+
+      # A failed install or stack refresh still opens the PR with what did refresh,
+      # and leaves the run red.
       - name: Check for changes
         id: diff
+        if: ${{ !cancelled() }}
         run: |
-          if git diff --quiet rust/crates/truapi-provider/networks/; then
+          if git diff --quiet rust/crates/truapi-provider/networks/ rust/crates/truapi-host-cli/stacks/; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Write changeset
+        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}
+        run: bash scripts/write-refresh-changeset.sh "$GITHUB_RUN_ID"
+
       - name: Create Pull Request
-        if: steps.diff.outputs.changed == 'true'
+        if: ${{ !cancelled() && steps.diff.outputs.changed == 'true' }}
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          title: "chore(truapi-provider): refresh bundled chain specs"
+          title: "chore: refresh bundled chain specs and stack descriptors"
           body: |
-            Automated refresh of the smoldot chain specs bundled in truapi-provider.
+            Automated refresh of the smoldot chain specs bundled in truapi-provider and the
+            stack descriptors bundled in truapi-host (`rust/crates/truapi-host-cli/stacks`), with
+            the changeset both need.
 
-            This branch is force-pushed on every run, so the newest head can end up with no
-            checks attached even though earlier ones had them. If none are shown below, push an
-            empty commit before merging rather than assuming the suite passed.
+            This branch is rebuilt from main on every run, so a commit pushed to it is lost on the
+            next one: make a fix in this PR only to merge it before the next run, or on main.
+            The newest head can also end up with no checks attached even though earlier ones had
+            them. If none are shown below, push an empty commit before merging rather than
+            assuming the suite passed.
 
-            If `every_catalog_genesis_hash_matches_its_bundled_spec` fails, a chain has been
-            re-genesised and its `genesis_hex` in `rust/crates/truapi-provider/src/networks.rs`
-            needs updating too. The refresh only rewrites the specs, never the catalog constants.
-            The failure names the network and service, and prints the hash the refreshed spec
-            derives to on the left and the stale catalog constant on the right. Copy the left one
-            into `networks.rs`, and update any consumer that pins the old hash.
+            When a stack restarted from genesis, `every_catalog_genesis_hash_matches_its_bundled_spec`
+            or `test_light_client_catalog_match` fails: the refresh rewrites the specs and the
+            descriptors, never the catalog constants. Edit `genesis_hex` in
+            `rust/crates/truapi-provider/src/networks.rs` in this same PR. The first failure prints
+            the network and service, the hash the refreshed spec derives to on the left
+            and the stale catalog constant on the right; copy the left one into `networks.rs`, and
+            update any consumer that pins the old hash.
+
+            If `test_built_in_network_hosts` fails, a stack moved an endpoint: confirm the new
+            host is a test network before adding it to `TEST_NETWORK_HOSTS` in
+            `rust/crates/truapi-host-cli/src/network/tests.rs`.
 
             Merging this publishes a dev snapshot of `@parity/truapi-provider` automatically
             (dev-publish.yml triggers on chain-spec changes landing on main). Consumers still
-            need to bump to the new snapshot to pick up the refresh.
+            need to bump to the new snapshot to pick up the refresh, and users get a refreshed
+            stack descriptor with the next truapi-host release.
           branch: auto/chain-spec-update
-          commit-message: "chore(truapi-provider): refresh bundled chain specs"
+          commit-message: "chore: refresh bundled chain specs and stack descriptors"
           delete-branch: true
           labels: dependencies

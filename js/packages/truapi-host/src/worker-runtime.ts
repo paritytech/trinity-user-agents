@@ -4,15 +4,12 @@
 // state that needs DOM access (localStorage, prompts) while the core dispatcher
 // runs here off the page main thread.
 
+import type { ProductId } from "@parity/truapi";
 import { isLoopbackWsUrl } from "./worker-protocol.js";
 import type {
   MainToWorker,
   SubscriptionName,
   WorkerToMain,
-} from "./worker-protocol.js";
-import {
-  COINAGE_WALLET_CALLBACKS,
-  MAX_JSON_RPC_CONNECTIONS,
 } from "./worker-protocol.js";
 import type { GenericError } from "@parity/truapi";
 import { TRUAPI_CODEC_VERSION } from "@parity/truapi";
@@ -28,18 +25,12 @@ import {
 } from "./worker-permission-authorization.js";
 import type {
   WasmModuleShape,
-  WorkerHostRuntime,
   WorkerPairingHostRuntime,
-  WorkerProductRuntime,
   WorkerSigningHostRuntime,
+  WorkerProductRuntime,
   WorkerTransition,
 } from "./wasm-module.js";
 import { errorMessage } from "./error.js";
-import { resolveLocalIdentity } from "./worker-local-identity.js";
-import {
-  validateAllowanceProductIds,
-  validateWalletAllowanceSnapshot,
-} from "./wallet-allowances.js";
 import {
   CHAT_ACTION_ENTRY_POINT,
   RENDERER_ACTION_ENTRY_POINT,
@@ -88,34 +79,18 @@ let nextConnId = 0;
 type ChainConnectAck = { ok: true } | { ok: false; error: string };
 const chainConnectAcks = new Map<number, (ack: ChainConnectAck) => void>();
 const chainResponseListeners = new Map<number, (json: string) => void>();
-const chainCloseListeners = new Map<number, (() => void) | undefined>();
-let connectionsDisposed = false;
 
 function callbackRequest(
   name: CallbackName,
   args: readonly unknown[],
-  coreId?: number,
 ): Promise<unknown> {
-  if (connectionsDisposed)
-    return Promise.reject(new Error("Host runtime is unavailable"));
   return new Promise((resolve, reject) => {
     const requestId = ++nextRequestId;
     pendingCallbacks.set(requestId, (r) => {
       if (r.ok) resolve(r.value);
       else reject(new Error(r.error));
     });
-    try {
-      postToMain({
-        kind: "callbackRequest",
-        requestId,
-        name,
-        args,
-        ...(coreId === undefined ? {} : { coreId }),
-      });
-    } catch {
-      pendingCallbacks.delete(requestId);
-      reject(new Error("Host callback transport is unavailable"));
-    }
+    postToMain({ kind: "callbackRequest", requestId, name, args });
   });
 }
 
@@ -124,32 +99,15 @@ function startSubscription<T>(
   payload: Uint8Array | string | null,
   sendItem: (value: T) => void,
   sendError: (error: GenericError) => void,
-  coreId?: number,
 ): () => void {
-  if (connectionsDisposed) {
-    sendError({ reason: "Host runtime is unavailable" });
-    return () => {};
-  }
   const subId = ++nextSubId;
   subscriptionListeners.set(subId, {
     sendItem: sendItem as (value: unknown) => void,
     sendError: (error) => sendError({ reason: error }),
   });
-  try {
-    postToMain({
-      kind: "subscriptionStart",
-      subId,
-      name,
-      payload,
-      ...(coreId === undefined ? {} : { coreId }),
-    });
-  } catch {
-    subscriptionListeners.delete(subId);
-    sendError({ reason: "Host subscription transport is unavailable" });
-    return () => {};
-  }
+  postToMain({ kind: "subscriptionStart", subId, name, payload });
   return () => {
-    if (!subscriptionListeners.delete(subId)) return;
+    subscriptionListeners.delete(subId);
     postToMain({ kind: "subscriptionStop", subId });
   };
 }
@@ -189,122 +147,38 @@ interface WorkerChainConnection {
 function chainConnect(
   genesisHash: string,
   onResponse: (json: string) => void,
-  onClosed?: () => void,
 ): Promise<WorkerChainConnection | null> {
-  return connectRpc(
-    { kind: "chainConnectStart", genesisHash },
-    onResponse,
-    onClosed,
-  );
-}
-
-function hopConnect(
-  genesisHash: string,
-  endpoint: string,
-  onResponse: (json: string) => void,
-  onClosed?: () => void,
-): Promise<WorkerChainConnection | null> {
-  return connectRpc(
-    { kind: "hopConnectStart", genesisHash, endpoint },
-    onResponse,
-    onClosed,
-  );
-}
-
-function closeRpcConnection(connId: number, notify = true): void {
-  const ack = chainConnectAcks.get(connId);
-  const onClosed = chainCloseListeners.get(connId);
-  chainConnectAcks.delete(connId);
-  chainResponseListeners.delete(connId);
-  chainCloseListeners.delete(connId);
-  ack?.({ ok: false, error: "JSON-RPC connection closed before opening" });
-  if (notify) {
-    try {
-      onClosed?.();
-    } catch {
-      postToMain({
-        kind: "disposeError",
-        error: "JSON-RPC close callback failed",
-      });
-    }
-  }
-}
-
-function connectRpc(
-  start:
-    | { kind: "chainConnectStart"; genesisHash: string }
-    | { kind: "hopConnectStart"; genesisHash: string; endpoint: string },
-  onResponse: (json: string) => void,
-  onClosed?: () => void,
-): Promise<WorkerChainConnection | null> {
-  if (
-    connectionsDisposed ||
-    chainCloseListeners.size >= MAX_JSON_RPC_CONNECTIONS
-  ) {
-    return Promise.reject(
-      new Error("JSON-RPC connections unavailable or limit reached"),
-    );
-  }
   const connId = ++nextConnId;
-  const { promise, resolve, reject } =
-    Promise.withResolvers<WorkerChainConnection | null>();
-  chainConnectAcks.set(connId, (ack) => {
-    if (!ack.ok) {
-      chainResponseListeners.delete(connId);
-      chainCloseListeners.delete(connId);
-      reject(new Error(ack.error));
-      return;
-    }
-    resolve({
-      send(request: string) {
-        if (!chainCloseListeners.has(connId)) {
-          throw new Error("JSON-RPC connection is closed");
-        }
-        postToMain({ kind: "chainSend", connId, request });
-      },
-      close() {
-        if (!chainCloseListeners.has(connId)) return;
-        closeRpcConnection(connId, false);
-        postToMain({ kind: "chainClose", connId });
-      },
+  return new Promise((resolve, reject) => {
+    chainConnectAcks.set(connId, (ack) => {
+      if (!ack.ok) {
+        chainResponseListeners.delete(connId);
+        reject(new Error(ack.error));
+        return;
+      }
+      resolve({
+        send(request: string) {
+          postToMain({ kind: "chainSend", connId, request });
+        },
+        close() {
+          chainResponseListeners.delete(connId);
+          postToMain({ kind: "chainClose", connId });
+        },
+      });
     });
+    chainResponseListeners.set(connId, onResponse);
+    postToMain({ kind: "chainConnectStart", connId, genesisHash });
   });
-  chainCloseListeners.set(connId, onClosed);
-  chainResponseListeners.set(connId, (json) => {
-    try {
-      onResponse(json);
-    } catch (err) {
-      closeRpcConnection(connId);
-      throw err;
-    }
-  });
-  try {
-    postToMain({ ...start, connId });
-  } catch (err) {
-    closeRpcConnection(connId, false);
-    reject(err);
-  }
-  return promise;
 }
 
 /** Build the host-level callback object passed to the WASM runtime. */
-function buildRawCallbacks(
-  capabilities: OptionalCapabilities,
-  coreId?: number,
-) {
+function buildRawCallbacks(capabilities: OptionalCapabilities) {
   return {
     ...createWorkerRawCallbacks(
       {
-        callbackRequest: (name, args) =>
-          callbackRequest(
-            name,
-            args,
-            COINAGE_WALLET_CALLBACKS[name] ? undefined : coreId,
-          ),
-        startSubscription: (name, payload, sendItem, sendError) =>
-          startSubscription(name, payload, sendItem, sendError, coreId),
+        callbackRequest,
+        startSubscription,
         chainConnect,
-        hopConnect,
       },
       capabilities,
     ),
@@ -314,7 +188,10 @@ function buildRawCallbacks(
      * `acquireWorker`/`releaseWorker` or the core took the reference itself
      * for an open render.
      */
-    workerDemandChanged(productId: string, transition: WorkerTransition): void {
+    requestWorkerTransition(
+      productId: ProductId,
+      transition: WorkerTransition,
+    ): void {
       postToMain({
         kind: "workerDemandChanged",
         productId,
@@ -717,7 +594,12 @@ function buildCoreCallbacks(coreId: number) {
   };
 }
 
-let runtime: WorkerHostRuntime | null = null;
+/** The runtime `init` built, tagged with the role it was built for. */
+type HostRuntime =
+  | { role: "pairing"; runtime: WorkerPairingHostRuntime }
+  | { role: "signing"; runtime: WorkerSigningHostRuntime };
+
+let host: HostRuntime | null = null;
 const cores = new Map<number, WorkerProductRuntime>();
 // Outstanding receiveFrame calls per core. wasm-bindgen holds a borrow of the
 // core for the whole duration of an async method, so `free()` throws while one
@@ -726,166 +608,6 @@ const inFlightFrames = new Map<number, Set<Promise<void>>>();
 /** Live render subscriptions, keyed by main-thread render id. */
 const renders: RenderSubscriptions = new Map();
 let wasm: WasmModuleShape | null = null;
-let identityAbort: AbortController | null = null;
-const identityOperations = new Set<Promise<void>>();
-let allowanceNetworkSuffix: string | null = null;
-let allowanceGeneration = 0;
-const allowanceOperations = new Set<Promise<void>>();
-const nativeChatContactsOperations = new Set<Promise<void>>();
-
-function handleNativeChatContacts(requestId: number): void {
-  const rt = runtime;
-  const generation = allowanceGeneration;
-  const operation = (async () => {
-    try {
-      if (!rt || !isSigningRuntime(rt)) {
-        throw new Error(
-          "native Chat contacts are unsupported on a pairing host",
-        );
-      }
-      const activation = rt.localIdentityContext().activationId;
-      const snapshot = await rt.getNativeChatContacts();
-      if (
-        runtime !== rt ||
-        generation !== allowanceGeneration ||
-        rt.localIdentityContext().activationId !== activation
-      ) {
-        throw new Error("local identity activation changed");
-      }
-      postToMain({
-        kind: "nativeChatContactsResponse",
-        requestId,
-        ok: true,
-        snapshot,
-      });
-    } catch (error) {
-      postToMain({
-        kind: "nativeChatContactsResponse",
-        requestId,
-        ok: false,
-        error: errorMessage(error),
-      });
-    }
-  })();
-  nativeChatContactsOperations.add(operation);
-  void operation.finally(() => nativeChatContactsOperations.delete(operation));
-}
-
-function handleWalletAllowanceSnapshot(
-  requestId: number,
-  input: string[],
-): void {
-  const rt = runtime;
-  const generation = allowanceGeneration;
-  const operation = (async () => {
-    try {
-      if (!rt || !isSigningRuntime(rt) || allowanceNetworkSuffix === null) {
-        throw new Error(
-          "wallet allowance inspection requires a signing runtime",
-        );
-      }
-      const productIds = validateAllowanceProductIds(input);
-      const context = rt.localIdentityContext();
-      const snapshot = await rt.getWalletAllowanceSnapshot(
-        context.activationId,
-        productIds,
-      );
-      if (
-        runtime !== rt ||
-        generation !== allowanceGeneration ||
-        rt.localIdentityContext().activationId !== context.activationId
-      ) {
-        throw new Error(
-          "local identity activation changed during allowance inspection",
-        );
-      }
-      validateWalletAllowanceSnapshot(
-        snapshot,
-        context.identityAccountId,
-        allowanceNetworkSuffix,
-        productIds,
-      );
-      postToMain({
-        kind: "walletAllowanceSnapshotResponse",
-        requestId,
-        ok: true,
-        snapshot,
-      });
-    } catch (error) {
-      postToMain({
-        kind: "walletAllowanceSnapshotResponse",
-        requestId,
-        ok: false,
-        error: errorMessage(error),
-      });
-    }
-  })();
-  allowanceOperations.add(operation);
-  void operation.finally(() => allowanceOperations.delete(operation));
-}
-
-function handleLocalIdentity(
-  requestId: number,
-  registration?: { baseUsername: string; identityBackendBaseUrl: string },
-): void {
-  const rt = runtime;
-  if (!rt || !isSigningRuntime(rt) || identityAbort) {
-    postToMain({
-      kind: "localIdentityResponse",
-      requestId,
-      ok: false,
-      error: identityAbort
-        ? "local identity operation already in progress"
-        : "signing runtime is not active",
-    });
-    return;
-  }
-  const controller = new AbortController();
-  identityAbort = controller;
-  const operation = (async () => {
-    try {
-      const identity = await resolveLocalIdentity(
-        rt,
-        controller.signal,
-        registration,
-        (progress) => {
-          if (controller.signal.aborted || identityAbort !== controller) return;
-          postToMain({ kind: "localIdentityProgress", requestId, progress });
-        },
-      );
-      controller.signal.throwIfAborted();
-      postToMain({
-        kind: "localIdentityResponse",
-        requestId,
-        ok: true,
-        identity,
-      });
-    } catch (error) {
-      postToMain({
-        kind: "localIdentityResponse",
-        requestId,
-        ok: false,
-        error: errorMessage(error),
-      });
-    } finally {
-      if (identityAbort === controller) identityAbort = null;
-    }
-  })();
-  identityOperations.add(operation);
-  void operation.finally(() => identityOperations.delete(operation));
-}
-
-function isPairingRuntime(
-  candidate: WorkerHostRuntime,
-): candidate is WorkerPairingHostRuntime {
-  return "cancelPairing" in candidate;
-}
-
-function isSigningRuntime(
-  candidate: WorkerHostRuntime,
-): candidate is WorkerSigningHostRuntime {
-  return "activateLocalSession" in candidate;
-}
 
 (async () => {
   try {
@@ -908,7 +630,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         });
         break;
       }
-      if (runtime) {
+      if (host) {
         postToMain({
           kind: "fatalError",
           error: "init: runtime already initialized",
@@ -939,19 +661,21 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
             });
             break;
           }
-          const hostConfig = msg.hostConfig as { networkSuffix?: unknown };
-          if (typeof hostConfig?.networkSuffix === "string") {
-            allowanceNetworkSuffix = hostConfig.networkSuffix;
-          }
-          runtime = new SigningRuntime(
-            buildRawCallbacks(msg.capabilities),
-            msg.hostConfig,
-          );
+          host = {
+            role: "signing",
+            runtime: new SigningRuntime(
+              buildRawCallbacks(msg.capabilities),
+              msg.hostConfig,
+            ),
+          };
         } else {
-          runtime = new wasm.WasmPairingHostRuntime(
-            buildRawCallbacks(msg.capabilities),
-            msg.hostConfig,
-          );
+          host = {
+            role: "pairing",
+            runtime: new wasm.WasmPairingHostRuntime(
+              buildRawCallbacks(msg.capabilities),
+              msg.hostConfig,
+            ),
+          };
         }
         postToMain({ kind: "ready", schema: coreWireSchemaHash(wasm) });
       } catch (err) {
@@ -959,7 +683,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       }
       break;
     case "createCore":
-      if (!runtime) {
+      if (!host) {
         postToMain({
           kind: "coreError",
           coreId: msg.coreId,
@@ -968,12 +692,9 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
         break;
       }
       try {
-        const core = runtime.productRuntime(
+        const core = host.runtime.productRuntime(
           msg.product,
           buildCoreCallbacks(msg.coreId),
-          msg.capabilities === undefined
-            ? undefined
-            : buildRawCallbacks(msg.capabilities, msg.coreId),
         );
         cores.set(msg.coreId, core);
         postToMain({ kind: "coreReady", coreId: msg.coreId });
@@ -992,13 +713,11 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       void handleFrame(msg.coreId, msg.bytes);
       break;
     case "disconnectSession":
-      identityAbort?.abort(new Error("local identity session disconnected"));
       void handleDisconnectSession(msg.requestId);
       break;
     case "cancelPairing":
-      if (runtime && isPairingRuntime(runtime)) {
-        runtime.cancelPairing();
-      }
+      // A signing host has no pairing to cancel.
+      if (host?.role === "pairing") host.runtime.cancelPairing();
       break;
     case "getSessionChatIdentityKey":
       handleGetSessionChatIdentityKey(msg.requestId);
@@ -1009,6 +728,24 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
     case "getDeviceEncryptionKey":
       void handleGetDeviceEncryptionKey(msg.requestId);
       break;
+    case "parseProductId":
+      try {
+        if (!wasm) throw new Error("runtime is not ready");
+        postToMain({
+          kind: "parseProductIdResponse",
+          requestId: msg.requestId,
+          ok: true,
+          value: wasm.parseProductId(msg.value),
+        });
+      } catch (error) {
+        postToMain({
+          kind: "parseProductIdResponse",
+          requestId: msg.requestId,
+          ok: false,
+          error: errorMessage(error),
+        });
+      }
+      break;
     case "getProductSubtreePublicKey":
       void handleGetProductSubtreePublicKey(
         msg.requestId,
@@ -1017,27 +754,27 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       );
       break;
     case "notifySessionStoreChanged":
-      if (runtime && isPairingRuntime(runtime)) {
-        runtime.notifySessionStoreChanged();
-      }
+      // Only a pairing host restores its session from the store.
+      if (host?.role === "pairing") host.runtime.notifySessionStoreChanged();
       break;
     case "notifyContactsChanged":
-      runtime?.notifyContactsChanged();
+      host?.runtime.notifyContactsChanged();
       break;
     case "acquireWorker":
-      runtime?.acquireWorker(msg.productId);
+      host?.runtime.acquireWorker(msg.productId);
       break;
     case "releaseWorker":
-      runtime?.releaseWorker(msg.productId);
+      host?.runtime.releaseWorker(msg.productId);
       break;
     case "activateStoredSession":
       void handleSessionActivation(
         msg.requestId,
         "activateStoredSession",
-        (rt) =>
-          isPairingRuntime(rt)
-            ? rt.activateStoredSession()
-            : Promise.reject(new Error("pairing runtime is not active")),
+        (booted) =>
+          pairingRuntime(
+            booted,
+            "activateStoredSession",
+          ).activateStoredSession(),
       );
       break;
     case "activateExternalSession": {
@@ -1045,31 +782,21 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       void handleSessionActivation(
         msg.requestId,
         "activateExternalSession",
-        (rt) =>
-          isPairingRuntime(rt)
-            ? rt.activateExternalSession(blob)
-            : Promise.reject(new Error("pairing runtime is not active")),
+        (booted) =>
+          pairingRuntime(
+            booted,
+            "activateExternalSession",
+          ).activateExternalSession(blob),
       );
       break;
     }
     case "activateLocalSession": {
-      identityAbort?.abort(new Error("local identity activation changed"));
       const { secret, liteUsername } = msg;
       void handleSessionActivation(
         msg.requestId,
         "activateLocalSession",
-        (rt) => {
-          const signing = rt as Partial<WorkerSigningHostRuntime>;
-          if (typeof signing.activateLocalSession !== "function") {
-            // A pairing host has no local secret to activate; saying so beats
-            // a TypeError about an undefined function.
-            return Promise.reject(
-              new Error(
-                "activateLocalSession needs a signing host; this runtime is " +
-                  'a pairing host (pass role: "signing" to init)',
-              ),
-            );
-          }
+        (booted) => {
+          const signing = signingRuntime(booted, "activateLocalSession");
           // Activating with a name is a separate core entry point. Fall back
           // when the name is absent, or when a core predating it is loaded.
           if (
@@ -1091,8 +818,8 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       void handleSessionActivation(
         msg.requestId,
         "setGrantAllowancesUnchecked",
-        (rt) => {
-          const signing = rt as Partial<WorkerSigningHostRuntime>;
+        (booted) => {
+          const signing = signingRuntime(booted, "setGrantAllowancesUnchecked");
           if (typeof signing.setGrantAllowancesUnchecked !== "function") {
             return Promise.reject(
               new Error(
@@ -1104,45 +831,61 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
           signing.setGrantAllowancesUnchecked(granted);
           return Promise.resolve();
         },
-        false,
+      );
+      break;
+    }
+    case "setSubmitPreimagesLocally": {
+      const { local } = msg;
+      void handleSessionActivation(
+        msg.requestId,
+        "setSubmitPreimagesLocally",
+        ({ runtime }) => {
+          if (typeof runtime.setSubmitPreimagesLocally !== "function") {
+            return Promise.reject(
+              new Error(
+                "setSubmitPreimagesLocally needs a core built with " +
+                  "`test-host`; this core does not carry it",
+              ),
+            );
+          }
+          runtime.setSubmitPreimagesLocally(local);
+          return Promise.resolve();
+        },
+      );
+      break;
+    }
+    case "setWithheldResources": {
+      const { tags } = msg;
+      void handleSessionActivation(
+        msg.requestId,
+        "setWithheldResources",
+        (booted) => {
+          const signing = signingRuntime(booted, "setWithheldResources");
+          if (typeof signing.setWithheldResources !== "function") {
+            return Promise.reject(
+              new Error(
+                "setWithheldResources needs a signing host built with " +
+                  "`wasm-signing-host`; this core does not carry it",
+              ),
+            );
+          }
+          signing.setWithheldResources(tags);
+          return Promise.resolve();
+        },
       );
       break;
     }
     case "resetSessionState":
-      void handleSessionActivation(msg.requestId, "resetSessionState", (rt) =>
-        isPairingRuntime(rt)
-          ? rt.resetSessionState()
-          : Promise.reject(new Error("pairing runtime is not active")),
-      );
-      break;
-    case "activateLocalSessionWithIdentity": {
-      identityAbort?.abort(new Error("local identity activation changed"));
-      const { secret, liteUsername } = msg;
       void handleSessionActivation(
         msg.requestId,
-        "activateLocalSessionWithIdentity",
-        (rt) =>
-          isSigningRuntime(rt)
-            ? rt.activateLocalSessionWithIdentity(secret, liteUsername)
-            : Promise.reject(new Error("signing runtime is not active")),
+        "resetSessionState",
+        (booted) =>
+          pairingRuntime(booted, "resetSessionState").resetSessionState(),
       );
-      break;
-    }
-    case "refreshLocalIdentity":
-      handleLocalIdentity(msg.requestId);
-      break;
-    case "registerLocalLiteUsername":
-      handleLocalIdentity(msg.requestId, msg);
-      break;
-    case "getWalletAllowanceSnapshot":
-      handleWalletAllowanceSnapshot(msg.requestId, msg.productIds);
-      break;
-    case "getNativeChatContacts":
-      handleNativeChatContacts(msg.requestId);
       break;
     case "getPermissionAuthorizationStatus":
       void handleGetPermissionAuthorizationStatus(
-        runtime,
+        host?.runtime ?? null,
         postToMain,
         msg.productId,
         msg.requestId,
@@ -1151,7 +894,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       break;
     case "getPermissionAuthorizationStatuses":
       void handleGetPermissionAuthorizationStatuses(
-        runtime,
+        host?.runtime ?? null,
         postToMain,
         msg.productId,
         msg.requestId,
@@ -1160,7 +903,7 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       break;
     case "setPermissionAuthorizationStatus":
       void handleSetPermissionAuthorizationStatus(
-        runtime,
+        host?.runtime ?? null,
         postToMain,
         msg.productId,
         msg.requestId,
@@ -1203,8 +946,6 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       if (cb) {
         chainConnectAcks.delete(msg.connId);
         cb(msg.ok ? { ok: true } : { ok: false, error: msg.error });
-      } else if (msg.ok) {
-        postToMain({ kind: "chainClose", connId: msg.connId });
       }
       break;
     }
@@ -1217,9 +958,6 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       );
       break;
     }
-    case "chainClosed":
-      closeRpcConnection(msg.connId);
-      break;
     case "publishChatAction":
       handlePublishAction(
         CHAT_ACTION_ENTRY_POINT,
@@ -1258,28 +996,12 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
       break;
     case "dispose": {
       // Null the runtime synchronously so a message arriving mid-disposal takes
-      // its `if (!runtime)` path instead of calling into a runtime being torn
+      // its `if (!host)` path instead of calling into a runtime being torn
       // down; free the captured handle after the cores finish disposing.
-      const disposing = runtime;
-      runtime = null;
-      allowanceGeneration++;
-      identityAbort?.abort(new Error("runtime disposed"));
-      connectionsDisposed = true;
-      for (const settle of pendingCallbacks.values()) {
-        settle({ ok: false, error: "Host runtime is unavailable" });
-      }
-      pendingCallbacks.clear();
-      for (const connId of chainCloseListeners.keys()) {
-        closeRpcConnection(connId);
-        postToMain({ kind: "chainClose", connId });
-      }
+      const disposing = host?.runtime;
+      host = null;
       void (async () => {
         try {
-          if (disposing && isSigningRuntime(disposing))
-            await disposing.disconnectSession();
-          await Promise.allSettled(identityOperations);
-          await Promise.allSettled(allowanceOperations);
-          await Promise.allSettled(nativeChatContactsOperations);
           await Promise.all(
             [...cores.keys()].map((coreId) => disposeCore(coreId)),
           );
@@ -1312,13 +1034,37 @@ async function disposeCore(coreId: number): Promise<void> {
   }
 }
 
+function pairingRuntime(
+  booted: HostRuntime,
+  label: string,
+): WorkerPairingHostRuntime {
+  if (booted.role === "signing") {
+    throw new Error(
+      `${label} needs a pairing host; this runtime is a signing host`,
+    );
+  }
+  return booted.runtime;
+}
+
+function signingRuntime(
+  booted: HostRuntime,
+  label: string,
+): WorkerSigningHostRuntime {
+  if (booted.role === "pairing") {
+    throw new Error(
+      `${label} needs a signing host; this runtime is a pairing host ` +
+        '(pass role: "signing" to init)',
+    );
+  }
+  return booted.runtime;
+}
+
 async function handleSessionActivation(
   requestId: number,
   label: string,
-  activate: (runtime: WorkerHostRuntime) => Promise<void>,
-  changesIdentity = true,
+  activate: (booted: HostRuntime) => Promise<void>,
 ): Promise<void> {
-  if (!runtime) {
+  if (!host) {
     postToMain({
       kind: "sessionActivationResponse",
       requestId,
@@ -1327,12 +1073,8 @@ async function handleSessionActivation(
     });
     return;
   }
-  if (changesIdentity) {
-    allowanceGeneration++;
-    identityAbort?.abort(new Error("local identity activation changed"));
-  }
   try {
-    await activate(runtime);
+    await activate(host);
     postToMain({ kind: "sessionActivationResponse", requestId, ok: true });
   } catch (err) {
     postToMain({
@@ -1345,7 +1087,7 @@ async function handleSessionActivation(
 }
 
 async function handleDisconnectSession(requestId: number): Promise<void> {
-  if (!runtime) {
+  if (!host) {
     postToMain({
       kind: "disconnectSessionResponse",
       requestId,
@@ -1354,10 +1096,8 @@ async function handleDisconnectSession(requestId: number): Promise<void> {
     });
     return;
   }
-  allowanceGeneration++;
-  identityAbort?.abort(new Error("local identity disconnected"));
   try {
-    await runtime.disconnectSession();
+    await host.runtime.disconnectSession();
     postToMain({ kind: "disconnectSessionResponse", requestId, ok: true });
   } catch (err) {
     postToMain({
@@ -1370,7 +1110,7 @@ async function handleDisconnectSession(requestId: number): Promise<void> {
 }
 
 function handleGetSessionChatIdentityKey(requestId: number): void {
-  if (!runtime) {
+  if (!host) {
     postToMain({
       kind: "sessionChatIdentityKeyResponse",
       requestId,
@@ -1384,7 +1124,10 @@ function handleGetSessionChatIdentityKey(requestId: number): void {
       kind: "sessionChatIdentityKeyResponse",
       requestId,
       ok: true,
-      key: runtime.sessionChatIdentityKey(),
+      key: pairingRuntime(
+        host,
+        "getSessionChatIdentityKey",
+      ).sessionChatIdentityKey(),
     });
   } catch (err) {
     postToMain({
@@ -1397,7 +1140,7 @@ function handleGetSessionChatIdentityKey(requestId: number): void {
 }
 
 function handleGetDeviceStatementKey(requestId: number): void {
-  if (!runtime) {
+  if (!host) {
     postToMain({
       kind: "deviceStatementKeyResponse",
       requestId,
@@ -1411,7 +1154,7 @@ function handleGetDeviceStatementKey(requestId: number): void {
       kind: "deviceStatementKeyResponse",
       requestId,
       ok: true,
-      key: runtime.deviceStatementKey(),
+      key: pairingRuntime(host, "getDeviceStatementKey").deviceStatementKey(),
     });
   } catch (err) {
     postToMain({
@@ -1425,10 +1168,10 @@ function handleGetDeviceStatementKey(requestId: number): void {
 
 async function handleGetProductSubtreePublicKey(
   requestId: number,
-  productId: string,
+  productId: ProductId,
   timeoutMs: number | undefined,
 ): Promise<void> {
-  if (!runtime) {
+  if (!host) {
     postToMain({
       kind: "productSubtreePublicKeyResponse",
       requestId,
@@ -1442,7 +1185,7 @@ async function handleGetProductSubtreePublicKey(
       kind: "productSubtreePublicKeyResponse",
       requestId,
       ok: true,
-      key: await runtime.productSubtreePublicKey(productId, timeoutMs),
+      key: await host.runtime.productSubtreePublicKey(productId, timeoutMs),
     });
   } catch (err) {
     postToMain({
@@ -1455,7 +1198,7 @@ async function handleGetProductSubtreePublicKey(
 }
 
 async function handleGetDeviceEncryptionKey(requestId: number): Promise<void> {
-  if (!runtime) {
+  if (!host) {
     postToMain({
       kind: "deviceEncryptionKeyResponse",
       requestId,
@@ -1469,7 +1212,10 @@ async function handleGetDeviceEncryptionKey(requestId: number): Promise<void> {
       kind: "deviceEncryptionKeyResponse",
       requestId,
       ok: true,
-      key: await runtime.deviceEncryptionKey(),
+      key: await pairingRuntime(
+        host,
+        "getDeviceEncryptionKey",
+      ).deviceEncryptionKey(),
     });
   } catch (err) {
     postToMain({

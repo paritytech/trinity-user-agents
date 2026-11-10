@@ -12,7 +12,7 @@ use crate::{
 
 /// Preimage lookup and submission methods.
 #[wire_trait(id = 11)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Preimage: Send + Sync {
 	/// Subscribe to preimage lookups for a given key.
 	///
@@ -43,6 +43,11 @@ pub trait Preimage: Send + Sync {
 	}
 
 	/// Submit a preimage. Returns the preimage key (hash) on success.
+	///
+	/// Requires the `PreimageSubmit` permission and raises no per-upload
+	/// confirmation. `AllowAlways` covers every upload; `AllowOnce` covers a
+	/// single upload. Allocating or renewing the Bulletin allowance may still
+	/// ask the paired wallet.
 	///
 	/// ```ts
 	/// const value = `0x${crypto.getRandomValues(new Uint8Array(4)).toHex()}` as `0x${string}`;

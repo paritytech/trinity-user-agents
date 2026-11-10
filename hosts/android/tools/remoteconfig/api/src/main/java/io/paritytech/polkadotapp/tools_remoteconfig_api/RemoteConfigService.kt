@@ -28,8 +28,18 @@ interface RemoteConfigService {
      * Parses [T] from JSON value. [T] should not be a generic type
      */
     suspend fun <T> getSyncedJsonObject(key: String, clazz: Class<T>): Result<T>
+
+    /**
+     * Parses [T] from the last activated JSON value without waiting for a sync, so it can be stale or absent.
+     * [T] should not be a generic type
+     */
+    suspend fun <T> getJsonObject(key: String, clazz: Class<T>): Result<T>
 }
 
 suspend inline fun <reified T> RemoteConfigService.getSyncedJsonObject(key: String): Result<T> {
     return getSyncedJsonObject(key, T::class.java)
+}
+
+suspend inline fun <reified T> RemoteConfigService.getJsonObject(key: String): Result<T> {
+    return getJsonObject(key, T::class.java)
 }

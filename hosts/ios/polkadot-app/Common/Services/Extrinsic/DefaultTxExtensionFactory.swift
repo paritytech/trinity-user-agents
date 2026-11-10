@@ -30,14 +30,10 @@ extension DefaultTxExtensionFactory: ExtrinsicTransactionExtensionMaking {
 
 enum DefaultSignedExtensionCoders {
     static func createDefaultCoders(for metadata: RuntimeMetadataProtocol) -> [TransactionExtensionCoding] {
-        let extensionId = Extrinsic.TransactionExtensionId.assetTxPayment
-
-        let extraType = metadata.getSignedExtensionType(for: extensionId)
-
-        return [
-            DefaultTransactionExtensionCoder(
-                txExtensionId: extensionId,
-                extensionExplicitType: extraType ?? "pallet_asset_tx_payment.ChargeAssetTxPayment"
+        [
+            DefaultVersionedTransactionExtensionCoder(
+                txExtensionId: Extrinsic.TransactionExtensionId.assetTxPayment,
+                metadata: metadata
             )
         ]
     }

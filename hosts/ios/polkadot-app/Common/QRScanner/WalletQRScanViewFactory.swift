@@ -16,7 +16,13 @@ enum WalletQRScanViewFactory {
         let qrService = QRCaptureService(delegate: nil, delegateQueue: processingQueue)
         let qrExtractor = QRExtractionService(processingQueue: processingQueue)
 
-        let wireframe = QRScannerWireframe()
+        let wireframe: QRScannerWireframeProtocol =
+            switch presentation {
+            case .fullScreen:
+                QRScannerWireframe()
+            case .embedded:
+                EmbeddedQRScannerWireframe()
+            }
 
         let presenter = WalletQRScanPresenter(
             matcher: AddressQRMatcher(),

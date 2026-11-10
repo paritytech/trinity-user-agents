@@ -59,7 +59,9 @@ import io.paritytech.polkadotapp.common.utils.calendar.RealCalendarEventsMixin
 import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.common.utils.network.RealNetworkStateService
 import io.paritytech.polkadotapp.common.utils.permissions.PermissionAsker
+import io.paritytech.polkadotapp.common.utils.permissions.PermissionStatusChecker
 import io.paritytech.polkadotapp.common.utils.permissions.RealPermissionAsker
+import io.paritytech.polkadotapp.common.utils.permissions.RealPermissionStatusChecker
 import io.paritytech.polkadotapp.design.theme.AppThemeSelector
 import javax.inject.Singleton
 
@@ -117,6 +119,9 @@ internal interface CommonModule {
 
     @Binds
     fun bindPermissionAsker(impl: RealPermissionAsker): PermissionAsker
+
+    @Binds
+    fun bindPermissionStatusChecker(impl: RealPermissionStatusChecker): PermissionStatusChecker
 
     @Binds
     @Singleton

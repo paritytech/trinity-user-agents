@@ -7,24 +7,39 @@ final class ChatCallWireframe: ChatCallWireframeProtocol, AlertPresentable, Appl
         view?.controller.dismiss(animated: true)
     }
 
-    func presentMicrophoneAccessDenied(dismissing view: ChatCallViewProtocol?) {
-        let presentAlert: () -> Void = { [weak self] in
-            self?.presentMicrophoneAccessAlert()
-        }
+    func presentMicrophoneAccessRequired(from view: ChatCallViewProtocol?) {
+        presentAccessRequired(
+            title: String(localized: .chatCallMicAccessTitle),
+            message: String(localized: .chatCallMicAccessMessage),
+            from: view
+        )
+    }
 
-        if let controller = view?.controller, controller.presentingViewController != nil {
-            controller.dismiss(animated: true, completion: presentAlert)
-        } else {
-            presentAlert()
-        }
+    func presentCameraAccessRequired(from view: ChatCallViewProtocol?) {
+        presentAccessRequired(
+            title: String(localized: .chatCallCameraAccessTitle),
+            message: String(localized: .chatCallCameraAccessMessage),
+            from: view
+        )
+    }
+
+    func presentVideoCaptureFailed(from view: ChatCallViewProtocol?) {
+        let viewModel = AlertPresentableViewModel(
+            title: String(localized: .chatCallVideoUnavailableTitle),
+            message: String(localized: .chatCallVideoUnavailableMessage),
+            actions: [],
+            closeActionTitle: String(localized: .Common.gotIt)
+        )
+
+        present(viewModel: viewModel, style: .alert, from: view)
     }
 }
 
 private extension ChatCallWireframe {
-    func presentMicrophoneAccessAlert() {
+    func presentAccessRequired(title: String, message: String, from view: ChatCallViewProtocol?) {
         let viewModel = AlertPresentableViewModel(
-            title: String(localized: .chatCallMicAccessTitle),
-            message: String(localized: .chatCallMicAccessMessage),
+            title: title,
+            message: message,
             actions: [
                 AlertPresentableAction(title: String(localized: .Common.openSettings)) { [weak self] in
                     self?.openApplicationSettings()
@@ -33,6 +48,6 @@ private extension ChatCallWireframe {
             closeActionTitle: String(localized: .Common.notNow)
         )
 
-        present(viewModel: viewModel, style: .alert, from: nil)
+        present(viewModel: viewModel, style: .alert, from: view)
     }
 }

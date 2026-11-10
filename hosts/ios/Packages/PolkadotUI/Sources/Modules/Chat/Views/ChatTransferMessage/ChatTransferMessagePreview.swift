@@ -36,6 +36,7 @@
             ]
             return states.map { state, originalAmount in
                 let configuration = ChatTransferMessageConfiguration.inbox(
+                    currencySymbol: "$",
                     amount: "17",
                     tokenSymbol: "DOT",
                     originalAmount: originalAmount,
@@ -63,6 +64,7 @@
             ]
             return states.map { state, originalAmount in
                 let configuration = ChatTransferMessageConfiguration.outbox(
+                    currencySymbol: "$",
                     amount: originalAmount == nil ? "99" : "40",
                     tokenSymbol: "DOT",
                     originalAmount: originalAmount,

@@ -40,18 +40,4 @@ extension BalanceViewModelFactory: BalanceViewModelFactoryProtocol {
             )
         }
     }
-
-    func plainAmountFromValue(_ value: Balance) -> LocalizableResource<String> {
-        let decimalValue = value.decimal(assetInfo: targetAssetInfo)
-
-        let localizableFormatter = formatterFactory.createAssetPriceFormatter(
-            for: targetAssetInfo.withoutSymbol,
-            minimumFractionDigits: decimalValue.hasFraction ? targetAssetInfo.displayPrecision : 0
-        )
-
-        return LocalizableResource { locale in
-            let formatter = localizableFormatter.value(for: locale)
-            return formatter.stringFromDecimal(decimalValue) ?? ""
-        }
-    }
 }

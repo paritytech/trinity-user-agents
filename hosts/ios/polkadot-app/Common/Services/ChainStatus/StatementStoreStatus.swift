@@ -55,7 +55,7 @@ extension StatementStoreStatus {
         case .connecting:
             String(localized: .Common.statementStoreStatusConnecting)
         case .active:
-            String(localized: .Common.statementStoreStatusActive)
+            String(localized: .Common.chainConnectionStatusConnected)
         case .unavailable:
             String(localized: .Common.statementStoreStatusUnavailable)
         case .noInternet:

@@ -9,6 +9,7 @@ enum PushNotificationKeys {
     static let gameIndex = "gameIndex"
     static let chatExtensionId = "chatExtensionId"
     static let deeplink = "deeplink"
+    static let blockedContact = "blockedContact"
 }
 
 enum PushNotificationSource: Int, Equatable {

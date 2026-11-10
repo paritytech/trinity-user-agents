@@ -4,6 +4,7 @@ import UIKitExt
 
 @MainActor
 protocol ErrorPresentable: AnyObject {
+    @discardableResult
     func present(error: ErrorContent, from view: ControllerBackedProtocol?) -> Bool
 }
 

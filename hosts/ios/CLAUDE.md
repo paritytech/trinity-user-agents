@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Polkadot iOS — a production-grade iOS wallet and social app for the Polkadot blockchain ecosystem. Features include wallet management, cross-chain transfers (XCM), real-time chat with WebRTC calls, fiat on-ramp, identity/username claiming, and QR-based interactions.
+Polkadot iOS — a production-grade iOS wallet and social app for the Polkadot blockchain ecosystem. Features include wallet management, cross-chain transfers (XCM), real-time chat with WebRTC calls, identity/username claiming, and QR-based interactions.
 
 ### Key Technologies
 - **UIKit** — Primary UI framework, programmatic layout (no Storyboards)
@@ -14,7 +14,7 @@ Polkadot iOS — a production-grade iOS wallet and social app for the Polkadot b
 - **substrate-sdk-ios** — Substrate/Polkadot blockchain interaction
 - **Operation-iOS** (3.0.0) — Core Data service (writer/observer/reader modes), repositories, operations
 - **CoreData** — Local persistence (SubstrateDataModel + UserDataModel)
-- **WebRTC** — Peer-to-peer voice/video calls and DIM2 game
+- **WebRTC** — Peer-to-peer voice/video calls
 - **Firebase** — Remote Config
 - **Fastlane + GitHub Actions** — CI/CD pipeline
 

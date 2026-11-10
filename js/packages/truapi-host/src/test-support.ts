@@ -1,16 +1,10 @@
 import type { RequiredHostCallbacks } from "./generated/host-callbacks.js";
-import {
-  unavailableHopProvider,
-  unavailableNativeChatFilesHost,
-} from "./adapter-support.js";
 
 /** `HostCallbacks` with every optional member required, for exhaustive test fixtures. */
 export type CompleteHostCallbacks = RequiredHostCallbacks;
 
 type HostCallbackOverrides = {
-  [K in keyof RequiredHostCallbacks]?: K extends "coinageWallet"
-    ? RequiredHostCallbacks[K]
-    : Partial<RequiredHostCallbacks[K]>;
+  [K in keyof RequiredHostCallbacks]?: Partial<RequiredHostCallbacks[K]>;
 };
 
 /** Default no-op host callbacks with optional per-test overrides. */
@@ -34,6 +28,9 @@ export function makeHostCallbacks(
     features: {
       featureSupported: async () => ({ supported: false }),
       supportedChains: async () => ({ network: "paseo", chains: [] }),
+    },
+    extrinsicVersion: {
+      transactionExtensionVersions: async () => ({ chains: [] }),
     },
     productStorage: {
       read: async () => undefined,
@@ -80,6 +77,10 @@ export function makeHostCallbacks(
       ...overrides.permissions,
     },
     features: { ...defaults.features, ...overrides.features },
+    extrinsicVersion: {
+      ...defaults.extrinsicVersion,
+      ...overrides.extrinsicVersion,
+    },
     productStorage: {
       ...defaults.productStorage,
       ...overrides.productStorage,
@@ -101,20 +102,6 @@ export function makeHostCallbacks(
     theme: { ...defaults.theme, ...overrides.theme },
     locale: { ...defaults.locale, ...overrides.locale },
     chain: { ...defaults.chain, ...overrides.chain },
-    ...(overrides.hop
-      ? { hop: { ...unavailableHopProvider, ...overrides.hop } }
-      : {}),
-    ...(overrides.coinageWallet === undefined
-      ? {}
-      : { coinageWallet: overrides.coinageWallet }),
-    ...(overrides.nativeChatFiles
-      ? {
-          nativeChatFiles: {
-            ...unavailableNativeChatFilesHost,
-            ...overrides.nativeChatFiles,
-          },
-        }
-      : {}),
     // Chat is an optional capability: only fixtures that ask for it get the
     // group, so the default fixture is a host that does not serve chat.
     ...(overrides.chat
@@ -123,6 +110,7 @@ export function makeHostCallbacks(
             createChatRoom: async () => ({ status: "New" as const }),
             registerChatBot: async () => ({ status: "New" as const }),
             postChatMessage: async () => ({ messageId: "message" }),
+            setChatRoomFooter: async () => {},
             async *subscribeChatRooms() {},
             ...overrides.chat,
           },
@@ -149,14 +137,24 @@ export function makeHostCallbacks(
           },
         }
       : {}),
-    // An unavailable authenticated search must not look like an empty result.
-    ...(overrides.identityBackend
+    // And for Game: the default fixture is a host that holds no reminders,
+    // so Game calls are answered `Unsupported`.
+    ...(overrides.game
       ? {
-          identityBackend: {
-            identityUsernameCandidates: async (): Promise<Uint8Array[]> => {
-              throw new Error("identity backend unavailable");
-            },
-            ...overrides.identityBackend,
+          game: {
+            scheduleGameReminder: async () => {},
+            cancelGameReminder: async () => {},
+            ...overrides.game,
+          },
+        }
+      : {}),
+    // And for the scanner: the default fixture is a host with no viewfinder,
+    // so scans are answered `Unsupported`, as on a web host.
+    ...(overrides.scanner
+      ? {
+          scanner: {
+            scanCode: async () => ({ tag: "Dismissed" as const }),
+            ...overrides.scanner,
           },
         }
       : {}),

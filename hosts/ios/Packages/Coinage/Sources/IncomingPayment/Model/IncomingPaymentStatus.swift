@@ -11,11 +11,10 @@ public enum IncomingPaymentStatus: Equatable, Sendable {
     case detecting
     /// Claim in progress.
     case claiming
-    /// At least the positive minimum was credited at best/finalized head, depending on `finalized`.
-    /// A zero claim-all request instead requires positive credit once claiming has finished.
-    /// Terminal only when `finalized == true`.
+    /// At least `amount` was claimed at best/finalized head, depending on `finalized`.
+    /// Terminal when `finalized == true`.
     case claimed(finalized: Bool)
-    /// Terminal finalized credit below the positive minimum; the raw actual amount is preserved.
+    /// Terminal. Only `actualClaimed < amount` could be claimed.
     case claimedPartially(actualClaimed: Balance)
     /// Terminal. Nothing could be claimed.
     case notClaimed

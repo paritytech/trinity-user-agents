@@ -4,42 +4,61 @@ import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * Keep release metadata derived from @parity/truapi's version in sync.
+ * Sync the release metadata derived from the npm package versions.
  *
- * Update the tracked Cargo.toml versions and the host and truapi-debugger
- * dependency ranges:
+ * Update the tracked Cargo.toml versions to their npm package's version, the
+ * host and truapi-debugger dependency ranges, and the @parity/truapi version
+ * recorded in js/container/package-lock.json:
  *   npm run sync-release-versions
  *
- * Verify those files and package-lock.json without writing changes:
+ * Verify those files and both package-lock.json files without writing changes:
  *   npm run check-release-versions
  *
  * `npm run version-packages` runs the update after consuming changesets and
- * then refreshes package-lock.json.
+ * then refreshes package-lock.json and Cargo.lock.
  */
 
 const command = "sync-release-versions";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const truapiPath = resolve(repoRoot, "js/packages/truapi/package.json");
 const hostPath = resolve(repoRoot, "js/packages/truapi-host/package.json");
-// Crates whose version tracks @parity/truapi: the protocol crate itself, and
-// the host CLI, whose published binaries are cut on every protocol release.
-const cargoPaths = [
-  "rust/crates/truapi/Cargo.toml",
-  "rust/crates/truapi-host-cli/Cargo.toml",
-].map((path) => resolve(repoRoot, path));
+const trinityStackPath = resolve(
+  repoRoot,
+  "js/packages/trinity-stack/package.json",
+);
 const debuggerPath = resolve(
   repoRoot,
   "js/packages/truapi-debugger/package.json",
 );
 const lockPath = resolve(repoRoot, "package-lock.json");
+// The container links @parity/truapi from the tree (`file:../packages/truapi`),
+// so the version its own lockfile records is a copy of the package's. Left
+// behind on a release, the next `npm install` there rewrites the lockfile.
+const containerLockPath = resolve(repoRoot, "js/container/package-lock.json");
+const containerLinkKey = "../packages/truapi";
 const check = process.argv.includes("--check");
 
 const truapi = readJson(truapiPath);
 const host = readJson(hostPath);
 const wireDebugger = readJson(debuggerPath);
-if (typeof truapi.version !== "string" || truapi.version.length === 0) {
-  fail(`could not read .version from ${truapiPath}`);
+const trinityStack = readJson(trinityStackPath);
+for (const [path, manifest] of [
+  [truapiPath, truapi],
+  [trinityStackPath, trinityStack],
+]) {
+  if (typeof manifest.version !== "string" || manifest.version.length === 0) {
+    fail(`could not read .version from ${path}`);
+  }
 }
+
+// The protocol crate and the host CLI, whose published binaries are cut on
+// every protocol release, track @parity/truapi. The trinity-stack crate is
+// published to crates.io with @parity/trinity-stack's version.
+const cargoSources = [
+  ["rust/crates/truapi/Cargo.toml", truapi.version],
+  ["rust/crates/truapi-host-cli/Cargo.toml", truapi.version],
+  ["rust/crates/trinity-stack/Cargo.toml", trinityStack.version],
+];
 
 const expectedDependency = `^${truapi.version}`;
 const actualDependency = host.dependencies?.["@parity/truapi"];
@@ -48,21 +67,22 @@ const actualDependency = host.dependencies?.["@parity/truapi"];
 // catch at runtime - cheaper to catch here, at release time.
 const actualDebuggerDependency = wireDebugger.dependencies?.["@parity/truapi"];
 const cargoVersionLine = /^version = "([^"]*)"$/m;
-const cargoManifests = cargoPaths.map((path) => {
+const cargoManifests = cargoSources.map(([cargoPath, expected]) => {
+  const path = resolve(repoRoot, cargoPath);
   const contents = readFile(path);
   const version = contents.match(cargoVersionLine)?.[1];
   if (version === undefined) {
     fail(`could not find a top-level \`version = "..."\` line in ${path}`);
   }
-  return { path, contents, version };
+  return { path, contents, version, expected };
 });
 
 if (check) {
   const errors = [];
   for (const manifest of cargoManifests) {
-    if (manifest.version !== truapi.version) {
+    if (manifest.version !== manifest.expected) {
       errors.push(
-        `${relative(repoRoot, manifest.path)} is ${manifest.version}; expected ${truapi.version}`,
+        `${relative(repoRoot, manifest.path)} is ${manifest.version}; expected ${manifest.expected}`,
       );
     }
   }
@@ -121,6 +141,15 @@ if (check) {
     );
   }
 
+  const containerLock = readJson(containerLockPath);
+  const containerTruapi =
+    containerLock.packages?.[containerLinkKey]?.version;
+  if (containerTruapi !== truapi.version) {
+    errors.push(
+      `js/container/package-lock.json records @parity/truapi ${containerTruapi ?? "<missing>"}; expected ${truapi.version}`,
+    );
+  }
+
   if (errors.length > 0) {
     for (const error of errors) console.error(`${command}: ${error}`);
     console.error(`${command}: run \`npm run version-packages\` to sync`);
@@ -128,7 +157,7 @@ if (check) {
   }
 
   console.log(
-    `${command}: crate manifests, host and truapi-debugger dependencies, and package-lock.json use @parity/truapi ${truapi.version}`,
+    `${command}: crate manifests match their npm packages; host and truapi-debugger dependencies and both package-lock.json files use @parity/truapi ${truapi.version}`,
   );
   process.exit(0);
 }
@@ -137,13 +166,13 @@ for (const manifest of cargoManifests) {
   const name = relative(repoRoot, manifest.path);
   const next = manifest.contents.replace(
     cargoVersionLine,
-    `version = "${truapi.version}"`,
+    `version = "${manifest.expected}"`,
   );
   if (next === manifest.contents) {
-    console.log(`${command}: ${name} already uses ${truapi.version}`);
+    console.log(`${command}: ${name} already uses ${manifest.expected}`);
   } else {
     writeFileSync(manifest.path, next);
-    console.log(`${command}: updated ${name} to ${truapi.version}`);
+    console.log(`${command}: updated ${name} to ${manifest.expected}`);
   }
 }
 
@@ -174,6 +203,26 @@ if (actualDebuggerDependency === expectedDependency) {
   writeFileSync(debuggerPath, `${JSON.stringify(wireDebugger, null, 2)}\n`);
   console.log(
     `${command}: updated truapi-debugger dependency to @parity/truapi ${expectedDependency}`,
+  );
+}
+
+const containerLock = readJson(containerLockPath);
+const containerLink = containerLock.packages?.[containerLinkKey];
+if (containerLink === undefined) {
+  fail(`could not find "${containerLinkKey}" in ${containerLockPath}`);
+}
+if (containerLink.version === truapi.version) {
+  console.log(
+    `${command}: js/container/package-lock.json already records @parity/truapi ${truapi.version}`,
+  );
+} else {
+  containerLink.version = truapi.version;
+  writeFileSync(
+    containerLockPath,
+    `${JSON.stringify(containerLock, null, 2)}\n`,
+  );
+  console.log(
+    `${command}: updated js/container/package-lock.json to @parity/truapi ${truapi.version}`,
   );
 }
 

@@ -72,6 +72,7 @@ struct MixnetDownloadServiceTests {
     func alreadyDownloadedSkipped() async throws {
         let attachmentsStore = MockAttachmentStore()
         let mockLoader = MockHOPFileLoader()
+        mockLoader.downloadEvents = [.onProgress(.init(downloaded: 1, total: 1_000))]
         mockLoader.shouldSuspend = true
 
         let filename = Data(repeating: 0xAA, count: 32).toHex() + ".mp4"
@@ -83,13 +84,20 @@ struct MixnetDownloadServiceTests {
         )
         try await env.chatManager.setup()
 
-        _ = try await env.chatManager.sendMessage(makeRichTextContent(), status: .incoming(.new))
+        let skipped = try await env.chatManager.sendMessage(makeRichTextContent(), status: .incoming(.new))
         env.service.setup()
 
-        try await Task.sleep(for: .milliseconds(500))
+        // Messages are processed in order, so barrier progress means the skipped message was handled.
+        let barrierFileId = Data(repeating: 0xCC, count: 32)
+        let barrier = try await env.chatManager.sendMessage(
+            makeRichTextContent(fileId: barrierFileId),
+            status: .incoming(.new)
+        )
+        let barrierId = makeAttachmentId(message: barrier, fileId: barrierFileId)
+        try await env.service.waitForFirstEvent(of: barrierId)
 
-        let taskCount = await env.service.context.tasks.count
-        #expect(taskCount == 0)
+        #expect(await env.service.context.state[makeAttachmentId(message: skipped)] == nil)
+        #expect(await Set(env.service.context.tasks.keys) == [barrierId])
 
         env.service.throttle()
     }

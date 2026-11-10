@@ -14,7 +14,7 @@ extension TabBarChromeContext {
             tabController: controller,
             contentController: controller,
             isTabRoot: false,
-            foldDerived: .folded,
+            foldDerived: .tucked,
             screen: controller
         )
     }

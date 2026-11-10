@@ -5,6 +5,7 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
 import android.net.Uri
+import android.os.Bundle
 import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationChannelCompat
 import androidx.core.app.NotificationCompat
@@ -25,13 +26,15 @@ abstract class NotificationPublisher(
     protected fun publish(
         notificationId: Int,
         channel: PolkadotNotificationChannel,
-        notification: Notification
-    ) {
-        if (notificationManager.areNotificationsEnabled().not()) return
+        notification: Notification,
+        tag: String? = null,
+    ): Boolean {
+        if (notificationManager.areNotificationsEnabled().not()) return false
 
         createChannel(channel)
 
-        notificationManager.notify(notificationId, notification)
+        notificationManager.notify(tag, notificationId, notification)
+        return channelReachesThePerson(notificationManager.getNotificationChannelCompat(channel.id)?.importance)
     }
 
     private fun createChannel(channel: PolkadotNotificationChannel) {
@@ -60,24 +63,31 @@ abstract class NotificationPublisher(
         }
     }
 
-    protected fun NotificationCompat.Builder.setupDefaultNotification(deepLink: Uri? = null): NotificationCompat.Builder {
+    protected fun NotificationCompat.Builder.setupDefaultNotification(
+        deepLink: Uri? = null,
+        contentIntentExtras: Bundle? = null,
+        contentIntentRequestCode: Int = 0,
+    ): NotificationCompat.Builder {
         return this
             .setSmallIcon(RCommon.drawable.ic_notification_default)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(createPendingIntent(deepLink))
+            .setContentIntent(createPendingIntent(deepLink, contentIntentExtras, contentIntentRequestCode))
             .setAutoCancel(true)
     }
 
-    private fun createPendingIntent(deepLink: Uri?): PendingIntent {
+    private fun createPendingIntent(deepLink: Uri?, extras: Bundle?, requestCode: Int): PendingIntent {
         val intent = intentProvider.getRootIntent().apply {
             if (deepLink != null) {
                 data = deepLink
+            }
+            if (extras != null) {
+                putExtras(extras)
             }
         }
 
         return PendingIntent.getActivity(
             appContext,
-            0,
+            requestCode,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -89,7 +99,15 @@ abstract class NotificationPublisher(
             ?.notification
     }
 
-    protected fun cancel(notificationId: Int) {
-        notificationManager.cancel(notificationId)
+    protected fun cancel(notificationId: Int, tag: String? = null) {
+        notificationManager.cancel(tag, notificationId)
     }
 }
+
+/**
+ * Whether a notification posted to a channel of this importance reaches the person.
+ *
+ * A null importance is a channel that does not exist, which nothing can be posted through.
+ */
+internal fun channelReachesThePerson(importance: Int?): Boolean =
+    importance != null && importance != NotificationManagerCompat.IMPORTANCE_NONE

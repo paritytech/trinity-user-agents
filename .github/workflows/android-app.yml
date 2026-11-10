@@ -1,0 +1,150 @@
+name: Android app
+
+# The Android app's checks, called by ci.yml when a change reaches the app.
+# They run on hosted Linux runners, so a pull request from a fork runs them
+# too.
+on:
+  workflow_call:
+    inputs:
+      tree:
+        description: >-
+          Whether the Android side changed, rather than only the core it
+          consumes. Only a change there can break the app's own unit tests.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    name: Compile and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Shared with the Android distribution workflows, so a toolchain moves
+      # in one place. This job compiles rather than signs, so it takes no
+      # configuration or keystore, and it is the one that writes the cache the
+      # others read.
+      - name: Set up the Android build
+        id: setup
+        uses: ./.github/actions/setup-android-build
+        with:
+          save_cache: "true"
+
+      # The app module applies the Google Services plugin, which needs a
+      # configuration naming the debug package before it configures. The unit
+      # tests never reach Firebase, so a placeholder with no real project is
+      # enough, and it keeps the gate independent of the real configuration.
+      - name: Write a placeholder Google configuration
+        working-directory: hosts/android
+        run: |
+          cat > app/google-services.json <<'JSON'
+          {
+            "project_info": {"project_number": "0", "project_id": "ci", "storage_bucket": "ci.appspot.com"},
+            "client": [{
+              "client_info": {
+                "mobilesdk_app_id": "1:0:android:0000000000000000",
+                "android_client_info": {"package_name": "io.parity.polkadotapp.debug"}
+              },
+              "oauth_client": [],
+              "api_key": [{"current_key": "ci"}],
+              "services": {"appinvite_service": {"other_platform_oauth_client": []}}
+            }],
+            "configuration_version": "1"
+          }
+          JSON
+
+      # No truapi.dir: the core resolves two levels up, which is one of the
+      # properties this job keeps true.
+      #
+      # Compiling the modules that consume the bindings is the bindings check.
+      # Generated bindings cannot disagree with the library they were generated
+      # from, so compiling them alone proves nothing; the signal is in the app
+      # code that pattern matches over core types, and these test tasks compile
+      # all of it, building :bindings:truapi-host on the way.
+      #
+      # The products module's release tests and the instrumentation compile run
+      # for every call. A change to the app tree adds testGpDebugUnitTest, the
+      # app module and the only one with flavours, and testDebugUnitTest, every
+      # library module. Without those the build configures only what it runs.
+      #
+      # These values are configuration rather than credentials, and the app tree
+      # reads each of them from the environment when it is absent from
+      # local.properties. Placeholders are enough to configure every module, and
+      # keep the gate independent of secrets this repository does not hold.
+      - name: Compile the Android consumers and instrumentation, run unit tests
+        working-directory: hosts/android
+        env:
+          # The real id, because it is the one the Google configuration is
+          # built for.
+          APPLICATION_ID: io.parity.polkadotapp
+          IOS_BUNDLE_ID: io.parity.polkadotapp
+          APPLICATION_NAME: Polkadot
+          CONTACT_EMAIL: ci@example.invalid
+          CURRENCY_SYMBOL: DOT
+          FIAT_SYMBOL: "$"
+          FIRESTORE_DATABASE_ID: ci
+          GOOGLE_OAUTH_ID: ci
+          # Typed as a long, so a non-numeric placeholder is a compile error.
+          GOOGLE_PROJECT_ID: "0"
+          LOG_COLLECTION_EMAIL: ci@example.invalid
+          NIGHTLY_FUNDING_MNEMONIC: ci
+          PRIVACY_POLICY_URL: https://example.invalid/privacy
+          SENTRY_ORG: ci
+          SENTRY_PROJECT: ci
+          TERMS_OF_USE_URL: https://example.invalid/terms
+          ALL_UNIT_TESTS: ${{ inputs.tree }}
+        run: |
+          set -euo pipefail
+          tasks=(:feature:products:impl:testReleaseUnitTest :bindings:truapi-host:compileDebugAndroidTestKotlin)
+          if [ "$ALL_UNIT_TESTS" = true ]; then
+            tasks+=(testGpDebugUnitTest testDebugUnitTest)
+          else
+            tasks+=(--configure-on-demand)
+          fi
+          ./gradlew --continue "${tasks[@]}"
+
+  detekt:
+    name: Detekt
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Reads the cache the compile gate writes rather than writing its own,
+      # since the two want the same toolchain and only one of them needs to
+      # pay for it.
+      - name: Set up the Android build
+        uses: ./.github/actions/setup-android-build
+
+      # Static analysis reads sources, but Gradle configures the whole build to
+      # find the task, and configuration is where a missing value throws. This
+      # needs CONTACT_EMAIL where the compile gate does not: that gate names a
+      # module and configures on demand, while detekt at the root configures
+      # every module, including the one that reads it.
+      - name: Run detekt
+        working-directory: hosts/android
+        env:
+          APPLICATION_ID: io.parity.polkadotapp
+          IOS_BUNDLE_ID: io.parity.polkadotapp
+          APPLICATION_NAME: Polkadot
+          CONTACT_EMAIL: ci@example.invalid
+          CURRENCY_SYMBOL: DOT
+          FIAT_SYMBOL: "$"
+          FIRESTORE_DATABASE_ID: ci
+          GOOGLE_OAUTH_ID: ci
+          GOOGLE_PROJECT_ID: "0"
+          LOG_COLLECTION_EMAIL: ci@example.invalid
+          NIGHTLY_FUNDING_MNEMONIC: ci
+          PRIVACY_POLICY_URL: https://example.invalid/privacy
+          SENTRY_ORG: ci
+          SENTRY_PROJECT: ci
+          TERMS_OF_USE_URL: https://example.invalid/terms
+        run: ./gradlew :config:detekt:rules:test detekt --no-daemon

@@ -61,19 +61,28 @@ failing, which is the single most expensive failure mode in this migration.
 **5. No spec depends on a refused capability.** Grep first:
 
 ```bash
-grep -rEn "getPaymentLog|clearPaymentLog|setPaymentBalance|setPaymentTopUpBehavior|simulatePaymentStatus|setLoginBehavior" e2e/
+grep -rEn "getPaymentLog|clearPaymentLog|setPaymentBalance|setPaymentTopUpBehavior|simulatePaymentStatus" e2e/
 ```
 
 Any hit is a spec that needs rewriting or skipping, not porting — see section 4.
-`setLoginBehavior` is the sharpest: suites pass `"success"`/`"reject"` to drive
-an RFC-0009 login flow, and the fixture option only takes `"auto" | "manual"`,
-because this is a signing host and that flow belongs to a pairing host.
+`setLoginBehavior("success" | "reject")` is served: it answers a product's
+login request while the host is signed out, so a suite booting with
+`loginBehavior: "manual"` can drive the cold login path. `"success"` signs in
+the first account, or the one named as a second argument. The old custom
+function form has no equivalent, because the answer is given in the page.
+The default differs: the old host approved login requests unless told
+otherwise, and this one answers `Rejected`, as a real signing host does, until
+a suite calls `setLoginBehavior("success")`. A suite that relied on the old
+default adds that call.
 
 The statement-store controls and `injectChatAction` are served, so they are not
-in this grep. `injectStatement` takes a SCALE-encoded signed statement rather
-than a structured one, and `injectChatAction` takes the core's
-`HostChatActionSubscribeItem` rather than `{roomId, peer, payload}`, so those
-call sites change shape even though they keep working.
+in this grep. `injectStatement` takes `{topics, data}` the way the old package
+spells it, or the SCALE wire bytes, and answers the `StatementEntry` it
+retained; `getSubmittedStatements` and `getStatements` answer entries too, so a
+suite reading `0x` hex off them reads `entry.data` instead.
+`injectChatAction` takes the core's `HostChatActionSubscribeItem` rather than
+`{roomId, peer, payload}`, so that call site changes shape even though it keeps
+working.
 
 ## 1. Swap the import
 
@@ -84,10 +93,22 @@ call sites change shape even though they keep working.
 
 Network constants and the log-entry types come from the same subpath, so a file
 importing `PASEO_ASSET_HUB`, `SigningLogEntry`, `PermissionLogEntry`,
-`ChatMessageLogEntry`, `LoginBehavior` or `DevAccountName` needs no second
-import path.
+`ChatMessageLogEntry` or `DevAccountName` needs no second import path.
+`LoginBehavior` here is the `"auto" | "manual"` boot option. The type
+`setLoginBehavior` takes, which the old package called `LoginBehavior`, is
+`LoginRequestBehavior`.
 
 `e2e/helpers.ts` usually has one `import type { TestHost }` to change too.
+`HexString` is on that subpath as well, for a file annotating a `genesisHash`.
+
+Swap the dependency, and add `esbuild`: the package takes it as a peer, so a
+suite without it fails to resolve at import rather than at run.
+
+```diff
+-"@parity/host-api-test-sdk": "catalog:",
++"@parity/truapi-host": "catalog:",
++"esbuild": "^0.25.0",
+```
 
 ## 2. Delete the server plumbing
 
@@ -108,14 +129,19 @@ The fixture starts and shares its own host server when none is given, so
  );
 ```
 
-Chain options need no edit. Both spellings are accepted -- `networks: [X]` and
-the older `chain: X`, which is exactly `networks: [X]` -- and either expands
+Chain options keep their spelling. Both are accepted, `networks: [X]` and the
+older `chain: X`, which is exactly `networks: [X]`, and either expands
 into the chain proxy, the reported chain set and the runtime genesis, which
 have to agree. Passing both is refused rather than merged.
 
 A suite that starts the server itself also needs no restructuring:
 `createTestHostServer` takes the same host configuration it always did
-(`productUrl`, `accounts`, `networks`) and returns a URL ready to open.
+(`productUrl`, `accounts`, `networks`) and returns a URL ready to open. Chains
+need that `productUrl`: a server started without one returns a bare base the
+fixture configures per test, so it refuses `networks` and `chain` rather than
+dropping them, and they go to the fixture instead. A URL built with a
+`productUrl` is complete: open it directly, not as the fixture's `hostUrl`,
+whose own options replace what it carries.
 
 Set `productId` to the dotNS identifier the product signs with. A product that
 derives its own identifier from `window.location.host` wants that value here --
@@ -129,9 +155,17 @@ signing fails but reads pass, set this before looking anywhere else.
 ### Allowances are granted without being performed, by default
 
 `allowances` defaults to `"granted"`: every allocation is answered as allocated
-without being carried out, and the statement store is served in-page for the
-People chain. A suite that allocates allowances, signs with the key it gets back
-and submits statements therefore passes with no on-chain identity.
+without being carried out, and the statement store is served in-page. A suite
+that allocates allowances, signs with the key it gets back and submits
+statements therefore passes with no on-chain identity.
+
+The store is served on the People chain when the suite declares one, and on the
+single declared chain when it does not -- that proxy takes every request, so it
+carries the statement traffic too. Declaring several chains with no People among
+them serves no store, since there is no request the store could attach to and
+answering statement reads on a hub would answer what a hub refuses. Asking for
+one there with `loopbackStatements: true` is refused, as is asking for one
+with no chain declared at all.
 
 What that buys is narrower than it looks. Nothing is registered anywhere, so a
 green run says the product handles a grant, not that a host would have given
@@ -195,8 +229,34 @@ implementation. Read through the control surface instead:
 +const raw = await testHost.findProductStorage("mykey");
 ```
 
-`findProductStorage` matches on key suffix, so the caller does not need to know
-the namespacing. It returns `Uint8Array | undefined`.
+`findProductStorage` reads the product's own key out of the namespaced one, so
+the caller does not need to know the namespacing and a prefixed store stays
+distinct from an unprefixed one. It returns `Uint8Array | undefined`;
+`getProductStorageValue` returns the same value decoded as UTF-8.
+
+Product storage lives in the host page, so a `page.reload()` or a new page
+starts it empty, where the old host kept it in the page's `localStorage`. State
+a product reads once at startup has to be there before it starts, so pass it as
+a boot option, by the product's own keys:
+
+```ts
+createTestHostFixture({
+  productUrl: PRODUCT_URL,
+  productStorage: { "app:state": JSON.stringify(value) },
+});
+```
+
+It travels in the host page URL, so a reload starts from it again, and
+`testHost.reset()` writes it back after clearing the store.
+`testHost.seedProductStorage(key, value)` writes an entry while the product
+runs. It reaches a product that subscribes to the key or reads it later, not a
+read already made at startup. Either way the host builds the key the core
+reads, so a spec never spells out the namespace.
+
+The product's own iframe storage does not carry over either: the frame is
+`credentialless`, so its `localStorage` and IndexedDB start empty with each
+host page and are not shared with a top-level page on the product's origin.
+Seed those from inside the frame with `context.addInitScript`.
 
 **A pinned product account.** `productAccounts: { "demo.dot/0": "bob" }` is
 rejected at construction, and cannot be supported: TrUAPI *derives* a product
@@ -224,24 +284,163 @@ activates from 32 bytes of entropy, not a derivation path. Never hard-code a
 well-known address; read it back.
 
 **A permission revoked mid-run.** The core persists a decided authorization per
-(product, permission) and answers from its own storage, so a second request
-never reaches the host and cannot re-prompt. No test host can make that pass.
-Skip it with the reason in the skip.
+(product, permission) and answers from its own storage, so a product asking
+twice is answered from that record and the host is not called again. Setting the
+answer on the mock is the suite talking to the host, not the product asking
+again: it retracts that record, so the next request is put to the host afresh.
+
+```ts
+await client.permissions.requestDevicePermission("Camera"); // asks the host
+await client.permissions.requestDevicePermission("Camera"); // answered from the record
+
+testHost.revokePermission("Camera");
+await client.permissions.requestDevicePermission("Camera"); // asks again, denied
+```
+
+A spec that revokes and then waits for a host-side entry works. One that expects
+a *product* asking twice to re-prompt does not, and is asserting the old
+package's behaviour.
+
+### Smaller changes
+
+Each of these is a one-line edit, but each fails quietly or confusingly if
+missed:
+
+- **Declare the chains.** The old fixture and server fell back to Paseo Asset
+  Hub when a suite named none; this host serves no chain then, and a product's
+  chain reads get no answer. Pass `networks` explicitly (`DEFAULT_CHAIN` is
+  Paseo Asset Hub, with the genesis below).
+- **Report unserved chains as a real host does.** By default the mock reports
+  every chain as supported and leaves an unserved one silent, so a product's
+  "network unavailable" path hangs. New suites should pass
+  `mock: { onlyServedChains: true }`, which answers from the chains the
+  suite declares. It becomes the default in a later breaking release.
+- **A chain's role comes from its `id`.** An id ending in `-asset-hub`,
+  `-people` or `-bulletin` selects that role; anything else is a relay chain.
+  A `chain: "AssetHub"` field is ignored.
+- **`PASEO_ASSET_HUB` carries a new genesis.** It is re-pinned to the hash the
+  chain reports since its reset, so a product or suite still holding an older
+  copy of the hash disagrees with it, and a suite that spreads it and overrides
+  `rpcUrl` declares a genesis that endpoint may not serve. `PREVIEWNET`,
+  `PREVIEWNET_ASSET_HUB`, `SUPPORTED_CHAINS`, `Account` and `DevAccountInfo`
+  are not exported:
+  declare the chain inline, type it as `NetworkConfig`, and use `DevAccount`.
+- **Permission names.** `setPermissionBehavior` takes `"allow-all"` or
+  `"deny-all"` (`"reject-all"` is accepted as the latter); the old default
+  `"approve-all"` throws. A permission tag is the core's, so
+  `"TransactionSubmit"` is `"ChainSubmit"`, and `grantPermission` with the old
+  tag records a decision no request ever matches.
+- **Themes are capitalised:** `setTheme("Dark")`, not `"dark"`.
+- **Declining a signature in one test.** Call `testHost.setConfirmUserActions(false)`
+  before the action and `true` after, rather than booting a second fixture
+  with `mock: { confirmUserActions: false }`. A permission the core has
+  already cached keeps its answer.
+- **Signed out is a boot option.** An empty `accounts` fails the page at boot,
+  which a suite sees as the fixture timing out; pass `loginBehavior: "manual"`.
+  `simulateDisconnect` drops the chain connections and refuses new ones until
+  `simulateReconnect`; neither touches the session.
+- **Accounts.** `uri` is refused by the fixture and the server; pass
+  `{ name, entropy }`. The `name` is the
+  username the product sees. `switchAccount` must name an account in the boot
+  roster, and switching re-activates the session without reloading the product,
+  as on a real host: wait on the product's own UI for the new account rather
+  than on `waitForConnection`, which has already resolved.
+- **Seed preimages whenever.** `seedPreimage` reaches a lookup the product
+  already has open, so a spec need not seed before the product asks. It returns
+  the key as bytes, not hex.
+- **Log shapes.** `getNavigationLog()` answers URLs, not `{url, timestamp}`.
+  `getPreimages()` answers the seeded values only, as bytes. Statement entries
+  carry `topics` and `data` directly, not under `.statement`, along with
+  `channel`, `expiry` (a bigint) and `decryptionKey`, which `injectStatement`
+  also takes. A `Remote`
+  permission's value is `{ domains }`, not an array.
+- **Deep links.** The host page passes its path, its hash and every query
+  parameter it does not read itself on to the product, as a real host does.
+  With the fixture, call `testHost.openDeepLink("/notes/1?view=raw#top")`,
+  which loads the host page again at that link. With the server alone, open
+  `deepLinkUrl(server.url, link)` from `@parity/truapi-host/testing/server`.
+
+### A suite that submits extrinsics must fund the product account first
+
+A product account is derived, so it starts with no balance and nothing has ever
+funded it. A suite that submits a real extrinsic fails with
+`Invalid.Payment` -- before inclusion, with the rest of the protocol path
+working, which reads like a host bug and is not one. The old package sidestepped
+this by pinning the product to an already-funded dev key.
+
+Work the address out before the run, not from the failures. This needs no host
+and no browser:
+
+```ts
+import { productAccountAddress } from "@parity/truapi-host/testing/playwright";
+
+const address = await productAccountAddress({
+  account: "bob",            // the dev account the session activates from
+  productId: "tx-demo.dot",  // index defaults to 0
+});
+```
+
+Fund that address once, from a faucet or a transfer. Derivation is
+deterministic, so it holds for every later run. Re-fund only when the suite
+changes its `accounts` or its product id: both feed the derivation, so either
+change is a different account.
+
+That funded address is now the suite's to keep alive, and this is the part worth
+writing down. `@parity/host-api-test-sdk` pinned the product to a dev account
+such as Bob, and a testnet funds Bob as a matter of course, so no suite ever had
+to think about a balance. A derived product account is specific to this suite
+and nobody tops it up. It drains as the suite spends, and a chain reset empties
+it outright -- and either way the next run fails as `Invalid.Payment` before
+inclusion, the same opaque symptom as never having funded it.
+
+Two things make that cheap to live with. Record the derived address somewhere a
+person will find it, next to the suite rather than in a run log, so topping it
+up does not start with re-deriving it. And check the balance in the run's setup
+rather than letting the first extrinsic discover it: a setup that fails with the
+address and the balance it found turns a protocol-looking failure into an
+errand. A setup that funds the account itself removes the chore entirely, which
+is worth doing once a suite runs anywhere unattended.
+
+The address is encoded at the prefix the core mandates, which is **not**
+necessarily the one the product displays -- a product rendering at another
+prefix shows a different string for the same account. Pass this to a faucet or a
+transfer as it stands, and compare against a product's own rendering by decoding
+both.
+
+Inside a running suite the same address is on the fixture, where it also tracks
+`switchAccount`:
+
+```ts
+const address = await testHost.getProductAccountAddress();
+```
+
+### Withholding one resource while the rest stay granted
+
+With allocation granted by default, a product's refusal path is unreachable.
+Name the resources the host should refuse:
+
+```ts
+createTestHostFixture({
+  // ...
+  behaviors: { resourceAllocation: { AutoSigning: false } },
+});
+```
+
+Unlisted resources stay granted. This is a boot option because a product asks
+for its resources on connect, so a later call would land after that.
 
 ## 4. What refuses, and why
 
-Six of `TestHostAPI`'s members throw with an explanation rather than returning
+Five of `TestHostAPI`'s members, the payment ones, throw with an explanation rather than returning
 something plausible. The rest, including the statement-store controls and
 `injectChatAction`, are served.
 
 - payments (`getPaymentLog`, `setPaymentBalance`, `simulatePaymentStatus`,
-  `setPaymentTopUpBehavior`, `clearPaymentLog`) -- the protocol declares them
-  and no host implements them. Every method of the core's payment capability
-  returns an error and ignores its arguments, so there is no behaviour to mock.
-  A suite with payment specs cannot migrate them; it can only drop or rewrite
-  them.
-- `setLoginBehavior` -- fixed at boot. Pass `loginBehavior: "auto" | "manual"`
-  to the fixture instead, which is where this host takes it.
+  `setPaymentTopUpBehavior`, `clearPaymentLog`) -- only native and Rust hosts
+  serve payments, because the browser host-callback bridge cannot carry the
+  payment platforms yet. This host answers every payment call `Unsupported`,
+  so there is no payment engine to drive. A suite with payment specs cannot
+  migrate them; it can only drop or rewrite them.
 
 A test reaching one of these gets a reason, not `is not a function`.
 

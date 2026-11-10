@@ -29,18 +29,15 @@ network="${E2E_NETWORK:-paseo-next-v2}"
 # run generates a fresh mnemonic, asks for the same username, and is told it is
 # taken, permanently, because nothing can prove ownership of it any more.
 #
-# Point E2E_STATE_DIR elsewhere to run against a fresh identity, and expect to
-# supply an unused --lite-username-prefix with it.
+# Point E2E_STATE_DIR elsewhere and set E2E_SESSION to choose a username base
+# for a fresh identity.
 state="${E2E_STATE_DIR:-$repo_root/target/e2e/cross-product-ringvrf}"
 
-# Only consulted when the state directory above holds no account yet, which
-# is the first run on a machine or a deliberately fresh E2E_STATE_DIR. A
-# machine that stranded the default name before this script kept its state
-# cannot reach a single assertion without one. Lowercase ASCII letters only,
-# at least six: digits and hyphens are refused.
-lite_prefix="${E2E_LITE_USERNAME_PREFIX:-}"
-prefix_arg=()
-[ -n "$lite_prefix" ] && prefix_arg=(--lite-username-prefix "$lite_prefix")
+# A base restores its newest local session; a full username selects it exactly.
+# Creating an account requires at least six lowercase ASCII letters in the base.
+session="${E2E_SESSION:-}"
+session_arg=()
+[ -n "$session" ] && session_arg=(--session "$session")
 mkdir -p "$state"
 
 echo "==> building truapi-host"
@@ -56,7 +53,7 @@ run_phase() {
   E2E_PHASE="$phase" "$host" signing-host \
     --network "$network" \
     --base-path "$state" \
-      ${prefix_arg[@]+"${prefix_arg[@]}"} \
+      ${session_arg[@]+"${session_arg[@]}"} \
     --product-id "$product" \
     --product-config "$fixtures/peopl.paseo.json" \
     --product-config "$fixtures/dim2.paseo.json" \

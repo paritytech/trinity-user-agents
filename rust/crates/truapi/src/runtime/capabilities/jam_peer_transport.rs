@@ -2,14 +2,15 @@
 //!
 //! Native runtimes dial JAMNP-S QUIC through the connection's
 //! [`JamPeerSession`](crate::jam_peer_transport::session::JamPeerSession),
-//! gating every dial on [`ProductRuntimeHost::require_jam_peers`]. The browser
-//! core keeps the trait's `NotGranted` defaults: its JavaScript session answers
+//! gating every dial on
+//! [`ProductConnection::require_jam_peers`](crate::runtime::ProductConnection::require_jam_peers).
+//! The browser core keeps the trait's `NotGranted` defaults: its JavaScript session answers
 //! trait 111 before frames reach the core.
 
 use crate::runtime::ProductRuntimeHost;
 
 #[cfg(target_arch = "wasm32")]
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl truapi::api::JamPeerTransport for ProductRuntimeHost {}
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -34,7 +35,7 @@ mod native {
 
 	use super::ProductRuntimeHost;
 
-	#[truapi::async_trait]
+	#[async_trait::async_trait]
 	impl truapi::api::JamPeerTransport for ProductRuntimeHost {
 		#[instrument(skip_all, fields(runtime.method = "jam_peer_transport.dial"))]
 		async fn dial(
@@ -44,8 +45,14 @@ mod native {
 		) -> Result<HostJamPeerTransportDialResponse, CallError<HostJamPeerTransportDialError>> {
 			let HostJamPeerTransportDialRequest::V1(inner) = &request;
 			let genesis = inner.genesis;
-			self.jam_peers
-				.dial(cx, request, || self.require_jam_peers(genesis), &self.services.spawner)
+			self.connection
+				.jam_peers
+				.dial(
+					cx,
+					request,
+					|| self.connection.require_jam_peers(genesis),
+					&self.connection.services.spawner,
+				)
 				.await
 		}
 
@@ -55,7 +62,7 @@ mod native {
 			_cx: &CallContext,
 			request: HostJamPeerTransportOpenRequest,
 		) -> Result<HostJamPeerTransportOpenResponse, CallError<HostJamPeerTransportOpenError>> {
-			self.jam_peers.open(request).await
+			self.connection.jam_peers.open(request).await
 		}
 
 		#[instrument(skip_all, fields(runtime.method = "jam_peer_transport.send"))]
@@ -64,7 +71,7 @@ mod native {
 			_cx: &CallContext,
 			request: HostJamPeerTransportSendRequest,
 		) -> Result<HostJamPeerTransportSendResponse, CallError<HostJamPeerTransportSendError>> {
-			self.jam_peers.send(request)
+			self.connection.jam_peers.send(request)
 		}
 
 		#[instrument(skip_all, fields(runtime.method = "jam_peer_transport.recv"))]
@@ -73,7 +80,7 @@ mod native {
 			_cx: &CallContext,
 			request: HostJamPeerTransportRecvRequest,
 		) -> Result<HostJamPeerTransportRecvResponse, CallError<HostJamPeerTransportRecvError>> {
-			self.jam_peers.recv(request)
+			self.connection.jam_peers.recv(request)
 		}
 
 		#[instrument(skip_all, fields(runtime.method = "jam_peer_transport.reset"))]
@@ -83,7 +90,7 @@ mod native {
 			request: HostJamPeerTransportResetRequest,
 		) -> Result<HostJamPeerTransportResetResponse, CallError<HostJamPeerTransportResetError>>
 		{
-			self.jam_peers.reset(request)
+			self.connection.jam_peers.reset(request)
 		}
 
 		#[instrument(skip_all, fields(runtime.method = "jam_peer_transport.close"))]
@@ -93,7 +100,7 @@ mod native {
 			request: HostJamPeerTransportCloseRequest,
 		) -> Result<HostJamPeerTransportCloseResponse, CallError<HostJamPeerTransportCloseError>>
 		{
-			self.jam_peers.close(request)
+			self.connection.jam_peers.close(request)
 		}
 
 		#[instrument(skip_all, fields(runtime.method = "jam_peer_transport.events"))]
@@ -103,7 +110,7 @@ mod native {
 			_request: HostJamPeerTransportEventsRequest,
 		) -> Result<HostJamPeerTransportEventsResponse, CallError<HostJamPeerTransportEventsError>>
 		{
-			self.jam_peers.events()
+			self.connection.jam_peers.events()
 		}
 	}
 }

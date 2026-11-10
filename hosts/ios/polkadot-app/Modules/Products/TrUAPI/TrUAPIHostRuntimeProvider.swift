@@ -3,11 +3,12 @@ import UIKit
 import UIKitExt
 import TrUAPIHost
 import ChainRegistry
+import Foundation_iOS
+import FoundationExt
 import Products
 import SubstrateSdk
 import KeyDerivation
 import Keystore_iOS
-import Coinage
 
 /// Runtime configuration error raised while assembling the shared host config.
 enum TrUAPIRuntimeConfigError: Error {
@@ -22,11 +23,16 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// first use. Subsequent calls return the cached instance.
     func sharedRuntime() throws -> TrUAPIHostRuntime
 
-    func setCoinageAvailable(_ available: Bool)
-
     /// Anchor the host's core confirmations (signing, permission prompts) to
     /// the given view. Until it is attached, host-level prompts deny.
     @MainActor func setPresentationView(_ view: ControllerBackedProtocol)
+
+    /// The view the host's own prompts present from, once attached.
+    @MainActor var presentationView: ControllerBackedProtocol? { get }
+
+    /// Attach what runs product workers when the core's reference ledger asks
+    /// for them. Called once at startup, before the runtime is first built.
+    func attach(workerManager: any TrUAPIWorkerManaging)
 }
 
 /// Lazily builds one ``TrUAPIHostRuntime`` from host identity + people/bulletin
@@ -39,13 +45,21 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let settingsManager: SettingsManagerProtocol
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
+    private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
-    private let coinageAdapter: TrUAPINativeCoinage
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
     private var contactsChangeNotifier: ContactsChangeNotifier?
+
+    /// Set once at startup, before any product opens. The runtime is built on
+    /// first use, which is long after, so the manager is in place by then.
+    private var workerManager: (any TrUAPIWorkerManaging)?
+
+    /// Set once at startup, after the payment engines are assembled. Installed on the runtime when
+    /// it is built, or right away if it already is.
+    private var paymentsBridge: RustPaymentsBridge?
 
     init(
         chainRegistry: ChainRegistryProtocol,
@@ -53,8 +67,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         settingsManager: SettingsManagerProtocol,
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
-        coinageService: any CoinageServicing,
-        storageFacade: StorageFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
         logger: LoggerProtocol
     ) {
@@ -65,31 +77,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
         self.logger = logger
-        // CoinageService is assembled for this wallet/chain. Live configuration may not relabel that instance.
-        let boundScope = try? Self.makeNativeCoinageScope(chainRegistry: chainRegistry, entropyManager: entropyManager)
-        coinageAdapter = TrUAPINativeCoinage(
-            service: coinageService,
-            storageFacade: storageFacade,
-            scope: {
-                guard let boundScope else {
-                    throw HostRejection.Rejected(reason: "Native Coinage wallet session unavailable")
-                }
-                let currentScope = try Self.makeNativeCoinageScope(
-                    chainRegistry: chainRegistry,
-                    entropyManager: entropyManager
-                )
-                guard currentScope == boundScope else {
-                    throw HostRejection.Rejected(reason: "Native Coinage wallet session unavailable")
-                }
-                return boundScope
-            },
-            confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade)
-        )
-    }
-
-    deinit {
-        // The runtime can outlive its provider. It retains the adapter, not an authorization lease.
-        coinageAdapter.setAvailable(false)
     }
 
     @MainActor
@@ -97,8 +84,44 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         confirmationRouterFacade.setPresentationView(view)
     }
 
-    func setCoinageAvailable(_ available: Bool) {
-        coinageAdapter.setAvailable(available)
+    @MainActor
+    var presentationView: ControllerBackedProtocol? {
+        confirmationRouterFacade.productsRouter.presentationView
+    }
+
+    func attach(workerManager: any TrUAPIWorkerManaging) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        self.workerManager = workerManager
+    }
+
+    /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
+    /// privacy warnings are presented like the core's own host-level prompts.
+    func attach(paymentsSupport: PaymentsSupport, hostProvider: ProductHostProviding) {
+        backedUpInstallation.attach(paymentsSupport.coinageService.backedUpInstallationProvider)
+        let productsRouter = confirmationRouterFacade.productsRouter
+        let bridge = RustPaymentsBridge(
+            payments: ProductPayments(
+                support: paymentsSupport,
+                approvalRequester: PaymentApprovalRequesterFactory.create(
+                    router: productsRouter,
+                    fundingProvider: FundingDomainProvider(hostProvider: hostProvider)
+                ),
+                privacyConfirmer: PaymentPrivacyConfirmer(router: productsRouter),
+                recyclingStrategy: CoinageRecyclingStrategyStore.shared
+            ),
+            logger: logger
+        )
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard paymentsBridge == nil else { return }
+        paymentsBridge = bridge
+        if let cachedRuntime {
+            bridge.install(on: cachedRuntime)
+        }
     }
 
     func sharedRuntime() throws -> TrUAPIHostRuntime {
@@ -116,11 +139,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             secret: secret,
             liteUsername: settingsManager.string(for: .username),
             networkSuffix: networkSuffix,
-            coinageInstanceId: AppConfig.Coinage.instanceId
+            databaseDirectory: Self.coreDatabaseDirectory()
         )
 
-        let chainConnections = TrUAPIChainConnectionPool(
+        let chainConnections = TrUAPIV2SpecConnectionPool(
             chainRegistry: chainRegistry,
+            applicationHandler: ApplicationHandler(),
+            dateProvider: NowDateProvider(),
             logger: logger
         )
 
@@ -129,13 +154,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             coreStorage: coreStorage,
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
-            chatFiles: TrUAPINativeChatFiles.shared,
+            workerManager: workerManager,
+            backedUpInstallation: backedUpInstallation,
+            encryptedStorage: TrUAPIEncryptedStorage(keychain: Keychain()),
             logger: logger
         )
 
-        // Always register native custody, including while the service is unavailable.
-        // Temporary unavailability must never opt this host into Rust purse storage.
-        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig, nativeWallet: coinageAdapter)
+        let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
         bridge.attach(runtime)
         // Before any product execution opens, so a product never sees the
         // window where the host lists no contacts.
@@ -145,6 +170,11 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             routerFacade: confirmationRouterFacade
         )
         runtime.setContacts(contactsBridge)
+        runtime.setScanner(AppScannerHostBridge(
+            routerFacade: confirmationRouterFacade,
+            visibility: ProductVisibility(application: UIApplication.shared)
+        ))
+        paymentsBridge?.install(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
@@ -163,22 +193,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 }
 
 extension TrUAPIHostRuntimeProvider {
-    private static func makeNativeCoinageScope(
-        chainRegistry: ChainRegistryProtocol,
-        entropyManager: RootEntropyManaging
-    ) throws -> NativeCoinageScope {
-        let chain = try chainRegistry.getChainOrError(for: AppConfig.Assets.mainAsset.chainId)
-        guard let genesis = chain.explicitGenesisHash else {
-            throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "coinage")
-        }
-        let wallet = DynamicDerivedWallet(derivationPath: nil, entropyManager: entropyManager)
-        return try NativeCoinageScope(
-            rootPublicKey: wallet.getRawPublicKey(),
-            genesisHash: Data(hexString: genesis),
-            coinageInstanceId: AppConfig.Coinage.instanceId
-        )
-    }
-
     /// Assemble the immutable host-wide config. Genesis hashes are fetched from
     /// the registry and must resolve; a missing hash fails explicitly rather
     /// than degrading. `networkSuffix` is the dotNS TLD the core derives the
@@ -190,9 +204,9 @@ extension TrUAPIHostRuntimeProvider {
         secret: Data,
         liteUsername: String?,
         networkSuffix: String,
-        coinageInstanceId: UInt32
+        databaseDirectory: String
     ) throws -> HostRuntimeConfig {
-        let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.usernameChain)
+        let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.peopleChain)
         let bulletinChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.bulletInChain)
         let assetHubChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.assethubChain)
 
@@ -210,7 +224,10 @@ extension TrUAPIHostRuntimeProvider {
             throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "assetHub")
         }
 
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        let bundle = Bundle.main
+        let version = bundle.appVersion.map { version in
+            bundle.appBuild.map { "\(version) (\($0))" } ?? version
+        }
 
         return try HostRuntimeConfig(
             hostName: "Polkadot App",
@@ -221,9 +238,24 @@ extension TrUAPIHostRuntimeProvider {
             bulletinChainGenesisHash: Data(hexString: bulletinGenesisHex),
             assetHubChainGenesisHash: Data(hexString: assetHubGenesisHex),
             networkSuffix: networkSuffix,
+            databaseDirectory: databaseDirectory,
+            pinnedPocketCards: AssetPinnedPocketCards(tld: networkSuffix).cards(),
             localSessionSecret: secret,
-            localSessionLiteUsername: liteUsername,
-            coinageInstanceId: coinageInstanceId
+            localSessionLiteUsername: liteUsername
         )
+    }
+
+    /// The core database directory under Application Support, created if
+    /// needed and excluded from backup: a durable-transaction ledger restored
+    /// onto another device would act on transactions that already settled.
+    static func coreDatabaseDirectory(fileManager: FileManager = .default) throws -> String {
+        var directory = try fileManager
+            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appendingPathComponent("truapi", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try directory.setResourceValues(values)
+        return directory.path
     }
 }

@@ -28,4 +28,5 @@ dependencies {
     implementation(libs.google.android.material)
 
     testImplementation(project(":test-shared"))
+    testImplementation(libs.mockk)
 }

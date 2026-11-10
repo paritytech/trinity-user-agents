@@ -70,6 +70,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatSummaryBad
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatUserInputState
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.LastMessageSummary
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.MessageEditHistoryItem
+import io.paritytech.polkadotapp.feature_chats_impl.domain.models.chatSummaryOrder
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.toDomain
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.DmChatMessageOriginDisplayResolver
 import io.paritytech.polkadotapp.feature_chats_impl.domain.originDisplay.MessageOriginDisplayResolver
@@ -131,7 +132,7 @@ class ChatEngine @Inject constructor(
             is ChatVariant.Contact -> contactsRepository.subscribeContact(variant.contactAccountId)
                 .map { contact ->
                     Result.success(contact)
-                        .requireNotNull { error("Contact with accountId=${variant.contactAccountId} not found") }
+                        .requireNotNull { IllegalStateException("Contact with accountId=${variant.contactAccountId} not found") }
                         .map(::getContactChatDisplay)
                 }
 
@@ -175,8 +176,8 @@ class ChatEngine @Inject constructor(
             .map { extension ->
                 val defaultMetadata = extension.defaultRoomMetadata ?: return@map null
 
-                val avatar = defaultMetadata.icon?.let(ChatAvatar::Url)
-                    ?: ChatAvatar.Account(defaultMetadata.name, themeSeed = chatId.value.value)
+                val letterAvatar = ChatAvatar.Account(defaultMetadata.name, themeSeed = chatId.value.value)
+                val avatar = defaultMetadata.icon?.let { ChatAvatar.Url(it, placeholder = letterAvatar) } ?: letterAvatar
 
                 ChatDisplay(defaultMetadata.name, avatar)
             }.requireNotNull()
@@ -263,10 +264,7 @@ class ChatEngine @Inject constructor(
             combine(allChatSummaries, customPreviews) { summaries, previews ->
                 summaries
                     .map { createChatSummary(it, previews[it.chatId]) }
-                    .sortedWith(
-                        compareBy<ChatSummary> { it.preview.order }
-                            .thenByDescending { it.timestamp }
-                    )
+                    .sortedWith(chatSummaryOrder)
             }
         }
             .inBackground()
@@ -304,9 +302,11 @@ class ChatEngine @Inject constructor(
 
         return ChatSummary(
             timestamp = timestamp,
+            lastMessageSortOrder = messageSummary.lastMessageSortOrder,
             chatId = messageSummary.chatId,
             badge = createBadge(messageSummary, customChatPreview),
             preview = preview,
+            order = customChatPreview?.order ?: Order.ByTimestamp,
             roomMetadata = messageSummary.roomMetadata,
             hasUnseenReaction = messageSummary.hasUnseenReaction,
             customPreviewRenderer = customPreviewRenderer,
@@ -500,32 +500,42 @@ class ChatEngine @Inject constructor(
     suspend fun saveMessage(
         chatMessage: ChatMessage,
         onConflict: ChatMessageSaveConflictStrategy = ChatMessageSaveConflictStrategy.REPLACE,
+        placement: ChatMessagePlacement = ChatMessagePlacement.Latest,
         onSaved: suspend () -> Unit = {},
     ): Boolean {
         val customContentDecoder = getCustomContentDecoder(chatMessage.chatId)
-        return chatMessageRepository.saveMessage(chatMessage, customContentDecoder, onConflict, onSaved)
-            .also { saved ->
-                if (saved) {
-                    messageSaveProcessors.forEach { it.onMessageSaved(chatMessage) }
-                    savedMessagesFlow.tryEmit(chatMessage)
-                    messagesChangedFlow.tryEmit(Unit)
-                }
-            }
+        var saved = false
+
+        // A processor's writes (e.g. an acceptance's request state and peer device) commit with the message or not at all.
+        contactsRepository.withTransaction {
+            saved = chatMessageRepository.saveMessage(chatMessage, customContentDecoder, onConflict, placement, onSaved)
+            if (saved) messageSaveProcessors.forEach { it.onMessageSaved(chatMessage) }
+        }
+
+        if (saved) {
+            savedMessagesFlow.tryEmit(chatMessage)
+            messagesChangedFlow.tryEmit(Unit)
+        }
+
+        return saved
     }
 
     suspend fun saveMessages(
         chatMessages: List<ChatMessage>,
         onConflict: ChatMessageSaveConflictStrategy = ChatMessageSaveConflictStrategy.REPLACE,
+        placement: ChatMessagePlacement,
     ): List<ChatMessage> {
         if (chatMessages.isEmpty()) return emptyList()
 
         val customContentDecoder = getGlobalContentDecoder()
-        val savedMessages = chatMessageRepository.saveMessages(chatMessages, customContentDecoder, onConflict)
+        var savedMessages = emptyList<ChatMessage>()
 
-        savedMessages.forEach { saved ->
-            messageSaveProcessors.forEach { it.onMessageSaved(saved) }
-            savedMessagesFlow.tryEmit(saved)
+        contactsRepository.withTransaction {
+            savedMessages = chatMessageRepository.saveMessages(chatMessages, customContentDecoder, onConflict, placement)
+            savedMessages.forEach { saved -> messageSaveProcessors.forEach { it.onMessageSaved(saved) } }
         }
+
+        savedMessages.forEach { saved -> savedMessagesFlow.tryEmit(saved) }
 
         if (savedMessages.isNotEmpty()) {
             messagesChangedFlow.tryEmit(Unit)

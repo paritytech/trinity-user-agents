@@ -1,8 +1,11 @@
 import Foundation
+import os
+import FoundationExt
 import TrUAPIHost
 import Products
 import ChainRegistry
 import SubstrateSdk
+import DesignSystem
 
 /// Production `HostBridge` for one product execution: wires the rust core's
 /// platform callbacks to app services and, once attached, notifies the
@@ -19,15 +22,17 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         let permissionGuard: ProductPermissionGuarding
         let osPermissionAsker: OSPermissionAsking
         let notificationScheduler: ProductNotificationScheduling
+        let gameReminders: ProductGameReminderScheduling?
+        let reminderPermissionAsker: ReminderPermissionAsking
         let navigationRouter: ProductsNavigationRouting
         let chainRegistry: ChainRegistryProtocol
         let chainConnections: TrUAPIChainConnecting
         let productStorage: TrUAPILocalStoring
         let coreStorage: TrUAPILocalStoring
         let confirmationPresenter: TrUAPIConfirmationPresenting
-        let chatFiles: NativeChatFilesHost
         let preimageCache: TrUAPIPreimageLookuping
         let hostProvider: ProductHostProviding
+        let themeManager: ThemeManagerProtocol
         let logger: LoggerProtocol
     }
 
@@ -36,6 +41,10 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
 
     private let dependencies: Dependencies
     private weak var execution: TrUAPIProductExecutionProtocol?
+    private let cachedTheme = OSAllocatedUnfairLock(
+        uncheckedState: HostThemeSubscribeItem(name: .default, variant: .dark)
+    )
+    private var themeObservation: Task<Void, Never>?
 
     init(dependencies: Dependencies) {
         self.dependencies = dependencies
@@ -47,10 +56,15 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     func attach(_ execution: TrUAPIProductExecutionProtocol) {
         self.execution = execution
         dependencies.chainConnections.eventHandler = self
+        observeTheme()
+    }
+
+    deinit {
+        themeObservation?.cancel()
     }
 
     func onCoreLog(marker: String, detail: String) {
-        dependencies.logger.debug("[truapi:\(marker)] \(detail)")
+        dependencies.logger.logCoreLine(marker: marker, detail: detail)
     }
 
     func navigateTo(url: String) async throws {
@@ -89,7 +103,8 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
              .nfc,
              .clipboard,
              .openUrl,
-             .biometrics:
+             .biometrics,
+             .motion:
             .notApplicable
         }
     }
@@ -100,7 +115,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     ) async throws -> TrUAPIPermissionDecision {
         try await dependencies.permissionGuard.requestPermissionsDecision(
             productId: dependencies.productId,
-            permissions: request.toDomainRequest().toDomainPermissions()
+            permissions: request.toDomainPermissions()
         ).hostDecision
     }
 
@@ -124,56 +139,19 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         }
     }
 
-    func pickChatFiles(request: NativeChatFilePickRequest) async throws -> [NativeChatPickedFile] {
-        guard request.productId == dependencies.productId else { throw ChatFileFailure.unavailable }
-        return try await dependencies.chatFiles.pickChatFiles(request: request)
-    }
-
-    func readChatFile(sourceId: String, offset: UInt64, length: UInt32) async throws -> Data {
-        try await dependencies.chatFiles.readChatFile(sourceId: sourceId, offset: offset, length: length)
-    }
-
-    func releaseChatFile(sourceId: String) async throws {
-        try await dependencies.chatFiles.releaseChatFile(sourceId: sourceId)
-    }
-
-    func beginChatFileExport(request: NativeChatFileExportRequest) async throws -> String? {
-        guard request.productId == dependencies.productId else { throw ChatFileFailure.unavailable }
-        return try await dependencies.chatFiles.beginChatFileExport(request: request)
-    }
-
-    func writeChatFileExport(exportId: String, offset: UInt64, data: Data) async throws {
-        try await dependencies.chatFiles.writeChatFileExport(exportId: exportId, offset: offset, data: data)
-    }
-
-    func finishChatFileExport(exportId: String) async throws {
-        try await dependencies.chatFiles.finishChatFileExport(exportId: exportId)
-    }
-
-    func cancelChatFileExport(exportId: String) async throws {
-        try await dependencies.chatFiles.cancelChatFileExport(exportId: exportId)
-    }
-
     func confirmUserAction(review: UserConfirmationReview) async throws -> Bool {
-        await dependencies.confirmationPresenter.confirm(review: review, from: dependencies.productId)
+        await dependencies.confirmationPresenter.confirm(review: review, from: dependencies.productId.rawValue)
     }
 
     func confirmPermission(review: UserConfirmationReview) async throws -> TrUAPIPermissionDecision {
-        await dependencies.confirmationPresenter.confirmPermission(review: review, from: dependencies.productId)
+        await dependencies.confirmationPresenter.confirmPermission(
+            review: review,
+            from: dependencies.productId.rawValue
+        )
     }
 
     func chainConnect(genesisHash: Data) throws -> UInt32? {
         dependencies.chainConnections.connect(genesisHash: genesisHash)
-    }
-
-    func allowedHopEndpoints(bulletinGenesisHash: Data) async throws -> [String] {
-        dependencies.chainConnections.allowedHopEndpoints(bulletinGenesisHash: bulletinGenesisHash)
-    }
-
-    func hopConnect(bulletinGenesisHash: Data, endpoint: String) throws -> UInt32? {
-        try dependencies.chainConnections.hopConnect(
-            bulletinGenesisHash: bulletinGenesisHash, endpoint: endpoint
-        )
     }
 
     func chainSend(connectionId: UInt32, request: String) throws {
@@ -189,7 +167,7 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func currentTheme() throws -> HostThemeSubscribeItem {
-        HostThemeSubscribeItem(name: .default, variant: .dark)
+        cachedTheme.withLock { $0 }
     }
 
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {
@@ -210,22 +188,29 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         TrUAPISupportedChains.make(chainRegistry: dependencies.chainRegistry)
     }
 
-    func authStateChanged(state: AuthState) {
-        let details =
-            switch state {
-            case .disconnected:
-                "disconnected"
-            case .pairing:
-                "pairing"
-            case .connected:
-                "connected"
-            case .loginFailed:
-                "loging failed"
-            case .authenticating:
-                "authenticating"
-            }
+    func transactionExtensionVersions() async throws -> ExtensionVersionMap {
+        try TrUAPIExtensionVersions.make(chainRegistry: dependencies.chainRegistry)
+    }
 
-        dependencies.logger.debug("[truapi] auth state: \(details)")
+    func authStateChanged(state: AuthState) {
+        dependencies.logger.info("[truapi.auth] \(dependencies.productId): \(state.logMarker)")
+    }
+}
+
+// MARK: - Theme
+
+private extension RustProductExecutionBridge {
+    func observeTheme() {
+        themeObservation?.cancel()
+        let themeManager = dependencies.themeManager
+        themeObservation = Task { @MainActor [weak self] in
+            for await theme in themeManager.observeTheme() {
+                guard let self else { return }
+                let item = theme.hostThemeSubscribeItem
+                cachedTheme.withLock { $0 = item }
+                execution?.notifyThemeChanged(theme: item)
+            }
+        }
     }
 }
 
@@ -238,6 +223,32 @@ extension RustProductExecutionBridge: TrUAPIChainEventHandling {
 
     func chainDidClose(connectionId: UInt32) {
         execution?.notifyChainClosed(connectionId: connectionId)
+    }
+}
+
+// MARK: - Game reminders
+
+extension RustProductExecutionBridge: GameHostBridge {
+    func scheduleReminder(startsAt: UInt64) async throws {
+        let asker = dependencies.reminderPermissionAsker
+        let ringAlarm: Bool
+        if await asker.askAlarm() {
+            ringAlarm = true
+        } else if await asker.askNotifications() {
+            ringAlarm = false
+        } else {
+            throw HostRejection.Rejected(reason: "alarms and notifications are both turned off")
+        }
+        await dependencies.gameReminders?.schedule(
+            productId: dependencies.productId,
+            startsAt: Date(timeIntervalSince1970: startsAt.millisecondsToSeconds()),
+            ringAlarm: ringAlarm,
+            addCalendarEvent: true
+        )
+    }
+
+    func cancelReminder() async throws {
+        await dependencies.gameReminders?.cancel(productId: dependencies.productId)
     }
 }
 
@@ -266,20 +277,32 @@ extension HostDevicePermissionRequest {
         case .clipboard: .clipboard
         case .openUrl: .openUrl
         case .biometrics: .biometrics
+        case .motion: .motion
         }
     }
 }
 
 extension RemotePermission {
-    /// Maps the TrUAPI remote permission to the Products domain request.
-    func toDomainRequest() -> Products.RemotePermissionRequest {
+    /// The Products permissions the guard asks the user about.
+    func toDomainPermissions() -> [ProductPermission] {
         switch self {
-        case let .remote(domains): .remote(domains: domains)
-        case .webRtc: .webRTC
-        case .chainSubmit: .chainSubmit
-        case .preimageSubmit: .preimageSubmit
-        case .statementSubmit: .statementSubmit
-        case let .jamPeers(genesis): .jamPeers(genesis: genesis.toHex(includePrefix: true))
+        case let .remote(domains): Products.RemotePermissionRequest.remote(domains: domains).toDomainPermissions()
+        case .webRtc: Products.RemotePermissionRequest.webRTC.toDomainPermissions()
+        case .chainSubmit: Products.RemotePermissionRequest.chainSubmit.toDomainPermissions()
+        case .preimageSubmit: Products.RemotePermissionRequest.preimageSubmit.toDomainPermissions()
+        case .statementSubmit: Products.RemotePermissionRequest.statementSubmit.toDomainPermissions()
+        case .balanceAccess: [.balanceAccess]
+        case let .nftPurseRead(owner): [.nftPurseRead(ownerProductId: owner.productId)]
+        }
+    }
+}
+
+extension NftPurseOwner {
+    /// The owning product, or `nil` for purses of the user's own account.
+    var productId: ProductId? {
+        switch self {
+        case let .product(productId): productId
+        case .root: nil
         }
     }
 }

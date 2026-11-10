@@ -11,7 +11,7 @@ protocol ChatRequestFactoryProtocol {
         from message: Chat.RequestMessage,
         peerEncryptionPubKey: Data,
         peerAccountId: AccountId,
-        ownKeyId: MessageExchange.Own
+        ownSignKeyId: String
     ) throws -> ChatRequest.EncryptedRemoteModel
 
     func decodeAndValidate(
@@ -24,6 +24,8 @@ enum ChatRequestFactoryError: Error {
     case unsupportedProof
     case invalidSignature
     case peerNotFound
+    /// v1 requests carry no device, so the chat could never reach the device route.
+    case unsupportedRequestVersion
 }
 
 final class ChatRequestFactory {
@@ -47,7 +49,7 @@ extension ChatRequestFactory: ChatRequestFactoryProtocol {
         from message: Chat.RequestMessage,
         peerEncryptionPubKey: Data,
         peerAccountId: AccountId,
-        ownKeyId: MessageExchange.Own
+        ownSignKeyId: String
     ) throws -> ChatRequest.EncryptedRemoteModel {
         let messageData = try ChatRequest.ProofPayload(
             message: message,
@@ -55,7 +57,7 @@ extension ChatRequestFactory: ChatRequestFactoryProtocol {
         )
         .scaleEncoded()
 
-        let proof = try signManager.makeSigner(for: ownKeyId.signKeyId).sign(messageData)
+        let proof = try signManager.makeSigner(for: ownSignKeyId).sign(messageData)
 
         let remoteModel = ChatRequest.RemoteModel(
             message: message,
@@ -91,6 +93,9 @@ extension ChatRequestFactory: ChatRequestFactoryProtocol {
 
         let decryptedModel = try ChatRequest.RemoteModel(scaleDecoder: ScaleDecoder(data: decryptedData))
 
+        // Accepting derives a one-shot signer from the peer's request id.
+        try ChatKeyPaths.validateRequestId(decryptedModel.message.messageId)
+
         let myAccountId = try signManager.makeSigner(for: ownKeyId.signKeyId).accountId
 
         guard case let .sr25519(signature, signer) = decryptedModel.proof else {
@@ -121,9 +126,6 @@ extension ChatRequestFactory: ChatRequestFactoryProtocol {
         return ChatRequest.ValidatedRemoteModel(
             message: decryptedModel.message,
             peerAccountId: peerAccountId,
-            // TODO: Add statement account id to request.
-            // Taking `signer` is fine for now and needed for device sync,
-            // but this is an assumption.
             peerStatementAccountId: signer
         )
     }
@@ -136,7 +138,7 @@ private extension ChatRequestFactory {
         ownEncryptionKeyId: String
     ) async throws -> AccountId {
         guard let identityAccountId = message.content.extractIdentityAccountId() else {
-            return signer
+            throw ChatRequestFactoryError.unsupportedRequestVersion
         }
 
         let peerEncryptionPubKey = try await fetchPeerEncryptionPubKey(

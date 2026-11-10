@@ -102,7 +102,7 @@ private fun ChatContactHeaderPreview() {
             avatarModel = AvatarUiModel.Mock.fromName("brave beaver"),
             subtitle = {
                 NovaText(
-                    text = "You both played 5th January Weekly Game",
+                    text = "You both joined in January",
                     style = PolkadotTheme.typography.body.medium,
                     color = PolkadotTheme.colors.fg.secondary,
                     textAlign = TextAlign.Center

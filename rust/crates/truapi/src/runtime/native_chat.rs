@@ -19,7 +19,11 @@ use std::{
 	sync::Arc,
 };
 
-use crate::platform::{CoreStorageKey, normalize_product_identifier};
+use crate::{
+	ProductId,
+	host_internal::sso_messages::{PaymentTopUpError, PaymentTopUpRequest},
+	platform::CoreStorageKey,
+};
 use futures::{channel::oneshot, lock::Mutex};
 use parity_scale_codec::{DecodeAll, Encode};
 use truapi::latest::{
@@ -188,10 +192,9 @@ impl NativeChatRegistry {
 		if version != 1 ||
 			products.len() > 256 ||
 			products.windows(2).any(|pair| pair[0] >= pair[1]) ||
-			products
-				.iter()
-				.any(|product| normalize_product_identifier(product).as_ref() != Ok(product))
-		{
+			products.iter().any(|product| {
+				product.parse::<ProductId>().map(|id| id.as_str() != product).unwrap_or(true)
+			}) {
 			return Err(ChatError::StorageUnavailable);
 		}
 		Ok(products)
@@ -265,32 +268,33 @@ impl NativeChatRegistry {
 	pub(crate) fn top_up(
 		&self,
 		context: NativeChatContext,
-		product: String,
+		product: ProductId,
 		request: truapi::v01::HostPaymentTopUpRequest,
-	) -> impl Future<Output = Result<(), truapi::v01::HostPaymentTopUpError>> + Send + '_ {
+	) -> impl Future<Output = Result<(), PaymentTopUpError>> + Send + '_ {
 		// Construct the guard before returning the future, including when the
 		// caller cancels it without ever polling wallet initialization.
-		let request = crate::host_internal::sso_messages::PaymentTopUpRequest {
+		let request = PaymentTopUpRequest {
 			calling_product_id: product,
 			payload: truapi::versioned::payment::HostPaymentTopUpRequest::V1(request),
 		};
 		async move {
-			let truapi::versioned::payment::HostPaymentTopUpRequest::V1(payload) = &request.payload;
+			let truapi::versioned::payment::HostPaymentTopUpRequest::V1(payload) = &request.payload
+			else {
+				return Err(PaymentTopUpError::InvalidSource);
+			};
 			if payload.into.is_some_and(|purse| purse != truapi::v01::MAIN_PURSE) ||
 				!matches!(&payload.source, truapi::v01::PaymentTopUpSource::Coins { .. })
 			{
-				return Err(truapi::v01::HostPaymentTopUpError::InvalidSource);
+				return Err(PaymentTopUpError::InvalidSource);
 			}
-			let wallet = self.wallet(&context).await.map_err(|_| {
-				truapi::v01::HostPaymentTopUpError::Unknown {
-					reason: "Wallet custody is unavailable".into(),
-				}
+			let wallet = self.wallet(&context).await.map_err(|_| PaymentTopUpError::Unknown {
+				reason: "Wallet custody is unavailable".into(),
 			})?;
 			// Install recovery before yielding ownership to the claim task:
 			// a caller may disappear while that task commits its first memo.
 			self.resume_wallet_recovery(context.clone());
 			let (product, request) = request.into_parts();
-			wallet.top_up(&context, &product, request).await
+			wallet.top_up(&context, product.as_str(), request).await
 		}
 	}
 

@@ -22,6 +22,7 @@ fn request(entries: &[MemoEntry], amount: u128) -> HostPaymentTopUpRequest {
 		source: PaymentTopUpSource::Coins {
 			sr25519_secret_keys: entries.iter().map(|entry| entry.0).collect(),
 		},
+		id: [0; 32],
 	}
 }
 
@@ -56,6 +57,7 @@ fn top_up_rejects_duplicate_invalid_and_over_limit_sources_before_custody() {
 			into: None,
 			amount: 1,
 			source: PaymentTopUpSource::PrivateKey { sr25519_secret_key: source(40).0 },
+			id: [0; 32],
 		};
 		assert_eq!(
 			wallet.top_up(&context, "chat.dot", unsupported).await,

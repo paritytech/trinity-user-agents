@@ -15,12 +15,10 @@ final class IdentityProfileService {
     private struct UsernameState: Equatable {
         let username: Username?
         let isClaimed: Bool
-        let isPerson: Bool
     }
 
     private let usernameStorage: UsernameStoring
     private let identityService: IdentityServiceProtocol
-    private let personDataStore: BaseObservableStateStore<DetermineStatePersonData>
     private let wallet: WalletManaging
     private let eventCenter: EventCenterProtocol
     private let logger: LoggerProtocol
@@ -30,21 +28,18 @@ final class IdentityProfileService {
 
     private var usernameContinuation: AsyncStream<UsernameState>.Continuation?
     private var coordinatorTask: Task<Void, Never>?
-    private var rankTask: Task<Void, Never>?
     private var usernameTask: Task<Void, Never>?
     private var started = false
 
     init(
         usernameStorage: UsernameStoring,
         identityService: IdentityServiceProtocol,
-        personDataStore: BaseObservableStateStore<DetermineStatePersonData>,
         wallet: WalletManaging,
         eventCenter: EventCenterProtocol = EventCenter.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.usernameStorage = usernameStorage
         self.identityService = identityService
-        self.personDataStore = personDataStore
         self.wallet = wallet
         self.eventCenter = eventCenter
         self.logger = logger
@@ -52,14 +47,13 @@ final class IdentityProfileService {
         let initialProfile = IdentityProfile(
             username: usernameStorage.username,
             isClaimed: usernameStorage.usernameClaimed,
-            rank: usernameStorage.isPerson ? .membership : .basic
+            rank: .basic
         )
         profileSubject = AsyncCurrentValueSubject<IdentityProfile>(initialProfile)
     }
 
     deinit {
         coordinatorTask?.cancel()
-        rankTask?.cancel()
         usernameTask?.cancel()
         usernameContinuation?.finish()
     }
@@ -97,23 +91,10 @@ private extension IdentityProfileService {
                 let profile = IdentityProfile(
                     username: state.username,
                     isClaimed: state.isClaimed,
-                    rank: state.isPerson ? .membership : .basic
+                    rank: .basic
                 )
                 profileSubject.send(profile)
                 self?.ensureOnChainSubscription(state: state)
-            }
-        }
-
-        rankTask = Task { [personDataStore, logger, weak self] in
-            do {
-                // personDataStore emits events when any data is changed
-                // until fully synced .makeRegisteredData() may return nil
-                for try await data in personDataStore.observe().debounce(for: .seconds(1)) {
-                    let isPerson = data?.makeRegisteredData() != nil
-                    self?.handle(isPerson: isPerson)
-                }
-            } catch {
-                logger.error("Personhood pipeline failed: \(error)")
             }
         }
     }
@@ -123,8 +104,7 @@ private extension IdentityProfileService {
     func refreshUsername() {
         let state = UsernameState(
             username: usernameStorage.username,
-            isClaimed: usernameStorage.usernameClaimed,
-            isPerson: usernameStorage.isPerson
+            isClaimed: usernameStorage.usernameClaimed
         )
         usernameContinuation?.yield(state)
     }
@@ -159,11 +139,6 @@ private extension IdentityProfileService {
                 logger.error("Username subscription failed: \(error)")
             }
         }
-    }
-
-    func handle(isPerson: Bool) {
-        usernameStorage.isPerson = isPerson
-        refreshUsername()
     }
 
     func handleClaimed(username: Username) {

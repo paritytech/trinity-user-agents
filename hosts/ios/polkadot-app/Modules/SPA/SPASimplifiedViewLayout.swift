@@ -11,12 +11,28 @@ final class SPASimplifiedViewLayout: UIView {
 
     let activityIndicatorView = PolkadotLogoLoadingView()
 
+    let statusBarTitleButton = StatusBarTitleButton()
+    private let statusStrip = UIView()
+    private let chainStatusAnchorGuide = UILayoutGuide()
+    private var chainStatusAnchorWidth: Constraint?
+
     let loadProgressView: UIProgressView = {
         let progressView = UIProgressView(progressViewStyle: .bar)
         progressView.progressTintColor = .bgAccent
         progressView.trackTintColor = .clear
         progressView.isHidden = true
         return progressView
+    }()
+
+    let loadStatusLabel: Label = {
+        let label = Label()
+        label.typography = .bodyMedium
+        label.usesMonospacedDigits = true
+        label.textColor = .fgSecondary
+        label.textAlignment = .center
+        label.numberOfLines = 0
+        label.isHidden = true
+        return label
     }()
 
     init(webViewConfiguration: WKWebViewConfiguration) {
@@ -78,6 +94,51 @@ final class SPASimplifiedViewLayout: UIView {
 
         setNeedsLayout()
     }
+
+    /// The strip sits in the top safe area, with the web view edge to edge below it.
+    func setupFullScreenLayout(chainStatusView: UIView) {
+        addSubview(statusStrip)
+        statusStrip.snp.makeConstraints { make in
+            make.top.equalTo(safeAreaLayoutGuide.snp.top)
+            make.leading.trailing.equalToSuperview()
+            make.height.equalTo(ChainConnectionStatusBarView.preferredHeight)
+        }
+
+        statusStrip.addSubview(chainStatusView)
+        chainStatusView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+
+        statusStrip.addLayoutGuide(chainStatusAnchorGuide)
+        chainStatusAnchorGuide.snp.makeConstraints { make in
+            make.trailing.equalToSuperview().offset(-ChainConnectionStatusBarView.horizontalPadding)
+            make.top.bottom.equalToSuperview()
+            chainStatusAnchorWidth = make.width.equalTo(1).constraint
+        }
+
+        statusStrip.addSubview(statusBarTitleButton)
+        statusBarTitleButton.snp.makeConstraints { make in
+            make.leading.equalToSuperview().offset(ChainConnectionStatusBarView.horizontalPadding)
+            make.centerY.equalToSuperview()
+            make.height.equalTo(ChainConnectionStatusBarView.preferredHeight)
+            make.trailing.lessThanOrEqualTo(chainStatusAnchorGuide.snp.leading).offset(-DSSpacings.small)
+        }
+
+        addSubview(webView)
+        webView.snp.makeConstraints { make in
+            make.top.equalTo(statusStrip.snp.bottom)
+            make.leading.trailing.bottom.equalToSuperview()
+        }
+        webView.scrollView.contentInsetAdjustmentBehavior = .automatic
+
+        setupActivityIndicatorLayout()
+        setupLoadProgressLayout(top: statusStrip.snp.bottom)
+    }
+
+    /// Sizes the space the status title leaves for the rings, `ringsWidth` wide at the trailing end.
+    func setChainStatusWidth(_ ringsWidth: CGFloat) {
+        chainStatusAnchorWidth?.update(offset: ringsWidth)
+    }
 }
 
 // MARK: - Private
@@ -88,12 +149,18 @@ private extension SPASimplifiedViewLayout {
         activityIndicatorView.snp.makeConstraints { make in
             make.center.equalToSuperview()
         }
+
+        addSubview(loadStatusLabel)
+        loadStatusLabel.snp.remakeConstraints { make in
+            make.top.equalTo(activityIndicatorView.snp.bottom).offset(16)
+            make.leading.trailing.equalToSuperview().inset(32)
+        }
     }
 
-    func setupLoadProgressLayout() {
+    func setupLoadProgressLayout(top: ConstraintItem? = nil) {
         addSubview(loadProgressView)
         loadProgressView.snp.makeConstraints { make in
-            make.top.equalTo(safeAreaLayoutGuide.snp.top)
+            make.top.equalTo(top ?? safeAreaLayoutGuide.snp.top)
             make.leading.trailing.equalToSuperview()
         }
     }

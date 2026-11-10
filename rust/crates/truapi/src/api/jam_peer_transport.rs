@@ -29,7 +29,7 @@ use crate::{
 /// methods act only on connections a granted `dial` opened. A grant is
 /// separate from account, signing and storage authority.
 #[wire_trait(id = 111)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait JamPeerTransport: Send + Sync {
 	/// Dial one peer. The host builds the ALPN from `genesis` and requires the
 	/// peer certificate to carry `ed25519` (QUIC) or to hash to the

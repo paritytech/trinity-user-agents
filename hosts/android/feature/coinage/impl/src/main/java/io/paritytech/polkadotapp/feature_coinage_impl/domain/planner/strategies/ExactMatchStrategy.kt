@@ -28,10 +28,13 @@ class ExactMatchStrategy(
      * Marks no region: a local handoff mark cannot stall.
      */
     context(_: StalenessReportCollector)
-    override suspend fun schedule(params: TransferSubmissionParams): Result<ScheduledTransfer> {
+    override suspend fun schedule(
+        params: TransferSubmissionParams,
+        reservationMode: CoinReservationMode,
+    ): Result<ScheduledTransfer> {
         val handedOff = coins.map { OwnAsset.Coin(it.derivationIndex) }
 
-        return transactionService.preCommitHandoff(handedOff)
+        return transactionService.reserveAssets(handedOff, reservationMode)
             .map { commit -> ScheduledTransfer(coins.toMemoEntries(), commit, transactions = emptyList()) }
     }
 }

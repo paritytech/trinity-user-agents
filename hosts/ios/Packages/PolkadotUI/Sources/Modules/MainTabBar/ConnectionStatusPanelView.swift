@@ -11,12 +11,11 @@ public struct ConnectionStatusPanelView: View, Hashable {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: DSSpacings.mediumIncreased) {
+        VStack(alignment: .leading, spacing: DSSpacings.large) {
             Text(.Common.connectionStatusPanelTitle)
                 .typography(.titleLarge)
                 .foregroundStyle(Color.fgPrimary)
                 .lineLimit(1)
-                .padding(.bottom, DSSpacings.small)
 
             ForEach(rows) { row in
                 rowView(row)
@@ -38,13 +37,13 @@ private extension ConnectionStatusPanelView {
     static let intervalFormatter = DateComponentsFormatter.secondsMinutesAbbreviated
 
     func rowView(_ row: ChainConnectionStatusViewModel) -> some View {
-        HStack(spacing: DSSpacings.extraMedium) {
-            ChainStatusRingView(viewModel: row, diameter: 40)
+        HStack(spacing: DSSpacings.small) {
+            ChainStatusRingView(viewModel: row, diameter: 35)
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: DSSpacings.extraTiny) {
+            VStack(alignment: .leading, spacing: DSSpacings.zero) {
                 Text(verbatim: row.title)
-                    .typography(.bodySmall)
+                    .typography(.titleMedium)
                     .foregroundStyle(Color.fgPrimary)
                     .lineLimit(1)
 

@@ -43,10 +43,6 @@ final class IdentityDetailsViewBinding: IdentityDetailsViewProtocol {
         viewModel.username = .init(value: username.value, isClaimed: claimed)
     }
 
-    func didReceive(isPerson: Bool) {
-        viewModel.isPersonal = isPerson
-    }
-
     func didReceive(qrCode: UIImage) {
         viewModel.qrCode = Image(uiImage: qrCode)
     }

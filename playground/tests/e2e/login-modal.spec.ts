@@ -15,9 +15,26 @@ test.describe("login pairing modal", () => {
     "dotli host UI; the CLI host has no login modal",
   );
 
-  test("stays open while pairing, closes, and reopens on retry", async ({
+  test("stays open while pairing, cancels on close, reopens on retry", async ({
     page,
   }) => {
+    const subscribeSends: number[] = [];
+    page.on("console", (msg) => {
+      const text = msg.text();
+      if (
+        text.includes("chainSend") &&
+        text.includes("statement_subscribeStatement")
+      ) {
+        subscribeSends.push(Date.now());
+      }
+    });
+    await page.addInitScript(() => {
+      try {
+        localStorage.setItem("truapi:logLevel", "debug");
+      } catch {
+        /* storage unavailable */
+      }
+    });
 
     const frame = await openPlaygroundInDotli(page);
     await waitForOnline(frame);
@@ -32,11 +49,17 @@ test.describe("login pairing modal", () => {
     await expect(page.locator("#auth-modal-backdrop.open")).toBeVisible();
     await expect(page.locator("#auth-modal-qr canvas")).toBeVisible();
 
-    // Dismissing the pairing flow must close the modal and keep it closed.
+    // While pairing, the core polls the statement store with ~2s
+    // snapshot queries.
+    expect(subscribeSends.length).toBeGreaterThanOrEqual(2);
+
+    // Closing the modal cancels the login in the core: polling stops.
     await page.locator("#auth-modal-close").click();
     await expect(page.locator("#auth-modal-backdrop.open")).toBeHidden();
-    await page.waitForTimeout(3_000);
-    await expect(page.locator("#auth-modal-backdrop.open")).toBeHidden();
+    await page.waitForTimeout(1_000); // grace for an in-flight tick
+    const sendsAtCancel = subscribeSends.length;
+    await page.waitForTimeout(6_000);
+    expect(subscribeSends.length).toBe(sendsAtCancel);
 
     // Retry opens a fresh pairing modal.
     await openPairingModal(page);

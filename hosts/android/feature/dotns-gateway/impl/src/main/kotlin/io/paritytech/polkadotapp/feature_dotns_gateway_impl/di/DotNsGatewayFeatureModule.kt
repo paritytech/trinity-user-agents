@@ -20,6 +20,7 @@ import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.repository.Real
 import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.signer.origins.DotNsGatewayOrigins
 import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.signer.origins.RealDotNsGatewayOrigins
 import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.updater.AccountAliasUpdater
+import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.updater.AccountNamesUpdater
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -39,13 +40,27 @@ internal interface DotNsGatewayFeatureModule {
         }
 
         @Provides
+        fun provideAccountNamesUpdater(
+            @WalletAccount accountUpdateScope: Updater.NoChainScope<MetaAccount>,
+            chainRegistry: ChainRegistry,
+            storageCache: StorageCache
+        ): AccountNamesUpdater {
+            return AccountNamesUpdater(
+                chainRegistry,
+                storageCache,
+                accountUpdateScope
+            )
+        }
+
+        @Provides
         fun provideDotNsGatewayUpdateSystem(
             knownChains: KnownChains,
             updateSystemFactory: UpdateSystemFactory,
-            accountAliasUpdater: AccountAliasUpdater
+            accountAliasUpdater: AccountAliasUpdater,
+            accountNamesUpdater: AccountNamesUpdater
         ): DotNsGatewayUpdateSystem {
             val updateSystem = updateSystemFactory.createConstantSingleChain(
-                listOf(accountAliasUpdater),
+                listOf(accountAliasUpdater, accountNamesUpdater),
                 knownChains.assetHub
             )
             return DotNsGatewayUpdateSystem(updateSystem)

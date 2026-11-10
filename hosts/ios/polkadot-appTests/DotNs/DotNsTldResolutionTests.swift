@@ -26,27 +26,13 @@ struct DotNsTldResolutionTests {
     func repositoriesThrowForTldDependentAccessorsWhenTldMissing() throws {
         let walletRepo = WalletManagerRepository(tldProvider: StubDotNsTldProvider(tld: nil))
         #expect(throws: DotNsTldError.self) { try walletRepo.main() }
-        #expect(throws: DotNsTldError.self) { try walletRepo.candidate() }
-        #expect(throws: DotNsTldError.self) { try walletRepo.scoreAlias() }
         #expect(throws: DotNsTldError.self) { try walletRepo.depositWallet() }
         // TLD-independent accessors derive from fixed pallet-context paths and never fail.
-        _ = walletRepo.mobRuleAlias()
         _ = walletRepo.resourcesAlias()
 
         let vrfRepo = BandersnatchManagerRepository(tldProvider: StubDotNsTldProvider(tld: nil))
         #expect(throws: DotNsTldError.self) { try vrfRepo.fullPerson() }
         #expect(throws: DotNsTldError.self) { try vrfRepo.litePerson() }
-    }
-
-    /// The bug fix itself: product domains and derivation paths must embed the resolved TLD, not a
-    /// hardcoded `.dot`. Parameterized so a reverted fix (constant `.dot`) fails on any non-dot TLD.
-    @Test(arguments: ["dot", "ksm", "paseo"])
-    func derivationPathsEmbedResolvedTld(_ tld: String) {
-        #expect(BuiltInProduct.personhood(for: tld) == "peopl.\(tld)")
-        #expect(BuiltInProduct.dim2(for: tld) == "dim2.\(tld)")
-        #expect(BuiltInProduct.uid(for: tld) == "uid.\(tld)")
-        #expect(WalletDerivationPath.main(for: tld).contains("uid.\(tld)"))
-        #expect(WalletDerivationPath.candidate(for: tld).contains("dim2.\(tld)"))
     }
 
     /// End-to-end proof that the TLD flows into real key material: two TLDs over the same root
@@ -58,15 +44,15 @@ struct DotNsTldResolutionTests {
 
         let dotMain = try MockWalletManagerRepository(tld: "dot", entropyManager: entropyManager)
             .main().getRawPublicKey()
-        let ksmMain = try MockWalletManagerRepository(tld: "ksm", entropyManager: entropyManager)
+        let testnetMain = try MockWalletManagerRepository(tld: "testnet", entropyManager: entropyManager)
             .main().getRawPublicKey()
-        #expect(dotMain != ksmMain)
+        #expect(dotMain != testnetMain)
 
         let dotMember = try MockBandersnatchManagerRepository(tld: "dot", entropyManager: entropyManager)
             .fullPerson().getMemberKey()
-        let ksmMember = try MockBandersnatchManagerRepository(tld: "ksm", entropyManager: entropyManager)
+        let testnetMember = try MockBandersnatchManagerRepository(tld: "testnet", entropyManager: entropyManager)
             .fullPerson().getMemberKey()
-        #expect(dotMember != ksmMember)
+        #expect(dotMember != testnetMember)
     }
 }
 

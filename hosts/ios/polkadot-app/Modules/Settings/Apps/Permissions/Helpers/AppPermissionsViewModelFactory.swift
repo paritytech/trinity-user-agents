@@ -48,7 +48,7 @@ private extension AppPermissionsViewModelFactory {
                 String(localized: .Products.appPermissionAccountTitle),
                 String(
                     localized: .Products.permissionBodyAccountAccess(
-                        targetProductId: targetProductId
+                        targetProductId: targetProductId.rawValue
                     )
                 )
             )
@@ -77,24 +77,15 @@ private extension AppPermissionsViewModelFactory {
                 String(localized: .Products.appPermissionStatementSubmitTitle),
                 String(localized: .Products.permissionBodyStatementSubmit)
             )
-        case let .jamPeersAccess(genesis):
-            (
-                String(localized: .Products.appPermissionJamPeersTitle),
-                String(
-                    localized: .Products.permissionLabelJamPeers(
-                        shortGenesis: ProductPermission.shortGenesis(genesis)
-                    )
-                )
-            )
         case .userIdentityAccess:
             (
                 String(localized: .Products.appPermissionUserIdentityTitle),
                 String(localized: .Products.permissionBodyUserIdentityAccess)
             )
-        case .chatAuthority:
+        case let .nftPurseRead(ownerProductId):
             (
-                String(localized: .Products.appPermissionChatAuthorityTitle),
-                String(localized: .Products.permissionBodyChatAuthority)
+                String(localized: .Products.appPermissionNftPursesTitle),
+                NftPurseReadCopy.description(ownerProductId: ownerProductId)
             )
         }
     }
@@ -110,6 +101,7 @@ private extension AppPermissionsViewModelFactory {
         case .clipboard: String(localized: .Products.appPermissionCapabilityClipboard)
         case .openUrl: String(localized: .Products.appPermissionCapabilityOpenUrl)
         case .biometrics: String(localized: .Products.appPermissionCapabilityBiometrics)
+        case .motion: String(localized: .Products.appPermissionCapabilityMotion)
         }
     }
 
@@ -124,6 +116,7 @@ private extension AppPermissionsViewModelFactory {
         case .clipboard: String(localized: .Products.permissionCapabilityDescriptionClipboard)
         case .openUrl: String(localized: .Products.permissionCapabilityDescriptionOpenUrl)
         case .biometrics: String(localized: .Products.permissionCapabilityDescriptionBiometrics)
+        case .motion: String(localized: .Products.permissionCapabilityDescriptionMotion)
         }
     }
 }

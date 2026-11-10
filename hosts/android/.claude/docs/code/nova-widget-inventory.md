@@ -27,7 +27,6 @@ Full catalog of `Nova*` composables and Compose helpers in `design/src/main/.../
 | Loading screen | `LoadingScreenState` |
 | Empty state | `EmptyScreenState(title, message)` |
 | Error state | `DefaultErrorState(text)` |
-| Placeholder with CTA | `DimSwitchPlaceholder` |
 | Circular progress | `NovaCircularProgressIndicator` |
 | Linear progress | `NovaLinearProgressIndicator` |
 | Arc / segmented progress | `SegmentedArcIndicator` |

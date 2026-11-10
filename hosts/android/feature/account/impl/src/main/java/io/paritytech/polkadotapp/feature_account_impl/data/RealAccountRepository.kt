@@ -19,7 +19,6 @@ import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets
 import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.getAliasInContext
 import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.requireMetaAccountPassphrase
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.AccountDerivationProvider
-import io.paritytech.polkadotapp.feature_account_api.domain.model.AliasAccountDerivationOverride
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_account_api.domain.model.SubstrateCryptoType
 import io.paritytech.polkadotapp.feature_account_api.domain.model.toEncryption
@@ -46,7 +45,6 @@ class RealAccountRepository @Inject constructor(
     private val accountSecretsStorage: AccountSecretsStorage,
     private val accountSecretsFactory: AccountSecretsFactory,
     private val bandersnatchSecretsStorage: BandersnatchSecretsStorage,
-    private val aliasDerivationOverrides: Set<@JvmSuppressWildcards AliasAccountDerivationOverride>,
     private val accountDerivationProviders: Map<MetaAccount.Purpose, @JvmSuppressWildcards AccountDerivationProvider>,
 ) : AccountRepository {
     companion object {
@@ -169,11 +167,7 @@ class RealAccountRepository @Inject constructor(
         return secrets.substrateKeyPair.publicKey.substrateAccountId()
     }
 
-    private suspend fun BandersnatchContext.aliasAccountDerivationPath(): String {
-        val derivationOverride = aliasDerivationOverrides.find { it.context().stringValue == stringValue }
-
-        return derivationOverride?.derivationPath?.invoke() ?: (JunctionDecoder.HARD_SEPARATOR + stringValue)
-    }
+    private fun BandersnatchContext.aliasAccountDerivationPath(): String = JunctionDecoder.HARD_SEPARATOR + stringValue
 
     private suspend fun MetaAccount.Purpose.derivationPath(): String {
         val provider = accountDerivationProviders[this]

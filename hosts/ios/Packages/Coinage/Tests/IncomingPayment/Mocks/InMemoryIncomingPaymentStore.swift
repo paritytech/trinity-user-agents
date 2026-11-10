@@ -11,21 +11,21 @@ final class InMemoryIncomingPaymentStore: IncomingPaymentStoring, @unchecked Sen
     private struct State {
         var payments: [CoinageTxGroupId: IncomingPayment] = [:]
         var settledGroupIds: [CoinageTxGroupId] = []
+
+        /// Oldest first, so tests that queue one payment behind another do not depend on dictionary order.
+        var activePayments: [IncomingPayment] {
+            payments.values.filter { $0.outcome == nil }.sorted { $0.createdAt < $1.createdAt }
+        }
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
     private let activeSubject = AsyncCurrentValueSubject<[IncomingPayment]>([])
-    private let beforeSave: (@Sendable () async -> Void)?
 
     var saveError: Error?
     var fetchError: Error?
     var settleError: Error?
 
-    init(
-        seed: [IncomingPayment] = [],
-        beforeSave: (@Sendable () async -> Void)? = nil
-    ) {
-        self.beforeSave = beforeSave
+    init(seed: [IncomingPayment] = []) {
         state.withLock { state in
             for payment in seed {
                 state.payments[payment.groupId] = payment
@@ -34,17 +34,9 @@ final class InMemoryIncomingPaymentStore: IncomingPaymentStoring, @unchecked Sen
         publishActive()
     }
 
-    func save(
-        _ payment: IncomingPayment,
-        authorization: @escaping @Sendable () throws -> Void
-    ) async throws {
-        await beforeSave?()
+    func save(_ payment: IncomingPayment) async throws {
         if let saveError { throw saveError }
-        try state.withLock {
-            try authorization()
-            guard $0.payments[payment.groupId] == nil else { throw IncomingPaymentError.alreadyExists }
-            $0.payments[payment.groupId] = payment
-        }
+        state.withLock { $0.payments[payment.groupId] = payment }
         publishActive()
     }
 
@@ -54,28 +46,22 @@ final class InMemoryIncomingPaymentStore: IncomingPaymentStoring, @unchecked Sen
     }
 
     func fetchActivePayments() async throws -> [IncomingPayment] {
-        state.withLock { Array($0.payments.values.filter { $0.outcome == nil }) }
+        state.withLock { $0.activePayments }
     }
 
-    func settle(
-        groupId: CoinageTxGroupId,
-        ownerId: Data,
-        outcome: IncomingPaymentTerminalOutcome,
-        authorization: @escaping @Sendable () throws -> Void
-    ) async throws {
+    func settle(groupId: CoinageTxGroupId, outcome: IncomingPaymentTerminalOutcome) async throws {
         if let settleError { throw settleError }
-        try state.withLock { state in
-            try authorization()
-            guard let existing = state.payments[groupId], existing.ownerId == ownerId else { throw Failure() }
+        state.withLock { state in
             state.settledGroupIds.append(groupId)
-            state.payments[groupId] = IncomingPayment(
-                paymentId: existing.paymentId,
-                productId: existing.productId,
-                amount: existing.amount,
-                createdAt: existing.createdAt,
-                outcome: outcome,
-                ownerId: existing.ownerId
-            )
+            if let existing = state.payments[groupId] {
+                state.payments[groupId] = IncomingPayment(
+                    paymentId: existing.paymentId,
+                    productId: existing.productId,
+                    amount: existing.amount,
+                    createdAt: existing.createdAt,
+                    outcome: outcome
+                )
+            }
         }
         publishActive()
     }
@@ -95,7 +81,6 @@ final class InMemoryIncomingPaymentStore: IncomingPaymentStoring, @unchecked Sen
     }
 
     private func publishActive() {
-        let active = state.withLock { Array($0.payments.values.filter { $0.outcome == nil }) }
-        activeSubject.send(active)
+        activeSubject.send(state.withLock { $0.activePayments })
     }
 }

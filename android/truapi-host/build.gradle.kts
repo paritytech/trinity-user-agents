@@ -94,17 +94,17 @@ publishing {
                         "`libtruapi` cdylib and route product traffic " +
                         "through the localhost WebSocket bridge."
                 )
-                url.set("https://github.com/paritytech/host-rust-core")
+                url.set("https://github.com/paritytech/trinity-user-agents")
                 licenses {
                     license {
                         name.set("MIT")
-                        url.set("https://github.com/paritytech/host-rust-core/blob/main/LICENSE")
+                        url.set("https://github.com/paritytech/trinity-user-agents/blob/main/LICENSE")
                     }
                 }
                 scm {
-                    connection.set("scm:git:https://github.com/paritytech/host-rust-core.git")
-                    developerConnection.set("scm:git:ssh://git@github.com/paritytech/host-rust-core.git")
-                    url.set("https://github.com/paritytech/host-rust-core")
+                    connection.set("scm:git:https://github.com/paritytech/trinity-user-agents.git")
+                    developerConnection.set("scm:git:ssh://git@github.com/paritytech/trinity-user-agents.git")
+                    url.set("https://github.com/paritytech/trinity-user-agents")
                 }
                 developers {
                     developer {
@@ -125,7 +125,7 @@ publishing {
         // the workflow's GITHUB_TOKEN.
         maven {
             name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/paritytech/host-rust-core")
+            url = uri("https://maven.pkg.github.com/paritytech/trinity-user-agents")
             credentials {
                 username = System.getenv("GITHUB_ACTOR")
                 password = System.getenv("GITHUB_TOKEN")

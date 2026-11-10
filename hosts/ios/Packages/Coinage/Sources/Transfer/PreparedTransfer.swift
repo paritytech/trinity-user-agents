@@ -8,16 +8,13 @@ import Foundation
 /// whatever carries the keys, so a crash either keeps all of it or none of it; the transactions are
 /// built by their policies once that transaction commits. A payment whose keys never left calls
 /// ``abandon()`` instead, and the coins are free again immediately rather than on the next launch.
-///
-/// Native-custody transfers have already committed their marks, their transactions and their derivation
-/// journal atomically before returning; their keys remain recoverable across relaunch, and committing
-/// again schedules nothing.
 public struct PreparedTransfer {
     public let memo: TransferMemo
     public let handoffCommit: any CoinageHandoffCommit
 
-    /// Still to be scheduled when the transport commits; `nil` once they are already durable.
-    private let pending: (transactions: [CoinageScheduledTxRequest], groupId: CoinageTxGroupId, txService: any CoinageTxServicing)?
+    private let transactions: [CoinageScheduledTxRequest]
+    private let groupId: CoinageTxGroupId
+    private let txService: any CoinageTxServicing
 
     init(
         memo: TransferMemo,
@@ -28,14 +25,9 @@ public struct PreparedTransfer {
     ) {
         self.memo = memo
         self.handoffCommit = handoffCommit
-        pending = (transactions, groupId, txService)
-    }
-
-    /// A native-custody transfer, whose handoff and transactions were registered with its custody record.
-    init(memo: TransferMemo, retaining handoffCommit: any CoinageHandoffCommit) {
-        self.memo = memo
-        self.handoffCommit = handoffCommit
-        pending = nil
+        self.transactions = transactions
+        self.groupId = groupId
+        self.txService = txService
     }
 
     /// Makes the handoff final and registers the payment's transactions, both inside `scope`.
@@ -45,9 +37,9 @@ public struct PreparedTransfer {
     public func commit(in scope: any DurableTxRegistrationScope) throws {
         try handoffCommit.commit(in: scope)
 
-        guard let pending, !pending.transactions.isEmpty else { return }
+        guard !transactions.isEmpty else { return }
 
-        try pending.txService.scheduleTransactions(pending.transactions, groupId: pending.groupId, joining: scope)
+        try txService.scheduleTransactions(transactions, groupId: groupId, joining: scope)
     }
 
     /// Drops the reservation for a payment whose keys never left. Nothing was scheduled, so there is

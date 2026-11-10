@@ -1,5 +1,6 @@
 import SwiftUI
 import PolkadotUI
+import DesignSystem
 
 extension DepositViewLayout {
     private struct OperationView: View {
@@ -15,11 +16,11 @@ extension DepositViewLayout {
             case .completed:
                 Text(.depositTransactionComplete)
                     .textStyle(.body14Regular())
-                    .foregroundStyle(.systemSuccess)
+                    .foregroundStyle(.fgSuccess)
             case .failed:
                 Text(.depositTransactionIncomplete)
                     .textStyle(.body14Regular())
-                    .foregroundStyle(.systemError)
+                    .foregroundStyle(.fgError)
             }
         }
 
@@ -109,7 +110,7 @@ extension DepositViewLayout {
             case .completed:
                 Text(.depositTransactionSuccessInfo)
                     .textStyle(.body14Regular())
-                    .foregroundStyle(.systemSuccess)
+                    .foregroundStyle(.fgSuccess)
                     .multilineTextAlignment(.leading)
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)

@@ -334,7 +334,7 @@ mod tests {
 			identity_account_id: [3; 32],
 			identity_chat_public_key: [4; 32],
 			product_account: ProductAccountId {
-				dot_ns_identifier: "chat.test".into(),
+				dot_ns_identifier: crate::ProductId::for_test("chat.testnet"),
 				derivation_index: DerivationIndex::Raw([0; 32]),
 			},
 			account_id: [5; 32],

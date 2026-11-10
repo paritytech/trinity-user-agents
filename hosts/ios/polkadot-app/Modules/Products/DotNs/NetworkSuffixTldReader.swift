@@ -35,16 +35,30 @@ extension NetworkSuffixTldReader: DotNsTldReading {
             codingFactory: codingFactory
         )
 
-        guard let decoded = String(data: suffix, encoding: .utf8) else {
-            throw DotNsContractError.tldNotFound
-        }
-
-        let tld = String(decoded.trimmingPrefix("."))
-
-        guard !tld.isEmpty, !tld.contains(".") else {
+        // Product contexts are built from the stored bytes as is, so anything but a bare label is refused
+        // rather than normalized into a TLD the runtime would not recognize.
+        guard let tld = String(data: suffix, encoding: .utf8), Self.isBareLabel(tld) else {
             throw DotNsContractError.tldNotFound
         }
 
         return tld
+    }
+}
+
+extension NetworkSuffixTldReader {
+    private static let maxLabelLength = 63
+
+    static func isBareLabel(_ value: String) -> Bool {
+        guard let first = value.first, value.count <= maxLabelLength, isLowercaseAlphanumeric(first) else {
+            return false
+        }
+
+        return value.allSatisfy { isLowercaseAlphanumeric($0) || $0 == "-" }
+    }
+
+    private static func isLowercaseAlphanumeric(_ character: Character) -> Bool {
+        guard character.isASCII else { return false }
+
+        return character.isLowercase || character.isNumber
     }
 }

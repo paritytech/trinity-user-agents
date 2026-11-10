@@ -14,13 +14,6 @@ final class MockConfirmationPresenter: TrUAPIConfirmationPresenting, @unchecked 
         return verdictToReturn
     }
 
-    func confirmNativeCoinage(
-        review: MainPurseChatPaymentReview,
-        requiresPrivacyConfirmation _: Bool
-    ) async -> Bool {
-        await confirm(review: .mainPurseChatPayment(review), from: review.callingProductId)
-    }
-
     func confirmPermission(
         review: UserConfirmationReview,
         from requesterName: String

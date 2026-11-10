@@ -17,11 +17,14 @@
 //!   TLS tunnels in `wss_tunnel`; on `wasm32` it runs on a vendored browser platform (JS event
 //!   loop, browser `WebSocket`, which speaks TLS itself). `EmbeddedChainProvider::lifecycle`
 //!   reports its sync progress per chain.
-//! - `networks` feature — a bundled catalog so `connect(genesis_hash)` resolves the whole network
-//!   (relay wiring + statement placement included) from the genesis hash alone, with no prior
-//!   registration.
+//! - `networks` feature — a bundled catalog: `add_network` registers a whole network by name, and a
+//!   provider built with `catalog()` resolves any bundled network from its genesis hash.
 //! - `js` feature — a JavaScript-facing API (the `js` module) on `wasm32`, so web hosts can consume
 //!   the provider directly without a Rust caller.
+//!
+//! On native targets every `wss` connection, to a remote node or a light-client bootnode, checks
+//! the server certificate against the webpki roots compiled into the crate, not the operating
+//! system's trust store. On `wasm32` the browser checks it.
 
 // The `uniffi` feature pulls in UniFFI's generated scaffolding, which contains
 // `unsafe` extern-"C" glue; scope the allowance to that feature so every other
@@ -58,6 +61,8 @@ pub mod platform;
 mod provider;
 #[cfg(feature = "smoldot")]
 mod storage;
+#[cfg(all(any(feature = "ws", feature = "smoldot"), not(target_arch = "wasm32")))]
+mod tls;
 #[cfg(all(feature = "ws", not(target_arch = "wasm32")))]
 mod ws;
 #[cfg(all(feature = "ws", target_arch = "wasm32"))]
@@ -70,7 +75,7 @@ mod wss_tunnel;
 pub use config::ChainSource;
 #[cfg(feature = "smoldot")]
 pub use config::LightClientBuilder;
-#[cfg(all(feature = "smoldot", target_arch = "wasm32"))]
+#[cfg(feature = "smoldot")]
 pub use connection_types::ConnectionTypes;
 pub use error::ProviderError;
 #[cfg(feature = "smoldot")]

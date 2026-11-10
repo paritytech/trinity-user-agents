@@ -110,8 +110,8 @@ private fun Header() {
 
         NovaText(
             text = stringResource(RCommon.string.payment_privacy_mode_title, LocalPaymentAssetBrand.current.symbol)
-                .withCurrencyTickerStyle(PolkadotTheme.typography.title.small),
-            style = PolkadotTheme.typography.title.small,
+                .withCurrencyTickerStyle(PolkadotTheme.typography.body.large),
+            style = PolkadotTheme.typography.body.large,
             color = PolkadotTheme.colors.fg.primary
         )
     }

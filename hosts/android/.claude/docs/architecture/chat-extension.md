@@ -10,7 +10,7 @@ The current code implements **v1**: native `ChatExtension`s plug renderers/overl
 ## Glossary
 
 - **`ChatExtension`** (api) — composition-based plug-in; renderers returned as nullable overrides.
-- **`ChatBot`** — abstract `ChatExtension` for **1-room-per-extension** extensions. Auto-creates the room; auto-routes messages to `onTextMessage` / `onCustomMessage`. Built-in bots only (`WeeklyGameBot`, `MobRuleBot`, `TattooBot`, `PolkadotPeerBot`, `SampleBot`).
+- **`ChatBot`** — abstract `ChatExtension` for **1-room-per-extension** extensions. Auto-creates the room; auto-routes messages to `onTextMessage` / `onCustomMessage`. Built-in bots only (`SampleBot`).
 - **Direct `ChatExtension`** — for **N-room** extensions (like `ProductChatExtension`) and **no-room** processors (like `CoinagePaymentProcessingExtension`).
 - **`ChatExtensionRegistry`** — Dagger `Set<@JvmSuppressWildcards ChatExtension>`. Add an extension via `@Binds @IntoSet`.
 - **`ChatEngine`** — orchestrator; **not exposed** from `feature/chats/api`. Other modules cannot reach into it.
@@ -80,7 +80,7 @@ A "yes" isn't automatically blocking, but must be named in the architect plan wi
 
 ## Canonical examples
 
-- 1-room bot: `WeeklyGameBot`.
+- 1-room bot: `SampleBot`.
 - N-room product-driven: `ProductChatExtension`.
 - No-room background processor: `CoinagePaymentProcessingExtension`. **This is the template for "chat watches on-chain event".**
 - Overlay done right: anywhere that uses `customGlobalOverlayRenderer()` + dedicated `*OverlayViewModel` + `ownedFragmentClasses()` suppression.

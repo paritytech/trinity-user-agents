@@ -2,6 +2,7 @@
 import { installContainer } from './container.js';
 import { createHostConnection } from '@parity/truapi/internal';
 import { freezeAndDelete, freezeValue } from './freeze.js';
+import { logHostLinkReturn } from './link-log.js';
 import { reloadAfterMessagePortLoss } from './message-port-loss.js';
 import { createPermissionAuthorization } from './network-transport.js';
 import { freezePermissionRuntime } from './permission-runtime.js';
@@ -27,6 +28,7 @@ if (connection) {
     set() {},
     configurable: false,
   });
+  logHostLinkReturn(window, connection.subscribeConnectionStatus);
   const stopWatchingMessagePorts = reloadAfterMessagePortLoss(
     window,
     connection.subscribeConnectionStatus,

@@ -59,6 +59,9 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 private val ChatInputMinHeight = 48.dp
 
+// Keeps a chat request inside the single 10 KiB statement a notification slot allows.
+private const val MAX_WELCOME_MESSAGE_LENGTH = 1000
+
 @Composable
 internal fun ChatInputRow(
     inputState: ChatInputUiState,
@@ -72,6 +75,8 @@ internal fun ChatInputRow(
     onAcceptChatRequest: () -> Unit,
     onDeclineChatRequest: () -> Unit,
     onUnblockUserClick: () -> Unit,
+    onAllowIdentitySigningClick: () -> Unit,
+    onDeclineIdentitySigningClick: () -> Unit,
     onHeightChanged: (Dp) -> Unit,
 ) {
     val density = LocalDensity.current
@@ -97,11 +102,16 @@ internal fun ChatInputRow(
 
                         SendMessageInput(
                             messageState = inputState.messageState,
+                            characterLimit = MAX_WELCOME_MESSAGE_LENGTH.takeIf { inputState.isChatRequest },
                             showPayButton = inputState.showPayButton,
                             showAttachmentButton = inputState.showAttachButton,
                             onClearReply = onClearReply,
                             onClearEdit = onClearEdit,
-                            onMessageChange = onMessageChange,
+                            onMessageChange = if (inputState.isChatRequest) {
+                                { text -> onMessageChange(text.take(MAX_WELCOME_MESSAGE_LENGTH)) }
+                            } else {
+                                onMessageChange
+                            },
                             onSendMessageClick = onSendMessageClick,
                             onPayClick = onPayClick,
                             onAttachClick = onAttachClick
@@ -136,6 +146,13 @@ internal fun ChatInputRow(
                         onUnblock = onUnblockUserClick
                     )
                 }
+
+                ChatInputUiState.IdentitySigningConsent -> {
+                    IdentitySigningConsentInput(
+                        onAllow = onAllowIdentitySigningClick,
+                        onDecline = onDeclineIdentitySigningClick
+                    )
+                }
             }
         }
     }
@@ -150,7 +167,8 @@ private fun footerBackgroundBrush(state: ChatInputUiState): Brush = when (state)
         )
     )
 
-    is ChatInputUiState.AcceptChatRequest -> SolidColor(PolkadotTheme.colors.bg.surface.container)
+    is ChatInputUiState.AcceptChatRequest,
+    is ChatInputUiState.IdentitySigningConsent -> SolidColor(PolkadotTheme.colors.bg.surface.container)
 
     is ChatInputUiState.Hidden,
     is ChatInputUiState.PeerLeft,
@@ -161,6 +179,7 @@ private fun footerBackgroundBrush(state: ChatInputUiState): Brush = when (state)
 @Composable
 private fun SendMessageInput(
     messageState: ChatSendMessageInputState,
+    characterLimit: Int?,
     showPayButton: Boolean,
     showAttachmentButton: Boolean,
     onClearReply: () -> Unit,
@@ -212,6 +231,7 @@ private fun SendMessageInput(
                         .fillMaxWidth()
                         .animateContentSize(),
                     text = messageState.inputMessage,
+                    characterLimit = characterLimit,
                     onTextChanged = onMessageChange,
                     onSendAction = onSendMessageClick
                 )
@@ -365,7 +385,9 @@ private fun ChatInputRowPreview() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -402,7 +424,9 @@ private fun ChatInputRowPreview_WithReply() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -432,7 +456,9 @@ private fun ChatInputRowPreview_WithEdit() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -456,7 +482,9 @@ private fun ChatInputRowPreview_InviteToChat() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -477,7 +505,9 @@ private fun ChatInputRowPreview_AcceptRequest() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -498,7 +528,9 @@ private fun ChatInputRowPreview_WaitingForAccept() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -519,7 +551,9 @@ private fun ChatInputRowPreview_PeerLeft() {
             onAttachClick = { },
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
-            onUnblockUserClick = {}
+            onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {}
         )
     }
 }
@@ -540,6 +574,8 @@ private fun ChatInputRowPreview_UnblockUser() {
             onAcceptChatRequest = {},
             onDeclineChatRequest = {},
             onUnblockUserClick = {},
+            onAllowIdentitySigningClick = {},
+            onDeclineIdentitySigningClick = {},
             onAttachClick = {}
         )
     }

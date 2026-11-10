@@ -58,40 +58,41 @@ inputs:
 runs:
   using: composite
   steps:
-    # The app tree pins the nightly its codegen runs under, because rustdoc's
-    # JSON format version moves with the toolchain. The value reaches an action
-    # input that is interpolated into a shell command, so it is constrained to
-    # the dated-nightly shape and to a single line.
-    - name: Read the pinned nightly
+    - name: Install the pinned nightly
       id: nightly
+      uses: ./.github/actions/rust-nightly
+
+    # The Gradle build runs codegen under the nightly the app tree names in
+    # truapi.rustNightly, not under the one installed above. The two have to be
+    # the same toolchain, or codegen here and in the rest of CI reads rustdoc
+    # JSON of different format versions.
+    - name: Check the app tree names the same nightly
       shell: bash
+      env:
+        PINNED: ${{ steps.nightly.outputs.toolchain }}
       run: |
         set -euo pipefail
-        toolchain="$(sed -n 's/^truapi\.rustNightly=//p' hosts/android/gradle.properties | head -n1)"
-        case "${toolchain}" in
-          nightly-[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
-          *)
-            echo "::error::truapi.rustNightly must be a dated nightly, got '${toolchain}'"
-            exit 1
-            ;;
-        esac
-        echo "toolchain=${toolchain}" >> "$GITHUB_OUTPUT"
-
-    - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # pinned nightly
-      with:
-        toolchain: ${{ steps.nightly.outputs.toolchain }}
-        components: rustfmt
+        app="$(sed -n 's/^truapi\.rustNightly=//p' hosts/android/gradle.properties | head -n1)"
+        if [ "${app}" != "${PINNED}" ]; then
+          echo "::error::hosts/android/gradle.properties names truapi.rustNightly=${app}, but nightly-toolchain pins ${PINNED}. Change truapi.rustNightly in hosts/android/gradle.properties to ${PINNED}."
+          exit 1
+        fi
 
     # An APK carries the core for every ABI it ships. The convention plugin
     # builds four, and only the truapi-host module narrows to three.
     - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
       with:
+        toolchain: stable
         targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
 
-    - uses: ./.github/actions/rust-cache
+    # rust-cache directly rather than through ./.github/actions/rust-cache. An
+    # action's post step evaluates its inputs again, and two composites deep
+    # they come back empty, so rust-cache reads save-if as false and never
+    # saves. The rule it applies is the same one: only a run on main saves.
+    - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.8.1
       with:
         shared-key: host-android-bindings-gate
-        save: ${{ inputs.save_cache }}
+        save-if: ${{ inputs.save_cache == 'true' && github.ref == 'refs/heads/main' }}
 
     # The wrapper jar and its distribution url are both tracked files, and the
     # jobs that call this sign what they build.

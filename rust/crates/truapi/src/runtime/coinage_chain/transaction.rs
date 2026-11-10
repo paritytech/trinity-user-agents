@@ -4,15 +4,26 @@
 // contributors. See truapi-coinage/NOTICE and LICENSE.
 
 use crate::{
-	host_internal::extrinsic::{Sr25519Signer, build_signed_extrinsic_v5},
-	runtime::statement_allowance::extension::{ChainState, Metadata},
+	host_internal::extrinsic::{Sr25519Signer, build_signed_transaction},
+	runtime::statement_allowance::extension::Metadata,
 };
 use parity_scale_codec::{Compact, Decode, Encode};
+use scale_info::{PortableRegistry, TypeDef, TypeDefPrimitive, Variant, form::PortableForm};
 use subxt::ext::frame_decode::extrinsics::ExtrinsicTypeInfo;
 use truapi::latest::TxPayloadExtension;
 use truapi_coinage::DenominationBreakdownContext;
 
 pub(super) const AS_COINAGE: &str = "AsCoinage";
+
+/// Chain values every standard extension rests on at one finalized snapshot.
+#[derive(Clone, Copy)]
+pub(super) struct ChainState {
+	pub spec_version: u32,
+	pub transaction_version: u32,
+	pub genesis_hash: [u8; 32],
+	pub nonce: u32,
+	pub restrict_origins: bool,
+}
 
 #[derive(Clone)]
 pub(super) struct Snapshot {
@@ -125,18 +136,18 @@ impl Snapshot {
 			.subxt
 			.extrinsic_extension_info(Some(self.metadata.extension_version()))
 			.map_err(|_| "invalid extension pipeline")?;
-		let encoded = self.metadata.encode_signed_extensions(&state);
-		if encoded.len() != info.extension_ids.len() {
-			return Err("extension pipeline mismatch".into());
-		}
 		let mut extensions: Vec<_> = info
 			.extension_ids
 			.iter()
-			.zip(encoded)
-			.map(|(definition, bytes)| TxPayloadExtension {
-				id: definition.name.to_string(),
-				extra: bytes.extra,
-				additional_signed: bytes.additional_signed,
+			.map(|definition| {
+				let (extra, additional_signed) = encode_extension(
+					self.subxt.types(),
+					&definition.name,
+					definition.id,
+					definition.implicit_id,
+					&state,
+				);
+				TxPayloadExtension { id: definition.name.to_string(), extra, additional_signed }
 			})
 			.collect();
 		let era = mortal_era(self.period, self.number)?;
@@ -174,20 +185,49 @@ impl Snapshot {
 	}
 
 	pub fn as_coin(&self) -> Result<Vec<u8>, String> {
-		if self
-			.metadata
-			.extension_info_field_count(AS_COINAGE, "AsCoin")
-			.map_err(|_| "invalid AsCoinage.AsCoin shape")? !=
-			0
-		{
+		let variant = self.extension_info_variant(AS_COINAGE, "AsCoin")?;
+		if !variant.fields.is_empty() {
 			return Err("invalid AsCoinage.AsCoin fields".into());
 		}
-		Ok(vec![
-			1,
-			self.metadata
-				.extension_info_variant_index(AS_COINAGE, "AsCoin")
-				.map_err(|_| "missing AsCoinage.AsCoin")?,
-		])
+		Ok(vec![1, variant.index])
+	}
+
+	/// The named authorization carried by an extension shaped as
+	/// `Wrapper(Option<Info>)`, resolved from the runtime's pipeline.
+	fn extension_info_variant(
+		&self,
+		identifier: &str,
+		variant: &str,
+	) -> Result<&Variant<PortableForm>, String> {
+		let types = self.subxt.types();
+		let info = self
+			.subxt
+			.extrinsic_extension_info(Some(self.metadata.extension_version()))
+			.map_err(|_| "invalid extension pipeline")?;
+		let extra_type = info
+			.extension_ids
+			.iter()
+			.find(|definition| definition.name == identifier)
+			.ok_or_else(|| format!("missing {identifier} extension"))?
+			.id;
+		let option_type = match &types.resolve(extra_type).ok_or("unknown extension type")?.type_def
+		{
+			TypeDef::Composite(composite) => match composite.fields.as_slice() {
+				[field] => field.ty.id,
+				_ => return Err(format!("{identifier} extension is not a single-field wrapper")),
+			},
+			_ => extra_type,
+		};
+		let info_type = resolve_variant(types, option_type)
+			.and_then(|option| option.variants.iter().find(|candidate| candidate.name == "Some"))
+			.and_then(|some| match some.fields.as_slice() {
+				[field] => Some(field.ty.id),
+				_ => None,
+			})
+			.ok_or_else(|| format!("{identifier} extension extra is not an Option"))?;
+		resolve_variant(types, info_type)
+			.and_then(|info| info.variants.iter().find(|candidate| candidate.name == variant))
+			.ok_or_else(|| format!("missing {identifier}.{variant}"))
 	}
 
 	pub fn signed(
@@ -201,7 +241,7 @@ impl Snapshot {
 		replace(&mut extensions, AS_COINAGE, self.as_coin()?, Vec::new())?;
 		self.validate_extensions(&extensions)?;
 		extensions.retain(|extension| extension.id != "VerifyMultiSignature");
-		build_signed_extrinsic_v5(
+		build_signed_transaction(
 			&Sr25519Signer::from_keypair(keypair),
 			self.state.genesis_hash,
 			call,
@@ -245,10 +285,7 @@ impl Snapshot {
 			truapi_coinage::PersonOriginKind::Full => "AsUnloadTokenPeople",
 			truapi_coinage::PersonOriginKind::Lite => "AsUnloadTokenLitePeople",
 		};
-		let variant = self
-			.metadata
-			.extension_info_variant_index(AS_COINAGE, name)
-			.map_err(|_| "missing Coinage unload origin")?;
+		let variant = self.extension_info_variant(AS_COINAGE, name)?.index;
 		if extra.len() < 2 {
 			return Err("invalid Coinage unload proof encoding".into());
 		}
@@ -328,6 +365,85 @@ impl Snapshot {
 			return Err("Coinage call has trailing arguments".into());
 		}
 		Ok(())
+	}
+}
+
+fn resolve_variant(
+	types: &PortableRegistry,
+	type_id: u32,
+) -> Option<&scale_info::TypeDefVariant<PortableForm>> {
+	match &types.resolve(type_id)?.type_def {
+		TypeDef::Variant(variant) => Some(variant),
+		_ => None,
+	}
+}
+
+/// One extension's `(extra, additional_signed)` at its resting value; unknown
+/// extensions fall back to the metadata type default (`Option` -> None, void
+/// -> empty). Mortality is filled in afterwards from the snapshot block.
+fn encode_extension(
+	types: &PortableRegistry,
+	name: &str,
+	extra_type: u32,
+	additional_signed_type: u32,
+	state: &ChainState,
+) -> (Vec<u8>, Vec<u8>) {
+	match name {
+		"CheckNonce" => (Compact(state.nonce).encode(), Vec::new()),
+		"CheckSpecVersion" => (Vec::new(), state.spec_version.to_le_bytes().to_vec()),
+		"CheckTxVersion" => (Vec::new(), state.transaction_version.to_le_bytes().to_vec()),
+		"CheckGenesis" => (Vec::new(), state.genesis_hash.to_vec()),
+		"CheckMortality" => (vec![0x00], state.genesis_hash.to_vec()),
+		"VerifyMultiSignature" => (vec![0x00], Vec::new()),
+		"ChargeAssetTxPayment" => (vec![0x00, 0x00], Vec::new()),
+		"RestrictOrigins" => (vec![u8::from(state.restrict_origins)], Vec::new()),
+		_ => (encode_default(types, extra_type), encode_default(types, additional_signed_type)),
+	}
+}
+
+/// The "disabled" default of a metadata type: `Option` -> None, void -> empty,
+/// enums -> first variant, primitives -> zero.
+fn encode_default(types: &PortableRegistry, type_id: u32) -> Vec<u8> {
+	let Some(ty) = types.resolve(type_id) else {
+		return Vec::new();
+	};
+	match &ty.type_def {
+		TypeDef::Composite(composite) => composite
+			.fields
+			.iter()
+			.flat_map(|field| encode_default(types, field.ty.id))
+			.collect(),
+		TypeDef::Tuple(tuple) => {
+			tuple.fields.iter().flat_map(|field| encode_default(types, field.id)).collect()
+		},
+		TypeDef::Variant(variant) => {
+			if ty.path.segments.last().map(String::as_str) == Some("Option") {
+				return vec![0x00];
+			}
+			match variant.variants.iter().min_by_key(|candidate| candidate.index) {
+				None => Vec::new(),
+				Some(first) => {
+					let mut out = vec![first.index];
+					for field in &first.fields {
+						out.extend(encode_default(types, field.ty.id));
+					}
+					out
+				},
+			}
+		},
+		TypeDef::Array(array) => {
+			encode_default(types, array.type_param.id).repeat(array.len as usize)
+		},
+		TypeDef::Sequence(_) | TypeDef::BitSequence(_) | TypeDef::Compact(_) => vec![0x00],
+		TypeDef::Primitive(primitive) => match primitive {
+			TypeDefPrimitive::Bool | TypeDefPrimitive::U8 | TypeDefPrimitive::I8 => vec![0],
+			TypeDefPrimitive::Char | TypeDefPrimitive::U32 | TypeDefPrimitive::I32 => vec![0; 4],
+			TypeDefPrimitive::U16 | TypeDefPrimitive::I16 => vec![0; 2],
+			TypeDefPrimitive::U64 | TypeDefPrimitive::I64 => vec![0; 8],
+			TypeDefPrimitive::U128 | TypeDefPrimitive::I128 => vec![0; 16],
+			TypeDefPrimitive::U256 | TypeDefPrimitive::I256 => vec![0; 32],
+			TypeDefPrimitive::Str => vec![0x00],
+		},
 	}
 }
 

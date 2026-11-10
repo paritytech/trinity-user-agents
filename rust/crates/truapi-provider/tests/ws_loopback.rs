@@ -7,7 +7,7 @@ use std::{net::SocketAddr, time::Duration};
 use futures::stream::StreamExt;
 use jsonrpsee::{
 	core::SubscriptionResult,
-	server::{RpcModule, Server, ServerHandle, SubscriptionMessage},
+	server::{RpcModule, Server, ServerConfig, ServerHandle},
 };
 use serde_json::Value;
 use truapi_provider::{ChainSource, EmbeddedChainProvider, platform::ChainProvider};
@@ -15,7 +15,16 @@ use truapi_provider::{ChainSource, EmbeddedChainProvider, platform::ChainProvide
 const GENESIS: [u8; 32] = [7; 32];
 
 async fn spawn_server() -> (SocketAddr, ServerHandle) {
-	let server = Server::builder().build("127.0.0.1:0").await.expect("loopback server binds");
+	// No limit of the server's own, so a size test measures the client's.
+	let config = ServerConfig::builder()
+		.max_request_body_size(u32::MAX)
+		.max_response_body_size(u32::MAX)
+		.build();
+	let server = Server::builder()
+		.set_config(config)
+		.build("127.0.0.1:0")
+		.await
+		.expect("loopback server binds");
 	let addr = server.local_addr().expect("server has a local address");
 
 	let mut module = RpcModule::new(());
@@ -32,7 +41,7 @@ async fn spawn_server() -> (SocketAddr, ServerHandle) {
 			|_params, pending, _context, _extensions| async move {
 				let sink = pending.accept().await?;
 				for tick in 0..3u32 {
-					sink.send(SubscriptionMessage::from_json(&tick)?).await?;
+					sink.send(serde_json::value::to_raw_value(&tick)?).await?;
 				}
 				SubscriptionResult::Ok(())
 			},
@@ -64,6 +73,24 @@ async fn request_response_round_trip() {
 			.expect("frames are valid JSON");
 	assert_eq!(frame["id"], 1);
 	assert_eq!(frame["result"], "ping");
+}
+
+/// The body of a busy Bulletin block arrives hex-encoded and can pass
+/// jsonrpsee's 10 MiB default, so a message that large has to get through.
+/// The echo checks both directions.
+#[tokio::test]
+async fn messages_past_ten_mebibytes_round_trip() {
+	let (addr, _server) = spawn_server().await;
+	let connection = connect(addr).await;
+	let mut responses = connection.responses();
+	let payload = "a".repeat(12 * 1024 * 1024);
+
+	connection
+		.send(format!(r#"{{"jsonrpc":"2.0","id":5,"method":"echo","params":["{payload}"]}}"#));
+	let frame: Value =
+		serde_json::from_str(&responses.next().await.expect("the echo response arrives"))
+			.expect("frames are valid JSON");
+	assert_eq!(frame["result"].as_str(), Some(payload.as_str()));
 }
 
 #[tokio::test]

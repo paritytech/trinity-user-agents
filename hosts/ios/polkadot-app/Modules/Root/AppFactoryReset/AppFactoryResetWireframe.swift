@@ -4,19 +4,25 @@
     final class AppFactoryResetWireframe {}
 
     extension AppFactoryResetWireframe: AppFactoryResetWireframeProtocol {
-        func navigateToFreshStart() {
-            guard
-                let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                let sceneDelegate = scene.delegate as? SceneDelegate
-            else {
-                return
-            }
+        func detachCurrentSession(from view: AppFactoryResetViewProtocol?) {
+            // Dismissed first: a hierarchy replaced while it still presents a sheet is not released.
+            view?.controller.presentingViewController?.dismiss(animated: false)
+            sceneDelegate?.showResetPlaceholder()
+        }
 
-            sceneDelegate.restartScene()
+        func navigateToFreshStart() {
+            sceneDelegate?.restartScene()
         }
 
         func dismiss(from view: AppFactoryResetViewProtocol?) {
             view?.controller.presentingViewController?.dismiss(animated: true)
+        }
+    }
+
+    private extension AppFactoryResetWireframe {
+        var sceneDelegate: SceneDelegate? {
+            let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene
+            return scene?.delegate as? SceneDelegate
         }
     }
 #endif

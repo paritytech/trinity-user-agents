@@ -15,7 +15,7 @@ use crate::{
 /// General-purpose TrUAPI methods for handshake, feature detection,
 /// navigation, and runtime information.
 #[wire_trait(id = 1)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait System: Send + Sync {
 	/// Negotiate the wire codec version with the product.
 	///
@@ -67,7 +67,7 @@ pub trait System: Send + Sync {
 	/// An `http` or `https` URL outside the ecosystem needs a
 	/// `RemotePermission::Remote` grant for the target host, and prompts for one
 	/// on first use. dotNS names, `localhost`, and the app-handoff schemes
-	/// (`mailto:`, `tel:`, `polkadot:`, `dot:`) consume no grant. The grant is
+	/// (`mailto:`, `tel:`, `polkadot:`, `polkadotapp:`) consume no grant. The grant is
 	/// per host and shared with outbound data access to that host, so approving
 	/// one covers the other.
 	///

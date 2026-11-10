@@ -1,3 +1,5 @@
+import struct TrUAPIHost.ProductId
+import enum TrUAPIHost.ExecutableKind
 import Foundation
 import Products
 
@@ -6,6 +8,39 @@ enum SPAContentSource {
     case dotNs
     /// Debug: load the URL as-is, skipping resolution. Rust runtime only.
     case directURL(URL)
+    /// A product the app ships: its App's files in this directory, served
+    /// through the polkadot:// scheme handler under the product's own origin,
+    /// with no dotNS read. Rust runtime only.
+    case bundled(URL)
+    #if DEBUG
+        /// Debug: a product served from a development server on the developer's machine, loaded from
+        /// `url` and run under the identifier the core gave it. Rust runtime only.
+        case devServer(url: URL, productId: ProductId)
+    #endif
+
+    /// Whether only the rust runtime can serve it.
+    var isRustOnly: Bool {
+        switch self {
+        case .dotNs: false
+        case .directURL,
+             .bundled: true
+        #if DEBUG
+            case .devServer: true
+        #endif
+        }
+    }
+}
+
+/// Where an SPA screen lives, which decides its chrome.
+enum SPAPresentation {
+    /// Pushed onto a navigation stack.
+    case pushed
+    /// Mounted as a browser tab, with the browser chrome.
+    case browserTab
+    /// A one-shot sheet over the tabs, without browser chrome.
+    case sheet
+    /// A full-screen product over the app, with its own status strip; closing dismisses it.
+    case fullScreen
 }
 
 struct SPAConfiguration {
@@ -14,7 +49,7 @@ struct SPAConfiguration {
     let showMoreButton: Bool
     let page: ProductPage
     let contentSource: SPAContentSource
-    let isBrowserTab: Bool
+    let presentation: SPAPresentation
     let browserTabId: UUID?
 
     init(
@@ -23,7 +58,7 @@ struct SPAConfiguration {
         showMoreButton: Bool,
         page: ProductPage,
         contentSource: SPAContentSource = .dotNs,
-        isBrowserTab: Bool = false,
+        presentation: SPAPresentation = .pushed,
         browserTabId: UUID? = nil
     ) {
         self.title = title
@@ -31,12 +66,30 @@ struct SPAConfiguration {
         self.showMoreButton = showMoreButton
         self.page = page
         self.contentSource = contentSource
-        self.isBrowserTab = isBrowserTab
+        self.presentation = presentation
         self.browserTabId = browserTabId
     }
 }
 
 extension SPAConfiguration {
+    var productDomain: ProductId {
+        page.host.toDotDomain()
+    }
+
+    /// Identifier the product runs under, which storage, permissions and account derivation key off.
+    var productId: ProductId {
+        switch contentSource {
+        case .dotNs,
+             .directURL,
+             .bundled:
+            productDomain
+        #if DEBUG
+            case let .devServer(_, productId):
+                productId
+        #endif
+        }
+    }
+
     static func browseRoot(host: ProductHost) -> SPAConfiguration {
         SPAConfiguration(
             title: nil,

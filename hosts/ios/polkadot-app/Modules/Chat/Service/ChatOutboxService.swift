@@ -686,6 +686,10 @@ private extension MessageExchange.OutgoingMessageError {
 
 private extension Error {
     var allowsStatementResubmit: Bool {
+        guard !(self is ChatSigningConsentError) else {
+            return false
+        }
+
         guard let submitError = self as? StatementSubmitError else {
             return true
         }

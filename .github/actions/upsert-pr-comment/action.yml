@@ -28,14 +28,72 @@ inputs:
     required: false
     default: ${{ github.token }}
 
+# The work runs through `github-script` on the runner's own Node, the one every
+# runner already has to execute JavaScript actions. A shell implementation
+# would need `gh` and `jq`, which the GitHub images ship and the self-hosted
+# macOS images do not, so the comment step failed there while the build it
+# reported on had succeeded.
 runs:
   using: composite
   steps:
-    - shell: bash
+    - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
       env:
-        GH_TOKEN: ${{ inputs.github-token }}
-        REPO: ${{ github.repository }}
         PR: ${{ inputs.pr-number }}
         MARKER: ${{ inputs.marker }}
         BODY_FILE: ${{ inputs.body-file }}
-      run: '"${{ github.action_path }}/upsert.sh"'
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const fs = require("fs");
+
+          const marker = process.env.MARKER;
+          const bodyFile = process.env.BODY_FILE;
+          if (!fs.existsSync(bodyFile)) {
+            core.info("nothing to post");
+            return;
+          }
+
+          const body = `${marker}\n${fs.readFileSync(bodyFile, "utf8")}`;
+          const issueNumber = Number(process.env.PR);
+          const { owner, repo } = context.repo;
+
+          // Paged through rather than read a page at a time: a match can be on
+          // any page, and the newest is the one worth keeping.
+          const comments = await github.paginate(github.rest.issues.listComments, {
+            owner,
+            repo,
+            issue_number: issueNumber,
+            per_page: 100,
+          });
+          const ids = comments
+            .filter((comment) => (comment.body ?? "").startsWith(marker))
+            .map((comment) => comment.id);
+
+          if (ids.length === 0) {
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issueNumber,
+              body,
+            });
+            core.info("created a comment");
+            return;
+          }
+
+          const keep = ids[ids.length - 1];
+          await github.rest.issues.updateComment({
+            owner,
+            repo,
+            comment_id: keep,
+            body,
+          });
+          core.info(`updated comment ${keep}`);
+
+          for (const stale of ids.slice(0, -1)) {
+            await github.rest.issues.deleteComment({
+              owner,
+              repo,
+              comment_id: stale,
+            });
+            core.info(`deleted duplicate comment ${stale}`);
+          }

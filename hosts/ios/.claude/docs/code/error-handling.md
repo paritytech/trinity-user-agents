@@ -43,7 +43,25 @@ let decoded = try? decoder.decode(Model.self, from: data) ?? defaultValue
 - Use `SwiftyBeaver` for logging, not `print` or `NSLog`
 - Log at appropriate levels: error for failures, warning for recoverable issues, info for state changes, debug for development
 - Never log PII (except public AccountId/pubkey)
-- Sentry handles non-fatal error monitoring in non-debug builds
+- Lines written as `[truapi.<tag>] message` at info and above also go to Sentry logs in builds that link Sentry, through `HostLogSinkDestination`. The Android host sends the same lines with the same tags. Every other line stays on the device.
+- On `[truapi.core]`, `logCoreLine` looks the marker up in the core's own table, read once through `coreMarkers()`, and logs it at the severity the table carries. A marker the table keeps on the device, which is every `truapi.native.` one, stays at debug, because those carry notification bodies, URLs and permission requests. A marker the table does not list at all stays at debug too, so adding one to the core without registering it costs the line rather than exporting it. The host keeps no list of its own, and the Android host reads the same table.
+- A product console warning or error is logged as `[truapi.product]` by `JSEngineLogger`, capped at 512 characters, so it leaves the device. An uncaught error line names the message only, never the script or page URL. Console logs stay at debug.
+
+## Critical Issue Reporting
+
+`IssueReporting` (IssueMonitoring package) sends events to Sentry in non-Release builds; Release is a no-op.
+Sentry has event limits, so report only **critical** issues:
+
+1. **Report only flow-breaking failures with no short-term retry** — a terminal state the user sees, or a
+   retry loop that crossed its threshold. Never report a failure the code retries soon on its own.
+2. **Once per occurrence** — deduplicate per item (or per period for system-wide conditions); keep retrying after
+   reporting.
+3. **No sensitive data** — static `flow`/`kind`, the error's type name or `ReportableError.reportCode`, numeric
+   counters only. Never ids, keys, account ids or aliases, usernames, message content, hashes, derivation paths,
+   `localizedDescription` or `String(describing: error)`.
+4. **Keep thresholds out of business logic** — feature code only calls `recordFailure`/`recordRecovery` on injected
+   `IssueDiagnostic`s. A per-feature factory owns the thresholds and returns no-op diagnostics when the build has no
+   reporting SDK.
 
 ## Notification Cleanup
 

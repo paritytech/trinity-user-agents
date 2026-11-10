@@ -2,7 +2,7 @@
 # Regenerate js/packages/truapi/src/generated/* from rust/crates/truapi.
 #
 # Pipeline:
-#   1. cargo +nightly doc -p truapi --no-default-features --features host-api
+#   1. cargo +<pinned nightly> doc -p truapi --no-default-features --features host-api
 #      -> target/doc/truapi.json, the protocol definitions alone, kept as
 #      target/doc/truapi_protocol.json
 #   2. cargo run -p truapi-codegen -- --input target/doc/truapi_protocol.json
@@ -10,7 +10,7 @@
 #                                     --rust-output rust/crates/truapi/src/generated
 #      The runtime includes the dispatcher, so it has to exist before the
 #      runtime can be documented.
-#   3. cargo +nightly doc -p truapi -p truapi-provider
+#   3. cargo +<pinned nightly> doc -p truapi -p truapi-provider
 #      -> target/doc/{truapi,truapi_provider}.json, with the runtime
 #   4. cargo run -p truapi-codegen -- --input target/doc/truapi_protocol.json
 #                                     --output js/packages/truapi/src/generated
@@ -22,6 +22,7 @@
 #                                     --platform-ts-output js/packages/truapi-host/src/generated
 #                                     --platform-wasm-adapter-output js/packages/truapi-host/src/generated
 #                                     --platform-rust-output rust/crates/truapi/src/wasm
+#                                     --markers-ts-output js/packages/truapi-host/src/generated
 #
 # The codec version is not passed: it defaults to `truapi::WIRE_CODEC_VERSION`,
 # so the generated client and the host's handshake derive it from one place.
@@ -38,7 +39,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-NIGHTLY_TOOLCHAIN="${TRUAPI_NIGHTLY_TOOLCHAIN:-nightly}"
+# The dated nightly CI runs, from nightly-toolchain; TRUAPI_NIGHTLY_TOOLCHAIN
+# overrides it.
+NIGHTLY_TOOLCHAIN="${TRUAPI_NIGHTLY_TOOLCHAIN:-$(head -n1 "$ROOT/nightly-toolchain" | tr -d '[:space:]')}"
 
 # Homebrew LLVM on DYLD_LIBRARY_PATH makes rustc and rustdoc load a mismatched
 # libLLVM, which dies with SIGSEGV in initialize_available_targets.
@@ -66,7 +69,8 @@ cargo run -p truapi-codegen -- \
   --platform-ts-output js/packages/truapi-host/src/generated \
   --platform-wasm-adapter-output js/packages/truapi-host/src/generated \
   --platform-rust-output rust/crates/truapi/src/wasm \
-  --explorer-output js/packages/truapi/src/explorer
+  --explorer-output js/packages/truapi/src/explorer \
+  --markers-ts-output js/packages/truapi-host/src/generated
 
 rustfmt +"$NIGHTLY_TOOLCHAIN" --edition 2024 \
   rust/crates/truapi-client/src/generated.rs \
@@ -110,3 +114,4 @@ echo "Generated Rust dispatcher at rust/crates/truapi/src/generated/"
 echo "Generated no-std Rust client catalog at rust/crates/truapi-client/src/generated.rs"
 echo "Generated host-callbacks WASM adapter at js/packages/truapi-host/src/generated/"
 echo "Generated Rust WASM bridge at rust/crates/truapi/src/wasm/generated_bridge.rs"
+echo "Generated marker table at js/packages/truapi-host/src/generated/markers.ts"

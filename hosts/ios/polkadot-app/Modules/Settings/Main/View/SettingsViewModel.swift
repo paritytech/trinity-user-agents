@@ -9,6 +9,7 @@ enum SettingsViewModel {
 
     enum CellType: Hashable {
         case backup
+        case paymentsBackup
         case theme
         case tabBarLabels
         case currency
@@ -20,6 +21,7 @@ enum SettingsViewModel {
         var title: String {
             switch self {
             case .backup: String(localized: .settingsCellBackup)
+            case .paymentsBackup: String(localized: .settingsCellPaymentsBackup)
             case .theme: String(localized: .settingsCellTheme)
             case .tabBarLabels: String(localized: .settingsCellTabBarLabels)
             case .currency: String(localized: .settingsCellCurrency)
@@ -65,7 +67,7 @@ enum SettingsViewModel {
         }
 
         private static var securityCells: [CellType] {
-            var cells: [CellType] = [.backup]
+            var cells: [CellType] = [.backup, .paymentsBackup]
 
             #if FEATURE_PRODUCTS
                 cells.append(.apps)

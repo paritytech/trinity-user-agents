@@ -11,6 +11,7 @@ import dagger.Lazy
 import dagger.hilt.android.HiltAndroidApp
 import io.paritytech.polkadotapp.app.logging.AppFileDebugTree
 import io.paritytech.polkadotapp.app.logging.CoinageFileTree
+import io.paritytech.polkadotapp.app.logging.SentryLogTree
 import io.paritytech.polkadotapp.app.root.presentation.debug.DebugShakeObserver
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.AppInitializerPipeline
@@ -18,6 +19,7 @@ import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.tools_remoteconfig_api.RemoteConfigService
+import io.sentry.Sentry
 import timber.log.Timber
 import javax.inject.Inject
 
@@ -59,6 +61,7 @@ class App : Application(), Configuration.Provider {
         // Planted before the initializers: the pipeline resumes unfinished top-ups, and Timber drops
         // anything logged before a tree exists.
         Timber.plant(coinageFileTree)
+        if (Sentry.isEnabled()) Timber.plant(SentryLogTree())
 
         if (FeatureOption.DEBUG_MENU.isEnabled) {
             Timber.plant(Timber.DebugTree(), appFileDebugTree.get())

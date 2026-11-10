@@ -27,8 +27,9 @@ import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.HostRuntimeConfig
+import uniffi.truapi.ProductId
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
 import java.io.Closeable
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -40,16 +41,17 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.io.path.createTempDirectory
 
 @RunWith(AndroidJUnit4::class)
 class ContainerHttpAuthorizationTest {
     @Test
-    fun appSharesOneUseHttpGrantsWithRustAndRecovers() = verifyAuthorization(ProductExecutionKind.APP)
+    fun appSharesOneUseHttpGrantsWithRustAndRecovers() = verifyAuthorization(ExecutableKind.APP)
 
     @Test
-    fun hiddenWorkerSharesOneUseHttpGrantsWithRustAndRecovers() = verifyAuthorization(ProductExecutionKind.WORKER)
+    fun hiddenWorkerSharesOneUseHttpGrantsWithRustAndRecovers() = verifyAuthorization(ExecutableKind.WORKER)
 
-    private fun verifyAuthorization(kind: ProductExecutionKind) {
+    private fun verifyAuthorization(kind: ExecutableKind) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val container = ContainerScriptBundle.load(context)
@@ -64,10 +66,11 @@ class ContainerHttpAuthorizationTest {
             bulletinChainGenesisHash = ByteArray(32),
             assetHubChainGenesisHash = ByteArray(32),
             networkSuffix = "paseo",
+            databaseDirectory = createTempDirectory("truapi").toString(),
         )
 
         TrUAPIHostRuntime(bridge, config).use { runtime ->
-            runtime.openProductExecution(bridge, ProductExecutionConfig("http-policy.paseo", kind)).use { execution ->
+            runtime.openProductExecution(bridge, ProductExecutionConfig(ProductId.parse("http-policy.paseo").getOrThrow(), kind)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 BridgeProxy(endpoint.port.toInt()).use { proxy ->
                     MockWebServer().use { server ->

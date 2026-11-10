@@ -32,7 +32,7 @@ pub(super) fn context(platform: Arc<StubPlatform>) -> NativeChatContext {
 		},
 		entropy: Zeroizing::new(vec![0x44; 16]),
 		session_valid: Arc::new(|| true),
-		network_suffix: "test".into(),
+		network_suffix: "testnet".into(),
 		genesis_hash: [2; 32],
 		coinage_instance_id: None,
 	}

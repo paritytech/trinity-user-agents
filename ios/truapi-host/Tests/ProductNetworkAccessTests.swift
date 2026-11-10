@@ -39,7 +39,12 @@ struct ProductNetworkAccessTests {
                 const results = [];
                 let interrupted = 0;
                 for (let cycle = 0; cycle < 2; cycle++) {
-                  client.theme.subscribe().subscribe({ error() { interrupted++; } });
+                  // A call the host has not seen yet survives a lost connection and is sent
+                  // on the next one, so the subscription has to be live before the cut for
+                  // the cut to interrupt it.
+                  await new Promise(live => {
+                    client.theme.subscribe().subscribe({ next: live, error() { interrupted++; } });
+                  });
                   const disconnected = new Promise(resolve => {
                     const unsubscribe = host.subscribeConnectionStatus(status => {
                       if (status === 'disconnected') { unsubscribe(); resolve(); }
@@ -272,11 +277,12 @@ private struct NetworkTestProduct {
             let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: HostRuntimeConfig(
                 hostName: "network-tests", peopleChainGenesisHash: Data(repeating: 0, count: 32),
                 bulletinChainGenesisHash: Data(repeating: 0, count: 32),
-                assetHubChainGenesisHash: Data(repeating: 1, count: 32), networkSuffix: "paseo"
+                assetHubChainGenesisHash: Data(repeating: 1, count: 32), networkSuffix: "paseo",
+                databaseDirectory: temporaryDatabaseDirectory()
             ))
             let execution = try runtime.openProductExecution(
                 bridge: bridge,
-                configuration: ProductExecutionConfig(productId: "network.paseo", executionKind: .app)
+                configuration: ProductExecutionConfig(productId: ProductId("network.paseo"), executionKind: .app)
             )
             let ready = ProductPageReady()
             let configuration = WKWebViewConfiguration()

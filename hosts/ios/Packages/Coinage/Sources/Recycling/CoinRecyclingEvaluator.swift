@@ -9,8 +9,9 @@ import SDKLogger
 ///
 /// The verdict depends on the current balance ratio and on the ages of every other active coin, both
 /// of which move, so it is computed, never persisted. Balance consumes ``verdicts`` (deduplicated);
-/// the recycle trigger fires from the evaluation body, not from a verdict observer, so an unchanged
-/// verdict after a failed recycle still retries.
+/// every evaluation hands its verdicts to the recycle trigger, not a verdict observer, so an unchanged
+/// verdict after a failed recycle still retries. Recycling can wait on the installation backup, so it
+/// runs apart from the evaluation and only the newest pending verdicts are recycled next.
 public actor CoinRecyclingEvaluator {
     private nonisolated let databaseFactory: any DatabaseDependencyFactoring
     private nonisolated let settings: any CoinageRecyclingStrategyProviding
@@ -25,6 +26,7 @@ public actor CoinRecyclingEvaluator {
     private nonisolated let verdictsSubject = AsyncCurrentValueSubject<RecyclingVerdicts?>(nil)
 
     private var inputTask: Task<Void, Never>?
+    private var recycleTask: Task<Void, Never>?
 
     private static let evaluationInterval: Duration = .seconds(5)
 
@@ -79,6 +81,11 @@ private extension CoinRecyclingEvaluator {
         let strategy: RecyclingStrategyType
     }
 
+    struct PendingRecycle {
+        let verdicts: RecyclingVerdicts
+        let coins: [TrackedCoin]
+    }
+
     func run() {
         let coinsStream = databaseFactory.makeTrackedCoinSnapshotStream()
         let vouchersStream = databaseFactory.makeTrackedVoucherSnapshotStream()
@@ -88,6 +95,17 @@ private extension CoinRecyclingEvaluator {
             leadingTick,
             AsyncTimerSequence(interval: Self.evaluationInterval, clock: ContinuousClock()).map { _ in () }
         )
+
+        let (pendingRecycles, pendingRecycleContinuation) = AsyncStream.makeStream(
+            of: PendingRecycle.self,
+            bufferingPolicy: .bufferingNewest(1)
+        )
+
+        recycleTask = Task { [weak self] in
+            for await pending in pendingRecycles {
+                await self?.recycleGated(pending.verdicts, coins: pending.coins)
+            }
+        }
 
         inputTask = Task { [settings, weak self] in
             let assets = combineLatest(coinsStream, vouchersStream).map { coins, vouchers in
@@ -101,19 +119,22 @@ private extension CoinRecyclingEvaluator {
 
             do {
                 for try await input in inputStream {
-                    await self?.evaluateAndRecycle(for: input)
+                    guard let pending = await self?.publishVerdicts(for: input) else { continue }
+                    pendingRecycleContinuation.yield(pending)
                 }
             } catch {
                 self?.logger?.error("Recycling evaluator asset stream failed: \(error)")
             }
+            pendingRecycleContinuation.finish()
         }
     }
 
     func cancelTasks() {
         inputTask?.cancel()
+        recycleTask?.cancel()
     }
 
-    func evaluateAndRecycle(for input: Input) async {
+    func publishVerdicts(for input: Input) async -> PendingRecycle? {
         let now = Date()
 
         // Fast pass first, but only until a verdict exists: it applies just the chain age-ceiling (no
@@ -127,9 +148,10 @@ private extension CoinRecyclingEvaluator {
         do {
             let complete = try await evaluate(input: input, now: now, mode: .complete)
             verdictsSubject.send(complete)
-            await recycleGated(complete, coins: input.assets.coins)
+            return PendingRecycle(verdicts: complete, coins: input.assets.coins)
         } catch {
             logger?.error("Recycling evaluation failed: \(error)")
+            return nil
         }
     }
 

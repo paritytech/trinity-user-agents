@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import os
@@ -23,8 +24,6 @@ public final class IncomingPaymentService: IncomingPaymentServicing, @unchecked 
     private let acknowledger: any IncomingPaymentAcknowledging
     private let instanceId: CoinageInstanceId
     private let logger: SDKLoggerProtocol?
-    private let lifecycle: CoinageLifecycle?
-    private let ownerId: Data
     private let acceptQueue = SerialOperationQueue()
 
     init(
@@ -37,9 +36,7 @@ public final class IncomingPaymentService: IncomingPaymentServicing, @unchecked 
         verdictResolver: any CoinageGroupVerdictResolving,
         acknowledger: any IncomingPaymentAcknowledging,
         instanceId: CoinageInstanceId,
-        logger: SDKLoggerProtocol?,
-        lifecycle: CoinageLifecycle? = nil,
-        ownerId: Data
+        logger: SDKLoggerProtocol?
     ) {
         self.store = store
         self.secretStore = secretStore
@@ -51,8 +48,6 @@ public final class IncomingPaymentService: IncomingPaymentServicing, @unchecked 
         self.acknowledger = acknowledger
         self.instanceId = instanceId
         self.logger = logger
-        self.lifecycle = lifecycle
-        self.ownerId = ownerId
     }
 }
 
@@ -63,17 +58,13 @@ public extension IncomingPaymentService {
         amount: Balance,
         descriptor: IncomingPaymentSourceDescriptor,
         paymentId: IncomingPaymentId,
-        productId: String
+        productId: ProductId
     ) async throws {
         do {
-            let operation = try lifecycle?.captureOperation()
-            try await CoinageLifecycle.$operation.withValue(operation) {
-                try await acceptQueue.run { [self] in
-                    try await performAccept(
-                        amount: amount, descriptor: descriptor, paymentId: paymentId, productId: productId,
-                        operation: operation
-                    )
-                }
+            try await acceptQueue.run { [self] in
+                try await performAccept(
+                    amount: amount, descriptor: descriptor, paymentId: paymentId, productId: productId
+                )
             }
         } catch let error as IncomingPaymentError {
             throw error
@@ -84,42 +75,26 @@ public extension IncomingPaymentService {
 
     func subscribeStatus(
         for paymentId: IncomingPaymentId,
-        productId: String
+        productId: ProductId
     ) async throws -> AnyAsyncSequence<IncomingPaymentStatus> {
         let groupId = IncomingPayment.groupId(productId: productId, paymentId: paymentId)
 
-        let operation = try lifecycle?.captureOperation()
-        guard let payment = try await store.fetch(groupId: groupId), payment.ownerId == ownerId else {
-            throw IncomingPaymentError.notFound(paymentId)
-        }
-        if let lifecycle, let operation { try lifecycle.check(operation) }
-        return try await paymentContext.liveStatusStream(for: groupId) {
+        return try await paymentContext.liveStatusStream(for: groupId) { [store] in
+            // Cold subscribe: a settled record returns its stored verdict exactly; an unknown one, notClaimed.
+            let payment = try await store.fetch(groupId: groupId)
+            guard let payment else {
+                throw IncomingPaymentError.notFound(paymentId)
+            }
+
             return payment.outcome.map(IncomingPaymentStatus.init(outcome:)) ?? .detecting
         }
     }
 
     func setup(with denomination: DenominationBreakdownContext) {
-        do {
-            let operation = try lifecycle?.captureOperation()
-            Task { [weak self, paymentContext] in
-                do {
-                    try await CoinageLifecycle.$operation.withValue(operation) {
-                        try await paymentContext.setup {
-                            guard let self else { return nil }
-                            if let lifecycle = self.lifecycle, let operation {
-                                return try lifecycle.withEffect(operation) {
-                                    self.runSetup(denomination: denomination)
-                                }
-                            }
-                            return self.runSetup(denomination: denomination)
-                        }
-                    }
-                } catch {
-                    self?.logger?.warning("Incoming payment setup skipped: \(error)")
-                }
+        Task { [weak self, paymentContext] in
+            await paymentContext.setup {
+                self?.runSetup(denomination: denomination)
             }
-        } catch {
-            logger?.warning("Incoming payment setup skipped: \(error)")
         }
     }
 }
@@ -140,13 +115,10 @@ private extension IncomingPaymentService {
         amount: Balance,
         descriptor: IncomingPaymentSourceDescriptor,
         paymentId: IncomingPaymentId,
-        productId: String,
-        operation: CoinageLifecycle.Operation?
+        productId: ProductId
     ) async throws {
-        if amount == 0 {
-            guard case .coins = descriptor else {
-                throw IncomingPaymentError.invalidAmount
-            }
+        guard amount > 0 else {
+            throw IncomingPaymentError.invalidAmount
         }
 
         let groupId = IncomingPayment.groupId(productId: productId, paymentId: paymentId)
@@ -163,34 +135,20 @@ private extension IncomingPaymentService {
 
         try await ensureSourceFree(descriptor: descriptor)
 
-        let authorization: @Sendable () throws -> Void = { [lifecycle] in
-            if let lifecycle, let operation { try lifecycle.check(operation) }
-        }
         // Both recorded before a single transaction is built, so a resumed top-up can be picked up.
-        if let lifecycle, let operation {
-            try lifecycle.withEffect(operation) {
-                try secretStore.save(groupId: groupId, descriptor: descriptor)
-            }
-        } else {
-            try secretStore.save(groupId: groupId, descriptor: descriptor)
-        }
+        try secretStore.save(groupId: groupId, descriptor: descriptor)
 
         let payment = IncomingPayment(
             paymentId: paymentId,
             productId: productId,
             amount: amount,
             createdAt: Date(),
-            outcome: nil,
-            ownerId: ownerId
+            outcome: nil
         )
         do {
-            try await store.save(payment, authorization: authorization)
+            try await store.save(payment)
         } catch {
-            if let lifecycle, let operation {
-                try? lifecycle.withEffect(operation) { secretStore.remove(groupId: groupId) }
-            } else {
-                secretStore.remove(groupId: groupId)
-            }
+            secretStore.remove(groupId: groupId)
             throw error
         }
     }
@@ -200,7 +158,7 @@ private extension IncomingPaymentService {
     /// store that cannot be read at all still aborts, since nothing is known about those payments.
     func ensureSourceFree(descriptor: IncomingPaymentSourceDescriptor) async throws {
         let active = try await store.fetchActivePayments()
-        for other in active where other.ownerId == ownerId {
+        for other in active {
             let otherDescriptor: IncomingPaymentSourceDescriptor?
             do {
                 otherDescriptor = try secretStore.fetch(groupId: other.groupId)
@@ -229,8 +187,7 @@ private extension IncomingPaymentService {
     func driveActivePayments(denomination: DenominationBreakdownContext) async {
         do {
             for try await payments in store.observeActivePayments() {
-                try lifecycle?.checkCurrentOperation()
-                for payment in payments where payment.ownerId == ownerId {
+                for payment in payments {
                     await paymentContext.process(groupId: payment.groupId) { [weak self] in
                         guard let self else { return Task {} }
                         return Task { await self.drive(payment: payment, denomination: denomination) }
@@ -249,21 +206,14 @@ private extension IncomingPaymentService {
             }
         }
 
-        do {
-            guard let current = try await store.fetch(groupId: payment.groupId),
-                  current.ownerId == ownerId, current.isActive else { return }
-            try lifecycle?.checkCurrentOperation()
-            switch lookupSecret(for: current) {
-            case .unreadable:
-                return
-            case .gone:
-                // Can't re-run without the source, so settle from the ledger alone.
-                await settleFromDurability(payment: current, denomination: denomination)
-            case let .found(descriptor):
-                await runClaim(payment: current, descriptor: descriptor, denomination: denomination)
-            }
-        } catch {
-            logger?.error("Incoming payment \(payment.paymentId) cannot resume: \(error)")
+        switch lookupSecret(for: payment) {
+        case .unreadable:
+            return
+        case .gone:
+            // Can't re-run without the source, so settle from the ledger alone.
+            await settleFromDurability(payment: payment, denomination: denomination)
+        case let .found(descriptor):
+            await runClaim(payment: payment, descriptor: descriptor, denomination: denomination)
         }
     }
 
@@ -308,8 +258,7 @@ private extension IncomingPaymentService {
         var last: IncomingPaymentStatus = .detecting
         do {
             for try await detection in claimStream(for: payment, resolved: resolved, denomination: denomination) {
-                last = IncomingPaymentStatus(detection: detection, amount: payment.amount)
-                try lifecycle?.checkCurrentOperation()
+                last = IncomingPaymentStatus(detection: detection)
                 await paymentContext.report(last, for: payment.groupId)
             }
         } catch {
@@ -362,24 +311,17 @@ private extension IncomingPaymentService {
         }
 
         do {
-            let operation = try lifecycle?.captureOperation()
-            try await store.settle(groupId: payment.groupId, ownerId: ownerId, outcome: outcome) { [lifecycle] in
-                if let lifecycle, let operation { try lifecycle.check(operation) }
-            }
-            // A readable secret is retired only by a verdict that says where the funds went. `notClaimed`
-            // says they were never collected — and for a `.coins` source the stored secrets *are* the
-            // money, so removing them here is what turns an uncollected top-up into an unrecoverable one.
-            // Keeping them costs a Keychain entry; a retention sweep can reclaim those once one exists.
-            if !secretIsUsable || outcome != .notClaimed {
-                if let lifecycle, let operation {
-                    try lifecycle.withEffect(operation) { secretStore.remove(groupId: payment.groupId) }
-                } else {
-                    secretStore.remove(groupId: payment.groupId)
-                }
-            }
+            try await store.settle(groupId: payment.groupId, outcome: outcome)
         } catch {
-            logger?.error("Incoming payment \(payment.paymentId) settlement interrupted: \(error)")
+            logger?.error("Incoming payment \(payment.paymentId) failed to persist verdict: \(error)")
             return
+        }
+        // A readable secret is retired only by a verdict that says where the funds went. `notClaimed`
+        // says they were never collected — and for a `.coins` source the stored secrets *are* the
+        // money, so removing them here is what turns an uncollected top-up into an unrecoverable one.
+        // Keeping them costs a Keychain entry; a retention sweep can reclaim those once one exists.
+        if !secretIsUsable || outcome != .notClaimed {
+            secretStore.remove(groupId: payment.groupId)
         }
 
         await acknowledge(payment: payment, outcome: outcome)
@@ -411,8 +353,7 @@ private extension IncomingPaymentService {
                 amount: payment.amount,
                 context: denomination
             )
-            let status = IncomingPaymentStatus(detection: detection, amount: payment.amount)
-            try lifecycle?.checkCurrentOperation()
+            let status = IncomingPaymentStatus(detection: detection)
             await paymentContext.report(status, for: payment.groupId)
             // The secret is gone or corrupt — that is why this path was taken — so it is retired with
             // the verdict whatever that verdict is.

@@ -4,10 +4,13 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
-use crate::platform::{
-	CoinageWalletHost, NativeCoinageFailure, NativeCoinageMemo,
-	NativeCoinageOperation as Operation, NativeCoinagePaymentIntent, NativeCoinageRequest,
-	NativeCoinageResponse as Response, NativeCoinageScope, NativeCoinageTopUpOutcome,
+use crate::{
+	host_internal::sso_messages::PaymentTopUpError as TopUpError,
+	platform::{
+		CoinageWalletHost, NativeCoinageFailure, NativeCoinageMemo,
+		NativeCoinageOperation as Operation, NativeCoinagePaymentIntent, NativeCoinageRequest,
+		NativeCoinageResponse as Response, NativeCoinageScope, NativeCoinageTopUpOutcome,
+	},
 };
 use futures::{channel::oneshot, lock::Mutex};
 use parity_scale_codec::Encode;
@@ -16,7 +19,7 @@ use truapi::{
 		HostNativeChatPayment as Payment, HostNativeChatPaymentDirection as Direction,
 		HostNativeChatPaymentState as State, HostProductDeviceChatError as Error,
 	},
-	v01::{HostPaymentTopUpError as TopUpError, HostPaymentTopUpRequest, PaymentTopUpSource},
+	v01::{HostPaymentTopUpRequest, PaymentTopUpSource},
 };
 use truapi_coinage::{MemoEntry, TransferMemo};
 use zeroize::{Zeroize, Zeroizing};

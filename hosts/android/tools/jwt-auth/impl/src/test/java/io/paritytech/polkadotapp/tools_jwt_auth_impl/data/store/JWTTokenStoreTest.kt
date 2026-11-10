@@ -124,6 +124,11 @@ private class FakeEncryptedPreferences : EncryptedPreferences {
         storage[field] = value
     }
 
+    override fun putEncryptedStringNow(field: String, value: String): Boolean {
+        storage[field] = value
+        return true
+    }
+
     override fun getDecryptedString(field: String): String? = storage[field]
 
     override fun hasKey(field: String): Boolean = storage.containsKey(field)

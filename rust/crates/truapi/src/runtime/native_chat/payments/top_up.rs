@@ -5,10 +5,9 @@
 mod tests;
 
 use super::*;
+use crate::host_internal::sso_messages::PaymentTopUpError as TopUpError;
 use std::collections::BTreeSet;
-use truapi::v01::{
-	HostPaymentTopUpError as TopUpError, HostPaymentTopUpRequest, PaymentTopUpSource,
-};
+use truapi::v01::{HostPaymentTopUpRequest, PaymentTopUpSource};
 
 pub(super) const OPERATION_MAGIC: &[u8; 4] = b"HCT1";
 const MAX_SOURCES: usize = 4096;

@@ -5,6 +5,7 @@ public struct ChatInputViewConfiguration: ChatInputViewConfigurationProtocol, Eq
     let placeholder: String
     let maxNumberOfLines: Int
     let maxCharacterCount: Int
+    let showsCharacterCounter: Bool
     let canPay: Bool
     let canAttachFile: Bool
     let canSendWithoutText: Bool
@@ -15,6 +16,7 @@ public struct ChatInputViewConfiguration: ChatInputViewConfigurationProtocol, Eq
         placeholder: String,
         maxNumberOfLines: Int,
         maxCharacterCount: Int,
+        showsCharacterCounter: Bool = false,
         canPay: Bool,
         canAttachFile: Bool,
         canSendWithoutText: Bool,
@@ -24,6 +26,7 @@ public struct ChatInputViewConfiguration: ChatInputViewConfigurationProtocol, Eq
         self.placeholder = placeholder
         self.maxNumberOfLines = maxNumberOfLines
         self.maxCharacterCount = maxCharacterCount
+        self.showsCharacterCounter = showsCharacterCounter
         self.canPay = canPay
         self.canAttachFile = canAttachFile
         self.canSendWithoutText = canSendWithoutText
@@ -66,6 +69,24 @@ public struct ChatInputViewConfiguration: ChatInputViewConfigurationProtocol, Eq
             canPay: canPay,
             canAttachFile: canAttachFile,
             canSendWithoutText: canSendWithoutText,
+            inputAccessibilityId: inputAccessibilityId,
+            sendAccessibilityId: sendAccessibilityId
+        )
+    }
+
+    /// The welcome message of a chat request, which must fit one notification statement.
+    public static func chatRequest(
+        inputAccessibilityId: (any AccessibilityIdentifying)? = AccessibilityID.Chat.messageInput,
+        sendAccessibilityId: (any AccessibilityIdentifying)? = AccessibilityID.Chat.sendButton
+    ) -> Self {
+        .init(
+            placeholder: String(localized: .chatInputPlaceholder),
+            maxNumberOfLines: 7,
+            maxCharacterCount: 1_000,
+            showsCharacterCounter: true,
+            canPay: false,
+            canAttachFile: false,
+            canSendWithoutText: false,
             inputAccessibilityId: inputAccessibilityId,
             sendAccessibilityId: sendAccessibilityId
         )

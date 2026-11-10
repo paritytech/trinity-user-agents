@@ -70,8 +70,10 @@ let package = Package(
             name: "ChainRegistryTests",
             dependencies: [
                 "ChainRegistry",
+                "Starscream",
                 .product(name: "SubstrateSdk", package: "substrate-sdk-ios"),
-                .product(name: "Foundation-iOS", package: "Foundation-iOS")
+                .product(name: "Foundation-iOS", package: "Foundation-iOS"),
+                .product(name: "SDKLogger", package: "logger-ios")
             ]
         )
     ]

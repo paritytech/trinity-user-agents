@@ -3,12 +3,12 @@
 
 use super::super::NativeChatContext;
 use crate::{
-	host_logic::dotns_gateway::{
-		DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, encode_revive_call, view_output,
-	},
+	chain::{EvmContractCaller, EvmContractError, RuntimeApiCaller},
+	host_logic::dotns_gateway::{DotnsError, DotnsPopController, DotnsTransport, LabelStore},
 	host_rpc_client::HostRpcClient,
 	platform::JsonRpcConnection,
 };
+use alloy_sol_types::SolCall;
 use core::time::Duration;
 use futures::FutureExt;
 use serde_json::{Value, json};
@@ -55,17 +55,17 @@ impl Snapshot {
 			started,
 			session_valid: context.session_valid.clone(),
 		};
-		if hash(&snapshot.call("chain_getBlockHash", json!([0])).await?)? != genesis {
+		if hash(&snapshot.request("chain_getBlockHash", json!([0])).await?)? != genesis {
 			return Err("Chat chain genesis differs from configured network".into());
 		}
-		snapshot.at = hash(&snapshot.call("chain_getFinalizedHead", json!([])).await?)?;
+		snapshot.at = hash(&snapshot.request("chain_getFinalizedHead", json!([])).await?)?;
 		if snapshot.at == [0; 32] {
 			return Err("Chat chain finalized hash is zero".into());
 		}
 		Ok(snapshot)
 	}
 
-	async fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+	async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
 		if !(self.session_valid)() {
 			return Err("Chat session expired".into());
 		}
@@ -91,7 +91,10 @@ impl Snapshot {
 	}
 
 	pub(super) async fn metadata(&self) -> Result<Vec<u8>, String> {
-		bytes(&self.call("state_getMetadata", json!([hex0x(&self.at)])).await?, MAX_METADATA_BYTES)
+		bytes(
+			&self.request("state_getMetadata", json!([hex0x(&self.at)])).await?,
+			MAX_METADATA_BYTES,
+		)
 	}
 
 	pub(super) async fn runtime_call(
@@ -101,7 +104,7 @@ impl Snapshot {
 	) -> Result<Vec<u8>, String> {
 		bytes(
 			&self
-				.call("state_call", json!([function, hex0x(input), hex0x(&self.at)]))
+				.request("state_call", json!([function, hex0x(input), hex0x(&self.at)]))
 				.await?,
 			MAX_STORAGE_BYTES,
 		)
@@ -109,33 +112,37 @@ impl Snapshot {
 
 	pub(super) async fn storage_value(&self, key: &[u8]) -> Result<Option<Vec<u8>>, String> {
 		let response = self
-			.call("state_queryStorageAt", json!([[hex0x(key)], hex0x(&self.at)]))
+			.request("state_queryStorageAt", json!([[hex0x(key)], hex0x(&self.at)]))
 			.await?;
 		storage_response(&response, key, self.at)
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
+impl RuntimeApiCaller for Snapshot {
+	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
+		self.runtime_call(function, input).await.map_err(subxt::Error::other_str)
+	}
+}
+
+#[async_trait::async_trait]
 impl DotnsTransport for Snapshot {
-	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-		self.storage_value(&key).await
+	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+		self.storage_value(&key).await.map_err(DotnsError::Storage)
 	}
 
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		let output = self
-			.runtime_call("ReviveApi_call", &encode_revive_call(&VIEW_CALL_ORIGIN, dest, &input))
-			.await
-			.map_err(DotnsViewError::Failed)?;
-		let output = view_output(&output)?;
-		validate_view_bounds(&input, &output).map_err(DotnsViewError::Failed)?;
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		let output = EvmContractCaller::read(self, dest, &input).await?;
+		validate_view_bounds(&input, &output).map_err(|reason| {
+			EvmContractError::Simulation(Box::new(subxt::Error::other_str(reason)))
+		})?;
 		Ok(output)
 	}
 }
 
 fn validate_view_bounds(input: &[u8], output: &[u8]) -> Result<(), String> {
-	use crate::host_logic::dotns_gateway::selector;
-	if input.get(..4) == Some(selector("getLabels(uint256,uint256)").as_slice()) ||
-		input.get(..4) == Some(selector("pendingClaims(address,uint256,uint256)").as_slice())
+	if input.get(..4) == Some(LabelStore::getLabelsCall::SELECTOR.as_slice()) ||
+		input.get(..4) == Some(DotnsPopController::pendingClaimsCall::SELECTOR.as_slice())
 	{
 		// Both shared gateway readers request pages of sixteen. Check dynamic
 		// array lengths before their ABI decoders allocate or follow offsets;
@@ -223,8 +230,11 @@ mod tests {
 
 	#[test]
 	fn dynamic_directory_pages_cannot_amplify_unbounded_claimed_counts() {
-		let input =
-			crate::host_logic::dotns_gateway::call_u256_pair("getLabels(uint256,uint256)", 0, 16);
+		let input = LabelStore::getLabelsCall {
+			offset: alloy_primitives::U256::ZERO,
+			limit: alloy_primitives::U256::from(16),
+		}
+		.abi_encode();
 		let mut page = vec![0; 64];
 		page[31] = 32;
 		assert!(validate_view_bounds(&input, &page).is_ok());

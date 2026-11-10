@@ -14,10 +14,14 @@ struct ExactMatchStrategy: TransferStrategy {
         self.durability = durability
     }
 
-    func prepare(native: NativeTransferRequest?) async throws -> PreparedStrategy {
+    func prepare() async throws -> PreparedStrategy {
         guard !coins.isEmpty else {
             throw TransferStrategyError.emptyCoins
         }
+
+        // No entry backs these coins, so the provisional handoff mark is the only thing keeping
+        // them out of a concurrent selection until the memo is durable.
+        let handoffCommit = try await durability.preCommitHandoff(coins.map { .coin($0.derivationIndex, $0.publicKey) })
 
         let memoEntries = coins.map {
             PlannedMemoEntry(
@@ -26,13 +30,10 @@ struct ExactMatchStrategy: TransferStrategy {
             )
         }
 
-        // No entry backs these coins, so the provisional handoff mark (or, natively, the retained
-        // custody) is the only thing keeping them out of a concurrent selection until the memo is durable.
-        return try await durability.prepareTransfer(
-            handingOff: coins,
+        return PreparedStrategy(
             memoEntries: memoEntries,
-            transactions: [],
-            native: native
+            handoffCommit: handoffCommit,
+            transactions: []
         )
     }
 }

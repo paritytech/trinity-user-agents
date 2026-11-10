@@ -1,0 +1,9 @@
+{
+  "productName": "peopl.paseo",
+  "displayName": "Personhood",
+  "description": "Owns the ring-VRF key in the cross-product ring-VRF context e2e. Grants dim2next its key, nothing else.",
+  "icon": "./icon.png",
+  "trustedProducts": {
+    "dim2next": ["context"]
+  }
+}

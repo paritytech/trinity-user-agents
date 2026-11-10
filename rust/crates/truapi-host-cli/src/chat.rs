@@ -12,9 +12,6 @@
 
 use std::{
 	collections::{BTreeMap, BTreeSet},
-	fs::OpenOptions,
-	io::Write,
-	path::PathBuf,
 	sync::{Arc, Mutex},
 };
 
@@ -30,11 +27,13 @@ use truapi::{
 		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
 		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
 		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
-		HostChatRegisterBotResponse,
+		HostChatRegisterBotResponse, HostChatSetRoomFooterRequest,
 	},
-	platform::{ChatPlatform, ProductContext, async_trait},
+	platform::{ChatPlatform, ProductContext},
 	v01::{ChatRoom, ChatRoomParticipation},
 };
+
+use crate::transcript::Transcript;
 
 /// Rooms, bots and posted messages for one process.
 #[derive(Default)]
@@ -54,24 +53,18 @@ struct State {
 /// A chat host that keeps everything in memory.
 pub struct CliChatHost {
 	state: Mutex<State>,
-	transcript: Option<PathBuf>,
+	transcript: Transcript,
 }
 
 impl CliChatHost {
 	/// Build a chat host, writing a transcript when `TRUAPI_CHAT_LOG` names a
 	/// path.
 	pub fn from_env() -> Arc<Self> {
-		Self::new(std::env::var_os("TRUAPI_CHAT_LOG").map(PathBuf::from))
+		Self::new(Transcript::from_env("TRUAPI_CHAT_LOG", "chat"))
 	}
 
-	/// Build a chat host recording to `transcript`. The file is truncated at
-	/// startup so a run never reads an earlier run's messages as its own.
-	fn new(transcript: Option<PathBuf>) -> Arc<Self> {
-		if let Some(path) = transcript.as_ref() &&
-			let Err(error) = std::fs::write(path, b"")
-		{
-			tracing::warn!(?path, %error, "chat transcript could not be truncated");
-		}
+	/// Build a chat host recording to `transcript`.
+	fn new(transcript: Transcript) -> Arc<Self> {
 		Arc::new(Self { state: Mutex::new(State::default()), transcript })
 	}
 
@@ -104,7 +97,7 @@ impl CliChatHost {
 
 	/// Append one accepted message to the transcript, if one is configured.
 	fn record_message(&self, message_id: &str, request: &HostChatPostMessageRequest) {
-		self.record(serde_json::json!({
+		self.transcript.record(serde_json::json!({
 			"kind": "message",
 			"messageId": message_id,
 			"roomId": request.room_id,
@@ -113,12 +106,13 @@ impl CliChatHost {
 			// difference between what a product sent and what a host stored
 			// hide behind the summary.
 			"payload": hex::encode(request.payload.encode()),
+			"alt": request.alt,
 		}));
 	}
 
 	/// Append one accepted room or bot registration.
 	fn record_registration(&self, kind: &str, id: &str, name: &str, icon: &str) {
-		self.record(serde_json::json!({
+		self.transcript.record(serde_json::json!({
 			"kind": kind,
 			"id": id,
 			"name": name,
@@ -126,21 +120,6 @@ impl CliChatHost {
 			// rather than what the product typed.
 			"icon": icon,
 		}));
-	}
-
-	/// Append one line to the transcript, if one is configured.
-	fn record(&self, line: serde_json::Value) {
-		let Some(path) = self.transcript.as_ref() else {
-			return;
-		};
-		let appended = OpenOptions::new()
-			.create(true)
-			.append(true)
-			.open(path)
-			.and_then(|mut file| writeln!(file, "{line}"));
-		if let Err(error) = appended {
-			tracing::warn!(?path, %error, "chat transcript could not be appended to");
-		}
 	}
 }
 
@@ -157,7 +136,7 @@ fn variant_name(content: &ChatMessageContent) -> &'static str {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ChatPlatform for CliChatHost {
 	async fn create_chat_room(
 		&self,
@@ -212,6 +191,14 @@ impl ChatPlatform for CliChatHost {
 		Ok(HostChatPostMessageResponse { message_id })
 	}
 
+	async fn set_chat_room_footer(
+		&self,
+		_product: &ProductContext,
+		_request: HostChatSetRoomFooterRequest,
+	) -> Result<(), GenericError> {
+		Ok(())
+	}
+
 	fn subscribe_chat_rooms(
 		&self,
 		_product: &ProductContext,
@@ -227,92 +214,4 @@ impl ChatPlatform for CliChatHost {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use std::fs::read_to_string;
-
-	fn product() -> ProductContext {
-		ProductContext::new("chat.dot".to_string()).expect("valid product id")
-	}
-
-	fn text(text: &str) -> ChatMessageContent {
-		ChatMessageContent::Text { text: text.to_string() }
-	}
-
-	fn room(room_id: &str) -> HostChatCreateRoomRequest {
-		HostChatCreateRoomRequest {
-			room_id: room_id.to_string(),
-			name: "Support".to_string(),
-			icon: String::new(),
-		}
-	}
-
-	#[test]
-	fn a_message_needs_a_room_this_host_created() {
-		let transcript = tempfile::NamedTempFile::new().expect("a temp transcript");
-		let host = CliChatHost::new(Some(transcript.path().to_path_buf()));
-
-		let posted = futures::executor::block_on(host.post_chat_message(
-			&product(),
-			HostChatPostMessageRequest { room_id: "support".to_string(), payload: text("hello") },
-		));
-
-		assert!(matches!(posted, Err(HostChatPostMessageError::Unknown { .. })));
-		// A refused message is not one this host was willing to store, so it
-		// must not appear in the record a battery reads.
-		assert_eq!(read_to_string(transcript.path()).expect("the transcript is readable"), "");
-	}
-
-	#[test]
-	fn a_stored_message_is_recorded_as_the_host_received_it() {
-		let transcript = tempfile::NamedTempFile::new().expect("a temp transcript");
-		let host = CliChatHost::new(Some(transcript.path().to_path_buf()));
-		futures::executor::block_on(host.create_chat_room(&product(), room("support")))
-			.expect("a new room is created");
-
-		let payload = text("line one\nline two");
-		let posted = futures::executor::block_on(host.post_chat_message(
-			&product(),
-			HostChatPostMessageRequest { room_id: "support".to_string(), payload: payload.clone() },
-		))
-		.expect("a message posts into a room this host created");
-
-		assert_eq!(posted.message_id, "m1");
-		let transcript_text =
-			read_to_string(transcript.path()).expect("the transcript is readable");
-		let recorded: serde_json::Value = serde_json::from_str(
-			transcript_text
-				.lines()
-				.next_back()
-				.expect("the message is the last line, after the room"),
-		)
-		.expect("each line is one JSON object");
-		assert_eq!(recorded["kind"], "message");
-		assert_eq!(recorded["messageId"], "m1");
-		assert_eq!(recorded["roomId"], "support");
-		assert_eq!(recorded["variant"], "Text");
-		// The payload as bytes, so a difference between what a product sent
-		// and what the host received cannot hide behind a rendering.
-		assert_eq!(recorded["payload"], hex::encode(payload.encode()));
-	}
-
-	#[test]
-	fn a_room_appears_in_the_list_a_subscriber_already_holds() {
-		let host = CliChatHost::new(None);
-		let mut rooms = host.subscribe_chat_rooms(&product());
-
-		let snapshot = futures::executor::block_on(rooms.next())
-			.expect("a subscription emits its snapshot")
-			.expect("the snapshot is not an error");
-		assert!(snapshot.rooms.is_empty());
-
-		futures::executor::block_on(host.create_chat_room(&product(), room("support")))
-			.expect("a new room is created");
-
-		let replacement = futures::executor::block_on(rooms.next())
-			.expect("creating a room republishes the list")
-			.expect("the replacement is not an error");
-		assert_eq!(replacement.rooms.len(), 1);
-		assert_eq!(replacement.rooms[0].room_id, "support");
-	}
-}
+mod tests;

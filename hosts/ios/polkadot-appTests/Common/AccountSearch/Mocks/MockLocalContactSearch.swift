@@ -5,6 +5,8 @@ import SubstrateSdk
 
 final class MockLocalContactSearch: LocalContactSearching {
     var contacts: [Chat.Contact] = []
+    var contactsError: Error?
+    var blockedContactsError: Error?
 
     // Recorded inputs
     var receivedUsernamePrefix: String?
@@ -29,6 +31,11 @@ final class MockLocalContactSearch: LocalContactSearching {
 
     func blockedContacts() -> AnyDataProviderRepository<Chat.Contact> {
         didRequestBlockedContacts = true
+
+        if let blockedContactsError {
+            return makeFailingRepository(error: blockedContactsError)
+        }
+
         return makeRepository(with: contacts.filter(\.isBlocked))
     }
 
@@ -41,6 +48,66 @@ final class MockLocalContactSearch: LocalContactSearching {
     }
 
     private func makeSeededRepository() -> AnyDataProviderRepository<Chat.Contact> {
-        makeRepository(with: contacts)
+        if let contactsError {
+            return makeFailingRepository(error: contactsError)
+        }
+
+        return makeRepository(with: contacts)
+    }
+
+    private func makeFailingRepository(error: Error) -> AnyDataProviderRepository<Chat.Contact> {
+        AnyDataProviderRepository(FailingContactRepository(error: error))
+    }
+}
+
+/// Every operation throws, so a test can drive the failure branch of a repository fetch.
+private final class FailingContactRepository: DataProviderRepositoryProtocol {
+    typealias Model = Chat.Contact
+
+    private let error: Error
+
+    init(error: Error) {
+        self.error = error
+    }
+
+    func fetchOperation(
+        by _: @escaping () throws -> String,
+        options _: RepositoryFetchOptions
+    ) -> BaseOperation<Chat.Contact?> {
+        failingOperation()
+    }
+
+    func fetchAllOperation(with _: RepositoryFetchOptions) -> BaseOperation<[Chat.Contact]> {
+        failingOperation()
+    }
+
+    func fetchOperation(
+        by _: RepositorySliceRequest,
+        options _: RepositoryFetchOptions
+    ) -> BaseOperation<[Chat.Contact]> {
+        failingOperation()
+    }
+
+    func saveOperation(
+        _: @escaping () throws -> [Chat.Contact],
+        _: @escaping () throws -> [String]
+    ) -> BaseOperation<Void> {
+        failingOperation()
+    }
+
+    func replaceOperation(_: @escaping () throws -> [Chat.Contact]) -> BaseOperation<Void> {
+        failingOperation()
+    }
+
+    func fetchCountOperation() -> BaseOperation<Int> {
+        failingOperation()
+    }
+
+    func deleteAllOperation() -> BaseOperation<Void> {
+        failingOperation()
+    }
+
+    private func failingOperation<T>() -> BaseOperation<T> {
+        ClosureOperation { [error] in throw error }
     }
 }

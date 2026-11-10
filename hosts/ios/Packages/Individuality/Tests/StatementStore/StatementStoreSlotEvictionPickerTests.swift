@@ -55,6 +55,55 @@ struct StatementStoreSlotEvictionPickerTests {
     }
 
     @Test
+    func criticalSlotsAreNeverEvictedEvenByCriticalCaller() async throws {
+        let caller = try Data.randomOrError(of: 32)
+        let other = try Data.randomOrError(of: 32)
+
+        let picker = makePicker(records: [makeRecord(accountId: other, priority: .critical)])
+
+        let slots = [
+            SSSOccupiedSlot(personOrigin: liteOrigin(), seq: 0, accountId: other, since: 100)
+        ]
+
+        await #expect(throws: StatementStoreAllowanceError.noEvictableSlots) {
+            try await picker.pickCandidate(
+                from: slots,
+                excluding: caller,
+                callerPriority: .critical,
+                cooldown: 0,
+                nowSeconds: 300
+            )
+        }
+    }
+
+    @Test
+    func criticalCallerEvictsHighSlotAndSkipsCritical() async throws {
+        let caller = try Data.randomOrError(of: 32)
+        let criticalAccount = try Data.randomOrError(of: 32)
+        let highAccount = try Data.randomOrError(of: 32)
+
+        let picker = makePicker(records: [
+            makeRecord(accountId: criticalAccount, priority: .critical),
+            makeRecord(accountId: highAccount, priority: .high)
+        ])
+
+        let slots = [
+            SSSOccupiedSlot(personOrigin: liteOrigin(), seq: 0, accountId: criticalAccount, since: 100),
+            SSSOccupiedSlot(personOrigin: fullOrigin(), seq: 1, accountId: highAccount, since: 200)
+        ]
+
+        let picked = try await picker.pickCandidate(
+            from: slots,
+            excluding: caller,
+            callerPriority: .critical,
+            cooldown: 0,
+            nowSeconds: 300
+        )
+
+        #expect(picked.accountId == highAccount)
+    }
+
+    @Test
     func cooldownNotElapsedThrowsNoSlotsAvailableWithWait() async throws {
         let caller = try Data.randomOrError(of: 32)
         let other = try Data.randomOrError(of: 32)
@@ -139,6 +188,7 @@ private extension StatementStoreSlotEvictionPickerTests {
             accountId: accountId,
             allocatedAt: Date(),
             kind: .statementStore,
+            domain: .product,
             priority: priority,
             latestRenewedPeriod: nil
         )

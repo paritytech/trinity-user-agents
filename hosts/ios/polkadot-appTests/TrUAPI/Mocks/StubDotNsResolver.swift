@@ -1,5 +1,4 @@
 import Foundation
-import AsyncExtensions
 import Products
 @testable import polkadot_app
 
@@ -11,14 +10,6 @@ final class StubDotNsResolver: DotNsResolverProtocol {
         resolvedNames.append(dotNsName)
         return contentURL
     }
-
-    func getMetadataEntry(dotNsName _: String, key _: String) async throws -> String? { nil }
-
-    func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
-        AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
-    }
-
-    func hasChatEntry(_: String) -> Bool { false }
 
     func clearCache() throws {}
 }

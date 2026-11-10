@@ -54,8 +54,7 @@ private extension ProductsNativeApi {
                 kind: .bulletIn
             )
         case .autoSigning,
-             .smartContractAllowance,
-             .productStatementStoreAllowance:
+             .smartContractAllowance:
             break
         }
     }

@@ -1,18 +1,19 @@
 //! In-core Bulletin preimage submission over the shared Subxt client.
 //!
 //! One submission at a time: build + sign the `TransactionStorage.store`
-//! extrinsic against the current best block (Subxt resolves metadata, nonce,
-//! and the mortality anchor), dry-run it via Subxt's typed transaction
-//! validation, then submit through Subxt's transaction watch and classify the
-//! dispatch outcome from the inclusion block's events.
+//! extrinsic through the core's `ExtrinsicService`, mortal from the finalized
+//! head, dry-run it at a best block no older than that head via Subxt's typed
+//! transaction validation, then submit through Subxt's transaction watch and
+//! classify the dispatch outcome from the inclusion block's events.
 
-use std::sync::Mutex as StdMutex;
+use std::sync::{Arc, Mutex as StdMutex};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 #[cfg(target_arch = "wasm32")]
 use web_time::{Duration, Instant};
 
 use crate::{
+	chain::{ExtrinsicBuildError, ExtrinsicService},
 	chain_runtime::{ChainRuntime, RuntimeFailure},
 	host_internal::{
 		bulletin::{
@@ -36,6 +37,7 @@ use subxt::{
 		SubmittableTransaction, TransactionInBlock, TransactionInvalid, TransactionStatus,
 		TransactionUnknown, ValidationResult,
 	},
+	utils::H256,
 };
 use tracing::{instrument, warn};
 use truapi::CallContext;
@@ -68,11 +70,13 @@ const INCLUSION_RECHECK_BLOCKS: usize = 3;
 const INCLUSION_RECHECK_BLOCK_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
 #[cfg(test)]
 const INCLUSION_RECHECK_BLOCK_WAIT_TIMEOUT: Duration = Duration::from_millis(25);
-/// Budget for the best-block stream to replay the current chain head.
+/// Bound on each wait for the next block while picking the head: the first
+/// replayed block, and each block read on until the head reaches finality.
 const INITIALIZATION_TIMEOUT: Duration = Duration::from_secs(10);
 /// Quiet window after which the newest replayed block is taken as the head.
-/// The replay delivers the initialized finalized block first and any known
-/// best block right after; active chains never need the full window.
+/// The replay delivers the initialized finalized blocks first, oldest first,
+/// and any known best block right after; active chains never need the full
+/// window.
 #[cfg(not(test))]
 const BEST_BLOCK_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(test)]
@@ -106,7 +110,7 @@ type BulletinAtBlock = OnlineClientAtBlockImpl<SubstrateConfig>;
 /// dry-run and submission steps.
 type SignedStore = SubmittableTransaction<SubstrateConfig, BulletinAtBlock>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum DryRunStatus {
 	Valid,
 	AllowanceRejected,
@@ -119,9 +123,12 @@ pub enum BulletinSubmitError {
 	/// The host-owned physical connection could not provide a Subxt client.
 	#[display("bulletin chain unavailable: {_0}")]
 	Host(#[error(source)] RuntimeFailure),
-	/// Subxt failed while building, validating, submitting, or reading events.
+	/// Subxt failed while validating, submitting, or reading events.
 	#[display("subxt: {_0}")]
 	Subxt(#[error(source)] Box<subxt::Error>),
+	/// The store transaction could not be built.
+	#[display("building the store transaction: {_0}")]
+	Build(#[error(source)] ExtrinsicBuildError),
 	/// The allowance key could not be converted to its purpose-scoped signer.
 	#[display("invalid allowance key: {_0}")]
 	InvalidAllowanceKey(#[error(not(source))] String),
@@ -164,8 +171,23 @@ pub enum BulletinSubmitError {
 	Cancelled,
 }
 
+impl<Error> From<Error> for BulletinSubmitError
+where
+	subxt::Error: From<Error>,
+{
+	fn from(error: Error) -> Self {
+		Self::Subxt(Box::new(error.into()))
+	}
+}
+
+impl From<RuntimeFailure> for BulletinSubmitError {
+	fn from(error: RuntimeFailure) -> Self {
+		Self::Host(error)
+	}
+}
+
 /// Which stage rejected the allowance account.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::Display)]
+#[derive(Debug, Clone, derive_more::Display)]
 pub enum AllowanceRejectionPhase {
 	#[display("dry-run")]
 	DryRun,
@@ -181,12 +203,14 @@ impl BulletinSubmitError {
 	fn is_broadcast_outcome_unknown(&self, phase: SubmissionPhase) -> bool {
 		match self {
 			Self::Subxt(_) if phase == SubmissionPhase::Watch => !self.is_node_rejection(),
-			Self::Subxt(error) if phase == SubmissionPhase::Events => matches!(
-				error.as_ref(),
-				subxt::Error::TransactionEventsError(
-					TransactionEventsError::CannotFindTransactionInBlock { .. }
+			Self::Subxt(error) if phase == SubmissionPhase::Events => {
+				matches!(
+					error.as_ref(),
+					subxt::Error::TransactionEventsError(
+						TransactionEventsError::CannotFindTransactionInBlock { .. }
+					)
 				)
-			),
+			},
 			_ => false,
 		}
 	}
@@ -223,6 +247,7 @@ impl BulletinSubmitError {
 /// Bulletin-chain submission service shared by all product runtimes.
 pub struct BulletinRpc {
 	chain: ChainRuntime,
+	extrinsics: Arc<ExtrinsicService>,
 	genesis_hash: [u8; 32],
 	/// Serializes submissions: no same-account nonce races between
 	/// concurrent submits.
@@ -237,10 +262,16 @@ pub struct BulletinRpc {
 }
 
 impl BulletinRpc {
-	/// Build a bulletin submission service over the shared chain runtime.
-	pub fn new(chain: ChainRuntime, genesis_hash: [u8; 32]) -> Self {
+	/// Build a bulletin submission service over the shared chain runtime,
+	/// building its transactions through `extrinsics`.
+	pub fn new(
+		chain: ChainRuntime,
+		extrinsics: Arc<ExtrinsicService>,
+		genesis_hash: [u8; 32],
+	) -> Self {
 		Self {
 			chain,
+			extrinsics,
 			genesis_hash,
 			submit_lock: futures::lock::Mutex::new(()),
 			phase: StdMutex::new(SubmissionPhase::Connect),
@@ -303,10 +334,6 @@ impl BulletinRpc {
 			_ = lock_cancelled => return Err(BulletinSubmitError::Cancelled),
 		};
 
-		// The Preimage::submit boundary owns one absolute chain deadline across
-		// the initial submission and an optional refreshed-allowance retry.
-		// The context is used only for cancellation. Dropping the flow on
-		// timeout/cancel drops its in-flight chain work.
 		let mut attempt = 0;
 		loop {
 			attempt += 1;
@@ -343,16 +370,10 @@ impl BulletinRpc {
 		let key = preimage_key(value);
 
 		self.enter_phase(SubmissionPhase::Connect);
-		let client = self
-			.chain
-			.online_client(&self.genesis_hash)
-			.await
-			.map_err(BulletinSubmitError::Host)?;
-		let mut best_blocks = client
-			.stream_best_blocks()
-			.await
-			.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-		let head = initial_best_block(&mut best_blocks).await?;
+		let client = self.chain.online_client(&self.genesis_hash).await?;
+		let finalized = client.at_current_block().await?;
+		let mut best_blocks = client.stream_best_blocks().await?;
+		let head = initial_best_block(&mut best_blocks, finalized.block_number()).await?;
 
 		self.enter_phase(SubmissionPhase::Build);
 		let signer =
@@ -424,19 +445,21 @@ impl BulletinRpc {
 		let mut allowance_rejection_started = None;
 		loop {
 			self.enter_phase(SubmissionPhase::Build);
-			let at_block = block
-				.at()
-				.await
-				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
-			let signed = build_signed_store_transaction(&at_block, signer, value)
-				.await
-				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+			let built = build_signed_store_transaction(
+				&self.extrinsics,
+				H256(self.genesis_hash),
+				signer,
+				value,
+			)
+			.await
+			.map_err(BulletinSubmitError::Build)?;
 
 			self.enter_phase(SubmissionPhase::DryRun);
-			let validity = signed
-				.validate()
-				.await
-				.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+			let birth = built.mortality.birth().number;
+			block = best_block_from(best_blocks, block, birth, SubmissionPhase::DryRun).await?;
+			let at_block = block.at().await?;
+			let signed = at_block.tx().from_bytes(built.extrinsic.bytes().to_vec());
+			let validity = signed.validate().await?;
 			match Self::classify_dry_run_validity(validity)? {
 				DryRunStatus::Valid => return Ok(signed),
 				DryRunStatus::AllowanceRejected => {
@@ -518,13 +541,16 @@ impl BulletinRpc {
 }
 
 /// Take the stream's replayed view of the current chain head: the initialized
-/// finalized block arrives first, followed by the newest known best block.
-/// Returns the newest block seen during one bounded [`BEST_BLOCK_TIMEOUT`]
-/// replay window; falling back to the finalized block is safe for cold starts.
-/// The deadline is absolute so a continuously advancing best-block stream
-/// cannot keep initialization alive forever.
+/// finalized blocks arrive first, oldest first, followed by the newest known
+/// best block. Returns the newest block seen during one bounded
+/// [`BEST_BLOCK_TIMEOUT`] replay window, read on until it reaches
+/// `finalized_number`. The transaction is anchored at that finalized block, and
+/// a head behind it would validate against an earlier birth block and read a
+/// stale nonce. The window's deadline is absolute so a continuously advancing
+/// best-block stream cannot keep initialization alive forever.
 async fn initial_best_block(
 	blocks: &mut Blocks<SubstrateConfig>,
+	finalized_number: u64,
 ) -> Result<Block<SubstrateConfig>, BulletinSubmitError> {
 	let mut block =
 		next_best_block(blocks, INITIALIZATION_TIMEOUT, SubmissionPhase::Connect).await?;
@@ -541,9 +567,25 @@ async fn initial_best_block(
 				}
 				None => return Err(BulletinSubmitError::BestBlockStreamEnded),
 			},
-			() = replay_deadline => return Ok(block),
+			() = replay_deadline => break,
 		}
 	}
+	best_block_from(blocks, block, finalized_number, SubmissionPhase::Connect).await
+}
+
+/// `block`, or the first best block after it numbered at least `number`. A
+/// transaction validated at a block before its birth block names a birth the
+/// node does not know.
+async fn best_block_from(
+	blocks: &mut Blocks<SubstrateConfig>,
+	mut block: Block<SubstrateConfig>,
+	number: u64,
+	phase: SubmissionPhase,
+) -> Result<Block<SubstrateConfig>, BulletinSubmitError> {
+	while block.number() < number {
+		block = next_best_block(blocks, INITIALIZATION_TIMEOUT, phase).await?;
+	}
+	Ok(block)
 }
 
 async fn next_best_block(
@@ -569,12 +611,9 @@ async fn next_best_block(
 async fn watch_until_included(
 	signed: &SignedStore,
 ) -> Result<TransactionInBlock<SubstrateConfig, BulletinAtBlock>, BulletinSubmitError> {
-	let mut progress = signed
-		.submit_and_watch()
-		.await
-		.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+	let mut progress = signed.submit_and_watch().await?;
 	while let Some(status) = progress.next().await {
-		let status = status.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+		let status = status?;
 		match status {
 			TransactionStatus::InBestBlock(block) | TransactionStatus::InFinalizedBlock(block) => {
 				return Ok(block);
@@ -689,7 +728,7 @@ fn dispatch_outcome_from_events(
 	metadata: ArcMetadata,
 ) -> Result<(), BulletinSubmitError> {
 	for event in events.iter() {
-		let event = event.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+		let event = event?;
 		if event.pallet_name() == "System" && event.event_name() == "ExtrinsicFailed" {
 			let dispatch_error = DispatchError::decode_from(event.field_bytes(), metadata.clone())
 				.map_err(|error| {
@@ -705,7 +744,7 @@ fn dispatch_outcome_from_events(
 		}
 	}
 	for event in events.iter() {
-		let event = event.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+		let event = event?;
 		if event.pallet_name() == "System" && event.event_name() == "ExtrinsicSuccess" {
 			return Ok(());
 		}
@@ -722,8 +761,7 @@ async fn require_dispatch_success(
 	match in_block.wait_for_success().await {
 		Ok(events) => {
 			for event in events.iter() {
-				let event =
-					event.map_err(|error| BulletinSubmitError::Subxt(Box::new(error.into())))?;
+				let event = event?;
 				if event.pallet_name() == "System" && event.event_name() == "ExtrinsicSuccess" {
 					return Ok(());
 				}
@@ -756,1048 +794,4 @@ fn classify_dispatch_error(error: DispatchError) -> BulletinSubmitError {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::host_internal::extrinsic::tests::bulletin_metadata;
-	use subxt::metadata::ArcMetadata;
-
-	#[test]
-	fn dry_run_classifies_allowance_rejections_for_retry() {
-		for validity in [
-			ValidationResult::Invalid(TransactionInvalid::Payment),
-			ValidationResult::Invalid(TransactionInvalid::Custom(7)),
-			ValidationResult::Invalid(TransactionInvalid::BadSigner),
-		] {
-			assert_eq!(
-				BulletinRpc::classify_dry_run_validity(validity).unwrap(),
-				DryRunStatus::AllowanceRejected
-			);
-		}
-	}
-
-	#[test]
-	fn classifies_post_broadcast_errors() {
-		let invalid = BulletinSubmitError::Subxt(Box::new(
-			TransactionStatusError::Invalid("bad nonce".to_string()).into(),
-		));
-		assert!(invalid.is_node_rejection());
-		assert!(invalid.is_invalid_verdict());
-		assert!(!invalid.is_broadcast_outcome_unknown(SubmissionPhase::Watch));
-
-		let dropped = BulletinSubmitError::Subxt(Box::new(
-			TransactionStatusError::Dropped("pool full".to_string()).into(),
-		));
-		assert!(dropped.is_node_rejection());
-		assert!(!dropped.is_invalid_verdict());
-		assert!(!dropped.is_broadcast_outcome_unknown(SubmissionPhase::Watch));
-
-		let interrupted = BulletinSubmitError::Subxt(Box::new(
-			TransactionProgressError::UnexpectedEndOfTransactionStatusStream.into(),
-		));
-		assert!(interrupted.is_broadcast_outcome_unknown(SubmissionPhase::Watch));
-		assert!(!interrupted.is_node_rejection());
-
-		let node_error = BulletinSubmitError::Subxt(Box::new(
-			TransactionStatusError::Error("node error".to_string()).into(),
-		));
-		assert!(node_error.is_broadcast_outcome_unknown(SubmissionPhase::Watch));
-		assert!(!node_error.is_node_rejection());
-
-		let inconsistent_inclusion = BulletinSubmitError::Subxt(Box::new(
-			TransactionEventsError::CannotFindTransactionInBlock {
-				block_hash: [1_u8; 32].into(),
-				transaction_hash: [2_u8; 32].into(),
-			}
-			.into(),
-		));
-		assert!(inconsistent_inclusion.is_broadcast_outcome_unknown(SubmissionPhase::Events));
-		assert!(!inconsistent_inclusion.is_broadcast_outcome_unknown(SubmissionPhase::DryRun));
-
-		assert!(
-			!BulletinSubmitError::Timeout { phase: SubmissionPhase::Watch }
-				.is_broadcast_outcome_unknown(SubmissionPhase::Watch)
-		);
-	}
-
-	/// Decode a `DispatchError::Module` for the named error variant out of
-	/// the bulletin fixture metadata.
-	fn module_error(error_name: &str) -> DispatchError {
-		let metadata = ArcMetadata::from(bulletin_metadata());
-		let pallet = metadata.pallet_by_name(STORE_PALLET_NAME).unwrap();
-		let variant_index = (0..=u8::MAX)
-			.find(|index| {
-				pallet
-					.error_variant_by_index(*index)
-					.is_some_and(|variant| variant.name == error_name)
-			})
-			.unwrap_or_else(|| panic!("fixture metadata lacks the {error_name} error"));
-		// `DispatchError::Module` is variant 3: (pallet index, 4 error bytes).
-		let bytes = [3, pallet.error_index(), variant_index, 0, 0, 0];
-		DispatchError::decode_from(&bytes, metadata).unwrap()
-	}
-
-	/// Any error variant that is not an allowance rejection.
-	fn non_allowance_error_name() -> String {
-		let metadata = ArcMetadata::from(bulletin_metadata());
-		let pallet = metadata.pallet_by_name(STORE_PALLET_NAME).unwrap();
-		(0..=u8::MAX)
-			.find_map(|index| {
-				let name = &pallet.error_variant_by_index(index)?.name;
-				(!ALLOWANCE_REJECTED_MODULE_ERRORS.contains(&name.as_str())).then(|| name.clone())
-			})
-			.expect("fixture metadata has a non-allowance error variant")
-	}
-
-	#[test]
-	fn dispatch_errors_classify_allowance_rejections() {
-		assert!(matches!(
-			classify_dispatch_error(module_error("AuthorizationNotFound")),
-			BulletinSubmitError::AllowanceRejected { phase: AllowanceRejectionPhase::Dispatch }
-		));
-
-		let other = non_allowance_error_name();
-		let error = classify_dispatch_error(module_error(&other));
-		let BulletinSubmitError::Subxt(error) = error else {
-			panic!("non-allowance dispatch error must remain a Subxt error");
-		};
-		assert!(matches!(
-			error.as_ref(),
-			subxt::Error::TransactionEventsError(TransactionEventsError::ExtrinsicFailed(_))
-		));
-	}
-
-	#[test]
-	fn error_reason_strings_are_stable() {
-		assert_eq!(
-			BulletinSubmitError::AllowanceRejected { phase: AllowanceRejectionPhase::DryRun }
-				.to_string(),
-			"allowance rejected: dry-run"
-		);
-		assert_eq!(
-			BulletinSubmitError::InvalidTransaction(TransactionInvalid::Future).to_string(),
-			"invalid: Future"
-		);
-		assert_eq!(
-			BulletinSubmitError::Timeout { phase: SubmissionPhase::Watch }.to_string(),
-			"timeout: watch, inclusion unverified"
-		);
-		assert_eq!(
-			BulletinSubmitError::Timeout { phase: SubmissionPhase::Connect }.to_string(),
-			"timeout: connect"
-		);
-		assert_eq!(
-			BulletinSubmitError::Subxt(Box::new(
-				TransactionStatusError::Invalid("bad nonce".to_string()).into(),
-			))
-			.to_string(),
-			"subxt: The transaction is not valid: bad nonce"
-		);
-		assert_eq!(
-			BulletinSubmitError::RebroadcastRejected { reason: "stale".to_string() }.to_string(),
-			"inclusion unverified: re-broadcast rejected: stale"
-		);
-	}
-
-	#[cfg(not(target_arch = "wasm32"))]
-	mod orchestration {
-		use super::*;
-		use crate::{
-			chain_runtime::{RuntimeChainProvider, RuntimeFailure},
-			host_internal::extrinsic::tests::BULLETIN_METADATA_BYTES,
-			platform::JsonRpcConnection,
-			subscription::thread_per_subscription_spawner,
-		};
-		use async_trait::async_trait;
-		use futures::{StreamExt, channel::mpsc, stream::BoxStream};
-		use parity_scale_codec::{Compact, Encode};
-		use scale_info::{PortableRegistry, TypeDef, TypeDefPrimitive};
-		use serde_json::{Value as JsonValue, json};
-		use std::{
-			collections::VecDeque,
-			sync::{Arc, Mutex},
-		};
-		use subxt::{
-			events::Phase,
-			ext::{
-				scale_encode::{EncodeAsFields, Field},
-				scale_value::{Primitive, Value as ScaleValue},
-			},
-		};
-
-		const FOLLOW_ID: &str = "bulletin-follow";
-		const BLOCK_HASH: &str =
-			"0x1111111111111111111111111111111111111111111111111111111111111111";
-		const INCLUDED_HASH: &str =
-			"0x2222222222222222222222222222222222222222222222222222222222222222";
-
-		#[derive(Clone, Copy)]
-		enum TransactionOutcome {
-			Included,
-			IncludedWithMissingBody,
-			Invalid,
-			InvalidWithMissingBody,
-			Dropped,
-			FollowStop,
-			FollowStopWithMissingBody,
-		}
-
-		#[derive(Clone, Copy, PartialEq, Eq)]
-		enum ValidationOutcome {
-			Valid,
-			AllowanceRejected,
-		}
-
-		struct ScriptedState {
-			transaction_outcomes: VecDeque<TransactionOutcome>,
-			validation_outcomes: VecDeque<ValidationOutcome>,
-			next_operation: usize,
-			next_transaction: usize,
-			next_best_block: usize,
-			current_best_hash: String,
-			advance_best_block_after_rejection: bool,
-			stall_headers: bool,
-			last_transaction: Option<String>,
-			omit_transaction_from_next_body: bool,
-		}
-
-		struct BulletinScriptedProvider {
-			state: Arc<Mutex<ScriptedState>>,
-			sent: Arc<Mutex<Vec<String>>>,
-			sender: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
-			receiver: Mutex<Option<mpsc::UnboundedReceiver<String>>>,
-			events: String,
-		}
-
-		impl BulletinScriptedProvider {
-			fn new(outcomes: impl IntoIterator<Item = TransactionOutcome>) -> Self {
-				Self::with_options(outcomes, false)
-			}
-
-			fn with_options(
-				outcomes: impl IntoIterator<Item = TransactionOutcome>,
-				stall_headers: bool,
-			) -> Self {
-				let (sender, receiver) = mpsc::unbounded();
-				Self {
-					state: Arc::new(Mutex::new(ScriptedState {
-						transaction_outcomes: outcomes.into_iter().collect(),
-						validation_outcomes: VecDeque::new(),
-						next_operation: 0,
-						next_transaction: 0,
-						next_best_block: 0,
-						current_best_hash: BLOCK_HASH.to_string(),
-						advance_best_block_after_rejection: false,
-						stall_headers,
-						last_transaction: None,
-						omit_transaction_from_next_body: false,
-					})),
-					sent: Arc::new(Mutex::new(Vec::new())),
-					sender: Arc::new(Mutex::new(Some(sender))),
-					receiver: Mutex::new(Some(receiver)),
-					events: format!("0x{}", hex::encode(success_events())),
-				}
-			}
-
-			fn with_failed_events(mut self) -> Self {
-				self.events = format!("0x{}", hex::encode(failed_events()));
-				self
-			}
-
-			fn with_validation_outcomes(
-				self,
-				outcomes: impl IntoIterator<Item = ValidationOutcome>,
-				advance_best_block_after_rejection: bool,
-			) -> Self {
-				{
-					let mut state = self.state.lock().unwrap();
-					state.validation_outcomes = outcomes.into_iter().collect();
-					state.advance_best_block_after_rejection = advance_best_block_after_rejection;
-				}
-				self
-			}
-
-			fn method_count(&self, method: &str) -> usize {
-				self.sent
-					.lock()
-					.unwrap()
-					.iter()
-					.filter(|request| {
-						serde_json::from_str::<JsonValue>(request)
-							.ok()
-							.and_then(|value| {
-								value
-									.get("method")
-									.and_then(JsonValue::as_str)
-									.map(ToOwned::to_owned)
-							})
-							.as_deref() == Some(method)
-					})
-					.count()
-			}
-
-			fn submitted_transactions(&self) -> Vec<String> {
-				self.sent
-					.lock()
-					.unwrap()
-					.iter()
-					.filter_map(|request| {
-						let value: JsonValue = serde_json::from_str(request).ok()?;
-						(value.get("method").and_then(JsonValue::as_str) ==
-							Some("transactionWatch_v1_submitAndWatch"))
-						.then(|| value["params"][0].as_str().map(ToOwned::to_owned))
-						.flatten()
-					})
-					.collect()
-			}
-
-			fn runtime_call_count(&self, runtime_method: &str) -> usize {
-				self.sent
-					.lock()
-					.unwrap()
-					.iter()
-					.filter(|request| {
-						serde_json::from_str::<JsonValue>(request)
-							.ok()
-							.and_then(|value| {
-								(value.get("method").and_then(JsonValue::as_str) ==
-									Some("chainHead_v1_call"))
-								.then(|| {
-									value
-										.get("params")
-										.and_then(|params| params.get(2))
-										.and_then(JsonValue::as_str)
-										.map(ToOwned::to_owned)
-								})
-								.flatten()
-							})
-							.as_deref() == Some(runtime_method)
-					})
-					.count()
-			}
-		}
-
-		struct BulletinScriptedConnection {
-			state: Arc<Mutex<ScriptedState>>,
-			sent: Arc<Mutex<Vec<String>>>,
-			sender: Arc<Mutex<Option<mpsc::UnboundedSender<String>>>>,
-			receiver: Mutex<Option<mpsc::UnboundedReceiver<String>>>,
-			events: String,
-		}
-
-		impl JsonRpcConnection for BulletinScriptedConnection {
-			fn send(&self, request: String) {
-				self.sent.lock().unwrap().push(request.clone());
-				let frames =
-					scripted_frames(&request, &self.events, &mut self.state.lock().unwrap());
-				if let Some(sender) = self.sender.lock().unwrap().as_ref() {
-					for frame in frames {
-						sender.unbounded_send(frame).unwrap();
-					}
-				}
-			}
-
-			fn responses(&self) -> BoxStream<'static, String> {
-				self.receiver.lock().unwrap().take().expect("responses called once").boxed()
-			}
-
-			fn close(&self) {
-				self.sender.lock().unwrap().take();
-			}
-		}
-
-		#[async_trait]
-		impl RuntimeChainProvider for BulletinScriptedProvider {
-			async fn connect(
-				&self,
-				_genesis_hash: Vec<u8>,
-			) -> Result<Arc<dyn JsonRpcConnection>, RuntimeFailure> {
-				Ok(Arc::new(BulletinScriptedConnection {
-					state: self.state.clone(),
-					sent: self.sent.clone(),
-					sender: self.sender.clone(),
-					receiver: Mutex::new(self.receiver.lock().unwrap().take()),
-					events: self.events.clone(),
-				}))
-			}
-		}
-
-		fn scripted_frames(request: &str, events: &str, state: &mut ScriptedState) -> Vec<String> {
-			let request: JsonValue = serde_json::from_str(request).unwrap();
-			let id = request.get("id").cloned().unwrap_or(JsonValue::Null);
-			let method = request["method"].as_str().unwrap();
-			let response = |result: JsonValue| {
-				json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()
-			};
-			let follow_event = |result: JsonValue| {
-				json!({
-					"jsonrpc": "2.0",
-					"method": "chainHead_v1_followEvent",
-					"params": {"subscription": FOLLOW_ID, "result": result}
-				})
-				.to_string()
-			};
-
-			match method {
-				"chainHead_v1_follow" => vec![
-					response(json!(FOLLOW_ID)),
-					follow_event(json!({
-						"event": "initialized",
-						"finalizedBlockHashes": [BLOCK_HASH],
-						"finalizedBlockRuntime": null
-					})),
-				],
-				"chainHead_v1_header" if state.stall_headers => Vec::new(),
-				"chainHead_v1_header" => vec![response(json!(encoded_header()))],
-				"chainHead_v1_call" => {
-					state.next_operation += 1;
-					let operation_id = format!("call-{}", state.next_operation);
-					let runtime_method = request["params"][2].as_str().unwrap();
-					let validation_outcome = if runtime_method ==
-						"TaggedTransactionQueue_validate_transaction"
-					{
-						state.validation_outcomes.pop_front().unwrap_or(ValidationOutcome::Valid)
-					} else {
-						ValidationOutcome::Valid
-					};
-					let output = runtime_call_output(runtime_method, validation_outcome);
-					let mut frames = vec![
-						response(json!({"result": "started", "operationId": operation_id})),
-						follow_event(json!({
-							"event": "operationCallDone",
-							"operationId": operation_id,
-							"output": format!("0x{}", hex::encode(output))
-						})),
-					];
-					if validation_outcome == ValidationOutcome::AllowanceRejected &&
-						state.advance_best_block_after_rejection
-					{
-						state.next_best_block += 1;
-						let block_hash = scripted_block_hash(state.next_best_block);
-						let parent_block_hash =
-							std::mem::replace(&mut state.current_best_hash, block_hash.clone());
-						frames.push(follow_event(json!({
-							"event": "newBlock",
-							"blockHash": block_hash,
-							"parentBlockHash": parent_block_hash,
-							"newRuntime": null
-						})));
-						frames.push(follow_event(json!({
-							"event": "bestBlockChanged",
-							"bestBlockHash": block_hash
-						})));
-					}
-					frames
-				},
-				"transactionWatch_v1_submitAndWatch" => {
-					state.next_transaction += 1;
-					state.last_transaction = request["params"][0].as_str().map(ToOwned::to_owned);
-					let subscription_id = format!("tx-{}", state.next_transaction);
-					let outcome = state
-						.transaction_outcomes
-						.pop_front()
-						.expect("scripted transaction outcome");
-					let status = match outcome {
-						TransactionOutcome::Included => json!({
-							"event": "bestChainBlockIncluded",
-							"block": {"hash": INCLUDED_HASH, "index": "0"}
-						}),
-						TransactionOutcome::IncludedWithMissingBody => {
-							state.omit_transaction_from_next_body = true;
-							json!({
-								"event": "bestChainBlockIncluded",
-								"block": {"hash": INCLUDED_HASH, "index": "0"}
-							})
-						},
-						TransactionOutcome::Invalid |
-						TransactionOutcome::InvalidWithMissingBody => {
-							if matches!(outcome, TransactionOutcome::InvalidWithMissingBody) {
-								state.omit_transaction_from_next_body = true;
-							}
-							json!({"event": "invalid", "error": "scripted invalid"})
-						},
-						TransactionOutcome::Dropped => {
-							json!({"event": "dropped", "error": "scripted dropped"})
-						},
-						TransactionOutcome::FollowStop |
-						TransactionOutcome::FollowStopWithMissingBody => {
-							// The chainHead follow dies mid-watch instead of the
-							// watch reporting a transaction status.
-							if matches!(outcome, TransactionOutcome::FollowStopWithMissingBody) {
-								state.omit_transaction_from_next_body = true;
-							}
-							return vec![
-								response(json!(subscription_id)),
-								follow_event(json!({"event": "stop"})),
-							];
-						},
-					};
-					vec![
-						response(json!(subscription_id)),
-						json!({
-							"jsonrpc": "2.0",
-							"method": "transactionWatch_v1_watchEvent",
-							"params": {"subscription": subscription_id, "result": status}
-						})
-						.to_string(),
-					]
-				},
-				"chainHead_v1_body" => {
-					state.next_operation += 1;
-					let operation_id = format!("body-{}", state.next_operation);
-					let transaction =
-						state.last_transaction.clone().expect("submitted transaction available");
-					let transactions = if std::mem::take(&mut state.omit_transaction_from_next_body)
-					{
-						vec![]
-					} else {
-						vec![transaction]
-					};
-					vec![
-						response(json!({"result": "started", "operationId": operation_id})),
-						follow_event(json!({
-							"event": "operationBodyDone",
-							"operationId": operation_id,
-							"value": transactions
-						})),
-					]
-				},
-				"chainHead_v1_storage" => {
-					state.next_operation += 1;
-					let operation_id = format!("storage-{}", state.next_operation);
-					let key = request["params"][2][0]["key"].clone();
-					vec![
-						response(json!({"result": "started", "operationId": operation_id})),
-						follow_event(json!({
-							"event": "operationStorageItems",
-							"operationId": operation_id,
-							"items": [{"key": key, "value": events}]
-						})),
-						follow_event(json!({
-							"event": "operationStorageDone",
-							"operationId": operation_id
-						})),
-					]
-				},
-				"chainHead_v1_unpin" | "chainHead_v1_unfollow" | "transactionWatch_v1_unwatch" => {
-					vec![response(JsonValue::Null)]
-				},
-				other => {
-					vec![
-						json!({
-							"jsonrpc": "2.0",
-							"id": id,
-							"error": {"code": -32601, "message": format!("unexpected method {other}")}
-						})
-						.to_string(),
-					]
-				},
-			}
-		}
-
-		fn encoded_header() -> String {
-			let mut bytes = Vec::new();
-			[0u8; 32].encode_to(&mut bytes);
-			Compact(1u32).encode_to(&mut bytes);
-			[0u8; 32].encode_to(&mut bytes);
-			[0u8; 32].encode_to(&mut bytes);
-			Vec::<u8>::new().encode_to(&mut bytes);
-			format!("0x{}", hex::encode(bytes))
-		}
-
-		fn scripted_block_hash(index: usize) -> String {
-			format!("0x{index:064x}")
-		}
-
-		fn runtime_call_output(method: &str, validation_outcome: ValidationOutcome) -> Vec<u8> {
-			match method {
-				"Core_version" => {
-					("bulletin", "bulletin", 1u32, 1u32, 1u32, Vec::<([u8; 8], u32)>::new(), 1u32)
-						.encode()
-				},
-				"Metadata_metadata_versions" => vec![14u32].encode(),
-				"Metadata_metadata_at_version" => {
-					let mut output = vec![1];
-					Compact(u32::try_from(BULLETIN_METADATA_BYTES.len()).unwrap())
-						.encode_to(&mut output);
-					output.extend_from_slice(BULLETIN_METADATA_BYTES);
-					output
-				},
-				"AccountNonceApi_account_nonce" => 0u32.encode(),
-				"TaggedTransactionQueue_validate_transaction"
-					if validation_outcome == ValidationOutcome::Valid =>
-				{
-					let mut output = vec![0];
-					0u64.encode_to(&mut output);
-					Vec::<Vec<u8>>::new().encode_to(&mut output);
-					Vec::<Vec<u8>>::new().encode_to(&mut output);
-					64u64.encode_to(&mut output);
-					true.encode_to(&mut output);
-					output
-				},
-				"TaggedTransactionQueue_validate_transaction" => {
-					// Result::Err(TransactionValidityError::Invalid(
-					// TransactionInvalid::Payment)).
-					vec![1, 0, 1]
-				},
-				other => panic!("unexpected runtime call {other}"),
-			}
-		}
-
-		fn success_events() -> Vec<u8> {
-			system_events("ExtrinsicSuccess")
-		}
-
-		fn failed_events() -> Vec<u8> {
-			system_events("ExtrinsicFailed")
-		}
-
-		fn system_events(event_name: &str) -> Vec<u8> {
-			let metadata = ArcMetadata::from(bulletin_metadata());
-			let system = metadata.pallet_by_name("System").unwrap();
-			let event = system
-				.event_variants()
-				.unwrap()
-				.iter()
-				.find(|event| event.name == event_name)
-				.unwrap();
-			let values = ScaleValue::unnamed_composite(
-				event.fields.iter().map(|field| default_value(metadata.types(), field.ty.id)),
-			);
-			let mut fields =
-				event.fields.iter().map(|field| Field::new(field.ty.id, field.name.as_deref()));
-
-			let mut bytes = Vec::new();
-			Compact(1u32).encode_to(&mut bytes);
-			Phase::ApplyExtrinsic(0).encode_to(&mut bytes);
-			system.event_index().encode_to(&mut bytes);
-			event.index.encode_to(&mut bytes);
-			values.encode_as_fields_to(&mut fields, metadata.types(), &mut bytes).unwrap();
-			Vec::<[u8; 32]>::new().encode_to(&mut bytes);
-			bytes
-		}
-
-		fn default_value(types: &PortableRegistry, type_id: u32) -> ScaleValue {
-			let ty = types.resolve(type_id).expect("metadata type exists");
-			match &ty.type_def {
-				TypeDef::Composite(composite) => ScaleValue::unnamed_composite(
-					composite.fields.iter().map(|field| default_value(types, field.ty.id)),
-				),
-				TypeDef::Variant(variants) => {
-					let variant = variants.variants.first().expect("variant exists");
-					ScaleValue::unnamed_variant(
-						variant.name.clone(),
-						variant.fields.iter().map(|field| default_value(types, field.ty.id)),
-					)
-				},
-				TypeDef::Sequence(_) => ScaleValue::unnamed_composite([]),
-				TypeDef::Array(array) => ScaleValue::unnamed_composite(
-					(0..array.len).map(|_| default_value(types, array.type_param.id)),
-				),
-				TypeDef::Tuple(tuple) => ScaleValue::unnamed_composite(
-					tuple.fields.iter().map(|field| default_value(types, field.id)),
-				),
-				TypeDef::Primitive(primitive) => match primitive {
-					TypeDefPrimitive::Bool => ScaleValue::bool(false),
-					TypeDefPrimitive::Char => ScaleValue::char('\0'),
-					TypeDefPrimitive::Str => ScaleValue::string(""),
-					TypeDefPrimitive::U8 |
-					TypeDefPrimitive::U16 |
-					TypeDefPrimitive::U32 |
-					TypeDefPrimitive::U64 |
-					TypeDefPrimitive::U128 => ScaleValue::u128(0),
-					TypeDefPrimitive::U256 => ScaleValue::primitive(Primitive::U256([0; 32])),
-					TypeDefPrimitive::I8 |
-					TypeDefPrimitive::I16 |
-					TypeDefPrimitive::I32 |
-					TypeDefPrimitive::I64 |
-					TypeDefPrimitive::I128 => ScaleValue::i128(0),
-					TypeDefPrimitive::I256 => ScaleValue::primitive(Primitive::I256([0; 32])),
-				},
-				TypeDef::Compact(_) => ScaleValue::u128(0),
-				TypeDef::BitSequence(_) => {
-					ScaleValue::bit_sequence(subxt::ext::scale_bits::Bits::new())
-				},
-			}
-		}
-
-		fn allowance_fixture() -> BulletinAllowanceKey {
-			BulletinAllowanceKey::from_secret_bytes(
-				hex::decode(
-					"0eef5183411d40c32446bb1cbaabd70004a17af6012a577c735d054f04059208\
-                     573dfc9b6ffeb1c786a16349e70f9836876a743c31c0a7a2a70727a852eec372",
-				)
-				.unwrap(),
-			)
-			.unwrap()
-		}
-
-		fn rpc(provider: Arc<BulletinScriptedProvider>) -> BulletinRpc {
-			BulletinRpc::new(
-				ChainRuntime::new(provider, thread_per_subscription_spawner()),
-				[0x42; 32],
-			)
-			.with_allowance_block_wait_timeout(Duration::from_millis(25))
-		}
-
-		#[test]
-		fn submit_preimage_drives_subxt_happy_path() {
-			let provider = Arc::new(BulletinScriptedProvider::new([TransactionOutcome::Included]));
-			let value = b"scripted bulletin happy path";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
-
-			assert_eq!(result, preimage_key(value));
-			assert_eq!(
-				provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
-				1
-			);
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
-			assert_eq!(provider.method_count("chainHead_v1_storage"), 1);
-		}
-
-		#[test]
-		fn submit_preimage_rebuilds_once_after_node_rejection() {
-			let provider = Arc::new(BulletinScriptedProvider::new([
-				TransactionOutcome::Dropped,
-				TransactionOutcome::Included,
-			]));
-			let value = b"scripted bulletin retry";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
-
-			assert_eq!(result, preimage_key(value));
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 2);
-		}
-
-		#[test]
-		fn submit_preimage_recovers_inconsistent_inclusion_via_recheck() {
-			let provider = Arc::new(BulletinScriptedProvider::new([
-				TransactionOutcome::IncludedWithMissingBody,
-			]));
-			let value = b"scripted bulletin inconsistent inclusion";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
-
-			assert_eq!(result, preimage_key(value));
-			// The reported inclusion block was inconsistent, but the re-check
-			// finds the transaction on chain: no re-broadcast happens.
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
-			assert_eq!(provider.method_count("chainHead_v1_body"), 2);
-		}
-
-		#[test]
-		fn submit_preimage_recovers_finalized_inclusion_after_watch_stop() {
-			let provider = Arc::new(BulletinScriptedProvider::new([
-				TransactionOutcome::FollowStop,
-				TransactionOutcome::FollowStop,
-			]));
-			let value = b"scripted watch stop recovery";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
-
-			assert_eq!(result, preimage_key(value));
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
-			assert!(provider.method_count("chainHead_v1_body") >= 1);
-		}
-
-		#[test]
-		fn submit_preimage_reports_failed_dispatch_found_by_inclusion_recheck() {
-			let provider = Arc::new(
-				BulletinScriptedProvider::new([TransactionOutcome::FollowStop])
-					.with_failed_events(),
-			);
-			let error = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				b"scripted watch stop failed dispatch",
-			))
-			.unwrap_err();
-
-			let BulletinSubmitError::Subxt(error) = error else {
-				panic!("found-but-failed dispatch must surface the dispatch error, got {error}");
-			};
-			assert!(matches!(
-				error.as_ref(),
-				subxt::Error::TransactionEventsError(TransactionEventsError::ExtrinsicFailed(_))
-			));
-			// The transaction is on chain; a failed dispatch must never
-			// trigger a re-broadcast.
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
-		}
-
-		#[test]
-		fn submit_preimage_rebroadcasts_when_inclusion_recheck_finds_nothing() {
-			let provider = Arc::new(BulletinScriptedProvider::new([
-				TransactionOutcome::FollowStopWithMissingBody,
-				TransactionOutcome::Included,
-			]));
-			let value = b"scripted watch stop rebroadcast";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
-
-			assert_eq!(result, preimage_key(value));
-			let submitted = provider.submitted_transactions();
-			assert_eq!(submitted.len(), 2);
-			// The retry re-broadcasts the identical signed bytes; a fresh
-			// signing could double-store if the first broadcast landed.
-			assert_eq!(submitted[0], submitted[1]);
-		}
-
-		#[test]
-		fn submit_preimage_recovers_inclusion_when_rebroadcast_bounces() {
-			let provider = Arc::new(BulletinScriptedProvider::new([
-				TransactionOutcome::FollowStopWithMissingBody,
-				TransactionOutcome::Invalid,
-			]));
-			let value = b"scripted bounced rebroadcast recovery";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
-
-			assert_eq!(result, preimage_key(value));
-			// The bounce triggers one more re-check, which finds the first
-			// broadcast on chain; the invalid verdict never surfaces.
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 2);
-		}
-
-		#[test]
-		fn submit_preimage_reports_unverified_when_rebroadcast_bounces_unseen() {
-			let provider = Arc::new(BulletinScriptedProvider::new([
-				TransactionOutcome::FollowStopWithMissingBody,
-				TransactionOutcome::InvalidWithMissingBody,
-			]));
-			let error = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				b"scripted bounced rebroadcast unseen",
-			))
-			.unwrap_err();
-
-			assert!(matches!(error, BulletinSubmitError::RebroadcastRejected { .. }));
-			assert!(error.to_string().starts_with("inclusion unverified"));
-			// A bounced re-broadcast must never trigger a rebuilt signing:
-			// the first broadcast may be on chain out of the re-check's
-			// reach, and a fresh nonce would double-store.
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 2);
-		}
-
-		#[test]
-		fn submit_preimage_does_not_infer_allowance_rejection_from_authoring_invalidity() {
-			let provider = Arc::new(BulletinScriptedProvider::new([
-				TransactionOutcome::Invalid,
-				TransactionOutcome::Invalid,
-			]));
-			let error = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				b"scripted stale allowance",
-			))
-			.unwrap_err();
-
-			let BulletinSubmitError::Subxt(error) = error else {
-				panic!("invalid authoring status must remain a Subxt error");
-			};
-			assert!(matches!(
-				error.as_ref(),
-				subxt::Error::TransactionStatusError(TransactionStatusError::Invalid(message))
-					if message == "scripted invalid"
-			));
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 2);
-			assert_eq!(
-				provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
-				2
-			);
-		}
-
-		#[test]
-		fn submit_preimage_classifies_allowance_only_from_the_follow_up_dry_run() {
-			let provider = Arc::new(
-				BulletinScriptedProvider::new([TransactionOutcome::Invalid])
-					.with_validation_outcomes(
-						[ValidationOutcome::Valid, ValidationOutcome::AllowanceRejected],
-						false,
-					),
-			);
-			let error = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				b"scripted stale allowance",
-			))
-			.unwrap_err();
-
-			assert!(matches!(
-				error,
-				BulletinSubmitError::AllowanceRejected { phase: AllowanceRejectionPhase::DryRun }
-			));
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
-			assert_eq!(
-				provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
-				2
-			);
-		}
-
-		#[test]
-		fn submit_preimage_budget_reports_pre_broadcast_phase() {
-			let provider = Arc::new(BulletinScriptedProvider::with_options([], true));
-			let error = futures::executor::block_on(rpc(provider).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_millis(25),
-				&allowance_fixture(),
-				b"timeout",
-			))
-			.unwrap_err();
-
-			assert!(matches!(
-				&error,
-				BulletinSubmitError::Timeout { phase: SubmissionPhase::Connect }
-			));
-			assert_eq!(error.to_string(), "timeout: connect");
-		}
-
-		#[test]
-		fn dry_run_rebuilds_at_a_new_best_block_then_submits() {
-			let provider = Arc::new(
-				BulletinScriptedProvider::new([TransactionOutcome::Included])
-					.with_validation_outcomes(
-						[ValidationOutcome::AllowanceRejected, ValidationOutcome::Valid],
-						true,
-					),
-			);
-			let value = b"scripted allowance propagation";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
-
-			assert_eq!(result, preimage_key(value));
-			assert_eq!(
-				provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
-				2
-			);
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
-		}
-
-		#[test]
-		fn dry_run_propagation_block_wait_timeout_remains_an_allowance_rejection() {
-			let provider = Arc::new(
-				BulletinScriptedProvider::new([])
-					.with_validation_outcomes([ValidationOutcome::AllowanceRejected], false),
-			);
-			let error = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(2),
-				&allowance_fixture(),
-				b"scripted propagation block wait timeout",
-			))
-			.unwrap_err();
-
-			assert!(matches!(
-				error,
-				BulletinSubmitError::AllowanceRejected { phase: AllowanceRejectionPhase::DryRun }
-			));
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 0);
-		}
-
-		#[test]
-		fn dry_run_keeps_polling_past_the_old_block_count_while_blocks_are_fast() {
-			// Regression: Bulletin's best-block cadence dropped, so a
-			// fixed-count propagation budget (3 blocks) collapsed from the
-			// intended ~18s to ~3s and gave up before a freshly-claimed
-			// allowance became visible to the dry-run. The wait is now bound
-			// by wall-clock, so a rapid stream of rejections keeps polling
-			// until the allowance propagates.
-			// Six is well past the old three-block give-up cap.
-			let rejections_past_old_limit = 6;
-			let mut validation_outcomes =
-				vec![ValidationOutcome::AllowanceRejected; rejections_past_old_limit];
-			validation_outcomes.push(ValidationOutcome::Valid);
-			let provider = Arc::new(
-				BulletinScriptedProvider::new([TransactionOutcome::Included])
-					.with_validation_outcomes(validation_outcomes, true),
-			);
-			let value = b"scripted fast-block allowance propagation";
-			let result = futures::executor::block_on(rpc(provider.clone()).submit_preimage(
-				&CallContext::default(),
-				Instant::now() + Duration::from_secs(30),
-				&allowance_fixture(),
-				value,
-			))
-			.unwrap();
-
-			assert_eq!(result, preimage_key(value));
-			assert_eq!(
-				provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
-				rejections_past_old_limit + 1
-			);
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 1);
-		}
-
-		#[test]
-		fn dry_run_propagation_stops_once_the_wall_clock_window_elapses() {
-			// A zero-length window makes the first rejection exceed the budget
-			// immediately, so a never-propagating allowance is treated as real
-			// after one dry-run rather than looping until the outer deadline.
-			let provider = Arc::new(
-				BulletinScriptedProvider::new([])
-					.with_validation_outcomes([ValidationOutcome::AllowanceRejected; 4], true),
-			);
-			let error = futures::executor::block_on(
-				rpc(provider.clone())
-					.with_allowance_propagation_window(Duration::ZERO)
-					.submit_preimage(
-						&CallContext::default(),
-						Instant::now() + Duration::from_secs(2),
-						&allowance_fixture(),
-						b"scripted propagation window elapsed",
-					),
-			)
-			.unwrap_err();
-
-			assert!(matches!(
-				error,
-				BulletinSubmitError::AllowanceRejected { phase: AllowanceRejectionPhase::DryRun }
-			));
-			assert_eq!(
-				provider.runtime_call_count("TaggedTransactionQueue_validate_transaction"),
-				1
-			);
-			assert_eq!(provider.method_count("transactionWatch_v1_submitAndWatch"), 0);
-		}
-	}
-}
+mod tests;

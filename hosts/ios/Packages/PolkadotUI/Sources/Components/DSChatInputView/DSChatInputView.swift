@@ -13,6 +13,8 @@ final class DSChatInputView: UIView {
         static let stackSpacing: CGFloat = DSSpacings.small
         static let fieldLeading: CGFloat = DSSpacings.mediumIncreased
         static let textVerticalInset: CGFloat = DSSpacings.extraMedium
+        static let counterTopSpacing: CGFloat = DSSpacings.extraTiny
+        static let counterBottomInset: CGFloat = DSSpacings.small
         static let minHeight: CGFloat = 64
     }
 
@@ -26,6 +28,7 @@ final class DSChatInputView: UIView {
 
     let textView = UITextView()
     private let placeholderLabel = Label()
+    private let characterCounterLabel = Label()
     private let sendButton: DSIconButton = .chatInputSend
     private let attachmentButton = DSIconButton.chatInputLeading(icon: UIImage(resource: .icon24Plus))
     private let transferButton = DSIconButton.chatInputLeading(icon: UIImage(resource: .icon24Dollar))
@@ -118,6 +121,7 @@ private extension DSChatInputView {
 
         configureTextView()
         configurePlaceholder()
+        configureCharacterCounter()
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(focusText))
         // Don't cancel touches in subviews, otherwise the gesture swallows the send
@@ -156,6 +160,10 @@ private extension DSChatInputView {
         containerContentView.addSubview(textView)
         containerContentView.addSubview(placeholderLabel)
         containerContentView.addSubview(sendButton)
+
+        if appliedConfiguration.showsCharacterCounter {
+            containerContentView.addSubview(characterCounterLabel)
+        }
 
         bannerView.alpha = 0
         bannerView.onClose = { [weak self] in
@@ -213,6 +221,12 @@ private extension DSChatInputView {
         placeholderLabel.numberOfLines = 1
     }
 
+    func configureCharacterCounter() {
+        characterCounterLabel.typography = .captionMedium
+        characterCounterLabel.textColor = UIColor.fgTertiary
+        characterCounterLabel.textAlignment = .right
+    }
+
     func setupConstraints() {
         bannerView.snp.makeConstraints {
             $0.top.leading.trailing.equalToSuperview()
@@ -229,7 +243,11 @@ private extension DSChatInputView {
             textViewTopConstraint = $0.top.equalTo(bannerView.snp.bottom)
                 .offset(Metrics.textVerticalInset)
                 .constraint
-            $0.bottom.equalToSuperview().inset(Metrics.textVerticalInset)
+            if appliedConfiguration.showsCharacterCounter {
+                $0.bottom.equalTo(characterCounterLabel.snp.top).offset(-Metrics.counterTopSpacing)
+            } else {
+                $0.bottom.equalToSuperview().inset(Metrics.textVerticalInset)
+            }
             $0.leading.equalToSuperview().offset(Metrics.fieldLeading)
 
             textViewTrailingToButton = $0.trailing.equalTo(sendButton.snp.leading)
@@ -247,6 +265,14 @@ private extension DSChatInputView {
             $0.leading.equalTo(textView).offset(2)
             $0.centerY.equalTo(textView)
             $0.trailing.lessThanOrEqualTo(textView)
+        }
+
+        if appliedConfiguration.showsCharacterCounter {
+            characterCounterLabel.snp.makeConstraints {
+                $0.leading.greaterThanOrEqualTo(textView)
+                $0.trailing.equalTo(textView)
+                $0.bottom.equalToSuperview().inset(Metrics.counterBottomInset)
+            }
         }
 
         sendButton.snp.makeConstraints {
@@ -275,6 +301,7 @@ private extension DSChatInputView {
         )
 
         updateTextViewMaxHeight()
+        updateCharacterCounter()
         updatePlaceholderVisibility()
         updateSendButtonState()
         updateTextViewScrolling()
@@ -346,6 +373,7 @@ private extension DSChatInputView {
 
         textView.text = ""
         updateSendButtonState()
+        updateCharacterCounter()
         updatePlaceholderVisibility()
         updateTextViewScrolling()
 
@@ -364,6 +392,12 @@ private extension DSChatInputView {
             sendButton.isHidden = true
             textViewTrailingToButton?.isActive = false
         }
+    }
+
+    func updateCharacterCounter() {
+        guard appliedConfiguration.showsCharacterCounter else { return }
+
+        characterCounterLabel.text = "\(textView.text.count)/\(appliedConfiguration.maxCharacterCount)"
     }
 
     func updatePlaceholderVisibility() {
@@ -431,6 +465,7 @@ extension DSChatInputView: UITextViewDelegate {
     }
 
     func textViewDidChange(_: UITextView) {
+        updateCharacterCounter()
         updatePlaceholderVisibility()
         updateSendButtonState()
         updateTextViewScrolling()
@@ -489,6 +524,7 @@ private extension DSChatInputView {
 
         if populateTextField {
             textView.text = text
+            updateCharacterCounter()
             updatePlaceholderVisibility()
             updateSendButtonState()
             updateTextViewScrolling()
@@ -510,6 +546,7 @@ private extension DSChatInputView {
 
         if wasEditing {
             textView.text = ""
+            updateCharacterCounter()
             updatePlaceholderVisibility()
             updateSendButtonState()
             updateTextViewScrolling()
@@ -567,6 +604,14 @@ private extension DSChatInputView {
         )
         view.backgroundColor = .bgSurfaceMain
         view.textView.text = ""
+        return view
+    }
+
+    @available(iOS 26.0, *)
+    #Preview("Chat request") {
+        let view = DSChatInputView(configuration: .chatRequest(), handler: nil)
+        view.backgroundColor = .bgSurfaceMain
+        view.textView.text = "Hi! I'd like to add you as a contact"
         return view
     }
 

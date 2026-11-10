@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.common.CoinAmountBre
 import io.paritytech.polkadotapp.feature_coinage_api.domain.common.CoinageBalanceConversionContext
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.ValueExponent
 import java.math.BigDecimal
+import java.math.BigInteger
 
 class RealCoinAmountBreakdownContext(
     private val precision: Int,
@@ -34,13 +35,19 @@ class RealCoinAmountBreakdownContext(
 
     override fun roundDownAmount(amount: BigDecimal): BigDecimal {
         val planksAmount = amount.planksFromAmount(precision).value
-        val minAllowedMultiplier = allowedExponents.minOf { it.valueInPlanks() }.value
+        val minAllowedMultiplier = smallestCoinInPlanks()
 
         val roundedPlanks = planksAmount.divide(minAllowedMultiplier)
             .multiply(minAllowedMultiplier)
 
         return roundedPlanks.intoBalance().amountFromPlanks(precision)
     }
+
+    override fun remainderAfterBreakdown(amount: BigDecimal): Balance {
+        return (amount.planksFromAmount(precision).value % smallestCoinInPlanks()).intoBalance()
+    }
+
+    private fun smallestCoinInPlanks(): BigInteger = allowedExponents.minOf { it.valueInPlanks() }.value
 
     private fun ValueExponent.valueInPlanks(): Balance {
         return coinageBalanceConvertionContext.formatExponentToBalance(this)

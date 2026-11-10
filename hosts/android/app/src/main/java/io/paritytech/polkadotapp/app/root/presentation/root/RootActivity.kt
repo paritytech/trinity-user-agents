@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.app.root.presentation.root
 
 import android.content.Intent
+import android.content.res.Resources
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -9,9 +10,13 @@ import android.view.ViewGroup
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.annotation.StyleRes
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.graphics.Insets
@@ -20,6 +25,7 @@ import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import androidx.navigation.fragment.DialogFragmentNavigator
 import androidx.navigation.fragment.NavHostFragment
 import dagger.hilt.android.AndroidEntryPoint
 import io.paritytech.polkadotapp.app.BuildConfig
@@ -27,8 +33,17 @@ import io.paritytech.polkadotapp.app.R
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
 import io.paritytech.polkadotapp.app.root.presentation.debug.reportIssue.DebugScreenshotObserver
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.DevResetOverlay
+import io.paritytech.polkadotapp.app.root.presentation.root.compose.IdBar
+import io.paritytech.polkadotapp.app.root.presentation.root.compose.PaymentsSetupNotice
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.RootNavBarHost
+import io.paritytech.polkadotapp.app.root.presentation.root.compose.StatusBarRow
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.chatoverlay.ChatExtensionOverlayHost
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
+import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_MARKER
+import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID
+import io.paritytech.polkadotapp.common.data.telemetry.isFreshNotificationLaunch
+import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatter
@@ -39,14 +54,21 @@ import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAs
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrandProvider
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.presentation.screens.ObserveViewModelEvents
+import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarScrollHolder
+import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarTitleHolder
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
+import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.observe
+import io.paritytech.polkadotapp.common.utils.observeWhenCreated
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBar
+import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthBarDefaults
+import io.paritytech.polkadotapp.feature_connection_status_api.presentation.ChainHealthIndicatorsWithTooltip
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import kotlin.math.roundToInt
+import io.paritytech.polkadotapp.common.R as RCommon
 
 @AndroidEntryPoint
 class RootActivity : AppCompatActivity(R.layout.activity_root) {
@@ -67,6 +89,18 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
 
     @Inject
     lateinit var router: RootRouter
+
+    @Inject
+    lateinit var statusBarScrollHolder: StatusBarScrollHolder
+
+    @Inject
+    lateinit var statusBarTitleHolder: StatusBarTitleHolder
+
+    @Inject
+    lateinit var hostEventOriginProvider: HostEventOriginProvider
+
+    @Inject
+    lateinit var hostEventCapture: HostEventCapture
 
     private val viewModel by viewModels<RootViewModel>()
 
@@ -89,9 +123,15 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
         navigationHolder.attach(navController)
         contextManager.attachActivity(this)
 
-        intent?.let(::processIntent)
+        intent?.let {
+            if (isFreshNotificationLaunch(isRestored = savedInstanceState != null, intentFlags = it.flags)) {
+                recordProductNotificationTap(it)
+            }
+            processIntent(it)
+        }
 
         handleDeeplinkOutcome()
+        syncSplashScreenTheme()
         if (BuildConfig.DEBUG) {
             setupDevResetOverlay()
         }
@@ -102,12 +142,14 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
         setupAppNotificationOverlay()
 
         setupChatExtensionOverlay()
+        setupPaymentsSetupNotice()
         setupChainHealthBar()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
 
+        recordProductNotificationTap(intent)
         processIntent(intent)
     }
 
@@ -116,6 +158,14 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
 
         contextManager.detachActivity()
         navigationHolder.detach()
+    }
+
+    private fun syncSplashScreenTheme() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+
+        viewModel.appTheme.observeWhenCreated { theme ->
+            splashScreen.setSplashScreenTheme(theme.splashScreenTheme)
+        }
     }
 
     private fun handleDeeplinkOutcome() {
@@ -166,22 +216,42 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
     }
 
     private fun setupChainHealthBar() {
+        val navHost = findViewById<View>(R.id.rootNavHost)
+
         findViewById<ComposeView>(R.id.connectionStatusBanner).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
                 val model by viewModel.chainsHealth.collectAsStateWithLifecycle()
                 val tooltipVisible by viewModel.isNetworkStatusTooltipVisible.collectAsStateWithLifecycle()
+                val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
+                val currentEntry by navController.currentBackStackEntryFlow.collectAsStateWithLifecycle(initialValue = null)
+                val scroll = statusBarScrollHolder.state
+                val titleShown = statusBarTitleHolder.isShown && currentEntry?.destination !is DialogFragmentNavigator.Destination
+
+                LaunchedEffect(currentEntry?.id, currentTab) { statusBarScrollHolder.reset() }
+
                 PolkadotTheme {
-                    ChainHealthBar(
-                        model = model,
-                        tooltipVisible = tooltipVisible,
-                        onTooltipDismiss = viewModel::dismissNetworkStatusTooltip,
-                    )
+                    IdBar(
+                        scroll = scroll,
+                        backdropSource = navHost,
+                        showsScrim = titleShown,
+                        pinned = tooltipVisible,
+                    ) {
+                        StatusBarRow(
+                            title = { if (titleShown) statusBarTitleHolder.Title() },
+                            indicators = {
+                                ChainHealthIndicatorsWithTooltip(
+                                    model = model,
+                                    tooltipVisible = tooltipVisible,
+                                    onTooltipDismiss = viewModel::dismissNetworkStatusTooltip,
+                                )
+                            },
+                        )
+                    }
                 }
             }
         }
 
-        val navHost = findViewById<View>(R.id.rootNavHost)
         val barHeightPx = (ChainHealthBarDefaults.ContentHeight.value * resources.displayMetrics.density).roundToInt()
 
         // Keyboard animation frames reach the subtree through this callback and never through the apply
@@ -214,12 +284,13 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
     }
 
     private fun setupRootNavBar() {
+        val navHost = findViewById<View>(R.id.rootNavHost)
         val composeView = ComposeView(this).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
             setContent {
                 val chainsHealth by viewModel.chainsHealth.collectAsStateWithLifecycle()
                 PolkadotTheme {
-                    RootNavBarHost(navController = navController, chainsHealth = chainsHealth)
+                    RootNavBarHost(navController = navController, chainsHealth = chainsHealth, backdropSource = navHost)
                 }
             }
         }
@@ -243,9 +314,55 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
         addContentView(composeView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     }
 
+    private fun setupPaymentsSetupNotice() {
+        val composeView = ComposeView(this).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+            setContent {
+                val isVisible by viewModel.isPaymentsSetupNoticeVisible.collectAsStateWithLifecycle()
+                PaymentsSetupNotice(
+                    modifier = Modifier.fillMaxSize(),
+                    isVisible = isVisible,
+                    onDismissClick = viewModel::dismissPaymentsSetupNotice,
+                )
+            }
+        }
+        addContentView(composeView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    private fun recordProductNotificationTap(intent: Intent) {
+        if (!FeatureOption.HOST_TELEMETRY.isEnabled) return
+
+        // Reading extras unparcels an intent any app can send this exported activity.
+        runCatching {
+            if (!intent.getBooleanExtra(PRODUCT_NOTIFICATION_INTENT_MARKER, false)) return@runCatching
+
+            // One tap is one event, whatever later hands this intent back to the activity.
+            intent.removeExtra(PRODUCT_NOTIFICATION_INTENT_MARKER)
+
+            // The extras are reachable from any app, so only a name the core accepts is reported.
+            val productId = intent.getStringExtra(PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID)
+                ?.let { ProductId.parse(it).getOrNull() }
+                ?: return@runCatching
+
+            hostEventCapture.capture {
+                hostEventOriginProvider.current().productNotificationTapped(productId.value)
+            }
+        }.logFailure("Failed to capture product notification tapped event")
+    }
+
     private fun processIntent(intent: Intent) {
         intent.data?.let {
             viewModel.handleDeepLink(it)
         }
     }
 }
+
+@get:StyleRes
+private val PolkadotAppTheme.splashScreenTheme: Int
+    get() = when (this) {
+        PolkadotAppTheme.BerlinNight -> Resources.ID_NULL
+        PolkadotAppTheme.BerlinDay -> RCommon.style.Theme_PolkadotApp_Splash_BerlinDay
+        PolkadotAppTheme.Lisbon -> RCommon.style.Theme_PolkadotApp_Splash_Lisbon
+        PolkadotAppTheme.Malta -> RCommon.style.Theme_PolkadotApp_Splash_Malta
+        PolkadotAppTheme.Tokyo -> RCommon.style.Theme_PolkadotApp_Splash_Tokyo
+    }

@@ -1,0 +1,50 @@
+//! Whether items can be spent from a purse: they hold an NFT there and
+//! nothing spends them.
+
+use std::collections::BTreeSet;
+
+use rusqlite::Connection;
+
+use super::{
+	dao::{self, KeyStanding},
+	keys::{ItemKey, ItemSlot},
+	purse::PurseId,
+};
+use crate::store::DbError;
+
+/// An item that holds an NFT and that nothing spends.
+pub struct IdleItem {
+	/// The item's key.
+	pub key: ItemKey,
+	/// Where the key sits in the derivation tree.
+	pub slot: ItemSlot,
+}
+
+/// Why an item cannot be spent from a purse.
+#[derive(Debug, thiserror::Error)]
+pub enum ItemRefusal {
+	/// The item is not in the purse, or holds no NFT.
+	#[error("item {} is not held in the purse", hex::encode(.0.0))]
+	NotFound(ItemKey),
+	/// The item is handed off or spent by a live transaction.
+	#[error("item {} is in use", hex::encode(.0.0))]
+	Unavailable(ItemKey),
+}
+
+/// Each of `items` with its slot, in order, when every one is
+/// idle in `purse`. Otherwise refuses the first one that is not. Reads every
+/// standing in one query.
+pub fn idle_items<E: From<ItemRefusal> + From<DbError>>(
+	conn: &Connection,
+	purse: PurseId,
+	items: &BTreeSet<ItemKey>,
+) -> Result<Vec<IdleItem>, E> {
+	let keys: Vec<ItemKey> = items.iter().copied().collect();
+	let standings = dao::key_standings(conn, purse, &keys)?;
+	let idle_item = |key: &ItemKey| match standings.get(key) {
+		Some(KeyStanding::Idle { slot, .. }) => Ok(IdleItem { key: *key, slot: *slot }),
+		Some(KeyStanding::Spent) => Err(ItemRefusal::Unavailable(*key).into()),
+		None => Err(ItemRefusal::NotFound(*key).into()),
+	};
+	keys.iter().map(idle_item).collect()
+}

@@ -5,7 +5,12 @@ import Products
 protocol ModuleNavigating: AnyObject {
     func openChat(_ model: ChatOpenModel)
     func presentModally(_ viewController: UIViewController)
+    /// Clears what covers the tabs, selects the Wallet tab and hands over its
+    /// stack, saying whether the Wallet was already the tab on screen.
+    func openWallet(then show: @escaping @MainActor (UINavigationController, _ wasOnScreen: Bool) -> Void)
     func openProduct(page: ProductPage)
+    func presentProduct(page: ProductPage)
+    func openPocket()
     func openScanPanel()
 }
 
@@ -24,11 +29,61 @@ extension ModuleNavigator: ModuleNavigating {
         UIWindow.topWindow?.topmostViewController?.present(navigationController, animated: true)
     }
 
+    func openWallet(then show: @escaping @MainActor (UINavigationController, _ wasOnScreen: Bool) -> Void) {
+        guard
+            let view = UIApplication.shared.mainTabBarController,
+            let wallet = view.view(for: .wallet) as? UINavigationController
+        else { return }
+
+        let wasOnScreen = view.container.selectedController === wallet
+        PresentedPageDismissal.dismissingPresented(on: view, unless: Self.isPinnedPresentation) { [weak view] in
+            view?.select(tab: .wallet)
+            show(wallet, wasOnScreen)
+        }
+    }
+
     func openChat(_ model: ChatOpenModel) {
         guard let view = UIApplication.shared.mainTabBarController else {
             return
         }
 
+        PresentedPageDismissal.dismissingPresented(on: view, unless: Self.isPinnedPresentation) { [weak view] in
+            guard let view else {
+                return
+            }
+            Self.showChat(model, in: view)
+        }
+    }
+
+    func openProduct(page: ProductPage) {
+        UIApplication.shared.mainTabBarController?.openProduct(page: page)
+    }
+
+    func presentProduct(page: ProductPage) {
+        UIApplication.shared.mainTabBarController?.presentProduct(page: page)
+    }
+
+    /// An open card stays open, as the Pocket shows it.
+    func openPocket() {
+        openWallet { wallet, _ in
+            guard !(wallet.topViewController is PocketCardScreenViewController) else { return }
+
+            wallet.popToRootViewController(animated: true)
+        }
+    }
+
+    func openScanPanel() {
+        UIApplication.shared.mainTabBarController?.openScanPanel()
+    }
+}
+
+@MainActor
+private extension ModuleNavigator {
+    static func isPinnedPresentation(_ controller: UIViewController) -> Bool {
+        controller is any LocalAuthViewProtocol
+    }
+
+    static func showChat(_ model: ChatOpenModel, in view: MainTabBarViewController) {
         view.select(tab: .chat)
         let tabNavigation = view.view(for: .chat) as? UINavigationController
 
@@ -60,17 +115,5 @@ extension ModuleNavigator: ModuleNavigating {
             return
         }
         tabNavigation.viewControllers = [rootViewController, topViewController]
-    }
-
-    func openProduct(page: ProductPage) {
-        guard let tabBar = UIWindow.keyWindow?.rootViewController as? MainTabBarViewController else {
-            return
-        }
-
-        tabBar.openProduct(page: page)
-    }
-
-    func openScanPanel() {
-        UIApplication.shared.mainTabBarController?.openScanPanel()
     }
 }

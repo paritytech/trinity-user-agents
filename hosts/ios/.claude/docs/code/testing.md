@@ -28,7 +28,8 @@ bundle exec fastlane run_unit_tests
 PR pipeline (`.github/workflows/pr.yml`):
 1. **Build** (macos-26) — build with Fastlane (DevCI config)
 2. **Test** (macos-26-xlarge) — unit tests
-3. Skip with `skip-ci` label or `release/` branch prefix
+3. **Hardcoded strings** (ubuntu-latest) — `Runscripts/check_hardcoded_strings.py` through reviewdog; fails on hardcoded UI strings in lines the PR adds
+4. Skip with `skip-ci` label or `release/` branch prefix
 
 ## Test Patterns
 

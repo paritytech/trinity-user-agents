@@ -32,25 +32,6 @@
             image: UIImage(systemName: "1.circle.fill")!
         )
 
-        let widgetView = GameWidget(viewModel: GameWidgetViewModel(
-            actionViewModels: [],
-            stateViewModel: .init(
-                state: .registered(gameDate: Date()),
-                countdownFormatter: CountdownFmt()
-            ),
-            upgradeUsernameViewModel: nil
-        ))
-
-        let voteMessage = MobRuleMessageConfiguration(
-            mediaPreviewProvider: StaticImagePreviewProvider(image: .actions),
-            tattooPreviewProvider: StaticImagePreviewProvider(image: .actions),
-            type: "Photo evidence",
-            details: longDetails,
-            layout: .compact(
-                configuration: .init(isSensitive: false, isArchived: false)
-            )
-        )
-
         let layout = ChatViewLayout()
         let systemMessages: [any HashableContentConfiguration] = [
             ChatInfoMessageConfiguration.youAdded(username: "username.77"),
@@ -63,8 +44,7 @@
             message3,
             message4,
             textImage,
-            imageOnly,
-            voteMessage
+            imageOnly
         ]
         let msgs: [IdentifiableAnyContentConfiguration<String>] = systemMessages.map {
             IdentifiableAnyContentConfiguration(UUID().uuidString, $0)
@@ -78,7 +58,7 @@
             chatInputConfiguration: ChatInputViewConfiguration.chat(canPay: true, canAttachFile: true),
             scrollDownConfiguration: .init(available: true, unreadCount: 1),
             sections: [.init(identifier: "Section 1", dateText: "Today", messages: msgs)],
-            footerConfiguration: SwiftUIContentConfiguration(view: widgetView)
+            footerConfiguration: nil
         )
         layout.bind(viewModel: viewModel)
 

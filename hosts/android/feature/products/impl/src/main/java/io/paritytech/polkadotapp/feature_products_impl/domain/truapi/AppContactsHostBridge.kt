@@ -14,6 +14,7 @@ import kotlinx.coroutines.runBlocking
 import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /**
@@ -27,7 +28,7 @@ import javax.inject.Inject
  */
 class AppContactsHostBridge @Inject constructor(
     private val directory: ContactDirectory,
-    private val pickLauncher: TrUAPIContactPickLauncher,
+    private val picks: TrUAPIContactPicks,
 ) : ContactsHostBridge {
     private class HandleIndex(val handleKey: ByteArray, val accountsByHandle: Map<DataByteArray, ByteArray>)
 
@@ -77,7 +78,7 @@ class AppContactsHostBridge @Inject constructor(
      * Resolution does not go through here: a handle minted earlier still
      * resolves, because that goes through [contacts] alone.
      */
-    override suspend fun pickContact(productId: String): HostContactPick {
+    override suspend fun pickContact(productId: ProductId): HostContactPick {
         val options = directory.getContacts().map { contact ->
             ContactPickOption(
                 account = contact.accountId.value,
@@ -87,7 +88,7 @@ class AppContactsHostBridge @Inject constructor(
 
         if (options.isEmpty()) return HostContactPick.NoContacts
 
-        val picked = pickLauncher.awaitPick(productId, options)
+        val picked = picks.ask(ContactPickRequest(productId, options))
             ?: return HostContactPick.Dismissed
 
         return HostContactPick.Picked(picked.account)
@@ -122,4 +123,3 @@ internal fun Flow<List<Contact>>.contactRemovals(): Flow<Unit> = flow {
         if (previous != null && !current.containsAll(previous)) emit(Unit)
     }
 }
-

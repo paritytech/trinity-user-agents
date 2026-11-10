@@ -1,6 +1,8 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.usecase
 
 import io.novasama.substrate_sdk_android.encrypt.keypair.Keypair
+import io.paritytech.polkadotapp.chains.multiNetwork.connection.ChainConnectionRefCounter
+import io.paritytech.polkadotapp.chains.multiNetwork.connection.holdingConnection
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.domain.model.AccountId
@@ -26,9 +28,12 @@ import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.DurableTxStatus
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.produceIn
@@ -46,6 +51,7 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
     private val assetValueUseCase: CoinageAssetValueUseCase,
     private val submissionUseCase: CoinageTransferSubmissionUseCase,
     private val timeProvider: TimeProvider,
+    private val chainConnectionRefCounter: ChainConnectionRefCounter,
 ) : ClaimReceivedCoinsUseCase {
     private companion object {
         /**
@@ -58,6 +64,8 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
          * pass holds out for a complete set — never how long claiming goes on, which is the caller's window.
          */
         val DETECTION_TIMEOUT = 30.seconds
+
+        const val CONNECTION_LABEL = "CoinClaim"
     }
 
     override fun claim(
@@ -76,6 +84,7 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
         val onChain = subscribeCoinInfos(keys.keys.toList()).produceIn(this)
 
         var settled: List<CoinageTransactionState>
+        var chainAnswered = false
 
         while (true) {
             settled = awaitKnownOperationsSettled(groupId, keys.keys, report = ::send)
@@ -87,19 +96,25 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
             // Every coin has a claim, and none of them can change any more. Claim finished.
             if (unregistered.isEmpty()) break
 
-            val claimable = awaitOnChainWithTimeout(onChain, unregistered)
+            val look = awaitOnChainWithTimeout(onChain, unregistered)
+            if (look != null) chainAnswered = true
+
+            val claimable = look.orEmpty()
 
             when {
                 // Coin detected => register its claim
                 claimable.isNotEmpty() -> submit(keys, claimable, groupId, retryUntil)
 
-                // Timeout to limit claim of remaining coins in case they never appeared on-chain
-                timeProvider.now() >= retryUntil -> {
+                // Timeout to limit claim of remaining coins in case they never appeared on-chain.
+                // A chain that never answered says nothing about whether they did
+                chainAnswered && timeProvider.now() >= retryUntil -> {
                     coinageLogW("Claim window closed group=${groupId.value} unregistered=${unregistered.size}")
                     break
                 }
 
-                else -> coinageLogD("Claim still waiting group=${groupId.value} unregistered=${unregistered.size}")
+                else -> coinageLogD(
+                    "Claim still waiting group=${groupId.value} unregistered=${unregistered.size} chainAnswered=$chainAnswered"
+                )
             }
         }
 
@@ -137,7 +152,7 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
 
     /**
      * The next look at the chain that shows every coin still owed to us, or the best look taken within
-     * [DETECTION_TIMEOUT].
+     * [DETECTION_TIMEOUT] — null when the chain gave none at all.
      *
      * Holding out for all of them is deliberate: submitting while the sender's split is still landing is
      * what gets a claim refused. Settling for the last look is equally deliberate — a coin that never
@@ -147,17 +162,18 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
     private suspend fun awaitOnChainWithTimeout(
         onChain: ReceiveChannel<Map<AccountId, OnChainCoinInfo>>,
         unclaimed: Set<AccountId>,
-    ): Map<AccountId, OnChainCoinInfo> {
-        var latest = emptyMap<AccountId, OnChainCoinInfo>()
+    ): Map<AccountId, OnChainCoinInfo>? {
+        var latest: Map<AccountId, OnChainCoinInfo>? = null
 
         withTimeoutOrNull(DETECTION_TIMEOUT) {
             for (look in onChain) {
                 // The newest look wins outright, even when it holds fewer coins than the one before: a fork
                 // can take a coin away, and claiming against the widest view ever seen would submit against
                 // one the chain no longer has.
-                latest = look.filterKeys { it in unclaimed }
+                val current = look.filterKeys { it in unclaimed }
+                latest = current
 
-                if (latest.keys.containsAll(unclaimed)) break
+                if (current.keys.containsAll(unclaimed)) break
             }
         }
 
@@ -280,14 +296,26 @@ class RealClaimReceivedCoinsUseCase @Inject constructor(
         }
     }
 
-    private suspend fun subscribeCoinInfos(accountIds: List<AccountId>): Flow<Map<AccountId, OnChainCoinInfo>> =
-        coinRepository.subscribeCoinsInfoFor(chainAssetProvider.chainId(), accountIds)
-            .mapNotNull { read ->
-                read.logFailure("Can't fetch info for coins")
-                    // Important: ignore failed reads via mapNotNull
-                    .getOrNull()
-                    ?.filterValuesNotNull()
+    // A failed read ends the subscription while a claim may watch for days, so subscribe again. The connection
+    // is held because claims run in the background, where a socket nothing holds is paused and never answers
+    private fun subscribeCoinInfos(accountIds: List<AccountId>): Flow<Map<AccountId, OnChainCoinInfo>> {
+        val chainId = chainAssetProvider.chainId()
+
+        return flow {
+            while (true) {
+                val reads = coinRepository.subscribeCoinsInfoFor(chainId, accountIds)
+                    .mapNotNull { read ->
+                        read.logFailure("Can't fetch info for coins")
+                            // Important: ignore failed reads via mapNotNull
+                            .getOrNull()
+                            ?.filterValuesNotNull()
+                    }
+
+                emitAll(reads)
+                delay(DETECTION_TIMEOUT)
             }
+        }.holdingConnection(chainConnectionRefCounter, chainId, CONNECTION_LABEL)
+    }
 
     private fun Keypair.accountId(): AccountId = publicKey.toDataByteArray()
 }

@@ -7,19 +7,22 @@ struct NotificationContentResult {
     let body: String
     let accountId: AccountId?
     let badgeCount: Int?
+    let isFromBlockedContact: Bool
 
     init(
         title: String,
         subtitle: String? = nil,
         body: String,
         accountId: AccountId? = nil,
-        badgeCount: Int? = nil
+        badgeCount: Int? = nil,
+        isFromBlockedContact: Bool = false
     ) {
         self.title = title
         self.subtitle = subtitle
         self.body = body
         self.accountId = accountId
         self.badgeCount = badgeCount
+        self.isFromBlockedContact = isFromBlockedContact
     }
 }
 
@@ -30,7 +33,8 @@ extension NotificationContentResult {
             subtitle: subtitle,
             body: body,
             accountId: accountId,
-            badgeCount: badgeCount
+            badgeCount: badgeCount,
+            isFromBlockedContact: isFromBlockedContact
         )
     }
 
@@ -48,6 +52,16 @@ extension NotificationContentResult {
             title: String(localized: .commonTitle),
             subtitle: nil,
             body: String(localized: .bestAttemptMessage)
+        )
+    }
+
+    static func createBlockedContactResult(badgeCount: Int?) -> NotificationContentResult {
+        .init(
+            title: String(localized: .commonTitle),
+            subtitle: nil,
+            body: String(localized: .blockedContactMessage),
+            badgeCount: badgeCount,
+            isFromBlockedContact: true
         )
     }
 }

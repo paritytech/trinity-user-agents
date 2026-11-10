@@ -169,7 +169,7 @@ private extension DeviceSyncExchange {
     }
 
     func observeMessageChanges() async {
-        let multideviceSignKeyIds = dependencies.messageExchangeModeProvider.multideviceSignKeyIds
+        let multideviceSignKeyIds = dependencies.ownSignKeyIds
 
         guard !multideviceSignKeyIds.isEmpty else { return }
 

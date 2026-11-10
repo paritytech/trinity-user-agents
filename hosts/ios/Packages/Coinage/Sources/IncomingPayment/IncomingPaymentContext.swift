@@ -29,12 +29,10 @@ actor IncomingPaymentContext {
 // MARK: - Scheduling
 
 extension IncomingPaymentContext {
-    func setup(_ setupClosure: () throws -> Task<Void, Never>?) rethrows {
-        // Validate/create the replacement before cancelling the current driver. A stale lifecycle
-        // operation must not cancel a newer setup that already reached this actor.
-        let replacement = try setupClosure()
+    func setup(_ setupClosure: () -> Task<Void, Never>?) {
         lifeCycleTask?.cancel()
-        lifeCycleTask = replacement
+        lifeCycleTask = nil
+        lifeCycleTask = setupClosure()
     }
 
     func throttleIfNeeded() {

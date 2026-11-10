@@ -6,7 +6,7 @@
 //! `/usernames`. Polls the dotNS contracts on Asset Hub until the lite username
 //! lands.
 //!
-//! Registers the signing host's RFC-0022 `uid.<suffix>` identity account. The paired
+//! Registers the signing host's RFC-0028 `peopl.<suffix>` identity account. The paired
 //! host can then resolve its username via `get_user_id`.
 
 use std::time::Duration;
@@ -24,50 +24,69 @@ use tracing::{debug, warn};
 use truapi::{
 	LocalIdentityContext, SigningHostRuntime,
 	host_logic::{
-		attestation::build_lite_registration,
+		attestation::{
+			SIGNING_CONTEXT_CONSTANT, SigningContexts, build_lite_registration,
+			sign_backend_challenge, signing_context_from_constant,
+		},
 		dotns_gateway::{MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_registrable_full_label},
 		product_account::{
-			derive_identity_keypair, derive_root_keypair_from_entropy, identity_product_id,
-			product_public_key_to_address,
+			ProductAccountError, derive_identity_keypair, derive_root_keypair_from_entropy,
+			personhood_product_id, product_public_key_to_address,
 		},
 	},
 	latest::GenericError,
 	platform::IdentityBackendHost,
+	statement_allowance as alloc,
 };
 
-use crate::{dotns_read::AssetHubReader, network::NetworkConfig};
+use crate::{
+	accounts::IdentityDerivationError, chain::CliChainProvider, dotns_read::AssetHubReader,
+	network::Stack,
+};
 
 /// Env var carrying an optional bearer token for the identity backend.
 /// Set it to reuse a token minted elsewhere. Unset, the CLI runs the sr25519
 /// auth handshake itself ([`backend_token`]).
 pub const IDENTITY_BACKEND_TOKEN_ENV: &str = "HOST_CLI_IDENTITY_BACKEND_TOKEN";
 
+#[derive(derive_more::Display, derive_more::Error, derive_more::From, Debug)]
+#[display("backend auth identity derivation failed")]
+struct BackendIdentityDerivationError(ProductAccountError);
+
+#[derive(derive_more::Display, derive_more::Error, derive_more::From, Debug)]
+#[display("invalid entropy")]
+struct RootKeyDerivationError(ProductAccountError);
+
 /// Access tokens for the username routes, keyed by backend and authenticated
 /// account. The backend requires a username registration's candidate account
 /// to be the JWT subject, so a token must never cross candidate identities.
 static BACKEND_TOKENS: Mutex<Vec<CachedBackendToken>> = Mutex::new(Vec::new());
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 struct CachedBackendToken {
 	backend_base: String,
 	auth_client_id: [u8; 32],
 	value: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 enum BackendTokenSource {
 	Environment,
 	Cache,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 struct BackendToken {
 	value: String,
 	source: BackendTokenSource,
 	auth_client_id: [u8; 32],
 }
 
-/// The same backend handshake serves one-shot commands and a fenced Host session.
+/// Who authenticates to the identity backend: a one-shot command holding the
+/// mnemonic's entropy, or the active local session of a running signing host.
+/// The session variant is fenced: every step re-checks that the activation it
+/// started under is still the current one, so a session swap mid-handshake
+/// fails rather than mixing identities.
 enum BackendAuth<'a> {
 	Entropy { entropy: &'a [u8], network_suffix: &'a str },
 	Session { runtime: &'a SigningHostRuntime, context: LocalIdentityContext },
@@ -91,11 +110,10 @@ impl BackendAuth<'_> {
 		self.ensure_current()?;
 		match self {
 			Self::Entropy { entropy, network_suffix } => {
-				derive_identity_keypair(entropy, network_suffix)
-					.map(|key| key.public.to_bytes())
-					.map_err(|err| {
-						anyhow::anyhow!("backend auth identity derivation failed: {err}")
-					})
+				Ok(derive_identity_keypair(entropy, network_suffix)
+					.map_err(BackendIdentityDerivationError::from)?
+					.public
+					.to_bytes())
 			},
 			Self::Session { context, .. } => {
 				decode_backend_account_id(&context.identity_account_id)
@@ -103,16 +121,13 @@ impl BackendAuth<'_> {
 		}
 	}
 
+	/// The `(clientId, proof)` of the backend's auth handshake, the proof over
+	/// SHA256(challenge || clientId || SHA256(`{}`)), the exact token body.
 	fn sign_challenge(&self, challenge: &[u8]) -> Result<([u8; 32], [u8; 64])> {
 		match self {
 			Self::Entropy { entropy, network_suffix } => {
-				truapi::host_logic::attestation::sign_backend_challenge(
-					entropy,
-					network_suffix,
-					challenge,
-					b"{}",
-				)
-				.context("backend auth identity derivation failed")
+				Ok(sign_backend_challenge(entropy, network_suffix, challenge, b"{}")
+					.map_err(BackendIdentityDerivationError::from)?)
 			},
 			Self::Session { runtime, context } => {
 				let proof = runtime
@@ -131,7 +146,7 @@ impl BackendAuth<'_> {
 ///
 /// The explicit env token wins. Otherwise the CLI completes the backend's
 /// `challenges` → `token` sr25519 handshake as the mnemonic's RFC-0022
-/// `uid.<suffix>` account on the network being attested. Since
+/// `peopl.<suffix>` account 0 on the network being attested. Since
 /// device-uniqueness-backend#77, `POST /usernames` rejects a JWT whose subject
 /// differs from `candidateAccountId`.
 async fn backend_token(
@@ -217,6 +232,8 @@ async fn mint_backend_token(
 		.to_string();
 	let challenge_bytes = BASE64.decode(&challenge).context("challenge is not valid base64")?;
 
+	// The proof covers the exact bytes the request carries, so the body is
+	// serialized once.
 	let payload = b"{}";
 	let (client_id, proof) = auth.sign_challenge(&challenge_bytes)?;
 
@@ -280,15 +297,11 @@ where
 }
 
 /// Inputs for one attestation run.
-pub struct AttestConfig {
-	/// Identity backend base URL including `/api/v1`.
-	pub backend_base: String,
-	/// Asset Hub WebSocket URL for the reservation timestamp and the dotNS
-	/// username poll.
-	pub asset_hub_ws: String,
-	/// The network's dotNS TLD without the dot (`paseo`, `testnet`); the
-	/// registered person is `uid.<suffix>` / `peopl.<suffix>`.
-	pub network_suffix: String,
+pub struct AttestConfig<'a> {
+	/// The network whose identity backend takes the registration, whose People
+	/// and Asset Hub give the signing contexts, and whose Asset Hub serves the
+	/// reservation timestamp and the dotNS username poll.
+	pub network: &'a Stack,
 	/// BIP-39 entropy of the signing host's root account.
 	pub entropy: Vec<u8>,
 	/// Requested lite username base (6+ lowercase letters, no digits).
@@ -300,18 +313,18 @@ pub struct AttestConfig {
 /// Check whether a lite username base is available through the identity
 /// backend. The username must be the base form without the digit suffix.
 pub async fn lite_username_available(
-	network: NetworkConfig,
+	network: &Stack,
 	auth_entropy: &[u8],
 	username_base: &str,
 ) -> Result<bool> {
-	let backend_base = network.identity_backend_base;
+	let backend_base = network.identity_backend();
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 	let url = format!("{backend_base}/usernames/available");
 	let body = json!({ "usernames": [username_base] });
 	let response = send_with_backend_auth(
 		&client,
 		backend_base,
-		&BackendAuth::Entropy { entropy: auth_entropy, network_suffix: network.network_suffix },
+		&BackendAuth::Entropy { entropy: auth_entropy, network_suffix: network.tld() },
 		|token| client.post(&url).bearer_auth(token).json(&body),
 	)
 	.await
@@ -336,10 +349,11 @@ fn availability_status<'a>(body: &'a Value, username_base: &str) -> Option<&'a s
 /// Registers (or confirms) the signing host's lite username. Waits until the
 /// dotNS contracts on Asset Hub record it. Returns the lite username assigned on
 /// chain, including its discriminator.
-pub async fn attest(config: &AttestConfig) -> Result<String> {
+pub async fn attest(config: &AttestConfig<'_>) -> Result<String> {
+	let backend_base = config.network.identity_backend();
 	let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
 
-	let mut reader = AssetHubReader::connect(&config.asset_hub_ws).await?;
+	let mut reader = AssetHubReader::connect(config.network).await?;
 	// Timestamping the reservation signature with Asset Hub chain time. The
 	// gateway rejects values ahead of the chain.
 	let signed_at = reader.timestamp_secs().await.context("read Asset Hub Timestamp.Now")?;
@@ -364,14 +378,21 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 		}
 	}
 
-	let verifier = fetch_verifier(&client, &config.backend_base).await?;
+	let chains = CliChainProvider::new(config.network);
+	let people_signing_context =
+		signing_context_of(&chains, config.network.genesis().people, PEOPLE_LITE_PALLET).await?;
+	let asset_hub_signing_context =
+		signing_context_of(&chains, config.network.genesis().asset_hub, DOTNS_GATEWAY_PALLET)
+			.await?;
+	let verifier = fetch_verifier(&client, backend_base).await?;
 	let registration = build_lite_registration(
 		&config.entropy,
-		&config.network_suffix,
+		config.network.tld(),
 		verifier,
 		&config.username_base,
 		config.reserved_username.as_deref(),
 		signed_at,
+		SigningContexts { people: people_signing_context, asset_hub: asset_hub_signing_context },
 	)
 	.map_err(|reason| anyhow::anyhow!("failed to build registration params: {reason}"))?;
 	debug!(
@@ -382,36 +403,60 @@ pub async fn attest(config: &AttestConfig) -> Result<String> {
 
 	submit_registration(&client, config, signed_at, &registration).await?;
 
-	let identity = wait_for_dotns_username(&mut reader, &registration.candidate_public_key).await?;
+	let lite_username =
+		wait_for_lite_username(&mut reader, &registration.candidate_public_key).await?;
 	debug!("lite username registered and confirmed on-chain");
-	identity.lite_username.context("registered dotNS identity has no lite username")
+	Ok(lite_username)
+}
+
+/// The pallet that checks the candidate and consumer registration signatures.
+const PEOPLE_LITE_PALLET: &str = "PeopleLite";
+/// The pallet that checks the dotNS reservation signature.
+const DOTNS_GATEWAY_PALLET: &str = "DotnsGateway";
+
+/// The signing context `pallet` on the chain `genesis_hash` names checks account
+/// signatures in, read from its `SigningContext` constant. `None` means the
+/// message alone.
+async fn signing_context_of(
+	chains: &CliChainProvider,
+	genesis_hash: [u8; 32],
+	pallet: &str,
+) -> Result<Option<[u8; 32]>> {
+	let location = chains.location(genesis_hash);
+	let rpc = alloc::rpc::RpcClient::new(
+		chains
+			.rpc_client(genesis_hash)
+			.await
+			.with_context(|| format!("connect to the chain holding {pallet} ({location})"))?,
+	);
+	let metadata = alloc::fetch_metadata(&rpc)
+		.await
+		.with_context(|| format!("read {pallet} metadata from {location}"))?;
+	Ok(signing_context_from_constant(metadata.constant(pallet, SIGNING_CONTEXT_CONSTANT)))
 }
 
 /// Resolves the on-chain lite username for an already-attested signer: the
 /// discriminated `name.NN` the dotNS contracts hold for its identity account,
 /// whatever base the account record asked for.
-pub async fn registered_lite_username(network: NetworkConfig, entropy: &[u8]) -> Result<String> {
-	let identity = derive_identity_keypair(entropy, network.network_suffix)
-		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
-	let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
+pub async fn registered_lite_username(network: &Stack, entropy: &[u8]) -> Result<String> {
+	let identity =
+		derive_identity_keypair(entropy, network.tld()).map_err(IdentityDerivationError::from)?;
+	let mut reader = AssetHubReader::connect(network).await?;
 	reader
 		.dotns_identity(&identity.public.to_bytes())
 		.await?
-		.lite_username
+		.and_then(|identity| identity.into_lite_username())
 		.context("attested signer has no dotNS lite username")
 }
 
 /// Resolve an existing full-person or Lite dotNS identity when one exists.
 /// An unlabeled account is a valid result and can still back a local session.
-pub async fn lookup_registered_username(
-	network: NetworkConfig,
-	entropy: &[u8],
-) -> Result<Option<String>> {
-	let identity = derive_identity_keypair(entropy, network.network_suffix)
-		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
-	let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
+pub async fn lookup_registered_username(network: &Stack, entropy: &[u8]) -> Result<Option<String>> {
+	let identity =
+		derive_identity_keypair(entropy, network.tld()).map_err(IdentityDerivationError::from)?;
+	let mut reader = AssetHubReader::connect(network).await?;
 	let identity = reader.dotns_identity(&identity.public.to_bytes()).await?;
-	Ok(identity.full_username.or(identity.lite_username))
+	Ok(identity.map(|identity| identity.primary_username().to_owned()))
 }
 
 #[derive(Deserialize)]
@@ -430,19 +475,23 @@ struct UsernameSearchItem {
 	status: String,
 }
 
-/// A runtime-local provider: secrets stay in the active signing Host, and a
-/// weak reference avoids a provider/runtime ownership cycle.
+/// The signing host's `IdentityBackendHost`: resolves a full username to the
+/// accounts the identity backend has it assigned to, authenticating as the
+/// host's active local session. Secrets stay in the runtime, held weakly so
+/// the provider and the runtime that owns it form no cycle.
 pub struct CliIdentityBackendHost {
 	runtime: Weak<SigningHostRuntime>,
-	network: NetworkConfig,
+	people_genesis: [u8; 32],
+	identity_backend_base: String,
 	client: reqwest::Client,
 }
 
 impl CliIdentityBackendHost {
-	pub fn new(runtime: &Arc<SigningHostRuntime>, network: NetworkConfig) -> Result<Self> {
+	pub fn new(runtime: &Arc<SigningHostRuntime>, network: &Stack) -> Result<Self> {
 		Ok(Self {
 			runtime: Arc::downgrade(runtime),
-			network,
+			people_genesis: network.genesis().people,
+			identity_backend_base: network.identity_backend().to_owned(),
 			client: reqwest::Client::builder()
 				.timeout(Duration::from_secs(30))
 				.redirect(reqwest::redirect::Policy::none())
@@ -452,10 +501,10 @@ impl CliIdentityBackendHost {
 
 	async fn candidates(&self, username: &str, people_genesis: [u8; 32]) -> Result<Vec<[u8; 32]>> {
 		const LIMIT: usize = 32;
-		if people_genesis != self.network.people_genesis {
+		if people_genesis != self.people_genesis {
 			bail!("identity backend is not configured for the requested People network");
 		}
-		if self.network.identity_backend_base.trim().is_empty() {
+		if self.identity_backend_base.trim().is_empty() {
 			bail!("identity backend is not configured");
 		}
 		if !is_registrable_full_label(username) {
@@ -471,7 +520,7 @@ impl CliIdentityBackendHost {
 		for _ in 0..LIMIT {
 			let page = search_backend_page(
 				&self.client,
-				self.network.identity_backend_base,
+				&self.identity_backend_base,
 				&auth,
 				username,
 				"32",
@@ -533,6 +582,7 @@ fn decode_backend_account_id(account: &str) -> Result<[u8; 32]> {
 	Ok(bytes)
 }
 
+/// One page of `GET /usernames/search`.
 async fn search_backend_page(
 	client: &reqwest::Client,
 	backend_base: &str,
@@ -552,13 +602,12 @@ async fn search_backend_page(
 	.await
 	.with_context(|| format!("GET {url} for prefix {prefix:?}"))?;
 	let status = response.status();
+	let text = response.text().await.unwrap_or_default();
 	if !status.is_success() {
-		bail!("identity backend username search failed ({status})");
+		bail!("identity backend username search failed ({status}): {text}");
 	}
-	let page = response
-		.json()
-		.await
-		.context("decode identity backend username search response")?;
+	let page = serde_json::from_str(&text)
+		.with_context(|| format!("decode identity backend username search response: {text}"))?;
 	auth.ensure_current()?;
 	Ok(page)
 }
@@ -568,10 +617,10 @@ async fn search_backend_page(
 /// The backend does not currently expose an account-indexed route. Its search
 /// route is cursor-paginated and prefix-only, so imports search each valid
 /// initial letter and retain only rows whose candidate account is the mnemonic's
-/// `uid.<suffix>` identity on this network. The bearer token exempts these calls
+/// `peopl.<suffix>` identity on this network. The bearer token exempts these calls
 /// from the unauthenticated proof-of-compute challenge.
 pub async fn lookup_backend_username(
-	network: NetworkConfig,
+	network: &Stack,
 	auth_entropy: &[u8],
 	candidate_account_id: &str,
 ) -> Result<Option<String>> {
@@ -596,25 +645,26 @@ pub async fn lookup_backend_username(
 	match matches.len() {
 		0 => Ok(None),
 		1 => Ok(matches.into_iter().next()),
-		_ => bail!(
-			"identity backend returned multiple assigned usernames for {candidate_account_id}: {}",
-			matches.into_iter().collect::<Vec<_>>().join(", ")
-		),
+		_ => {
+			bail!(
+				"identity backend returned multiple assigned usernames for {candidate_account_id}: {}",
+				matches.into_iter().collect::<Vec<_>>().join(", ")
+			)
+		},
 	}
 }
 
 async fn search_backend_prefix(
 	client: &reqwest::Client,
-	network: NetworkConfig,
+	network: &Stack,
 	auth_entropy: &[u8],
 	candidate_account_id: &str,
 	initial: char,
 ) -> Result<Vec<String>> {
 	const PAGE_LIMIT: &str = "1000";
 
-	let backend_base = network.identity_backend_base;
-	let auth =
-		BackendAuth::Entropy { entropy: auth_entropy, network_suffix: network.network_suffix };
+	let backend_base = network.identity_backend();
+	let auth = BackendAuth::Entropy { entropy: auth_entropy, network_suffix: network.tld() };
 	let prefix = initial.to_string();
 	let mut cursor = None;
 	let mut seen_cursors = BTreeSet::new();
@@ -669,28 +719,26 @@ fn normalize_searched_username(username: &str) -> String {
 }
 
 /// Probes the dotNS contracts for the bare root and the network's RFC-0022
-/// `uid.<suffix>` identity account. Prints any recorded usernames. Used to
+/// `peopl.<suffix>` identity account. Prints any recorded usernames. Used to
 /// confirm a pre-onboarded account.
-pub async fn check_identity(network: NetworkConfig, entropy: &[u8]) -> Result<()> {
-	let root = derive_root_keypair_from_entropy(entropy)
-		.map_err(|err| anyhow::anyhow!("invalid entropy: {err}"))?;
-	let identity = derive_identity_keypair(entropy, network.network_suffix)
-		.map_err(|err| anyhow::anyhow!("uid identity derivation failed: {err}"))?;
-	let mut reader = AssetHubReader::connect(network.asset_hub_ws).await?;
+pub async fn check_identity(network: &Stack, entropy: &[u8]) -> Result<()> {
+	let root = derive_root_keypair_from_entropy(entropy).map_err(RootKeyDerivationError::from)?;
+	let identity =
+		derive_identity_keypair(entropy, network.tld()).map_err(IdentityDerivationError::from)?;
+	let mut reader = AssetHubReader::connect(network).await?;
 	let identity_path =
-		format!("//product//{}/index_bytes(0)", identity_product_id(network.network_suffix));
+		format!("//product//{}/index_bytes(0)", personhood_product_id(network.tld()));
 
 	for (label, public) in
 		[("<root>", root.public.to_bytes()), (identity_path.as_str(), identity.public.to_bytes())]
 	{
 		let address = product_public_key_to_address(public);
 		match reader.dotns_identity(&public).await {
-			Ok(identity) => match identity.full_username.or(identity.lite_username) {
-				Some(username) => {
-					println!("IDENTITY_FOUND path={label} account={address} username={username}")
-				},
-				None => println!("IDENTITY_NONE path={label} account={address}"),
+			Ok(Some(identity)) => {
+				let username = identity.primary_username();
+				println!("IDENTITY_FOUND path={label} account={address} username={username}")
 			},
+			Ok(None) => println!("IDENTITY_NONE path={label} account={address}"),
 			Err(err) => println!("IDENTITY_ERROR path={label} account={address} error={err:#}"),
 		}
 	}
@@ -719,21 +767,21 @@ async fn fetch_verifier(client: &reqwest::Client, backend_base: &str) -> Result<
 }
 
 /// `POST /usernames` for `reg`, authenticated as the candidate account the
-/// registration was built for (`config.entropy` on `config.network_suffix`).
+/// registration was built for (`config.entropy` on `config.network`).
 async fn submit_registration(
 	client: &reqwest::Client,
-	config: &AttestConfig,
+	config: &AttestConfig<'_>,
 	signed_at: u64,
 	reg: &truapi::host_logic::attestation::LiteRegistration,
 ) -> Result<()> {
-	let backend_base = config.backend_base.as_str();
+	let backend_base = config.network.identity_backend();
 	let url = format!("{backend_base}/usernames");
 	let body =
 		reg.request_body(&config.username_base, config.reserved_username.as_deref(), signed_at);
 	let response = send_with_backend_auth(
 		client,
 		backend_base,
-		&BackendAuth::Entropy { entropy: &config.entropy, network_suffix: &config.network_suffix },
+		&BackendAuth::Entropy { entropy: &config.entropy, network_suffix: config.network.tld() },
 		|token| client.post(&url).bearer_auth(token).json(&body),
 	)
 	.await
@@ -754,24 +802,28 @@ async fn submit_registration(
 	bail!("username registration failed ({status}): {text}");
 }
 
-async fn wait_for_dotns_username(
+async fn wait_for_lite_username(
 	reader: &mut AssetHubReader,
 	candidate: &[u8; 32],
-) -> Result<truapi::host_logic::dotns_gateway::DotnsIdentity> {
+) -> Result<String> {
 	// First-time lite registration is backend-async and can lag the HTTP
 	// response. The record is permanent once written. Later runs therefore
 	// resolve on the first poll.
 	const MAX_ATTEMPTS: usize = 30;
 	for attempt in 1..=MAX_ATTEMPTS {
-		match reader.dotns_identity(candidate).await {
-			Ok(identity) if identity.lite_username.is_some() => {
+		let lite_username = reader
+			.dotns_identity(candidate)
+			.await
+			.map(|identity| identity.and_then(|identity| identity.into_lite_username()));
+		match lite_username {
+			Ok(Some(lite_username)) => {
 				crate::terminal_ui::update_activity(
 					"signer",
 					"Setting up signer",
 					Some("dotNS identity ready".to_string()),
 					crate::terminal_ui::ActivityState::Running,
 				);
-				return Ok(identity);
+				return Ok(lite_username);
 			},
 			Ok(_) => {
 				crate::terminal_ui::update_activity(
@@ -782,7 +834,9 @@ async fn wait_for_dotns_username(
 				);
 				debug!("dotNS username poll {attempt}/{MAX_ATTEMPTS}: empty");
 			},
-			Err(err) => warn!(%err, "dotNS username poll attempt {attempt} failed"),
+			Err(err) => {
+				warn!(err = %format!("{err:#}"), "dotNS username poll attempt {attempt} failed")
+			},
 		}
 		if attempt < MAX_ATTEMPTS {
 			tokio::time::sleep(Duration::from_secs(4)).await;
@@ -792,280 +846,4 @@ async fn wait_for_dotns_username(
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use tokio::{
-		io::{AsyncReadExt as _, AsyncWriteExt as _},
-		net::TcpListener,
-	};
-
-	/// The availability response is a flat `{base: status}` map.
-	#[test]
-	fn availability_reads_flat_and_versioned_status_maps() {
-		let flat = json!({ "pntest": "EXHAUSTED", "other": "AVAILABLE" });
-		assert_eq!(availability_status(&flat, "pntest"), Some("EXHAUSTED"));
-		assert_eq!(availability_status(&flat, "other"), Some("AVAILABLE"));
-		assert_eq!(availability_status(&flat, "missing"), None);
-
-		let versioned = json!({
-			"_tag": "v1",
-			"value": {
-				"pntest": { "status": "AVAILABLE", "availableDigits": [1, 2, 3] }
-			}
-		});
-		assert_eq!(availability_status(&versioned, "pntest"), Some("AVAILABLE"));
-		assert_eq!(availability_status(&versioned, "missing"), None);
-	}
-
-	#[test]
-	fn search_username_restores_the_v1_two_digit_discriminator() {
-		assert_eq!(normalize_searched_username("alice.1"), "alice.01");
-		assert_eq!(normalize_searched_username("alice.42"), "alice.42");
-		assert_eq!(normalize_searched_username("fullperson"), "fullperson");
-		assert_eq!(normalize_searched_username("future.123"), "future.123");
-	}
-
-	#[test]
-	fn backend_search_uses_only_assigned_rows_for_the_candidate() -> Result<()> {
-		let page: UsernameSearchPage = serde_json::from_value(json!({
-			"usernames": [
-				{ "accountId": "candidate", "username": "alice.1", "status": "ASSIGNED" },
-				{ "accountId": "candidate", "username": "stale.2", "status": "FAILED" },
-				{ "accountId": "someone-else", "username": "other.3", "status": "ASSIGNED" }
-			],
-			"nextCursor": null
-		}))?;
-
-		assert_eq!(
-			matching_assigned_usernames(page.usernames, "candidate").collect::<Vec<_>>(),
-			["alice.01"]
-		);
-		Ok(())
-	}
-
-	#[tokio::test]
-	async fn username_registration_authenticates_as_the_candidate() -> Result<()> {
-		let listener = TcpListener::bind("127.0.0.1:0").await?;
-		let backend_base = format!("http://{}/api/v1", listener.local_addr()?);
-		let server = tokio::spawn(serve_candidate_bound_registration(listener));
-
-		let entropy = [7u8; 16];
-		let registration =
-			build_lite_registration(&entropy, "paseo", [9u8; 32], "testing", None, 123)?;
-		let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
-		let config = AttestConfig {
-			backend_base: backend_base.clone(),
-			asset_hub_ws: String::new(),
-			network_suffix: "paseo".to_string(),
-			entropy: entropy.to_vec(),
-			username_base: "testing".to_string(),
-			reserved_username: None,
-		};
-		let result = submit_registration(&client, &config, 123, &registration).await;
-		let requests = server.await??;
-
-		assert_eq!(requests.len(), 3);
-		assert!(
-			result.is_ok(),
-			"candidate-bound backend rejected registration: {}",
-			result.unwrap_err()
-		);
-		Ok(())
-	}
-
-	async fn serve_candidate_bound_registration(listener: TcpListener) -> Result<Vec<String>> {
-		let mut requests = Vec::new();
-		let mut authenticated_account = None;
-		for _ in 0..3 {
-			let (mut stream, _) = listener.accept().await?;
-			let mut buffer = vec![0u8; 32 * 1024];
-			let read = stream.read(&mut buffer).await?;
-			let request = String::from_utf8_lossy(&buffer[..read]).to_string();
-			let lowercase = request.to_ascii_lowercase();
-			let (status, body) = if request.starts_with("POST /api/v1/auth/challenges ") {
-				("200 OK", r#"{"challenge":"Y2hhbGxlbmdl"}"#.to_string())
-			} else if request.starts_with("POST /api/v1/auth/token ") {
-				let client_id = request_header(&request, "Auth-ClientId")
-					.context("auth token request missing Auth-ClientId")?;
-				let bytes = BASE64.decode(client_id).context("Auth-ClientId is not base64")?;
-				let public_key: [u8; 32] = bytes.try_into().map_err(|bytes: Vec<u8>| {
-					anyhow::anyhow!("Auth-ClientId is {} bytes", bytes.len())
-				})?;
-				authenticated_account = Some(product_public_key_to_address(public_key));
-				("200 OK", r#"{"token":"candidate-token"}"#.to_string())
-			} else if request.starts_with("POST /api/v1/usernames ") &&
-				lowercase.contains("authorization: bearer candidate-token")
-			{
-				let payload = request
-					.split_once("\r\n\r\n")
-					.map(|(_, body)| body)
-					.context("username request missing body")?;
-				let candidate = serde_json::from_str::<Value>(payload)?
-					.get("candidateAccountId")
-					.and_then(Value::as_str)
-					.context("username request missing candidateAccountId")?
-					.to_string();
-				if authenticated_account.as_deref() == Some(candidate.as_str()) {
-					("202 Accepted", r#"{"status":"PENDING"}"#.to_string())
-				} else {
-					(
-						"403 Forbidden",
-						r#"{"error":"candidateAccountId must be the authenticated account."}"#
-							.to_string(),
-					)
-				}
-			} else {
-				("500 Internal Server Error", r#"{"error":"unexpected request"}"#.to_string())
-			};
-			let response = format!(
-				"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-				body.len()
-			);
-			stream.write_all(response.as_bytes()).await?;
-			requests.push(request);
-		}
-		Ok(requests)
-	}
-
-	fn request_header<'a>(request: &'a str, expected: &str) -> Option<&'a str> {
-		request.lines().find_map(|line| {
-			let (name, value) = line.split_once(':')?;
-			name.eq_ignore_ascii_case(expected).then(|| value.trim())
-		})
-	}
-
-	#[test]
-	fn rejected_token_eviction_is_scoped_to_the_matching_cached_value() {
-		const BASE: &str = "test://rejected-token";
-		const OTHER_BASE: &str = "test://other-token";
-		const SUBJECT: [u8; 32] = [1; 32];
-		const OTHER_SUBJECT: [u8; 32] = [2; 32];
-		let mut tokens = BACKEND_TOKENS.lock().expect("backend token cache mutex poisoned");
-		tokens.retain(|token| token.backend_base != BASE && token.backend_base != OTHER_BASE);
-		tokens.push(CachedBackendToken {
-			backend_base: BASE.to_string(),
-			auth_client_id: SUBJECT,
-			value: "stale".to_string(),
-		});
-		tokens.push(CachedBackendToken {
-			backend_base: BASE.to_string(),
-			auth_client_id: OTHER_SUBJECT,
-			value: "other-subject".to_string(),
-		});
-		tokens.push(CachedBackendToken {
-			backend_base: OTHER_BASE.to_string(),
-			auth_client_id: SUBJECT,
-			value: "keep".to_string(),
-		});
-		drop(tokens);
-
-		evict_rejected_backend_token(BASE, &SUBJECT, "newer-token");
-		assert!(BACKEND_TOKENS.lock().expect("backend token cache mutex poisoned").iter().any(
-			|token| {
-				token.backend_base == BASE &&
-					token.auth_client_id == SUBJECT &&
-					token.value == "stale"
-			}
-		));
-
-		evict_rejected_backend_token(BASE, &SUBJECT, "stale");
-		let mut tokens = BACKEND_TOKENS.lock().expect("backend token cache mutex poisoned");
-		assert!(
-			tokens
-				.iter()
-				.all(|token| token.backend_base != BASE || token.auth_client_id != SUBJECT)
-		);
-		assert!(tokens.iter().any(|token| {
-			token.backend_base == BASE &&
-				token.auth_client_id == OTHER_SUBJECT &&
-				token.value == "other-subject"
-		}));
-		assert!(tokens.iter().any(|token| {
-			token.backend_base == OTHER_BASE &&
-				token.auth_client_id == SUBJECT &&
-				token.value == "keep"
-		}));
-		tokens.retain(|token| token.backend_base != BASE && token.backend_base != OTHER_BASE);
-	}
-
-	#[tokio::test]
-	async fn cached_401_reauthenticates_and_retries_once() -> Result<()> {
-		let listener = TcpListener::bind("127.0.0.1:0").await?;
-		let backend_base = format!("http://{}/api/v1", listener.local_addr()?);
-		let server = tokio::spawn(serve_auth_retry(listener));
-		let entropy = [11u8; 16];
-		let auth_client_id = derive_identity_keypair(&entropy, "paseo")
-			.map_err(|err| anyhow::anyhow!("derive test auth identity: {err}"))?
-			.public
-			.to_bytes();
-
-		{
-			let mut tokens = BACKEND_TOKENS.lock().expect("backend token cache mutex poisoned");
-			tokens.retain(|token| token.backend_base != backend_base);
-			tokens.push(CachedBackendToken {
-				backend_base: backend_base.clone(),
-				auth_client_id,
-				value: "expired-test-token".to_string(),
-			});
-		}
-
-		let client = reqwest::Client::builder().timeout(Duration::from_secs(30)).build()?;
-		let url = format!("{backend_base}/protected");
-		let auth = BackendAuth::Entropy { entropy: &entropy, network_suffix: "paseo" };
-		let response = send_with_backend_auth(&client, &backend_base, &auth, |token| {
-			client.post(&url).bearer_auth(token).body("{}")
-		})
-		.await?;
-		assert_eq!(response.status(), reqwest::StatusCode::OK);
-		let requests = server.await??;
-		assert_eq!(requests.len(), 4);
-		assert!(requests[0].contains("authorization: Bearer expired-test-token"));
-		assert!(requests[1].starts_with("POST /api/v1/auth/challenges "));
-		assert!(requests[2].starts_with("POST /api/v1/auth/token "));
-		let encoded_client_id = BASE64.encode(auth_client_id);
-		assert_eq!(request_header(&requests[2], "Auth-ClientId"), Some(encoded_client_id.as_str()));
-		assert!(requests[3].contains("authorization: Bearer fresh-token"));
-
-		let mut tokens = BACKEND_TOKENS.lock().expect("backend token cache mutex poisoned");
-		assert!(tokens.iter().any(|token| {
-			token.backend_base == backend_base &&
-				token.auth_client_id == auth_client_id &&
-				token.value == "fresh-token"
-		}));
-		tokens.retain(|token| token.backend_base != backend_base);
-		Ok(())
-	}
-
-	async fn serve_auth_retry(listener: TcpListener) -> Result<Vec<String>> {
-		let mut requests = Vec::new();
-		for _ in 0..4 {
-			let (mut stream, _) = listener.accept().await?;
-			let mut buffer = vec![0u8; 16 * 1024];
-			let read = stream.read(&mut buffer).await?;
-			let request = String::from_utf8_lossy(&buffer[..read]).to_string();
-			let lowercase = request.to_ascii_lowercase();
-			let (status, body) = if request.starts_with("POST /api/v1/protected ") &&
-				lowercase.contains("authorization: bearer expired-test-token")
-			{
-				("401 Unauthorized", r#"{"title":"Invalid Token"}"#)
-			} else if request.starts_with("POST /api/v1/auth/challenges ") {
-				("200 OK", r#"{"challenge":"Y2hhbGxlbmdl"}"#)
-			} else if request.starts_with("POST /api/v1/auth/token ") {
-				("200 OK", r#"{"token":"fresh-token"}"#)
-			} else if request.starts_with("POST /api/v1/protected ") &&
-				lowercase.contains("authorization: bearer fresh-token")
-			{
-				("200 OK", r#"{"ok":true}"#)
-			} else {
-				("500 Internal Server Error", r#"{"error":"unexpected request"}"#)
-			};
-			let response = format!(
-				"HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-				body.len()
-			);
-			stream.write_all(response.as_bytes()).await?;
-			requests.push(request);
-		}
-		Ok(requests)
-	}
-}
+mod tests;

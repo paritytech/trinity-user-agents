@@ -17,7 +17,7 @@ use crate::{
 
 /// Signing operations.
 #[wire_trait(id = 13)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Signing: Send + Sync {
 	/// Construct a transaction for a product account.
 	///
@@ -41,6 +41,12 @@ pub trait Signing: Send + Sync {
 	/// contact matches, refuses the whole call as `UnknownContact` rather than
 	/// signing something that names somebody else. A call paying nobody from
 	/// the picker leaves it empty.
+	///
+	/// Fails as `ChainUnavailable` when the chain stays unreachable, such as
+	/// during a halt. Nothing was signed, so the call can be retried. Bound the
+	/// attempts, and expect a confirmed call to prompt again. When the paired
+	/// wallet builds the transaction, it reports this only if it answers
+	/// through the TrUAPI core. Other and older wallets report it as `Unknown`.
 	///
 	/// ```ts
 	/// const productContext = await truapi.system.getProductContext();
@@ -278,7 +284,7 @@ pub trait Signing: Send + Sync {
 	/// This permits transaction-shaped data and requires signing authorization
 	/// and explicit user confirmation.
 	///
-	/// @deprecated Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See <https://github.com/paritytech/host-rust-core/issues/612>
+	/// @deprecated Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See <https://github.com/paritytech/trinity-user-agents/issues/612>
 	///
 	/// ```ts
 	/// const productContext = await truapi.system.getProductContext();
@@ -297,7 +303,7 @@ pub trait Signing: Send + Sync {
 	/// console.log("raw bytes signed:", result.value);
 	/// ```
 	#[deprecated(
-		note = "Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See https://github.com/paritytech/host-rust-core/issues/612"
+		note = "Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See https://github.com/paritytech/trinity-user-agents/issues/612"
 	)]
 	#[wire(id = 6)]
 	async fn sign_raw_unwatermarked_deprecated(
@@ -316,7 +322,7 @@ pub trait Signing: Send + Sync {
 	/// This permits transaction-shaped data and requires signing authorization
 	/// and explicit user confirmation.
 	///
-	/// @deprecated Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See <https://github.com/paritytech/host-rust-core/issues/612>
+	/// @deprecated Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See <https://github.com/paritytech/trinity-user-agents/issues/612>
 	///
 	/// ```ts
 	/// const accountsResult = await truapi.account.getLegacyAccounts();
@@ -337,7 +343,7 @@ pub trait Signing: Send + Sync {
 	/// console.log("raw bytes signed:", result.value);
 	/// ```
 	#[deprecated(
-		note = "Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See https://github.com/paritytech/host-rust-core/issues/612"
+		note = "Temporary unwatermarked signing; migrate to watermarked signing when the runtime supports it. This API will be removed. See https://github.com/paritytech/trinity-user-agents/issues/612"
 	)]
 	#[wire(id = 7)]
 	async fn sign_raw_unwatermarked_deprecated_with_legacy_account(

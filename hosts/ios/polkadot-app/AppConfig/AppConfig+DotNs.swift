@@ -29,7 +29,7 @@ extension AppConfig {
         static let dotNsBrowse = "browse"
 
         static let dotNsGameWebview = "game-webview"
-        static let dotNsCollectibles = "collectibles-webview"
+        static let dotNsCollectibles = "stash"
 
         static func config() throws -> DotNsConfig {
             let resolverAddress = try EvmAddressFormat.validate(Self.dotNsResolverAddress.fromHex())

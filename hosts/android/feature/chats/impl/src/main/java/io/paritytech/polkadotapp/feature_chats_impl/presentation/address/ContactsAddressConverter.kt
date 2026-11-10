@@ -33,7 +33,7 @@ private class ContactsAddressConverter(
             .sortedBy { it.display.lowercase() }
 
         return ExtractedAddressesSection(
-            category = ExtractedAddressesCategory.Custom(RCommon.string.address_section_my_contacts),
+            category = ExtractedAddressesCategory.Custom(RCommon.string.search_section_contacts),
             addresses = contacts
         )
     }

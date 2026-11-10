@@ -1,0 +1,722 @@
+[
+ {
+  "exponent": 0,
+  "tile": 0,
+  "band": 1,
+  "kind": "round",
+  "dials": {},
+  "geometry": "g0",
+  "outerMetal": 0,
+  "coreMetal": -1,
+  "size": 0.86,
+  "thickness": 0.068,
+  "reeds": 0,
+  "width": 0.999999,
+  "faces": {
+   "usd": {
+    "label": "1¢",
+    "numeral": "1",
+    "mark": "¢",
+    "markAfter": true
+   },
+   "eur": {
+    "label": "1c",
+    "numeral": "1",
+    "mark": "c",
+    "markAfter": true
+   },
+   "gbp": {
+    "label": "1p",
+    "numeral": "1",
+    "mark": "p",
+    "markAfter": true
+   },
+   "jpy": {
+    "label": "¥1",
+    "numeral": "1",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "0.01",
+    "numeral": "0.01",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 1,
+  "tile": 1,
+  "band": 1,
+  "kind": "flower",
+  "dials": {
+   "notches": 7,
+   "depth": 0.04,
+   "width": 0.15,
+   "round": 0.055
+  },
+  "geometry": "g1",
+  "outerMetal": 0,
+  "coreMetal": -1,
+  "size": 0.87,
+  "thickness": 0.069143,
+  "reeds": 0,
+  "width": 1.012238,
+  "faces": {
+   "usd": {
+    "label": "2¢",
+    "numeral": "2",
+    "mark": "¢",
+    "markAfter": true
+   },
+   "eur": {
+    "label": "2c",
+    "numeral": "2",
+    "mark": "c",
+    "markAfter": true
+   },
+   "gbp": {
+    "label": "2p",
+    "numeral": "2",
+    "mark": "p",
+    "markAfter": true
+   },
+   "jpy": {
+    "label": "¥2",
+    "numeral": "2",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "0.02",
+    "numeral": "0.02",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 2,
+  "tile": 2,
+  "band": 2,
+  "kind": "round",
+  "dials": {},
+  "geometry": "g0",
+  "outerMetal": 1,
+  "coreMetal": -1,
+  "size": 0.88,
+  "thickness": 0.070286,
+  "reeds": 122,
+  "width": 0.999999,
+  "faces": {
+   "usd": {
+    "label": "4¢",
+    "numeral": "4",
+    "mark": "¢",
+    "markAfter": true
+   },
+   "eur": {
+    "label": "4c",
+    "numeral": "4",
+    "mark": "c",
+    "markAfter": true
+   },
+   "gbp": {
+    "label": "4p",
+    "numeral": "4",
+    "mark": "p",
+    "markAfter": true
+   },
+   "jpy": {
+    "label": "¥4",
+    "numeral": "4",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "0.04",
+    "numeral": "0.04",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 3,
+  "tile": 3,
+  "band": 2,
+  "kind": "reuleaux",
+  "dials": {
+   "sides": 7,
+   "round": 0.035
+  },
+  "geometry": "g2",
+  "outerMetal": 1,
+  "coreMetal": -1,
+  "size": 0.89,
+  "thickness": 0.071429,
+  "reeds": 0,
+  "width": 1,
+  "faces": {
+   "usd": {
+    "label": "8¢",
+    "numeral": "8",
+    "mark": "¢",
+    "markAfter": true
+   },
+   "eur": {
+    "label": "8c",
+    "numeral": "8",
+    "mark": "c",
+    "markAfter": true
+   },
+   "gbp": {
+    "label": "8p",
+    "numeral": "8",
+    "mark": "p",
+    "markAfter": true
+   },
+   "jpy": {
+    "label": "¥8",
+    "numeral": "8",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "0.08",
+    "numeral": "0.08",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 4,
+  "tile": 4,
+  "band": 3,
+  "kind": "round",
+  "dials": {},
+  "geometry": "g0",
+  "outerMetal": 2,
+  "coreMetal": -1,
+  "size": 0.9,
+  "thickness": 0.072571,
+  "reeds": 0,
+  "width": 0.999999,
+  "faces": {
+   "usd": {
+    "label": "16¢",
+    "numeral": "16",
+    "mark": "¢",
+    "markAfter": true
+   },
+   "eur": {
+    "label": "16c",
+    "numeral": "16",
+    "mark": "c",
+    "markAfter": true
+   },
+   "gbp": {
+    "label": "16p",
+    "numeral": "16",
+    "mark": "p",
+    "markAfter": true
+   },
+   "jpy": {
+    "label": "¥16",
+    "numeral": "16",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "0.16",
+    "numeral": "0.16",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 5,
+  "tile": 5,
+  "band": 3,
+  "kind": "flower",
+  "dials": {
+   "notches": 7,
+   "depth": 0.04,
+   "width": 0.15,
+   "round": 0.055
+  },
+  "geometry": "g1",
+  "outerMetal": 2,
+  "coreMetal": -1,
+  "size": 0.91,
+  "thickness": 0.073714,
+  "reeds": 0,
+  "width": 1.012238,
+  "faces": {
+   "usd": {
+    "label": "32¢",
+    "numeral": "32",
+    "mark": "¢",
+    "markAfter": true
+   },
+   "eur": {
+    "label": "32c",
+    "numeral": "32",
+    "mark": "c",
+    "markAfter": true
+   },
+   "gbp": {
+    "label": "32p",
+    "numeral": "32",
+    "mark": "p",
+    "markAfter": true
+   },
+   "jpy": {
+    "label": "¥32",
+    "numeral": "32",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "0.32",
+    "numeral": "0.32",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 6,
+  "tile": 6,
+  "band": 4,
+  "kind": "round",
+  "dials": {},
+  "geometry": "g3",
+  "outerMetal": 1,
+  "coreMetal": 2,
+  "size": 0.92,
+  "thickness": 0.074857,
+  "reeds": 124,
+  "width": 0.999999,
+  "faces": {
+   "usd": {
+    "label": "64¢",
+    "numeral": "64",
+    "mark": "¢",
+    "markAfter": true
+   },
+   "eur": {
+    "label": "64c",
+    "numeral": "64",
+    "mark": "c",
+    "markAfter": true
+   },
+   "gbp": {
+    "label": "64p",
+    "numeral": "64",
+    "mark": "p",
+    "markAfter": true
+   },
+   "jpy": {
+    "label": "¥64",
+    "numeral": "64",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "0.64",
+    "numeral": "0.64",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 7,
+  "tile": 7,
+  "band": 4,
+  "kind": "polygon",
+  "dials": {
+   "sides": 12,
+   "round": 0.06
+  },
+  "geometry": "g4",
+  "outerMetal": 1,
+  "coreMetal": 2,
+  "size": 0.93,
+  "thickness": 0.076,
+  "reeds": 0,
+  "width": 1,
+  "faces": {
+   "usd": {
+    "label": "$1.28",
+    "numeral": "1.28",
+    "mark": "$",
+    "markAfter": false
+   },
+   "eur": {
+    "label": "€1.28",
+    "numeral": "1.28",
+    "mark": "€",
+    "markAfter": false
+   },
+   "gbp": {
+    "label": "£1.28",
+    "numeral": "1.28",
+    "mark": "£",
+    "markAfter": false
+   },
+   "jpy": {
+    "label": "¥128",
+    "numeral": "128",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "1.28",
+    "numeral": "1.28",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 8,
+  "tile": 8,
+  "band": 5,
+  "kind": "round",
+  "dials": {},
+  "geometry": "g3",
+  "outerMetal": 2,
+  "coreMetal": 1,
+  "size": 0.94,
+  "thickness": 0.077143,
+  "reeds": 126,
+  "width": 0.999999,
+  "faces": {
+   "usd": {
+    "label": "$2.56",
+    "numeral": "2.56",
+    "mark": "$",
+    "markAfter": false
+   },
+   "eur": {
+    "label": "€2.56",
+    "numeral": "2.56",
+    "mark": "€",
+    "markAfter": false
+   },
+   "gbp": {
+    "label": "£2.56",
+    "numeral": "2.56",
+    "mark": "£",
+    "markAfter": false
+   },
+   "jpy": {
+    "label": "¥256",
+    "numeral": "256",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "2.56",
+    "numeral": "2.56",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 9,
+  "tile": 9,
+  "band": 5,
+  "kind": "reuleaux",
+  "dials": {
+   "sides": 7,
+   "round": 0.035
+  },
+  "geometry": "g5",
+  "outerMetal": 2,
+  "coreMetal": 1,
+  "size": 0.95,
+  "thickness": 0.078286,
+  "reeds": 0,
+  "width": 1,
+  "faces": {
+   "usd": {
+    "label": "$5.12",
+    "numeral": "5.12",
+    "mark": "$",
+    "markAfter": false
+   },
+   "eur": {
+    "label": "€5.12",
+    "numeral": "5.12",
+    "mark": "€",
+    "markAfter": false
+   },
+   "gbp": {
+    "label": "£5.12",
+    "numeral": "5.12",
+    "mark": "£",
+    "markAfter": false
+   },
+   "jpy": {
+    "label": "¥512",
+    "numeral": "512",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "5.12",
+    "numeral": "5.12",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 10,
+  "tile": 10,
+  "band": 6,
+  "kind": "round",
+  "dials": {},
+  "geometry": "g0",
+  "outerMetal": 3,
+  "coreMetal": -1,
+  "size": 0.96,
+  "thickness": 0.079429,
+  "reeds": 127,
+  "width": 0.999999,
+  "faces": {
+   "usd": {
+    "label": "$10.24",
+    "numeral": "10.24",
+    "mark": "$",
+    "markAfter": false
+   },
+   "eur": {
+    "label": "€10.24",
+    "numeral": "10.24",
+    "mark": "€",
+    "markAfter": false
+   },
+   "gbp": {
+    "label": "£10.24",
+    "numeral": "10.24",
+    "mark": "£",
+    "markAfter": false
+   },
+   "jpy": {
+    "label": "¥1024",
+    "numeral": "1024",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "10.24",
+    "numeral": "10.24",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 11,
+  "tile": 11,
+  "band": 6,
+  "kind": "scalloped",
+  "dials": {
+   "lobes": 10,
+   "lobe": 0.15,
+   "round": 0.012
+  },
+  "geometry": "g6",
+  "outerMetal": 3,
+  "coreMetal": -1,
+  "size": 0.97,
+  "thickness": 0.080571,
+  "reeds": 0,
+  "width": 0.96574,
+  "faces": {
+   "usd": {
+    "label": "$20.48",
+    "numeral": "20.48",
+    "mark": "$",
+    "markAfter": false
+   },
+   "eur": {
+    "label": "€20.48",
+    "numeral": "20.48",
+    "mark": "€",
+    "markAfter": false
+   },
+   "gbp": {
+    "label": "£20.48",
+    "numeral": "20.48",
+    "mark": "£",
+    "markAfter": false
+   },
+   "jpy": {
+    "label": "¥2048",
+    "numeral": "2048",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "20.48",
+    "numeral": "20.48",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 12,
+  "tile": 12,
+  "band": 7,
+  "kind": "round",
+  "dials": {},
+  "geometry": "g0",
+  "outerMetal": 4,
+  "coreMetal": -1,
+  "size": 0.98,
+  "thickness": 0.081714,
+  "reeds": 129,
+  "width": 0.999999,
+  "faces": {
+   "usd": {
+    "label": "$40.96",
+    "numeral": "40.96",
+    "mark": "$",
+    "markAfter": false
+   },
+   "eur": {
+    "label": "€40.96",
+    "numeral": "40.96",
+    "mark": "€",
+    "markAfter": false
+   },
+   "gbp": {
+    "label": "£40.96",
+    "numeral": "40.96",
+    "mark": "£",
+    "markAfter": false
+   },
+   "jpy": {
+    "label": "¥4096",
+    "numeral": "4096",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "40.96",
+    "numeral": "40.96",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 13,
+  "tile": 13,
+  "band": 7,
+  "kind": "reuleaux",
+  "dials": {
+   "sides": 7,
+   "round": 0.035
+  },
+  "geometry": "g2",
+  "outerMetal": 4,
+  "coreMetal": -1,
+  "size": 0.99,
+  "thickness": 0.082857,
+  "reeds": 0,
+  "width": 1,
+  "faces": {
+   "usd": {
+    "label": "$81.92",
+    "numeral": "81.92",
+    "mark": "$",
+    "markAfter": false
+   },
+   "eur": {
+    "label": "€81.92",
+    "numeral": "81.92",
+    "mark": "€",
+    "markAfter": false
+   },
+   "gbp": {
+    "label": "£81.92",
+    "numeral": "81.92",
+    "mark": "£",
+    "markAfter": false
+   },
+   "jpy": {
+    "label": "¥8192",
+    "numeral": "8192",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "81.92",
+    "numeral": "81.92",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ },
+ {
+  "exponent": 14,
+  "tile": 14,
+  "band": 7,
+  "kind": "scalloped",
+  "dials": {
+   "lobes": 10,
+   "lobe": 0.15,
+   "round": 0.012
+  },
+  "geometry": "g6",
+  "outerMetal": 4,
+  "coreMetal": -1,
+  "size": 1,
+  "thickness": 0.084,
+  "reeds": 0,
+  "width": 0.96574,
+  "faces": {
+   "usd": {
+    "label": "$163.84",
+    "numeral": "163.84",
+    "mark": "$",
+    "markAfter": false
+   },
+   "eur": {
+    "label": "€163.84",
+    "numeral": "163.84",
+    "mark": "€",
+    "markAfter": false
+   },
+   "gbp": {
+    "label": "£163.84",
+    "numeral": "163.84",
+    "mark": "£",
+    "markAfter": false
+   },
+   "jpy": {
+    "label": "¥16384",
+    "numeral": "16384",
+    "mark": "¥",
+    "markAfter": false
+   },
+   "cash": {
+    "label": "163.84",
+    "numeral": "163.84",
+    "mark": "",
+    "markAfter": false
+   }
+  }
+ }
+]

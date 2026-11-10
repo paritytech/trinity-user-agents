@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 // Copyright 2026 Parity Technologies (UK) Ltd.
 // SPDX-License-Identifier: MIT
 /**
@@ -25,6 +26,38 @@ import {
 } from "./worker-test-harness.js";
 import { makeHostCallbacks } from "../test-support.js";
 import { createWebWorkerPairingHostRuntime } from "./index.js";
+
+it("constructs product IDs through the worker and reports parsing failures", async () => {
+  const worker = new FakeWorker();
+  const runtime = await readyRuntime(worker);
+  const parsed = runtime.parseProductId(" PEOPL.DOT ");
+  const request = worker.messages.at(-1)!;
+  expect(request).toMatchObject({
+    kind: "parseProductId",
+    value: " PEOPL.DOT ",
+  });
+  worker.emit({
+    kind: "parseProductIdResponse",
+    requestId: request.requestId,
+    ok: true,
+    value: "peopl.dot",
+  });
+  expect(await parsed).toBe(asProductId("peopl.dot"));
+  const invalid = runtime.parseProductId("invalid");
+  worker.emit({
+    kind: "parseProductIdResponse",
+    requestId: worker.messages.at(-1)!.requestId,
+    ok: false,
+    error: "invalid product ID",
+  });
+  await expect(invalid).rejects.toThrow("invalid product ID");
+  const pending = runtime.parseProductId("pending.dot");
+  runtime.dispose();
+  await expect(pending).rejects.toThrow("runtime disposed");
+  await expect(runtime.parseProductId("peopl.dot")).rejects.toThrow(
+    "runtime disposed",
+  );
+});
 
 describe("debugger enablement reporting", () => {
   // Under `bun test` `import.meta.env.DEV` reads undefined, so the live path

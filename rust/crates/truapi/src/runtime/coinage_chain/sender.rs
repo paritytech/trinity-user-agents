@@ -8,7 +8,7 @@ use super::{
 	rpc,
 	transaction::{Snapshot, constant, decode_exact, denomination_value, storage_key},
 };
-use crate::platform::async_trait;
+
 use parity_scale_codec::Encode;
 use scale_decode::DecodeAsType;
 use std::{
@@ -281,7 +281,7 @@ impl HostCoinageChain {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl RegularTransferSubmitter for HostCoinageChain {
 	async fn prepare_unload_groups(
 		&self,

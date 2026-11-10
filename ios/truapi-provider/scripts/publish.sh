@@ -66,11 +66,11 @@ trap 'rm -rf "$STAGING"' EXIT
 ditto -c -k --keepParent "$XCFRAMEWORK" "$ZIP"
 CHECKSUM="$(cd "$TRUAPI_ROOT" && swift package compute-checksum "$ZIP")"
 
-if gh release view "$TAG" --repo paritytech/host-rust-core >/dev/null 2>&1; then
-    gh release upload "$TAG" "$ZIP" --repo paritytech/host-rust-core --clobber
+if gh release view "$TAG" --repo paritytech/trinity-user-agents >/dev/null 2>&1; then
+    gh release upload "$TAG" "$ZIP" --repo paritytech/trinity-user-agents --clobber
 else
     gh release create "$TAG" "$ZIP" \
-        --repo paritytech/host-rust-core \
+        --repo paritytech/trinity-user-agents \
         --target "$RELEASE_TARGET" \
         --title "$TITLE" \
         --latest=false \
@@ -79,7 +79,7 @@ fi
 
 # The tag contains "@" and "/" — percent-encode it for the asset URL.
 ENCODED_TAG="$(printf %s "$TAG" | sed 's/@/%40/g; s,/,%2F,g')"
-URL="https://github.com/paritytech/host-rust-core/releases/download/${ENCODED_TAG}/truapi_provider.xcframework.zip"
+URL="https://github.com/paritytech/trinity-user-agents/releases/download/${ENCODED_TAG}/truapi_provider.xcframework.zip"
 MANIFEST="$TRUAPI_ROOT/Package.swift"
 sed -i '' -E "s|^let providerBinaryURL = .*|let providerBinaryURL = \"$URL\"|" "$MANIFEST"
 sed -i '' -E "s|^let providerBinaryChecksum = .*|let providerBinaryChecksum = \"$CHECKSUM\"|" "$MANIFEST"
