@@ -1,0 +1,488 @@
+{
+  "format": "shaderlab-conformance-core",
+  "version": 1,
+  "subject": "material text v1 parsing and IDs",
+  "notes": "IDs computed independently with Python hashlib.blake2b(digest_size=32) over the exact UTF-8 bytes; CIDv1 raw codec, base32 lower. Error codes are stable; messages are not.",
+  "cases": [
+    {
+      "name": "float parameter",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": true,
+        "id": "bafk2bzacec5k4yvgbrldgley7tteukvpvpvi6h656nkjigl5gtgoz62luhm5s"
+      }
+    },
+    {
+      "name": "no parameters",
+      "text": "// @material 1\nvec4 material(vec2 uv) {\n  return texture(r_input, uv);\n}\n",
+      "expect": {
+        "ok": true,
+        "id": "bafk2bzacedb233m62ycskd67q7afoj6jfsyon5uzsjl7lng7nfozf7sqpzdso"
+      }
+    },
+    {
+      "name": "vector and sampler parameters",
+      "text": "// @material 1\n// @control {\"name\":\"tint\",\"label\":\"Tint\",\"type\":\"vec3\",\"default\":[1,0.5,0.25]}\n// @control {\"name\":\"height\",\"label\":\"Height map\",\"type\":\"samplerFloat\"}\nvec4 material(vec2 uv) {\n  float h = texture(sp_height, uv);\n  return vec4(texture(r_input, uv).rgb * p_tint * h, 1.0);\n}\n",
+      "expect": {
+        "ok": true,
+        "id": "bafk2bzacedsvwxjvrluvbr27uqevznizxfu7cqppn6sbsmhhllmzvcwkxtry6"
+      }
+    },
+    {
+      "name": "CRLF line endings",
+      "text": "// @material 1\r\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\r\nvec4 material(vec2 uv) {\r\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\r\n}\r\n",
+      "expect": {
+        "ok": false,
+        "code": "non-canonical"
+      }
+    },
+    {
+      "name": "missing final newline",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}",
+      "expect": {
+        "ok": false,
+        "code": "non-canonical"
+      }
+    },
+    {
+      "name": "spaced JSON",
+      "text": "// @material 1\n// @control {\"name\": \"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "non-canonical"
+      }
+    },
+    {
+      "name": "reordered keys",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"max\":1,\"min\":0}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "non-canonical"
+      }
+    },
+    {
+      "name": "number spelling 1.0",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1.0,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "non-canonical"
+      }
+    },
+    {
+      "name": "no header",
+      "text": "// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "unsupported-version"
+      }
+    },
+    {
+      "name": "future version",
+      "text": "// @material 2\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "unsupported-version"
+      }
+    },
+    {
+      "name": "bad JSON",
+      "text": "// @material 1\n// @control {name:\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-parameter"
+      }
+    },
+    {
+      "name": "unknown field",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1,\"blend\":\"multiply\"}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-parameter"
+      }
+    },
+    {
+      "name": "unknown type",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"color\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-parameter"
+      }
+    },
+    {
+      "name": "sampler default",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"samplerVec4\",\"default\":\"x\"}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-parameter"
+      }
+    },
+    {
+      "name": "directive after body",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n// @control {}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "missing entry point",
+      "text": "// @material 1\nvec4 other(vec2 uv) { return vec4(1.0); }\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "byte order mark",
+      "text": "﻿// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-encoding"
+      }
+    },
+    {
+      "name": "invalid UTF-8",
+      "bytesHex": "2f2fff",
+      "expect": {
+        "ok": false,
+        "code": "invalid-encoding"
+      }
+    },
+    {
+      "name": "ordinary comments mentioning @",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\n/// @brief Darkens the layer below.\n// Contact: shaders@example.org; version 1 needs no @requires line.\nvec4 material(vec2 uv) {\n  vec3 c = texture(r_input, uv).rgb; // @darkness scales this\n  /* @note a block comment that does not start a line */\n  return vec4(c * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": true,
+        "id": "bafk2bzacecuu3rtanpecz7enbpkmxezfwgvc2mw2v6xvebudbzcmmmsjhduna"
+      }
+    },
+    {
+      "name": "unknown directive after header",
+      "text": "// @material 1\n// @author shaderlab\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "unknown directive between parameters",
+      "text": "// @material 1\n// @control {\"name\":\"tint\",\"label\":\"Tint\",\"type\":\"vec3\",\"default\":[1,0.5,0.25]}\n// @author shaderlab\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_tint * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "unknown directive in body",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n// @author shaderlab\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "Studio @controls marker",
+      "text": "// @material 1\n// @controls\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "legacy @param line",
+      "text": "// @material 1\n// @param float darkness = 1\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * 1.0, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "indented directive",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  // @author shaderlab\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "directive without space after slashes",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n//@author shaderlab\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "directive after a tab",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n//\t@author shaderlab\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "directive line inside a block comment",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\n/*\n// @author shaderlab\n*/\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "bare @ directive",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n// @\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "repeated header in body",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n// @material 1\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "unknown directive instead of header",
+      "text": "// @author shaderlab\n// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "unsupported-version"
+      }
+    },
+    {
+      "name": "requires one feature",
+      "text": "// @material 1\n// @requires [\"sl-pressure\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "unsupported-feature"
+      }
+    },
+    {
+      "name": "requires two features",
+      "text": "// @material 1\n// @requires [\"sampler-vector\",\"sl-pressure\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "unsupported-feature"
+      }
+    },
+    {
+      "name": "requires repeated line",
+      "text": "// @material 1\n// @requires [\"sl-pressure\"]\n// @requires [\"sl-pressure\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "unsupported-feature"
+      }
+    },
+    {
+      "name": "requires empty list",
+      "text": "// @material 1\n// @requires []\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "non-canonical"
+      }
+    },
+    {
+      "name": "requires unsorted",
+      "text": "// @material 1\n// @requires [\"sl-pressure\",\"sampler-vector\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "non-canonical"
+      }
+    },
+    {
+      "name": "requires duplicate",
+      "text": "// @material 1\n// @requires [\"sl-pressure\",\"sl-pressure\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "non-canonical"
+      }
+    },
+    {
+      "name": "requires spaced JSON",
+      "text": "// @material 1\n// @requires [ \"sl-pressure\" ]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "non-canonical"
+      }
+    },
+    {
+      "name": "requires extra space before value",
+      "text": "// @material 1\n// @requires  [\"sl-pressure\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "non-canonical"
+      }
+    },
+    {
+      "name": "requires escaped name",
+      "text": "// @material 1\n// @requires [\"sl\\u002dpressure\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "non-canonical"
+      }
+    },
+    {
+      "name": "requires not JSON",
+      "text": "// @material 1\n// @requires [sl-pressure]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "requires not an array",
+      "text": "// @material 1\n// @requires \"sl-pressure\"\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "requires non-string name",
+      "text": "// @material 1\n// @requires [1]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "requires upper-case name",
+      "text": "// @material 1\n// @requires [\"SL-pressure\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "requires underscore name",
+      "text": "// @material 1\n// @requires [\"sl_pressure\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "requires empty name",
+      "text": "// @material 1\n// @requires [\"\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "requires without value",
+      "text": "// @material 1\n// @requires\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "requires without space after slashes",
+      "text": "// @material 1\n//@requires [\"sl-pressure\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "requires capitalized",
+      "text": "// @material 1\n// @Requires [\"sl-pressure\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "requires after a parameter",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\n// @requires [\"sl-pressure\"]\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "requires in body",
+      "text": "// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n// @requires [\"sl-pressure\"]\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-source"
+      }
+    },
+    {
+      "name": "requires before header",
+      "text": "// @requires [\"sl-pressure\"]\n// @material 1\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "unsupported-version"
+      }
+    },
+    {
+      "name": "required feature before unknown parameter type",
+      "text": "// @material 1\n// @requires [\"sampler-vector\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"color\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "unsupported-feature"
+      }
+    },
+    {
+      "name": "required feature before body rules",
+      "text": "// @material 1\n// @requires [\"sl-pressure\"]\nvec4 other(vec2 uv) { return vec4(1.0); }\n",
+      "expect": {
+        "ok": false,
+        "code": "unsupported-feature"
+      }
+    },
+    {
+      "name": "empty requires before bad parameter JSON",
+      "text": "// @material 1\n// @requires []\n// @control {name:\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "non-canonical"
+      }
+    },
+    {
+      "name": "required feature with CRLF",
+      "text": "// @material 1\r\n// @requires [\"sl-pressure\"]\r\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\r\nvec4 material(vec2 uv) {\r\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\r\n}\r\n",
+      "expect": {
+        "ok": false,
+        "code": "unsupported-feature"
+      }
+    },
+    {
+      "name": "byte order mark before requires",
+      "text": "﻿// @material 1\n// @requires [\"sl-pressure\"]\n// @control {\"name\":\"darkness\",\"label\":\"Darkness\",\"type\":\"float\",\"default\":1,\"min\":0,\"max\":1}\nvec4 material(vec2 uv) {\n  return vec4(texture(r_input, uv).rgb * p_darkness, 1.0);\n}\n",
+      "expect": {
+        "ok": false,
+        "code": "invalid-encoding"
+      }
+    },
+    {
+      "name": "LF-separated comment marker and at-sign are ordinary",
+      "text": "// @material 1\n/*\n//\n@see x\n*/\nvec4 material(vec2 uv) {\n  return texture(r_input, uv);\n}\n",
+      "expect": {
+        "ok": true,
+        "id": "bafk2bzacebtn5gpohxjhi72iynapyvmip4ukcds2bfq7wppugkbmhkivpydus"
+      }
+    },
+    {
+      "name": "LS inside an ordinary comment does not start a directive",
+      "text": "// @material 1\n/* example \u2028// @author */\nvec4 material(vec2 uv) {\n  return texture(r_input, uv);\n}\n",
+      "expect": {
+        "ok": true,
+        "id": "bafk2bzacedoldt5vjuowgdcwuq3f7hesugn27fqkisedycnboredfdzrd5ocs"
+      }
+    },
+    {
+      "name": "PS inside an ordinary comment does not start a directive",
+      "text": "// @material 1\n/* example \u2029// @author */\nvec4 material(vec2 uv) {\n  return texture(r_input, uv);\n}\n",
+      "expect": {
+        "ok": true,
+        "id": "bafk2bzacealgojhrw3swopbye75xy6l3qxq7eljbakg4uap5mrjvh5uinmjkg"
+      }
+    }
+  ]
+}
