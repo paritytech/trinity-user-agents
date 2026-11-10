@@ -57,7 +57,9 @@
         "android/truapi-host/",
         "android/truapi-container.gradle"
       ],
-      "full": [],
+      "full": [
+        "stacks/"
+      ],
       "ci": [
         ".github/workflows/android-app.yml",
         ".github/actions/setup-android-build/",

@@ -46,13 +46,13 @@ fun instrumentedRuntimeConfig(databaseDirectory: String) = HostRuntimeConfig(
     databaseDirectory = databaseDirectory,
 )
 
-/** Previewnet's signed descriptor and link, packaged into the test APK from the core's copies. */
+/** Previewnet's signed descriptor and link, from the stack assets this module syncs from the core checkout. */
 fun previewnetStack(): BundledStack {
     val assets = InstrumentationRegistry.getInstrumentation().context.assets
     fun asset(name: String) = assets.open(name).use { it.readBytes() }
     return BundledStack(
-        pointer = asset("previewnet.link").decodeToString().trim(),
-        descriptor = asset("previewnet.json"),
+        pointer = asset("stacks/previewnet.link").decodeToString().trim(),
+        descriptor = asset("stacks/previewnet.json"),
         allowsReservedValues = false,
     )
 }

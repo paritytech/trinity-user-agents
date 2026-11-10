@@ -143,8 +143,10 @@ class TrUAPIHostRuntimeProviderTest {
             every { packageName } returns "io.parity.polkadotapp"
             every { packageManager.getPackageInfo("io.parity.polkadotapp", 0) } returns packageInfo
             every { noBackupFilesDir } returns tempFolder.root
-            // The copies the app ships, so a stack missing from the assets fails here rather than at launch.
-            every { assets.open(any()) } answers { File("src/main/assets", firstArg<String>()).inputStream() }
+            // The stack assets the app ships, so a stack missing from them fails here rather than at launch.
+            every { assets.open(any()) } answers {
+                File(System.getProperty("truapi.stackAssets"), firstArg<String>()).inputStream()
+            }
         }
     }
 }

@@ -8,8 +8,9 @@ import uniffi.truapi.BundledStack
  * The Trinity stacks the app bundles, and which one each environment runs.
  *
  * Each stack ships as two assets: `<asset>.link`, the stack's pointer, and `<asset>.json`, its signed
- * descriptor, which `scripts/update-stacks.sh` refreshes from the CLI's copy. The core checks the descriptor
- * against the pointer's key when the runtime starts.
+ * descriptor. `:bindings:truapi-host` syncs both from the core checkout's `stacks/`, which
+ * `scripts/update-stacks.sh` refreshes. The core checks the descriptor against the pointer's key when the
+ * runtime starts.
  */
 enum class TrUAPIStack(
     private val asset: String,
