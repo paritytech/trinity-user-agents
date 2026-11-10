@@ -236,6 +236,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
             when (request) {
                 is HostFeatureSupportedRequest.Chain -> cachedChains.get().canDial(request.genesisHash)
+                is HostFeatureSupportedRequest.Materials -> false
             }
 
         override fun currentTheme(): HostThemeSubscribeItem = cachedTheme.get()

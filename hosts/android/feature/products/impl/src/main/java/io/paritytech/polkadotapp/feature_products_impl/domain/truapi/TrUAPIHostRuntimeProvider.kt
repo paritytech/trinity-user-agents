@@ -281,6 +281,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
             when (request) {
                 is HostFeatureSupportedRequest.Chain -> cachedChains.get().canDial(request.genesisHash)
+                is HostFeatureSupportedRequest.Materials -> false
             }
 
         override fun supportedChains(): HostChainSet = cachedChains.get().advertised

@@ -1080,13 +1080,16 @@ impl Features for MockPlatform {
 		if let Some(reason) = &self.config.faults.feature_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
-		let latest::HostFeatureSupportedRequest::Chain { genesis_hash } = request;
-		let served = !self.config.only_served_chains ||
-			self.config
-				.supported_chains
-				.chains
-				.iter()
-				.any(|entry| entry.genesis_hash.as_slice() == genesis_hash.as_slice());
+		let served =
+			match request {
+				latest::HostFeatureSupportedRequest::Chain { genesis_hash } => {
+					!self.config.only_served_chains ||
+						self.config.supported_chains.chains.iter().any(|entry| {
+							entry.genesis_hash.as_slice() == genesis_hash.as_slice()
+						})
+				},
+				latest::HostFeatureSupportedRequest::Materials { .. } => true,
+			};
 		Ok(latest::HostFeatureSupportedResponse {
 			supported: self.config.feature_supported && served,
 		})

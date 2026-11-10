@@ -29,16 +29,18 @@ mod option_bool_json {
 mod hex_bytes_json {
 	use serde::{Deserialize, Deserializer, de::Error};
 
-	/// Reads a hex string into bytes.
-	pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
+	/// Reads a hex string into bytes, or into a fixed array of exactly as many.
+	pub fn deserialize<'de, D, Bytes>(deserializer: D) -> Result<Bytes, D::Error>
 	where
 		D: Deserializer<'de>,
+		Bytes: TryFrom<Vec<u8>>,
 	{
 		let text = String::deserialize(deserializer)?;
 		let digits = text
 			.strip_prefix("0x")
 			.ok_or_else(|| D::Error::custom("hex bytes need a 0x prefix"))?;
-		hex::decode(digits).map_err(D::Error::custom)
+		let bytes = hex::decode(digits).map_err(D::Error::custom)?;
+		Bytes::try_from(bytes).map_err(|_| D::Error::custom("wrong number of hex bytes"))
 	}
 }
 
@@ -444,23 +446,61 @@ pub struct ImageProps {
 	pub fit: Option<ImageFit>,
 }
 
-/// A visual effect. Each variant names one effect and carries its parameters.
+/// Properties of a `Materials` node.
 #[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
-pub enum Effect {
-	/// Animated rainbow tint over the children.
-	Rainbow,
-}
-
-/// Properties of an `Effect`.
-#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
-#[cfg_attr(feature = "runtime", serde(rename_all = "camelCase"))]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
-pub struct EffectProps {
-	/// The effect applied to the children.
-	pub effect: Effect,
+pub struct MaterialsProps {
+	/// Layers in drawing order.
+	pub layers: Vec<MaterialInstance>,
+}
+
+/// One material applied with its arguments.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct MaterialInstance {
+	/// Material ID: the BLAKE2b-256 hash of its canonical text.
+	#[cfg_attr(feature = "runtime", serde(deserialize_with = "hex_bytes_json::deserialize"))]
+	pub material: [u8; 32],
+	/// One argument per declared parameter, in declaration order.
+	pub args: Vec<Parameter>,
+}
+
+/// One argument. Numbers are IEEE 754 single-precision bit patterns.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum Parameter {
+	/// A `float` parameter.
+	Float(u32),
+	/// A `vec2` parameter.
+	Vec2([u32; 2]),
+	/// A `vec3` parameter.
+	Vec3([u32; 3]),
+	/// A `vec4` parameter.
+	Vec4([u32; 4]),
+	/// A `samplerFloat` parameter, reading the image's first channel.
+	SamplerFloat(ImageRef),
+	/// A `samplerVec2` parameter, reading the image's first two channels.
+	SamplerVec2(ImageRef),
+	/// A `samplerVec3` parameter, reading the image's first three channels.
+	SamplerVec3(ImageRef),
+	/// A `samplerVec4` parameter, reading all four channels.
+	SamplerVec4(ImageRef),
+}
+
+/// Where an image argument comes from.
+#[cfg_attr(feature = "runtime", derive(serde::Deserialize))]
+#[cfg_attr(feature = "runtime", serde(tag = "tag", content = "value"))]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum ImageRef {
+	/// A PNG, JPEG or WebP image, loaded like an `Image` node's source.
+	Source(ImageSource),
+	/// The host's noise image for this body, the same as `r_noise`.
+	Noise,
 }
 
 /// Properties of a `TextField`.
@@ -569,12 +609,14 @@ pub enum RendererNode {
 		/// Image properties.
 		props: ImageProps,
 	},
-	/// Applies its effect to its children. As large as its children, which it
-	/// places at the top start like a `Box`.
-	Effect {
-		/// Effect properties.
-		props: EffectProps,
-		/// Child nodes.
+	/// Draws its children, then runs its layers over them, as the materials
+	/// RFC defines. As large as its children, which it places at the top start
+	/// like a `Box`.
+	#[codec(index = 11)]
+	Materials {
+		/// The layers to run.
+		props: MaterialsProps,
+		/// The content the layers draw over.
 		children: Vec<RendererNode>,
 	},
 }
@@ -633,6 +675,44 @@ pub struct HostRendererActionSubscribeItem {
 	/// empty payload; a `TextField` value change carries the UTF-8 bytes of
 	/// the new value, with no length prefix.
 	pub payload: Vec<u8>,
+}
+
+/// A `Materials` node that fell back.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct HostRendererFailureSubscribeItem {
+	/// Where the body lives.
+	pub context: RenderContext,
+	/// The node's position among the tree's `Materials` nodes, depth first,
+	/// starting at 0.
+	pub node: u32,
+	/// The material that failed, when the failure belongs to one.
+	pub material: Option<[u8; 32]>,
+	/// Why the node fell back.
+	pub reason: MaterialFailure,
+}
+
+/// Why a `Materials` node fell back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum MaterialFailure {
+	/// A material or image argument cannot be fetched, or has expired.
+	NotFound,
+	/// Fetched bytes do not match their ID.
+	Integrity,
+	/// The material breaks the format, with any format code but
+	/// `unsupported-version` and `unsupported-feature`.
+	InvalidMaterial,
+	/// The arguments do not match the declared parameters, an image is not
+	/// PNG, JPEG or WebP, or the noise image fills a parameter other than
+	/// `samplerFloat`.
+	InvalidStack,
+	/// The node breaks a limit.
+	LimitExceeded,
+	/// The host does not read the version or a required feature, cannot
+	/// compile the material, does not draw materials on this surface, or has
+	/// materials switched off.
+	Unsupported,
 }
 
 #[cfg(test)]
