@@ -69,10 +69,8 @@ impl LightStack {
 	pub fn new(id: impl Into<String>, descriptor: &Descriptor) -> Result<Self, ProviderError> {
 		let mut chains: Vec<([u8; 32], Chain)> = Vec::with_capacity(descriptor.chains.len());
 		for chain in &descriptor.chains {
-			let genesis = hex::decode(chain.genesis_hash.trim_start_matches("0x"))
-				.ok()
-				.and_then(|bytes| <[u8; 32]>::try_from(bytes).ok())
-				.ok_or_else(|| {
+			let genesis =
+				crate::config::genesis_from_hex(&chain.genesis_hash).ok_or_else(|| {
 					refused(Error::Malformed(format!("genesisHash {}", chain.genesis_hash)))
 				})?;
 			if chains.iter().any(|(known, _)| *known == genesis) {

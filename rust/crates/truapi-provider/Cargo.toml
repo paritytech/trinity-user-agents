@@ -131,8 +131,6 @@ web-sys = { workspace = true, features = [
 web-time = { workspace = true, optional = true }
 
 [dev-dependencies]
-# Derives a bundled spec's genesis hash so the catalog cannot drift off it.
-blake2b_simd = { workspace = true }
 # Computes the digest a test descriptor names for a spec.
 sha2 = { workspace = true }
 
