@@ -8,7 +8,7 @@ use super::{ChainEndpoint, Stack};
 
 /// The bundle `built_in` ships, included here rather than read from
 /// `built_in`, whose tests use this module.
-const PASEO_NEXT_V2_BUNDLE: &[u8] = include_bytes!("../../stacks/paseo-next-v2.json");
+const PASEO_NEXT_V2_BUNDLE: &[u8] = include_bytes!("../../../../../stacks/paseo-next-v2.json");
 
 /// The bundled paseo-next-v2 descriptor, edited, as plain JSON bytes.
 pub fn edit_descriptor(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {

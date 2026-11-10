@@ -169,14 +169,11 @@ export function settle(): Promise<void> {
 }
 
 /**
- * The previewnet stack as a host build bundles it: the signed copy and link
- * the CLI ships, read from `rust/crates/truapi-host-cli/stacks`.
+ * The previewnet stack as a host build bundles it: the link and signed copy
+ * in the repository's `stacks/`.
  */
 export function bundledTestStack(): BundledStack {
-  const stacks = new URL(
-    "../../../../rust/crates/truapi-host-cli/stacks/",
-    import.meta.url,
-  );
+  const stacks = new URL("../../../../stacks/", import.meta.url);
   return {
     pointer: readFileSync(new URL("previewnet.link", stacks), "utf8").trim(),
     descriptor: new Uint8Array(

@@ -43,6 +43,7 @@ on:
       - "rust/crates/truapi/**"
       - "rust/crates/uniffi-bindgen-cli/**"
       - "scripts/**"
+      - "stacks/**"
   workflow_dispatch:
 
 # Every run finishes, so each one publishes what it built. A later push waits,

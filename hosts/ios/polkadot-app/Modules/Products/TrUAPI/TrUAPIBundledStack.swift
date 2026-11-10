@@ -3,10 +3,11 @@ import TrUAPIHost
 
 /// The Trinity stacks the app bundles, and which one each build runs.
 ///
-/// Each stack ships as two files under `Stacks/`: `<resource>.link`, the
-/// stack's pointer, and `<resource>.json`, its signed descriptor, which
-/// `scripts/update-stacks.sh` refreshes from the CLI's copy. The core checks
-/// the descriptor against the pointer's key when the runtime starts.
+/// Each stack ships as two resources: `<resource>.link`, the stack's pointer,
+/// and `<resource>.json`, its signed descriptor. The app target's "Bundle
+/// Trinity stacks" build phase copies both from the repository's `stacks/`,
+/// which `scripts/update-stacks.sh` refreshes. The core checks the descriptor
+/// against the pointer's key when the runtime starts.
 enum TrUAPIBundledStack {
     enum Error: Swift.Error, Equatable {
         case missingResource(name: String)

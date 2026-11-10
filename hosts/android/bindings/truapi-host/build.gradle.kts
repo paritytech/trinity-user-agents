@@ -60,6 +60,9 @@ val truapiDir: String = run {
 // Handwritten Kotlin adapters and value types synced from the core checkout.
 val hostShellDir: Provider<Directory> = layout.buildDirectory.dir("truapi-shell")
 
+// The signed stacks the app can run, synced from the core checkout as `stacks/` assets.
+val stackAssetsDir: Provider<Directory> = layout.buildDirectory.dir("truapi-stacks")
+
 android {
     namespace = "io.parity.truapi"
 
@@ -70,13 +73,10 @@ android {
                 "src/main/kotlin/generated",
                 hostShellDir.get().asFile.path,
             )
+            assets.srcDir(stackAssetsDir.get().asFile.path)
         }
         getByName("test") { java.srcDirs("src/test/kotlin") }
-        getByName("androidTest") {
-            java.srcDirs("src/androidTest/kotlin")
-            // The core's own signed stack copies, so a test runtime starts on a stack the core verifies.
-            assets.srcDir("$truapiDir/rust/crates/truapi-host-cli/stacks")
-        }
+        getByName("androidTest") { java.srcDirs("src/androidTest/kotlin") }
     }
 
     lint {
@@ -96,6 +96,18 @@ val syncHostShell by tasks.registering(Sync::class) {
     from("$truapiDir/android/truapi-host/src/main/kotlin") { exclude("generated/**") }
     into(hostShellDir)
 }
+
+// truapi owns the signed stack descriptors too. The app ships the three it can
+// run as `stacks/<name>.link` and `stacks/<name>.json` assets, synced from the
+// checkout so this repo holds no copy of them either.
+val syncStacks by tasks.registering(Sync::class) {
+    from("$truapiDir/stacks") { include("previewnet.*", "paseo-next-v2.*", "polkadot.*") }
+    into(stackAssetsDir.map { it.dir("stacks") })
+}
+
+// Asset merging and lint both read the synced stacks.
+tasks.matching { (it.name.startsWith("merge") && it.name.endsWith("Assets")) || "lint" in it.name.lowercase() }
+    .configureEach { dependsOn(syncStacks) }
 
 // Every Kotlin compilation here consumes the synced shell and the generated
 // bindings, across all four build types and both test source sets.

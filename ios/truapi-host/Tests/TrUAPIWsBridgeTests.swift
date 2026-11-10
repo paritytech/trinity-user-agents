@@ -224,15 +224,15 @@ final class StubCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
     }
 }
 
-/// The previewnet stack the CLI bundles, read from its signed copies in this
-/// checkout, so the core verifies a real descriptor against its link.
+/// The previewnet stack host builds bundle, read from the repository's
+/// `stacks/`, so the core verifies a real descriptor against its link.
 ///
 /// The tests run on a simulator, which reads the host file system, so the
 /// path comes from this file's location rather than a test bundle resource.
 func previewnetStack() throws -> BundledStack {
     let stacks = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()
-        .appendingPathComponent("../../../rust/crates/truapi-host-cli/stacks")
+        .appendingPathComponent("../../../stacks")
         .standardizedFileURL
     let link = try String(contentsOf: stacks.appendingPathComponent("previewnet.link"), encoding: .utf8)
     return try BundledStack(

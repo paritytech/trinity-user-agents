@@ -111,7 +111,15 @@ dependencies {
     androidTestImplementation(libs.google.gson)
 }
 
+// The stack assets the app ships, which :bindings:truapi-host syncs from the core checkout.
+val stackAssetsDir = project(":bindings:truapi-host").layout.buildDirectory.dir("truapi-stacks")
+
 tasks.withType<Test>().configureEach {
+    // The unit tests start the runtime from those assets, so a refreshed stack reruns them.
+    dependsOn(":bindings:truapi-host:syncStacks")
+    inputs.dir(stackAssetsDir).withPropertyName("stackAssets").withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("truapi.stackAssets", stackAssetsDir.get().asFile.relativeTo(projectDir).path)
+
     // Instrument only when the coverage report is actually being built, so an ordinary test run is unaffected.
     extensions.configure<JacocoTaskExtension> {
         isEnabled = gradle.startParameter.taskNames.any { "topUpCoverage" in it }
