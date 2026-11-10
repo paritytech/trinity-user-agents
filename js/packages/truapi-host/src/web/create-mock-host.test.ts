@@ -670,6 +670,8 @@ describe("createMockHost TestHostAPI parity", () => {
       ),
     ).toEqual([true, true, true, false]);
     expect(mockRuntimeConfig().testStack).toEqual({
+      id: "mock",
+      generation: "mock",
       network: "mock",
       tld: "paseo",
       people: { genesisHash: MOCK_GENESIS.people },

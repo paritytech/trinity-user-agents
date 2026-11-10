@@ -21,6 +21,10 @@ fn bundled(
 	Stack::bundled(&pointer, &bytes, allows_reserved_values)
 }
 
+fn identity() -> StackIdentity {
+	StackIdentity { id: "stack".to_string(), generation: "generation".to_string() }
+}
+
 fn info(
 	stack: &Stack,
 	chain: ChainIdentifier,
@@ -116,7 +120,7 @@ fn a_tld_the_core_does_not_serve_is_refused() {
 	let tlds = ["kusama", "", ".paseo", "Paseo"];
 
 	assert_eq!(
-		tlds.map(|tld| Stack::new("paseo".into(), tld.into(), chains.clone(), true)),
+		tlds.map(|tld| Stack::new(identity(), "paseo".into(), tld.into(), chains.clone(), true)),
 		tlds.map(|tld| Err(StackError::UnsupportedTld { tld: tld.into() })),
 	);
 	assert_eq!(
@@ -160,8 +164,8 @@ fn a_stack_from_parts_is_held_to_the_reserved_values() {
 
 	assert_eq!(
 		(
-			Stack::new("polkadot".into(), "paseo".into(), chains.clone(), false).err(),
-			Stack::new("polkadot".into(), "paseo".into(), chains, true).is_ok(),
+			Stack::new(identity(), "polkadot".into(), "paseo".into(), chains.clone(), false).err(),
+			Stack::new(identity(), "polkadot".into(), "paseo".into(), chains, true).is_ok(),
 		),
 		(Some(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }), true)
 	);
@@ -179,7 +183,27 @@ fn an_all_zero_genesis_hash_is_refused() {
 	};
 
 	assert_eq!(
-		Stack::new("paseo".into(), "paseo".into(), chains, true),
+		Stack::new(identity(), "paseo".into(), "paseo".into(), chains, true),
 		Err(StackError::ZeroGenesis { chain: ChainIdentifier::AssetHub })
+	);
+}
+
+/// A reader keys what it stores by the stack's identity, and drops chain
+/// caches when the generation changes, so both come from the bundled copy.
+#[test]
+fn a_bundled_stack_is_identified_by_its_key_and_its_descriptors_generation() {
+	let descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None);
+	let (link, _) = sign_test_descriptor(&descriptor);
+	let stack = bundled(&descriptor, false).expect("stack is valid");
+
+	assert_eq!(
+		(stack.id(), stack.generation()),
+		(
+			Pointer::from_link(&link)
+				.expect("test link is a stack link")
+				.stack_id()
+				.as_str(),
+			descriptor["generation"].as_str().expect("test descriptor names a generation"),
+		)
 	);
 }

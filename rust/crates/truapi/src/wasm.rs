@@ -24,14 +24,14 @@ use std::{
 
 #[cfg(feature = "wasm-signing-host")]
 use crate::platform::SigningHostConfig;
-#[cfg(feature = "test-host")]
-use crate::platform::StackChains;
 use crate::platform::{
 	ChainProvider, ChatPlatform, ContactsPlatform, ExecutableKind, GamePlatform, HostInfo,
 	JsonRpcConnection, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform,
 	ProductContext, ProductId, ProductIdError, ProviderError, RuntimeConfigValidationError,
 	ScannerPlatform, Stack,
 };
+#[cfg(feature = "test-host")]
+use crate::platform::{StackChains, StackIdentity};
 use futures::{
 	channel::mpsc,
 	future::{AbortHandle, Abortable},
@@ -604,9 +604,9 @@ fn stack_from_js(value: &JsValue) -> Result<Stack, JsValue> {
 		.map_err(|error| JsValue::from_str(&format!("runtimeConfig.stack: {error}")))
 }
 
-/// `runtimeConfig.testStack`: `network`, `tld`, `people`, `bulletin` and the
-/// optional `assetHub` and `relay`, each `{ genesisHash }`, and
-/// `allowsReservedValues`, which defaults to false.
+/// `runtimeConfig.testStack`: `id`, `generation`, `network`, `tld`, `people`,
+/// `bulletin` and the optional `assetHub` and `relay`, each `{ genesisHash }`,
+/// and `allowsReservedValues`, which defaults to false.
 #[cfg(feature = "test-host")]
 fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 	let genesis = |role: &str| {
@@ -628,7 +628,16 @@ fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 		people: required("people")?,
 		bulletin: required("bulletin")?,
 	};
+	let identity = StackIdentity {
+		id: get_required_string_at(stack, "id", "runtimeConfig.testStack.id")?,
+		generation: get_required_string_at(
+			stack,
+			"generation",
+			"runtimeConfig.testStack.generation",
+		)?,
+	};
 	Stack::new(
+		identity,
 		get_required_string_at(stack, "network", "runtimeConfig.testStack.network")?,
 		get_required_string_at(stack, "tld", "runtimeConfig.testStack.tld")?,
 		chains,

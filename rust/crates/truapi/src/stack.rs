@@ -51,9 +51,23 @@ const RESERVED_TLD: &str = "dot";
 /// and the genesis hash of each chain role the core uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stack {
+	identity: StackIdentity,
 	network: String,
 	tld: String,
 	chains: StackChains,
+}
+
+/// What tells a stack from every other stack, and one run of its chains from
+/// the next.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackIdentity {
+	/// The stack's identity: `trinity_stack::Pointer::stack_id` of its pointer.
+	/// A fork and its source have different ones, though their chains share
+	/// genesis hashes.
+	pub id: String,
+	/// The descriptor's `generation`, which changes whenever the stack
+	/// restarts its chains, as after a wipe.
+	pub generation: String,
 }
 
 /// The genesis hash of each chain role a stack names. People and Bulletin are
@@ -141,6 +155,7 @@ impl Stack {
 		if pointer.key().is_none() {
 			return Err(StackError::Unsigned);
 		}
+		let id = pointer.stack_id();
 		let descriptor = open(descriptor, &pointer).map_err(StackError::Descriptor)?.descriptor;
 		if !allows_reserved_values {
 			refuse_reserved_genesis(descriptor.chains.iter().map(Chain::genesis))?;
@@ -154,7 +169,8 @@ impl Stack {
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
-		Self::new(descriptor.network, descriptor.tld, chains, allows_reserved_values)
+		let identity = StackIdentity { id, generation: descriptor.generation };
+		Self::new(identity, descriptor.network, descriptor.tld, chains, allows_reserved_values)
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
@@ -163,6 +179,7 @@ impl Stack {
 	/// Applies the same TLD and reserved-value rules as [`Self::bundled`], and
 	/// refuses an all-zero Relay or Asset Hub genesis hash.
 	pub fn new(
+		identity: StackIdentity,
 		network: String,
 		tld: String,
 		chains: StackChains,
@@ -188,7 +205,18 @@ impl Stack {
 				[relay, asset_hub].into_iter().flatten().chain([people, bulletin]),
 			)?;
 		}
-		Ok(Self { network, tld, chains })
+		Ok(Self { identity, network, tld, chains })
+	}
+
+	/// The stack's identity. See [`StackIdentity::id`].
+	pub fn id(&self) -> &str {
+		&self.identity.id
+	}
+
+	/// The run of the stack's chains. What the core cached about the chains
+	/// under another generation is stale. See [`StackIdentity::generation`].
+	pub fn generation(&self) -> &str {
+		&self.identity.generation
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.

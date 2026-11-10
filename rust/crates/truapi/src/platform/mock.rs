@@ -985,6 +985,9 @@ impl Notifications for MockPlatform {
 	}
 }
 
+/// Identity of every [`mock_stack`].
+pub const MOCK_STACK_ID: &str = "mock";
+
 /// A stack for tests that need particular genesis hashes: network `mock`
 /// under the `paseo` TLD, without a relay.
 pub fn mock_stack(
@@ -992,8 +995,12 @@ pub fn mock_stack(
 	bulletin: truapi::Bytes32,
 	asset_hub: Option<truapi::Bytes32>,
 ) -> crate::platform::Stack {
+	let identity = crate::platform::StackIdentity {
+		id: MOCK_STACK_ID.to_string(),
+		generation: "mock".to_string(),
+	};
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new("mock".to_string(), "paseo".to_string(), chains, false)
+	crate::platform::Stack::new(identity, "mock".to_string(), "paseo".to_string(), chains, false)
 		.expect("a mock stack names no reserved value")
 }
 

@@ -8,7 +8,7 @@ use super::{
 
 /// `descriptor` as a stack, for a descriptor `Stack::new` may reject.
 fn read_stack(descriptor: Descriptor) -> Result<Stack> {
-	Stack::new(descriptor, ChainBackend::Rpc)
+	Stack::new("test-stack".to_string(), descriptor, ChainBackend::Rpc)
 }
 
 /// A descriptor carries everything a network needs: the routes and genesis of
