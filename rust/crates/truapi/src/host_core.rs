@@ -906,16 +906,36 @@ impl SigningHostRuntime {
 	}
 
 	/// Quotes for funding session `intent`, sent through
-	/// [`FundingPlatform::funding_quotes_changed`] until the session is handed
-	/// to a provider, ends or leaves the overlay, or the host asks for another
-	/// `ask`. Returns the request id each list carries.
+	/// [`FundingPlatform::funding_quotes_changed`] (natively `funding_changed`
+	/// with `Quotes`) until the session is handed to a provider, ends or
+	/// leaves the overlay, the host asks for another `ask`, or a selection
+	/// names another route. Returns the request id each list carries.
 	pub fn request_funding_quotes(&self, intent: &str, ask: latest::FundingQuoteAsk) -> u64 {
 		self.services.request_funding_quotes(intent, ask)
 	}
 
+	/// Start funding session `intent` on the best quote of request
+	/// `request_id` once every provider answered it; see
+	/// [`RuntimeServices::start_funding_when_quoted`].
+	pub fn start_funding_when_quoted(&self, intent: &str, request_id: u64) {
+		self.services.start_funding_when_quoted(intent, request_id);
+	}
+
+	/// Disarm [`Self::start_funding_when_quoted`] for session `intent`.
+	pub fn cancel_funding_auto_start(&self, intent: &str) {
+		self.services.cancel_funding_auto_start(intent);
+	}
+
+	/// Whether the host offers any funding provider.
+	pub fn funding_available(&self) -> bool {
+		!self.services.funding_providers().is_empty()
+	}
+
 	/// Record what the user picked in funding session `intent`'s overlay;
 	/// the options it leads to arrive through
-	/// [`crate::runtime::FundingFeed::funding_options_changed`].
+	/// [`crate::runtime::FundingFeed::funding_options_changed`] (natively
+	/// `funding_changed` with `Options`). A selection naming another route
+	/// than the quote request withdraws it.
 	pub fn select_funding_options(
 		&self,
 		intent: &str,

@@ -265,6 +265,15 @@ pub trait FundingFeed: Send + Sync {
 		intent: String,
 		options: crate::host_logic::funding_providers::FundingOptions,
 	);
+
+	/// Session `intent`'s quote list is gone: the user selected another
+	/// route than it priced.
+	fn funding_quotes_withdrawn(&self, intent: String) {
+		let _ = intent;
+	}
+
+	/// The host's configuration changed the funding providers it offers.
+	fn funding_providers_changed(&self) {}
 }
 
 /// What commits change, behind one lock: a commit replaces it and tells the
