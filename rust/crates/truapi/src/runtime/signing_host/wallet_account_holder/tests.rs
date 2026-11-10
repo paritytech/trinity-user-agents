@@ -1,8 +1,9 @@
 use super::*;
 use crate::{
+	Spawner,
 	platform::HostInfo,
 	runtime::signing_host::ring_vrf::ChainRingResolver,
-	test_support::{StubPlatform, test_spawner, test_stack},
+	test_support::{StubPlatform, test_stack},
 };
 use truapi::latest::DerivationIndex;
 
@@ -21,7 +22,7 @@ pub fn unlocked_wallet(
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		test_stack(network_suffix, [0; 32], [0; 32], None),
-		test_spawner(),
+		Spawner::for_test(),
 	);
 	let registry = RingVrfRegistryStore::new(services.platform.clone());
 	let consent = Arc::new(ProductConsent::new(services.platform.clone()));

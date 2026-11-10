@@ -64,6 +64,8 @@ import uniffi.truapi.RecoveryException
 import uniffi.truapi.ImageException
 import uniffi.truapi.ImageReference
 import uniffi.truapi.LoadedImage
+import uniffi.truapi.PublicProfile
+import uniffi.truapi.PublicProfileException
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketObserver
@@ -1163,6 +1165,11 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Report the core database's SQLite version, schema version and file path. */
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
+
+    /** Profile metadata without image bytes. [force] bypasses the core's one-hour cache. */
+    @Throws(PublicProfileException::class)
+    suspend fun resolvePublicProfile(username: String, force: Boolean): PublicProfile =
+        inner.resolvePublicProfile(username, force)
 
     /**
      * The image [reference] names, read from Bulletin by the core and checked against its CID and
