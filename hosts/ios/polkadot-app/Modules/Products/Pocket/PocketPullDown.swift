@@ -1,6 +1,6 @@
-import CoreImage
 import PolkadotUI
 import UIKit
+import UIKitExt
 
 /// The pull-down every opened card closes with. It starts only on the card, never during a transition, and the card
 /// follows the finger. The body below it moves with the card, fades and blurs up to `PocketClosePull.maxBlur`.
@@ -60,6 +60,8 @@ private extension PocketPullDown {
         case .changed:
             show(pull)
         case .ended:
+            guard overlay != nil else { return }
+
             if pull.closes {
                 closeCard(draggedBy: travel)
             } else {
@@ -76,7 +78,9 @@ private extension PocketPullDown {
     /// Snapshots are taken before the overlay goes in, so the overlay never appears in its own images.
     func beginPull(on screen: PocketFlightScreen) {
         overlay?.view.removeFromSuperview()
-        let pullOverlay = makeOverlay(of: screen.view, card: screen.itemFrame(in: screen.view))
+        overlay = nil
+        guard let pullOverlay = makeOverlay(of: screen.view, card: screen.itemFrame(in: screen.view)) else { return }
+
         screen.view.addSubview(pullOverlay.view)
         overlay = pullOverlay
     }
@@ -116,21 +120,25 @@ private extension PocketPullDown {
         animator.startAnimation()
     }
 
-    func makeOverlay(of screenView: UIView, card cardFrame: CGRect) -> PullOverlay {
+    func makeOverlay(of screenView: UIView, card cardFrame: CGRect) -> PullOverlay? {
         let bodyFrame = CGRect(
             x: 0,
             y: cardFrame.maxY,
             width: screenView.bounds.width,
             height: screenView.bounds.maxY - cardFrame.maxY
         )
-        let bodyImage = snapshot(of: screenView, in: bodyFrame)
+        guard
+            let bodyImage = screenView.snapshot(of: bodyFrame),
+            let cardImage = screenView.snapshot(of: cardFrame),
+            let blurredImage = bodyImage.blurred(radius: PocketClosePull.maxBlur)
+        else { return nil }
 
         let view = UIView(frame: screenView.bounds)
         view.backgroundColor = .bgSurfaceMain
-        let card = imageView(snapshot(of: screenView, in: cardFrame), frame: cardFrame)
+        let card = imageView(cardImage, frame: cardFrame)
         let body = UIView(frame: bodyFrame)
         let sharpBody = imageView(bodyImage, frame: body.bounds)
-        let blurredBody = imageView(blurred(bodyImage), frame: body.bounds)
+        let blurredBody = imageView(blurredImage, frame: body.bounds)
         blurredBody.alpha = 0
         body.addSubview(sharpBody)
         body.addSubview(blurredBody)
@@ -138,26 +146,6 @@ private extension PocketPullDown {
         view.addSubview(card)
 
         return PullOverlay(view: view, card: card, body: body, blurredBody: blurredBody, startCard: cardFrame)
-    }
-
-    func snapshot(of screenView: UIView, in frame: CGRect) -> UIImage {
-        UIGraphicsImageRenderer(size: frame.size).image { _ in
-            screenView.drawHierarchy(
-                in: CGRect(origin: CGPoint(x: -frame.minX, y: -frame.minY), size: screenView.bounds.size),
-                afterScreenUpdates: false
-            )
-        }
-    }
-
-    func blurred(_ image: UIImage) -> UIImage {
-        guard let input = CIImage(image: image) else { return image }
-
-        let output = input.clampedToExtent()
-            .applyingGaussianBlur(sigma: PocketClosePull.maxBlur * image.scale)
-            .cropped(to: input.extent)
-        guard let cgImage = CIContext().createCGImage(output, from: input.extent) else { return image }
-
-        return UIImage(cgImage: cgImage, scale: image.scale, orientation: .up)
     }
 
     func imageView(_ image: UIImage, frame: CGRect) -> UIImageView {

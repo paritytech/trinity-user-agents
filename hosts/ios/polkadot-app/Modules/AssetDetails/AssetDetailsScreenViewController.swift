@@ -4,6 +4,7 @@ import PolkadotUI
 import SnapKit
 import SwiftUI
 import UIKit
+import UIKitExt
 
 /// The Balance card opened onto a screen of its own, titled Purse, pushed on the Wallet stack above the Pocket.
 ///

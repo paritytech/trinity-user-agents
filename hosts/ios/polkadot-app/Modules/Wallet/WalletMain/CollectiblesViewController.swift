@@ -3,6 +3,7 @@ import PolkadotUI
 import Products
 import SnapKit
 import UIKit
+import UIKitExt
 import WebKit
 
 /// The Collectibles screen pushed over the Wallet, with the stash product filling it.
