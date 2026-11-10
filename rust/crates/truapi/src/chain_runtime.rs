@@ -1800,31 +1800,102 @@ impl ChainConnection {
 		// says so once rather than on every follow that renews the condition.
 		let already_reported = self.budget_reported.swap(at_budget, Ordering::Relaxed);
 		let report = at_budget && !already_reported;
-		let occupants = report.then(|| {
-			let now = SystemTime::now();
-			holding
-				.iter()
-				.map(|held| {
-					let activity = follows.get(held).map(|follow| follow.describe_activity(now));
-					format!("{} ({})", Self::occupant_name(held), activity.unwrap_or_default())
-				})
-				.collect::<Vec<_>>()
-				.join(", ")
+		let line = report.then(|| {
+			Self::budget_line(
+				&encode_hex(&self.genesis_hash),
+				&holding,
+				&follows,
+				SystemTime::now(),
+			)
 		});
 		drop(follows);
-		if let Some(occupants) = occupants {
+		if let Some(line) = line {
 			// The refusal this predicts surfaces far from here, on whichever
 			// call happens to open the next follow, and says nothing about
 			// follows when it does. The target addresses it to the host, so it
 			// arrives whatever the level is, and hosts run at `ERROR`.
-			let genesis = encode_hex(&self.genesis_hash);
-			let held = holding.len();
-			warn!(
-				target: crate::markers::CHAIN_FOLLOW_BUDGET_REACHED.target,
-				"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows; its next follow will be refused: {occupants}",
-			);
+			warn!(target: crate::markers::CHAIN_FOLLOW_BUDGET_REACHED.target, "{line}");
 		}
 		true
+	}
+
+	/// What the budget marker carries: the chain, how many follows hold a slot,
+	/// and each of those follows with its activity.
+	///
+	/// Every follow is named, because a leak shows as one follow open far longer
+	/// than the rest, and a line that named only some of them could leave that
+	/// one out. The follows read in the order [`Self::follows_holding_a_slot`]
+	/// gives them, which is by id rather than by age.
+	fn budget_line(
+		genesis: &str,
+		holding: &[String],
+		follows: &HashMap<String, FollowState>,
+		now: SystemTime,
+	) -> String {
+		let held = holding.len();
+		let head = format!(
+			"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows, the next is refused: "
+		);
+		let entries = holding
+			.iter()
+			.map(|follow_id| {
+				let activity = follows
+					.get(follow_id)
+					.map(|follow| follow.describe_activity(now))
+					.unwrap_or_default();
+				(Self::occupant_name(follow_id), activity)
+			})
+			.collect::<Vec<_>>();
+		let room = crate::logging::HOST_SINK_DETAIL_MAX_CHARS
+			.saturating_sub(head.chars().count() + held.saturating_sub(1) * 2);
+		let occupants = Self::fit_entries(&entries, room).join(", ");
+		format!("{head}{occupants}")
+	}
+
+	/// Each `(name, activity)` as `name activity`, all of them inside `room`
+	/// characters between them.
+	///
+	/// Nothing is cut when everything fits. Otherwise the shortest entries
+	/// are kept whole and the longest share what is left equally. A cut
+	/// entry loses the end of its name and keeps its activity, which is what
+	/// says whether a follow is stale or its receiver gone; only an entry
+	/// whose activity alone outruns its share is cut at its end.
+	fn fit_entries(entries: &[(String, String)], room: usize) -> Vec<String> {
+		let whole = entries
+			.iter()
+			.map(|(name, activity)| format!("{name} {activity}"))
+			.collect::<Vec<_>>();
+		let mut by_length = (0..whole.len()).collect::<Vec<_>>();
+		by_length.sort_by_key(|&index| whole[index].chars().count());
+		let mut fitted = whole.clone();
+		let mut left = room;
+		for (placed, &index) in by_length.iter().enumerate() {
+			let share = left / (whole.len() - placed);
+			let length = whole[index].chars().count();
+			if length <= share {
+				left = left.saturating_sub(length);
+				continue;
+			}
+			let (name, activity) = &entries[index];
+			let name_room = share.saturating_sub(activity.chars().count() + 1);
+			fitted[index] = if name_room >= 2 {
+				format!("{} {activity}", Self::bound_entry(name, name_room))
+			} else {
+				Self::bound_entry(&whole[index], share)
+			};
+			left = left.saturating_sub(fitted[index].chars().count());
+		}
+		fitted
+	}
+
+	/// `entry` within `max_chars`, marking a cut so a name read short is not
+	/// mistaken for a name that is short.
+	fn bound_entry(entry: &str, max_chars: usize) -> String {
+		if entry.chars().count() <= max_chars {
+			return entry.to_string();
+		}
+		let kept = crate::logging::truncate_to_chars(entry, max_chars.saturating_sub(1));
+		format!("{kept}\u{2026}")
 	}
 
 	/// Local ids of the follows holding a slot in this connection's budget.
@@ -1845,14 +1916,16 @@ impl ChainConnection {
 
 	/// Name one follow holding a slot, for a line that leaves the device.
 	///
-	/// The core's own follow ids are its own words and are named in full. A
-	/// product's follow id is built from the request id it chose, which is
-	/// arbitrary text off the wire, so only the runtime it belongs to is named.
+	/// The core's own follow ids are its own words, so one is named by what it
+	/// says less the prefix every core follow shares, and the line's own budget
+	/// is what bounds its length. A product's follow id is built from the
+	/// request id it chose, which is arbitrary text off the wire, so only the
+	/// runtime it belongs to is named.
 	/// Which products hold how many is the diagnostic; what a product called
 	/// its request is not, and is not ours to repeat.
 	fn occupant_name(local_follow_id: &str) -> String {
-		if local_follow_id.starts_with("truapi:") {
-			return local_follow_id.to_string();
+		if let Some(core_follow) = local_follow_id.strip_prefix("truapi:") {
+			return core_follow.to_string();
 		}
 		match local_follow_id.split_once(':') {
 			Some((runtime, _)) => format!("{runtime}:product"),
@@ -1988,16 +2061,15 @@ impl FollowState {
 		let FollowActivity { opened_at, last_event_at, calls, last_call_at } = &self.activity;
 		let elapsed = |at: &SystemTime| now.duration_since(*at).unwrap_or_default().as_secs();
 		let since = |at: &Option<SystemTime>| match at {
-			Some(at) => format!("{} s ago", elapsed(at)),
+			Some(at) => format!("{}s", elapsed(at)),
 			None => "never".to_string(),
 		};
 		let open = elapsed(opened_at);
 		let last_event = since(last_event_at);
 		let last_call = since(last_call_at);
-		let receiver = if self.sender.is_closed() { "dropped" } else { "open" };
-		format!(
-			"open {open} s, last event {last_event}, {calls} calls, last call {last_call}, receiver {receiver}"
-		)
+		// A live receiver is the ordinary case, so only a dropped one is named.
+		let receiver = if self.sender.is_closed() { ", dropped" } else { "" };
+		format!("open {open}s, event {last_event}, calls {calls}, call {last_call}{receiver}")
 	}
 }
 
@@ -2522,11 +2594,10 @@ mod occupant_name_tests {
 	}
 
 	/// The core's own ids are its own words, and say which read holds the slot.
+	/// The prefix they all share says nothing one from another, and the line
+	/// they go into has room for four of them.
 	#[test]
-	fn a_core_follow_is_named_in_full() {
-		assert_eq!(
-			ChainConnection::occupant_name("truapi:dotns:3:identity"),
-			"truapi:dotns:3:identity"
-		);
+	fn a_core_follow_is_named_by_what_its_id_says() {
+		assert_eq!(ChainConnection::occupant_name("truapi:dotns:3:identity"), "dotns:3:identity");
 	}
 }
