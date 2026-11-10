@@ -905,13 +905,13 @@ impl SigningHostRuntime {
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
-	/// Quotes for funding session `intent`, sent through
-	/// [`FundingPlatform::funding_quotes_changed`] (natively `funding_changed`
-	/// with `Quotes`) until the session is handed to a provider, ends or
-	/// leaves the overlay, the host asks for another `ask`, or a selection
-	/// names another route. Returns the request id each list carries.
-	pub fn request_funding_quotes(&self, intent: &str, ask: latest::FundingQuoteAsk) -> u64 {
-		self.services.request_funding_quotes(intent, ask)
+	/// Quotes of `amount` for funding session `intent` on what the user
+	/// selected, sent through [`FundingPlatform::funding_quotes_changed`]
+	/// (natively `funding_changed` with `Quotes`); see
+	/// [`RuntimeServices::request_selected_quotes`]. Returns the request id
+	/// each list carries, `None` when there is nothing to price.
+	pub fn request_funding_quotes(&self, intent: &str, amount: u128) -> Option<u64> {
+		self.services.request_selected_quotes(intent, amount)
 	}
 
 	/// Start funding session `intent` on the best quote of request

@@ -345,12 +345,7 @@ impl RuntimeServices {
 		// The asset the overlay works in: the one the user picked, else the
 		// one the core resolves for the rail, so a selection without an asset
 		// already gets that asset's countries and limits.
-		let asset = selection.as_ref().and_then(|selection| match selection.rail {
-			FundingRail::Crypto => selection.asset.clone(),
-			rail => Some(selection.asset.clone().unwrap_or_else(|| {
-				funding_view::fiat_asset(&candidates, rail, selection.currency.as_deref())
-			})),
-		});
+		let asset = selection.as_ref().and_then(|selection| selected_asset(&candidates, selection));
 		let (countries, limits, networks) = match &selection {
 			None => (Vec::new(), FundingAmountLimits::ANY, Vec::new()),
 			Some(selection) => {
@@ -584,6 +579,20 @@ fn declared_networks(
 	}
 	networks.retain(|(_, assets)| !assets.is_empty());
 	networks
+}
+
+/// The asset `selection` works in: the one the user picked, else for card and
+/// bank the fiat asset the core resolves from `candidates`.
+pub(super) fn selected_asset(
+	candidates: &[FundingCandidate],
+	selection: &FundingSelection,
+) -> Option<String> {
+	match selection.rail {
+		FundingRail::Crypto => selection.asset.clone(),
+		rail => Some(selection.asset.clone().unwrap_or_else(|| {
+			funding_view::fiat_asset(candidates, rail, selection.currency.as_deref())
+		})),
+	}
 }
 
 #[cfg(test)]

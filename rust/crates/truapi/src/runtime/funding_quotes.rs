@@ -30,10 +30,12 @@ use futures::{
 };
 use truapi::latest::{
 	FundingDirection, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal,
+	FundingRail,
 };
 
 use super::{
 	funding::{FundingSessionBook, lock, within},
+	funding_providers::selected_asset,
 	services::RuntimeServices,
 };
 use crate::{
@@ -120,6 +122,15 @@ impl FundingQuotes {
 			Watch { request_id, ask, shown: Vec::new(), rounds, start_when_quoted: false },
 		);
 		(request_id, registration)
+	}
+
+	/// The id of session `intent`'s running request when it asks `ask`.
+	fn running(&self, intent: &str, ask: &FundingQuoteAsk) -> Option<u64> {
+		lock(&self.watches)
+			.by_session
+			.get(intent)
+			.filter(|watch| watch.ask == *ask)
+			.map(|watch| watch.request_id)
 	}
 
 	/// Stop session `intent`'s quotes, with every quote still asked, which
@@ -247,6 +258,12 @@ impl FundingQuotes {
 		})
 	}
 
+	/// What session `intent`'s running request asks.
+	#[cfg(test)]
+	pub(crate) fn asked(&self, intent: &str) -> Option<FundingQuoteAsk> {
+		lock(&self.watches).by_session.get(intent).map(|watch| watch.ask.clone())
+	}
+
 	/// The rows session `intent`'s host was last shown.
 	#[cfg(test)]
 	pub(crate) fn shown(&self, intent: &str) -> Option<Vec<FundingQuoteRow>> {
@@ -267,6 +284,7 @@ impl FundingQuotes {
 			amount,
 			refusal: None,
 			issue: None,
+			complete: false,
 		};
 		self.publish(intent, &list, true, &FundingSessionBook::default());
 	}
@@ -314,6 +332,30 @@ impl RuntimeServices {
 		self.request_funding_quotes_within(intent, ask, QUOTE_DEADLINE, QUOTE_REFRESH)
 	}
 
+	/// Price `amount` for session `intent` on what the user selected; see
+	/// [`Self::request_funding_quotes`]. The ask takes the selection's rail,
+	/// network for crypto, and country, and its asset, for card and bank the
+	/// fiat asset the core resolves. `None` without a selection, an asset or
+	/// an amount. An ask the running request already prices keeps it.
+	pub fn request_selected_quotes(self: &Arc<Self>, intent: &str, amount: u128) -> Option<u64> {
+		let session = self.funding().get(intent)?;
+		let selection = self.funding().selection(intent)?;
+		let candidates = self.funding_providers().candidates(session.direction);
+		let asset = selected_asset(&candidates, &selection).filter(|_| amount > 0)?;
+		let ask = FundingQuoteAsk {
+			direction: session.direction,
+			rail: selection.rail,
+			asset,
+			network: selection.network.filter(|_| selection.rail == FundingRail::Crypto),
+			amount,
+			country: selection.country,
+		};
+		if let Some(request_id) = self.funding_quotes().running(intent, &ask) {
+			return Some(request_id);
+		}
+		Some(self.request_funding_quotes(intent, ask))
+	}
+
 	/// [`Self::request_funding_quotes`] with `deadline` for each provider and
 	/// a new round every `refresh`.
 	pub(crate) fn request_funding_quotes_within(
@@ -327,6 +369,8 @@ impl RuntimeServices {
 			self.funding().get(intent).map_or(ask.direction, |session| session.direction);
 		let ask = FundingQuoteAsk { direction, ..ask };
 		let (request_id, registration) = self.funding_quotes().start(intent, ask.clone());
+		// The list before belongs to the request this one replaces.
+		self.funding().book().quotes_withdrawn(intent);
 		let rounds =
 			self.clone()
 				.quote_rounds(intent.to_string(), request_id, ask, deadline, refresh);
@@ -380,6 +424,7 @@ impl RuntimeServices {
 				amount: ask.amount,
 				refusal: None,
 				issue: None,
+				complete: false,
 			};
 			if !self.publish_quotes(&intent, &mut list) {
 				return;
@@ -468,6 +513,7 @@ impl RuntimeServices {
 		list.best = best_quote(session.direction, &list.rows, |provider_id| {
 			self.funding_providers().is_quote_target(provider_id)
 		});
+		list.complete = !list.rows.iter().any(|row| row.state == FundingQuoteState::Pending);
 		list.refusal = funding_view::quotes_refusal(&list.rows);
 		list.issue = funding_view::quotes_issue(&list.rows);
 		let quotable = !session.is_terminal() && session.provider_id.is_none();

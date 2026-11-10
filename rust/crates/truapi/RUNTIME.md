@@ -554,8 +554,11 @@ for raw bytes signed inside the `<Bytes>` watermark.
   Funding drops out. A provider whose `origin` is `Bundled` ships inside
   the host: its shipped manifest is what the core goes by, and dotNS is never
   read for it.
-  `get_funding_quote(intent, ask)` prices an ask (rail, asset, amount,
-  country) with every funding provider, whatever its manifest says it serves,
+  `get_funding_quote(intent, amount)` prices `amount` on the rail, asset,
+  network and country the last `select_funding_options` named (card and bank
+  take the resolved fiat asset), returning `None` while there is nothing to
+  price; asking what the running request prices keeps it. It asks every
+  funding provider, whatever its manifest says it serves,
   since a provider can serve more or less than it last published: the core
   calls each provider's worker with `quote`, holding the worker while it
   waits, and the worker answers priced from its own API. Every provider's
@@ -603,8 +606,9 @@ for raw bytes signed inside the `<Bytes>` watermark.
   or `Unsupported` when every answer naming it refused it; a country nothing
   names is left out.
   Natively `funding_changed` announces each list with `Quotes`, and
-  `funding_quotes` reads it as a `FundingQuoteList`: the `request_id`
-  `get_funding_quote` returned, the rows in the host's provider order,
+  `funding_quotes` reads it as a `FundingQuoteList`, only ever the current
+  request's: the `request_id` `get_funding_quote` returned, whether it is
+  `complete` (no row pending), the rows in the host's provider order,
   `best` (the least to pay inbound, the most to receive outbound, the earliest row on a tie, among providers the
   session can be handed to), which the host selects until the user picks
   another, and `refresh_at_ms`. The core asks every provider again each

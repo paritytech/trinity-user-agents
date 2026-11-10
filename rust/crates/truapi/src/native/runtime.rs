@@ -15,7 +15,7 @@ use crate::{
 	},
 };
 use parity_scale_codec::Encode;
-use truapi::{Bytes32, api::Permissions, latest, v01, versioned::IntoLatest};
+use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
 
 use super::{
 	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
@@ -509,15 +509,18 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.set_funding_providers(providers)?)
 	}
 
-	/// Ask every funding provider to price `ask` for session `intent`. Each
-	/// list is announced through `funding_changed` with `Quotes` and read
-	/// with `funding_quotes`, and is asked for again every minute until the
-	/// session is handed to a provider, ends or leaves the overlay, the host
-	/// asks for another `ask`, or a selection names another route. Returns
-	/// the request id every list of this request carries, so the host shows
-	/// only the latest request's lists.
-	pub fn get_funding_quote(&self, intent: String, ask: latest::FundingQuoteAsk) -> u64 {
-		self.runtime.request_funding_quotes(&intent, ask)
+	/// Ask every funding provider to price `amount` for session `intent`, on
+	/// the rail, asset, network and country the last `select_funding_options`
+	/// named; card and bank take the fiat asset `FundingOptions.asset` shows.
+	/// Each list is announced through `funding_changed` with `Quotes` and read
+	/// with `funding_quotes`, which answers only this request's list. It is
+	/// asked for again every minute until the session is handed to a
+	/// provider, ends or leaves the overlay, another amount or selection is
+	/// asked, or a selection names another route. Asking what the running
+	/// request prices keeps it. Returns the request id, `None` while the
+	/// selection names no asset or `amount` is zero.
+	pub fn get_funding_quote(&self, intent: String, amount: u128) -> Option<u64> {
+		self.runtime.request_funding_quotes(&intent, amount)
 	}
 
 	/// Start session `intent` on the best quote of request `request_id` once
