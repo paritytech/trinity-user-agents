@@ -2,9 +2,10 @@
 //!
 //! Exposes the embedded smoldot [`ChainProvider`](crate::platform::ChainProvider)
 //! to Swift (and other UniFFI targets): build a provider, connect to a chain by
-//! genesis hash, and drive the raw JSON-RPC string pipe. Chain specs, relay
-//! topology, and statement-store placement come from the bundled network
-//! catalog, so the only argument a host supplies is the genesis hash.
+//! genesis hash, and drive the raw JSON-RPC string pipe. Relay topology and
+//! statement-store placement come from a stack's descriptor, with the chain
+//! specs the host fetched, or from the bundled network catalog, where the
+//! only argument a host supplies is the genesis hash.
 //!
 //! Inbound responses are delivered to a foreign [`ChainMessageListener`]; a
 //! background thread pumps the response stream and invokes it until the
@@ -31,7 +32,7 @@ use futures::{
 };
 
 use crate::{
-	ChainLifecycle, EmbeddedChainProvider,
+	ChainLifecycle, EmbeddedChainProvider, LightSpecSource, LightStack,
 	storage::{StorageClient, StorageClientError},
 };
 
@@ -74,6 +75,21 @@ pub enum ChainProviderError {
 	/// Storage the host owns, or the snapshot taken to feed it, failed.
 	#[error("{reason}")]
 	Storage {
+		/// Human-readable failure reason.
+		reason: String,
+	},
+	/// A stack's link or descriptor was refused, or the provider has no stack.
+	#[error("{reason}")]
+	Stack {
+		/// Human-readable failure reason.
+		reason: String,
+	},
+	/// A light spec is not the one the stack's descriptor names for the chain.
+	/// Fetch the descriptor again before refusing the stack.
+	#[error("{reason}")]
+	LightSpec {
+		/// Genesis hash of the chain the spec was handed over for.
+		genesis_hash: Vec<u8>,
 		/// Human-readable failure reason.
 		reason: String,
 	},
@@ -217,6 +233,43 @@ fn genesis_from(genesis_hash: Vec<u8>) -> Result<[u8; 32], ChainProviderError> {
 	genesis_hash.try_into().map_err(|_| ChainProviderError::BadGenesis)
 }
 
+/// A builder for the stack `link` points to, with `light_specs` checked.
+fn stack_builder(
+	link: &str,
+	descriptor: &[u8],
+	light_specs: Vec<LightSpec>,
+) -> Result<crate::EmbeddedChainProviderBuilder, ChainProviderError> {
+	let stack = LightStack::open(link, descriptor).map_err(stack_error)?;
+	for LightSpec { genesis_hash, spec } in light_specs {
+		stack.add_light_spec(genesis_from(genesis_hash)?, &spec).map_err(stack_error)?;
+	}
+	Ok(EmbeddedChainProvider::builder().stack(stack))
+}
+
+/// A refused stack or light spec, as the foreign caller sees it.
+fn stack_error(error: crate::ProviderError) -> ChainProviderError {
+	let reason = error.to_string();
+	match error {
+		crate::ProviderError::LightSpec { genesis, .. } |
+		crate::ProviderError::UnknownGenesis { genesis } => {
+			ChainProviderError::LightSpec { genesis_hash: genesis.to_vec(), reason }
+		},
+		_ => ChainProviderError::Stack { reason },
+	}
+}
+
+/// Where the host fetches each light spec of the stack `link` points to, from
+/// its `descriptor` as served, in the descriptor's order. A chain the
+/// descriptor names no light spec for is left out. Fails with `Stack` when the
+/// link or the descriptor is refused.
+#[uniffi::export]
+pub fn stack_light_specs(
+	link: String,
+	descriptor: Vec<u8>,
+) -> Result<Vec<LightSpecSource>, ChainProviderError> {
+	Ok(LightStack::open(&link, &descriptor).map_err(stack_error)?.light_specs())
+}
+
 /// Sink for a connection's inbound JSON-RPC responses and notifications,
 /// implemented on the foreign (Swift) side.
 #[uniffi::export(with_foreign)]
@@ -252,6 +305,15 @@ impl From<uniffi::UnexpectedUniFFICallbackError> for StorageClientError {
 	}
 }
 
+/// The light spec of one chain of a stack, as the host fetched it.
+#[derive(uniffi::Record)]
+pub struct LightSpec {
+	/// Genesis hash of the chain (32 bytes).
+	pub genesis_hash: Vec<u8>,
+	/// The bytes served at the `lightSpec.url` the descriptor names.
+	pub spec: Vec<u8>,
+}
+
 /// Embedded-smoldot chain provider. Construct one per process and share it;
 /// every connection runs on the single embedded light client.
 #[derive(uniffi::Object)]
@@ -284,6 +346,59 @@ impl ChainProvider {
 		Arc::new(Self { inner: EmbeddedChainProvider::builder().catalog().storage(client).build() })
 	}
 
+	/// Create a provider for the chains of a Trinity stack, with nowhere to
+	/// keep finalized state.
+	///
+	/// `link` is the stack's link and `descriptor` its descriptor as served,
+	/// the pair a host gives the core. `light_specs` holds the specs the host
+	/// fetched from the URLs `stack_light_specs` lists. A chain left out is
+	/// unknown until [`add_light_spec`](Self::add_light_spec) supplies it, and
+	/// the rest of the stack runs. The bundled catalog is not consulted.
+	/// Create one provider per stack, and a new one when the stack's
+	/// generation changes.
+	///
+	/// Fails with `Stack` when the link or the descriptor is refused, and with
+	/// `LightSpec` when a spec is not the one the descriptor names.
+	#[uniffi::constructor(name = "for_stack")]
+	pub fn for_stack(
+		link: String,
+		descriptor: Vec<u8>,
+		light_specs: Vec<LightSpec>,
+	) -> Result<Arc<Self>, ChainProviderError> {
+		let builder = stack_builder(&link, &descriptor, light_specs)?;
+		Ok(Arc::new(Self { inner: builder.build() }))
+	}
+
+	/// [`for_stack`](Self::for_stack), keeping database blobs through `client`
+	/// as [`with_storage`](Self::with_storage) does.
+	#[uniffi::constructor(name = "for_stack_with_storage")]
+	pub fn for_stack_with_storage(
+		link: String,
+		descriptor: Vec<u8>,
+		light_specs: Vec<LightSpec>,
+		client: Arc<dyn StorageClient>,
+	) -> Result<Arc<Self>, ChainProviderError> {
+		let builder = stack_builder(&link, &descriptor, light_specs)?;
+		Ok(Arc::new(Self { inner: builder.storage(client).build() }))
+	}
+
+	/// Hand over the light spec of the stack's chain with `genesis_hash` after
+	/// the provider was created, so the chain comes up without a new one. A
+	/// chain that is already running keeps the spec it started with.
+	///
+	/// Fails with `LightSpec` when the spec is not the one the descriptor
+	/// names or the chain is not in the stack, and with `Stack` on a provider
+	/// created without one.
+	pub fn add_light_spec(
+		&self,
+		genesis_hash: Vec<u8>,
+		spec: Vec<u8>,
+	) -> Result<(), ChainProviderError> {
+		self.inner
+			.add_light_spec(genesis_from(genesis_hash)?, &spec)
+			.map_err(stack_error)
+	}
+
 	/// Read the stored blob for `genesis_hash` into this provider, so the next
 	/// [`connect`](Self::connect) to that chain resumes from finalized state
 	/// instead of syncing from the chain-spec checkpoint. Answers whether a
@@ -293,8 +408,8 @@ impl ChainProvider {
 	/// nowhere to keep blobs. A chain that never warms up looks exactly like
 	/// one with nothing stored yet, so the missing store is reported rather
 	/// than swallowed: build with [`with_storage`](Self::with_storage). It also
-	/// fails for a genesis outside the bundled catalog, which `connect` refuses
-	/// too.
+	/// fails for a genesis `connect` refuses too: one outside the bundled
+	/// catalog, or a stack's chain with no light spec yet.
 	///
 	/// Call it before `connect`, and never from a listener callback. `connect`
 	/// blocks its calling thread, so a store awaited underneath it would
@@ -336,8 +451,8 @@ impl ChainProvider {
 	}
 
 	/// Open a connection to the chain identified by `genesis_hash` (32 bytes).
-	/// The network is resolved from the catalog; responses are delivered to
-	/// `listener` until the connection closes.
+	/// The chain is resolved from the provider's stack or from the catalog;
+	/// responses are delivered to `listener` until the connection closes.
 	pub fn connect(
 		&self,
 		genesis_hash: Vec<u8>,

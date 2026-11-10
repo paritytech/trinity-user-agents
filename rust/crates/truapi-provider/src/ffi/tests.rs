@@ -482,12 +482,21 @@ impl RecordingStore {
 
 #[async_trait::async_trait]
 impl StorageClient for RecordingStore {
-	async fn load(&self, genesis_hash: [u8; 32]) -> Result<Option<String>, StorageClientError> {
+	async fn load(
+		&self,
+		genesis_hash: [u8; 32],
+		_stack: Option<String>,
+	) -> Result<Option<String>, StorageClientError> {
 		self.calls.lock().expect("not poisoned").push((genesis_hash.to_vec(), None));
 		self.answer().map(|()| Some("blob".to_owned()))
 	}
 
-	async fn save(&self, genesis_hash: [u8; 32], blob: String) -> Result<(), StorageClientError> {
+	async fn save(
+		&self,
+		genesis_hash: [u8; 32],
+		blob: String,
+		_stack: Option<String>,
+	) -> Result<(), StorageClientError> {
 		self.calls
 			.lock()
 			.expect("not poisoned")
@@ -616,4 +625,54 @@ fn a_catalog_chain_answers_on_the_listener_and_closes() {
 	closed
 		.recv_timeout(Duration::from_secs(30))
 		.expect("disconnecting ends the stream and fires on_closed");
+}
+
+/// A native host fetches each spec itself, so a wrong one has to come back
+/// naming its chain, and a spec that arrives late has to bring its chain up on
+/// the provider the host already holds.
+#[test]
+fn a_stack_provider_checks_its_specs_and_takes_one_later() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, descriptor_json, genesis};
+
+	let link = "polkadotapp://stack?url=https%3A%2F%2Fstack.example%2Fdescriptor.json".to_owned();
+	let descriptor = serde_json::to_vec(&descriptor_json("one")).expect("JSON");
+	let (relay, people) = (genesis(RELAY_SPEC).to_vec(), genesis(PEOPLE_SPEC).to_vec());
+	let spec = |genesis_hash: &Vec<u8>, spec: &str| LightSpec {
+		genesis_hash: genesis_hash.clone(),
+		spec: spec.as_bytes().to_vec(),
+	};
+
+	let listed = stack_light_specs(link.clone(), descriptor.clone()).expect("the link opens");
+	assert_eq!(
+		listed.iter().map(|listed| listed.genesis_hash.to_vec()).collect::<Vec<_>>()[..2],
+		[relay.clone(), people.clone()],
+		"a host reads what to fetch from the binding"
+	);
+
+	let refused =
+		ChainProvider::for_stack(link.clone(), descriptor.clone(), vec![spec(&relay, PEOPLE_SPEC)])
+			.err()
+			.expect("People's spec is not the relay's");
+	assert!(
+		matches!(&refused, ChainProviderError::LightSpec { genesis_hash, reason }
+			if *genesis_hash == relay && reason.contains("Relay")),
+		"got {refused:?}"
+	);
+
+	let provider = ChainProvider::for_stack(link, descriptor, vec![spec(&relay, RELAY_SPEC)])
+		.expect("the relay's spec matches the descriptor");
+	let (listener, _messages, _closed) = Collector::new();
+	assert!(
+		matches!(
+			provider.connect(people.clone(), listener.clone()),
+			Err(ChainProviderError::Connect { .. })
+		),
+		"People has no spec yet"
+	);
+	provider
+		.add_light_spec(people.clone(), PEOPLE_SPEC.as_bytes().to_vec())
+		.expect("the spec matches the descriptor");
+	provider
+		.connect(people, listener)
+		.expect("People syncs through the stack's relay");
 }

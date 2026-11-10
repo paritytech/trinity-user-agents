@@ -9,6 +9,15 @@
 //! competes with the host for the same quota and never decides on its behalf
 //! whether the bytes are backed up or encrypted.
 //!
+//! A blob is stored per stack and per chain. Two stacks can share genesis
+//! hashes, as a fork and its source do, so [`StorageClient`] is handed what
+//! identifies the stack with the genesis hash, and a store keeps the pair
+//! apart. What a stack's provider stores starts with a line naming the stack
+//! and its `generation`, and the provider reads back only what carries its
+//! own. So a store that ignores the stack still cannot hand one stack
+//! another's state, and a stack that restarted its chains reads nothing
+//! stored for the earlier ones. The next save replaces what was not read.
+//!
 //! Reads and writes are explicit, through
 //! [`load_database`](crate::EmbeddedChainProvider::load_database) and
 //! [`save_database`](crate::EmbeddedChainProvider::save_database), rather than
@@ -59,11 +68,47 @@ impl std::error::Error for StorageClientError {}
 #[cfg_attr(all(feature = "uniffi", not(target_arch = "wasm32")), uniffi::export(with_foreign))]
 #[async_trait::async_trait]
 pub trait StorageClient: Send + Sync {
-	/// Read the blob stored for `genesis_hash`, if any.
-	async fn load(&self, genesis_hash: [u8; 32]) -> Result<Option<String>, StorageClientError>;
+	/// Read the blob stored for `genesis_hash` on `stack`, if any.
+	///
+	/// `stack` identifies the stack the provider was built for, and is `None`
+	/// on a provider built without one. The same genesis hash on another stack
+	/// is another blob.
+	async fn load(
+		&self,
+		genesis_hash: [u8; 32],
+		stack: Option<String>,
+	) -> Result<Option<String>, StorageClientError>;
 
-	/// Replace the blob stored for `genesis_hash`.
-	async fn save(&self, genesis_hash: [u8; 32], blob: String) -> Result<(), StorageClientError>;
+	/// Replace the blob stored for `genesis_hash` on `stack`.
+	async fn save(
+		&self,
+		genesis_hash: [u8; 32],
+		blob: String,
+		stack: Option<String>,
+	) -> Result<(), StorageClientError>;
+}
+
+/// The first line of what a stack's provider stores.
+fn header(stack: &str, generation: &str) -> serde_json::Value {
+	serde_json::json!({ "stack": stack, "generation": generation })
+}
+
+/// What `stack` stores for a chain at `generation`: a line naming both, then
+/// `blob`.
+pub fn seal(stack: &str, generation: &str, blob: &str) -> String {
+	format!("{}\n{blob}", header(stack, generation))
+}
+
+/// The blob inside `stored`, when [`seal`] wrote it for `stack` at
+/// `generation`, and `None` for anything else.
+pub fn unseal(stack: &str, generation: &str, mut stored: String) -> Option<String> {
+	let end = stored.find('\n')?;
+	let named: serde_json::Value = serde_json::from_str(&stored[..end]).ok()?;
+	if named != header(stack, generation) {
+		return None;
+	}
+	stored.drain(..=end);
+	Some(stored)
 }
 
 /// Whether `blob` carries the runtime code.
