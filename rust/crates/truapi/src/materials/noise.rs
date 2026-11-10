@@ -23,15 +23,20 @@ pub fn noise_seed(context: &RenderContext) -> u32 {
 
 /// The noise image of `seed`: one byte per pixel, row after row.
 pub fn noise_image(seed: u32) -> Vec<u8> {
-	(0..NOISE_BYTES / CHUNK_BYTES)
-		.flat_map(|chunk| noise_chunk(seed, chunk))
-		.collect()
+	let mut image = Vec::with_capacity(NOISE_BYTES as usize);
+	for chunk in 0..NOISE_BYTES / CHUNK_BYTES {
+		image.extend(noise_chunk(seed, chunk));
+	}
+	image
 }
 
 /// Chunk `chunk` of the image: BLAKE2b-256 of the seed then the chunk index,
 /// both little-endian.
 fn noise_chunk(seed: u32, chunk: u32) -> [u8; 32] {
-	blake2_256(&[seed.to_le_bytes(), chunk.to_le_bytes()].concat())
+	let mut input = [0; 8];
+	input[..4].copy_from_slice(&seed.to_le_bytes());
+	input[4..].copy_from_slice(&chunk.to_le_bytes());
+	blake2_256(&input)
 }
 
 #[cfg(test)]

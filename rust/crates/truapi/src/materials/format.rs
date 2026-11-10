@@ -232,9 +232,12 @@ fn requires_error(features: &str) -> FormatError {
 
 /// `^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$`
 fn is_feature_name(name: &str) -> bool {
-	name.starts_with(|c: char| c.is_ascii_lowercase()) &&
+	name.starts_with(|character: char| character.is_ascii_lowercase()) &&
 		name.split('-').all(|part| {
-			!part.is_empty() && part.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+			!part.is_empty() &&
+				part.chars().all(|character| {
+					character.is_ascii_lowercase() || character.is_ascii_digit()
+				})
 		})
 }
 
@@ -273,8 +276,9 @@ fn read_params(controls: &[Map<String, Value>]) -> Result<Vec<ParamKind>, Format
 /// `^[a-zA-Z][a-zA-Z0-9_]{0,47}$`
 fn is_identifier(name: &str) -> bool {
 	name.len() <= 48 &&
-		name.starts_with(|c: char| c.is_ascii_alphabetic()) &&
-		name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+		name.starts_with(|character: char| character.is_ascii_alphabetic()) &&
+		name.chars()
+			.all(|character| character.is_ascii_alphanumeric() || character == '_')
 }
 
 /// `min` and `max` come together, on a `float` only, finite and increasing.
@@ -355,8 +359,8 @@ fn object_json(object: &Map<String, Value>, keys: &[&str]) -> String {
 	format!("{{{}}}", fields.join(","))
 }
 
-/// Other objects keep serde's key order. Only a `label` can hold one, and
-/// labels are text.
+/// Other objects keep serde's sorted key order, which differs from
+/// JavaScript's only for an object `label`, a value no real material uses.
 fn value_json(value: &Value) -> String {
 	match value {
 		Value::Number(number) => number.as_f64().map_or_else(|| number.to_string(), js_number),
@@ -402,9 +406,9 @@ fn js_number(value: f64) -> String {
 }
 
 /// ECMAScript's `\s`, which also decides what `trim` removes.
-fn is_js_space(c: char) -> bool {
+fn is_js_space(character: char) -> bool {
 	matches!(
-		c,
+		character,
 		'\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..=
 			'\u{200a}' |
 				'\u{2028}' | '\u{2029}' |

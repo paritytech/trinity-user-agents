@@ -91,6 +91,7 @@ fn every_body_rule_refuses_with_invalid_source() {
 		"vec4 shade(vec2 uv) {\n  return vec4(1.0);\n}".to_string(),
 		format!("uni\\\nform float k;\n{ENTRY}"),
 		format!("/* a *\\\n/ uniform float k; */\n{ENTRY}"),
+		format!("// note \\\nuniform float k;\n{ENTRY}"),
 	];
 	for keyword in ["uniform", "layout", "attribute", "varying", "buffer", "shared", "precision"] {
 		refused.push(format!("{keyword} float k;\n{ENTRY}"));
@@ -102,8 +103,9 @@ fn every_body_rule_refuses_with_invalid_source() {
 }
 
 /// The rules refuse only what Shaderlab refuses: qualifiers, forward
-/// declarations, loops, helpers and every renderer input stay allowed, and a
-/// banned word inside a comment is only a comment.
+/// declarations, loops, helpers, struct names and every renderer input stay
+/// allowed, a banned word inside a comment is only a comment, and so is a
+/// comment line ending in a backslash.
 #[test]
 fn the_body_rules_accept_what_shaderlab_accepts() {
 	let accepted = [
@@ -112,6 +114,8 @@ fn the_body_rules_accept_what_shaderlab_accepts() {
 		format!("highp float half_of(highp float x) {{\n  return x * 0.5;\n}}\n{ENTRY}"),
 		"vec4 material(vec2 uv) {\n  float sum = 0.0;\n  for (int i = 0; i < 4; i++) {\n    sum += 0.25;\n  }\n  return vec4(sum);\n}".to_string(),
 		format!("// uniform gl_x main() #define\n/* layout sl_x */\n{ENTRY}"),
+		format!("// see below \\\n\n{ENTRY}"),
+		format!("struct sl_Light {{\n  float strength;\n}};\n{ENTRY}"),
 		"vec4 material(vec2 uv) {\n  vec4 sum = texture(r_input, uv) + texture(r_base, uv) + vec4(texture(r_noise, uv));\n  sum.xy += sl_tilt * sl_time + sl_resolution;\n  sum.xyz += sl_rotation * sl_orientation;\n  return sum;\n}".to_string(),
 	];
 

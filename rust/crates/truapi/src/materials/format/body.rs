@@ -42,16 +42,28 @@ enum Token<'a> {
 	Symbol(char),
 }
 
-/// Whether `body` keeps every body rule and declares `vec4 material(vec2)`.
+/// Whether `body` keeps every body rule and declares `vec4 material(vec2)`,
+/// both as Shaderlab reads it and as the GLSL compiler reads it. The compiler
+/// first joins a line ending in a backslash to the next and Shaderlab does
+/// not, so either reading alone would let a banned word be split across lines.
 pub fn follows_body_rules(body: &str) -> bool {
-	// The compiler joins a line ending in a backslash to the next before reading
-	// anything, so a banned word or a comment's end can be split across lines.
-	let joined = body.replace("\\\n", "");
-	let Some(tokens) = tokenize(&joined) else {
+	follows_rules_as_read(body) && follows_rules_as_read(&body.replace("\\\n", ""))
+}
+
+/// Struct names are types, which Shaderlab does not hold to the name rules.
+fn follows_rules_as_read(body: &str) -> bool {
+	let Some(tokens) = tokenize(body) else {
 		return false;
 	};
+	let struct_names: Vec<&str> = tokens
+		.windows(2)
+		.filter_map(|pair| match pair {
+			[Token::Word("struct"), Token::Word(name)] => Some(*name),
+			_ => None,
+		})
+		.collect();
 	let words_allowed = tokens.iter().all(|token| match token {
-		Token::Word(word) => word_allowed(word),
+		Token::Word(word) => struct_names.contains(word) || word_allowed(word),
 		Token::Symbol(_) => true,
 	});
 	words_allowed && entry_point_declared(&tokens)
@@ -130,15 +142,15 @@ fn tokenize(source: &str) -> Option<Vec<Token<'_>>> {
 			return None;
 		} else if next.is_ascii_alphabetic() || next == '_' {
 			let end = rest
-				.find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+				.find(|character: char| !character.is_ascii_alphanumeric() && character != '_')
 				.unwrap_or(rest.len());
 			tokens.push(Token::Word(&rest[..end]));
 			rest = &rest[end..];
 		} else if next.is_ascii_digit() ||
-			(next == '.' && rest[1..].starts_with(|c: char| c.is_ascii_digit()))
+			(next == '.' && rest[1..].starts_with(|character: char| character.is_ascii_digit()))
 		{
 			let end = rest
-				.find(|c: char| !c.is_ascii_alphanumeric() && c != '.')
+				.find(|character: char| !character.is_ascii_alphanumeric() && character != '.')
 				.unwrap_or(rest.len());
 			rest = &rest[end..];
 		} else {
