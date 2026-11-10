@@ -594,6 +594,6 @@ fn a_database_is_read_only_by_its_own_stack_and_generation() {
 	assert!(block_on(next.store_blob(people, WITHOUT_CODE.to_owned())).expect("the store answers"));
 	assert_eq!(
 		store.stored.lock().expect("test store").get(&key(STACK_ID)),
-		Some(&crate::storage::seal(STACK_ID, "two", WITHOUT_CODE))
+		Some(&crate::storage::Owner { stack: STACK_ID, generation: "two" }.seal(WITHOUT_CODE))
 	);
 }
