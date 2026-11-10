@@ -1,10 +1,26 @@
 //! Stack descriptors and stacks for tests, edited from the bundled
 //! paseo-next-v2 copy, and loopback RPC nodes.
 
-use trinity_stack::{Descriptor, Document};
+use std::{
+	path::Path,
+	sync::{
+		Arc,
+		atomic::{AtomicUsize, Ordering},
+	},
+};
+
+use sha2::{Digest, Sha256};
+use trinity_stack::{Descriptor, Document, Pointer};
 use truapi::latest::ChainIdentifier;
 
-use super::{ChainEndpoint, Stack};
+use super::{ChainEndpoint, Stack, stack::light_client};
+
+/// Paseo's light spec, answered from without network access.
+pub const RELAY_LIGHT_SPEC: &str =
+	include_str!("../../../truapi-provider/tests/fixtures/paseo.json");
+/// The light spec of a People chain on [`RELAY_LIGHT_SPEC`]'s relay.
+pub const PEOPLE_LIGHT_SPEC: &str =
+	include_str!("../../../truapi-provider/tests/fixtures/paseo_people.json");
 
 /// The bundle `built_in` ships, included here rather than read from
 /// `built_in`, whose tests use this module.
@@ -35,6 +51,11 @@ pub fn edit_chain(role: &str, edit: impl FnOnce(&mut serde_json::Value)) -> Desc
 	})
 }
 
+/// The pointer the stacks of this module are read under.
+fn test_pointer() -> Pointer {
+	Pointer::new("https://stack.example/descriptor.json", None).expect("a descriptor URL")
+}
+
 impl Stack {
 	/// The descriptor this stack reads.
 	pub fn descriptor(&self) -> &Descriptor {
@@ -57,7 +78,7 @@ impl Stack {
 		let mut document = serde_json::to_value(&self.descriptor).expect("descriptor not JSON");
 		edit(&mut document);
 		let descriptor = Descriptor::from_json(document).expect("invalid edited descriptor");
-		Self::new(descriptor, self.chain_backend).expect("edited stack refused")
+		Self::new(&test_pointer(), descriptor, self.chain_backend()).expect("edited stack refused")
 	}
 
 	/// This stack with the chain of `role` edited as JSON.
@@ -66,6 +87,40 @@ impl Stack {
 			let chains = descriptor["chains"].as_array_mut().expect("chains is not an array");
 			edit(chains.iter_mut().find(|chain| chain["role"] == role).expect("role missing"));
 		})
+	}
+
+	/// This stack on a light client that keeps its specs in `spec_directory`,
+	/// with the relay and People replaced by the chains of
+	/// [`RELAY_LIGHT_SPEC`] and [`PEOPLE_LIGHT_SPEC`], their light specs named
+	/// at `relay_url` and `people_url`.
+	pub fn with_light_specs_at(
+		&self,
+		relay_url: &str,
+		people_url: &str,
+		spec_directory: &Path,
+	) -> Self {
+		let edited =
+			[("Relay", RELAY_LIGHT_SPEC, relay_url), ("People", PEOPLE_LIGHT_SPEC, people_url)]
+				.into_iter()
+				.fold(self.with_edit(|_| {}), |stack, (role, spec, url)| {
+					let genesis = trinity_stack::light_spec_genesis(spec.as_bytes())
+						.expect("the fixture is a light spec");
+					stack.with_chain_edit(role, |chain| {
+						chain["genesisHash"] = format!("0x{}", hex::encode(genesis)).into();
+						chain["lightSpec"] = serde_json::json!({
+							"url": url,
+							"sha256": format!("0x{}", hex::encode(Sha256::digest(spec.as_bytes()))),
+						});
+					})
+				});
+		let light = light_client(
+			&test_pointer(),
+			&edited.descriptor,
+			&edited.chains,
+			spec_directory.into(),
+		)
+		.expect("the edited stack names its light specs");
+		Self { light_client: Some(Arc::new(light)), ..edited }
 	}
 
 	/// This stack with its `dub` service at `url`, so its identity backend is
@@ -141,4 +196,39 @@ pub async fn serve_silent() -> String {
 		}
 	});
 	url
+}
+
+/// A loopback HTTP server with [`RELAY_LIGHT_SPEC`] at `/relay.json` and
+/// [`PEOPLE_LIGHT_SPEC`] at `/people.json`. Returns its base URL and the
+/// number of requests it has answered.
+pub async fn serve_light_specs() -> (String, Arc<AtomicUsize>) {
+	use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+	let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+		.await
+		.expect("loopback bind failed");
+	let url = format!("http://{}", listener.local_addr().expect("no listener address"));
+	let requests = Arc::new(AtomicUsize::new(0));
+	let answered = Arc::clone(&requests);
+	tokio::spawn(async move {
+		while let Ok((mut socket, _)) = listener.accept().await {
+			let mut request = [0; 1024];
+			let read = socket.read(&mut request).await.unwrap_or(0);
+			let request = String::from_utf8_lossy(&request[..read]);
+			let body = match request.split_whitespace().nth(1) {
+				Some("/relay.json") => RELAY_LIGHT_SPEC,
+				Some("/people.json") => PEOPLE_LIGHT_SPEC,
+				_ => "",
+			};
+			let status = if body.is_empty() { "404 Not Found" } else { "200 OK" };
+			let head = format!(
+				"HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+				body.len()
+			);
+			answered.fetch_add(1, Ordering::Relaxed);
+			let _ = socket.write_all(head.as_bytes()).await;
+			let _ = socket.write_all(body.as_bytes()).await;
+		}
+	});
+	(url, requests)
 }

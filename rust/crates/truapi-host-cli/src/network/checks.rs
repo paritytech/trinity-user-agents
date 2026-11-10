@@ -1,57 +1,64 @@
-//! What the CLI checks of a resolved network before a command runs: whether
-//! the light client can serve it, whether each endpoint reports the genesis
-//! it is routed as, whether People reports the network's TLD as its
+//! What the CLI checks of a resolved network before a command runs: on the
+//! light client whether each light spec is the one the descriptor names, and
+//! over RPC whether each endpoint reports the genesis it is
+//! routed as, whether People reports the network's TLD as its
 //! `NetworkSuffix`, and whether an endpoint with one of Polkadot's genesis
 //! hashes serves a fork rather than Polkadot itself.
 
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{Result, bail, ensure};
 use truapi::statement_allowance::{fetch_genesis_hash, rpc::RpcClient, slot};
 
 use super::{
-	ChainEndpoint, Stack,
+	ChainEndpoint, Roles, Stack,
 	built_in::BuiltInOrigin,
 	polkadot_fork::{PolkadotChain, polkadot_chains},
 	within_check_timeout,
 };
-use crate::chain::ChainBackend;
+use crate::chain::{MissingSpec, StackLightClient};
 
 /// The checks of `stack`, a built-in from `built_in` or a `--stack` when
 /// `None`: over RPC every endpoint and People's `NetworkSuffix` are checked,
-/// and on either backend every endpoint with one of Polkadot's genesis hashes
-/// is compared with real Polkadot. Fails when such an endpoint does not show
-/// it serves a fork; otherwise the outcome of the endpoint checks, which a
+/// on the light client every light spec is, and on either backend every endpoint with one of
+/// Polkadot's genesis hashes is compared with real Polkadot. Fails when such an endpoint does not
+/// show it serves a fork; otherwise the outcome of the endpoint checks, which a
 /// fetch of the published descriptor may resolve.
 pub async fn verify_chains(stack: &Stack, built_in: Option<&BuiltInOrigin>) -> Result<Result<()>> {
 	let polkadot_chains = polkadot_chains(stack);
+	let reachable = async {
+		match stack.light_client() {
+			Some(light) => verify_light_specs(light, stack).await,
+			None => verify_endpoints(stack, built_in).await,
+		}
+	};
 	let (endpoints, polkadot_forks) = futures::join!(
-		verify_endpoints(stack, built_in),
+		reachable,
 		futures::future::try_join_all(polkadot_chains.iter().map(PolkadotChain::ensure_fork)),
 	);
 	polkadot_forks?;
 	Ok(endpoints)
 }
 
-/// The light client knows only the networks `truapi-provider` bundles, by
-/// genesis hash, so it can serve neither another network nor a built-in stack
-/// that restarted after this build's chain specs.
-pub fn refuse_light_client(stack: &Stack) -> Result<()> {
-	if stack.chain_backend() != ChainBackend::LightClient {
-		return Ok(());
-	}
-	let namespace = stack.namespace();
-	let (_, catalog) = truapi_provider::EmbeddedChainProviderBuilder::new()
-		.add_network(namespace)
-		.map_err(|error| {
-			anyhow!("--chain-backend light-client has no chain specs for {namespace}: {error}")
-		})?;
-	let genesis = stack.genesis();
-	ensure!(
-		(catalog.people, catalog.assethub, catalog.bulletin) ==
-			(genesis.people, genesis.asset_hub, genesis.bulletin),
-		"this build's light-client chain specs for {namespace} predate the stack's restart from \
-		 genesis; use --chain-backend rpc, or `truapi-host update` once a release ships the new \
-		 specs"
-	);
+/// Gets the light spec of every routed chain of `stack`, and of their relay,
+/// into `light`. Fails when one is not the spec the descriptor names. A spec
+/// that cannot be fetched is logged, and fetched again when a command first
+/// connects to its chain.
+async fn verify_light_specs(light: &StackLightClient, stack: &Stack) -> Result<()> {
+	let Roles { people, asset_hub, bulletin } = stack.genesis();
+	let relay = light.provider().relay_of(people);
+	let loads = relay
+		.into_iter()
+		.chain([people, asset_hub, bulletin])
+		.map(|genesis| async move {
+			match light.load_spec(genesis).await {
+				Ok(()) => Ok(()),
+				Err(MissingSpec::Unreachable(reason)) => {
+					tracing::warn!("{reason}; the chain is unavailable until it can be fetched");
+					Ok(())
+				},
+				Err(MissingSpec::Wrong(error)) => bail!("the {} stack: {error}", stack.namespace()),
+			}
+		});
+	futures::future::try_join_all(loads).await?;
 	Ok(())
 }
 
@@ -80,12 +87,8 @@ async fn probe_endpoint(stack: &Stack, endpoint: &ChainEndpoint) -> Result<Endpo
 /// is routed as, adding the restart hint of `built_in` to the error, or when
 /// People reports a `NetworkSuffix` other than the stack's TLD. An endpoint
 /// that does not answer within [`super::CHAIN_CHECK_TIMEOUT`], or a People
-/// chain without a readable suffix, is logged. The light client does not use
-/// the endpoints, so it has none checked.
+/// chain without a readable suffix, is logged.
 async fn verify_endpoints(stack: &Stack, built_in: Option<&BuiltInOrigin>) -> Result<()> {
-	if stack.chain_backend() == ChainBackend::LightClient {
-		return Ok(());
-	}
 	let checks = stack.chains().iter().map(|endpoint| async move {
 		let report = match within_check_timeout(probe_endpoint(stack, endpoint)).await {
 			Ok(report) => report,

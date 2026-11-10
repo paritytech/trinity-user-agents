@@ -127,8 +127,8 @@ struct Cli {
 	#[arg(long, global = true, env = "TRUAPI_DEBUGGER_URL", value_name = "URL")]
 	debugger: Option<String>,
 	/// How the hosts reach the chains: `rpc` dials the network's RPC nodes, and
-	/// `light-client` syncs them with the embedded light client (`paseo-next-v2`
-	/// and `previewnet` only, without `--stack`).
+	/// `light-client` syncs them with the embedded light client, from the light
+	/// specs the stack's descriptor names.
 	#[arg(long, global = true, value_enum, default_value = "rpc", env = "TRUAPI_CHAIN_BACKEND")]
 	chain_backend: ChainBackend,
 	/// Built-in network to run against; paseo-next-v2 when neither this nor

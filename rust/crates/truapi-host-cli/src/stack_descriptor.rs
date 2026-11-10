@@ -13,8 +13,9 @@ use trinity_stack::{Descriptor, Fetched, Pointer, accept};
 /// A local file has no URL of its own; the pointer only carries the key to check.
 const LOCAL_FILE_URL: &str = "https://local-file.invalid/";
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
-/// The largest descriptor `fetch` reads; a descriptor is a few kilobytes.
-const MAX_DESCRIPTOR_BYTES: usize = 1024 * 1024;
+/// The largest body `fetch` reads. A descriptor is a few kilobytes, and the
+/// largest light spec, a relay's with its checkpoint, is under 300 KiB.
+const MAX_FETCH_BYTES: usize = 1024 * 1024;
 
 pub fn refused(error: trinity_stack::Error) -> anyhow::Error {
 	anyhow!("refused ({}): {error}", error.code())
@@ -53,10 +54,10 @@ pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<
 	}
 }
 
-/// The descriptor a `--stack` value points to: a link or a URL, fetched and checked against the
-/// key a link carries, or a local descriptor file, signed or not. Fails when it is unreachable,
-/// breaks a rule or is past `expiresAt`; warns when it is past `validUntil`.
-pub async fn load_descriptor(stack: &str) -> Result<Descriptor> {
+/// The pointer and the descriptor a `--stack` value points to: a link or a URL, fetched and
+/// checked against the key a link carries, or a local descriptor file, signed or not. Fails when
+/// it is unreachable, breaks a rule or is past `expiresAt`; warns when it is past `validUntil`.
+pub async fn load_descriptor(stack: &str) -> Result<(Pointer, Descriptor)> {
 	let (pointer, bytes) = read_stack(stack, None).await?;
 	let accepted = accept(&pointer, None, Fetched::Document(&bytes), unix_now() as i64)
 		.map_err(|error| anyhow!("stack {stack} is {}", refused(error)))?;
@@ -66,7 +67,7 @@ pub async fn load_descriptor(stack: &str) -> Result<Descriptor> {
 	if accepted.stale {
 		tracing::warn!("stack {stack} is past validUntil; its operator should republish");
 	}
-	Ok(accepted.stack.descriptor)
+	Ok((pointer, accepted.stack.descriptor))
 }
 
 /// One value for each chain role a host routes.
@@ -150,8 +151,9 @@ pub enum FetchError {
 	Transport(String),
 }
 
-/// The bytes a descriptor URL serves, or why it is unreachable. Redirects are refused: the URL
-/// rules hold for the URL the pointer names, and a redirect could lead to plain http.
+/// The bytes a descriptor or light spec URL serves, or why it is unreachable. Redirects are
+/// refused: the URL rules hold for the URL the pointer names, and a redirect could lead to plain
+/// http.
 pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, FetchError> {
 	let transport = |error: reqwest::Error| FetchError::Transport(error.to_string());
 	let client = reqwest::Client::builder()
@@ -174,18 +176,15 @@ pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, FetchError> 
 	if !status.is_success() {
 		return Err(FetchError::Http(format!("HTTP {status}")));
 	}
-	let too_large = || FetchError::Transport(format!("larger than {MAX_DESCRIPTOR_BYTES} bytes"));
-	if response
-		.content_length()
-		.is_some_and(|length| length > MAX_DESCRIPTOR_BYTES as u64)
-	{
+	let too_large = || FetchError::Transport(format!("larger than {MAX_FETCH_BYTES} bytes"));
+	if response.content_length().is_some_and(|length| length > MAX_FETCH_BYTES as u64) {
 		return Err(too_large());
 	}
 	let mut response = response;
 	let mut body = Vec::new();
 	while let Some(chunk) = response.chunk().await.map_err(transport)? {
 		body.extend_from_slice(&chunk);
-		if body.len() > MAX_DESCRIPTOR_BYTES {
+		if body.len() > MAX_FETCH_BYTES {
 			return Err(too_large());
 		}
 	}
