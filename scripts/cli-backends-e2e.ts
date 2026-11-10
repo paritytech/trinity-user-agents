@@ -270,33 +270,46 @@ else {
 }
 
 // The host resolves the network before it runs a command, so `/session` shows
-// whether a routing is accepted.
-const resolveWith = (env: Record<string, string>) =>
-  run(host, ["signing-host", "exec", "/session"], env);
-const atAssetHub = await resolveWith({
-  HOST_CLI_PEOPLE_WS: assetHubUrl,
-  TRUAPI_CHAIN_BACKEND: "rpc",
-});
+// whether a stack is accepted. Each stack is the bundled Paseo Next v2
+// descriptor with People routed elsewhere, as a local file.
+const bundled = JSON.parse(
+  readFileSync(
+    resolve(root, "rust/crates/truapi-host-cli/stacks/paseo-next-v2.json"),
+    "utf8",
+  ),
+);
+const paseoNextV2 = JSON.parse(
+  Buffer.from(bundled.payload, "base64").toString("utf8"),
+);
+const stackWithPeopleAt = (url: string) => {
+  const path = resolve(out, `stack-people-${new URL(url).hostname}.json`);
+  const descriptor = structuredClone(paseoNextV2);
+  descriptor.id = "paseo-next-v2-fork";
+  for (const chain of descriptor.chains)
+    if (chain.role === "People") chain.rpc = [url];
+  writeFileSync(path, JSON.stringify(descriptor));
+  return path;
+};
+const resolveWith = (stackUrl: string, backend: Backend) =>
+  run(host, ["signing-host", "exec", "/session"], {
+    HOST_CLI_STACK: stackWithPeopleAt(stackUrl),
+    TRUAPI_CHAIN_BACKEND: backend,
+  });
+const atAssetHub = await resolveWith(assetHubUrl, "rpc");
 check(
   atAssetHub.code !== 0 &&
     atAssetHub.lines.some((line) => line.text.includes("reports genesis")),
-  "People pointed at Asset Hub's URL is refused",
+  "a stack with People at Asset Hub's URL is refused",
 );
-const atPeople = await resolveWith({
-  HOST_CLI_PEOPLE_WS: peopleUrl,
-  TRUAPI_CHAIN_BACKEND: "rpc",
-});
-check(atPeople.code === 0, "People pointed at its own URL is accepted");
-const withLight = await resolveWith({
-  HOST_CLI_PEOPLE_WS: peopleUrl,
-  TRUAPI_CHAIN_BACKEND: "light-client",
-});
+const atPeople = await resolveWith(peopleUrl, "rpc");
+check(atPeople.code === 0, "a stack with People at its own URL is accepted");
+const withLight = await resolveWith(peopleUrl, "light-client");
 check(
   withLight.code !== 0 &&
     withLight.lines.some((line) =>
-      line.text.includes("cannot be used together"),
+      line.text.includes("--chain-backend light-client cannot run"),
     ),
-  "a chain override is refused with the light client",
+  "a stack is refused with the light client",
 );
 
 console.log("Running the live chain tests");

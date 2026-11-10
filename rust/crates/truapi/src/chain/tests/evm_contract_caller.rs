@@ -10,7 +10,7 @@ use subxt::{
 	events::Phase,
 	ext::{
 		frame_decode::extrinsics::decode_extrinsic,
-		scale_encode::{EncodeAsFields, Field},
+		scale_encode::{EncodeAsFields, EncodeAsType, Field},
 	},
 	tx::Signer,
 	utils::{AccountId32, Era, MultiSignature},
@@ -174,7 +174,7 @@ fn serve_contracts(
 	let provider = Arc::new(ScriptedProvider::with_frames(move |request| {
 		scripted.lock().unwrap().respond(request)
 	}));
-	let chain = ChainRuntime::new(provider.clone(), test_spawner());
+	let chain = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let extrinsics = ExtrinsicService::over_chain(chain.clone(), Arc::new(V4OnlyHost));
 	let caller = EvmContractCaller::new(chain, extrinsics, GENESIS);
 	(node, provider, caller)
@@ -483,7 +483,7 @@ fn a_runtime_call_failure_preserves_the_rpc_error() {
 			.to_string(),
 		]
 	}));
-	let chain = ChainRuntime::new(provider, test_spawner());
+	let chain = ChainRuntime::new(provider, Spawner::for_test());
 	let client = block_on(chain.rpc_client("contract_read", &GENESIS.0)).unwrap();
 	let mut rpc = subxt_rpcs::RpcClient::new(client);
 
@@ -588,4 +588,51 @@ fn a_contract_read_batch_keeps_successes_and_each_failure_in_request_order() {
 			Ok(vec![6])
 		]
 	);
+}
+
+/// A caller reacts to one pallet error, such as an unfunded storage deposit,
+/// by the indices the runtime metadata gives it. The error is encoded here as
+/// the runtime's own `DispatchError` type, so the match follows the dry-run
+/// output a node returns.
+#[test]
+fn a_simulated_module_error_matches_its_metadata_indices() {
+	let metadata = Metadata::decode_from(ASSET_HUB_METADATA).unwrap();
+	let revive = metadata.pallet_by_name("Revive").unwrap();
+	let error_index = |name: &str| {
+		let variant = revive.error_variants().unwrap().iter().find(|error| error.name == name);
+		[revive.error_index(), variant.unwrap().index]
+	};
+	let unfunded = error_index("StorageDepositNotEnoughFunds");
+	let failed = metadata
+		.pallet_by_name("System")
+		.unwrap()
+		.event_variants()
+		.unwrap()
+		.iter()
+		.find(|event| event.name == "ExtrinsicFailed")
+		.unwrap();
+	let dispatch_error_type = failed.fields[0].ty.id;
+	let module_error = ScaleValue::unnamed_variant(
+		"Module",
+		[ScaleValue::unnamed_composite([
+			ScaleValue::u128(unfunded[0].into()),
+			ScaleValue::unnamed_composite(
+				[unfunded[1], 0, 0, 0].map(|byte| ScaleValue::u128(byte.into())),
+			),
+		])],
+	);
+	let encoded = module_error.encode_as_type(dispatch_error_type, metadata.types()).unwrap();
+
+	let error = block_on(EvmContractCaller::read(
+		&mut ScriptedRuntimeApi(VecDeque::from([Ok(simulation_result(Err(RawDispatchError(
+			encoded,
+		))))])),
+		&CONTRACT,
+		INPUT,
+	))
+	.unwrap_err();
+
+	assert!(error.is_module_error(unfunded));
+	assert!(!error.is_module_error(error_index("ContractReverted")));
+	assert!(!EvmContractError::Reverted { detail: String::new() }.is_module_error(unfunded));
 }

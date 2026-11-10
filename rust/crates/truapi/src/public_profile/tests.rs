@@ -17,10 +17,7 @@ use crate::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::{
-	platform::HostInfo,
-	test_support::{StubPlatform, test_spawner},
-};
+use crate::{Spawner, platform::HostInfo, test_support::StubPlatform};
 
 struct ProfileContracts {
 	deployed: bool,
@@ -268,7 +265,7 @@ fn services_with_platform(platform: Arc<StubPlatform>) -> Arc<RuntimeServices> {
 		[1; 32],
 		[2; 32],
 		[3; 32],
-		test_spawner(),
+		Spawner::for_test(),
 	)
 }
 

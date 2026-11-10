@@ -5,8 +5,9 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 
 use crate::{
+	Spawner,
 	chain::{ContractResult, ExecReturnValue, StorageDeposit, Weight},
-	test_support::{ScriptedProvider, test_spawner},
+	test_support::ScriptedProvider,
 };
 
 #[test]
@@ -79,7 +80,7 @@ fn a_view_batch_starts_together_on_one_block_and_keeps_early_replies() {
 			method => panic!("unexpected RPC method: {method}"),
 		}
 	}));
-	let chain = ChainRuntime::new(provider, test_spawner());
+	let chain = ChainRuntime::new(provider, Spawner::for_test());
 	futures::executor::block_on(async {
 		let mut lookup =
 			DotnsLookup::pinned_to_best_block(&chain, [0x11; 32], DotnsLookupKind::Identity)

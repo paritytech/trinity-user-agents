@@ -25,7 +25,9 @@ rust/crates/
                          the statement store; its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
                          from Bulletin by CID and checks them
-  truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
+  truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
+                         also links the truapi crate to emit the core marker
+                         table as TypeScript, which rustdoc JSON does not carry
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol
                          One implementation module per macro; lib.rs holds entry points
@@ -40,12 +42,14 @@ rust/crates/
 js/packages/
   truapi/                  @parity/truapi TS package; generated TS lives under ignored paths
   truapi-host/            @parity/truapi-host: WASM-backed host runtime. Subpath entries:
-                          `.` (shared host types), `/web` (iframe + Web
-                          Worker), `/worker-runtime` (Worker entry), and the
-                          test host `/testing` (createMockHost),
-                          `/testing/playwright` (fixture), `/testing/server`
-                          (node server), `/testing/client` (no-iframe client),
-                          `/testing/dev-accounts`, `/testing/host-page`.
+                          `.` (shared host types), `/markers` (the core's
+                          table of which log markers may leave the device),
+                          `/web` (iframe + Web Worker), `/worker-runtime`
+                          (Worker entry), and the test host `/testing`
+                          (createMockHost), `/testing/playwright` (fixture),
+                          `/testing/server` (node server), `/testing/client`
+                          (no-iframe client), `/testing/dev-accounts`,
+                          `/testing/host-page`.
                           Two WASM bundles (gitignored) under dist/wasm/, built
                           via `make wasm`: `web/` is the production browser host
                           and `testing/` adds the `wasm-signing-host` and

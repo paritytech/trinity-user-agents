@@ -9,7 +9,7 @@ use futures::{
 };
 use truapi::{CallError, Subscription, latest::ProductRendererRenderItem};
 
-use crate::{interrupt::interrupt_reason, subscription::Spawner};
+use crate::{Spawner, interrupt::interrupt_reason};
 
 /// Observer implemented by a native host to receive renderer tree replacements.
 #[uniffi::export(callback_interface)]
@@ -54,9 +54,9 @@ pub fn spawn_observation(
 	observation: impl Future<Output = ()> + Send + 'static,
 ) -> Arc<NativeSubscription> {
 	let (abort, registration) = AbortHandle::new_pair();
-	(spawner)(Box::pin(async move {
+	spawner.spawn(async move {
 		let _ = Abortable::new(observation, registration).await;
-	}));
+	});
 	Arc::new(NativeSubscription { abort: Mutex::new(Some(abort)) })
 }
 

@@ -19,7 +19,7 @@ fn call_batch_fixture(
 		};
 		vec![serde_json::json!({"jsonrpc": "2.0", "id": value["id"], "result": result}).to_string()]
 	}));
-	let core = ChainRuntime::new(provider, spawner_for_tests());
+	let core = ChainRuntime::new(provider, Spawner::for_test());
 	let (chain, follow) = following_product(&core, 1);
 	let requests = functions
 		.iter()
