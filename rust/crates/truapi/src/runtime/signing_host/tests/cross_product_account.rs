@@ -6,7 +6,7 @@
 //! which door the request got through.
 
 use super::*;
-use crate::test_support::test_storage_key;
+use crate::test_support::{TEST_STACK_GENERATION, test_storage_key};
 
 use crate::{
 	platform::{CoreStorage, CoreStorageKey},
@@ -24,7 +24,7 @@ use truapi::versioned::signing::{
 /// Seed `owner`'s manifest cache, so the grant resolves without a chain.
 fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 	let entry = CachedManifest {
-		generation: crate::test_support::TEST_STACK_GENERATION.to_string(),
+		generation: TEST_STACK_GENERATION.to_string(),
 		fetched_at_secs: current_unix_secs(),
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
 	};

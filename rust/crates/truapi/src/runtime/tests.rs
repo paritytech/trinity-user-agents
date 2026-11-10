@@ -12,7 +12,7 @@ use crate::{
 		CreateTransactionReview, ExecutableKind, HostScan, LegacySigningAccount,
 		PermissionAuthorizationRequest, SignPayloadReview, SignRawReview,
 	},
-	test_support::test_storage_key,
+	test_support::{TEST_STACK_GENERATION, test_storage_key},
 };
 use parity_scale_codec::{Decode, Encode};
 use truapi::{
@@ -410,7 +410,7 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
                 "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted}}}"#
 	);
 	let entry = CachedManifest {
-		generation: crate::test_support::TEST_STACK_GENERATION.to_string(),
+		generation: TEST_STACK_GENERATION.to_string(),
 		fetched_at_secs,
 		json: Some(json),
 	};
@@ -424,7 +424,7 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 /// Seeds `owner`'s cached lookup, `None` standing for "publishes no manifest".
 fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<String>, age_secs: u64) {
 	let entry = CachedManifest {
-		generation: crate::test_support::TEST_STACK_GENERATION.to_string(),
+		generation: TEST_STACK_GENERATION.to_string(),
 		fetched_at_secs: current_unix_secs().saturating_sub(age_secs),
 		json,
 	};
