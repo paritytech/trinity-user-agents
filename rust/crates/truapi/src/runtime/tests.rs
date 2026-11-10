@@ -643,8 +643,8 @@ fn a_cached_grant_stops_being_honoured_once_it_expires() {
 	assert_eq!(read_storage(&host, Some("wallet.dot"), "k").unwrap_err(), access_not_granted());
 }
 
-/// A product runtime for `unknown.dot` on the stack `id` in `generation`, over
-/// the same chains whatever the two are.
+/// A product runtime for `unknown.dot` on a stack with this `id` and
+/// `generation`. The chains are the same for every id and generation.
 fn host_on_stack(platform: Arc<StubPlatform>, id: &str, generation: &str) -> ProductRuntimeHost {
 	let identity =
 		crate::platform::StackIdentity { id: id.to_string(), generation: generation.to_string() };
@@ -669,8 +669,8 @@ fn host_on_stack(platform: Arc<StubPlatform>, id: &str, generation: &str) -> Pro
 	ProductRuntimeHost::new_pairing_for_tests(platform, config, product, Spawner::for_test()).0
 }
 
-/// Stores what the runtime on `host`'s stack would after reading
-/// `wallet.dot`'s manifest and after the user allowed identity disclosure.
+/// Stores, for `host`'s stack, a cached manifest in which `wallet.dot` grants
+/// storage access, and an allowed identity disclosure.
 fn store_grant_and_permission(host: &ProductRuntimeHost) {
 	let storage = host.connection.services.storage();
 	let entry = CachedManifest {
@@ -708,9 +708,8 @@ fn stored_identity_disclosure(host: &ProductRuntimeHost) -> PermissionAuthorizat
 	.expect("stub core storage reads")
 }
 
-/// A wipe restarts the stack's chains under a new generation. The Asset Hub
-/// that answered the cached grant is gone, so the grant is not honoured. The
-/// user's decision never came from a chain and still stands.
+/// After a wipe the stack has a new generation and a new Asset Hub. A grant
+/// cached from the old one must not apply. The stored permission is kept.
 #[test]
 fn a_new_generation_drops_the_cached_manifest_and_keeps_stored_permissions() {
 	let platform = stub_platform();
@@ -729,9 +728,9 @@ fn a_new_generation_drops_the_cached_manifest_and_keeps_stored_permissions() {
 	);
 }
 
-/// A fork has its source's genesis hashes and its own identity. A host that
-/// switches from the source to the fork must not act on a grant read from the
-/// source's chain or on a decision the user made there.
+/// A fork has the same genesis hashes as its source and a different id. After
+/// a host switches to the fork, a grant cached on the source and a permission
+/// stored there must not apply.
 #[test]
 fn a_fork_honours_neither_grants_nor_permissions_stored_for_its_source() {
 	let platform = stub_platform();

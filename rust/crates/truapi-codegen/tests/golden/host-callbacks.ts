@@ -840,17 +840,16 @@ export interface SignVrfReview {
 }
 
 /**
- * A `CoreStorageKey` slot of one stack: the key a host stores core-owned
- * state under.
+ * The key a host stores core-owned state under: a `CoreStorageKey` slot
+ * and the id of the stack it belongs to.
  *
- * `stack` is the stack's identity, `Stack::id`: its key in hex. Two stacks
- * never share a key, even when their chains have the same genesis hashes, as
- * a fork's and its source's do. A host stores every slot under the whole
- * encoded key and never under the slot alone.
+ * `stack` is `Stack::id`. A fork has the same genesis hashes as its source
+ * and a different id, so the two never share a key. A host stores each value
+ * under the whole encoded key, never under the slot alone.
  */
 export interface StackStorageKey {
   /**
-   * Identity of the stack the slot belongs to.
+   * Id of the stack the slot belongs to.
    */
   stack: string;
 
@@ -1528,13 +1527,12 @@ export const SignVrfReview: S.Codec<SignVrfReview> = S.lazy(
 );
 
 /**
- * A `CoreStorageKey` slot of one stack: the key a host stores core-owned
- * state under.
+ * The key a host stores core-owned state under: a `CoreStorageKey` slot
+ * and the id of the stack it belongs to.
  *
- * `stack` is the stack's identity, `Stack::id`: its key in hex. Two stacks
- * never share a key, even when their chains have the same genesis hashes, as
- * a fork's and its source's do. A host stores every slot under the whole
- * encoded key and never under the slot alone.
+ * `stack` is `Stack::id`. A fork has the same genesis hashes as its source
+ * and a different id, so the two never share a key. A host stores each value
+ * under the whole encoded key, never under the slot alone.
  */
 export const StackStorageKey: S.Codec<StackStorageKey> = S.lazy(
   (): S.Codec<StackStorageKey> =>
@@ -1883,9 +1881,8 @@ export interface CoreAdmin {
 /**
  * Host-private persistence for core-owned state.
  *
- * Every key names the stack its slot belongs to. The core reads and writes
- * only the stack it runs, so what a host stored for one stack is never read
- * for another.
+ * Every key includes the id of the stack it belongs to, and the core only
+ * uses keys of the stack it runs. Stacks therefore do not share entries.
  *
  * Clearing product-indexed slots is the host's job. The core drops the ones
  * it is holding when a session ends, but a product it never opened this run

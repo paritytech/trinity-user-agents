@@ -176,9 +176,9 @@ pub const MANIFEST_TTL_SECS: u64 = 24 * 60 * 60;
 /// reads today, so a later consumer needs no cache migration.
 #[derive(Clone, Encode, Decode)]
 pub struct CachedManifest {
-	/// The [`Stack::generation`](crate::platform::Stack::generation) whose
-	/// Asset Hub answered. An entry from another generation is not read: the
-	/// chain that answered it is gone.
+	/// The [`Stack::generation`](crate::platform::Stack::generation) the
+	/// lookup was made in. The core skips an entry from another generation,
+	/// because the chain it was read from no longer exists.
 	pub generation: String,
 	/// Seconds since the Unix epoch at which the lookup was made.
 	pub fetched_at_secs: u64,

@@ -192,8 +192,8 @@ fn an_all_zero_genesis_hash_is_refused() {
 	);
 }
 
-/// The session, a stored permission, a cached manifest and the device key:
-/// one slot of each kind the core keeps.
+/// One slot of each kind: the session, a permission, a cached manifest and
+/// the device key.
 fn slots() -> [CoreStorageKey; 4] {
 	let product = ProductId::for_test("app.paseo");
 	[
@@ -212,8 +212,8 @@ async fn read_slots(storage: &StackStorage<'_, MemoryCoreStorage>) -> [Option<Ve
 	values
 }
 
-/// A reader keys what it stores by the stack's identity, and drops chain
-/// caches when the generation changes, so both come from the bundled copy.
+/// The id comes from the pointer's key and the generation from the
+/// descriptor.
 #[test]
 fn a_bundled_stack_is_identified_by_its_key_and_its_descriptors_generation() {
 	let descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None);
@@ -232,9 +232,9 @@ fn a_bundled_stack_is_identified_by_its_key_and_its_descriptors_generation() {
 	);
 }
 
-/// A fork runs chains with its source's genesis hashes, so only the stack's
-/// identity tells their state apart. A user signed in on the source must not
-/// find that session, its permissions or its cached chain data on the fork.
+/// A fork has the same genesis hashes as its source, so only the stack's id
+/// separates their state. What is stored for the source must not be readable
+/// on the fork.
 #[test]
 fn a_fork_and_its_source_share_no_stored_state() {
 	let chains = StackChains {

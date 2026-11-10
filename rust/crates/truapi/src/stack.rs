@@ -6,9 +6,9 @@
 //! link. The [`Stack`] it returns holds the network, the dotNS TLD and each
 //! chain's genesis hash, and answers `get_chain_info`.
 //!
-//! What the core stores belongs to one stack: [`Stack::storage`] is the only
-//! way the core reaches [`CoreStorage`](crate::platform::CoreStorage), and it
-//! puts [`Stack::id`] in every key.
+//! [`Stack::storage`] is the only way the core reaches
+//! [`CoreStorage`](crate::platform::CoreStorage). It adds [`Stack::id`] to
+//! every key, so stacks do not share stored state.
 
 mod storage;
 
@@ -65,13 +65,11 @@ pub struct Stack {
 	chains: StackChains,
 }
 
-/// What tells a stack from every other stack, and one run of its chains from
-/// the next.
+/// A stack's id and the generation of its chains.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StackIdentity {
-	/// The stack's identity: `trinity_stack::Pointer::stack_id` of its pointer.
-	/// A fork and its source have different ones, though their chains share
-	/// genesis hashes.
+	/// `trinity_stack::Pointer::stack_id` of the stack's pointer. A fork has
+	/// the same genesis hashes as its source and a different id.
 	pub id: String,
 	/// The descriptor's `generation`, which changes whenever the stack
 	/// restarts its chains, as after a wipe.
@@ -216,14 +214,14 @@ impl Stack {
 		Ok(Self { identity, network, tld, chains })
 	}
 
-	/// The stack's identity, which every key the core stores carries. See
+	/// The stack's id. Every storage key includes it. See
 	/// [`StackIdentity::id`].
 	pub fn id(&self) -> &str {
 		&self.identity.id
 	}
 
-	/// The run of the stack's chains. What the core cached about the chains
-	/// under another generation is stale. See [`StackIdentity::generation`].
+	/// The descriptor's `generation`. Chain data cached under another
+	/// generation is stale. See [`StackIdentity::generation`].
 	pub fn generation(&self) -> &str {
 		&self.identity.generation
 	}

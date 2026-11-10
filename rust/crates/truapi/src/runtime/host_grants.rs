@@ -176,8 +176,8 @@ pub struct HostGrantPersistence<'a> {
 }
 
 impl HostGrantStore {
-	/// Bind retained capabilities to `stack`'s slots in the host's storage, kept
-	/// as `keeping` says.
+	/// Keep retained capabilities for `stack` in the host's storage, as
+	/// `keeping` says.
 	///
 	/// Grants are only kept for the session `session_state` selects.
 	pub fn new(
