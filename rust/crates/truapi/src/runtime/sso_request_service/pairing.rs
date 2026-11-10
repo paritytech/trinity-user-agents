@@ -22,6 +22,7 @@ use super::{
 	SsoRequestService,
 };
 use crate::{
+	Spawner,
 	host_logic::{
 		session::{SessionInfo, encode_persisted_session},
 		sso::pairing::{
@@ -32,7 +33,6 @@ use crate::{
 		},
 		statement_store::{decode_verified_statement_data, parse_new_statements_result},
 	},
-	subscription::Spawner,
 };
 
 use crate::platform::{CoreStorage, CoreStorageKey};
@@ -258,6 +258,7 @@ impl<'a> SsoPairingFlow<'a> {
 			full_username: None,
 		};
 		let resolve_session = resolve_session_identity_with_chain(
+			&self.host.dotns_reads,
 			&self.host.chain,
 			self.host.host_config.asset_hub_chain_genesis_hash,
 			session,
@@ -475,7 +476,7 @@ async fn wait_for_v2_pairing_success(
 					// `RpcClient` is transport-only here; spawning lets live
 					// notifications continue to be consumed while a snapshot
 					// query is waiting for backlog completion or timeout.
-					(spawner)(fut.boxed());
+					spawner.spawn(fut);
 				}
 				poll.set(futures_timer::Delay::new(PAIRING_QUERY_INTERVAL).fuse());
 			}

@@ -8,5 +8,5 @@ protocol TabBarChromeVisibilityCustomizing {
 }
 
 /// A screen pushed over a tab's root that the tab bar treats as the root itself: the bar stays shown, cannot fold,
-/// keeps the root's clearance, and ignores a tap on the selected tab.
+/// and keeps the root's clearance.
 protocol TabBarRootStandIn {}

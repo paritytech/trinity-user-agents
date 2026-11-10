@@ -5,17 +5,6 @@ use parity_scale_codec::Encode;
 use parking_lot::{Condvar, Mutex as ParkingMutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-fn spawner_for_tests() -> Spawner {
-	#[cfg(not(target_arch = "wasm32"))]
-	{
-		crate::subscription::thread_per_subscription_spawner()
-	}
-	#[cfg(target_arch = "wasm32")]
-	{
-		Arc::new(futures::executor::block_on)
-	}
-}
-
 /// A stop the node acknowledges.
 const STOPPED: &str = r#""result":null"#;
 
@@ -169,7 +158,7 @@ fn header_request_reuses_existing_follow() {
 			None
 		}
 	}));
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let _follow_stream = runtime.remote_chain_head_follow(
 		"local-follow".to_string(),
 		RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
@@ -214,7 +203,7 @@ fn header_waits_for_a_just_created_follow() {
 	}));
 	let gate = Arc::new((ParkingMutex::new(false), Condvar::new()));
 	let spawner_gate = gate.clone();
-	let spawner: Spawner = Arc::new(move |future| {
+	let spawner = Spawner::with_test_scheduler(move |future| {
 		let task_gate = spawner_gate.clone();
 		std::thread::spawn(move || {
 			let (released, ready) = &*task_gate;
@@ -288,7 +277,7 @@ fn header_request_binds_product_follow_alias_to_transport_follow() {
 			None
 		}
 	}));
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let _follow_stream = runtime.remote_chain_head_follow(
 		"transport-request-id".to_string(),
 		RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: true },
@@ -332,7 +321,7 @@ fn opening_a_second_follow_keeps_an_established_alias_working() {
 			None
 		}
 	}));
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let follow_request =
 		|| RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false };
 	let header_request = |follow_subscription_id: &str| RemoteChainHeadHeaderRequest {
@@ -383,7 +372,7 @@ fn opening_a_second_follow_keeps_an_established_alias_working() {
 #[test]
 fn pending_follow_aliases_are_product_scoped_and_ambiguous_aliases_fail_closed() {
 	let provider = Arc::new(ScriptedProvider::new(|_| None));
-	let runtime = ChainRuntime::new(provider, spawner_for_tests());
+	let runtime = ChainRuntime::new(provider, Spawner::for_test());
 	let genesis_hash = vec![0u8; 32];
 
 	runtime.register_follow_intent(&genesis_hash, "c1:request-first");
@@ -413,7 +402,7 @@ fn pending_follow_aliases_are_product_scoped_and_ambiguous_aliases_fail_closed()
 fn transaction_stop_uses_host_handle_and_accepts_finished_provider_operation() {
 	let provider =
 		broadcast_provider(r#""error":{"code":-32602,"message":"Invalid operation id"}"#);
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let genesis = vec![0x11; 32];
 
 	let local_id = broadcast(&runtime, &genesis);
@@ -435,7 +424,7 @@ fn transaction_stop_uses_host_handle_and_accepts_finished_provider_operation() {
 
 #[test]
 fn transaction_operations_evict_oldest_beyond_cap() {
-	let runtime = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+	let runtime = ChainRuntime::new(broadcast_provider(STOPPED), Spawner::for_test());
 	let genesis = vec![0x11; 32];
 
 	let first_id = broadcast(&runtime, &genesis);
@@ -459,7 +448,7 @@ fn unpin_uses_typed_subxt_method_for_each_hash() {
 			None
 		}
 	}));
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let _follow_stream = runtime.remote_chain_head_follow(
 		"local-follow".to_string(),
 		RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
@@ -519,7 +508,7 @@ fn header_request_rejects_unknown_follow_id_without_opening_follow() {
 			None
 		}
 	}));
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 
 	let err = futures::executor::block_on(runtime.remote_chain_head_header(
 		RemoteChainHeadHeaderRequest {
@@ -569,7 +558,7 @@ fn concurrent_connection_for_shares_one_connect() {
 			}
 		}),
 	});
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 
 	let (first, second) = futures::executor::block_on(futures::future::join(
 		runtime.remote_chain_spec_chain_name(vec![0u8; 32]),
@@ -587,7 +576,7 @@ fn concurrent_connection_for_shares_one_connect() {
 #[test]
 fn subxt_connection_pins_configured_genesis_and_is_cached() {
 	let provider = Arc::new(ScriptedProvider::new(|_| None));
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let genesis = vec![0xab; 32];
 
 	let connection =
@@ -632,7 +621,7 @@ fn subxt_connection_pins_configured_genesis_and_is_cached() {
 #[test]
 fn subxt_connection_invalidated_when_backend_driver_exits() {
 	let provider = Arc::new(ScriptedProvider::new(|_| None));
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let genesis = vec![0xab; 32];
 
 	let connection =
@@ -667,7 +656,7 @@ fn each_scope_gets_its_own_connection_to_the_same_chain() {
 			.contains("chainSpec_v1_chainName")
 			.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"Polkadot"}}"#))
 	}));
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let genesis = vec![0xab; 32];
 
 	let first = core.for_product(1);
@@ -689,7 +678,7 @@ fn each_scope_gets_its_own_connection_to_the_same_chain() {
 #[test]
 fn the_same_product_reuses_its_connection() {
 	let provider = Arc::new(ScriptedProvider::new(|_| None));
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let genesis = vec![0xab; 32];
 
 	futures::executor::block_on(core.for_product(7).connection_for("scope_test", &genesis))
@@ -716,7 +705,7 @@ fn a_products_follows_do_not_consume_another_scopes_budget() {
 			.contains("chainHead_v1_follow")
 			.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-{id}"}}"#))
 	}));
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let genesis = vec![0xab; 32];
 
 	let busy = core.for_product(1);
@@ -785,7 +774,7 @@ fn a_products_follows_do_not_consume_another_scopes_budget() {
 #[test]
 fn a_scope_releases_its_connections_when_it_ends() {
 	let provider = Arc::new(ScriptedProvider::new(|_| None));
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let genesis = vec![0xab; 32];
 	let other_chain = vec![0xcd; 32];
 
@@ -846,7 +835,7 @@ fn releasing_a_scope_with_a_live_follow_closes_the_socket() {
 			.contains("chainHead_v1_follow")
 			.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
 	}));
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let product = core.for_product(1);
 
 	// Hold the stream, so nothing tears the follow down on our behalf.
@@ -904,7 +893,7 @@ fn a_connect_in_flight_cannot_resurrect_a_released_scope() {
 
 	let gate = Arc::new((ParkingMutex::new(false), Condvar::new()));
 	let provider = Arc::new(ParkedProvider { gate: gate.clone() });
-	let core = ChainRuntime::new(provider, spawner_for_tests());
+	let core = ChainRuntime::new(provider, Spawner::for_test());
 	let product = core.for_product(1);
 	let genesis = vec![0xab; 32];
 
@@ -972,7 +961,7 @@ fn a_connect_in_flight_cannot_resurrect_a_released_scope() {
 #[test]
 fn releasing_a_product_drops_only_its_own_follow_intents() {
 	let provider = Arc::new(ScriptedProvider::new(|_| None));
-	let core = ChainRuntime::new(provider, spawner_for_tests());
+	let core = ChainRuntime::new(provider, Spawner::for_test());
 	let genesis = vec![0xab; 32];
 	let first = core.for_product(1);
 	let second = core.for_product(2);
@@ -996,7 +985,7 @@ fn releasing_a_product_drops_only_its_own_follow_intents() {
 #[test]
 fn a_product_cannot_resolve_another_products_follow() {
 	let provider = Arc::new(ScriptedProvider::new(|_| None));
-	let core = ChainRuntime::new(provider, spawner_for_tests());
+	let core = ChainRuntime::new(provider, Spawner::for_test());
 	let genesis = vec![0xab; 32];
 	let first = core.for_product(1);
 	let second = core.for_product(2);
@@ -1015,7 +1004,7 @@ fn a_product_cannot_resolve_another_products_follow() {
 #[test]
 fn a_product_cannot_stop_another_products_transaction() {
 	let provider = broadcast_provider(STOPPED);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let genesis = vec![0x11; 32];
 	let owner = core.for_product(1);
 	let other = core.for_product(2);
@@ -1040,7 +1029,7 @@ fn a_product_cannot_stop_another_products_transaction() {
 
 #[test]
 fn the_transaction_cap_applies_per_product() {
-	let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+	let core = ChainRuntime::new(broadcast_provider(STOPPED), Spawner::for_test());
 	let genesis = vec![0x11; 32];
 	let quiet = core.for_product(1);
 	let flooding = core.for_product(2);
@@ -1055,7 +1044,7 @@ fn the_transaction_cap_applies_per_product() {
 
 #[test]
 fn releasing_a_product_forgets_its_transactions() {
-	let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+	let core = ChainRuntime::new(broadcast_provider(STOPPED), Spawner::for_test());
 	let genesis = vec![0x11; 32];
 	let product = core.for_product(1);
 	broadcast(&product, &genesis);
@@ -1072,7 +1061,7 @@ fn releasing_a_product_forgets_its_transactions() {
 /// same entries and hide a missing release gate.
 #[test]
 fn a_call_finishing_after_release_leaves_nothing_behind() {
-	let inert: Spawner = Arc::new(|_task| {});
+	let inert = Spawner::with_test_scheduler(|_task| {});
 	let core = ChainRuntime::new(broadcast_provider(STOPPED), inert);
 	let genesis = vec![0x11; 32];
 	let product = core.for_product(1);
@@ -1099,7 +1088,7 @@ fn a_call_finishing_after_release_leaves_nothing_behind() {
 
 #[test]
 fn releasing_a_product_sweeps_only_its_own_follow_starts() {
-	let core = ChainRuntime::new(broadcast_provider(STOPPED), spawner_for_tests());
+	let core = ChainRuntime::new(broadcast_provider(STOPPED), Spawner::for_test());
 	let genesis = vec![0xab; 32];
 	let first = core.for_product(1);
 	let second = core.for_product(2);
@@ -1126,7 +1115,7 @@ fn releasing_a_product_sweeps_only_its_own_follow_starts() {
 #[test]
 fn releasing_one_product_does_not_touch_another() {
 	let provider = Arc::new(ScriptedProvider::new(|_| None));
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let genesis = vec![0xab; 32];
 
 	let first = core.for_product(1);
@@ -1154,7 +1143,7 @@ fn releasing_one_product_does_not_touch_another() {
 fn a_queued_follow_cannot_open_a_connection_after_product_release() {
 	let queued = Arc::new(Mutex::new(Vec::<BoxFuture<'static, ()>>::new()));
 	let queue = queued.clone();
-	let spawner: Spawner = Arc::new(move |task| queue.lock().unwrap().push(task));
+	let spawner = Spawner::with_test_scheduler(move |task| queue.lock().unwrap().push(task));
 	let provider = Arc::new(ScriptedProvider::new(|_| None));
 	let core = ChainRuntime::new(provider, spawner);
 	let product = core.for_product(1);
@@ -1200,7 +1189,7 @@ fn a_failed_connection_can_be_retried() {
 		attempted: AtomicBool::new(false),
 		inner: ScriptedProvider::new(|_| None),
 	});
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let genesis = vec![0xab; 32];
 	let failed = futures::executor::block_on(runtime.connection_for("retry", &genesis)).map(|_| ());
 	let retried =
@@ -1214,7 +1203,7 @@ fn a_failed_connection_can_be_retried() {
 #[test]
 fn closed_products_do_not_accumulate_in_the_connection_registry() {
 	let provider = Arc::new(ScriptedProvider::new(|_| None));
-	let core = ChainRuntime::new(provider, spawner_for_tests());
+	let core = ChainRuntime::new(provider, Spawner::for_test());
 	for instance in 1..=1_000 {
 		core.for_product(instance).release_scope();
 	}
@@ -1225,7 +1214,7 @@ fn closed_products_do_not_accumulate_in_the_connection_registry() {
 #[test]
 fn unknown_genesis_chain_spec_propagates_failure() {
 	let provider = Arc::new(UnavailableChainProvider);
-	let runtime = ChainRuntime::new(provider, spawner_for_tests());
+	let runtime = ChainRuntime::new(provider, Spawner::for_test());
 	let err = match futures::executor::block_on(runtime.remote_chain_spec_chain_name(vec![0u8; 32]))
 	{
 		Ok(_) => panic!("expected failure"),
@@ -1242,7 +1231,7 @@ fn unknown_genesis_chain_spec_propagates_failure() {
 fn dropped_connection_keeps_the_transport_reason() {
 	let provider = Arc::new(ScriptedProvider::new(|_| None));
 	provider.sender.lock().unwrap().take();
-	let runtime = ChainRuntime::new(provider, spawner_for_tests());
+	let runtime = ChainRuntime::new(provider, Spawner::for_test());
 	let err =
 		match futures::executor::block_on(runtime.remote_chain_spec_genesis_hash(vec![0u8; 32])) {
 			Ok(_) => panic!("expected failure"),
@@ -1278,7 +1267,7 @@ fn json_rpc_error_becomes_host_failure() {
 			r#"{{"jsonrpc":"2.0","id":"{id}","error":{{"code":-32601,"message":"method not found"}}}}"#
 		))
 	}));
-	let runtime = ChainRuntime::new(provider, spawner_for_tests());
+	let runtime = ChainRuntime::new(provider, Spawner::for_test());
 	let err = match futures::executor::block_on(runtime.remote_chain_spec_chain_name(vec![0u8; 32]))
 	{
 		Ok(_) => panic!("expected failure"),
@@ -1298,7 +1287,7 @@ fn a_closed_transport_names_its_cause_on_the_call_and_the_follow() {
 			.contains("chainHead_v1_follow")
 			.then(|| format!(r#"{{"jsonrpc":"2.0","id":"{id}","result":"REMOTE-FOLLOW"}}"#))
 	}));
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let mut follow = runtime.remote_chain_head_follow(
 		"local-follow".to_string(),
 		RemoteChainHeadFollowRequest { genesis_hash: vec![0u8; 32], with_runtime: false },
@@ -1364,7 +1353,7 @@ fn follow_event_initialized_translates_to_v01_item() {
 			None
 		}
 	}));
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 
 	let mut stream = runtime.remote_chain_head_follow(
 		"local-follow".to_string(),
@@ -1414,7 +1403,7 @@ fn follow_event_initialized_translates_to_v01_item() {
 /// reads as a subscription that simply had nothing more to say.
 #[test]
 fn follow_setup_failure_ends_the_stream_with_the_failure() {
-	let runtime = ChainRuntime::new(Arc::new(UnavailableChainProvider), spawner_for_tests());
+	let runtime = ChainRuntime::new(Arc::new(UnavailableChainProvider), Spawner::for_test());
 
 	let mut stream = runtime.remote_chain_head_follow(
 		"local-follow".to_string(),
@@ -1443,7 +1432,7 @@ fn an_unreadable_follow_event_interrupts_the_stream_after_earlier_items() {
 			None
 		}
 	}));
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 
 	let mut stream = runtime.remote_chain_head_follow(
 		"local-follow".to_string(),
@@ -1485,7 +1474,7 @@ fn drop_follow_stream_sends_unfollow() {
 			None
 		}
 	}));
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let sent = provider.sent.clone();
 
 	let stream = runtime.remote_chain_head_follow(
@@ -1533,6 +1522,7 @@ fn only_acknowledged_follows_hold_a_slot_in_the_budget() {
 		abort: None,
 		sender: mpsc::unbounded().0,
 		cancelled: Arc::new(AtomicBool::new(false)),
+		activity: FollowActivity::new(),
 	};
 	follows.insert("acknowledged-b".to_string(), intended(Some("REMOTE-B")));
 	follows.insert("intent-only".to_string(), intended(None));
@@ -1636,7 +1626,7 @@ fn lose_connection(
 #[test]
 fn a_follow_lost_with_its_connection_is_named_after_the_caller_let_go() {
 	let provider = follow_and_storage_provider();
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let follow = open_initialized_follow(&runtime, &provider, "host:1");
 
 	lose_connection(&provider, follow);
@@ -1656,7 +1646,7 @@ fn a_follow_lost_with_its_connection_is_named_after_the_caller_let_go() {
 #[test]
 fn a_lost_follow_is_named_under_the_alias_a_product_bound() {
 	let provider = follow_and_storage_provider();
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let follow = open_initialized_follow(&runtime, &provider, "host:1");
 	read_storage(&runtime, "follow_0").expect("the alias binds to the live follow");
 
@@ -1674,7 +1664,7 @@ fn a_lost_follow_is_named_under_the_alias_a_product_bound() {
 /// message above means what it says.
 #[test]
 fn an_id_that_was_never_followed_is_still_unknown() {
-	let runtime = ChainRuntime::new(Arc::new(ScriptedProvider::new(|_| None)), spawner_for_tests());
+	let runtime = ChainRuntime::new(Arc::new(ScriptedProvider::new(|_| None)), Spawner::for_test());
 	let failure = read_storage(&runtime, "never-issued").expect_err("an unknown id must fail");
 	assert!(
 		failure.reason().contains("unknown follow subscription id"),
@@ -1690,7 +1680,7 @@ fn an_id_that_was_never_followed_is_still_unknown() {
 #[test]
 fn a_node_stop_names_itself_on_the_next_call() {
 	let provider = follow_and_storage_provider();
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let mut follow = open_initialized_follow(&runtime, &provider, "host:1");
 	assert!(read_storage(&runtime, "host:1").is_ok(), "the read before the stop should succeed");
 
@@ -1726,7 +1716,7 @@ fn a_spent_follow_id_is_not_served_by_an_unrelated_follow() {
 			None
 		}
 	}));
-	let runtime = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let runtime = ChainRuntime::new(provider.clone(), Spawner::for_test());
 
 	// One live follow, never aliased, exactly as a fresh refollow leaves it.
 	let _follow = runtime.remote_chain_head_follow(
@@ -2051,7 +2041,7 @@ fn request_sent(provider: &ScriptedProvider, method: &str) -> String {
 #[test]
 fn products_share_one_metadata_download() {
 	let provider = runtime_call_node(true);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, mut first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 	let (third, mut third_follow) = following_product(&core, 3);
@@ -2074,7 +2064,7 @@ fn products_share_one_metadata_download() {
 #[test]
 fn a_caller_during_the_download_waits_for_it() {
 	let provider = runtime_call_node(false);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, mut first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 
@@ -2099,7 +2089,7 @@ fn a_caller_during_the_download_waits_for_it() {
 #[test]
 fn a_call_that_reads_state_is_never_shared() {
 	let provider = runtime_call_node(true);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, mut first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 
@@ -2120,7 +2110,7 @@ fn a_call_that_reads_state_is_never_shared() {
 #[test]
 fn blocks_of_one_runtime_share_one_download() {
 	let provider = runtime_call_node(true);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, mut first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 
@@ -2140,7 +2130,7 @@ fn blocks_of_one_runtime_share_one_download() {
 #[test]
 fn blocks_of_different_runtimes_never_share() {
 	let provider = runtime_call_node(true);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, mut first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 
@@ -2160,7 +2150,7 @@ fn blocks_of_different_runtimes_never_share() {
 #[test]
 fn a_block_whose_code_cannot_be_read_is_never_shared() {
 	let provider = runtime_call_node_with(true, |_| None);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, mut first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 
@@ -2181,7 +2171,7 @@ fn a_block_whose_code_cannot_be_read_is_never_shared() {
 #[test]
 fn stopping_the_download_releases_its_waiters() {
 	let provider = runtime_call_node(false);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, _first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 
@@ -2208,7 +2198,7 @@ fn stopping_the_download_releases_its_waiters() {
 #[test]
 fn a_follow_ending_during_the_download_releases_its_waiters() {
 	let provider = runtime_call_node(false);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 	call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK);
@@ -2228,7 +2218,7 @@ fn a_follow_ending_during_the_download_releases_its_waiters() {
 #[test]
 fn a_follow_ending_before_the_node_names_the_download_releases_its_waiters() {
 	let provider = runtime_call_node_withholding(&["chainHead_v1_call"]);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 	std::thread::spawn(move || call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK));
@@ -2255,7 +2245,7 @@ fn a_follow_ending_before_the_node_names_the_download_releases_its_waiters() {
 #[test]
 fn a_call_dropped_before_the_node_names_the_download_releases_its_waiters() {
 	let provider = runtime_call_node_withholding(&["chainHead_v1_call"]);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, _first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 	let (abort, registration) = AbortHandle::new_pair();
@@ -2284,7 +2274,7 @@ fn a_call_dropped_before_the_node_names_the_download_releases_its_waiters() {
 #[test]
 fn a_call_on_a_follow_that_ended_is_never_waited_on() {
 	let provider = runtime_call_node_withholding(&["state_getStorageHash", "chainHead_v1_call"]);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 	std::thread::spawn(move || call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK));
@@ -2312,7 +2302,7 @@ fn a_call_on_a_follow_that_ended_is_never_waited_on() {
 #[test]
 fn stopping_a_cached_operation_never_reaches_the_node() {
 	let provider = runtime_call_node(false);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, mut first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 
@@ -2451,7 +2441,7 @@ fn runtime_loads(client: &OnlineClient<SubstrateConfig>) -> bool {
 #[test]
 fn the_core_reuses_metadata_a_product_downloaded() {
 	let provider = subxt_node();
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (product, mut product_follow) = following_product(&core, 1);
 	call_with(&product, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK, 14u32.encode());
 	output_of(&mut product_follow).expect("the product gets the metadata");
@@ -2468,7 +2458,7 @@ fn the_core_reuses_metadata_a_product_downloaded() {
 #[test]
 fn the_core_never_waits_on_a_download_in_flight() {
 	let provider = subxt_node_with(|follow, _| follow != 1);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (product, _product_follow) = following_product(&core, 1);
 	call_with(&product, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK, 14u32.encode());
 
@@ -2483,7 +2473,7 @@ fn the_core_never_waits_on_a_download_in_flight() {
 #[test]
 fn a_download_alongside_a_stalled_one_answers_its_waiters() {
 	let provider = subxt_node_with(|follow, _| follow != 1);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, _first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 	call_with(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK, 14u32.encode());
@@ -2511,7 +2501,7 @@ fn a_product_during_the_core_download_waits_for_it() {
 	let provider = subxt_node_with(|follow, function| {
 		follow != 1 || function != "Metadata_metadata_at_version"
 	});
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let client = futures::executor::block_on(core.online_client(&SHARED_GENESIS)).expect("client");
 	std::thread::spawn(move || futures::executor::block_on(client.at_current_block()).is_ok());
 	request_sent(&provider, "Metadata_metadata_at_version");
@@ -2536,7 +2526,7 @@ fn a_product_during_the_core_download_waits_for_it() {
 #[test]
 fn a_download_reported_before_its_reply_still_answers_its_waiters() {
 	let provider = runtime_call_node_withholding(&["chainHead_v1_call"]);
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let (first, mut first_follow) = following_product(&core, 1);
 	let (second, mut second_follow) = following_product(&core, 2);
 	std::thread::spawn(move || call(&first, 1, "Metadata_metadata_at_version", RUNTIME_BLOCK));
@@ -2562,7 +2552,7 @@ fn a_download_reported_before_its_reply_still_answers_its_waiters() {
 #[test]
 fn products_reuse_metadata_the_core_downloaded() {
 	let provider = subxt_node();
-	let core = ChainRuntime::new(provider.clone(), spawner_for_tests());
+	let core = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let client = futures::executor::block_on(core.online_client(&SHARED_GENESIS)).expect("client");
 	let loaded = runtime_loads(&client);
 	let (product, mut product_follow) = following_product(&core, 1);
@@ -2585,4 +2575,198 @@ fn is_call_end_for(item: &Option<RemoteChainHeadFollowItem>, operation: &str) ->
 		item,
 		Some(RemoteChainHeadFollowItem::OperationCallDone { operation_id, .. }) if operation_id == operation
 	)
+}
+
+/// The budget line tells a follow nobody ended from one in use: how long it
+/// has been open, whether the node still sends it events, how recently a call
+/// was made on it, and whether its receiver is still open.
+#[test]
+fn a_follow_holding_a_slot_says_how_long_it_has_been_open_and_when_it_was_last_used() {
+	let opened = SystemTime::now();
+	let at = |seconds| opened + Duration::from_secs(seconds);
+	let (sender, receiver) = mpsc::unbounded();
+	let mut follow = FollowState {
+		with_runtime: false,
+		client_subscription_id: None,
+		remote_subscription_id: Some("REMOTE".to_string()),
+		abort: None,
+		sender,
+		cancelled: Arc::new(AtomicBool::new(false)),
+		activity: FollowActivity {
+			opened_at: opened,
+			last_event_at: None,
+			calls: 0,
+			last_call_at: None,
+		},
+	};
+	assert_eq!(follow.describe_activity(at(600)), "open 600s, event never, calls 0, call never");
+
+	follow.activity.last_event_at = Some(at(594));
+	follow.activity.calls = 3;
+	follow.activity.last_call_at = Some(at(60));
+	drop(receiver);
+	assert_eq!(
+		follow.describe_activity(at(600)),
+		"open 600s, event 6s, calls 3, call 540s, dropped"
+	);
+}
+
+/// The host sink cuts a detail at [`crate::logging::HOST_SINK_DETAIL_MAX_CHARS`]
+/// before a host sees it, so the line has to carry four follows inside that. A
+/// leaked follow is one whose receiver went without an unfollow, so that is the
+/// shape the line is sized for, and a dotNS follow is named by a label carrying
+/// a product id, which is the longest name a follow brings.
+#[test]
+fn a_budget_line_names_four_dropped_dotns_follows_inside_the_detail_a_host_receives() {
+	let opened = SystemTime::now();
+	let products = [
+		"notes-worker-demo.paseo",
+		"some.longish.product.identifier.paseo",
+		"peopl.paseo",
+		"a.dot",
+	];
+	let mut follows = HashMap::new();
+	for (index, product) in products.into_iter().enumerate() {
+		let (sender, receiver) = mpsc::unbounded();
+		// The receiver goes, which is what a leaked follow looks like and what
+		// adds the widest activity text beside the name.
+		drop(receiver);
+		follows.insert(
+			format!("truapi:dotns:{}:manifest:{product}", index + 10),
+			FollowState {
+				with_runtime: false,
+				client_subscription_id: None,
+				remote_subscription_id: Some("REMOTE".to_string()),
+				abort: None,
+				sender,
+				cancelled: Arc::new(AtomicBool::new(false)),
+				activity: FollowActivity {
+					opened_at: opened,
+					last_event_at: Some(opened + Duration::from_secs(12)),
+					calls: 7,
+					last_call_at: Some(opened + Duration::from_secs(30)),
+				},
+			},
+		);
+	}
+
+	let holding = ChainConnection::follows_holding_a_slot(&follows);
+	let line = ChainConnection::budget_line(
+		&encode_hex(&[0xab; 32]),
+		&holding,
+		&follows,
+		opened + Duration::from_secs(600),
+	);
+
+	assert_eq!(holding.len(), FOLLOWS_A_NODE_BUDGETS);
+	assert_eq!(
+		line,
+		"this connection to chain 0xabababababababababababababababababababababababababababababababab holds 4 of 4 follows, the next is refused: dotns:10:manifest:notes-worker-demo.paseo open 600s, event 588s, calls 7, call 570s, dropped, dotns:11:manifest:some.longish.product.identifier.paseo open 600s, event 588s, calls 7, call 570s, dropped, dotns:12:manifest:peopl.paseo open 600s, event 588s, calls 7, call 570s, dropped, dotns:13:manifest:a.dot open 600s, event 588s, calls 7, call 570s, dropped"
+	);
+	assert!(
+		line.chars().count() <= crate::logging::HOST_SINK_DETAIL_MAX_CHARS,
+		"the host receives {} of {} chars",
+		line.chars().count(),
+		crate::logging::HOST_SINK_DETAIL_MAX_CHARS
+	);
+}
+
+/// A node that cannot be reached may be reachable later, so the read waits on
+/// it. A provider that refuses, whatever reason it gives, answers the same way
+/// every time, so the read reports it at once.
+#[test]
+fn only_an_unreachable_node_is_a_transient_connect_failure() {
+	struct Refusing(fn() -> ProviderError);
+
+	#[async_trait::async_trait]
+	impl ChainProvider for Refusing {
+		async fn connect(
+			&self,
+			_genesis_hash: [u8; 32],
+		) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
+			Err((self.0)())
+		}
+	}
+
+	let kind_for = |error: fn() -> ProviderError| {
+		let provider = HostChainProvider::new(Arc::new(Refusing(error)));
+		match futures::executor::block_on(RuntimeChainProvider::connect(&provider, vec![0xab; 32]))
+		{
+			Ok(_) => panic!("the refusing provider connected"),
+			Err(failure) => failure.kind(),
+		}
+	};
+	let transient = [
+		(|| ProviderError::Handshake { url: "wss://node".into(), reason: "dns".into() })
+			as fn() -> ProviderError,
+		|| ProviderError::Transport { reason: "socket".into() },
+	];
+	for error in transient {
+		assert_eq!(kind_for(error), RuntimeFailureKind::Unavailable, "{}", error());
+	}
+	let refused = [
+		(|| ProviderError::UnknownGenesis { genesis: [0xab; 32] }) as fn() -> ProviderError,
+		|| ProviderError::UnknownRelay { relay: [0xcd; 32] },
+		|| ProviderError::Host { reason: "chain provider unavailable".into() },
+		|| ProviderError::MissingRuntime,
+	];
+	for error in refused {
+		assert_eq!(kind_for(error), RuntimeFailureKind::HostFailure, "{}", error());
+	}
+}
+
+/// A follow left open for a day carries wider numbers than a fresh one, so a
+/// line of four such follows with long product ids outruns the detail a host
+/// receives. It is the names that give way: every follow still says how long
+/// it has been open, when it was last used and that its receiver is gone.
+#[test]
+fn a_budget_line_of_day_old_follows_shortens_names_and_keeps_every_activity() {
+	let opened = SystemTime::now();
+	let products = [
+		"notes-worker-demo.paseo",
+		"some.longish.product.identifier.paseo",
+		"another.rather.long.product.identifier.paseo",
+		"a.dot",
+	];
+	let mut follows = HashMap::new();
+	for (index, product) in products.into_iter().enumerate() {
+		let (sender, receiver) = mpsc::unbounded();
+		drop(receiver);
+		follows.insert(
+			format!("truapi:dotns:{}:manifest:{product}", index + 1000),
+			FollowState {
+				with_runtime: false,
+				client_subscription_id: None,
+				remote_subscription_id: Some("REMOTE".to_string()),
+				abort: None,
+				sender,
+				cancelled: Arc::new(AtomicBool::new(false)),
+				activity: FollowActivity {
+					opened_at: opened,
+					last_event_at: Some(opened + Duration::from_secs(12)),
+					calls: 123_456,
+					last_call_at: Some(opened + Duration::from_secs(30)),
+				},
+			},
+		);
+	}
+
+	let holding = ChainConnection::follows_holding_a_slot(&follows);
+	let line = ChainConnection::budget_line(
+		&encode_hex(&[0xab; 32]),
+		&holding,
+		&follows,
+		opened + Duration::from_secs(86_400),
+	);
+
+	let activity = "open 86400s, event 86388s, calls 123456, call 86370s, dropped";
+	assert!(
+		line.chars().count() <= crate::logging::HOST_SINK_DETAIL_MAX_CHARS,
+		"the host receives {} of {} chars: {line}",
+		line.chars().count(),
+		crate::logging::HOST_SINK_DETAIL_MAX_CHARS
+	);
+	assert_eq!(line.matches(activity).count(), FOLLOWS_A_NODE_BUDGETS, "{line}");
+	assert!(line.contains(&format!("dotns:1003:manifest:a.dot {activity}")), "{line}");
+	assert!(line.contains('\u{2026}'), "a long name is cut and says so: {line}");
 }

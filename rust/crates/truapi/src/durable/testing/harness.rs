@@ -19,7 +19,7 @@ use crate::{
 		policy::SubmissionPolicy,
 	},
 	store::Db,
-	test_support::{test_spawner, wait_until},
+	test_support::wait_until,
 	time::ManualTimer,
 };
 
@@ -201,7 +201,7 @@ fn engine_over(
 		validator: chain.clone(),
 		submitter: chain.clone(),
 		timer,
-		spawner: test_spawner(),
+		spawner: crate::Spawner::for_test(),
 	})
 }
 

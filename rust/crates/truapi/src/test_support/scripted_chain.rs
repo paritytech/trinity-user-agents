@@ -19,10 +19,11 @@ use subxt::{
 };
 
 use crate::{
+	Spawner,
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 	host_internal::extrinsic::tests::bulletin_runtime_call,
 	platform::JsonRpcConnection,
-	test_support::{chain_halted_error, test_spawner},
+	test_support::chain_halted_error,
 	time::ManualTimer,
 };
 
@@ -217,6 +218,9 @@ pub struct ScriptedChainHead {
 	pub finishes_calls: bool,
 	/// How many header reads get dotli's halt error before one is served.
 	pub halted_headers: usize,
+	/// How many header reads go unanswered, so a test can close the
+	/// connection under them.
+	pub unanswered_headers: usize,
 }
 
 impl Default for ScriptedChainHead {
@@ -226,6 +230,7 @@ impl Default for ScriptedChainHead {
 			refusal: FollowRefusal::ChainHalted,
 			finishes_calls: true,
 			halted_headers: 0,
+			unanswered_headers: 0,
 		}
 	}
 }
@@ -243,6 +248,7 @@ impl ScriptedChainHead {
 		let finalized = H256(blake2_256(&header.encode()));
 		let follows = AtomicUsize::new(0);
 		let headers = AtomicUsize::new(0);
+		let unanswered = AtomicUsize::new(0);
 		let operations = AtomicUsize::new(0);
 		let provider = Arc::new(ScriptedProvider::with_frames(move |request| {
 			let request: Value = serde_json::from_str(request).unwrap();
@@ -278,6 +284,11 @@ impl ScriptedChainHead {
 					})),
 				],
 				"chainHead_v1_header"
+					if unanswered.fetch_add(1, Ordering::SeqCst) < self.unanswered_headers =>
+				{
+					Vec::new()
+				},
+				"chainHead_v1_header"
 					if headers.fetch_add(1, Ordering::SeqCst) < self.halted_headers =>
 				{
 					vec![
@@ -310,7 +321,8 @@ impl ScriptedChainHead {
 			}
 		}));
 		let timer = Arc::new(ManualTimer::default());
-		let chain = ChainRuntime::new(provider.clone(), test_spawner()).with_timer(timer.clone());
+		let chain =
+			ChainRuntime::new(provider.clone(), Spawner::for_test()).with_timer(timer.clone());
 		(provider, chain, timer)
 	}
 }

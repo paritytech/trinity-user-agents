@@ -51,7 +51,7 @@ use crate::{
 	},
 	runtime::{
 		ProductRuntimeHost,
-		funding::{FundsAsked, StartGuard, engine_holds},
+		funding::{Claim, FundsAsked, engine_holds},
 		payment_id::host_payment_id,
 		versioning::version,
 	},
@@ -165,7 +165,7 @@ struct FundingStart {
 	/// Whether this call recorded them, rather than a call before it.
 	fresh: bool,
 	/// Keeps a second call under the id out until this one finished.
-	_guard: StartGuard,
+	_guard: Claim<[u8; 32]>,
 }
 
 /// What the host's engine did with funds a worker started for a session.
@@ -188,7 +188,7 @@ impl ProductRuntimeHost {
 		&self,
 		host_id: [u8; 32],
 		already_exists: E,
-	) -> Result<StartGuard, CallError<E>> {
+	) -> Result<Claim<[u8; 32]>, CallError<E>> {
 		let registry = self.connection.services.funding();
 		let product_id = &self.connection.product.product_id;
 		registry

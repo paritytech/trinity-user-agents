@@ -11,6 +11,7 @@ The package exposes tree-shakeable subpath exports — import only what your env
 | Import                               | Provides                                                                                                            |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | `@parity/truapi-host`                | Shared runtime types plus generated typed host callback contracts.                                                  |
+| `@parity/truapi-host/markers`        | `CORE_MARKERS`, the core's table of which log markers may leave the device and how loud each one is.                |
 | `@parity/truapi-host/web`            | Browser pairing host: `createIframeHost` (iframe MessageChannel handshake) and `createWebWorkerPairingHostRuntime`. |
 | `@parity/truapi-host/worker-runtime` | Web Worker entrypoint (import with your bundler's `?worker` suffix) so the WASM core runs off the page main thread. |
 | `@parity/truapi-host/wasm/web`       | The raw browser `wasm-bindgen` glue, if you need to instantiate the core yourself.                                  |
@@ -155,9 +156,9 @@ capability set on both sides of the boundary.
 ### Product-rendered bodies
 
 A host can ask a product to draw one body — a chat message, an input-widget
-candidate, a Pocket card — and send back what the user does with it. Both entry
-points live on the product provider and are present only on runtimes holding a
-live channel to the core:
+candidate, a Pocket card or its back — and send back what the user does with it.
+Both entry points live on the product provider and are present only on runtimes
+holding a live channel to the core:
 
 ```ts
 import type { RenderContext } from "@parity/truapi";
@@ -204,9 +205,10 @@ the product's worker stays up for as long as something is being drawn.
 policy: the renderer refuses a connection that is not a `Worker` execution, and
 chat additionally requires a live session.
 
-Two rules the core cannot check are the host's to keep: send a render context
-only for a surface the product's manifest `includes`, and publish a renderer
-action only from the current tree of an open render stream.
+Three rules the core cannot check are the host's to keep: send a render context
+only for a surface the product's manifest `includes`, send `PocketCardBack` only
+for a card whose definition declares `back`, and publish a renderer action only
+from the current tree of an open render stream.
 
 ## Product account addresses
 

@@ -37,6 +37,7 @@ mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
+mod single_flight;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
 mod sso_request_service;
@@ -64,7 +65,7 @@ use std::{
 
 pub use actions::ActionChannel;
 use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
-pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
+pub use authority::{AccountHolder, AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 pub use funding::{FundingFeed, FundingProviderLink};
@@ -84,7 +85,8 @@ pub use services::RuntimeServices;
 pub use signing_host::{LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService};
 pub use sso_responder_service::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
+	PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
+	SsoResponderService,
 };
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
@@ -92,7 +94,7 @@ pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
+	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview, LegacySigningAccount,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
 	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
 	normalize_chat_identifier, validate_chat_icon, validate_chat_message_content,
@@ -124,9 +126,10 @@ use truapi::{
 			HostFundingStatusSubscribeRequest,
 		},
 		funding_provider::{
-			HostFundingPresentFrameError, HostFundingPresentFrameRequest,
-			HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
-			HostFundingReportResponse,
+			HostFundingCloseFrameError, HostFundingCloseFrameRequest,
+			HostFundingCloseFrameResponse, HostFundingPresentFrameError,
+			HostFundingPresentFrameRequest, HostFundingPresentFrameResponse,
+			HostFundingReportError, HostFundingReportRequest, HostFundingReportResponse,
 		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
@@ -143,7 +146,7 @@ use truapi::{
 use web_time::Instant;
 
 #[cfg(test)]
-use crate::subscription::Spawner;
+use crate::Spawner;
 use crate::{
 	chain_runtime::{RuntimeFailure, RuntimeFailureKind},
 	host_internal::{
@@ -198,8 +201,17 @@ const LEGACY_ACCOUNT_UNAVAILABLE_REASON: &str = "Account is not available in the
 
 #[derive(Clone)]
 enum LegacySigner {
-	Product,
+	Product(latest::ProductAccountId),
 	Identity([u8; 32]),
+}
+
+impl LegacySigner {
+	fn review_account(&self) -> LegacySigningAccount {
+		match self {
+			Self::Product(account) => LegacySigningAccount::Product(account.clone()),
+			Self::Identity(_) => LegacySigningAccount::Identity,
+		}
+	}
 }
 
 #[derive(derive_more::From)]
@@ -377,7 +389,7 @@ impl ProductConnection {
 	}
 
 	/// Role-neutral services shared with the owning host runtime.
-	pub fn services(&self) -> &Arc<RuntimeServices> {
+	pub(crate) fn services(&self) -> &Arc<RuntimeServices> {
 		&self.services
 	}
 
@@ -583,6 +595,11 @@ impl ProductConnection {
 		self.services.worker_ledger.release(&self.product.product_id);
 	}
 
+	/// Hold this connection's product worker until the hold is dropped.
+	pub(crate) fn hold_worker(&self) -> funding_quotes::WorkerHold {
+		funding_quotes::WorkerHold::acquire(&self.services, &self.product.product_id)
+	}
+
 	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
 	async fn begin_operation_with_host(
 		&self,
@@ -591,12 +608,12 @@ impl ProductConnection {
 		let (tx, rx) = futures::channel::oneshot::channel();
 		let platform = self.platform.clone();
 		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
+		self.services.spawner.spawn(async move {
 			let begun = platform.begin_operation(&product, label).await;
 			if let Err(Ok(response)) = tx.send(begun) {
 				let _ = platform.end_operation(&product, response.id).await;
 			}
-		}));
+		});
 		rx.await.unwrap_or_else(|_| {
 			Err(latest::HostWorkerOperationError::Unknown {
 				reason: "the host did not answer".to_string(),
@@ -625,11 +642,11 @@ impl ProductConnection {
 		}
 		let platform = self.platform.clone();
 		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
+		self.services.spawner.spawn(async move {
 			for id in open {
 				let _ = platform.end_operation(&product, id).await;
 			}
-		}));
+		});
 	}
 
 	/// Release one open operation's demand; unknown ids leave demand unchanged.
@@ -983,7 +1000,10 @@ impl ProductRuntimeHost {
 		}
 		let product_public_key = self.legacy_slot_zero_public_key(cx, session).await?;
 		if requested_key == product_public_key {
-			return Ok(LegacySigner::Product);
+			return Ok(LegacySigner::Product(latest::ProductAccountId {
+				dot_ns_identifier: self.connection.product_id().clone(),
+				derivation_index: latest::DerivationIndex::Index(0),
+			}));
 		}
 		Err(LegacySignerError::Unavailable)
 	}
@@ -1679,21 +1699,39 @@ impl FundingProvider for ProductRuntimeHost {
 			.exec(|latest::HostFundingPresentFrameRequest { intent, target }| async move {
 				let domain = CallError::Domain;
 				let platform = self.connection.funding_provider_access()?;
-				if !self
-					.connection
-					.services
-					.funding()
-					.is_serving(&self.connection.product.product_id, &intent)
-				{
+				if !self.serves(&intent) {
 					return Err(domain(latest::HostFundingPresentFrameError::NotFound));
 				}
 				let target = crate::host_logic::funding::checked_frame_target(target)
 					.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
+				if matches!(target, latest::FundingFrameTarget::App { .. }) &&
+					!platform.provider_has_app(&self.connection.product).await
+				{
+					return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+				}
 				let outcome = platform
 					.present_provider_frame(&self.connection.product, intent, target)
 					.await
 					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
 				Ok(latest::HostFundingPresentFrameResponse { outcome })
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.close_frame"))]
+	async fn close_frame(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingCloseFrameRequest,
+	) -> Result<HostFundingCloseFrameResponse, CallError<HostFundingCloseFrameError>> {
+		version(request)
+			.exec(|latest::HostFundingCloseFrameRequest { intent }| async move {
+				let platform = self.connection.funding_provider_access()?;
+				if !self.serves(&intent) {
+					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
+				}
+				platform.close_provider_frame(&self.connection.product, intent);
+				Ok(())
 			})
 			.await
 	}
@@ -1870,6 +1908,14 @@ impl ProductRuntimeHost {
 			debug_assert_eq!(key_bytes, preimage_key(&value));
 			self.connection.services.cache_preimage(key_bytes, value);
 		}
+	}
+
+	/// Whether this connection's product serves funding session `intent`.
+	fn serves(&self, intent: &str) -> bool {
+		self.connection
+			.services
+			.funding()
+			.is_serving(&self.connection.product.product_id, intent)
 	}
 }
 
