@@ -16,26 +16,35 @@
 //! [`NativeTrUApiHostRuntime::set_contacts_callbacks`]. A host that installs
 //! none leaves `contacts.pick` answering `Unsupported`.
 
+mod bundled_products;
 mod callbacks;
 mod config;
+mod engine_follow;
 mod errors;
 mod events;
 mod executor;
+mod funding;
+mod funding_feed;
+mod funding_page;
 mod platform;
 mod pocket;
 mod renderer;
 mod runtime;
+mod sso;
 mod subscribers;
 mod ws_bridge;
 
 pub use crate::{
-	host_internal::sso_messages::SsoRequestOutcome,
 	host_logic::{
 		dev_server::{DevServerError, DevServerProduct},
 		dotns::{NavigateDecision, PocketDeeplinkAction, ProductLink},
 		scanner::{ScanFilter, ScanVerdict},
 	},
 	pocket_cards::{PinnedPocketCard, PocketAddError, PocketCardRemoval, PocketEntry},
+};
+pub use bundled_products::{
+	ArchiveFile, BundleEntry, BundleReader, ProductSource, archive_file, bundled_funding_providers,
+	bundled_products, product_source,
 };
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
@@ -46,11 +55,18 @@ pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionCo
 pub use errors::{
 	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
 };
+pub use funding::funding_status_in_flight;
+pub use funding_feed::{FundingChangeKind, funding_resume_pending};
+pub use funding_page::{
+	funding_page_allows_media, funding_page_allows_navigation, funding_page_matches_return,
+	funding_page_origin,
+};
 pub use pocket::NativePocketObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
 };
+pub use sso::SsoRequestOutcome;
 pub use ws_bridge::{WsBridgeEndpoint, WsBridgeStartError};
 
 use serde::Deserialize;

@@ -12,7 +12,7 @@ use truapi::{CallError, Subscription, latest::ProductRendererRenderItem};
 use crate::{Spawner, interrupt::interrupt_reason};
 
 /// Observer implemented by a native host to receive renderer tree replacements.
-#[uniffi::export(callback_interface)]
+#[uniffi::export(foreign)]
 pub trait NativeRendererObserver: Send + Sync {
 	/// Deliver a complete replacement tree.
 	fn on_update(&self, node: ProductRendererRenderItem);
