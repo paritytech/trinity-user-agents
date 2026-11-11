@@ -982,10 +982,7 @@ pub use host_logic::worker::{WorkerLedger, WorkerTransition};
 #[cfg(feature = "runtime")]
 pub use host_rpc_client::HostRpcClient;
 #[cfg(feature = "runtime")]
-pub use image_loader::{
-	ImageError, ImageFormat, ImageReference, ImageRejection, LoadedImage, MAX_IMAGE_BYTES,
-	MAX_IMAGE_SIDE, check_image,
-};
+pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{

@@ -3,18 +3,14 @@
 
 mod chain;
 
-use std::{
-	fs::File,
-	io::{Cursor, Read},
-	path::Path,
-};
+use std::{fs, io::Cursor, path::Path};
 
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use image::ImageReader;
 use truapi::{
-	ImageFormat, MAX_IMAGE_BYTES, ProfileAvatar, ProfileRecord, PublicProfile, SigningHostRuntime,
-	check_image, preimage_key,
+	ImageFormat, ProfileAvatar, ProfileRecord, PublicProfile, SigningHostRuntime, check_image,
+	preimage_key,
 };
 
 use crate::network::Stack;
@@ -57,12 +53,7 @@ fn format_profile(username: &str, profile: &PublicProfile) -> String {
 }
 
 fn read_image(path: &Path) -> Result<(ImageFormat, Vec<u8>)> {
-	let mut bytes = Vec::new();
-	File::open(path)
-		.with_context(|| format!("open avatar {}", path.display()))?
-		.take(u64::try_from(MAX_IMAGE_BYTES)? + 1)
-		.read_to_end(&mut bytes)
-		.with_context(|| format!("read avatar {}", path.display()))?;
+	let bytes = fs::read(path).with_context(|| format!("read avatar {}", path.display()))?;
 	let format =
 		check_image(&bytes, None).map_err(|rejection| anyhow!("image rejected: {rejection}"))?;
 	ImageReader::new(Cursor::new(&bytes))
