@@ -261,6 +261,11 @@ class DockletGeometryTest {
     }
 
     @Test
+    fun `resting dock has no shelf at 540 dpi, where 62 dp rounds down to whole px`() {
+        assertEquals(0f, DockletGeometry.shelfHeightPx(surfaceHeightPx = 209f, density = 3.375f), EPS)
+    }
+
+    @Test
     fun `shelf height is the surface height above the 62 dp row`() {
         assertEquals(300f, DockletGeometry.shelfHeightPx(surfaceHeightPx = 486f, density = 3f), EPS)
     }

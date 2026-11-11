@@ -74,6 +74,22 @@ class DockletSlotTapTest {
     }
 
     @Test
+    fun `selects the current tab when the chain-health panel is closed`() {
+        assertEquals(
+            DockletSlotHighlight.Selected,
+            dockletSlotHighlight(Chats, currentTab = BottomTab.CHATS, networkStatusExpanded = false),
+        )
+    }
+
+    @Test
+    fun `leaves the other tabs unhighlighted while the chain-health panel is open`() {
+        assertEquals(
+            DockletSlotHighlight.None,
+            dockletSlotHighlight(Browse, currentTab = BottomTab.CHATS, networkStatusExpanded = true),
+        )
+    }
+
+    @Test
     fun `emphasizes Network Status without selecting it while its panel is open`() {
         assertEquals(
             DockletSlotHighlight.Emphasized,
