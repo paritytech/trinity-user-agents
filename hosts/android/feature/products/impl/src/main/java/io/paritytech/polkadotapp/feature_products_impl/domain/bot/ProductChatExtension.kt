@@ -51,6 +51,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
@@ -94,6 +96,7 @@ class ProductChatExtension(
 
     // Absent means the text input, the default.
     private val roomFooters = MutableStateFlow(roomFooterStorage.read(product.id))
+    private val roomFootersLock = Mutex()
 
     override fun observeInputSlot(chatId: ChatId): Flow<ChatExtensionInputSlot> {
         val room = chatId.productRoomId(id) ?: return flowOf(ChatExtensionInputSlot.TextInput)
@@ -203,10 +206,12 @@ class ProductChatExtension(
         }
 
         override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, footer: ProductRoomFooter): Result<Unit> {
-            val footers = roomFooters.updateAndGet { rooms ->
-                if (footer == ProductRoomFooter.TextInput) rooms - chatIdParameter else rooms + (chatIdParameter to footer)
+            roomFootersLock.withLock {
+                val footers = roomFooters.updateAndGet { rooms ->
+                    if (footer == ProductRoomFooter.TextInput) rooms - chatIdParameter else rooms + (chatIdParameter to footer)
+                }
+                roomFooterStorage.write(product.id, footers)
             }
-            roomFooterStorage.write(product.id, footers)
             return Result.success(Unit)
         }
 
