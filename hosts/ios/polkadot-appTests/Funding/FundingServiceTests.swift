@@ -10,7 +10,7 @@ struct FundingServiceTests {
     func theStateShowsTheCoresListForTheAsk() async throws {
         let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
         let service = makeService(runtime)
-        await service.select(selection(.card), for: intent)
+        service.select(selection(.card), for: intent)
 
         service.quote(amount: "50000000", for: intent)
         try await waitUntil { runtime.asks.count == 1 }
@@ -26,7 +26,7 @@ struct FundingServiceTests {
     func aListForAnEarlierAskIsDropped() async throws {
         let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
         let service = makeService(runtime)
-        await service.select(selection(.card), for: intent)
+        service.select(selection(.card), for: intent)
 
         service.quote(amount: "50000000", for: intent)
         service.quote(amount: "60000000", for: intent)
@@ -64,7 +64,7 @@ struct FundingServiceTests {
     func anUnchangedAskKeepsTheShownList() async throws {
         let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
         let service = makeService(runtime)
-        await service.select(selection(.card), for: intent)
+        service.select(selection(.card), for: intent)
         service.quote(amount: "50000000", for: intent)
         try await waitUntil { runtime.asks.count == 1 }
         push(quotes(1, [("routed", quote("q1", send: "5200"))], best: "routed"), runtime, service)
@@ -81,7 +81,7 @@ struct FundingServiceTests {
     func theCoreWithdrawingTheListShowsNone() async throws {
         let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
         let service = makeService(runtime)
-        await service.select(selection(.card), for: intent)
+        service.select(selection(.card), for: intent)
         service.quote(amount: "50000000", for: intent)
         try await waitUntil { runtime.asks.count == 1 }
         push(quotes(1, [("routed", quote("q1", send: "5200"))], best: "routed"), runtime, service)
@@ -96,7 +96,7 @@ struct FundingServiceTests {
     func noAmountDropsTheQuotes() async throws {
         let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
         let service = makeService(runtime)
-        await service.select(selection(.card), for: intent)
+        service.select(selection(.card), for: intent)
         service.quote(amount: "50000000", for: intent)
         try await waitUntil { runtime.asks.count == 1 }
         push(quotes(1, [("routed", quote("q1", send: "5200"))], best: "routed"), runtime, service)
@@ -123,7 +123,7 @@ struct FundingServiceTests {
         let service = makeService(runtime)
         let outcome = Task { await service.presentFunding(intent: intent, direction: .in, amount: nil) }
         let requested = try await firstEvent(of: service)
-        await service.select(selection(.card), for: intent)
+        service.select(selection(.card), for: intent)
         service.quote(amount: "50000000", for: intent)
         try await waitUntil { runtime.asks.count == 1 }
         push(quotes(1, [("routed", quote("q1", send: "5200"))], best: "routed"), runtime, service)
@@ -146,7 +146,7 @@ struct FundingServiceTests {
         let service = makeService(runtime)
         let outcome = Task { await service.presentFunding(intent: intent, direction: .in, amount: nil) }
         _ = try await firstEvent(of: service)
-        await service.select(selection(.card), for: intent)
+        service.select(selection(.card), for: intent)
         service.quote(amount: "50000000", for: intent)
         try await waitUntil { runtime.asks.count == 1 }
         push(quotes(1, [("routed", quote("q1", send: "5200"))], best: "routed"), runtime, service)
@@ -169,7 +169,7 @@ struct FundingServiceTests {
         let service = makeService(runtime)
         let outcome = Task { await service.presentFunding(intent: intent, direction: .in, amount: nil) }
         _ = try await firstEvent(of: service)
-        await service.select(selection(.crypto, asset: "USDC", network: "polkadot"), for: intent)
+        service.select(selection(.crypto, asset: "USDC", network: "polkadot"), for: intent)
 
         service.quote(amount: "50000000", for: intent)
         try await service.start(intent, provider: nil)
@@ -186,7 +186,7 @@ struct FundingServiceTests {
     func leavingTheDepositScreenKeepsTheSessionFromStarting() async throws {
         let runtime = MockFundingRuntime(candidates: [candidate("crypto", routes: [cryptoRoute()])])
         let service = makeService(runtime)
-        await service.select(selection(.crypto, asset: "USDC", network: "polkadot"), for: intent)
+        service.select(selection(.crypto, asset: "USDC", network: "polkadot"), for: intent)
         service.quote(amount: "50000000", for: intent)
         try await service.start(intent, provider: nil)
 

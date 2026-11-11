@@ -21,9 +21,10 @@ protocol FundingServiceProtocol: AnyObject, Sendable {
     /// answered whether the session started.
     func open(_ direction: FundingDirection, amount: U128?) async throws
 
-    /// Tells the core what the user picked. What it offers for it comes back
-    /// on the session's state, as `.selecting(options)`.
-    func select(_ selection: FundingSelection, for entryId: String) async
+    /// Tells the core what the user picked, in order with the asks made
+    /// after it. What it offers for it comes back on the session's state, as
+    /// `.selecting(options)`.
+    func select(_ selection: FundingSelection, for entryId: String)
 
     /// Asks every provider routing the reported selection to quote `amount`,
     /// or drops the quotes on screen when `amount` is nil. The quotes come

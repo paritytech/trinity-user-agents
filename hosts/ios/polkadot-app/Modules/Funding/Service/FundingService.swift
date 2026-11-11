@@ -56,9 +56,11 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
         _ = try await runtime.openFunding(direction: direction, amount: amount)
     }
 
-    func select(_ selection: FundingSelection, for entryId: String) async {
-        await calls.run { [runtime] in runtime.selectFundingOptions(intent: entryId, selection: selection) }.value
-        publish(entryId)
+    func select(_ selection: FundingSelection, for entryId: String) {
+        calls.run { [runtime, weak self] in
+            runtime.selectFundingOptions(intent: entryId, selection: selection)
+            self?.publish(entryId)
+        }
     }
 
     func quote(amount: U128?, for entryId: String) {
