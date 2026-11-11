@@ -37,8 +37,12 @@ runs:
         set -euo pipefail
         version="${REQUESTED_VERSION}"
         if [ -z "${version}" ]; then
-          version="$(awk -F'"' '/^version = /{print $2; exit}' \
-            "${GITHUB_ACTION_PATH}/../../../rust/crates/truapi-host-cli/Cargo.toml")"
+          cargo_toml="${GITHUB_ACTION_PATH}/../../../rust/crates/truapi-host-cli/Cargo.toml"
+          version="$(awk -F'"' '/^version = /{print $2; exit}' "${cargo_toml}" 2>/dev/null || true)"
+          if [ -z "${version}" ]; then
+            echo "::error::could not read the CLI version this action ships from ${cargo_toml}"
+            exit 1
+          fi
         fi
         if [ "${version}" != latest ] \
           && ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then

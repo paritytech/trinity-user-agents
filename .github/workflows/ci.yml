@@ -571,7 +571,6 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             .github/actions/install-truapi-host/
-            rust/crates/truapi-host-cli/Cargo.toml
             scripts/truapi-host-installer.sh
 
       - id: install
