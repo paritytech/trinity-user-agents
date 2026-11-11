@@ -6,6 +6,7 @@
 
 use super::*;
 use crate::{
+	Spawner,
 	chain::{ContractResult, ExecReturnValue, StorageDeposit, Weight},
 	chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 	host_logic::dotns_gateway::{
@@ -13,7 +14,6 @@ use crate::{
 		account_to_h160, dispatcher_address_key,
 	},
 	platform::JsonRpcConnection,
-	subscription::thread_per_subscription_spawner,
 };
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolInterface};
@@ -277,11 +277,11 @@ fn session_without_usernames(public_key: [u8; 32], identity_account_id: [u8; 32]
 #[test]
 fn in_core_lookup_resolves_usernames_over_one_runtime_follow() {
 	let provider = Arc::new(ScriptedAssetHub::new());
-	let chain = ChainRuntime::new(provider.clone(), thread_per_subscription_spawner());
+	let chain = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let session = session_without_usernames([0x11; 32], ACCOUNT);
 
 	let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
-		&DotnsReads::new(thread_per_subscription_spawner()),
+		&DotnsReads::new(Spawner::for_test()),
 		&chain,
 		[0xcc; 32],
 		session,
@@ -319,11 +319,11 @@ fn in_core_lookup_resolves_usernames_over_one_runtime_follow() {
 #[test]
 fn root_key_resolves_when_identity_account_labels_are_unissued() {
 	let provider = Arc::new(ScriptedAssetHub::new());
-	let chain = ChainRuntime::new(provider, thread_per_subscription_spawner());
+	let chain = ChainRuntime::new(provider, Spawner::for_test());
 	let session = session_without_usernames(ACCOUNT, SQUATTER);
 
 	let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
-		&DotnsReads::new(thread_per_subscription_spawner()),
+		&DotnsReads::new(Spawner::for_test()),
 		&chain,
 		[0xcc; 32],
 		session,
@@ -352,7 +352,7 @@ fn overlapping_lookups_of_one_session_open_the_follows_of_one() {
 			[0; 32],
 			[0xbb; 32],
 			[0xcc; 32],
-			crate::test_support::test_spawner(),
+			crate::Spawner::for_test(),
 		);
 		let session = session_without_usernames([0x11; 32], ACCOUNT);
 		futures::executor::block_on(futures::future::join_all((0..lookups).map(|_| {

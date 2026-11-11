@@ -1,6 +1,6 @@
 //! Versioned wrappers for [`Renderer`](crate::api::Renderer) methods.
 //!
-//! v0.2 adds the room footer as a place a body can live. The three v0.1
+//! v0.2 adds the room footer as a place a body can live. The v0.1
 //! contexts keep their wire indexes, so a v0.1 product sees no change, and a
 //! footer context is only ever sent to the product that docked it, which spoke
 //! v0.2 to do so.
@@ -34,6 +34,9 @@ fn upgrade(context: v01::RenderContext) -> v02::RenderContext {
 			v02::RenderContext::InputWidget { candidate_id }
 		},
 		v01::RenderContext::PocketCard { card_id } => v02::RenderContext::PocketCard { card_id },
+		v01::RenderContext::PocketCardBack { card_id } => {
+			v02::RenderContext::PocketCardBack { card_id }
+		},
 	}
 }
 
@@ -47,6 +50,9 @@ fn downgrade(context: v02::RenderContext) -> Result<v01::RenderContext, v02::Ren
 		},
 		v02::RenderContext::PocketCard { card_id } => {
 			Ok(v01::RenderContext::PocketCard { card_id })
+		},
+		v02::RenderContext::PocketCardBack { card_id } => {
+			Ok(v01::RenderContext::PocketCardBack { card_id })
 		},
 		footer @ v02::RenderContext::ChatRoomFooter { .. } => Err(footer),
 	}

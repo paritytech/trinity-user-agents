@@ -1173,6 +1173,11 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.coreDatabaseStatus()
     }
 
+    /// Profile metadata without image bytes. `force` bypasses the core's one-hour cache.
+    public func resolvePublicProfile(username: String, force: Bool) async throws -> PublicProfile {
+        try await inner.resolvePublicProfile(username: username, force: force)
+    }
+
     /// The image `reference` names, read from Bulletin by the core and checked against its
     /// CID and the image policy. Key a disk cache on ``LoadedImage/contentKey``.
     public func loadImage(reference: ImageReference) async throws -> LoadedImage {

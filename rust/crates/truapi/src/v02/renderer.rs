@@ -2,7 +2,7 @@ use parity_scale_codec::{Decode, Encode};
 
 /// Where a product-rendered body lives, and the id that names it there.
 ///
-/// v0.2 adds the room footer. The three v0.1 contexts come first, so they keep
+/// v0.2 adds the room footer. The v0.1 contexts come first, so they keep
 /// their wire indexes.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
@@ -24,6 +24,12 @@ pub enum RenderContext {
 	},
 	/// A card face in the host's Pocket collection.
 	PocketCard {
+		/// Card id, as declared in the product's worker manifest.
+		card_id: String,
+	},
+	/// The back of a card in the host's Pocket collection, for a card whose
+	/// definition declares `back`.
+	PocketCardBack {
 		/// Card id, as declared in the product's worker manifest.
 		card_id: String,
 	},
