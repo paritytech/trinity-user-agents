@@ -24,8 +24,6 @@ object PocketMotion {
 
     const val BALANCE_COUNT_UP_MILLIS = 650
     const val STRIPE_PERIOD_MILLIS = 700
-
-    val Standard = CubicBezierEasing(0.2f, 0.8f, 0.2f, 1f)
     val EaseOutCubic = CubicBezierEasing(0.33f, 1f, 0.68f, 1f)
 }
 
