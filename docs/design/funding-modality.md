@@ -67,9 +67,9 @@ flowchart LR
 
 | Host ↔ core (native names) | Methods                                                                                                                                                                                                                                                                                 |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Callbacks (core → host)    | `present_funding` · `present_provider_frame` · `close_provider_frame` · `detected_country` · `funding_changed(intent, kind)`                                                                                                                                                            |
-| Actions (host → core)      | `set_funding_provider_config` · `open_funding` · `select_funding_options` · `get_funding_quote` · `start_funding_when_quoted` · `cancel_funding_auto_start` · `select_funding_provider` · `cancel_funding` · `confirm_funding_cancel` · `acknowledge_funding_session` · `worker_exited` |
-| Reads (host → core)        | `funding_session` · `funding_progress` · `funding_options` · `funding_quotes` · `funding_amount_issue` · `funding_entries` · `funding_summary` · `funding_history` · `funding_available` · `funding_resume_pending`                                                                     |
+| Callbacks (core → host)    | `present_funding` · `provider_frame_requested` · `present_provider_frame` · `close_provider_frame` · `detected_country` · `funding_changed(intent, kind)`                                                                                                                                                            |
+| Actions (host → core)      | `set_funding_provider_config` · `open_funding` · `open_provider_frame` · `select_funding_options` · `get_funding_quote` · `start_funding_when_quoted` · `cancel_funding_auto_start` · `select_funding_provider` · `cancel_funding` · `confirm_funding_cancel` · `acknowledge_funding_session` · `worker_exited` |
+| Reads (host → core)         | `funding_session` · `funding_progress` · `funding_options` · `funding_quotes` · `funding_amount_issue` · `funding_entries` · `funding_summary` · `funding_history` · `funding_available` · `funding_resume_pending`                                                                     |
 
 Session id: `fs_` + nanoid(10). Another product's session reads as `NotFound`. Amounts cross the FFI as decimal strings.
 
@@ -124,6 +124,13 @@ sequenceDiagram
   C->>W: assign
   opt provider screen
     W->>C: presentFrame
+    C->>H: provider_frame_requested · held
+    alt user on the session
+      H->>C: open_provider_frame
+    else user elsewhere
+      H->>H: notice "<provider> wants to show a screen"
+      H->>C: open_provider_frame on tap
+    end
     C->>H: present_provider_frame
     W->>C: closeFrame → host shows the session sheet
   end

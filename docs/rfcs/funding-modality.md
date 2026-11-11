@@ -326,6 +326,11 @@ enum FundingFrameOutcome {
 - When the provider is done with a screen, such as a card payment the user made, its worker calls
   `close_frame(intent)`. The host closes the frame, the open `present_frame` answers `Closed`, and the host shows the
   session sheet in its place, so the user sees the session move on without closing anything.
+- A worker never opens a screen by itself. The core holds every request and asks the host, which opens it at once when
+  the user is on that session, and otherwise shows a notice ("<provider> wants to show a screen") that opens it on tap.
+  `present_frame` answers only once the frame closes, however long it waited.
+- Only one request waits per session: a new one replaces it, and the replaced call answers `Dismissed`. `close_frame`
+  drops a waiting request, which answers `Closed`; the session ending drops it too.
 
 ## Outcome
 

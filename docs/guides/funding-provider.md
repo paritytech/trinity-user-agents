@@ -159,6 +159,14 @@ await client.fundingProvider.closeFrame({ intent }); // the user did what the sc
 `presentFrame` answers when the frame closes: `Closed` · `Dismissed` · `Returned { url }` (the page reached `returnUrl`,
 query included). A page can't call TrUAPI: your Worker reads the result and moves the funds.
 
+| The user is…             | Your screen                                                      |
+| ------------------------ | ---------------------------------------------------------------- |
+| on the session (overlay) | opens at once                                                    |
+| elsewhere in the app     | waits behind a notice "<you> wants to show a screen" until a tap |
+
+So `presentFrame` can take minutes to answer. One request waits per session: a new one replaces it (the old answers
+`Dismissed`), and `closeFrame` drops it (`Closed`).
+
 ## 7. Say what is happening within a step
 
 Report a `Progress` fact while a step takes time; the host words it, so you never need the user's language.
