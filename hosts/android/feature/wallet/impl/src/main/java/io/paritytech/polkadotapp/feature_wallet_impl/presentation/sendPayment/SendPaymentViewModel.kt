@@ -1,13 +1,10 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment
 
-import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.OneShotEventChannel
-import io.paritytech.polkadotapp.common.utils.disable
-import io.paritytech.polkadotapp.common.utils.enable
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.shareInBackground
@@ -28,22 +25,17 @@ import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.Sen
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.TransferMethodPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.activityOrNone
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMapper
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingSheets
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.scanAddressQr.ScanAddressQrResultPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.domain.SendPaymentInteractor
-import kotlinx.collections.immutable.persistentListOf
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -63,16 +55,10 @@ class SendPaymentViewModel @Inject constructor(
     previousPaymentsAddressConverterFactory: PreviousPaymentsAddressConverterFactory,
     contactsAddressConverterFactory: ContactsAddressConverterFactory,
     private val interactor: SendPaymentInteractor,
-    private val tokenAmountMapper: TokenAmountMapper,
     private val fundingEntryPoints: FundingEntryPoints,
+    fundingActivityMixinFactory: FundingActivityMixin.Factory,
 ) : BaseViewModel(), SendPaymentContract {
-    private val withdrawalInProgress = MutableStateFlow(false)
-
-    private val sheets = FundingSheets()
-
-    private val funding = fundingEntryPoints.activityOrNone(interactor::observeFundingActivity)
-        .map { activity -> FundingActivityMapper(interactor.asset(), tokenAmountMapper).map(activity) }
-        .onStart { emit(EMPTY_FUNDING) }
+    private val funding = fundingActivityMixinFactory.create(this)
 
     private val contacts = flowOf { getContactsUseCase() }
         .shareInBackground()
@@ -103,8 +89,8 @@ class SendPaymentViewModel @Inject constructor(
     override val state: StateFlow<SendPaymentUiState> = combine(
         addressInputMixin.input,
         searchResults,
-        funding,
-        sheets.shown,
+        funding.activity,
+        funding.sheet,
     ) { inputValue, results, fundingState, sheet ->
         SendPaymentUiState(
             input = inputValue,
@@ -120,7 +106,7 @@ class SendPaymentViewModel @Inject constructor(
             input = "",
             sendToYourselfVisible = fundingEntryPoints.visible,
             results = PaymentSearchResults.Loading,
-            funding = EMPTY_FUNDING,
+            funding = funding.activity.value,
             fundingSheet = null,
         )
     )
@@ -163,38 +149,26 @@ class SendPaymentViewModel @Inject constructor(
 
     /** Withdrawals in progress show first, so a second one is a deliberate choice. */
     override fun onSendToYourselfClick() {
-        if (state.value.funding.sending.isEmpty()) openWithdrawal() else sheets.open(FundingSheet.SENDING)
+        if (state.value.funding.sending.isEmpty()) openWithdrawal() else funding.openSheet(FundingSheet.SENDING)
     }
 
     override fun onSendMoneyOutClick() {
-        sheets.close()
+        funding.close()
         openWithdrawal()
     }
 
-    override fun onFundingHistoryClick() = sheets.open(FundingSheet.HISTORY)
+    override fun onFundingHistoryClick() = funding.openSheet(FundingSheet.HISTORY)
 
-    override fun onFundingSheetBack() = sheets.back()
+    override fun onFundingSheetBack() = funding.back()
 
-    override fun onFundingSheetDismiss() = sheets.close()
+    override fun onFundingSheetDismiss() = funding.close()
 
-    override fun onFundingRowClick(id: String) = launchUnit {
-        sheets.close()
-        interactor.showFundingSession(id)
-    }
+    override fun onFundingRowClick(id: String) = funding.onRowClick(id)
 
-    private fun openWithdrawal() = launchUnit {
-        if (withdrawalInProgress.value) return@launchUnit
-        withdrawalInProgress.enable()
-        interactor.openWithdrawal()
-            .onFailure { showPresentationError(WithdrawUnavailablePresentationError(it)) }
-        withdrawalInProgress.disable()
-    }
+    private fun openWithdrawal() = funding.open(FundingDirection.OUT) { showPresentationError(WithdrawUnavailablePresentationError(it)) }
 
     override fun onBackClick() {
         walletRouter.back()
     }
 
-    private companion object {
-        val EMPTY_FUNDING = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf())
-    }
 }

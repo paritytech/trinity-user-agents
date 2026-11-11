@@ -41,6 +41,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import kotlin.time.Instant
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
 
 private const val EVENT_TIMEOUT_MS = 1_000L
 
@@ -76,7 +77,6 @@ class DigitalDollarCardDetailsViewModelTest {
         coinageTestnetFundUseCase = mockk(),
         coinageBackupService = coinageBackupService,
         shareCoinageLogsUseCase = mockk(),
-        hostFunding = hostFunding,
         coinageHoldingsUseCase = coinageHoldingsUseCase,
         coinageBalanceConverterUseCase = mockk()
     )
@@ -187,17 +187,6 @@ class DigitalDollarCardDetailsViewModelTest {
         assertEquals(BalanceRestoreUiState.SendCash(canGetCash = false), balanceRestore(createViewModel()))
     }
 
-    // Observing the activity starts the core, which a build without funding has no reason to start.
-    @Test
-    fun `a build without funding never observes the funding activity`() = runBlocking<Unit> {
-        fundingVisible = false
-        val viewModel = createViewModel()
-
-        val activity = withTimeout(EVENT_TIMEOUT_MS) { viewModel.fundingActivity.first() }
-
-        assertTrue(activity.inFlight.isEmpty() && activity.completed.isEmpty())
-        verify(exactly = 0) { hostFunding.observeActivity() }
-    }
 
     private suspend fun balanceRestore(viewModel: DigitalDollarCardDetailsViewModel): BalanceRestoreUiState =
         withTimeout(EVENT_TIMEOUT_MS) {
@@ -224,5 +213,6 @@ class DigitalDollarCardDetailsViewModelTest {
         router = mockk(),
         tokenAmountMapper = mockk(relaxed = true),
         fundingEntryPoints = fundingEntryPoints,
+        fundingActivityMixinFactory = FundingActivityMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true)),
     )
 }

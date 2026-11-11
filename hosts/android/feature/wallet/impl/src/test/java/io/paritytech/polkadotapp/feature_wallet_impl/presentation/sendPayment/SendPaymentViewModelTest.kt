@@ -60,6 +60,7 @@ import org.mockito.Mockito.mock
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
 
 private const val CHAIN_ID = "chain"
 private val STATE_TIMEOUT = 1.seconds
@@ -97,11 +98,11 @@ class SendPaymentViewModelTest {
             CompletableDeferred<Result<String?>>().also(pendingOpens::addLast).await()
         }
         every { observeActivity() } returns emptyFlow()
+        coEvery { acknowledgeShown(any()) } returns Unit
     }
 
     private val interactor = RealSendPaymentInteractor(
         chainAssetProvider = chainAssetProvider,
-        hostFunding = hostFunding
     )
 
     @Before
@@ -119,17 +120,6 @@ class SendPaymentViewModelTest {
         Dispatchers.resetMain()
     }
 
-    // Observing the activity starts the core, which a build without funding has no reason to start.
-    @Test
-    fun `a build without funding never observes the funding activity`() = runBlocking<Unit> {
-        fundingVisible = false
-        val viewModel = createViewModel()
-
-        withRecentsListed(query = "")
-        viewModel.awaitState { it.results is PaymentSearchResults.Sections }
-
-        verify(exactly = 0) { hostFunding.observeActivity() }
-    }
 
     /** A build that cannot run a funding provider, such as release, has no Send to yourself. */
     @Test
@@ -345,6 +335,6 @@ class SendPaymentViewModelTest {
         contactsAddressConverterFactory = contactsAddressConverterFactory,
         interactor = interactor,
         fundingEntryPoints = fundingEntryPoints,
-        tokenAmountMapper = mockk(relaxed = true),
+        fundingActivityMixinFactory = FundingActivityMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true)),
     )
 }

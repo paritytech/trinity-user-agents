@@ -17,7 +17,10 @@ interface HostFunding {
      */
     suspend fun openFunding(direction: FundingDirection, amount: Balance?): Result<String?>
 
-    /** The sessions in flight and the ended ones the core keeps, as the core lists them. Observing it starts the core. */
+    /**
+     * The sessions in flight and the ended ones the core keeps, as the core lists them. Observing it starts the core;
+     * a build that offers no funding answers none and leaves the core alone.
+     */
     fun observeActivity(): Flow<FundingActivity>
 
     /**
