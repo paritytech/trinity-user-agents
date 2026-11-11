@@ -41,6 +41,12 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
         var lifecycleTask: Task<Void, Never>?
     }
 
+    fileprivate struct ClosedSocket {
+        let connectionId: UInt32
+        let wasOpened: Bool
+        let handler: TrUAPIChainEventHandling?
+    }
+
     public var eventHandler: TrUAPIChainEventHandling? {
         get { state.withLockUnchecked { $0.eventHandler } }
         set { state.withLockUnchecked { $0.eventHandler = newValue } }
@@ -133,9 +139,7 @@ extension TrUAPIV2SpecConnectionPool: ChainSocketDelegate {
             return connectionId
         }
 
-        guard let connectionId else {
-            return
-        }
+        guard let connectionId else { return }
 
         logger.info("[truapi.chain] chain connection \(connectionId) open on \(socket.url)")
         issueDiagnostic.recordRecovery(for: socket.url.absoluteString)
@@ -151,22 +155,20 @@ extension TrUAPIV2SpecConnectionPool: ChainSocketDelegate {
     }
 
     public func chainSocket(_ socket: ChainSocketProtocol, didCloseWith reason: ChainSocketCloseReason) {
-        let (connectionId, wasOpened, handler) = state.withLockUnchecked {
-            state -> (UInt32?, Bool, TrUAPIChainEventHandling?) in
-            guard let connectionId = state.connectionIds[ObjectIdentifier(socket)] else {
-                return (nil, false, nil)
-            }
+        let closed = state.withLockUnchecked { state -> ClosedSocket? in
+            guard let connectionId = state.connectionIds[ObjectIdentifier(socket)] else { return nil }
 
             let wasOpened = state.openedConnectionIds.contains(connectionId)
             _ = state.removeSocket(for: connectionId)
-            return (connectionId, wasOpened, state.eventHandler)
+            return ClosedSocket(connectionId: connectionId, wasOpened: wasOpened, handler: state.eventHandler)
         }
 
-        guard let connectionId else { return }
+        guard let closed else { return }
 
+        let connectionId = closed.connectionId
         logger.info("[truapi.chain] \(Self.closeLine(connectionId: connectionId, url: socket.url, reason: reason))")
-        reportFailure(of: socket.url, reason: reason, wasOpened: wasOpened)
-        handler?.chainDidClose(connectionId: connectionId)
+        reportFailure(of: socket.url, reason: reason, wasOpened: closed.wasOpened)
+        closed.handler?.chainDidClose(connectionId: connectionId)
     }
 }
 
