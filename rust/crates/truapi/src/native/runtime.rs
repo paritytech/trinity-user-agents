@@ -239,7 +239,7 @@ impl NativeTrUApiHostRuntime {
 			renderer_connection: Arc::new(crate::runtime::ActionChannel::renderer()),
 			ws_bridge: self.ws_bridge.clone(),
 			bridge_token: Mutex::new(None),
-			product_control: Arc::new(Mutex::new(None)),
+			product_control: tokio::sync::watch::channel(None).0,
 		});
 
 		if product.execution_kind == ExecutableKind::Worker {
@@ -932,7 +932,9 @@ pub struct NativeProductExecution {
 	closed: AtomicBool,
 	ws_bridge: Arc<SharedWsBridge>,
 	bridge_token: Mutex<Option<String>>,
-	product_control: Arc<Mutex<Option<crate::ProductRuntimeControl>>>,
+	/// The control of the product connection the bridge accepted last, or
+	/// `None` since the bridge last stopped. Watched by [`Self::wait_until_connected`].
+	product_control: tokio::sync::watch::Sender<Option<crate::ProductRuntimeControl>>,
 }
 
 impl NativeProductExecution {
@@ -979,7 +981,13 @@ impl NativeProductExecution {
 		if let Some(token) = token {
 			self.ws_bridge.revoke(&token);
 		}
-		*self.product_control.lock().expect("native product control mutex poisoned") = None;
+		self.product_control.send_replace(None);
+	}
+
+	/// The control of the product connected right now, if one is. A product
+	/// that hung up leaves a disposed control behind, which does not count.
+	fn live_control(&self) -> Option<crate::ProductRuntimeControl> {
+		self.product_control.borrow().clone().filter(|control| !control.is_disposed())
 	}
 }
 
@@ -1154,12 +1162,7 @@ impl NativeProductExecution {
 		observer: Arc<dyn NativeRendererObserver>,
 	) -> Result<Arc<NativeSubscription>, crate::ProductRuntimeError> {
 		self.require_renderer()?;
-		let control = self
-			.product_control
-			.lock()
-			.expect("native product control mutex poisoned")
-			.clone()
-			.ok_or(crate::ProductRuntimeError::NotConnected)?;
+		let control = self.live_control().ok_or(crate::ProductRuntimeError::NotConnected)?;
 		let card_id = match &request.context {
 			truapi::latest::RenderContext::PocketCard { card_id } => Some(card_id.clone()),
 			_ => None,
@@ -1246,8 +1249,7 @@ impl NativeProductExecution {
 		let runtime_factory = Arc::new(move |sink| {
 			let product_runtime =
 				runtime.product_runtime_with(product.clone(), adapters.clone(), sink);
-			*product_control.lock().expect("native product control mutex poisoned") =
-				Some(product_runtime.control());
+			product_control.send_replace(Some(product_runtime.control()));
 			product_runtime
 		});
 		let endpoint = self.ws_bridge.register(bind_port, runtime_factory, logger)?;
@@ -1258,6 +1260,29 @@ impl NativeProductExecution {
 	/// Revoke this execution's bridge registration while leaving it reusable.
 	pub fn stop_ws_bridge(&self) {
 		self.stop_bridge();
+	}
+
+	/// Resolve once a product is attached, so a caller need not poll `render`.
+	///
+	/// Returns at once when a product already is, when the execution shuts
+	/// down without one, and when `timeout_ms` elapses; `render` then names
+	/// the reason. Bounded here rather than by the caller because the
+	/// generated async binding cannot be cancelled.
+	pub async fn wait_until_connected(&self, timeout_ms: u32) {
+		let mut product_control = self.product_control.subscribe();
+		let connected = product_control.wait_for(|control| {
+			self.closed.load(Ordering::Acquire) ||
+				control.as_ref().is_some_and(|control| !control.is_disposed())
+		});
+		// The timer registers with the shared runtime when it is built, and is
+		// then polled from whichever thread the binding drives this future on.
+		let bounded = {
+			let executor = shared_native_executor()
+				.expect("the host runtime that opened this execution started the executor");
+			let _runtime = executor.handle().enter();
+			tokio::time::timeout(core::time::Duration::from_millis(timeout_ms.into()), connected)
+		};
+		let _ = bounded.await;
 	}
 }
 

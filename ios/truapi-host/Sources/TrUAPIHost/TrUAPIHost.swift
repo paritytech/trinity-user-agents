@@ -1336,6 +1336,7 @@ public protocol TrUAPIProductExecutionProtocol: AnyObject, Sendable {
     func stopWsBridge()
     func close()
     func publishChatAction(_ action: HostChatActionSubscribeItem) throws
+    func waitUntilConnected(timeoutMs: UInt32) async
     func render(_ request: ProductRendererRenderRequest) throws -> AsyncThrowingStream<RendererNode, Error>
     func publishRendererAction(_ item: HostRendererActionSubscribeItem) throws
     func permissionAuthorizationStatus(
@@ -1393,6 +1394,12 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
 
     public func publishChatAction(_ action: HostChatActionSubscribeItem) throws {
         try inner.publishChatAction(action: action)
+    }
+
+    /// Returns once a product is attached, when the execution stops without
+    /// one, or after `timeoutMs`; `render` then names the reason.
+    public func waitUntilConnected(timeoutMs: UInt32) async {
+        await inner.waitUntilConnected(timeoutMs: timeoutMs)
     }
 
     public func render(

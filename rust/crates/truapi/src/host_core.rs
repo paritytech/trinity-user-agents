@@ -1919,6 +1919,11 @@ pub struct ProductRuntimeControl {
 }
 
 impl ProductRuntimeControl {
+	/// Whether the product connection behind this control has ended.
+	pub fn is_disposed(&self) -> bool {
+		self.disposed.load(Ordering::Acquire)
+	}
+
 	fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
 		if self.disposed.load(Ordering::Acquire) {
 			return Err(ProductRuntimeError::Closed);
