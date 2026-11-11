@@ -5,6 +5,9 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.updateTransition
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
@@ -12,18 +15,21 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.IntOffset
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.compose.TickerWordmark
@@ -32,6 +38,7 @@ import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.statusBar.reportsScrollToStatusBar
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotButton
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
@@ -40,11 +47,8 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowUpwards
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
-import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
-import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
-import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleSize
-import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
+import io.paritytech.polkadotapp.design.utils.blurEffect
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
@@ -52,6 +56,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.Digital
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.debug.CoinageTestDataMode
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.LocalPocketScreenTransition
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.rememberCardCloseDragState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketCardSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketContentSlide
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
@@ -62,6 +67,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
+import kotlin.math.roundToInt
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val BalancedLineBreak = LineBreak(
@@ -121,91 +127,101 @@ private fun DigitalDollarCardDetailsContent(
     onBackupUpdateClick: () -> Unit,
     onBackupCloseClick: () -> Unit
 ) {
+    val closeDrag = rememberCardCloseDragState()
+
+    val scrollState = rememberScrollState()
+    val pageAtTop by remember { derivedStateOf { scrollState.value == 0 } }
+
     Column(
-        modifier = Modifier.fillMaxSize()
+        modifier = Modifier
+            .fillMaxSize()
+            .reportsScrollToStatusBar(scrollState)
+            .verticalScroll(scrollState)
+            .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+            .padding(PolkadotTheme.spacings.mediumIncreased)
+            .windowInsetsPadding(LocalAppNavigationBarInsets.current)
     ) {
-        PolkadotTopBar(
-            title = stringResource(RCommon.string.pocket_digital_dollar_title),
-            navigationAction = rememberTopBarAction(onBack),
-            titleAlignment = TopBarTitleAlignment.Center,
-            titleSize = TopBarTitleSize.Medium
+        DigitalDollarCard(
+            modifier = Modifier
+                .offset { IntOffset(0, closeDrag.offsetPx.roundToInt()) }
+                .pocketCardSharedElement(cardIndex)
+                .draggable(
+                    orientation = Orientation.Vertical,
+                    enabled = pageAtTop,
+                    state = rememberDraggableState(closeDrag::drag),
+                    onDragStarted = { closeDrag.beginDrag() },
+                    onDragStopped = { closeDrag.release(onBack) }
+                ),
+            card = card,
+            isExpanded = true
         )
+
+        VerticalSpacer { mediumIncreased }
 
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(PolkadotTheme.spacings.mediumIncreased)
-                .windowInsetsPadding(LocalAppNavigationBarInsets.current)
+                .pocketContentSlide()
+                .graphicsLayer {
+                    translationY = closeDrag.offsetPx
+                    alpha = 1f - closeDrag.progress
+                    renderEffect = blurEffect(closeDrag.blurSigma, density)
+                }
         ) {
-            DigitalDollarCard(
-                modifier = Modifier.pocketCardSharedElement(cardIndex),
-                card = card,
-                isExpanded = true
-            )
+            AnimatedContent(
+                targetState = state.balanceRestore,
+                contentKey = { it::class.simpleName }
+            ) { balanceRestoreState ->
+                when (balanceRestoreState) {
+                    BalanceRestoreUiState.NotDetermined -> Unit
 
-            VerticalSpacer { mediumIncreased }
+                    BalanceRestoreUiState.SendCash -> SendCashActions(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Min),
+                        onGetCashClick = onGetCashClick,
+                        onSendClick = onSendClick
+                    )
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .pocketContentSlide()
-            ) {
-                AnimatedContent(
-                    targetState = state.balanceRestore,
-                    contentKey = { it::class.simpleName }
-                ) { balanceRestoreState ->
-                    when (balanceRestoreState) {
-                        BalanceRestoreUiState.NotDetermined -> Unit
+                    is BalanceRestoreUiState.Restore -> {
+                        var isDoneUpdatingVisible by remember { mutableStateOf(false) }
+                        var isWhyVisible by remember { mutableStateOf(false) }
 
-                        BalanceRestoreUiState.SendCash -> SendCashActions(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(IntrinsicSize.Min),
-                            onGetCashClick = onGetCashClick,
-                            onSendClick = onSendClick
+                        BalanceRestoredWidget(
+                            modifier = Modifier.fillMaxWidth(),
+                            isInProgress = balanceRestoreState.inProgress,
+                            onWhyClick = { isWhyVisible = true },
+                            onCloseClick = { isDoneUpdatingVisible = true },
+                            onUpdateClick = onBackupUpdateClick
                         )
 
-                        is BalanceRestoreUiState.Restore -> {
-                            var isDoneUpdatingVisible by remember { mutableStateOf(false) }
-                            var isWhyVisible by remember { mutableStateOf(false) }
+                        DoneUpdatingBottomSheet(
+                            isVisible = isDoneUpdatingVisible,
+                            onDismissRequest = { isDoneUpdatingVisible = false },
+                            onConfirm = onBackupCloseClick
+                        )
 
-                            BalanceRestoredWidget(
-                                modifier = Modifier.fillMaxWidth(),
-                                isInProgress = balanceRestoreState.inProgress,
-                                onWhyClick = { isWhyVisible = true },
-                                onCloseClick = { isDoneUpdatingVisible = true },
-                                onUpdateClick = onBackupUpdateClick
-                            )
-
-                            DoneUpdatingBottomSheet(
-                                isVisible = isDoneUpdatingVisible,
-                                onDismissRequest = { isDoneUpdatingVisible = false },
-                                onConfirm = onBackupCloseClick
-                            )
-
-                            WhyUpdateBottomSheet(
-                                isVisible = isWhyVisible,
-                                onDismissRequest = { isWhyVisible = false }
-                            )
-                        }
+                        WhyUpdateBottomSheet(
+                            isVisible = isWhyVisible,
+                            onDismissRequest = { isWhyVisible = false }
+                        )
                     }
                 }
+            }
 
-                coinageLoadingState.onLoaded { coinageState ->
-                    VerticalSpacer { mediumIncreased }
+            coinageLoadingState.onLoaded { coinageState ->
+                VerticalSpacer { mediumIncreased }
 
-                    CoinageCardContent(
-                        state = coinageState,
-                        onAutoFundClick = onAutoFundClick,
-                        onCoinTapped = onCoinTapped,
-                        onCoinsFlickedDown = onCoinsFlickedDown,
-                        onHeadingClicked = onHeadingClicked,
-                        onShareLogsClick = onShareLogsClick,
-                        onTestDataSelected = onTestDataSelected,
-                        onCoinSetSelected = onCoinSetSelected
-                    )
-                }
+                CoinageCardContent(
+                    state = coinageState,
+                    onAutoFundClick = onAutoFundClick,
+                    onCoinTapped = onCoinTapped,
+                    onCoinsFlickedDown = onCoinsFlickedDown,
+                    onHeadingClicked = onHeadingClicked,
+                    onShareLogsClick = onShareLogsClick,
+                    onTestDataSelected = onTestDataSelected,
+                    onCoinSetSelected = onCoinSetSelected
+                )
             }
         }
     }

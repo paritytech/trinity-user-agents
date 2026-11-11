@@ -15,7 +15,7 @@ use crate::{
 	},
 };
 use parity_scale_codec::Encode;
-use truapi::{Bytes32, api::Permissions, latest, v01, versioned::IntoLatest};
+use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
 
 use super::{
 	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
@@ -24,7 +24,8 @@ use super::{
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
 use crate::{
-	ImageError, ImageReference, LoadedImage, PairedSsoPeer, ResponderExit, SigningHostRuntime,
+	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfile, PublicProfileError,
+	ResponderExit, SigningHostRuntime, Spawner,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
@@ -35,7 +36,6 @@ use crate::{
 	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCards},
 	runtime::{AnnouncedPairing, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
-	subscription::Spawner,
 };
 
 #[cfg(doc)]
@@ -370,6 +370,19 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_options(&intent)
 	}
 
+	/// Why `amount` (balance units) cannot go ahead in funding session
+	/// `intent`, if it cannot: more than `spendable` on a withdrawal, then
+	/// what every provider's refusal of this same amount said, then the
+	/// amount limits the session's options show.
+	pub fn funding_amount_issue(
+		&self,
+		intent: String,
+		amount: u128,
+		spendable: Option<u128>,
+	) -> Option<crate::platform::FundingAmountIssue> {
+		self.runtime.funding_amount_issue(&intent, amount, spendable)
+	}
+
 	/// Funding session `intent`'s latest quote list, while its overlay is up.
 	pub fn funding_quotes(&self, intent: String) -> Option<crate::platform::FundingQuoteList> {
 		self.runtime.funding_quotes(&intent)
@@ -377,7 +390,7 @@ impl NativeTrUApiHostRuntime {
 
 	/// The funding sessions the host has heard of that the core holds in
 	/// full, with their progress now, newest opened first.
-	pub fn funding_entries(&self) -> Vec<crate::runtime::FundingBookEntry> {
+	pub fn funding_entries(&self) -> Vec<crate::host_logic::funding::FundingBookEntry> {
 		self.runtime.funding_entries()
 	}
 
@@ -397,8 +410,9 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_history()
 	}
 
-	/// Ended funding session `intent`'s summary, as `funding_history` lists
-	/// it.
+	/// Ended funding session `intent`'s summary, held in full or compacted,
+	/// including a cancel that moved no money, which `funding_history`
+	/// leaves out.
 	pub fn funding_summary(
 		&self,
 		intent: String,
@@ -434,15 +448,16 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Install the host's top-up engine. Set-once; answers whether this call
-	/// installed it. Report each later status with
+	/// installed it. Push what each followed top-up reports with
 	/// [`Self::notify_top_up_status`].
 	pub fn set_top_up_callbacks(&self, callbacks: Arc<dyn NativeTopUpCallbacks>) -> bool {
-		let platform = Arc::new(TopUpCallbackPlatform::new(callbacks));
+		let platform = Arc::new(TopUpCallbackPlatform::new(callbacks, self.spawner.clone()));
 		self.runtime.set_top_up_platform(platform.clone()) && self.top_up.set(platform).is_ok()
 	}
 
-	/// Report a later status of `product_id`'s top-up `id` to the products
-	/// following it. `MyApp.dot` reaches the same products as `myapp.dot`.
+	/// Push a status the engine reported for `product_id`'s top-up `id`,
+	/// which the core asked to follow through `follow_top_up`. `MyApp.dot`
+	/// names the same top-up as `myapp.dot`.
 	///
 	/// Returns a `Result` so a `product_id` UniFFI cannot parse throws in Swift
 	/// and Kotlin.
@@ -459,15 +474,16 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Install the host's payment engine. Set-once; answers whether this
-	/// call installed it. Report each later status with
+	/// call installed it. Push what each followed payment reports with
 	/// [`Self::notify_payment_status`].
 	pub fn set_payment_callbacks(&self, callbacks: Arc<dyn NativePaymentCallbacks>) -> bool {
-		let platform = Arc::new(PaymentCallbackPlatform::new(callbacks));
+		let platform = Arc::new(PaymentCallbackPlatform::new(callbacks, self.spawner.clone()));
 		self.runtime.set_payment_platform(platform.clone()) && self.payments.set(platform).is_ok()
 	}
 
-	/// Report a later status of `product_id`'s payment `id` to the products
-	/// following it. `MyApp.dot` reaches the same products as `myapp.dot`.
+	/// Push a status the engine reported for `product_id`'s payment `id`,
+	/// which the core asked to follow through `follow_payment`. `MyApp.dot`
+	/// names the same payment as `myapp.dot`.
 	///
 	/// Returns a `Result` so a `product_id` UniFFI cannot parse throws in Swift
 	/// and Kotlin.
@@ -484,44 +500,62 @@ impl NativeTrUApiHostRuntime {
 	}
 
 	/// Install the host's balance view. Set-once; answers whether this call
-	/// installed it. Report each change with [`Self::notify_balance`].
+	/// installed it. Push each balance with [`Self::notify_balance`].
 	pub fn set_balance_callbacks(&self, callbacks: Arc<dyn NativeBalanceCallbacks>) -> bool {
-		let platform = Arc::new(BalanceCallbackPlatform::new(callbacks));
+		let platform = Arc::new(BalanceCallbackPlatform::new(callbacks, self.spawner.clone()));
 		self.runtime.set_balance_platform(platform.clone()) && self.balance.set(platform).is_ok()
 	}
 
-	/// Report the new balance of `purse` (`None` for the main purse), a
-	/// decimal string of CASH units, to the products following it. The
-	/// balance is the user's, so one call reaches every such product; the
-	/// core passes it on only to those that still hold balance access.
-	pub fn notify_balance(&self, purse: Option<u32>, available: u128) {
+	/// Push the user's spendable balance, a decimal string of CASH units,
+	/// while the core follows it through `follow_balance`. The balance is the
+	/// user's, so one call reaches every product following it that still
+	/// holds balance access.
+	pub fn notify_balance(&self, available: u128) {
 		if let Some(platform) = self.balance.get() {
-			platform.notify_balance(purse, available);
+			platform.notify_balance(available);
 		}
 	}
 
-	/// Replace the funding providers this host offers, each with the Worker
-	/// manifest JSON it ships for it.
-	pub fn set_funding_providers(
-		&self,
-		providers: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
-	) -> Result<(), HostRejection> {
-		Ok(self.runtime.set_funding_providers(providers)?)
+	/// Ask every funding provider to price `amount` for session `intent`, on
+	/// the rail, asset, network and country the last `select_funding_options`
+	/// named; card and bank take the fiat asset `FundingOptions.asset` shows.
+	/// Each list is announced through `funding_changed` with `Quotes` and read
+	/// with `funding_quotes`, which answers only this request's list. It is
+	/// asked for again every minute until the session is handed to a
+	/// provider, ends or leaves the overlay, another amount or selection is
+	/// asked, or a selection names another route. Asking what the running
+	/// request prices keeps it. Returns the request id, `None` while the
+	/// selection names no asset or `amount` is zero.
+	pub fn get_funding_quote(&self, intent: String, amount: u128) -> Option<u64> {
+		self.runtime.request_funding_quotes(&intent, amount)
 	}
 
-	/// Ask every funding provider to price `ask` for session `intent`. The
-	/// list arrives through `funding_quotes_changed`, and is asked for again
-	/// every minute until the session is handed to a provider, ends or
-	/// leaves the overlay, or the host asks for another `ask`. Returns the
-	/// request id every list of this request carries, so the host shows only
-	/// the latest request's lists.
-	pub fn get_funding_quote(&self, intent: String, ask: latest::FundingQuoteAsk) -> u64 {
-		self.runtime.request_funding_quotes(&intent, ask)
+	/// Start session `intent` on the best quote of request `request_id` once
+	/// every provider answered it, as `select_funding_provider` would; at
+	/// once when it already has. The start is announced with `Session`. A new
+	/// `get_funding_quote`, `select_funding_options`,
+	/// `cancel_funding_auto_start` or a list with no usable quote disarms it.
+	pub fn start_funding_when_quoted(&self, intent: String, request_id: u64) {
+		self.runtime.start_funding_when_quoted(&intent, request_id);
+	}
+
+	/// Disarm `start_funding_when_quoted` for session `intent`, as the user
+	/// leaves its quotes.
+	pub fn cancel_funding_auto_start(&self, intent: String) {
+		self.runtime.cancel_funding_auto_start(&intent);
+	}
+
+	/// Whether the host offers any funding provider; announced through
+	/// `funding_changed` with `Providers` when it may have changed.
+	pub fn funding_available(&self) -> bool {
+		self.runtime.funding_available()
 	}
 
 	/// Report what the user picked so far in session `intent`'s overlay. The
-	/// countries and amount limits it leads to arrive through
-	/// `funding_options_changed`.
+	/// countries and amount limits it leads to are announced through
+	/// `funding_changed` with `Options`. A selection naming another rail,
+	/// asset, network or country than the active quote request withdraws it:
+	/// `funding_quotes` answers `None`, announced with `Quotes`.
 	pub fn select_funding_options(
 		&self,
 		intent: String,
@@ -705,7 +739,10 @@ impl NativeTrUApiHostRuntime {
 		&self,
 		peer: PairedSsoPeer,
 	) -> Result<ResponderExit, NativePairingError> {
-		self.runtime.resume_pairing(peer).await.map_err(NativePairingError::from)
+		self.runtime
+			.resume_pairing(peer)
+			.await
+			.map_err(|error| NativePairingError::Rejected { reason: error.to_string() })
 	}
 
 	/// Tell a paired host this signing host is ending their SSO session.
@@ -852,6 +889,18 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.core_database_status().await.map_err(Into::into)
 	}
 
+	/// Resolves public profile metadata without loading image bytes.
+	///
+	/// Records expire after one hour; `force` skips the cache. Invalid usernames and
+	/// lookup or storage failures return errors.
+	pub async fn resolve_public_profile(
+		&self,
+		username: String,
+		force: bool,
+	) -> Result<PublicProfile, PublicProfileError> {
+		self.runtime.resolve_public_profile(&username, force).await
+	}
+
 	/// The image `reference` names, read from Bulletin over the core's own connection and
 	/// checked against its CID and the image policy. Dropping the future stops the load.
 	pub async fn load_image(&self, reference: ImageReference) -> Result<LoadedImage, ImageError> {
@@ -862,9 +911,9 @@ impl NativeTrUApiHostRuntime {
 	/// after each change, until the subscription is cancelled.
 	pub fn observe_pocket_cards(
 		&self,
-		observer: Box<dyn NativePocketObserver>,
+		observer: Arc<dyn NativePocketObserver>,
 	) -> Arc<NativeSubscription> {
-		observe_pocket_cards(&self.pocket, observer.into(), &self.spawner)
+		observe_pocket_cards(&self.pocket, observer, &self.spawner)
 	}
 
 	/// Add a card the user approved, with the face they approved it by. An id
@@ -1207,7 +1256,7 @@ impl NativeProductExecution {
 	pub fn render(
 		&self,
 		request: v01::ProductRendererRenderRequest,
-		observer: Box<dyn NativeRendererObserver>,
+		observer: Arc<dyn NativeRendererObserver>,
 	) -> Result<Arc<NativeSubscription>, crate::ProductRuntimeError> {
 		self.require_renderer()?;
 		let control = self
@@ -1221,15 +1270,15 @@ impl NativeProductExecution {
 			_ => None,
 		};
 		let stream = control.render(request)?;
-		let observer: Arc<dyn NativeRendererObserver> = match card_id {
+		let observer = match card_id {
 			Some(card_id) => keeping_faces(
 				self.pocket.clone(),
 				self.product.product_id.clone(),
 				card_id,
-				observer.into(),
+				observer,
 				&self.spawner,
 			),
-			None => observer.into(),
+			None => observer,
 		};
 		Ok(observe_renderer(stream, observer, self.spawner.clone()))
 	}

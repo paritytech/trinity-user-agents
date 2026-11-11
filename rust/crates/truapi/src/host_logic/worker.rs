@@ -308,56 +308,5 @@ impl Drop for DrainGuard<'_> {
 	}
 }
 
-/// Which launch of each product's worker is the live one, so a host that
-/// starts workers can tell the exit of the current launch from that of one
-/// it already replaced or stopped. A launch is a number that only grows.
-#[derive(Default)]
-pub struct WorkerLaunchTable {
-	state: Mutex<Launches>,
-}
-
-#[derive(Default)]
-struct Launches {
-	next: u64,
-	live: HashMap<ProductId, u64>,
-}
-
-impl WorkerLaunchTable {
-	/// Start a launch of `product_id`'s worker and answer its number, or
-	/// `None` while one is live, which the host keeps.
-	pub fn begin(&self, product_id: ProductId) -> Option<u64> {
-		let mut state = self.lock();
-		if state.live.contains_key(&product_id) {
-			return None;
-		}
-		let launch = state.next;
-		state.next += 1;
-		state.live.insert(product_id, launch);
-		Some(launch)
-	}
-
-	/// Record that launch `launch` of `product_id`'s worker exited. Answers
-	/// whether it was the live one, whose exit the host reports; an earlier
-	/// or stopped launch's exit is ignored.
-	pub fn ended(&self, product_id: ProductId, launch: u64) -> bool {
-		let mut state = self.lock();
-		if state.live.get(&product_id) != Some(&launch) {
-			return false;
-		}
-		state.live.remove(&product_id);
-		true
-	}
-
-	/// Stop `product_id`'s live launch, answering its number, so its exit
-	/// is not reported. `None` when none is live.
-	pub fn stop(&self, product_id: ProductId) -> Option<u64> {
-		self.lock().live.remove(&product_id)
-	}
-
-	fn lock(&self) -> MutexGuard<'_, Launches> {
-		self.state.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
-	}
-}
-
 #[cfg(test)]
 mod tests;

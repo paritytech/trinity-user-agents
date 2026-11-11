@@ -250,7 +250,12 @@ export type CoreStorageKey =
    * What funding providers' quote answers showed about what they serve,
    * each record trusted for twelve hours.
    */
-  | { tag: "FundingSupport"; value?: undefined };
+  | { tag: "FundingSupport"; value?: undefined }
+  /**
+   * A product's App executable manifest as last read from dotNS, and when,
+   * cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "AppManifest"; value: { productLabel: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -371,17 +376,6 @@ export type FundingAmountIssue =
   | { tag: "AboveMaximum"; value: { max: bigint } };
 
 /**
- * Facts about the session a provider frame is shown for.
- */
-export interface FundingFrameContext {
-  /**
-   * Whether the session waits on a transfer the user makes outside the
-   * frame: an inbound bank deposit.
-   */
-  awaitsUserTransfer: boolean;
-}
-
-/**
  * How the user left the funding overlay.
  */
 export type FundingPresentOutcome = "Started" | "Dismissed";
@@ -412,9 +406,8 @@ export interface FundingPresentation {
 export interface FundingQuoteList {
   /**
    * The request this list answers, as `request_funding_quotes` returned
-   * it. Ids only grow, and a list can reach the host before the call that
-   * returns its id does, so a host shows a list only when its id is at
-   * least the latest it has seen, and drops the rest.
+   * it. The core keeps only the current request's list, so a list read
+   * back is always the one to show.
    */
   requestId: bigint;
 
@@ -455,6 +448,11 @@ export interface FundingQuoteList {
    * highest maximum.
    */
   issue?: FundingAmountIssue;
+
+  /**
+   * Whether every provider answered: no row is pending.
+   */
+  complete: boolean;
 }
 
 /**
@@ -1143,6 +1141,10 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
       FundingSupport: [15, S._void] as const,
+      AppManifest: [
+        16,
+        S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
+      ] as const,
     }),
 );
 
@@ -1252,14 +1254,6 @@ export const FundingAmountIssue: S.Codec<FundingAmountIssue> = S.lazy(
 );
 
 /**
- * Facts about the session a provider frame is shown for.
- */
-export const FundingFrameContext: S.Codec<FundingFrameContext> = S.lazy(
-  (): S.Codec<FundingFrameContext> =>
-    S.Struct({ awaitsUserTransfer: S.bool }) as S.Codec<FundingFrameContext>,
-);
-
-/**
  * How the user left the funding overlay.
  */
 export const FundingPresentOutcome: S.Codec<FundingPresentOutcome> = S.lazy(
@@ -1291,6 +1285,7 @@ export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
       amount: S.u128,
       refusal: S.Option(FundingQuoteUnavailable),
       issue: S.Option(FundingAmountIssue),
+      complete: S.bool,
     }) as S.Codec<FundingQuoteList>,
 );
 
@@ -2064,15 +2059,14 @@ export interface FundingPlatform {
    * Show `target` for `provider`'s session `intent` in a frame the host
    * owns, and answer once it closes. A page is an https URL the core has
    * checked: the host shows its origin, and closes the frame with
-   * `Returned` when the page reaches its return URL. `context` carries
-   * facts about the session the frame is for. The core closes the frame itself, through
+   * `Returned` when the page reaches its return URL. The core closes the
+   * frame itself, through
    * `Self::close_provider_frame`, once the session's payment moved.
    */
   presentProviderFrame(
     provider: ProductContext,
     intent: string,
     target: FundingFrameTarget,
-    context: FundingFrameContext,
   ): Promise<FundingFrameOutcome>;
 
   /**
@@ -2082,12 +2076,6 @@ export interface FundingPlatform {
    * open for it.
    */
   closeProviderFrame(provider: ProductContext, intent: string): void;
-
-  /**
-   * Whether `provider` ships an App, so an App route of its can be shown.
-   * A provider without one shows only external pages.
-   */
-  providerHasApp?(provider: ProductContext): Promise<boolean>;
 
   /**
    * The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
@@ -2110,9 +2098,12 @@ export interface FundingPlatform {
   /**
    * Observe the quote list the host requested, for the provider list:
    * again whenever a provider answers, and each time the core asks every
-   * provider again.
+   * provider again. ``undefined`` once a selection on another route withdrew it.
    */
-  fundingQuotesChanged?(intent: string, quotes: FundingQuoteList): void;
+  fundingQuotesChanged?(
+    intent: string,
+    quotes: FundingQuoteList | undefined,
+  ): void;
 }
 
 /**

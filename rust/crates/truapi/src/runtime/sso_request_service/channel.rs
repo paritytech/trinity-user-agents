@@ -12,7 +12,7 @@ use super::{
 			SsoSessionKey, fresh_statement_expiry, reply_matcher, sso_message_id,
 			statement_subscription_stream, subscribe_statement_topic, wait_for_sso_remote_response,
 		},
-		statement_store_rpc::{self, StatementStoreRpc},
+		statement_store_rpc::{self, StatementStoreRpc, StatementSubmitError},
 	},
 	SsoRequestService,
 };
@@ -105,7 +105,7 @@ impl SsoRequestService {
 				},
 			}
 		};
-		spawner(Box::pin(Abortable::new(future, registration).map(|_| ())));
+		spawner.spawn(Abortable::new(future, registration).map(|_| ()));
 	}
 
 	/// Stop channel work for a cleared session: wake its in-flight waiters
@@ -188,7 +188,7 @@ impl SsoRequestService {
 		};
 		let statement_store = self.statement_store.clone();
 		let message_id = message_id.to_string();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let submitted = match withdrawal {
 				Ok(statement) => {
 					statement_store.submit_fire_and_forget(statement, "SSO statement-store").await
@@ -198,7 +198,7 @@ impl SsoRequestService {
 			if let Err(reason) = submitted {
 				warn!(%message_id, %reason, "could not withdraw the SSO request");
 			}
-		}));
+		});
 	}
 
 	/// Send `request` to the paired signing host and await its typed answer.
@@ -251,16 +251,11 @@ impl SsoRequestService {
 			}
 			submit_started.store(true, Ordering::Release);
 			let submit_statement = || {
-				statement_store_rpc::submit_sso(
-					&submit_client,
-					statement.clone(),
-					"pairing-host request",
-				)
+				statement_store_rpc::submit_sso(&submit_client, &statement, "pairing-host request")
 			};
-			let reached_no_peer = |reason: &String| statement_store_rpc::reached_no_peer(reason);
 			retry_while_halted(
 				submit_statement,
-				reached_no_peer,
+				StatementSubmitError::reached_no_peer,
 				&RealTimer,
 				&CancellationToken::default(),
 			)
@@ -268,7 +263,7 @@ impl SsoRequestService {
 			.map_err(|err| {
 				let reason = format!("SSO statement submit failed: {err}");
 				// A statement no peer received never reached the signing host.
-				if statement_store_rpc::reached_no_peer(&err) {
+				if err.reached_no_peer() {
 					SsoRemoteResponseError::ChainUnavailable(reason)
 				} else {
 					SsoRemoteResponseError::Failure(reason)
