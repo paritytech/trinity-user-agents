@@ -3,9 +3,9 @@ import SwiftUI
 
 /// How a crypto network id from a provider's routes is shown. The ids are the
 /// lowercase names the core uses (`polkadot` is Asset Hub); an id this table
-/// does not know is shown capitalised. The tints are each network's and token's own
-/// brand colour, which the design system has no token for; an unknown one
-/// takes the design system's tertiary colour.
+/// does not know is shown capitalised. Polkadot, USDC and USDT take the app's
+/// own asset logos and colours; the other networks keep their brand colour,
+/// and an unknown one takes the design system's tertiary colour.
 struct FundingNetwork: Identifiable, Hashable {
     let id: String
 
@@ -15,6 +15,11 @@ struct FundingNetwork: Identifiable, Hashable {
 
     var tint: Color {
         Self.tints[id] ?? .fgTertiary
+    }
+
+    /// The app's logo for the network, when it has one.
+    var logo: ImageResource? {
+        id == "polkadot" ? .iconDot : nil
     }
 
     var monogram: String {
@@ -32,6 +37,11 @@ struct FundingToken: Identifiable, Hashable {
         Self.tints[symbol.uppercased()] ?? .fgTertiary
     }
 
+    /// The app's logo for the token, when it has one.
+    var logo: ImageResource? {
+        Self.logos[symbol.uppercased()]
+    }
+
     var monogram: String {
         String(symbol.prefix(1)).uppercased()
     }
@@ -47,7 +57,7 @@ private extension FundingNetwork {
     ]
 
     static let tints: [String: Color] = [
-        "polkadot": Color(red: 0.9, green: 0.0, blue: 0.48),
+        "polkadot": Color(.assetDOT),
         "bitcoin": Color(red: 0.97, green: 0.58, blue: 0.1),
         "ethereum": Color(red: 0.38, green: 0.49, blue: 0.92),
         "tron": Color(red: 0.92, green: 0.0, blue: 0.16),
@@ -57,7 +67,12 @@ private extension FundingNetwork {
 
 private extension FundingToken {
     static let tints: [String: Color] = [
-        "USDC": Color(red: 0.16, green: 0.46, blue: 0.79),
-        "USDT": Color(red: 0.15, green: 0.63, blue: 0.48)
+        "USDC": Color(.assetUSDC),
+        "USDT": Color(.assetUSDT)
+    ]
+
+    static let logos: [String: ImageResource] = [
+        "USDC": .iconUsdc,
+        "USDT": .iconUsdt
     ]
 }

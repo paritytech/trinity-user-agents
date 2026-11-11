@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import SubstrateSdk
 import TrUAPIHost
 
@@ -111,6 +112,6 @@ extension FundingStatus {
 
 extension Date {
     init(milliseconds: UInt64) {
-        self.init(timeIntervalSince1970: TimeInterval(milliseconds) / 1_000)
+        self.init(timeIntervalSince1970: milliseconds.millisecondsToSeconds())
     }
 }
