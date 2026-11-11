@@ -267,6 +267,7 @@ fn resource_allocation_outcome(
 
 #[truapi_macros::sso_service]
 impl SsoAccountHolderService {
+	/// Sign a payload or raw bytes with a product account.
 	async fn sign(&self, cx: &SsoRequestContext, request: SignRequest) -> SignResponse {
 		let payload = self.serve_sign(cx, request).await;
 		if let Err(reason) = &payload {
@@ -275,6 +276,7 @@ impl SsoAccountHolderService {
 		payload
 	}
 
+	/// Derive a contextual alias for a registered ring-VRF key.
 	async fn get_account_alias(
 		&self,
 		cx: &SsoRequestContext,
@@ -288,6 +290,7 @@ impl SsoAccountHolderService {
 			.await
 	}
 
+	/// Allocate SSO-backed resources for a product.
 	async fn resource_allocation(
 		&self,
 		cx: &SsoRequestContext,
@@ -362,6 +365,7 @@ impl SsoAccountHolderService {
 		allocation_reply(payload, failures)
 	}
 
+	/// Build a signed transaction for a product account.
 	async fn create_transaction(
 		&self,
 		cx: &SsoRequestContext,
@@ -373,6 +377,7 @@ impl SsoAccountHolderService {
 			.await
 	}
 
+	/// Build a signed transaction for the wallet's identity account.
 	async fn create_transaction_with_legacy_account(
 		&self,
 		cx: &SsoRequestContext,
@@ -389,6 +394,7 @@ impl SsoAccountHolderService {
 		.await
 	}
 
+	/// Sign raw data with a legacy account.
 	async fn sign_raw_with_legacy_account(
 		&self,
 		cx: &SsoRequestContext,
@@ -400,6 +406,7 @@ impl SsoAccountHolderService {
 			.map_err(|error| error.to_string())
 	}
 
+	/// Create a ring-VRF proof bound to a context and message.
 	async fn create_account_proof(
 		&self,
 		cx: &SsoRequestContext,
@@ -410,6 +417,7 @@ impl SsoAccountHolderService {
 			.await
 	}
 
+	/// Sign an RFC-0023 VRF transcript.
 	async fn sign_vrf(
 		&self,
 		cx: &SsoRequestContext,
@@ -444,6 +452,7 @@ impl SsoAccountHolderService {
 			.map_err(|err| err.to_string())
 	}
 
+	/// Register a ring-VRF key owned by the calling product.
 	async fn register_ring_vrf_key(
 		&self,
 		cx: &SsoRequestContext,
@@ -457,6 +466,7 @@ impl SsoAccountHolderService {
 			.await
 	}
 
+	/// List registered ring-VRF keys.
 	async fn list_ring_vrf_keys(
 		&self,
 		cx: &SsoRequestContext,
@@ -470,6 +480,7 @@ impl SsoAccountHolderService {
 			.await
 	}
 
+	/// Sign bytes directly with a registered ring-VRF key.
 	async fn ring_vrf_sign(
 		&self,
 		cx: &SsoRequestContext,
