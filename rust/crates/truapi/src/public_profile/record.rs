@@ -43,9 +43,25 @@ impl ProfileRecord {
 	///
 	/// Unknown or malformed entries are skipped. Returns `None` when no avatar decodes.
 	pub fn avatar(&self) -> Option<ProfileAvatar> {
+		self.shown_avatar().map(|(_, avatar)| avatar)
+	}
+
+	/// Makes `avatar` the one readers show.
+	///
+	/// Removes the avatar [`Self::avatar`] returns and puts the new one first. Every other entry
+	/// keeps its bytes and order.
+	pub fn set_avatar(&mut self, avatar: ProfileAvatar) {
+		if let Some((index, _)) = self.shown_avatar() {
+			self.entries.remove(index);
+		}
 		self.entries
-			.iter()
-			.find_map(|entry| entry.try_decode().map(|ProfileEntry::Avatar(avatar)| avatar))
+			.insert(0, WrapperKeepOpaque::from_value(ProfileEntry::Avatar(avatar)));
+	}
+
+	fn shown_avatar(&self) -> Option<(usize, ProfileAvatar)> {
+		self.entries.iter().enumerate().find_map(|(index, entry)| {
+			entry.try_decode().map(|ProfileEntry::Avatar(avatar)| (index, avatar))
+		})
 	}
 }
 

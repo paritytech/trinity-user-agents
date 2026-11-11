@@ -10,7 +10,9 @@ use alloy_primitives::B256;
 use alloy_sol_types::SolCall;
 use tracing::{instrument, warn};
 
-pub use record::{ProfileAvatar, ProfileEntry, ProfileRecord};
+#[cfg(test)]
+use record::ProfileEntry;
+pub use record::{ProfileAvatar, ProfileRecord};
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{store::DbError, unix_time::current_unix_secs};

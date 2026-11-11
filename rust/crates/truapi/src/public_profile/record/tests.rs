@@ -78,6 +78,22 @@ fn an_entry_kind_from_a_newer_writer_is_kept_and_skipped() {
 }
 
 #[test]
+fn a_new_avatar_replaces_the_one_readers_show_and_keeps_other_entries() {
+	let entry = |seed: u8| {
+		WrapperKeepOpaque::from_value(ProfileEntry::Avatar(ProfileAvatar {
+			cid: [seed; 32].into(),
+			format: ImageFormat::Png,
+		}))
+	};
+	let unknown = WrapperKeepOpaque::from_encoded(vec![7, 1, 2]);
+	let mut record = ProfileRecord { entries: vec![unknown.clone(), entry(1), entry(2)] };
+
+	record.set_avatar(ProfileAvatar { cid: [3; 32].into(), format: ImageFormat::Png });
+
+	assert_eq!(record, ProfileRecord { entries: vec![entry(3), unknown, entry(2)] });
+}
+
+#[test]
 fn the_first_avatar_wins() {
 	let record = ProfileRecord {
 		entries: vec![
