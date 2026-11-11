@@ -1,3 +1,4 @@
+import AsyncAlgorithms
 import PolkadotUI
 import TrUAPIHost
 import UIKit
@@ -41,12 +42,14 @@ final class PublicProfileAvatarViewModel: IdentifiableImageViewModelProtocol {
                 try Task.checkCancellation()
                 let runtime = try await Self.sharedRuntime(from: runtimeProvider)
                 try Task.checkCancellation()
-                let updates = runtime.resolvePublicProfile(username: username, options: requestOptions)
-                for try await profile in updates {
+                let avatars = runtime.resolvePublicProfile(username: username, options: requestOptions)
+                    .map(\.avatar)
+                    .removeDuplicates()
+                for try await avatar in avatars {
                     try Task.checkCancellation()
                     guard let imageView else { return }
                     imageLoader.cancel(on: imageView)
-                    if let avatar = profile.avatar {
+                    if let avatar {
                         imageLoader.load(
                             .bulletin(cid: avatar.cid, declaredFormat: avatar.format),
                             on: imageView,
