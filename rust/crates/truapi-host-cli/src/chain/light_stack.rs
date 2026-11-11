@@ -16,6 +16,7 @@ use truapi_provider::{EmbeddedChainProvider, LightSpecSource, LightStack};
 
 use crate::{
 	network::ChainEndpoint,
+	platform::{StorageError, atomic_write},
 	stack_descriptor::{FETCH_TIMEOUT, Roles, fetch},
 };
 
@@ -151,25 +152,31 @@ impl StackLightClient {
 	}
 }
 
-/// Writes `bytes` at `path` through a file beside it, so a reader never sees a
+/// Keeps `bytes` at `path`, replacing it in one step so a reader never sees a
 /// spec cut short, and removes the specs beside it that are older than
 /// [`KEPT_SPEC_LIFETIME`].
-fn keep(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-	let directory = path.parent().unwrap_or(Path::new("."));
-	std::fs::create_dir_all(directory)?;
-	let mut file = tempfile::NamedTempFile::new_in(directory)?;
-	std::io::Write::write_all(&mut file, bytes)?;
-	file.persist(path)?;
+fn keep(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
+	atomic_write(path, bytes)?;
+	if let Some(directory) = path.parent() {
+		remove_expired(directory);
+	}
+	Ok(())
+}
 
-	let expired = |entry: &std::fs::DirEntry| {
+/// Removes the files of `directory` written more than [`KEPT_SPEC_LIFETIME`]
+/// ago. One that cannot be read or removed is left for the next time.
+fn remove_expired(directory: &Path) {
+	let expired = |entry: std::fs::DirEntry| {
 		let written = entry.metadata().and_then(|metadata| metadata.modified()).ok()?;
 		let age = SystemTime::now().duration_since(written).ok()?;
 		(age > KEPT_SPEC_LIFETIME).then(|| entry.path())
 	};
-	for stale in std::fs::read_dir(directory)?.flatten().filter_map(|entry| expired(&entry)) {
+	let Ok(entries) = std::fs::read_dir(directory) else {
+		return;
+	};
+	for stale in entries.flatten().filter_map(expired) {
 		let _ = std::fs::remove_file(stale);
 	}
-	Ok(())
 }
 
 #[cfg(test)]
