@@ -10,6 +10,8 @@ _How value moves into and out of the user's CASH balance. Rationale: [RFC](../rf
 [product manifest](../rfcs/product-manifest.md#funding-configuration) · for provider teams:
 [Building a funding provider](../guides/funding-provider.md)._
 
+_Screens are from the Pocket R2 design in Figma; the apps follow it, with small differences._
+
 ## Parts
 
 ```mermaid
@@ -95,6 +97,13 @@ sequenceDiagram
 
 ## Top-up
 
+<p>
+  <img src="funding-modality/amount-in.png" width="180" alt="Top up: amount and rail">
+  <img src="funding-modality/providers.png" width="180" alt="Choose a provider">
+  <img src="funding-modality/summary.png" width="180" alt="Summary before paying">
+  <img src="funding-modality/crypto-deposit.png" width="180" alt="Crypto deposit">
+</p>
+
 ```mermaid
 sequenceDiagram
   participant P as Product
@@ -130,6 +139,10 @@ sequenceDiagram
 
 ## Withdrawal
 
+<p>
+  <img src="funding-modality/amount-out.png" width="180" alt="Send money out: amount and rail">
+</p>
+
 ```mermaid
 sequenceDiagram
   participant H as Host
@@ -149,6 +162,10 @@ sequenceDiagram
 ```
 
 ## Session lifecycle
+
+<p>
+  <img src="funding-modality/in-progress.png" width="180" alt="Sessions in progress on the Purse">
+</p>
 
 ```mermaid
 stateDiagram-v2
@@ -175,6 +192,10 @@ Once money moved, only the provider ends a session. A bank top-up cancelled befo
 transfer, which is still added.
 
 ## Cancel
+
+<p>
+  <img src="funding-modality/cancel-top-up.png" width="180" alt="Cancel a pending top-up">
+</p>
 
 ```mermaid
 flowchart TD
@@ -211,6 +232,10 @@ flowchart LR
 A repeat under the same id must ask the same thing.
 
 ## Storage
+
+<p>
+  <img src="funding-modality/history.png" width="180" alt="History on the Purse">
+</p>
 
 ```mermaid
 flowchart LR

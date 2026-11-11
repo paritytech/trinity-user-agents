@@ -35,6 +35,11 @@ sequenceDiagram
 
 ## 1. Pick a screen shape
 
+<p>
+  <img src="../design/funding-modality/crypto-deposit.png" width="180" alt="Worker only: the host's session sheet">
+  <img src="../design/funding-modality/provider-screen.png" width="180" alt="Your own screen in the host's frame">
+</p>
+
 | Shape               | You publish                  | Your Worker shows a screen with                      |
 | ------------------- | ---------------------------- | ---------------------------------------------------- |
 | **Worker only**     | the Worker                   | nothing: the host's session sheet is enough (crypto) |
@@ -81,6 +86,10 @@ client.fundingProvider.onSettleCancel(({ intent, decision }) => settle(intent, d
 Calls can repeat and arrive in any order: key everything by `intent`, make every handler idempotent.
 
 ## 4. Quote
+
+<p>
+  <img src="../design/funding-modality/providers.png" width="180" alt="Your quote in the host's provider list">
+</p>
 
 ```ts
 { tag: "Quoted", value: { quote: { quoteId, sendAmount, receiveAmount, providerFee, networkFee, etaSecs, expiresAt, assetDecimals } } }
@@ -175,6 +184,10 @@ report({
 | `Other{text}`                  | your text, untranslated (≤ 80 chars)  | when it happened |
 
 ## 8. Cancels
+
+<p>
+  <img src="../design/funding-modality/cancel-top-up.png" width="180" alt="The cancel the user confirms">
+</p>
 
 ```mermaid
 flowchart LR
