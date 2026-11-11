@@ -47,8 +47,10 @@ func expectedProductNotificationHostEvent(
     return HostEvent(
         name: "host.product_notification.\(step)",
         level: level,
+        fingerprint: ["host.product_notification.\(step)"],
         tags: expectedTags.merging(tags) { _, new in new },
-        extras: extras
+        extras: extras,
+        counters: [:]
     )
 }
 
