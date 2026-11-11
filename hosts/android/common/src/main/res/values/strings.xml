@@ -1277,7 +1277,6 @@
     <string name="funding_failure_above_maximum">Above the maximum</string>
     <string name="funding_failure_below_minimum">Below the minimum</string>
     <string name="funding_failure_cancelled">Cancelled</string>
-    <string name="funding_failure_close">Close</string>
     <string name="funding_failure_declined">Payment declined</string>
     <string name="funding_failure_expired">Expired</string>
     <string name="funding_failure_failed">Failed · %1$s</string>

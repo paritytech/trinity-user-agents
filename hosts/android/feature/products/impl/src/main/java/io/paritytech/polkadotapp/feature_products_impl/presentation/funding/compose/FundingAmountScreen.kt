@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose
 
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,7 +10,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -93,10 +93,14 @@ private fun AmountFigure(state: FundingAmountUiState) {
 
         NovaText(
             text = state.amount,
-            style = amountStyle(state.digitCount),
+            style = PolkadotTheme.typography.display.extraLarge,
             color = if (state.hasAmount) PolkadotTheme.colors.fg.primary else PolkadotTheme.colors.fg.tertiary,
             maxLines = 1,
             textAlign = TextAlign.Center,
+            autoSize = TextAutoSize.StepBased(
+                minFontSize = PolkadotTheme.typography.headline.large.fontSize,
+                maxFontSize = PolkadotTheme.typography.display.extraLarge.fontSize,
+            ),
         )
 
         NovaText(
@@ -107,12 +111,6 @@ private fun AmountFigure(state: FundingAmountUiState) {
     }
 }
 
-@Composable
-private fun amountStyle(digits: Int): TextStyle = when (digits) {
-    in 0..3 -> PolkadotTheme.typography.display.extraLarge
-    in 4..5 -> PolkadotTheme.typography.display.medium
-    else -> PolkadotTheme.typography.headline.large
-}
 
 @Composable
 private fun noteText(note: FundingAmountNote): String = when (note) {
@@ -168,7 +166,6 @@ private fun FundingAmountScreenPreview() {
                     FundingRailTab(FundingRail.BANK, selected = false, enabled = false),
                 ),
                 amount = "$50",
-                digitCount = 2,
                 hasAmount = true,
                 available = null,
                 note = FundingAmountNote.Minimum("$10 CASH", withdraw = false),

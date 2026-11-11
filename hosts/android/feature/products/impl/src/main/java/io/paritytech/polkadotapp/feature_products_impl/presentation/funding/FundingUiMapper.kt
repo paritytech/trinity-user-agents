@@ -39,7 +39,6 @@ fun FundingFlowState.toAmountUiState(): FundingAmountUiState {
         isWithdraw = withdraw,
         rails = FUNDING_RAIL_ORDER.map { FundingRailTab(it, selected = it == rail, enabled = it in available) }.toImmutableList(),
         amount = format.figure(amount),
-        digitCount = amountText.count { it.isDigit() },
         hasAmount = amount.signum() > 0,
         available = spendable?.takeIf { withdraw }?.let(format::label),
         note = amountNote(),
@@ -271,10 +270,6 @@ private fun FundingFlowState.forAmount(quote: FundingQuote): String =
 private fun Map<ProductId, FundingProviderBrand>.brandOf(providerId: ProductId) =
     get(providerId) ?: FundingProviderBrand(providerId = providerId, name = providerId.value, iconUrl = null)
 
-private const val SHORT_ADDRESS_MIN_LENGTH = 14
-private const val SHORT_ADDRESS_HEAD = 6
-private const val SHORT_ADDRESS_TAIL = 5
-
 /** A network stays closed to amounts below the least the core says it takes. */
 fun FundingFlowState.toNetworkRows(): ImmutableList<FundingNetworkRow> = networks.map { id ->
     val name = fundingNetworkName(id)
@@ -302,7 +297,6 @@ fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: Funding
             amount = FundingAssetUnit.of(deposit.asset, deposit.decimals.toInt()).format(deposit.amount),
             exact = deposit.exact,
             address = deposit.address,
-            shortAddress = shortened(deposit.address),
             networkName = fundingNetworkName(deposit.network),
         )
 
@@ -398,5 +392,3 @@ private fun FundingCancel.toUi(cash: FundingCash, format: FundingCashFormat): Fu
     FundingCancel.Declined, is FundingCancel.Overtaken -> null
 }
 
-private fun shortened(address: String): String =
-    if (address.length <= SHORT_ADDRESS_MIN_LENGTH) address else "${address.take(SHORT_ADDRESS_HEAD)}…${address.takeLast(SHORT_ADDRESS_TAIL)}"

@@ -93,7 +93,7 @@ private fun FundingEndedContent(
         when (ended.action) {
             FundingEndedAction.CLOSE -> PolkadotTextButton(
                 modifier = Modifier.fillMaxWidth(),
-                text = stringResource(RCommon.string.funding_failure_close),
+                text = stringResource(RCommon.string.common_close),
                 style = PolkadotButtonStyle.secondary(),
                 onClick = onClose,
             )
