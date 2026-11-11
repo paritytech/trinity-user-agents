@@ -104,7 +104,7 @@ pub struct EventCallbacks {
 	pub chat_bot_rejection: Mutex<Option<String>>,
 	pub chat_post_rejection: Mutex<Option<String>>,
 	pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent, Option<String>)>>,
-	pub chat_room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
+	pub chat_room_footers: Mutex<Vec<(String, truapi::latest::ChatRoomFooter)>>,
 	pub theme: Mutex<v01::HostThemeSubscribeItem>,
 	pub locale: Mutex<v01::HostLocaleSubscribeItem>,
 	pub preimages: Mutex<PreimageFixtureEntries>,
@@ -456,7 +456,7 @@ impl NativeChatCallbacks for EventCallbacks {
 	async fn set_room_footer(
 		&self,
 		room_id: String,
-		footer: v01::ChatRoomFooter,
+		footer: truapi::latest::ChatRoomFooter,
 	) -> Result<(), HostRejection> {
 		self.chat_room_footers
 			.lock()
@@ -1682,16 +1682,16 @@ fn native_chat_adapter_hands_the_room_footer_to_the_host() {
 	futures::executor::block_on(crate::platform::ChatPlatform::set_chat_room_footer(
 		&platform,
 		&product,
-		v01::HostChatSetRoomFooterRequest {
+		truapi::latest::HostChatSetRoomFooterRequest {
 			room_id: "support".to_string(),
-			footer: v01::ChatRoomFooter::Empty,
+			footer: truapi::latest::ChatRoomFooter::Empty,
 		},
 	))
 	.unwrap();
 
 	assert_eq!(
 		*callbacks.chat_room_footers.lock().expect("room footers mutex poisoned"),
-		[("support".to_string(), v01::ChatRoomFooter::Empty)]
+		[("support".to_string(), truapi::latest::ChatRoomFooter::Empty)]
 	);
 }
 
