@@ -52,3 +52,15 @@ fun DockletGlassTheme(content: @Composable () -> Unit) {
     val palette = remember(colors) { dockletPalette(colors) }
     CompositionLocalProvider(LocalDockletPalette provides palette, content = content)
 }
+
+// Fixed colours, not theme tokens: the shimmer looks the same in every theme.
+internal val DockletShimmerColors = listOf(
+    Color(0xFF5B8CFF),
+    Color(0xFFA78BFA),
+    Color(0xFFF472B6),
+    Color(0xFFFB923C),
+    Color(0xFFFACC15),
+    Color(0xFF34D399),
+    Color(0xFF38BDF8),
+    Color(0xFF5B8CFF),
+)
