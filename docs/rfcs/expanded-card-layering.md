@@ -1,0 +1,160 @@
+---
+title: "Expanded card layering"
+owner: "@ERussel"
+status: draft
+---
+
+# RFC — Expanded card layering
+
+## Summary
+
+An opened Pocket card shows the product page in a transparent WebView that covers the whole screen, above the native
+face. The page scrolls the face with it, starts its content below a host-supplied inset, and may draw over the face.
+`ExpandedCard::set_face_shown` keeps its wire shape and comes to mean whether the page covers the face. Everything else
+about Pocket and the expanded card stays as [Pocket modality](pocket-modality.md) defines it.
+
+## Motivation
+
+[Pocket modality](pocket-modality.md#expanded-card) has the host draw the face above the Widget, move the face out of
+the way on `set_face_shown(false)`, and size the Widget to the space the face leaves. On iOS the card screen then nests
+the WebView's scroll view inside a scroll view that carries the face, and keeps the two in step by hand: it moves the
+face with the page and resizes the page after each gesture. The two scroll views fight over gestures, and every resize
+makes the page lay out again.
+
+Products also need the face to stay on screen while the page draws modal content over it. For example, The Humanity product's
+daily-dollar scratch card is a full-screen route that calls `expandedCard.setFaceShown({ shown: false })` while it is
+open. Under pocket-modality that moves the face away instead of letting the scratch card sit over it.
+
+## Requirements
+
+- **Scrolling:** the page and the face scroll as one column in one scroll view.
+- **Layering:** the page can draw over the face without the face leaving the screen.
+- **Stability:** the page is never resized because the face moved or was covered.
+- **Wire:** the `ExpandedCard` wire format does not change.
+- **Fallback:** one page works under its card, in a tab, and on hosts that follow pocket-modality's layout.
+
+## Approach
+
+The design has five parts:
+
+- The executable the card opens.
+- How the face and the page are layered.
+- The inset that tells the page where the face ends.
+- How the two scroll.
+- What `set_face_shown` means.
+
+### Executable
+
+Tapping a face opens the product's `widget` executable, or its `app` executable when the product publishes no widget, with `card=<card_id>` in the launch URL as pocket-modality defines. Either one runs as a Widget execution, so either can call `ExpandedCard`.
+
+### Layering
+
+The host draws the face at the top of the screen and the page in a transparent WebView above it, covering the whole
+screen. Wherever the page paints, it is drawn over the face; where it paints nothing, the face shows through. The page
+lays out its content below the face and may draw over the face, for example a modal or a full-screen surface.
+
+### Inset
+
+Before the page runs, the host sets the CSS custom property `--pocket-card-inset` on the page's root element, and
+updates it when it changes. Its value is the distance from the top of the viewport to the bottom of the face when the
+document is scrolled to the top. In its normal state the page paints nothing above the inset and starts its content
+there. A page reads it as `var(--pocket-card-inset, 0px)`, so the same page works where no face is drawn: in a tab, in a
+browser, and on a host that sets no inset.
+
+### Scrolling
+
+The face follows the WebView's scroll offset as if it were the first thing in the document, overscroll past the top
+included, so the page and the card read as one column. There is one scroll view, and the host never resizes the page for
+the face. Widget manifest `dimensions` size nothing on the expanded card.
+
+### Face state
+
+`set_face_shown(false)` marks the face covered: it stays drawn where it is, and touches over it go to the page.
+`set_face_shown(true)` sends touches over the face back to the face. Neither call moves the face or resizes the page. A
+card definition's `faceShown` sets whether the face starts covered, with `false` meaning covered. Covering applies to
+the card whichever side is up, and turning the card keeps it covered or uncovered. The host keeps its own gestures for
+leaving the card, covered or not.
+
+`UserMoving` means the user is moving the card, such as pulling it down to close it, and the request has no effect.
+`NotPresented` keeps its meaning. Trait id `23`, method `0`, and the request, response and error types are unchanged;
+only their documented meaning changes.
+
+```rust
+/// The card a Widget is shown under.
+///
+/// Only a Widget execution may call it.
+#[wire_trait(id = 23)]
+#[crate::service(required_execution = Widget)]
+#[async_trait::async_trait]
+pub trait ExpandedCard: Send + Sync {
+    /// Cover the face under the calling Widget, or uncover it.
+    ///
+    /// A covered face stays drawn where it is and touches over it go to the
+    /// Widget; an uncovered face takes its own touches. Neither state moves the
+    /// face or resizes the Widget. Succeeds when the face is already in that
+    /// state. Fails with `NotPresented` when the Widget is not shown under its
+    /// card, and `UserMoving` while the user moves or turns the card.
+    #[wire(id = 0)]
+    async fn set_face_shown(
+        &self,
+        _cx: &CallContext,
+        _request: HostExpandedCardSetFaceShownRequest,
+    ) -> Result<HostExpandedCardSetFaceShownResponse, CallError<HostExpandedCardSetFaceShownError>>
+    {
+        Err(CallError::unavailable())
+    }
+
+    /// Turn the card under the calling Widget so its back or its front is up.
+    ///
+    /// Succeeds when that side is already up. Fails with `NotPresented` when
+    /// the Widget is not shown under its card, `UserMoving` while the user moves
+    /// or turns the card, `NoBack` when the card has no back to show right now,
+    /// and `Unsupported` on a host that cannot turn cards.
+    #[wire(id = 1)]
+    async fn set_back_shown(
+        &self,
+        _cx: &CallContext,
+        _request: HostExpandedCardSetBackShownRequest,
+    ) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>>
+    {
+        Err(CallError::unavailable())
+    }
+}
+
+/// Request to cover or uncover the face under the calling Widget.
+pub struct HostExpandedCardSetFaceShownRequest {
+    /// `false` covers the face so touches over it reach the Widget, `true`
+    /// gives those touches back to the face.
+    pub shown: bool,
+}
+
+/// Face cover change failure.
+pub enum HostExpandedCardSetFaceShownError {
+    /// The Widget is not shown under its card right now.
+    NotPresented,
+    /// The user is moving or turning the card; the request had no effect.
+    UserMoving,
+    /// Catch-all.
+    Unknown {
+        /// Human-readable reason.
+        reason: String,
+    },
+}
+```
+
+`HostExpandedCardSetBackShownError::UserMoving` takes the same meaning: the user is moving or turning the card.
+
+### Compatibility
+
+A host that keeps pocket-modality's layout, works with a page that reads the inset: the inset falls
+back to `0px`, and covering the face still gives the page the face's area because that host moves the face away. A page that paints its whole viewport opaque hides the face on a layered host, so Humanity adopts the inset before any host ships the layered layout.
+
+## Trade-offs
+
+- **Touches route by state, not by pixels.** The host cannot see what the page painted, so a page that draws a control
+  over the face without covering it loses those taps to the face.
+- **A covered face is inert.** Face actions are out of reach while the face is covered.
+- **The inset is outside the wire.** It is a host-to-page contract carried as CSS, so the generated TrUAPI client
+  neither exposes nor checks it.
+- **Manifest dimensions stop sizing the expanded card.** The page always gets the whole screen and fits its content
+  below the inset.
