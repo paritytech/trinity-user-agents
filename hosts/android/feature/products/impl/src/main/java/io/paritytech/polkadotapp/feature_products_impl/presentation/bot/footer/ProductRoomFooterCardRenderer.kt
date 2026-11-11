@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.bot.message
+package io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -6,28 +6,31 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
-import io.paritytech.polkadotapp.common.utils.logFailure
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
-import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.LocalJsImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductRoomFooter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
+import io.paritytech.polkadotapp.common.R as RCommon
 
 /** Draws the card a product docked in the input slot of [room], over a fade from the feed. */
 class ProductRoomFooterCardRenderer(
@@ -38,14 +41,15 @@ class ProductRoomFooterCardRenderer(
 ) : CustomChatFooterRenderer {
     @Composable
     override fun drawFooter() {
-        var widget by remember(card) { mutableStateOf<JsWidget?>(null) }
-        LaunchedEffect(card) {
-            worker.renderRoomFooter(room, card.messageType, card.payload.toDataByteArray())
-                .collect { result ->
-                    result.logFailure("Room footer card render failed in ${room.value}")
-                        .onSuccess { widget = it }
-                }
-        }
+        val viewModel: ProductRoomFooterCardViewModel = hiltViewModel(
+            key = "room-footer-${room.value}",
+            creationCallback = { factory: ProductRoomFooterCardViewModel.Factory ->
+                factory.create(room.value, worker)
+            }
+        )
+        LaunchedEffect(card) { viewModel.show(card) }
+        val state by viewModel.state.collectAsState()
+
         val background = PolkadotTheme.colors.bg.surface.main
         Box(
             modifier = Modifier
@@ -55,13 +59,29 @@ class ProductRoomFooterCardRenderer(
                 .imePadding()
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            widget?.let {
-                CompositionLocalProvider(LocalJsImageResolver provides imageResolver) {
-                    JsWidgetRenderer(
-                        widget = it,
-                        jsEventHandler = { actionId, eventType ->
-                            worker.dispatchRoomFooterEvent(room, card.messageType, actionId, eventType)
-                        },
+            when (val currentState = state) {
+                is LoadingState.Loading -> {
+                    CircularProgressIndicator(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .align(Alignment.Center),
+                        color = PolkadotTheme.colors.fg.secondary,
+                        strokeWidth = 2.dp,
+                    )
+                }
+                is LoadingState.Loaded -> {
+                    CompositionLocalProvider(LocalJsImageResolver provides imageResolver) {
+                        JsWidgetRenderer(
+                            widget = currentState.data,
+                            jsEventHandler = viewModel::handleUiEvent,
+                        )
+                    }
+                }
+                is LoadingState.Error -> {
+                    NovaText(
+                        text = stringResource(RCommon.string.products_message_render_failed),
+                        style = PolkadotTheme.typography.body.medium,
+                        color = PolkadotTheme.colors.fg.error,
                     )
                 }
             }

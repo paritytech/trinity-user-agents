@@ -20,7 +20,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
-import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductRoomFooterCardRenderer
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIcon
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.productIconUri
@@ -29,6 +28,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWork
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerReference
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RecordingWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
+import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer.ProductRoomFooterCardRenderer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.menu.ProductChatMenuRenderer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
