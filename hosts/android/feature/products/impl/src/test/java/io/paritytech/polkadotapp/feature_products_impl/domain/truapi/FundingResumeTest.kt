@@ -1,22 +1,18 @@
-package io.paritytech.polkadotapp.feature_products_impl.presentation.initialization
+package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.content.Context
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 // The core leaves its resume marker in its database directory while a provider works on a session.
-class FundingResumeInitializerTest {
+class FundingResumeTest {
     @get:Rule
     val tempFolder = TemporaryFolder()
 
@@ -44,11 +40,7 @@ class FundingResumeInitializerTest {
         coVerify(exactly = 0) { runtime.start() }
     }
 
-    private fun TestScope.initialize() {
-        val scope = object : ComputationalScope, CoroutineScope by backgroundScope {}
-        with(scope) { FundingResumeInitializer(runtime, context).initialize() }
-        runCurrent()
-    }
+    private suspend fun initialize() = FundingResume(runtime, context).resumeUnfinished()
 
     private companion object {
         // The core's name for the marker, which only the core writes.
