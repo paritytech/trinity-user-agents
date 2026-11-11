@@ -18,6 +18,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
@@ -37,12 +38,8 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.comp
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingInfoRow
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingTimelineCard
-import kotlinx.collections.immutable.ImmutableList
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.time.format.FormatStyle
 import kotlin.time.Instant
-import kotlin.time.toJavaInstant
+import kotlinx.collections.immutable.ImmutableList
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val ICON_SIZE = 40.dp
@@ -226,6 +223,6 @@ private fun text(text: FundingEndedText): String = when (text) {
     is FundingEndedText.Plain -> text.text
 }
 
-private val DATE_TIME = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM, FormatStyle.SHORT)
-
-private fun dateTime(at: Instant): String = at.toJavaInstant().atZone(ZoneId.systemDefault()).format(DATE_TIME)
+@Composable
+private fun dateTime(at: Instant): String =
+    LocalTimeFormatter.current.formatDayAndTime(at.toEpochMilliseconds(), System.currentTimeMillis())

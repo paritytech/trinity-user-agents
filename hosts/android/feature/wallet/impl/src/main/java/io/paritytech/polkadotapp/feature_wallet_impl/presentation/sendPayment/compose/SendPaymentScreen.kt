@@ -223,7 +223,7 @@ private fun SendPaymentScreenPreview() {
                         )
                     )
                 ),
-                funding = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf(), currentBalance = null),
+                funding = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf()),
                 fundingSheet = null,
             ),
             onInputChange = {},

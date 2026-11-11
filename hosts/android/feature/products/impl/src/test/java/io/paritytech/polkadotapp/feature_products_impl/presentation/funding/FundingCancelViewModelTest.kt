@@ -10,9 +10,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDire
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayMode
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.Dispatchers

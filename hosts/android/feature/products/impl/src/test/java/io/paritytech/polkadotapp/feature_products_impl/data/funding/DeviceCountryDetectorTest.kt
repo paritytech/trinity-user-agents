@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.funding
+package io.paritytech.polkadotapp.feature_products_impl.data.funding
 
 import android.content.Context
 import android.content.pm.PackageManager

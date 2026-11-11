@@ -8,7 +8,6 @@ import io.mockk.verify
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
-import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.search.RemoteSearchPhase
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.converter.ParseAddressConverterFactory
 import io.paritytech.polkadotapp.feature_account_api.presentation.address.mixin.AddressInputMixin
@@ -346,6 +345,6 @@ class SendPaymentViewModelTest {
         contactsAddressConverterFactory = contactsAddressConverterFactory,
         interactor = interactor,
         fundingEntryPoints = fundingEntryPoints,
-        paymentAssetBrandProvider = mockk { every { brand } returns MutableStateFlow(PaymentAssetBrand.mocked) },
+        tokenAmountMapper = mockk(relaxed = true),
     )
 }

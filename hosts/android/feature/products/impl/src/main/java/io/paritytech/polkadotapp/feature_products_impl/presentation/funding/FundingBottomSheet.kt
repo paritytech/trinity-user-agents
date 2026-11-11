@@ -10,8 +10,6 @@ import androidx.fragment.app.viewModels
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.lifecycle.withCreationCallback
 import io.paritytech.polkadotapp.common.presentation.screens.BaseComposeBottomSheet
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.FundingSheetScreen
 import javax.inject.Inject
 

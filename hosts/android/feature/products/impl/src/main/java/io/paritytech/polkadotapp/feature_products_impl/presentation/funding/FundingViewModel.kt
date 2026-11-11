@@ -15,26 +15,23 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCou
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowState
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingKey
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayMode
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.applying
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.failure
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isOpen
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.toCore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import java.math.BigDecimal
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -52,8 +49,6 @@ import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingStatus
 import uniffi.truapi.ProductId
-import java.math.BigDecimal
-import kotlin.time.Duration.Companion.milliseconds
 import io.paritytech.polkadotapp.common.R as RCommon
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
@@ -441,10 +436,7 @@ class FundingViewModel @AssistedInject constructor(
      * back as options. The core ignores this once the sheet is no longer waited on.
      */
     private suspend fun reportSelection() {
-        flow.filterNotNull().map { it.selection }.distinctUntilChanged().collect { selection ->
-            context.selection = selection
-            interactor.selectOptions(intent, selection)
-        }
+        flow.filterNotNull().map { it.selection }.distinctUntilChanged().collect { interactor.selectOptions(intent, it) }
     }
 
     /** Quotes the new amount once the user pauses, so a provider's limit shows before Continue. */

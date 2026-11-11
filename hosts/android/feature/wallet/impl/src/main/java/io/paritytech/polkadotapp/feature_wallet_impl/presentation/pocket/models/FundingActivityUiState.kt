@@ -2,14 +2,14 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models
 
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
+import kotlin.time.Instant
 import kotlinx.collections.immutable.ImmutableList
 
 /** The CASH card's funding lists: what is in progress, delayed first, then what completed, newest first. */
 data class FundingActivityUiState(
     val inFlight: ImmutableList<FundingActivityRowUi>,
     val completed: ImmutableList<FundingActivityRowUi>,
-    /** The card's balance, for the card details' docked bar; `null` where nothing shows it. */
-    val currentBalance: String? = null,
 ) {
     /** Top-ups in progress, for the Topping up sheet. */
     val toppingUp: List<FundingActivityRowUi>
@@ -32,19 +32,22 @@ data class FundingActivityRowUi(
     val id: String,
     val inbound: Boolean,
     /** "$50 CASH" in flight in, "+$50 CASH" once added, "-$50 CASH" out, unsigned once nothing moved. */
-    val amount: String?,
+    val amount: FundingRowAmount?,
     val amountTone: FundingAmountTone,
     val rail: FundingRailType?,
     val subtitle: FundingRowSubtitle,
     val icon: FundingRowIcon,
 )
 
+/** A row's figure, formatted as every CASH amount is, after its [sign]: "+", "-" or none. */
+data class FundingRowAmount(val sign: String, val value: TokenAmountModel)
+
 sealed interface FundingRowSubtitle {
     /** In flight: where the session stands. */
     data class Step(val step: FundingActivityStep, val inbound: Boolean) : FundingRowSubtitle
 
-    /** Ended: "{moment}" when the money moved, otherwise what happened before it. */
-    data class Ended(val outcome: FundingRowOutcome, val moment: FundingMoment) : FundingRowSubtitle
+    /** Ended at [at]: the moment when the money moved, otherwise what happened before it. */
+    data class Ended(val outcome: FundingRowOutcome, val at: Instant) : FundingRowSubtitle
 }
 
 enum class FundingRowOutcome {
@@ -54,17 +57,6 @@ enum class FundingRowOutcome {
     EXPIRED,
     PAYMENT_FAILED,
     CANCELLED,
-}
-
-/** "Today at 12:45", "Yesterday at 12:45", "Jun 12 at 16:40", "Jun 12, 2025". */
-sealed interface FundingMoment {
-    data class TodayAt(val time: String) : FundingMoment
-
-    data class YesterdayAt(val time: String) : FundingMoment
-
-    data class DayAt(val day: String, val time: String) : FundingMoment
-
-    data class Date(val text: String) : FundingMoment
 }
 
 enum class FundingRowIcon {

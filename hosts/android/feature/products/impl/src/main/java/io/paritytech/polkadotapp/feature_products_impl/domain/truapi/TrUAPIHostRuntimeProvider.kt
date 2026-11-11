@@ -20,9 +20,7 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepo
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.getTldRetrying
-import io.paritytech.polkadotapp.feature_products_impl.data.config.FundingProvidersConfig
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PinnedPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.CoreDurableRecoveryWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIWorkerSupervisor
@@ -46,7 +44,6 @@ import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.ExtensionVersionMap
-import uniffi.truapi.FundingProviderEntry
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -85,8 +82,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val networkStateService: NetworkStateService,
     private val contactsBridge: AppContactsHostBridge,
     private val fundingBridge: AppFundingHostBridge,
-    private val bundledProducts: BundledProducts,
-    private val fundingProvidersConfig: FundingProvidersConfig,
+    private val fundingProviders: TrUAPIFundingProviders,
     private val paymentPlatforms: TrUAPIPaymentPlatforms,
     private val scannerBridge: TrUAPIProductScans,
     private val installations: CurrentInstallationProvider,
@@ -143,7 +139,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         runtime.setContacts(contactsBridge)
         paymentPlatforms.install(runtime)
         runtime.setFunding(fundingBridge)
-        listFundingProviders(runtime)
+        fundingProviders.install(runtime, scope)
         runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
         chainProvider.attach(
@@ -153,21 +149,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         observeAppLifecycle()
         scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
         observeWalletAccount(runtime)
-    }
-
-    // The core offers only the providers listed here: the bundled ones at once, then the configured ones after each
-    // Remote Config sync, which the core merges and ignores when nothing changed.
-    private fun listFundingProviders(runtime: TrUAPIHostRuntime) {
-        val bundled = bundledProducts.fundingProviders()
-        if (bundled.isNotEmpty()) setFundingProviderConfig(runtime, emptyList(), bundled)
-        scope.launch {
-            fundingProvidersConfig.publishedNames().collect { names -> setFundingProviderConfig(runtime, names, bundled) }
-        }
-    }
-
-    private fun setFundingProviderConfig(runtime: TrUAPIHostRuntime, names: List<String>, bundled: List<FundingProviderEntry>) {
-        runCatching { runtime.setFundingProviderConfig(names, bundled) }
-            .logFailure("TrUAPI refused the funding providers")
     }
 
     private suspend fun buildRuntimeConfig(): HostRuntimeConfig {

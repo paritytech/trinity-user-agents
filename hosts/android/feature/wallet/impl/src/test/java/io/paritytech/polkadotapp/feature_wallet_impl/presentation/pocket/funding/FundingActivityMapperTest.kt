@@ -3,7 +3,9 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.fundin
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
+import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainAssetWithAmount
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
+import io.paritytech.polkadotapp.chains.util.amountFromPlanks
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityItem
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStatus
@@ -11,22 +13,23 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActi
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenSymbolAppearance
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityRowUi
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingAmountTone
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingMoment
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowIcon
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowOutcome
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowSubtitle
-import org.junit.Assert.assertEquals
-import org.junit.Test
-import java.time.ZoneOffset
-import java.util.Locale
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
+import org.junit.Assert.assertEquals
+import org.junit.Test
 
 class FundingActivityMapperTest {
     private val asset = mockk<Chain.Asset> { every { precision } returns 6 }
     private val now = Instant.fromEpochMilliseconds(86_400_000)
-    private val mapper = FundingActivityMapper(asset, "CASH", now, ZoneOffset.UTC, Locale.US, dayPattern = "MMM d")
+    private val mapper = FundingActivityMapper(asset, PlainAmounts)
 
     @Test
     fun `a failure reads why and when, under an unsigned amount`() {
@@ -35,7 +38,7 @@ class FundingActivityMapperTest {
         val row = mapper.map(history(item("in", FundingDirection.IN, failed))).completed.single()
 
         assertEquals(FundingRowOutcome.PAYMENT_FAILED, (row.subtitle as FundingRowSubtitle.Ended).outcome)
-        assertEquals("$50 CASH", row.amount)
+        assertEquals("50", label(row))
         assertEquals(FundingAmountTone.SECONDARY, row.amountTone)
         assertEquals(FundingRowIcon.FAILED, row.icon)
     }
@@ -53,7 +56,7 @@ class FundingActivityMapperTest {
             listOf(FundingRowOutcome.PAYOUT_FAILED, FundingRowOutcome.CANCELLED),
             rows.map { (it.subtitle as FundingRowSubtitle.Ended).outcome },
         )
-        assertEquals(listOf("$50 CASH", "$50 CASH"), rows.map { it.amount })
+        assertEquals(listOf("50", "50"), rows.map(::label))
         assertEquals(listOf(FundingRailType.CARD, FundingRailType.CARD), rows.map { it.rail })
     }
 
@@ -63,45 +66,17 @@ class FundingActivityMapperTest {
             history(item("in", FundingDirection.IN, FundingActivityStatus.ToppedUp), item("out", FundingDirection.OUT, FundingActivityStatus.Sent)),
         ).completed
 
-        assertEquals(listOf("+$50 CASH", "-$50 CASH"), rows.map { it.amount })
+        assertEquals(listOf("+50", "-50"), rows.map(::label))
         assertEquals(listOf(FundingAmountTone.SUCCESS, FundingAmountTone.PRIMARY), rows.map { it.amountTone })
         assertEquals(listOf(FundingRowIcon.MOVED_IN, FundingRowIcon.MOVED_OUT), rows.map { it.icon })
     }
 
     @Test
-    fun `moments read today, yesterday, then the day, and the date in another year`() {
-        val day = 86_400_000L
-        val moments = mapper.map(
-            history(
-                item("today", FundingDirection.IN, FundingActivityStatus.ToppedUp, at = now),
-                item("yesterday", FundingDirection.IN, FundingActivityStatus.ToppedUp, at = now - day.milliseconds),
-                item("older", FundingDirection.IN, FundingActivityStatus.ToppedUp, at = now - (3 * day).milliseconds),
-            ),
-        ).completed.map { (it.subtitle as FundingRowSubtitle.Ended).moment }
+    fun `an ended row carries when it ended, for the row to format`() {
+        val at = now - 86_400_000L.milliseconds
+        val subtitle = mapper.map(history(item("done", FundingDirection.IN, FundingActivityStatus.ToppedUp, at = at))).completed.single().subtitle
 
-        assertEquals(listOf(FundingMoment.TodayAt::class, FundingMoment.YesterdayAt::class, FundingMoment.Date::class), moments.map { it::class })
-        assertEquals(FundingMoment.Date("Dec 30, 1969"), moments.last())
-    }
-
-    @Test
-    fun `an older day this year reads as the day and time`() {
-        val later = Instant.fromEpochMilliseconds(10 * DAY_MS)
-        val mapper = FundingActivityMapper(asset, "CASH", later, ZoneOffset.UTC, Locale.US, dayPattern = "MMM d")
-
-        val moment = mapper.map(
-            history(item("older", FundingDirection.IN, FundingActivityStatus.ToppedUp, at = later - (5 * DAY_MS).milliseconds)),
-        ).completed.map { (it.subtitle as FundingRowSubtitle.Ended).moment }.single()
-
-        assertEquals("Jan 6", (moment as FundingMoment.DayAt).day)
-    }
-
-    @Test
-    fun `a day this year reads in the locale's own order, without the year`() {
-        assertEquals("MMM d", dayPattern(Locale.US))
-        assertEquals("d MMM", dayPattern(Locale.UK))
-        assertEquals("dd.MM", dayPattern(Locale.GERMANY))
-        assertEquals("d MMM", dayPattern(Locale.forLanguageTag("ru")))
-        assertEquals("M月d日", dayPattern(Locale.CHINA))
+        assertEquals(FundingRowSubtitle.Ended(FundingRowOutcome.MOVED, at), subtitle)
     }
 
     @Test
@@ -118,7 +93,7 @@ class FundingActivityMapperTest {
 
         assertEquals(listOf("in"), state.toppingUp.map { it.id })
         assertEquals(listOf("out"), state.sending.map { it.id })
-        assertEquals(listOf("$50 CASH", "-$50 CASH"), state.inFlight.map { it.amount })
+        assertEquals(listOf("50", "-50"), state.inFlight.map(::label))
     }
 
     @Test
@@ -170,7 +145,14 @@ class FundingActivityMapperTest {
         status = status,
     )
 
-    private companion object {
-        const val DAY_MS = 86_400_000L
+    /** The sign and the amount in whole CASH, as the row formats them. */
+    private fun label(row: FundingActivityRowUi): String? = row.amount?.let { it.sign + it.value.amount.stripTrailingZeros().toPlainString() }
+
+    /** Models an amount by its value alone; the formatter the rows share is not under test here. */
+    private object PlainAmounts : TokenAmountMapper {
+        override fun mapFrom(source: ChainAssetWithAmount): TokenAmountModel = object : TokenAmountModel {
+            override val amount = source.chainAsset.amountFromPlanks(source.amount)
+            override val appearance = TokenSymbolAppearance.DigitalDollar
+        }
     }
 }

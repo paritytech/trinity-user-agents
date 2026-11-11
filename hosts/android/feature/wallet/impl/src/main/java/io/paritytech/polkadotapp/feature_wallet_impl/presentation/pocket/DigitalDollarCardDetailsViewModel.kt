@@ -5,7 +5,6 @@ import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.Chain
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.withAmount
 import io.paritytech.polkadotapp.common.BuildConfig
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
-import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrandProvider
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.presentation.ui.errors.PresentationThrowable
 import io.paritytech.polkadotapp.common.utils.FeatureOption
@@ -50,14 +49,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
-import kotlin.time.Clock
 
 @HiltViewModel
 class DigitalDollarCardDetailsViewModel @Inject constructor(
     private val interactor: DigitalDollarCardDetailsInteractor,
     private val router: PocketRouter,
     private val tokenAmountMapper: TokenAmountMapper,
-    private val paymentAssetBrandProvider: PaymentAssetBrandProvider,
     private val fundingEntryPoints: FundingEntryPoints,
 ) : BaseViewModel() {
     private companion object {
@@ -136,17 +133,12 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             )
         )
 
-    val fundingActivity: StateFlow<FundingActivityUiState> = combine(
-        fundingEntryPoints.activityOrNone(interactor::observeFundingActivity),
-        paymentAssetBrandProvider.brand,
-        holdingsFlow.map { it.getOrNull()?.balance?.total }.onStart { emit(null) }
-    ) { activity, brand, balance ->
-        FundingActivityMapper(interactor.asset(), brand.symbol, Clock.System.now()).map(activity, currentBalance = balance)
-    }
+    val fundingActivity: StateFlow<FundingActivityUiState> = fundingEntryPoints.activityOrNone(interactor::observeFundingActivity)
+        .map { activity -> FundingActivityMapper(interactor.asset(), tokenAmountMapper).map(activity) }
         .stateIn(
             scope = this,
             started = SharingStarted.WhileSubscribed(FUNDING_ACTIVITY_STOP_TIMEOUT),
-            initialValue = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf(), currentBalance = null)
+            initialValue = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf())
         )
 
     private val sheets = FundingSheets()

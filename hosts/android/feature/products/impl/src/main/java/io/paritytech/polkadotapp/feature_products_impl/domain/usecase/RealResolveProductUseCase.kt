@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.RootManifest
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.toDefinition
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductManifest
@@ -35,6 +36,7 @@ internal class RealResolveProductUseCase @Inject constructor(
     private val manifestParser: ManifestParser,
     private val productRepository: ProductRepository,
     private val debugPocketCards: DebugPocketCards,
+    private val bundledProducts: BundledProducts,
 ) : ResolveProductUseCase {
     // Successful resolutions only, so a transient read failure stays retryable. Hit without the
     // lock, since the WebView's request-interception thread blocks on this for every request.
@@ -42,6 +44,8 @@ internal class RealResolveProductUseCase @Inject constructor(
     private val resolveMutex = Mutex()
 
     override suspend fun resolve(productId: ProductId): Result<ResolvedProduct> {
+        // A product the app ships is read from its own files on any network, with no dotNS lookup.
+        bundledProducts.entry(productId)?.let { return bundledProducts.resolved(it) }
         cache[productId]?.let { return Result.success(it) }
 
         return resolveMutex.withLock {

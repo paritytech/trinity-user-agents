@@ -6,8 +6,8 @@ import io.mockk.mockk
 import io.paritytech.polkadotapp.common.presentation.notification.AppNotification
 import io.paritytech.polkadotapp.common.presentation.notification.AppNotifier
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBranding
+import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
+import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.test_shared.testDispatchers
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -25,12 +25,12 @@ class WorkerCrashNoticeTest {
             "${secondArg<Array<Any>>()[0]} stopped working. Retrying…"
         }
     }
-    private val branding = mockk<FundingProviderBranding>()
+    private val resolveProduct = mockk<ResolveProductUseCase>()
     private val ramp = ProductId.parse("ramp.dot").getOrThrow()
 
     @Test
-    fun `the notice names the product as the sheet does`() = runTest {
-        coEvery { branding.brand(ramp) } returns FundingProviderBrand(ramp, "Ramp", iconUrl = null)
+    fun `the notice names the product by its manifest`() = runTest {
+        coEvery { resolveProduct.resolve(ramp) } returns Result.success(mockk<ResolvedProduct> { every { product.name } returns "Ramp" })
 
         notice().onCrashing(ramp)
         advanceUntilIdle()
@@ -40,7 +40,7 @@ class WorkerCrashNoticeTest {
 
     @Test
     fun `a name that cannot be resolved falls back to the product id`() = runTest {
-        coEvery { branding.brand(ramp) } throws IllegalStateException("no manifest")
+        coEvery { resolveProduct.resolve(ramp) } returns Result.failure(IllegalStateException("no manifest"))
 
         notice().onCrashing(ramp)
         advanceUntilIdle()
@@ -48,5 +48,5 @@ class WorkerCrashNoticeTest {
         assertEquals(listOf(AppNotification.Error("ramp.dot stopped working. Retrying…")), shown)
     }
 
-    private fun TestScope.notice() = WorkerCrashNotice({ branding }, notifier, contextManager, testDispatchers())
+    private fun TestScope.notice() = WorkerCrashNotice({ resolveProduct }, notifier, contextManager, testDispatchers())
 }

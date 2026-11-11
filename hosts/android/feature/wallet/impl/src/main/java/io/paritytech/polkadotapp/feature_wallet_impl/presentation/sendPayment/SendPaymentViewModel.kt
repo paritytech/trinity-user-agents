@@ -1,9 +1,9 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment
 
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
-import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrandProvider
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.OneShotEventChannel
 import io.paritytech.polkadotapp.common.utils.disable
@@ -42,12 +42,12 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import javax.inject.Inject
-import kotlin.time.Clock
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @HiltViewModel
@@ -63,16 +63,16 @@ class SendPaymentViewModel @Inject constructor(
     previousPaymentsAddressConverterFactory: PreviousPaymentsAddressConverterFactory,
     contactsAddressConverterFactory: ContactsAddressConverterFactory,
     private val interactor: SendPaymentInteractor,
+    private val tokenAmountMapper: TokenAmountMapper,
     private val fundingEntryPoints: FundingEntryPoints,
-    private val paymentAssetBrandProvider: PaymentAssetBrandProvider,
 ) : BaseViewModel(), SendPaymentContract {
     private val withdrawalInProgress = MutableStateFlow(false)
 
     private val sheets = FundingSheets()
 
-    private val funding = combine(fundingEntryPoints.activityOrNone(interactor::observeFundingActivity), paymentAssetBrandProvider.brand) { activity, brand ->
-        FundingActivityMapper(interactor.asset(), brand.symbol, Clock.System.now()).map(activity, currentBalance = null)
-    }.onStart { emit(EMPTY_FUNDING) }
+    private val funding = fundingEntryPoints.activityOrNone(interactor::observeFundingActivity)
+        .map { activity -> FundingActivityMapper(interactor.asset(), tokenAmountMapper).map(activity) }
+        .onStart { emit(EMPTY_FUNDING) }
 
     private val contacts = flowOf { getContactsUseCase() }
         .shareInBackground()
@@ -195,6 +195,6 @@ class SendPaymentViewModel @Inject constructor(
     }
 
     private companion object {
-        val EMPTY_FUNDING = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf(), currentBalance = null)
+        val EMPTY_FUNDING = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf())
     }
 }

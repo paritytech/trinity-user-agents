@@ -19,19 +19,19 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingKey
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAmountNote
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAmountUiState
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingKey
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingPreset
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingRailTab
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingCircleButton
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingKeypad
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingRailTabs
+import java.math.BigDecimal
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import uniffi.truapi.FundingRail
-import java.math.BigDecimal
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val PRESET_HEIGHT = 36.dp

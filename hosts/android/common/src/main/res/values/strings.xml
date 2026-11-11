@@ -1202,9 +1202,9 @@
     <string name="funding_country_search">Search for a country</string>
     <string name="funding_country_title">Choose payment country</string>
     <string name="funding_country_unsupported">Unsupported country</string>
-    <string name="funding_date_today_at">Today at %1$s</string>
-    <string name="funding_date_yesterday_at">Yesterday at %1$s</string>
-    <string name="funding_date_day_at">%1$s at %2$s</string>
+    <string name="common_date_today_at">Today at %1$s</string>
+    <string name="common_date_yesterday_at">Yesterday at %1$s</string>
+    <string name="common_date_day_at">%1$s at %2$s</string>
     <string name="funding_deposit_account">Account</string>
     <string name="funding_deposit_address_on">To this address on %1$s Network</string>
     <string name="funding_deposit_at_least">Send at least</string>

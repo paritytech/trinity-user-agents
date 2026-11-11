@@ -20,6 +20,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
+import io.paritytech.polkadotapp.common.presentation.formatters.time.TimeFormatter
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Check
@@ -33,10 +35,6 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.fundingLiveParts
 import kotlinx.coroutines.delay
 import uniffi.truapi.FundingDetail
-import java.time.Instant
-import java.time.LocalDate
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 private val MILESTONE_SIZE = 20.dp
 private val MILESTONE_ICON_SIZE = 12.dp
@@ -177,9 +175,10 @@ fun FundingLiveLine(detail: FundingDetail?, lastHeardAtMs: Long?, modifier: Modi
     val parts = fundingLiveParts(detail, lastHeardAtMs, nowMs)
     if (parts.isEmpty()) return
     val resources = LocalContext.current.resources
+    val timeFormatter = LocalTimeFormatter.current
     NovaText(
         modifier = modifier.fillMaxWidth(),
-        text = parts.joinToString(" · ") { it.resolve(resources) },
+        text = parts.joinToString(" · ") { it.resolve(resources, timeFormatter) },
         style = PolkadotTheme.typography.caption.medium,
         color = PolkadotTheme.colors.fg.tertiary,
         textAlign = TextAlign.Center,
@@ -188,16 +187,13 @@ fun FundingLiveLine(detail: FundingDetail?, lastHeardAtMs: Long?, modifier: Modi
     )
 }
 
-private fun FundingLivePart.resolve(resources: Resources): String = when (this) {
-    is FundingLivePart.Res -> resources.getString(id, *args.map { (it as? FundingLivePart)?.resolve(resources) ?: it }.toTypedArray())
+private fun FundingLivePart.resolve(resources: Resources, timeFormatter: TimeFormatter): String = when (this) {
+    is FundingLivePart.Res ->
+        resources.getString(id, *args.map { (it as? FundingLivePart)?.resolve(resources, timeFormatter) ?: it }.toTypedArray())
     is FundingLivePart.Verbatim -> text
-    is FundingLivePart.Moment -> {
-        val at = Instant.ofEpochMilli(atMs).atZone(ZoneId.systemDefault())
-        val pattern = when {
-            dayOnly -> "EEE d MMM"
-            at.toLocalDate() == LocalDate.now() -> "HH:mm"
-            else -> "EEE HH:mm"
-        }
-        DateTimeFormatter.ofPattern(pattern).format(at)
+    // The day alone with its weekday, else the time today or the day and time, in the device's 12/24-hour setting.
+    is FundingLivePart.Moment -> when {
+        dayOnly -> timeFormatter.formatDateWithWeekday(atMs, includeYear = false)
+        else -> timeFormatter.formatDayAndTime(atMs, System.currentTimeMillis())
     }
 }

@@ -2,6 +2,7 @@
 
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar
 
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatFiatSigned
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
@@ -290,7 +291,7 @@ private fun DigitalDollarCardDetailsContent(
         if (collapse >= 1f) {
             StickyBalanceBar(
                 modifier = Modifier.offset { IntOffset(0, topBarBounds.bottom.toInt()) },
-                currentBalance = fundingActivity.currentBalance
+                currentBalance = (coinageLoadingState as? LoadingState.Loaded)?.data?.tokensState?.totalBalance
             )
         }
 
@@ -326,7 +327,7 @@ private fun DigitalDollarCardDetailsContent(
 
 /** Under the header once the card has scrolled away. */
 @Composable
-private fun StickyBalanceBar(modifier: Modifier = Modifier, currentBalance: String?) {
+private fun StickyBalanceBar(modifier: Modifier = Modifier, currentBalance: TokenAmountModel?) {
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -344,7 +345,7 @@ private fun StickyBalanceBar(modifier: Modifier = Modifier, currentBalance: Stri
         )
         if (currentBalance != null) {
             NovaText(
-                text = currentBalance,
+                text = LocalTokenAmountFormatter.current.formatFiatSigned(currentBalance, withSymbol = true),
                 style = PolkadotTheme.typography.title.small,
                 color = PolkadotTheme.colors.fg.primary,
                 maxLines = 1,
@@ -482,7 +483,7 @@ private fun DigitalDollarCardDetailsPreview() {
                 state = DigitalDollarCardDetailsUiState(
                     balanceRestore = BalanceRestoreUiState.SendCash(canGetCash = true)
                 ),
-                fundingActivity = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf(), currentBalance = null),
+                fundingActivity = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf()),
                 onSendClick = {},
                 onHistoryClick = {},
                 onGetCashClick = {},

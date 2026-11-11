@@ -7,7 +7,6 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
-import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageBackupService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageHoldingsUseCase
@@ -27,7 +26,6 @@ import io.paritytech.polkadotapp.test_shared.assertPresentationErrorShown
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
@@ -224,8 +222,7 @@ class DigitalDollarCardDetailsViewModelTest {
     private fun createViewModel() = DigitalDollarCardDetailsViewModel(
         interactor = interactor,
         router = mockk(),
-        tokenAmountMapper = mockk(),
-        paymentAssetBrandProvider = mockk { every { brand } returns MutableStateFlow(PaymentAssetBrand.mocked) },
+        tokenAmountMapper = mockk(relaxed = true),
         fundingEntryPoints = fundingEntryPoints,
     )
 }

@@ -14,7 +14,7 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowLeft
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingKey
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingKey
 
 private val KEY_ROWS = listOf(
     listOf(FundingKey.Digit('1'), FundingKey.Digit('2'), FundingKey.Digit('3')),

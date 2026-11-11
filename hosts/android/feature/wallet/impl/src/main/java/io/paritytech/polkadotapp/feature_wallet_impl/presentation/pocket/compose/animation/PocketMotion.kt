@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation
 
-import android.provider.Settings
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
@@ -8,8 +7,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import io.paritytech.polkadotapp.design.utils.rememberReducedMotion
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenSymbolAppearance
 import java.math.BigDecimal
@@ -69,13 +68,6 @@ object PocketCollapse {
 fun countUpValue(from: BigDecimal, to: BigDecimal, fraction: Float): BigDecimal {
     val step = (to - from).multiply(fraction.coerceIn(0f, 1f).toBigDecimal())
     return (from + step).setScale(to.scale().coerceAtLeast(2), RoundingMode.DOWN)
-}
-
-/** Whether the user turned animations off, which leaves every Pocket animation at its end state. */
-@Composable
-fun rememberReducedMotion(): Boolean {
-    val resolver = LocalContext.current.contentResolver
-    return remember(resolver) { Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
 }
 
 /**
