@@ -73,13 +73,14 @@ fun Docklet(
     modifier: Modifier,
     slots: ImmutableList<DockletSlot>,
     cardProgress: () -> Float,
+    quietFade: () -> Float,
     backdrop: DockletBackdrop?,
     shelf: @Composable () -> Unit,
 ) {
     val haptics = rememberDockletHaptics()
     Box(modifier = modifier) {
         DockletGlassTheme {
-            DockSurface(slots, cardProgress, backdrop, shelf) { slot ->
+            DockSurface(slots, cardProgress, quietFade, backdrop, shelf) { slot ->
                 if (cardProgress() <= 0f) haptics.perform(DockletMoment.SlotTap)
                 slot.onClick()
             }
@@ -91,6 +92,7 @@ fun Docklet(
 private fun DockSurface(
     slots: ImmutableList<DockletSlot>,
     cardProgress: () -> Float,
+    quietFade: () -> Float,
     backdrop: DockletBackdrop?,
     shelf: @Composable () -> Unit,
     onSlotTap: (DockletSlot) -> Unit,
@@ -123,7 +125,7 @@ private fun DockSurface(
                     .height(DockletGeometry.ItemRowHeight)
                     .graphicsLayer {
                         val dim = cardProgress().coerceIn(0f, 1f)
-                        alpha = lerp(1f, DockletMaterials.DockItemsFadedAlpha, dim)
+                        alpha = lerp(1f, DockletMaterials.DockItemsFadedAlpha, dim) * DockletDrawbridge.quietFadeAlpha(quietFade())
                         renderEffect = blurEffect(DockletMaterials.DockItemsBlurSigma * dim, density)
                     },
                 slots = slots,
@@ -233,6 +235,7 @@ private fun DockletPreview() {
                 DockletSlot(NovaIcons.SettingsFilled, "", highlight = DockletSlotHighlight.Emphasized, badgeCount = 0, warning = false) {},
             ),
             cardProgress = { 0f },
+            quietFade = { 0f },
             backdrop = null,
             shelf = {},
         )
