@@ -43,10 +43,10 @@ fn a_blob_without_runtime_code_never_replaces_one_that_has_it() {
 #[test]
 fn a_sealed_blob_opens_only_for_its_stack_and_generation() {
 	let blob = r#"{"chain":{"a":1}}"#;
-	let sealed = Owner { stack: "stack", generation: "one\ntwo" }.seal(blob);
+	let sealed = Header { stack: "stack", generation: "one\ntwo" }.seal(blob);
 
 	let opened = [("stack", "one\ntwo"), ("stack", "one"), ("fork", "one\ntwo")]
-		.map(|(stack, generation)| Owner { stack, generation }.unseal(sealed.clone()));
+		.map(|(stack, generation)| Header { stack, generation }.unseal(sealed.clone()));
 
 	assert_eq!(opened, [Some(blob.to_owned()), None, None]);
 }
@@ -54,6 +54,6 @@ fn a_sealed_blob_opens_only_for_its_stack_and_generation() {
 /// A blob stored without the header was not stored by a stack's provider.
 #[test]
 fn a_blob_without_a_header_is_not_opened() {
-	let owner = Owner { stack: "stack", generation: "one" };
-	assert_eq!(owner.unseal(r#"{"chain":{"a":1}}"#.to_owned()), None);
+	let header = Header { stack: "stack", generation: "one" };
+	assert_eq!(header.unseal(r#"{"chain":{"a":1}}"#.to_owned()), None);
 }

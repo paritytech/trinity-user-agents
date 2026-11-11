@@ -426,7 +426,7 @@ impl EmbeddedChainProvider {
 			return Ok(store.load(genesis_hash, None).await?);
 		};
 		let stored = store.load(genesis_hash, Some(stack.id().to_owned())).await?;
-		Ok(stored.and_then(|stored| stack.owner().unseal(stored)))
+		Ok(stored.and_then(|stored| stack.database_header().unseal(stored)))
 	}
 
 	/// Put a seed back after a connect that never reached `add_chain`.
@@ -580,7 +580,7 @@ impl EmbeddedChainProvider {
 		// back before the process ends.
 		match &self.stack {
 			Some(stack) => {
-				let sealed = stack.owner().seal(&blob);
+				let sealed = stack.database_header().seal(&blob);
 				store.save(genesis_hash, sealed, Some(stack.id().to_owned())).await?;
 			},
 			None => store.save(genesis_hash, blob, None).await?,
