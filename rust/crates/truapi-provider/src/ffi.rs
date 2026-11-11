@@ -272,7 +272,7 @@ pub fn stack_light_specs(
 
 /// Sink for a connection's inbound JSON-RPC responses and notifications,
 /// implemented on the foreign (Swift) side.
-#[uniffi::export(with_foreign)]
+#[uniffi::export(foreign)]
 pub trait ChainMessageListener: Send + Sync {
 	/// Called for each JSON-RPC response or notification string.
 	fn on_message(&self, message: String) -> Result<(), ChainProviderError>;
@@ -281,7 +281,7 @@ pub trait ChainMessageListener: Send + Sync {
 }
 
 /// Sink for a chain's lifecycle, implemented on the foreign side.
-#[uniffi::export(with_foreign)]
+#[uniffi::export(foreign)]
 pub trait ChainLifecycleListener: Send + Sync {
 	/// Called with the current state, then once per change.
 	fn on_lifecycle(&self, state: ChainLifecycle) -> Result<(), ChainProviderError>;

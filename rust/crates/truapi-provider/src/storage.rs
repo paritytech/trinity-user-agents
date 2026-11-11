@@ -62,7 +62,7 @@ impl std::error::Error for StorageClientError {}
 /// state to resume from, so whatever can write to the store can steer the
 /// view the client has of the chain. Keep storage no more writable than the source
 /// the chain specification itself came from.
-#[cfg_attr(all(feature = "uniffi", not(target_arch = "wasm32")), uniffi::export(with_foreign))]
+#[cfg_attr(all(feature = "uniffi", not(target_arch = "wasm32")), uniffi::export(foreign))]
 #[async_trait::async_trait]
 pub trait StorageClient: Send + Sync {
 	/// Read the blob stored for `genesis_hash` on `stack`, if any.
