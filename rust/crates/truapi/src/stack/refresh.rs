@@ -13,6 +13,7 @@ use futures::{
 	future::{Either, pending, select},
 };
 use trinity_stack::{FetchRequest, Served};
+use truapi::latest::GenericError;
 
 use super::{
 	Stack, StackError, StackFetchRequest, StackFetchResponse, StackRecords, StackStatus,
@@ -34,9 +35,12 @@ const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 #[async_trait::async_trait]
 pub trait StackHost: Send + Sync {
 	/// Fetches the stack's descriptor over HTTP, as [`StackFetchRequest`]
-	/// describes. Never fails: an unusable answer is
-	/// [`StackFetchResponse::Unreachable`].
-	async fn fetch_stack_descriptor(&self, request: StackFetchRequest) -> StackFetchResponse;
+	/// describes. Fails when the server gave no usable answer. The core then
+	/// keeps the copy it holds and tries again later.
+	async fn fetch_stack_descriptor(
+		&self,
+		request: StackFetchRequest,
+	) -> Result<StackFetchResponse, GenericError>;
 
 	/// The stack's status when the refresh starts, and again whenever it
 	/// changes. Return promptly: the refresh waits on it.
@@ -168,12 +172,12 @@ impl Shared {
 		let answer = select(host.fetch_stack_descriptor(request), self.timer.sleep(FETCH_TIMEOUT));
 		let response = match answer.await {
 			Either::Left((response, _)) => response,
-			Either::Right(_) => StackFetchResponse::Unreachable {
-				reason: format!("no answer within {}s", FETCH_TIMEOUT.as_secs()),
+			Either::Right(_) => {
+				Err(format!("no answer within {}s", FETCH_TIMEOUT.as_secs()).into())
 			},
 		};
 		let served = match &response {
-			StackFetchResponse::Document { bytes, etag } => match u32::try_from(bytes.len()) {
+			Ok(StackFetchResponse::Document { bytes, etag }) => match u32::try_from(bytes.len()) {
 				Ok(length) if length <= MAX_DESCRIPTOR_BYTES => {
 					Served::Document { bytes, etag: etag.as_deref() }
 				},
@@ -186,9 +190,9 @@ impl Shared {
 					Served::Unreachable
 				},
 			},
-			StackFetchResponse::NotModified => Served::NotModified,
-			StackFetchResponse::Unreachable { reason } => {
-				tracing::debug!("stack descriptor fetch failed: {reason}");
+			Ok(StackFetchResponse::NotModified) => Served::NotModified,
+			Err(error) => {
+				tracing::debug!("stack descriptor fetch failed: {error}");
 				Served::Unreachable
 			},
 		};

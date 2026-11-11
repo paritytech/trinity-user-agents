@@ -196,7 +196,7 @@ fn a_fetch_is_due_an_hour_after_the_last_one() {
 
 	assert_eq!(source.due_fetch(START + 3599), None);
 	assert!(source.forced_fetch(START + 3599).is_some(), "a host may ask sooner");
-	source.fetched(Served::Unreachable, START + 3599);
+	let _no_record = source.fetched(Served::Unreachable, START + 3599);
 	assert_eq!(source.due_fetch(START + 3599 + 3599), None, "a failed fetch also waits an hour");
 	assert!(source.due_fetch(START + 3599 + 3600).is_some());
 }
@@ -233,7 +233,7 @@ fn a_stale_or_expired_copy_is_reported() {
 
 	serve(&mut source, &newer, START);
 	let stale = source.status();
-	source.fetched(Served::Unreachable, START + 10);
+	let _no_record = source.fetched(Served::Unreachable, START + 10);
 
 	assert_eq!(
 		[stale, source.status()],

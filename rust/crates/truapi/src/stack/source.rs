@@ -26,12 +26,14 @@ pub struct StackFetchRequest {
 	pub url: String,
 	/// The `ETag` to send as `If-None-Match`, when the core holds one.
 	pub if_none_match: Option<String>,
-	/// The largest body to read. Stop reading and answer `Unreachable` once a
-	/// body passes it.
+	/// The largest body to read. Stop reading and fail the fetch once a body
+	/// passes it.
 	pub max_bytes: u32,
 }
 
-/// What a fetch of the stack's descriptor got.
+/// What a fetch of the stack's descriptor got. Anything but these two is a
+/// failed fetch: a transport error, a timeout, a redirect, another status, or
+/// a body larger than [`StackFetchRequest::max_bytes`].
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum StackFetchResponse {
 	/// `200 OK`.
@@ -43,12 +45,6 @@ pub enum StackFetchResponse {
 	},
 	/// `304 Not Modified`.
 	NotModified,
-	/// Anything else: a transport error, a timeout, a redirect, another
-	/// status, or a body larger than `max_bytes`.
-	Unreachable {
-		/// What went wrong, for the core's log.
-		reason: String,
-	},
 }
 
 /// What the last finished fetch of the stack's descriptor came to.
@@ -97,7 +93,7 @@ struct HeldCopy {
 }
 
 impl HeldCopy {
-	fn new(verified: Verified, allows_reserved_values: bool) -> Result<Self, StackError> {
+	fn try_new(verified: Verified, allows_reserved_values: bool) -> Result<Self, StackError> {
 		let stack = Stack::from_descriptor(&verified.descriptor, allows_reserved_values)?;
 		Ok(Self { descriptor: verified.descriptor, stack })
 	}
@@ -120,7 +116,7 @@ struct Opened {
 }
 
 impl Opened {
-	fn new(
+	fn try_new(
 		pointer: &Pointer,
 		bundled: &[u8],
 		stored: Option<&[u8]>,
@@ -132,7 +128,7 @@ impl Opened {
 		let read = reader.get(pointer, now_unix_seconds);
 		let current = read.current.expect("a reader loaded with a build copy has a copy");
 		Ok(Self {
-			running: HeldCopy::new(current.stack, allows_reserved_values)?,
+			running: HeldCopy::try_new(current.stack, allows_reserved_values)?,
 			reader,
 			first_fetch: read.fetch,
 			stale: current.stale,
@@ -171,7 +167,7 @@ impl StackSource {
 		now_unix_seconds: i64,
 	) -> Result<Self, StackError> {
 		let open = |stored| {
-			Opened::new(&pointer, bundled, stored, allows_reserved_values, now_unix_seconds)
+			Opened::try_new(&pointer, bundled, stored, allows_reserved_values, now_unix_seconds)
 		};
 		let opened = match (open(stored), stored) {
 			(Err(error), Some(_)) => {
@@ -221,6 +217,7 @@ impl StackSource {
 
 	/// The fetch to make now, when the copy is old enough and no fetch is
 	/// out. Answer it with [`Self::fetched`].
+	#[must_use = "a fetch handed out stays pending until `fetched` answers it"]
 	pub fn due_fetch(&mut self, now_unix_seconds: i64) -> Option<FetchRequest> {
 		self.first_fetch
 			.take()
@@ -229,6 +226,7 @@ impl StackSource {
 
 	/// How long until [`Self::due_fetch`] has a fetch to make, or `None` while
 	/// one is out.
+	#[must_use]
 	pub fn next_fetch_in(&self, now_unix_seconds: i64) -> Option<Duration> {
 		match self.first_fetch {
 			Some(_) => Some(Duration::ZERO),
@@ -238,6 +236,7 @@ impl StackSource {
 
 	/// A fetch to make now whatever the copy's age, unless one is out. Answer
 	/// it with [`Self::fetched`].
+	#[must_use = "a fetch handed out stays pending until `fetched` answers it"]
 	pub fn forced_fetch(&mut self, now_unix_seconds: i64) -> Option<FetchRequest> {
 		self.first_fetch
 			.take()
@@ -249,6 +248,7 @@ impl StackSource {
 	///
 	/// A copy the core cannot run is refused like one that breaks a
 	/// descriptor rule: it is not stored, so the core never starts from it.
+	#[must_use = "the record is the copy the next start reads"]
 	pub fn fetched(&mut self, served: Served, now_unix_seconds: i64) -> Option<Vec<u8>> {
 		let refreshed = match self.reader.fetched(&self.pointer, served, now_unix_seconds) {
 			Ok(refreshed) => refreshed,
@@ -267,7 +267,7 @@ impl StackSource {
 				StackRefreshOutcome::Refused { reason: status.code().to_string() }
 			},
 		};
-		let held = match HeldCopy::new(accepted.stack, self.allows_reserved_values) {
+		let held = match HeldCopy::try_new(accepted.stack, self.allows_reserved_values) {
 			Ok(held) => held,
 			Err(error) => {
 				self.last_refresh = Some(match outcome {
