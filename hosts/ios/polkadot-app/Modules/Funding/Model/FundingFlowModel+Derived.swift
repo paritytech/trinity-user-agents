@@ -6,20 +6,6 @@ extension FundingFlowModel {
         brands.brand(for: providerId)
     }
 
-    /// What the providers are asked to quote for the selection on screen.
-    func currentAsk() -> FundingQuoteAsk? {
-        guard let amountUnits, amount > 0, let askedAsset else { return nil }
-
-        return FundingQuoteAsk(
-            direction: direction,
-            rail: rail,
-            asset: askedAsset,
-            network: rail == .crypto ? network : nil,
-            amount: amountUnits,
-            country: country?.code
-        )
-    }
-
     /// The asset an ask names: the chosen token for crypto, and for card or
     /// bank the one the core offers for the payment country's currency.
     var askedAsset: String? {
@@ -56,24 +42,10 @@ extension FundingFlowModel {
         (min: cash.decimal(limits.min) ?? 0, max: cash.decimal(limits.max))
     }
 
-    /// Why the typed amount cannot go ahead, as the core decides it from the
-    /// limits, the latest quote list and what a withdrawal can spend.
-    var amountIssue: FundingAmountIssue? {
-        guard let amountUnits else { return nil }
-
-        return fundingAmountIssue(
-            direction: direction,
-            limits: limits,
-            quotes: quotes.list,
-            amount: amountUnits,
-            spendable: spendable.flatMap { cash.units($0) }
-        )
-    }
-
     /// The asset `quote`'s provider-side figures are counted in, with the
     /// decimals the quote carries.
     func quoteUnit(_ quote: FundingQuote) -> FundingAssetUnit {
-        FundingAssetUnit(code: ask?.asset ?? session?.choice?.asset ?? askedAsset ?? "", decimals: quote.assetDecimals)
+        FundingAssetUnit(code: session?.choice?.asset ?? askedAsset ?? "", decimals: quote.assetDecimals)
     }
 }
 
@@ -141,11 +113,6 @@ extension FundingFlowModel {
         quotes.bestProviderId
     }
 
-    /// What every provider was asked last.
-    var ask: FundingQuoteAsk? {
-        quotes.ask
-    }
-
     /// When the core asks every provider again, and the prices on screen change.
     var quotesRefreshAt: Date? {
         quotes.refreshAt
@@ -185,7 +152,8 @@ extension FundingFlowModel {
         case .timeout: String(localized: .Funding.errorQuoteTimeout)
         case .refused(.countryUnsupported): String(localized: .Funding.providersCountryUnsupported)
         case let .refused(.other(message)): message
-        case .refused, nil: nil
+        case .refused,
+             nil: nil
         }
     }
 }

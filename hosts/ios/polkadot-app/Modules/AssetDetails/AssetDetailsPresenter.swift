@@ -105,6 +105,10 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
         openFunding(.in)
     }
 
+    func onHistory() {
+        wireframe.showFundingHistory()
+    }
+
     #if TESTNET_FEATURE
         func onTestnetTopUp() {
             view?.didReceive(testnetTopUpLoading: true)

@@ -71,7 +71,12 @@ struct FundingCloseFrameTests {
         let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
 
         let answer = Task {
-            await coordinator.presentFrame(providerId: provider, intent: "intent", route: "/", awaitsUserTransfer: false)
+            await coordinator.presentFrame(
+                providerId: provider,
+                intent: "intent",
+                route: "/",
+                awaitsUserTransfer: false
+            )
         }
         try await environment.waitUntil { $0.presented.last is FundingProviderFrameController }
 
@@ -89,7 +94,12 @@ struct FundingCloseFrameTests {
         let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
 
         let answer = Task {
-            await coordinator.presentFrame(providerId: provider, intent: "intent", route: "/", awaitsUserTransfer: false)
+            await coordinator.presentFrame(
+                providerId: provider,
+                intent: "intent",
+                route: "/",
+                awaitsUserTransfer: false
+            )
         }
         try await environment.waitUntil { $0.presented.last is FundingProviderFrameController }
 
@@ -124,13 +134,16 @@ private func summary(_ intent: String, settledAtMs: UInt64) -> FundingSessionSum
         refunded: nil,
         transactionId: "tx",
         reference: "ref",
+        moneyMoved: true,
         ended: .init(
             atMs: openedAtMs + settledAtMs,
             outcome: .succeeded,
             payoutState: nil,
             cashAmount: "50000000",
             differingRequested: nil,
-            stoppedAt: nil
+            stoppedAt: nil,
+            steps: [.started, .received, .added],
+            waitingAt: nil
         )
     )
 }
@@ -157,13 +170,16 @@ private func withdrawal(
         refunded: refunded,
         transactionId: nil,
         reference: nil,
+        moneyMoved: true,
         ended: .init(
             atMs: openedAtMs + 1_000,
             outcome: outcome,
             payoutState: payoutState,
             cashAmount: "50000000",
             differingRequested: nil,
-            stoppedAt: stoppedAt
+            stoppedAt: stoppedAt,
+            steps: [.started, .received, .sent],
+            waitingAt: nil
         )
     )
 }
@@ -234,10 +250,6 @@ private final class WindowEnvironment: FundingOverlayEnvironment {
 
     func providerPage(providerId _: ProductId, route _: String, title _: String) -> UIViewController? {
         UIViewController()
-    }
-
-    func providerHasApp(providerId _: ProductId) async -> Bool {
-        true
     }
 
     func fundingActivityChanged() {}

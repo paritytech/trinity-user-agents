@@ -53,7 +53,8 @@ extension FundingEndedSession {
         switch summary.stage {
         case let .delivered(credited, _): credited
         case let .released(debited, _): debited
-        case .open, .failed: nil
+        case .open,
+             .failed: nil
         }
     }
 

@@ -31,6 +31,7 @@ protocol AssetDetailsPresenterProtocol: AnyObject {
     func onBackupCancel()
     func onBackupWhyUpdate()
     func onTopUp()
+    func onHistory()
 
     #if TESTNET_FEATURE
         func onTestnetTopUp()
@@ -78,4 +79,6 @@ protocol AssetDetailsWireframeProtocol: AlertPresentable, ErrorPresentable, Back
     func showTransfer(from view: ControllerBackedProtocol?, chainAsset: ChainAsset)
 
     func showAddTokens(from view: ControllerBackedProtocol?)
+
+    func showFundingHistory()
 }

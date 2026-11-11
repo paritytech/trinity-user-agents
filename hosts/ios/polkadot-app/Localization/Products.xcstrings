@@ -353,6 +353,18 @@
         }
       }
     },
+    "collectibles": {
+      "comment": "Title of the screen that shows the Collectibles product.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collectibles"
+          }
+        }
+      }
+    },
     "createProof.body.context": {
       "extractionState": "manual",
       "localizations": {
@@ -1055,6 +1067,39 @@
           "stringUnit": {
             "state": "translated",
             "value": "Can't reach the app"
+          }
+        }
+      }
+    },
+    "product.replace.message": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(name)@ will close."
+          }
+        }
+      }
+    },
+    "product.replace.open": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open"
+          }
+        }
+      }
+    },
+    "product.replace.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open %1$(name)@?"
           }
         }
       }

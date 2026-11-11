@@ -38,4 +38,8 @@ final class AssetDetailsWireframe: AssetDetailsWireframeProtocol {
             animated: true
         )
     }
+
+    func showFundingHistory() {
+        FundingActivityCenter.shared.showHistory()
+    }
 }

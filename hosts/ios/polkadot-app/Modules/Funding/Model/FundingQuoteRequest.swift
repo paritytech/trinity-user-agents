@@ -10,7 +10,8 @@ struct FundingQuoteRequest {
     /// The id whose lists are shown; nil while no ask is current or its id
     /// is on its way.
     private var requestId: UInt64?
-    private var awaitsId = false
+    /// Whether an ask's id is on its way.
+    private(set) var awaitsId = false
     private var early: FundingQuoteList?
 
     /// Starts a new ask, and returns its number for ``take(_:ofAsk:)``.
@@ -27,6 +28,11 @@ struct FundingQuoteRequest {
         requestId = nil
         awaitsId = false
         early = nil
+    }
+
+    /// Whether ask `number` is the latest, with no drop since.
+    func isLatest(_ number: Int) -> Bool {
+        number == askNumber
     }
 
     /// Takes the core's id for ask `number`, unless a later ask or a drop

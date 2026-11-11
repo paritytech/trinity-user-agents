@@ -24,9 +24,13 @@ extension WalletMainPresenter: WalletMainPresenterProtocol {
         interactor.setup()
     }
 
+    func showBalanceCard() {
+        wireframe.showBalanceCard()
+    }
+
     func showCollectibles() {
         guard let collectiblesPage else { return }
-        wireframe.showProduct(page: collectiblesPage)
+        wireframe.showCollectibles(page: collectiblesPage)
     }
 
     func showPocketCard(_ card: PocketCardViewModel) {
@@ -39,10 +43,6 @@ extension WalletMainPresenter: WalletMainPresenterProtocol {
         wireframe.confirmPocketCardRemoval(card) { [weak self] in
             self?.interactor.removePocketCard(card)
         }
-    }
-
-    func showFundingHistory() {
-        wireframe.showFundingHistory()
     }
 }
 

@@ -19,12 +19,15 @@ fn route(rail: FundingRail, assets: &[&str], networks: Option<&[&str]>) -> Fundi
 	}
 }
 
+/// A candidate declaring `routes`, or none when they are empty.
 fn candidate(name: &str, routes: Vec<FundingRoute>) -> FundingCandidate {
 	FundingCandidate {
 		provider_id: ProductId::for_test(name),
+		declares_routes: !routes.is_empty(),
 		routes,
 		unsupported: Vec::new(),
 		limits: Vec::new(),
+		brand: None,
 	}
 }
 
@@ -49,7 +52,7 @@ fn quote(send: u128, receive: u128, provider_fee: u128, network_fee: u128) -> Fu
 	}
 }
 
-// Divergence "Rails shown": only routed rails, while a provider that
+// Only routed rails, while a provider that
 // declares no routes may serve any.
 #[test]
 fn only_routed_rails_are_offered() {
@@ -69,7 +72,7 @@ fn only_routed_rails_are_offered() {
 	}
 }
 
-// Divergence "Who is asked for a quote": a provider is asked only for a
+// A provider is asked only for a
 // rail it routes, or when it declares no routes.
 #[test]
 fn only_providers_routing_the_rail_are_asked() {
@@ -148,7 +151,7 @@ fn a_shared_reason_for_no_quote_is_given_once() {
 	}
 }
 
-// Divergence "Amount issue": the issue includes every provider refusing
+// The issue includes every provider refusing
 // this exact amount, after the balance and before the limits.
 #[test]
 fn the_amount_issue_includes_every_provider_refusing_the_amount() {
@@ -193,7 +196,7 @@ fn the_amount_issue_includes_every_provider_refusing_the_amount() {
 	assert_eq!(quotes_issue(&[row("a.dot", FundingQuoteState::Pending)]), None);
 }
 
-// Divergence "Cancel anyway": a repeat cancel only while no money moved.
+// A repeat cancel only while no money moved.
 #[test]
 fn a_repeat_cancel_only_before_money_moved() {
 	let cases = [
@@ -248,11 +251,12 @@ fn summary(
 		refunded: None,
 		transaction_id: None,
 		reference: None,
+		money_moved: false,
 		ended: FundingEnding::default(),
 	}
 }
 
-// Divergence "Failure dot on ended timeline": the first milestone not
+// The first milestone not
 // reached, not always the middle one.
 #[test]
 fn an_ended_session_fails_at_its_first_unreached_milestone() {
@@ -318,12 +322,17 @@ fn an_ended_session_reads_its_outcome_and_amounts() {
 			cash_amount: Some(95),
 			differing_requested: Some(100),
 			stopped_at: None,
+			steps: vec![FundingStep::Started, FundingStep::Received, FundingStep::Sent],
+			waiting_at: Some(FundingStep::Sent),
 		}
 	);
 	let mut paid = summary(FundingDirection::Out, released, FundingStatus::Sent);
 	paid.payout = Some(FundingPayout::PaidOut);
 	let paid = ending(&paid);
-	assert_eq!((paid.payout_state, paid.stopped_at), (Some(FundingPayoutState::PaidOut), None));
+	assert_eq!(
+		(paid.payout_state, paid.stopped_at, paid.waiting_at),
+		(Some(FundingPayoutState::PaidOut), None, None)
+	);
 	let mut expired = summary(
 		FundingDirection::In,
 		FundingStage::Failed { reason: FundingFailure::Expired, settled_at_ms: 2 },
@@ -332,13 +341,31 @@ fn an_ended_session_reads_its_outcome_and_amounts() {
 	expired.amount = None;
 	let expired = ending(&expired);
 	assert_eq!(
-		(expired.outcome, expired.cash_amount, expired.differing_requested),
-		(FundingEndedOutcome::Failed { reason: FundingFailure::Expired }, Some(90), None)
+		(expired.outcome, expired.cash_amount, expired.differing_requested, expired.steps),
+		(
+			FundingEndedOutcome::Failed { reason: FundingFailure::Expired },
+			Some(90),
+			None,
+			vec![FundingStep::Started, FundingStep::Received, FundingStep::Added],
+		)
 	);
 }
 
-// Divergence "Sent funds button": the fact behind it holds on a bank top-up
-// only.
+#[test]
+fn networks_read_by_name() {
+	let cases = [
+		("polkadot", "Polkadot"),
+		("ethereum", "Ethereum"),
+		("arbitrum one", "Arbitrum One"),
+		("BNB", "Bnb"),
+		("base-sepolia", "Base-Sepolia"),
+	];
+	for (id, name) in cases {
+		assert_eq!(funding_network_name(id.into()), name);
+	}
+}
+
+// Only a bank top-up waits on a transfer the user makes outside the frame.
 #[test]
 fn only_a_bank_top_up_awaits_the_users_transfer() {
 	let cases = [
@@ -348,10 +375,41 @@ fn only_a_bank_top_up_awaits_the_users_transfer() {
 		(FundingDirection::In, None, false),
 	];
 	for (direction, rail, awaits) in cases {
-		assert_eq!(
-			frame_context(direction, rail).awaits_user_transfer,
-			awaits,
-			"{direction:?} {rail:?}"
-		);
+		assert_eq!(awaits_user_transfer(direction, rail), awaits, "{direction:?} {rail:?}");
 	}
+}
+
+// A top-up cancelled after the provider saw the payment reached Received and
+// keeps its history row, even when no refund was recorded.
+#[test]
+fn a_cancel_after_money_moved_stops_later_and_stays_in_history() {
+	let cancelled = |money_moved| FundingSessionSummary {
+		money_moved,
+		..summary(
+			FundingDirection::In,
+			FundingStage::Failed { reason: FundingFailure::Cancelled, settled_at_ms: 2 },
+			FundingStatus::Cancelled { refunded: None },
+		)
+	};
+	assert_eq!(
+		[false, true].map(|moved| {
+			let summary = cancelled(moved);
+			(ending(&summary).stopped_at, summary.cancelled_unmoved())
+		}),
+		[(Some(FundingStep::Received), true), (Some(FundingStep::Added), false)]
+	);
+}
+
+// A provider that declares no routes may serve any rail, so a route one of
+// its answers confirmed does not stop it being asked about the others.
+#[test]
+fn a_provider_declaring_no_routes_is_asked_on_every_rail() {
+	let confirmed = |declares_routes| FundingCandidate {
+		declares_routes,
+		..candidate("ramp.dot", vec![route(FundingRail::Card, &["EUR"], None)])
+	};
+	assert_eq!(
+		[false, true].map(|declares| routes_rail(&confirmed(declares), FundingRail::Crypto)),
+		[true, false]
+	);
 }

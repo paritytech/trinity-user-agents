@@ -61,6 +61,10 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
             presenter?.onTopUp()
         }
 
+        viewModel.onHistory = { [weak presenter] in
+            presenter?.onHistory()
+        }
+
         #if TESTNET_FEATURE
             viewModel.onTestnetTopUp = { [weak presenter] in
                 presenter?.onTestnetTopUp()

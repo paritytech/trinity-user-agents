@@ -30,6 +30,8 @@ protocol AssetDetailsViewModelProtocol: Observation.Observable {
     var onBackupSync: (() -> Void)? { get set }
     var onBackupCancel: (() -> Void)? { get set }
     var onBackupWhyUpdate: (() -> Void)? { get set }
+    /// Shows every funding session, in flight and ended.
+    var onHistory: (() -> Void)? { get set }
 
     var isTopUpInProgress: Bool { get set }
     var onTopUp: (() -> Void)? { get set }
@@ -52,6 +54,7 @@ class AssetDetailsViewModel: AssetDetailsViewModelProtocol {
     var onBackupSync: (() -> Void)?
     var onBackupCancel: (() -> Void)?
     var onBackupWhyUpdate: (() -> Void)?
+    var onHistory: (() -> Void)?
 
     var isTopUpInProgress: Bool = false
     var onTopUp: (() -> Void)?

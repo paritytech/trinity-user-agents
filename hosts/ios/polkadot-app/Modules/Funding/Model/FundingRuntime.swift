@@ -12,8 +12,11 @@ protocol FundingRuntime: AnyObject, Sendable {
     func fundingQuotes(intent: String) -> FundingQuoteList?
     func fundingEntries() -> [FundingBookEntry]
     func selectFundingOptions(intent: String, selection: FundingSelection)
+    func fundingAmountIssue(intent: String, amount: U128, spendable: U128?) -> FundingAmountIssue?
     @discardableResult
-    func getFundingQuote(intent: String, ask: FundingQuoteAsk) -> UInt64
+    func getFundingQuote(intent: String, amount: U128) -> UInt64?
+    func startFundingWhenQuoted(intent: String, requestId: UInt64)
+    func cancelFundingAutoStart(intent: String)
     func selectFundingProvider(intent: String, providerId: ProductId, quoteId: String) async throws -> Bool
     func cancelFunding(intent: String) async throws -> CancelOutcome
     func confirmFundingCancel(intent: String, terms: CancelTerms?) async throws -> CancelConfirmation
