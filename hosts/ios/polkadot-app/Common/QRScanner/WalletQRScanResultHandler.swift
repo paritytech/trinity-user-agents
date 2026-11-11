@@ -5,6 +5,8 @@ import UIKitExt
 // scanned URLs into the deeplink pipeline and DSFiNVK receipts into W3s pay.
 final class WalletQRScanResultHandler {
     weak var view: ControllerBackedProtocol?
+    /// Closes a scanner that is embedded rather than presented, such as the tab bar's scan panel.
+    var closeEmbeddedScanner: (() -> Void)?
 
     private let dsfinvkRouter: W3sDsfinvkRouting
     private let schemeNormalizer: DeeplinkSchemeNormalizing
@@ -40,6 +42,7 @@ private extension WalletQRScanResultHandler {
     @MainActor
     func dismissPresented(completion: @escaping () -> Void) {
         guard let presented = view?.controller.presentedViewController else {
+            closeEmbeddedScanner?()
             completion()
             return
         }

@@ -267,7 +267,7 @@ fun rememberDockletCardState(): DockletCardState {
     }
 }
 
-private fun systemMotionMode() =
+internal fun systemMotionMode() =
     if (systemAnimationsEnabled()) DockletMotionMode.Morph else DockletMotionMode.CrossFade
 
 internal fun dockletIconSize(progress: Float): Dp = lerp(RestIconSize, OpenIconSize, progress)
