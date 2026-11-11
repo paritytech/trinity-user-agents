@@ -193,7 +193,9 @@ struct TrUAPIWorkerManagerTests {
 
         manager.demandChanged(productId: gameProductId, transition: .start)
         try await logger.waitForError(containing: "failed to start")
-        try await barrier(manager)
+        // The builder fails for every product, so a barrier worker would never
+        // start: wait for the exit report itself.
+        try await waitUntil { references.exited == [gameProductId] }
 
         #expect(manager.currentExecution(of: gameProductId) == nil)
         #expect(references.exited == [gameProductId])
@@ -218,7 +220,9 @@ struct TrUAPIWorkerManagerTests {
 
         manager.demandChanged(productId: gameProductId, transition: .start)
         try await logger.waitForError(containing: "failed to start")
-        try await barrier(manager)
+        // The builder fails for every product, so a barrier worker would never
+        // start: wait for the exit report itself.
+        try await waitUntil { references.exited == [gameProductId] }
 
         #expect(manager.currentExecution(of: gameProductId) == nil)
         #expect(references.exited == [gameProductId])
