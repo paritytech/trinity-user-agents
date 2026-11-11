@@ -20,7 +20,7 @@ final class TabBarContainer {
         self.controllers = controllers
         currentIndex = index
         selection = .tab(index)
-        mountController(at: index, animated: false)
+        mountController(at: index)
     }
 
     func select(index: Int) {
@@ -29,12 +29,12 @@ final class TabBarContainer {
         }
         currentIndex = index
         selection = .tab(index)
-        mountController(at: index, animated: true)
+        mountController(at: index)
     }
 
     func mountSPA(_ controller: UIViewController, for tabId: UUID) {
         selection = .spa(tabId)
-        mount(controller, animated: true)
+        mount(controller)
     }
 
     func unmountSPA() {
@@ -42,7 +42,7 @@ final class TabBarContainer {
             return
         }
         selection = .tab(currentIndex)
-        mountController(at: currentIndex, animated: true)
+        mountController(at: currentIndex)
     }
 
     func controller(at index: Int) -> UIViewController? {
@@ -55,14 +55,14 @@ private extension TabBarContainer {
         hostController?.view
     }
 
-    func mountController(at index: Int, animated: Bool) {
+    func mountController(at index: Int) {
         guard controllers.indices.contains(index) else {
             return
         }
-        mount(controllers[index], animated: animated)
+        mount(controllers[index])
     }
 
-    func mount(_ incoming: UIViewController, animated: Bool) {
+    func mount(_ incoming: UIViewController) {
         guard
             let hostController,
             let hostView,
@@ -72,7 +72,11 @@ private extension TabBarContainer {
         }
 
         let outgoing = selectedController
+        selectedController = incoming
+
         outgoing?.willMove(toParent: nil)
+        outgoing?.view.removeFromSuperview()
+        outgoing?.removeFromParent()
 
         hostController.addChild(incoming)
         incoming.view.frame = hostView.bounds
@@ -80,35 +84,6 @@ private extension TabBarContainer {
         hostView.insertSubview(incoming.view, at: 0)
         incoming.didMove(toParent: hostController)
 
-        selectedController = incoming
         onContentInsetInvalidated?()
-
-        guard animated else {
-            finishUnmount(outgoing)
-            return
-        }
-
-        incoming.view.alpha = 0
-        incoming.view.transform = CGAffineTransform(scaleX: 0.998, y: 0.998)
-        UIView.animate(
-            withDuration: 0.15,
-            animations: {
-                incoming.view.alpha = 1
-                incoming.view.transform = .identity
-                outgoing?.view.alpha = 0
-            },
-            completion: { _ in
-                self.finishUnmount(outgoing)
-            }
-        )
-    }
-
-    func finishUnmount(_ controller: UIViewController?) {
-        guard let controller, controller !== selectedController else {
-            return
-        }
-        controller.view.removeFromSuperview()
-        controller.removeFromParent()
-        controller.view.alpha = 1
     }
 }
