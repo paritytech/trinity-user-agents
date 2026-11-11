@@ -58,7 +58,7 @@ final class SearchContactListView: UIView, UIContentView {
     private func setupViews() {
         addSubview(avatarView)
         avatarView.snp.makeConstraints {
-            $0.size.equalTo(DSSearchAvatar.dimension)
+            $0.size.equalTo(DSLetterAvatar.Size.s40.dimension)
             $0.leading.equalToSuperview()
             $0.top.bottom.equalToSuperview().inset(12)
         }

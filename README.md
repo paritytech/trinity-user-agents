@@ -452,8 +452,9 @@ WASM resolves once without caching.
 
 Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
 
-iOS contacts and chat views consume `resolvePublicProfile(username:options:)`
-as a finite `AsyncThrowingStream`. New chat headers explicitly request forced
+iOS contacts, search results and chat views consume
+`resolvePublicProfile(username:options:)` as a finite `AsyncThrowingStream`.
+New chat headers explicitly request forced
 freshness; cells and search explicitly use the ordinary policy. All app callers
 explicitly set `skipStale` to false. A cancelled header
 observation retains its forced intent until an observation completes or fails.
