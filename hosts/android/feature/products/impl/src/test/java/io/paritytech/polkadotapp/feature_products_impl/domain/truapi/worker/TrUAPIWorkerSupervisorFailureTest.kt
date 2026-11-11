@@ -2,8 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.bundledProducts
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.productSources
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
@@ -61,7 +59,6 @@ class TrUAPIWorkerSupervisorFailureTest {
         scriptResolver = scriptResolver,
         webViewProviderFactory = webViewProviderFactory,
         bootstrapInstaller = bootstrapInstaller,
-        productSources = productSources(bundledProducts(emptyMap())),
         refCounter = Lazy { refCounter },
         navigation = mock(),
         dispatchers = testDispatchers(),

@@ -2,17 +2,16 @@
 
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar
 
-import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatFiatSigned
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.foundation.background
+import androidx.compose.animation.core.updateTransition
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -23,24 +22,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.boundsInParent
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInRoot
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toSize
-import androidx.compose.ui.zIndex
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.compose.TickerWordmark
@@ -51,18 +40,14 @@ import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAs
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.statusBar.reportsScrollToStatusBar
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotButton
+import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDownwards
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowUpwards
-import io.paritytech.polkadotapp.design.components.icon.vectors.Clock
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
-import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
-import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
-import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleSize
-import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.blurEffect
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
@@ -71,9 +56,8 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmou
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.DigitalDollarCardDetailsViewModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageScene
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.debug.CoinageTestDataMode
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.PocketCollapse
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.animation.PocketMotion
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.CardSizes
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.LocalPocketScreenTransition
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.rememberCardCloseDragState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketCardSharedElement
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.pocketContentSlide
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
@@ -82,6 +66,7 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarCardDetailsUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.collections.immutable.persistentMapOf
 import kotlin.math.roundToInt
@@ -160,210 +145,114 @@ private fun DigitalDollarCardDetailsContent(
     onBackupUpdateClick: () -> Unit,
     onBackupCloseClick: () -> Unit
 ) {
-    val listState = rememberLazyListState()
-    val density = LocalDensity.current
-    val collapseRangePx = with(density) { PocketMotion.COLLAPSE_RANGE.toPx() }
-    // The card is drawn over the list and docks into the header as the list scrolls under it.
-    val collapse by remember(collapseRangePx) {
-        derivedStateOf { PocketCollapse.progress(listState.scrolledPx(), collapseRangePx) }
-    }
-    var topBarBounds by remember { mutableStateOf(Rect.Zero) }
-    var cardRest by remember { mutableStateOf(Rect.Zero) }
-    var pageOrigin by remember { mutableStateOf(Offset.Zero) }
-    val navigationInsets = LocalAppNavigationBarInsets.current.asPaddingValues()
-    val hasActivity = fundingActivity.inFlight.isNotEmpty() || fundingActivity.completed.isNotEmpty()
-    val historyAction = rememberTopBarAction(action = onHistoryClick, icon = NovaIcons.Clock)
+    val closeDrag = rememberCardCloseDragState()
 
-    Box(modifier = Modifier.fillMaxSize().onGloballyPositioned { pageOrigin = it.positionInRoot() }) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Box(
-                modifier = Modifier.onGloballyPositioned { topBarBounds = it.boundsInParent() },
-                contentAlignment = Alignment.Center
-            ) {
-                // The status bar names the screen; this bar keeps back and the history action.
-                PolkadotTopBar(
-                    title = "",
-                    navigationAction = rememberTopBarAction(onBack),
-                    titleAlignment = TopBarTitleAlignment.Center,
-                    titleSize = TopBarTitleSize.Medium,
-                    actions = if (hasActivity) persistentListOf(historyAction) else persistentListOf()
+    val scrollState = rememberScrollState()
+    val pageAtTop by remember { derivedStateOf { scrollState.value == 0 } }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .reportsScrollToStatusBar(scrollState)
+            .verticalScroll(scrollState)
+            .windowInsetsPadding(WindowInsets.statusBars.only(WindowInsetsSides.Top))
+            .padding(PolkadotTheme.spacings.mediumIncreased)
+            .windowInsetsPadding(LocalAppNavigationBarInsets.current)
+    ) {
+        DigitalDollarCard(
+            modifier = Modifier
+                .offset { IntOffset(0, closeDrag.offsetPx.roundToInt()) }
+                .pocketCardSharedElement(cardIndex)
+                .draggable(
+                    orientation = Orientation.Vertical,
+                    enabled = pageAtTop,
+                    state = rememberDraggableState(closeDrag::drag),
+                    onDragStarted = { closeDrag.beginDrag() },
+                    onDragStopped = { closeDrag.release(onBack) }
+                ),
+            card = card,
+            isExpanded = true
+        )
+
+        VerticalSpacer { mediumIncreased }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .pocketContentSlide()
+                .graphicsLayer {
+                    translationY = closeDrag.offsetPx
+                    alpha = 1f - closeDrag.progress
+                    renderEffect = blurEffect(closeDrag.blurSigma, density)
+                }
+        ) {
+            AnimatedContent(
+                targetState = state.balanceRestore,
+                contentKey = { it::class.simpleName }
+            ) { balanceRestoreState ->
+                when (balanceRestoreState) {
+                    BalanceRestoreUiState.NotDetermined -> Unit
+
+                    is BalanceRestoreUiState.SendCash -> SendCashActions(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Min),
+                        canGetCash = balanceRestoreState.canGetCash,
+                        onGetCashClick = onGetCashClick,
+                        onSendClick = onSendClick
+                    )
+
+                    is BalanceRestoreUiState.Restore -> {
+                        var isDoneUpdatingVisible by remember { mutableStateOf(false) }
+                        var isWhyVisible by remember { mutableStateOf(false) }
+
+                        BalanceRestoredWidget(
+                            modifier = Modifier.fillMaxWidth(),
+                            isInProgress = balanceRestoreState.inProgress,
+                            onWhyClick = { isWhyVisible = true },
+                            onCloseClick = { isDoneUpdatingVisible = true },
+                            onUpdateClick = onBackupUpdateClick
+                        )
+
+                        DoneUpdatingBottomSheet(
+                            isVisible = isDoneUpdatingVisible,
+                            onDismissRequest = { isDoneUpdatingVisible = false },
+                            onConfirm = onBackupCloseClick
+                        )
+
+                        WhyUpdateBottomSheet(
+                            isVisible = isWhyVisible,
+                            onDismissRequest = { isWhyVisible = false }
+                        )
+                    }
+                }
+            }
+
+            if (fundingActivity.inFlight.isNotEmpty() || fundingActivity.completed.isNotEmpty()) {
+                PolkadotTextButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    text = stringResource(RCommon.string.funding_history_title),
+                    onClick = onHistoryClick
                 )
             }
 
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .reportsScrollToStatusBar(listState),
-                state = listState,
-                contentPadding = PaddingValues(
-                    start = PolkadotTheme.spacings.mediumIncreased,
-                    end = PolkadotTheme.spacings.mediumIncreased,
-                    top = PolkadotTheme.spacings.mediumIncreased,
-                    bottom = navigationInsets.calculateBottomPadding() + PolkadotTheme.spacings.mediumIncreased,
-                ),
-            ) {
-                item(key = CARD_KEY) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(CardSizes.HEIGHT)
-                            .onGloballyPositioned { coordinates ->
-                                if (listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0) {
-                                    cardRest = Rect(coordinates.positionInRoot() - pageOrigin, coordinates.size.toSize())
-                                }
-                            }
-                    )
-                }
+            coinageLoadingState.onLoaded { coinageState ->
+                VerticalSpacer { mediumIncreased }
 
-                item(key = ACTIONS_KEY) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .pocketContentSlide()
-                            .padding(top = PolkadotTheme.spacings.small)
-                    ) {
-                        AnimatedContent(
-                            modifier = Modifier.zIndex(1f),
-                            targetState = state.balanceRestore,
-                            contentKey = { it::class.simpleName }
-                        ) { balanceRestoreState ->
-                            when (balanceRestoreState) {
-                                BalanceRestoreUiState.NotDetermined -> Unit
-
-                                is BalanceRestoreUiState.SendCash -> SendCashActions(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(ACTION_TILE_HEIGHT),
-                                    canGetCash = balanceRestoreState.canGetCash,
-                                    onGetCashClick = onGetCashClick,
-                                    onSendClick = onSendClick
-                                )
-
-                                is BalanceRestoreUiState.Restore -> {
-                                    var isDoneUpdatingVisible by remember { mutableStateOf(false) }
-                                    var isWhyVisible by remember { mutableStateOf(false) }
-
-                                    BalanceRestoredWidget(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        isInProgress = balanceRestoreState.inProgress,
-                                        onWhyClick = { isWhyVisible = true },
-                                        onCloseClick = { isDoneUpdatingVisible = true },
-                                        onUpdateClick = onBackupUpdateClick
-                                    )
-
-                                    DoneUpdatingBottomSheet(
-                                        isVisible = isDoneUpdatingVisible,
-                                        onDismissRequest = { isDoneUpdatingVisible = false },
-                                        onConfirm = onBackupCloseClick
-                                    )
-
-                                    WhyUpdateBottomSheet(
-                                        isVisible = isWhyVisible,
-                                        onDismissRequest = { isWhyVisible = false }
-                                    )
-                                }
-                            }
-                        }
-
-                        // The Total panel tucks under the tiles, which are drawn over it.
-                        coinageLoadingState.onLoaded { coinageState ->
-                            CoinageCardContent(
-                                modifier = Modifier
-                                    .offset(y = -TOTAL_TUCK)
-                                    .padding(horizontal = TOTAL_INSET),
-                                state = coinageState,
-                                onAutoFundClick = onAutoFundClick,
-                                onCoinTapped = onCoinTapped,
-                                onCoinsFlickedDown = onCoinsFlickedDown,
-                                onHeadingClicked = onHeadingClicked,
-                                onShareLogsClick = onShareLogsClick,
-                                onTestDataSelected = onTestDataSelected,
-                                onCoinSetSelected = onCoinSetSelected
-                            )
-                        }
-
-                        VerticalSpacer { large }
-                    }
-                }
+                CoinageCardContent(
+                    state = coinageState,
+                    onAutoFundClick = onAutoFundClick,
+                    onCoinTapped = onCoinTapped,
+                    onCoinsFlickedDown = onCoinsFlickedDown,
+                    onHeadingClicked = onHeadingClicked,
+                    onShareLogsClick = onShareLogsClick,
+                    onTestDataSelected = onTestDataSelected,
+                    onCoinSetSelected = onCoinSetSelected
+                )
             }
         }
-
-        if (collapse >= 1f) {
-            StickyBalanceBar(
-                modifier = Modifier.offset { IntOffset(0, topBarBounds.bottom.toInt()) },
-                currentBalance = (coinageLoadingState as? LoadingState.Loaded)?.data?.tokensState?.totalBalance
-            )
-        }
-
-        if (cardRest != Rect.Zero) {
-            CashCardFace(
-                modifier = Modifier
-                    .offset {
-                        val (x, y) = PocketCollapse.offset(
-                            progress = collapse,
-                            restX = cardRest.left,
-                            restY = cardRest.top - minOf(listState.scrolledPx(), collapseRangePx),
-                            dockCenterX = topBarBounds.center.x,
-                            dockCenterY = topBarBounds.center.y,
-                            width = cardRest.width,
-                            height = cardRest.height
-                        )
-                        IntOffset(x.roundToInt(), y.roundToInt())
-                    }
-                    .width(with(density) { cardRest.width.toDp() })
-                    .pocketCardSharedElement(cardIndex)
-                    .graphicsLayer {
-                        transformOrigin = TransformOrigin(0f, 0f)
-                        scaleX = PocketCollapse.scale(collapse)
-                        scaleY = scaleX
-                    },
-                card = card,
-                isExpanded = true,
-                balanceAlpha = { PocketCollapse.balanceAlpha(collapse) }
-            )
-        }
     }
 }
-
-/** Under the header once the card has scrolled away. */
-@Composable
-private fun StickyBalanceBar(modifier: Modifier = Modifier, currentBalance: TokenAmountModel?) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(PolkadotTheme.colors.bg.surface.main)
-            .height(STICKY_BAR_HEIGHT)
-            .padding(horizontal = PolkadotTheme.spacings.large),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        NovaText(
-            modifier = Modifier.weight(1f),
-            text = stringResource(RCommon.string.pocket_current_balance),
-            style = PolkadotTheme.typography.title.small,
-            color = PolkadotTheme.colors.fg.primary,
-            maxLines = 1,
-        )
-        if (currentBalance != null) {
-            NovaText(
-                text = LocalTokenAmountFormatter.current.formatFiatSigned(currentBalance, withSymbol = true),
-                style = PolkadotTheme.typography.title.small,
-                color = PolkadotTheme.colors.fg.primary,
-                maxLines = 1,
-            )
-        }
-    }
-}
-
-private const val CARD_KEY = "card"
-private const val ACTIONS_KEY = "actions"
-private val ACTION_TILE_HEIGHT = 96.dp
-private val TOTAL_TUCK = 8.dp
-private val TOTAL_INSET = 3.dp
-private val STICKY_BAR_HEIGHT = 49.dp
-
-/** How far the list has scrolled from its top, saturating once the card has left it. */
-private fun LazyListState.scrolledPx(): Float =
-    if (firstVisibleItemIndex > 0) Float.MAX_VALUE else firstVisibleItemScrollOffset.toFloat()
 
 @Composable
 private fun SendCashActions(
@@ -441,18 +330,21 @@ private fun CashActionButton(
 @Preview
 @Composable
 private fun DigitalDollarCardDetailsPreview() {
+    val card = PocketCardUiModel.DigitalDollar(
+        amounts = LoadingState.Loaded(
+            PocketCardUiModel.DigitalDollar.Amounts(TokenAmountModel.mock, TokenAmountModel.mock)
+        ),
+        syncInProgress = false,
+    )
+
     PolkadotTheme {
         CompositionLocalProvider(
             LocalTokenAmountFormatter provides TokenAmountFormatter.mocked,
-            LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
+            LocalPaymentAssetBrand provides PaymentAssetBrand.mocked,
+            LocalPocketScreenTransition provides updateTransition(PocketScreenState.CardDetails(card), label = "preview")
         ) {
             DigitalDollarCardDetailsContent(
-                card = PocketCardUiModel.DigitalDollar(
-                    amounts = LoadingState.Loaded(
-                        PocketCardUiModel.DigitalDollar.Amounts(TokenAmountModel.mock, TokenAmountModel.mock)
-                    ),
-                    syncInProgress = false,
-                ),
+                card = card,
                 onBack = {},
                 cardIndex = 0,
                 coinageLoadingState = LoadingState.Loaded(

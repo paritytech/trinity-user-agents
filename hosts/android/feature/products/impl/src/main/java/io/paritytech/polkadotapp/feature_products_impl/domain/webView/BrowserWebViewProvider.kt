@@ -22,9 +22,9 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsContentLoader
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
+import io.paritytech.polkadotapp.feature_products_impl.data.bundled.ProductContents
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.firstPartyOrigin
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.fixedProductId
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.CallingProductIdProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.PageLifecycleSource
@@ -54,7 +54,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     private val dotNsResolver: DotNsResolver,
     private val dotNsTldProvider: DotNsTldProvider,
     private val servingHostResolver: ProductServingHostResolver,
-    bundledProducts: BundledProducts,
+    productContents: ProductContents,
     dispatchers: CoroutineDispatchers,
     @Assisted("initialUrl") private val initialUrl: String,
     @Assisted private val navigationPolicy: NavigationPolicy,
@@ -92,9 +92,7 @@ class BrowserWebViewProvider @AssistedInject constructor(
     // exposes its download/unpack progress for the host UI to render.
     private val contentLoader = DotNsContentLoader(dotNsResolver)
 
-    private val bundledContent = (source as? ProductSource.Bundled)?.let {
-        BundledProductContent.app(it.entry, bundledProducts, frameEmbeddingResponseHeaders(allowIframes))
-    }
+    private val ownContent = productContents.app(source, frameEmbeddingResponseHeaders(allowIframes))
 
     // No dotNS load reports progress for a bundled or dev server page, so its own load does.
     private val servedPageProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Idle)
@@ -197,13 +195,13 @@ class BrowserWebViewProvider @AssistedInject constructor(
             request: WebResourceRequest,
         ): WebResourceResponse? {
             return permissionClient.shouldInterceptRequest(view, request)
-                ?: bundledContent?.intercept(request)
+                ?: ownContent?.intercept(request)
                 ?: innerClient.shouldInterceptRequest(view, request)
         }
 
         override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
-            // The bundled product's own pages are served by the interception above.
-            if (bundledContent?.serves(request?.url?.host) == true) return false
+            // Pages the app serves itself are answered by the interception above.
+            if (ownContent?.serves(request?.url?.host) == true) return false
             return innerClient.shouldOverrideUrlLoading(view, request)
         }
 

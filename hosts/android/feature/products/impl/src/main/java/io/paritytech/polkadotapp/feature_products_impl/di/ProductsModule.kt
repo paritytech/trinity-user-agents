@@ -145,6 +145,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealT
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIFundingRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostFunding
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSessionPresenter
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -404,6 +406,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindHostFunding(impl: TrUAPIHostFunding): HostFunding
+
+    @Binds
+    fun bindFundingSessionScreens(impl: FundingSessionPresenter): FundingSessionScreens
 
     @Binds
     fun bindFundingProvidersConfig(impl: RemoteConfigFundingProvidersConfig): FundingProvidersConfig

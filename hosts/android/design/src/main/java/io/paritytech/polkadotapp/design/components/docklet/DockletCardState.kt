@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.design.components.docklet
 
+import android.animation.ValueAnimator
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.LinearEasing
@@ -17,9 +18,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.util.lerp
-import io.paritytech.polkadotapp.design.utils.systemAnimationsEnabled
-import kotlin.math.abs
-import kotlin.time.Duration
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -27,6 +25,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
+import kotlin.time.Duration
 
 enum class DockletMotionMode { Morph, CrossFade }
 
@@ -268,7 +268,7 @@ fun rememberDockletCardState(): DockletCardState {
 }
 
 internal fun systemMotionMode() =
-    if (systemAnimationsEnabled()) DockletMotionMode.Morph else DockletMotionMode.CrossFade
+    if (ValueAnimator.areAnimatorsEnabled()) DockletMotionMode.Morph else DockletMotionMode.CrossFade
 
 internal fun dockletIconSize(progress: Float): Dp = lerp(RestIconSize, OpenIconSize, progress)
 

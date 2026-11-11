@@ -43,7 +43,7 @@ class TrUAPIHostFundingTest {
     }
     private val funding = TrUAPIHostFunding(
         runtime = runtime,
-        sessionPresenter = mockk(),
+        sessionScreens = mockk(),
         enabled = true,
     )
 
@@ -159,7 +159,7 @@ class TrUAPIHostFundingTest {
 
     @Test
     fun `a build without funding answers no activity and leaves the core alone`() = runBlocking<Unit> {
-        val off = TrUAPIHostFunding(runtime = runtime, sessionPresenter = mockk(), enabled = false)
+        val off = TrUAPIHostFunding(runtime = runtime, sessionScreens = mockk(), enabled = false)
 
         val activity = off.observeActivity().first()
 

@@ -1,8 +1,9 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.funding
+package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.AppFundingOverlay
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -18,12 +19,12 @@ class FundingSessionPresenter @Inject constructor(
     private val runtime: FundingRuntime,
     private val router: ProductsRouter,
     dispatchers: CoroutineDispatchers,
-) {
+) : FundingSessionScreens {
     // Outlives the sheet that asks for a new session, which closes before the overlay for it opens.
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
 
     /** A session the core still holds reopens where it stands; one it has dropped opens its detail from the history. */
-    suspend fun show(intent: String) {
+    override suspend fun show(intent: String) {
         if (!overlay.reopen(intent)) router.openFundingEnded(intent)
     }
 

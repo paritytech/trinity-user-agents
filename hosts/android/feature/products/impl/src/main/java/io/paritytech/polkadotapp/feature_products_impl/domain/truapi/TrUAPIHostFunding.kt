@@ -10,7 +10,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDire
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionPresenter
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.toActivityStatus
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -30,12 +30,12 @@ import uniffi.truapi.FundingDirection as CoreFundingDirection
 /** The host's funding entry points over the core, which holds the sessions and their history. */
 class TrUAPIHostFunding internal constructor(
     private val runtime: FundingRuntime,
-    private val sessionPresenter: FundingSessionPresenter,
+    private val sessionScreens: FundingSessionScreens,
     private val enabled: Boolean,
 ) : HostFunding {
     @Inject
-    constructor(runtime: FundingRuntime, sessionPresenter: FundingSessionPresenter) :
-        this(runtime, sessionPresenter, FeatureOption.FUNDING.isEnabled)
+    constructor(runtime: FundingRuntime, sessionScreens: FundingSessionScreens) :
+        this(runtime, sessionScreens, FeatureOption.FUNDING.isEnabled)
 
     override suspend fun openFunding(direction: FundingDirection, amount: Balance?): Result<String?> =
         runtime.openFunding(direction.toCore(), amount?.toU128())
@@ -52,7 +52,7 @@ class TrUAPIHostFunding internal constructor(
         intents.forEach { runtime.acknowledge(it).logFailure("Funding acknowledgement failed") }
     }
 
-    override suspend fun showSession(intent: String) = sessionPresenter.show(intent)
+    override suspend fun showSession(intent: String) = sessionScreens.show(intent)
 }
 
 /** In flight while its status says so, newest opened first; history leaves those out, newest ended first. */
