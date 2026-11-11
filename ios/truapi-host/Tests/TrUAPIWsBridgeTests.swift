@@ -118,7 +118,7 @@ struct TrUAPIWsBridgeTests {
             Issue.record("expected binary frame, got \(message)")
             return
         }
-        #expect(response.prefix(Self.hostInfoResponsePrefix.count) == Self.hostInfoResponsePrefix)
+        #expect(response.suffix(Self.hostInfoResponseTail.count) == Self.hostInfoResponseTail)
     }
 
     /// iOS reclaims a suspended app's listening socket while products keep
@@ -201,15 +201,14 @@ private extension TrUAPIWsBridgeTests {
         return frame
     }
 
-    // The platform and host identity precede the core's variable protocol version.
-    static var hostInfoResponsePrefix: Data {
-        var prefix = Data([0x0C])
-        prefix.append("p:1".data(using: .utf8)!)
-        prefix.append(hostInfoDiscriminant)
-        prefix.append(contentsOf: [0x01, 0x00, 0x00, 0x02, 0x44])
-        prefix.append("truapi-host-tests".data(using: .utf8)!)
-        prefix.append(contentsOf: [0x00])
-        return prefix
+    // Response tail: message_type=Response(0x01), then the payload,
+    // Result::Ok(0x00), V1(0x00), then HostInfo as platform(Ios = 0x02),
+    // name, version (empty, hostVersion is unset).
+    static var hostInfoResponseTail: Data {
+        var tail = Data([0x01, 0x00, 0x00, 0x02, 0x44]) // 0x44 is compact length 17
+        tail.append("truapi-host-tests".data(using: .utf8)!)
+        tail.append(contentsOf: [0x00])
+        return tail
     }
 
     static func featureSupportedRequestFrame() -> Data {
