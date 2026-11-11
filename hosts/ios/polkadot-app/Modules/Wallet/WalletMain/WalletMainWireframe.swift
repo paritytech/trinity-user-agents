@@ -21,7 +21,7 @@ final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
         let viewModel = assetDetailsScene.viewModel
         moduleNavigator.openWallet { wallet, wasOnScreen in
             let origin = wallet.viewControllers.first as? PocketOrigin
-            let screen = AssetDetailsScreenViewController(viewModel: viewModel, origin: origin, cash: .current)
+            let screen = AssetDetailsScreenViewController(viewModel: viewModel, origin: origin)
             PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {}
         }
     }

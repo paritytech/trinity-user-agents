@@ -76,8 +76,7 @@ struct WalletView: View {
             },
             // The open flight clears the Pocket on its first frame, so the face switches as the card lifts.
             // The close flight restores the Pocket as it starts, so the card turns back before it flies home.
-            showsOpenedFace: viewModel.openItem == .balance && viewModel.isPocketCleared,
-            cash: .current
+            showsOpenedFace: viewModel.openItem == .balance && viewModel.isPocketCleared
         )
         .matchedGeometryEffect(id: "asset", in: cardNamespace)
     }

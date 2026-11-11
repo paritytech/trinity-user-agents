@@ -157,7 +157,7 @@ extension FundingActivityCenter {
         known: [String: Date],
         now: Date
     ) -> [String: Date] {
-        var result = known.filter { now.timeIntervalSince($0.value) < PurseMotion.Arrival.window }
+        var result = known.filter { now.timeIntervalSince($0.value) < FundingActivityTiming.Arrival.window }
         for id in Set(before).subtracting(after) {
             result[id] = now
         }
@@ -166,6 +166,6 @@ extension FundingActivityCenter {
 
     /// Whether the row for `id` arrives with its completion now.
     func isArriving(_ id: String, now: Date = Date()) -> Bool {
-        justFinished[id].map { now.timeIntervalSince($0) < PurseMotion.Arrival.window } ?? false
+        justFinished[id].map { now.timeIntervalSince($0) < FundingActivityTiming.Arrival.window } ?? false
     }
 }
