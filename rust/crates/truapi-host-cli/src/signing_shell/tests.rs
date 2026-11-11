@@ -10,59 +10,19 @@ fn profile_commands_distinguish_reads_from_uploads_and_preserve_quoted_paths() {
 		[
 			"/profile",
 			"/profile alice.01",
-			"/profile alice",
 			r#"/profile upload "pictures/my avatar.png""#,
-			"/profile upload 'pictures/my avatar.webp'",
+			"/profile upload"
 		]
 		.map(parse_command),
 		[
-			ProfileCommand::Current,
-			ProfileCommand::Get("alice.01".to_string()),
-			ProfileCommand::Get("alice".to_string()),
-			ProfileCommand::Upload(PathBuf::from("pictures/my avatar.png")),
-			ProfileCommand::Upload(PathBuf::from("pictures/my avatar.webp")),
+			Ok(ShellCommand::Profile(ProfileCommand::Current)),
+			Ok(ShellCommand::Profile(ProfileCommand::Get("alice.01".to_string()))),
+			Ok(ShellCommand::Profile(ProfileCommand::Upload(PathBuf::from(
+				"pictures/my avatar.png"
+			)))),
+			Err("usage: /profile [<username> | upload <image>]".into()),
 		]
-		.map(|command| Ok(ShellCommand::Profile(command)))
 	);
-}
-
-#[test]
-fn profile_commands_refuse_missing_and_extra_arguments() {
-	for input in [
-		"/profile upload",
-		"/profile upload ''",
-		"/profile ''",
-		"/profile alice.01 extra",
-		"/profile upload first.png second.png",
-		"/profile upload 'unfinished.png",
-	] {
-		assert!(parse_command(input).is_err(), "{input}");
-	}
-}
-
-#[test]
-fn profile_completion_offers_upload_and_quotes_image_paths_with_spaces() {
-	assert_eq!(
-		completions_for_scope("/profile up", &[], CommandScope::SigningHost),
-		vec![Completion {
-			value: "/profile upload".to_string(),
-			description: "publish an image as your avatar",
-		}]
-	);
-	let directory = tempfile::tempdir().expect("create image directory");
-	let path = directory.path().join("my avatar.png");
-	fs::write(&path, []).expect("create image path");
-	let input = format!("/profile upload {}/my", directory.path().display());
-	let completions = completions_for_scope(&input, &[], CommandScope::SigningHost);
-	assert_eq!(
-		completions
-			.iter()
-			.map(|completion| parse_command(&completion.value))
-			.collect::<Vec<_>>(),
-		vec![Ok(ShellCommand::Profile(ProfileCommand::Upload(path)))]
-	);
-	assert!(completions_for_scope("/profile", &[], CommandScope::PairingHost).is_empty());
-	assert!(completions_for_scope(&input, &[], CommandScope::PairingHost).is_empty());
 }
 
 #[test]

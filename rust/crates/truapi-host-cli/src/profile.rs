@@ -11,9 +11,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
-use base64::{Engine, engine::general_purpose::STANDARD};
 use image::ImageReader;
-use parity_scale_codec::Encode;
 use subxt::utils::WrapperKeepOpaque;
 use truapi::{
 	ImageFormat, MAX_IMAGE_BYTES, ProfileAvatar, ProfileEntry, ProfileRecord, PublicProfile,
@@ -113,11 +111,7 @@ async fn publish_avatar(
 	};
 	let key = preimage_key(&bytes);
 	let record = with_avatar(record, ProfileAvatar { cid: key.into(), format });
-	let text = STANDARD.encode(record.encode());
-	ensure!(
-		ProfileRecord::from_text(&text).as_ref() == Some(&record),
-		"profile record is too large for readers to decode"
-	);
+	let text = record.to_text().context("profile record is too large for readers to decode")?;
 	let prepared = backend.prepare(&text).await?;
 	ensure!(backend.upload(bytes).await? == key, "uploaded avatar key does not match its bytes");
 	ensure!(

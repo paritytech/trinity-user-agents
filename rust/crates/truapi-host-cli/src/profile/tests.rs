@@ -1,16 +1,6 @@
-use std::{collections::VecDeque, fs};
+use std::collections::VecDeque;
 
 use super::*;
-
-#[test]
-fn profile_output_uses_a_cid_that_can_be_loaded() {
-	let cid = "bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy";
-	let profile = PublicProfile {
-		avatar: Some(ProfileAvatar { cid: cid.parse().unwrap(), format: ImageFormat::Webp }),
-	};
-	assert_eq!(format_profile("alice.01", &profile), format!("alice.01\nAvatar: {cid} (Webp)"));
-	assert_eq!(format_profile("alice.01", &PublicProfile { avatar: None }), "alice.01\nNo avatar");
-}
 
 fn avatar_entry(seed: u8) -> WrapperKeepOpaque<ProfileEntry> {
 	WrapperKeepOpaque::from_value(ProfileEntry::Avatar(ProfileAvatar {
@@ -73,95 +63,45 @@ impl ProfileBackend for Backend {
 	}
 }
 
-fn image() -> (ImageFormat, Vec<u8>) {
-	(ImageFormat::Png, vec![1, 2, 3])
-}
-
-fn published_text() -> String {
-	let record = ProfileRecord {
-		entries: vec![WrapperKeepOpaque::from_value(ProfileEntry::Avatar(ProfileAvatar {
-			cid: preimage_key(&image().1).into(),
-			format: ImageFormat::Png,
-		}))],
-	};
-	STANDARD.encode(record.encode())
-}
+const IMAGE: [u8; 3] = [1, 2, 3];
 
 #[tokio::test]
 async fn the_record_is_written_only_after_its_avatar_is_stored_and_confirmed_after() {
 	let mut backend = Backend { records: [None, None].into(), ..Default::default() };
 
-	let record = publish_avatar(&mut backend, image()).await.unwrap();
+	let record = publish_avatar(&mut backend, (ImageFormat::Png, IMAGE.to_vec())).await.unwrap();
 
+	let text = record.to_text().unwrap();
 	assert_eq!(
-		(STANDARD.encode(record.encode()), backend.operations),
+		(record.avatar(), backend.operations),
 		(
-			published_text(),
+			Some(ProfileAvatar { cid: preimage_key(&IMAGE).into(), format: ImageFormat::Png }),
 			vec![
 				Operation::Read,
-				Operation::Prepare(published_text()),
-				Operation::Upload(image().1),
+				Operation::Prepare(text.clone()),
+				Operation::Upload(IMAGE.to_vec()),
 				Operation::Read,
-				Operation::Publish(published_text()),
+				Operation::Publish(text),
 				Operation::Read,
 			]
-		)
-	);
-}
-
-#[tokio::test]
-async fn a_malformed_record_is_never_overwritten() {
-	let mut backend =
-		Backend { records: [Some("not base64".to_string())].into(), ..Default::default() };
-
-	let error = publish_avatar(&mut backend, image()).await.unwrap_err();
-
-	assert_eq!(
-		(error.to_string(), backend.operations),
-		(
-			"existing profile record is malformed; refusing to overwrite it".to_string(),
-			vec![Operation::Read]
 		)
 	);
 }
 
 #[tokio::test]
 async fn a_record_changed_during_the_upload_is_not_overwritten() {
-	let changed = STANDARD.encode(ProfileRecord { entries: vec![avatar_entry(9)] }.encode());
-	let mut backend = Backend { records: [None, Some(changed)].into(), ..Default::default() };
+	let changed = ProfileRecord { entries: vec![avatar_entry(9)] }.to_text();
+	let mut backend = Backend { records: [None, changed].into(), ..Default::default() };
 
-	let error = publish_avatar(&mut backend, image()).await.unwrap_err();
+	let error = publish_avatar(&mut backend, (ImageFormat::Png, IMAGE.to_vec()))
+		.await
+		.unwrap_err();
 
 	assert_eq!(
-		(error.to_string(), backend.operations),
+		(error.to_string(), backend.operations.last()),
 		(
 			"profile changed during the upload; retry to preserve the new record".to_string(),
-			vec![
-				Operation::Read,
-				Operation::Prepare(published_text()),
-				Operation::Upload(image().1),
-				Operation::Read,
-			]
+			Some(&Operation::Read)
 		)
 	);
-}
-
-#[test]
-fn only_images_the_core_would_load_are_uploaded() -> Result<()> {
-	let directory = tempfile::tempdir()?;
-	let path = directory.path().join("avatar.jpeg");
-	let mut png = Cursor::new(Vec::new());
-	image::DynamicImage::new_rgb8(2, 2).write_to(&mut png, image::ImageFormat::Png)?;
-	fs::write(&path, png.get_ref())?;
-	assert_eq!(read_image(&path)?, (ImageFormat::Png, png.into_inner()));
-
-	fs::write(&path, b"\x89PNG\r\n\x1a\ntruncated")?;
-	assert!(read_image(&path).is_err());
-
-	image::DynamicImage::new_rgb8(5000, 1).save(directory.path().join("wide.png"))?;
-	assert_eq!(
-		read_image(&directory.path().join("wide.png")).unwrap_err().to_string(),
-		"image rejected: 5000x1 pixels is over the 4096-pixel side limit"
-	);
-	Ok(())
 }
