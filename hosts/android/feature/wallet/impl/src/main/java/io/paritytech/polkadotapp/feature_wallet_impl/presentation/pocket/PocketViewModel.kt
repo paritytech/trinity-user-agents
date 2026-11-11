@@ -268,7 +268,9 @@ class PocketViewModel @Inject constructor(
         if (collectiblesShown.value) return
 
         // First, before anything moves, so the page can time its load from the tap itself.
-        if (card is PocketCardUiModel.ProductCard) interactor.cardTapped(card.key)
+        if (card is PocketCardUiModel.ProductCard) {
+            interactor.cardTapped(card.key, reused = expandedProduct.holds(card.key.launchUrl(pageQuery)))
+        }
         select(card, pageQuery)
     }
 

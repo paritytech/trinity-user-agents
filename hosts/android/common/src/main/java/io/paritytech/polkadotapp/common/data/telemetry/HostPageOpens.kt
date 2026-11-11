@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.common.data.telemetry
 
+import io.paritytech.polkadotapp.common.utils.logFailure
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -10,18 +12,35 @@ enum class HostOpenSource(val tag: String) {
     DEEPLINK("deeplink"),
 }
 
-/** One ask to open a product page. [epochMs] is read where the user asked, before any hop. */
-data class HostPageOpen(val source: HostOpenSource, val epochMs: Long = System.currentTimeMillis())
+/**
+ * One ask to open a product page. [epochMs] is read where the user asked, before any hop.
+ * [sessionId] is minted with it: the host session that takes this ask adopts it.
+ */
+data class HostPageOpen(
+    val source: HostOpenSource,
+    val epochMs: Long = System.currentTimeMillis(),
+    val sessionId: String = UUID.randomUUID().toString(),
+)
 
-/** Holds the latest ask until the page it opens takes it, so the page can time itself from the tap. */
+/**
+ * Holds the latest ask until the page it opens takes it, so the page can time itself from the tap.
+ * Reports each ask as `host.pocket.opened` when it is held.
+ */
 @Singleton
-class HostPageOpens @Inject constructor() {
+class HostPageOpens @Inject constructor(
+    private val originProvider: HostEventOriginProvider,
+    private val capture: HostEventCapture,
+) {
     private class Held(val productId: String, val open: HostPageOpen)
 
     private val held = AtomicReference<Held?>(null)
 
-    fun hold(productId: String, open: HostPageOpen) {
+    /** [reused] when the page asked for is already open, so no session will start for it and adopt the ask's id. */
+    fun hold(productId: String, open: HostPageOpen, reused: Boolean = false) {
         held.set(Held(productId, open))
+        runCatching {
+            capture.capture { originProvider.current().pocketOpened(open, reused) }
+        }.logFailure("Failed to capture native host Pocket open event")
     }
 
     /** Drops the ask held for [productId], when the page it was for reuses a session and no new one will take it. */

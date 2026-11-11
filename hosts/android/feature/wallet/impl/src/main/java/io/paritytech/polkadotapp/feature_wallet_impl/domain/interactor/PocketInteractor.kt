@@ -58,8 +58,9 @@ class PocketInteractor @Inject constructor(
 
     fun observeProductCards(): Flow<List<PocketCard>> = pocketCollection.observeCards()
 
-    /** Holds the tap, so the page opened for [key] can report when it was asked for. */
-    fun cardTapped(key: PocketCardKey) = pageOpens.hold(key.productId.value, HostPageOpen(HostOpenSource.POCKET_CARD))
+    /** Holds the tap, so the page opened for [key] can report when it was asked for; [reused] if that page is already open. */
+    fun cardTapped(key: PocketCardKey, reused: Boolean) =
+        pageOpens.hold(key.productId.value, HostPageOpen(HostOpenSource.POCKET_CARD), reused)
 
     /** Drops the held tap when the card's product is shown from a session already running: no page will take it. */
     fun openReused(key: PocketCardKey) = pageOpens.discard(key.productId.value)

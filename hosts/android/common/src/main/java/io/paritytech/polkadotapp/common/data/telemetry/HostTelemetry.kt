@@ -48,6 +48,16 @@ fun HostEventOrigin.productNotificationTapped(productId: String) = HostEvent(
     extras = baseExtras(),
 )
 
+fun HostEventOrigin.pocketOpened(open: HostPageOpen, reused: Boolean) = HostEvent(
+    name = "host.pocket.opened",
+    tags = baseTags() + mapOf(
+        "open.source" to open.source.tag,
+        "host.session_id" to open.sessionId,
+        "open.reused" to reused.toString(),
+    ),
+    extras = baseExtras(),
+)
+
 enum class HostLoadStage(val tag: String) {
     /** The page's own session: runtime, execution, WebView, first load. */
     PAGE("page"),

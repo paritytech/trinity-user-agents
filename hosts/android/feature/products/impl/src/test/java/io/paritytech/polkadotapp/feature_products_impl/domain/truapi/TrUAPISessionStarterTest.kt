@@ -52,7 +52,7 @@ class TrUAPISessionStarterTest {
     private val reportedSessionId = slot<String>()
     private val origin = HostEventOrigin("debug", "gp", "1.2.3", "android", "15", 123L)
     private val events = mutableListOf<HostEvent>()
-    private val pageOpens = HostPageOpens()
+    private val pageOpens = HostPageOpens({ origin }, { events += it() })
     private val webViewSetups = mutableListOf<(WebView) -> Unit>()
 
     private val starter = TrUAPISessionStarter(
@@ -100,6 +100,27 @@ class TrUAPISessionStarterTest {
         }
 
         assertEquals(listOf(tap, null), installerOpens)
+    }
+
+    @Test
+    fun `the session adopts the id minted at the tap and shows it to the product`() = runBlocking<Unit> {
+        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = System.currentTimeMillis())
+        pageOpens.hold(PRODUCT_ID.value, tap)
+
+        startPage()
+        yield()
+        invokeTelemetrySetupTwice()
+
+        assertEquals(tap.sessionId, installerSessionId.captured)
+        assertEquals(tap.sessionId, reportedSessionId.captured)
+    }
+
+    @Test
+    fun `a session with no held open mints its own id`() = runBlocking<Unit> {
+        startPage()
+        yield()
+
+        assertTrue(installerSessionId.captured.isNotEmpty())
     }
 
     @Test

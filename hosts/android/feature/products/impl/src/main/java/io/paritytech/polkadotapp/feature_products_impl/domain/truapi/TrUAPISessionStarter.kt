@@ -72,8 +72,9 @@ class TrUAPISessionStarter @Inject constructor(
             }
         }
 
-        val hostSessionId = UUID.randomUUID().toString()
         val open = pageOpens.take(productId.value)
+        // The tap minted its id before this session existed; the page sees the same one.
+        val hostSessionId = open?.sessionId ?: UUID.randomUUID().toString()
         provider.addWebViewSetup { webView -> visibleProducts.track(productId, webView) }
         val runtime = runtimeProvider.runtime().getOrElse { return failed(it, productId, hostSessionId) }
         // The bootstrap publishes the loopback port and its bearer token, so it goes to the
