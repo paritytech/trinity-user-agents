@@ -171,6 +171,8 @@ hosts/android/             Android host app
 hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
 e2e/host-playground/       host-playground suite run inside the native host apps; see its README
+stacks/                    Link and signed descriptor of each Trinity stack a host build bundles;
+                           scripts/update-stacks.sh refreshes each descriptor from its link
 docs/                      Design docs, RFCs, feature proposals
 scripts/codegen.sh         Regenerate the TS client from the Rust source
 scripts/refresh-host-import.sh
@@ -467,6 +469,8 @@ A stack descriptor describes one deployment of chains and services, as
 [`trinity-stack`](rust/crates/trinity-stack) crate holds every rule a reader applies and the
 conformance vectors. The plan for it and the tools on top of it is in
 [docs/design/trinity-stack-library.md](docs/design/trinity-stack-library.md).
+
+The core takes all of its chain configuration from one stack. See [RUNTIME.md](rust/crates/truapi/RUNTIME.md#stack).
 
 ### Wire debugger
 

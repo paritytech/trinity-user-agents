@@ -10,7 +10,9 @@ rust/crates/
                          (canonical), plus the runtime hosts implement (default `runtime`
                          feature); ships as WASM (browser/node); its `platform` module
                          holds the host syscall traits (storage, navigation, consent, ...),
-                         its `chain` module builds the core's own extrinsics through
+                         its `stack` module resolves the Trinity stack the host runs, the
+                         core's only chain configuration, from the descriptor its build
+                         bundles, its `chain` module builds the core's own extrinsics through
                          `ExtrinsicService` and reads and writes contracts through
                          `EvmContractCaller` with signer-bound prepared transactions;
                          on native targets, its `durable` module follows presigned
@@ -95,6 +97,9 @@ hosts/android/             Android host app
 hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule
+stacks/                    the link and signed descriptor of each Trinity stack a host build
+                           bundles; `scripts/update-stacks.sh` refreshes each descriptor from
+                           its link
 docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate
 scripts/battery.sh         run the generated battery against both headless CLI host roles,
