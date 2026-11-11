@@ -170,6 +170,25 @@ extension SPARustRuntime: SPARuntimeProtocol {
     }
 }
 
+extension SPARustRuntime {
+    /// Sends `host.page.visible` for the first main-frame commit of this session and ignores every later one,
+    /// so a reload or an in-page navigation does not send it again.
+    func pageDidCommit(monotonicMilliseconds: Int, now: Date) {
+        guard !pageVisibleRecorded, !disposed, let createdAtMilliseconds = webViewCreatedAtMilliseconds else { return }
+
+        pageVisibleRecorded = true
+        hostEventRecorder.record(.pageVisible(
+            hostSessionID: hostSessionId,
+            origin: .current,
+            truapiHostVersion: truapiHostVersion(),
+            monotonicMilliseconds: monotonicMilliseconds,
+            webViewMilliseconds: monotonicMilliseconds - createdAtMilliseconds,
+            openTap: openTap,
+            now: now
+        ))
+    }
+}
+
 private extension SPARustRuntime {
     func prepareDotNsContent() async throws -> URL {
         let domain = configuration.productDomain
@@ -215,25 +234,8 @@ private extension SPARustRuntime {
         guard !disposed else { throw CancellationError() }
     }
 
-    /// Sends `host.page.visible` for the first main-frame commit of this session and ignores every later one,
-    /// so a reload or an in-page navigation does not send it again.
-    func pageDidCommit(monotonicMilliseconds: Int, now: Date) {
-        guard !pageVisibleRecorded, !disposed, let createdAtMilliseconds = webViewCreatedAtMilliseconds else { return }
-
-        pageVisibleRecorded = true
-        hostEventRecorder.record(.pageVisible(
-            hostSessionID: hostSessionId,
-            origin: .current,
-            truapiHostVersion: truapiHostVersion(),
-            monotonicMilliseconds: monotonicMilliseconds,
-            webViewMilliseconds: monotonicMilliseconds - createdAtMilliseconds,
-            openTap: openTap,
-            now: now
-        ))
-    }
-
     /// The clock is read where the commit happens, before the hop onto this actor.
-    private func observeFirstVisibleCommit(of engine: JSEngineProtocol) {
+    func observeFirstVisibleCommit(of engine: JSEngineProtocol) {
         guard let reporter = engine as? MainFrameCommitReporting else { return }
 
         reporter.onMainFrameCommit = { [weak self] in
