@@ -466,6 +466,7 @@ view cancels observation and image loading.
 
 iOS contacts, search results and chat views consume
 `resolvePublicProfile(username:options:)` as a finite `AsyncThrowingStream`.
+Only avatar changes trigger image requests.
 New chat headers explicitly request forced
 freshness; cells and search explicitly use the ordinary policy. All app callers
 explicitly set `skipStale` to false. A cancelled header
