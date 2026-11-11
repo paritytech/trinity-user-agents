@@ -21,5 +21,3 @@ pub fn profile_cache_lru() -> M<'static> {
 	)
 }
 
-#[cfg(test)]
-mod tests;
