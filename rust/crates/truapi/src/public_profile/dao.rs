@@ -51,20 +51,6 @@ pub fn stored_record(
 	Ok(Some(CachedRecord { record, expires_at }))
 }
 
-/// Returns fresh metadata, updating its access order without renewing freshness.
-///
-/// `now` is Unix time in seconds. Missing or undecodable rows return `None`;
-/// database failures return errors.
-pub fn fresh_record(
-	tx: &Transaction<'_>,
-	username: &str,
-	now: u64,
-) -> Result<Option<ProfileRecord>, DbError> {
-	Ok(stored_record(tx, username)?
-		.filter(|cached| cached.is_fresh(now))
-		.map(|cached| cached.record))
-}
-
 const UPSERT_RECORD: &str =
 	"INSERT INTO public_profiles (username, public_record, expires_at, access_order)
 	VALUES (:username, :public_record, :expires_at,

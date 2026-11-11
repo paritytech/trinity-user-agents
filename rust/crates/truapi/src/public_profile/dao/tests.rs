@@ -22,8 +22,8 @@ async fn store(db: &Db, username: &'static str, record: ProfileRecord, expires_a
 		.expect("row written");
 }
 
-async fn fresh(db: &Db, username: &'static str, now: u64) -> Option<ProfileRecord> {
-	db.write(move |tx| fresh_record(tx, username, now)).await.expect("row read")
+async fn stored(db: &Db, username: &'static str) -> Option<CachedRecord> {
+	db.write(move |tx| stored_record(tx, username)).await.expect("row read")
 }
 
 async fn row_count(db: &Db) -> u32 {
@@ -35,12 +35,21 @@ async fn row_count(db: &Db) -> u32 {
 }
 
 #[tokio::test]
-async fn a_record_is_served_until_it_expires() {
+async fn a_record_becomes_stale_at_its_deadline_without_being_removed() {
 	let (_dir, db) = open_temporary_core_db();
 	store(&db, "alice.01", record_with_avatar(), 200).await;
 
-	assert_eq!(fresh(&db, "alice.01", 199).await, Some(record_with_avatar()));
-	assert_eq!(fresh(&db, "alice.01", 200).await, None);
+	let before = stored(&db, "alice.01")
+		.await
+		.map(|cached| (cached.is_fresh(199), cached.record));
+	let after = stored(&db, "alice.01")
+		.await
+		.map(|cached| (cached.is_fresh(200), cached.record));
+
+	assert_eq!(
+		(before, after),
+		(Some((true, record_with_avatar())), Some((false, record_with_avatar())))
+	);
 }
 
 #[tokio::test]
@@ -48,7 +57,10 @@ async fn a_name_without_a_record_is_cached_as_an_empty_one() {
 	let (_dir, db) = open_temporary_core_db();
 	store(&db, "bob.02", ProfileRecord::default(), 200).await;
 
-	assert_eq!(fresh(&db, "bob.02", 150).await, Some(ProfileRecord::default()));
+	assert_eq!(
+		stored(&db, "bob.02").await.map(|cached| cached.record),
+		Some(ProfileRecord::default())
+	);
 }
 
 #[tokio::test]
@@ -57,10 +69,9 @@ async fn a_clock_correction_cannot_extend_a_records_lifetime() {
 	let written_at = 10_000;
 	store(&db, "alice.01", ProfileRecord::default(), written_at + RECORD_TTL_SECS).await;
 
-	assert_eq!(
-		(fresh(&db, "alice.01", written_at - 1).await, fresh(&db, "alice.01", written_at).await,),
-		(None, Some(ProfileRecord::default())),
-	);
+	let cached = stored(&db, "alice.01").await.unwrap();
+
+	assert_eq!((cached.is_fresh(written_at - 1), cached.is_fresh(written_at)), (false, true));
 }
 
 #[tokio::test]
@@ -100,11 +111,18 @@ async fn reading_a_record_protects_it_from_capacity_eviction() {
 	.await
 	.unwrap();
 
-	assert_eq!(fresh(&db, "user0", 100).await, Some(ProfileRecord::default()));
+	assert_eq!(
+		stored(&db, "user0").await.map(|cached| cached.record),
+		Some(ProfileRecord::default())
+	);
 	store(&db, "newest.01", ProfileRecord::default(), 100 + RECORD_TTL_SECS).await;
 
 	assert_eq!(
-		(fresh(&db, "user0", 100).await, fresh(&db, "user1", 100).await, row_count(&db).await),
+		(
+			stored(&db, "user0").await.map(|cached| cached.record),
+			stored(&db, "user1").await.map(|cached| cached.record),
+			row_count(&db).await
+		),
 		(Some(ProfileRecord::default()), None, MAX_ROWS),
 	);
 }

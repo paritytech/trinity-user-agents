@@ -455,8 +455,7 @@ needs `loadImage`. The Rust WASM resolver reads the chain and emits one value.
 
 The Kotlin SDK's `observePublicProfile(username, options)` returns an ordered,
 finite `Flow<PublicProfile>` with cancellation and typed terminal errors. Callers
-explicitly supply both resolution options. The one-shot
-`resolvePublicProfile(username, force)` API is deprecated.
+explicitly supply both resolution options.
 
 Android avatar views collect the profile stream for their composition's lifetime.
 Each emitted avatar becomes a Coil request whose data is the canonical

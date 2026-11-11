@@ -4,6 +4,8 @@ mod cache;
 use alloy_primitives::Address;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
+#[cfg(not(target_arch = "wasm32"))]
+use futures::{StreamExt, TryStreamExt};
 use parity_scale_codec::Encode;
 
 use super::*;
@@ -226,8 +228,11 @@ async fn a_profile_failure_retains_the_contract_error_source() {
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn a_profile_failure_retains_the_database_error_source() {
-	let profiles = PublicProfiles::new(profile_services());
-	let error = profiles.resolve("alice.01", false).await.unwrap_err();
+	let mut profiles = PublicProfiles::new(profile_services()).observe(
+		"alice.01".to_owned(),
+		PublicProfileResolutionOptions { force_fresh: false, skip_stale: false },
+	);
+	let error = profiles.next().await.unwrap().unwrap_err();
 	let source = core::error::Error::source(&error).expect("database error is retained");
 
 	assert!(matches!(source.downcast_ref::<DbError>(), Some(DbError::NotConfigured)));
@@ -273,7 +278,6 @@ fn services_with_platform(platform: Arc<StubPlatform>) -> Arc<RuntimeServices> {
 #[tokio::test]
 async fn a_cached_record_survives_an_offline_chain_until_forced() {
 	let (_directory, db) = crate::store::open_temporary_core_db();
-	let record = PublicProfile { avatar: None };
 	let now = current_unix_secs();
 	db.write(move |tx| {
 		dao::store_record(tx, "alice01", &ProfileRecord::default(), now + RECORD_TTL_SECS)
@@ -282,13 +286,24 @@ async fn a_cached_record_survives_an_offline_chain_until_forced() {
 	.unwrap();
 	let services = profile_services();
 	assert!(services.install_core_db(db));
-	let profiles = PublicProfiles::new(services);
-
-	let cached = profiles.resolve("alice01", false).await;
-	let forced = profiles.resolve("alice01", true).await;
+	let cached: Vec<_> = PublicProfiles::new(services.clone())
+		.observe(
+			"alice01".to_owned(),
+			PublicProfileResolutionOptions { force_fresh: false, skip_stale: false },
+		)
+		.try_collect()
+		.await
+		.unwrap();
+	let mut forced = PublicProfiles::new(services).observe(
+		"alice01".to_owned(),
+		PublicProfileResolutionOptions { force_fresh: true, skip_stale: false },
+	);
+	let initial = forced.next().await.unwrap().unwrap();
+	let failed = matches!(forced.next().await, Some(Err(PublicProfileError::Dotns(_))));
+	let complete = forced.next().await.is_none();
 	assert_eq!(
-		(cached.unwrap(), matches!(forced, Err(PublicProfileError::Dotns(_)))),
-		(record, true)
+		(cached, initial, failed, complete),
+		(vec![PublicProfile { avatar: None }], PublicProfile { avatar: None }, true, true)
 	);
 }
 
@@ -323,9 +338,19 @@ async fn cached_metadata_never_loads_bulletin() {
 			.unwrap();
 		assert!(services.install_core_db(db));
 
-		let profile = PublicProfiles::new(services).resolve("alice.01", false).await.unwrap();
+		let profiles: Vec<_> = PublicProfiles::new(services)
+			.observe(
+				"alice.01".to_owned(),
+				PublicProfileResolutionOptions { force_fresh: false, skip_stale: false },
+			)
+			.try_collect()
+			.await
+			.unwrap();
 
-		assert_eq!((profile, platform.chain_connects.lock().unwrap().clone()), (expected, vec![]));
+		assert_eq!(
+			(profiles, platform.chain_connects.lock().unwrap().clone()),
+			(vec![expected], vec![])
+		);
 	}
 }
 
@@ -349,7 +374,13 @@ async fn expired_and_forced_profiles_only_read_asset_hub_and_do_not_cache_errors
 			.unwrap();
 		assert!(services.install_core_db(db.clone()));
 
-		let result = PublicProfiles::new(services).resolve("alice.01", force).await;
+		let mut profiles = PublicProfiles::new(services).observe(
+			"alice.01".to_owned(),
+			PublicProfileResolutionOptions { force_fresh: force, skip_stale: false },
+		);
+		let initial = profiles.next().await.unwrap().unwrap();
+		let failed = matches!(profiles.next().await, Some(Err(PublicProfileError::Dotns(_))));
+		let complete = profiles.next().await.is_none();
 		let stored: Vec<u8> = db
 			.read(|conn| {
 				Ok(conn.query_row(
@@ -362,12 +393,8 @@ async fn expired_and_forced_profiles_only_read_asset_hub_and_do_not_cache_errors
 			.unwrap();
 
 		assert_eq!(
-			(
-				matches!(result, Err(PublicProfileError::Dotns(_))),
-				platform.chain_connects.lock().unwrap().clone(),
-				stored
-			),
-			(true, vec![[3; 32]], record.encode())
+			(initial, failed, complete, platform.chain_connects.lock().unwrap().clone(), stored),
+			(PublicProfile { avatar: record.avatar() }, true, true, vec![[3; 32]], record.encode())
 		);
 	}
 }
@@ -375,10 +402,11 @@ async fn expired_and_forced_profiles_only_read_asset_hub_and_do_not_cache_errors
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn an_invalid_username_does_not_need_storage_or_a_chain() {
-	let profiles = PublicProfiles::new(profile_services());
+	let mut profiles = PublicProfiles::new(profile_services()).observe(
+		"alice.1".to_owned(),
+		PublicProfileResolutionOptions { force_fresh: false, skip_stale: false },
+	);
 
-	assert!(matches!(
-		profiles.resolve("alice.1", false).await,
-		Err(PublicProfileError::InvalidUsername)
-	));
+	assert!(matches!(profiles.next().await, Some(Err(PublicProfileError::InvalidUsername))));
+	assert!(profiles.next().await.is_none());
 }

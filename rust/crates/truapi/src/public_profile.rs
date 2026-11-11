@@ -9,7 +9,7 @@ use std::sync::Arc;
 use alloy_primitives::B256;
 use alloy_sol_types::SolCall;
 use futures::stream;
-use tracing::{instrument, warn};
+use tracing::warn;
 
 pub use record::ProfileAvatar;
 #[cfg(test)]
@@ -219,32 +219,11 @@ impl PublicProfiles {
 		username: String,
 		_options: PublicProfileResolutionOptions,
 	) -> Subscription<PublicProfile, PublicProfileError> {
-		Subscription::new(stream::once(async move { self.resolve(&username, false).await }))
-	}
-
-	/// Resolves a profile using the native record cache.
-	///
-	/// Records are fresh for one hour; `force` bypasses that freshness policy.
-	/// Missing or malformed records are empty. Lookup and storage failures return errors.
-	#[cfg(not(target_arch = "wasm32"))]
-	#[instrument(skip_all, fields(runtime.method = "public_profile.resolve"))]
-	pub async fn resolve(
-		&self,
-		username: &str,
-		force: bool,
-	) -> Result<PublicProfile, PublicProfileError> {
-		validate_username(username)?;
-		if !force {
-			let db = self.services.core_db()?;
-			let cached_username = username.to_owned();
-			let now = current_unix_secs();
-			let cached = db.write(move |tx| dao::fresh_record(tx, &cached_username, now)).await?;
-			if let Some(record) = cached {
-				return Ok(PublicProfile { avatar: record.avatar() });
-			}
-		}
-		let record = self.refresh_record(username).await?;
-		Ok(PublicProfile { avatar: record.avatar() })
+		Subscription::new(stream::once(async move {
+			validate_username(&username)?;
+			let record = self.read_record(&username).await?;
+			Ok(PublicProfile { avatar: record.avatar() })
+		}))
 	}
 
 	#[cfg(not(target_arch = "wasm32"))]
@@ -266,22 +245,6 @@ impl PublicProfiles {
 		db.write(move |tx| dao::store_record(tx, &stored_username, &stored_record, expires_at))
 			.await?;
 		Ok(record)
-	}
-
-	/// Resolves a profile directly from the chain.
-	///
-	/// Missing or malformed records are empty. Invalid usernames and lookup failures
-	/// return errors. The refresh argument has no effect because browsers do not cache records.
-	#[cfg(target_arch = "wasm32")]
-	#[instrument(skip_all, fields(runtime.method = "public_profile.resolve"))]
-	pub async fn resolve(
-		&self,
-		username: &str,
-		_force: bool,
-	) -> Result<PublicProfile, PublicProfileError> {
-		validate_username(username)?;
-		let record = self.read_record(username).await?;
-		Ok(PublicProfile { avatar: record.avatar() })
 	}
 
 	async fn read_record(&self, username: &str) -> Result<ProfileRecord, PublicProfileError> {

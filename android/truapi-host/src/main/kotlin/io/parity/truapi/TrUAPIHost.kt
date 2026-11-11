@@ -1225,12 +1225,6 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
             }
         }.buffer(2)
 
-    /** Profile metadata without image bytes. [force] bypasses the core's one-hour cache. */
-    @Deprecated("Collect observePublicProfile(username, options) instead.")
-    @Throws(PublicProfileException::class)
-    suspend fun resolvePublicProfile(username: String, force: Boolean): PublicProfile =
-        inner.resolvePublicProfile(username, force)
-
     /**
      * The image [reference] names, read from Bulletin by the core and checked against its CID and
      * the image policy. Key a disk cache on [LoadedImage.contentKey]. Cancelling the coroutine
