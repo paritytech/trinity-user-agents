@@ -16,16 +16,17 @@ status: draft
 
 Pocket is a host surface holding a small set of **cards**, each backed by a product. The host owns the collection and
 renders every collapsed card natively from a renderer tree the product's worker streams to it. Tapping a card opens the
-product's Widget executable. A product cannot add a card by itself: a card enters Pocket when the user follows a
-Pocket-targeted deeplink and approves a host dialog showing the card as it will look. A link can also name an instance,
-which the product's worker labels for the dialog, so one card definition can back many cards. The user removes a card,
-directly or through the owning product. Three privileged cards, Humanity, Balance and Scarcity, are always present and
-removable by no one.
+product's Widget executable, and a card that declares a back can be turned over there. A product cannot add a card by
+itself: a card enters Pocket when the user follows a Pocket-targeted deeplink and approves a host dialog showing the
+card as it will look. A link can also name an instance, which the product's worker labels for the dialog, so one card
+definition can back many cards. The user removes a card, directly or through the owning product. Three privileged cards,
+Humanity, Balance and Scarcity, are always present and removable by no one.
 
 A face is drawn through the [Unified Renderer](https://github.com/paritytech/trinity-user-agents/pull/633)'s
-`PocketCard` context, or `PocketCardInstance` for an instance. The collection itself is one `Pocket` trait with three
-methods, a Pocket section in the Worker manifest, and a host-owned deeplink that names the Pocket. An opened card adds
-one `ExpandedCard` trait, through which the Widget moves the face out of the way and back.
+`PocketCard` context, or `PocketCardInstance` for an instance, and a card's back on `PocketCardBack`. The collection
+itself is one `Pocket` trait with three methods, a Pocket section in the Worker manifest, and a host-owned deeplink that
+names the Pocket. An opened card adds one `ExpandedCard` trait, through which the Widget moves the face out of the way
+and back, and turns a card with a back over.
 
 Tracking issue: [#563](https://github.com/paritytech/trinity-user-agents/issues/563).
 
@@ -49,6 +50,10 @@ host-placed card on their own and the add flow layers on top without changing th
   privileged card is always a plain card. An instance's **label** is the short text the product's worker gives it,
   naming it as the user knows it.
 - The **face** is the collapsed presentation, rendered natively from a `RendererNode` tree.
+- The **back** is an optional second face a card declares, drawn the same way and shown only by turning the opened card
+  over. The face shown otherwise is the card's front. The fixed theme, `faceShown` and `ExpandedCard::set_face_shown`
+  apply to the card whichever side is up. A turn is not a move of the face, and hiding and showing the face keeps the
+  side that was up.
 - The **expanded card** is the product's `widget` executable in a WebView.
 - The **worker** is the product's one Worker executable. It draws the faces, handles their actions, and is the only
   execution the `Pocket` trait is available to.
@@ -64,15 +69,25 @@ add, removes a card when the user asks it to, and does nothing else.
 A face is a body drawn through [Renderer](https://github.com/paritytech/trinity-user-agents/pull/633), on the
 `PocketCard { card_id }` context. The host opens a `render` stream while the face is on screen and gets a `RendererNode`
 tree per item; presses and edits inside the tree arrive on `action_subscribe` under the same context, so one handler
-serves every card of the product. An instance's face is drawn on `PocketCardInstance { card_id, instance_id }` instead,
-so a product tells its instances apart by context alone.
+serves every card of the product. The back is drawn on `PocketCardBack { card_id }` and its presses arrive under that
+context, so a product tells the sides apart by context alone. The host requests a back only for a card whose definition
+declares one. An instance's face is drawn on `PocketCardInstance { card_id, instance_id }` instead, so a product tells
+its instances apart by context too.
 
-Pocket adds two rules on top. First, the host caches the newest tree per card durably, so a face is shown offline and at
-cold start before the worker answers, and a privileged card has something to show on first run.
+Pocket adds two rules on top. First, the host caches the newest tree per card and side durably, so a face is shown
+offline and at cold start before the worker answers, and a privileged card has something to show on first run. Until the
+worker draws the back, the host shows the cached back, else the archive file the definition names, and a back render the
+worker refuses leaves that back in place rather than blanking it. A definition that stops declaring `back` discards the
+cached back, and an opened card showing its back returns to the front.
 
 Second, the host draws every face in one fixed theme, whatever theme the user picked, so a card looks the same in every
 theme. In the Polkadot Android and iOS apps that theme is Berlin Night: `FgPrimary` is `#F4F4F5` and `BgSurfaceMain` is
 `#0B0C0F`. `theme.subscribe` still reports the user's theme, for the product's own screens.
+
+Presses inside a cached or archive back go nowhere, by the renderer's rule that only the current tree of an open
+`render` stream is a source of actions. This also protects a product on an SDK without `PocketCardBack`: it refuses the
+back render, so it never receives a back press it cannot decode, which would end its whole action stream. Its back shows
+but does not respond, so a product declares `back` only once its SDK has `PocketCardBack`.
 
 ### Expanded card
 
@@ -85,15 +100,30 @@ The host draws the face above the Widget, and the user can move it out of the wa
 with `ExpandedCard::set_face_shown`, to take the whole screen or to bring the face back after something on it changed. A
 card definition's `faceShown` sets where the face starts when the card opens. The host sizes the Widget to the part of
 the screen the face leaves, so the Widget learns the space it has from its own `resize` event. The face is never locked:
-the user can always move it, and a call that arrives while the user is moving it has no effect and is answered
-`UserMoving`, so the product can retry once the user lets go. A product should not undo a move the user made. Keeping
-the native face visible through the open and close animation, and preloading the WebView, are host implementation and
-not part of the contract.
+the user can always move it, and a call that arrives while the user is moving it or turning the card has no effect and
+is answered `UserMoving`, so the product can retry once the user lets go. A product should not undo a move the user
+made. Keeping the native face visible through the open and close animation, and preloading the WebView, are host
+implementation and not part of the contract.
+
+A card with a back is turned over on the opened card by dragging sideways or flicking, and the host offers the same turn
+as an accessibility action for users who cannot drag. The turn follows the finger, always settles flat on one side, and
+never shows a side mirrored. A card without a back does not turn, and a card in the collection never turns. Closing the
+card returns it to its front. The host loads the back no later than when the card opens, so turning never waits on it.
+On an opened card both sides count as on screen, an exception to the renderer's Live rule, since the back is one turn
+away.
+
+The Widget can turn the card too, with `ExpandedCard::set_back_shown`, for example from a "Show my code" button on its
+page for a user who does not know the card turns. The call names the side to show rather than turning by half a turn, so
+repeating it changes nothing, and it answers once the turn starts. A call while the user is dragging the card, to turn
+it or to move the face, has no effect and is answered `UserMoving`. Asking for the back of a card with no back to show
+right now answers `NoBack`, which may change once the worker draws one. Asking for the front of a card with no back
+succeeds, since the front is up. A product should not undo a turn the user made. Turning while the face is moved away
+changes the side the face shows when it comes back.
 
 ### Lifecycle
 
-Pocket holds one worker reference per card whose face is on screen, and one while it waits for the worker to label an
-instance. A product cannot add a reference, only drop one by removing a card.
+Pocket holds a worker reference for each side on screen, and one while it waits for the worker to label an instance. A
+product cannot add a reference, only drop one by removing a card.
 
 ### Adding a card (full iteration)
 
@@ -114,12 +144,15 @@ type PocketCardDefinition = {
   title: string; // Shown in the approval dialog and in host chrome.
   preview: string; // Path inside the worker archive to a RendererNode tree, JSON in the generated TypeScript shape.
   faceShown?: boolean; // Whether the face is shown above the expanded card when it opens. Default true.
+  back?: string; // Path inside the worker archive to the back's RendererNode tree. Absent: the card has no back.
 };
 ```
 
-A `faceShown` that is not a boolean makes the definition invalid, as a missing `title` does, and an invalid definition
-drops all of the product's cards. A host that does not read `faceShown` shows nothing wrong, so a product checks the
-field before publishing rather than relying on what today's hosts display.
+A `faceShown` that is not a boolean, or a `back` that is not a string or is empty, makes the definition invalid, as a
+missing `title` does, and an invalid definition drops all of the product's cards. A `back` file that is missing or does
+not decode counts as no file: the card shows its cached back, or has no back until the worker draws one. A host that
+does not read `faceShown` or `back` shows nothing wrong, so a product checks both before publishing rather than relying
+on what today's hosts display.
 
 The preview is a static file in the CID-pinned archive, so the host can show a plain card before any product code runs,
 the same property the [funding modality](https://github.com/paritytech/trinity-user-agents/pull/339) relies on for its
@@ -211,9 +244,9 @@ The worker draws an instance whose id it can no longer resolve as unavailable ra
 
 The user removes a card in host UI. A product removes one of its own with `remove_card` when the user asks it to, such
 as from a "Remove from Pocket" button on its page; offering one is up to the product, and the host cannot check that the
-user asked. Either way the card is gone: its cached face is discarded, its `Renderer::render` stream ends, its reference
-is dropped, and getting it back means the deeplink flow again. Removing a card that is not present succeeds. Removing a
-privileged card fails with `Privileged`, for the product, and is not offered to the user.
+user asked. Either way the card is gone: its cached front and back are discarded, its `Renderer::render` streams end,
+its references are dropped, and getting it back means the deeplink flow again. Removing a card that is not present
+succeeds. Removing a privileged card fails with `Privileged`, for the product, and is not offered to the user.
 
 ### Wire surface
 
@@ -306,9 +339,11 @@ predates `V2` refuses a `V2` call as an unsupported version. `label_instance` st
 `HostPocketRemoveCardResponse` carries no payload of its own: removal has nothing to report beyond success, so its
 envelope is the bare variant, as every other unit response is.
 
-Instances add one variant to the renderer's `RenderContext`, `PocketCardInstance { card_id, instance_id }`, appended
-last so existing contexts keep their encoding. A worker on an SDK without the variant cannot label an instance either,
-so the host never asks it to draw one.
+The back adds one variant to the renderer's `RenderContext`, `PocketCardBack { card_id }`, appended after `PocketCard`
+so existing contexts keep their encoding.
+
+Instances add one variant, `PocketCardInstance { card_id, instance_id }`, appended after `PocketCardBack` for the same
+reason. A worker on an SDK without the variant cannot label an instance either, so the host never asks it to draw one.
 
 **Bounds.** `card_id` is a product-supplied identifier and carries the rules chat already applies to its own, through
 `normalize_chat_identifier`: trimmed, NFC-normalized, non-empty, at most `CHAT_FIELD_MAX_BYTES` (256) bytes once
@@ -324,10 +359,11 @@ another product's cards. A host with no Pocket surface answers `remove_card` wit
 `list_subscribe` with the same error, which a product reads as an unsupported host rather than as an empty collection.
 
 The expanded card's call comes from the Widget, and `Pocket` is reachable only from the worker. An execution restriction
-applies to a whole trait, so the call is a trait of its own, `23`, with `set_face_shown` as method `0`.
+applies to a whole trait, so the calls are a trait of their own, `23`, with `set_face_shown` as method `0` and
+`set_back_shown` as method `1`.
 
 ```rust
-/// The face drawn above the calling Widget when the Widget is an expanded card.
+/// The card a Widget is shown under.
 #[wire_trait(id = 23)]
 #[crate::service(required_execution = Widget)]
 #[async_trait::async_trait]
@@ -339,6 +375,14 @@ pub trait ExpandedCard: Send + Sync {
         cx: &CallContext,
         request: HostExpandedCardSetFaceShownRequest,
     ) -> Result<HostExpandedCardSetFaceShownResponse, CallError<HostExpandedCardSetFaceShownError>>;
+
+    /// Turn the card so its back (`true`) or its front (`false`) is up. Succeeds when that side is already up.
+    #[wire(id = 1)]
+    async fn set_back_shown(
+        &self,
+        cx: &CallContext,
+        request: HostExpandedCardSetBackShownRequest,
+    ) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>>;
 }
 ```
 
@@ -351,8 +395,27 @@ pub struct HostExpandedCardSetFaceShownRequest {
 pub enum HostExpandedCardSetFaceShownError {
     /// The Widget is not shown under its card right now, such as one the host keeps loaded after the card closed.
     NotPresented,
-    /// The user is moving the face; the request had no effect.
+    /// The user is moving the face or turning the card; the request had no effect.
     UserMoving,
+    /// Catch-all.
+    Unknown {
+        /// Human-readable reason.
+        reason: String,
+    },
+}
+
+pub struct HostExpandedCardSetBackShownRequest {
+    /// `true` turns the back up, `false` turns the front up.
+    pub shown: bool,
+}
+
+pub enum HostExpandedCardSetBackShownError {
+    /// The Widget is not shown under its card right now, such as one the host keeps loaded after the card closed.
+    NotPresented,
+    /// The user is turning the card or moving its face; the request had no effect.
+    UserMoving,
+    /// The card has no back to show right now.
+    NoBack,
     /// Catch-all.
     Unknown {
         /// Human-readable reason.
@@ -361,9 +424,10 @@ pub enum HostExpandedCardSetFaceShownError {
 }
 ```
 
-`HostExpandedCardSetFaceShownResponse` is a bare `V1`, as other unit responses are. The call moves the face above the
-Widget that made it, so no request names a card. An App or Worker caller is `Denied`, a host without expanded cards
-answers `Unsupported`, and a call made while the user is moving the face answers `UserMoving`.
+`HostExpandedCardSetFaceShownResponse` and `HostExpandedCardSetBackShownResponse` are bare `V1`s, as other unit
+responses are. Each call acts on the card above the Widget that made it, so no request names a card. An App or Worker
+caller is `Denied`, and a host without expanded cards, or one that cannot turn them, answers `Unsupported`. Both calls
+answer `UserMoving` while the user is moving the face or turning the card.
 
 ## Trade-offs
 
@@ -372,7 +436,8 @@ answers `Unsupported`, and a call made while the user is moving the face answers
 - **The node vocabulary is the renderer's.** A face cannot ask for a node the renderer does not carry, so gaps such as a
   barcode node or aspect-ratio control are argued there and close for every surface at once.
 - **The preview can lie.** The approved static face and the live face are both product-authored and nothing ties them
-  together. The host can bound the drift by rendering both from the same node vocabulary, not by checking content.
+  together. The back is never shown at approval at all. The host can bound the drift by rendering both from the same
+  node vocabulary, not by checking content.
 - **Card definitions cost manifest budget.** Text records are small; a product with many cards pushes the Worker
   manifest toward the dotNS limit. Only ids, titles, and paths go in the manifest; the trees live in the archive.
 - **An instance runs product code before the dialog.** The host asks the worker to label an instance before showing the
@@ -394,6 +459,11 @@ answers `Unsupported`, and a call made while the user is moving the face answers
 - **Pocket declares no rendering method of its own.** A `card_render` and `action_subscribe` pair keyed by `card_id` was
   considered and dropped: a face is a body like any other, and a pair per surface costs four wire ids each and gives a
   product one handler per surface to register.
+- **`set_back_shown` sets a side, it does not toggle.** A toggle undoes itself when called twice or when it races the
+  user's own turn. Naming the side makes every call safe to repeat, as `set_face_shown` is.
+- **The side is a context variant, not a render payload.** The render request has to name the side to draw, and a
+  variant names it for presses too, so a product needs no action-id convention to tell the sides apart. A product on an
+  SDK without the variant refuses back renders and keeps its front.
 - **The Pocket link is the host's own URL.** The host recognizes it by its host, `pocket`, without reading any
   product's paths, and the same link works from a product, a QR code or a web page. A reserved path under the
   product's name, such as `/-/pocket`, would take that path from every App. A query parameter on the product's URL was
@@ -410,3 +480,5 @@ answers `Unsupported`, and a call made while the user is moving the face answers
 - **Material effects on a face.** Predefined surface effects a card picks, animated by device orientation. Not specified
   here: a privileged card is host-placed, so a host can attach one by card identity, and anything a third-party card
   picks is a [material](materials.md).
+- **A tap target that turns the card.** Left for later. It can reuse the same turn. Until then a product can put a
+  button on its Widget page instead, since a press on the card itself goes to the worker.

@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.app.root.presentation.debug.reportIssue
 
 import androidx.lifecycle.SavedStateHandle
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.paritytech.polkadotapp.app.root.domain.debug.GitHubUsername
 import io.paritytech.polkadotapp.app.root.domain.debug.ReportIssueInteractor
 import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
@@ -21,24 +22,33 @@ class ReportIssueViewModel @Inject constructor(
 ) : BaseViewModel(), ReportIssueContract {
     private val screenshot = File(requireNotNull(savedStateHandle.get<String>(ISSUE_SCREENSHOT_PATH)))
     private val description = savedStateHandle.getStateFlow("description", "")
+    private val gitHubUsername = savedStateHandle.getStateFlow("gitHubUsername", interactor.lastGitHubUsername())
     private val sending = MutableStateFlow(false)
     private val complete = MutableStateFlow(false)
 
-    override val state = combine(description, sending, complete) { text, isSending, isComplete ->
-        ReportIssueState(text, screenshot.path, isSending, isComplete)
-    }.stateIn(this, SharingStarted.Eagerly, ReportIssueState(description.value, screenshot.path, false, false))
+    override val state = combine(description, gitHubUsername, sending, complete) { text, username, isSending, isComplete ->
+        ReportIssueState(text, username, screenshot.path, isSending, isComplete)
+    }.stateIn(
+        this,
+        SharingStarted.Eagerly,
+        ReportIssueState(description.value, gitHubUsername.value, screenshot.path, false, false),
+    )
 
     override fun onDescriptionChanged(description: String) {
         if (!sending.value) savedStateHandle["description"] = description.take(ISSUE_DESCRIPTION_LIMIT)
     }
 
+    override fun onGitHubUsernameChanged(gitHubUsername: String) {
+        if (!sending.value) savedStateHandle["gitHubUsername"] = gitHubUsername
+    }
+
     override fun onSendClick() {
-        if (sending.value || complete.value || description.value.isBlank()) return
+        if (sending.value || complete.value || description.value.isBlank() || !state.value.isGitHubUsernameValid) return
         sending.value = true
 
         launchUnit {
             try {
-                interactor.send(description.value, screenshot)
+                interactor.send(description.value, GitHubUsername.parse(gitHubUsername.value), screenshot)
                     .onSuccess { complete.value = true }
                     .onFailure { showPresentationError(ReportIssueError(it)) }
             } finally {

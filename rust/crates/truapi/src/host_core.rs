@@ -35,16 +35,18 @@ use tracing::{instrument, warn};
 use truapi::{CallContext, CancellationReason, latest, v01};
 
 use crate::{
+	Spawner,
 	frame::ProtocolMessage,
 	host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome},
 	host_logic::worker::WorkerLedger,
 	runtime::{
 		ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
 		FundingProviderLink, HostSession, LocalActivation, PairedSsoPeer, PairingHostRole,
-		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices,
-		SigningHostRole, SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
+		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, ResumePairingError,
+		RuntimeServices, SigningHostRole, SigningHostSsoService, SsoResponderService,
+		sso_service::Dispatch,
 	},
-	subscription::{HostInitiatedSubscriptionManager, Spawner},
+	subscription::HostInitiatedSubscriptionManager,
 	transport::Transport,
 	truapi_core::TrUApiCore,
 };
@@ -185,6 +187,7 @@ fn product_context(product_id: &ProductId) -> ProductContext {
 pub struct PairingHostRuntime {
 	services: Arc<RuntimeServices>,
 	pairing_host: Arc<PairingHostRole>,
+	image_loader: crate::image_loader::ImageLoader,
 }
 
 impl PairingHostRuntime {
@@ -250,7 +253,39 @@ impl PairingHostRuntime {
 		}
 		let pairing_host = PairingHostRole::new(services.clone(), config);
 		pairing_host.session().clone().start_session_store_sync(spawner);
-		Self { services, pairing_host }
+		Self {
+			image_loader: crate::image_loader::ImageLoader::new(
+				services.clone(),
+				Arc::new(crate::time::RealTimer),
+			),
+			services,
+			pairing_host,
+		}
+	}
+
+	/// Resolves public profile metadata without loading image bytes.
+	///
+	/// Native records expire after one hour; `force` skips that cache. Browsers always
+	/// read the chain. Invalid usernames and lookup or storage failures return errors.
+	pub async fn resolve_public_profile(
+		&self,
+		username: &str,
+		force: bool,
+	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
+		crate::public_profile::PublicProfiles::new(self.services.clone())
+			.resolve(username, force)
+			.await
+	}
+
+	/// The image `reference` names, checked against its CID and the image policy.
+	///
+	/// Unsupported CIDs, unavailable bytes and image policy failures return errors.
+	/// Dropping the future cancels the load.
+	pub async fn load_image(
+		&self,
+		reference: crate::ImageReference,
+	) -> Result<crate::LoadedImage, crate::ImageError> {
+		self.image_loader.load(reference).await
 	}
 
 	/// Install the host's [`PermissionStatusHost`], which carries the reasoning
@@ -1098,6 +1133,20 @@ impl SigningHostRuntime {
 		self.services.core_db()?.status().await
 	}
 
+	/// Resolves public profile metadata without loading image bytes.
+	///
+	/// Native records expire after one hour; `force` skips that cache. Browsers always
+	/// read the chain. Invalid usernames and lookup or storage failures return errors.
+	pub async fn resolve_public_profile(
+		&self,
+		username: &str,
+		force: bool,
+	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
+		crate::public_profile::PublicProfiles::new(self.services.clone())
+			.resolve(username, force)
+			.await
+	}
+
 	/// The image `reference` names, checked against its CID and the image policy.
 	pub async fn load_image(
 		&self,
@@ -1364,12 +1413,15 @@ impl SigningHostRuntime {
 	///
 	/// Only [`ResponderExit::PeerDisconnected`] authorizes removing the durable
 	/// pairing. Retain it after [`ResponderExit::SubscriptionEnded`] or an error.
+	/// After [`ResumePairingError::Interrupted`] the call can be made again;
+	/// after [`ResumePairingError::CannotServe`] it fails the same way until
+	/// the local session changes.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.resume_pairing"))]
 	pub async fn resume_pairing(
 		&self,
 		peer: PairedSsoPeer,
-	) -> Result<ResponderExit, v01::GenericError> {
-		self.sso_responder.resume_pairing(peer).await.map_err(Into::into)
+	) -> Result<ResponderExit, ResumePairingError> {
+		self.sso_responder.resume_pairing(peer).await
 	}
 
 	/// Notify a paired host that this signing host is ending their SSO session.

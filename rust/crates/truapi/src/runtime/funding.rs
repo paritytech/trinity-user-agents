@@ -1130,7 +1130,7 @@ impl FundingRegistry {
 		let (wake, woken) = mpsc::unbounded();
 		reconciler.wake = Some(wake);
 		drop(reconciler);
-		(services.spawner)(Box::pin(reconcile(Arc::downgrade(&services), woken)));
+		services.spawner.spawn(reconcile(Arc::downgrade(&services), woken));
 	}
 
 	/// Ask the reconciler to run again by `at_ms`, in Unix milliseconds.
@@ -1291,9 +1291,9 @@ impl FundingRegistry {
 				host_id: funds.host_id,
 				next_ms: None,
 			};
-			(services.spawner)(Box::pin(
-				services.clone().resolve_start(asking, intent, provider, funds),
-			));
+			services
+				.spawner
+				.spawn(services.clone().resolve_start(asking, intent, provider, funds));
 		}
 	}
 
@@ -1318,7 +1318,7 @@ impl FundingRegistry {
 				generation,
 				answered: false,
 			};
-			(services.spawner)(Box::pin(async move {
+			services.spawner.spawn(async move {
 				let mut catching = catching;
 				let registry = catching.registry.clone();
 				let mut answered = true;
@@ -1326,7 +1326,7 @@ impl FundingRegistry {
 					answered &= registry.put(link.as_ref(), call).await;
 				}
 				catching.answered = answered;
-			}));
+			});
 		}
 	}
 
@@ -1426,7 +1426,7 @@ impl FundingRegistry {
 		};
 		let provider_id = provider_id.clone();
 		let spawner = services.spawner.clone();
-		spawner(Box::pin(async move {
+		spawner.spawn(async move {
 			let registry = services.funding().clone();
 			let mut answered = true;
 			for call in calls {
@@ -1435,7 +1435,7 @@ impl FundingRegistry {
 			if !answered {
 				registry.call_unanswered(&provider_id, generation);
 			}
-		}));
+		});
 	}
 
 	/// Put one call to a provider's worker and store its answer. Returns
@@ -1886,7 +1886,7 @@ impl RuntimeServices {
 	/// sessions from before a restart end on time and the host hears of them.
 	pub fn resume_funding(self: &Arc<Self>) {
 		let services = self.clone();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let registry = services.funding();
 			// The host's session views are fed from what the core has
 			// loaded, so a failed load is retried until the sessions are in.
@@ -1944,7 +1944,7 @@ impl RuntimeServices {
 				},
 			)
 			.await;
-		}));
+		});
 	}
 
 	/// End session `intent` with `stage` as though its funds had moved.
@@ -2052,7 +2052,7 @@ impl RuntimeServices {
 		settlement: Settlement,
 	) {
 		let spawner = self.spawner.clone();
-		spawner(Box::pin(async move {
+		spawner.spawn(async move {
 			let registry = following.registry.clone();
 			let intent = following.key.clone();
 			let provider = ProductContext::new_with_execution(provider_id, ExecutableKind::Worker);
@@ -2106,7 +2106,7 @@ impl RuntimeServices {
 				}
 			}
 			drop(following);
-		}));
+		});
 	}
 
 	/// Place funds recorded for session `intent` that the host has not
@@ -2267,7 +2267,7 @@ impl RuntimeServices {
 		let (finished, outcome) = oneshot::channel();
 		let services = self.clone();
 		let product = product.cloned();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let result = services.finish_presenting(platform, product, session).await;
 			if let Err(error @ (OpenFundingError::Present(_) | OpenFundingError::Session(_))) =
 				&result
@@ -2276,7 +2276,7 @@ impl RuntimeServices {
 			}
 			// A caller that does not wait for the result has nothing to hear.
 			let _ = finished.send(result);
-		}));
+		});
 		Ok(outcome)
 	}
 
