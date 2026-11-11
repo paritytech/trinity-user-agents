@@ -2,8 +2,13 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bundled
 
 import io.paritytech.polkadotapp.feature_dotns_api.domain.ArchiveFiles
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
+import io.paritytech.polkadotapp.feature_products_api.model.Executables
+import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
+import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
+import io.paritytech.polkadotapp.feature_products_api.model.SemVer
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
+import io.paritytech.polkadotapp.feature_products_impl.data.manifest.RootManifest
 import uniffi.truapi.BundleEntry
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.FundingProviderEntry
@@ -44,15 +49,32 @@ class BundledProducts @Inject internal constructor(
     fun fundingProviders(): List<FundingProviderEntry> =
         if (files.enabled) bundledFundingProviders(BundledProductFiles.ROOT, files) else emptyList()
 
-    /** The Worker [entry] ships, read as a published one is: a manifest the parser rejects fails the boot. */
-    fun worker(entry: BundleEntry): Result<ProductExecutable.Worker> = runCatching {
-        val manifest = workerManifest(entry)
-        require(entry.hasWorker && manifest != null) { "Bundled ${entry.productId.value} ships no Worker" }
-        manifestParser.parseExecutable(manifest, ExecutableKind.WORKER, ExecutableHost(entry.workerHost)).getOrThrow()
+    /**
+     * [entry] resolved from its files as a published product resolves from dotNS: the root manifest it ships names it,
+     * else its id does, and a manifest the parser rejects fails the resolve.
+     */
+    fun resolved(entry: BundleEntry): Result<ResolvedProduct> = runCatching {
+        val root = files.readText("${entry.path}/$ROOT_MANIFEST")?.let { manifestParser.parseRoot(it).getOrThrow() }
+            ?: RootManifest(displayName = entry.productId.value, description = null, icon = null)
+        ResolvedProduct(
+            product = Product(id = entry.productId, name = root.displayName, icon = root.icon),
+            description = root.description,
+            executables = Executables(
+                app = if (entry.hasApp) ProductExecutable.App(ExecutableHost(entry.appHost), SemVer.ZERO) else null,
+                widget = null,
+                worker = if (entry.hasWorker) worker(entry) else null,
+            ),
+        )
+    }
+
+    private fun worker(entry: BundleEntry): ProductExecutable.Worker {
+        val manifest = requireNotNull(workerManifest(entry)) { "Bundled ${entry.productId.value} ships no Worker manifest" }
+        return manifestParser.parseExecutable(manifest, ExecutableKind.WORKER, ExecutableHost(entry.workerHost)).getOrThrow()
             as ProductExecutable.Worker
     }
 
     private companion object {
+        const val ROOT_MANIFEST = "manifest.json"
         const val WORKER_MANIFEST = "worker-manifest.json"
     }
 }

@@ -5,7 +5,7 @@ import io.paritytech.polkadotapp.common.presentation.notification.AppNotifier
 import io.paritytech.polkadotapp.common.presentation.notification.error
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBranding
+import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
@@ -16,15 +16,13 @@ import io.paritytech.polkadotapp.common.R as RCommon
 
 /**
  * Tells the user a product's worker keeps crashing, once the core says so. The core goes on restarting it with
- * backoff, so the notice is transient and asks nothing. The product is named as the funding sheet names a provider,
- * by the bare id until its manifest resolves: funding providers are the workers this runs today, and
- * [FundingProviderBranding] is the lookup that already names a product from its manifest, so it is reused on purpose
- * rather than duplicated for any worker.
+ * backoff, so the notice is transient and asks nothing. The product is named by its manifest, or by its id when that
+ * does not resolve.
  */
 @Singleton
 class WorkerCrashNotice @Inject constructor(
     // Lazy: resolving a manifest reaches the runtime, whose bridge reports crashes here.
-    private val branding: Lazy<FundingProviderBranding>,
+    private val resolveProduct: Lazy<ResolveProductUseCase>,
     private val appNotifier: AppNotifier,
     private val contextManager: ContextManager,
     dispatchers: CoroutineDispatchers,
@@ -34,7 +32,7 @@ class WorkerCrashNotice @Inject constructor(
     /** May arrive on any thread; the name is resolved off it. */
     fun onCrashing(productId: ProductId) {
         scope.launch {
-            val name = runCatching { branding.get().brand(productId).name }.getOrDefault(productId.value)
+            val name = resolveProduct.get().resolve(productId).getOrNull()?.product?.name ?: productId.value
             appNotifier.error(contextManager.applicationContext.getString(RCommon.string.worker_crashing_notice, name))
         }
     }
