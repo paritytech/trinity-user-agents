@@ -9,14 +9,11 @@
 //! competes with the host for the same quota and never decides on its behalf
 //! whether the bytes are backed up or encrypted.
 //!
-//! A blob is stored per stack and per chain. Two stacks can share genesis
-//! hashes, as a fork and its source do, so [`StorageClient`] is handed what
-//! identifies the stack with the genesis hash, and a store keeps the pair
-//! apart. What a stack's provider stores starts with a line naming the stack
-//! and its `generation`, and the provider reads back only what carries its
-//! own. So a store that ignores the stack still cannot hand one stack
-//! another's state, and a stack that restarted its chains reads nothing
-//! stored for the earlier ones. The next save replaces what was not read.
+//! A blob is stored per stack and per chain, because a fork shares its
+//! source's genesis hashes. A stack's provider starts what it stores with a
+//! line naming the stack and its `generation`, and reads back only its own,
+//! whatever the store does with the stack it is handed. The next save
+//! replaces what it did not read.
 //!
 //! Reads and writes are explicit, through
 //! [`load_database`](crate::EmbeddedChainProvider::load_database) and
