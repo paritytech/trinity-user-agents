@@ -471,8 +471,8 @@ freshness; cells and search explicitly use the ordinary policy. All app callers
 explicitly set `skipStale` to false. A cancelled header
 observation retains its forced intent until an observation completes or fails.
 [Shared CID loaders](hosts/ios/polkadot-app/Common/ImageViewModel/CID) use Kingfisher's
-cache without a freshness expiry, with a 100 MiB disk budget. Avatar loaders keep the displayed
-image while a replacement loads and cancel metadata observation and image work
+cache without a freshness expiry, with a 100 MiB disk budget. CID loaders always keep
+the current image while loading; avatar views cancel metadata observation and image work
 when their view is reused or released.
 
 ### Trinity stack descriptors
