@@ -250,7 +250,12 @@ export type CoreStorageKey =
    * What funding providers' quote answers showed about what they serve,
    * each record trusted for twelve hours.
    */
-  | { tag: "FundingSupport"; value?: undefined };
+  | { tag: "FundingSupport"; value?: undefined }
+  /**
+   * A product's App executable manifest as last read from dotNS, and when,
+   * cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "AppManifest"; value: { productLabel: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -291,7 +296,10 @@ export type CreateTransactionReview =
   /**
    * Legacy-account transaction request.
    */
-  | { tag: "LegacyAccount"; value: LegacyAccountTxPayload };
+  | {
+      tag: "LegacyAccount";
+      value: { account: LegacySigningAccount; payload: LegacyAccountTxPayload };
+    };
 
 /**
  * A kind of signature a product makes with another product's account.
@@ -351,6 +359,23 @@ export interface ExtensionVersionMap {
 }
 
 /**
+ * Why an amount cannot go ahead.
+ */
+export type FundingAmountIssue =
+  /**
+   * A withdrawal of more than the user can spend.
+   */
+  | { tag: "NotEnoughBalance"; value?: undefined }
+  /**
+   * Below the smallest amount any provider takes.
+   */
+  | { tag: "BelowMinimum"; value: { min: bigint } }
+  /**
+   * Above the largest amount any provider takes.
+   */
+  | { tag: "AboveMaximum"; value: { max: bigint } };
+
+/**
  * How the user left the funding overlay.
  */
 export type FundingPresentOutcome = "Started" | "Dismissed";
@@ -381,9 +406,8 @@ export interface FundingPresentation {
 export interface FundingQuoteList {
   /**
    * The request this list answers, as `request_funding_quotes` returned
-   * it. Ids only grow, and a list can reach the host before the call that
-   * returns its id does, so a host shows a list only when its id is at
-   * least the latest it has seen, and drops the rest.
+   * it. The core keeps only the current request's list, so a list read
+   * back is always the one to show.
    */
   requestId: bigint;
 
@@ -404,6 +428,31 @@ export interface FundingQuoteList {
    * row keeps its answer until the provider answers again.
    */
   refreshAtMs: bigint;
+
+  /**
+   * The amount the list prices, in balance units, which `issue` is
+   * about.
+   */
+  amount: bigint;
+
+  /**
+   * Once every provider answered and none quoted, the reason they all
+   * gave. ``undefined`` while any is pending or quoted, or when they gave
+   * different reasons.
+   */
+  refusal?: FundingQuoteUnavailable;
+
+  /**
+   * Once every provider answered and none quoted, what their refusals
+   * say about the amount: the lowest minimum any showed, otherwise the
+   * highest maximum.
+   */
+  issue?: FundingAmountIssue;
+
+  /**
+   * Whether every provider answered: no row is pending.
+   */
+  complete: boolean;
 }
 
 /**
@@ -577,6 +626,20 @@ export interface IdentityDisclosureReview {
    */
   productId: ProductId;
 }
+
+/**
+ * Account a legacy-account request resolved to, so a host knows the signer
+ * without resolving the request's address itself.
+ */
+export type LegacySigningAccount =
+  /**
+   * The wallet's identity account.
+   */
+  | { tag: "Identity"; value?: undefined }
+  /**
+   * The requesting product's account at derivation index 0.
+   */
+  | { tag: "Product"; value: ProductAccountId };
 
 /**
  * Why a login attempt failed, for hosts that need to act on the cause rather
@@ -799,9 +862,16 @@ export type SignPayloadReview =
       value: { callingProductId?: ProductId; request: HostSignPayloadRequest };
     }
   /**
-   * Legacy-account signing request.
+   * Legacy-account signing request, which only the product's account at
+   * index 0 may sign.
    */
-  | { tag: "LegacyAccount"; value: HostSignPayloadWithLegacyAccountRequest };
+  | {
+      tag: "LegacyAccount";
+      value: {
+        account: ProductAccountId;
+        request: HostSignPayloadWithLegacyAccountRequest;
+      };
+    };
 
 /**
  * Review shown before a sign-raw request is sent to the paired wallet.
@@ -826,6 +896,7 @@ export type SignRawReview =
   | {
       tag: "LegacyAccount";
       value: {
+        account: LegacySigningAccount;
         request: HostSignRawWithLegacyAccountRequest;
         watermarked: boolean;
       };
@@ -1070,6 +1141,10 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
       FundingSupport: [15, S._void] as const,
+      AppManifest: [
+        16,
+        S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
+      ] as const,
     }),
 );
 
@@ -1099,7 +1174,13 @@ export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
         callingProductId?: ProductId;
         payload: ProductAccountTxPayload;
       }>,
-      LegacyAccount: LegacyAccountTxPayload,
+      LegacyAccount: S.Struct({
+        account: LegacySigningAccount,
+        payload: LegacyAccountTxPayload,
+      }) as S.Codec<{
+        account: LegacySigningAccount;
+        payload: LegacyAccountTxPayload;
+      }>,
     }),
 );
 
@@ -1161,6 +1242,18 @@ export const ExtensionVersionMap: S.Codec<ExtensionVersionMap> = S.lazy(
 );
 
 /**
+ * Why an amount cannot go ahead.
+ */
+export const FundingAmountIssue: S.Codec<FundingAmountIssue> = S.lazy(
+  (): S.Codec<FundingAmountIssue> =>
+    S.TaggedUnion({
+      NotEnoughBalance: S._void,
+      BelowMinimum: S.Struct({ min: S.u128 }) as S.Codec<{ min: bigint }>,
+      AboveMaximum: S.Struct({ max: S.u128 }) as S.Codec<{ max: bigint }>,
+    }),
+);
+
+/**
  * How the user left the funding overlay.
  */
 export const FundingPresentOutcome: S.Codec<FundingPresentOutcome> = S.lazy(
@@ -1189,6 +1282,10 @@ export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
       rows: S.Vector(FundingQuoteRow),
       best: S.Option(ProductId),
       refreshAtMs: S.u64,
+      amount: S.u128,
+      refusal: S.Option(FundingQuoteUnavailable),
+      issue: S.Option(FundingAmountIssue),
+      complete: S.bool,
     }) as S.Codec<FundingQuoteList>,
 );
 
@@ -1321,6 +1418,15 @@ export const IdentityDisclosureReview: S.Codec<IdentityDisclosureReview> =
     (): S.Codec<IdentityDisclosureReview> =>
       S.Struct({ productId: ProductId }) as S.Codec<IdentityDisclosureReview>,
   );
+
+/**
+ * Account a legacy-account request resolved to, so a host knows the signer
+ * without resolving the request's address itself.
+ */
+export const LegacySigningAccount: S.Codec<LegacySigningAccount> = S.lazy(
+  (): S.Codec<LegacySigningAccount> =>
+    S.TaggedUnion({ Identity: S._void, Product: ProductAccountId }),
+);
 
 /**
  * Why a login attempt failed, for hosts that need to act on the cause rather
@@ -1471,7 +1577,13 @@ export const SignPayloadReview: S.Codec<SignPayloadReview> = S.lazy(
         callingProductId?: ProductId;
         request: HostSignPayloadRequest;
       }>,
-      LegacyAccount: HostSignPayloadWithLegacyAccountRequest,
+      LegacyAccount: S.Struct({
+        account: ProductAccountId,
+        request: HostSignPayloadWithLegacyAccountRequest,
+      }) as S.Codec<{
+        account: ProductAccountId;
+        request: HostSignPayloadWithLegacyAccountRequest;
+      }>,
     }),
 );
 
@@ -1493,9 +1605,11 @@ export const SignRawReview: S.Codec<SignRawReview> = S.lazy(
         watermarked: boolean;
       }>,
       LegacyAccount: S.Struct({
+        account: LegacySigningAccount,
         request: HostSignRawWithLegacyAccountRequest,
         watermarked: S.bool,
       }) as S.Codec<{
+        account: LegacySigningAccount;
         request: HostSignRawWithLegacyAccountRequest;
         watermarked: boolean;
       }>,
@@ -1945,7 +2059,9 @@ export interface FundingPlatform {
    * Show `target` for `provider`'s session `intent` in a frame the host
    * owns, and answer once it closes. A page is an https URL the core has
    * checked: the host shows its origin, and closes the frame with
-   * `Returned` when the page reaches its return URL.
+   * `Returned` when the page reaches its return URL. The core closes the
+   * frame itself, through
+   * `Self::close_provider_frame`, once the session's payment moved.
    */
   presentProviderFrame(
     provider: ProductContext,
@@ -1960,12 +2076,6 @@ export interface FundingPlatform {
    * open for it.
    */
   closeProviderFrame(provider: ProductContext, intent: string): void;
-
-  /**
-   * Whether `provider` ships an App, so an App route of its can be shown.
-   * A provider without one shows only external pages.
-   */
-  providerHasApp?(provider: ProductContext): Promise<boolean>;
 
   /**
    * The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
@@ -1988,9 +2098,12 @@ export interface FundingPlatform {
   /**
    * Observe the quote list the host requested, for the provider list:
    * again whenever a provider answers, and each time the core asks every
-   * provider again.
+   * provider again. ``undefined`` once a selection on another route withdrew it.
    */
-  fundingQuotesChanged?(intent: string, quotes: FundingQuoteList): void;
+  fundingQuotesChanged?(
+    intent: string,
+    quotes: FundingQuoteList | undefined,
+  ): void;
 }
 
 /**

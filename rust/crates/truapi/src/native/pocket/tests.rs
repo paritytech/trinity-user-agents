@@ -4,10 +4,7 @@ use futures::executor::block_on;
 use truapi::latest::RendererNode;
 
 use super::*;
-use crate::{
-	store::open_temporary_core_db,
-	test_support::{test_spawner, wait_until},
-};
+use crate::{store::open_temporary_core_db, test_support::wait_until};
 
 #[derive(Default)]
 struct Drawn(Mutex<Vec<ProductRendererRenderItem>>);
@@ -33,7 +30,7 @@ fn a_pocket_card_render_draws_each_face_and_keeps_it() {
 	block_on(cards.add(product.clone(), card(), "Stamps".into(), RendererNode::Nil)).unwrap();
 	let drawn = Arc::new(Drawn::default());
 	let observer =
-		keeping_faces(cards.clone(), product.clone(), card(), drawn.clone(), &test_spawner());
+		keeping_faces(cards.clone(), product.clone(), card(), drawn.clone(), &Spawner::for_test());
 	let face = RendererNode::String { text: "Stamps: 3".into() };
 
 	observer.on_update(face.clone());

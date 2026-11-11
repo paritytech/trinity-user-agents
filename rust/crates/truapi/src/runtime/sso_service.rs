@@ -8,10 +8,13 @@ use std::{
 
 use truapi::{CallContext, CancellationToken};
 
-use super::authority::AuthoritySession;
-use crate::host_internal::{
-	sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
-	sso_wire::ResponseOutcome,
+use super::authority::{AccountCaller, AccountInvocation, AuthoritySession};
+use crate::{
+	host_internal::{
+		sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
+		sso_wire::ResponseOutcome,
+	},
+	platform::ProductId,
 };
 
 /// Per-request context handed to every service method.
@@ -27,6 +30,19 @@ impl SsoRequestContext {
 	/// withdraws by firing `cancel`.
 	pub fn new(message_id: &str, session: AuthoritySession, cancel: CancellationToken) -> Self {
 		Self { call: CallContext::with_parts(String::from(message_id), cancel), session }
+	}
+
+	/// Bind the product the peer reported. Stored permission decisions apply to it as to a
+	/// local caller, but a paired caller never skips a review.
+	pub fn account_invocation<'a>(
+		&'a self,
+		product_id: Option<&'a ProductId>,
+	) -> AccountInvocation<'a> {
+		AccountInvocation {
+			call: &self.call,
+			session: &self.session,
+			caller: AccountCaller::Remote { product_id },
+		}
 	}
 }
 

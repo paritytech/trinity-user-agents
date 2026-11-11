@@ -123,7 +123,7 @@ impl DurableTxEngine {
 		registration: AbortRegistration,
 	) {
 		let abortable = Abortable::new(task, registration).map(|_| ());
-		(self.spawner)(Box::pin(abortable));
+		self.spawner.spawn(abortable);
 	}
 }
 

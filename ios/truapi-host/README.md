@@ -352,10 +352,10 @@ runtime.setTopUp(wallet)
 runtime.setPayments(wallet)
 runtime.setBalance(wallet)
 
-// Later, from the wallet's own status and balance streams:
+// While the core follows an id or the balance:
 runtime.notifyTopUpStatus(productId: productId, id: id, status: .claiming)
 runtime.notifyPaymentStatus(productId: productId, id: id, status: .completed)
-runtime.notifyBalance(purse: nil, available: "1500000000")
+runtime.notifyBalance(available: "1500000000")
 ```
 
 The core checks the session, the source keys, a positive amount and the
@@ -364,10 +364,12 @@ payment the balance cannot cover throws `HostPaymentError.InsufficientBalance`,
 which the core turns into `Rejected` for a product without balance access. The
 balance is what a payment can spend now, as a decimal string of CASH units.
 
-`topUpStatus` and `paymentStatus` answer the current status of an id inline,
-or `nil` when the host holds none. Every later status goes through
-`notifyTopUpStatus` and `notifyPaymentStatus`, ending with a terminal one; the
-core relays each to the products following that id.
+The core decides which ids to follow. It calls `followTopUp`,
+`followPayment` and `followBalance`, and the host follows its engine's stream,
+pushing what it reports through `notifyTopUpStatus`, `notifyPaymentStatus` and
+`notifyBalance` until the call returns. The core keeps the latest status per
+id, relays it to the products following that id and cancels the call once it
+has a final status.
 
 ## Architecture
 

@@ -118,7 +118,7 @@ pub struct SigningHostConfig {
 	pub asset_hub_chain_genesis_hash: [u8; 32],
 	/// The network's dotNS TLD without the leading dot: `dot`, `paseo`,
 	/// `testnet`. Every reserved RFC-0022 identity the wallet derives ends in
-	/// it: the `uid.<suffix>` identity account and the `peopl.<suffix>` person
+	/// it: the `peopl.<suffix>` identity account and the `peopl.<suffix>` person
 	/// ring-VRF keys. Must match the People chain's
 	/// `NetworkSuffix.NetworkSuffix` value used for proof contexts.
 	pub network_suffix: String,
@@ -1298,6 +1298,13 @@ pub enum CoreStorageKey {
 	/// each record trusted for twelve hours.
 	#[codec(index = 15)]
 	FundingSupport,
+	/// A product's App executable manifest as last read from dotNS, and when,
+	/// cached for the same lifetime as [`Self::ProductManifest`].
+	#[codec(index = 16)]
+	AppManifest {
+		/// Bare label of the product whose App manifest was cached.
+		product_label: String,
+	},
 }
 
 /// Permission storage payload, whose targets can be bare manifest labels.
@@ -1413,6 +1420,9 @@ pub fn describe_core_storage_key(
 			("WorkerManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
 		CoreStorageKey::FundingSupport => ("FundingSupport", None),
+		CoreStorageKey::AppManifest { product_label } => {
+			("AppManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
+		},
 	};
 	Ok(CoreStorageKeyDescription { kind, owner })
 }
@@ -1755,8 +1765,25 @@ pub enum SignPayloadReview {
 		/// Signing request.
 		request: HostSignPayloadRequest,
 	},
-	/// Legacy-account signing request.
-	LegacyAccount(HostSignPayloadWithLegacyAccountRequest),
+	/// Legacy-account signing request, which only the product's account at
+	/// index 0 may sign.
+	LegacyAccount {
+		/// Account that will sign.
+		account: ProductAccountId,
+		/// Signing request.
+		request: HostSignPayloadWithLegacyAccountRequest,
+	},
+}
+
+/// Account a legacy-account request resolved to, so a host knows the signer
+/// without resolving the request's address itself.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum LegacySigningAccount {
+	/// The wallet's identity account.
+	Identity,
+	/// The requesting product's account at derivation index 0.
+	Product(ProductAccountId),
 }
 
 /// Review shown before a sign-raw request is sent to the paired wallet.
@@ -1777,6 +1804,8 @@ pub enum SignRawReview {
 	},
 	/// Legacy-account raw signing request.
 	LegacyAccount {
+		/// Account that will sign.
+		account: LegacySigningAccount,
 		/// Raw signing request.
 		request: HostSignRawWithLegacyAccountRequest,
 		/// Whether the signer applies the `<Bytes>` transaction-payload protection.
@@ -1813,7 +1842,12 @@ pub enum CreateTransactionReview {
 		payload: ProductAccountTxPayload,
 	},
 	/// Legacy-account transaction request.
-	LegacyAccount(LegacyAccountTxPayload),
+	LegacyAccount {
+		/// Account that will sign.
+		account: LegacySigningAccount,
+		/// Transaction request.
+		payload: LegacyAccountTxPayload,
+	},
 }
 
 /// Review shown before a product derives a contextual alias (RFC 0004).
@@ -2173,9 +2207,8 @@ pub struct FundingPresentation {
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingQuoteList {
 	/// The request this list answers, as `request_funding_quotes` returned
-	/// it. Ids only grow, and a list can reach the host before the call that
-	/// returns its id does, so a host shows a list only when its id is at
-	/// least the latest it has seen, and drops the rest.
+	/// it. The core keeps only the current request's list, so a list read
+	/// back is always the one to show.
 	pub request_id: u64,
 	/// One row per provider asked, in the host's provider order.
 	pub rows: Vec<FundingQuoteRow>,
@@ -2186,6 +2219,37 @@ pub struct FundingQuoteList {
 	/// When the core asks every provider again, in Unix milliseconds. Each
 	/// row keeps its answer until the provider answers again.
 	pub refresh_at_ms: u64,
+	/// The amount the list prices, in balance units, which `issue` is
+	/// about.
+	pub amount: u128,
+	/// Once every provider answered and none quoted, the reason they all
+	/// gave. `None` while any is pending or quoted, or when they gave
+	/// different reasons.
+	pub refusal: Option<FundingQuoteUnavailable>,
+	/// Once every provider answered and none quoted, what their refusals
+	/// say about the amount: the lowest minimum any showed, otherwise the
+	/// highest maximum.
+	pub issue: Option<FundingAmountIssue>,
+	/// Whether every provider answered: no row is pending.
+	pub complete: bool,
+}
+
+/// Why an amount cannot go ahead.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingAmountIssue {
+	/// A withdrawal of more than the user can spend.
+	NotEnoughBalance,
+	/// Below the smallest amount any provider takes.
+	BelowMinimum {
+		/// That smallest amount, in balance units.
+		min: u128,
+	},
+	/// Above the largest amount any provider takes.
+	AboveMaximum {
+		/// That largest amount, in balance units.
+		max: u128,
+	},
 }
 
 /// One provider's place in the list a quote request fills in.
@@ -2257,7 +2321,9 @@ pub trait FundingPlatform: Send + Sync {
 	/// Show `target` for `provider`'s session `intent` in a frame the host
 	/// owns, and answer once it closes. A page is an https URL the core has
 	/// checked: the host shows its origin, and closes the frame with
-	/// `Returned` when the page reaches its return URL.
+	/// `Returned` when the page reaches its return URL. The core closes the
+	/// frame itself, through
+	/// [`Self::close_provider_frame`], once the session's payment moved.
 	async fn present_provider_frame(
 		&self,
 		provider: &ProductContext,
@@ -2270,12 +2336,6 @@ pub trait FundingPlatform: Send + Sync {
 	/// session's progress in its place. Does nothing when no frame is
 	/// open for it.
 	fn close_provider_frame(&self, provider: &ProductContext, intent: String);
-
-	/// Whether `provider` ships an App, so an App route of its can be shown.
-	/// A provider without one shows only external pages.
-	async fn provider_has_app(&self, _provider: &ProductContext) -> bool {
-		true
-	}
 
 	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
 	/// the quotes the core asks before the user picks one. Best effort,
@@ -2294,8 +2354,8 @@ pub trait FundingPlatform: Send + Sync {
 
 	/// Observe the quote list the host requested, for the provider list:
 	/// again whenever a provider answers, and each time the core asks every
-	/// provider again.
-	fn funding_quotes_changed(&self, intent: String, quotes: FundingQuoteList) {
+	/// provider again. `None` once a selection on another route withdrew it.
+	fn funding_quotes_changed(&self, intent: String, quotes: Option<FundingQuoteList>) {
 		let _ = (intent, quotes);
 	}
 }
