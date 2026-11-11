@@ -584,7 +584,8 @@ struct ChatRuntimeTests {
     }
 
     /// The native runtime cannot draw a docked card, and a room that shows
-    /// neither its input nor its card must say why in the host log.
+    /// neither its input nor its card must say why in the host log, once per
+    /// card rather than on every feed update.
     @Test func aCardDockedUnderTheNativeRuntimeIsLoggedAsRefused() throws {
         let runtime = ManagedChatRuntime(
             productId: try ProductId("test.dot"),
@@ -600,10 +601,15 @@ struct ChatRuntimeTests {
         )
 
         let card = decoder.makeRoomFooterCard(roomId: "room", messageType: "register", payload: Data([1]))
+        let sameCard = decoder.makeRoomFooterCard(roomId: "room", messageType: "register", payload: Data([1]))
+        let nextCard = decoder.makeRoomFooterCard(roomId: "room", messageType: "register", payload: Data([2]))
 
         #expect(card == nil)
+        #expect(sameCard == nil)
+        #expect(nextCard == nil)
         #expect(logger.lines == [
-            .warning("Room room docks a register card, but only the TrUAPI chat runtime can draw one")
+            .warning("[truapi.product] A register card is docked, but only the TrUAPI chat runtime can draw one"),
+            .warning("[truapi.product] A register card is docked, but only the TrUAPI chat runtime can draw one"),
         ])
     }
 

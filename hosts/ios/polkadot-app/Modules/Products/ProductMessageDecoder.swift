@@ -14,6 +14,7 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
     private let logger: LoggerProtocol
     private var viewModels: [String: ProductWidgetViewModel] = [:]
     private var roomFooterCards: [String: (footer: Chat.RoomFooter, viewModel: ProductWidgetViewModel)] = [:]
+    private var refusedRoomFooters: [String: Chat.RoomFooter] = [:]
 
     init(
         runtime: ChatRuntimeProtocol,
@@ -66,12 +67,15 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
         messageType: String,
         payload: Data
     ) -> (any ChatInputViewConfigurationProtocol)? {
+        let footer = Chat.RoomFooter.card(messageType: messageType, payload: payload)
         guard let handler = runtime as? TrUAPIChatHandler else {
-            logger.warning("Room \(roomId) docks a \(messageType) card, but only the TrUAPI chat runtime can draw one")
+            if refusedRoomFooters[roomId] != footer {
+                refusedRoomFooters[roomId] = footer
+                logger.warning("[truapi.product] A \(messageType) card is docked, but only the TrUAPI chat runtime can draw one")
+            }
             return nil
         }
 
-        let footer = Chat.RoomFooter.card(messageType: messageType, payload: payload)
         let viewModel: ProductWidgetViewModel
         if let docked = roomFooterCards[roomId], docked.footer == footer {
             viewModel = docked.viewModel
@@ -107,6 +111,7 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
 
     /// Stops drawing the card docked in the footer of `roomId`, once the room docks another or none.
     func clearRoomFooterCard(roomId: String) {
+        refusedRoomFooters.removeValue(forKey: roomId)
         roomFooterCards.removeValue(forKey: roomId)?.viewModel.renderTask?.cancel()
     }
 
