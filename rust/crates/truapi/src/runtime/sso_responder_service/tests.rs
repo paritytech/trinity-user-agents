@@ -1055,6 +1055,47 @@ fn a_request_whose_ack_failed_is_answered_when_delivered_again() {
 	);
 }
 
+/// A loop whose activation was replaced can only refuse, so it must stop
+/// before acking and leave the request to the loop serving the new activation.
+#[test]
+fn a_replaced_activation_leaves_the_request_to_the_next_loop() {
+	let platform = Arc::new(StubPlatform {
+		// One more than needed, so a loop that acks for a replaced activation
+		// fails the count instead of waiting for an answer.
+		rpc_method_responses: submit_answers("new", 3),
+		..StubPlatform::default()
+	});
+	let replay_scope = paired_peer()
+		.replay_scope(derive_root_keypair_from_entropy(&ENTROPY).unwrap().public.to_bytes());
+	let (_services, signing_host) = signing_fixture(platform.clone());
+	let session = paired_session(&signing_host);
+	let replaced = sso_service(&signing_host);
+	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec())).unwrap();
+	let current = sso_service(&signing_host);
+	let responder = signing_host.sso_responder();
+	let serve = |service| {
+		futures::executor::block_on(serve_statement(
+			&responder,
+			service,
+			&session,
+			replay_scope,
+			subtree_request(),
+		))
+	};
+
+	let stopped = serve(&replaced);
+	let answered = serve(&current);
+
+	assert_eq!(
+		(
+			stopped.is_err(),
+			answered,
+			recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD)
+		),
+		(true, Ok(None), 2)
+	);
+}
+
 #[test]
 fn resource_consent_cannot_authorize_a_replacement_account() {
 	allocation_after_session_change(Some(vec![0xcd; 16]));
