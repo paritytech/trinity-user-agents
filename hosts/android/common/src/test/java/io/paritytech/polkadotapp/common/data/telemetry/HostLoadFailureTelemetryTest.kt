@@ -50,4 +50,21 @@ class HostLoadFailureTelemetryTest {
 
         assertEquals("worker", events.single().tags["load.stage"])
     }
+
+    @Test
+    fun `a failure that repeats is reported once, as each attempt would only repeat it`() {
+        repeat(3) { telemetry.report(HostLoadStage.RESOLVE, IllegalStateException("no node"), "loyalty.dot") }
+
+        assertEquals(1, events.size)
+    }
+
+    @Test
+    fun `the same failure at another stage, product or error type is reported again`() {
+        telemetry.report(HostLoadStage.RESOLVE, IllegalStateException("a"), "loyalty.dot")
+        telemetry.report(HostLoadStage.PAGE, IllegalStateException("a"), "loyalty.dot")
+        telemetry.report(HostLoadStage.RESOLVE, IllegalStateException("a"), "coffee.dot")
+        telemetry.report(HostLoadStage.RESOLVE, IllegalArgumentException("a"), "loyalty.dot")
+
+        assertEquals(4, events.size)
+    }
 }

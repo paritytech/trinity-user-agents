@@ -61,6 +61,9 @@ class PocketInteractor @Inject constructor(
     /** Holds the tap, so the page opened for [key] can report when it was asked for. */
     fun cardTapped(key: PocketCardKey) = pageOpens.hold(key.productId.value, HostPageOpen(HostOpenSource.POCKET_CARD))
 
+    /** Drops the held tap when the card's product is shown from a session already running: no page will take it. */
+    fun openReused(key: PocketCardKey) = pageOpens.discard(key.productId.value)
+
     /** Fetches the product's pages before its card is opened, so opening it does not wait on them. */
     suspend fun warmUpProduct(key: PocketCardKey): Result<Unit> = productContentWarmUp.warmUp(key.productId)
 

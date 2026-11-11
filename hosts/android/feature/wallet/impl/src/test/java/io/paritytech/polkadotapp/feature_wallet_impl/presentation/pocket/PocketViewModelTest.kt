@@ -64,6 +64,7 @@ class PocketViewModelTest {
         every { observeFace(any()) } returns emptyFlow()
         coEvery { warmUpProduct(any()) } returns Result.success(Unit)
         every { cardTapped(any()) } just Runs
+        every { openReused(any()) } just Runs
         coEvery { faceShownOnOpen(any()) } returns true
     }
 
@@ -516,6 +517,25 @@ class PocketViewModelTest {
 
         verify(exactly = 1) { interactor.cardTapped(tapped.key) }
         verify(exactly = 0) { interactor.cardTapped(linked.key) }
+    }
+
+    // The tap is held for the page a new session starts. Showing the held product again starts none,
+    // so the tap would wait for a later, unrelated session of the product and time it from here.
+    @Test
+    fun `a tap on a card whose product is already held drops the tap it holds`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
+
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        viewModel.selectCard(uiCard)
+        viewModel.hostExpandedProduct(uiCard)
+        verify(exactly = 0) { interactor.openReused(any()) }
+
+        viewModel.dismissCard()
+        viewModel.selectCard(uiCard)
+
+        verify(exactly = 1) { interactor.openReused(card.key) }
     }
 
     // A request outlives the screen that answers it, since it is held for a tab that may not exist

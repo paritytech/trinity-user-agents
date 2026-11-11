@@ -3,7 +3,9 @@ package io.paritytech.polkadotapp.common.data.telemetry
 import android.content.Intent
 import io.paritytech.polkadotapp.common.utils.logFailure
 import kotlinx.coroutines.TimeoutCancellationException
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
+import javax.inject.Singleton
 import kotlin.coroutines.cancellation.CancellationException
 
 data class HostEventOrigin(
@@ -89,11 +91,18 @@ fun interface HostMonotonicTimeProvider {
     fun nowMillis(): Long
 }
 
-/** Reports a product load that failed, as one event, so Sentry can count and group the failures by stage. */
+/**
+ * Reports a product load that failed, as one event, so Sentry can count and group the failures by stage.
+ * Resolution is retried on every request and by background warm-ups, so a failure is reported once per
+ * stage, product and error type for the life of the app, not once per attempt.
+ */
+@Singleton
 class HostLoadFailureTelemetry @Inject constructor(
     private val originProvider: HostEventOriginProvider,
     private val capture: HostEventCapture,
 ) {
+    private val reported = ConcurrentHashMap.newKeySet<List<String?>>()
+
     fun report(
         stage: HostLoadStage,
         cause: Throwable,
@@ -103,6 +112,7 @@ class HostLoadFailureTelemetry @Inject constructor(
     ) {
         // A page or worker closed mid-load is not a failure; a timeout is.
         if (cause is CancellationException && cause !is TimeoutCancellationException) return
+        if (!reported.add(listOf(stage.tag, productId, domain, cause.javaClass.name))) return
         runCatching {
             capture.capture { originProvider.current().loadFailed(stage, cause, productId, sessionId, domain) }
         }.logFailure("Failed to capture native host load failure")

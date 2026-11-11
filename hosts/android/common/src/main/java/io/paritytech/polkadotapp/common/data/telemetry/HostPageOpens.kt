@@ -24,6 +24,11 @@ class HostPageOpens @Inject constructor() {
         held.set(Held(productId, open))
     }
 
+    /** Drops the ask held for [productId], when the page it was for reuses a session and no new one will take it. */
+    fun discard(productId: String) {
+        held.get()?.takeIf { it.productId == productId }?.let { held.compareAndSet(it, null) }
+    }
+
     /** Taken once, and only for the product it was held for; an ask older than [MAX_AGE_MS] is dropped. */
     fun take(productId: String, nowEpochMs: Long = System.currentTimeMillis()): HostPageOpen? {
         val current = held.get()?.takeIf { it.productId == productId } ?: return null

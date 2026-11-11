@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_dotns_impl.domain.dotNs
 
+import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostLoadFailureTelemetry
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_dotns_impl.data.contract.DotNsContractApi
@@ -11,6 +13,7 @@ import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
@@ -22,6 +25,8 @@ class RealDotNsResolverTest {
     private val carFetcher: CarFetcher = mock()
     private val contentStorage: DotNsContentStorage = mock()
     private val contentHashOverrides: ContentHashOverrides = mock()
+
+    private val events = mutableListOf<HostEvent>()
 
     private val domain = "peopl.testnet"
 
@@ -66,12 +71,29 @@ class RealDotNsResolverTest {
         verify(contractApi, times(2)).resolveContentHash(domain)
     }
 
+    // The chain read is the resolve stage; a failed lookup is retried on every request, and one
+    // failing domain is one event.
+    @Test
+    fun `a failed chain read is reported once under the resolve stage however often it is retried`() = runTest {
+        whenever(contentHashOverrides.getContentHashOverride(domain)).thenReturn(null)
+        whenever(contractApi.resolveContentHash(domain)).thenReturn(Result.failure(IllegalStateException("no node")))
+        val resolver = resolver()
+
+        repeat(3) { resolver.resolveToLocalUri(domain) }
+
+        assertEquals("resolve", events.single().tags["load.stage"])
+        assertEquals(domain, events.single().tags["dotns.domain"])
+    }
+
     private fun TestScope.resolver() = RealDotNsResolver(
         contractApi = contractApi,
         carFetcher = carFetcher,
         contentStorage = contentStorage,
         contentHashOverrides = contentHashOverrides,
         dispatchers = testDispatchers(),
-        loadFailures = HostLoadFailureTelemetry(originProvider = { error("unused") }, capture = { }),
+        loadFailures = HostLoadFailureTelemetry(
+            originProvider = { HostEventOrigin("debug", "gp", "1.2.3", "android", "15", 123L) },
+            capture = { events += it() },
+        ),
     )
 }

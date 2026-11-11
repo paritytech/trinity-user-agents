@@ -253,7 +253,7 @@ class PocketViewModel @Inject constructor(
         cardOpenRequests.consume(request)
         if (selectedCardId.value == card.id) {
             selectedPageQuery = request.pageQuery
-            if (shownProduct.value != null) expandedProduct.open(card.key.launchUrl(request.pageQuery))
+            if (shownProduct.value != null) openProduct(card, request.pageQuery)
             return
         }
 
@@ -278,7 +278,9 @@ class PocketViewModel @Inject constructor(
         selectedCardId.value = card.id
         selectedPageQuery = pageQuery
         if (card is PocketCardUiModel.ProductCard) {
-            expandedProduct.showIfHeld(card.key.launchUrl(pageQuery))
+            val url = card.key.launchUrl(pageQuery)
+            if (expandedProduct.holds(url)) interactor.openReused(card.key)
+            expandedProduct.showIfHeld(url)
             warmUpProduct(card)
             lookUpOpeningFace(card)
         }
@@ -341,7 +343,14 @@ class PocketViewModel @Inject constructor(
      * one is hosted.
      */
     fun hostExpandedProduct(card: PocketCardUiModel.ProductCard) {
-        if (card.id == selectedCardId.value) expandedProduct.open(card.key.launchUrl(selectedPageQuery))
+        if (card.id == selectedCardId.value) openProduct(card, selectedPageQuery)
+    }
+
+    /** A held product is shown again on its running session, which starts no page to take the held tap. */
+    private fun openProduct(card: PocketCardUiModel.ProductCard, pageQuery: String) {
+        val url = card.key.launchUrl(pageQuery)
+        if (expandedProduct.holds(url)) interactor.openReused(card.key)
+        expandedProduct.open(url)
     }
 
     /** A press or edit inside a face goes back to the product; a text edit carries the new value as UTF-8. */

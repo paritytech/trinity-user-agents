@@ -43,6 +43,9 @@ class ExpandedProductPage(
         shownProduct.value = ShownProduct(url, product.session)
     }
 
+    /** Whether [url]'s product is the one held, so showing it reuses its session rather than starting one. */
+    fun holds(url: String): Boolean = held?.url == url
+
     /** Shows [url]'s product at the tap only if it is held; a new one waits for the card to settle. */
     fun showIfHeld(url: String) {
         if (held?.url == url) open(url)

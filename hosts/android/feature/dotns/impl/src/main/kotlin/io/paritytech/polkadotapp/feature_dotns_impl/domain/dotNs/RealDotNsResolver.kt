@@ -53,7 +53,7 @@ internal class RealDotNsResolver @Inject constructor(
             // own failures, and a host screen reading progress would wait on it for good.
             .onFailure {
                 progressRegistry.markFailed(domainName, it)
-                loadFailures.report(HostLoadStage.BULLETIN, it, domain = domainName)
+                loadFailures.report(HostLoadStage.RESOLVE, it, domain = domainName)
             }
     }
 
