@@ -106,6 +106,18 @@ class TrUAPIFundingRuntime @Inject constructor(
     override suspend fun amountIssue(intent: String, amount: U128, spendable: U128?): Result<FundingAmountIssue?> =
         runtimeProvider.runtime().mapCatching { it.fundingAmountIssue(intent, amount, spendable) }
 
+    override suspend fun startWhenQuoted(intent: String, requestId: ULong) {
+        runtimeProvider.runtime()
+            .mapCatching { it.startFundingWhenQuoted(intent, requestId) }
+            .logFailure("TrUAPI funding auto-start failed")
+    }
+
+    override suspend fun cancelAutoStart(intent: String) {
+        runtimeProvider.runtime()
+            .mapCatching { it.cancelFundingAutoStart(intent) }
+            .logFailure("TrUAPI funding auto-start cancel failed")
+    }
+
     override suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean> =
         runtimeProvider.runtime().mapCatching { it.selectFundingProvider(intent, providerId, quoteId) }
 

@@ -17,14 +17,11 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOve
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayMode
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
-import kotlin.time.Instant
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -36,17 +33,20 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import uniffi.truapi.FundingAmountLimits
+import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingCandidate
+import uniffi.truapi.FundingChoice
+import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingStage
 import uniffi.truapi.FundingOptions
+import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuote
-import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingQuoteRow
 import uniffi.truapi.FundingQuoteState
@@ -66,7 +66,8 @@ class FundingViewModelTest {
     private val context = FundingOverlayContext(request, FundingOverlayMode.New)
     private val contexts = FundingOverlayContexts().apply { put(context) }
     private val router = mockk<ProductsRouter>(relaxed = true)
-    private val quoteLists = MutableSharedFlow<FundingQuoteList>()
+    private val quoteLists = MutableSharedFlow<FundingQuoteList?>()
+    private val session = MutableStateFlow<FundingBookEntry?>(null)
     private val pushedOptions = MutableStateFlow<FundingOptions?>(options(cardCandidate()))
     private val interactor = mockk<FundingFlowInteractor> {
         coEvery { cash() } returns FundingCash(symbol = "CASH", precision = 6)
@@ -75,8 +76,11 @@ class FundingViewModelTest {
         coEvery { selectOptions("intent", any()) } returns Unit
         every { countries() } returns emptyList()
         every { quoteLists("intent") } returns quoteLists
-        every { session("intent") } returns flowOf(null)
-        coEvery { requestQuote("intent", any()) } returns Result.success(1uL)
+        every { session("intent") } returns session
+        coEvery { requestQuote("intent", any(), any()) } returns Result.success(1uL)
+        coEvery { amountIssue("intent", any(), any()) } returns null
+        coEvery { startWhenQuoted("intent", any()) } returns Unit
+        coEvery { cancelAutoStart("intent") } returns Unit
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg<ProductId>().value, null) }
         coEvery { selectProvider("intent", ramp, "q-1") } returns Result.success(true)
     }
@@ -97,15 +101,12 @@ class FundingViewModelTest {
         model.onKey(FundingKey.Digit('0'))
         advanceTimeBy(599)
         runCurrent()
-        coVerify(exactly = 0) { interactor.requestQuote(any(), any()) }
+        coVerify(exactly = 0) { interactor.requestQuote(any(), any(), any()) }
 
         advanceTimeBy(2)
         runCurrent()
         coVerify(exactly = 1) {
-            interactor.requestQuote(
-                "intent",
-                FundingQuoteAsk(CoreFundingDirection.IN, FundingRail.CARD, "EUR", null, "50000000", "DE"),
-            )
+            interactor.requestQuote("intent", FundingSelection(FundingRail.CARD, null, null, "DE", "EUR"), "50000000")
         }
     }
 
@@ -167,10 +168,10 @@ class FundingViewModelTest {
         cancelTicker(model)
     }
 
+    // The core starts a crypto top-up on its best quote once every provider answered; the deposit screen asks it to.
     @Test
-    fun `a crypto top-up starts with the best quote once every provider answered`() = runTest(testDispatcher) {
+    fun `a crypto top-up asks the core to start on the best quote, and answers started once it has`() = runTest(testDispatcher) {
         pushedOptions.value = options(cryptoCandidate(providerA), cryptoCandidate(providerB))
-        coEvery { interactor.selectProvider("intent", providerB, "q-b") } returns Result.success(true)
         val model = viewModel()
         advanceUntilIdle()
         val answer = async { context.awaitOutcome() }
@@ -180,23 +181,21 @@ class FundingViewModelTest {
         model.onNetworkChosen("ethereum")
         model.onTokenChosen("USDT")
         runCurrent()
-        val quotedA = FundingQuoteRow(providerA, FundingQuoteState.Quoted(quote().copy(quoteId = "q-a", sendAmount = "52000000")))
-        quoteLists.emit(list(quotedA, FundingQuoteRow(providerB, FundingQuoteState.Pending), best = providerA))
-        runCurrent()
+        coVerify { interactor.startWhenQuoted("intent", 1uL) }
         assertFalse(answer.isCompleted)
 
-        quoteLists.emit(list(quotedA, FundingQuoteRow(providerB, FundingQuoteState.Quoted(quote().copy(quoteId = "q-b", sendAmount = "51800000"))), best = providerB))
+        session.value = FundingBookEntry(startedSession(providerB, FundingRail.CRYPTO), awaitingDeposit())
         runCurrent()
 
         assertEquals(FundingOverlayOutcome.STARTED, answer.await())
+        coVerify(exactly = 0) { interactor.selectProvider(any(), any(), any()) }
         coVerify(exactly = 0) { router.closeFundingOverlay(any()) }
         stopFollowingDeposit(model)
     }
 
     @Test
-    fun `a crypto top-up the user went back from does not start when its quotes arrive`() = runTest(testDispatcher) {
+    fun `going back from a crypto top-up's deposit screen disarms its start`() = runTest(testDispatcher) {
         pushedOptions.value = options(cryptoCandidate(providerA))
-        coEvery { interactor.selectProvider("intent", providerA, "q-a") } returns Result.success(true)
         val model = viewModel()
         advanceUntilIdle()
 
@@ -206,10 +205,9 @@ class FundingViewModelTest {
         model.onTokenChosen("USDT")
         runCurrent()
         model.onBack()
-        quoteLists.emit(list(FundingQuoteRow(providerA, FundingQuoteState.Quoted(quote().copy(quoteId = "q-a"))), best = providerA))
         runCurrent()
 
-        coVerify(exactly = 0) { interactor.selectProvider(any(), any(), any()) }
+        coVerify { interactor.cancelAutoStart("intent") }
         assertFalse(context.isClosed)
         stopFollowingDeposit(model)
     }
@@ -224,40 +222,6 @@ class FundingViewModelTest {
 
         assertTrue(context.isClosed)
         coVerify { router.closeFundingOverlay("intent") }
-    }
-
-    // The core numbers every quote request of the runtime, so a new ask's id is the one it returns, not the last + 1,
-    // and a list can arrive before that id does.
-    @Test
-    fun `quote lists show only for the request id the core returned`() = runTest(testDispatcher) {
-        val secondId = CompletableDeferred<ULong>()
-        var asks = 0
-        coEvery { interactor.requestQuote("intent", any()) } coAnswers {
-            if (asks++ == 0) Result.success(4uL) else Result.success(secondId.await())
-        }
-        val model = viewModel()
-        advanceUntilIdle()
-        val quoted = FundingQuoteRow(ramp, FundingQuoteState.Quoted(quote()))
-        fun countdown() = (model.state.value as LoadingState.Loaded).data.providers.countdown
-
-        model.onPreset(BigDecimal("50"))
-        advanceTimeBy(601)
-        runCurrent()
-        quoteLists.emit(list(quoted, best = ramp, requestId = 4uL))
-        runCurrent()
-        model.onPreset(BigDecimal("60"))
-        advanceTimeBy(601)
-        runCurrent()
-        quoteLists.emit(list(quoted, best = ramp, requestId = 5uL, refreshAtMs = 70_000uL))
-        runCurrent()
-        secondId.complete(9uL)
-        runCurrent()
-        assertNotEquals(FundingCountdown.Until(Instant.fromEpochMilliseconds(70_000)), countdown())
-
-        quoteLists.emit(list(quoted, best = ramp, requestId = 9uL, refreshAtMs = 80_000uL))
-        runCurrent()
-        assertEquals(FundingCountdown.Until(Instant.fromEpochMilliseconds(80_000)), countdown())
-        cancelTicker(model)
     }
 
     @Test
@@ -302,6 +266,8 @@ class FundingViewModelTest {
         ),
         unsupported = emptyList(),
         limits = emptyList(),
+        declaresRoutes = true,
+        brand = null,
     )
 
     /** The deposit screen keeps reading the session until the sheet goes, which in a test it never does. */
@@ -338,7 +304,21 @@ class FundingViewModelTest {
         amount = "50000000",
         refusal = null,
         issue = null,
+        complete = rows.none { it.state is FundingQuoteState.Pending },
     )
+
+    // ULong fields read from a relaxed mock come back as Long, so the ones the deposit screen reads are stubbed.
+    private fun awaitingDeposit(): FundingProgress = mockk(relaxed = true) {
+        every { lastHeardAtMs } returns null
+        every { failedAtMs } returns null
+        every { longerAtMs } returns null
+    }
+
+    private fun startedSession(providerId: ProductId, rail: FundingRail): FundingSession = mockk(relaxed = true) {
+        every { this@mockk.providerId } returns providerId
+        every { stage } returns FundingStage.Open
+        every { choice } returns mockk<FundingChoice>(relaxed = true) { every { this@mockk.rail } returns rail }
+    }
 
     private fun viewModel() = FundingViewModel(context, contexts, interactor, router, mockk(relaxed = true))
 
@@ -355,5 +335,7 @@ class FundingViewModelTest {
         ),
         unsupported = emptyList(),
         limits = emptyList(),
+        declaresRoutes = true,
+        brand = null,
     )
 }

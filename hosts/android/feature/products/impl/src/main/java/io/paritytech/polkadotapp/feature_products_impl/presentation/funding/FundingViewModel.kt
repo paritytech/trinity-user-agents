@@ -34,12 +34,12 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
@@ -48,7 +48,6 @@ import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingProgress
-import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingStatus
@@ -87,8 +86,8 @@ class FundingViewModel @AssistedInject constructor(
     private val progress = MutableStateFlow<FundingProgress?>(null)
     private var quoteJob: Job? = null
 
-    /** The ask a crypto top-up starts on once every provider answered it, while its deposit screen is on top. */
-    private var startsWhenQuoted: FundingQuoteAsk? = null
+    /** A crypto top-up the core starts on the best quote once every provider answered, while its deposit screen is on top. */
+    private var startsWhenQuoted = false
 
     private val brands = MutableStateFlow<Map<ProductId, FundingProviderBrand>>(emptyMap())
     private val brandsLoading = mutableSetOf<ProductId>()
@@ -124,6 +123,7 @@ class FundingViewModel @AssistedInject constructor(
             if (context.mode == FundingOverlayMode.Resumed) resume()
             launch { followSession() }
             launch { interactor.options(intent).filterNotNull().collect(::onOptions) }
+            launch { followAmountIssue() }
             reportSelection()
         }
     }
@@ -139,12 +139,13 @@ class FundingViewModel @AssistedInject constructor(
     fun onTokenChosen(symbol: String) {
         val current = flow.value ?: return
         flow.value = current.withAsset(symbol)
-        requestQuote()
 
         if (current.direction == CoreFundingDirection.IN) {
-            startsWhenQuoted = flow.value?.ask
+            startsWhenQuoted = true
+            requestQuote(startWhenQuoted = true)
             push(FundingScreen.DEPOSIT)
         } else {
+            requestQuote()
             push(FundingScreen.SUMMARY)
         }
     }
@@ -209,7 +210,7 @@ class FundingViewModel @AssistedInject constructor(
         when (current.rail) {
             FundingRail.CRYPTO -> onOpenNetworks()
             FundingRail.CARD, FundingRail.BANK -> {
-                if (current.ask != current.currentAsk()) requestQuote()
+                if (current.askedAmount != current.askAmount) requestQuote()
                 push(FundingScreen.SUMMARY)
             }
         }
@@ -307,21 +308,15 @@ class FundingViewModel @AssistedInject constructor(
     }
 
     private fun pop() {
-        if (path.value.lastOrNull() == FundingScreen.DEPOSIT) startsWhenQuoted = null
+        if (path.value.lastOrNull() == FundingScreen.DEPOSIT && startsWhenQuoted) {
+            startsWhenQuoted = false
+            launchUnit { interactor.cancelAutoStart(intent) }
+        }
         path.update { it.dropLast(1) }
     }
 
-    private fun onQuoteList(list: FundingQuoteList) {
-        val current = flow.value ?: return
-        val updated = current.receiving(list)
-        if (updated === current) return
-        flow.value = updated
-
-        val armed = startsWhenQuoted
-        if (armed != null && updated.ask == armed && updated.allAnswered && path.value.lastOrNull() == FundingScreen.DEPOSIT) {
-            startsWhenQuoted = null
-            onStart()
-        }
+    private fun onQuoteList(list: FundingQuoteList?) {
+        flow.update { it?.receiving(list) }
     }
 
     /** Draws the session as the core holds it, and leaves once it is over. A failed one stays up with its reason. */
@@ -337,6 +332,13 @@ class FundingViewModel @AssistedInject constructor(
         val stage = session?.stage
         val failure = stage?.failure?.toReason()
         if (failure != start.value.failure) start.update { it.copy(failure = failure) }
+
+        // The core started it on the best quote, as the deposit screen asked.
+        if (startsWhenQuoted && session?.providerId != null && !start.value.started) {
+            startsWhenQuoted = false
+            start.update { it.copy(started = true) }
+            session.choice?.let { didStart(it.rail) }
+        }
 
         val ended = stage?.isOpen == false
         if (start.value.started && ended && failure == null) {
@@ -457,15 +459,29 @@ class FundingViewModel @AssistedInject constructor(
         }
     }
 
-    private fun requestQuote() {
-        val ask = flow.value?.currentAsk() ?: return
-        val number = flow.updateAndGet { it?.asking(ask) }?.askNumber ?: return
+    private fun requestQuote(startWhenQuoted: Boolean = false) {
+        val current = flow.value ?: return
+        val amount = current.askAmount ?: return
+        flow.update { it?.asking(amount) }
 
         launchUnit {
-            interactor.requestQuote(intent, ask)
+            val id = interactor.requestQuote(intent, current.selection, amount)
                 .logFailure("Funding quote request failed")
-                .onSuccess { id -> flow.update { it?.requested(id, number) } }
+                .getOrNull() ?: return@launchUnit
+            if (startWhenQuoted && startsWhenQuoted) interactor.startWhenQuoted(intent, id)
         }
+    }
+
+    /** Asks the core why the amount on screen cannot go ahead whenever the amount, the options or the quotes change. */
+    private suspend fun followAmountIssue() {
+        flow.filterNotNull()
+            .map { Triple(it.units, it.options, it.list) }
+            .distinctUntilChanged()
+            .collectLatest { (units, _, _) ->
+                val current = flow.value ?: return@collectLatest
+                val issue = units?.let { interactor.amountIssue(intent, it, current.spendable?.let(current.cash::units)) }
+                flow.update { it?.withAmountIssue(issue) }
+            }
     }
 
     @AssistedFactory

@@ -62,14 +62,8 @@ class AppFundingOverlay @Inject constructor(
         providerId: ProductId,
         intent: String,
         target: ProviderFrameTarget,
-        awaitsUserTransfer: Boolean,
     ): ProviderFrameOutcome {
-        val frame = FundingFrameContext(
-            providerId = providerId,
-            intent = intent,
-            target = target,
-            showsSentFunds = awaitsUserTransfer,
-        )
+        val frame = FundingFrameContext(providerId = providerId, intent = intent, target = target)
         frames.put(frame)
         val outcome = try {
             router.openFundingProviderFrame(intent)

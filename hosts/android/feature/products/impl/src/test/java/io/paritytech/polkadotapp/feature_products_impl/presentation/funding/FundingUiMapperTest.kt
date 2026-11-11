@@ -37,7 +37,7 @@ class FundingUiMapperTest {
     @Test
     fun `the core's best of several quotes is marked and the countdown runs to its refresh`() {
         val state = flow()
-            .asked(1u)
+            .asked()
             .receiving(bothQuoted())
 
         val providers = state.toProvidersUiState(emptyMap())
@@ -57,7 +57,7 @@ class FundingUiMapperTest {
         try {
             val fees = requireNotNull(
                 flow()
-                    .asked(1u)
+                    .asked()
                     .receiving(bothQuoted())
                     .toFeesUiState(),
             )
@@ -74,10 +74,10 @@ class FundingUiMapperTest {
     @Test
     fun `asking the same again keeps what each price was for while the new one loads`() {
         val quotedOnce = flow()
-            .asked(1u)
+            .asked()
             .receiving(bothQuoted())
 
-        val providers = quotedOnce.asking(requireNotNull(quotedOnce.currentAsk()))
+        val providers = quotedOnce.asked()
             .toProvidersUiState(emptyMap())
 
         assertEquals(FundingCountdown.Refreshing, providers.countdown)
@@ -97,9 +97,8 @@ class FundingUiMapperTest {
         assertNull(bank.bandLine(FundingBand.ENDED, null))
     }
 
-    /** Asks for the quotes on screen, and takes [id] as the core's id for the ask. */
-    private fun FundingFlowState.asked(id: ULong): FundingFlowState =
-        asking(requireNotNull(currentAsk())).let { it.requested(id, it.askNumber) }
+    /** Asks for quotes of the amount on screen. */
+    private fun FundingFlowState.asked(): FundingFlowState = asking(requireNotNull(askAmount))
 
     private fun flow() = FundingFlowState.initial(
         direction = FundingDirection.IN,
@@ -132,6 +131,8 @@ class FundingUiMapperTest {
         ),
         unsupported = emptyList(),
         limits = emptyList(),
+        declaresRoutes = true,
+        brand = null,
     )
 
     private fun bothQuoted() = FundingQuoteList(
@@ -142,6 +143,7 @@ class FundingUiMapperTest {
         amount = "50000000",
         refusal = null,
         issue = null,
+        complete = true,
     )
 
     private fun quoted(providerId: ProductId, send: String, expiresAt: ULong) = FundingQuoteRow(

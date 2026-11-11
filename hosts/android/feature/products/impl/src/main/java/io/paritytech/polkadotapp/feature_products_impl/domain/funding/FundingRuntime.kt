@@ -67,6 +67,16 @@ interface FundingRuntime {
      */
     suspend fun amountIssue(intent: String, amount: U128, spendable: U128?): Result<FundingAmountIssue?>
 
+    /**
+     * Starts session [intent] on the best quote of request [requestId] once every provider answered it, at once when
+     * they already have; the start comes through [sessions]. Another quote request or selection, [cancelAutoStart] or
+     * a list with no usable quote disarms it.
+     */
+    suspend fun startWhenQuoted(intent: String, requestId: ULong)
+
+    /** Disarms [startWhenQuoted] for session [intent], as the user leaves its quotes. */
+    suspend fun cancelAutoStart(intent: String)
+
     suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean>
 
     /** The user's cancel, and what it did. */

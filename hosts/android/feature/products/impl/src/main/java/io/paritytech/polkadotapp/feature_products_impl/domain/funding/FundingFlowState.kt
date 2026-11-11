@@ -171,9 +171,12 @@ data class FundingFlowState(
             (support as? FundingCountrySupport.Supported)?.min?.let { code to cash.decimal(it) }
         }.toMap()
 
-    /** The amount to ask quotes for: the typed one, once the core names the asset the selection is asked in. */
+    /** The amount to ask quotes for: the typed one, once the asset is known: the token picked for crypto, else the one the core names. */
     val askAmount: U128?
-        get() = units?.takeIf { amount.signum() > 0 && options?.asset != null }
+        get() {
+            val asked = if (rail == FundingRail.CRYPTO) asset else options?.asset
+            return units?.takeIf { amount.signum() > 0 && asked != null }
+        }
 
     fun withRail(newRail: FundingRail): FundingFlowState =
         if (newRail == rail) {
@@ -206,12 +209,11 @@ data class FundingFlowState(
     )
 
     /**
-     * The core's list for the current ask, which is the only one it keeps; `null` once a selection withdrew it. A
-     * row still pending after the same amount was asked again keeps its last quote greyed until it answers.
+     * The core's list for its current request, which is the only one it keeps; `null` once a selection withdrew it.
+     * A row still pending after the same amount was asked again keeps its last quote greyed until it answers.
      */
     fun receiving(newList: FundingQuoteList?): FundingFlowState {
         if (newList == null) return dropped()
-        if (askedAmount == null) return this
 
         val newRows = newList.rows.associate { it.providerId to it.state }
         val stale = newRows
@@ -219,7 +221,7 @@ data class FundingFlowState(
             .mapNotNull { (providerId, _) -> (rows[providerId]?.quote ?: staleQuotes[providerId])?.let { providerId to it } }
             .toMap()
 
-        return copy(rows = newRows, staleQuotes = stale, list = newList)
+        return copy(askedAmount = newList.amount, rows = newRows, staleQuotes = stale, list = newList)
     }
 
     /**
