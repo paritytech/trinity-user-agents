@@ -166,7 +166,7 @@ class ProductChatHostBridgeTest {
             listOf(
                 ProductChatIdParameter(ROOM) to ProductRoomFooter.Empty,
                 ProductChatIdParameter(ROOM) to ProductRoomFooter.TextInput,
-                ProductChatIdParameter(ROOM) to ProductRoomFooter.Card("register", byteArrayOf(1)),
+                ProductChatIdParameter(ROOM) to ProductRoomFooter.Card("register", byteArrayOf(1).toDataByteArray()),
             ),
             api.footers,
         )

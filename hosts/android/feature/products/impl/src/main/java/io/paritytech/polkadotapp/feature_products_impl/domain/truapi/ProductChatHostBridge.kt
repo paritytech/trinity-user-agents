@@ -49,7 +49,7 @@ class ProductChatHostBridge(
         val roomFooter = when (footer) {
             ChatRoomFooter.TextInput -> ProductRoomFooter.TextInput
             ChatRoomFooter.Empty -> ProductRoomFooter.Empty
-            is ChatRoomFooter.Card -> ProductRoomFooter.Card(footer.v1.messageType, footer.v1.payload)
+            is ChatRoomFooter.Card -> ProductRoomFooter.Card(footer.v1.messageType, footer.v1.payload.toDataByteArray())
         }
         chatMessaging.setRoomFooter(ProductChatIdParameter(roomId), roomFooter).orReject()
     }

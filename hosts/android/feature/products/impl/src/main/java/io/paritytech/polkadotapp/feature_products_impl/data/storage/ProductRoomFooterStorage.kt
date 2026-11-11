@@ -5,6 +5,7 @@ import com.google.gson.annotations.SerializedName
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.novasama.substrate_sdk_android.extensions.toHexString
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
+import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductRoomFooter
@@ -65,13 +66,13 @@ private enum class StoredKind {
 private fun ProductRoomFooter.toStored(room: ProductChatIdParameter): StoredFooter? = when (this) {
     ProductRoomFooter.TextInput -> null
     ProductRoomFooter.Empty -> StoredFooter(room.value, StoredKind.EMPTY)
-    is ProductRoomFooter.Card -> StoredFooter(room.value, StoredKind.CARD, messageType, payload.toHexString())
+    is ProductRoomFooter.Card -> StoredFooter(room.value, StoredKind.CARD, messageType, payload.value.toHexString())
 }
 
 private fun StoredFooter.toDomain(): ProductRoomFooter = when (kind) {
     StoredKind.EMPTY -> ProductRoomFooter.Empty
     StoredKind.CARD -> ProductRoomFooter.Card(
         messageType = requireNotNull(messageType) { "room footer card held without its message type" },
-        payload = requireNotNull(payloadHex) { "room footer card held without its payload" }.fromHex(),
+        payload = DataByteArray(requireNotNull(payloadHex) { "room footer card held without its payload" }.fromHex()),
     )
 }

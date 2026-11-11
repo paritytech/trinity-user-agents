@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
+import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
@@ -30,10 +31,5 @@ sealed interface ProductRoomFooter {
     data object Empty : ProductRoomFooter
 
     /** A body the product draws itself, docked under the messages and never shown as a message. */
-    class Card(val messageType: String, val payload: ByteArray) : ProductRoomFooter {
-        override fun equals(other: Any?): Boolean =
-            other is Card && messageType == other.messageType && payload.contentEquals(other.payload)
-
-        override fun hashCode(): Int = 31 * messageType.hashCode() + payload.contentHashCode()
-    }
+    data class Card(val messageType: String, val payload: DataByteArray) : ProductRoomFooter
 }

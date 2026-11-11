@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.feature_products_api.model.JsUiEvent
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
@@ -26,8 +27,8 @@ private const val ROOM = "jollity"
 
 class ProductRoomFooterCardViewModelTest {
     private val testDispatcher = StandardTestDispatcher()
-    private val register = ProductRoomFooter.Card("register", byteArrayOf(1))
-    private val confirm = ProductRoomFooter.Card("confirm", byteArrayOf(2))
+    private val register = ProductRoomFooter.Card("register", byteArrayOf(1).toDataByteArray())
+    private val confirm = ProductRoomFooter.Card("confirm", byteArrayOf(2).toDataByteArray())
 
     @Before
     fun setUp() = Dispatchers.setMain(testDispatcher)
@@ -77,7 +78,7 @@ class ProductRoomFooterCardViewModelTest {
         val viewModel = ProductRoomFooterCardViewModel(ROOM, worker)
 
         viewModel.show(register)
-        viewModel.show(ProductRoomFooter.Card("register", byteArrayOf(1)))
+        viewModel.show(ProductRoomFooter.Card("register", byteArrayOf(1).toDataByteArray()))
         advanceUntilIdle()
         viewModel.handleUiEvent("join", JsUiEvent.Type.ButtonClick)
 

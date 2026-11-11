@@ -6,6 +6,7 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionInputSlot
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomResult
@@ -196,7 +197,7 @@ class ProductChatExtensionTest {
         val messaging = requireNotNull(refCounter.chatSurface)
         val room = ChatId.forExtensionRoom(extensionId, ROOM)
 
-        val card = ProductRoomFooter.Card("register", byteArrayOf(1))
+        val card = ProductRoomFooter.Card("register", byteArrayOf(1).toDataByteArray())
         messaging.setRoomFooter(ProductChatIdParameter(ROOM), card)
         val slotWithCard = extension.observeInputSlot(room).first()
         messaging.setRoomFooter(ProductChatIdParameter(ROOM), ProductRoomFooter.TextInput)
@@ -215,7 +216,7 @@ class ProductChatExtensionTest {
         withChatHost { extension.startGlobalWork() }
         val messaging = requireNotNull(refCounter.chatSurface)
         val room = ChatId.forExtensionRoom(extensionId, ROOM)
-        val card = ProductRoomFooter.Card("register", byteArrayOf(1))
+        val card = ProductRoomFooter.Card("register", byteArrayOf(1).toDataByteArray())
 
         // When
         messaging.setRoomFooter(ProductChatIdParameter(ROOM), card)
@@ -238,8 +239,8 @@ class ProductChatExtensionTest {
         withChatHost { extension.startGlobalWork() }
         val messaging = requireNotNull(refCounter.chatSurface)
         val room = ChatId.forExtensionRoom(extensionId, ROOM)
-        val first = ProductRoomFooter.Card("register", byteArrayOf(1))
-        val second = ProductRoomFooter.Card("confirm", byteArrayOf(2))
+        val first = ProductRoomFooter.Card("register", byteArrayOf(1).toDataByteArray())
+        val second = ProductRoomFooter.Card("confirm", byteArrayOf(2).toDataByteArray())
 
         val slots = mutableListOf<ChatExtensionInputSlot>()
         val collector = launch { extension.observeInputSlot(room).toList(slots) }
@@ -262,7 +263,7 @@ class ProductChatExtensionTest {
         val refCounter = FakeRefCounter(RecordingWorker())
         val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), footerStorage)
         withChatHost { extension.startGlobalWork() }
-        val card = ProductRoomFooter.Card("register", byteArrayOf(1))
+        val card = ProductRoomFooter.Card("register", byteArrayOf(1).toDataByteArray())
         requireNotNull(refCounter.chatSurface).setRoomFooter(ProductChatIdParameter(ROOM), card)
 
         // When

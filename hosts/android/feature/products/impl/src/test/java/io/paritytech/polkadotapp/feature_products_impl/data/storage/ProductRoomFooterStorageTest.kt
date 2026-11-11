@@ -5,6 +5,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductRoomFooter
 import org.junit.Assert.assertEquals
@@ -24,7 +25,7 @@ class ProductRoomFooterStorageTest {
         }
         val storage = RealProductRoomFooterStorage(preferences, Gson())
         val footers = mapOf(
-            ProductChatIdParameter("jollity") to ProductRoomFooter.Card("register", byteArrayOf(1, 2, -1)),
+            ProductChatIdParameter("jollity") to ProductRoomFooter.Card("register", byteArrayOf(1, 2, -1).toDataByteArray()),
             ProductChatIdParameter("lobby") to ProductRoomFooter.Empty,
         )
 

@@ -4,7 +4,6 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
-import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -43,7 +42,7 @@ class ProductRoomFooterCardViewModel @AssistedInject constructor(
         shownCard = card
         rendering?.cancel()
         _state.value = LoadingState.Loading
-        rendering = worker.renderRoomFooter(room, card.messageType, card.payload.toDataByteArray())
+        rendering = worker.renderRoomFooter(room, card.messageType, card.payload)
             .onEach { result ->
                 result
                     .logFailure("Room footer card render failed in ${room.value}")
