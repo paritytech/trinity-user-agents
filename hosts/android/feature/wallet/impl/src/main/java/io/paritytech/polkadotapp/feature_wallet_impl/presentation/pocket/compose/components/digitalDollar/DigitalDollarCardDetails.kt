@@ -39,12 +39,16 @@ import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.statusBar.reportsScrollToStatusBar
+import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonShape
+import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotButton
-import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
+import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
+import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDownwards
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowUpwards
+import io.paritytech.polkadotapp.design.components.icon.vectors.Clock
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -64,7 +68,6 @@ import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageBalanceBreakdownUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.CoinageUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.DigitalDollarCardDetailsUiState
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketCardUiModel
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.PocketScreenState
 import kotlinx.collections.immutable.persistentListOf
@@ -98,7 +101,7 @@ fun DigitalDollarCardDetails(
         cardIndex = cardIndex,
         coinageLoadingState = loadingState,
         state = state,
-        fundingActivity = fundingActivity,
+        showsFundingHistory = viewModel.showsFundingHistory,
         onSendClick = viewModel::onSendClick,
         onHistoryClick = viewModel::onHistoryClick,
         onGetCashClick = viewModel::onGetCashClick,
@@ -131,7 +134,7 @@ private fun DigitalDollarCardDetailsContent(
     cardIndex: Int,
     coinageLoadingState: LoadingState<CoinageUiState>,
     state: DigitalDollarCardDetailsUiState,
-    fundingActivity: FundingActivityUiState,
+    showsFundingHistory: Boolean,
     onSendClick: () -> Unit,
     onHistoryClick: () -> Unit,
     onGetCashClick: () -> Unit,
@@ -159,6 +162,21 @@ private fun DigitalDollarCardDetailsContent(
             .padding(PolkadotTheme.spacings.mediumIncreased)
             .windowInsetsPadding(LocalAppNavigationBarInsets.current)
     ) {
+        // Where iOS has its navigation bar's history item: the top end, above the card.
+        if (showsFundingHistory) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                PolkadotIconButton(
+                    icon = NovaIcons.Clock,
+                    onClick = onHistoryClick,
+                    style = PolkadotButtonStyle.ghost(),
+                    size = PolkadotIconButtonSize.medium(),
+                    shape = PolkadotButtonShape.pill,
+                )
+            }
+
+            VerticalSpacer { small }
+        }
+
         DigitalDollarCard(
             modifier = Modifier
                 .offset { IntOffset(0, closeDrag.offsetPx.roundToInt()) }
@@ -226,14 +244,6 @@ private fun DigitalDollarCardDetailsContent(
                         )
                     }
                 }
-            }
-
-            if (fundingActivity.inFlight.isNotEmpty() || fundingActivity.completed.isNotEmpty()) {
-                PolkadotTextButton(
-                    modifier = Modifier.fillMaxWidth(),
-                    text = stringResource(RCommon.string.funding_history_title),
-                    onClick = onHistoryClick
-                )
             }
 
             coinageLoadingState.onLoaded { coinageState ->
@@ -375,7 +385,7 @@ private fun DigitalDollarCardDetailsPreview() {
                 state = DigitalDollarCardDetailsUiState(
                     balanceRestore = BalanceRestoreUiState.SendCash(canGetCash = true)
                 ),
-                fundingActivity = FundingActivityUiState(inFlight = persistentListOf(), completed = persistentListOf()),
+                showsFundingHistory = true,
                 onSendClick = {},
                 onHistoryClick = {},
                 onGetCashClick = {},

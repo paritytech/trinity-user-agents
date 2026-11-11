@@ -4,7 +4,6 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
@@ -20,6 +19,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import io.paritytech.polkadotapp.test_shared.assertPresentationErrorShown
@@ -36,12 +36,12 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import kotlin.time.Instant
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
 
 private const val EVENT_TIMEOUT_MS = 1_000L
 
@@ -187,6 +187,17 @@ class DigitalDollarCardDetailsViewModelTest {
         assertEquals(BalanceRestoreUiState.SendCash(canGetCash = false), balanceRestore(createViewModel()))
     }
 
+    // As on iOS, the history button does not wait for activity: a first-time user can open the empty history.
+    @Test
+    fun `the history button shows wherever funding is, with or without activity`() {
+        every { hostFunding.observeActivity() } returns flowOf(FundingActivity(inFlight = emptyList(), history = emptyList()))
+
+        fundingVisible = true
+        assertTrue(createViewModel().showsFundingHistory)
+
+        fundingVisible = false
+        assertFalse(createViewModel().showsFundingHistory)
+    }
 
     private suspend fun balanceRestore(viewModel: DigitalDollarCardDetailsViewModel): BalanceRestoreUiState =
         withTimeout(EVENT_TIMEOUT_MS) {

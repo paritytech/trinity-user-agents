@@ -140,8 +140,11 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
         openTopUp()
     }
 
-    fun onHistoryClick() = funding.openSheet(FundingSheet.HISTORY)
+    /** The history button shows wherever the build offers funding, as on iOS, with or without activity. */
+    val showsFundingHistory: Boolean
+        get() = fundingEntryPoints.visible
 
+    fun onHistoryClick() = funding.openSheet(FundingSheet.HISTORY)
 
     fun onSheetBack() = funding.back()
 
