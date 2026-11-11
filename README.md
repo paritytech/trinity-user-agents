@@ -17,6 +17,7 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
 - [Labels](docs/labels.md)
 - [Building the apps for development](docs/local-app-builds.md)
+- [Moving an e2e suite to the TrUAPI test host](docs/migration/test-host.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -146,7 +147,8 @@ js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
                           (shared host types), `/web` (iframe + Web Worker),
-                          `/worker-runtime`, and the test host: `/testing`
+                          `/node` (worker thread), `/worker-runtime`, and the
+                          test host: `/testing`
                           (createMockHost), `/testing/playwright`,
                           `/testing/server`, `/testing/client`,
                           `/testing/dev-accounts`, `/testing/host-page`
@@ -222,13 +224,7 @@ native-only adapter types are limited to lifecycle and callback behavior.
 The core requests product worker transitions through `requestWorkerTransition`
 (`request_worker_transition` in Rust). `Start` requires the worker to run;
 `Stop` permits it to stop when no references remain.
-On iOS, a wallet host that manages its own statement-store SSO session can call
-`handleSsoRequest` (routes one decrypted remote message through the core,
-returning a typed outcome: response bytes to post back, a disconnect marker, or
-ignored; a `Cancel` returns at once, so the wallet passes it on without queueing
-it behind the request it withdraws) and `prepareDisconnectRequest` (builds the SCALE-encoded wire message
-for a wallet-initiated disconnect) on `TrUAPIHostRuntime`. Response posting and
-session-record cleanup remain on the wallet side.
+A native wallet that runs its own SSO transport opens one SSO service per peer with `openSsoService` and passes it each incoming message; `prepareDisconnectRequest` builds a wallet-initiated disconnect. The core binds each service to the wallet activation that authenticated the peer. The [iOS SDK guide](ios/truapi-host/README.md#sso-session-handling) gives the call sequence.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
 SSO session, responder identity and handshake payload structs zeroize their fields on drop; debug output redacts their secret fields.
@@ -245,6 +241,8 @@ a single package with tree-shakeable subpath entries:
   leave the device, on its own entry so reading telemetry policy pulls in no host runtime.
 - `@parity/truapi-host/web` wires the WASM provider into a browser host: the iframe
   MessageChannel handshake (`createIframeHost`) plus `createWebWorkerProvider`.
+- `@parity/truapi-host/node` runs the same pairing host in a Node process, with the core in
+  a `node:worker_threads` thread (`createNodePairingHostRuntime`, `createHeadlessHostCallbacks`).
 - `@parity/truapi-host/worker-runtime` is the Web Worker entrypoint so the WASM core can
   run off the page main thread.
 

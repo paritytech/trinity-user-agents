@@ -10,7 +10,9 @@ rust/crates/
                          (canonical), plus the runtime hosts implement (default `runtime`
                          feature); ships as WASM (browser/node); its `platform` module
                          holds the host syscall traits (storage, navigation, consent, ...),
-                         its `chain` module builds the core's own extrinsics through
+                         its `stack` module resolves the Trinity stack a host runs from
+                         the signed descriptor its build bundles, its `chain` module
+                         builds the core's own extrinsics through
                          `ExtrinsicService` and reads and writes contracts through
                          `EvmContractCaller` with signer-bound prepared transactions;
                          on native targets, its `durable` module follows presigned
@@ -44,7 +46,8 @@ js/packages/
   truapi-host/            @parity/truapi-host: WASM-backed host runtime. Subpath entries:
                           `.` (shared host types), `/markers` (the core's
                           table of which log markers may leave the device),
-                          `/web` (iframe + Web Worker), `/worker-runtime`
+                          `/web` (iframe + Web Worker), `/node` (worker
+                          thread), `/worker-runtime`
                           (Worker entry), and the test host `/testing`
                           (createMockHost), `/testing/playwright` (fixture),
                           `/testing/server` (node server), `/testing/client`

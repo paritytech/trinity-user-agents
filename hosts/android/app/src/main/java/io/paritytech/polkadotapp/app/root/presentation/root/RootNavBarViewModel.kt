@@ -2,10 +2,12 @@ package io.paritytech.polkadotapp.app.root.presentation.root
 
 import androidx.compose.ui.unit.Dp
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
 import io.paritytech.polkadotapp.app.root.domain.main.MainInteractor
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
 import io.paritytech.polkadotapp.app.root.presentation.main.BottomNavHeightProvider
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarMode
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarOffsetHolder
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarVisibilityHolder
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
@@ -42,8 +44,7 @@ class RootNavBarViewModel @Inject constructor(
     scanPanelRequests: ScanPanelRequests,
 ) : BaseViewModel() {
     val currentTab: StateFlow<BottomTab> = navigationHolder.currentTab
-    val hidden: StateFlow<Boolean> = tabBarVisibilityHolder.hidden
-    val forced: StateFlow<Boolean> = tabBarVisibilityHolder.forced
+    val barMode: StateFlow<TabBarMode> = tabBarVisibilityHolder.mode
     val openApps: StateFlow<ImmutableList<TabInfo>> = productSessionController.openTabs
         .map { it.toImmutableList() }
         .stateInBackground(started = SharingStarted.Eagerly, initialValue = persistentListOf())
@@ -56,6 +57,11 @@ class RootNavBarViewModel @Inject constructor(
         field = MutableStateFlow(interactor.shouldShowScannerTooltip())
 
     val scanPanelOpenRequests: SharedFlow<Unit> = scanPanelRequests.openRequests
+
+    val dockletTip: StateFlow<DockletTip?>
+        field = MutableStateFlow(null)
+
+    private var sessionPeekShown = false
 
     // Selecting a tab always lands on Main (bringing the user there if needed).
     fun onTabSelected(tab: BottomTab) {
@@ -78,6 +84,22 @@ class RootNavBarViewModel @Inject constructor(
 
     fun setBarHeight(value: Dp) {
         bottomNavHeightProvider.set(value)
+    }
+
+    fun onDockletHidden(tip: DockletTip) {
+        if (!interactor.shouldShowDockletTip(tip)) return
+        dockletTip.value = tip
+        interactor.markDockletTipShown(tip)
+    }
+
+    fun dismissDockletTip() {
+        dockletTip.value = null
+    }
+
+    fun takeSessionPeek(): Boolean {
+        val peek = !sessionPeekShown
+        sessionPeekShown = true
+        return peek
     }
 
     fun dismissScannerTooltip() {
