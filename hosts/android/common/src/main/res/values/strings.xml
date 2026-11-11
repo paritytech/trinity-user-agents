@@ -940,7 +940,6 @@
     <string name="pocket_coinage_balance_title">Total</string>
     <string name="pocket_coinage_ready">Ready</string>
     <string name="pocket_coinage_clearing">Clearing</string>
-    <string name="pocket_coinage_split_label">%1$s %2$s</string>
     <string name="pocket_coinage_total_balance">Total</string>
     <string name="pocket_coinage_share_logs">Share Coinage Logs</string>
     <string name="pocket_debug_features_title">Debug features</string>
