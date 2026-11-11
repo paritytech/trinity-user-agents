@@ -170,27 +170,29 @@ impl PublicProfiles {
 		username: String,
 		options: PublicProfileResolutionOptions,
 	) -> Subscription<PublicProfile, PublicProfileError> {
+		if let Err(error) = validate_username(&username) {
+			return Subscription::interrupted(error);
+		}
 		let PublicProfileResolutionOptions { force_fresh, skip_stale } = options;
 		enum Resolution {
-			Stored(PublicProfiles, String),
-			Refresh(PublicProfiles, String, ProfileRecord),
+			Stored,
+			Refresh(ProfileRecord),
 		}
 
 		Subscription::new(stream::try_unfold(
-			Some(Resolution::Stored(self, username)),
+			Some((self, username, Resolution::Stored)),
 			move |state| async move {
-				let Some(state) = state else { return Ok(None) };
-				match state {
-					Resolution::Stored(profiles, username) => {
-						validate_username(&username)?;
+				let Some((profiles, username, resolution)) = state else { return Ok(None) };
+				match resolution {
+					Resolution::Stored => {
 						if let Some(cached) = profiles.stored_record(&username).await? {
 							let fresh = cached.is_fresh(current_unix_secs());
 							if fresh || !skip_stale {
 								let profile = PublicProfile { avatar: cached.record.avatar() };
-								let next = (force_fresh || !fresh).then_some(Resolution::Refresh(
+								let next = (force_fresh || !fresh).then_some((
 									profiles,
 									username,
-									cached.record,
+									Resolution::Refresh(cached.record),
 								));
 								return Ok(Some((profile, next)));
 							}
@@ -198,7 +200,7 @@ impl PublicProfiles {
 						let record = profiles.refresh_record(&username).await?;
 						Ok(Some((PublicProfile { avatar: record.avatar() }, None)))
 					},
-					Resolution::Refresh(profiles, username, previous) => {
+					Resolution::Refresh(previous) => {
 						let record = profiles.refresh_record(&username).await?;
 						let profile = PublicProfile { avatar: record.avatar() };
 						let previous = PublicProfile { avatar: previous.avatar() };
