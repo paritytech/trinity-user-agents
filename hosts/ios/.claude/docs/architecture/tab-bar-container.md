@@ -366,10 +366,6 @@ A Presented product covers the container, so it draws its own strip with the sam
 
 `TabBarContainer` mounts one child at a time, full bleed into the container's view.
 
-A Tab switch is instant in every case: tab to tab, tab to or from a mounted product, and product to product. The container first records the new selection and `selectedController`. It then removes the outgoing child completely, and only then adds the incoming one. Every UIKit callback during the switch, including the navigation controller's will-show and did-show that drive the status title and the chrome, sees the new tab as selected. Only one tab view is ever in the container. The Selection pill keeps its own slide.
-
-A screen that is slow to show the first time keeps the Tab switch smooth by itself. It shows a placeholder when it appears. It finishes its expensive work after it is on screen, on a later run loop turn, using standard UIKit appearance (`viewDidAppear`). The container knows nothing about which screens are expensive. Browse is the example: it builds its product view only once its host has resolved and it is on screen.
-
 A tap on the selected tab is a re-tap. `TabBarReselectionPolicy.action(for:)` checks these cases in order:
 
 1. A modal is presented from the target, or the target is a `TabBarRootStandIn`: ignore.
