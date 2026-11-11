@@ -591,7 +591,6 @@ impl FundingPlatform for ReentrantHost {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
-		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
@@ -688,7 +687,6 @@ impl FundingPlatform for SilentPlatform {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
-		_context: crate::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Closed)
 	}
@@ -696,20 +694,15 @@ impl FundingPlatform for SilentPlatform {
 	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
 }
 
-/// A host feed that records, per session, whether each push carried the
-/// full record.
+/// A host feed that records each session it is told changed.
 #[derive(Default)]
 struct RecordingFeed {
-	pushed: Mutex<Vec<(String, bool)>>,
+	pushed: Mutex<Vec<String>>,
 }
 
 impl RecordingFeed {
-	fn sessions(&self, intent: &str) -> Vec<bool> {
-		lock(&self.pushed)
-			.iter()
-			.filter(|(pushed, _)| pushed == intent)
-			.map(|(_, in_full)| *in_full)
-			.collect()
+	fn sessions(&self, intent: &str) -> usize {
+		lock(&self.pushed).iter().filter(|pushed| *pushed == intent).count()
 	}
 
 	fn clear(&self) {
@@ -718,80 +711,19 @@ impl RecordingFeed {
 }
 
 impl FundingFeed for RecordingFeed {
-	fn funding_session_changed(
-		&self,
-		intent: String,
-		_status: HostFundingStatusSubscribeItem,
-		session: Option<FundingSession>,
-		_progress: Option<crate::host_logic::funding::FundingProgress>,
-	) {
-		lock(&self.pushed).push((intent, session.is_some()));
+	fn funding_session_changed(&self, intent: String) {
+		lock(&self.pushed).push(intent);
 	}
 
 	fn funding_in_progress_changed(&self, _in_progress: bool) {}
 
-	fn funding_options_changed(
-		&self,
-		_intent: String,
-		_options: crate::host_logic::funding_providers::FundingOptions,
-	) {
-	}
+	fn funding_options_changed(&self, _intent: String) {}
 }
 
-// History is the core's: a session is listed as soon as it ends, before
-// the host acknowledges it, and an open one is not. The ended one is
-// compacted at once, remembering that the host has not acknowledged it.
+// A session compacted as it ends is still announced, and the host reads
+// its ending back from the summary.
 #[test]
-fn history_lists_every_ended_session_whether_acknowledged_or_not() {
-	let registry = registry_on(&open_memory_core_db());
-	insert(&registry, session("fs_open", NOW));
-	insert(&registry, session("fs_ended", NOW - DAY_MS));
-	block_on(registry.sweep(NOW)).expect("expired");
-	let packed = registry.lock_held().pack.get("fs_ended").cloned().expect("compacted");
-
-	assert_eq!(
-		(registry.get("fs_ended"), packed.acknowledged, registry.history()),
-		(None, false, vec![packed.summary])
-	);
-}
-
-// Changes queued for a session compacted before they are delivered carry
-// the record it had when each was queued; an ending replayed from the
-// pack has none.
-#[test]
-fn a_queued_change_of_a_compacted_session_carries_the_record_it_was_queued_with() {
-	let registry = registry_on(&open_memory_core_db());
-	let feed = Arc::new(RecordingFeed::default());
-	assert!(registry.install_platform(Arc::new(SilentPlatform)));
-	registry.install_feed(feed.clone());
-	let ended = FundingSession {
-		stage: FundingStage::Failed { reason: FundingFailure::Expired, settled_at_ms: NOW },
-		..session("fs_1", NOW)
-	};
-	{
-		let mut announcements = registry.lock_announcements();
-		announcements.pending.push_back((
-			"fs_1".to_string(),
-			HostFundingStatusSubscribeItem::InProgress { expires_at: None },
-			Some(Box::new(session("fs_1", NOW))),
-		));
-		announcements.pending.push_back((
-			"fs_1".to_string(),
-			ended.wire_item(),
-			Some(Box::new(ended.clone())),
-		));
-		announcements.pending.push_back(("fs_1".to_string(), ended.wire_item(), None));
-	}
-
-	registry.announce();
-
-	assert_eq!(feed.sessions("fs_1"), vec![true, true, false]);
-}
-
-// A session compacted as it ends still reaches its watchers and the
-// host in full, so the host shows the ending with the whole record.
-#[test]
-fn a_session_compacted_as_it_ends_reaches_the_host_in_full() {
+fn a_session_compacted_as_it_ends_is_announced_and_read_back() {
 	let registry = registry_on(&open_memory_core_db());
 	let feed = Arc::new(RecordingFeed::default());
 	assert!(registry.install_platform(Arc::new(SilentPlatform)));
@@ -801,7 +733,10 @@ fn a_session_compacted_as_it_ends_reaches_the_host_in_full() {
 
 	block_on(registry.sweep(NOW + 1)).expect("expired");
 
-	assert_eq!((registry.get("fs_1"), feed.sessions("fs_1")), (None, vec![true]));
+	assert_eq!(
+		(registry.get("fs_1"), feed.sessions("fs_1"), registry.summary("fs_1").is_some()),
+		(None, 1, true)
+	);
 }
 
 // A product that reloads after the host recorded its session must still
@@ -1118,4 +1053,33 @@ fn a_compaction_that_fails_to_store_keeps_every_session() {
 		),
 		(true, true, 0, 2, 0)
 	);
+}
+
+// A frame that replaced another for the same session stays tracked when the
+// one it replaced goes, so it is still closed once the payment moves.
+#[test]
+fn a_replaced_frame_leaves_its_successor_tracked() {
+	let registry = FundingRegistry::default();
+	let first = registry.track_frame("fs_1", worker("ramp.dot"));
+	let second = registry.track_frame("fs_1", worker("ramp.dot"));
+	drop(first);
+	let tracked = lock(&registry.frames).contains_key("fs_1");
+	drop(second);
+	assert_eq!((tracked, lock(&registry.frames).contains_key("fs_1")), (true, false));
+}
+
+// A cancel that moved no money is left out of history, yet its summary still
+// answers for the session's own ending screen.
+#[test]
+fn an_unmoved_cancel_leaves_history_but_keeps_its_summary() {
+	let registry = registry_on(&open_memory_core_db());
+	insert(
+		&registry,
+		FundingSession {
+			stage: FundingStage::Failed { reason: FundingFailure::Cancelled, settled_at_ms: NOW },
+			..session("fs_1", NOW)
+		},
+	);
+	block_on(registry.sweep(NOW + 1)).expect("swept");
+	assert_eq!((registry.history().len(), registry.summary("fs_1").is_some()), (0, true));
 }

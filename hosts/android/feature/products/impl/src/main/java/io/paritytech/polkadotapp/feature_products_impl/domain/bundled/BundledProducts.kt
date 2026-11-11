@@ -44,11 +44,13 @@ class BundledProducts @Inject internal constructor(
     fun fundingProviders(): List<FundingProviderEntry> =
         if (files.enabled) bundledFundingProviders(BundledProductFiles.ROOT, files) else emptyList()
 
-    /** Whether the worker [entry] ships declares the Chat modality; a manifest the parser rejects declares none. */
-    fun includesChat(entry: BundleEntry): Boolean = workerManifest(entry)
-        ?.let { manifestParser.parseExecutable(it, ExecutableKind.WORKER, ExecutableHost(entry.workerHost)).getOrNull() }
-        .let { it as? ProductExecutable.Worker }
-        ?.includesChat == true
+    /** The Worker [entry] ships, read as a published one is: a manifest the parser rejects fails the boot. */
+    fun worker(entry: BundleEntry): Result<ProductExecutable.Worker> = runCatching {
+        val manifest = workerManifest(entry)
+        require(entry.hasWorker && manifest != null) { "Bundled ${entry.productId.value} ships no Worker" }
+        manifestParser.parseExecutable(manifest, ExecutableKind.WORKER, ExecutableHost(entry.workerHost)).getOrThrow()
+            as ProductExecutable.Worker
+    }
 
     private companion object {
         const val WORKER_MANIFEST = "worker-manifest.json"
@@ -64,9 +66,6 @@ val BundleEntry.appRoot: String
 /** The worker's own origin, as a published worker is served from its `worker.` subname. */
 val BundleEntry.workerHost: String
     get() = "worker.${productId.value}"
-
-val BundleEntry.workerScriptUrl: String
-    get() = "https://$workerHost/index.js"
 
 /** The App is served under the product id itself, which is the origin its grants and storage key off. */
 val BundleEntry.appHost: String

@@ -7,8 +7,6 @@ import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.ProductSources
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.workerScriptUrl
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
@@ -36,7 +34,6 @@ import kotlinx.coroutines.withTimeout
 import timber.log.Timber
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
-import uniffi.truapi.ProductSource
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.Duration.Companion.seconds
@@ -65,7 +62,6 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val webViewProviderFactory: ChatWebViewProvider.Factory,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
     private val productSources: ProductSources,
-    private val bundledProducts: BundledProducts,
     private val refCounter: Lazy<ProductWorkerRefCounter>,
     private val navigation: ChatWorkerNavigation,
     dispatchers: CoroutineDispatchers,
@@ -138,15 +134,10 @@ class TrUAPIWorkerSupervisor @Inject constructor(
 
     private suspend fun boot(productId: ProductId, worker: RunningWorker): Result<TrUAPIProductExecution> {
         val source = productSources.of(productId.value)
-        val (scriptUrl, includesChat) = if (source is ProductSource.Bundled) {
-            if (!source.entry.hasWorker) return Result.failure(IllegalStateException("Bundled ${productId.value} ships no Worker"))
-            source.entry.workerScriptUrl to bundledProducts.includesChat(source.entry)
-        } else {
-            val resolved = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
-            resolved.scriptUrl to resolved.includesChat
-        }
+        val resolved = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
+        val includesChat = resolved.includesChat
         val runtime = runtimeProvider.get().runtime().getOrElse { return Result.failure(it) }
-        val workerScript = WorkerScript.of(scriptUrl)
+        val workerScript = WorkerScript.of(resolved.scriptUrl)
 
         val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript, source), worker.scope)
         val webViewRuntime = WebViewRuntime(provider).also { worker.webViewRuntime = it }

@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.app.root.data.debug
 
 import io.paritytech.polkadotapp.app.BuildConfig
+import io.paritytech.polkadotapp.app.root.domain.debug.GitHubUsername
 import io.paritytech.polkadotapp.app.root.domain.debug.IssueReport
 import io.paritytech.polkadotapp.app.root.domain.debug.IssueReportSubmissionError
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
@@ -52,6 +53,7 @@ class RealIssueReportApiTest {
             "The screen froze 🐛",
             temporaryFolder.newFile("logs.zip").apply { writeBytes(byteArrayOf(0x50, 0x4b, 0x03, 0x04)) },
             temporaryFolder.newFile("screenshot.png").apply { writeBytes(byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47)) },
+            GitHubUsername.parse("octocat"),
         )
     }
 
@@ -76,6 +78,7 @@ class RealIssueReportApiTest {
         val expectedDescription = report.description + "\n\n## App information\n\n" +
             "- App ID: `${BuildConfig.APPLICATION_ID}`\n" +
             "- App version: `${BuildConfig.VERSION_NAME}`\n" +
+            "- GitHub username: @octocat\n" +
             "- Build: `${BuildConfig.VERSION_CODE}`"
         append("body", expectedDescription.toByteArray())
         append("screenshot", report.screenshot.readBytes(), "; filename=\"screenshot.png\"\r\nContent-Type: image/png")
