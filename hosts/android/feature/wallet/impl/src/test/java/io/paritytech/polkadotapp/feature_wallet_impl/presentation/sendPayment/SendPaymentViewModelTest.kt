@@ -30,7 +30,6 @@ import io.paritytech.polkadotapp.feature_transfers_api.presentation.PreviousPaym
 import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.ParseAddressUsernameConverterFactory
 import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.UsernameAddressConverterFactory
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.domain.RealSendPaymentInteractor
@@ -118,20 +117,6 @@ class SendPaymentViewModelTest {
     @After
     fun tearDown() {
         Dispatchers.resetMain()
-    }
-
-
-    /** A build that cannot run a funding provider, such as release, has no Send to yourself. */
-    @Test
-    fun `hides Send to yourself where funding is not offered`() = runBlocking<Unit> {
-        fundingVisible = false
-        val viewModel = createViewModel()
-
-        assertFalse(viewModel.state.value.sendToYourselfVisible)
-
-        withRecentsListed(query = "")
-
-        assertFalse(viewModel.awaitState { it.input.isEmpty() && it.results is PaymentSearchResults.Sections }.sendToYourselfVisible)
     }
 
     @Test
@@ -319,9 +304,6 @@ class SendPaymentViewModelTest {
         accountId = username.encodeToByteArray().intoAccountId()
     )
 
-    private var fundingVisible = true
-    private val fundingEntryPoints = mockk<FundingEntryPoints> { every { visible } answers { fundingVisible } }
-
     private fun createViewModel() = SendPaymentViewModel(
         walletRouter = router,
         clipboardService = clipboardService,
@@ -334,7 +316,6 @@ class SendPaymentViewModelTest {
         previousPaymentsAddressConverterFactory = previousPaymentsAddressConverterFactory,
         contactsAddressConverterFactory = contactsAddressConverterFactory,
         interactor = interactor,
-        fundingEntryPoints = fundingEntryPoints,
         fundingActivityMixinFactory = FundingActivityMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true)),
     )
 }

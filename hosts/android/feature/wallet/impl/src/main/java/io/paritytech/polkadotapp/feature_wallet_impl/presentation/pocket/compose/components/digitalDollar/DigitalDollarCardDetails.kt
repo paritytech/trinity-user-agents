@@ -101,7 +101,6 @@ fun DigitalDollarCardDetails(
         cardIndex = cardIndex,
         coinageLoadingState = loadingState,
         state = state,
-        showsFundingHistory = viewModel.showsFundingHistory,
         onSendClick = viewModel::onSendClick,
         onHistoryClick = viewModel::onHistoryClick,
         onGetCashClick = viewModel::onGetCashClick,
@@ -134,7 +133,6 @@ private fun DigitalDollarCardDetailsContent(
     cardIndex: Int,
     coinageLoadingState: LoadingState<CoinageUiState>,
     state: DigitalDollarCardDetailsUiState,
-    showsFundingHistory: Boolean,
     onSendClick: () -> Unit,
     onHistoryClick: () -> Unit,
     onGetCashClick: () -> Unit,
@@ -163,19 +161,18 @@ private fun DigitalDollarCardDetailsContent(
             .windowInsetsPadding(LocalAppNavigationBarInsets.current)
     ) {
         // Where iOS has its navigation bar's history item: the top end, above the card.
-        if (showsFundingHistory) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                PolkadotIconButton(
-                    icon = NovaIcons.Clock,
-                    onClick = onHistoryClick,
-                    style = PolkadotButtonStyle.ghost(),
-                    size = PolkadotIconButtonSize.medium(),
-                    shape = PolkadotButtonShape.pill,
-                )
-            }
-
-            VerticalSpacer { small }
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            PolkadotIconButton(
+                icon = NovaIcons.Clock,
+                onClick = onHistoryClick,
+                style = PolkadotButtonStyle.ghost(),
+                size = PolkadotIconButtonSize.medium(),
+                shape = PolkadotButtonShape.pill,
+                contentDescription = stringResource(RCommon.string.funding_open_history),
+            )
         }
+
+        VerticalSpacer { small }
 
         DigitalDollarCard(
             modifier = Modifier
@@ -211,11 +208,10 @@ private fun DigitalDollarCardDetailsContent(
                 when (balanceRestoreState) {
                     BalanceRestoreUiState.NotDetermined -> Unit
 
-                    is BalanceRestoreUiState.SendCash -> SendCashActions(
+                    BalanceRestoreUiState.SendCash -> SendCashActions(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(IntrinsicSize.Min),
-                        canGetCash = balanceRestoreState.canGetCash,
                         onGetCashClick = onGetCashClick,
                         onSendClick = onSendClick
                     )
@@ -267,7 +263,6 @@ private fun DigitalDollarCardDetailsContent(
 @Composable
 private fun SendCashActions(
     modifier: Modifier = Modifier,
-    canGetCash: Boolean,
     onGetCashClick: () -> Unit,
     onSendClick: () -> Unit
 ) {
@@ -277,7 +272,7 @@ private fun SendCashActions(
         modifier = modifier,
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small)
     ) {
-        if (canGetCash) CashActionButton(
+        CashActionButton(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight(),
@@ -383,9 +378,8 @@ private fun DigitalDollarCardDetailsPreview() {
                     )
                 ),
                 state = DigitalDollarCardDetailsUiState(
-                    balanceRestore = BalanceRestoreUiState.SendCash(canGetCash = true)
+                    balanceRestore = BalanceRestoreUiState.SendCash
                 ),
-                showsFundingHistory = true,
                 onSendClick = {},
                 onHistoryClick = {},
                 onGetCashClick = {},

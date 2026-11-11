@@ -24,7 +24,6 @@ import io.paritytech.polkadotapp.feature_usernames_api.presentation.filterAvaila
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.SendEnterAmountPayload
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.TransferMethodPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
@@ -55,7 +54,6 @@ class SendPaymentViewModel @Inject constructor(
     previousPaymentsAddressConverterFactory: PreviousPaymentsAddressConverterFactory,
     contactsAddressConverterFactory: ContactsAddressConverterFactory,
     private val interactor: SendPaymentInteractor,
-    private val fundingEntryPoints: FundingEntryPoints,
     fundingActivityMixinFactory: FundingActivityMixin.Factory,
 ) : BaseViewModel(), SendPaymentContract {
     private val funding = fundingActivityMixinFactory.create(this)
@@ -94,7 +92,7 @@ class SendPaymentViewModel @Inject constructor(
     ) { inputValue, results, fundingState, sheet ->
         SendPaymentUiState(
             input = inputValue,
-            sendToYourselfVisible = inputValue.isEmpty() && fundingEntryPoints.visible,
+            sendToYourselfVisible = inputValue.isEmpty(),
             results = results,
             funding = fundingState,
             fundingSheet = sheet,
@@ -104,7 +102,7 @@ class SendPaymentViewModel @Inject constructor(
         started = SharingStarted.Eagerly,
         initialValue = SendPaymentUiState(
             input = "",
-            sendToYourselfVisible = fundingEntryPoints.visible,
+            sendToYourselfVisible = true,
             results = PaymentSearchResults.Loading,
             funding = funding.activity.value,
             fundingSheet = null,
@@ -170,5 +168,4 @@ class SendPaymentViewModel @Inject constructor(
     override fun onBackClick() {
         walletRouter.back()
     }
-
 }

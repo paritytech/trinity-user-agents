@@ -44,6 +44,7 @@ fun PolkadotIconButton(
     shape: Shape = PolkadotButtonShape.rounded,
     interactionSource: MutableInteractionSource? = null,
     border: BorderStroke? = null,
+    contentDescription: String? = null,
 ) {
     val interactive = enabled && !loading
 
@@ -83,7 +84,8 @@ fun PolkadotIconButton(
                     modifier = Modifier
                         .size(size.iconSize)
                         .alpha(1f - progressAlpha),
-                    imageVector = icon
+                    imageVector = icon,
+                    contentDescription = contentDescription,
                 )
             }
         }

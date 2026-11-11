@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
-import org.junit.Assert.assertTrue
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -44,7 +43,6 @@ class TrUAPIHostFundingTest {
     private val funding = TrUAPIHostFunding(
         runtime = runtime,
         sessionScreens = mockk(),
-        enabled = true,
     )
 
     @Test
@@ -156,14 +154,4 @@ class TrUAPIHostFundingTest {
         moneyMoved = true,
         ended = FundingEnding(atMs, FundingEndedOutcome.Open, null, "50000000", null, null, emptyList(), null),
     )
-
-    @Test
-    fun `a build without funding answers no activity and leaves the core alone`() = runBlocking<Unit> {
-        val off = TrUAPIHostFunding(runtime = runtime, sessionScreens = mockk(), enabled = false)
-
-        val activity = off.observeActivity().first()
-
-        assertTrue(activity.inFlight.isEmpty() && activity.history.isEmpty())
-        coVerify(exactly = 0) { runtime.start() }
-    }
 }

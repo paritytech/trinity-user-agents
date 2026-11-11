@@ -27,7 +27,6 @@ object FeatureFlags {
             FeatureOption.COINAGE_DEBUG_FEATURES -> BuildConfig.COINAGE_DEBUG_FEATURES
             FeatureOption.COINAGE_DEBUG_TOOLS -> BuildConfig.COINAGE_DEBUG_TOOLS
             FeatureOption.SAMPLE_BOT -> BuildConfig.SAMPLE_BOT
-            FeatureOption.FUNDING -> BuildConfig.BUNDLED_PRODUCTS_ENABLED
         }
     }
 }
@@ -60,10 +59,6 @@ enum class FeatureOption {
     PERSONHOOD,
     COLLECTIBLES,
     ARBITRARY_PRODUCTS,
-
-    // Adding and withdrawing CASH through a funding provider. Its provider runs as a bundled product, which only
-    // testnet builds ship, so a release build hides the entry points rather than open a sheet no provider serves.
-    FUNDING,
 }
 
 val FeatureOption.isEnabled

@@ -17,7 +17,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDire
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.BalanceRestoreUiState
@@ -36,9 +35,7 @@ import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import kotlin.time.Instant
@@ -63,9 +60,6 @@ class DigitalDollarCardDetailsViewModelTest {
         every { observeActivity() } returns emptyFlow()
         coEvery { acknowledgeShown(any()) } returns Unit
     }
-
-    private var fundingVisible = true
-    private val fundingEntryPoints = mockk<FundingEntryPoints> { every { visible } answers { fundingVisible } }
 
     private val chainAssetProvider = mockk<ChainAssetProvider> {
         coEvery { asset() } returns mockk { every { precision } returns 6 }
@@ -175,28 +169,12 @@ class DigitalDollarCardDetailsViewModelTest {
         coVerify(exactly = 1) { hostFunding.openFunding(FundingDirection.IN, null) }
     }
 
-    /** A build that cannot run a funding provider, such as release, offers Send but not Get. */
+    /** Every build offers Get and Send, as on iOS: with no provider, Get opens the sheet's unavailable state. */
     @Test
-    fun `get is offered only where funding is`() = runBlocking<Unit> {
+    fun `get and send are offered in every build`() = runBlocking<Unit> {
         every { coinageBackupService.subscribeProgress() } returns flowOf(BackupProgress.NotStarted)
 
-        fundingVisible = true
-        assertEquals(BalanceRestoreUiState.SendCash(canGetCash = true), balanceRestore(createViewModel()))
-
-        fundingVisible = false
-        assertEquals(BalanceRestoreUiState.SendCash(canGetCash = false), balanceRestore(createViewModel()))
-    }
-
-    // As on iOS, the history button does not wait for activity: a first-time user can open the empty history.
-    @Test
-    fun `the history button shows wherever funding is, with or without activity`() {
-        every { hostFunding.observeActivity() } returns flowOf(FundingActivity(inFlight = emptyList(), history = emptyList()))
-
-        fundingVisible = true
-        assertTrue(createViewModel().showsFundingHistory)
-
-        fundingVisible = false
-        assertFalse(createViewModel().showsFundingHistory)
+        assertEquals(BalanceRestoreUiState.SendCash, balanceRestore(createViewModel()))
     }
 
     private suspend fun balanceRestore(viewModel: DigitalDollarCardDetailsViewModel): BalanceRestoreUiState =
@@ -223,7 +201,6 @@ class DigitalDollarCardDetailsViewModelTest {
         interactor = interactor,
         router = mockk(),
         tokenAmountMapper = mockk(relaxed = true),
-        fundingEntryPoints = fundingEntryPoints,
         fundingActivityMixinFactory = FundingActivityMixin.Factory(hostFunding, chainAssetProvider, mockk(relaxed = true)),
     )
 }

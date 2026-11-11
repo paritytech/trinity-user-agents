@@ -16,7 +16,6 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.BackupProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.mapper.TokenAmountMapper
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
-import io.paritytech.polkadotapp.feature_wallet_impl.domain.funding.FundingEntryPoints
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor.DigitalDollarCardDetailsInteractor
 import io.paritytech.polkadotapp.feature_wallet_impl.domain.model.CoinageHoldingsInfo
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.coins.CoinageBreakdownFactory
@@ -46,7 +45,6 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
     private val interactor: DigitalDollarCardDetailsInteractor,
     private val router: PocketRouter,
     private val tokenAmountMapper: TokenAmountMapper,
-    private val fundingEntryPoints: FundingEntryPoints,
     fundingActivityMixinFactory: FundingActivityMixin.Factory,
 ) : BaseViewModel() {
     private val fundInProgress = MutableStateFlow(false)
@@ -139,10 +137,6 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
         funding.close()
         openTopUp()
     }
-
-    /** The history button shows wherever the build offers funding, as on iOS, with or without activity. */
-    val showsFundingHistory: Boolean
-        get() = fundingEntryPoints.visible
 
     fun onHistoryClick() = funding.openSheet(FundingSheet.HISTORY)
 
@@ -238,7 +232,7 @@ class DigitalDollarCardDetailsViewModel @Inject constructor(
             is BackupProgress.Deep.Completed,
             is BackupProgress.Deep.Syncing,
             is BackupProgress.Initial.Completed -> BalanceRestoreUiState.Restore(inProgress = isInProgress())
-            else -> BalanceRestoreUiState.SendCash(canGetCash = fundingEntryPoints.visible)
+            else -> BalanceRestoreUiState.SendCash
         }
     }
 }

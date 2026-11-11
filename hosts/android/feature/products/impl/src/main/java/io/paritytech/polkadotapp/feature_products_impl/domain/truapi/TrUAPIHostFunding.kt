@@ -1,8 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.paritytech.polkadotapp.chains.network.binding.Balance
-import io.paritytech.polkadotapp.common.utils.FeatureOption
-import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityItem
@@ -14,7 +12,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSes
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.toActivityStatus
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onStart
 import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingFailure
@@ -28,25 +25,16 @@ import kotlin.time.Instant
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
 /** The host's funding entry points over the core, which holds the sessions and their history. */
-class TrUAPIHostFunding internal constructor(
+class TrUAPIHostFunding @Inject constructor(
     private val runtime: FundingRuntime,
     private val sessionScreens: FundingSessionScreens,
-    private val enabled: Boolean,
 ) : HostFunding {
-    @Inject
-    constructor(runtime: FundingRuntime, sessionScreens: FundingSessionScreens) :
-        this(runtime, sessionScreens, FeatureOption.FUNDING.isEnabled)
-
     override suspend fun openFunding(direction: FundingDirection, amount: Balance?): Result<String?> =
         runtime.openFunding(direction.toCore(), amount?.toU128())
 
     override fun observeActivity(): Flow<FundingActivity> =
-        if (!enabled) {
-            flowOf(FundingActivity(inFlight = emptyList(), history = emptyList()))
-        } else {
-            combine(runtime.sessions, runtime.history) { sessions, history -> activityOf(sessions.values, history) }
-                .onStart { runtime.start().logFailure("Failed to start the core for funding activity") }
-        }
+        combine(runtime.sessions, runtime.history) { sessions, history -> activityOf(sessions.values, history) }
+            .onStart { runtime.start().logFailure("Failed to start the core for funding activity") }
 
     override suspend fun acknowledgeShown(intents: List<String>) {
         intents.forEach { runtime.acknowledge(it).logFailure("Funding acknowledgement failed") }
