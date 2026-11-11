@@ -5,7 +5,7 @@ import TrUAPIHost
 @testable import polkadot_app
 
 /// The overlay draws what the core decides: the providers it asked in its
-/// order, the rails it offers, the asset an ask names and why an amount
+/// order, the rails it offers, the requests it keeps and why an amount
 /// cannot go ahead.
 @MainActor
 struct FundingFlowModelQuoteTests {
@@ -56,30 +56,18 @@ struct FundingFlowModelQuoteTests {
     }
 
     @Test
-    func anAmountBelowTheCoresMinimumIsRefused() {
-        let model = makeModel(MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])]))
+    func theAmountIssueIsTheCoresForEachTypedAmount() {
+        let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
+        let model = makeModel(runtime)
         model.selectRail(.card)
 
+        runtime.answerAmounts(with: .belowMinimum(min: "10000000"))
         model.amountText = "5"
         #expect(model.amountIssue == .belowMinimum(min: "10000000"))
+        #expect(!model.canContinue)
 
+        runtime.answerAmounts(with: nil)
         model.amountText = "10"
-        #expect(model.amountIssue == nil)
-    }
-
-    @Test
-    func aWithdrawalAboveWhatPaymentsCanSpendIsRefused() {
-        let model = makeModel(
-            MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])]),
-            direction: .out
-        )
-        model.selectRail(.card)
-        model.spendable = 20
-
-        model.amountText = "30"
-        #expect(model.amountIssue == .notEnoughBalance)
-
-        model.amountText = "15"
         #expect(model.amountIssue == nil)
     }
 
@@ -123,8 +111,10 @@ struct FundingFlowModelQuoteTests {
         #expect(!earlierShown)
     }
 
+    /// The core can learn an amount's issue from a quote list, so the issue
+    /// is read again once a list shows.
     @Test
-    func everyProviderRefusingTheAmountIsItsIssue() async throws {
+    func aShownListReadsTheAmountIssueAgain() async throws {
         let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
         let model = makeModel(runtime)
         model.selectRail(.card)
@@ -132,13 +122,44 @@ struct FundingFlowModelQuoteTests {
         model.continueFromAmount()
         await model.settled()
 
-        var list = quotes(runtime.lastRequestId, [], best: nil)
-        list.amount = "50000000"
-        list.issue = .aboveMaximum(max: "40000000")
-        model.receive(quotes: list)
+        runtime.answerAmounts(with: .aboveMaximum(max: "40000000"))
+        model.receive(quotes: quotes(runtime.lastRequestId, [], best: nil))
 
         #expect(model.amountIssue == .aboveMaximum(max: "40000000"))
-        #expect(model.unavailableIssue == nil)
+    }
+
+    @Test
+    func anUnchangedAskKeepsTheShownList() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
+        let model = makeModel(runtime)
+        model.selectRail(.card)
+        model.amountText = "50"
+        model.continueFromAmount()
+        await model.settled()
+        model.receive(quotes: quotes(runtime.lastRequestId, [("routed", quote("q1", send: "5200"))], best: "routed"))
+
+        model.back()
+        model.continueFromAmount()
+        await model.settled()
+
+        #expect(runtime.asks.count == 1)
+        #expect(model.selectedQuote?.quoteId == "q1")
+        #expect(!model.isQuoting)
+    }
+
+    @Test
+    func theCoreWithdrawingTheListShowsNone() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])])
+        let model = makeModel(runtime)
+        model.selectRail(.card)
+        model.amountText = "50"
+        model.continueFromAmount()
+        await model.settled()
+        model.receive(quotes: quotes(runtime.lastRequestId, [("routed", quote("q1", send: "5200"))], best: "routed"))
+
+        model.refreshQuotes()
+
+        #expect(model.selectedQuote == nil)
     }
 
     /// The core keeps refreshing the last ask after the user changes rail;
@@ -211,6 +232,27 @@ struct FundingFlowModelQuoteTests {
     }
 
     @Test
+    func theDepositScreenStartsOnTheCoresBestQuote() async throws {
+        let runtime = MockFundingRuntime(candidates: [candidate("crypto", routes: [cryptoRoute()])])
+        let model = makeModel(runtime)
+        var outcomes: [FundingPresentOutcome] = []
+        model.onOutcome = { outcomes.append($0) }
+        model.selectRail(.crypto)
+        model.amountText = "50"
+        model.continueFromAmount()
+        model.chooseNetwork("polkadot")
+        model.chooseToken("USDC")
+        await model.settled()
+        #expect(runtime.autoStarts == [.armed(requestId: 1)])
+
+        runtime.hold(session(provider: "crypto"))
+        model.refreshSession()
+
+        #expect(outcomes == [.started])
+        #expect(model.path.last == .deposit)
+    }
+
+    @Test
     func goingBackFromTheDepositScreenKeepsTheSessionFromStarting() async throws {
         let runtime = MockFundingRuntime(candidates: [candidate("crypto", routes: [cryptoRoute()])])
         let model = makeModel(runtime)
@@ -220,11 +262,10 @@ struct FundingFlowModelQuoteTests {
         model.chooseNetwork("polkadot")
         model.chooseToken("USDC")
         model.back()
-        try await waitUntil { runtime.asks.count == 1 }
+        await model.settled()
 
-        model.receive(quotes: quotes(runtime.lastRequestId, [("crypto", quote("q1", send: "5200"))], best: "crypto"))
-
-        #expect(!model.isStarting)
+        #expect(runtime.autoStarts == [.armed(requestId: 1), .cancelled])
+        #expect(!model.hasStarted)
         #expect(model.path == [.network, .token])
     }
 
@@ -288,7 +329,14 @@ private extension FundingFlowModelQuoteTests {
     }
 
     func candidate(_ name: String, routes: [FundingRoute]) -> FundingCandidate {
-        FundingCandidate(providerId: provider(name), routes: routes, unsupported: [], limits: [])
+        FundingCandidate(
+            providerId: provider(name),
+            routes: routes,
+            unsupported: [],
+            limits: [],
+            declaresRoutes: !routes.isEmpty,
+            brand: nil
+        )
     }
 
     func route(_ rail: FundingRail) -> FundingRoute {
@@ -315,7 +363,30 @@ private extension FundingFlowModelQuoteTests {
             refreshAtMs: 0,
             amount: "0",
             refusal: nil,
-            issue: nil
+            issue: nil,
+            complete: !rows.isEmpty
+        )
+    }
+
+    /// Open session `intent` once the core handed it to `name`.
+    func session(provider name: String) -> FundingSession {
+        FundingSession(
+            intent: "intent",
+            ownerProductId: nil,
+            direction: .in,
+            amount: "50000000",
+            stage: .open,
+            openedAtMs: 0,
+            deadlineMs: 86_400_000,
+            acknowledged: false,
+            providerId: provider(name),
+            assignedAtMs: 0,
+            cancel: nil,
+            updates: [],
+            started: [],
+            choice: FundingChoice(quote: quote("q1", send: "5200"), rail: .crypto, asset: "USDC", network: "polkadot"),
+            refund: nil,
+            detail: nil
         )
     }
 

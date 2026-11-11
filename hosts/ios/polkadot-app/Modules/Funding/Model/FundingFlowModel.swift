@@ -19,12 +19,22 @@ final class FundingFlowModel: FundingFlowModelProtocol {
     let direction: FundingDirection
     let cash: FundingCash
     /// What a payment can spend now, once the app has read it.
-    var spendable: Decimal?
+    var spendable: Decimal? {
+        didSet { refreshAmountIssue() }
+    }
+
     /// Keeps ``spendable`` current while the overlay is up.
     var balanceTask: Task<Void, Never>?
 
     private(set) var rail: FundingRail
-    var amountText: String
+    var amountText: String {
+        didSet { refreshAmountIssue() }
+    }
+
+    /// Why the typed amount cannot go ahead, as the core decides it from the
+    /// reported selection's limits, its latest quote list and what a
+    /// withdrawal can spend.
+    private(set) var amountIssue: FundingAmountIssue?
     var path: [Screen] = []
     /// Where the user pays from: the device's region until the user picks one.
     private(set) var country: PaymentCountry?
@@ -71,11 +81,12 @@ final class FundingFlowModel: FundingFlowModelProtocol {
     /// The providers' brands, read once each.
     let brands: FundingBrands
 
-    private let service: FundingFlowServiceProtocol
-    private let coreCalls: FundingCoreCallQueue
+    let service: FundingFlowServiceProtocol
+    /// Makes the overlay's core calls in the order the user took its steps.
+    let coreCalls: FundingCoreCallQueue
     private let logger: LoggerProtocol
-    /// The deposit screen starts the session once every provider answered
-    /// the ask it was opened on.
+    /// The deposit screen asked the core to start the session on the best
+    /// quote once every provider answered.
     @ObservationIgnored private var startsWhenQuoted = false
     /// Set when the user left before `Started`, which the core discards the
     /// session on.
@@ -113,12 +124,13 @@ final class FundingFlowModel: FundingFlowModelProtocol {
         detectedCountry = (options?.detectedCountry ?? FundingCountries.localeRegion())
             .flatMap { FundingCountries.country(code: $0) }
         country = detectedCountry
-        quotes.onShown = { [weak self] in self?.startIfQuoted() }
+        quotes.onShown = { [weak self] in self?.refreshAmountIssue() }
         if let options {
             apply(options)
         } else {
             reportSelection()
         }
+        refreshAmountIssue()
     }
 }
 
@@ -160,14 +172,12 @@ extension FundingFlowModel {
 
     func chooseToken(_ symbol: String) {
         asset = symbol
-        reportSelection()
-        requestQuote()
-
         if direction == .in {
             startsWhenQuoted = true
+            requestQuote()
             path.append(.deposit)
-            startIfQuoted()
         } else {
+            requestQuote()
             path.append(.summary)
         }
     }
@@ -193,7 +203,7 @@ extension FundingFlowModel {
         }
 
         path.removeLast()
-        startsWhenQuoted = false
+        stopStartingWhenQuoted()
     }
 
     /// The user left the overlay. Before `Started` that is the answer the core
@@ -301,6 +311,22 @@ extension FundingFlowModel {
     func showFees() {
         path.append(.fees)
     }
+
+    /// Called on every keypad change: quotes the new amount once the user
+    /// pauses, so the screen can show a provider's limit before Continue.
+    func amountChanged() {
+        quotes.cancelPause()
+        guard rail != .crypto, amount > 0 else { return }
+
+        quotes.askAfterPause { [weak self] in self?.requestQuote() }
+    }
+
+    /// Reads the core's issue with the typed amount again.
+    func refreshAmountIssue() {
+        amountIssue = amountUnits.flatMap {
+            service.amountIssue(intent: intent, amount: $0, spendable: spendable.flatMap { cash.units($0) })
+        }
+    }
 }
 
 // MARK: - Start
@@ -340,49 +366,21 @@ extension FundingFlowModel {
         }
     }
 
-    /// The core pushed the session again: draw what it holds now.
+    /// The core pushed the session again: draw what it holds now. A session
+    /// the core started on its best quote is reported started.
     func refreshSession() {
         session = service.session(intent: intent)
         progress = service.progress(intent: intent)
+        if startsWhenQuoted, !hasStarted, !hasLeft, session?.providerId != nil {
+            startsWhenQuoted = false
+            didStart()
+        }
     }
 
     /// The core pushed what the overlay offers again: its providers, and the
     /// countries and amounts for the reported selection.
     func refreshOptions() {
         apply(service.options(intent: intent))
-    }
-
-    /// The core changed the quote list: show it when it answers the latest ask.
-    func refreshQuotes() {
-        service.quotes(intent: intent).map { receive(quotes: $0) }
-    }
-
-    /// Takes the core's quote list when it answers the latest ask. The core
-    /// keeps refreshing the last ask after a rail change drops it, and a list
-    /// can arrive before the core's id for its ask does.
-    func receive(quotes list: FundingQuoteList) {
-        quotes.receive(list)
-    }
-}
-
-// MARK: - Quoting
-
-extension FundingFlowModel {
-    /// Returns once the quote waiting on the keypad pause, every core call
-    /// made so far and every brand read have finished.
-    func settled() async {
-        await quotes.pauseSettled()
-        await coreCalls.idle()
-        await brands.settled()
-    }
-
-    /// Called on every keypad change: quotes the new amount once the user
-    /// pauses, so the screen can show a provider's limit before Continue.
-    func amountChanged() {
-        quotes.cancelPause()
-        guard rail != .crypto, amount > 0 else { return }
-
-        quotes.askAfterPause { [weak self] in self?.requestQuote() }
     }
 }
 
@@ -402,6 +400,7 @@ private extension FundingFlowModel {
     func leave() {
         quotes.cancelPause()
         balanceTask?.cancel()
+        stopStartingWhenQuoted()
         guard !hasStarted, !hasLeft else { return }
 
         hasLeft = true
@@ -414,6 +413,8 @@ private extension FundingFlowModel {
     }
 
     func didStart() {
+        guard !hasStarted else { return }
+
         hasStarted = true
         onOutcome?(.started)
         refreshSession()
@@ -425,15 +426,13 @@ private extension FundingFlowModel {
         }
     }
 
-    /// Starts the session the deposit screen is waiting on, once every
-    /// provider answered.
-    func startIfQuoted() {
-        guard startsWhenQuoted, path.last == .deposit, !isStarting, !hasStarted, !quotes.isAwaiting,
-              !rows.isEmpty, !rows.values.contains(where: \.isPending)
-        else { return }
+    /// The user left the deposit screen before the session started: the
+    /// core no longer starts it on its best quote.
+    func stopStartingWhenQuoted() {
+        guard startsWhenQuoted else { return }
 
         startsWhenQuoted = false
-        start()
+        coreCalls.run { [intent] service in await service.cancelAutoStart(intent: intent) }
     }
 
     /// Takes what the core offers for the reported selection, and reports
@@ -452,6 +451,7 @@ private extension FundingFlowModel {
         networkLimits = options.networks
         brands.load(candidates.map(\.providerId))
         takeDetectedCountry(options.detectedCountry)
+        refreshAmountIssue()
         reportSelection()
     }
 
@@ -486,12 +486,11 @@ private extension FundingFlowModel {
         }
     }
 
-    /// Asks the providers to quote what is on screen, unless they were
-    /// asked exactly that last. The core is told of the selection first, and
-    /// the ask names the asset it offers for that selection.
+    /// Asks the core to price the typed amount on the selection on screen,
+    /// which it is told of first. The core keeps the running request when it
+    /// already prices that.
     func requestQuote() {
         reportSelection()
-        quotes.awaitAsk()
-        coreCalls.run { _ in } then: { [weak self] _ in self.map { $0.quotes.askIfNew($0.currentAsk()) } }
+        quotes.request(amount: amountUnits, startWhenQuoted: startsWhenQuoted)
     }
 }

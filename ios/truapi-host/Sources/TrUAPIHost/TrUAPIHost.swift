@@ -350,7 +350,7 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
 /// answers Funding calls with `Unsupported`.
 ///
 /// The core owns the sessions. While `presentFunding` is waiting, the session
-/// is live: quote it with ``TrUAPIHostRuntime/getFundingQuote(intent:ask:)``
+/// is live: quote it with ``TrUAPIHostRuntime/getFundingQuote(intent:amount:)``
 /// and hand it to a provider with
 /// ``TrUAPIHostRuntime/selectFundingProvider(intent:providerId:quoteId:)``
 /// before answering `.started`.
@@ -369,34 +369,28 @@ public protocol FundingHostBridge: AnyObject, Sendable {
     /// Show `target` for provider `providerId`'s session `intent` in a frame
     /// the host owns, and report how it closed. A page is a checked https
     /// URL: show its origin, and answer `.returned` when it reaches its
-    /// return URL. `context` carries what the core knows of the session the
-    /// frame is for. The core closes the frame itself, through
+    /// return URL. The core closes the frame itself, through
     /// ``closeProviderFrame(providerId:intent:)``, once the payment moved.
     func presentProviderFrame(
         providerId: ProductId,
         intent: String,
-        target: FundingFrameTarget,
-        context: FundingFrameContext
+        target: FundingFrameTarget
     ) async throws -> FundingFrameOutcome
 
     /// Close the frame
-    /// ``presentProviderFrame(providerId:intent:target:context:)`` shows for
+    /// ``presentProviderFrame(providerId:intent:target:)`` shows for
     /// provider `providerId`'s session `intent`, answering that call
     /// `.closed`, and show the session sheet in its place. Does nothing when
     /// no frame is open for it. Called inline.
     func closeProviderFrame(providerId: ProductId, intent: String)
 
-    /// Whether provider `providerId` ships an App, so an App route of its can
-    /// be shown in ``presentProviderFrame(providerId:intent:target:context:)``.
-    /// A provider without one shows only external pages.
-    func providerHasApp(providerId: ProductId) async -> Bool
-
     /// What the core holds about session `intent` changed: `kind` says
     /// which, and the host reads it back from the runtime, as
     /// ``TrUAPIHostRuntime/fundingSession(intent:)``,
     /// ``TrUAPIHostRuntime/fundingOptions(intent:)`` or
-    /// ``TrUAPIHostRuntime/fundingQuotes(intent:)``. `intent` is `nil` for
-    /// `.inProgress`, which concerns every session. Every session in flight,
+    /// ``TrUAPIHostRuntime/fundingQuotes(intent:)``, or
+    /// ``TrUAPIHostRuntime/fundingAvailable()`` for `.providers`, whose
+    /// `intent` is `nil`. Every session in flight,
     /// and every ended one not yet acknowledged, comes through again when
     /// funding resumes. Called inline, so hand it off rather than drawing
     /// here.
@@ -688,25 +682,19 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
     func presentProviderFrame(
         providerId: ProductId,
         intent: String,
-        target: FundingFrameTarget,
-        context: FundingFrameContext
+        target: FundingFrameTarget
     ) async throws -> FundingFrameOutcome {
         try await withHostRejection {
             try await bridge.presentProviderFrame(
                 providerId: providerId,
                 intent: intent,
-                target: target,
-                context: context
+                target: target
             )
         }
     }
 
     func closeProviderFrame(providerId: ProductId, intent: String) {
         bridge.closeProviderFrame(providerId: providerId, intent: intent)
-    }
-
-    func providerHasApp(providerId: ProductId) async -> Bool {
-        await bridge.providerHasApp(providerId: providerId)
     }
 
     func fundingChanged(intent: String?, kind: FundingChangeKind) {
@@ -1221,12 +1209,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.fundingEntries()
     }
 
-    /// Replace the funding providers this host ships, each with its Worker
-    /// manifest JSON.
-    public func setFundingProviders(_ providers: [FundingProviderEntry]) throws {
-        try inner.setFundingProviders(providers: providers)
-    }
-
     /// Offer the providers the remote configuration names, in order, then
     /// the `bundled` ones it does not name. Call it on every remote config
     /// refresh: a call listing what the last one did changes nothing.
@@ -1234,16 +1216,44 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try inner.setFundingProviderConfig(publishedNames: publishedNames, bundled: bundled)
     }
 
-    /// Ask every provider routing the ask's rail to price `ask` for session
-    /// `intent`. The list is read with ``fundingQuotes(intent:)`` on
+    /// Ask every provider routing the selected rail to price `amount` for
+    /// session `intent`, on the rail, asset, network and country last
+    /// reported with ``selectFundingOptions(intent:selection:)``. The list is
+    /// read with ``fundingQuotes(intent:)`` on
     /// ``FundingHostBridge/fundingChanged(intent:kind:)``
     /// and is asked for again every minute until the session is handed to a
-    /// provider, ends or leaves the overlay, or another ask replaces it.
-    /// Returns the request id every list of this request carries; show only
-    /// the latest request's lists.
+    /// provider, ends or leaves the overlay, or another ask replaces it; an
+    /// unchanged ask keeps the running request. Returns the request id every
+    /// list of this request carries, `nil` while the selection names no asset
+    /// or `amount` is zero.
     @discardableResult
-    public func getFundingQuote(intent: String, ask: FundingQuoteAsk) -> UInt64 {
-        inner.getFundingQuote(intent: intent, ask: ask)
+    public func getFundingQuote(intent: String, amount: U128) -> UInt64? {
+        inner.getFundingQuote(intent: intent, amount: amount)
+    }
+
+    /// Hand session `intent` to the best quote of request `requestId` as soon
+    /// as every provider has answered. Going back, a new ask or another
+    /// selection cancels it, as ``cancelFundingAutoStart(intent:)`` does.
+    public func startFundingWhenQuoted(intent: String, requestId: UInt64) {
+        inner.startFundingWhenQuoted(intent: intent, requestId: requestId)
+    }
+
+    /// Stop session `intent` from starting on its best quote.
+    public func cancelFundingAutoStart(intent: String) {
+        inner.cancelFundingAutoStart(intent: intent)
+    }
+
+    /// What is wrong with `amount` for session `intent`'s selection, given
+    /// the `spendable` balance on a withdrawal; `nil` when nothing is.
+    public func fundingAmountIssue(intent: String, amount: U128, spendable: U128?) -> FundingAmountIssue? {
+        inner.fundingAmountIssue(intent: intent, amount: amount, spendable: spendable)
+    }
+
+    /// Whether any funding provider is offered, so the entry points show.
+    /// Read again on ``FundingHostBridge/fundingChanged(intent:kind:)`` with
+    /// `.providers`.
+    public func fundingAvailable() -> Bool {
+        inner.fundingAvailable()
     }
 
     /// Report the rail, asset, network and country the user has picked in

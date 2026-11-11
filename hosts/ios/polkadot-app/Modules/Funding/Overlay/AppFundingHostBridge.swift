@@ -19,16 +19,12 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
     func presentProviderFrame(
         providerId: ProductId,
         intent: String,
-        target: FundingFrameTarget,
-        context: FundingFrameContext
+        target: FundingFrameTarget
     ) async -> FundingFrameOutcome
 
     /// The provider closed its frame for session `intent`: answer it
     /// `.closed` and show the session sheet in its place.
     func closeProviderFrame(providerId: ProductId, intent: String)
-
-    /// Whether provider `providerId` ships an App its frame can show.
-    func providerHasApp(providerId: ProductId) async -> Bool
 
     /// Session `intent` changed in the core: read it back from the runtime.
     func fundingSessionChanged(intent: String)
@@ -84,23 +80,18 @@ final class AppFundingHostBridge: FundingHostBridge, Sendable {
     func presentProviderFrame(
         providerId: ProductId,
         intent: String,
-        target: FundingFrameTarget,
-        context: FundingFrameContext
+        target: FundingFrameTarget
     ) async throws -> FundingFrameOutcome {
-        await overlay.presentProviderFrame(providerId: providerId, intent: intent, target: target, context: context)
+        await overlay.presentProviderFrame(providerId: providerId, intent: intent, target: target)
     }
 
     func closeProviderFrame(providerId: ProductId, intent: String) {
         overlay.closeProviderFrame(providerId: providerId, intent: intent)
     }
 
-    func providerHasApp(providerId: ProductId) async -> Bool {
-        await overlay.providerHasApp(providerId: providerId)
-    }
-
-    /// Whether a provider still works on a session is kept by the core, which
-    /// answers `fundingResumePending` at the next launch, so `.inProgress`
-    /// needs nothing here.
+    /// `.providers` needs nothing here: the entry points open the overlay
+    /// whether or not a provider is offered, and the overlay lists the
+    /// candidates the core names for the session.
     func fundingChanged(intent: String?, kind: FundingChangeKind) {
         guard let intent else { return }
 
@@ -108,7 +99,7 @@ final class AppFundingHostBridge: FundingHostBridge, Sendable {
         case .session: overlay.fundingSessionChanged(intent: intent)
         case .options: overlay.fundingOptionsChanged(intent: intent)
         case .quotes: overlay.fundingQuotesChanged(intent: intent)
-        case .inProgress: break
+        case .providers: break
         }
     }
 

@@ -12,13 +12,22 @@ protocol FundingFlowServiceProtocol: Sendable {
     func quotes(intent: String) -> FundingQuoteList?
     func session(intent: String) -> FundingSession?
     func progress(intent: String) -> FundingProgress?
+    /// Why `amount` cannot go ahead for the reported selection, given what a
+    /// withdrawal can spend.
+    func amountIssue(intent: String, amount: U128, spendable: U128?) -> FundingAmountIssue?
 
     /// Tells the core what the user picked, and returns what the core offers
     /// for it, which it answers inline.
     func select(_ selection: FundingSelection, intent: String) async -> FundingOptions?
-    /// Asks every provider to quote `ask`, and returns the core's id for the
-    /// request.
-    func requestQuote(_ ask: FundingQuoteAsk, intent: String) async -> UInt64
+    /// Asks every provider routing the reported selection to quote `amount`,
+    /// and returns the core's id for the request: the running one when it
+    /// already prices that, nil while the selection names no asset or the
+    /// amount is zero.
+    func requestQuote(amount: U128, intent: String) async -> UInt64?
+    /// Hands the session to request `requestId`'s best quote once every
+    /// provider answered it.
+    func startWhenQuoted(requestId: UInt64, intent: String) async
+    func cancelAutoStart(intent: String) async
     func selectProvider(_ providerId: ProductId, quoteId: String, intent: String) async throws -> Bool
     func cancel(intent: String) async throws -> CancelOutcome
     func confirmCancel(intent: String, terms: CancelTerms?) async throws -> CancelConfirmation
@@ -52,13 +61,25 @@ actor FundingFlowService: FundingFlowServiceProtocol {
         runtime.fundingProgress(intent: intent)
     }
 
+    nonisolated func amountIssue(intent: String, amount: U128, spendable: U128?) -> FundingAmountIssue? {
+        runtime.fundingAmountIssue(intent: intent, amount: amount, spendable: spendable)
+    }
+
     func select(_ selection: FundingSelection, intent: String) -> FundingOptions? {
         runtime.selectFundingOptions(intent: intent, selection: selection)
         return runtime.fundingOptions(intent: intent)
     }
 
-    func requestQuote(_ ask: FundingQuoteAsk, intent: String) -> UInt64 {
-        runtime.getFundingQuote(intent: intent, ask: ask)
+    func requestQuote(amount: U128, intent: String) -> UInt64? {
+        runtime.getFundingQuote(intent: intent, amount: amount)
+    }
+
+    func startWhenQuoted(requestId: UInt64, intent: String) {
+        runtime.startFundingWhenQuoted(intent: intent, requestId: requestId)
+    }
+
+    func cancelAutoStart(intent: String) {
+        runtime.cancelFundingAutoStart(intent: intent)
     }
 
     func selectProvider(_ providerId: ProductId, quoteId: String, intent: String) async throws -> Bool {

@@ -6,7 +6,8 @@ import TrUAPIHost
 /// A runtime answering each selection with fixed options, as the core does
 /// inline, and recording what the funding screens asked of it. Like the
 /// core, it offers the chosen token on crypto and the payment country's
-/// currency on card and bank.
+/// currency on card and bank, prices the reported selection, and keeps the
+/// running request for an unchanged ask.
 final class MockFundingRuntime: FundingRuntime, Sendable {
     private struct State: Sendable {
         var options: FundingOptions?
@@ -14,10 +15,18 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
         var history: [FundingSessionSummary] = []
         var selections: [FundingSelection] = []
         var asks: [FundingQuoteAsk] = []
+        var amountIssue: FundingAmountIssue?
+        var autoStarts: [AutoStart] = []
         var selectedProviders: [ProductId] = []
         var acknowledged: [String] = []
         var holdsSelection = false
         var heldSelection: CheckedContinuation<Void, Never>?
+    }
+
+    /// What the screens asked of the core's start when quoted.
+    enum AutoStart: Equatable {
+        case armed(requestId: UInt64)
+        case cancelled
     }
 
     private let state = OSAllocatedUnfairLock(initialState: State())
@@ -44,10 +53,16 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
 
     var selections: [FundingSelection] { state.withLock { $0.selections } }
     var asks: [FundingQuoteAsk] { state.withLock { $0.asks } }
+    var autoStarts: [AutoStart] { state.withLock { $0.autoStarts } }
     var selectedProviders: [ProductId] { state.withLock { $0.selectedProviders } }
     var acknowledged: [String] { state.withLock { $0.acknowledged } }
     /// The id of the latest quote request, which counts them from 1.
     var lastRequestId: UInt64 { UInt64(asks.count) }
+
+    /// Answers every amount with `issue`.
+    func answerAmounts(with issue: FundingAmountIssue?) {
+        state.withLock { $0.amountIssue = issue }
+    }
 
     /// Keeps the next provider selection waiting until ``releaseSelection()``.
     func holdSelection() {
@@ -92,11 +107,35 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
         }
     }
 
-    func getFundingQuote(intent _: String, ask: FundingQuoteAsk) -> UInt64 {
+    func fundingAmountIssue(intent _: String, amount _: U128, spendable _: U128?) -> FundingAmountIssue? {
+        state.withLock { $0.amountIssue }
+    }
+
+    func getFundingQuote(intent _: String, amount: U128) -> UInt64? {
         state.withLock { state in
-            state.asks.append(ask)
+            guard amount != "0", let selection = state.selections.last, let asset = state.options?.asset else {
+                return nil
+            }
+
+            let ask = FundingQuoteAsk(
+                direction: .in,
+                rail: selection.rail,
+                asset: asset,
+                network: selection.network,
+                amount: amount,
+                country: selection.country
+            )
+            if ask != state.asks.last { state.asks.append(ask) }
             return UInt64(state.asks.count)
         }
+    }
+
+    func startFundingWhenQuoted(intent _: String, requestId: UInt64) {
+        state.withLock { $0.autoStarts.append(.armed(requestId: requestId)) }
+    }
+
+    func cancelFundingAutoStart(intent _: String) {
+        state.withLock { $0.autoStarts.append(.cancelled) }
     }
 
     func selectFundingProvider(intent _: String, providerId: ProductId, quoteId _: String) async throws -> Bool {

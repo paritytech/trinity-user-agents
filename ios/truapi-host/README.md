@@ -358,7 +358,7 @@ session's options name its providers and the rails, asset and tokens a
 selection can use. While `presentFunding` waits, the session is live:
 report the user's rail, asset, network, country and currency with
 `selectFundingOptions(intent:selection:)` whenever one changes, price it
-with `getFundingQuote(intent:ask:)` (the quote list carries the request id the
+with `getFundingQuote(intent:amount:)` on that selection (the quote list carries the request id the
 call returned, `pending` rows first, and once every provider answered without
 a quote, the reason they gave and what it says about the amount; the core asks
 again every minute, each row keeping its answer until the provider answers
@@ -366,11 +366,17 @@ again, until the session is handed over or the overlay closes, and a new
 `getFundingQuote` replaces the ask), hand it to the chosen provider with
 `selectFundingProvider(intent:providerId:quoteId:)`, and only then answer
 `.started`. Answering `.dismissed` discards the session. A provider that needs
-one of its own screens asks through `presentProviderFrame`, with a context
-saying whether the session waits on a transfer the user makes outside the
-frame. It is answered `.closed` when the screen closed itself or the core
+one of its own screens asks through `presentProviderFrame`; whether the session
+waits on a transfer the user makes outside the frame is on its progress
+(`awaitsUserTransfer`). It is answered `.closed` when the screen closed itself or the core
 closed it because the payment moved, `.dismissed` when the user closed it and
 `.returned(url:)` when the page navigated to the request's `return_url`.
+
+`startFundingWhenQuoted(intent:requestId:)` hands the session to the best quote
+once every provider answered, until `cancelFundingAutoStart(intent:)`, a new ask
+or another selection. `fundingAmountIssue(intent:amount:spendable:)` says what
+is wrong with an amount for the selection, and `fundingAvailable()` whether any
+provider is offered, read again on `.providers`.
 
 `fundingEntries()` lists every session the core announced with its progress,
 `fundingHistory()` the ended ones as summaries, each with how it ended in
@@ -381,7 +387,7 @@ handed over on each resume until the host records each with
 on screen. `setFundingProviderConfig(publishedNames:bundled:)` lists the
 providers the remote configuration names and the ones the host ships, on every
 refresh; amounts cross as decimal strings of CASH units. Free functions hold
-the rules both apps share: `fundingAmountIssue(...)`, the `fundingPage*` checks
+the rules both apps share: the `fundingPage*` checks
 for a provider's page, `productSource(...)` and `archiveFile(...)` for where a
 product runs from and which file answers a request, and
 `fundingResumePending(databaseDirectory:)` for starting the core at launch.

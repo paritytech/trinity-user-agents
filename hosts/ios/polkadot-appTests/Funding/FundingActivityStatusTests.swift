@@ -141,6 +141,7 @@ private extension FundingActivityStatusTests {
             payout: payout,
             refunded: refunded,
             status: status,
+            awaitsUserTransfer: false,
             longerAtMs: nil,
             moneyMoved: false,
             cancel: .unavailable
