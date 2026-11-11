@@ -108,7 +108,7 @@ impl PlanStream {
 		let reason = MaterialFailure::Unsupported;
 		let count = materials_nodes(tree).len();
 		for node in (0u32..).take(count) {
-			failures(PlanFailure { node, material: None, reason });
+			tell(&failures, PlanFailure { node, material: None, reason });
 		}
 		let plan = MaterialPlan {
 			nodes: vec![NodePlan::Plain { reason }; count],
@@ -320,8 +320,8 @@ impl Planner {
 		}
 	}
 
-	/// The plan as it stands. Nodes plain for the first time are told to
-	/// `failures` and logged.
+	/// The plan as it stands. Nodes plain for the first time are logged and
+	/// told to `failures`.
 	fn plan(&mut self) -> MaterialPlan {
 		let mut plans = Vec::with_capacity(self.nodes.len());
 		for index in 0..self.nodes.len() {
@@ -330,14 +330,7 @@ impl Planner {
 			if let (NodePlan::Plain { reason }, false) = (&plan.0, node.reported) {
 				node.reported = true;
 				let failure = PlanFailure { node: index as u32, material: plan.1, reason: *reason };
-				tracing::info!(
-					target: crate::markers::MATERIALS_NODE_PLAIN.target,
-					"node {} draws plain: {:?}, material {:?}",
-					failure.node,
-					failure.reason,
-					failure.material.map(hex::encode)
-				);
-				(self.failures)(failure);
+				tell(&self.failures, failure);
 			}
 			plans.push(plan.0);
 		}
@@ -411,6 +404,18 @@ const SHADER_CACHE_CAPACITY: usize = 64;
 /// A material's ID, the language and whether the GPU filters float images.
 type ShaderKey = ([u8; 32], ShaderLanguage, bool);
 
+/// Logs a node drawn plain on the device and tells `failures`.
+fn tell(failures: &dyn Fn(PlanFailure), failure: PlanFailure) {
+	tracing::info!(
+		target: crate::markers::MATERIALS_NODE_PLAIN.target,
+		"node {} draws plain: {:?}, material {:?}",
+		failure.node,
+		failure.reason,
+		failure.material.map(hex::encode)
+	);
+	failures(failure);
+}
+
 /// What building each shader gave, failures included, the oldest dropped
 /// first.
 #[derive(Default)]
@@ -427,8 +432,10 @@ impl ShaderCache {
 			.map(|(_, built)| built.clone())
 	}
 
-	/// Keeps what building `key` gave, dropping the oldest beyond capacity.
+	/// Keeps what building `key` gave, in place of what it gave before,
+	/// dropping the oldest beyond capacity.
 	pub fn insert(&mut self, key: ShaderKey, built: Result<MaterialShader, MaterialFailure>) {
+		self.shaders.retain(|(kept, _)| kept != &key);
 		self.shaders.push_back((key, built));
 		if self.shaders.len() > SHADER_CACHE_CAPACITY {
 			self.shaders.pop_front();

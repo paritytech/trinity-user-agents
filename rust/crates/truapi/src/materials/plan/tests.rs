@@ -392,14 +392,17 @@ impl ShaderCache {
 }
 
 /// A session can see many materials, so built shaders are kept within a fixed
-/// number, the oldest dropped first. A build that failed is kept too, so a
-/// material naga cannot translate is not translated again on every change.
+/// number of shaders, the oldest dropped first. A build that failed is kept
+/// too, so a material naga cannot translate is not translated again on every
+/// change.
 #[test]
 fn the_shader_cache_keeps_builds_and_failures_dropping_the_oldest() {
 	let mut cache = ShaderCache::default();
 	let key = |index: usize| ([index as u8; 32], ShaderLanguage::GlslEs, true);
 	cache.insert(key(0), Err(MaterialFailure::Unsupported));
+	cache.insert(key(0), Err(MaterialFailure::Unsupported));
 	assert_eq!(cache.get(&key(0)), Some(Err(MaterialFailure::Unsupported)));
+	assert_eq!(cache.len(), 1, "two plans that build one shader at once keep it once");
 
 	let shader = read_material(STILL).unwrap().shader(ShaderLanguage::GlslEs, true);
 	for index in 1..=SHADER_CACHE_CAPACITY {

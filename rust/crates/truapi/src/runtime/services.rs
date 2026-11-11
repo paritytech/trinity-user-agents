@@ -529,8 +529,7 @@ impl RuntimeServices {
 	pub fn draws_materials(&self, version: u32, features: &[String]) -> bool {
 		#[cfg(not(target_arch = "wasm32"))]
 		{
-			self.materials().is_some() &&
-				crate::materials::draws(self.materials_enabled(), version, features)
+			crate::materials::draws(self.materials_enabled(), version, features)
 		}
 		#[cfg(target_arch = "wasm32")]
 		{

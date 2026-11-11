@@ -658,9 +658,11 @@ impl ProductConnection {
 		}
 	}
 
-	/// End the renderer action stream this connection's product is reading.
+	/// End the renderer action and failure streams this connection's product
+	/// is reading.
 	pub fn detach_renderer(&self) {
 		self.renderer.detach();
+		self.renderer_failures.detach();
 	}
 
 	/// Buffer one renderer action for this connection's product.

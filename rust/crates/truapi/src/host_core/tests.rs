@@ -1708,6 +1708,18 @@ fn the_durable_engine_starts_without_an_installation_provider() {
 	assert!(runtime.services.durable_engine().is_some());
 }
 
+/// Products ask the materials question as they connect, which can be before
+/// the core database opens. The answer follows the host's configuration, so a
+/// product never keeps a no the host did not mean.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn the_materials_answer_does_not_wait_for_the_core_database() {
+	let (runtime, _platform) = test_signing_runtime();
+	runtime.services.enable_materials();
+
+	assert!(runtime.services.draws_materials(1, &[]));
+}
+
 /// The runtime keeps one set of materials, so every renderer tree shares
 /// the fetches the start-up fetch began, and a second start begins none.
 #[cfg(not(target_arch = "wasm32"))]
