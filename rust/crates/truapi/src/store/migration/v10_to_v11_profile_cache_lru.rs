@@ -20,4 +20,3 @@ pub fn profile_cache_lru() -> M<'static> {
 		CREATE INDEX public_profiles_access_order ON public_profiles(access_order);",
 	)
 }
-
