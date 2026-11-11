@@ -14,6 +14,7 @@ use super::{
 	sso_request_service::SsoRequestService,
 };
 use crate::{
+	Spawner,
 	host_internal::{
 		sso_messages::{
 			CreateTransactionLegacyPayload, CreateTransactionPayload, CreateTransactionRequest,
@@ -26,7 +27,6 @@ use crate::{
 	},
 	host_logic::entropy::derive_product_entropy_from_source,
 	platform::ProductId,
-	subscription::Spawner,
 };
 use futures::{
 	StreamExt,
@@ -80,7 +80,7 @@ impl RemoteAccountHolder {
 			invocation.caller.product_id().ok_or(RingVrfError::NotAllowlisted)?.clone();
 		let service = Arc::downgrade(&self.service);
 		let session = invocation.session.clone();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let Some(service) = service.upgrade() else {
 				return;
 			};
@@ -96,7 +96,7 @@ impl RemoteAccountHolder {
 			if let Err(error) = result {
 				tracing::warn!(?error, "ring-VRF registration mirror failed");
 			}
-		}));
+		});
 		Ok(())
 	}
 

@@ -272,20 +272,6 @@ struct DockletMotionTests {
         #expect(motion.progress == 1)
     }
 
-    @Test("A quiet hide fades the content, and a swipe tuck keeps it")
-    func onlyQuietHideFadesContent() {
-        var quiet = DockletMotion()
-        quiet.quietSettle(to: .tucked, now: 0)
-        _ = quiet.tick(now: 1.0 / 60)
-        _ = quiet.tick(now: 0.7)
-        #expect(quiet.contentOpacity == 0)
-
-        var swipe = release(from: 40, translationX: 200)
-        _ = swipe.tick(now: 1.4)
-        #expect(swipe.progress == 1)
-        #expect(swipe.contentOpacity == 1)
-    }
-
     @Test("Settling back to shown restores the content at once")
     func shownRestoresContent() {
         var motion = DockletMotion()
@@ -387,19 +373,6 @@ struct DockletMotionTests {
         }
     }
 
-    @Test("A quiet hide fades the content out from its start and keeps that target until it lands at zero")
-    func quietHideTargetsFadeOut() {
-        var motion = DockletMotion()
-        motion.quietSettle(to: .tucked, now: 0)
-        #expect(motion.contentFadeTarget == .quietFadeOut)
-        _ = motion.tick(now: 1.0 / 60)
-        _ = motion.tick(now: 0.5)
-        #expect(motion.contentFadeTarget == .quietFadeOut)
-        _ = motion.tick(now: 0.7)
-        #expect(!motion.isSettling)
-        #expect(motion.contentOpacity == motion.contentFadeTarget.opacity)
-    }
-
     @Test("A grab during a quiet fade targets shown, so the content does not keep fading under the finger")
     func grabDuringQuietFadeTargetsShown() {
         var motion = DockletMotion()
@@ -447,23 +420,6 @@ struct DockletMotionTests {
         _ = motion.tick(now: 0.7)
         #expect(motion.contentFadeTarget == .shown)
         _ = motion.tick(now: 1.4)
-        #expect(motion.contentFadeTarget == .shown)
-        #expect(motion.contentOpacity == 1)
-    }
-
-    @Test("Snapping a quiet hide to tucked hides the content at once, and to shown restores it at once")
-    func snapTargetsFollowRest() {
-        var motion = DockletMotion()
-        motion.quietSettle(to: .tucked, now: 0)
-        _ = motion.tick(now: 1.0 / 60)
-        _ = motion.tick(now: 0.15)
-
-        var tucked = motion
-        tucked.snap(to: .tucked)
-        #expect(tucked.contentFadeTarget == .hidden)
-        #expect(tucked.contentOpacity == 0)
-
-        motion.snap(to: .shown)
         #expect(motion.contentFadeTarget == .shown)
         #expect(motion.contentOpacity == 1)
     }

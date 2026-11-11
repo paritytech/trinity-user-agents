@@ -2,7 +2,7 @@ use super::*;
 use crate::{
 	platform::{AuthState, CoreStorage, ProductId},
 	runtime::{ProductAuthority, ProductRuntimeHost, allowances},
-	test_support::{StubPlatform, sso_session_info, test_spawner},
+	test_support::{StubPlatform, sso_session_info},
 };
 use futures::{FutureExt, executor::block_on};
 use parity_scale_codec::Encode;
@@ -67,7 +67,8 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 			core_storage_override: Some(storage.clone()),
 			..Default::default()
 		});
-		let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+		let (_, pairing) =
+			ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
 		let host = pairing.session().clone();
 		let session = sso_session_info();
 		block_on(host.set_connected_session_for_tests(session.clone()));
@@ -130,7 +131,7 @@ fn clearing_the_old_session_during_login_keeps_the_new_one_connected() {
 	let recorded = states.clone();
 	*platform.on_auth_state.lock().unwrap() =
 		Some(Arc::new(move |state: &AuthState| recorded.lock().unwrap().push(state.clone())));
-	let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+	let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
 	let host = pairing.session().clone();
 	let previous = sso_session_info();
 	block_on(host.set_connected_session_for_tests(previous.clone()));
@@ -163,7 +164,8 @@ fn login_store_notifications_follow_the_persisted_value() {
 			core_storage_override: Some(storage.clone()),
 			..Default::default()
 		});
-		let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, test_spawner());
+		let (_, pairing) =
+			ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
 		let host = pairing.session().clone();
 		let session = sso_session_info();
 		let generation = host.begin_login_attempt();

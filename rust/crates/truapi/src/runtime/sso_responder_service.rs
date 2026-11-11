@@ -558,7 +558,6 @@ async fn serve_session(
 	wallet_session: AuthoritySession,
 ) -> Result<ResponderExit, String> {
 	let service = responder.account_holder_service(wallet_session);
-	service.require_current_session().map_err(|error| error.to_string())?;
 	let services = &responder.services;
 	let rpc_client = services
 		.statement_store
@@ -743,6 +742,9 @@ fn log_request_received(incoming: &IncomingSsoRequest) {
 }
 
 /// Serve one inbound request statement exactly once across redeliveries.
+///
+/// Fails without acking once `service`'s wallet activation is replaced, which
+/// leaves the request to the loop serving the new activation.
 async fn serve_statement(
 	responder: &SsoResponderService,
 	service: &SsoAccountHolderService,
@@ -750,6 +752,7 @@ async fn serve_statement(
 	replay_scope: SsoReplayScope,
 	incoming: IncomingSsoRequest,
 ) -> Result<Option<ResponderExit>, String> {
+	service.require_current_session().map_err(|error| error.to_string())?;
 	let services = &responder.services;
 	let request_id = incoming.request_id.clone();
 	let request =

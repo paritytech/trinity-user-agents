@@ -31,7 +31,7 @@ pub async fn load() -> Result<Vrf, RingVrfError> {
 
 /// Native builds link the operations in, so there is nothing to prefetch.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn prefetch(_spawner: &crate::subscription::Spawner) {}
+pub fn prefetch(_spawner: &crate::Spawner) {}
 
 #[cfg(target_arch = "wasm32")]
 pub use module::{load, prefetch};
@@ -105,6 +105,13 @@ mod module {
 let module;
 export async function read() {
   const url = new URL("../../truapi_verifiable_bg.wasm", import.meta.url);
+  if (url.protocol === "file:") {
+    // Node's fetch rejects file: URLs. The specifier is a variable so browser
+    // bundlers never try to resolve a Node builtin.
+    const fsModule = "node:fs/promises";
+    const { readFile } = await import(/* @vite-ignore */ /* webpackIgnore: true */ fsModule);
+    return new Uint8Array(await readFile(url));
+  }
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${url}: ${response.status} ${response.statusText}`);
   return new Uint8Array(await response.arrayBuffer());
@@ -159,12 +166,12 @@ export const prove = (...args) => module.prove(...args);
 	/// Load the module in the background, so a later call does not wait on
 	/// it. A call made while it loads waits on this load instead of starting
 	/// another.
-	pub fn prefetch(spawner: &crate::subscription::Spawner) {
-		spawner(Box::pin(async {
+	pub fn prefetch(spawner: &crate::Spawner) {
+		spawner.spawn(async {
 			if let Err(error) = load().await {
 				tracing::warn!(%error, "truapi-verifiable prefetch failed");
 			}
-		}));
+		});
 	}
 
 	async fn start_module() -> Result<(), String> {

@@ -4,9 +4,9 @@ use parity_scale_codec::{Decode, Encode};
 use truapi::v01;
 
 use crate::{
-	SigningHostRuntime,
+	SigningHostRuntime, Spawner,
 	frame::{Payload, ProtocolMessage, request_ids},
-	test_support::{StubPlatform, test_spawner},
+	test_support::StubPlatform,
 };
 
 fn start_test_bridge() -> WsBridge {
@@ -32,7 +32,7 @@ fn runtime_factory_for(platform: Arc<StubPlatform>) -> Arc<dyn WsProductRuntimeF
 		"paseo".to_string(),
 	)
 	.expect("test signing host config is valid");
-	let runtime = Arc::new(SigningHostRuntime::new(platform, config, test_spawner()));
+	let runtime = Arc::new(SigningHostRuntime::new(platform, config, Spawner::for_test()));
 	let product = ProductContext::new(ProductId::for_test("dotli.dot"));
 	Arc::new(move |sink| runtime.product_runtime(product.clone(), sink))
 }

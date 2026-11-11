@@ -18,6 +18,7 @@ use super::{
 	vrf,
 };
 use crate::{
+	Spawner,
 	chain_runtime::ChainRuntime,
 	host_logic::{
 		session::{SessionInfo, SessionState, encode_persisted_session},
@@ -25,7 +26,6 @@ use crate::{
 	},
 	platform::{CoreStorageKey, PairingHostConfig, Platform, ProductContext},
 	session_usernames::SessionUsernames,
-	subscription::Spawner,
 };
 use channel::SsoDisconnectMonitor;
 use futures::{StreamExt, channel::oneshot};
@@ -403,7 +403,7 @@ impl SsoRequestService {
 	pub fn start_session_store_sync(self: Arc<Self>, spawner: Spawner) {
 		let service = Arc::downgrade(&self);
 		drop(self);
-		spawner(Box::pin(async move {
+		spawner.spawn(async move {
 			let Some(booting) = service.upgrade() else {
 				return;
 			};
@@ -420,7 +420,7 @@ impl SsoRequestService {
 				#[cfg(test)]
 				service.session_store_change_ticks.fetch_add(1, Ordering::SeqCst);
 			}
-		}));
+		});
 	}
 
 	async fn commit_login_session(
@@ -834,11 +834,11 @@ impl HostSession for SsoRequestService {
 		self.clear_disconnected_session(true, None).await;
 		if let Some(session) = session {
 			let weak_self = self.weak_self.clone();
-			(self.spawner)(Box::pin(async move {
+			self.spawner.spawn(async move {
 				if let Some(host) = weak_self.upgrade() {
 					let _ = channel::submit_disconnected_message(&host, &session).await;
 				}
-			}));
+			});
 		}
 	}
 

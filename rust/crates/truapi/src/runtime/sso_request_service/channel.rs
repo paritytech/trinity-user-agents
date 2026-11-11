@@ -124,7 +124,7 @@ pub fn start_disconnect_monitor(service: &SsoRequestService, session: &SessionIn
 			},
 		}
 	};
-	spawner(Box::pin(Abortable::new(future, registration).map(|_| ())));
+	spawner.spawn(Abortable::new(future, registration).map(|_| ()));
 }
 
 /// Detach channel state while session selection is locked.
@@ -224,7 +224,7 @@ impl SsoRequestService {
 		};
 		let statement_store = self.statement_store.clone();
 		let message_id = message_id.to_string();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let submitted = match withdrawal {
 				Ok(statement) => {
 					statement_store.submit_fire_and_forget(statement, "SSO statement-store").await
@@ -234,7 +234,7 @@ impl SsoRequestService {
 			if let Err(reason) = submitted {
 				warn!(%message_id, %reason, "could not withdraw the SSO request");
 			}
-		}));
+		});
 	}
 
 	/// Send `request` to the paired signing host and await its typed answer.
