@@ -582,6 +582,11 @@ fn core_storage_key_description_is_strict_and_product_scoped() {
 			Some(CoreStorageKeyOwner::ProductLabel("ramp".to_string())),
 		),
 		(CoreStorageKey::FundingSupport, "FundingSupport", None),
+		(
+			CoreStorageKey::AppManifest { product_label: "ramp".to_string() },
+			"AppManifest",
+			Some(CoreStorageKeyOwner::ProductLabel("ramp".to_string())),
+		),
 	] {
 		let description = describe_core_storage_key(&key.encode()).expect("valid key");
 		assert_eq!(description, CoreStorageKeyDescription { kind, owner });
