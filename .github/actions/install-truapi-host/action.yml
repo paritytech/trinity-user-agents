@@ -1,0 +1,82 @@
+name: Install truapi-host
+description: >-
+  Installs the prebuilt truapi-host CLI on a macOS arm64 or Linux x86_64 or
+  arm64 runner and puts it on PATH for the rest of the job. The archive is
+  checked against its published SHA-256 before it is unpacked. Without a
+  `version`, the action installs the CLI version its own ref ships: each CLI
+  release tags this action as truapi-host-cli-v<version>, so that tag installs
+  that release.
+
+inputs:
+  version:
+    description: >-
+      Version to install, for example 0.30.0, or `latest` for the current
+      stable release. Empty installs the version this action's ref ships.
+    required: false
+    default: ""
+
+outputs:
+  version:
+    description: The installed version, for example 0.30.0.
+    value: ${{ steps.install.outputs.version }}
+  path:
+    description: Absolute path of the installed truapi-host binary.
+    value: ${{ steps.install.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    # TRUAPI_HOST_NO_UPDATE stays set for the rest of the job: the binary
+    # otherwise updates itself in the background, and a later step would run
+    # a different version than the one requested. The cargo-install switch
+    # keeps the installer from removing a copy outside RUNNER_TEMP, which on a
+    # self-hosted runner belongs to the machine rather than to this job.
+    - name: Install truapi-host
+      id: install
+      shell: bash
+      env:
+        REQUESTED_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        is_release_version() {
+          [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+        }
+
+        shipped="$(awk -F'"' '/^version = /{print $2; exit}' \
+          "${GITHUB_ACTION_PATH}/../../../rust/crates/truapi-host-cli/Cargo.toml")"
+        if ! is_release_version "${shipped}"; then
+          echo "::error::could not read the CLI version this action ships, got '${shipped}'"
+          exit 1
+        fi
+
+        case "${REQUESTED_VERSION}" in
+          "") TRUAPI_HOST_VERSION="${shipped}" ;;
+          latest) TRUAPI_HOST_VERSION="" ;;
+          *)
+            if ! is_release_version "${REQUESTED_VERSION}"; then
+              echo "::error::version must be empty, \`latest\` or a release version such as ${shipped}, got '${REQUESTED_VERSION}'"
+              exit 1
+            fi
+            TRUAPI_HOST_VERSION="${REQUESTED_VERSION}"
+            ;;
+        esac
+        export TRUAPI_HOST_VERSION
+        # One root per requested version, so a job that installs twice keeps
+        # both binaries and an earlier step's `path` output stays valid.
+        root="${RUNNER_TEMP}/truapi-host/${REQUESTED_VERSION:-${shipped}}"
+        export TRUAPI_HOST_INSTALL_DIR="${root}"
+        export TRUAPI_HOST_BIN_DIR="${root}/bin"
+        export TRUAPI_HOST_NO_UPDATE=1
+        export TRUAPI_HOST_KEEP_CARGO_INSTALL=1
+        export PATH="${TRUAPI_HOST_BIN_DIR}:${PATH}"
+
+        bash "${GITHUB_ACTION_PATH}/../../../scripts/truapi-host-installer.sh"
+
+        binary="${TRUAPI_HOST_BIN_DIR}/truapi-host"
+        reported="$("${binary}" --version)"
+        echo "TRUAPI_HOST_NO_UPDATE=1" >> "$GITHUB_ENV"
+        echo "${TRUAPI_HOST_BIN_DIR}" >> "$GITHUB_PATH"
+        {
+          echo "version=${reported#truapi-host }"
+          echo "path=${binary}"
+        } >> "$GITHUB_OUTPUT"

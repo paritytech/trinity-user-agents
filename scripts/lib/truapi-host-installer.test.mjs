@@ -247,6 +247,32 @@ test("installing succeeds when no cargo copy exists", { skip }, async () => {
   });
 });
 
+test(
+  "TRUAPI_HOST_KEEP_CARGO_INSTALL leaves a cargo copy in place",
+  { skip },
+  async () => {
+    await withRelease("0.10.0", {}, async (release) => {
+      await withHome(async (home) => {
+        const cargoBin = join(home, "cargo/bin");
+        mkdirSync(cargoBin, { recursive: true });
+        const existing = join(cargoBin, "truapi-host");
+        writeFileSync(existing, "#!/bin/sh\necho stale\n");
+
+        const result = await runInstaller({
+          ...installEnvironment(home, release.baseUrl),
+          TRUAPI_HOST_KEEP_CARGO_INSTALL: "1",
+        });
+        assert.equal(result.status, 0, result.stderr);
+        assert.ok(
+          existsSync(existing),
+          "a caller that owns only its own PATH must not delete another install",
+        );
+        assert.ok(existsSync(join(home, "bin/truapi-host")));
+      });
+    });
+  },
+);
+
 test("--uninstall succeeds when nothing is installed", { skip }, async () => {
   await withHome(async (home) => {
     const removal = await run("bash", ["-s", "--", "--uninstall"], {
