@@ -8,13 +8,14 @@ use futures::{
 };
 use truapi::latest::{BoxProps, MaterialFailure, MaterialInstance, MaterialsProps, RendererNode};
 
-use super::{
-	testing::{Device, next},
-	*,
-};
+use super::{testing::Device, *};
 use crate::{
-	host_internal::bulletin::preimage_key, platform::ProductId, pocket_cards::PocketCards,
-	spawner::Spawner, store::open_temporary_core_db, test_support::wait_until,
+	host_internal::bulletin::preimage_key,
+	platform::ProductId,
+	pocket_cards::PocketCards,
+	spawner::Spawner,
+	store::open_temporary_core_db,
+	test_support::{next, wait_until},
 };
 
 impl Device {

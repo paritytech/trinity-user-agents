@@ -9,13 +9,9 @@ use truapi::latest::{
 use super::*;
 use crate::{
 	host_internal::bulletin::preimage_key,
-	materials::{
-		format::read_material,
-		noise::noise_seed,
-		testing::{Device, next},
-	},
+	materials::{format::read_material, noise::noise_seed, testing::Device},
 	store::open_temporary_core_db,
-	test_support::wait_until,
+	test_support::{next, wait_until},
 };
 
 const STILL: &[u8] =
@@ -134,6 +130,33 @@ fn a_node_over_a_limit_falls_back_at_once_and_fetches_nothing() {
 		planning.failures(),
 		[PlanFailure { node: 0, material: None, reason: MaterialFailure::LimitExceeded }]
 	);
+}
+
+/// A host started without a core database keeps no materials, yet its products
+/// still hear why each node draws plain, and the app gets one plan to draw.
+#[test]
+fn a_host_without_materials_draws_every_node_plain_and_says_so() {
+	let failures = Arc::new(Mutex::new(Vec::new()));
+	let sink = failures.clone();
+	let nodes = vec![node(vec![layer(STILL, Vec::new())]), node(vec![layer(TINT, tint_args())])];
+	let mut plans = PlanStream::plain(
+		&tree(nodes),
+		&card(),
+		Box::new(move |failure| sink.lock().unwrap().push(failure)),
+	);
+
+	let plan = next(&mut plans).expect("a plan");
+	assert_eq!(
+		plan,
+		MaterialPlan {
+			nodes: vec![NodePlan::Plain { reason: MaterialFailure::Unsupported }; 2],
+			noise_seed: noise_seed(&card()),
+		}
+	);
+	assert_eq!(next(&mut plans), None);
+	let unsupported =
+		|node| PlanFailure { node, material: None, reason: MaterialFailure::Unsupported };
+	assert_eq!(*failures.lock().unwrap(), [unsupported(0), unsupported(1)]);
 }
 
 /// An inline image is already in the tree, so the core checks it as it plans,
@@ -301,14 +324,14 @@ fn an_app_report_makes_its_node_plain_for_good() {
 	let mut planning = plan(&device, &tree(nodes), &card(), ON);
 	assert_eq!(planning.next(), [State::Loading, State::Loading]);
 
-	planning.plans.report(fail(1, TINT, MaterialFailure::Unsupported));
+	planning.plans.reporter().report(fail(1, TINT, MaterialFailure::Unsupported));
 	assert_eq!(planning.next(), [State::Loading, State::Plain(MaterialFailure::Unsupported)]);
 	answer(&device, TINT);
 	answer(&device, STILL);
 	assert_eq!(planning.next(), [State::Ready, State::Plain(MaterialFailure::Unsupported)]);
 
-	planning.plans.report(fail(0, STILL, MaterialFailure::NotFound));
-	planning.plans.report(fail(7, STILL, MaterialFailure::NotFound));
+	planning.plans.reporter().report(fail(0, STILL, MaterialFailure::NotFound));
+	planning.plans.reporter().report(fail(7, STILL, MaterialFailure::NotFound));
 	assert_eq!(
 		planning.next(),
 		[State::Plain(MaterialFailure::NotFound), State::Plain(MaterialFailure::Unsupported)],
@@ -366,26 +389,26 @@ impl ShaderCache {
 	fn len(&self) -> usize {
 		self.shaders.len()
 	}
-
-	fn contains(&self, key: &ShaderKey) -> bool {
-		self.shaders.iter().any(|(kept, _)| kept == key)
-	}
 }
 
 /// A session can see many materials, so built shaders are kept within a fixed
-/// number, the oldest dropped first.
+/// number, the oldest dropped first. A build that failed is kept too, so a
+/// material naga cannot translate is not translated again on every change.
 #[test]
-fn the_shader_cache_keeps_at_most_its_capacity_dropping_the_oldest() {
+fn the_shader_cache_keeps_builds_and_failures_dropping_the_oldest() {
 	let mut cache = ShaderCache::default();
-	let shader = || read_material(STILL).unwrap().shader(ShaderLanguage::GlslEs, true);
-	for index in 0..=SHADER_CACHE_CAPACITY {
-		let key = ([index as u8; 32], ShaderLanguage::GlslEs, true);
-		cache.get_or_build(key, shader).unwrap();
+	let key = |index: usize| ([index as u8; 32], ShaderLanguage::GlslEs, true);
+	cache.insert(key(0), Err(MaterialFailure::Unsupported));
+	assert_eq!(cache.get(&key(0)), Some(Err(MaterialFailure::Unsupported)));
+
+	let shader = read_material(STILL).unwrap().shader(ShaderLanguage::GlslEs, true);
+	for index in 1..=SHADER_CACHE_CAPACITY {
+		cache.insert(key(index), shader.clone());
 	}
 
 	assert_eq!(cache.len(), SHADER_CACHE_CAPACITY);
-	assert!(!cache.contains(&([0; 32], ShaderLanguage::GlslEs, true)), "the oldest went");
-	assert!(cache.contains(&([1; 32], ShaderLanguage::GlslEs, true)));
+	assert_eq!(cache.get(&key(0)), None, "the oldest went");
+	assert_eq!(cache.get(&key(1)), Some(shader));
 }
 
 /// One rule for every image argument, wherever the app loaded it from.

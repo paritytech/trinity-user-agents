@@ -633,7 +633,6 @@ pub struct SigningHostRuntime {
 	signing_host: Arc<SigningHostRole>,
 	sso_responder: Arc<SsoResponderService>,
 	image_loader: crate::image_loader::ImageLoader,
-	materials_enabled: bool,
 }
 
 impl SigningHostRuntime {
@@ -752,7 +751,9 @@ impl SigningHostRuntime {
                  every cross-product grant not already cached is refused"
 			);
 		}
-		let materials_enabled = config.materials_enabled;
+		if config.materials_enabled {
+			services.enable_materials();
+		}
 		let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
 		let sso_responder = SsoResponderService::new(services.clone(), signing_host.clone());
 		Self {
@@ -763,7 +764,6 @@ impl SigningHostRuntime {
 			services,
 			signing_host,
 			sso_responder,
-			materials_enabled,
 		}
 	}
 
@@ -1027,7 +1027,7 @@ impl SigningHostRuntime {
 			);
 			return;
 		};
-		start_materials(&self.services, db.clone(), self.materials_enabled);
+		start_materials(&self.services, db.clone());
 		let signer = Arc::new(Arc::downgrade(&self.signing_host));
 		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer) else {
 			return;
@@ -1117,8 +1117,8 @@ impl SigningHostRuntime {
 
 	/// The plans for `tree` in `context`, its shaders in `language`, filtering
 	/// 32-bit float images themselves unless `float_filterable`. Each node that
-	/// falls back reaches `failures` once. `None` until the core services
-	/// start over a core database.
+	/// falls back reaches `failures` once. Until the core services start over
+	/// a core database, every node draws plain.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn material_plan(
 		&self,
@@ -1127,10 +1127,14 @@ impl SigningHostRuntime {
 		language: crate::ShaderLanguage,
 		float_filterable: bool,
 		failures: Box<dyn Fn(crate::PlanFailure) + Send + Sync>,
-	) -> Option<crate::PlanStream> {
-		let (materials, enabled) = self.services.materials()?;
+	) -> crate::PlanStream {
+		let Some(materials) = self.services.materials() else {
+			tracing::warn!("no core database, so every material node draws plain");
+			return crate::PlanStream::plain(tree, context, failures);
+		};
+		let enabled = self.services.materials_enabled();
 		let settings = crate::materials::PlanSettings { enabled, language, float_filterable };
-		Some(materials.plan(tree, context, settings, failures))
+		materials.plan(tree, context, settings, failures)
 	}
 
 	/// Build a product-facing runtime from this signing host.
@@ -1427,13 +1431,13 @@ impl SigningHostRuntime {
 	}
 }
 
-/// Installs the materials on the device over `db`, and fetches what saved
-/// Pocket faces draw and `db` lacks. Does nothing when materials are already
-/// installed.
+/// Installs the materials on the device over `db` and, when the host draws
+/// them, fetches what saved Pocket faces draw and `db` lacks. Does nothing
+/// when materials are already installed.
 #[cfg(not(target_arch = "wasm32"))]
-fn start_materials(services: &Arc<RuntimeServices>, db: crate::store::Db, enabled: bool) {
+fn start_materials(services: &Arc<RuntimeServices>, db: crate::store::Db) {
 	let materials = materials(services, db);
-	if services.install_materials(materials.clone(), enabled) && enabled {
+	if services.install_materials(materials.clone()) && services.materials_enabled() {
 		services.spawner.spawn(materials.fetch_saved());
 	}
 }

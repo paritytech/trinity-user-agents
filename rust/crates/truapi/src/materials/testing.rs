@@ -6,17 +6,20 @@ use std::{
 };
 
 use futures::{
-	Stream, StreamExt,
+	StreamExt,
 	channel::mpsc::{UnboundedSender, unbounded},
-	executor::block_on,
 	stream::BoxStream,
 };
 use truapi::latest::GenericError;
 
 use super::{FETCH_DEADLINE, Materials};
 use crate::{
-	host_internal::bulletin::preimage_key, platform::PreimageHost, spawner::Spawner, store::Db,
-	test_support::wait_until, time::ManualTimer,
+	host_internal::bulletin::preimage_key,
+	platform::PreimageHost,
+	spawner::Spawner,
+	store::Db,
+	test_support::{next, wait_until},
+	time::ManualTimer,
 };
 
 type Answer = Result<Option<Vec<u8>>, GenericError>;
@@ -98,14 +101,5 @@ impl Device {
 	pub fn pass_the_deadline(&self) {
 		wait_until(|| self.timer.sleeps() > 0, "the deadline is set");
 		self.timer.advance(FETCH_DEADLINE);
-	}
-}
-
-/// The next item, failing the test rather than hanging when none comes.
-pub fn next<S: Stream + Unpin>(stream: &mut S) -> Option<S::Item> {
-	let timeout = futures_timer::Delay::new(std::time::Duration::from_secs(2));
-	match block_on(futures::future::select(stream.next(), timeout)) {
-		futures::future::Either::Left((item, _)) => item,
-		futures::future::Either::Right(_) => panic!("nothing came"),
 	}
 }

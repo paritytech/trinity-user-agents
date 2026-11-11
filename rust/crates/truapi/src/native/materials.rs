@@ -25,7 +25,7 @@ pub trait NativeMaterialPlanObserver: Send + Sync {
 /// materials they share keep their fetch.
 #[derive(uniffi::Object)]
 pub struct NativeMaterialPlan {
-	reporter: Option<PlanReporter>,
+	reporter: PlanReporter,
 	subscription: Arc<NativeSubscription>,
 }
 
@@ -35,9 +35,7 @@ impl NativeMaterialPlan {
 	/// not compile (`Unsupported`) or an image argument could not be used
 	/// (`check_material_image`'s reason, or `NotFound`).
 	pub fn report(&self, node: u32, material: Option<crate::Bytes32>, reason: MaterialFailure) {
-		if let Some(reporter) = &self.reporter {
-			reporter.report(PlanFailure { node, material, reason });
-		}
+		self.reporter.report(PlanFailure { node, material, reason });
 	}
 
 	/// Stop following the plan, and what it fetches.
@@ -62,15 +60,8 @@ pub fn observe_material_plan(
 		HostPlatform::Ios => ShaderLanguage::Metal,
 		_ => ShaderLanguage::GlslEs,
 	};
-	let Some(mut plans) =
-		runtime.material_plan(&tree, &context, language, float_filterable, failures)
-	else {
-		tracing::warn!("no core database, so every material node draws plain");
-		let plain = MaterialPlan::plain(&tree, &context);
-		let subscription = spawn_observation(spawner, async move { observer.on_plan(plain) });
-		return Arc::new(NativeMaterialPlan { reporter: None, subscription });
-	};
-	let reporter = Some(plans.reporter());
+	let mut plans = runtime.material_plan(&tree, &context, language, float_filterable, failures);
+	let reporter = plans.reporter();
 	let subscription = spawn_observation(spawner, async move {
 		while let Some(plan) = plans.next().await {
 			observer.on_plan(plan);

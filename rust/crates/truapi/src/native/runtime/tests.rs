@@ -235,15 +235,6 @@ impl crate::NativeMaterialPlanObserver for Plans {
 	}
 }
 
-/// The next item, failing the test rather than hanging when none comes.
-fn next_within_seconds<S: futures::Stream + Unpin>(stream: &mut S) -> Option<S::Item> {
-	let timeout = futures_timer::Delay::new(std::time::Duration::from_secs(2));
-	match futures::executor::block_on(futures::future::select(stream.next(), timeout)) {
-		futures::future::Either::Left((item, _)) => item,
-		futures::future::Either::Right(_) => panic!("nothing came"),
-	}
-}
-
 fn materials_host() -> Arc<NativeTrUApiHostRuntime> {
 	let mut config = native_host_runtime_config();
 	config.materials_enabled = true;
@@ -282,7 +273,7 @@ fn a_material_node_that_falls_back_reaches_the_product_that_rendered_it() {
 
 	let plans = Box::new(Plans(std::sync::Mutex::new(Vec::new())));
 	let _plan = execution.observe_material_plan(tree, context.clone(), true, plans);
-	let delivered = next_within_seconds(&mut failures)
+	let delivered = crate::test_support::next(&mut failures)
 		.expect("a failure report")
 		.expect("a failure item")
 		.into_latest();
@@ -320,7 +311,7 @@ fn shutting_an_execution_down_closes_its_failure_stream() {
 		truapi::versioned::renderer::HostRendererFailureSubscribeRequest::V1,
 	));
 
-	assert!(matches!(next_within_seconds(&mut failures), Some(Err(_))));
+	assert!(matches!(crate::test_support::next(&mut failures), Some(Err(_))));
 }
 
 #[test]

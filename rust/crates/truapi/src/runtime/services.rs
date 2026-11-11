@@ -133,10 +133,11 @@ pub struct RuntimeServices {
 	/// installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	nft_ledger: OnceLock<NftLedger>,
-	/// The materials on the device, over the core database, installed with it,
-	/// and whether the host draws them.
+	/// The materials on the device, over the core database, installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
-	materials: OnceLock<(Materials, bool)>,
+	materials: OnceLock<Materials>,
+	/// Whether the host draws materials, from its configuration.
+	materials_enabled: AtomicBool,
 	/// The secret that opens `Static` NFT cheques, installed with the ledger.
 	#[cfg(not(target_arch = "wasm32"))]
 	static_receive_secret: OnceLock<Arc<dyn StaticReceiveSecret>>,
@@ -286,6 +287,7 @@ impl RuntimeServices {
 			nft_ledger: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			materials: OnceLock::new(),
+			materials_enabled: AtomicBool::new(false),
 			#[cfg(not(target_arch = "wasm32"))]
 			static_receive_secret: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
@@ -499,19 +501,27 @@ impl RuntimeServices {
 		self.durable_engine.get().cloned()
 	}
 
-	/// Install the materials on the device, and whether the host draws them.
-	/// Set-once, like the database they are kept in. Returns whether this call
-	/// installed them.
+	/// Install the materials on the device. Set-once, like the database they
+	/// are kept in. Returns whether this call installed them.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub fn install_materials(&self, materials: Materials, enabled: bool) -> bool {
-		self.materials.set((materials, enabled)).is_ok()
+	pub fn install_materials(&self, materials: Materials) -> bool {
+		self.materials.set(materials).is_ok()
 	}
 
-	/// The materials on the device, and whether the host draws them, once
-	/// installed.
+	/// The materials on the device, once installed.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub fn materials(&self) -> Option<(Materials, bool)> {
+	pub fn materials(&self) -> Option<Materials> {
 		self.materials.get().cloned()
+	}
+
+	/// Let the host draw materials, as its configuration asks.
+	pub fn enable_materials(&self) {
+		self.materials_enabled.store(true, Ordering::Relaxed);
+	}
+
+	/// Whether the host draws materials at all.
+	pub fn materials_enabled(&self) -> bool {
+		self.materials_enabled.load(Ordering::Relaxed)
 	}
 
 	/// Whether the host draws materials of format `version` requiring
@@ -519,8 +529,8 @@ impl RuntimeServices {
 	pub fn draws_materials(&self, version: u32, features: &[String]) -> bool {
 		#[cfg(not(target_arch = "wasm32"))]
 		{
-			self.materials()
-				.is_some_and(|(_, enabled)| crate::materials::draws(enabled, version, features))
+			self.materials().is_some() &&
+				crate::materials::draws(self.materials_enabled(), version, features)
 		}
 		#[cfg(target_arch = "wasm32")]
 		{

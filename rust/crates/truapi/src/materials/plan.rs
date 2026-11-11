@@ -98,10 +98,26 @@ pub struct PlanStream {
 }
 
 impl PlanStream {
-	/// Makes a node plain for the rest of this plan, as the app reports it. A
-	/// node out of range is ignored.
-	pub fn report(&self, failure: PlanFailure) {
-		let _ = self.reports.unbounded_send(failure);
+	/// One plan with every node of `tree` drawn plain, for a host that keeps
+	/// no materials. Each node reaches `failures`.
+	pub fn plain(
+		tree: &RendererNode,
+		context: &RenderContext,
+		failures: Box<dyn Fn(PlanFailure) + Send + Sync>,
+	) -> Self {
+		let reason = MaterialFailure::Unsupported;
+		let count = materials_nodes(tree).len();
+		for node in (0u32..).take(count) {
+			failures(PlanFailure { node, material: None, reason });
+		}
+		let plan = MaterialPlan {
+			nodes: vec![NodePlan::Plain { reason }; count],
+			noise_seed: noise_seed(context),
+		};
+		let (sender, plans) = unbounded();
+		let _ = sender.unbounded_send(plan);
+		let (reports, _) = unbounded();
+		Self { plans, reports, abort: AbortHandle::new_pair().0 }
 	}
 
 	/// A handle that reports for this plan while the stream is read elsewhere.
@@ -114,17 +130,10 @@ impl PlanStream {
 pub struct PlanReporter(UnboundedSender<PlanFailure>);
 
 impl PlanReporter {
-	/// Makes a node plain for the rest of its plan, as [`PlanStream::report`].
+	/// Makes a node plain for the rest of its plan, as the app reports it. A
+	/// node out of range is ignored.
 	pub fn report(&self, failure: PlanFailure) {
 		let _ = self.0.unbounded_send(failure);
-	}
-}
-
-impl MaterialPlan {
-	/// Every node of `tree` drawn plain, for a host that keeps no materials.
-	pub fn plain(tree: &RendererNode, context: &RenderContext) -> Self {
-		let plain = NodePlan::Plain { reason: MaterialFailure::Unsupported };
-		Self { nodes: vec![plain; materials_nodes(tree).len()], noise_seed: noise_seed(context) }
 	}
 }
 
@@ -363,14 +372,14 @@ impl Planner {
 			return Some(Err(MaterialFailure::InvalidStack));
 		}
 		let PlanSettings { language, float_filterable, .. } = self.settings;
-		let shader = self
-			.materials
-			.0
-			.shaders
-			.lock()
-			.get_or_build((layer.material, language, float_filterable), || {
-				material.shader(language, float_filterable)
-			});
+		let key = (layer.material, language, float_filterable);
+		let kept = self.materials.0.shaders.lock().get(&key);
+		// Built outside the lock: a translation would hold up every other plan.
+		let shader = kept.unwrap_or_else(|| {
+			let built = material.shader(language, float_filterable);
+			self.materials.0.shaders.lock().insert(key, built.clone());
+			built
+		});
 		Some(shader.map(|shader| PlannedLayer {
 			material: layer.material,
 			shader,
@@ -402,28 +411,28 @@ const SHADER_CACHE_CAPACITY: usize = 64;
 /// A material's ID, the language and whether the GPU filters float images.
 type ShaderKey = ([u8; 32], ShaderLanguage, bool);
 
-/// Built shaders, the oldest dropped first.
+/// What building each shader gave, failures included, the oldest dropped
+/// first.
 #[derive(Default)]
 pub struct ShaderCache {
-	shaders: VecDeque<(ShaderKey, MaterialShader)>,
+	shaders: VecDeque<(ShaderKey, Result<MaterialShader, MaterialFailure>)>,
 }
 
 impl ShaderCache {
-	/// The shader built for `key`, building it with `build` when missing.
-	pub fn get_or_build(
-		&mut self,
-		key: ShaderKey,
-		build: impl FnOnce() -> Result<MaterialShader, MaterialFailure>,
-	) -> Result<MaterialShader, MaterialFailure> {
-		if let Some((_, shader)) = self.shaders.iter().find(|(kept, _)| *kept == key) {
-			return Ok(shader.clone());
-		}
-		let shader = build()?;
-		self.shaders.push_back((key, shader.clone()));
+	/// What building `key` gave, when kept.
+	pub fn get(&self, key: &ShaderKey) -> Option<Result<MaterialShader, MaterialFailure>> {
+		self.shaders
+			.iter()
+			.find(|(kept, _)| kept == key)
+			.map(|(_, built)| built.clone())
+	}
+
+	/// Keeps what building `key` gave, dropping the oldest beyond capacity.
+	pub fn insert(&mut self, key: ShaderKey, built: Result<MaterialShader, MaterialFailure>) {
+		self.shaders.push_back((key, built));
 		if self.shaders.len() > SHADER_CACHE_CAPACITY {
 			self.shaders.pop_front();
 		}
-		Ok(shader)
 	}
 }
 

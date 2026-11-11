@@ -1719,7 +1719,7 @@ fn core_services_install_the_materials_once() {
 	runtime.start_core_services();
 	runtime.start_core_services();
 
-	assert!(!runtime.services.install_materials(materials(&runtime.services, db), false));
+	assert!(!runtime.services.install_materials(materials(&runtime.services, db)));
 }
 
 #[test]

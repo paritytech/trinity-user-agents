@@ -1356,6 +1356,7 @@ class MaterialPlans internal constructor(
     subscribe: (NativeMaterialPlanObserver) -> NativeMaterialPlan,
 ) : AutoCloseable {
     private val latest = MutableStateFlow<MaterialPlan?>(null)
+    private var closed = false
 
     /** The newest plan, `null` until the first. */
     val plans: StateFlow<MaterialPlan?> = latest.asStateFlow()
@@ -1375,11 +1376,15 @@ class MaterialPlans internal constructor(
      * compile ([MaterialFailure.UNSUPPORTED]), or an image argument could not
      * be used (`checkMaterialImage`'s reason, or [MaterialFailure.NOT_FOUND]).
      */
+    @Synchronized
     fun report(node: UInt, material: ByteArray?, reason: MaterialFailure) {
-        handle.report(node, material, reason)
+        if (!closed) handle.report(node, material, reason)
     }
 
+    @Synchronized
     override fun close() {
+        if (closed) return
+        closed = true
         handle.cancel()
         handle.close()
     }

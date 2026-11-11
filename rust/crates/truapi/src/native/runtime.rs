@@ -1206,15 +1206,15 @@ impl NativeProductExecution {
 	/// shaders filter 32-bit float images themselves.
 	pub fn observe_material_plan(
 		&self,
-		tree: v01::RendererNode,
-		context: v01::RenderContext,
+		tree: latest::RendererNode,
+		context: latest::RenderContext,
 		float_filterable: bool,
 		observer: Box<dyn NativeMaterialPlanObserver>,
 	) -> Arc<NativeMaterialPlan> {
 		let channel = self.renderer_failures.clone();
 		let reported = context.clone();
 		let failures = Box::new(move |failure: crate::PlanFailure| {
-			let item = v01::HostRendererFailureSubscribeItem {
+			let item = latest::HostRendererFailureSubscribeItem {
 				context: reported.clone(),
 				node: failure.node,
 				material: failure.material,

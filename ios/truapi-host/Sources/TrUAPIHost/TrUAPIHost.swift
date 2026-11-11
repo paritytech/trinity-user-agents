@@ -1566,9 +1566,11 @@ private final class RendererStreamObserver: NativeRendererObserver, @unchecked S
 /// The plans of one tree, now and after each change, and the reports the app
 /// makes against them. Cancel it, or let it go, to stop.
 public final class MaterialPlans: @unchecked Sendable {
-    /// Each plan replaces the last, so only the newest is kept.
+    /// Each plan replaces the last, so only the newest is kept. The plan is
+    /// followed until this stream ends or is dropped.
     public let plans: AsyncStream<MaterialPlan>
     private let handle: NativeMaterialPlan
+    private let continuation: AsyncStream<MaterialPlan>.Continuation
 
     fileprivate init(_ subscribe: (NativeMaterialPlanObserver) -> NativeMaterialPlan) {
         let (plans, continuation) = AsyncStream.makeStream(
@@ -1581,10 +1583,7 @@ public final class MaterialPlans: @unchecked Sendable {
         }
         self.plans = plans
         self.handle = handle
-    }
-
-    deinit {
-        handle.cancel()
+        self.continuation = continuation
     }
 
     /// Draws node `node` plain for the rest of this plan: its shader did not
@@ -1594,9 +1593,9 @@ public final class MaterialPlans: @unchecked Sendable {
         handle.report(node: node, material: material, reason: reason)
     }
 
-    /// Stops following the plan.
+    /// Stops following the plan and ends `plans`.
     public func cancel() {
-        handle.cancel()
+        continuation.finish()
     }
 }
 
