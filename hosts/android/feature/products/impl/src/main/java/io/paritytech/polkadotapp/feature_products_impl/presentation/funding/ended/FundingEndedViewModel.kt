@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended
 
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCashFormat
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSessionPresenter
 import androidx.lifecycle.SavedStateHandle
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
@@ -8,7 +9,6 @@ import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionPresenter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow

@@ -1,8 +1,8 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.funding
+package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.AppFundingOverlay
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import javax.inject.Inject
 import javax.inject.Singleton
