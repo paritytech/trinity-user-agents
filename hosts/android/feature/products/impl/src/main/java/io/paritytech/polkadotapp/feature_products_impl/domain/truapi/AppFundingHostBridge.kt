@@ -10,7 +10,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.DeviceCountryDetector
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
 import uniffi.truapi.FundingChangeKind
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
@@ -30,7 +30,7 @@ class AppFundingHostBridge @Inject constructor(
     // Lazy: the overlay reaches the runtime, whose provider is built with this bridge.
     private val overlay: Lazy<FundingOverlay>,
     private val funding: Lazy<TrUAPIFundingRuntime>,
-    private val countryDetector: DeviceCountryDetector,
+    private val countryDetector: CountryDetector,
 ) : FundingHostBridge {
     override suspend fun presentFunding(
         productId: ProductId?,
