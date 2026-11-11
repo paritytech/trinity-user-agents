@@ -20,12 +20,12 @@ use crate::{
 
 const ANSWER_WAIT: Duration = Duration::from_secs(10);
 
-fn published(descriptor: &serde_json::Value) -> StackFetchResponse {
-	StackFetchResponse::Document { bytes: sign_test_descriptor(descriptor).1, etag: None }
+fn published(descriptor: &serde_json::Value) -> Result<StackFetchResponse, GenericError> {
+	Ok(StackFetchResponse::Document { bytes: sign_test_descriptor(descriptor).1, etag: None })
 }
 
-fn unreachable() -> StackFetchResponse {
-	StackFetchResponse::Unreachable { reason: "connection refused".to_string() }
+fn unreachable() -> Result<StackFetchResponse, GenericError> {
+	Err("connection refused".to_string().into())
 }
 
 #[derive(Default)]
@@ -54,13 +54,16 @@ impl StackRecords for Arc<MemoryRecords> {
 /// answers once the queue is empty, and passes on every status it is told.
 struct QueuedHost {
 	fetches: Arc<AtomicUsize>,
-	responses: Mutex<VecDeque<StackFetchResponse>>,
+	responses: Mutex<VecDeque<Result<StackFetchResponse, GenericError>>>,
 	statuses: Mutex<Sender<StackStatus>>,
 }
 
 #[async_trait::async_trait]
 impl StackHost for QueuedHost {
-	async fn fetch_stack_descriptor(&self, _request: StackFetchRequest) -> StackFetchResponse {
+	async fn fetch_stack_descriptor(
+		&self,
+		_request: StackFetchRequest,
+	) -> Result<StackFetchResponse, GenericError> {
 		self.fetches.fetch_add(1, Ordering::SeqCst);
 		let response = self.responses.lock().expect("responses mutex poisoned").pop_front();
 		match response {
@@ -103,7 +106,10 @@ fn load(records: Arc<MemoryRecords>, timer: Arc<ManualTimer>) -> StackRefresh {
 }
 
 /// A core on the bundled copy whose host answers fetches with `responses`.
-fn start(records: Arc<MemoryRecords>, responses: Vec<StackFetchResponse>) -> Started {
+fn start(
+	records: Arc<MemoryRecords>,
+	responses: Vec<Result<StackFetchResponse, GenericError>>,
+) -> Started {
 	let timer = Arc::new(ManualTimer::default());
 	let refresh = load(records, timer.clone());
 	let (told, statuses) = channel();
@@ -223,10 +229,10 @@ fn requests_made_during_a_fetch_lead_to_one_more_fetch() {
 /// ignores `max_bytes` cannot make the core parse an unbounded body.
 #[test]
 fn a_document_past_the_size_cap_is_not_read() {
-	let oversized = StackFetchResponse::Document {
+	let oversized = Ok(StackFetchResponse::Document {
 		bytes: vec![b' '; usize::try_from(MAX_DESCRIPTOR_BYTES).expect("fits usize") + 1],
 		etag: None,
-	};
+	});
 	let started = start(Arc::default(), vec![oversized]);
 	let _at_start = started.next_status();
 
