@@ -464,8 +464,9 @@ displayed image remains visible during replacement or a metadata error; a profil
 without an avatar restores the letter tile. Changing the username or removing the
 view cancels observation and image loading.
 
-iOS contacts and chat views consume `resolvePublicProfile(username:options:)`
-as a finite `AsyncThrowingStream`. New chat headers explicitly request forced
+iOS contacts, search results and chat views consume
+`resolvePublicProfile(username:options:)` as a finite `AsyncThrowingStream`.
+New chat headers explicitly request forced
 freshness; cells and search explicitly use the ordinary policy. All app callers
 explicitly set `skipStale` to false. A cancelled header
 observation retains its forced intent until an observation completes or fails.

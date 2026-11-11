@@ -3,7 +3,7 @@ import UIKit
 
 internal import SnapKit
 
-/// UIKit host for ``DSSearchAvatar`` in search result rows.
+/// UIKit host for ``DSAsyncAvatar`` in search result rows.
 public final class DSSearchAvatarView: UIView {
     public var viewModel: AvatarViewModel {
         get { model.viewModel }
@@ -17,7 +17,7 @@ public final class DSSearchAvatarView: UIView {
     }
 
     override public var intrinsicContentSize: CGSize {
-        CGSize(width: DSSearchAvatar.dimension, height: DSSearchAvatar.dimension)
+        CGSize(width: DSLetterAvatar.Size.s40.dimension, height: DSLetterAvatar.Size.s40.dimension)
     }
 
     private let model: Model
