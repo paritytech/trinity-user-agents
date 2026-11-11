@@ -256,20 +256,11 @@ The host sends a `GET` without following redirects, stops reading at
 `304`. The core waits 30 seconds for an answer.
 
 `stack_changed` reports a `StackStatus` when a refresh starts and on every
-change. `stack_status` returns the current one:
-
-- `descriptor`: the verified descriptor the core runs, as plain JSON. The
-  host's own features read their chains and services from it.
-- `stale`, `expired`: the newest descriptor is past `validUntil` or
-  `expiresAt`. The core keeps running on it, and the host shows the stack as
-  stale or as shut down.
-- `restart_required`: build the runtime again to apply a newer descriptor.
-  Set when it changes a genesis hash, the network or the TLD, or restarts the
-  chains. Any other change applies at once.
-- `new_generation`: the chains restarted. Drop cached chain data, such as a
-  light client's database, before the next start.
-- `last_refresh`: `Current`, `Unreachable`, or `Refused` with the rule the
-  published descriptor breaks.
+change, and `stack_status` returns the current one. Its fields say what the
+host shows and does, and are documented on the type. A newer descriptor that
+changes a genesis hash, the network or the TLD, or that restarts the chains,
+applies from the next start, so the host builds the runtime again. Any other
+change applies at once.
 
 ### Core database
 
