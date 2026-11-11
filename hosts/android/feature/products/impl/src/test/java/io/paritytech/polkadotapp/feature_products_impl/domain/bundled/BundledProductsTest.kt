@@ -83,17 +83,19 @@ class BundledProductsTest {
 
     @Test
     fun `reads the Worker it ships under its own subname`() {
-        val chat = products.worker(entry("chat.dot")!!).getOrThrow()
+        val chat = products.resolved(entry("chat.dot")!!).getOrThrow()
+        val worker = requireNotNull(chat.executables.worker)
 
-        assertEquals("https://worker.chat.dot/index.js", chat.scriptUrl)
-        assertTrue(chat.includesChat)
-        assertFalse(products.worker(entry("quiet.dot")!!).getOrThrow().includesChat)
+        assertEquals("chat.dot", chat.product.name)
+        assertEquals("https://worker.chat.dot/index.js", worker.scriptUrl)
+        assertTrue(worker.includesChat)
+        assertFalse(products.resolved(entry("quiet.dot")!!).getOrThrow().executables.worker!!.includesChat)
     }
 
     @Test
     fun `a Worker manifest the parser rejects fails as a published one does`() {
         // provider.dot's manifest has no appVersion.
-        assertTrue(products.worker(entry("provider.dot")!!).isFailure)
+        assertTrue(products.resolved(entry("provider.dot")!!).isFailure)
     }
 
     @Test
