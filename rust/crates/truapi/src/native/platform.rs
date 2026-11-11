@@ -106,8 +106,8 @@ impl crate::platform::StackHost for StackCallbackHost {
 	async fn fetch_stack_descriptor(
 		&self,
 		request: crate::platform::StackFetchRequest,
-	) -> crate::platform::StackFetchResponse {
-		self.stack.fetch_stack_descriptor(request).await
+	) -> Result<crate::platform::StackFetchResponse, v01::GenericError> {
+		Ok(self.stack.fetch_stack_descriptor(request).await?)
 	}
 
 	fn stack_changed(&self, status: crate::platform::StackStatus) {

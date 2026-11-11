@@ -252,8 +252,8 @@ The core has no HTTP client, so the host fetches and reports what it got:
 Without the callbacks the core stays on the descriptor it started from.
 
 The host sends a `GET` without following redirects, stops reading at
-`max_bytes` (1 MiB), and answers `Unreachable` for anything but `200` and
-`304`. The core waits 30 seconds for an answer.
+`max_bytes` (1 MiB), and fails the fetch for anything but `200` and `304`. The
+core waits 30 seconds for an answer.
 
 `stack_changed` reports a `StackStatus` when a refresh starts and on every
 change, and `stack_status` returns the current one. Its fields say what the

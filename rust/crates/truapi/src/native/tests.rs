@@ -1836,8 +1836,11 @@ impl crate::native::NativeStackCallbacks for PublishedStack {
 	async fn fetch_stack_descriptor(
 		&self,
 		_request: crate::platform::StackFetchRequest,
-	) -> crate::platform::StackFetchResponse {
-		crate::platform::StackFetchResponse::Document { bytes: self.document.clone(), etag: None }
+	) -> Result<crate::platform::StackFetchResponse, crate::native::HostRejection> {
+		Ok(crate::platform::StackFetchResponse::Document {
+			bytes: self.document.clone(),
+			etag: None,
+		})
 	}
 
 	fn stack_changed(&self, status: crate::platform::StackStatus) {
