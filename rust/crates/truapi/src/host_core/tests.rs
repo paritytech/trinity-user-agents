@@ -15,10 +15,11 @@ use crate::{
 	},
 	test_support::{StubPlatform, runtime_config, wait_until},
 };
+use futures::FutureExt;
 use parity_scale_codec::Encode;
 use std::sync::atomic::Ordering;
 use truapi::{
-	api::Permissions,
+	CallContext,
 	latest::{RemotePermission, RemotePermissionRequest, RemotePermissionResponse},
 	versioned::permissions,
 };
@@ -62,10 +63,7 @@ fn activated_signing_runtime(platform: Arc<StubPlatform>) -> SigningHostRuntime 
 /// once is asked again after the user resets its account access.
 #[test]
 fn a_settings_change_to_account_access_ends_allow_once() {
-	use crate::{
-		platform::{PermissionAuthorizationRequest, PermissionDecision},
-		runtime::ProductAuthority,
-	};
+	use crate::platform::{PermissionAuthorizationRequest, PermissionDecision};
 
 	let platform = Arc::new(StubPlatform {
 		permission_confirmation_decisions: std::sync::Mutex::new(
@@ -76,7 +74,7 @@ fn a_settings_change_to_account_access_ends_allow_once() {
 	let runtime = activated_signing_runtime(platform.clone());
 	let (requester, target) = (ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
 	let access = || {
-		futures::executor::block_on(runtime.signing_host.consent().account_access(
+		futures::executor::block_on(runtime.signing_host.accounts().consent().account_access(
 			&requester,
 			&target,
 			platform.as_ref(),
@@ -376,7 +374,7 @@ fn a_cached_subtree_answers_without_reaching_the_wallet() {
 	let runtime = PairingHostRuntime::new(platform.clone(), host_config, Spawner::for_test());
 	let session = crate::test_support::sso_session_info();
 	install_session_after_boot(&runtime, &platform, session.clone());
-	runtime.pairing_host.cache_product_subtree_for_test(
+	runtime.pairing_host.accounts().cache_product_subtree_for_test(
 		&session,
 		&crate::platform::ProductId::for_test("myapp.dot"),
 		[9; 32],
@@ -855,7 +853,7 @@ fn worker_connection_renders_and_receives_actions_without_a_session() {
 	);
 	let host = runtime.admin.product_runtime().clone();
 	assert!(
-		host.test_session_state().current().is_none(),
+		runtime.core.session_state().current().is_none(),
 		"the fixture must be signed out for this test to mean anything"
 	);
 
@@ -1927,7 +1925,7 @@ fn signing_manifest_lookup_rpc(asset_hub: [u8; 32]) -> ManifestLookup {
 	let host = ProductRuntimeHost::from_services(
 		runtime.services.clone(),
 		ConnectionAdapters::from_services(&runtime.services),
-		runtime.signing_host.clone(),
+		runtime.signing_host.accounts().clone(),
 		runtime.signing_host.clone(),
 		ProductContext::new(ProductId::for_test("unknown.dot")),
 	);

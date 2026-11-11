@@ -62,7 +62,7 @@ pub struct WalletAccountHolder {
 	/// neither the production browser bundle nor a released native host
 	/// enables, so a shipping host has no way to set it.
 	#[cfg(feature = "test-host")]
-	resource_controls: crate::runtime::test_resource_controls::TestResourceControls,
+	resource_controls: Arc<crate::runtime::test_resource_controls::TestResourceControls>,
 	/// The dotNS TLD of the network this wallet serves, from
 	/// [`crate::platform::SigningHostConfig::network_suffix`]. Every reserved
 	/// RFC-0022 derivation (`peopl.<suffix>` account and ring-VRF keys) ends in it.
@@ -217,7 +217,7 @@ impl WalletAccountHolder {
 	#[cfg(feature = "test-host")]
 	pub fn resource_controls(
 		&self,
-	) -> &crate::runtime::test_resource_controls::TestResourceControls {
+	) -> &Arc<crate::runtime::test_resource_controls::TestResourceControls> {
 		&self.resource_controls
 	}
 

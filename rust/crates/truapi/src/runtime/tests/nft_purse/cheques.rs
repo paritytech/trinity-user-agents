@@ -43,7 +43,7 @@ impl EncryptedStorage for RejectingStorage {
 }
 
 pub fn create_receive_key(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	into: u32,
 ) -> Result<v01::NftPurseReceiveKey, CallError<HostNftPurseCreateReceiveKeyError>> {
 	let request = v01::HostNftPurseCreateReceiveKeyRequest { into: v01::NftPurseId(into) };
@@ -128,7 +128,7 @@ fn a_receive_key_whose_secret_was_not_stored_is_not_recorded() {
 }
 
 pub fn create_cheque(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	from: u32,
 	to: v01::NftPurseChequeDestination,
 	items: Vec<v01::NftPurseItemKey>,
@@ -304,7 +304,7 @@ fn a_cheque_to_a_low_order_static_key_answers_other_and_spends_nothing() {
 }
 
 fn revoke(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	cheque_id: v01::NftPurseChequeId,
 ) -> Result<HostNftPurseRevokeChequeResponse, CallError<HostNftPurseRevokeChequeError>> {
 	let request =
@@ -315,7 +315,7 @@ fn revoke(
 /// The first status of the operation `host`'s product registered under
 /// `idempotency_key`.
 pub fn first_status_under(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	idempotency_key: [u8; 32],
 ) -> Result<
 	HostNftPurseObserveOperationStatusItem,

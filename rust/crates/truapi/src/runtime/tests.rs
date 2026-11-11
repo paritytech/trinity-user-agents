@@ -100,7 +100,10 @@ use crate::{
 		product_manifest::test_manifest_json,
 		sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
 	},
-	host_logic::{product_account::index_bytes, statement_store::SUBMIT_STATEMENT_METHOD},
+	host_logic::{
+		product_account::{derive_product_public_key, index_bytes},
+		statement_store::SUBMIT_STATEMENT_METHOD,
+	},
 	test_support::*,
 	unix_time::current_unix_secs,
 };
@@ -122,7 +125,10 @@ fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
 		.expect("test subtree derives an account")
 }
 
-pub fn install_pairing_session(host: &ProductRuntimeHost, session: SessionInfo) {
+pub fn install_pairing_session(
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
+	session: SessionInfo,
+) {
 	let product_id = host.connection.product_id();
 	if session.sso.is_some() {
 		host.test_cache_product_subtree(
@@ -135,7 +141,7 @@ pub fn install_pairing_session(host: &ProductRuntimeHost, session: SessionInfo) 
 }
 
 pub fn cache_test_product_subtree(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	session: &SessionInfo,
 	product_id: &str,
 ) {
@@ -301,7 +307,7 @@ fn local_storage_read_platform_error_preserves_the_request_version() {
 }
 
 fn read_storage(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	product: Option<&str>,
 	key: &str,
 ) -> Result<HostLocalStorageReadResponse, CallError<HostLocalStorageReadError>> {
@@ -374,7 +380,7 @@ fn access_not_granted() -> CallError<HostLocalStorageReadError> {
 }
 
 /// Reads `owner`'s stored value at `k`, requiring the grant to admit it.
-fn granted_value(host: &ProductRuntimeHost, owner: &str) -> Option<Vec<u8>> {
+fn granted_value(host: &ProductRuntimeHost<RemoteAccountHolder>, owner: &str) -> Option<Vec<u8>> {
 	let HostLocalStorageReadResponse::V2(v01::HostLocalStorageReadResponse { value }) =
 		read_storage(host, Some(owner), "k").expect("the grant admits the read")
 	else {
@@ -456,7 +462,7 @@ fn a_grant_to_another_product_does_not_admit_this_caller() {
 /// The account gate, which decides whether a signature may be made with
 /// another product's account. The caller is `unknown.dot` throughout, so a
 /// manifest names the bare label `unknown`.
-fn may_use_account_of(host: &ProductRuntimeHost, owner: &str) -> bool {
+fn may_use_account_of(host: &ProductRuntimeHost<RemoteAccountHolder>, owner: &str) -> bool {
 	futures::executor::block_on(
 		host.may_use_product_account(&ProductId::for_test(owner), &CallContext::default()),
 	)
@@ -523,7 +529,9 @@ fn a_subname_of_the_granting_product_is_admitted_under_its_base_grant() {
 }
 
 /// What `sign_payload` answers for an account owned by `wallet.dot`.
-fn sign_with_wallets_account(host: &ProductRuntimeHost) -> CallError<HostSignPayloadError> {
+fn sign_with_wallets_account(
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
+) -> CallError<HostSignPayloadError> {
 	futures::executor::block_on(host.sign_payload(
 		&CallContext::default(),
 		HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
@@ -654,7 +662,7 @@ fn with_no_session_a_proof_refusal_never_discloses_whether_a_grant_exists() {
 }
 
 fn proof_refusal(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	product: &str,
 ) -> Option<CallError<HostAccountCreateProofError>> {
 	futures::executor::block_on(
@@ -788,7 +796,7 @@ fn contacts_host(
 	platform: Arc<StubPlatform>,
 	contacts: Option<Arc<StubContactsPlatform>>,
 	connected: bool,
-) -> ProductRuntimeHost {
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config(product_id);
 	let services = RuntimeServices::with_chat_platform(
 		platform as Arc<dyn Platform>,
@@ -807,7 +815,7 @@ fn contacts_host(
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -818,7 +826,7 @@ fn contacts_host(
 }
 
 fn pick(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 ) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
 	futures::executor::block_on(Contacts::pick(
 		host,
@@ -877,7 +885,7 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -1182,7 +1190,9 @@ fn a_handle_no_contact_matches_refuses_the_call() {
 }
 
 /// A connected runtime whose contacts adapter is `contacts`.
-fn host_with_contacts(contacts: Arc<dyn crate::platform::ContactsPlatform>) -> ProductRuntimeHost {
+fn host_with_contacts(
+	contacts: Arc<dyn crate::platform::ContactsPlatform>,
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config("voting.dot");
 	let services = RuntimeServices::with_chat_platform(
 		stub_platform() as Arc<dyn Platform>,
@@ -1199,7 +1209,7 @@ fn host_with_contacts(contacts: Arc<dyn crate::platform::ContactsPlatform>) -> P
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -1500,7 +1510,7 @@ fn chat_post_message_screens_content_before_it_reaches_a_host() {
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -1650,7 +1660,7 @@ fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -1756,7 +1766,7 @@ fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -1838,7 +1848,7 @@ fn chat_room_ids_agree_across_create_and_post() {
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -1922,7 +1932,7 @@ fn chat_register_bot_rejects_unsafe_product_fields() {
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product.clone(),
 	);
@@ -2011,7 +2021,7 @@ fn chat_register_bot_reaches_the_installed_adapter() {
 	let host = ProductRuntimeHost::from_services(
 		services.clone(),
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product.clone(),
 	);
@@ -2094,7 +2104,7 @@ impl crate::platform::PocketPlatform for RecordingPocketPlatform {
 fn pocket_dot_host(
 	kind: crate::platform::ExecutableKind,
 	configure: impl FnOnce(&mut crate::host_core::ConnectionAdapters),
-) -> ProductRuntimeHost {
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, _) = runtime_config("pocket.dot");
 	let product = ProductContext::new_with_execution(ProductId::for_test("pocket.dot"), kind);
 	let platform: Arc<dyn Platform> = stub_platform();
@@ -2112,7 +2122,7 @@ fn pocket_dot_host(
 	ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	)
@@ -2122,7 +2132,7 @@ fn pocket_host(
 	kind: crate::platform::ExecutableKind,
 	pocket: Option<Arc<RecordingPocketPlatform>>,
 	with_session: bool,
-) -> ProductRuntimeHost {
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let host = pocket_dot_host(kind, |adapters| {
 		adapters.pocket_platform =
 			pocket.map(|pocket| pocket as Arc<dyn crate::platform::PocketPlatform>);
@@ -2134,7 +2144,7 @@ fn pocket_host(
 }
 
 fn remove_card(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	card_id: &str,
 ) -> Result<HostPocketRemoveCardResponse, CallError<HostPocketRemoveCardError>> {
 	futures::executor::block_on(Pocket::remove_card(
@@ -2149,7 +2159,7 @@ fn remove_card(
 /// First thing a Pocket subscription yields: an item, or the interrupt that
 /// ended it before any item arrived.
 fn first_pocket_item(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 ) -> Option<
 	Result<
 		HostPocketListSubscribeItem,
@@ -2224,7 +2234,7 @@ impl crate::platform::ExpandedCardHost for RecordingExpandedCardHost {
 fn expanded_card_host(
 	kind: crate::platform::ExecutableKind,
 	expanded_card: Option<Arc<RecordingExpandedCardHost>>,
-) -> ProductRuntimeHost {
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	pocket_dot_host(kind, |adapters| {
 		adapters.expanded_card =
 			expanded_card.map(|card| card as Arc<dyn crate::platform::ExpandedCardHost>);
@@ -2232,7 +2242,7 @@ fn expanded_card_host(
 }
 
 fn set_face_shown(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	shown: bool,
 ) -> Result<
 	truapi::versioned::expanded_card::HostExpandedCardSetFaceShownResponse,
@@ -2246,7 +2256,7 @@ fn set_face_shown(
 }
 
 fn set_back_shown(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	shown: bool,
 ) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>> {
 	futures::executor::block_on(ExpandedCard::set_back_shown(
@@ -2453,7 +2463,7 @@ fn game_host(
 	kind: crate::platform::ExecutableKind,
 	platform: Arc<StubPlatform>,
 	game: Option<Arc<RecordingGamePlatform>>,
-) -> ProductRuntimeHost {
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	game_host_for(GAME_PRODUCT, kind, platform, game)
 }
 
@@ -2463,7 +2473,7 @@ fn game_host_for(
 	kind: crate::platform::ExecutableKind,
 	platform: Arc<StubPlatform>,
 	game: Option<Arc<RecordingGamePlatform>>,
-) -> ProductRuntimeHost {
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, _) = runtime_config(product_id);
 	let product = ProductContext::new_with_execution(ProductId::for_test(product_id), kind);
 	let platform: Arc<dyn Platform> = platform;
@@ -2481,21 +2491,21 @@ fn game_host_for(
 	ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	)
 }
 
 fn remind(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	starts_at: u64,
 ) -> Result<HostRemindNextGameResponse, CallError<HostRemindNextGameError>> {
 	remind_with(host, &CallContext::default(), starts_at)
 }
 
 fn remind_with(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	cx: &CallContext,
 	starts_at: u64,
 ) -> Result<HostRemindNextGameResponse, CallError<HostRemindNextGameError>> {
@@ -2507,7 +2517,7 @@ fn remind_with(
 }
 
 fn cancel(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 ) -> Result<HostCancelNextGameResponse, CallError<HostCancelNextGameError>> {
 	futures::executor::block_on(Game::cancel_next_game(
 		host,
@@ -3168,13 +3178,13 @@ fn funding_host(
 	services: &Arc<RuntimeServices>,
 	product_id: &str,
 	with_session: bool,
-) -> ProductRuntimeHost {
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config(product_id);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
 	let host = ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(services),
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -3198,7 +3208,7 @@ fn funding_request() -> truapi::versioned::funding::HostFundingRequest {
 
 /// Request funding and take the intent it answers.
 fn request_funding(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 ) -> Result<String, CallError<truapi::versioned::funding::HostFundingError>> {
 	futures::executor::block_on(truapi::api::Funding::request(
 		host,
@@ -3209,7 +3219,7 @@ fn request_funding(
 }
 
 fn watch_funding(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	intent: &str,
 ) -> Subscription<
 	truapi::versioned::funding::HostFundingStatusSubscribeItem,
@@ -3225,7 +3235,7 @@ fn watch_funding(
 }
 
 fn first_funding_status(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	intent: &str,
 ) -> Option<
 	Result<
@@ -3732,14 +3742,14 @@ fn chain_follow_ids_are_scoped_per_product_core() {
 	let first = ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(&services),
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product.clone(),
 	);
 	let second = ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(&services),
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -3843,7 +3853,7 @@ fn permission_prompts_name_the_requesting_product_and_execution_kind() {
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product.clone(),
 	);
@@ -5576,7 +5586,7 @@ fn storage_item(
 }
 
 fn subscribe_storage_key(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	key: &str,
 ) -> Subscription<HostLocalStorageChangeItem, CallError<HostLocalStorageSubscribeError>> {
 	futures::executor::block_on(LocalStorage::subscribe(
@@ -5588,7 +5598,7 @@ fn subscribe_storage_key(
 	))
 }
 
-fn write_storage_key(host: &ProductRuntimeHost, key: &str, value: &[u8]) {
+fn write_storage_key(host: &ProductRuntimeHost<RemoteAccountHolder>, key: &str, value: &[u8]) {
 	futures::executor::block_on(host.write(
 		&CallContext::default(),
 		HostLocalStorageWriteRequest::V1(v01::HostLocalStorageWriteRequest {
@@ -6436,7 +6446,7 @@ pub fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Ar
     })
 }
 
-pub fn request_auto_signing(host: &ProductRuntimeHost, request_id: &str) {
+pub fn request_auto_signing(host: &ProductRuntimeHost<RemoteAccountHolder>, request_id: &str) {
 	futures::executor::block_on(ResourceAllocation::request(
 		host,
 		&CallContext::with_request_id(request_id.to_string()),
@@ -6458,7 +6468,7 @@ fn auto_signing_vrf_request() -> HostAccountSignVrfRequest {
 /// A pairing host holding an AutoSigning capability, with its SSO script
 /// already spent on the allocation: anything that relays from here fails, so a
 /// call that succeeds was served locally.
-fn granted_pairing_host() -> (Arc<StubPlatform>, ProductRuntimeHost) {
+fn granted_pairing_host() -> (Arc<StubPlatform>, ProductRuntimeHost<RemoteAccountHolder>) {
 	let session = sso_session_info();
 	let platform = auto_signing_test_platform(&session, "auto-1");
 	let host =
@@ -6516,7 +6526,7 @@ fn auto_signing_serves_sign_raw_locally_without_prompt_or_sso() {
 /// The account a picked contact resolves to, and the handle a product holds
 /// for them. Minted through the real picker so the handle is keyed the way a
 /// product's would be.
-fn picked_contact(host: &ProductRuntimeHost) -> v01::ContactHandle {
+fn picked_contact(host: &ProductRuntimeHost<RemoteAccountHolder>) -> v01::ContactHandle {
 	let HostContactsPickResponse::V1(picked) = pick(host).expect("the picker opens");
 	let v01::ContactPickOutcome::Picked { handle } = picked.outcome else {
 		panic!("the user picked someone");
@@ -6549,7 +6559,9 @@ fn transaction_naming(
 
 /// A granted host that also serves a picker, so what a transaction naming a
 /// contact ends up signing is visible with no prompt in the way.
-fn granted_pairing_host_with_contact(account: [u8; 32]) -> (Arc<StubPlatform>, ProductRuntimeHost) {
+fn granted_pairing_host_with_contact(
+	account: [u8; 32],
+) -> (Arc<StubPlatform>, ProductRuntimeHost<RemoteAccountHolder>) {
 	let (platform, host) = granted_pairing_host();
 	assert!(
 		host.connection
@@ -7449,31 +7461,31 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
 	install_pairing_session(&host, session_info());
-	let session = pairing_host.current_session().expect("the pairing host has an active session");
+	let session = pairing_host
+		.accounts()
+		.current_session()
+		.expect("the pairing host has an active session");
 
-	let proof = futures::executor::block_on(ProductAuthority::create_proof(
-		&*pairing_host,
-		&CallContext::default(),
+	let proof = futures::executor::block_on(pairing_host.accounts().create_proof(
 		&session,
-		crate::host_internal::sso_messages::ProductRequest {
-			calling_product_id: ProductId::for_test("dim2.dot"),
-			payload: v01::HostAccountCreateProofRequest {
-				key_handle: v01::ProductAccountId {
-					dot_ns_identifier: ProductId::for_test("peopl.dot"),
-					derivation_index: v01::DerivationIndex::Index(0),
-				},
-				context: v01::ProductProofContext {
-					product_id: ProductId::for_test("dim2.dot"),
-					suffix: v01::DerivationIndex::Index(0),
-				},
-				ring_location: ring_location_fixture(),
-				message: b"prove me".to_vec(),
+		&CallContext::default(),
+		&ProductContext::new(ProductId::for_test("dim2.dot")),
+		v01::HostAccountCreateProofRequest {
+			key_handle: v01::ProductAccountId {
+				dot_ns_identifier: ProductId::for_test("peopl.dot"),
+				derivation_index: v01::DerivationIndex::Index(0),
 			},
+			context: v01::ProductProofContext {
+				product_id: ProductId::for_test("dim2.dot"),
+				suffix: v01::DerivationIndex::Index(0),
+			},
+			ring_location: ring_location_fixture(),
+			message: b"prove me".to_vec(),
 		},
 	));
 	assert_eq!(
@@ -7482,19 +7494,16 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 		"the pairing authority must refuse a foreign key that no manifest granted"
 	);
 
-	let signed = futures::executor::block_on(ProductAuthority::ring_vrf_sign(
-		&*pairing_host,
-		&CallContext::default(),
+	let signed = futures::executor::block_on(pairing_host.accounts().ring_vrf_sign(
 		&session,
-		crate::host_internal::sso_messages::ProductRequest {
-			calling_product_id: ProductId::for_test("dim2.dot"),
-			payload: v01::HostAccountRingVrfSignRequest {
-				key_handle: v01::ProductAccountId {
-					dot_ns_identifier: ProductId::for_test("peopl.dot"),
-					derivation_index: v01::DerivationIndex::Index(0),
-				},
-				message: b"sign me".to_vec(),
+		&CallContext::default(),
+		&ProductContext::new(ProductId::for_test("dim2.dot")),
+		v01::HostAccountRingVrfSignRequest {
+			key_handle: v01::ProductAccountId {
+				dot_ns_identifier: ProductId::for_test("peopl.dot"),
+				derivation_index: v01::DerivationIndex::Index(0),
 			},
+			message: b"sign me".to_vec(),
 		},
 	));
 	assert_eq!(
@@ -7533,33 +7542,32 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 		let host = ProductRuntimeHost::from_services(
 			services,
 			adapters,
-			pairing_host.clone(),
+			pairing_host.accounts().clone(),
 			pairing_host.session().clone(),
 			product,
 		);
 		install_pairing_session(&host, session_info());
-		let session =
-			pairing_host.current_session().expect("the pairing host has an active session");
+		let session = pairing_host
+			.accounts()
+			.current_session()
+			.expect("the pairing host has an active session");
 		let mut cx = CallContext::default();
 		cx.set_timeout(Duration::from_millis(200));
-		futures::executor::block_on(ProductAuthority::create_proof(
-			&*pairing_host,
-			&cx,
+		futures::executor::block_on(pairing_host.accounts().create_proof(
 			&session,
-			crate::host_internal::sso_messages::ProductRequest {
-				calling_product_id: ProductId::for_test("dim2next.dot"),
-				payload: v01::HostAccountCreateProofRequest {
-					key_handle: v01::ProductAccountId {
-						dot_ns_identifier: ProductId::for_test("peopl.dot"),
-						derivation_index: v01::DerivationIndex::Index(0),
-					},
-					context: v01::ProductProofContext {
-						product_id: ProductId::for_test("dim2.dot"),
-						suffix: v01::DerivationIndex::Index(0),
-					},
-					ring_location: ring_location_fixture(),
-					message: b"prove me".to_vec(),
+			&cx,
+			&ProductContext::new(ProductId::for_test("dim2next.dot")),
+			v01::HostAccountCreateProofRequest {
+				key_handle: v01::ProductAccountId {
+					dot_ns_identifier: ProductId::for_test("peopl.dot"),
+					derivation_index: v01::DerivationIndex::Index(0),
 				},
+				context: v01::ProductProofContext {
+					product_id: ProductId::for_test("dim2.dot"),
+					suffix: v01::DerivationIndex::Index(0),
+				},
+				ring_location: ring_location_fixture(),
+				message: b"prove me".to_vec(),
 			},
 		))
 	};
@@ -7602,7 +7610,7 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -7740,7 +7748,7 @@ fn a_refusal_past_the_frontend_is_warned_once() {
 fn dim2_with_a_pairing_session(
 	platform: Arc<StubPlatform>,
 	asset_hub_chain_genesis_hash: [u8; 32],
-) -> ProductRuntimeHost {
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config("dim2.dot");
 	let services = RuntimeServices::new(
 		platform,
@@ -7755,7 +7763,7 @@ fn dim2_with_a_pairing_session(
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -7924,7 +7932,9 @@ impl crate::platform::ScannerPlatform for StubScannerPlatform {
 
 /// A runtime for `greenmarket.dot` with no session, and `scanner` installed
 /// when given.
-fn scanner_host(scanner: Option<Arc<StubScannerPlatform>>) -> ProductRuntimeHost {
+fn scanner_host(
+	scanner: Option<Arc<StubScannerPlatform>>,
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	scanner_host_for(ExecutableKind::App, scanner)
 }
 
@@ -7932,7 +7942,7 @@ fn scanner_host(scanner: Option<Arc<StubScannerPlatform>>) -> ProductRuntimeHost
 fn scanner_host_for(
 	kind: ExecutableKind,
 	scanner: Option<Arc<StubScannerPlatform>>,
-) -> ProductRuntimeHost {
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, mut product) = runtime_config("greenmarket.dot");
 	product.execution_kind = kind;
 	let services = RuntimeServices::with_chat_platform(
@@ -7952,7 +7962,7 @@ fn scanner_host_for(
 	ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	)
@@ -7978,7 +7988,7 @@ fn unwrap_scan(
 }
 
 fn scan(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 ) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
 	unwrap_scan(futures::executor::block_on(Scanner::scan(
 		host,
@@ -8176,13 +8186,13 @@ fn payment_host(
 	services: &Arc<RuntimeServices>,
 	product_id: &str,
 	with_session: bool,
-) -> ProductRuntimeHost {
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config(product_id);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
 	let host = ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(services),
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -8209,7 +8219,10 @@ fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: 
 }
 
 /// A provider's worker connection, signed in.
-fn provider_worker(services: &Arc<RuntimeServices>, provider_id: &str) -> ProductRuntimeHost {
+fn provider_worker(
+	services: &Arc<RuntimeServices>,
+	provider_id: &str,
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let host = signed_out_provider_worker(services, provider_id);
 	install_pairing_session(&host, session_info());
 	host
@@ -8219,7 +8232,7 @@ fn provider_worker(services: &Arc<RuntimeServices>, provider_id: &str) -> Produc
 fn signed_out_provider_worker(
 	services: &Arc<RuntimeServices>,
 	provider_id: &str,
-) -> ProductRuntimeHost {
+) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, _) = runtime_config(provider_id);
 	let product = ProductContext::new_with_execution(
 		ProductId::for_test(provider_id),
@@ -8229,7 +8242,7 @@ fn signed_out_provider_worker(
 	ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(services),
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	)
@@ -8342,7 +8355,7 @@ fn wait_for_session(
 }
 
 fn report_funding(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	intent: &str,
 	update: v01::FundingUpdate,
 ) -> Result<(), CallError<truapi::versioned::funding_provider::HostFundingReportError>> {
@@ -9979,7 +9992,7 @@ fn served_session(services: &Arc<RuntimeServices>, amount: u128) -> String {
 }
 
 fn crediting(
-	worker: &ProductRuntimeHost,
+	worker: &ProductRuntimeHost<RemoteAccountHolder>,
 	intent: &str,
 	top_up_id: [u8; 32],
 	amount: u128,
@@ -10478,7 +10491,7 @@ impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
 }
 
 fn top_up(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	amount: u128,
 	source: v01::PaymentTopUpSource,
 ) -> Result<
@@ -10503,7 +10516,7 @@ fn top_up(
 /// A provider's worker starting a top-up under id `[7; 32]` for funding
 /// session `intent`.
 fn fund_top_up(
-	worker: &ProductRuntimeHost,
+	worker: &ProductRuntimeHost<RemoteAccountHolder>,
 	intent: &str,
 	amount: u128,
 ) -> Result<
@@ -10684,7 +10697,7 @@ fn payment_request() -> truapi::latest::HostPaymentRequest {
 }
 
 fn request_payment(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 ) -> Result<
 	truapi::versioned::payment::HostPaymentResponse,
 	CallError<truapi::versioned::payment::HostPaymentError>,
@@ -10697,7 +10710,7 @@ fn request_payment(
 }
 
 fn follow_payment(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 ) -> Vec<
 	Result<
 		truapi::versioned::payment::HostPaymentStatusSubscribeItem,
@@ -10821,7 +10834,7 @@ impl crate::platform::BalancePlatform for RecordingBalancePlatform {
 }
 
 fn first_balance(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 ) -> Option<
 	Result<
 		v01::HostPaymentBalanceSubscribeItem,
@@ -11238,7 +11251,7 @@ fn ramp_top_up_id() -> [u8; 32] {
 fn served_with_engine(
 	engine: Arc<dyn crate::platform::TopUpPlatform>,
 	amount: u128,
-) -> (Arc<RuntimeServices>, String, ProductRuntimeHost) {
+) -> (Arc<RuntimeServices>, String, ProductRuntimeHost<RemoteAccountHolder>) {
 	let services = funding_services();
 	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
 		crate::platform::FundingPresentOutcome::Started,

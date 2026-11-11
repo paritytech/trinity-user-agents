@@ -17,7 +17,8 @@ use crate::{
 	generated::dispatcher,
 	host_logic::session::SessionState,
 	runtime::{
-		HostSession, PairingHostRole, ProductAuthority, ProductRuntimeHost, RuntimeServices,
+		AccountHolder, HostAccounts, HostSession, PairingHostRole, ProductRuntimeHost,
+		RuntimeServices,
 	},
 	transport::Transport,
 };
@@ -67,14 +68,14 @@ impl TrUApiCore {
 		let pairing_host = PairingHostRole::new(services.clone(), host_config);
 		pairing_host.session().clone().start_session_store_sync(spawner);
 		let session = pairing_host.session().clone();
-		Self::from_runtime_parts(services, pairing_host, session, product)
+		Self::from_runtime_parts(services, pairing_host.accounts().clone(), session, product)
 	}
 
-	/// Build a product-facing core from shared services and authority.
+	/// Build a product-facing core from shared services and accounts.
 	#[instrument(skip_all, fields(runtime.method = "core.from_runtime_parts"))]
-	fn from_runtime_parts(
+	fn from_runtime_parts<H: AccountHolder>(
 		services: Arc<RuntimeServices>,
-		authority: Arc<dyn ProductAuthority>,
+		accounts: Arc<HostAccounts<H>>,
 		host_session: Arc<dyn HostSession>,
 		product: ProductContext,
 	) -> Self {
@@ -82,7 +83,7 @@ impl TrUApiCore {
 		let runtime = Arc::new(ProductRuntimeHost::from_services(
 			services.clone(),
 			crate::host_core::ConnectionAdapters::from_services(&services),
-			authority,
+			accounts,
 			host_session,
 			product,
 		));
@@ -91,8 +92,8 @@ impl TrUApiCore {
 
 	/// Build a dispatcher core around an already-created product runtime.
 	#[instrument(skip_all, fields(runtime.method = "core.from_product_runtime"))]
-	pub fn from_product_runtime(
-		runtime: Arc<ProductRuntimeHost>,
+	pub fn from_product_runtime<H: AccountHolder>(
+		runtime: Arc<ProductRuntimeHost<H>>,
 		spawner: Spawner,
 		session_state: Arc<SessionState>,
 	) -> Self {

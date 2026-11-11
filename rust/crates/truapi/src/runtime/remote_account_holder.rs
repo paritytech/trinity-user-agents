@@ -7,7 +7,8 @@ use super::{
 		AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation, Allowance,
 		AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
 		CreateTransactionAuthorityRequest, GrantKeeping, SignPayloadAuthorityRequest,
-		SignRawAuthorityRequest, StatementStoreAllowanceKey, require_current_session,
+		SignRawAuthorityRequest, StatementStoreAllowanceKey, SubtreeResolution,
+		require_current_session,
 	},
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure, validate_owner_listing},
 	sso_remote::SsoRemoteResponseError,
@@ -156,17 +157,19 @@ impl AccountHolder for RemoteAccountHolder {
 		require_current_session(&self.service.session_state(), session).map(|_| ())
 	}
 
-	async fn product_subtree_public_key(
-		&self,
-		invocation: AccountInvocation<'_>,
-		product_id: &ProductId,
-	) -> Result<[u8; 32], AuthorityError> {
+	async fn product_subtree_public_key<'a>(
+		&'a self,
+		invocation: AccountInvocation<'a>,
+		product_id: &'a ProductId,
+	) -> Result<SubtreeResolution<'a>, AuthorityError> {
 		let session = require_current_session(&self.service.session_state(), invocation.session)?;
 		let request = ProductSubtreeRequest { product_id: product_id.clone() };
-		self.service
-			.call(invocation.call, &session, request)
-			.await?
-			.map_err(remote_authority_error)
+		Ok(SubtreeResolution::Ask(Box::pin(async move {
+			self.service
+				.call(invocation.call, &session, request)
+				.await?
+				.map_err(remote_authority_error)
+		})))
 	}
 
 	async fn sign_vrf(
@@ -222,7 +225,10 @@ impl AccountHolder for RemoteAccountHolder {
 	) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
 		let request = match request {
 			SignRawAuthorityRequest::Product(request) => request,
-			SignRawAuthorityRequest::LegacyAccount { account, request } => {
+			SignRawAuthorityRequest::LegacyAccount { product_account, request } => {
+				latest::HostSignRawRequest { account: product_account, payload: request.payload }
+			},
+			SignRawAuthorityRequest::IdentityAccount { account, request } => {
 				let request = SignRawWithLegacyAccountRequest { account, data: request.payload };
 				if !watermarked {
 					return self

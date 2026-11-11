@@ -1,5 +1,5 @@
 use super::{
-	super::{LocalActivation, RuntimeServices, SigningHostRole},
+	super::{LocalActivation, RuntimeServices, SigningHostRole, signing_host::WalletAccountHolder},
 	*,
 };
 use crate::{
@@ -56,14 +56,16 @@ fn cache_context_grant(platform: &StubPlatform, owner: &str, grantee: &str) {
 	.expect("stub core storage accepts the entry");
 }
 
-fn signing_host_runtime(product_id: &str) -> (ProductRuntimeHost, Arc<SigningHostRole>) {
+fn signing_host_runtime(
+	product_id: &str,
+) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHostRole>) {
 	signing_host_runtime_on(product_id, Arc::new(StubPlatform::default()))
 }
 
 fn signing_host_runtime_on(
 	product_id: &str,
 	platform: Arc<StubPlatform>,
-) -> (ProductRuntimeHost, Arc<SigningHostRole>) {
+) -> (ProductRuntimeHost<WalletAccountHolder>, Arc<SigningHostRole>) {
 	let platform: Arc<dyn crate::platform::Platform> = platform;
 	let services = RuntimeServices::new(
 		platform.clone(),
@@ -84,7 +86,7 @@ fn signing_host_runtime_on(
 	let host = ProductRuntimeHost::from_services(
 		services.clone(),
 		crate::host_core::ConnectionAdapters::from_services(&services),
-		signing_host.clone(),
+		signing_host.accounts().clone(),
 		signing_host.clone(),
 		ProductContext::new(ProductId::for_test(product_id)),
 	);
@@ -224,7 +226,7 @@ fn statement_store_create_proof_refuses_a_cross_product_account_the_user_decline
 }
 
 fn create_proof_as(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<WalletAccountHolder>,
 	account: latest::ProductAccountId,
 ) -> Result<RemoteStatementStoreCreateProofResponse, CallError<RemoteStatementStoreCreateProofError>>
 {

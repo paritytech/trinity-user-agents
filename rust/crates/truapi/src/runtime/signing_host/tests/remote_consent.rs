@@ -40,7 +40,7 @@ fn remote_account_access_reuses_shared_decisions_and_preserves_their_lifetime() 
 				signing_runtime_with_ring_resolver(platform.clone(), full_person_ring_resolver());
 			futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 				.unwrap();
-			let session = authority.current_session().unwrap();
+			let session = authority.accounts().current_session().unwrap();
 			register_full_person_key(&authority, &session, &full_person_ring_location());
 			let owner =
 				ProductId::for_test(if operation == "alias" { "peopl.dot" } else { "foreign.dot" });

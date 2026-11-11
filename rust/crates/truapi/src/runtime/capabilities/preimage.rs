@@ -21,7 +21,7 @@ use web_time::Instant;
 use crate::{
 	host_internal::bulletin::{allowance_signer, preimage_key},
 	runtime::{
-		AuthoritySession, BulletinAllowanceKey, PERMISSION_DENIED_REASON,
+		AccountHolder, AuthoritySession, BulletinAllowanceKey, PERMISSION_DENIED_REASON,
 		PREIMAGE_BULLETIN_AUTHORIZATION_WAIT, PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
 		PREIMAGE_SUBMIT_TIMEOUT, ProductRuntimeHost, bulletin_allowance_error_reason,
 		bulletin_rpc::BulletinSubmitError,
@@ -34,7 +34,7 @@ use crate::{
 };
 use subxt::tx::Signer;
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// Extend the product's Bulletin authorization before signing a payload it
 	/// cannot hold, so the chain never rejects a submission the host could see coming.
 	async fn bulletin_allowance_for(
@@ -94,7 +94,7 @@ impl ProductRuntimeHost {
 }
 
 #[async_trait::async_trait]
-impl Preimage for ProductRuntimeHost {
+impl<H: AccountHolder> Preimage for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "preimage.lookup_subscribe"))]
 	async fn lookup_subscribe(
 		&self,

@@ -18,7 +18,7 @@ fn pending_account_access_tracks_wallet_activation() {
 		});
 		let (services, authority) = signing_runtime_with_platform(platform.clone());
 		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-		let session = authority.current_session().unwrap();
+		let session = authority.accounts().current_session().unwrap();
 		let runtime = product_runtime(services, authority.clone());
 		let cx = CallContext::default();
 		let account = runtime.get_account(
@@ -50,7 +50,7 @@ fn pending_account_access_tracks_wallet_activation() {
 		assert_eq!(
 			(
 				futures::executor::block_on(account).map(|_| ()),
-				authority.current_session().map(|current| current.validation_id) ==
+				authority.accounts().current_session().map(|current| current.validation_id) ==
 					Some(session.validation_id),
 				platform.account_access_reviews.lock().unwrap().len(),
 			),

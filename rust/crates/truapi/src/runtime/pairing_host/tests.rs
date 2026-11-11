@@ -57,7 +57,7 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -114,7 +114,7 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
 	let host = ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	);
@@ -164,7 +164,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 	let host = Arc::new(ProductRuntimeHost::from_services(
 		services,
 		adapters,
-		pairing_host.clone(),
+		pairing_host.accounts().clone(),
 		pairing_host.session().clone(),
 		product,
 	));
@@ -289,7 +289,7 @@ fn auto_signing_ring_vrf_requires_registration_and_signs_locally() {
 	futures::executor::block_on(remember_auto_key(
 		&pairing_host,
 		&session,
-		pairing_host.grant_revision(),
+		pairing_host.accounts().grant_revision(),
 		"myapp.dot",
 		subtree.public.to_bytes(),
 		subtree.secret.to_bytes(),
@@ -420,7 +420,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 		Spawner::for_test(),
 	);
 	install_pairing_session(&host, session.clone());
-	let stale_revision = pairing_host.grant_revision();
+	let stale_revision = pairing_host.accounts().grant_revision();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
@@ -501,7 +501,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 	);
 	install_pairing_session(&host, session.clone());
 	cache_test_product_subtree(&host, &session, "other.dot");
-	let stale_revision = pairing_host.grant_revision();
+	let stale_revision = pairing_host.accounts().grant_revision();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let first = crate::host_logic::product_account::derive_product_subtree_keypair(
@@ -552,7 +552,7 @@ fn product_clear_preserves_other_capabilities_and_fences_stale_work() {
 		pairing_host.clear_product_state(&ProductId::for_test("myapp.dot")),
 	)
 	.unwrap();
-	let current_revision = pairing_host.grant_revision();
+	let current_revision = pairing_host.accounts().grant_revision();
 	assert_ne!(current_revision, stale_revision);
 	assert_eq!(cache_sizes(&pairing_host), (1, 1, 1, 1));
 	assert!(
@@ -649,7 +649,7 @@ fn reset_session_state_clears_all_capabilities_without_peer_traffic() {
 		Spawner::for_test(),
 	);
 	install_pairing_session(&host, session.clone());
-	let grant_revision = pairing_host.grant_revision();
+	let grant_revision = pairing_host.accounts().grant_revision();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
@@ -711,7 +711,7 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 	);
 	install_pairing_session(&host, session.clone());
 	request_auto_signing(&host, "auto-replace");
-	let grant_revision = pairing_host.grant_revision();
+	let grant_revision = pairing_host.accounts().grant_revision();
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
 	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
@@ -1161,7 +1161,7 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
 		Spawner::for_test(),
 	);
 	install_pairing_session(&host, session.clone());
-	let grant_revision = pairing_host.grant_revision();
+	let grant_revision = pairing_host.accounts().grant_revision();
 	let allowance =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0x42; 32]).unwrap();
 	futures::executor::block_on(retain_allowance_key(
@@ -1173,7 +1173,7 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
 		allowance.secret.to_bytes().to_vec(),
 	))
 	.expect("the wallet's allowance is cached");
-	pairing_host.set_submit_preimages_locally(true);
+	pairing_host.accounts().set_submit_preimages_locally(true);
 	let value = b"pairing test host preimage".to_vec();
 	let cx = CallContext::default();
 
@@ -1228,25 +1228,24 @@ fn a_paired_registration_records_the_phones_key_locally() {
 		Spawner::for_test(),
 	);
 	install_pairing_session(&host, session);
-	let authority_session = ProductAuthority::current_session(pairing.as_ref()).unwrap();
+	let authority_session = pairing.accounts().current_session().unwrap();
 
-	let registered = futures::executor::block_on(ProductAuthority::register_ring_vrf_key(
-		pairing.as_ref(),
-		&CallContext::with_request_id("register".to_string()),
+	let registered = futures::executor::block_on(pairing.accounts().register_ring_vrf_key(
 		&authority_session,
-		crate::host_internal::sso_messages::ProductRequest {
-			calling_product_id: ProductId::for_test("myapp.dot"),
-			payload: v01::HostAccountRegisterRingVrfKeyRequest {
-				index: v01::DerivationIndex::Index(0),
-				ring: ring_location_fixture(),
-			},
+		&CallContext::with_request_id("register".to_string()),
+		&ProductContext::new(ProductId::for_test("myapp.dot")),
+		v01::HostAccountRegisterRingVrfKeyRequest {
+			index: v01::DerivationIndex::Index(0),
+			ring: ring_location_fixture(),
 		},
 	));
 
 	assert_eq!(
 		(
 			registered,
-			futures::executor::block_on(pairing.ring_vrf_providers(&ring_location_fixture())),
+			futures::executor::block_on(
+				pairing.accounts().ring_vrf_providers(&ring_location_fixture())
+			),
 		),
 		(Ok(public_key), Ok(vec![account_id("myapp.dot", 0)])),
 	);
@@ -1258,7 +1257,8 @@ async fn has_auto_key(
 	product_id: &str,
 ) -> Result<bool, AuthorityError> {
 	pairing_host
-		.grants
+		.accounts()
+		.grants_for_tests()
 		.auto_signing_key(session, &crate::platform::ProductId::for_test(product_id))
 		.await
 		.map(|key| key.is_some())
@@ -1274,7 +1274,8 @@ async fn remember_auto_key(
 	ring_vrf_domain_entropy: [u8; 32],
 ) -> Result<(), AuthorityError> {
 	pairing_host
-		.grants
+		.accounts()
+		.grants_for_tests()
 		.remember_auto_signing_key(
 			session,
 			grant_revision,
@@ -1303,7 +1304,8 @@ async fn retain_allowance_key(
 		},
 	};
 	pairing_host
-		.grants
+		.accounts()
+		.grants_for_tests()
 		.retain_allowance(session, grant_revision, product_id, &grant)
 		.await
 }
@@ -1316,7 +1318,8 @@ async fn cached_allowance_key(
 	product_id: &ProductId,
 ) -> Result<Option<Allowance>, AuthorityError> {
 	pairing_host
-		.grants
+		.accounts()
+		.grants_for_tests()
 		.cached_allowance(session, grant_revision, product_id, resource)
 		.await
 }
@@ -1329,11 +1332,11 @@ async fn register_vrf_key(
 	public_key: [u8; 32],
 ) -> Result<(), RingVrfError> {
 	pairing_host
-		.ring_vrf_registry
-		.register(session.public_key, handle, ring, public_key)
+		.accounts()
+		.register_ring_vrf_key_for_tests(session.public_key, handle, ring, public_key)
 		.await
 }
 
 fn cache_sizes(pairing_host: &PairingHost) -> (usize, usize, usize, usize) {
-	pairing_host.grants.capability_cache_sizes_for_tests()
+	pairing_host.accounts().grants_for_tests().capability_cache_sizes_for_tests()
 }

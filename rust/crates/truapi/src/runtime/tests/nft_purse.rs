@@ -28,7 +28,7 @@ const TICKETS: u32 = 0;
 fn nft_host(
 	platform: Arc<StubPlatform>,
 	with_session: bool,
-) -> (tempfile::TempDir, ProductRuntimeHost) {
+) -> (tempfile::TempDir, ProductRuntimeHost<RemoteAccountHolder>) {
 	let encrypted = Arc::new(MemoryEncryptedStorage::default());
 	nft_host_with_storage(platform, with_session, encrypted)
 }
@@ -39,7 +39,7 @@ pub fn nft_host_with_storage(
 	platform: Arc<StubPlatform>,
 	with_session: bool,
 	encrypted: Arc<dyn EncryptedStorage>,
-) -> (tempfile::TempDir, ProductRuntimeHost) {
+) -> (tempfile::TempDir, ProductRuntimeHost<RemoteAccountHolder>) {
 	let services = payment_services_over(platform);
 	let (dir, db) = open_temporary_core_db();
 	assert!(services.install_core_db(db.clone()));
@@ -55,7 +55,7 @@ fn test_static_secret() -> Arc<FixedStaticSecret> {
 }
 
 fn create(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	name: &str,
 ) -> Result<HostNftPurseCreatePurseResponse, CallError<HostNftPurseCreatePurseError>> {
 	let request = v01::HostNftPurseCreatePurseRequest { name: name.to_owned() };
@@ -65,7 +65,7 @@ fn create(
 }
 
 fn list(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	owner: v01::NftPurseOwner,
 ) -> Result<HostNftPurseListPursesResponse, CallError<HostNftPurseListPursesError>> {
 	let request = v01::HostNftPurseListPursesRequest { owner };
@@ -75,7 +75,7 @@ fn list(
 }
 
 fn create_items(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	purse: u32,
 	count: u32,
 ) -> Result<HostNftPurseCreateItemsResponse, CallError<HostNftPurseCreateItemsError>> {
@@ -97,7 +97,7 @@ fn create_items_refusal(
 }
 
 fn query(
-	host: &ProductRuntimeHost,
+	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	purse: u32,
 	page_size: u32,
 ) -> Result<HostNftPurseQueryPurseResponse, CallError<HostNftPurseQueryPurseError>> {
@@ -395,7 +395,7 @@ mod operations {
 		_dir: tempfile::TempDir,
 		pub services: Arc<RuntimeServices>,
 		pub ledger: NftLedger,
-		pub host: ProductRuntimeHost,
+		pub host: ProductRuntimeHost<RemoteAccountHolder>,
 	}
 
 	/// [`Purses`] over in-memory encrypted storage.
@@ -438,13 +438,13 @@ mod operations {
 		}
 
 		/// A host for [`OTHER_PRODUCT`] over the same services.
-		pub fn other_product(&self) -> ProductRuntimeHost {
+		pub fn other_product(&self) -> ProductRuntimeHost<RemoteAccountHolder> {
 			payment_host(&self.services, OTHER_PRODUCT, true)
 		}
 	}
 
 	fn rebalance(
-		host: &ProductRuntimeHost,
+		host: &ProductRuntimeHost<RemoteAccountHolder>,
 		from: u32,
 		to: u32,
 		keys: Vec<v01::NftPurseItemKey>,
@@ -463,7 +463,7 @@ mod operations {
 	}
 
 	fn transfer(
-		host: &ProductRuntimeHost,
+		host: &ProductRuntimeHost<RemoteAccountHolder>,
 		item: v01::NftPurseItemKey,
 	) -> Result<HostNftPurseTransferItemResponse, CallError<HostNftPurseTransferItemError>> {
 		let destination = v01::NftPurseItemKey([0xee; 32]);
@@ -474,7 +474,7 @@ mod operations {
 	}
 
 	fn first_status(
-		host: &ProductRuntimeHost,
+		host: &ProductRuntimeHost<RemoteAccountHolder>,
 	) -> Result<
 		HostNftPurseObserveOperationStatusItem,
 		CallError<HostNftPurseObserveOperationStatusError>,

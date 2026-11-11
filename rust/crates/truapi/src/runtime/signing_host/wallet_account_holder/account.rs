@@ -19,7 +19,7 @@ use crate::{
 			AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation, Allowance,
 			AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
 			CreateTransactionAuthorityRequest, GrantKeeping, SignPayloadAuthorityRequest,
-			SignRawAuthorityRequest, StatementStoreAllowanceKey,
+			SignRawAuthorityRequest, StatementStoreAllowanceKey, SubtreeResolution,
 		},
 		authority_cancellation_error,
 		contacts::ContactHandles,
@@ -408,13 +408,15 @@ impl AccountHolder for WalletAccountHolder {
 		}
 	}
 
-	async fn product_subtree_public_key(
-		&self,
-		invocation: AccountInvocation<'_>,
-		product_id: &ProductId,
-	) -> Result<[u8; 32], AuthorityError> {
+	async fn product_subtree_public_key<'a>(
+		&'a self,
+		invocation: AccountInvocation<'a>,
+		product_id: &'a ProductId,
+	) -> Result<SubtreeResolution<'a>, AuthorityError> {
 		self.with_keys(invocation.session, |keys| {
-			Ok(keys.product_subtree_keypair(product_id)?.public.to_bytes())
+			Ok(SubtreeResolution::Known(
+				keys.product_subtree_keypair(product_id)?.public.to_bytes(),
+			))
 		})
 	}
 
@@ -471,7 +473,10 @@ impl AccountHolder for WalletAccountHolder {
 					SignRawAuthorityRequest::Product(request) => {
 						(keys.product_keypair(&request.account)?, request.payload)
 					},
-					SignRawAuthorityRequest::LegacyAccount { account, request } => {
+					SignRawAuthorityRequest::LegacyAccount { product_account, request } => {
+						(keys.product_keypair(&product_account)?, request.payload)
+					},
+					SignRawAuthorityRequest::IdentityAccount { account, request } => {
 						(keys.identity_keypair_for(account)?, request.payload)
 					},
 				};

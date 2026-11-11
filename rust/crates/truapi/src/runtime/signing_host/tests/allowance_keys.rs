@@ -82,12 +82,13 @@ fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
 /// of hanging.
 fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {
 	futures::executor::block_on(async {
-		let session = signing_host.current_session().expect("a session is active");
+		let session = signing_host.accounts().current_session().expect("a session is active");
 		let cx = CallContext::default();
-		let product_id = ProductId::for_test(PRODUCT_ID);
+		let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));
 		futures::select! {
 			result = signing_host
-				.statement_store_allowance_key(&cx, &session, &product_id)
+				.accounts()
+				.statement_store_allowance_key(&cx, &session, &product)
 				.fuse() => result,
 			_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
 				panic!("the proof blocked on a chain read")
@@ -108,8 +109,8 @@ fn secret_key() -> StatementStoreAllowanceKey {
 fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
 	let state = signing_host.session_state();
 	let session = state.current().unwrap();
-	let revision = signing_host.grants.lifecycle().revision();
-	futures::executor::block_on(signing_host.grants.retain_allowance(
+	let revision = signing_host.accounts().grant_revision();
+	futures::executor::block_on(signing_host.accounts().grants_for_tests().retain_allowance(
 		&session,
 		revision,
 		&ProductId::for_test(product_id),
@@ -121,8 +122,8 @@ fn remember(signing_host: &SigningHostRole, product_id: &str, period: u32) {
 fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 64]> {
 	let state = signing_host.session_state();
 	let session = state.current().unwrap();
-	let revision = signing_host.grants.lifecycle().revision();
-	futures::executor::block_on(signing_host.grants.cached_allowance(
+	let revision = signing_host.accounts().grant_revision();
+	futures::executor::block_on(signing_host.accounts().grants_for_tests().cached_allowance(
 		&session,
 		revision,
 		&ProductId::for_test(product_id),
@@ -136,12 +137,13 @@ fn remembered(signing_host: &SigningHostRole, product_id: &str) -> Option<[u8; 6
 /// through to an unanswered chain read fails instead of hanging.
 fn served(signing_host: &SigningHostRole) -> Option<[u8; 64]> {
 	futures::executor::block_on(async {
-		let session = signing_host.current_session().expect("a session is active");
+		let session = signing_host.accounts().current_session().expect("a session is active");
 		let cx = CallContext::default();
-		let product_id = ProductId::for_test(PRODUCT_ID);
+		let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));
 		futures::select! {
 			result = signing_host
-				.statement_store_allowance_key(&cx, &session, &product_id)
+				.accounts()
+				.statement_store_allowance_key(&cx, &session, &product)
 				.fuse() => result.ok().map(|key| *key.as_secret_bytes()),
 			_ = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
 				panic!("the lookup blocked on a chain read")
@@ -275,7 +277,7 @@ fn clearing_a_product_forgets_only_its_key() {
 #[test]
 fn a_replaced_session_is_not_served_the_new_sessions_key() {
 	let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
-	let authority_session = signing_host.current_session().unwrap();
+	let authority_session = signing_host.accounts().current_session().unwrap();
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("re-activation succeeds");
 	remember(
@@ -286,10 +288,10 @@ fn a_replaced_session_is_not_served_the_new_sessions_key() {
 
 	assert!(
 		matches!(
-			futures::executor::block_on(signing_host.statement_store_allowance_key(
+			futures::executor::block_on(signing_host.accounts().statement_store_allowance_key(
 				&CallContext::default(),
 				&authority_session,
-				&ProductId::for_test(PRODUCT_ID),
+				&ProductContext::new(ProductId::for_test(PRODUCT_ID)),
 			)),
 			Err(AuthorityError::Disconnected)
 		),
@@ -302,16 +304,17 @@ fn a_key_allocated_under_a_replaced_session_is_not_remembered() {
 	let signing_host = active_signing_host(Arc::new(StubPlatform::default()));
 	let state = signing_host.session_state();
 	let session = state.current().unwrap();
-	let revision = signing_host.grants.lifecycle().revision();
+	let revision = signing_host.accounts().grant_revision();
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("re-activation succeeds");
 
-	let remembered_stale = futures::executor::block_on(signing_host.grants.retain_allowance(
-		&session,
-		revision,
-		&ProductId::for_test(PRODUCT_ID),
-		&Allowance::StatementStore { key: secret_key(), period: Some(PERIOD) },
-	));
+	let remembered_stale =
+		futures::executor::block_on(signing_host.accounts().grants_for_tests().retain_allowance(
+			&session,
+			revision,
+			&ProductId::for_test(PRODUCT_ID),
+			&Allowance::StatementStore { key: secret_key(), period: Some(PERIOD) },
+		));
 	assert_eq!(
 		(remembered_stale.map(|_| ()), remembered(&signing_host, PRODUCT_ID)),
 		(Err(AuthorityError::Disconnected), None),
