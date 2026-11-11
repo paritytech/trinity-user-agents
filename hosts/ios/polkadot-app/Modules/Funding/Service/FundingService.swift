@@ -116,11 +116,17 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
         calls.run { [runtime] in runtime.cancelFundingAutoStart(intent: entryId) }
     }
 
+    func leave(_ entryId: String) {
+        guard isPresenting(entryId) else { return }
+
+        stopStarting(entryId)
+        resolvePresentation(entryId, with: .dismissed)
+        finishFollowers(of: entryId)
+    }
+
     func cancel(_ entryId: String) async throws -> CancelOutcome {
         guard !isPresenting(entryId) else {
-            stopStarting(entryId)
-            resolvePresentation(entryId, with: .dismissed)
-            finishFollowers(of: entryId)
+            leave(entryId)
             return .ended
         }
 

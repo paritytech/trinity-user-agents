@@ -164,6 +164,17 @@ struct FundingServiceTests {
     }
 
     @Test
+    func leavingASessionThatNeverStartedDropsIt() async throws {
+        let service = makeService(MockFundingRuntime(candidates: [candidate("routed", routes: [route(.card)])]))
+        let outcome = Task { await service.presentFunding(intent: intent, direction: .in, amount: nil) }
+        _ = try await firstEvent(of: service)
+
+        service.leave(intent)
+
+        #expect(await outcome.value == .dismissed)
+    }
+
+    @Test
     func theDepositScreenStartsOnTheCoresBestQuote() async throws {
         let runtime = MockFundingRuntime(candidates: [candidate("crypto", routes: [cryptoRoute()])])
         let service = makeService(runtime)

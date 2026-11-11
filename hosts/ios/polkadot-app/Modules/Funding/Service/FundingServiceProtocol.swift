@@ -44,6 +44,10 @@ protocol FundingServiceProtocol: AnyObject, Sendable {
     /// the core no longer starts it.
     func stopStarting(_ entryId: String)
 
+    /// The user left the session's screens. One that never started is
+    /// dropped; one in flight runs on.
+    func leave(_ entryId: String)
+
     /// Cancels a session. One that never started is dropped at once, as when
     /// the user leaves its screens; one in flight goes to the core, which ends
     /// it or asks the provider.
