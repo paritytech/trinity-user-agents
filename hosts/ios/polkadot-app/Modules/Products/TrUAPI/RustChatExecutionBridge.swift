@@ -79,6 +79,7 @@ final class RustChatExecutionBridge: RustProductExecutionBridge, ChatHostBridge,
             switch footer {
             case .textInput: .textInput
             case .empty: .empty
+            case let .card(card): .card(messageType: card.messageType, payload: card.payload)
             }
         try await chatMessaging.setRoomFooter(roomId: roomId, footer: roomFooter)
     }
