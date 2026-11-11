@@ -352,10 +352,10 @@ runtime.setTopUp(wallet)
 runtime.setPayments(wallet)
 runtime.setBalance(wallet)
 
-// Later, from the wallet's own status and balance streams:
+// While the core follows an id or the balance:
 runtime.notifyTopUpStatus(productId: productId, id: id, status: .claiming)
 runtime.notifyPaymentStatus(productId: productId, id: id, status: .completed)
-runtime.notifyBalance(purse: nil, available: "1500000000")
+runtime.notifyBalance(available: "1500000000")
 ```
 
 The core checks the session, the source keys, a positive amount and the
@@ -364,10 +364,12 @@ payment the balance cannot cover throws `HostPaymentError.InsufficientBalance`,
 which the core turns into `Rejected` for a product without balance access. The
 balance is what a payment can spend now, as a decimal string of CASH units.
 
-`topUpStatus` and `paymentStatus` answer the current status of an id inline,
-or `nil` when the host holds none. Every later status goes through
-`notifyTopUpStatus` and `notifyPaymentStatus`, ending with a terminal one; the
-core relays each to the products following that id.
+The core decides which ids to follow. It calls `followTopUp`,
+`followPayment` and `followBalance`, and the host follows its engine's stream,
+pushing what it reports through `notifyTopUpStatus`, `notifyPaymentStatus` and
+`notifyBalance` until the call returns. The core keeps the latest status per
+id, relays it to the products following that id and cancels the call once it
+has a final status.
 
 ## Architecture
 
@@ -410,22 +412,26 @@ The container enforces product consent, while native media delegates resolve OS 
 
 ## SSO session handling
 
-`TrUAPIHostRuntime` exposes two methods for wallet-owned SSO sessions. Meaningful request answering requires `activateLocalSession` to have been called first; `prepareDisconnectRequest` needs no session.
+An externally owned SSO transport calls `openSsoService` for each peer with its own statement-account and encryption public keys. Rust verifies both against the active wallet and binds the returned service to that activation. Locking or reactivating the wallet invalidates the binding, including reactivation with the same secret.
 
 ```swift
-func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome
-func prepareDisconnectRequest() -> Data
+let service = try runtime.openSsoService(
+    ownStatementAccountId: statementAccountId,
+    ownEncryptionPublicKey: encryptionPublicKey
+)
 ```
 
-`handleSsoRequest(message:)` takes one SCALE-encoded `RemoteMessage` exactly as decrypted from the statement-store session and routes it through the Rust core. The returned `SsoRequestOutcome` is the generated UniFFI enum (no Swift mirror):
+Retain one generated service per authenticated peer. Before queueing each decrypted SCALE message, call `service.handleSsoControl(message:)`: a non-nil outcome handles the message immediately, allowing Cancel to reach a running request. Queue only nil results, in arrival order, for `service.handleSsoRequest(message:)`. Both calls use the same service and withdrawal state. Malformed messages throw.
 
-- `.response(message:)` — SCALE-encoded reply; post it back over the same session.
+The generated `SsoRequestOutcome` distinguishes these results:
+
+- `.response(message:)`: SCALE-encoded reply to post over the same authenticated transport, including not-connected errors after wallet replacement.
 - `.disconnected`: the peer ended the session; tear down its transport and records.
 - `.ignored`: nothing to post.
 
-Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`, so `handleSsoRequest` can take arbitrarily long. Always call it from a `Task`, never the main thread.
+Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`. Release each service with its peer transport. An invalid binding cannot be reused after wallet activation; recreate the coordinator and verify its transport keys again.
 
-`prepareDisconnectRequest()` returns the SCALE-encoded `Disconnected` message to post when the wallet is ending the session. Posting and record cleanup (host entry, device record, device-removed broadcast) stay with the wallet.
+`runtime.prepareDisconnectRequest()` builds the SCALE-encoded `Disconnected` message without requiring an active wallet. Posting and record cleanup stay with the host.
 
 ## Statement-store allowance renewal
 
