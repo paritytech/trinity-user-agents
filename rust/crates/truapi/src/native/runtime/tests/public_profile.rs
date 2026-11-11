@@ -1,10 +1,10 @@
-use futures::{channel::oneshot, future, stream};
 use tokio::sync::mpsc;
 
 use super::*;
 use crate::{
-	PublicProfileResolutionOptions, platform::HostInfo, public_profile::PublicProfiles,
-	runtime::services::RuntimeServices, store::open_temporary_core_db, test_support::StubPlatform,
+	native::tests::{native_host_runtime_config, native_host_runtime_no_session},
+	store::{Db, open_temporary_core_db},
+	test_support::StubPlatform,
 };
 
 struct Observer {
@@ -25,6 +25,17 @@ impl NativePublicProfileObserver for Observer {
 	}
 }
 
+fn profile_runtime(platform: Arc<StubPlatform>, db: Db) -> Arc<NativeTrUApiHostRuntime> {
+	let mut config = native_host_runtime_config();
+	config.asset_hub_chain_genesis_hash = vec![3; 32];
+	let config = NativeResolvedHostRuntimeConfig::try_from(config).unwrap();
+	let core = SigningHostRuntime::new(platform, config.signing, Spawner::for_test());
+	assert!(core.set_core_db(db));
+	let mut host = native_host_runtime_no_session();
+	Arc::get_mut(&mut host).unwrap().runtime = Arc::new(core);
+	host
+}
+
 #[tokio::test]
 async fn native_profile_observation_reports_eligible_profiles_before_its_terminal_callback() {
 	for (fresh, force_fresh, skip_stale) in [
@@ -38,19 +49,6 @@ async fn native_profile_observation_reports_eligible_profiles_before_its_termina
 	] {
 		let platform =
 			Arc::new(StubPlatform { chain_connect_error: Some("offline"), ..Default::default() });
-		let services = RuntimeServices::new(
-			platform.clone(),
-			HostInfo {
-				name: "Profile test".into(),
-				icon: None,
-				version: None,
-				platform: truapi::latest::HostPlatform::Unknown,
-			},
-			[1; 32],
-			[2; 32],
-			[3; 32],
-			Spawner::for_test(),
-		);
 		let (_directory, db) = open_temporary_core_db();
 		db.write(move |tx| {
 			let expires_at = crate::unix_time::current_unix_secs() + if fresh { 3600 } else { 0 };
@@ -60,15 +58,12 @@ async fn native_profile_observation_reports_eligible_profiles_before_its_termina
 			)?;
 			Ok(())
 		}).await.unwrap();
-		assert!(services.install_core_db(db));
+		let host = profile_runtime(platform.clone(), db);
 		let (events, mut received) = mpsc::unbounded_channel();
-		let subscription = observe_public_profile(
-			PublicProfiles::new(services).observe(
-				"alice.01".to_owned(),
-				PublicProfileResolutionOptions { force_fresh, skip_stale },
-			),
+		let subscription = host.observe_public_profile(
+			"alice.01".to_owned(),
+			PublicProfileResolutionOptions { force_fresh, skip_stale },
 			Arc::new(Observer { events }),
-			&Spawner::for_test(),
 		);
 
 		if !skip_stale || fresh {
@@ -97,30 +92,22 @@ async fn native_profile_observation_reports_eligible_profiles_before_its_termina
 	}
 }
 
-struct PendingResolution(Option<oneshot::Sender<()>>);
-
-impl Drop for PendingResolution {
-	fn drop(&mut self) {
-		self.0.take().unwrap().send(()).unwrap();
-	}
-}
-
 #[tokio::test]
 async fn cancelling_native_observation_drops_an_in_progress_resolution_without_callbacks() {
-	let (started, pending) = oneshot::channel();
-	let (dropped, cancelled) = oneshot::channel();
+	let platform = Arc::new(StubPlatform { chain_connect_pending: true, ..Default::default() });
+	let (_directory, db) = open_temporary_core_db();
+	let host = profile_runtime(platform.clone(), db);
 	let (events, mut received) = mpsc::unbounded_channel();
-	let stream = Subscription::new(stream::once(async move {
-		let _resolution = PendingResolution(Some(dropped));
-		started.send(()).unwrap();
-		future::pending::<Result<PublicProfile, PublicProfileError>>().await
-	}));
-	let subscription =
-		observe_public_profile(stream, Arc::new(Observer { events }), &Spawner::for_test());
-	pending.await.unwrap();
+	let subscription = host.observe_public_profile(
+		"alice.01".to_owned(),
+		PublicProfileResolutionOptions { force_fresh: false, skip_stale: false },
+		Arc::new(Observer { events }),
+	);
+	while platform.chain_connects.lock().unwrap().is_empty() {
+		tokio::task::yield_now().await;
+	}
 
 	subscription.cancel();
-	cancelled.await.unwrap();
 
 	assert!(received.recv().await.is_none());
 }
