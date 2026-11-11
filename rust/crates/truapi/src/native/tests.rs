@@ -1828,7 +1828,7 @@ fn each_descriptor_chain_reaches_its_own_role() {
 /// each status the core reports.
 struct PublishedStack {
 	document: Vec<u8>,
-	statuses: Mutex<std::sync::mpsc::Sender<crate::platform::StackStatus>>,
+	statuses: std::sync::mpsc::Sender<crate::platform::StackStatus>,
 }
 
 #[async_trait::async_trait]
@@ -1841,7 +1841,7 @@ impl crate::native::NativeStackCallbacks for PublishedStack {
 	}
 
 	fn stack_changed(&self, status: crate::platform::StackStatus) {
-		let _ = self.statuses.lock().expect("statuses mutex poisoned").send(status);
+		let _ = self.statuses.send(status);
 	}
 }
 
@@ -1859,7 +1859,7 @@ fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 	let (told, statuses) = std::sync::mpsc::channel();
 	let published = PublishedStack {
 		document: crate::test_support::sign_test_descriptor(&wiped).1,
-		statuses: Mutex::new(told),
+		statuses: told,
 	};
 	let next_status = || {
 		statuses
