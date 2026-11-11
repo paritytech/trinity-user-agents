@@ -53,23 +53,16 @@ private extension PurseSnapshotTests {
             strip: Self.coins,
             traces: [:]
         )
-        let wallet = WalletViewModel()
-        wallet.assetDetailsViewModel = assets
-        wallet.expandedSection = .assetDetails
-
-        let host = UIHostingController(rootView: WalletView(
-            viewModel: wallet,
+        let screen = AssetDetailsScreenViewController(
+            viewModel: assets,
+            origin: nil,
             cash: FundingCash(symbol: "USDC", precision: 6)
-        ))
-        host.view.backgroundColor = .bgSurfaceMain
-        let title = PurseTitleView()
-        host.navigationItem.titleView = title
-        wallet.onPurseCollapse = { title.apply(progress: $0) }
+        )
 
         let scene = try #require(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
         window.windowLevel = .alert + 1
-        window.rootViewController = UINavigationController(rootViewController: host)
+        window.rootViewController = UINavigationController(rootViewController: screen)
         window.makeKeyAndVisible()
         return window
     }

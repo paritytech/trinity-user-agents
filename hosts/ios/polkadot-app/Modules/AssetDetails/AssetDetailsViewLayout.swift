@@ -7,9 +7,11 @@ struct AssetDetailsView: View {
     @State var viewModel: AssetDetailsViewModelProtocol
     var isExpanded: Bool = false
     var onCardTapped: () -> Void
-    var overscroll: CGFloat = 0
-    var onCollapse: (() -> Void)?
-    /// How visible the page's own card is: the wallet draws the card itself
+    var overscroll: DSOverscroll?
+    var isCardHidden: Bool = false
+    var showsOpenedFace: Bool = false
+    var onCardFrame: (CGRect) -> Void = { _ in }
+    /// How visible the page's own card is: the screen draws the card itself
     /// while it shrinks into the header, so this one stands aside.
     var cardOpacity: Double = 1
     var cash: FundingCash
@@ -31,8 +33,10 @@ struct AssetDetailsView: View {
         viewModel: AssetDetailsViewModelProtocol = AssetDetailsViewModel(),
         isExpanded: Bool = false,
         onCardTapped: @escaping () -> Void,
-        overscroll: CGFloat = 0,
-        onCollapse: (() -> Void)? = nil,
+        overscroll: DSOverscroll? = nil,
+        isCardHidden: Bool = false,
+        showsOpenedFace: Bool = false,
+        onCardFrame: @escaping (CGRect) -> Void = { _ in },
         cardOpacity: Double = 1,
         cash: FundingCash
     ) {
@@ -40,7 +44,9 @@ struct AssetDetailsView: View {
         self.isExpanded = isExpanded
         self.onCardTapped = onCardTapped
         self.overscroll = overscroll
-        self.onCollapse = onCollapse
+        self.isCardHidden = isCardHidden
+        self.showsOpenedFace = showsOpenedFace
+        self.onCardFrame = onCardFrame
         self.cardOpacity = cardOpacity
         self.cash = cash
     }
@@ -49,7 +55,6 @@ struct AssetDetailsView: View {
         DSExpandableCardLayout(
             isExpanded: isExpanded,
             overscroll: overscroll,
-            onCollapse: onCollapse,
             card: { headerCard },
             details: { expandedBody }
         )
@@ -61,12 +66,13 @@ struct AssetDetailsView: View {
             balanceCard(balanceCardModel)
                 .onTapGesture { onCardTapped() }
                 .background { cardMark }
-                .opacity(isExpanded ? cardOpacity : 1)
+                .opacity(isCardHidden ? 0 : isExpanded ? cardOpacity : 1)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onCardFrame($0) }
                 .animation(balanceAnimation, value: viewModel.coinageBreakdown?.amounts.total)
         }
     }
 
-    /// Where the card is while the Purse scrolls, for the card the wallet draws
+    /// Where the card is while the Purse scrolls, for the card the screen draws
     /// shrinking into the header and the sticky bar under it.
     @ViewBuilder
     private var cardMark: some View {
@@ -156,7 +162,7 @@ struct AssetDetailsView: View {
         AssetDetailsBalanceCard(
             viewModel: balanceCardModel,
             isUpdating: viewModel.isUpdating,
-            isExpanded: isExpanded
+            isExpanded: isExpanded || showsOpenedFace
         )
     }
 

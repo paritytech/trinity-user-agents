@@ -20,9 +20,6 @@ protocol FundingOverlayEnvironment: AnyObject {
     func present(_ controller: UIViewController) -> Bool
     /// The provider product's page at `route`, as the app shows products.
     func providerPage(providerId: ProductId, route: String, title: String) -> UIViewController?
-    /// Whether the provider product ships an App; true when that cannot be
-    /// told, so its page is tried as before.
-    func providerHasApp(providerId: ProductId) async -> Bool
     /// A session changed, for the CASH card's lists.
     func fundingActivityChanged()
     /// A passing notice over whatever is on screen.
@@ -55,18 +52,13 @@ final class AppFundingOverlay: FundingOverlayPresenting, @unchecked Sendable {
     func presentProviderFrame(
         providerId: ProductId,
         intent: String,
-        target: FundingFrameTarget,
-        context: FundingFrameContext
+        target: FundingFrameTarget
     ) async -> FundingFrameOutcome {
-        await frame(providerId: providerId, intent: intent, target: target, context: context)
+        await frame(providerId: providerId, intent: intent, target: target)
     }
 
     func closeProviderFrame(providerId: ProductId, intent: String) {
         Task { @MainActor in coordinator?.closeFrame(providerId: providerId, intent: intent) }
-    }
-
-    func providerHasApp(providerId: ProductId) async -> Bool {
-        await hasApp(providerId: providerId)
     }
 
     func fundingSessionChanged(intent: String) {
@@ -116,17 +108,10 @@ private extension AppFundingOverlay {
     }
 
     @MainActor
-    func hasApp(providerId: ProductId) async -> Bool {
-        guard let coordinator else { return true }
-        return await coordinator.providerHasApp(providerId: providerId)
-    }
-
-    @MainActor
     func frame(
         providerId: ProductId,
         intent: String,
-        target: FundingFrameTarget,
-        context: FundingFrameContext
+        target: FundingFrameTarget
     ) async -> FundingFrameOutcome {
         guard let coordinator else { return .dismissed }
         switch target {
@@ -135,7 +120,7 @@ private extension AppFundingOverlay {
                 providerId: providerId,
                 intent: intent,
                 route: route,
-                awaitsUserTransfer: context.awaitsUserTransfer
+                awaitsUserTransfer: runtime?.fundingProgress(intent: intent)?.awaitsUserTransfer ?? false
             )
         case let .page(url, returnUrl):
             return await coordinator.presentPage(providerId: providerId, intent: intent, url: url, returnUrl: returnUrl)
@@ -227,10 +212,6 @@ final class FundingOverlayCoordinator {
         if environment.present(sheet) {
             acknowledgeShown(intent: intent)
         }
-    }
-
-    func providerHasApp(providerId: ProductId) async -> Bool {
-        await environment.providerHasApp(providerId: providerId)
     }
 
     /// The provider closed its frame for session `intent`: the frame answers

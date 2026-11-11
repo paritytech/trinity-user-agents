@@ -99,7 +99,11 @@ extension FundingStatus {
     /// Slower than it should be, which the row draws in amber.
     var isDelayed: Bool {
         switch self {
-        case .retrying, .retryingPayout, .takingLonger, .cancelOffered, .cancelRefused: true
+        case .retrying,
+             .retryingPayout,
+             .takingLonger,
+             .cancelOffered,
+             .cancelRefused: true
         default: false
         }
     }

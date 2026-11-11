@@ -381,8 +381,10 @@ pub trait NativeContactsCallbacks: Send + Sync {
 
 /// Native payment engine, which pays from the user's balance to an account.
 /// A host passes an implementation to
-/// [`NativeTrUApiHostRuntime::set_payment_callbacks`] and reports each later
-/// status with [`NativeTrUApiHostRuntime::notify_payment_status`].
+/// [`NativeTrUApiHostRuntime::set_payment_callbacks`]. The core decides which
+/// payments to follow and asks through [`Self::follow_payment`]; the host
+/// pushes what its engine reports with
+/// [`NativeTrUApiHostRuntime::notify_payment_status`].
 ///
 /// [`NativeTrUApiHostRuntime::set_payment_callbacks`]: super::NativeTrUApiHostRuntime::set_payment_callbacks
 /// [`NativeTrUApiHostRuntime::notify_payment_status`]: super::NativeTrUApiHostRuntime::notify_payment_status
@@ -399,19 +401,23 @@ pub trait NativePaymentCallbacks: Send + Sync {
 		request: latest::HostPaymentRequest,
 	) -> Result<(), latest::HostPaymentError>;
 
-	/// The current status of `product_id`'s payment `id`, or `None` when the
-	/// host holds no such payment.
-	fn payment_status(
+	/// Follow `product_id`'s payment `id` on the engine, pushing each status
+	/// it reports through `notify_payment_status`, and return when the
+	/// engine's stream ends. `PaymentNotFound` when the engine holds no such
+	/// payment. The core drops the call once it has a final status.
+	async fn follow_payment(
 		&self,
 		product_id: ProductId,
 		id: crate::Bytes32,
-	) -> Result<Option<latest::HostPaymentStatusSubscribeItem>, HostRejection>;
+	) -> Result<(), latest::HostPaymentStatusSubscribeError>;
 }
 
 /// Native top-up engine, which claims a source's funds into the user's
 /// balance. A host passes an implementation to
-/// [`NativeTrUApiHostRuntime::set_top_up_callbacks`] and reports each later
-/// status with [`NativeTrUApiHostRuntime::notify_top_up_status`].
+/// [`NativeTrUApiHostRuntime::set_top_up_callbacks`]. The core decides which
+/// top-ups to follow and asks through [`Self::follow_top_up`]; the host pushes
+/// what its engine reports with
+/// [`NativeTrUApiHostRuntime::notify_top_up_status`].
 ///
 /// [`NativeTrUApiHostRuntime::set_top_up_callbacks`]: super::NativeTrUApiHostRuntime::set_top_up_callbacks
 /// [`NativeTrUApiHostRuntime::notify_top_up_status`]: super::NativeTrUApiHostRuntime::notify_top_up_status
@@ -426,35 +432,33 @@ pub trait NativeTopUpCallbacks: Send + Sync {
 		request: latest::HostPaymentTopUpRequest,
 	) -> Result<(), latest::HostPaymentTopUpError>;
 
-	/// The current status of `product_id`'s top-up `id`, or `None` when the
-	/// host holds no such top-up.
-	fn top_up_status(
+	/// Follow `product_id`'s top-up `id` on the engine, pushing each status
+	/// it reports through `notify_top_up_status`, and return when the
+	/// engine's stream ends. `TopUpNotFound` when the engine holds no such
+	/// top-up. The core drops the call once it has a final status.
+	async fn follow_top_up(
 		&self,
 		product_id: ProductId,
 		id: crate::Bytes32,
-	) -> Result<Option<latest::HostPaymentTopUpStatusSubscribeItem>, HostRejection>;
+	) -> Result<(), latest::HostPaymentTopUpStatusSubscribeError>;
 }
 
 /// Native balance view, which shares the user's spendable balance with a
 /// product. A host passes an implementation to
-/// [`NativeTrUApiHostRuntime::set_balance_callbacks`] and reports each change
-/// with [`NativeTrUApiHostRuntime::notify_balance`].
+/// [`NativeTrUApiHostRuntime::set_balance_callbacks`]. The core follows the
+/// balance while a product does, through [`Self::follow_balance`]; the host
+/// pushes each balance with [`NativeTrUApiHostRuntime::notify_balance`].
 ///
 /// [`NativeTrUApiHostRuntime::set_balance_callbacks`]: super::NativeTrUApiHostRuntime::set_balance_callbacks
 /// [`NativeTrUApiHostRuntime::notify_balance`]: super::NativeTrUApiHostRuntime::notify_balance
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait NativeBalanceCallbacks: Send + Sync {
-	/// The current balance of `purse` (`None` for the main purse), as a
-	/// decimal string of CASH units: what a payment request can spend right
-	/// now. The balance is the user's, the same for every product;
-	/// `product_id` names the asking product only for the host's own records.
-	/// The core has already checked the product's balance access.
-	async fn balance(
-		&self,
-		product_id: ProductId,
-		purse: Option<u32>,
-	) -> Result<u128, latest::HostPaymentBalanceSubscribeError>;
+	/// Follow the user's spendable balance, pushing the current one and each
+	/// change through `notify_balance`, and return when the stream ends. The
+	/// core drops the call once no product follows the balance, and calls
+	/// again when one does.
+	async fn follow_balance(&self) -> Result<(), HostRejection>;
 }
 
 /// Native form of [`crate::platform::ScannerPlatform`], whose rules it follows.
@@ -494,26 +498,19 @@ pub trait NativeFundingCallbacks: Send + Sync {
 
 	/// Show `target` for provider `provider_id`'s session `intent` in a frame
 	/// the host owns, and report how it closed. A page is a checked https
-	/// URL: answer `Returned` when it reaches its return URL. `context`
-	/// carries facts about the session the frame is for. The core closes the
-	/// frame through `close_provider_frame` once the session's payment moved.
+	/// URL: answer `Returned` when it reaches its return URL. The core closes
+	/// the frame through `close_provider_frame` once the session's payment moved.
 	async fn present_provider_frame(
 		&self,
 		provider_id: ProductId,
 		intent: String,
 		target: latest::FundingFrameTarget,
-		context: crate::platform::FundingFrameContext,
 	) -> Result<latest::FundingFrameOutcome, HostRejection>;
 
 	/// Close the frame `present_provider_frame` shows for provider
 	/// `provider_id`'s session `intent`, answering that call `Closed`. Does
 	/// nothing when no frame is open for it.
 	fn close_provider_frame(&self, provider_id: ProductId, intent: String);
-
-	/// Whether provider `provider_id` ships an App, so an App route of its
-	/// can be shown. Asked only for a provider whose entry left `has_app`
-	/// unset. A provider without one shows only external pages.
-	async fn provider_has_app(&self, provider_id: ProductId) -> bool;
 
 	/// The country the user is likely in, as an ISO 3166-1 alpha-2 code:
 	/// the device's coarse location when already permitted, then its SIM or
@@ -522,7 +519,7 @@ pub trait NativeFundingCallbacks: Send + Sync {
 	async fn detected_country(&self) -> Option<String>;
 
 	/// Funding state the host reads back from the runtime changed: `kind`
-	/// says what, `intent` which session, `None` for `InProgress`. The core
-	/// has updated what the runtime answers before it calls.
+	/// says what, `intent` which session, `None` for `Providers`. The core has updated what the
+	/// runtime answers before it calls.
 	fn funding_changed(&self, intent: Option<String>, kind: super::funding_feed::FundingChangeKind);
 }

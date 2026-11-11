@@ -11,24 +11,16 @@ use truapi::latest::{
 use crate::{
 	host_logic::{
 		funding::{FundingSessionSummary, FundingStage, FundingStatus, FundingStep},
-		funding_providers::{FundingAmountLimits, FundingCandidate},
+		funding_providers::{FundingAmountLimits, FundingCandidate, FundingSelection},
 	},
-	platform::{
-		FundingAmountIssue, FundingFrameContext, FundingQuoteRow, FundingQuoteState,
-		FundingQuoteUnavailable,
-	},
+	platform::{FundingAmountIssue, FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable},
 };
 
-/// The frame facts for a session moving value in `direction` by `rail`:
-/// the user makes the transfer themselves, outside the frame, only on a bank
-/// top-up.
-pub fn frame_context(
-	direction: FundingDirection,
-	rail: Option<FundingRail>,
-) -> FundingFrameContext {
-	FundingFrameContext {
-		awaits_user_transfer: rail == Some(FundingRail::Bank) && direction == FundingDirection::In,
-	}
+/// Whether a session moving value in `direction` by `rail` waits on a
+/// transfer the user makes themselves, outside a provider frame: only a
+/// bank top-up does.
+pub fn awaits_user_transfer(direction: FundingDirection, rail: Option<FundingRail>) -> bool {
+	rail == Some(FundingRail::Bank) && direction == FundingDirection::In
 }
 
 /// The fiat asset asked for when neither the user's country nor any provider
@@ -39,7 +31,7 @@ const DEFAULT_FIAT: &str = "USD";
 /// for. A provider that declares no routes may serve any rail, so only its
 /// quotes say what it serves.
 pub fn routes_rail(candidate: &FundingCandidate, rail: FundingRail) -> bool {
-	candidate.routes.is_empty() || candidate.routes.iter().any(|route| route.rail == rail)
+	!candidate.declares_routes || candidate.routes.iter().any(|route| route.rail == rail)
 }
 
 /// The rails some candidate routes, in core order (crypto, card, bank): the
@@ -49,6 +41,23 @@ pub fn routed_rails(candidates: &[FundingCandidate]) -> Vec<FundingRail> {
 		.into_iter()
 		.filter(|rail| candidates.iter().any(|candidate| routes_rail(candidate, *rail)))
 		.collect()
+}
+
+/// The asset `selection` works in: the one the user picked, else for card and
+/// bank the fiat asset the core resolves from `candidates`.
+pub fn selected_asset(
+	candidates: &[FundingCandidate],
+	selection: &FundingSelection,
+) -> Option<String> {
+	match selection.rail {
+		FundingRail::Crypto => selection.asset.clone(),
+		rail => Some(
+			selection
+				.asset
+				.clone()
+				.unwrap_or_else(|| fiat_asset(candidates, rail, selection.currency.as_deref())),
+		),
+	}
 }
 
 /// The fiat asset a card or bank ask names: the user's currency when a
@@ -101,6 +110,42 @@ pub fn crypto_tokens(candidates: &[FundingCandidate], network: Option<&str>) -> 
 		}
 	}
 	tokens
+}
+
+/// The canonical English name of a crypto network id, which hosts may
+/// localise. Known ids have their proper name; any other is title-cased word
+/// by word.
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi::export)]
+pub fn funding_network_name(id: String) -> String {
+	match id.as_str() {
+		"polkadot" => "Polkadot".to_string(),
+		"bitcoin" => "Bitcoin".to_string(),
+		"ethereum" => "Ethereum".to_string(),
+		"tron" => "Tron".to_string(),
+		"solana" => "Solana".to_string(),
+		other => title_case(other),
+	}
+}
+
+/// Each word of `text` with its first letter upper-cased and the rest
+/// lower-cased.
+fn title_case(text: &str) -> String {
+	let mut out = String::with_capacity(text.len());
+	let mut word_start = true;
+	for ch in text.chars() {
+		if ch.is_alphanumeric() {
+			if word_start {
+				out.extend(ch.to_uppercase());
+			} else {
+				out.extend(ch.to_lowercase());
+			}
+			word_start = false;
+		} else {
+			out.push(ch);
+			word_start = true;
+		}
+	}
+	out
 }
 
 /// Whether every row has answered and none quoted.
@@ -306,6 +351,10 @@ pub struct FundingEnding {
 	/// The step the session stopped before: the first one it did not
 	/// reach. `None` when it succeeded.
 	pub stopped_at: Option<FundingStep>,
+	/// The steps a session in its direction goes through, in order.
+	pub steps: Vec<FundingStep>,
+	/// The step a released withdrawal waits at while its payout is pending.
+	pub waiting_at: Option<FundingStep>,
 }
 
 /// Whether a summary's status or stage says the withdrawal was released,
@@ -346,7 +395,11 @@ fn end_kind(summary: &FundingSessionSummary) -> Option<EndKind> {
 pub fn ending(summary: &FundingSessionSummary) -> FundingEnding {
 	let at_ms = summary.settled_at_ms().unwrap_or(summary.opened_at_ms);
 	let Some(ending) = end_kind(summary) else {
-		return FundingEnding { at_ms, ..FundingEnding::default() };
+		return FundingEnding {
+			at_ms,
+			steps: FundingStep::of(summary.direction).to_vec(),
+			..FundingEnding::default()
+		};
 	};
 	let payout_state = match ending {
 		EndKind::Released if summary.direction == FundingDirection::Out => {
@@ -371,12 +424,13 @@ pub fn ending(summary: &FundingSessionSummary) -> FundingEnding {
 		FundingDirection::In => FundingStep::Added,
 		FundingDirection::Out => FundingStep::Sent,
 	};
-	let received = matches!(
-		summary.stage,
-		FundingStage::Delivered { .. } |
-			FundingStage::Released { .. } |
-			FundingStage::Failed { reason: FundingFailure::Refunded, .. }
-	);
+	let received = summary.money_moved ||
+		matches!(
+			summary.stage,
+			FundingStage::Delivered { .. } |
+				FundingStage::Released { .. } |
+				FundingStage::Failed { reason: FundingFailure::Refunded, .. }
+		);
 	let completed = match summary.stage {
 		FundingStage::Delivered { .. } => true,
 		FundingStage::Released { .. } => matches!(summary.payout, Some(FundingPayout::PaidOut)),
@@ -403,6 +457,8 @@ pub fn ending(summary: &FundingSessionSummary) -> FundingEnding {
 			.amount
 			.filter(|requested| settled.is_some_and(|settled| settled != *requested)),
 		stopped_at,
+		steps: FundingStep::of(summary.direction).to_vec(),
+		waiting_at: (payout_state == Some(FundingPayoutState::Pending)).then_some(last),
 	}
 }
 

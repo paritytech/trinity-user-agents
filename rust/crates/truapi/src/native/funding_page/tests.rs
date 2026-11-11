@@ -21,7 +21,7 @@ fn a_return_url_matches_by_scheme_host_port_and_path() {
 	));
 }
 
-// Divergence "Page sub-frame about:/blob:/data:": allowed, in sub-frames
+// Allowed, in sub-frames
 // only; the main frame stays on https.
 #[test]
 fn a_page_navigates_on_https_and_builds_sub_frames_itself() {
@@ -63,7 +63,7 @@ fn an_origin_is_normalised() {
 	assert_eq!(funding_page_origin("about:blank".into()), None);
 }
 
-// Divergence "Media grant": only the on-screen page's own origin.
+// Only the on-screen page's own origin.
 #[test]
 fn media_goes_only_to_the_page_on_screen() {
 	let page = "https://kyc.example/verify";
