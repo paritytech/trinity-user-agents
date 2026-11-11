@@ -10,7 +10,7 @@ _How value moves into and out of the user's CASH balance. Rationale: [RFC](../rf
 [product manifest](../rfcs/product-manifest.md#funding-configuration) · for provider teams:
 [Building a funding provider](../guides/funding-provider.md)._
 
-_Screens are from the Pocket R2 design in Figma; the apps follow it, with small differences._
+_Screens are from the Pocket R2 design in Figma. The apps put funding on the existing CASH card (Get, Send and a history button, the same on iOS and Android); the card's own redesign comes later._
 
 ## Parts
 
@@ -21,7 +21,7 @@ flowchart LR
   subgraph HOST["Host app · iOS / Android / CLI"]
     overlay["Overlay<br/>amount · providers · summary"]
     frame["Provider frame<br/>App route or https page"]
-    purse["Purse<br/>session sheet · history"]
+    purse["CASH card<br/>Get · Send · history"]
     wallet["Coin wallet<br/>top-ups · payments"]
   end
 
@@ -171,7 +171,7 @@ sequenceDiagram
 ## Session lifecycle
 
 <p>
-  <img src="funding-modality/in-progress.png" width="180" alt="Sessions in progress on the Purse">
+  <img src="funding-modality/in-progress.png" width="180" alt="Sessions in progress, from the CASH card's history">
 </p>
 
 ```mermaid
@@ -241,7 +241,7 @@ A repeat under the same id must ask the same thing.
 ## Storage
 
 <p>
-  <img src="funding-modality/history.png" width="180" alt="History on the Purse">
+  <img src="funding-modality/history.png" width="180" alt="History, from the CASH card">
 </p>
 
 ```mermaid
