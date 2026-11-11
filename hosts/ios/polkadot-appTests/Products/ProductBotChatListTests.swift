@@ -14,78 +14,6 @@ private let productId = try! ProductId("dim2.paseo")
 @Suite("Product bot in the chat list")
 struct ProductBotChatListTests {
     @Test
-    func eachChatHeaderRequestsFreshMetadataOnce() throws {
-        let profiles = RecordingPublicProfileAvatarViewModelFactory()
-        let header = ChatHeaderIconViewModelFactory(
-            productFactory: RecordingProductIconViewModelFactory(),
-            publicProfileFactory: profiles
-        )
-        let icon = Chat.PeerMetadata.Icon.publicProfile(username: "alice.01")
-        let initial = try #require(header.viewModel(for: icon))
-        let redrawn = try #require(header.viewModel(for: icon))
-        let reopened = ChatHeaderIconViewModelFactory(
-            productFactory: RecordingProductIconViewModelFactory(),
-            publicProfileFactory: profiles
-        )
-        _ = reopened.viewModel(for: icon)
-
-        #expect(initial === redrawn)
-        #expect(profiles.requests == [
-            .init(username: "alice.01", options: .init(forceFresh: true, skipStale: false)),
-            .init(username: "alice.01", options: .init(forceFresh: true, skipStale: false))
-        ])
-    }
-
-    @Test
-    func chatListAvatarsRespectTheNormalFreshnessPolicy() throws {
-        let profiles = RecordingPublicProfileAvatarViewModelFactory()
-        let chain = ChainMock.makeChainModel(from: ChainMock.makeRemoteChain(name: "Polkadot"), order: 0)
-        let asset = try #require(chain.assets.first)
-        let factory = ContactsListViewModelFactory(
-            chatMessageDecoderFactory: FixedChatMessageDecoderFactory(decoders: []),
-            productIconViewModelFactory: RecordingProductIconViewModelFactory(),
-            publicProfileAvatarViewModelFactory: profiles,
-            chain: chain,
-            tokenFormatter: { info in
-                TransferAmountViewModelFactory(targetAssetInfo: info, formatterFactory: AssetBalanceFormatterFactory())
-            }
-        )
-        let chat = Chat.LocalModel(
-            peer: .person(.init(
-                accountId: Data(repeating: 1, count: 32),
-                username: "alice.01",
-                publicKey: Data(repeating: 2, count: 32),
-                ownKeyId: .init(signKeyId: "signing", encryptionKeyId: "encryption"),
-                imageData: nil,
-                isBlocked: false,
-                devices: [],
-                pendingDevicesFanOut: false,
-                addedAt: nil,
-                acceptedAt: nil
-            )),
-            message: nil,
-            unreadDisplayMessageCount: 0,
-            hasIncomingReaction: false,
-            createdAt: nil,
-            roomMetadata: nil
-        )
-
-        _ = factory.createViewModel(
-            assetDisplayInfo: asset.displayInfo,
-            model: ChatListModel(
-                establishedChats: [.init(
-                    chat: chat,
-                    peerMetadata: .init(name: "Alice", icon: .publicProfile(username: "alice.01"))
-                )],
-                pendingIncomingRequestCount: 0,
-                newIncomingRequestCount: 0
-            )
-        )
-
-        #expect(profiles.requests == [.init(username: "alice.01", options: .init(forceFresh: false, skipStale: false))])
-    }
-
-    @Test
     func aWidgetPreviewsAsTheManifestDescription() {
         let bot = makeBot(description: "Play the weekly game with friends")
 
@@ -122,11 +50,7 @@ struct ProductBotChatListTests {
     @Test
     func aProductPeerLoadsItsIconByDomain() {
         let iconFactory = RecordingProductIconViewModelFactory()
-        let publicProfileFactory = PublicProfileAvatarViewModelFactory(profiles: { _, _ in
-            AsyncThrowingStream { $0.finish() }
-        }, imageLoader: CIDImageLoader(loadImage: { _ in
-            throw ImageError.Unavailable(reason: "no profile avatar")
-        }))
+        let publicProfileFactory = UnusedPublicProfileAvatarFactory()
 
         #expect(Chat.PeerMetadata.Icon.product(domain: productId).imageViewModel(
             using: iconFactory,
@@ -187,11 +111,7 @@ private extension ProductBotChatListTests {
         let factory = ContactsListViewModelFactory(
             chatMessageDecoderFactory: FixedChatMessageDecoderFactory(decoders: [bot.messageDecoder]),
             productIconViewModelFactory: RecordingProductIconViewModelFactory(),
-            publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelFactory(profiles: { _, _ in
-                AsyncThrowingStream { $0.finish() }
-            }, imageLoader: CIDImageLoader(loadImage: { _ in
-                throw ImageError.Unavailable(reason: "no profile avatar")
-            })),
+            publicProfileAvatarViewModelFactory: UnusedPublicProfileAvatarFactory(),
             chain: chain,
             tokenFormatter: { info in
                 TransferAmountViewModelFactory(targetAssetInfo: info, formatterFactory: AssetBalanceFormatterFactory())
@@ -228,20 +148,13 @@ private final class RecordingProductIconViewModelFactory: ProductIconViewModelMa
     }
 }
 
-private final class RecordingPublicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking {
-    struct Request: Equatable {
-        let username: String
-        let options: PublicProfileResolutionOptions
-    }
-
-    private(set) var requests: [Request] = []
-
+private struct UnusedPublicProfileAvatarFactory: PublicProfileAvatarViewModelMaking {
     func createViewModel(
-        for username: String,
-        options: PublicProfileResolutionOptions
+        for _: String,
+        options _: PublicProfileResolutionOptions
     ) -> any IdentifiableImageViewModelProtocol {
-        requests.append(.init(username: username, options: options))
-        return EmptyProductIconViewModel(identifier: "profile:\(username)")
+        Issue.record("Product icons must not resolve public profiles")
+        return EmptyProductIconViewModel(identifier: "unused")
     }
 }
 
