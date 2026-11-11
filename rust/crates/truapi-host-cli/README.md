@@ -260,6 +260,9 @@ Commands always start with `/`:
 | `/log <level>` | Save tracing as `error`, `warn`, `info`, `debug`, or `trace`, and apply it now. |
 | `/product` | Show the currently selected product. |
 | `/product <id>` | Switch the product used by future scripts and frame connections. |
+| `/profile` | Resolve the active identity's public avatar metadata from dotNS (signing host). |
+| `/profile <username>` | Resolve another username's public avatar metadata without provisioning an identity (signing host). |
+| `/profile upload <image>` | Publish a local PNG, JPEG, GIF, or WebP image as the active identity's avatar (signing host). |
 | `/session` | Show the current session name, path, and user id (signing host). |
 | `/session <name>` | Restore or create an isolated signing-host session, retrying unfinished setup even for the current name. |
 | `/session --mnemonic "<phrase>"` | Import an existing signer as a durable session. |
@@ -270,6 +273,19 @@ Commands always start with `/`:
 | `/clear` | Clear the visible transcript. |
 | `/copy` | Copy the retained transcript to the system clipboard. |
 | `/quit` | Shut down cleanly. |
+
+`/profile upload` requires an existing identity with a username. It accepts the
+images the core loads: up to 2 MiB and 4096 pixels on each side. Quote paths
+containing spaces, for example `/profile upload "pictures/my avatar.png"`.
+
+The command acts as the identity's Humanity product, `peopl.<network TLD>`. It
+calls the core's TrUAPI methods for that product in process, the same calls the
+product makes: a smart contract allowance for account 0, then a preimage upload
+of the image to Bulletin. Both go through the normal permission and confirmation
+flow. It then updates the username's dotNS `profile` text record, signed with the
+identity key. Unrelated entries are kept, and the record is not overwritten if it
+changed during the upload. Profile reads and uploads also work through
+`signing-host exec`, for example `truapi-host signing-host exec '/profile alice.01'`.
 
 ### Pasting a pairing QR image
 
@@ -298,8 +314,9 @@ pairing responder.
 
 Typing `/` opens autocomplete. Up/Down selects a completion; with the menu
 closed it navigates process-local command history. Tab inserts a completion,
-and `/script` completes filesystem paths. Enter submits `/session <name>` as
-typed; use Tab first to insert a suggested exact session name.
+and `/script` and `/profile upload` complete filesystem paths. Profile uploads
+also complete quoted directories containing spaces. Enter submits `/session <name>`
+as typed; use Tab first to insert a suggested exact session name.
 Mnemonic characters are masked while
 typing and mnemonic commands are never retained in command history or the
 transcript. Ctrl-U/Ctrl-D scroll by half a
