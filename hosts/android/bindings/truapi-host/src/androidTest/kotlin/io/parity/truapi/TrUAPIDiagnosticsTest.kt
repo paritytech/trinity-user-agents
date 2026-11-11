@@ -65,9 +65,9 @@ class TrUAPIDiagnosticsTest {
 
         val context = instrumentation.targetContext
 
-        // The People-chain statement store backs the SSO/identity path; the
-        // all-zero genesis is the local-session sentinel. Route any genesis to
-        // the configured node so chain-touching methods can reach a backend.
+        // The People-chain statement store backs the SSO/identity path. Route
+        // any genesis to the configured node so chain-touching methods can
+        // reach a backend.
         val chainNode = args.getString("truapi.chainWs")
         val chainProvider = WebSocketChainProvider({ listOfNotNull(chainNode) }, OkHttpClient())
 
@@ -107,10 +107,7 @@ class TrUAPIDiagnosticsTest {
         val config = HostRuntimeConfig(
             hostName = "Polkadot Android (diagnostics)",
             hostIcon = "https://dot.li/dotli.png",
-            peopleChainGenesisHash = ByteArray(32),
-            bulletinChainGenesisHash = ByteArray(32),
-            assetHubChainGenesisHash = ByteArray(32),
-            networkSuffix = "paseo",
+            stack = previewnetStack(),
             databaseDirectory = createTempDirectory("truapi").toString(),
             // 32 bytes of BIP-39 entropy → a deterministic local signing session
             // (no SSO pairing, fully offline).
