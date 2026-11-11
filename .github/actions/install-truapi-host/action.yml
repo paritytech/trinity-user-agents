@@ -38,36 +38,29 @@ runs:
         REQUESTED_VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        is_release_version() {
-          [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
-        }
-
-        shipped="$(awk -F'"' '/^version = /{print $2; exit}' \
-          "${GITHUB_ACTION_PATH}/../../../rust/crates/truapi-host-cli/Cargo.toml")"
-        if ! is_release_version "${shipped}"; then
-          echo "::error::could not read the CLI version this action ships, got '${shipped}'"
+        version="${REQUESTED_VERSION}"
+        if [ -z "${version}" ]; then
+          version="$(awk -F'"' '/^version = /{print $2; exit}' \
+            "${GITHUB_ACTION_PATH}/../../../rust/crates/truapi-host-cli/Cargo.toml")"
+        fi
+        if [ "${version}" != latest ] \
+          && ! [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+          echo "::error::version must be empty, \`latest\` or a release version, got '${version}'"
           exit 1
         fi
 
-        case "${REQUESTED_VERSION}" in
-          "") TRUAPI_HOST_VERSION="${shipped}" ;;
-          latest) TRUAPI_HOST_VERSION="" ;;
-          *)
-            if ! is_release_version "${REQUESTED_VERSION}"; then
-              echo "::error::version must be empty, \`latest\` or a release version such as ${shipped}, got '${REQUESTED_VERSION}'"
-              exit 1
-            fi
-            TRUAPI_HOST_VERSION="${REQUESTED_VERSION}"
-            ;;
-        esac
-        export TRUAPI_HOST_VERSION
+        if [ "${version}" != latest ]; then
+          export TRUAPI_HOST_VERSION="${version}"
+        fi
         # One root per requested version, so a job that installs twice keeps
         # both binaries and an earlier step's `path` output stays valid.
-        root="${RUNNER_TEMP}/truapi-host/${REQUESTED_VERSION:-${shipped}}"
+        root="${RUNNER_TEMP}/truapi-host/${version}"
         export TRUAPI_HOST_INSTALL_DIR="${root}"
         export TRUAPI_HOST_BIN_DIR="${root}/bin"
         export TRUAPI_HOST_NO_UPDATE=1
         export TRUAPI_HOST_KEEP_CARGO_INSTALL=1
+        # The installer reports a bin directory missing from PATH, and this one
+        # reaches PATH only through GITHUB_PATH, after the job's later steps.
         export PATH="${TRUAPI_HOST_BIN_DIR}:${PATH}"
 
         bash "${GITHUB_ACTION_PATH}/../../../scripts/truapi-host-installer.sh"

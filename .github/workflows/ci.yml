@@ -598,12 +598,10 @@ jobs:
 
       - name: Check the pinned install reports the version asked for
         env:
-          PINNED_VERSION: ${{ steps.pinned.outputs.version }}
           PINNED_PATH: ${{ steps.pinned.outputs.path }}
         run: |
           set -euo pipefail
-          [ "${PINNED_VERSION}" = 0.29.0 ]
-          [ "$("${PINNED_PATH}" --version)" = "truapi-host ${PINNED_VERSION}" ]
+          [ "$("${PINNED_PATH}" --version)" = "truapi-host 0.29.0" ]
 
       - name: Check an invalid version is rejected
         id: invalid

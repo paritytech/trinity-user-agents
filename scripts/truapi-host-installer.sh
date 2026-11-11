@@ -161,8 +161,8 @@ remove_prebuilt_install() {
 }
 
 # A cargo-installed copy and this one shadow each other depending on PATH
-# order, so only one of the two should ever exist. A caller that only puts this
-# install on PATH for itself, such as the install-truapi-host action, sets
+# order, so only one of the two should ever exist. A caller that puts this
+# install on PATH for itself only, and owns no other install, sets
 # TRUAPI_HOST_KEEP_CARGO_INSTALL rather than deleting a copy outside its own
 # directory.
 remove_cargo_install() {
