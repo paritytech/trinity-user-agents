@@ -84,10 +84,10 @@ struct ProductNotificationEvent: Equatable {
             "host.os_version": origin.osVersion,
             "product_notification.product_id": productId
         ]
-        tags["product_notification.id"] = notificationId.map(String.init)
         tags["product_notification.reason"] = reason?.rawValue
 
         var extras = ["app.launch_id": HostEventValue.string(origin.launchID.uuidString.lowercased())]
+        extras["product_notification.id"] = notificationId.map { .integer(Int($0)) }
         if let deliveredAt {
             let deliveredAtMs = Int(deliveredAt.timeIntervalSince1970 * 1_000)
             extras["product_notification.delivered_at_unix_ms"] = .integer(deliveredAtMs)

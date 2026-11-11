@@ -87,8 +87,11 @@ class RealProductNotificationSchedulerTelemetryTest {
             listOf(
                 event(
                     ProductNotificationStep.SCHEDULED,
-                    tags = productTags + ("product_notification.id" to id.value.toUInt().toString()),
-                    extras = baseExtras + ("product_notification.scheduled_at_unix_ms" to DUE),
+                    tags = productTags,
+                    extras = baseExtras + mapOf(
+                        "product_notification.id" to id.value.toUInt().toLong(),
+                        "product_notification.scheduled_at_unix_ms" to DUE,
+                    ),
                 ),
             ),
             captured,
@@ -229,16 +232,14 @@ class RealProductNotificationSchedulerTelemetryTest {
 
     private fun notScheduled(id: Int?, reason: String) = event(
         ProductNotificationStep.NOT_SCHEDULED,
-        tags = productTags +
-            listOfNotNull(id?.let { "product_notification.id" to it.toUInt().toString() }) +
-            ("product_notification.reason" to reason),
-        extras = baseExtras,
+        tags = productTags + ("product_notification.reason" to reason),
+        extras = baseExtras + listOfNotNull(id?.let { "product_notification.id" to it.toUInt().toLong() }),
     )
 
     private fun cancelled(tags: Map<String, String>, id: Int) = event(
         ProductNotificationStep.CANCELLED,
-        tags + ("product_notification.id" to id.toUInt().toString()),
-        baseExtras,
+        tags,
+        baseExtras + ("product_notification.id" to id.toUInt().toLong()),
     )
 
     private fun event(step: ProductNotificationStep, tags: Map<String, String>, extras: Map<String, Any>) =

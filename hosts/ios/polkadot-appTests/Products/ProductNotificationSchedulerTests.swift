@@ -130,7 +130,8 @@ struct ProductNotificationSchedulerTests {
         try await scheduler.cancelAll(forProductId: productId)
 
         let byId: (HostEvent, HostEvent) -> Bool = {
-            $0.tags["product_notification.id", default: ""] < $1.tags["product_notification.id", default: ""]
+            String(describing: $0.extras["product_notification.id"])
+                < String(describing: $1.extras["product_notification.id"])
         }
         let cancellations = [cancelled(first), cancelled(second)].sorted(by: byId)
         #expect(Array(recorder.events.prefix(2)) == [scheduled(first), scheduled(second)])

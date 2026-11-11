@@ -55,8 +55,8 @@ class ProductNotificationTelemetryTest {
             listOf(
                 event(
                     ProductNotificationStep.SCHEDULED,
-                    tags = withBooking,
-                    extras = baseExtras + ("product_notification.scheduled_at_unix_ms" to DUE),
+                    tags = productTags,
+                    extras = bookingExtras + ("product_notification.scheduled_at_unix_ms" to DUE),
                 ),
             ),
             events,
@@ -91,8 +91,8 @@ class ProductNotificationTelemetryTest {
             listOf(
                 event(
                     ProductNotificationStep.SHOWN,
-                    tags = withBooking,
-                    extras = baseExtras + mapOf(
+                    tags = productTags,
+                    extras = bookingExtras + mapOf(
                         "product_notification.scheduled_at_unix_ms" to DUE,
                         "product_notification.delivered_at_unix_ms" to NOW,
                     ),
@@ -114,8 +114,8 @@ class ProductNotificationTelemetryTest {
             listOf(
                 event(
                     ProductNotificationStep.SUPPRESSED,
-                    tags = withBooking + ("product_notification.reason" to "notifications_disabled"),
-                    extras = baseExtras + ("product_notification.delivered_at_unix_ms" to NOW),
+                    tags = productTags + ("product_notification.reason" to "notifications_disabled"),
+                    extras = bookingExtras + ("product_notification.delivered_at_unix_ms" to NOW),
                 ),
             ),
             events,
@@ -128,11 +128,11 @@ class ProductNotificationTelemetryTest {
         val events = captured { cancelled(product, booking) }
 
         // Then
-        assertEquals(listOf(event(ProductNotificationStep.CANCELLED, withBooking, baseExtras)), events)
+        assertEquals(listOf(event(ProductNotificationStep.CANCELLED, productTags, bookingExtras)), events)
     }
 
     @Test
-    fun `a negative booking id is tagged as the unsigned number the product holds`() {
+    fun `a negative booking id is sent as the unsigned number the product holds`() {
         // When
         val events = captured { cancelled(product, NotificationId(-7)) }
 
@@ -141,8 +141,8 @@ class ProductNotificationTelemetryTest {
             listOf(
                 event(
                     ProductNotificationStep.CANCELLED,
-                    productTags + ("product_notification.id" to "4294967289"),
-                    baseExtras,
+                    productTags,
+                    baseExtras + ("product_notification.id" to 4_294_967_289L),
                 ),
             ),
             events,
@@ -198,7 +198,7 @@ class ProductNotificationTelemetryTest {
             "host.native_app_version" to "1.2.3",
             "product_notification.product_id" to "acme.dot",
         )
-        val withBooking = productTags + ("product_notification.id" to "7")
         val baseExtras = mapOf<String, Any>("host.app_build" to 42L)
+        val bookingExtras = baseExtras + ("product_notification.id" to 7L)
     }
 }

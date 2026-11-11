@@ -29,13 +29,13 @@ func expectedProductNotificationHostEvent(
         "host.os_version": "26.5",
         "product_notification.product_id": productId
     ]
-    expectedTags["product_notification.id"] = id.map(String.init)
 
     var extras: [String: HostEventValue] = [
         "host.app_build": .integer(456),
         "event.monotonic_ms": .integer(GameReminderDiagnostics.testMonotonicMilliseconds),
         "app.launch_id": .string("d93fe846-8f3c-4cfa-a440-402b6f7b43d3")
     ]
+    extras["product_notification.id"] = id.map { .integer(Int($0)) }
     extras["product_notification.delivered_at_unix_ms"] = deliveredAt.map {
         .integer(Int($0.timeIntervalSince1970 * 1_000))
     }

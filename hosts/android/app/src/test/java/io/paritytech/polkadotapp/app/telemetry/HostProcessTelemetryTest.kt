@@ -165,8 +165,8 @@ class HostProcessTelemetryTest {
             listOf(
                 HostEvent(
                     "host.product_notification.tapped",
-                    expectedTags + ("product_notification.id" to "7"),
-                    expectedExtras,
+                    expectedTags,
+                    expectedExtras + ("product_notification.id" to 7L),
                 ),
                 HostEvent("host.product_notification.tapped", expectedTags, expectedExtras),
             ),

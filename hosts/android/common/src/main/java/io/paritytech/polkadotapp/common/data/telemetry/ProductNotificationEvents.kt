@@ -42,7 +42,7 @@ enum class ProductNotificationReason(val value: String) {
 /**
  * Builds one step of a product notification trail, naming the product and the booking id only.
  *
- * The notification text and deeplink have no parameter here, so they cannot reach an event. The id is tagged as
+ * The notification text and deeplink have no parameter here, so they cannot reach an event. The id is sent as
  * the unsigned number the product receives.
  */
 fun HostEventOrigin.productNotification(
@@ -56,11 +56,11 @@ fun HostEventOrigin.productNotification(
     val tags = buildMap {
         putAll(baseTags())
         put("product_notification.product_id", productId)
-        notificationId?.let { put("product_notification.id", it.toUInt().toString()) }
         reason?.let { put("product_notification.reason", it.value) }
     }
     val extras = buildMap<String, Any> {
         putAll(baseExtras())
+        notificationId?.let { put("product_notification.id", it.toUInt().toLong()) }
         scheduledAtMillis?.let { put("product_notification.scheduled_at_unix_ms", it) }
         deliveredAtMillis?.let { put("product_notification.delivered_at_unix_ms", it) }
     }
