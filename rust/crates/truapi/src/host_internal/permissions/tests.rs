@@ -1059,50 +1059,53 @@ fn a_trusted_product_grant_is_not_persisted() {
 	);
 }
 
+/// As in release 0.30, a trusted product's grant is the product's, not a user
+/// toggle: a stored denial, exact or wildcard, does not remove it.
 #[test]
-fn a_trusted_product_honours_explicit_remote_revocation() {
+fn a_trusted_product_stays_authorized_over_a_stored_denial() {
 	let storage = MemStorage::default();
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let service = trusted_service(&storage, &prompt);
 
-	for request in [remote(RemotePermission::ChainSubmit), remote_domains(&["a.com"])] {
+	for denied in [remote(RemotePermission::ChainSubmit), remote_domains(&["*"])] {
 		futures::executor::block_on(service.set_authorization_status(
-			&PermissionAuthorizationRequest::Remote(request.clone()),
+			&PermissionAuthorizationRequest::Remote(denied),
 			PermissionAuthorizationStatus::Denied,
 		))
 		.unwrap();
-
+	}
+	for request in [
+		remote(RemotePermission::ChainSubmit),
+		remote_domains(&["a.com"]),
+		remote_domains(&["a.com", "deep.api.example.com"]),
+	] {
 		assert_eq!(
-			futures::executor::block_on(service.peek_remote(&request)).unwrap(),
-			PermissionAuthorizationStatus::Denied
-		);
-		assert_eq!(
-			futures::executor::block_on(service.check_or_prompt_remote(request)).unwrap(),
-			PermissionAuthorizationStatus::Denied
+			(
+				futures::executor::block_on(service.peek_remote(&request)).unwrap(),
+				futures::executor::block_on(service.check_or_prompt_remote(request)).unwrap(),
+			),
+			(PermissionAuthorizationStatus::Authorized, PermissionAuthorizationStatus::Authorized),
 		);
 	}
 	assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 0);
 }
 
+/// JAM peer access is not part of product trust: a trusted product still asks.
 #[test]
-fn a_trusted_product_honours_explicit_wildcard_revocation() {
+fn a_trusted_product_still_asks_for_jam_peers() {
 	let storage = MemStorage::default();
-	let prompt = ScriptedPrompt::new(vec![], vec![]);
+	let prompt = ScriptedPrompt::new(vec![], vec![false]);
 	let service = trusted_service(&storage, &prompt);
+	let jam = remote(RemotePermission::JamPeers { genesis: [7; 32] });
 
-	futures::executor::block_on(service.set_authorization_status(
-		&PermissionAuthorizationRequest::Remote(remote_domains(&["*"])),
-		PermissionAuthorizationStatus::Denied,
-	))
-	.unwrap();
-
-	for domain in ["a.com", "deep.api.example.com"] {
-		assert_eq!(
-			futures::executor::block_on(service.peek_remote(&remote_domains(&[domain]))).unwrap(),
-			PermissionAuthorizationStatus::Denied,
-			"an explicit user denial outranks the automatic trusted default"
-		);
-	}
+	assert_eq!(
+		(
+			futures::executor::block_on(service.peek_remote(&jam)).unwrap(),
+			futures::executor::block_on(service.check_or_prompt_remote(jam)).unwrap(),
+		),
+		(PermissionAuthorizationStatus::NotDetermined, PermissionAuthorizationStatus::Denied),
+	);
+	assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -1175,32 +1178,9 @@ fn an_untrusted_product_still_prompts_for_implicitly_trusted_remote_permissions(
 }
 
 #[test]
-fn a_trusted_product_still_prompts_for_device_permissions() {
-	let storage = MemStorage::default();
-	let prompt = ScriptedPrompt::new(vec![false], vec![]);
-	let service = trusted_service(&storage, &prompt);
-
-	assert_eq!(
-		futures::executor::block_on(service.peek_device(&HostDevicePermissionRequest::Camera))
-			.unwrap(),
-		PermissionAuthorizationStatus::NotDetermined
-	);
-	assert_eq!(
-		futures::executor::block_on(
-			service.check_or_prompt_device(HostDevicePermissionRequest::Camera)
-		)
-		.unwrap(),
-		PermissionAuthorizationStatus::Denied,
-		"a trusted product's device answer is the user's, not the whitelist's"
-	);
-	assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 1);
-}
-
-#[test]
 fn a_trusted_product_is_denied_a_device_capability_the_os_refuses() {
 	let storage = MemStorage::default();
-	// Answers pop from the end: allow the camera, then deny the microphone.
-	let prompt = ScriptedPrompt::new(vec![false, true], vec![]);
+	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let status = ScriptedStatus::per_capability(
 		vec![
 			(HostDevicePermissionRequest::Notifications, DevicePermissionStatus::Denied),
@@ -1216,55 +1196,45 @@ fn a_trusted_product_is_denied_a_device_capability_the_os_refuses() {
 	assert_eq!(
 		[
 			request(HostDevicePermissionRequest::Notifications),
-			futures::executor::block_on(
-				service.authorize_device(HostDevicePermissionRequest::Notifications)
-			)
-			.unwrap(),
-			futures::executor::block_on(
-				service.peek_device(&HostDevicePermissionRequest::Notifications)
-			)
-			.unwrap(),
+			request(HostDevicePermissionRequest::Camera),
+			request(HostDevicePermissionRequest::Microphone),
 		],
-		[PermissionAuthorizationStatus::Denied; 3],
+		[
+			PermissionAuthorizationStatus::Denied,
+			// The OS asks its own question where the capability is used.
+			PermissionAuthorizationStatus::Authorized,
+			PermissionAuthorizationStatus::Authorized,
+		],
 	);
 	assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 0);
-	assert!(futures::executor::block_on(storage.inner.lock()).is_empty());
-
-	// Neither an unresolved nor a granted OS permission replaces the user's
-	// product decision, even for a trusted product.
-	assert_eq!(
-		[
-			request(HostDevicePermissionRequest::Camera),
-			request(HostDevicePermissionRequest::Microphone),
-			request(HostDevicePermissionRequest::Camera),
-			request(HostDevicePermissionRequest::Microphone),
-		],
-		[
-			PermissionAuthorizationStatus::Authorized,
-			PermissionAuthorizationStatus::Denied,
-			PermissionAuthorizationStatus::Authorized,
-			PermissionAuthorizationStatus::Denied,
-		],
-	);
-	assert_eq!(prompt.device_calls.load(Ordering::SeqCst), 2);
 }
 
 #[test]
-fn a_trusted_product_cannot_ignore_unreadable_revocation_state() {
+fn a_trusted_product_reads_no_permission_storage() {
 	let storage = FailingStorage;
 	let prompt = ScriptedPrompt::new(vec![], vec![]);
 	let service = PermissionsService::new(&storage, &prompt, &PEOPL);
 	let status = |request| futures::executor::block_on(service.authorization_status(&request));
-	for request in [
-		PermissionAuthorizationRequest::Remote(remote(RemotePermission::ChainSubmit)),
-		PermissionAuthorizationRequest::IdentityDisclosure,
-		PermissionAuthorizationRequest::AccountAccess {
-			target_product_id: ProductId::for_test("other.dot"),
-		},
-		PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera),
-	] {
-		assert_eq!(status(request), Err(GenericError { reason: "read failed".to_string() }));
-	}
+	assert_eq!(
+		[
+			status(PermissionAuthorizationRequest::Remote(remote(RemotePermission::ChainSubmit))),
+			status(PermissionAuthorizationRequest::IdentityDisclosure),
+			status(PermissionAuthorizationRequest::AccountAccess {
+				target_product_id: ProductId::for_test("other.dot"),
+			}),
+			status(PermissionAuthorizationRequest::Device(HostDevicePermissionRequest::Camera)),
+			futures::executor::block_on(
+				service.check_or_prompt_device(HostDevicePermissionRequest::Notifications)
+			),
+		],
+		[
+			Ok(PermissionAuthorizationStatus::Authorized),
+			Ok(PermissionAuthorizationStatus::Authorized),
+			Ok(PermissionAuthorizationStatus::Authorized),
+			Ok(PermissionAuthorizationStatus::Authorized),
+			Ok(PermissionAuthorizationStatus::Authorized),
+		],
+	);
 }
 
 #[test]

@@ -102,8 +102,8 @@ fn account_consent_rejects_an_activation_replaced_before_its_first_poll() {
 		runtime::product_consent::AccountAccessError,
 	};
 
-	for retained in [false, true] {
-		for decision in [PermissionDecision::AllowOnce, PermissionDecision::AllowAlways] {
+	for decision in [PermissionDecision::AllowOnce, PermissionDecision::AllowAlways] {
+		{
 			let platform = Arc::new(StubPlatform {
 				permission_confirmation_decisions: std::sync::Mutex::new([decision].into()),
 				..StubPlatform::default()
@@ -116,17 +116,8 @@ fn account_consent_rejects_an_activation_replaced_before_its_first_poll() {
 			let target = ProductId::for_test("peopl.dot");
 			let is_current = || authority.session_is_current(&session, None);
 			let consent = authority.consent();
-			let pending = async {
-				if retained {
-					consent
-						.account_access(&requester, &target, platform.as_ref(), &is_current)
-						.await
-				} else {
-					consent
-						.account_disclosure(&requester, &target, platform.as_ref(), &is_current)
-						.await
-				}
-			};
+			let pending =
+				consent.account_access(&requester, &target, platform.as_ref(), &is_current);
 
 			futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 				.unwrap();
@@ -206,10 +197,10 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
 	);
 }
 
-/// Epoca's account disclosure consumes Allow once for that call. Ring-key access
-/// retains it for the current activation, but neither survives lifecycle changes.
+/// Allow once lasts for the activation, as in release 0.30, for an account read
+/// and for ring-key access alike, and neither survives lifecycle changes.
 #[test]
-fn account_access_allow_once_obeys_disclosure_and_activation_lifetimes() {
+fn account_access_allow_once_lasts_for_the_activation() {
 	for retained in [false, true] {
 		let platform = Arc::new(StubPlatform {
 			permission_confirmation_decisions: std::sync::Mutex::new(
@@ -258,7 +249,7 @@ fn account_access_allow_once_obeys_disclosure_and_activation_lifetimes() {
 		)
 		.unwrap();
 		prompts.push(prompts_after_request());
-		assert_eq!(prompts, if retained { vec![1, 1, 2, 3, 4] } else { vec![1, 2, 3, 4, 5] },);
+		assert_eq!(prompts, vec![1, 1, 2, 3, 4], "retained ring-key access: {retained}");
 	}
 }
 

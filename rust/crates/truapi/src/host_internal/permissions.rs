@@ -86,6 +86,20 @@ fn requested_domains(request: &RemotePermissionRequest) -> Option<&[String]> {
 	}
 }
 
+/// JAM peer access is outside product trust: dialing a network's peers always
+/// needs the user's own decision for that genesis.
+fn is_jam_peers_key(key: &CoreStorageKey) -> bool {
+	matches!(
+		key,
+		CoreStorageKey::PermissionAuthorization {
+			request: crate::platform::StoredPermissionRequest::RemoteV2(RemotePermissionRequest {
+				permission: RemotePermission::JamPeers { .. }
+			}),
+			..
+		}
+	)
+}
+
 /// A domain bundle as a request, for the key that answers it as a whole.
 fn remote_bundle_request(domains: &[String]) -> RemotePermissionRequest {
 	RemotePermissionRequest { permission: RemotePermission::Remote { domains: domains.to_vec() } }
@@ -399,7 +413,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 	) -> Result<PermissionAuthorizationStatus, GenericError> {
 		let Some(domains) = requested_domains(request) else {
 			let key = CoreStorageKey::remote_permission_authorization(self.product_id(), request);
-			return self.cached_remote_authorization(&key, false).await;
+			return self.cached_authorization(&key, false).await;
 		};
 		match self.resolve_domains(domains).await?.0 {
 			BundleResolution::Authorized => Ok(PermissionAuthorizationStatus::Authorized),
@@ -422,12 +436,8 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		{
 			return Ok((BundleResolution::Denied, Vec::new()));
 		}
-		if self.trusted_product &&
-			domains.len() > 1 &&
-			peek_stored(self.storage, self.bundle_key(domains)).await? ==
-				Some(StoredAuthorizationStatus::Denied)
-		{
-			return Ok((BundleResolution::Denied, Vec::new()));
+		if self.trusted_product {
+			return Ok((BundleResolution::Authorized, Vec::new()));
 		}
 		let mut undecided = Vec::new();
 		let mut temporary_keys = Vec::new();
@@ -472,10 +482,10 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 	) -> Result<(PermissionAuthorizationStatus, Option<CoreStorageKey>), GenericError> {
 		let blessed = BLESSED_REMOTE_DOMAINS.contains(&normalize_remote_domain(domain).as_str());
 		let mut temporary_keys = Vec::new();
-		let mut fallback = if blessed || self.trusted_product {
+		let mut fallback = if blessed {
 			PermissionAuthorizationStatus::Authorized
 		} else {
-			self.default_remote_status()
+			PermissionAuthorizationStatus::NotDetermined
 		};
 		for candidate in remote_domain_candidates(domain) {
 			let key = CoreStorageKey::remote_domain_authorization(self.product_id(), &candidate);
@@ -498,11 +508,16 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		Ok((fallback, None))
 	}
 
+	/// A trusted product is authorized whatever is stored, as in release 0.30,
+	/// except for JAM peer access, which always needs the user's own decision.
 	async fn cached_authorization(
 		&self,
 		key: &CoreStorageKey,
 		consume: bool,
 	) -> Result<PermissionAuthorizationStatus, GenericError> {
+		if self.trusted_product && !is_jam_peers_key(key) {
+			return Ok(PermissionAuthorizationStatus::Authorized);
+		}
 		if let Some(stored) = peek_stored(self.storage, key.clone()).await? &&
 			stored != StoredAuthorizationStatus::NotDetermined
 		{
@@ -513,36 +528,6 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		} else {
 			PermissionAuthorizationStatus::NotDetermined
 		})
-	}
-
-	async fn cached_remote_authorization(
-		&self,
-		key: &CoreStorageKey,
-		consume: bool,
-	) -> Result<PermissionAuthorizationStatus, GenericError> {
-		if matches!(
-			key,
-			CoreStorageKey::PermissionAuthorization {
-				request: crate::platform::StoredPermissionRequest::RemoteV2(
-					RemotePermissionRequest { permission: RemotePermission::JamPeers { .. } }
-				),
-				..
-			}
-		) {
-			return self.cached_authorization(key, consume).await;
-		}
-		match self.cached_authorization(key, consume).await? {
-			PermissionAuthorizationStatus::NotDetermined => Ok(self.default_remote_status()),
-			decided => Ok(decided),
-		}
-	}
-
-	fn default_remote_status(&self) -> PermissionAuthorizationStatus {
-		if self.trusted_product {
-			PermissionAuthorizationStatus::Authorized
-		} else {
-			PermissionAuthorizationStatus::NotDetermined
-		}
 	}
 
 	/// Returns the stored authorization status for a permission request
@@ -560,20 +545,11 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 			PermissionAuthorizationRequest::Remote(request) => self.peek_remote(request).await,
 			PermissionAuthorizationRequest::IdentityDisclosure |
 			PermissionAuthorizationRequest::AccountAccess { .. } => {
-				let status = authorization_status(
-					self.storage,
-					authorization_key(self.product_id(), request),
-				)
-				.await?;
-				Ok(
-					if self.trusted_product &&
-						status == PermissionAuthorizationStatus::NotDetermined
-					{
-						PermissionAuthorizationStatus::Authorized
-					} else {
-						status
-					},
-				)
+				if self.trusted_product {
+					return Ok(PermissionAuthorizationStatus::Authorized);
+				}
+				authorization_status(self.storage, authorization_key(self.product_id(), request))
+					.await
 			},
 			PermissionAuthorizationRequest::ChatAuthority => {
 				authorization_status(
@@ -1008,7 +984,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
 		let revision = scope.revision();
 		let Some(domains) = requested_domains(&request).map(<[String]>::to_vec) else {
 			let key = CoreStorageKey::remote_permission_authorization(self.product_id(), &request);
-			match self.cached_remote_authorization(&key, consume).await? {
+			match self.cached_authorization(&key, consume).await? {
 				PermissionAuthorizationStatus::NotDetermined => {},
 				decided => return Ok(decided),
 			}

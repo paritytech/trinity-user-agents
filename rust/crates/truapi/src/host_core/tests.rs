@@ -382,7 +382,7 @@ fn network_access_honors_wildcard_precedence_revocation_and_product_isolation() 
 }
 
 #[test]
-fn network_access_trusted_products_honor_recorded_denials() {
+fn network_access_trusted_products_ignore_recorded_denials() {
 	futures::executor::block_on(async {
 		let platform = Arc::new(StubPlatform::default());
 		let (config, _) = runtime_config("peopl.dot");
@@ -417,7 +417,7 @@ fn network_access_trusted_products_honor_recorded_denials() {
 					granted: true
 				}),
 				permissions::RemotePermissionResponse::V1(RemotePermissionResponse {
-					granted: false
+					granted: true
 				}),
 				vec![],
 			)

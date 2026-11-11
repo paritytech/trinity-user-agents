@@ -84,8 +84,10 @@ fn a_request_waiting_for_the_prompt_reuses_its_answer() {
 	assert_eq!((first.unwrap(), second.unwrap(), prompts(&platform)), (Authorized, Authorized, 1));
 }
 
+/// As in release 0.30, a trusted product reaches other accounts whatever a
+/// stored decision says, and is never prompted.
 #[test]
-fn a_stored_denial_overrides_a_trusted_products_account_access() {
+fn a_trusted_product_keeps_account_access_over_a_stored_denial() {
 	let (platform, consent) = consent_answering([]);
 	futures::executor::block_on(set_authorization_status(
 		platform.as_ref(),
@@ -96,7 +98,7 @@ fn a_stored_denial_overrides_a_trusted_products_account_access() {
 		Denied,
 	))
 	.unwrap();
-	assert_eq!((access(&consent, "dim2.dot"), prompts(&platform)), (Denied, 0));
+	assert_eq!((access(&consent, "dim2.dot"), prompts(&platform)), (Authorized, 0));
 }
 
 #[test]
@@ -154,7 +156,7 @@ fn genuine_account_access_failures_keep_their_classification() {
 			..StubPlatform::default()
 		});
 		let consent = ProductConsent::new(platform.clone(), Arc::default());
-		let error = futures::executor::block_on(consent.account_disclosure(
+		let error = futures::executor::block_on(consent.account_access(
 			&ProductId::for_test("myapp.dot"),
 			&ProductId::for_test("peopl.dot"),
 			platform.as_ref(),

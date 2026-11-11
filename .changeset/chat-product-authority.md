@@ -21,7 +21,8 @@ Use the unified runtime's native UniFFI gates and shared clock, dotNS discovery 
 for Chat and Coinage without changing product authorization or payment review policy.
 
 Keep renewal-ledger mutation native-only and use the chain metadata's extension version for Coinage extrinsics.
-Trusted products still honor explicit network-permission denials.
+Trusted products keep their permissions over stored denials, as in release 0.30; JAM peer access still needs the user's
+decision. Allow once for another product's account lasts for the activation.
 
 Align Android's durable core store with suspend callbacks while retaining serialized, committed writes.
 Carry the existing scoped AGPL license exception onto the unified runtime crate.

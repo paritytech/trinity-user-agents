@@ -583,8 +583,10 @@ fn native_permission_bundle_import_and_edits_do_not_rewrite_singleton_authority(
 	});
 }
 
+/// A trusted product's network grant is the product's, as in release 0.30: a
+/// stored bundle denial does not remove it.
 #[test]
-fn native_permission_explicit_bundle_denial_overrides_trusted_default_only_for_that_bundle() {
+fn native_permission_trusted_product_keeps_network_access_over_a_stored_denial() {
 	block_on(async {
 		let callbacks = Arc::new(EventCallbacks::new());
 		let runtime = host(&callbacks);
@@ -602,15 +604,7 @@ fn native_permission_explicit_bundle_denial_overrides_trusted_default_only_for_t
 			.await
 			.unwrap();
 		let execution = open(&runtime, &callbacks, "peopl.dot");
-		assert!(!execution.authorize_remote_permission(bundle).await.unwrap());
-		assert!(
-			execution
-				.authorize_remote_permission(RemotePermissionRequest {
-					permission: RemotePermission::Remote { domains: vec!["a.example".into()] },
-				})
-				.await
-				.unwrap()
-		);
+		assert!(execution.authorize_remote_permission(bundle).await.unwrap());
 	});
 }
 

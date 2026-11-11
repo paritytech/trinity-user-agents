@@ -7214,17 +7214,14 @@ fn get_account_other_product_skips_confirmation_for_a_blessed_product() {
 	);
 }
 
-/// An ephemeral disclosure answer is not a continuing account-access grant.
+/// Allow once covers later reads in the same activation without saving a
+/// decision, as in release 0.30.
 #[test]
-fn get_account_allow_once_does_not_authorize_the_next_disclosure() {
+fn get_account_allow_once_covers_later_reads_without_saving_a_grant() {
 	futures::executor::block_on(async {
 		let platform = Arc::new(StubPlatform {
 			permission_confirmation_decisions: Mutex::new(
-				[
-					crate::platform::PermissionDecision::AllowOnce,
-					crate::platform::PermissionDecision::Deny,
-				]
-				.into(),
+				[crate::platform::PermissionDecision::AllowOnce].into(),
 			),
 			..Default::default()
 		});
@@ -7245,21 +7242,18 @@ fn get_account_allow_once_does_not_authorize_the_next_disclosure() {
 			))
 			.await
 			.unwrap();
-		let mut rejected = Vec::new();
+		let mut allowed = Vec::new();
 		for _ in 0..2 {
-			rejected.push(matches!(
-				host.get_account(&CallContext::default(), request.clone()).await,
-				Err(CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::Rejected)))
-			));
+			allowed.push(host.get_account(&CallContext::default(), request.clone()).await.is_ok());
 		}
 		assert_eq!(
 			(
 				response.account.public_key,
 				saved,
-				rejected,
+				allowed,
 				platform.account_access_reviews.lock().unwrap().len(),
 			),
-			(test_product_account_public("other.dot", 0).to_vec(), None, vec![true, true], 2,),
+			(test_product_account_public("other.dot", 0).to_vec(), None, vec![true, true], 1,),
 		);
 	});
 }

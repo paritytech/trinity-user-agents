@@ -56,20 +56,7 @@ impl ProductConsent {
 		prompt: &dyn Platform,
 		is_current: impl Fn() -> bool + Send,
 	) -> Result<PermissionAuthorizationStatus, AccountAccessError> {
-		self.account_access_with_trust(requester, target, prompt, true, true, is_current)
-			.await
-	}
-
-	/// Disclose an account once without extending the answer to later disclosures.
-	/// A reset or activation change supersedes an answer still pending.
-	pub async fn account_disclosure(
-		&self,
-		requester: &ProductId,
-		target: &ProductId,
-		prompt: &dyn Platform,
-		is_current: impl Fn() -> bool + Send,
-	) -> Result<PermissionAuthorizationStatus, AccountAccessError> {
-		self.account_access_with_trust(requester, target, prompt, true, false, is_current)
+		self.account_access_with_trust(requester, target, prompt, true, is_current)
 			.await
 	}
 
@@ -81,7 +68,7 @@ impl ProductConsent {
 		prompt: &dyn Platform,
 		is_current: impl Fn() -> bool + Send,
 	) -> Result<PermissionAuthorizationStatus, AccountAccessError> {
-		self.account_access_with_trust(requester, target, prompt, false, true, is_current)
+		self.account_access_with_trust(requester, target, prompt, false, is_current)
 			.await
 	}
 
@@ -91,10 +78,11 @@ impl ProductConsent {
 		target: &ProductId,
 		prompt: &dyn Platform,
 		allow_trusted: bool,
-		retain_once: bool,
 		is_current: impl Fn() -> bool + Send,
 	) -> Result<PermissionAuthorizationStatus, AccountAccessError> {
-		if requester == target {
+		// A trusted product is granted before any stored decision, as release
+		// 0.30 does: its trust is the product's grant, not the user's toggle.
+		if requester == target || (allow_trusted && requester.has_trusted_remote_permissions()) {
 			return Ok(PermissionAuthorizationStatus::Authorized);
 		}
 		// Filed per product, the granularity a manifest grant uses, so a refused
@@ -108,11 +96,8 @@ impl ProductConsent {
 		if !is_current() {
 			return Err(AccountAccessError::Superseded);
 		}
-		if let Some(status) = self.decided(requester, target, retain_once).await? {
+		if let Some(status) = self.decided(requester, target).await? {
 			return Ok(status);
-		}
-		if allow_trusted && requester.has_trusted_remote_permissions() {
-			return Ok(PermissionAuthorizationStatus::Authorized);
 		}
 		drop(mutation);
 		let decision = scope
@@ -136,9 +121,7 @@ impl ProductConsent {
 		let decision = decision.map_err(AccountAccessError::Confirmation)?;
 		let status = match decision {
 			PermissionDecision::AllowOnce => {
-				if retain_once {
-					self.allowed_once.lock().expect("account access mutex poisoned").insert(pair);
-				}
+				self.allowed_once.lock().expect("account access mutex poisoned").insert(pair);
 				return Ok(PermissionAuthorizationStatus::Authorized);
 			},
 			PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
@@ -229,7 +212,6 @@ impl ProductConsent {
 		&self,
 		requester: &ProductId,
 		target: &ProductId,
-		retain_once: bool,
 	) -> Result<Option<PermissionAuthorizationStatus>, AccountAccessError> {
 		let stored = authorization_status(
 			self.platform.as_ref(),
@@ -239,9 +221,6 @@ impl ProductConsent {
 		.map_err(AccountAccessError::PermissionStorage)?;
 		if stored != PermissionAuthorizationStatus::NotDetermined {
 			return Ok(Some(stored));
-		}
-		if !retain_once {
-			return Ok(None);
 		}
 		let allowed_once = self
 			.allowed_once

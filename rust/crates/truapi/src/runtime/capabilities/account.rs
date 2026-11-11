@@ -61,7 +61,7 @@ impl Account for ProductRuntimeHost {
 					.ok_or(CallError::Domain(latest::HostAccountGetError::NotConnected))?;
 
 				if &owner != self.connection.product_id() {
-					let access = self.accounts.consent().account_disclosure(
+					let access = self.accounts.consent().account_access(
 						self.connection.product_id(),
 						&owner,
 						self.connection.platform.as_ref(),
