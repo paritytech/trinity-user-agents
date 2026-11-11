@@ -13,6 +13,7 @@ The package exposes tree-shakeable subpath exports — import only what your env
 | `@parity/truapi-host`                | Shared runtime types plus generated typed host callback contracts.                                                  |
 | `@parity/truapi-host/markers`        | `CORE_MARKERS`, the core's table of which log markers may leave the device and how loud each one is.                |
 | `@parity/truapi-host/web`            | Browser pairing host: `createIframeHost` (iframe MessageChannel handshake) and `createWebWorkerPairingHostRuntime`. |
+| `@parity/truapi-host/node`           | Node pairing host: `createNodePairingHostRuntime` (core in a worker thread) and `createHeadlessHostCallbacks`.      |
 | `@parity/truapi-host/worker-runtime` | Web Worker entrypoint (import with your bundler's `?worker` suffix) so the WASM core runs off the page main thread. |
 | `@parity/truapi-host/wasm/web`       | The raw browser `wasm-bindgen` glue, if you need to instantiate the core yourself.                                  |
 | `@parity/truapi-host/testing`        | `createMockHost`: the in-memory host seam a product is tested against.                                              |
@@ -22,6 +23,8 @@ The package exposes tree-shakeable subpath exports — import only what your env
 | `@parity/truapi-host/testing/dev-accounts` | Named dev accounts derived from fixed BIP-39 entropy, which sign for real.                                    |
 | `@parity/truapi-host/testing/host-page` | The browser half the fixture drives, for a suite that boots its own page.                                        |
 | `@parity/truapi-host/wasm/testing`   | The raw glue for the signing-enabled bundle the test host runs on.                                                  |
+
+A suite moving from `@parity/host-api-test-sdk` follows the [migration guide](../../../docs/migration/test-host.md).
 
 `scripts/build-wasm.mjs` builds two WASM bundles, both `--no-default-features`.
 `wasm/web` is the production browser host and excludes
@@ -156,9 +159,9 @@ capability set on both sides of the boundary.
 ### Product-rendered bodies
 
 A host can ask a product to draw one body — a chat message, an input-widget
-candidate, a Pocket card — and send back what the user does with it. Both entry
-points live on the product provider and are present only on runtimes holding a
-live channel to the core:
+candidate, a Pocket card or its back — and send back what the user does with it.
+Both entry points live on the product provider and are present only on runtimes
+holding a live channel to the core:
 
 ```ts
 import type { RenderContext } from "@parity/truapi";
@@ -205,9 +208,10 @@ the product's worker stays up for as long as something is being drawn.
 policy: the renderer refuses a connection that is not a `Worker` execution, and
 chat additionally requires a live session.
 
-Two rules the core cannot check are the host's to keep: send a render context
-only for a surface the product's manifest `includes`, and publish a renderer
-action only from the current tree of an open render stream.
+Three rules the core cannot check are the host's to keep: send a render context
+only for a surface the product's manifest `includes`, send `PocketCardBack` only
+for a card whose definition declares `back`, and publish a renderer action only
+from the current tree of an open render stream.
 
 ## Product account addresses
 
@@ -330,6 +334,49 @@ sends a frame, and the function `onPort` returned for the previous port runs
 then. Each port is a new product session, so give it a core connection of its
 own. With an opaque sandbox only the first document is connected. Host code creates one worker runtime
 and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
+
+## Example — Node (worker thread)
+
+For a host with no browser, such as a CLI that pairs with the user's wallet.
+`createNodePairingHostRuntime` takes the same callbacks and options as
+`createWebWorkerPairingHostRuntime` and returns the same runtime; the core runs
+in a `node:worker_threads` thread and its WASM is read from disk.
+
+```ts
+import { createClient, createTransport } from "@parity/truapi";
+import { createNodePairingHostRuntime, createHeadlessHostCallbacks } from "@parity/truapi-host/node";
+
+const runtime = await createNodePairingHostRuntime(
+  createHeadlessHostCallbacks({
+    coreStorage, // persists the paired session; files on disk for a CLI
+    chain, // opens a JSON-RPC WebSocket per genesis hash
+    auth: { authStateChanged: (state) => state.tag === "Pairing" && showQr(state.value.deeplink) },
+    productStorage,
+    supportedChains,
+    userConfirmation, // the user's answer to reviews, e.g. a CLI prompt
+    permissions,
+  }),
+  { hostConfig },
+);
+const client = createClient(createTransport(await runtime.createProvider({ productId: "my-cli.dot" })));
+await client.account.requestLogin({});
+```
+
+`createHeadlessHostCallbacks` fills in what a host without a screen cannot do:
+navigation and push notifications reject, and theme, locale and preimage lookup
+answer with fixed values. Every chain builds V4 transactions unless the host
+passes `extrinsicVersion` with the chains it builds as V5. The host still passes `userConfirmation` and
+`permissions`, because they are the user's answers: `getAccount` asks to
+disclose the product subtree, and `signRaw` asks for the `ChainSubmit`
+permission and a signing review. A CLI asks at its prompt. A host with a UI
+passes the full callback set instead, exactly as on the web.
+
+`./node` loads the production bundle, which has no signing host, so it runs
+pairing hosts only: `role: "signing"` is refused.
+
+Call `runtime.dispose()` when done: the core's thread keeps the process alive
+until then. Install the package rather than bundling `./node` into a single
+file, since the worker thread and the WASM are loaded from files beside it.
 
 ## Session lifecycle
 

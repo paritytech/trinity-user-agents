@@ -14,15 +14,13 @@ use std::time::Duration;
 #[cfg(target_arch = "wasm32")]
 use web_time::Duration;
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::subscription::thread_per_subscription_spawner;
 use crate::{
 	host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	host_logic::{
 		session::{SessionInfo, SsoSessionInfo},
 		sso::pairing,
+		statement_store::SUBMIT_STATEMENT_METHOD,
 	},
-	subscription::Spawner,
 };
 
 use crate::platform::{
@@ -58,6 +56,9 @@ pub use scripted_chain::{
 	notification_sender, sent_count, wait_for_sent,
 };
 
+/// Response frames produced for an incoming JSON-RPC request.
+pub type RpcResponder = Arc<dyn Fn(&str) -> Vec<String> + Send + Sync>;
+
 /// Block until `condition` holds, failing with `message` after two seconds.
 /// Background runtime tasks run on their own threads, so a test that observes
 /// their effects polls for them instead of assuming an ordering.
@@ -67,24 +68,6 @@ pub fn wait_until(mut condition: impl FnMut() -> bool, message: &str) {
 		assert!(std::time::Instant::now() < deadline, "{message}");
 		std::thread::sleep(Duration::from_millis(5));
 	}
-}
-
-/// Test spawner that matches the current target.
-pub fn test_spawner() -> Spawner {
-	#[cfg(not(target_arch = "wasm32"))]
-	{
-		thread_per_subscription_spawner()
-	}
-	#[cfg(target_arch = "wasm32")]
-	{
-		immediate_spawner()
-	}
-}
-
-/// Synchronous spawner for tests that should complete work immediately.
-#[cfg(target_arch = "wasm32")]
-pub fn immediate_spawner() -> Spawner {
-	Arc::new(futures::executor::block_on)
 }
 
 /// Test hook invoked after each recorded auth state.
@@ -191,6 +174,8 @@ pub struct StubPlatform {
 	pub cancelled_notifications: Arc<Mutex<Vec<u32>>>,
 	pub sent_rpc: Arc<Mutex<Vec<String>>>,
 	pub rpc_responses: Vec<String>,
+	/// Frames keyed by request contents, including subscription events.
+	pub rpc_responder: Option<RpcResponder>,
 	/// Responses keyed by JSON-RPC method, answered as each request arrives with
 	/// that request's own id echoed back. A `state_call` is keyed by the runtime
 	/// API it names instead, so metadata and view-function reads stay separable.
@@ -214,6 +199,9 @@ pub struct StubPlatform {
 	pub chain_connects: Arc<Mutex<Vec<[u8; 32]>>>,
 	/// When set, `connect` fails with this reason.
 	pub chain_connect_error: Option<&'static str>,
+	/// Reasons the next `connect` calls fail with, in order, each as a
+	/// transport failure a later attempt can outlast. Then `connect` succeeds.
+	pub chain_connect_failures: Mutex<std::collections::VecDeque<&'static str>>,
 	/// When set, `connect` to this one chain fails, while every other chain
 	/// still connects.
 	pub unreachable_genesis: Option<[u8; 32]>,
@@ -485,6 +473,29 @@ pub fn signed_test_statement(data: Vec<u8>) -> Vec<u8> {
 	)
 	.unwrap()
 	.encode()
+}
+
+/// JSON-RPC methods in the stub RPC log, in the order they were sent.
+pub fn recorded_rpc_methods(sent_rpc: &Mutex<Vec<String>>) -> Vec<String> {
+	sent_rpc
+		.lock()
+		.expect("rpc list mutex poisoned")
+		.iter()
+		.map(|request| {
+			serde_json::from_str::<serde_json::Value>(request).unwrap()["method"]
+				.as_str()
+				.unwrap()
+				.to_string()
+		})
+		.collect()
+}
+
+/// How many requests in the stub RPC log called `method`.
+pub fn recorded_rpc_method_count(sent_rpc: &Mutex<Vec<String>>, method: &str) -> usize {
+	recorded_rpc_methods(sent_rpc)
+		.iter()
+		.filter(|candidate| candidate.as_str() == method)
+		.count()
 }
 
 /// Last submitted SSO remote message decoded from the stub RPC log.
@@ -1304,6 +1315,7 @@ struct RecordingConnection {
 	sent: Arc<Mutex<Vec<String>>>,
 	all_sent: Arc<Mutex<Vec<String>>>,
 	responses: Vec<String>,
+	rpc_responder: Option<RpcResponder>,
 	method_responses: Vec<(&'static str, String)>,
 	method_responses_gate: Arc<Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
 	sso_response_script: Option<SsoResponseScript>,
@@ -1386,7 +1398,7 @@ fn sso_scripted_responses(
 					Some((subscribe_ack_frame(&id, "peer-sub"), 2))
 				},
 				2 => {
-					let id = wait_for_rpc_method_id(sent.clone(), "statement_submit", 0).await;
+					let id = wait_for_rpc_method_id(sent.clone(), SUBMIT_STATEMENT_METHOD, 0).await;
 					Some((statement_submit_ack_frame(&id), 3))
 				},
 				3 => match &script {
@@ -1471,6 +1483,24 @@ impl JsonRpcConnection for RecordingConnection {
 		self.sent.lock().expect("rpc list mutex poisoned").push(request);
 	}
 	fn responses(&self) -> BoxStream<'static, String> {
+		if let Some(responder) = self.rpc_responder.clone() {
+			let sent = self.sent.clone();
+			return stream::unfold(0, move |index| {
+				let sent = sent.clone();
+				let responder = responder.clone();
+				async move {
+					loop {
+						let request = sent.lock().unwrap().get(index).cloned();
+						if let Some(request) = request {
+							return Some((responder(&request), index + 1));
+						}
+						futures_timer::Delay::new(Duration::from_millis(1)).await;
+					}
+				}
+			})
+			.flat_map(stream::iter)
+			.boxed();
+		}
 		if self.pairing_silent_after_subscribe {
 			let sent = self.sent.clone();
 			return Box::pin(stream::unfold(0, move |state| {
@@ -1876,6 +1906,14 @@ impl ChainProvider for StubPlatform {
 		if let Some(reason) = self.chain_connect_error {
 			return Err(ProviderError::Host { reason: reason.to_string() });
 		}
+		let failure = self
+			.chain_connect_failures
+			.lock()
+			.expect("chain connect failure mutex poisoned")
+			.pop_front();
+		if let Some(reason) = failure {
+			return Err(ProviderError::Transport { reason: reason.to_string() });
+		}
 		if self.unreachable_genesis == Some(genesis_hash) {
 			return Err(ProviderError::Host { reason: "fixture serves no such chain".to_string() });
 		}
@@ -1887,6 +1925,7 @@ impl ChainProvider for StubPlatform {
 			sent: Arc::default(),
 			all_sent: self.sent_rpc.clone(),
 			responses: self.rpc_responses.clone(),
+			rpc_responder: self.rpc_responder.clone(),
 			method_responses: self.rpc_method_responses.clone(),
 			method_responses_gate: self.rpc_method_responses_gate.clone(),
 			sso_response_script: self.sso_response_script.clone(),

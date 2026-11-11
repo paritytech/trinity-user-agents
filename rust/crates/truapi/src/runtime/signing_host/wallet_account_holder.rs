@@ -65,7 +65,7 @@ pub struct WalletAccountHolder {
 	resource_controls: crate::runtime::test_resource_controls::TestResourceControls,
 	/// The dotNS TLD of the network this wallet serves, from
 	/// [`crate::platform::SigningHostConfig::network_suffix`]. Every reserved
-	/// RFC-0022 derivation (`uid.<suffix>`, `peopl.<suffix>`) ends in it.
+	/// RFC-0022 derivation (`peopl.<suffix>` account and ring-VRF keys) ends in it.
 	network_suffix: String,
 	consent: Arc<ProductConsent>,
 	lifecycle: Mutex<WalletState>,
@@ -448,7 +448,7 @@ impl WalletKeys {
 		derive_sr25519_hard_path(&self.entropy, &["allowance", "bulletin", product_id.as_str()])
 	}
 
-	/// The network's RFC-0022 `uid.<suffix>` statement identity with the SSO
+	/// The network's RFC-0028 `peopl.<suffix>` statement identity with the SSO
 	/// encryption key, and the identity chat key.
 	fn responder_identity(&self) -> Result<(ResponderIdentity, [u8; 32]), ProductAccountError> {
 		let statement = derive_identity_keypair(&self.entropy, &self.network_suffix)?;

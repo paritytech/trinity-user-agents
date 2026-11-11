@@ -1,8 +1,7 @@
 use super::*;
 use crate::{
-	platform::HostInfo,
-	runtime::signing_host::ring_vrf::ChainRingResolver,
-	test_support::{StubPlatform, test_spawner},
+	Spawner, platform::HostInfo, runtime::signing_host::ring_vrf::ChainRingResolver,
+	test_support::StubPlatform,
 };
 use truapi::latest::DerivationIndex;
 
@@ -23,7 +22,7 @@ pub fn unlocked_wallet(
 		[0; 32],
 		[0; 32],
 		[0; 32],
-		test_spawner(),
+		Spawner::for_test(),
 	);
 	let registry = RingVrfRegistryStore::new(services.platform.clone());
 	let consent = Arc::new(ProductConsent::new(services.platform.clone()));
@@ -46,7 +45,7 @@ fn wallet(network_suffix: &str) -> WalletAccountHolder {
 /// Wallet-internal allowance proofs use the reserved `peopl.<suffix>` keys the
 /// mobile hosts derive on the same network, full person first so a full person
 /// spends its wider slot budget first, and the session's identity is the
-/// network's `uid.<suffix>` account.
+/// network's `peopl.<suffix>` account 0.
 #[test]
 fn reserved_identities_follow_the_network_and_collection_order() {
 	for suffix in ["dot", "paseo"] {
