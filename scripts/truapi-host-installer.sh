@@ -12,7 +12,7 @@
 #   TRUAPI_HOST_INSTALL_DIR       version store (default $XDG_DATA_HOME/truapi-host)
 #   TRUAPI_HOST_BIN_DIR           directory the PATH symlink goes in (default ~/.local/bin)
 #   TRUAPI_HOST_RELEASE_BASE_URL  release host, for mirrors and tests
-#   TRUAPI_HOST_KEEP_CARGO_INSTALL  leave a cargo-installed copy in place
+#   TRUAPI_HOST_PRESERVE_CARGO_INSTALL  leave a cargo-installed copy in place
 #
 # Pass --uninstall to remove an install this script created.
 
@@ -160,13 +160,10 @@ remove_prebuilt_install() {
     return 0
 }
 
-# A cargo-installed copy and this one shadow each other depending on PATH
-# order, so only one of the two should ever exist. A caller that puts this
-# install on PATH for itself only, and owns no other install, sets
-# TRUAPI_HOST_KEEP_CARGO_INSTALL rather than deleting a copy outside its own
-# directory.
+# A caller that puts this install on PATH for itself only sets
+# TRUAPI_HOST_PRESERVE_CARGO_INSTALL, so a copy outside its directory survives.
 remove_cargo_install() {
-    if [ -n "${TRUAPI_HOST_KEEP_CARGO_INSTALL:-}" ]; then
+    if [ -n "${TRUAPI_HOST_PRESERVE_CARGO_INSTALL:-}" ]; then
         return 0
     fi
     local cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin/$BINARY"

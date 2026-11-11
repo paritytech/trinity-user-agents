@@ -26,11 +26,8 @@ outputs:
 runs:
   using: composite
   steps:
-    # TRUAPI_HOST_NO_UPDATE stays set for the rest of the job: the binary
-    # otherwise updates itself in the background, and a later step would run
-    # a different version than the one requested. The cargo-install switch
-    # keeps the installer from removing a copy outside RUNNER_TEMP, which on a
-    # self-hosted runner belongs to the machine rather than to this job.
+    # A later step would otherwise run a self-updated binary, and the installer
+    # must not delete a cargo copy outside RUNNER_TEMP on a shared runner.
     - name: Install truapi-host
       id: install
       shell: bash
@@ -58,7 +55,7 @@ runs:
         export TRUAPI_HOST_INSTALL_DIR="${root}"
         export TRUAPI_HOST_BIN_DIR="${root}/bin"
         export TRUAPI_HOST_NO_UPDATE=1
-        export TRUAPI_HOST_KEEP_CARGO_INSTALL=1
+        export TRUAPI_HOST_PRESERVE_CARGO_INSTALL=1
         # The installer reports a bin directory missing from PATH, and this one
         # reaches PATH only through GITHUB_PATH, after the job's later steps.
         export PATH="${TRUAPI_HOST_BIN_DIR}:${PATH}"

@@ -248,7 +248,7 @@ test("installing succeeds when no cargo copy exists", { skip }, async () => {
 });
 
 test(
-  "TRUAPI_HOST_KEEP_CARGO_INSTALL leaves a cargo copy in place",
+  "TRUAPI_HOST_PRESERVE_CARGO_INSTALL leaves a cargo copy in place",
   { skip },
   async () => {
     await withRelease("0.10.0", {}, async (release) => {
@@ -260,7 +260,7 @@ test(
 
         const result = await runInstaller({
           ...installEnvironment(home, release.baseUrl),
-          TRUAPI_HOST_KEEP_CARGO_INSTALL: "1",
+          TRUAPI_HOST_PRESERVE_CARGO_INSTALL: "1",
         });
         assert.equal(result.status, 0, result.stderr);
         assert.ok(

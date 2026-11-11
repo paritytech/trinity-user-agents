@@ -54,7 +54,7 @@ moves that one link.
 | `TRUAPI_HOST_VERSION` | Install this version instead of the current stable one. |
 | `TRUAPI_HOST_INSTALL_DIR` | Version store, default `$XDG_DATA_HOME/truapi-host`. |
 | `TRUAPI_HOST_BIN_DIR` | Directory the `PATH` symlink goes in, default `~/.local/bin`. |
-| `TRUAPI_HOST_KEEP_CARGO_INSTALL` | Leave a `cargo install` copy in place instead of removing it. |
+| `TRUAPI_HOST_PRESERVE_CARGO_INSTALL` | Leave a `cargo install` copy in place instead of removing it. |
 
 Product scripts (`--script`, `/script`) work from an installed binary: the
 archive ships a self-contained `runner.js` with the `@parity/truapi` client and
@@ -77,7 +77,8 @@ this is required for browser clients, which cannot open filesystem sockets.
 
 Every CLI release tags the action as `truapi-host-cli-v<version>`, and the
 action installs the CLI version of the commit it is checked out at, so that tag
-installs that release and a branch installs that branch's version. Pass
+installs that release. On a branch it installs the version that branch's
+`Cargo.toml` names, which only exists once that version is published. Pass
 `version: latest` to install the current stable release instead, or any
 published version such as `version: 0.29.0`. The action works on the same
 platforms as the installer, puts `truapi-host` on `PATH` for the rest of the
