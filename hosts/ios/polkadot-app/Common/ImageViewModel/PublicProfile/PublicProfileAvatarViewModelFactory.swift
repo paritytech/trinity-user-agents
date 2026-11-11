@@ -1,4 +1,3 @@
-import Foundation
 import PolkadotUI
 import TrUAPIHost
 
@@ -8,33 +7,12 @@ protocol PublicProfileAvatarViewModelMaking {
 }
 
 final class PublicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking {
-    private let profiles: @Sendable (String, PublicProfileResolutionOptions) async throws -> AsyncThrowingStream<
-        PublicProfile,
-        Error
-    >
-    private let imageLoader: any CIDImageLoading
+    private let runtimeProvider: TrUAPIHostRuntimeProviding
+    private let imageLoader: CIDImageLoader
 
-    init(
-        profiles: @escaping @Sendable (String, PublicProfileResolutionOptions) async throws -> AsyncThrowingStream<
-            PublicProfile,
-            Error
-        >,
-        imageLoader: any CIDImageLoading
-    ) {
-        self.profiles = profiles
-        self.imageLoader = imageLoader
-    }
-
-    convenience init(runtimeProvider: TrUAPIHostRuntimeProviding) {
-        self.init(profiles: { username, options in
-            let runtime = try runtimeProvider.sharedRuntime()
-            try Task.checkCancellation()
-            return runtime.resolvePublicProfile(username: username, options: options)
-        }, imageLoader: CIDImageLoader(loadImage: { reference in
-            let runtime = try runtimeProvider.sharedRuntime()
-            try Task.checkCancellation()
-            return try await runtime.loadImage(reference: reference).bytes
-        }))
+    init(runtimeProvider: TrUAPIHostRuntimeProviding) {
+        self.runtimeProvider = runtimeProvider
+        imageLoader = CIDImageLoader(runtimeProvider: runtimeProvider)
     }
 
     func createViewModel(
@@ -44,7 +22,7 @@ final class PublicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMak
         PublicProfileAvatarViewModel(
             username: username,
             options: options,
-            profiles: profiles,
+            runtimeProvider: runtimeProvider,
             imageLoader: imageLoader
         )
     }
