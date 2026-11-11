@@ -2,7 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding.history
 
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAssetUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test

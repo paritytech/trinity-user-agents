@@ -1,5 +1,6 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.funding
+package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.canonical
 import uniffi.truapi.U128
 import java.math.BigDecimal
 import java.math.RoundingMode
