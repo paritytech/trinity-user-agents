@@ -9,9 +9,12 @@ public struct HostOpenTap: Sendable, Equatable {
 
     public let openedAtEpochMilliseconds: Int
     public let source: Source
+    /// Minted at the tap; the session that takes this tap adopts it as its host session id.
+    public let sessionID: UUID
 
-    public init(source: Source, openedAt: Date = Date()) {
+    public init(source: Source, openedAt: Date = Date(), sessionID: UUID = UUID()) {
         self.source = source
+        self.sessionID = sessionID
         openedAtEpochMilliseconds = openedAt.epochMilliseconds
     }
 }

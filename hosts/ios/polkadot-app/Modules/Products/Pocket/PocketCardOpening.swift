@@ -1,6 +1,7 @@
 import Foundation
 import IssueMonitoring
 import Products
+import TrUAPIHost
 import UIKit
 
 /// Opens the card's product, at the page the card names, on a screen the card
@@ -14,6 +15,7 @@ struct PocketCardOpening {
     let flowState: SPAFlowState
     let navigator: ModuleNavigating
     let pocket: ProductPocketService
+    var hostEventRecorder: HostEventRecording = IssueMonitoringFactory.createHostEventRecorder()
 
     /// `tap` is read where the user acted, so the page measures from the tap, not from this call's hops.
     func open(
@@ -29,6 +31,7 @@ struct PocketCardOpening {
         navigator.openWallet { wallet, wasOnScreen in
             // A second screen would take the open card's page and leave it blank.
             guard !pocket.cardHosts.isOnDisplay(card.key) else {
+                recordOpened(tap, reused: true)
                 let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
                 pocket.cardHosts.reload(card.key, at: pageQuery) { view in
                     if let widgetURL { view.navigate(to: widgetURL) } else { view.navigate(to: page) }
@@ -36,9 +39,13 @@ struct PocketCardOpening {
                 return
             }
 
+            // A product the Pocket still holds is shown again without a new page, so no session takes this tap.
+            var builtPage = false
             guard let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: { _ in
-                makeView(for: card, page: page, pageQuery: pageQuery, tap: tap)
+                builtPage = true
+                return makeView(for: card, page: page, pageQuery: pageQuery, tap: tap)
             }) else { return }
+            recordOpened(tap, reused: !builtPage)
 
             let origin = wallet.viewControllers.first as? PocketCardOrigin
             let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
@@ -74,6 +81,16 @@ struct PocketCardOpening {
 }
 
 private extension PocketCardOpening {
+    func recordOpened(_ tap: HostOpenTap, reused: Bool) {
+        hostEventRecorder.record(.pocketOpened(
+            tap: tap,
+            reused: reused,
+            origin: .current,
+            truapiHostVersion: truapiHostVersion(),
+            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
+        ))
+    }
+
     func makeView(
         for card: PocketCardViewModel,
         page: ProductPage,

@@ -4,6 +4,11 @@ import Products
 import SDKLogger
 import WebKit
 
+/// An engine that reports its page's main frame committing.
+protocol MainFrameCommitReporting: AnyObject {
+    var onMainFrameCommit: (@Sendable () -> Void)? { get set }
+}
+
 final class SPAJSEngine: NSObject, @unchecked Sendable {
     private(set) var state: JSEngineState = .initializing
 
@@ -20,6 +25,7 @@ final class SPAJSEngine: NSObject, @unchecked Sendable {
 
     var onNavigationIntercepted: ((URL) -> Void)?
     var onDeeplinkRequested: ((URL) -> Void)?
+    var onMainFrameCommit: (@Sendable () -> Void)?
 
     init(
         webView: WKWebView,
@@ -149,6 +155,8 @@ private extension SPAJSEngine {
 
 // MARK: - JSEngineProtocol
 
+extension SPAJSEngine: MainFrameCommitReporting {}
+
 extension SPAJSEngine: JSEngineProtocol {
     func initialize(with scripts: [JSEngineScript]) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -220,6 +228,12 @@ extension SPAJSEngine: WKNavigationDelegate {
             decisionHandler(.cancel)
             onDeeplinkRequested?(url)
         }
+    }
+
+    /// `didCommit` is the earliest reliable main-frame signal WebKit gives and the closest to Android's
+    /// `onPageCommitVisible`: the new document has replaced the old one. `didFinish` waits for every subresource.
+    func webView(_: WKWebView, didCommit _: WKNavigation!) {
+        onMainFrameCommit?()
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

@@ -87,4 +87,57 @@ public struct HostEvent: Sendable, Equatable {
             extras: extras
         )
     }
+
+    /// The event for a tap that opens a Pocket card, sent at the tap. `reused` is whether the tap took a page that
+    /// was already open, in which case no later event carries `tap.sessionID`.
+    public static func pocketOpened(
+        tap: HostOpenTap,
+        reused: Bool,
+        origin: HostEventOrigin,
+        truapiHostVersion: String,
+        monotonicMilliseconds: Int
+    ) -> HostEvent {
+        make(
+            name: "host.pocket.opened",
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: [
+                "truapi.host_version": truapiHostVersion,
+                "host.session_id": tap.sessionID.uuidString.lowercased(),
+                "open.source": tap.source.rawValue,
+                "open.reused": reused ? "true" : "false"
+            ]
+        )
+    }
+
+    /// The event for the first visible commit of a session's main page. `webview_ms` is the WebView's creation to
+    /// that commit; `tap_ms` is the tap to it, and only a session a tap opened has one.
+    public static func pageVisible(
+        hostSessionID: UUID,
+        origin: HostEventOrigin,
+        truapiHostVersion: String,
+        monotonicMilliseconds: Int,
+        webViewMilliseconds: Int,
+        openTap: HostOpenTap? = nil,
+        now: Date = Date()
+    ) -> HostEvent {
+        var tags = [
+            "truapi.host_version": truapiHostVersion,
+            "host.session_id": hostSessionID.uuidString.lowercased()
+        ]
+        var extras: [String: HostEventValue] = ["webview_ms": .integer(max(0, webViewMilliseconds))]
+
+        if let openTap {
+            tags["open.source"] = openTap.source.rawValue
+            extras["tap_ms"] = .integer(max(0, now.epochMilliseconds - openTap.openedAtEpochMilliseconds))
+        }
+
+        return make(
+            name: "host.page.visible",
+            origin: origin,
+            monotonicMilliseconds: monotonicMilliseconds,
+            tags: tags,
+            extras: extras
+        )
+    }
 }

@@ -49,7 +49,8 @@ private func makeRuntime(
     chainConnections: MockChainConnections = MockChainConnections(),
     configuration: SPAConfiguration,
     contentLoader: ProductContentLoading = StubProductContentLoader(),
-    hostEventRecorder: HostEventRecording = NoopHostEventRecorder()
+    hostEventRecorder: HostEventRecording = NoopHostEventRecorder(),
+    openTap: HostOpenTap? = nil
 ) -> SPARustRuntime {
     SPARustRuntime(
         executionModel: makeExecutionModel(execution: execution, chainConnections: chainConnections),
@@ -57,7 +58,8 @@ private func makeRuntime(
         contentLoader: contentLoader,
         schemeHandlerProxy: SchemeHandlerProxy(),
         logger: Logger.shared,
-        hostEventRecorder: hostEventRecorder
+        hostEventRecorder: hostEventRecorder,
+        openTap: openTap
     )
 }
 
@@ -100,6 +102,80 @@ struct SPARustRuntimeTests {
         #expect(webViewEvent.tags["host.platform"] == "ios")
         #expect(webViewEvent.tags["host.session_id"] != nil)
         #expect(webViewEvent.extras["event.monotonic_ms"] != nil)
+
+        await runtime.dispose()
+    }
+
+    /// The tap minted the id, and the session it opens reports under it, so the tap and the page share one.
+    @Test func aSessionTakingATapAdoptsTheIdMintedAtTheTap() async throws {
+        let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
+        let tap = HostOpenTap(source: .deeplink)
+        let hostEventRecorder = RecordingHostEventRecorder()
+        let runtime = makeRuntime(configuration: configuration, hostEventRecorder: hostEventRecorder, openTap: tap)
+
+        _ = try await runtime.start(with: MockJSEngine())
+
+        let webViewEvent = try #require(hostEventRecorder.events.first)
+        #expect(webViewEvent.tags["host.session_id"] == tap.sessionID.uuidString.lowercased())
+
+        await runtime.dispose()
+    }
+
+    @Test func aSessionWithoutATapMintsItsOwnId() async throws {
+        let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
+        let hostEventRecorder = RecordingHostEventRecorder()
+        let runtime = makeRuntime(configuration: configuration, hostEventRecorder: hostEventRecorder)
+
+        _ = try await runtime.start(with: MockJSEngine())
+
+        let sessionID = try #require(hostEventRecorder.events.first?.tags["host.session_id"])
+        #expect(UUID(uuidString: sessionID) != nil)
+        #expect(sessionID == sessionID.lowercased())
+
+        await runtime.dispose()
+    }
+
+    /// The first visible commit sends `host.page.visible` once under the tap's id; a reload or an in-page
+    /// navigation commits again and sends nothing.
+    @Test func theFirstMainFrameCommitSendsPageVisibleOnce() async throws {
+        let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
+        let tap = HostOpenTap(source: .pocketCard)
+        let hostEventRecorder = RecordingHostEventRecorder()
+        let engine = MockJSEngine()
+        let runtime = makeRuntime(configuration: configuration, hostEventRecorder: hostEventRecorder, openTap: tap)
+
+        _ = try await runtime.start(with: engine)
+        engine.commitMainFrame()
+        try await hostEventRecorder.waitForEvents(count: 2)
+        await runtime.pageDidCommit(monotonicMilliseconds: HostEventClock.monotonicMilliseconds(), now: Date())
+        await runtime.pageDidCommit(monotonicMilliseconds: HostEventClock.monotonicMilliseconds(), now: Date())
+
+        let events = hostEventRecorder.events
+        #expect(events.map(\.name) == ["host.webview.created", "host.page.visible"])
+        let visible = try #require(events.last)
+        #expect(visible.tags["host.session_id"] == tap.sessionID.uuidString.lowercased())
+        #expect(visible.tags["open.source"] == "pocket_card")
+        #expect(visible.extras["webview_ms"] != nil)
+        #expect(visible.extras["tap_ms"] != nil)
+
+        await runtime.dispose()
+    }
+
+    @Test func aPageNoTapOpenedBecomesVisibleWithoutATapMeasurement() async throws {
+        let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
+        let hostEventRecorder = RecordingHostEventRecorder()
+        let engine = MockJSEngine()
+        let runtime = makeRuntime(configuration: configuration, hostEventRecorder: hostEventRecorder)
+
+        _ = try await runtime.start(with: engine)
+        engine.commitMainFrame()
+        try await hostEventRecorder.waitForEvents(count: 2)
+
+        let visible = try #require(hostEventRecorder.events.last)
+        #expect(visible.name == "host.page.visible")
+        #expect(visible.extras["webview_ms"] != nil)
+        #expect(visible.extras["tap_ms"] == nil)
+        #expect(visible.tags["open.source"] == nil)
 
         await runtime.dispose()
     }

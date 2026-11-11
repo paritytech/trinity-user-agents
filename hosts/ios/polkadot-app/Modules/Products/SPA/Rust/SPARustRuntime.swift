@@ -23,13 +23,15 @@ actor SPARustRuntime {
     private let logger: LoggerProtocol
     private let hostEventRecorder: HostEventRecording
     private let openTap: HostOpenTap?
-    private let hostSessionId = UUID()
+    private let hostSessionId: UUID
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
     private var started = false
     private var disposed = false
     private var servedContent: DotNsResolvedContent?
+    private var webViewCreatedAtMilliseconds: Int?
+    private var pageVisibleRecorded = false
 
     init(
         executionModel: RustRuntimeEnvironment.ExecutionModel,
@@ -47,6 +49,8 @@ actor SPARustRuntime {
         self.logger = logger
         self.hostEventRecorder = hostEventRecorder
         self.openTap = openTap
+        // A session a tap opened keeps the id minted at the tap, so the tap and the page share one.
+        hostSessionId = openTap?.sessionID ?? UUID()
     }
 
     deinit {
@@ -99,11 +103,13 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
 
+        let createdAtMilliseconds = HostEventClock.monotonicMilliseconds()
+        webViewCreatedAtMilliseconds = createdAtMilliseconds
         hostEventRecorder.record(.webViewCreated(
             hostSessionID: hostSessionId,
             origin: .current,
             truapiHostVersion: truapiHostVersion(),
-            monotonicMilliseconds: HostEventClock.monotonicMilliseconds(),
+            monotonicMilliseconds: createdAtMilliseconds,
             openTap: openTap
         ))
 
@@ -118,6 +124,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
         monitor.start()
         engineMonitor = monitor
         self.engine = engine
+        observeFirstVisibleCommit(of: engine)
 
         logger.debug("SPA(rust): runtime started for \(configuration.page.host.name)")
 
@@ -206,5 +213,33 @@ private extension SPARustRuntime {
 
     func checkNotDisposed() throws {
         guard !disposed else { throw CancellationError() }
+    }
+
+    /// Sends `host.page.visible` for the first main-frame commit of this session and ignores every later one,
+    /// so a reload or an in-page navigation does not send it again.
+    func pageDidCommit(monotonicMilliseconds: Int, now: Date) {
+        guard !pageVisibleRecorded, !disposed, let createdAtMilliseconds = webViewCreatedAtMilliseconds else { return }
+
+        pageVisibleRecorded = true
+        hostEventRecorder.record(.pageVisible(
+            hostSessionID: hostSessionId,
+            origin: .current,
+            truapiHostVersion: truapiHostVersion(),
+            monotonicMilliseconds: monotonicMilliseconds,
+            webViewMilliseconds: monotonicMilliseconds - createdAtMilliseconds,
+            openTap: openTap,
+            now: now
+        ))
+    }
+
+    /// The clock is read where the commit happens, before the hop onto this actor.
+    private func observeFirstVisibleCommit(of engine: JSEngineProtocol) {
+        guard let reporter = engine as? MainFrameCommitReporting else { return }
+
+        reporter.onMainFrameCommit = { [weak self] in
+            let committedAtMilliseconds = HostEventClock.monotonicMilliseconds()
+            let now = Date()
+            Task { await self?.pageDidCommit(monotonicMilliseconds: committedAtMilliseconds, now: now) }
+        }
     }
 }
