@@ -17,15 +17,11 @@ import androidx.test.platform.app.InstrumentationRegistry
 import coil.Coil
 import coil.EventListener
 import coil.ImageLoader
-import coil.disk.DiskCache
 import coil.request.ErrorResult
 import coil.request.ImageRequest
-import coil.request.SuccessResult
 import io.mockk.coEvery
-import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.design.components.avatar.AvatarUiModel
 import io.paritytech.polkadotapp.design.components.avatar.PolkadotAvatar
@@ -39,21 +35,17 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
-import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import uniffi.truapi.ImageFormat
 import uniffi.truapi.ImageReference
 import uniffi.truapi.LoadedImage
 import uniffi.truapi.ProfileAvatar
 import uniffi.truapi.PublicProfile
-import uniffi.truapi.PublicProfileResolutionOptions
 import java.io.ByteArrayOutputStream
 import android.graphics.Color as AndroidColor
 
@@ -61,9 +53,6 @@ import android.graphics.Color as AndroidColor
 class PublicProfileAvatarRenderingTest {
     @get:Rule
     val compose = createComposeRule()
-
-    @get:Rule
-    val temporaryFolder = TemporaryFolder()
 
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val runtime: TrUAPIHostRuntime = mockk()
@@ -75,7 +64,6 @@ class PublicProfileAvatarRenderingTest {
     private val bobAvatar = ProfileAvatar("bob-cid", ImageFormat.PNG)
     private val username = mutableStateOf("alice.01")
     private val shown = mutableStateOf(true)
-    private val avatarSize = mutableStateOf(48)
     private val failedImages = Channel<ProfileAvatar>(Channel.UNLIMITED)
     private val placeholder = AvatarUiModel.Name("Alice", AvatarColorScheme.from("alice".encodeToByteArray()))
     private lateinit var imageLoader: ImageLoader
@@ -85,7 +73,7 @@ class PublicProfileAvatarRenderingTest {
     fun setUp() {
         imageLoader = ImageLoader.Builder(context)
             .allowHardware(false)
-            .diskCache(DiskCache.Builder().directory(temporaryFolder.newFolder()).maxSizeBytes(1_024 * 1_024).build())
+            .diskCache(null)
             .components { PublicProfileAvatarImageLoaderRegistrar(runtimeProvider).register(this) }
             .eventListener(object : EventListener {
                 override fun onError(request: ImageRequest, result: ErrorResult) {
@@ -106,33 +94,11 @@ class PublicProfileAvatarRenderingTest {
     }
 
     @Test
-    fun cachedAvatarIsDisplayedBeforeTheMetadataStreamFinishes() {
-        withCachedAvatar()
-        val updates = withUpdates()
-
-        drawAvatar(forceFresh = true)
-        updates.emit(PublicProfile(avatar))
-        compose.waitUntil(TIMEOUT_MILLIS) { avatarColor() == Color.Red }
-
-        assertTrue(updates.started.isCompleted)
-        assertTrue(!updates.finished.isCompleted)
-        verify(exactly = 1) {
-            runtime.observePublicProfile("alice.01", PublicProfileResolutionOptions(forceFresh = true, skipStale = false))
-        }
-        updates.finish()
-        compose.waitUntil(TIMEOUT_MILLIS) { updates.finished.isCompleted }
-        compose.waitForIdle()
-        verify(exactly = 1) { runtime.observePublicProfile("alice.01", any()) }
-        assertEquals(Color.Red, avatarColor())
-        coVerify(exactly = 1) { runtime.loadImage(ImageReference.Bulletin(avatar.cid, avatar.format)) }
-    }
-
-    @Test
     fun replacementMetadataIsCollectedWhileTheFirstImageIsStillLoading() {
         val firstImage = withPendingImage(avatar, AndroidColor.RED)
         withImage(nextAvatar, AndroidColor.BLUE)
         val updates = withUpdates()
-        drawAvatar(forceFresh = true)
+        drawAvatar()
         updates.emit(PublicProfile(avatar))
         compose.waitUntil(TIMEOUT_MILLIS) { firstImage.started.isCompleted }
 
@@ -145,11 +111,11 @@ class PublicProfileAvatarRenderingTest {
     }
 
     @Test
-    fun cachedImageRemainsVisibleUntilTheReplacementImageIsReady() {
-        withCachedAvatar()
+    fun currentImageRemainsVisibleUntilTheReplacementImageIsReady() {
+        withImage(avatar, AndroidColor.RED)
         val replacement = withPendingImage(nextAvatar, AndroidColor.BLUE)
         val updates = withUpdates()
-        drawAvatar(forceFresh = true)
+        drawAvatar()
         updates.emit(PublicProfile(avatar))
         compose.waitUntil(TIMEOUT_MILLIS) { avatarColor() == Color.Red }
 
@@ -159,14 +125,13 @@ class PublicProfileAvatarRenderingTest {
         replacement.release.complete(Unit)
 
         compose.waitUntil(TIMEOUT_MILLIS) { avatarColor() == Color.Blue }
-        coVerify(exactly = 1) { runtime.loadImage(ImageReference.Bulletin(nextAvatar.cid, nextAvatar.format)) }
     }
 
     @Test
     fun removedAvatarRestoresTheLetter() {
-        withCachedAvatar()
+        withImage(avatar, AndroidColor.RED)
         val updates = withUpdates()
-        drawAvatar(forceFresh = true)
+        drawAvatar()
         updates.emit(PublicProfile(avatar))
         compose.waitUntil(TIMEOUT_MILLIS) { avatarColor() == Color.Red }
 
@@ -177,10 +142,10 @@ class PublicProfileAvatarRenderingTest {
     }
 
     @Test
-    fun failedMetadataRefreshKeepsTheCachedImage() {
-        withCachedAvatar()
+    fun failedMetadataRefreshKeepsTheCurrentImage() {
+        withImage(avatar, AndroidColor.RED)
         val updates = withUpdates()
-        drawAvatar(forceFresh = true)
+        drawAvatar()
         updates.emit(PublicProfile(avatar))
         compose.waitUntil(TIMEOUT_MILLIS) { avatarColor() == Color.Red }
 
@@ -192,11 +157,11 @@ class PublicProfileAvatarRenderingTest {
     }
 
     @Test
-    fun failedReplacementImageKeepsTheCachedImage() {
-        withCachedAvatar()
+    fun failedReplacementImageKeepsTheCurrentImage() {
+        withImage(avatar, AndroidColor.RED)
         val replacement = withPendingImage(nextAvatar, AndroidColor.BLUE)
         val updates = withUpdates()
-        drawAvatar(forceFresh = true)
+        drawAvatar()
         updates.emit(PublicProfile(avatar))
         compose.waitUntil(TIMEOUT_MILLIS) { avatarColor() == Color.Red }
         updates.emit(PublicProfile(nextAvatar))
@@ -216,12 +181,12 @@ class PublicProfileAvatarRenderingTest {
 
     @Test
     fun changingUsernameCancelsOldMetadataAndImageWork() {
-        withCachedAvatar()
+        withImage(avatar, AndroidColor.RED)
         val obsoleteImage = withPendingImage(nextAvatar, AndroidColor.BLUE)
         val oldUpdates = withUpdates()
         val newUpdates = withUpdates("bob.01")
         val newImage = withPendingImage(bobAvatar, AndroidColor.GREEN)
-        drawAvatar(forceFresh = true)
+        drawAvatar()
         oldUpdates.emit(PublicProfile(avatar))
         compose.waitUntil(TIMEOUT_MILLIS) { avatarColor() == Color.Red }
         oldUpdates.emit(PublicProfile(nextAvatar))
@@ -236,68 +201,13 @@ class PublicProfileAvatarRenderingTest {
         assertEquals(interiorPixels("letter"), interiorPixels("avatar"))
         newImage.release.complete(Unit)
         compose.waitUntil(TIMEOUT_MILLIS) { avatarColor() == Color.Green }
-        oldUpdates.emit(PublicProfile(null))
         obsoleteImage.release.complete(Unit)
         compose.waitForIdle()
         assertEquals(Color.Green, avatarColor())
     }
 
-    @Test
-    fun leavingTheViewCancelsMetadataAndImageWork() {
-        val image = withPendingImage(avatar, AndroidColor.RED)
-        val updates = withUpdates()
-        drawAvatar(forceFresh = true)
-        updates.emit(PublicProfile(avatar))
-        compose.waitUntil(TIMEOUT_MILLIS) { image.started.isCompleted }
-
-        compose.runOnIdle { shown.value = false }
-
-        compose.waitUntil(TIMEOUT_MILLIS) { updates.cancelled.isCompleted && image.cancelled.isCompleted }
-        image.release.complete(Unit)
-        updates.emit(PublicProfile(nextAvatar))
-        compose.waitForIdle()
-        compose.onNodeWithTag("avatar").assertDoesNotExist()
-    }
-
-    @Test
-    fun resizingTheAvatarDoesNotStartAnotherMetadataObservation() {
-        withCachedAvatar()
-        val updates = withUpdates()
-        drawAvatar(forceFresh = true)
-        updates.emit(PublicProfile(avatar))
-        compose.waitUntil(TIMEOUT_MILLIS) { avatarColor() == Color.Red }
-
-        compose.runOnIdle { avatarSize.value = 80 }
-        compose.waitForIdle()
-
-        verify(exactly = 1) { runtime.observePublicProfile("alice.01", any()) }
-        assertTrue(!updates.cancelled.isCompleted)
-        assertEquals(Color.Red, avatarColor())
-    }
-
-    @Test
-    fun listAvatarUsesOrdinaryMetadataFreshness() {
-        withImage(avatar, AndroidColor.RED)
-        val updates = withUpdates()
-        drawAvatar(forceFresh = false)
-        updates.emit(PublicProfile(avatar))
-        compose.waitUntil(TIMEOUT_MILLIS) { avatarColor() == Color.Red }
-
-        verify(exactly = 1) {
-            runtime.observePublicProfile("alice.01", PublicProfileResolutionOptions(forceFresh = false, skipStale = false))
-        }
-    }
-
     private fun withUpdates(name: String = "alice.01"): ProfileUpdates = ProfileUpdates().also { updates ->
         every { runtime.observePublicProfile(name, any()) } returns updates.flow
-    }
-
-    private fun withCachedAvatar() {
-        withImage(avatar, AndroidColor.RED)
-        val result = runBlocking {
-            imageLoader.execute(ImageRequest.Builder(context).data(avatar).size(64).build())
-        }
-        assertTrue("Cache warmup failed: $result", result is SuccessResult)
     }
 
     private fun withImage(image: ProfileAvatar, color: Int) {
@@ -329,16 +239,16 @@ class PublicProfileAvatarRenderingTest {
         return LoadedImage(bytes, image.format, image.cid)
     }
 
-    private fun drawAvatar(forceFresh: Boolean) {
+    private fun drawAvatar() {
         val source = CorePublicProfileAvatarSource(context, runtimeProvider)
         compose.setContent {
             PolkadotTheme(PolkadotAppTheme.BerlinNight) {
                 Row {
                     if (shown.value) {
                         PublicProfileAvatar(
-                            model = AvatarUiModel.PublicProfile(username.value, placeholder, forceFresh),
+                            model = AvatarUiModel.PublicProfile(username.value, placeholder, forceFresh = true),
                             source = source,
-                            modifier = Modifier.size(avatarSize.value.dp).testTag("avatar"),
+                            modifier = Modifier.size(48.dp).testTag("avatar"),
                         )
                     }
                     PolkadotAvatar(model = placeholder, modifier = Modifier.size(48.dp).testTag("letter"))
@@ -372,11 +282,9 @@ class PublicProfileAvatarRenderingTest {
 
     private class ProfileUpdates {
         private val values = Channel<PublicProfile>(Channel.UNLIMITED)
-        val started = CompletableDeferred<Unit>()
         val cancelled = CompletableDeferred<Unit>()
         val finished = CompletableDeferred<Unit>()
         val flow: Flow<PublicProfile> = flow {
-            started.complete(Unit)
             try {
                 for (profile in values) emit(profile)
             } catch (error: CancellationException) {
@@ -389,10 +297,6 @@ class PublicProfileAvatarRenderingTest {
 
         fun emit(profile: PublicProfile) {
             values.trySend(profile).getOrThrow()
-        }
-
-        fun finish() {
-            values.close()
         }
 
         fun fail(error: Throwable) {

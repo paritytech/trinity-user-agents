@@ -460,7 +460,7 @@ Each emitted avatar becomes a Coil request whose data is the canonical
 entry forces freshness, while list and search loads use ordinary freshness. All
 callers explicitly set `skipStale` to false. Coil reuses CID-keyed original bytes
 on disk and decoded variants in memory without an image freshness expiry. The
-displayed image remains visible during replacement or a metadata error; a profile
+displayed image remains visible during replacement, metadata errors or image errors; a profile
 without an avatar restores the letter tile. Changing the username or removing the
 view cancels observation and image loading.
 
