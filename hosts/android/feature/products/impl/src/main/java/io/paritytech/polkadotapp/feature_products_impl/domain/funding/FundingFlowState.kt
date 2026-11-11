@@ -7,14 +7,12 @@ import uniffi.truapi.FundingCountrySupport
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingQuote
-import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.ProductId
 import uniffi.truapi.U128
-import uniffi.truapi.fundingAmountIssue
 import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.Locale
@@ -46,20 +44,14 @@ data class FundingFlowState(
     val asset: String?,
     val chosenProviderId: ProductId?,
     val rows: Map<ProductId, FundingQuoteState>,
-    val ask: FundingQuoteAsk?,
-    /** The quotes on screen before the same ask went out again, shown greyed while the new ones arrive. */
+    /** The amount quotes were last asked for, in balance units; `null` while none are. */
+    val askedAmount: U128?,
+    /** The quotes on screen before the same amount was asked again, shown greyed while the new ones arrive. */
     val staleQuotes: Map<ProductId, FundingQuote>,
-    /** The core's latest list for [ask]; `null` from a new ask until its first list arrives. */
+    /** The core's list for [askedAmount]; `null` from a new ask until its first list arrives. */
     val list: FundingQuoteList?,
-    /**
-     * The id the core returned for [ask]; only lists for it are shown. `null` while no ask is current or its id is
-     * still on its way.
-     */
-    val requestId: ULong?,
-    /** Counts the asks and drops, so the id of an ask replaced while on its way is not taken; see [requested]. */
-    val askNumber: Int,
-    /** The newest list that arrived while [ask]'s id was on its way; shown if the id turns out to be its. */
-    val earlyList: FundingQuoteList?,
+    /** Why the typed amount cannot go ahead, as the core last answered for it. */
+    val amountIssue: FundingAmountIssue?,
 ) {
     companion object {
         fun initial(
@@ -82,12 +74,10 @@ data class FundingFlowState(
             asset = null,
             chosenProviderId = null,
             rows = emptyMap(),
-            ask = null,
+            askedAmount = null,
             staleQuotes = emptyMap(),
             list = null,
-            requestId = null,
-            askNumber = 0,
-            earlyList = null,
+            amountIssue = null,
         )
 
         fun textFor(value: BigDecimal): String =
@@ -114,14 +104,6 @@ data class FundingFlowState(
     val canContinue: Boolean
         get() = amount.signum() > 0 && amountIssue == null && rail in availableRails
 
-    /** Why the typed amount cannot go ahead, as the core says, including every provider refusing this amount. */
-    val amountIssue: FundingAmountIssue?
-        get() {
-            val units = units ?: return null
-            val limits = options?.limits ?: FundingAmountLimits(min = null, max = null)
-            return fundingAmountIssue(direction, limits, list, units, spendable?.let(::unitsOf))
-        }
-
     val amountLimits: FundingLimits
         get() = options?.limits.toLimits()
 
@@ -131,7 +113,7 @@ data class FundingFlowState(
 
     /** What [quote]'s provider-side figures are counted in: the asked asset, at the decimals the quote states. */
     fun unitOf(quote: FundingQuote): FundingAssetUnit =
-        FundingAssetUnit.of(ask?.asset ?: options?.asset ?: DEFAULT_ASSET, quote.assetDecimals.toInt())
+        FundingAssetUnit.of(options?.asset ?: DEFAULT_ASSET, quote.assetDecimals.toInt())
 
     val quotedProviders: List<Pair<ProductId, FundingQuote>>
         get() = rows.mapNotNull { (providerId, state) -> state.quote?.let { providerId to it } }
@@ -151,17 +133,17 @@ data class FundingFlowState(
 
     /** Asked and waiting: the ask's first list has not come, or a provider on it has not answered. */
     val isQuoting: Boolean
-        get() = selectedQuote == null && ask != null && (list == null || rows.values.any { it.isPending })
+        get() = selectedQuote == null && askedAmount != null && list?.complete != true
 
     val allAnswered: Boolean
-        get() = list != null && rows.isNotEmpty() && rows.values.none { it.isPending }
+        get() = list?.complete == true && rows.isNotEmpty()
 
     val noProviderQuoted: Boolean
         get() = allAnswered && quotedProviders.isEmpty()
 
-    /** Why no provider would quote, for the summary screen, when the amount is outside what they take. */
+    /** Why no provider would quote, for the summary screen, when their refusals say the amount is outside what they take. */
     val unavailableIssue: FundingAmountIssue?
-        get() = if (noProviderQuoted) amountIssue else null
+        get() = list?.issue
 
     /** The ids of the crypto networks a provider routes. */
     val networks: List<String>
@@ -189,23 +171,12 @@ data class FundingFlowState(
             (support as? FundingCountrySupport.Supported)?.min?.let { code to cash.decimal(it) }
         }.toMap()
 
-    fun currentAsk(): FundingQuoteAsk? {
-        val units = units?.takeIf { amount.signum() > 0 } ?: return null
-
-        val askedAsset = when (rail) {
-            FundingRail.CRYPTO -> asset
-            FundingRail.CARD, FundingRail.BANK -> fiatAsset
-        } ?: return null
-
-        return FundingQuoteAsk(
-            direction = direction,
-            rail = rail,
-            asset = askedAsset,
-            network = if (rail == FundingRail.CRYPTO) network else null,
-            amount = units,
-            country = country?.code,
-        )
-    }
+    /** The amount to ask quotes for: the typed one, once the asset is known: the token picked for crypto, else the one the core names. */
+    val askAmount: U128?
+        get() {
+            val asked = if (rail == FundingRail.CRYPTO) asset else options?.asset
+            return units?.takeIf { amount.signum() > 0 && asked != null }
+        }
 
     fun withRail(newRail: FundingRail): FundingFlowState =
         if (newRail == rail) {
@@ -224,52 +195,33 @@ data class FundingFlowState(
 
     fun withChosenProvider(providerId: ProductId): FundingFlowState = copy(chosenProviderId = providerId)
 
+    fun withAmountIssue(issue: FundingAmountIssue?): FundingFlowState = copy(amountIssue = issue)
+
     /**
-     * A new ask goes out: its rows read pending until the core's first list for it names who is asked. No list shows
-     * until the core returns the ask's id to [requested] with the returned [askNumber].
+     * Quotes of [amount] were asked: its rows read pending until the core's first list for it names who is asked.
+     * Asking the same amount again keeps its quotes greyed until they are answered.
      */
-    fun asking(newAsk: FundingQuoteAsk): FundingFlowState = copy(
-        requestId = null,
-        askNumber = askNumber + 1,
-        earlyList = null,
-        ask = newAsk,
+    fun asking(amount: U128): FundingFlowState = copy(
+        askedAmount = amount,
         rows = rows.mapValues { FundingQuoteState.Pending },
-        staleQuotes = if (newAsk == ask) quotedProviders.toMap() else emptyMap(),
+        staleQuotes = if (amount == askedAmount) quotedProviders.toMap() else emptyMap(),
         list = null,
     )
 
     /**
-     * The core returned [id] for ask [number]: its lists show from now on, starting with one that arrived first.
-     * Ignored when a later ask or a drop replaced that ask.
+     * The core's list for its current request, which is the only one it keeps; `null` once a selection withdrew it.
+     * A row still pending after the same amount was asked again keeps its last quote greyed until it answers.
      */
-    fun requested(id: ULong, number: Int): FundingFlowState {
-        if (number != askNumber || ask == null) return this
+    fun receiving(newList: FundingQuoteList?): FundingFlowState {
+        if (newList == null) return dropped()
 
-        val early = earlyList
-        val taken = copy(requestId = id, earlyList = null)
-        return if (early?.requestId == id) taken.receiving(early) else taken
-    }
-
-    /**
-     * The core's latest list, if it answers the current ask; while the ask's id is on its way, the newest list is
-     * kept for [requested] instead. A row still pending after the same ask went out again keeps its last quote
-     * greyed until it answers.
-     */
-    fun receiving(list: FundingQuoteList): FundingFlowState {
-        val current = requestId
-        if (current == null) {
-            val awaitsId = ask != null
-            return if (awaitsId && list.requestId >= (earlyList?.requestId ?: 0u)) copy(earlyList = list) else this
-        }
-        if (list.requestId != current) return this
-
-        val newRows = list.rows.associate { it.providerId to it.state }
+        val newRows = newList.rows.associate { it.providerId to it.state }
         val stale = newRows
             .filterValues { it.isPending }
             .mapNotNull { (providerId, _) -> (rows[providerId]?.quote ?: staleQuotes[providerId])?.let { providerId to it } }
             .toMap()
 
-        return copy(rows = newRows, staleQuotes = stale, list = list)
+        return copy(askedAmount = newList.amount, rows = newRows, staleQuotes = stale, list = newList)
     }
 
     /**
@@ -295,17 +247,8 @@ data class FundingFlowState(
         }
     }
 
-    /** No quotes, and no list for any ask made so far, including one whose id is still on its way. */
-    private fun dropped(): FundingFlowState = copy(
-        rows = emptyMap(),
-        ask = null,
-        list = null,
-        requestId = null,
-        askNumber = askNumber + 1,
-        earlyList = null,
-    )
-
-    private fun unitsOf(value: BigDecimal): U128 = cash.units(value)
+    /** No quotes and no ask. */
+    private fun dropped(): FundingFlowState = copy(rows = emptyMap(), askedAmount = null, staleQuotes = emptyMap(), list = null)
 
     private fun FundingAmountLimits?.toLimits() = FundingLimits(
         minimum = this?.min?.let(cash::decimal),

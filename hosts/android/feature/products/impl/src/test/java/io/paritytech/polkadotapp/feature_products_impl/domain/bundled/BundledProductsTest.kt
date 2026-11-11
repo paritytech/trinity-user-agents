@@ -12,6 +12,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.FundingProviderEntry
+import uniffi.truapi.FundingProviderApp
 import uniffi.truapi.FundingProviderOrigin
 import uniffi.truapi.ProductId
 import uniffi.truapi.ProductSource
@@ -55,7 +56,7 @@ class BundledProductsTest {
     private val manifest = workerManifestJson("""{"funding":{"routes":[]}}""")
 
     private val files = mapOf(
-        "bundled-products/provider.dot/manifest.json" to """{"${'$'}v":1,"displayName":"Provider","icon":{"cid":"bafyicon"}}""",
+        "bundled-products/provider.dot/manifest.json" to """{"${'$'}v":1,"displayName":"Provider","description":"Card top-ups","icon":{"cid":"bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy","format":"png"}}""",
         "bundled-products/provider.dot/worker-manifest.json" to manifest,
         "bundled-products/provider.dot/worker/index.js" to "export {}",
         "bundled-products/provider.dot/app/index.html" to "<html></html>",
@@ -64,6 +65,8 @@ class BundledProductsTest {
         "bundled-products/chat.dot/worker/index.js" to "export {}",
         "bundled-products/quiet.dot/worker-manifest.json" to workerManifestJson("""{"chat":false}"""),
         "bundled-products/quiet.dot/worker/index.js" to "export {}",
+        "bundled-products/broken.dot/worker-manifest.json" to """{"${'$'}v":1,"kind":"worker"}""",
+        "bundled-products/broken.dot/worker/index.js" to "export {}",
         "bundled-products/.provider.dot.staging/worker/index.js" to "ignored",
     )
 
@@ -79,9 +82,8 @@ class BundledProductsTest {
         assertEquals(manifest, products.workerManifest(provider))
         assertTrue(provider.hasWorker && provider.hasApp)
         assertEquals("Provider", provider.displayName)
-        assertEquals("bafyicon", provider.iconCid)
+        assertEquals("bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy", provider.iconCid)
         assertNull(entry("chat.dot")!!.displayName)
-        assertEquals("https://worker.provider.dot/index.js", provider.workerScriptUrl)
     }
 
     @Test
@@ -91,19 +93,26 @@ class BundledProductsTest {
                 FundingProviderEntry(
                     productId = ProductId.parse("provider.dot").getOrThrow(),
                     workerManifest = manifest,
+                    rootManifest = files.getValue("bundled-products/provider.dot/manifest.json"),
                     origin = FundingProviderOrigin.BUNDLED,
-                    hasApp = true,
+                    app = FundingProviderApp.SHIPPED,
                 ),
             ),
             products.fundingProviders(),
         )
     }
 
+    fun `reads the Worker it ships under its own subname`() {
+        val chat = products.worker(entry("chat.dot")!!).getOrThrow()
+
+        assertEquals("https://worker.chat.dot/index.js", chat.scriptUrl)
+        assertTrue(chat.includesChat)
+        assertFalse(products.worker(entry("quiet.dot")!!).getOrThrow().includesChat)
+    }
+
     @Test
-    fun `includes chat only when the manifest sets it`() {
-        assertTrue(products.includesChat(entry("chat.dot")!!))
-        assertFalse(products.includesChat(entry("quiet.dot")!!))
-        assertFalse(products.includesChat(entry("provider.dot")!!))
+    fun `a Worker manifest the parser rejects fails as a published one does`() {
+        assertTrue(products.worker(entry("broken.dot")!!).isFailure)
     }
 
     @Test

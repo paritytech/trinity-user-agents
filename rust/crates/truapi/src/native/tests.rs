@@ -2982,6 +2982,30 @@ fn reads_the_card_faces_the_hosts_conform_to() {
 	assert!(matches!(node, latest::RendererNode::Column { .. }));
 }
 
+/// Face files spell an inline image's bytes as the generated client does, a
+/// `0x` hex string, so a face written by hand and one written by the SDK read alike.
+#[test]
+fn reads_an_inline_image_from_hex() {
+	let image = |value: &str| {
+		format!(
+			r#"{{"tag":"Image","value":{{"modifiers":[],"props":{{"source":{{"tag":"Inline","value":"{value}"}}}}}}}}"#
+		)
+	};
+
+	assert_eq!(
+		parse_renderer_node_json(image("0x89504e47")).expect("hex reads"),
+		latest::RendererNode::Image {
+			modifiers: Vec::new(),
+			props: latest::ImageProps {
+				source: latest::ImageSource::Inline(vec![0x89, 0x50, 0x4e, 0x47]),
+				fit: None,
+			},
+		}
+	);
+	assert!(parse_renderer_node_json(image("not hex")).is_err());
+	assert!(parse_renderer_node_json(image("89504e47")).is_err());
+}
+
 /// `depth` boxes around an empty node, three brackets per box.
 fn nested_boxes(depth: usize) -> String {
 	let mut json = String::new();
@@ -3106,16 +3130,11 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 		_provider_id: ProductId,
 		_intent: String,
 		_target: v01::FundingFrameTarget,
-		_context: crate::platform::FundingFrameContext,
 	) -> Result<v01::FundingFrameOutcome, HostRejection> {
 		Ok(v01::FundingFrameOutcome::Closed)
 	}
 
 	fn close_provider_frame(&self, _provider_id: ProductId, _intent: String) {}
-
-	async fn provider_has_app(&self, _provider_id: ProductId) -> bool {
-		true
-	}
 
 	async fn detected_country(&self) -> Option<String> {
 		None
@@ -3164,7 +3183,6 @@ fn the_host_reads_back_what_the_core_says_changed() {
 		(
 			changes.contains(&(Some(intent.clone()), FundingChangeKind::Options)),
 			changes.contains(&(Some(intent.clone()), FundingChangeKind::Session)),
-			changes.contains(&(None, FundingChangeKind::InProgress)),
 			*funding.options_when_shown.lock().expect("options mutex poisoned"),
 			host.funding_options(intent.clone()).is_some(),
 			session.intent.clone(),
@@ -3179,7 +3197,6 @@ fn the_host_reads_back_what_the_core_says_changed() {
 		(
 			true,
 			true,
-			true,
 			Some(true),
 			false,
 			intent.clone(),
@@ -3188,6 +3205,43 @@ fn the_host_reads_back_what_the_core_says_changed() {
 			false,
 			false,
 		)
+	);
+}
+
+// Funding is available once the configuration offers a provider, and the
+// host hears so only when the list really changed, not on each refresh; a
+// list that went empty comes back with the next refresh naming it.
+#[test]
+fn providers_change_is_announced_only_when_the_list_changes() {
+	use super::funding_feed::FundingChangeKind;
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		native_host_runtime_config(),
+	)
+	.expect("host runtime config should be valid");
+	let funding = Arc::new(RecordingNativeFunding::default());
+	assert!(host.set_funding_callbacks(funding.clone()));
+	let configure = |names: &[&str]| {
+		host.set_funding_provider_config(
+			names.iter().map(|name| name.to_string()).collect(),
+			vec![],
+		)
+		.expect("configured");
+		let changes = funding.changes.lock().expect("changes mutex poisoned");
+		let announced =
+			changes.iter().filter(|change| **change == (None, FundingChangeKind::Providers));
+		(announced.count(), host.funding_available())
+	};
+
+	assert_eq!(
+		(
+			host.funding_available(),
+			configure(&["ramp.dot"]),
+			configure(&["ramp.dot"]),
+			configure(&[]),
+			configure(&["ramp.dot"])
+		),
+		(false, (1, true), (1, true), (2, false), (3, true))
 	);
 }
 

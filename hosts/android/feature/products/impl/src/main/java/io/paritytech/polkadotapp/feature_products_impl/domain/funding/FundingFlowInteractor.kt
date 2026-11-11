@@ -10,13 +10,14 @@ import kotlinx.coroutines.flow.map
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
+import uniffi.truapi.FundingAmountIssue
 import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingOptions
-import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.ProductId
+import uniffi.truapi.U128
 import java.math.BigDecimal
 import javax.inject.Inject
 
@@ -50,7 +51,18 @@ class FundingFlowInteractor @Inject constructor(
     suspend fun endedSummary(intent: String): FundingSessionSummary? =
         runtime.summary(intent).logFailure("Funding summary read failed").getOrNull()
 
-    suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<ULong> = runtime.requestQuote(intent, ask)
+    /** Reports [selection] first, so the quotes of [amount] are asked on it. */
+    suspend fun requestQuote(intent: String, selection: FundingSelection, amount: U128): Result<ULong?> {
+        runtime.selectOptions(intent, selection)
+        return runtime.requestQuote(intent, amount)
+    }
+
+    suspend fun startWhenQuoted(intent: String, requestId: ULong) = runtime.startWhenQuoted(intent, requestId)
+
+    suspend fun cancelAutoStart(intent: String) = runtime.cancelAutoStart(intent)
+
+    suspend fun amountIssue(intent: String, amount: U128, spendable: U128?): FundingAmountIssue? =
+        runtime.amountIssue(intent, amount, spendable).logFailure("Funding amount check failed").getOrNull()
 
     suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean> =
         runtime.selectProvider(intent, providerId, quoteId)
@@ -60,5 +72,5 @@ class FundingFlowInteractor @Inject constructor(
     suspend fun confirmCancel(intent: String, terms: CancelTerms?): Result<CancelConfirmation> =
         runtime.confirmCancel(intent, terms)
 
-    fun quoteLists(intent: String): Flow<FundingQuoteList> = runtime.quoteLists(intent)
+    fun quoteLists(intent: String): Flow<FundingQuoteList?> = runtime.quoteLists(intent)
 }

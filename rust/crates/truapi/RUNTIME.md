@@ -217,7 +217,7 @@ after activation. A name the host passes is shown until a record answers.
 `paseo`, or `testnet`). The shell supplies it alongside the chain genesis hashes
 from the same network configuration used by wallet onboarding. It must match
 the People chain's `NetworkSuffix.NetworkSuffix`: reserved identities derive
-under `uid.<suffix>` and `peopl.<suffix>`, while the chain uses that suffix for
+under `peopl.<suffix>`, while the chain uses that suffix for
 proof contexts. Configuration keeps local activation and key derivation
 available offline. The core validates supported suffixes but does not
 automatically check that the configured suffix matches the chain.
@@ -302,8 +302,8 @@ that can't mean it:
   `PairingHost` through `PairedSessionOwner`.
 - **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
-  from host-held secret material. Its public identity is the RFC-0022
-  `uid.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
+  from host-held secret material. Its public identity is the RFC-0028
+  `peopl.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
   product-owned registry entries; aliases, proofs, direct signatures, and
   internal personhood flows use the requested or user-selected registered key
   without a compiled-in fallback. It resolves RFC-0004 `RingLocation` values
@@ -496,26 +496,23 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `set_funding_callbacks` (the overlay), `open_funding`,
   `set_funding_providers`, `get_funding_quote`, `select_funding_options`, `select_funding_provider`, `cancel_funding`,
   `confirm_funding_cancel` and `acknowledge_funding_session`. Each of these
-  reports something the user did or the host owns. The host reads back only
-  `funding_history`, whenever it shows history. Everything else it draws,
-  the core pushes through the callbacks, the
-  `FundingFeed` a Rust host installs with `set_funding_feed` before its
-  funding platform:
-  `funding_session_changed` carries a session's status, the session as the
-  core holds it (choice, cancel offer, amounts) and its progress;
-  `funding_options_changed` carries what the overlay offers;
-  `funding_in_progress_changed` comes once each time funding resumes and
-  again whenever it changes, so the host
-  keeps a launch marker that starts funding at its next launch. Amounts
+  reports something the user did or the host owns. The core tells the host
+  what changed with `funding_changed(intent, kind)` (`Session`, `Options`,
+  `Quotes` or `Providers`), and the host reads it back:
+  `funding_session`, `funding_progress`, `funding_options`, `funding_quotes`,
+  `funding_entries`, `funding_summary` and `funding_history`. A Rust host
+  installs a `FundingFeed` with `set_funding_feed` before its funding
+  platform and gets the same notices. Whenever whether a provider still works
+  on a session changes, and once each time funding resumes, the native
+  runtime writes a launch marker that `funding_resume_pending` reads at the
+  next launch. Amounts
   cross the FFI as decimal strings.
   Sessions are stored in the core database, one row each; a row the core
   cannot read is skipped and left in place.
   The core owns the funding history. A session is stored only once the user
   starts it in the overlay. When funding resumes, every session in flight
-  and every ended one the host has not acknowledged comes through
-  `funding_session_changed` again. An ended
-  session is handed to the host through `funding_session_changed` each time
-  funding resumes until the host calls `acknowledge_funding_session` once it
+  and every ended one the host has not acknowledged is announced again. An
+  ended session is announced each time funding resumes until the host calls `acknowledge_funding_session` once it
   has told the user how it ended. A released withdrawal whose
   provider still owes its payout outcome, or the refund of a failed payout,
   is kept and served whether or not the host acknowledged it, and is handed
@@ -543,9 +540,11 @@ for raw bytes signed inside the `<Bytes>` watermark.
   needs the core database: natively the configured `database_directory`,
   otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.
-  The host lists its providers with `set_funding_providers`, each with the
-  Worker manifest it ships for it. Before the overlay shows, the core sends
-  `funding_options_changed(intent, options)`: `candidates` are the
+  The host lists its providers with `set_funding_provider_config` (Rust hosts
+  with `set_funding_providers`), each with the
+  Worker manifest it ships for it. Before the overlay shows, the core
+  announces the session's options, which `funding_options(intent)` works out
+  as it is read: `candidates` are the
   providers serving that session's direction, with their routes, from what the
   `includes.funding` configuration of each provider's Worker manifest declares:
   dotNS's answer once the core has read it (cached for a day, re-checked in the
@@ -554,9 +553,12 @@ for raw bytes signed inside the `<Bytes>` watermark.
   Funding drops out. A provider whose `origin` is `Bundled` ships inside
   the host: its shipped manifest is what the core goes by, and dotNS is never
   read for it.
-  `get_funding_quote(intent, ask)` prices an ask (rail, asset, amount,
-  country) with every funding provider, whatever its manifest says it serves,
-  since a provider can serve more or less than it last published: the core
+  `get_funding_quote(intent, amount)` prices `amount` on the rail, asset,
+  network and country the last `select_funding_options` named (card and bank
+  take the resolved fiat asset), returning `None` while there is nothing to
+  price; asking what the running request prices keeps it. It asks every
+  funding provider whose routes carry the rail, or that declares none (a
+  route its answers confirmed does not narrow one that declares none): the core
   calls each provider's worker with `quote`, holding the worker while it
   waits, and the worker answers priced from its own API. Every provider's
   worker is held from the moment the overlay opens until it closes, so it
@@ -602,16 +604,20 @@ for raw bytes signed inside the `<Bytes>` watermark.
   minimum a provider showed there, from manifest routes and recent answers,
   or `Unsupported` when every answer naming it refused it; a country nothing
   names is left out.
-  Natively the list arrives through `funding_quotes_changed` as a
-  `FundingQuoteList`: the `request_id` `get_funding_quote` returned, the
-  rows in the host's provider order, `best` (the least to pay inbound, the
-  most to receive outbound, the earliest row on a tie, among providers the
+  Natively `funding_changed` announces each list with `Quotes`, and
+  `funding_quotes` reads it as a `FundingQuoteList`, only ever the current
+  request's: the `request_id` `get_funding_quote` returned, whether it is
+  `complete` (no row pending), the rows in the host's provider order,
+  `best` (the least to pay inbound, the most to receive outbound, the earliest row on a tie, among providers the
   session can be handed to), which the host selects until the user picks
   another, and `refresh_at_ms`. The core asks every provider again each
   minute, each row keeping its answer until the provider answers again,
-  until the session is assigned, ends or leaves the overlay, or the host asks
-  for another ask; from then on no list of that request arrives, mid round
-  too, and the quotes still asked end with the workers they held. The
+  until the session is assigned, ends or leaves the overlay, the host asks
+  for another ask, or `select_funding_options` names another rail, asset,
+  network or country than the ask, which also clears the list
+  (`funding_quotes` answers `None`, announced with `Quotes`); from then on
+  no list of that request arrives, mid round too, and the quotes still
+  asked end with the workers they held. The
   options are sent again after each list, since a refusal can teach the core
   new limits. At most eight providers are asked at once, each with its own
   deadline. A session can be handed only a quote from the list its host was
@@ -619,6 +625,14 @@ for raw bytes signed inside the `<Bytes>` watermark.
   the ask's amount, moves nothing, charges more in fees than the user sends,
   has an unusable id or has expired shows as the provider being unable to
   serve the ask.
+  `start_funding_when_quoted(intent, request_id)` does that for the user
+  who continues before every row answered: once every row of that request
+  answered, the core selects `best` as `select_funding_provider` would, at
+  once when they already have. A new ask, `select_funding_options`,
+  `cancel_funding_auto_start` (the user leaving the quotes) or a list with
+  no usable quote disarms it. `funding_available` says whether the host
+  offers any provider, announced with `Providers` when
+  `set_funding_provider_config` changes the list.
   `select_funding_provider` hands a session to the provider the user chose,
   on the quote they chose it by, which must be one the core offered for the
   session, not yet expired and, when the session has an amount, pricing that
@@ -627,8 +641,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   receives it in `assign`, and the
   session keeps it with the rail and asset it priced. A session's offered
   quotes are dropped once it is assigned or ends.
-  A native host's `funding_session_changed` carries the session's
-  progress, so the host never reads it back: the milestones it draws, each with when it was reached: in, `Started`, `Received` (the
+  `funding_progress(intent)` gives the session's progress: the milestones it draws, each with when it was reached: in, `Started`, `Received` (the
   provider saw the payment) and `Added`; out, `Started`, `Received` (released
   to the provider) and `Sent` (paid out). A milestone the provider skipped
   takes the time of the first later one. `band` is the line under them, what
@@ -688,7 +701,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
   assigned provider, only forward; `Details` may come at any point while the
   session is open), `presentFrame` asks the host to
   show one of its screens through `present_provider_frame` (an App route only
-  when `provider_has_app` says the provider ships one, otherwise `NoApp`), and
+  when the provider ships an App: a bundled entry's `app`, else an `app`
+  subname dotNS publishes, read within ten seconds; otherwise `NoApp`), and
   `closeFrame`
   closes it through `close_provider_frame` once the provider is done with it,
   such as a card payment the user made: the open `presentFrame` answers
@@ -734,12 +748,18 @@ for raw bytes signed inside the `<Bytes>` watermark.
 - `PaymentPlatform`: pay from the user's balance to an account once the user
   approves, and stream each payment's status by its caller-chosen id.
   Installed with `set_payment_platform`; native hosts use
-  `set_payment_callbacks` with `notify_payment_status`. The core requires a
-  session and hands the host each id hashed with the product. Without it,
+  `set_payment_callbacks`: the core asks the host to `follow_payment` an id
+  and the host pushes each engine status with `notify_payment_status`. The
+  core keeps the latest status per id, shows the pending one when the engine
+  has not answered within 250 ms, keeps the last 512 final statuses, and
+  ends a stream whose engine stopped early with the abandoned status. The
+  core requires a session and hands the host each id hashed with the product,
+  and offers only the main purse. Without it,
   `request` and `statusSubscribe` answer `Unsupported`.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`; native
-  hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
+  hosts use `set_top_up_callbacks`, following ids through `follow_top_up` and
+  `notify_top_up_status` by the same rules as payments. The core
   requires a session, checks the source keys, passes a `ProductAccount`
   source through for the host to derive, and hands the host each id hashed
   with the product. The host owns claiming, retries, partial claims and
@@ -787,7 +807,8 @@ Omitting `ChatPlatform` makes the core answer Chat calls `Unsupported`, and
 omitting `ContactsPlatform`, `PocketPlatform`, `GamePlatform` or
 `ScannerPlatform` does the same for Contacts, Pocket, Game or Scanner calls. A
 connection without an `ExpandedCardHost` answers a Widget's `ExpandedCard` calls
-`Unsupported`.
+`Unsupported`, and `set_back_shown` answers `Unsupported` to every Widget, since
+no host seam turns a card.
 Omitting `PermissionStatusHost` leaves device grants resolving from stored
 state alone, which is what a host with no OS permission model does anyway.
 Serving it gates both halves of the surface: a device permission request and a

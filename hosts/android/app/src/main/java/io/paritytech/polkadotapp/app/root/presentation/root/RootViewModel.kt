@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.app.root.domain.RootInteractor
+import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
 import io.paritytech.polkadotapp.app.root.presentation.main.BottomNavHeightProvider
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
@@ -61,6 +62,7 @@ class RootViewModel @Inject constructor(
     private val chatRequestServiceCoordinator: ChatRequestServiceCoordinator,
     private val exploreProductsService: ExploreProductsService,
     private val jwtAuthWarmUpService: JwtAuthWarmUpService,
+    navigationHolder: NavigationHolder,
     appThemeSelector: AppThemeSelector,
     chatBotStateController: ChatBotStateController,
     chatEngine: ChatEngine,
@@ -76,6 +78,7 @@ class RootViewModel @Inject constructor(
     override val bottomNavHeight = bottomNavHeightProvider.heightDp
     val appTheme = appThemeSelector.selectedTheme
     override val chainsHealth = chainHealthMixinFactory.create(this).model
+    override val currentTab = navigationHolder.currentTab
 
     private val networkStatusTooltipDismissed = MutableStateFlow(!rootInteractor.shouldShowNetworkStatusTooltip())
     private val chainRingsOnScreen = chainsHealth.map { it.rows.isNotEmpty() }

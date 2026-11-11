@@ -14,7 +14,6 @@ class FundingFrameContext(
     val providerId: ProductId,
     val intent: String,
     val target: ProviderFrameTarget,
-    val showsSentFunds: Boolean,
 ) {
     private val outcome = CompletableDeferred<FrameAnswer>()
 

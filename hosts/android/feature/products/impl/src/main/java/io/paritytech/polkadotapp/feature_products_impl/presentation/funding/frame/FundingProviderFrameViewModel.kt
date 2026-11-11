@@ -18,16 +18,21 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFra
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameContext
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.WebFileChooserExecutor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import uniffi.truapi.fundingPageOrigin
 
 data class FundingProviderFrameUiState(
+    /** The session waits on a transfer the user makes outside the frame, as its progress says now. */
     val showsSentFunds: Boolean,
     val isContentVisible: Boolean,
     val failed: Boolean,
@@ -53,6 +58,7 @@ class FundingProviderFrameViewModel @AssistedInject constructor(
     private val router: ProductsRouter,
     private val contextManager: ContextManager,
     private val fileProvider: FileProvider,
+    runtime: FundingRuntime,
     spaHost: SpaHost,
 ) : BaseViewModel() {
     /** The external page, drawn in a WebView of the screen's own; `null` for the provider's App. */
@@ -70,14 +76,21 @@ class FundingProviderFrameViewModel @AssistedInject constructor(
 
     val webView: StateFlow<WebView?> = session?.webView ?: MutableStateFlow(null)
 
+    private val awaitsUserTransfer = runtime.sessions
+        .map { it[context.intent]?.progress?.awaitsUserTransfer == true }
+        .distinctUntilChanged()
+
     val state: StateFlow<FundingProviderFrameUiState> = (session?.loadProgress ?: pageProgress)
-        .scan(initialState()) { previous, progress ->
-            previous.copy(
+        .scan(LoadState(isContentVisible = false, failed = false)) { previous, progress ->
+            LoadState(
                 isContentVisible = previous.isContentVisible || progress == DotNsLoadProgress.Completed,
                 failed = progress is DotNsLoadProgress.Failed,
             )
         }
-        .stateIn(this, SharingStarted.Eagerly, initialState())
+        .combine(awaitsUserTransfer) { load, awaits ->
+            FundingProviderFrameUiState(showsSentFunds = awaits, isContentVisible = load.isContentVisible, failed = load.failed)
+        }
+        .stateIn(this, SharingStarted.Eagerly, FundingProviderFrameUiState(showsSentFunds = false, isContentVisible = false, failed = false))
 
     init {
         context.isShown = true
@@ -146,15 +159,11 @@ class FundingProviderFrameViewModel @AssistedInject constructor(
         router.closeFundingProviderFrame(context.intent)
     }
 
-    private fun initialState() = FundingProviderFrameUiState(
-        showsSentFunds = context.showsSentFunds,
-        isContentVisible = false,
-        failed = false,
-    )
-
     /** "ramp.example" or "ramp.example:8443": the core's origin of [url], with its port only when not the default. */
     private fun originOf(url: String): String? =
         fundingPageOrigin(url)?.let { origin -> origin.host + origin.port?.let { ":$it" }.orEmpty() }
+
+    private data class LoadState(val isContentVisible: Boolean, val failed: Boolean)
 
     @AssistedFactory
     interface Factory {

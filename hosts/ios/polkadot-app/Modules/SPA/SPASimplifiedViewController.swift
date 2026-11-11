@@ -239,6 +239,7 @@ private extension SPASimplifiedViewController {
 
 extension SPASimplifiedViewController: SPAViewProtocol {
     var pageScrollView: UIScrollView { rootView.webView.scrollView }
+    var pageWebView: WKWebView { rootView.webView }
 
     func navigate(to url: URL) {
         rootView.webView.load(URLRequest(url: url))
@@ -249,7 +250,12 @@ extension SPASimplifiedViewController: SPAViewProtocol {
             return
         }
 
-        navigate(to: page.applied(to: currentURL))
+        let target = page.applied(to: currentURL)
+        guard target != currentURL else {
+            return
+        }
+
+        navigate(to: target)
     }
 
     func updateTitle(_ title: String) {

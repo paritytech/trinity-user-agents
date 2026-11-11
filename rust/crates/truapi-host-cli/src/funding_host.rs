@@ -155,7 +155,6 @@ impl FundingPlatform for CliFundingHost {
 		_provider: &ProductContext,
 		_intent: String,
 		_target: truapi::latest::FundingFrameTarget,
-		_context: truapi::platform::FundingFrameContext,
 	) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
 		Ok(truapi::latest::FundingFrameOutcome::Dismissed)
 	}

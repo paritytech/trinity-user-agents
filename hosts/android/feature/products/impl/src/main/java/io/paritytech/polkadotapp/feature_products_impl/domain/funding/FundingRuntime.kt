@@ -5,11 +5,11 @@ import kotlinx.coroutines.flow.StateFlow
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
+import uniffi.truapi.FundingAmountIssue
 import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingProgress
-import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSession
@@ -32,12 +32,15 @@ interface FundingRuntime {
     /** Starts the core, which then pushes every session in flight and every ended one the host has not acknowledged. */
     suspend fun start(): Result<Unit>
 
+    /** Whether the host offers any funding provider, as the core last answered; `false` until it has. */
+    val available: StateFlow<Boolean>
+
     /** Every session the core holds in full, with its progress, by intent, as the core last answered. */
     val sessions: StateFlow<Map<String, FundingBookEntry>>
 
     /**
      * Every ended session the core holds, in full or compacted, as summaries newest first, as the core last answered:
-     * read again when the core starts, whenever a session changes and once funding resumes.
+     * read again when the core starts and whenever a session changes.
      */
     val history: StateFlow<List<FundingSessionSummary>>
 
@@ -54,11 +57,28 @@ interface FundingRuntime {
     suspend fun selectOptions(intent: String, selection: FundingSelection)
 
     /**
-     * The list arrives through [quoteLists], and is asked for again every minute until the session is handed to a
-     * provider, ends or leaves the overlay, or another [ask] replaces it. Returns the request id every list for this
-     * ask carries.
+     * Asks every provider routing the selected rail to price [amount] for session [intent], on what [selectOptions]
+     * last reported. The list arrives through [quoteLists], and is asked for again every minute until the session is
+     * handed to a provider, ends or leaves the overlay, or another amount or selection replaces it. Returns the
+     * request id the list carries, `null` while the selection names no asset.
      */
-    suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<ULong>
+    suspend fun requestQuote(intent: String, amount: U128): Result<ULong?>
+
+    /**
+     * Why [amount] cannot go ahead in session [intent], if it cannot: more than [spendable] on a withdrawal, then what
+     * every provider's refusal of this amount said, then the amount limits its options show.
+     */
+    suspend fun amountIssue(intent: String, amount: U128, spendable: U128?): Result<FundingAmountIssue?>
+
+    /**
+     * Starts session [intent] on the best quote of request [requestId] once every provider answered it, at once when
+     * they already have; the start comes through [sessions]. Another quote request or selection, [cancelAutoStart] or
+     * a list with no usable quote disarms it.
+     */
+    suspend fun startWhenQuoted(intent: String, requestId: ULong)
+
+    /** Disarms [startWhenQuoted] for session [intent], as the user leaves its quotes. */
+    suspend fun cancelAutoStart(intent: String)
 
     suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean>
 
@@ -72,10 +92,11 @@ interface FundingRuntime {
     suspend fun acknowledge(intent: String): Result<Boolean>
 
     /**
-     * Each quote list the core has for session [intent] once it changed, from when this is collected on; an earlier
-     * one is not replayed. Never completes: the collector stops it.
+     * Session [intent]'s quote list each time it changed, from when this is collected on: the current request's,
+     * or `null` once a selection on another route withdrew it. An earlier one is not replayed. Never completes: the
+     * collector stops it.
      */
-    fun quoteLists(intent: String): Flow<FundingQuoteList>
+    fun quoteLists(intent: String): Flow<FundingQuoteList?>
 
     /**
      * Emits the intent of every session whose status changed, once [sessions] holds the change; look the session up

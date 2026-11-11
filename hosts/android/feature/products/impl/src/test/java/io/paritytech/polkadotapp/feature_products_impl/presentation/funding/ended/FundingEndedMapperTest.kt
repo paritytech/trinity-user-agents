@@ -184,6 +184,7 @@ class FundingEndedMapperTest {
         refunded = refunded,
         transactionId = transactionId,
         reference = null,
+        moneyMoved = true,
         ended = FundingEnding(
             atMs = SETTLED_MS,
             outcome = outcome,
@@ -191,6 +192,8 @@ class FundingEndedMapperTest {
             cashAmount = "50000000",
             differingRequested = differingRequested,
             stoppedAt = stoppedAt,
+            steps = emptyList(),
+            waitingAt = null,
         ),
     )
 

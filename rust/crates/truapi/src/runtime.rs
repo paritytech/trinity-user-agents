@@ -19,6 +19,7 @@ mod capabilities;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
+pub use dotns_lookup::{DotnsLookup, DotnsLookupKind};
 mod funding;
 mod funding_providers;
 mod funding_quotes;
@@ -37,6 +38,7 @@ mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
+mod single_flight;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
 mod sso_request_service;
@@ -67,7 +69,7 @@ use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
 pub use authority::{AccountHolder, AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
-pub use funding::{FundingBookEntry, FundingFeed, FundingProviderLink};
+pub use funding::{FundingFeed, FundingProviderLink};
 pub use host_session::HostSession;
 
 /// The host's contact picker plus the key its handles are minted under:
@@ -84,7 +86,8 @@ pub use services::RuntimeServices;
 pub use signing_host::{LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService};
 pub use sso_responder_service::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
+	PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
+	SsoResponderService,
 };
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
@@ -144,7 +147,7 @@ use truapi::{
 use web_time::Instant;
 
 #[cfg(test)]
-use crate::subscription::Spawner;
+use crate::Spawner;
 use crate::{
 	chain_runtime::{RuntimeFailure, RuntimeFailureKind},
 	host_internal::{
@@ -606,12 +609,12 @@ impl ProductConnection {
 		let (tx, rx) = futures::channel::oneshot::channel();
 		let platform = self.platform.clone();
 		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
+		self.services.spawner.spawn(async move {
 			let begun = platform.begin_operation(&product, label).await;
 			if let Err(Ok(response)) = tx.send(begun) {
 				let _ = platform.end_operation(&product, response.id).await;
 			}
-		}));
+		});
 		rx.await.unwrap_or_else(|_| {
 			Err(latest::HostWorkerOperationError::Unknown {
 				reason: "the host did not answer".to_string(),
@@ -640,11 +643,11 @@ impl ProductConnection {
 		}
 		let platform = self.platform.clone();
 		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
+		self.services.spawner.spawn(async move {
 			for id in open {
 				let _ = platform.end_operation(&product, id).await;
 			}
-		}));
+		});
 	}
 
 	/// Release one open operation's demand; unknown ids leave demand unchanged.
@@ -1705,28 +1708,28 @@ impl FundingProvider for ProductRuntimeHost {
 				let services = &self.connection.services;
 				let provider = &self.connection.product;
 				if matches!(target, latest::FundingFrameTarget::App { .. }) {
-					let has_app = match services.funding_providers().has_app(&provider.product_id) {
-						Some(has_app) => has_app,
-						None => platform.provider_has_app(provider).await,
+					use crate::host_logic::funding_providers::FundingProviderApp;
+					let has_app = match services.funding_providers().app(&provider.product_id) {
+						FundingProviderApp::Shipped => true,
+						FundingProviderApp::Absent => false,
+						FundingProviderApp::Unknown => {
+							crate::runtime::product_manifest::publishes_app(
+								services,
+								services.platform.as_ref(),
+								&provider.product_id,
+								APP_LOOKUP_CEILING,
+							)
+							.await
+							.unwrap_or(false)
+						},
 					};
 					if !has_app {
 						return Err(domain(latest::HostFundingPresentFrameError::NoApp));
 					}
 				}
-				let session = services.funding().get(&intent);
-				let direction = session
-					.as_ref()
-					.map_or(latest::FundingDirection::In, |session| session.direction);
-				let rail = session
-					.as_ref()
-					.and_then(|session| session.choice.as_ref().map(|choice| choice.rail))
-					.or_else(|| {
-						services.funding().selection(&intent).map(|selection| selection.rail)
-					});
-				let context = crate::host_logic::funding_view::frame_context(direction, rail);
 				let _frame = services.funding().track_frame(&intent, provider.clone());
 				let outcome = platform
-					.present_provider_frame(provider, intent, target, context)
+					.present_provider_frame(provider, intent, target)
 					.await
 					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
 				Ok(latest::HostFundingPresentFrameResponse { outcome })
@@ -1951,6 +1954,10 @@ fn bulletin_allowance_error_reason(err: AuthorityError) -> String {
 		other => other.to_string(),
 	}
 }
+
+/// How long the core waits for dotNS to say whether a provider ships an App
+/// before showing it as having none.
+const APP_LOOKUP_CEILING: core::time::Duration = core::time::Duration::from_secs(10);
 
 #[cfg(test)]
 mod tests;

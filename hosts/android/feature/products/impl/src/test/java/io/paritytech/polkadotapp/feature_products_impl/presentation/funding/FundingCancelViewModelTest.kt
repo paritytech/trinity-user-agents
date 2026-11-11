@@ -71,7 +71,8 @@ class FundingCancelViewModelTest {
         every { countries() } returns emptyList()
         every { quoteLists("intent") } returns MutableSharedFlow()
         every { session("intent") } returns sessions
-        coEvery { requestQuote("intent", any()) } returns Result.success(1uL)
+        coEvery { requestQuote("intent", any(), any()) } returns Result.success(1uL)
+        coEvery { amountIssue("intent", any(), any()) } returns null
         coEvery { brand(any()) } answers { FundingProviderBrand(firstArg(), firstArg(), null) }
     }
 
@@ -289,6 +290,7 @@ class FundingCancelViewModelTest {
         status = FundingStatus.WaitingForPayment,
         longerAtMs = null,
         moneyMoved = moneyMoved,
+        awaitsUserTransfer = false,
         cancel = cancelAvailability,
     )
 

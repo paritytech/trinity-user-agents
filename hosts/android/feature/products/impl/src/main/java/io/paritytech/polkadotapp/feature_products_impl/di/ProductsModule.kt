@@ -131,6 +131,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.RealProductBotManagementInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.profile.PublicProfileAvatarImageLoaderRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.runtime.PrefsProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.search.ProductChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.serialization.JsWidgetSerializer
@@ -256,6 +257,10 @@ internal interface ProductsModule {
     @Binds
     @IntoSet
     fun bindProductIconImageLoaderRegistrar(impl: ProductIconImageLoaderRegistrar): ImageLoaderComponentRegistrar
+
+    @Binds
+    @IntoSet
+    fun bindPublicProfileAvatarImageLoaderRegistrar(impl: PublicProfileAvatarImageLoaderRegistrar): ImageLoaderComponentRegistrar
 
     @Binds
     @IntoSet

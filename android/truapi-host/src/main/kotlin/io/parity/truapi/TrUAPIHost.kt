@@ -65,6 +65,8 @@ import uniffi.truapi.RecoveryException
 import uniffi.truapi.ImageException
 import uniffi.truapi.ImageReference
 import uniffi.truapi.LoadedImage
+import uniffi.truapi.PublicProfile
+import uniffi.truapi.PublicProfileException
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketObserver
@@ -100,32 +102,32 @@ import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
+import uniffi.truapi.CancelConfirmation
+import uniffi.truapi.CancelOutcome
+import uniffi.truapi.CancelTerms
+import uniffi.truapi.FundingAmountIssue
+import uniffi.truapi.FundingBookEntry
+import uniffi.truapi.FundingChangeKind
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
-import uniffi.truapi.FundingBookEntry
-import uniffi.truapi.FundingChangeKind
-import uniffi.truapi.FundingFrameContext
 import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingPresentOutcome
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingProviderEntry
-import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
-import uniffi.truapi.CancelConfirmation
-import uniffi.truapi.CancelTerms
-import uniffi.truapi.CancelOutcome
 import uniffi.truapi.NativeFundingCallbacks
 import uniffi.truapi.U128
-import uniffi.truapi.HostPaymentBalanceSubscribeException
 import uniffi.truapi.HostPaymentException
 import uniffi.truapi.HostPaymentRequest
+import uniffi.truapi.HostPaymentStatusSubscribeException
 import uniffi.truapi.HostPaymentStatusSubscribeItem
 import uniffi.truapi.HostPaymentTopUpException
 import uniffi.truapi.HostPaymentTopUpRequest
+import uniffi.truapi.HostPaymentTopUpStatusSubscribeException
 import uniffi.truapi.HostPaymentTopUpStatusSubscribeItem
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
@@ -832,7 +834,8 @@ private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : Na
  *
  * The session stays open in the core while [presentFunding] suspends, so
  * quote it with [TrUAPIHostRuntime.getFundingQuote] and hand it over with
- * [TrUAPIHostRuntime.selectFundingProvider] before answering
+ * [TrUAPIHostRuntime.selectFundingProvider] or
+ * [TrUAPIHostRuntime.startFundingWhenQuoted] before answering
  * [FundingPresentOutcome.STARTED].
  */
 interface FundingHostBridge {
@@ -852,15 +855,15 @@ interface FundingHostBridge {
     /**
      * Show [target] for provider [providerId]'s session [intent] in a frame the host owns, and report how it
      * closed. A page is a checked https URL: show its origin, and answer [FundingFrameOutcome.Returned] when it
-     * reaches its return URL. [context] carries what the core knows about the session the frame is for. The core
-     * closes the frame through [closeProviderFrame] once the session's payment moved.
+     * reaches its return URL. What the frame shows around it, such as whether the user still has to send funds,
+     * comes from [TrUAPIHostRuntime.fundingProgress]. The core closes the frame through [closeProviderFrame] once
+     * the session's payment moved.
      */
     @Throws(HostRejection::class)
     suspend fun presentProviderFrame(
         providerId: ProductId,
         intent: String,
         target: FundingFrameTarget,
-        context: FundingFrameContext,
     ): FundingFrameOutcome
 
     /**
@@ -871,12 +874,6 @@ interface FundingHostBridge {
     fun closeProviderFrame(providerId: ProductId, intent: String)
 
     /**
-     * Whether provider [providerId] ships an App, so an App route of its can be shown in [presentProviderFrame]. A
-     * provider without one shows only external pages.
-     */
-    suspend fun providerHasApp(providerId: ProductId): Boolean
-
-    /**
      * The country the user is likely in, as an ISO 3166-1 alpha-2 code: the device's coarse location when
      * already permitted, then its SIM or network country, then its locale's region. Never asks for a
      * permission. `null` when nothing says.
@@ -885,7 +882,7 @@ interface FundingHostBridge {
 
     /**
      * Funding state the host reads back from [TrUAPIHostRuntime] changed: [kind] says what, [intent] which session,
-     * `null` for [FundingChangeKind.IN_PROGRESS]. The runtime already answers with the new state. Runs inline on the
+     * `null` for [FundingChangeKind.PROVIDERS]. The runtime already answers with the new state. Runs inline on the
      * core's thread, so return promptly and read it back elsewhere.
      */
     fun fundingChanged(intent: String?, kind: FundingChangeKind) {}
@@ -903,24 +900,12 @@ private class FundingCallbackAdapter(private val bridge: FundingHostBridge) : Na
         providerId: ProductId,
         intent: String,
         target: FundingFrameTarget,
-        context: FundingFrameContext,
-    ): FundingFrameOutcome = withHostRejection { bridge.presentProviderFrame(providerId, intent, target, context) }
+    ): FundingFrameOutcome = withHostRejection { bridge.presentProviderFrame(providerId, intent, target) }
 
     // Infallible across the FFI, as `onCoreLog` is.
     override fun closeProviderFrame(providerId: ProductId, intent: String) {
         runCatching { bridge.closeProviderFrame(providerId, intent) }
     }
-
-    // Infallible across the FFI: a host that cannot tell lets the App route through, as before. A cancelled call
-    // stays cancelled.
-    override suspend fun providerHasApp(providerId: ProductId): Boolean =
-        try {
-            bridge.providerHasApp(providerId)
-        } catch (cancellation: CancellationException) {
-            throw cancellation
-        } catch (error: Throwable) {
-            true
-        }
 
     // Infallible across the FFI: a host that cannot tell answers no country. A cancelled call stays cancelled.
     override suspend fun detectedCountry(): String? =
@@ -955,8 +940,8 @@ private class GameCallbackAdapter(private val bridge: GameHostBridge) : NativeGa
  *
  * The core has already checked the session, the source keys and the amount,
  * and hashed the product into every id it passes, so ids never collide across
- * products. Report each status after the one [topUpStatus] answered with
- * [TrUAPIHostRuntime.notifyTopUpStatus]; a terminal one ends the stream.
+ * products. The core asks to follow a top-up with [followTopUp]; push what
+ * the engine reports with [TrUAPIHostRuntime.notifyTopUpStatus].
  */
 interface TopUpHostBridge {
     /**
@@ -967,11 +952,13 @@ interface TopUpHostBridge {
     suspend fun topUp(productId: ProductId, request: HostPaymentTopUpRequest)
 
     /**
-     * The current status of [productId]'s top-up [id], or `null` when the host
-     * holds no such top-up. Runs inline on the core's thread.
+     * Follow [productId]'s top-up [id] on the engine, pushing each status it
+     * reports with [TrUAPIHostRuntime.notifyTopUpStatus], and return when the
+     * engine's stream ends. Throw `TopUpNotFound` when the engine holds no such
+     * top-up. The core cancels the call once it has a final status.
      */
-    @Throws(HostRejection::class)
-    fun topUpStatus(productId: ProductId, id: ByteArray): HostPaymentTopUpStatusSubscribeItem?
+    @Throws(HostPaymentTopUpStatusSubscribeException::class)
+    suspend fun followTopUp(productId: ProductId, id: ByteArray)
 }
 
 /**
@@ -981,8 +968,9 @@ interface TopUpHostBridge {
  *
  * The core hashes the product into every id it passes. Answer
  * `InsufficientBalance` whenever the balance is short: the core turns it into
- * `Rejected` for a product without balance access. Report each status after
- * the one [paymentStatus] answered with [TrUAPIHostRuntime.notifyPaymentStatus].
+ * `Rejected` for a product without balance access. The core asks to follow a
+ * payment with [followPayment]; push what the engine reports with
+ * [TrUAPIHostRuntime.notifyPaymentStatus].
  */
 interface PaymentHostBridge {
     /**
@@ -994,27 +982,29 @@ interface PaymentHostBridge {
     suspend fun requestPayment(productId: ProductId, request: HostPaymentRequest)
 
     /**
-     * The current status of [productId]'s payment [id], or `null` when the host
-     * holds no such payment. Runs inline on the core's thread.
+     * Follow [productId]'s payment [id] on the engine, pushing each status it
+     * reports with [TrUAPIHostRuntime.notifyPaymentStatus], and return when the
+     * engine's stream ends. Throw `PaymentNotFound` when the engine holds no
+     * such payment. The core cancels the call once it has a final status.
      */
-    @Throws(HostRejection::class)
-    fun paymentStatus(productId: ProductId, id: ByteArray): HostPaymentStatusSubscribeItem?
+    @Throws(HostPaymentStatusSubscribeException::class)
+    suspend fun followPayment(productId: ProductId, id: ByteArray)
 }
 
 /**
  * Native balance view, which shares what a payment can spend with a product.
- * Install with [TrUAPIHostRuntime.setBalance], once, and report each change
- * with [TrUAPIHostRuntime.notifyBalance]. The core owns balance access, so do
- * not prompt for it here.
+ * Install with [TrUAPIHostRuntime.setBalance], once. The core owns balance
+ * access, so do not prompt for it here.
  */
 interface BalanceHostBridge {
     /**
-     * The user's balance in [purse] (`null` for the main purse), as a decimal
-     * string of CASH units: what a payment request can spend now. It is the same
-     * for every product; [productId] only names the one asking.
+     * Follow the user's spendable balance, pushing the current one and each
+     * change with [TrUAPIHostRuntime.notifyBalance], and return when the
+     * stream ends. The core cancels the call once no product follows the
+     * balance, and calls again when one does.
      */
-    @Throws(HostPaymentBalanceSubscribeException::class)
-    suspend fun balance(productId: ProductId, purse: UInt?): String
+    @Throws(HostRejection::class)
+    suspend fun followBalance()
 }
 
 private class TopUpCallbackAdapter(private val bridge: TopUpHostBridge) : NativeTopUpCallbacks {
@@ -1029,8 +1019,17 @@ private class TopUpCallbackAdapter(private val bridge: TopUpHostBridge) : Native
             throw HostPaymentTopUpException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
         }
 
-    override fun topUpStatus(productId: ProductId, id: ByteArray): HostPaymentTopUpStatusSubscribeItem? =
-        withHostRejection { bridge.topUpStatus(productId, id) }
+    override suspend fun followTopUp(productId: ProductId, id: ByteArray) =
+        try {
+            bridge.followTopUp(productId, id)
+        } catch (error: HostPaymentTopUpStatusSubscribeException) {
+            throw error
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            throw HostPaymentTopUpStatusSubscribeException.Unknown(hostRejectionReason(error))
+                .apply { initCause(error) }
+        }
 }
 
 private class PaymentCallbackAdapter(private val bridge: PaymentHostBridge) : NativePaymentCallbacks {
@@ -1045,22 +1044,21 @@ private class PaymentCallbackAdapter(private val bridge: PaymentHostBridge) : Na
             throw HostPaymentException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
         }
 
-    override fun paymentStatus(productId: ProductId, id: ByteArray): HostPaymentStatusSubscribeItem? =
-        withHostRejection { bridge.paymentStatus(productId, id) }
-}
-
-private class BalanceCallbackAdapter(private val bridge: BalanceHostBridge) : NativeBalanceCallbacks {
-    override suspend fun balance(productId: ProductId, purse: UInt?): String =
+    override suspend fun followPayment(productId: ProductId, id: ByteArray) =
         try {
-            bridge.balance(productId, purse)
-        } catch (error: HostPaymentBalanceSubscribeException) {
+            bridge.followPayment(productId, id)
+        } catch (error: HostPaymentStatusSubscribeException) {
             throw error
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Throwable) {
-            throw HostPaymentBalanceSubscribeException.Unknown(hostRejectionReason(error))
+            throw HostPaymentStatusSubscribeException.Unknown(hostRejectionReason(error))
                 .apply { initCause(error) }
         }
+}
+
+private class BalanceCallbackAdapter(private val bridge: BalanceHostBridge) : NativeBalanceCallbacks {
+    override suspend fun followBalance() = withHostRejection { bridge.followBalance() }
 }
 
 /**
@@ -1149,6 +1147,9 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     suspend fun openFunding(direction: FundingDirection, amount: U128? = null): String? =
         inner.openFunding(direction, amount)
 
+    /** Whether the host offers any funding provider; [FundingChangeKind.PROVIDERS] says when it may have changed. */
+    fun fundingAvailable(): Boolean = inner.fundingAvailable()
+
     /**
      * Cancel session [intent] at the user's request, and say what that did. Once money has moved, a cancel is a request
      * its provider answers with a refusal or an offer, which arrives on the session's `cancel`, read through
@@ -1169,7 +1170,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Every ended funding session, as summaries newest first. Read it whenever the host shows history. */
     fun fundingHistory(): List<FundingSessionSummary> = inner.fundingHistory()
 
-    /** Ended funding session [intent]'s summary, as [fundingHistory] lists it. */
+    /** Ended funding session [intent]'s summary, including a cancel that moved no money, which [fundingHistory] leaves out. */
     fun fundingSummary(intent: String): FundingSessionSummary? = inner.fundingSummary(intent)
 
     /** Whether funding session [intent] is still open, so its overlay can be shown again. */
@@ -1188,17 +1189,18 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** What funding session [intent]'s overlay offers, while it is up. */
     fun fundingOptions(intent: String): FundingOptions? = inner.fundingOptions(intent)
 
+    /**
+     * Why [amount] cannot go ahead in session [intent], if it cannot: more than [spendable] on a withdrawal, then
+     * what every provider's refusal of this amount said, then the amount limits its options show.
+     */
+    fun fundingAmountIssue(intent: String, amount: U128, spendable: U128?): FundingAmountIssue? =
+        inner.fundingAmountIssue(intent, amount, spendable)
+
     /** Funding session [intent]'s latest quote list, while its overlay is up. */
     fun fundingQuotes(intent: String): FundingQuoteList? = inner.fundingQuotes(intent)
 
     /** Every funding session the core holds in full, with its progress now, newest opened first. */
     fun fundingEntries(): List<FundingBookEntry> = inner.fundingEntries()
-
-    /** Replace the funding providers this host offers, each with the Worker manifest it ships for it. */
-    @Throws(HostRejection::class)
-    fun setFundingProviders(providers: List<FundingProviderEntry>) {
-        inner.setFundingProviders(providers)
-    }
 
     /**
      * Offer the providers Remote Config lists by name, then the [bundled] ones it does not name. Call it on every
@@ -1210,12 +1212,28 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     }
 
     /**
-     * Ask every funding provider to price [ask] for session [intent]. The list is read through [fundingQuotes] once
-     * [FundingHostBridge.fundingChanged] says it changed, and is asked for again every minute until the session is handed
-     * to a provider, ends or leaves the overlay, or the host asks for another [ask]. Returns the request id every
-     * list for this ask carries as [FundingQuoteList.requestId]; a host shows only its latest request's.
+     * Ask every provider routing the selected rail to price [amount] for session [intent], on what
+     * [selectFundingOptions] last reported. The list is read through [fundingQuotes] once
+     * [FundingHostBridge.fundingChanged] says it changed, and is asked for again every minute until the session is
+     * handed to a provider, ends or leaves the overlay, or another amount or selection is asked; asking what the
+     * running request prices keeps it. Returns the request id the list carries, `null` while the selection names no
+     * asset or [amount] is zero.
      */
-    fun getFundingQuote(intent: String, ask: FundingQuoteAsk): ULong = inner.getFundingQuote(intent, ask)
+    fun getFundingQuote(intent: String, amount: U128): ULong? = inner.getFundingQuote(intent, amount)
+
+    /**
+     * Start session [intent] on the best quote of request [requestId] once every provider answered it, at once when
+     * they already have. A new quote request, selection, [cancelFundingAutoStart] or a list with no usable quote
+     * disarms it.
+     */
+    fun startFundingWhenQuoted(intent: String, requestId: ULong) {
+        inner.startFundingWhenQuoted(intent, requestId)
+    }
+
+    /** Disarm [startFundingWhenQuoted] for session [intent], as the user leaves its quotes. */
+    fun cancelFundingAutoStart(intent: String) {
+        inner.cancelFundingAutoStart(intent)
+    }
 
     /**
      * Report what the user picked so far in session [intent]'s overlay, whenever it changes. The countries and
@@ -1277,11 +1295,11 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     }
 
     /**
-     * Report the new balance of [purse] (`null` for the main purse), a decimal
-     * string of CASH units, to the products following it.
+     * Push the user's spendable balance, a decimal string of CASH units, while
+     * the core follows it through [BalanceHostBridge.followBalance].
      */
-    fun notifyBalance(purse: UInt?, available: String) {
-        inner.notifyBalance(purse, available)
+    fun notifyBalance(available: String) {
+        inner.notifyBalance(available)
     }
 
     /**
@@ -1421,6 +1439,11 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Report the core database's SQLite version, schema version and file path. */
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
+
+    /** Profile metadata without image bytes. [force] bypasses the core's one-hour cache. */
+    @Throws(PublicProfileException::class)
+    suspend fun resolvePublicProfile(username: String, force: Boolean): PublicProfile =
+        inner.resolvePublicProfile(username, force)
 
     /**
      * The image [reference] names, read from Bulletin by the core and checked against its CID and
