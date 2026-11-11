@@ -53,7 +53,7 @@ class BundledProductsTest {
     private val manifest = """{"${'$'}v":1,"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[]}}}"""
 
     private val files = mapOf(
-        "bundled-products/provider.dot/manifest.json" to """{"${'$'}v":1,"displayName":"Provider","icon":{"cid":"bafyicon"}}""",
+        "bundled-products/provider.dot/manifest.json" to """{"${'$'}v":1,"displayName":"Provider","description":"Card top-ups","icon":{"cid":"bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy","format":"png"}}""",
         "bundled-products/provider.dot/worker-manifest.json" to manifest,
         "bundled-products/provider.dot/worker/index.js" to "export {}",
         "bundled-products/provider.dot/app/index.html" to "<html></html>",
@@ -77,16 +77,23 @@ class BundledProductsTest {
         assertEquals(manifest, products.workerManifest(provider))
         assertTrue(provider.hasWorker && provider.hasApp)
         assertEquals("Provider", provider.displayName)
-        assertEquals("bafyicon", provider.iconCid)
+        assertEquals("bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy", provider.iconCid)
         assertNull(entry("chat.dot")!!.displayName)
-        assertEquals("https://worker.provider.dot/index.js", provider.workerScriptUrl)
     }
 
     @Test
-    fun `includes chat only when the manifest sets it`() {
-        assertTrue(products.includesChat(entry("chat.dot")!!))
-        assertFalse(products.includesChat(entry("quiet.dot")!!))
-        assertFalse(products.includesChat(entry("provider.dot")!!))
+    fun `reads the Worker it ships under its own subname`() {
+        val chat = products.worker(entry("chat.dot")!!).getOrThrow()
+
+        assertEquals("https://worker.chat.dot/index.js", chat.scriptUrl)
+        assertTrue(chat.includesChat)
+        assertFalse(products.worker(entry("quiet.dot")!!).getOrThrow().includesChat)
+    }
+
+    @Test
+    fun `a Worker manifest the parser rejects fails as a published one does`() {
+        // provider.dot's manifest has no appVersion.
+        assertTrue(products.worker(entry("provider.dot")!!).isFailure)
     }
 
     @Test

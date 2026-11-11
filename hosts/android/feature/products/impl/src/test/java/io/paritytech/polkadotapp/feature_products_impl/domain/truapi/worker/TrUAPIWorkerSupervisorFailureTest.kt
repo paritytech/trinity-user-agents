@@ -62,7 +62,6 @@ class TrUAPIWorkerSupervisorFailureTest {
         webViewProviderFactory = webViewProviderFactory,
         bootstrapInstaller = bootstrapInstaller,
         productSources = productSources(bundledProducts(emptyMap())),
-        bundledProducts = bundledProducts(emptyMap()),
         refCounter = Lazy { refCounter },
         navigation = mock(),
         dispatchers = testDispatchers(),
