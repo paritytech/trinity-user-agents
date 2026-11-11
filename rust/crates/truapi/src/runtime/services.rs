@@ -133,9 +133,10 @@ pub struct RuntimeServices {
 	/// installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	nft_ledger: OnceLock<NftLedger>,
-	/// The materials on the device, over the core database, installed with it.
+	/// The materials on the device, over the core database, installed with it,
+	/// and whether the host draws them.
 	#[cfg(not(target_arch = "wasm32"))]
-	materials: OnceLock<Materials>,
+	materials: OnceLock<(Materials, bool)>,
 	/// The secret that opens `Static` NFT cheques, installed with the ledger.
 	#[cfg(not(target_arch = "wasm32"))]
 	static_receive_secret: OnceLock<Arc<dyn StaticReceiveSecret>>,
@@ -498,11 +499,34 @@ impl RuntimeServices {
 		self.durable_engine.get().cloned()
 	}
 
-	/// Install the materials on the device. Set-once, like the database they
-	/// are kept in. Returns whether this call installed them.
+	/// Install the materials on the device, and whether the host draws them.
+	/// Set-once, like the database they are kept in. Returns whether this call
+	/// installed them.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub fn install_materials(&self, materials: Materials) -> bool {
-		self.materials.set(materials).is_ok()
+	pub fn install_materials(&self, materials: Materials, enabled: bool) -> bool {
+		self.materials.set((materials, enabled)).is_ok()
+	}
+
+	/// The materials on the device, and whether the host draws them, once
+	/// installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn materials(&self) -> Option<(Materials, bool)> {
+		self.materials.get().cloned()
+	}
+
+	/// Whether the host draws materials of format `version` requiring
+	/// `features`.
+	pub fn draws_materials(&self, version: u32, features: &[String]) -> bool {
+		#[cfg(not(target_arch = "wasm32"))]
+		{
+			self.materials()
+				.is_some_and(|(_, enabled)| crate::materials::draws(enabled, version, features))
+		}
+		#[cfg(target_arch = "wasm32")]
+		{
+			let _ = (version, features);
+			false
+		}
 	}
 
 	/// Install the NFT ledger. Set-once, like the database it runs on.

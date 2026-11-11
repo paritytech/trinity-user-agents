@@ -53,6 +53,10 @@ pub struct HostRuntimeConfig {
 	/// user added it.
 	#[uniffi(default)]
 	pub pinned_pocket_cards: Vec<PinnedPocketCard>,
+	/// Whether the host draws materials. Off by default, which draws every
+	/// `Materials` node plain and answers no to products that ask.
+	#[uniffi(default)]
+	pub materials_enabled: bool,
 	/// Optional local signing-host secret material (raw BIP-39 entropy).
 	#[uniffi(default)]
 	pub local_session_secret: Option<Vec<u8>>,
@@ -149,7 +153,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 			genesis_hash("bulletin_chain_genesis_hash", &config.bulletin_chain_genesis_hash)?;
 		let asset_hub_chain_genesis_hash =
 			genesis_hash("asset_hub_chain_genesis_hash", &config.asset_hub_chain_genesis_hash)?;
-		let signing = SigningHostConfig::new(
+		let mut signing = SigningHostConfig::new(
 			HostInfo {
 				name: config.host_name,
 				icon: config.host_icon,
@@ -162,6 +166,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 			asset_hub_chain_genesis_hash,
 			config.network_suffix,
 		)?;
+		signing.materials_enabled = config.materials_enabled;
 		Ok(Self {
 			signing,
 			local_session_secret: config.local_session_secret,

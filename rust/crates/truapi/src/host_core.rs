@@ -633,6 +633,7 @@ pub struct SigningHostRuntime {
 	signing_host: Arc<SigningHostRole>,
 	sso_responder: Arc<SsoResponderService>,
 	image_loader: crate::image_loader::ImageLoader,
+	materials_enabled: bool,
 }
 
 impl SigningHostRuntime {
@@ -751,6 +752,7 @@ impl SigningHostRuntime {
                  every cross-product grant not already cached is refused"
 			);
 		}
+		let materials_enabled = config.materials_enabled;
 		let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
 		let sso_responder = SsoResponderService::new(services.clone(), signing_host.clone());
 		Self {
@@ -761,6 +763,7 @@ impl SigningHostRuntime {
 			services,
 			signing_host,
 			sso_responder,
+			materials_enabled,
 		}
 	}
 
@@ -1024,7 +1027,7 @@ impl SigningHostRuntime {
 			);
 			return;
 		};
-		start_materials(&self.services, db.clone());
+		start_materials(&self.services, db.clone(), self.materials_enabled);
 		let signer = Arc::new(Arc::downgrade(&self.signing_host));
 		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer) else {
 			return;
@@ -1110,6 +1113,24 @@ impl SigningHostRuntime {
 		reference: crate::ImageReference,
 	) -> Result<crate::LoadedImage, crate::ImageError> {
 		self.image_loader.load(reference).await
+	}
+
+	/// The plans for `tree` in `context`, its shaders in `language`, filtering
+	/// 32-bit float images themselves unless `float_filterable`. Each node that
+	/// falls back reaches `failures` once. `None` until the core services
+	/// start over a core database.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn material_plan(
+		&self,
+		tree: &truapi::latest::RendererNode,
+		context: &truapi::latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+		failures: Box<dyn Fn(crate::PlanFailure) + Send + Sync>,
+	) -> Option<crate::PlanStream> {
+		let (materials, enabled) = self.services.materials()?;
+		let settings = crate::materials::PlanSettings { enabled, language, float_filterable };
+		Some(materials.plan(tree, context, settings, failures))
 	}
 
 	/// Build a product-facing runtime from this signing host.
@@ -1410,9 +1431,9 @@ impl SigningHostRuntime {
 /// Pocket faces draw and `db` lacks. Does nothing when materials are already
 /// installed.
 #[cfg(not(target_arch = "wasm32"))]
-fn start_materials(services: &Arc<RuntimeServices>, db: crate::store::Db) {
+fn start_materials(services: &Arc<RuntimeServices>, db: crate::store::Db, enabled: bool) {
 	let materials = materials(services, db);
-	if services.install_materials(materials.clone()) {
+	if services.install_materials(materials.clone(), enabled) && enabled {
 		services.spawner.spawn(materials.fetch_saved());
 	}
 }
@@ -1642,6 +1663,8 @@ pub struct ConnectionAdapters {
 	pub permission_grants: Arc<crate::host_internal::permissions::TemporaryPermissions>,
 	pub chat: Arc<ActionChannel<truapi::versioned::chat::HostChatActionSubscribeItem>>,
 	pub renderer: Arc<ActionChannel<truapi::versioned::renderer::HostRendererActionSubscribeItem>>,
+	pub renderer_failures:
+		Arc<ActionChannel<truapi::versioned::renderer::HostRendererFailureSubscribeItem>>,
 	pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
 	pub game_platform: Option<Arc<dyn GamePlatform>>,
 	/// Control of the card face above this connection's Widget, when the host draws one.
@@ -1658,6 +1681,7 @@ impl ConnectionAdapters {
 			permission_grants: Arc::default(),
 			chat: Arc::new(ActionChannel::chat()),
 			renderer: Arc::new(ActionChannel::renderer()),
+			renderer_failures: Arc::new(ActionChannel::renderer_failures()),
 			pocket_platform: services.pocket_platform(),
 			expanded_card: None,
 			game_platform: services.game_platform(),

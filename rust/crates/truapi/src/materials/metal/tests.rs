@@ -177,3 +177,25 @@ fn names_only_naga_reserves_translate() {
 		"// @material 1\nvec4 material(vec2 uv) {\n  float sampler = uv.x;\n  float texture2D = uv.y;\n  return vec4(sampler, texture2D, 0.0, 1.0);\n}\n"
 	));
 }
+
+/// Apple's compiler runs only on macOS, so CI writes every Metal shader the
+/// core builds into `TRUAPI_METAL_OUT` for a macOS job to compile with it.
+/// Without the variable, nothing is written.
+#[test]
+fn every_metal_shader_is_written_for_apples_compiler() {
+	let Some(directory) = std::env::var_os("TRUAPI_METAL_OUT") else {
+		return;
+	};
+	std::fs::create_dir_all(&directory).unwrap();
+	let compiled: Compiled = serde_json::from_str(COMPILED).unwrap();
+	for (index, case) in compiled.cases.iter().enumerate() {
+		let material = read_material(case.text.as_bytes()).unwrap();
+		for float_filterable in [true, false] {
+			let shader = material.shader(ShaderLanguage::Metal, float_filterable).unwrap();
+			for (stage, source) in [("vertex", &shader.vertex), ("fragment", &shader.fragment)] {
+				let name = format!("{index}-{float_filterable}-{stage}.metal");
+				std::fs::write(std::path::Path::new(&directory).join(name), source).unwrap();
+			}
+		}
+	}
+}

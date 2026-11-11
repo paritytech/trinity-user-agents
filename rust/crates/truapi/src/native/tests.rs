@@ -533,6 +533,7 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		// OS to clean so the fixture can stay a plain value.
 		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
 		pinned_pocket_cards: Vec::new(),
+		materials_enabled: false,
 		local_session_secret: Some(vec![7; 32]),
 		local_session_lite_username: Some("alice".to_string()),
 	}

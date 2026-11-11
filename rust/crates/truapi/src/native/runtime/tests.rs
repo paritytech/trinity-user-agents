@@ -227,6 +227,102 @@ fn a_renderer_action_reaches_the_product_that_rendered_it() {
 	assert!(admin.product_runtime().connection().recently_tapped());
 }
 
+struct Plans(std::sync::Mutex<Vec<crate::MaterialPlan>>);
+
+impl crate::NativeMaterialPlanObserver for Plans {
+	fn on_plan(&self, plan: crate::MaterialPlan) {
+		self.0.lock().unwrap().push(plan);
+	}
+}
+
+/// The next item, failing the test rather than hanging when none comes.
+fn next_within_seconds<S: futures::Stream + Unpin>(stream: &mut S) -> Option<S::Item> {
+	let timeout = futures_timer::Delay::new(std::time::Duration::from_secs(2));
+	match futures::executor::block_on(futures::future::select(stream.next(), timeout)) {
+		futures::future::Either::Left((item, _)) => item,
+		futures::future::Either::Right(_) => panic!("nothing came"),
+	}
+}
+
+fn materials_host() -> Arc<NativeTrUApiHostRuntime> {
+	let mut config = native_host_runtime_config();
+	config.materials_enabled = true;
+	NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+		.expect("host runtime config should be valid")
+}
+
+/// A material node that falls back in a body a product rendered is the
+/// product's to hear about: the plan on its execution reports it through the
+/// product's failure stream. A report is not one of the user's taps.
+#[test]
+fn a_material_node_that_falls_back_reaches_the_product_that_rendered_it() {
+	let host = materials_host();
+	let execution = host
+		.open_product_execution(
+			Arc::new(EventCallbacks::new()),
+			None,
+			None,
+			native_execution_config("cards.dot", ExecutableKind::Worker),
+		)
+		.expect("Worker execution should open");
+	let admin = execution.admin();
+	let mut failures = futures::executor::block_on(truapi::api::Renderer::failure_subscribe(
+		admin.product_runtime().as_ref(),
+		&truapi::CallContext::with_request_id("failures-1".to_string()),
+		truapi::versioned::renderer::HostRendererFailureSubscribeRequest::V1,
+	));
+	let context = v01::RenderContext::PocketCard { card_id: "stamps".to_string() };
+	let over_the_layer_limit = (0..17)
+		.map(|_| v01::MaterialInstance { material: [7; 32], args: Vec::new() })
+		.collect();
+	let tree = v01::RendererNode::Materials {
+		props: v01::MaterialsProps { layers: over_the_layer_limit },
+		children: Vec::new(),
+	};
+
+	let plans = Box::new(Plans(std::sync::Mutex::new(Vec::new())));
+	let _plan = execution.observe_material_plan(tree, context.clone(), true, plans);
+	let delivered = next_within_seconds(&mut failures)
+		.expect("a failure report")
+		.expect("a failure item")
+		.into_latest();
+
+	assert_eq!(
+		delivered,
+		v01::HostRendererFailureSubscribeItem {
+			context,
+			node: 0,
+			material: None,
+			reason: v01::MaterialFailure::LimitExceeded,
+		}
+	);
+	assert!(!admin.product_runtime().connection().recently_tapped());
+}
+
+/// A shut execution's products hear of no more failures.
+#[test]
+fn shutting_an_execution_down_closes_its_failure_stream() {
+	let host = materials_host();
+	let execution = host
+		.open_product_execution(
+			Arc::new(EventCallbacks::new()),
+			None,
+			None,
+			native_execution_config("cards.dot", ExecutableKind::Worker),
+		)
+		.expect("Worker execution should open");
+	let admin = execution.admin();
+
+	execution.shutdown();
+	let mut failures = futures::executor::block_on(truapi::api::Renderer::failure_subscribe(
+		admin.product_runtime().as_ref(),
+		&truapi::CallContext::with_request_id("failures-2".to_string()),
+		truapi::versioned::renderer::HostRendererFailureSubscribeRequest::V1,
+	));
+
+	assert!(matches!(next_within_seconds(&mut failures), Some(Err(_))));
+}
+
 #[test]
 fn an_expanded_card_face_request_reaches_only_the_execution_that_made_it() {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(

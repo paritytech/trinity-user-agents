@@ -122,6 +122,8 @@ pub struct SigningHostConfig {
 	/// ring-VRF keys. Must match the People chain's
 	/// `NetworkSuffix.NetworkSuffix` value used for proof contexts.
 	pub network_suffix: String,
+	/// Whether the host draws materials. Off by default: `new` leaves it off.
+	pub materials_enabled: bool,
 }
 
 /// Product identity attached to one product-facing TrUAPI connection.
@@ -262,6 +264,7 @@ impl SigningHostConfig {
 			bulletin_chain_genesis_hash,
 			asset_hub_chain_genesis_hash,
 			network_suffix,
+			materials_enabled: false,
 		})
 	}
 }

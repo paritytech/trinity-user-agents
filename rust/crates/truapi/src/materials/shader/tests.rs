@@ -204,3 +204,47 @@ fn every_uniform_and_texture_says_what_fills_it() {
 	);
 	assert_eq!((shader.vertex_block_size, shader.fragment_block_size), (16, 128));
 }
+
+/// A compiler named `program`, or `None` when it is not installed. Where
+/// `required` is set, as in CI, a missing compiler fails the test instead.
+pub fn installed_compiler(program: &str, required: &str) -> Option<std::process::Command> {
+	let installed = std::process::Command::new(program).arg("--version").output().is_ok();
+	assert!(
+		installed || std::env::var_os(required).is_none(),
+		"{required} is set but {program} is missing"
+	);
+	installed.then(|| std::process::Command::new(program))
+}
+
+/// The device's driver decides in the end, but Khronos's reference compiler
+/// refuses what no conformant GLSL ES 3.00 driver accepts, so every Android
+/// shader the core builds must pass it.
+#[test]
+fn every_android_shader_compiles_with_the_reference_compiler() {
+	if installed_compiler("glslangValidator", "REQUIRE_GLSLANG").is_none() {
+		return;
+	}
+	let compiled: Compiled = serde_json::from_str(COMPILED).unwrap();
+	let directory = tempfile::tempdir().unwrap();
+	for (index, case) in compiled.cases.iter().enumerate() {
+		let material = material(&case.text);
+		for float_filterable in [true, false] {
+			let shader = material.shader(ShaderLanguage::GlslEs, float_filterable).unwrap();
+			for (stage, source) in [("vert", &shader.vertex), ("frag", &shader.fragment)] {
+				let path = directory.path().join(format!("{index}-{float_filterable}.{stage}"));
+				std::fs::write(&path, source).unwrap();
+				let output = installed_compiler("glslangValidator", "REQUIRE_GLSLANG")
+					.unwrap()
+					.arg(&path)
+					.output()
+					.unwrap();
+				assert!(
+					output.status.success(),
+					"{} {stage} (float filterable: {float_filterable}):\n{}",
+					case.name,
+					String::from_utf8_lossy(&output.stdout)
+				);
+			}
+		}
+	}
+}

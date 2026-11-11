@@ -27,8 +27,9 @@ rust/crates/
                          `materials` module keeps the materials renderer trees name
                          in the same database, read from Bulletin by its
                          `bulletin_lookup` module, checked against Shaderlab's
-                         material format and the tree limits, and built into the
-                         shaders apps compile (GLSL ES, and Metal through naga)
+                         material format and the tree limits, built into the
+                         shaders apps compile (GLSL ES, and Metal through naga),
+                         and planned per tree for the apps to draw
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
                          also links the truapi crate to emit the core marker
                          table as TypeScript, which rustdoc JSON does not carry

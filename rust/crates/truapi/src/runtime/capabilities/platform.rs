@@ -93,9 +93,14 @@ impl System for ProductRuntimeHost {
 	) -> Result<HostFeatureSupportedResponse, CallError<HostFeatureSupportedError>> {
 		version(request)
 			.exec(|inner| async move {
-				feature_supported(self.connection.platform.as_ref(), inner)
-					.await
-					.map_err(CallError::Domain)
+				let services = &self.connection.services;
+				feature_supported(
+					self.connection.platform.as_ref(),
+					|version, features| services.draws_materials(version, features),
+					inner,
+				)
+				.await
+				.map_err(CallError::Domain)
 			})
 			.await
 	}

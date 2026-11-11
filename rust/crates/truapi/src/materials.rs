@@ -31,6 +31,17 @@ use rusqlite::{OptionalExtension, Transaction};
 use truapi::latest::{MaterialFailure, MaterialsProps, RendererNode};
 
 use self::format::read_material;
+pub use self::{
+	noise::noise_image,
+	plan::{
+		MaterialPlan, NodePlan, PlanFailure, PlanReporter, PlanSettings, PlanStream, PlannedLayer,
+		check_material_image,
+	},
+	shader::{
+		MaterialShader, ShaderLanguage, Stage, Texture, TextureRole, Uniform, UniformKind,
+		UniformRole,
+	},
+};
 use crate::{
 	host_internal::bulletin::preimage_key,
 	platform::PreimageHost,
@@ -39,6 +50,15 @@ use crate::{
 	store::{Db, DbError},
 	time::Timer,
 };
+
+/// Whether a host with materials `enabled` draws materials of format
+/// `version` requiring `features`: the format version this core reads, and
+/// only features it reads (none, in version 1).
+pub fn draws(enabled: bool, version: u32, features: &[String]) -> bool {
+	enabled &&
+		version == format::FORMAT_VERSION &&
+		features.iter().all(|feature| format::FEATURES.contains(&feature.as_str()))
+}
 
 /// Largest material the format allows.
 const MAX_MATERIAL_BYTES: usize = 64 * 1024;
@@ -59,6 +79,7 @@ struct Shared {
 	timer: Arc<dyn Timer>,
 	spawner: Spawner,
 	fetches: Mutex<HashMap<[u8; 32], Fetch>>,
+	shaders: Mutex<plan::ShaderCache>,
 }
 
 /// One fetch in flight, and the callers it answers.
@@ -77,7 +98,14 @@ impl Materials {
 		timer: Arc<dyn Timer>,
 		spawner: Spawner,
 	) -> Self {
-		Self(Arc::new(Shared { db, lookup, timer, spawner, fetches: Mutex::default() }))
+		Self(Arc::new(Shared {
+			db,
+			lookup,
+			timer,
+			spawner,
+			fetches: Mutex::default(),
+			shaders: Mutex::default(),
+		}))
 	}
 
 	/// The text of material `id` once it is on the device, then the end.
@@ -336,17 +364,15 @@ const NEWEST_FIRST: &str = "SELECT id, length(text) FROM material ORDER BY rowid
 
 const DELETE: &str = "DELETE FROM material WHERE id = ?1";
 
-#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
 mod format;
 mod glsl;
-#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
 mod limits;
-#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
 mod metal;
-#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
 mod noise;
-#[cfg_attr(not(test), expect(dead_code, reason = "the plan per tree, still to come, calls these"))]
+mod plan;
 mod shader;
 
+#[cfg(test)]
+mod testing;
 #[cfg(test)]
 mod tests;

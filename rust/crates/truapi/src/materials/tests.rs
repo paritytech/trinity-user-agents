@@ -1,99 +1,23 @@
-use std::{
-	collections::HashMap,
-	sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use futures::{
 	FutureExt, StreamExt,
-	channel::mpsc::{UnboundedSender, unbounded},
 	executor::{LocalPool, block_on},
 	future::BoxFuture,
-	stream::BoxStream,
 	task::SpawnExt,
 };
-use truapi::latest::{
-	BoxProps, GenericError, MaterialFailure, MaterialInstance, MaterialsProps, RendererNode,
-};
+use truapi::latest::{BoxProps, MaterialFailure, MaterialInstance, MaterialsProps, RendererNode};
 
-use super::*;
+use super::{
+	testing::{Device, next},
+	*,
+};
 use crate::{
-	host_internal::bulletin::preimage_key,
-	platform::{PreimageHost, ProductId},
-	pocket_cards::PocketCards,
-	spawner::Spawner,
-	store::{Db, open_temporary_core_db},
-	test_support::wait_until,
-	time::ManualTimer,
+	host_internal::bulletin::preimage_key, platform::ProductId, pocket_cards::PocketCards,
+	spawner::Spawner, store::open_temporary_core_db, test_support::wait_until,
 };
-
-type Answer = Result<Option<Vec<u8>>, GenericError>;
-
-/// Bulletin as the test answers it: each lookup waits until the test pushes an
-/// answer for its ID, as the real lookup waits on a miss.
-#[derive(Default)]
-struct FakeBulletin {
-	lookups: Mutex<HashMap<[u8; 32], Vec<UnboundedSender<Answer>>>>,
-}
-
-impl FakeBulletin {
-	fn answer(&self, id: [u8; 32], value: Vec<u8>) {
-		for lookup in self.lookups.lock().unwrap().entry(id).or_default() {
-			let _ = lookup.unbounded_send(Ok(Some(value.clone())));
-		}
-	}
-
-	fn end(&self, id: [u8; 32]) {
-		self.lookups.lock().unwrap().entry(id).or_default().clear();
-	}
-
-	fn lookups(&self, id: [u8; 32]) -> usize {
-		self.lookups.lock().unwrap().get(&id).map_or(0, Vec::len)
-	}
-
-	fn open_lookups(&self, id: [u8; 32]) -> usize {
-		let lookups = self.lookups.lock().unwrap();
-		lookups
-			.get(&id)
-			.map_or(0, |open| open.iter().filter(|lookup| !lookup.is_closed()).count())
-	}
-}
-
-impl PreimageHost for FakeBulletin {
-	fn lookup_preimage(&self, key: [u8; 32]) -> BoxStream<'static, Answer> {
-		let (answers, lookup) = unbounded();
-		self.lookups.lock().unwrap().entry(key).or_default().push(answers);
-		lookup.boxed()
-	}
-}
-
-struct Device {
-	materials: Materials,
-	bulletin: Arc<FakeBulletin>,
-	timer: Arc<ManualTimer>,
-	db: Db,
-}
 
 impl Device {
-	fn over(db: Db) -> Self {
-		Self::with_spawner(db, Spawner::for_test())
-	}
-
-	fn with_spawner(db: Db, spawner: Spawner) -> Self {
-		let bulletin = Arc::new(FakeBulletin::default());
-		let timer = Arc::new(ManualTimer::default());
-		let materials = Materials::new(db.clone(), bulletin.clone(), timer.clone(), spawner);
-		Self { materials, bulletin, timer, db }
-	}
-
-	/// Fetches `text` through Bulletin and waits until it is kept.
-	fn keep(&self, text: &[u8]) {
-		let id = preimage_key(text);
-		let mut answers = self.materials.observe(id);
-		wait_until(|| self.bulletin.lookups(id) == 1, "the material is looked up");
-		self.bulletin.answer(id, text.to_vec());
-		assert_eq!(next(&mut answers), Some(Ok(text.to_vec())));
-	}
-
 	fn kept_ids(&self) -> Vec<[u8; 32]> {
 		block_on(self.db.read(|conn| {
 			let mut ids = conn.prepare("SELECT id FROM material ORDER BY rowid")?;
@@ -120,22 +44,6 @@ impl Device {
 		let cards = block_on(PocketCards::open(self.db.clone(), Vec::new())).unwrap();
 		let product = ProductId::for_test("loyalty.dot");
 		block_on(cards.add(product, "stamps".to_string(), "Card".to_string(), face)).unwrap();
-	}
-
-	fn pass_the_deadline(&self) {
-		wait_until(|| self.timer.sleeps() > 0, "the deadline is set");
-		self.timer.advance(FETCH_DEADLINE);
-	}
-}
-
-/// The next answer, failing the test rather than hanging when none comes.
-fn next(
-	answers: &mut BoxStream<'static, Result<Vec<u8>, MaterialFailure>>,
-) -> Option<Result<Vec<u8>, MaterialFailure>> {
-	let timeout = futures_timer::Delay::new(std::time::Duration::from_secs(2));
-	match block_on(futures::future::select(answers.next(), timeout)) {
-		futures::future::Either::Left((answer, _)) => answer,
-		futures::future::Either::Right(_) => panic!("no answer came"),
 	}
 }
 
@@ -385,4 +293,16 @@ fn the_start_up_fetch_gives_up_at_the_deadline() {
 	device.pass_the_deadline();
 
 	wait_until(|| device.bulletin.open_lookups(id) == 0, "the lookup is dropped");
+}
+
+/// A product asks before sending materials, so the answer is yes only for what
+/// this host reads, and never with materials off.
+#[test]
+fn a_host_draws_only_the_format_it_reads_and_only_when_on() {
+	let features = |names: &[&str]| names.iter().map(|name| name.to_string()).collect::<Vec<_>>();
+
+	assert!(draws(true, 1, &[]));
+	assert!(!draws(false, 1, &[]), "materials off");
+	assert!(!draws(true, 2, &[]), "a newer format version");
+	assert!(!draws(true, 1, &features(&["sl-pressure"])), "a feature version 1 does not define");
 }
