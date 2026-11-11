@@ -48,11 +48,12 @@ struct ProductNotificationSchedulerTests {
         expectedProductNotificationHostEvent("gone", productId: Self.product, id: id)
     }
 
-    private func notScheduled(_ id: UInt32?, reason: String) -> HostEvent {
+    private func notScheduled(_ id: UInt32?, reason: String, level: HostLogLevel = .error) -> HostEvent {
         expectedProductNotificationHostEvent(
             "not_scheduled",
             productId: Self.product,
             id: id,
+            level: level,
             tags: ["product_notification.reason": reason]
         )
     }
@@ -111,7 +112,7 @@ struct ProductNotificationSchedulerTests {
         }
 
         #expect(error?.localizedDescription == ProductNativeApiError.scheduleLimitReached.localizedDescription)
-        #expect(recorder.events == ids.map(scheduled) + [notScheduled(nil, reason: "limit_reached")])
+        #expect(recorder.events == ids.map(scheduled) + [notScheduled(nil, reason: "limit_reached", level: .info)])
     }
 
     @Test func cancelRecordsCancelled() async throws {

@@ -46,6 +46,7 @@ struct ProductNotificationSchedulerSweepTests {
             "not_scheduled",
             productId: Self.product,
             id: id,
+            level: .error,
             tags: ["product_notification.reason": "store_failed"]
         )
     }

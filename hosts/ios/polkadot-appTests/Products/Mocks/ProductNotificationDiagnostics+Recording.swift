@@ -19,6 +19,7 @@ func expectedProductNotificationHostEvent(
     productId: String,
     id: UInt32?,
     deliveredAt: Date? = nil,
+    level: HostLogLevel = .info,
     tags: [String: String] = [:]
 ) -> HostEvent {
     var expectedTags = [
@@ -41,6 +42,7 @@ func expectedProductNotificationHostEvent(
 
     return HostEvent(
         name: "host.product_notification.\(step)",
+        level: level,
         tags: expectedTags.merging(tags) { _, new in new },
         extras: extras
     )

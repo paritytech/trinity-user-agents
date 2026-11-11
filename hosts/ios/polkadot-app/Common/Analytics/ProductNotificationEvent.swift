@@ -100,6 +100,7 @@ struct ProductNotificationEvent: Equatable {
             name: "host.product_notification.\(step.rawValue)",
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
+            level: reason == .addFailed || reason == .storeFailed ? .error : .info,
             tags: tags,
             extras: extras
         )

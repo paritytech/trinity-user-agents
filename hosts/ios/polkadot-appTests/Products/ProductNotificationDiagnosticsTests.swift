@@ -30,9 +30,17 @@ struct ProductNotificationDiagnosticsTests {
         productId: String,
         id: UInt32? = 42,
         deliveredAt: Date? = nil,
+        level: HostLogLevel = .info,
         tags: [String: String] = [:]
     ) -> HostEvent {
-        expectedProductNotificationHostEvent(step, productId: productId, id: id, deliveredAt: deliveredAt, tags: tags)
+        expectedProductNotificationHostEvent(
+            step,
+            productId: productId,
+            id: id,
+            deliveredAt: deliveredAt,
+            level: level,
+            tags: tags
+        )
     }
 
     @Test func shownThenTappedNamesOnlyTheProductNotItsDeeplinkOrText() {
@@ -95,12 +103,17 @@ struct ProductNotificationDiagnosticsTests {
         (ProductNotificationEvent.Reason.addFailed, "add_failed"),
         (.storeFailed, "store_failed")
     ])
-    func aFailedHandOverCarriesTheBookingIdAndReason(reason: ProductNotificationEvent.Reason, tag: String) {
+    func aFailedHandOverIsAnErrorCarryingTheBookingIdAndReason(reason: ProductNotificationEvent.Reason, tag: String) {
         diagnostics.notScheduled(productId: productId, notificationId: 42, reason: reason)
 
         #expect(
             recorder.events == [
-                expectedEvent("not_scheduled", productId: "example.dot", tags: ["product_notification.reason": tag])
+                expectedEvent(
+                    "not_scheduled",
+                    productId: "example.dot",
+                    level: .error,
+                    tags: ["product_notification.reason": tag]
+                )
             ]
         )
     }
