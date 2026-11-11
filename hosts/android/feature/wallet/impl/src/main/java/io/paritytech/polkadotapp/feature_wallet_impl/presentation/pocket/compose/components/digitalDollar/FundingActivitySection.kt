@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.design.components.bottomsheet.NovaModalBottomSheet
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
@@ -44,10 +45,11 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatFiatSigned
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityRowUi
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingActivityUiState
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingAmountTone
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingMoment
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowIcon
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowOutcome
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingRowSubtitle
@@ -229,7 +231,7 @@ fun FundingActivityRow(row: FundingActivityRowUi, onClick: () -> Unit, modifier:
                 ) {
                     RowGlyph(row.icon)
                     NovaText(
-                        text = row.amount.orEmpty(),
+                        text = row.amount?.let { it.sign + LocalTokenAmountFormatter.current.formatFiatSigned(it.value, withSymbol = true) }.orEmpty(),
                         style = PolkadotTheme.typography.body.mediumEmphasized,
                         color = when (row.amountTone) {
                             FundingAmountTone.SUCCESS -> PolkadotTheme.colors.fg.success
@@ -317,7 +319,7 @@ private fun subtitle(subtitle: FundingRowSubtitle): String = when (subtitle) {
     }
 
     is FundingRowSubtitle.Ended -> {
-        val moment = moment(subtitle.moment)
+        val moment = LocalTimeFormatter.current.formatDayAndTime(subtitle.at.toEpochMilliseconds(), System.currentTimeMillis())
         when (subtitle.outcome) {
             FundingRowOutcome.MOVED -> moment
             FundingRowOutcome.REFUNDED -> outcomeAt(RCommon.string.funding_activity_refunded, moment)
@@ -332,14 +334,6 @@ private fun subtitle(subtitle: FundingRowSubtitle): String = when (subtitle) {
 @Composable
 private fun outcomeAt(outcome: Int, moment: String): String =
     stringResource(RCommon.string.funding_activity_subtitle, stringResource(outcome), moment)
-
-@Composable
-private fun moment(moment: FundingMoment): String = when (moment) {
-    is FundingMoment.TodayAt -> stringResource(RCommon.string.funding_date_today_at, moment.time)
-    is FundingMoment.YesterdayAt -> stringResource(RCommon.string.funding_date_yesterday_at, moment.time)
-    is FundingMoment.DayAt -> stringResource(RCommon.string.funding_date_day_at, moment.day, moment.time)
-    is FundingMoment.Date -> moment.text
-}
 
 private fun FundingRailType.textRes(): Int = when (this) {
     FundingRailType.CARD -> RCommon.string.funding_rail_card

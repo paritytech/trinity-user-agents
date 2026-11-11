@@ -1078,9 +1078,9 @@
     <string name="funding_new_top_up">New top-up</string>
     <string name="funding_send_money_out">Send money out</string>
     <string name="funding_activity_subtitle">%1$s · %2$s</string>
-    <string name="funding_date_today_at">Today at %1$s</string>
-    <string name="funding_date_yesterday_at">Yesterday at %1$s</string>
-    <string name="funding_date_day_at">%1$s at %2$s</string>
+    <string name="common_date_today_at">Today at %1$s</string>
+    <string name="common_date_yesterday_at">Yesterday at %1$s</string>
+    <string name="common_date_day_at">%1$s at %2$s</string>
     <string name="funding_rail_bank">Bank</string>
     <string name="funding_rail_card">Card</string>
     <string name="funding_rail_crypto">Crypto</string>
