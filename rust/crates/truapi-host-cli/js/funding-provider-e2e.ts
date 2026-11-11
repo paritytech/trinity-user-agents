@@ -391,9 +391,9 @@ export class ScriptedProvider {
     return this.step(intent, "settle_cancel", async () => {
       await report(client, intent, {
         tag: "Failed",
-        value: { reason: { tag: "Cancelled" } },
+        value: { reason: { tag: "Refunded" } },
       });
-      return "ended the session as cancelled";
+      return "returned the payment less the fee";
     });
   }
 
@@ -940,10 +940,10 @@ export async function runProviderStart(
       throw new Error(`the provider heard ${stringify(settled)}`);
     }
     const last = await lastStatus(client, intent);
-    if (last?.tag !== "Failed" || last.value.reason.tag !== "Cancelled") {
+    if (last?.tag !== "Failed" || last.value.reason.tag !== "Refunded") {
       throw new Error(`ended as ${stringify(last)}`);
     }
-    return "after the payment arrived, the provider offered terms, the user accepted them and the provider settled the cancel";
+    return "after the payment arrived, the provider offered terms, the user accepted them and the provider refunded the payment";
   });
 
   await check("provider_cancel_too_late", async () => {
