@@ -230,7 +230,7 @@ private extension SSOTruAPICoordinator {
                 return entry
             }
             do {
-                let entry = Peer(host: host, service: try makeService())
+                let entry = try Peer(host: host, service: makeService())
                 peersByAccountId[peer.accountId] = entry
                 return entry
             } catch {
