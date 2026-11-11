@@ -40,7 +40,7 @@ File-by-file code review. For each rule violated, note severity (blocking/major/
 - [ ] UIHostingController pattern for SwiftUI views
 - [ ] @Observable ViewModels (not @StateObject/Combine)
 - [ ] SwiftUI color shorthand (`.fgPrimary` not `Color(.fgPrimary)`)
-- [ ] Opacity/crossfade transitions for visual state changes
+- [ ] Opacity/crossfade transitions for visual state changes (not for a Tab switch, which is instant like the system tab bar)
 - [ ] Design system tokens for colors/spacing/typography
 - [ ] Missing DS values discussed with design team (not just TODO)
 - [ ] No light mode code (dark mode enforced)
