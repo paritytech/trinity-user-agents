@@ -1,3 +1,5 @@
+mod public_profile;
+
 use super::*;
 use crate::{
 	PairedSsoPeer,

@@ -14,12 +14,13 @@ use crate::{
 		ProductContext, ProductId,
 	},
 };
+use futures::StreamExt;
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
 
 use super::{
 	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
-	public_profile::{NativePublicProfileObserver, observe_public_profile},
+	public_profile::NativePublicProfileObserver,
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
@@ -898,11 +899,16 @@ impl NativeTrUApiHostRuntime {
 		options: PublicProfileResolutionOptions,
 		observer: Arc<dyn NativePublicProfileObserver>,
 	) -> Arc<NativeSubscription> {
-		observe_public_profile(
-			self.runtime.observe_public_profile(&username, options),
-			observer,
-			&self.spawner,
-		)
+		let mut stream = self.runtime.observe_public_profile(&username, options);
+		self.spawner.spawn_observation(async move {
+			while let Some(item) = stream.next().await {
+				match item {
+					Ok(profile) => observer.on_profile(profile),
+					Err(error) => return observer.on_error(error),
+				}
+			}
+			observer.on_complete();
+		})
 	}
 
 	/// The image `reference` names, read from Bulletin over the core's own connection and

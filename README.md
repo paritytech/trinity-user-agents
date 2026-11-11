@@ -451,7 +451,8 @@ second and final value; an unchanged result renews freshness without another
 emission when a stored value was emitted. If a stale value was skipped, the
 resolved value is emitted even when unchanged. SQLite retains up to 1,000 records by last use, independently of
 freshness. The returned avatar CID selects the host's image cache; only a miss
-needs `loadImage`. The Rust WASM resolver reads the chain and emits one value.
+needs `loadImage`. A native subscription owns callback delivery and cancels its
+resolution when cancelled or dropped. The Rust WASM resolver reads the chain and emits one value.
 
 The Kotlin SDK's `observePublicProfile(username, options)` returns an ordered,
 finite `Flow<PublicProfile>` with cancellation and typed terminal errors. Callers
