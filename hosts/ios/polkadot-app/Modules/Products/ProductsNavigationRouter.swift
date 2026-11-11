@@ -56,6 +56,16 @@ final class ProductsNavigationRouter: ProductsNavigationRouting, WebPresentable 
             _ = await UIApplication.shared.open(url)
         }
     }
+
+    // No isReady guard: a worker with no chat on screen has no presentation view, and the system settings need none.
+    func openNotificationSettings() async throws {
+        guard
+            let url = URL(string: UIApplication.openNotificationSettingsURLString),
+            await UIApplication.shared.open(url)
+        else {
+            throw ProductNativeApiError.navigationForbidden
+        }
+    }
 }
 
 @MainActor
@@ -76,6 +86,10 @@ final class ForbiddenNavigationRouter: ProductsNavigationRouting {
     }
 
     func openExternalURL(_: URL) async throws {
+        throw ProductNativeApiError.navigationForbidden
+    }
+
+    func openNotificationSettings() async throws {
         throw ProductNativeApiError.navigationForbidden
     }
 }

@@ -61,9 +61,10 @@ use crate::SigningHostRuntime;
 use crate::{PairingProposal, ProductId, ProductIdError, host_logic::dotns};
 
 /// Classify a navigation input exactly like the core's internal navigate host
-/// call: the Pocket deeplink first, then dotNS, then `localhost`, then
-/// normalized external, with everything else rejected. Pure and stateless;
-/// hosts call it on every webview-internal navigation.
+/// call: the Pocket deeplink first, then the notification settings link, then
+/// dotNS, then `localhost`, then normalized external, with everything else
+/// rejected. Pure and stateless. Hosts call it on every webview-internal
+/// navigation.
 #[uniffi::export]
 pub fn parse_navigate(input: String) -> NavigateDecision {
 	dotns::parse_navigate(&input)

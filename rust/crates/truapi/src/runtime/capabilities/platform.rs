@@ -135,12 +135,14 @@ impl System for ProductRuntimeHost {
 					},
 					// dotNS, localhost and a host-handled Pocket target all resolve
 					// back into the host's own product surface, which is already gated
-					// by the product sandbox. None reaches an arbitrary internet host,
-					// so none consumes a grant.
+					// by the product sandbox, and the notification settings are a page
+					// the operating system keeps for the host. None reaches an arbitrary
+					// internet host, so none consumes a grant.
 					NavigateDecision::DotName { canonical_url, .. } |
 					NavigateDecision::Localhost { canonical_url, .. } |
 					NavigateDecision::Pocket { canonical_url, .. } |
-					NavigateDecision::PocketCollection { canonical_url, .. } => canonical_url,
+					NavigateDecision::PocketCollection { canonical_url, .. } |
+					NavigateDecision::NotificationSettings { canonical_url } => canonical_url,
 					NavigateDecision::External { url } => {
 						let status = self
 							.connection
