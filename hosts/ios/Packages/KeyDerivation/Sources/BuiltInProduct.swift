@@ -22,17 +22,13 @@ public enum BuiltInProduct {
         try productIdFromName(name: "fund", networkSuffix: tld)
     }
 
-    /// Public light person identity.
-    public static func uid(for tld: String) throws -> ProductId {
-        try productIdFromName(name: "uid", networkSuffix: tld)
-    }
-
     /// Chat — per-chat statement and upload accounts.
     public static func chat(for tld: String) throws -> ProductId {
         try productIdFromName(name: "chat", networkSuffix: tld)
     }
 
-    /// Personhood — ring-VRF key domain for full/light person keys.
+    /// Personhood — ring-VRF key domain for full/light person keys; account 0 is the main
+    /// account (RFC-0028).
     public static func personhood(for tld: String) throws -> ProductId {
         try productIdFromName(name: "peopl", networkSuffix: tld)
     }

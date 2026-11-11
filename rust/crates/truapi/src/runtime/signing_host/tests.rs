@@ -24,6 +24,7 @@ use super::{
 	ring_vrf::{MemberCandidate, ResolvedRing, RingResolver},
 };
 use crate::{
+	Spawner,
 	host_internal::{
 		extrinsic::tests::split_v4,
 		sso_messages::{ProductRequest, RingVrfError},
@@ -37,7 +38,7 @@ use crate::{
 		CoreStorageKey, HostInfo, Platform, PlatformInfo, ProductContext, ProductId,
 		SigningHostConfig,
 	},
-	test_support::{StubPlatform, test_spawner},
+	test_support::StubPlatform,
 };
 use truapi::{
 	CallContext, CallError,
@@ -178,7 +179,7 @@ fn signing_runtime_on_asset_hub(
 		config.people_chain_genesis_hash,
 		config.bulletin_chain_genesis_hash,
 		config.asset_hub_chain_genesis_hash,
-		test_spawner(),
+		Spawner::for_test(),
 	);
 	let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
 	(services, signing_host)
@@ -1811,14 +1812,14 @@ fn cross_product_alias_reuses_persisted_account_access_grant() {
 }
 
 #[test]
-fn local_activation_exposes_the_uid_dot_identity_account() {
+fn local_activation_exposes_the_peopl_dot_identity_account() {
 	let (_services, authority) = signing_runtime();
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 
 	let session = authority.current_session().expect("active session");
 	let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX)
-		.expect("uid.dot identity derivation")
+		.expect("peopl.dot identity derivation")
 		.public
 		.to_bytes();
 	assert_eq!(session.identity_account_id, Some(identity));
@@ -2250,7 +2251,7 @@ fn sign_payload_product_and_legacy_use_the_substrate_preimage() {
 }
 
 #[test]
-fn sign_raw_legacy_accepts_only_the_uid_dot_identity_key() {
+fn sign_raw_legacy_accepts_only_the_peopl_dot_identity_key() {
 	let (_services, authority) = signing_runtime();
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");

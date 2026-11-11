@@ -7,7 +7,7 @@ use std::sync::Arc;
 use subxt::utils::H256;
 use subxt_rpcs::RpcClient;
 
-use super::{start_statement_watch_over, submit_sso};
+use super::{StatementSubmitError, start_statement_watch_over, submit_sso};
 use crate::{
 	chain::{ExtrinsicService, FixedExtensionVersions, tokio_spawner},
 	host_logic::{
@@ -65,7 +65,7 @@ impl LivePeopleStatements {
 
 	/// Submits `statement`, retrying while its signer's allowance is not
 	/// visible yet.
-	pub async fn publish(&self, statement: Vec<u8>) -> Result<(), String> {
+	pub async fn publish(&self, statement: &[u8]) -> Result<(), StatementSubmitError> {
 		submit_sso(&self.rpc_client(), statement, "live statement").await
 	}
 

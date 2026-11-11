@@ -71,7 +71,7 @@ async fn a_payment_inbox_receives_a_cheque_published_on_the_live_chain() {
 	};
 	let statement = signed_inbox_statement(&signer, listen.statement_topic, &cheque);
 
-	statements.publish(statement).await.unwrap();
+	statements.publish(&statement).await.unwrap();
 
 	let arrived = tokio::time::timeout(LIVE_WAIT, listen.arrivals.next()).await;
 	assert_eq!(arrived.unwrap().map(Result::unwrap), Some(vec![cheque]));

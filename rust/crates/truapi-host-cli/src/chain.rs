@@ -103,7 +103,10 @@ impl CliChainProvider {
 		{
 			wait_until_synced(&*light_client(network_id)?, chain.genesis).await?;
 		}
-		let client = HostRpcClient::new(Arc::from(connection), crate::tokio_spawner());
+		let client = HostRpcClient::new(
+			Arc::from(connection),
+			truapi::Spawner::new(tokio::runtime::Handle::current()),
+		);
 		Ok(RpcClient::new(client))
 	}
 

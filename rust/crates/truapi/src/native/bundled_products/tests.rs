@@ -34,8 +34,7 @@ impl BundleReader for Bundle {
 }
 
 const FUNDING: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{}}}"#;
-const CHAT: &str =
-	r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{}}"#;
+const CHAT: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"chat":true}}"#;
 
 fn bundle() -> Bundle {
 	Bundle::new(&[
@@ -60,17 +59,17 @@ fn bundled_funding_providers_ship_a_funding_worker() {
 	assert_eq!(
 		providers
 			.iter()
-			.map(|entry| (entry.product_id.as_str().to_string(), entry.origin, entry.has_app))
+			.map(|entry| (entry.product_id.as_str().to_string(), entry.origin, entry.app))
 			.collect::<Vec<_>>(),
 		vec![
-			("bank.dot".to_string(), FundingProviderOrigin::Bundled, Some(false)),
-			("ramp.dot".to_string(), FundingProviderOrigin::Bundled, Some(true)),
+			("bank.dot".to_string(), FundingProviderOrigin::Bundled, FundingProviderApp::Absent),
+			("ramp.dot".to_string(), FundingProviderOrigin::Bundled, FundingProviderApp::Shipped),
 		]
 	);
 	assert_eq!(providers[0].worker_manifest.as_deref(), Some(FUNDING));
 }
 
-const ROOT_MANIFEST_JSON: &str = r#"{"$v":1,"displayName":"Ramp","icon":{"cid":"bafyramp","format":"png"},"trustedProducts":{}}"#;
+const ROOT_MANIFEST_JSON: &str = r#"{"$v":1,"displayName":"Ramp","description":"Card top-ups","icon":{"cid":"bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy","format":"png"},"trustedProducts":{}}"#;
 
 #[test]
 fn bundled_products_are_named_directories_described_by_their_root_manifest() {
@@ -97,7 +96,11 @@ fn bundled_products_are_named_directories_described_by_their_root_manifest() {
 			("broken.dot", None, None),
 			("chat.dot", None, None),
 			("noworker.dot", None, None),
-			("ramp.dot", Some("Ramp"), Some("bafyramp")),
+			(
+				"ramp.dot",
+				Some("Ramp"),
+				Some("bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy")
+			),
 		]
 	);
 }

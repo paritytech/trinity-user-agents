@@ -2,25 +2,25 @@ import SwiftUI
 import DesignSystem
 
 public struct CollectiblesCardView: View {
-    let isExpanded: Bool
+    let isColoured: Bool
 
-    public init(isExpanded: Bool = false) {
-        self.isExpanded = isExpanded
+    public init(isColoured: Bool = false) {
+        self.isColoured = isColoured
     }
 
     public var body: some View {
         Image(.imageCollectibles)
-            .saturation(isExpanded ? 1 : 0)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: isExpanded ? .center : .top)
+            .saturation(isColoured ? 1 : 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .clipped()
-            .motionShine(.collectibles(isExpanded: isExpanded))
+            .motionShine(.collectibles(isExpanded: false))
     }
 }
 
 #Preview {
     VStack {
         CollectiblesCardView()
-        CollectiblesCardView(isExpanded: true)
+        CollectiblesCardView(isColoured: true)
     }
     .padding()
 }
