@@ -18,7 +18,8 @@ interface TokenAmountFormatter {
         tokenAmount: TokenAmountModel,
         precision: RoundPrecision,
         approx: Boolean = false,
-        withSymbol: Boolean = true
+        withSymbol: Boolean = true,
+        abbreviate: Boolean = true,
     ): String
 
     fun formatAmount(
@@ -40,15 +41,20 @@ interface TokenAmountFormatter {
 fun TokenAmountFormatter.formatFiat(model: TokenAmountModel): String =
     formatTokenAmount(model, RoundPrecision.FIAT)
 
-fun TokenAmountFormatter.formatFiatSigned(model: TokenAmountModel, withSymbol: Boolean = false): String =
-    CurrencyConfig.fiatSymbol + formatTokenAmount(model, RoundPrecision.FIAT, withSymbol = withSymbol)
+/** [abbreviate] false writes millions and above in full, as where the user typed the amount. */
+fun TokenAmountFormatter.formatFiatSigned(
+    model: TokenAmountModel,
+    withSymbol: Boolean = false,
+    abbreviate: Boolean = true,
+): String = CurrencyConfig.fiatSymbol + formatTokenAmount(model, RoundPrecision.FIAT, withSymbol = withSymbol, abbreviate = abbreviate)
 
 private class MockedAmountFormatter : TokenAmountFormatter {
     override fun formatTokenAmount(
         tokenAmount: TokenAmountModel,
         precision: RoundPrecision,
         approx: Boolean,
-        withSymbol: Boolean
+        withSymbol: Boolean,
+        abbreviate: Boolean,
     ): String {
         return buildString {
             if (approx) append("≈ ")

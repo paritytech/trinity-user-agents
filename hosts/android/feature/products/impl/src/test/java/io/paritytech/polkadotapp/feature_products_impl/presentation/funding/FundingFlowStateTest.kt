@@ -186,6 +186,7 @@ class FundingFlowStateTest {
     ) = FundingFlowState.initial(
         direction = direction,
         cash = cash,
+        format = testCashFormat(),
         spendable = BigDecimal("226.78"),
         options = options,
         amount = null,

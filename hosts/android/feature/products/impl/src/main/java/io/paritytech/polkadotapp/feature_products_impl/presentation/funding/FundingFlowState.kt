@@ -35,6 +35,7 @@ data class FundingLimits(
 data class FundingFlowState(
     val direction: FundingDirection,
     val cash: FundingCash,
+    val format: FundingCashFormat,
     val spendable: BigDecimal?,
     /** What the core offers for the selection on screen; `null` until it has said. */
     val options: FundingOptions?,
@@ -60,6 +61,7 @@ data class FundingFlowState(
         fun initial(
             direction: FundingDirection,
             cash: FundingCash,
+            format: FundingCashFormat,
             spendable: BigDecimal?,
             options: FundingOptions?,
             amount: BigDecimal?,
@@ -67,6 +69,7 @@ data class FundingFlowState(
         ) = FundingFlowState(
             direction = direction,
             cash = cash,
+            format = format,
             spendable = spendable,
             options = options,
             rail = options.defaultRail,

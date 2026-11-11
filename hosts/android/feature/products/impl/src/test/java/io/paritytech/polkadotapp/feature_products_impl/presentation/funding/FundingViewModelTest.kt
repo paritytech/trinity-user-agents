@@ -66,11 +66,10 @@ class FundingViewModelTest {
     private val session = MutableStateFlow<FundingBookEntry?>(null)
     private val pushedOptions = MutableStateFlow<FundingOptions?>(options(cardCandidate()))
     private val interactor = mockk<FundingFlowInteractor> {
-        coEvery { cash() } returns FundingCash(symbol = "CASH", precision = 6)
+        coEvery { cash() } returns FundingCash(precision = 6)
         coEvery { spendable(any()) } returns null
         every { options("intent") } returns pushedOptions
         coEvery { selectOptions("intent", any()) } returns Unit
-        every { countries() } returns emptyList()
         every { quoteLists("intent") } returns quoteLists
         every { session("intent") } returns session
         coEvery { requestQuote("intent", any(), any()) } returns Result.success(1uL)
@@ -230,7 +229,7 @@ class FundingViewModelTest {
         advanceUntilIdle()
 
         val note = (model.state.value as LoadingState.Loaded).data.amount.note
-        assertEquals(FundingAmountNote.Minimum(FundingCash("CASH", 6).label(BigDecimal("20")), withdraw = false), note)
+        assertEquals(FundingAmountNote.Minimum(testCashFormat().label(BigDecimal("20")), withdraw = false), note)
         cancelTicker(model)
     }
 
@@ -316,7 +315,7 @@ class FundingViewModelTest {
         every { choice } returns mockk<FundingChoice>(relaxed = true) { every { this@mockk.rail } returns rail }
     }
 
-    private fun viewModel() = FundingViewModel(context, contexts, interactor, router, mockk(relaxed = true))
+    private fun viewModel() = FundingViewModel(context, contexts, interactor, router, mockk(relaxed = true), testCashFormat())
 
     private fun cardCandidate() = FundingCandidate(
         providerId = ramp,

@@ -29,13 +29,12 @@ class FundingFlowInteractor @Inject constructor(
 ) {
     suspend fun cash(): FundingCash {
         val asset = chainAssetProvider.asset()
-        return FundingCash(symbol = asset.symbol, precision = asset.precision)
+        return FundingCash(precision = asset.precision)
     }
 
     suspend fun spendable(cash: FundingCash): BigDecimal? =
         balance.spendable()?.let { cash.decimal(it.value.toString()) }
 
-    fun countries(): List<FundingCountry> = FundingCountries.all()
 
     suspend fun brand(providerId: ProductId): FundingProviderBrand = branding.brand(providerId)
 

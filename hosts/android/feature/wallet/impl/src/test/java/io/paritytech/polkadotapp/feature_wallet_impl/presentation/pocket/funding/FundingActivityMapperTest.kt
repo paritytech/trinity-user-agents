@@ -25,6 +25,7 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import java.math.BigDecimal
 
 class FundingActivityMapperTest {
     private val asset = mockk<Chain.Asset> { every { precision } returns 6 }
@@ -152,6 +153,11 @@ class FundingActivityMapperTest {
     private object PlainAmounts : TokenAmountMapper {
         override fun mapFrom(source: ChainAssetWithAmount): TokenAmountModel = object : TokenAmountModel {
             override val amount = source.chainAsset.amountFromPlanks(source.amount)
+            override val appearance = TokenSymbolAppearance.DigitalDollar
+        }
+
+        override fun digitalDollar(amount: BigDecimal): TokenAmountModel = object : TokenAmountModel {
+            override val amount = amount
             override val appearance = TokenSymbolAppearance.DigitalDollar
         }
     }
