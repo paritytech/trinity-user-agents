@@ -9,9 +9,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -65,7 +63,6 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
     val toolbarActions by contract.toolbarActions.collectAsStateWithLifecycle()
     val showPrivacyWarning by contract.showPrivacyWarning.collectAsStateWithLifecycle()
     val footerRenderer by contract.footerRenderer.collectAsStateWithLifecycle()
-    val roomFooterCard by contract.roomFooterCard.collectAsStateWithLifecycle()
     val headerRenderer by contract.headerRenderer.collectAsStateWithLifecycle()
     val customAppearance by contract.customAppearance.collectAsStateWithLifecycle()
     val revealingMessageId by contract.revealingMessageId.collectAsStateWithLifecycle()
@@ -97,7 +94,6 @@ fun ChatFeedScreen(contract: ChatFeedContract) {
         chatInputUiState = chatInputState,
         chatMessagesLoadingState = chatMessagesState,
         footerRenderer = footerRenderer,
-        roomFooterCard = roomFooterCard,
         headerRenderer = headerRenderer,
         customAppearance = customAppearance,
         revealingMessageId = revealingMessageId,
@@ -168,7 +164,6 @@ private fun ChatFeedScreenInternal(
     chatInputUiState: ChatInputUiState,
     chatMessagesLoadingState: LoadingState<ChatMessagesState>,
     footerRenderer: CustomChatFooterRenderer?,
-    roomFooterCard: CustomChatFooterRenderer?,
     headerRenderer: CustomChatHeaderRenderer?,
     customAppearance: CustomChatAppearance?,
     revealingMessageId: ChatMessageId?,
@@ -204,7 +199,6 @@ private fun ChatFeedScreenInternal(
     )
 
     var footerHeight by remember { mutableStateOf(0.dp) }
-    val density = LocalDensity.current
 
     // Messages can be replied to only when we have a regular send message input
     val canReplyToMessages = chatInputUiState is ChatInputUiState.SendMessage && !chatInputUiState.isChatRequest
@@ -263,28 +257,22 @@ private fun ChatFeedScreenInternal(
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                 ) {
-                    if (roomFooterCard != null) {
-                        Box(modifier = Modifier.onSizeChanged { footerHeight = with(density) { it.height.toDp() } }) {
-                            roomFooterCard.drawFooter()
-                        }
-                    } else {
-                        ChatInputRow(
-                            inputState = chatInputUiState,
-                            username = username,
-                            onClearReply = onClearReply,
-                            onClearEdit = onClearEdit,
-                            onMessageChange = onMessageChange,
-                            onSendMessageClick = onSendMessageClick,
-                            onPayClick = onPayClick,
-                            onAttachClick = onAttachClick,
-                            onAcceptChatRequest = onAcceptChatRequest,
-                            onDeclineChatRequest = onDeclineChatRequest,
-                            onUnblockUserClick = onUnblockUserClick,
-                            onAllowIdentitySigningClick = onAllowIdentitySigningClick,
-                            onDeclineIdentitySigningClick = onDeclineIdentitySigningClick,
-                            onHeightChanged = { footerHeight = it },
-                        )
-                    }
+                    ChatInputRow(
+                        inputState = chatInputUiState,
+                        username = username,
+                        onClearReply = onClearReply,
+                        onClearEdit = onClearEdit,
+                        onMessageChange = onMessageChange,
+                        onSendMessageClick = onSendMessageClick,
+                        onPayClick = onPayClick,
+                        onAttachClick = onAttachClick,
+                        onAcceptChatRequest = onAcceptChatRequest,
+                        onDeclineChatRequest = onDeclineChatRequest,
+                        onUnblockUserClick = onUnblockUserClick,
+                        onAllowIdentitySigningClick = onAllowIdentitySigningClick,
+                        onDeclineIdentitySigningClick = onDeclineIdentitySigningClick,
+                        onHeightChanged = { footerHeight = it },
+                    )
                 }
             }
         }
@@ -351,7 +339,6 @@ private fun ChatFeedPreview() {
                         )
                     ),
                     footerRenderer = null,
-                    roomFooterCard = null,
                     headerRenderer = null,
                     customAppearance = null,
                     revealingMessageId = null,

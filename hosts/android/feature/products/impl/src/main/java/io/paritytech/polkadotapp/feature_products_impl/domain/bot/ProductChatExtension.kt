@@ -3,13 +3,13 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 import android.content.Context
 import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionInputSlot
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.DefaultRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomMetadata
-import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewDelegate
@@ -93,17 +93,15 @@ class ProductChatExtension(
     // Absent means the text input, the default.
     private val roomFooters = MutableStateFlow(emptyMap<ProductChatIdParameter, ProductRoomFooter>())
 
-    override fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> {
-        val room = chatId.productRoomId(id) ?: return flowOf(true)
-        return roomFooters.map { (it[room] ?: ProductRoomFooter.TextInput) == ProductRoomFooter.TextInput }
-            .distinctUntilChanged()
-    }
-
-    override fun observeRoomFooterCard(chatId: ChatId): Flow<CustomChatFooterRenderer?> {
-        val room = chatId.productRoomId(id) ?: return flowOf(null)
+    override fun observeInputSlot(chatId: ChatId): Flow<ChatExtensionInputSlot> {
+        val room = chatId.productRoomId(id) ?: return flowOf(ChatExtensionInputSlot.TextInput)
         return roomFooters.map { footers ->
-            (footers[room] as? ProductRoomFooter.Card)?.let { card ->
-                ProductRoomFooterCardRenderer(room, card, runningWorker, messageRenderer.imageResolver)
+            when (val footer = footers[room] ?: ProductRoomFooter.TextInput) {
+                ProductRoomFooter.TextInput -> ChatExtensionInputSlot.TextInput
+                ProductRoomFooter.Empty -> ChatExtensionInputSlot.Hidden
+                is ProductRoomFooter.Card -> ChatExtensionInputSlot.Card(
+                    ProductRoomFooterCardRenderer(room, footer, runningWorker, messageRenderer.imageResolver)
+                )
             }
         }.distinctUntilChanged()
     }

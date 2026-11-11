@@ -13,6 +13,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 
 interface ChatExtension {
     val id: ChatExtensionId
@@ -57,7 +58,19 @@ interface ChatExtension {
 
     fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> = flowOf(true)
 
-    /** The card this extension docked in the input slot of [chatId], or null while that slot holds the input. */
-    fun observeRoomFooterCard(chatId: ChatId): Flow<CustomChatFooterRenderer?> = flowOf(null)
+    /** What the input slot of [chatId] holds. */
+    fun observeInputSlot(chatId: ChatId): Flow<ChatExtensionInputSlot> = observeUserInputAllowed(chatId).map { allowed ->
+        if (allowed) ChatExtensionInputSlot.TextInput else ChatExtensionInputSlot.Hidden
+    }
     fun observeChatConfig(chatId: ChatId): Flow<ChatConfig> = flowOf(ChatConfig.Default)
+}
+
+/** What a chat shows in place of its message input. */
+sealed interface ChatExtensionInputSlot {
+    data object TextInput : ChatExtensionInputSlot
+
+    data object Hidden : ChatExtensionInputSlot
+
+    /** A card the extension draws itself, in place of the input. */
+    data class Card(val renderer: CustomChatFooterRenderer) : ChatExtensionInputSlot
 }

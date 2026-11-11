@@ -267,9 +267,6 @@ class ChatFeedViewModel @Inject constructor(
         renderer.takeIf { revealed }
     }.stateInBackground(initialValue = null)
 
-    override val roomFooterCard = interactor.observeRoomFooterCard(chatId)
-        .stateInBackground(initialValue = null)
-
     override val customAppearance = flowOf {
         interactor.getCustomAppearanceForChat(chatId)
     }.stateInBackground(initialValue = null)
@@ -375,6 +372,7 @@ class ChatFeedViewModel @Inject constructor(
                 ChatUserInputState.UnblockUser,
                 ChatUserInputState.IdentitySigningConsentRequired,
                 ChatUserInputState.Nothing,
+                is ChatUserInputState.ExtensionCard,
                 ChatUserInputState.PeerLeft,
                 ChatUserInputState.UserDeclinedChatRequest,
                 ChatUserInputState.WaitChatRequestApproval -> {
@@ -747,6 +745,7 @@ class ChatFeedViewModel @Inject constructor(
             is ChatUserInputState.PeerLeft -> ChatInputUiState.PeerLeft
             is ChatUserInputState.UnblockUser -> ChatInputUiState.UnblockUser
             is ChatUserInputState.IdentitySigningConsentRequired -> ChatInputUiState.IdentitySigningConsent
+            is ChatUserInputState.ExtensionCard -> ChatInputUiState.ExtensionCard(renderer)
             is ChatUserInputState.WaitChatRequestApproval -> ChatInputUiState.WaitChatRequestApproval
             is ChatUserInputState.SendChatRequest -> {
                 ChatInputUiState.SendMessage(messageInputState.clearRelation(), isChatRequest = true)

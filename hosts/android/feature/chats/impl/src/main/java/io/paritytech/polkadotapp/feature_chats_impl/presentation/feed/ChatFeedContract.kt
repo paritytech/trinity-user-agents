@@ -33,7 +33,6 @@ interface ChatFeedContract {
     val chatMessagesState: StateFlow<LoadingState<ChatMessagesState>>
     val menuState: StateFlow<ChatMenuState>
     val footerRenderer: StateFlow<CustomChatFooterRenderer?>
-    val roomFooterCard: StateFlow<CustomChatFooterRenderer?>
     val headerRenderer: StateFlow<CustomChatHeaderRenderer?>
     val menuRenderer: StateFlow<CustomChatMenuRenderer?>
     val customAppearance: StateFlow<CustomChatAppearance?>

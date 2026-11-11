@@ -7,10 +7,10 @@ import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionInputSlot
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomResult
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
-import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomPreviewData
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
@@ -178,12 +178,12 @@ class ProductChatExtensionTest {
         withChatHost { extension.startGlobalWork() }
         val messaging = requireNotNull(refCounter.chatSurface)
 
-        assertEquals(true, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, ROOM)).first())
+        assertEquals(ChatExtensionInputSlot.TextInput, extension.observeInputSlot(ChatId.forExtensionRoom(extensionId, ROOM)).first())
 
         messaging.setRoomFooter(ProductChatIdParameter(ROOM), ProductRoomFooter.Empty)
 
-        assertEquals(false, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, ROOM)).first())
-        assertEquals(true, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, "other")).first())
+        assertEquals(ChatExtensionInputSlot.Hidden, extension.observeInputSlot(ChatId.forExtensionRoom(extensionId, ROOM)).first())
+        assertEquals(ChatExtensionInputSlot.TextInput, extension.observeInputSlot(ChatId.forExtensionRoom(extensionId, "other")).first())
     }
 
     @Test
@@ -194,11 +194,15 @@ class ProductChatExtensionTest {
         val messaging = requireNotNull(refCounter.chatSurface)
         val room = ChatId.forExtensionRoom(extensionId, ROOM)
 
-        messaging.setRoomFooter(ProductChatIdParameter(ROOM), ProductRoomFooter.Card("register", byteArrayOf(1)))
-        val inputWithCard = extension.observeUserInputAllowed(room).first()
+        val card = ProductRoomFooter.Card("register", byteArrayOf(1))
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), card)
+        val slotWithCard = extension.observeInputSlot(room).first()
         messaging.setRoomFooter(ProductChatIdParameter(ROOM), ProductRoomFooter.TextInput)
 
-        assertEquals(listOf(false, true), listOf(inputWithCard, extension.observeUserInputAllowed(room).first()))
+        assertEquals(
+            listOf(card, ChatExtensionInputSlot.TextInput),
+            listOf(slotWithCard.dockedCard(), extension.observeInputSlot(room).first()),
+        )
     }
 
     @Test
@@ -213,14 +217,14 @@ class ProductChatExtensionTest {
 
         // When
         messaging.setRoomFooter(ProductChatIdParameter(ROOM), card)
-        val slotWithCard = extension.observeRoomFooterCard(room).first()
-        val otherRoomSlot = extension.observeRoomFooterCard(ChatId.forExtensionRoom(extensionId, "other")).first()
+        val slotWithCard = extension.observeInputSlot(room).first()
+        val otherRoomSlot = extension.observeInputSlot(ChatId.forExtensionRoom(extensionId, "other")).first()
         messaging.setRoomFooter(ProductChatIdParameter(ROOM), ProductRoomFooter.Empty)
 
         // Then
         assertEquals(
-            listOf(card, null, null),
-            listOf((slotWithCard as? ProductRoomFooterCardRenderer)?.card, otherRoomSlot, extension.observeRoomFooterCard(room).first()),
+            listOf(card, ChatExtensionInputSlot.TextInput, ChatExtensionInputSlot.Hidden),
+            listOf(slotWithCard.dockedCard(), otherRoomSlot, extension.observeInputSlot(room).first()),
         )
     }
 
@@ -235,8 +239,8 @@ class ProductChatExtensionTest {
         val first = ProductRoomFooter.Card("register", byteArrayOf(1))
         val second = ProductRoomFooter.Card("confirm", byteArrayOf(2))
 
-        val slots = mutableListOf<CustomChatFooterRenderer?>()
-        val collector = launch { extension.observeRoomFooterCard(room).toList(slots) }
+        val slots = mutableListOf<ChatExtensionInputSlot>()
+        val collector = launch { extension.observeInputSlot(room).toList(slots) }
         runCurrent()
 
         // When
@@ -247,7 +251,7 @@ class ProductChatExtensionTest {
         collector.cancel()
 
         // Then
-        assertEquals(listOf(null, first, second), slots.map { (it as? ProductRoomFooterCardRenderer)?.card })
+        assertEquals(listOf(null, first, second), slots.map { it.dockedCard() })
     }
 
     @Test
@@ -339,3 +343,6 @@ class ProductChatExtensionTest {
         assertEquals(product.id.productIconUri(), extension.defaultRoomMetadata.icon)
     }
 }
+
+private fun ChatExtensionInputSlot.dockedCard(): ProductRoomFooter.Card? =
+    ((this as? ChatExtensionInputSlot.Card)?.renderer as? ProductRoomFooterCardRenderer)?.card
