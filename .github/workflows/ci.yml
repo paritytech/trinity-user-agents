@@ -367,7 +367,7 @@ jobs:
           # source, and bundling it is a step no other job performs. A release
           # is the wrong place to find out one of them moved.
           gate cli_package '^(rust/crates/(truapi-host-cli|truapi|truapi-codegen|truapi-macros|trinity-stack)/|js/container/|js/packages/truapi/(src/|package\.json$|tsconfig[^/]*\.json$)|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|scripts/(codegen\.sh|build-cli-runner\.ts|cli-runner-package\.test\.ts)$|\.github/workflows/(ci|cli-package|release-cli)\.yml$)'
-          gate install_action '^(\.github/actions/install-truapi-host/|scripts/truapi-host-installer\.sh$|\.github/workflows/ci\.yml$)'
+          gate install_action '^(\.github/actions/install-(truapi-host|trinity-stack)/|scripts/truapi-host-installer\.sh$|\.github/workflows/ci\.yml$)'
 
           # Include generators, dependency pins and package build configuration:
           # these can change a published artifact without touching its sources.
@@ -555,11 +555,11 @@ jobs:
       contents: read
     uses: ./.github/workflows/cli-package.yml
 
-  # Installs the stable release the way another repository's workflow would.
-  # The action's own default is the CLI version of this commit, which is not
+  # Installs the stable releases the way another repository's workflow would.
+  # Each action's own default is the version of this commit, which is not
   # published until the release lands, so this asks for `latest` instead.
   install-action:
-    name: install-truapi-host action
+    name: install actions
     needs: changes
     if: needs.changes.outputs.install_action == 'true'
     runs-on: ubuntu-latest
@@ -571,6 +571,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             .github/actions/install-truapi-host/
+            .github/actions/install-trinity-stack/
             scripts/truapi-host-installer.sh
 
       - id: install
@@ -612,6 +613,49 @@ jobs:
       - name: Check the rejection failed the step
         env:
           INVALID_OUTCOME: ${{ steps.invalid.outcome }}
+        run: |
+          set -euo pipefail
+          [ "${INVALID_OUTCOME}" = failure ]
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - id: stack
+        uses: ./.github/actions/install-trinity-stack
+        with:
+          version: latest
+
+      - name: Check trinity-stack runs from PATH
+        env:
+          STACK_PATH: ${{ steps.stack.outputs.path }}
+        run: |
+          set -euo pipefail
+          [ "$(command -v trinity-stack)" = "${STACK_PATH}" ]
+          trinity-stack --help
+
+      - id: stack-pinned
+        uses: ./.github/actions/install-trinity-stack
+        with:
+          version: 0.2.0
+
+      - name: Check the pinned trinity-stack is the version asked for
+        env:
+          PINNED_VERSION: ${{ steps.stack-pinned.outputs.version }}
+        run: |
+          set -euo pipefail
+          [ "${PINNED_VERSION}" = 0.2.0 ]
+
+      - name: Check an invalid trinity-stack version is rejected
+        id: stack-invalid
+        continue-on-error: true
+        uses: ./.github/actions/install-trinity-stack
+        with:
+          version: 0.2
+
+      - name: Check the trinity-stack rejection failed the step
+        env:
+          INVALID_OUTCOME: ${{ steps.stack-invalid.outcome }}
         run: |
           set -euo pipefail
           [ "${INVALID_OUTCOME}" = failure ]

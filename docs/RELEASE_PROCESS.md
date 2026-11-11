@@ -176,7 +176,10 @@ in-binary updater read. Last, it tags the release commit
 the commit it is checked out at, so the tag installs its own release. There is
 no separate release subject entry for it.
 
-`@parity/trinity-stack <version>` also publishes the `trinity-stack` crate to
+`@parity/trinity-stack <version>` also tags the release commit
+`trinity-stack-v<version>` for workflows that use
+`.github/actions/install-trinity-stack`, which installs the package version of
+the commit it is checked out at. It also publishes the `trinity-stack` crate to
 [crates.io](https://crates.io/crates/trinity-stack) with the same version, which
 `npm run check-release-versions` verifies against
 `rust/crates/trinity-stack/Cargo.toml`. The `publish-crate` job runs once the

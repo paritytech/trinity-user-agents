@@ -71,6 +71,20 @@ a restart start from the last copy fetched. A conditional fetch the server's COR
 `If-None-Match`. Every other decision is the crate's `StackReader`, so a host that drives the same reader behaves the
 same way.
 
+A GitHub Actions job that runs the CLI, such as a scheduled `update`, installs it with the action this repository ships:
+
+```yaml
+- uses: actions/setup-node@v4
+  with: { node-version: 22 }
+- uses: paritytech/trinity-user-agents/.github/actions/install-trinity-stack@trinity-stack-v<version>
+- run: trinity-stack update
+```
+
+Every release tags the action `trinity-stack-v<version>`, and the action installs the package version of the commit it
+is checked out at, so that tag installs that release. Pass `version: latest` for the newest release or a version such
+as `version: 0.2.0`. The action installs under `RUNNER_TEMP`, puts `trinity-stack` on `PATH` for the rest of the job,
+and outputs the installed `version` and the executable's `path`.
+
 ## Publishing a stack
 
 ```ts
