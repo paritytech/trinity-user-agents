@@ -22,19 +22,16 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.tappableElement
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -80,7 +77,6 @@ import io.paritytech.polkadotapp.design.components.docklet.DockletBackdrop
 import io.paritytech.polkadotapp.design.components.docklet.DockletCard
 import io.paritytech.polkadotapp.design.components.docklet.DockletCardFrames
 import io.paritytech.polkadotapp.design.components.docklet.DockletCardState
-import io.paritytech.polkadotapp.design.components.docklet.DockletDrawbridge
 import io.paritytech.polkadotapp.design.components.docklet.DockletFrame
 import io.paritytech.polkadotapp.design.components.docklet.DockletGeometry
 import io.paritytech.polkadotapp.design.components.docklet.DockletHideState
@@ -144,6 +140,7 @@ fun RootNavBar(
     pullState: TabBarPullState,
     forceShown: Boolean,
     hideState: DockletHideState,
+    dock: DockletFrame,
     onDockletAreas: (ImmutableList<DockletFrame>) -> Unit,
     onSlotClick: (DockletSlotTarget) -> Unit,
     onOpenCard: (DockletStep) -> Unit,
@@ -158,8 +155,6 @@ fun RootNavBar(
     onBarWidthChange: (Float) -> Unit,
 ) {
     val density = LocalDensity.current
-    val navigationInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    val threeButtonNavigation = WindowInsets.tappableElement.asPaddingValues().calculateBottomPadding() > 0.dp
     val statusInset = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val keyboardHeight = rememberDockletKeyboardHeight()
     val networkStatusItem = FeatureOption.TAB_BAR_CONNECTIVITY_INDICATOR.isEnabled
@@ -168,7 +163,6 @@ fun RootNavBar(
     val currentOnDockletAreas by rememberUpdatedState(onDockletAreas)
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val dock = DockletGeometry.dockFrame(maxWidth, maxHeight, navigationInset, threeButtonNavigation)
         val screenHeight = maxHeight
         val keyboardTop = { screenHeight - keyboardHeight() }
         var dockOnKeyboard by remember { mutableStateOf(false) }
@@ -191,8 +185,7 @@ fun RootNavBar(
                 )
             }
         }
-        val drawbridge = remember(dock, maxWidth, maxHeight) { DockletDrawbridge(dock, maxWidth, maxHeight) }
-        SideEffect { hideState.drawbridge = drawbridge }
+        val drawbridge = hideState.drawbridge
         val excludeFromBack = forceShown && !hideState.countsAsHidden && !cardState.isOpen
         val offScreen by remember(hideState) { derivedStateOf { hideState.isOffScreen } }
         val poseBackdrop = backdrop.takeUnless { offScreen }

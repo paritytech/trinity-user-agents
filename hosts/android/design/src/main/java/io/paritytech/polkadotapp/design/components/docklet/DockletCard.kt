@@ -340,7 +340,7 @@ private fun DockletCardRestPreview() {
                 onCloseRequest = {},
                 onKeyboardRequest = {},
                 lobeAnchor = {},
-                hideState = rememberDockletHideState {},
+                hideState = rememberDockletHideState(DockletDrawbridge(dock, 392.dp, 240.dp)) {},
             ) {}
         }
     }

@@ -105,10 +105,9 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
     @Inject
     lateinit var hostEventCapture: HostEventCapture
 
-    @Inject
-    lateinit var dockletInputEvents: DockletInputEvents
-
     private val viewModel by viewModels<RootViewModel>()
+
+    private val dockletInputEvents = DockletInputEvents()
 
     private val dockletEdgeTouchGate by lazy(LazyThreadSafetyMode.NONE) {
         DockletEdgeTouchGate(ViewConfiguration.get(this).scaledTouchSlop.toFloat())
@@ -331,7 +330,12 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
             setContent {
                 val chainsHealth by viewModel.chainsHealth.collectAsStateWithLifecycle()
                 PolkadotTheme {
-                    RootNavBarHost(navController = navController, chainsHealth = chainsHealth, backdropSource = navHost)
+                    RootNavBarHost(
+                        navController = navController,
+                        chainsHealth = chainsHealth,
+                        dockletInputs = dockletInputEvents.events,
+                        backdropSource = navHost,
+                    )
                 }
             }
         }

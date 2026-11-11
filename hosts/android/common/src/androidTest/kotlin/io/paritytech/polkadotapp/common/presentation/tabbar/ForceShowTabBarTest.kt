@@ -11,9 +11,7 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -33,7 +31,7 @@ class ForceShowTabBarTest {
         pinBar()
         moveHostTo(Lifecycle.State.STARTED)
 
-        assertTrue(holder.hidden.value)
+        assertEquals(TabBarMode.Absent, holder.mode.value)
     }
 
     @Test
@@ -41,8 +39,7 @@ class ForceShowTabBarTest {
         pinBar()
         moveHostTo(Lifecycle.State.RESUMED)
 
-        assertFalse(holder.hidden.value)
-        assertTrue(holder.forced.value)
+        assertEquals(TabBarMode.Main, holder.mode.value)
     }
 
     @Test
@@ -51,7 +48,7 @@ class ForceShowTabBarTest {
         moveHostTo(Lifecycle.State.RESUMED)
         moveHostTo(Lifecycle.State.CREATED)
 
-        assertFalse(holder.hidden.value)
+        assertEquals(TabBarMode.Main, holder.mode.value)
     }
 
     @Test
@@ -60,19 +57,18 @@ class ForceShowTabBarTest {
         moveHostTo(Lifecycle.State.RESUMED)
         unpinBar()
 
-        assertTrue(holder.hidden.value)
+        assertEquals(TabBarMode.Absent, holder.mode.value)
     }
 
     @Test
     fun aProductScreenPinsTheBarOverItselfOnceItResumes() {
         pinBar { ShowTabBarTucked() }
         moveHostTo(Lifecycle.State.STARTED)
-        assertNull(holder.tuckedPin.value)
+        assertEquals(TabBarMode.Absent, holder.mode.value)
 
         moveHostTo(Lifecycle.State.RESUMED)
 
-        assertTrue(holder.forced.value)
-        assertNotNull(holder.tuckedPin.value)
+        assertTrue(holder.mode.value is TabBarMode.TuckedOverScreen)
     }
 
     @Test
@@ -80,7 +76,7 @@ class ForceShowTabBarTest {
         pinBar()
         moveHostTo(Lifecycle.State.RESUMED)
 
-        assertNull(holder.tuckedPin.value)
+        assertEquals(TabBarMode.Main, holder.mode.value)
     }
 
     @Test
@@ -90,7 +86,7 @@ class ForceShowTabBarTest {
         unpinBar()
         moveHostTo(Lifecycle.State.RESUMED)
 
-        assertTrue(holder.hidden.value)
+        assertEquals(TabBarMode.Absent, holder.mode.value)
     }
 
     private fun pinBar(pin: @Composable () -> Unit = { ForceShowTabBar() }) {

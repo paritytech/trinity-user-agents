@@ -398,9 +398,10 @@ class DockletHideStateTest {
     private fun TestScope.hideState() = DockletHideState(
         scope = CoroutineScope(coroutineContext + TestMonotonicFrameClock(this) + Job()),
         haptics = { moments += it },
-        animationsEnabled = { true },
+        motionMode = { DockletMotionMode.Morph },
+        currentDrawbridge = { bridge },
         onLanded = { landings += it },
-    ).also { it.drawbridge = bridge }
+    )
 
     private fun TestScope.hiddenState(): DockletHideState {
         val state = hideState()

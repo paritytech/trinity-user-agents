@@ -8,111 +8,101 @@ class TabBarVisibilityHolderTest {
 
     @Test
     fun `a product pins the bar over itself`() {
-        holder.pin(ProductA)
+        holder.pin(ProductA, TabBarPin.Tucked)
 
-        assertEquals(shown(tuckedPin = ProductA), holder.visibility())
+        assertEquals(TabBarMode.TuckedOverScreen(ProductA), holder.mode.value)
     }
 
     @Test
     fun `Main pins the bar without a product`() {
-        holder.pin(Main)
+        holder.pin(Main, TabBarPin.Main)
 
-        assertEquals(shown(), holder.visibility())
+        assertEquals(TabBarMode.Main, holder.mode.value)
     }
 
     @Test
     fun `a product opening while Main is still pinned is already over a product`() {
-        holder.pin(Main)
-        holder.pin(ProductA)
+        holder.pin(Main, TabBarPin.Main)
+        holder.pin(ProductA, TabBarPin.Tucked)
 
-        assertEquals(shown(tuckedPin = ProductA), holder.visibility())
+        assertEquals(TabBarMode.TuckedOverScreen(ProductA), holder.mode.value)
     }
 
     @Test
     fun `Main resuming before the product lets go is still over the product until it does`() {
-        holder.pin(ProductA)
-        holder.pin(Main)
+        holder.pin(ProductA, TabBarPin.Tucked)
+        holder.pin(Main, TabBarPin.Main)
 
-        assertEquals(shown(tuckedPin = ProductA), holder.visibility())
+        assertEquals(TabBarMode.TuckedOverScreen(ProductA), holder.mode.value)
 
         holder.release(ProductA)
 
-        assertEquals(shown(), holder.visibility())
+        assertEquals(TabBarMode.Main, holder.mode.value)
     }
 
     @Test
     fun `a second product opened over the first is a new pin`() {
-        holder.pin(ProductA)
-        holder.pin(ProductB)
+        holder.pin(ProductA, TabBarPin.Tucked)
+        holder.pin(ProductB, TabBarPin.Tucked)
 
-        assertEquals(shown(tuckedPin = ProductB), holder.visibility())
+        assertEquals(TabBarMode.TuckedOverScreen(ProductB), holder.mode.value)
 
         holder.release(ProductB)
 
-        assertEquals(shown(tuckedPin = ProductA), holder.visibility())
+        assertEquals(TabBarMode.TuckedOverScreen(ProductA), holder.mode.value)
     }
 
     @Test
     fun `the bar leaves with the last screen that pinned it`() {
-        holder.pin(ProductA)
+        holder.pin(ProductA, TabBarPin.Tucked)
         holder.release(ProductA)
 
-        assertEquals(absent(), holder.visibility())
+        assertEquals(TabBarMode.Absent, holder.mode.value)
     }
 
     @Test
     fun `a chat keeps the bar away`() {
-        holder.pin(Chat)
+        holder.pin(Chat, TabBarPin.Hidden)
 
-        assertEquals(absent(hiddenPin = Chat), holder.visibility())
+        assertEquals(TabBarMode.HiddenByScreen(Chat), holder.mode.value)
     }
 
     @Test
     fun `a chat opening while Main is still pinned already takes the bar away`() {
-        holder.pin(Main)
-        holder.pin(Chat)
+        holder.pin(Main, TabBarPin.Main)
+        holder.pin(Chat, TabBarPin.Hidden)
 
-        assertEquals(absent(hiddenPin = Chat), holder.visibility())
+        assertEquals(TabBarMode.HiddenByScreen(Chat), holder.mode.value)
     }
 
     @Test
-    fun `a chat opening over a product takes the bar away and keeps the product's pin`() {
-        holder.pin(ProductA)
-        holder.pin(Chat)
+    fun `a chat opening over a product takes the bar away until the chat closes`() {
+        holder.pin(ProductA, TabBarPin.Tucked)
+        holder.pin(Chat, TabBarPin.Hidden)
 
-        assertEquals(absent(tuckedPin = ProductA, hiddenPin = Chat), holder.visibility())
+        assertEquals(TabBarMode.HiddenByScreen(Chat), holder.mode.value)
+
+        holder.release(Chat)
+
+        assertEquals(TabBarMode.TuckedOverScreen(ProductA), holder.mode.value)
     }
 
     @Test
     fun `Main comes back with the bar once the chat lets go`() {
-        holder.pin(Chat)
-        holder.pin(Main)
+        holder.pin(Chat, TabBarPin.Hidden)
+        holder.pin(Main, TabBarPin.Main)
 
-        assertEquals(absent(hiddenPin = Chat), holder.visibility())
+        assertEquals(TabBarMode.HiddenByScreen(Chat), holder.mode.value)
 
         holder.release(Chat)
 
-        assertEquals(shown(), holder.visibility())
+        assertEquals(TabBarMode.Main, holder.mode.value)
     }
-
-    private data class Visibility(
-        val hidden: Boolean,
-        val forced: Boolean,
-        val tuckedPin: TabBarTuckedPin?,
-        val hiddenPin: TabBarHiddenPin?,
-    )
-
-    private fun shown(tuckedPin: TabBarTuckedPin? = null) = Visibility(hidden = false, forced = true, tuckedPin = tuckedPin, hiddenPin = null)
-
-    private fun absent(tuckedPin: TabBarTuckedPin? = null, hiddenPin: TabBarHiddenPin? = null) =
-        Visibility(hidden = true, forced = false, tuckedPin = tuckedPin, hiddenPin = hiddenPin)
-
-    private fun TabBarVisibilityHolder.visibility() = Visibility(hidden.value, forced.value, tuckedPin.value, hiddenPin.value)
 
     private companion object {
         val Main = Any()
-        val ProductA = TabBarTuckedPin()
-        val ProductB = TabBarTuckedPin()
-        val Chat = TabBarHiddenPin()
+        val ProductA = Any()
+        val ProductB = Any()
+        val Chat = Any()
     }
 }

@@ -6,21 +6,25 @@ import androidx.compose.runtime.getValue
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
+import io.paritytech.polkadotapp.app.root.presentation.root.DockletInput
 import io.paritytech.polkadotapp.app.root.presentation.root.RootNavBarViewModel
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
+import kotlinx.coroutines.flow.Flow
 
 /**
  * Host for the global navigation bar: resolves its own [RootNavBarViewModel] and renders the overlay.
  * The [navController]'s current entry is the "screen entered" signal the bar resets its posture on.
  */
 @Composable
-fun RootNavBarHost(navController: NavController, chainsHealth: ChainHealthIndicatorsModel, backdropSource: View) {
+fun RootNavBarHost(
+    navController: NavController,
+    chainsHealth: ChainHealthIndicatorsModel,
+    dockletInputs: Flow<DockletInput>,
+    backdropSource: View,
+) {
     val viewModel: RootNavBarViewModel = hiltViewModel()
 
-    val hidden by viewModel.hidden.collectAsStateWithLifecycle()
-    val forceShown by viewModel.forced.collectAsStateWithLifecycle()
-    val tuckedPin by viewModel.tuckedPin.collectAsStateWithLifecycle()
-    val hiddenPin by viewModel.hiddenPin.collectAsStateWithLifecycle()
+    val barMode by viewModel.barMode.collectAsStateWithLifecycle()
     val currentEntry by navController.currentBackStackEntryFlow.collectAsStateWithLifecycle(initialValue = null)
     val currentTab by viewModel.currentTab.collectAsStateWithLifecycle()
     val tabWarnings by viewModel.tabWarnings.collectAsStateWithLifecycle()
@@ -29,10 +33,7 @@ fun RootNavBarHost(navController: NavController, chainsHealth: ChainHealthIndica
     val dockletTip by viewModel.dockletTip.collectAsStateWithLifecycle()
 
     RootNavBarOverlay(
-        hidden = hidden,
-        forceShown = forceShown,
-        tuckedPin = tuckedPin,
-        hiddenPin = hiddenPin,
+        barMode = barMode,
         screenKey = currentEntry?.id,
         currentTab = currentTab,
         tabWarnings = tabWarnings,
@@ -41,7 +42,7 @@ fun RootNavBarHost(navController: NavController, chainsHealth: ChainHealthIndica
         scannerTooltipVisible = tooltipVisible,
         openScanPanelRequests = viewModel.scanPanelOpenRequests,
         dockletTip = dockletTip,
-        dockletInputs = viewModel.dockletInputs,
+        dockletInputs = dockletInputs,
         backdropSource = backdropSource,
         onTabSelected = viewModel::onTabSelected,
         onScannerTooltipDismiss = viewModel::dismissScannerTooltip,

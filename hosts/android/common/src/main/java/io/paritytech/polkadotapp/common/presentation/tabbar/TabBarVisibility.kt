@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.common.presentation.tabbar
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -13,52 +14,58 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Whether the bar is shown at all. It exists only on screens that pin it via [ForceShowTabBar] (Main) or
+ * Which [TabBarMode] the bar is in. It exists only on screens that pin it via [ForceShowTabBar] (Main) or
  * [ShowTabBarTucked], and only while no screen pins [HideTabBar]; everywhere else it is absent entirely.
  * There is deliberately no opt-out state in between, so a screen cannot end up with a bar it did not ask for.
  */
 @Singleton
 class TabBarVisibilityHolder @Inject constructor() {
-    private val forceKeys = mutableSetOf<Any>()
+    private val pins = LinkedHashMap<Any, TabBarPin>()
 
-    val hidden: StateFlow<Boolean>
-        field = MutableStateFlow(true)
-
-    // Whether some screen forces the bar shown (e.g. Main) — its outside-tap scrim is disabled so content
-    // stays clickable.
-    val forced: StateFlow<Boolean>
-        field = MutableStateFlow(false)
-
-    val tuckedPin: StateFlow<TabBarTuckedPin?>
-        field = MutableStateFlow(null)
-
-    val hiddenPin: StateFlow<TabBarHiddenPin?>
-        field = MutableStateFlow(null)
+    val mode: StateFlow<TabBarMode>
+        field = MutableStateFlow<TabBarMode>(TabBarMode.Absent)
 
     @Synchronized
-    fun pin(key: Any) {
-        forceKeys.add(key)
+    fun pin(key: Any, pin: TabBarPin) {
+        pins[key] = pin
         recompute()
     }
 
     @Synchronized
     fun release(key: Any) {
-        forceKeys.remove(key)
+        pins.remove(key)
         recompute()
     }
 
     private fun recompute() {
-        val showing = forceKeys.isNotEmpty() && forceKeys.none { it is TabBarHiddenPin }
-        forced.value = showing
-        hidden.value = !showing
-        tuckedPin.value = forceKeys.filterIsInstance<TabBarTuckedPin>().lastOrNull()
-        hiddenPin.value = forceKeys.filterIsInstance<TabBarHiddenPin>().lastOrNull()
+        val hiding = pins.lastKeyPinning(TabBarPin.Hidden)
+        val tucking = pins.lastKeyPinning(TabBarPin.Tucked)
+        mode.value = when {
+            hiding != null -> TabBarMode.HiddenByScreen(hiding)
+            tucking != null -> TabBarMode.TuckedOverScreen(tucking)
+            pins.isNotEmpty() -> TabBarMode.Main
+            else -> TabBarMode.Absent
+        }
     }
+
+    private fun Map<Any, TabBarPin>.lastKeyPinning(pin: TabBarPin): Any? = entries.lastOrNull { it.value == pin }?.key
 }
 
-class TabBarTuckedPin
+enum class TabBarPin { Main, Tucked, Hidden }
 
-class TabBarHiddenPin
+@Immutable
+sealed interface TabBarMode {
+    val showsBar: Boolean
+        get() = this == Main || this is TuckedOverScreen
+
+    data object Absent : TabBarMode
+
+    data object Main : TabBarMode
+
+    data class TuckedOverScreen(val screen: Any) : TabBarMode
+
+    data class HiddenByScreen(val screen: Any) : TabBarMode
+}
 
 val LocalTabBarVisibility = staticCompositionLocalOf<TabBarVisibilityHolder?> { null }
 
@@ -68,21 +75,21 @@ val LocalTabBarVisibility = staticCompositionLocalOf<TabBarVisibilityHolder?> { 
  */
 @Composable
 fun ForceShowTabBar() {
-    PinTabBar(::Any)
+    PinTabBar(TabBarPin.Main)
 }
 
 @Composable
 fun ShowTabBarTucked() {
-    PinTabBar(::TabBarTuckedPin)
+    PinTabBar(TabBarPin.Tucked)
 }
 
 @Composable
 fun HideTabBar() {
-    PinTabBar(::TabBarHiddenPin)
+    PinTabBar(TabBarPin.Hidden)
 }
 
 @Composable
-private fun PinTabBar(newKey: () -> Any) {
+private fun PinTabBar(pin: TabBarPin) {
     val holder = LocalTabBarVisibility.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     // A back-gesture preview composes the screen unresumed; releasing on pause would republish a zero bar height.
@@ -90,8 +97,8 @@ private fun PinTabBar(newKey: () -> Any) {
 
     if (holder != null && resumed) {
         DisposableEffect(holder) {
-            val key = newKey()
-            holder.pin(key)
+            val key = Any()
+            holder.pin(key, pin)
             onDispose { holder.release(key) }
         }
     }

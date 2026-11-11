@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.design.components.docklet
 
-import android.animation.ValueAnimator
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.SpringSpec
@@ -31,7 +30,8 @@ enum class DockletLanding { Shown, HiddenBySwipe, HiddenQuietly }
 class DockletHideState internal constructor(
     private val scope: CoroutineScope,
     private val haptics: DockletHaptics,
-    private val animationsEnabled: () -> Boolean,
+    private val motionMode: () -> DockletMotionMode,
+    private val currentDrawbridge: () -> DockletDrawbridge,
     private val onLanded: DockletHideState.(DockletLanding) -> Unit,
 ) {
     private val progress = Animatable(0f, DockletSpring.Threshold)
@@ -39,12 +39,12 @@ class DockletHideState internal constructor(
     private val peek = Animatable(0f)
     private val barAlpha = Animatable(1f)
 
-    var drawbridge: DockletDrawbridge? by mutableStateOf(null)
+    val drawbridge: DockletDrawbridge get() = currentDrawbridge()
 
     private var hold: DockletHold? by mutableStateOf(null)
     private var aim: DockletAim? by mutableStateOf(null)
     private var dragProgress by mutableFloatStateOf(0f)
-    private var target by mutableFloatStateOf(0f)
+    private var targetHidden by mutableStateOf(false)
     private var landingPending = false
     private var quiet by mutableStateOf(false)
     private var settling by mutableStateOf(false)
@@ -56,15 +56,15 @@ class DockletHideState internal constructor(
     private var settleJob: Job? = null
     private var peekJob: Job? = null
 
-    val countsAsHidden: Boolean get() = target == 1f
+    val countsAsHidden: Boolean get() = targetHidden
 
-    val isShownAtRest: Boolean get() = target == 0f && !isMoving && progress.value == 0f
+    val isShownAtRest: Boolean get() = !targetHidden && !isMoving && progress.value == 0f
 
     val isMoving: Boolean get() = hold != null || aim != null || settling
 
     val isHeld: Boolean get() = hold != null || aim != null
 
-    val isOffScreen: Boolean get() = target == 1f && !isMoving && peek.value == 0f
+    val isOffScreen: Boolean get() = targetHidden && !isMoving && peek.value == 0f
 
     val alpha: Float get() = barAlpha.value
 
@@ -73,14 +73,13 @@ class DockletHideState internal constructor(
     fun quietFade(): Float = if (quiet) currentProgress() else 0f
 
     fun pose(): DockletPose {
-        val bridge = drawbridge ?: return DockletPose.Zero
         hold?.let { return it.pose() }
         aim?.let { return it.pose() }
-        return bridge.plainPose(screenProgress()).plus(residualPose, residual.value)
+        return drawbridge.plainPose(screenProgress()).plus(residualPose, residual.value)
     }
 
     fun startHide(touch: DockletPoint, time: Duration) {
-        val bridge = drawbridge ?: return
+        val bridge = drawbridge
         val screenPose = pose()
         val start = stopMotion()
         travel = bridge.hideTravel(touch.x)
@@ -108,7 +107,7 @@ class DockletHideState internal constructor(
         val start = samples.startProgress
         val velocity = samples.velocity(travel)
         val goal = DockletSpring.hideTarget(start, dragProgress, velocity, samples.turnedBack())
-        residualPose = held.pose().minus(drawbridge?.plainPose(dragProgress) ?: DockletPose.Zero)
+        residualPose = held.pose().minus(drawbridge.plainPose(dragProgress))
         hold = null
         tracker = null
         quiet = false
@@ -116,7 +115,7 @@ class DockletHideState internal constructor(
     }
 
     fun startRestore(touch: DockletPoint, time: Duration) {
-        val bridge = drawbridge ?: return
+        val bridge = drawbridge
         val screenPose = pose()
         val start = stopMotion()
         aim = DockletAim(bridge, touch, start, screenPose)
@@ -137,7 +136,7 @@ class DockletHideState internal constructor(
         val samples = tracker ?: return
         val velocity = samples.velocity(travel)
         val goal = DockletSpring.restoreTarget(dragProgress, velocity, samples.fingerSpeed(), samples.turnedBack())
-        residualPose = pulling.pose().minus(drawbridge?.plainPose(dragProgress) ?: DockletPose.Zero)
+        residualPose = pulling.pose().minus(drawbridge.plainPose(dragProgress))
         aim = null
         tracker = null
         settle(from = dragProgress, to = goal, velocity = velocity, spec = DockletSpring.afterRelease(velocity))
@@ -147,7 +146,7 @@ class DockletHideState internal constructor(
         val wasHeld = hold != null || aim != null
         if (!wasHeld) return
         val goal = if (dragProgress >= HalfWay) 1f else 0f
-        residualPose = (hold?.pose() ?: aim?.pose() ?: DockletPose.Zero).minus(drawbridge?.plainPose(dragProgress) ?: DockletPose.Zero)
+        residualPose = (hold?.pose() ?: aim?.pose() ?: DockletPose.Zero).minus(drawbridge.plainPose(dragProgress))
         hold = null
         aim = null
         tracker = null
@@ -155,10 +154,10 @@ class DockletHideState internal constructor(
     }
 
     fun quietHide() {
-        if (!isShownAtRest || drawbridge == null) return
+        if (!isShownAtRest) return
         quiet = true
         landingPending = true
-        target = 1f
+        targetHidden = true
         settling = true
         settleJob = scope.launch {
             withFrameNanos { }
@@ -167,25 +166,25 @@ class DockletHideState internal constructor(
         }
     }
 
-    fun tuck() = snapTo(1f)
+    fun tuck() = snapTo(hidden = true)
 
-    fun untuck() = snapTo(0f)
+    fun untuck() = snapTo(hidden = false)
 
-    private fun snapTo(to: Float) {
+    private fun snapTo(hidden: Boolean) {
         if (isHeld) return
         stopMotion()
         landingPending = false
         quiet = false
-        target = to
+        targetHidden = hidden
         settleJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
             peek.snapTo(0f)
-            progress.snapTo(to)
+            progress.snapTo(if (hidden) 1f else 0f)
             barAlpha.snapTo(1f)
         }
     }
 
     fun restore() {
-        if (target == 0f && !isHeld) return
+        if (!targetHidden && !isHeld) return
         val start = stopMotion()
         residualPose = DockletPose.Zero
         settle(from = start, to = 0f, velocity = 0f, spec = DockletSpring.Move)
@@ -201,8 +200,9 @@ class DockletHideState internal constructor(
     }
 
     private fun settle(from: Float, to: Float, velocity: Float, spec: SpringSpec<Float>) {
-        if (to != target) landingPending = true
-        target = to
+        val toHidden = to == 1f
+        if (toHidden != targetHidden) landingPending = true
+        targetHidden = toHidden
         settleJob?.cancel()
         settling = true
         settleJob = scope.launch { runSettle(from, to, velocity, spec) }
@@ -210,7 +210,9 @@ class DockletHideState internal constructor(
 
     private suspend fun runSettle(from: Float, to: Float, velocity: Float, spec: SpringSpec<Float>) {
         peek.snapTo(0f)
-        if (animationsEnabled()) {
+        if (motionMode() == DockletMotionMode.CrossFade) {
+            fadeTo(to)
+        } else {
             progress.snapTo(from)
             coroutineScope {
                 launch {
@@ -219,8 +221,6 @@ class DockletHideState internal constructor(
                 }
                 progress.animateTo(to, spec, initialVelocity = velocity)
             }
-        } else {
-            fadeTo(to)
         }
         residualPose = DockletPose.Zero
         settling = false
@@ -280,15 +280,17 @@ class DockletHideState internal constructor(
 }
 
 @Composable
-fun rememberDockletHideState(onLanded: DockletHideState.(DockletLanding) -> Unit): DockletHideState {
+fun rememberDockletHideState(drawbridge: DockletDrawbridge, onLanded: DockletHideState.(DockletLanding) -> Unit): DockletHideState {
     val scope = rememberCoroutineScope()
     val haptics = rememberDockletHaptics()
+    val currentDrawbridge by rememberUpdatedState(drawbridge)
     val currentOnLanded by rememberUpdatedState(onLanded)
     return remember(scope, haptics) {
         DockletHideState(
             scope = scope,
             haptics = haptics,
-            animationsEnabled = ValueAnimator::areAnimatorsEnabled,
+            motionMode = ::systemMotionMode,
+            currentDrawbridge = { currentDrawbridge },
             onLanded = { currentOnLanded(this, it) },
         )
     }
