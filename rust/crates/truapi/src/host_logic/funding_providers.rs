@@ -19,7 +19,7 @@ use crate::{
 };
 
 /// A provider the host offers, as the host supplies it.
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingProviderEntry {
 	/// The provider's product id.
@@ -28,20 +28,73 @@ pub struct FundingProviderEntry {
 	/// has read the live one. `None` waits for that read: until dotNS answers,
 	/// the provider is neither asked for quotes nor offered for a session.
 	pub worker_manifest: Option<String>,
-	/// Where the provider's Worker manifest comes from.
+	/// The root manifest JSON the host shipped for it, which its name and
+	/// icon are read from until the core has read the live one.
+	pub root_manifest: Option<String>,
+	/// Where the provider's manifests come from.
 	pub origin: FundingProviderOrigin,
+	/// Whether the provider ships an App, as the host knows for one it
+	/// bundles.
+	pub app: FundingProviderApp,
 }
 
-/// Where the core reads a provider's Worker manifest.
+/// Whether a funding provider ships an App, so an App route of its can be
+/// shown.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingProviderApp {
+	/// The host does not know: the core looks the App up on dotNS when an
+	/// App route is shown.
+	#[default]
+	Unknown,
+	/// It ships one.
+	Shipped,
+	/// It ships none, so it shows only external pages.
+	Absent,
+}
+
+/// The providers the host offers from its remote configuration's
+/// `published_names`, in order and each once, then the `bundled` ones the
+/// configuration does not name, with the names that are not product ids.
+pub fn provider_config(
+	published_names: &[String],
+	bundled: Vec<FundingProviderEntry>,
+) -> (Vec<FundingProviderEntry>, Vec<String>) {
+	let mut entries: Vec<FundingProviderEntry> = Vec::new();
+	let mut invalid = Vec::new();
+	for name in published_names {
+		let Ok(product_id) = name.trim().parse::<ProductId>() else {
+			invalid.push(name.clone());
+			continue;
+		};
+		if entries.iter().all(|entry| entry.product_id != product_id) {
+			entries.push(FundingProviderEntry {
+				product_id,
+				worker_manifest: None,
+				root_manifest: None,
+				origin: FundingProviderOrigin::Published,
+				app: FundingProviderApp::Unknown,
+			});
+		}
+	}
+	for entry in bundled {
+		if entries.iter().all(|known| known.product_id != entry.product_id) {
+			entries.push(entry);
+		}
+	}
+	(entries, invalid)
+}
+
+/// Where the core reads a provider's manifests.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingProviderOrigin {
-	/// Published on dotNS: the core reads the live manifest, and goes by the
-	/// host's snapshot until it has.
+	/// Published on dotNS: the core reads the live manifests, and goes by the
+	/// host's snapshots until it has.
 	#[default]
 	Published,
-	/// Shipped inside the host: its `worker_manifest` is what the core goes
-	/// by, and dotNS is never read for it.
+	/// Shipped inside the host: its `worker_manifest` and `root_manifest` are
+	/// what the core goes by, and dotNS is never read for it.
 	Bundled,
 }
 
@@ -196,6 +249,11 @@ pub struct FundingCandidate {
 	pub unsupported: Vec<FundingUnsupported>,
 	/// The limits its recent quote refusals showed.
 	pub limits: Vec<FundingLimit>,
+	/// Whether its manifest declares routes. One that declares none may
+	/// serve any rail, whatever its answers confirmed so far.
+	pub declares_routes: bool,
+	/// The name and icon its root manifest gives it, once the core has one.
+	pub brand: Option<crate::host_internal::product_manifest::ProductBrand>,
 }
 
 impl FundingCandidate {
@@ -262,6 +320,8 @@ impl FundingCandidate {
 			routes,
 			unsupported,
 			limits,
+			declares_routes: declared.is_some(),
+			brand: None,
 		})
 	}
 }
@@ -422,6 +482,10 @@ pub struct FundingSelection {
 	pub network: Option<String>,
 	/// The ISO 3166-1 alpha-2 code the user picked, or `None` for none yet.
 	pub country: Option<String>,
+	/// The ISO 4217 code of the picked country's currency, which the host
+	/// reads from its locale data. A card or bank ask names it when a
+	/// provider takes it.
+	pub currency: Option<String>,
 }
 
 /// What a session's overlay offers: the providers it can be handed to, and
@@ -433,7 +497,7 @@ pub struct FundingOptions {
 	/// The providers the session can be handed to.
 	pub candidates: Vec<FundingCandidate>,
 	/// What the core knows about each country for the selection's rail and
-	/// asset. Empty until an asset is picked.
+	/// `asset`. Empty while there is no `asset`.
 	pub countries: Vec<FundingCountry>,
 	/// The amounts the selection takes across every provider. The minimum
 	/// is never below [`FUNDING_MIN_AMOUNT`].
@@ -442,6 +506,21 @@ pub struct FundingOptions {
 	/// declares takes, for the network picker: for the picked asset, or the
 	/// widest range across the network's assets before one is picked.
 	pub networks: Vec<FundingNetworkLimits>,
+	/// The rails a session can use: those some candidate routes, crypto
+	/// first, then card, then bank.
+	pub rails: Vec<FundingRail>,
+	/// The asset an ask for the selection names, which `countries`, `limits`
+	/// and `networks` go by: the picked asset, else for card or bank the
+	/// user's currency when a provider takes it, else the first fiat one
+	/// lists. `None` before a selection, and for crypto before a token is
+	/// picked.
+	pub asset: Option<String>,
+	/// For crypto, the tokens a session can use on the picked network, or
+	/// on any before one is picked, each once in the order first listed.
+	pub tokens: Vec<String>,
+	/// The country the device is likely in, as the core last detected it
+	/// within the hour.
+	pub detected_country: Option<String>,
 }
 
 /// The amounts one network takes for a crypto selection.

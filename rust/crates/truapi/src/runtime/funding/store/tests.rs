@@ -120,3 +120,16 @@ fn a_row_that_does_not_decode_is_skipped_and_kept() {
 		)
 	);
 }
+
+// A summary stored before whether money moved was kept still loads, read as
+// moved when it settled or refunded anything.
+#[test]
+fn a_summary_of_the_previous_format_still_loads() {
+	let packed = summary("fs_old");
+	let row = (packed.summary.clone(), packed.acknowledged).encode();
+	let read = summary_of_format(2, &mut &row[..]).expect("read");
+	assert_eq!(
+		(read.money_moved, read.acknowledged, summary_of_format(1, &mut &row[..]).is_none()),
+		(false, packed.acknowledged, true)
+	);
+}
