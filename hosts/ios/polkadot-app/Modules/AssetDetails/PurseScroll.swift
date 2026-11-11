@@ -2,10 +2,10 @@ import DesignSystem
 import PolkadotUI
 import SwiftUI
 
-/// Where the Purse's card sits while the wallet scrolls, so the sticky bar
+/// Where the Purse's card sits while its screen scrolls, so the sticky bar
 /// knows when it has gone under it.
 enum PurseScroll {
-    /// The wallet's viewport, whose top is the bottom of the navigation bar.
+    /// The Purse's viewport, whose top is the bottom of the navigation bar.
     static let space = "purseScroll"
     static let barHeight: CGFloat = 49
 

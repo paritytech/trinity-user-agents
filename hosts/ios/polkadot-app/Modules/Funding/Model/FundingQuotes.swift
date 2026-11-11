@@ -2,17 +2,16 @@ import Foundation
 import Observation
 import TrUAPIHost
 
-/// The quotes one funding overlay shows: the ask the providers were sent
-/// last, and the core's latest list for it.
+/// The quotes one funding overlay shows: the core's latest list for the
+/// request the overlay made last.
 ///
-/// Asks go through the session's ``FundingCoreCallQueue``, after the calls
-/// the overlay made before them. A keypad change asks once the user pauses,
-/// timed on the injected clock.
+/// Requests go through the session's ``FundingCoreCallQueue``, after the
+/// calls the overlay made before them, so the core prices the selection it
+/// was told of last. A keypad change asks once the user pauses, timed on the
+/// injected clock.
 @MainActor
 @Observable
 final class FundingQuotes {
-    /// What every provider was asked last.
-    private(set) var ask: FundingQuoteAsk?
     private(set) var rows: [ProductId: FundingQuoteState] = [:]
     /// The providers of the core's latest quote list, in its order.
     private(set) var order: [ProductId] = []
@@ -20,14 +19,14 @@ final class FundingQuotes {
     private(set) var bestProviderId: ProductId?
     /// When the core asks every provider again, and the prices on screen change.
     private(set) var refreshAt: Date?
-    /// The core's latest list for the ask, with what the providers' refusals
-    /// say about it.
+    /// The core's latest list for the request, with what the providers'
+    /// refusals say about it.
     private(set) var list: FundingQuoteList?
-    /// Set from the moment the selection is reported for an ask until the
-    /// core's first list for it is shown, or the ask turned out unchanged.
+    /// Set from the moment a request is made until the core's first list for
+    /// it is shown, or the core kept the running one.
     private(set) var isAwaiting = false
 
-    /// Called after a list for the latest ask is shown.
+    /// Called after a list for the latest request is shown.
     @ObservationIgnored var onShown: (() -> Void)?
 
     private let intent: String
@@ -43,58 +42,62 @@ final class FundingQuotes {
         self.clock = clock
     }
 
-    /// An ask is on its way: no list counts as answering it until
-    /// ``askIfNew(_:)``.
-    func awaitAsk() {
-        isAwaiting = true
-    }
-
-    /// Asks for `newAsk` unless it is the one already asked, whose list then
-    /// stands.
-    func askIfNew(_ newAsk: FundingQuoteAsk?) {
-        guard let newAsk, newAsk != ask else {
-            isAwaiting = false
-            onShown?()
+    /// Asks the core to price `amount` on the reported selection. The core
+    /// keeps the running request when it already prices that, and its list
+    /// then stands; otherwise none shows until the new request's list
+    /// arrives. With `startWhenQuoted`, the core hands the session to the
+    /// request's best quote once every provider answered it.
+    func request(amount: U128?, startWhenQuoted: Bool = false) {
+        guard let amount else {
+            drop()
             return
         }
 
-        request(newAsk)
-    }
-
-    /// Asks the providers the core picks for `newAsk`, showing none until the
-    /// core's list for it arrives.
-    func request(_ newAsk: FundingQuoteAsk) {
-        ask = newAsk
-        refreshAt = nil
-        bestProviderId = nil
-        rows = [:]
-        order = []
-        list = nil
         isAwaiting = true
+        let shownId = list?.requestId
         let askNumber = request.ask()
         coreCalls.run { [intent] service in
-            await service.requestQuote(newAsk, intent: intent)
+            let requestId = await service.requestQuote(amount: amount, intent: intent)
+            if startWhenQuoted, let requestId {
+                await service.startWhenQuoted(requestId: requestId, intent: intent)
+            }
+            return requestId
         } then: { [weak self] requestId in
-            guard let self, let early = request.take(requestId, ofAsk: askNumber) else { return }
+            guard let self, request.isLatest(askNumber) else { return }
+            guard let requestId else {
+                drop()
+                return
+            }
 
-            receive(early)
+            if let early = request.take(requestId, ofAsk: askNumber) {
+                receive(early)
+            } else if requestId == shownId {
+                isAwaiting = false
+                onShown?()
+            } else {
+                clear()
+            }
         }
     }
 
-    /// Shows no quote, and no list for any ask made so far.
+    /// Shows no quote, and no list for any request made so far.
     func drop() {
-        rows = [:]
-        order = []
-        bestProviderId = nil
-        ask = nil
-        list = nil
+        clear()
         isAwaiting = false
         request.drop()
     }
 
-    /// Takes the core's quote list when it answers the latest ask. The core
-    /// keeps refreshing the last ask after a drop, and a list can arrive
-    /// before the core's id for its ask does.
+    /// The core withdrew the list: the user picked another route than it
+    /// priced.
+    func withdrawn() {
+        guard !request.awaitsId else { return }
+
+        clear()
+    }
+
+    /// Takes the core's quote list when it answers the latest request. The
+    /// core keeps refreshing the last request after a drop, and a list can
+    /// arrive before the core's id for its request does.
     func receive(_ quotes: FundingQuoteList) {
         guard request.shows(quotes) else { return }
 
@@ -127,5 +130,13 @@ final class FundingQuotes {
     /// Returns once the call waiting on the keypad pause has finished.
     func pauseSettled() async {
         await pause?.value
+    }
+
+    private func clear() {
+        rows = [:]
+        order = []
+        bestProviderId = nil
+        refreshAt = nil
+        list = nil
     }
 }

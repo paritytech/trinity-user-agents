@@ -218,17 +218,6 @@
         }
       }
     },
-    "address.copied" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Address copied"
-          }
-        }
-      }
-    },
     "app.permissions.title.format" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -1920,50 +1909,6 @@
         }
       }
     },
-    "identity.card.scan.qr.hint" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Show this QR to someone who wants to add you as a contact or send you %@"
-          }
-        }
-      }
-    },
-    "identity.card.scan.qr.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Scan with a camera"
-          }
-        }
-      }
-    },
-    "identity.card.share.message" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hey! I’m using the Polkadot app for chat. It’s private and easy to use. Download it at %1$@ and add me – my username is %2$@."
-          }
-        }
-      }
-    },
-    "identity.card.share.message.no.link" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hey! I’m using the Polkadot app for chat. It’s private and easy to use. Add me – my username is %@."
-          }
-        }
-      }
-    },
     "leave.chat.action" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2469,6 +2414,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "OK"
+          }
+        }
+      }
+    },
+    "report.issue.github.username" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GitHub username (optional)"
+          }
+        }
+      }
+    },
+    "report.issue.github.username.invalid" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a valid GitHub username"
           }
         }
       }
@@ -3625,17 +3592,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wallet creation failed with error %@. Please, contact support"
-          }
-        }
-      }
-    },
-    "wallet.main.idCard" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ID card"
           }
         }
       }

@@ -350,7 +350,7 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
 /// answers Funding calls with `Unsupported`.
 ///
 /// The core owns the sessions. While `presentFunding` is waiting, the session
-/// is live: quote it with ``TrUAPIHostRuntime/getFundingQuote(intent:ask:)``
+/// is live: quote it with ``TrUAPIHostRuntime/getFundingQuote(intent:amount:)``
 /// and hand it to a provider with
 /// ``TrUAPIHostRuntime/selectFundingProvider(intent:providerId:quoteId:)``
 /// before answering `.started`.
@@ -369,34 +369,28 @@ public protocol FundingHostBridge: AnyObject, Sendable {
     /// Show `target` for provider `providerId`'s session `intent` in a frame
     /// the host owns, and report how it closed. A page is a checked https
     /// URL: show its origin, and answer `.returned` when it reaches its
-    /// return URL. `context` carries what the core knows of the session the
-    /// frame is for. The core closes the frame itself, through
+    /// return URL. The core closes the frame itself, through
     /// ``closeProviderFrame(providerId:intent:)``, once the payment moved.
     func presentProviderFrame(
         providerId: ProductId,
         intent: String,
-        target: FundingFrameTarget,
-        context: FundingFrameContext
+        target: FundingFrameTarget
     ) async throws -> FundingFrameOutcome
 
     /// Close the frame
-    /// ``presentProviderFrame(providerId:intent:target:context:)`` shows for
+    /// ``presentProviderFrame(providerId:intent:target:)`` shows for
     /// provider `providerId`'s session `intent`, answering that call
     /// `.closed`, and show the session sheet in its place. Does nothing when
     /// no frame is open for it. Called inline.
     func closeProviderFrame(providerId: ProductId, intent: String)
 
-    /// Whether provider `providerId` ships an App, so an App route of its can
-    /// be shown in ``presentProviderFrame(providerId:intent:target:context:)``.
-    /// A provider without one shows only external pages.
-    func providerHasApp(providerId: ProductId) async -> Bool
-
     /// What the core holds about session `intent` changed: `kind` says
     /// which, and the host reads it back from the runtime, as
     /// ``TrUAPIHostRuntime/fundingSession(intent:)``,
     /// ``TrUAPIHostRuntime/fundingOptions(intent:)`` or
-    /// ``TrUAPIHostRuntime/fundingQuotes(intent:)``. `intent` is `nil` for
-    /// `.inProgress`, which concerns every session. Every session in flight,
+    /// ``TrUAPIHostRuntime/fundingQuotes(intent:)``, or
+    /// ``TrUAPIHostRuntime/fundingAvailable()`` for `.providers`, whose
+    /// `intent` is `nil`. Every session in flight,
     /// and every ended one not yet acknowledged, comes through again when
     /// funding resumes. Called inline, so hand it off rather than drawing
     /// here.
@@ -423,10 +417,13 @@ public protocol TopUpHostBridge: AnyObject, Sendable {
     /// else reaches the product as `Unknown`.
     func topUp(productId: ProductId, request: HostPaymentTopUpRequest) async throws
 
-    /// The current status of `productId`'s top-up `id`, or `nil` when the
-    /// host holds none. Report every later status with
-    /// ``TrUAPIHostRuntime/notifyTopUpStatus(productId:id:status:)``.
-    func topUpStatus(productId: ProductId, id: Data) throws -> HostPaymentTopUpStatusSubscribeItem?
+    /// Follow `productId`'s top-up `id` on the engine, pushing each status
+    /// it reports with
+    /// ``TrUAPIHostRuntime/notifyTopUpStatus(productId:id:status:)``, and
+    /// return when the engine's stream ends. Throw `TopUpNotFound` when the
+    /// engine holds no such top-up. The core cancels the call once it has a
+    /// final status.
+    func followTopUp(productId: ProductId, id: Data) async throws
 }
 
 /// Host-implemented payment engine: pays from the user's balance to an
@@ -443,10 +440,13 @@ public protocol PaymentHostBridge: AnyObject, Sendable {
     /// `Unknown`.
     func requestPayment(productId: ProductId, request: HostPaymentRequest) async throws
 
-    /// The current status of `productId`'s payment `id`, or `nil` when the
-    /// host holds none. Report every later status with
-    /// ``TrUAPIHostRuntime/notifyPaymentStatus(productId:id:status:)``.
-    func paymentStatus(productId: ProductId, id: Data) throws -> HostPaymentStatusSubscribeItem?
+    /// Follow `productId`'s payment `id` on the engine, pushing each status
+    /// it reports with
+    /// ``TrUAPIHostRuntime/notifyPaymentStatus(productId:id:status:)``, and
+    /// return when the engine's stream ends. Throw `PaymentNotFound` when the
+    /// engine holds no such payment. The core cancels the call once it has a
+    /// final status.
+    func followPayment(productId: ProductId, id: Data) async throws
 }
 
 /// Host-implemented balance view: what a payment request can spend right now.
@@ -456,11 +456,11 @@ public protocol PaymentHostBridge: AnyObject, Sendable {
 /// it here. A runtime without one answers `balanceSubscribe` with
 /// `Unsupported`.
 public protocol BalanceHostBridge: AnyObject, Sendable {
-    /// The current balance of `purse` (`nil` for the main purse), a decimal
-    /// string of CASH units. The balance is the user's, the same for every
-    /// product; `productId` only names who is asking. Report every change with
-    /// ``TrUAPIHostRuntime/notifyBalance(purse:available:)``.
-    func balance(productId: ProductId, purse: UInt32?) async throws -> U128
+    /// Follow the user's spendable balance, pushing the current one and each
+    /// change with ``TrUAPIHostRuntime/notifyBalance(available:)``, and
+    /// return when the stream ends. The core cancels the call once no product
+    /// follows the balance, and calls again when one does.
+    func followBalance() async throws
 }
 
 /// Draws the viewfinder for `scanner.scan`, following the rules on the core's
@@ -682,25 +682,19 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
     func presentProviderFrame(
         providerId: ProductId,
         intent: String,
-        target: FundingFrameTarget,
-        context: FundingFrameContext
+        target: FundingFrameTarget
     ) async throws -> FundingFrameOutcome {
         try await withHostRejection {
             try await bridge.presentProviderFrame(
                 providerId: providerId,
                 intent: intent,
-                target: target,
-                context: context
+                target: target
             )
         }
     }
 
     func closeProviderFrame(providerId: ProductId, intent: String) {
         bridge.closeProviderFrame(providerId: providerId, intent: intent)
-    }
-
-    func providerHasApp(providerId: ProductId) async -> Bool {
-        await bridge.providerHasApp(providerId: providerId)
     }
 
     func fundingChanged(intent: String?, kind: FundingChangeKind) {
@@ -731,13 +725,13 @@ private final class TopUpCallbackAdapter: NativeTopUpCallbacks, @unchecked Senda
         }
     }
 
-    func topUpStatus(productId: ProductId, id: Bytes32) throws -> HostPaymentTopUpStatusSubscribeItem? {
+    func followTopUp(productId: ProductId, id: Bytes32) async throws {
         do {
-            return try bridge.topUpStatus(productId: productId, id: id)
-        } catch let error as HostRejection {
+            try await bridge.followTopUp(productId: productId, id: id)
+        } catch let error as HostPaymentTopUpStatusSubscribeError {
             throw error
         } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+            throw HostPaymentTopUpStatusSubscribeError.Unknown(reason: hostRejectionReason(error))
         }
     }
 }
@@ -761,13 +755,13 @@ private final class PaymentCallbackAdapter: NativePaymentCallbacks, @unchecked S
         }
     }
 
-    func paymentStatus(productId: ProductId, id: Bytes32) throws -> HostPaymentStatusSubscribeItem? {
+    func followPayment(productId: ProductId, id: Bytes32) async throws {
         do {
-            return try bridge.paymentStatus(productId: productId, id: id)
-        } catch let error as HostRejection {
+            try await bridge.followPayment(productId: productId, id: id)
+        } catch let error as HostPaymentStatusSubscribeError {
             throw error
         } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+            throw HostPaymentStatusSubscribeError.Unknown(reason: hostRejectionReason(error))
         }
     }
 }
@@ -781,13 +775,13 @@ private final class BalanceCallbackAdapter: NativeBalanceCallbacks, @unchecked S
         self.bridge = bridge
     }
 
-    func balance(productId: ProductId, purse: UInt32?) async throws -> U128 {
+    func followBalance() async throws {
         do {
-            return try await bridge.balance(productId: productId, purse: purse)
-        } catch let error as HostPaymentBalanceSubscribeError {
+            try await bridge.followBalance()
+        } catch let error as HostRejection {
             throw error
         } catch {
-            throw HostPaymentBalanceSubscribeError.Unknown(reason: hostRejectionReason(error))
+            throw HostRejection.Rejected(reason: hostRejectionReason(error))
         }
     }
 }
@@ -1215,12 +1209,6 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.fundingEntries()
     }
 
-    /// Replace the funding providers this host ships, each with its Worker
-    /// manifest JSON.
-    public func setFundingProviders(_ providers: [FundingProviderEntry]) throws {
-        try inner.setFundingProviders(providers: providers)
-    }
-
     /// Offer the providers the remote configuration names, in order, then
     /// the `bundled` ones it does not name. Call it on every remote config
     /// refresh: a call listing what the last one did changes nothing.
@@ -1228,16 +1216,44 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try inner.setFundingProviderConfig(publishedNames: publishedNames, bundled: bundled)
     }
 
-    /// Ask every provider routing the ask's rail to price `ask` for session
-    /// `intent`. The list is read with ``fundingQuotes(intent:)`` on
+    /// Ask every provider routing the selected rail to price `amount` for
+    /// session `intent`, on the rail, asset, network and country last
+    /// reported with ``selectFundingOptions(intent:selection:)``. The list is
+    /// read with ``fundingQuotes(intent:)`` on
     /// ``FundingHostBridge/fundingChanged(intent:kind:)``
     /// and is asked for again every minute until the session is handed to a
-    /// provider, ends or leaves the overlay, or another ask replaces it.
-    /// Returns the request id every list of this request carries; show only
-    /// the latest request's lists.
+    /// provider, ends or leaves the overlay, or another ask replaces it; an
+    /// unchanged ask keeps the running request. Returns the request id every
+    /// list of this request carries, `nil` while the selection names no asset
+    /// or `amount` is zero.
     @discardableResult
-    public func getFundingQuote(intent: String, ask: FundingQuoteAsk) -> UInt64 {
-        inner.getFundingQuote(intent: intent, ask: ask)
+    public func getFundingQuote(intent: String, amount: U128) -> UInt64? {
+        inner.getFundingQuote(intent: intent, amount: amount)
+    }
+
+    /// Hand session `intent` to the best quote of request `requestId` as soon
+    /// as every provider has answered. Going back, a new ask or another
+    /// selection cancels it, as ``cancelFundingAutoStart(intent:)`` does.
+    public func startFundingWhenQuoted(intent: String, requestId: UInt64) {
+        inner.startFundingWhenQuoted(intent: intent, requestId: requestId)
+    }
+
+    /// Stop session `intent` from starting on its best quote.
+    public func cancelFundingAutoStart(intent: String) {
+        inner.cancelFundingAutoStart(intent: intent)
+    }
+
+    /// What is wrong with `amount` for session `intent`'s selection, given
+    /// the `spendable` balance on a withdrawal; `nil` when nothing is.
+    public func fundingAmountIssue(intent: String, amount: U128, spendable: U128?) -> FundingAmountIssue? {
+        inner.fundingAmountIssue(intent: intent, amount: amount, spendable: spendable)
+    }
+
+    /// Whether any funding provider is offered, so the entry points show.
+    /// Read again on ``FundingHostBridge/fundingChanged(intent:kind:)`` with
+    /// `.providers`.
+    public func fundingAvailable() -> Bool {
+        inner.fundingAvailable()
     }
 
     /// Report the rail, asset, network and country the user has picked in
@@ -1270,8 +1286,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         return true
     }
 
-    /// Report a later status of `productId`'s top-up `id` to the products
-    /// following it. A terminal status ends their streams.
+    /// Push a status the engine reported for `productId`'s top-up `id`,
+    /// which the core asked to follow through `followTopUp`.
     public func notifyTopUpStatus(productId: ProductId, id: Data, status: HostPaymentTopUpStatusSubscribeItem) throws {
         try inner.notifyTopUpStatus(productId: productId, id: id, status: status)
     }
@@ -1286,8 +1302,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         return true
     }
 
-    /// Report a later status of `productId`'s payment `id` to the products
-    /// following it. A terminal status ends their streams.
+    /// Push a status the engine reported for `productId`'s payment `id`,
+    /// which the core asked to follow through `followPayment`.
     public func notifyPaymentStatus(productId: ProductId, id: Data, status: HostPaymentStatusSubscribeItem) throws {
         try inner.notifyPaymentStatus(productId: productId, id: id, status: status)
     }
@@ -1302,10 +1318,10 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         return true
     }
 
-    /// Report the new balance of `purse` (`nil` for the main purse), a decimal
-    /// string of CASH units, to the products following it.
-    public func notifyBalance(purse: UInt32?, available: U128) {
-        inner.notifyBalance(purse: purse, available: available)
+    /// Push the user's spendable balance, a decimal string of CASH units,
+    /// while the core follows it through `followBalance`.
+    public func notifyBalance(available: U128) {
+        inner.notifyBalance(available: available)
     }
 
     /// Open one executable connection with a host-assigned immutable context.
@@ -1437,6 +1453,11 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
     /// path.
     public func coreDatabaseStatus() async throws -> DbStatus {
         try await inner.coreDatabaseStatus()
+    }
+
+    /// Profile metadata without image bytes. `force` bypasses the core's one-hour cache.
+    public func resolvePublicProfile(username: String, force: Bool) async throws -> PublicProfile {
+        try await inner.resolvePublicProfile(username: username, force: force)
     }
 
     /// The image `reference` names, read from Bulletin by the core and checked against its

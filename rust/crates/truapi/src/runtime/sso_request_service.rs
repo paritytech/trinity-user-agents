@@ -9,12 +9,13 @@ use super::{
 	authority::{AuthoritySession, authority_session},
 	connected_session_ui_info,
 	identity::resolve_session_identity_with_chain,
-	services::RuntimeServices,
+	services::{DotnsReads, RuntimeServices},
 	sso_remote::{SSO_PEER_DISCONNECT_REASON, SessionDisconnects, SsoSessionKey},
 	statement_store_rpc::StatementStoreRpc,
 	vrf,
 };
 use crate::{
+	Spawner,
 	chain_runtime::ChainRuntime,
 	host_logic::{
 		session::{SessionInfo, SessionState, encode_persisted_session},
@@ -22,7 +23,6 @@ use crate::{
 	},
 	platform::{CoreStorageKey, PairingHostConfig, Platform, ProductContext},
 	session_usernames::SessionUsernames,
-	subscription::Spawner,
 };
 use channel::SsoDisconnectMonitor;
 use futures::{StreamExt, channel::oneshot};
@@ -129,6 +129,9 @@ pub struct SsoRequestService {
 	platform: Arc<dyn Platform>,
 	host_config: PairingHostConfig,
 	chain: ChainRuntime,
+	/// dotNS reads shared with the rest of this host, so username lookups that
+	/// overlap read once.
+	dotns_reads: DotnsReads,
 	session_state: Arc<SessionState>,
 	session_store_changes: Arc<SessionStoreChangeNotifier>,
 	auth_state: AuthStateMachine,
@@ -165,6 +168,7 @@ impl SsoRequestService {
 			platform,
 			host_config,
 			chain: services.chain.clone(),
+			dotns_reads: services.dotns_reads.clone(),
 			session_state: SessionState::new(),
 			session_store_changes: SessionStoreChangeNotifier::new(),
 			auth_state,
@@ -282,6 +286,7 @@ impl SsoRequestService {
 		let session = crate::host_logic::session::decode_persisted_session(blob)?;
 		let activation_epoch = self.advance_session_lifecycle();
 		let resolved = resolve_session_identity_with_chain(
+			&self.dotns_reads,
 			&self.chain,
 			self.host_config.asset_hub_chain_genesis_hash,
 			session,
@@ -339,6 +344,7 @@ impl SsoRequestService {
 			},
 		};
 		let resolved = resolve_session_identity_with_chain(
+			&self.dotns_reads,
 			&self.chain,
 			self.host_config.asset_hub_chain_genesis_hash,
 			session,
@@ -379,7 +385,7 @@ impl SsoRequestService {
 	pub fn start_session_store_sync(self: Arc<Self>, spawner: Spawner) {
 		let pairing_host = Arc::downgrade(&self);
 		drop(self);
-		spawner(Box::pin(async move {
+		spawner.spawn(async move {
 			let Some(booting) = pairing_host.upgrade() else {
 				return;
 			};
@@ -396,7 +402,7 @@ impl SsoRequestService {
 				#[cfg(test)]
 				pairing_host.session_store_change_ticks.fetch_add(1, Ordering::SeqCst);
 			}
-		}));
+		});
 	}
 
 	/// Discard pairing bootstrap material so the next login generates a new
@@ -573,6 +579,7 @@ impl SsoRequestService {
 		}
 
 		let resolved = resolve_session_identity_with_chain(
+			&self.dotns_reads,
 			&self.chain,
 			self.host_config.asset_hub_chain_genesis_hash,
 			current.clone(),
@@ -700,11 +707,11 @@ impl HostSession for SsoRequestService {
 		self.clear_disconnected_session(true).await;
 		if let Some(session) = session {
 			let weak_self = self.weak_self.clone();
-			(self.spawner)(Box::pin(async move {
+			self.spawner.spawn(async move {
 				if let Some(host) = weak_self.upgrade() {
 					let _ = host.submit_disconnected_message(&session).await;
 				}
-			}));
+			});
 		}
 	}
 

@@ -40,7 +40,7 @@ pub struct HostRuntimeConfig {
 	pub asset_hub_chain_genesis_hash: Vec<u8>,
 	/// The network's dotNS TLD without the leading dot (`dot`, `paseo`,
 	/// `testnet`). The wallet's reserved identities are derived under it:
-	/// `uid.<suffix>` for the identity account, `peopl.<suffix>` for the person
+	/// `peopl.<suffix>` for the identity account (its account 0) and the person
 	/// ring-VRF keys. Read it from the network the host is configured for, the
 	/// way the host's own onboarding does; a wrong value derives a different
 	/// person from the same seed.

@@ -23,7 +23,7 @@ use url::Url;
 
 use crate::{
 	host_logic::funding_view::{
-		FundingCancelAvailability, FundingEnding, cancel_availability, ending,
+		FundingCancelAvailability, FundingEnding, awaits_user_transfer, cancel_availability, ending,
 	},
 	platform::ProductId,
 };
@@ -101,6 +101,10 @@ pub struct FundingSessionSummary {
 	pub transaction_id: Option<String>,
 	/// The provider's latest reference.
 	pub reference: Option<String>,
+	/// Whether money moved for the session: the provider started funds for
+	/// it or saw the user's payment. Stored beside the summary.
+	#[codec(skip)]
+	pub money_moved: bool,
 	/// The facts about how the session ended. Not stored: it is worked out
 	/// from the rest whenever a summary is made or loaded.
 	#[codec(skip)]
@@ -113,6 +117,7 @@ impl FundingSession {
 		let ended_at_ms = self.stage.settled_at_ms().unwrap_or(self.opened_at_ms);
 		FundingSessionSummary {
 			ended: FundingEnding::default(),
+			money_moved: self.money_moved(),
 			intent: self.intent.clone(),
 			owner_product_id: self.owner_product_id.clone(),
 			direction: self.direction,
@@ -148,10 +153,11 @@ impl FundingSessionSummary {
 		self.stage.settled_at_ms()
 	}
 
-	/// Whether the session was cancelled with nothing moved: no amount
-	/// settled and nothing refunded, so there is nothing to tell the user.
+	/// Whether the session was cancelled with nothing moved: no money moved
+	/// and nothing refunded, so there is nothing to tell the user.
 	pub fn cancelled_unmoved(&self) -> bool {
 		matches!(self.stage, FundingStage::Failed { reason: FundingFailure::Cancelled, .. }) &&
+			!self.money_moved &&
 			self.refunded.is_none()
 	}
 }
@@ -306,6 +312,9 @@ pub struct FundingProgress {
 	pub refunded: Option<u128>,
 	/// Where the session stands, in one line the host words.
 	pub status: FundingStatus,
+	/// Whether the session waits on a transfer the user makes outside a
+	/// provider frame: a bank top-up.
+	pub awaits_user_transfer: bool,
 	/// When the status turns to [`FundingStatus::TakingLonger`] unless the
 	/// provider reports first, in Unix milliseconds, so the host reads the
 	/// progress again then. `None` while a top-up waits on the user's
@@ -517,6 +526,16 @@ pub enum FundingStep {
 	///
 	/// Shown as "Sent".
 	Sent,
+}
+
+impl FundingStep {
+	/// The steps a session in `direction` goes through, in order.
+	pub fn of(direction: FundingDirection) -> &'static [FundingStep] {
+		match direction {
+			FundingDirection::In => &[Self::Started, Self::Received, Self::Added],
+			FundingDirection::Out => &[Self::Started, Self::Received, Self::Sent],
+		}
+	}
 }
 
 /// What is happening now, for the line under a session's milestones.
@@ -892,16 +911,9 @@ impl FundingSession {
 			.find(|update| update.rank().is_some())
 	}
 
-	/// The session's progress for its direction and rail at `now_ms`.
-	pub fn progress(&self, now_ms: u64) -> FundingProgress {
-		let steps: &[FundingStep] = match self.direction {
-			FundingDirection::In => {
-				&[FundingStep::Started, FundingStep::Received, FundingStep::Added]
-			},
-			FundingDirection::Out => {
-				&[FundingStep::Started, FundingStep::Received, FundingStep::Sent]
-			},
-		};
+	/// The session's steps, each with when it was reached, if it was.
+	fn steps_reached(&self) -> Vec<FundingProgressStep> {
+		let steps = FundingStep::of(self.direction);
 		let first = |matches: fn(&FundingUpdate) -> bool| {
 			self.updates
 				.iter()
@@ -935,11 +947,16 @@ impl FundingSession {
 				times[index] = times[index + 1];
 			}
 		}
-		let steps: Vec<FundingProgressStep> = steps
+		steps
 			.iter()
 			.zip(times)
 			.map(|(step, reached_at_ms)| FundingProgressStep { step: *step, reached_at_ms })
-			.collect();
+			.collect()
+	}
+
+	/// The session's progress for its direction and rail at `now_ms`.
+	pub fn progress(&self, now_ms: u64) -> FundingProgress {
+		let steps = self.steps_reached();
 		let band = self.band(now_ms);
 		let status = self.status(now_ms);
 		let money_moved = self.money_moved();
@@ -979,6 +996,10 @@ impl FundingSession {
 			longer_at_ms: self.longer_at_ms().filter(|at_ms| *at_ms > now_ms),
 			money_moved,
 			cancel: cancel_availability(&status, money_moved),
+			awaits_user_transfer: awaits_user_transfer(
+				self.direction,
+				self.choice.as_ref().map(|choice| choice.rail),
+			),
 			steps,
 			band,
 			status,
@@ -1612,12 +1633,11 @@ impl FundingSession {
 	/// Whether the provider's part in front of the user is done, so a frame
 	/// it shows for the session can close: the session ended, or it reached a
 	/// milestone past Started.
-	pub fn payment_moved(&self) -> bool {
+	pub fn frame_done(&self) -> bool {
 		if !matches!(self.stage, FundingStage::Open) {
 			return true;
 		}
-		self.progress(self.opened_at_ms)
-			.steps
+		self.steps_reached()
 			.iter()
 			.any(|step| step.step != FundingStep::Started && step.reached_at_ms.is_some())
 	}
