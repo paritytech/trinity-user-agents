@@ -377,6 +377,10 @@ extension MainTabBarViewController {
         chromeController.openPanelShowingDocklet(.content(.scan))
     }
 
+    func closeScanPanel() {
+        chromeController.closeCenterPanel(duration: nil)
+    }
+
     func makeScanPanel() -> UIViewController? {
         let controller = viewFactory.makeScanController()
         scanPanel = controller
