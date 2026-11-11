@@ -118,6 +118,31 @@ struct ProductNotificationDiagnosticsTests {
         )
     }
 
+    @Test(arguments: [
+        (ProductNotificationEvent.Reason.addFailed, "add-failed"),
+        (.storeFailed, "store-failed")
+    ])
+    func aFailedHandOverReportsAnIssueWithItsError(reason: ProductNotificationEvent.Reason, kind: String) {
+        struct StoreError: Error {}
+        let issues = RecordingIssueReporter()
+        let diagnostics = ProductNotificationDiagnostics.recording(into: recorder, issues: issues)
+
+        diagnostics.notScheduled(productId: productId, notificationId: 42, reason: reason, error: StoreError())
+
+        #expect(issues.issues.map { [$0.flow, $0.kind, $0.errorType] } == [
+            ["product-notification", kind, String(reflecting: StoreError.self)]
+        ])
+    }
+
+    @Test func limitReachedReportsNoIssue() {
+        let issues = RecordingIssueReporter()
+        let diagnostics = ProductNotificationDiagnostics.recording(into: recorder, issues: issues)
+
+        diagnostics.notScheduled(productId: productId, notificationId: nil, reason: .limitReached)
+
+        #expect(issues.issues.isEmpty)
+    }
+
     @Test func suppressedIsToldFromShown() {
         diagnostics.suppressed(identifier: "product:example.dot:42", userInfo: productInfo(), deliveredAt: deliveredAt)
 

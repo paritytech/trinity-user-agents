@@ -4,9 +4,13 @@ import IssueMonitoring
 
 extension ProductNotificationDiagnostics {
     /// Diagnostics whose events land in `recorder` with a fixed origin and clock.
-    static func recording(into recorder: RecordingHostEventRecorder) -> ProductNotificationDiagnostics {
+    static func recording(
+        into recorder: RecordingHostEventRecorder,
+        issues: any IssueReporting = NoopIssueReporter()
+    ) -> ProductNotificationDiagnostics {
         ProductNotificationDiagnostics(
             recorder: recorder,
+            issues: issues,
             origin: GameReminderDiagnostics.testOrigin,
             monotonicMilliseconds: { GameReminderDiagnostics.testMonotonicMilliseconds }
         )
@@ -46,4 +50,17 @@ func expectedProductNotificationHostEvent(
         tags: expectedTags.merging(tags) { _, new in new },
         extras: extras
     )
+}
+
+final class RecordingIssueReporter: IssueReporting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var reportedIssues: [CriticalIssue] = []
+
+    var issues: [CriticalIssue] {
+        lock.withLock { reportedIssues }
+    }
+
+    func report(_ issue: CriticalIssue) {
+        lock.withLock { reportedIssues.append(issue) }
+    }
 }

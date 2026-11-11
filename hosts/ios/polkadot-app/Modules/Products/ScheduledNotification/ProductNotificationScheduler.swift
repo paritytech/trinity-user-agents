@@ -51,7 +51,8 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
         storageFacade: StorageFacadeProtocol = UserDataStorageFacade.shared,
         notificationCenter: any ScheduledNotificationCentering = UNUserNotificationCenter.current(),
         diagnostics: ProductNotificationDiagnostics = ProductNotificationDiagnostics(
-            recorder: IssueMonitoringFactory.createHostEventRecorder()
+            recorder: IssueMonitoringFactory.createHostEventRecorder(),
+            issues: IssueReportingFacade.shared
         ),
         applicationStateStreams: ApplicationStateStreamFactory = ApplicationStateStreamFactory(),
         logger: LoggerProtocol = Logger.shared
@@ -153,7 +154,7 @@ private extension ProductNotificationScheduler {
         do {
             return try await step()
         } catch {
-            diagnostics.notScheduled(productId: productId, notificationId: notificationId, reason: reason)
+            diagnostics.notScheduled(productId: productId, notificationId: notificationId, reason: reason, error: error)
             throw error
         }
     }
