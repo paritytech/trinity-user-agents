@@ -582,6 +582,10 @@ host failures. Android and iOS hosts with Sentry enabled report the reminder
 lifecycle through `host.reminder.*` Sentry events without changing reminder
 delivery or cleanup.
 
+Android and iOS hosts with Sentry enabled report each product notification
+through `host.product_notification.*` events, joined by
+`product_notification.product_id` and `product_notification.id`.
+
 `Scanner` (`scan`) opens the host's own QR and barcode viewfinder (RFC
 "Host-drawn scanner"). The Android app draws it. Both CLI host roles answer
 it from `TRUAPI_SCAN_TEXT`, or with a dismissal when it is unset, so the
