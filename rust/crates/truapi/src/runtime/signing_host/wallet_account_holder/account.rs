@@ -8,7 +8,6 @@ use crate::{
 		transaction::sign_extrinsic_payload,
 	},
 	host_logic::{
-		features::genesis_for,
 		product_account::{SR25519_SIGNING_CONTEXT, personhood_product_id},
 		raw_signing::raw_payload_bytes,
 	},
@@ -42,10 +41,9 @@ use futures::{
 use truapi::{
 	latest as api,
 	latest::{
-		ChainIdentifier, DerivationIndex, HostAccountCreateProofRequest,
-		HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
-		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest, ProductAccountId,
-		RingLocation, RingLocationJunction,
+		DerivationIndex, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
 	},
 };
 
@@ -132,17 +130,10 @@ impl WalletAccountHolder {
 		session: &AuthoritySession,
 		owner: &ProductId,
 	) -> Result<(), RingVrfError> {
-		if owner != &personhood_product_id(&self.network_suffix) {
+		if owner != &personhood_product_id(self.services.stack().tld()) {
 			return Ok(());
 		}
-		let chains = self
-			.services
-			.platform
-			.supported_chains()
-			.await
-			.map_err(|error| RingVrfError::Unknown { reason: error.reason })?;
-		let chain_id =
-			genesis_for(&chains, ChainIdentifier::People).ok_or(RingVrfError::RingNotFound)?;
+		let chain_id = self.services.stack().chains().people;
 		let entries = self.ring_vrf_registry.owner_entries(session.public_key, owner).await?;
 		let missing = [(PersonhoodCollection::People, 0), (PersonhoodCollection::LitePeople, 1)]
 			.into_iter()
@@ -637,6 +628,23 @@ impl AccountHolder for WalletAccountHolder {
 		self.record_registration(invocation.session, handle, request.ring, public_key)
 			.await?;
 		Ok(public_key)
+	}
+
+	async fn record_ring_vrf_key(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountRegisterRingVrfKeyRequest,
+		public_key: [u8; 32],
+	) -> Result<(), RingVrfError> {
+		self.require_current_session(invocation.session)?;
+		let handle = Self::caller_key_handle(&invocation, request.index)?;
+		if self.derive_ring_vrf_member(invocation.session, &handle).await? != public_key {
+			return Err(RingVrfError::Unknown {
+				reason: "the kept AutoSigning key derives a different ring-VRF key".to_string(),
+			});
+		}
+		self.record_registration(invocation.session, handle, request.ring, public_key)
+			.await
 	}
 
 	async fn list_ring_vrf_keys(

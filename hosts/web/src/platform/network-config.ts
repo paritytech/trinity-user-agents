@@ -9,7 +9,7 @@
  *
  * - A built-in stack is one this build ships: its link pins the key every
  *   copy must be signed with, and the build bundles a signed copy from
- *   `rust/crates/truapi-host-cli/stacks/`, which `scripts/update-stacks.sh`
+ *   `stacks/` at the repository root, which `scripts/update-stacks.sh`
  *   refreshes.
  * - A custom stack is one the user added by its URL or stack link
  *   (`stacks.ts`). Only a link with a key pins a signer; a plain URL is read
@@ -26,15 +26,18 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import {
   decodeLink,
+  encodeLink,
   open,
   stackId,
   type Descriptor,
   type Pointer,
 } from "@parity/trinity-stack";
 import { bytesToHex, type HexString } from "@parity/truapi/scale";
-import paseoNextV2Copy from "../../../../rust/crates/truapi-host-cli/stacks/paseo-next-v2.json";
-import pcfDevnetCopy from "../../../../rust/crates/truapi-host-cli/stacks/pcf-devnet.json";
-import previewnetCopy from "../../../../rust/crates/truapi-host-cli/stacks/previewnet.json";
+import type { BundledStack } from "@parity/truapi-host";
+import type { TestStack } from "@parity/truapi-host/testing";
+import paseoNextV2Copy from "../../../../stacks/paseo-next-v2.json";
+import pcfDevnetCopy from "../../../../stacks/pcf-devnet.json";
+import previewnetCopy from "../../../../stacks/previewnet.json";
 import { DEFAULT_NETWORK as DEFAULT_NETWORK_ID } from "./network-scope.js";
 
 /** Id of a stack this build ships. Each is also the namespace its state is kept under. */
@@ -125,7 +128,7 @@ export interface StackCopy {
   pointer: Pointer;
   /**
    * The document as served or bundled. The core verifies these exact bytes
-   * once it takes its chains from a stack.
+   * when the copy is signed ({@link coreStack}).
    */
   document: Uint8Array;
   descriptor: Descriptor;
@@ -402,6 +405,38 @@ export function networkConfigFrom(
     bestBlockPosting: policy.bestBlockPosting,
     backup: policy.origin === "built-in",
     stack: copy,
+  };
+}
+
+/**
+ * The stack the core runs for `config`. A signed copy goes as it was served,
+ * and the core checks it again under the link's key. An unsigned custom stack
+ * goes as its parts, which only the testing bundle this host runs takes. Both
+ * allow Polkadot's TLD and genesis hashes, as the host does.
+ */
+export function coreStack(
+  config: NetworkConfig,
+): { stack: BundledStack } | { testStack: TestStack } {
+  const { pointer, document } = config.stack;
+  if (pointer.key !== undefined)
+    return {
+      stack: {
+        pointer: encodeLink(pointer),
+        descriptor: document,
+        allowsReservedValues: true,
+      },
+    };
+  const chain = (role: ChainRole) => ({ genesisHash: config.genesis[role] });
+  return {
+    testStack: {
+      network: config.chainInfoNetwork,
+      tld: config.networkSuffix,
+      relay: chain("relay"),
+      assetHub: chain("assetHub"),
+      people: chain("people"),
+      bulletin: chain("bulletin"),
+      allowsReservedValues: true,
+    },
   };
 }
 

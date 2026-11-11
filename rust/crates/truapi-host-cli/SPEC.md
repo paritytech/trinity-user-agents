@@ -1141,7 +1141,7 @@ Before a signing host answers a link, it:
 
 1. ensures a signer;
 2. decodes the V2 handshake;
-3. derives its RFC-0022 `uid.<tld>` identity account;
+3. derives its RFC-0028 `peopl.<tld>` identity account;
 4. reads the pairing device Statement Store account from the proposal;
 5. finds the signer's rings through the pairing-attestation bootstrap `peopl.<tld>`
    keys, index 0 for `People` and index 1 for `LitePeople`, scanning back from
@@ -1163,21 +1163,38 @@ other statement accounts keep running.
 
 Interactive mode and `--serve` restore every saved peer for the selected
 session. Background responders treat transient failures and ended subscriptions
-as retryable, with exponential backoff capped at 30 seconds. A remote
+as retryable, with exponential backoff capped at 30 seconds. After a session
+that ran for more than 30 seconds, the backoff starts again at one second. When
+the People chain cannot be reached, a responder sends an acknowledgement, a
+pairing answer or a disconnect notice again for about 15 seconds before it
+fails. It sends a response again until the People chain takes it, because the
+request behind it has already run and is not run again. A responder whose
+session cannot be served at all, such as one without an active local session,
+reports why and stops instead of restarting. A remote
 `Disconnected` protocol message stops retrying and removes only that peer from
 `paired-hosts.json` and allowance renewal. Other peers remain saved and active.
 
 Each responder uses a durable, versioned replay ledger scoped by the root
 public key, peer statement account ID, and peer encryption public key. A
-request is recorded as started before its messages execute and as completed
-afterward. Either state suppresses execution of an unexpired duplicate while
-still publishing the statement-level success acknowledgement. A duplicate
+request is acknowledged, then recorded as started before its messages execute
+and as completed afterward. A request whose acknowledgement fails is not
+recorded, so it runs when it is delivered again. Either state suppresses
+execution of an unexpired duplicate while still publishing the statement-level
+success acknowledgement. When the People chain refuses an answer to a request
+that ran, the responder keeps the answer in memory and publishes it again, with
+a fresh expiry, when the request is delivered again. A peer's request channel
+holds only its newest statement, so only the newest such request per peer is
+kept, and kept answers do not survive a process restart. A duplicate
 `Disconnected` request still terminates and removes that peer. Expired entries
 are pruned. Missing or overly distant peer expiry is retained for at most the
 seven-day SSO statement lifetime. At 1,024 live entries the ledger rejects a new
-request before executing it instead of evicting an unexpired replay marker.
+request before acknowledging or executing it instead of evicting an unexpired
+replay marker.
 
-In `exec`, `/pair` waits for the responder to finish. With `--deeplink` plus
+In `exec`, `/pair` waits for the responder to finish. It restarts the responder
+after a failure, like a background responder, and finishes when the paired host
+disconnects. A session that cannot be served at all fails `/pair` with that
+reason. With `--deeplink` plus
 another `exec` command or a script, the responder runs only for that command's
 lifetime and is then stopped. One-shot `exec` and `--script` do not restore
 other saved responders.
@@ -1261,7 +1278,7 @@ A new auto account:
 
 1. acquires `accounts.json.lock` and validates its username base before onboarding;
 2. generates a 12-word mnemonic;
-3. derives the RFC-0022 `uid.<tld>` index-0 sr25519 identity account;
+3. derives the RFC-0028 `peopl.<tld>` index-0 sr25519 identity account;
 4. chooses `auto-<n>` as its local name;
 5. checks that the requested Lite username base has an available numerical
    alias;
@@ -1288,7 +1305,7 @@ attempts. Identity-backend HTTP clients use a 30-second timeout.
 
 The backend's username routes are bearer-gated. Unless
 `HOST_CLI_IDENTITY_BACKEND_TOKEN` supplies one, the CLI mints an access token
-for the mnemonic's RFC-0022 `uid.<tld>` account. It takes a challenge from
+for the mnemonic's RFC-0028 `peopl.<tld>` account. It takes a challenge from
 `auth/challenges`. It answers `auth/token` with an sr25519 proof over
 `SHA256(challenge || clientId || SHA256(body))`, signed by that identity key.
 The backend requires the JWT subject to equal `candidateAccountId` on
@@ -1420,7 +1437,7 @@ may remain.
 `/session --mnemonic "<phrase>"` is an import-only flow:
 
 1. parse and normalize the BIP-39 phrase;
-2. derive the RFC-0022 `uid.<tld>` identity;
+2. derive the RFC-0028 `peopl.<tld>` identity;
 3. read its optional full or Lite dotNS username from Asset Hub;
 4. when no dotNS mirror exists, search the identity backend's assigned username
    records for the derived candidate account;
@@ -1636,7 +1653,7 @@ state, and other role-owned runtime data.
 - network id;
 - plaintext BIP-39 mnemonic;
 - final Lite username;
-- RFC-0022 `uid.<tld>` index-0 public key and address;
+- RFC-0028 `peopl.<tld>` index-0 public key and address;
 - creation timestamp;
 - attested state; and
 - exhausted Statement Store periods.
@@ -1739,7 +1756,7 @@ A stack with the id `polkadot` cannot run, since that namespace may contain
 sessions of real Polkadot identities.
 
 `paseo-next-v2`, `previewnet` and `pcf-devnet` are built-in stacks. The binary
-ships a signed copy of each in `stacks/<name>.json`, with the link that carries
+ships a signed copy of each from the repository's `stacks/<name>.json`, with the link that carries
 its pointer in `stacks/<name>.link`. A command that resolves a built-in fetches
 the published descriptor (3-second timeout) and runs the RFC's `accept` with the
 shipped copy as the stored one, then uses what it returns. A published descriptor
@@ -1789,10 +1806,10 @@ descriptor that breaks a rule and one past `expiresAt` are errors that name the
 stack; one past `validUntil` is used with a warning. Its endpoints and People's
 `NetworkSuffix` are checked as above. `--chain-backend light-client` is
 refused with `--stack`, since the light client syncs only the networks
-`truapi-provider` bundles. The product namespace (`HostChainSet.network` and the
-state directory) is the descriptor's `id` without a trailing `-fork`, which must
-be a lowercase label; the `polkadot-fork` namespace is its full `id`, so it does
-not share the `polkadot` namespace.
+`truapi-provider` bundles. `get_chain_info` reports the descriptor's
+`network`. The product namespace (the state directory) is the descriptor's `id`
+without a trailing `-fork`, which must be a lowercase label; the `polkadot-fork`
+namespace is its full `id`, so it does not share the `polkadot` namespace.
 
 #### `network-check`
 
@@ -2019,11 +2036,10 @@ Deliberately unavailable methods:
 - all nine Coin Payment methods, which answer `CallError::Unsupported`; and
 - all four Payment methods, which answer typed `Unknown` domain errors.
 
-A successful `System/feature_supported` call resolves the queried chain against
-the host's chain set, the same set `Chain/get_chain_info` answers from, so it
-returns `true` for the network's People, Bulletin and Asset Hub genesis hashes and
-`false` for anything else. Success means the method is wired, not that every feature
-is present.
+A successful `System/feature_supported` call returns `true` for the People,
+Bulletin and Asset Hub genesis hashes of the host's stack, the chains
+`Chain/get_chain_info` answers for, and `false` for anything else. Success means
+the method is wired, not that every feature is present.
 
 ### 15.2 Platform-specific semantics
 
@@ -2236,7 +2252,7 @@ truapi-host identity-check \
 The command derives and queries two accounts:
 
 - root; and
-- RFC-0022 `//product//uid.<tld>/index_bytes(0)`, `<tld>` being the selected
+- RFC-0028 `//product//peopl.<tld>/index_bytes(0)`, `<tld>` being the selected
   network's dotNS TLD (`paseo` for `paseo-next-v2`, `testnet` for `previewnet`,
   `dot` for `pcf-devnet`).
 
@@ -2262,7 +2278,7 @@ truapi-host register-name \
 ```
 
 Registers `label` as the full-person username of the mnemonic's RFC-0022
-`uid.<tld>` identity account, through `DotnsGateway.register_name` on Asset Hub.
+`peopl.<tld>` identity account, through `DotnsGateway.register_name` on Asset Hub.
 The account must be a recognized full person: its ring-VRF key must be built
 into a People-collection ring root on People, and Asset Hub's
 `members-subscriber` must already hold that root revision (the command waits for
@@ -2288,11 +2304,35 @@ REGISTER_CONFIRMED label=<label> full_username=<name>
 
 `REGISTER_ALIAS` is printed once `DotnsGateway.AccountAlias` records the
 account, `REGISTER_CONFIRMED` once the dotNS contracts return the name (or
-`<pending>`). Before signing: the label must be unminted on `DotnsRegistrar` (a
-pending reservation is not a mint and stays claimable); the account must not
-already hold a `DotnsGateway.AccountAlias`; a linked lite username must be
-owned by the account per `DotnsGateway.LiteLabelOwner`; and runtimes whose
+`<pending>`). Before signing: the label must be unminted on `DotnsRegistrar`;
+another account must not hold the first active reservation in the label's
+reservation queue on `DotnsPopController`; the account must not already hold a
+`DotnsGateway.AccountAlias`; a linked lite username must be owned by the
+account per `DotnsGateway.LiteLabelOwner`; and runtimes whose
 `RegisterFullName` shape differs are rejected.
+
+A gateway claim clears at most `MAX_QUEUE_STEPS_PER_CALL` expired or emptied
+reservations from the front of the queue, and a reverted claim keeps none of
+that clearing. The command reads the queue again after the ring revision wait,
+right before the claim. When more of them stand in front of the claim then
+(dotNS 1.1.0 and later), it first clears the queue with
+`DotnsPopController.expireReservation(label)`, sent as a `Revive.call` signed by
+the account, with the weight and storage deposit limits of a dry-run from it.
+The fee and the storage deposit are paid in PGAS. When the account holds less
+than one claim's worth of PGAS (`Pgas.PgasClaimAmount`), or the dry-run fails
+because the account cannot fund the deposit, the command claims PGAS into the
+account with the same People ring membership (`Pgas.claim_pgas`, one daily
+slot) and dry-runs again. Any other dry-run failure stops the command. After
+the call is finalized, it reads the queue again and stops if the claim would
+still revert. Clearing prints, before `REGISTER_SUBMITTED`:
+
+```text
+REGISTER_QUEUE_BLOCKED label=<label> dead=<count>
+REGISTER_PGAS_CLAIMED block=<hash>
+REGISTER_QUEUE_CLEARED label=<label>
+```
+
+`REGISTER_PGAS_CLAIMED` appears only when a claim was needed.
 
 ### 19.3 `alloc-check`
 
@@ -2376,7 +2416,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `TRUAPI_HOST_RELEASE_BASE_URL` | Release host for the installer and the updater, for mirrors and tests. |
 | `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check`, `pgas-check` and `attest` when `--mnemonic` is omitted. |
 | `HOST_CLI_STACK` | Default `--stack`: a descriptor URL, a stack link or a local descriptor file (§14.1). Blank is unset; combined with `--network`, it is an error. |
-| `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
+| `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `peopl.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
 | `XDG_STATE_HOME` | Preferred default state parent. |
 | `HOME` | Fallback default state parent. |
 | `VISUAL` | Preferred script editor. |

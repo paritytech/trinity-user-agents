@@ -9,10 +9,11 @@ use crate::{
 		sso::pairing::{
 			PairingBootstrap, derive_x25519_keypair_from_entropy, establish_sso_session_info,
 		},
+		statement_store::SUBMIT_STATEMENT_METHOD,
 		worker::WorkerTransition,
 		x25519_seal::X25519PrivateKey,
 	},
-	test_support::{StubPlatform, runtime_config, test_spawner, wait_until},
+	test_support::{StubPlatform, runtime_config, wait_until},
 };
 use parity_scale_codec::Encode;
 use std::sync::atomic::Ordering;
@@ -51,14 +52,10 @@ fn signing_runtime(platform: Arc<StubPlatform>) -> SigningHostRuntime {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		// Distinct from its siblings so a transposition stays visible.
-		[0xcc; 32],
-		"testnet".to_string(),
+		crate::test_support::test_stack("testnet", [0; 32], [0xbb; 32], Some([0xcc; 32])),
 	)
 	.expect("signing host config is valid");
-	SigningHostRuntime::new(platform, config, test_spawner())
+	SigningHostRuntime::new(platform, config, Spawner::for_test())
 }
 
 /// An answer changed in settings applies at once: a product that was allowed
@@ -134,7 +131,7 @@ fn network_access_reuses_product_grants_and_prompts_only_for_new_domains() {
 	futures::executor::block_on(async {
 		let platform = Arc::new(StubPlatform::default());
 		let (config, _) = runtime_config("fetch.dot");
-		let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
+		let runtime = PairingHostRuntime::new(platform.clone(), config, Spawner::for_test());
 		let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
 		let cx = CallContext::default();
 		let request = network_permission(&["api.example.com"]);
@@ -198,7 +195,7 @@ fn remote_authorization_frames_consume_one_use_grants() {
 				platform.clone(),
 				config,
 				product,
-				test_spawner(),
+				Spawner::for_test(),
 				sink.clone(),
 			);
 			let permission = network_permission(&["api.example.com"]);
@@ -252,7 +249,7 @@ fn network_access_honors_wildcard_precedence_revocation_and_product_isolation() 
 		let platform =
 			Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
 		let (config, _) = runtime_config("fetch.dot");
-		let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
+		let runtime = PairingHostRuntime::new(platform.clone(), config, Spawner::for_test());
 		let admin = runtime.product_admin(product_context(&ProductId::for_test("fetch.dot")));
 		let cx = CallContext::default();
 		admin
@@ -333,7 +330,7 @@ fn network_access_trusted_products_ignore_recorded_denials() {
 	futures::executor::block_on(async {
 		let platform = Arc::new(StubPlatform::default());
 		let (config, _) = runtime_config("peopl.dot");
-		let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
+		let runtime = PairingHostRuntime::new(platform.clone(), config, Spawner::for_test());
 		let admin = runtime.product_admin(product_context(&ProductId::for_test("peopl.dot")));
 		let cx = CallContext::default();
 		let request = network_permission(&["api.example.com"]);
@@ -376,7 +373,7 @@ fn network_access_trusted_products_ignore_recorded_denials() {
 fn a_cached_subtree_answers_without_reaching_the_wallet() {
 	let platform = Arc::new(StubPlatform::default());
 	let (host_config, _) = runtime_config("myapp.dot");
-	let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
+	let runtime = PairingHostRuntime::new(platform.clone(), host_config, Spawner::for_test());
 	let session = crate::test_support::sso_session_info();
 	install_session_after_boot(&runtime, &platform, session.clone());
 	runtime.pairing_host.cache_product_subtree_for_test(
@@ -401,7 +398,7 @@ fn a_cached_subtree_answers_without_reaching_the_wallet() {
 fn a_timeout_bounds_the_wait_for_the_account_holder() {
 	let platform = Arc::new(StubPlatform::default());
 	let (host_config, _) = runtime_config("myapp.dot");
-	let runtime = PairingHostRuntime::new(platform.clone(), host_config, test_spawner());
+	let runtime = PairingHostRuntime::new(platform.clone(), host_config, Spawner::for_test());
 	install_session_after_boot(&runtime, &platform, crate::test_support::sso_session_info());
 
 	// Nothing answers the wallet request, and wait_for_sso_remote_response exits
@@ -423,7 +420,7 @@ fn product_runtime_and_dispatch_future_are_send() {
 		Arc::new(StubPlatform::default()),
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		Arc::new(RecordingSink::default()),
 	);
 
@@ -457,7 +454,7 @@ fn debug_sink_taps_frames_in_both_directions() {
 		platform,
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		sink.clone(),
 	);
 	runtime.set_debug_sink(ChannelId("myapp.dot".to_string()), debug.clone());
@@ -573,7 +570,7 @@ fn a_panicking_sink_destructor_does_not_poison_the_tap_for_later_frames() {
 		platform,
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		transport,
 	);
 	let channel = ChannelId("myapp.dot".to_string());
@@ -616,7 +613,7 @@ fn a_corrupt_inbound_frame_is_tapped_even_though_decode_rejects_it() {
 		platform,
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		transport,
 	);
 	let debug = Arc::new(RecordingDebugSink::default());
@@ -674,7 +671,7 @@ fn a_panicking_sink_destructor_does_not_unwind_the_frame_path() {
 		platform,
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		transport,
 	));
 	let channel = ChannelId("myapp.dot".to_string());
@@ -731,7 +728,7 @@ fn outbound_frames_are_delivered_before_they_are_tapped() {
 		platform,
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		transport.clone(),
 	);
 	let debug = Arc::new(DeliveryOrderSink {
@@ -823,13 +820,13 @@ fn app_connection_rejects_rendering() {
 		Arc::new(StubPlatform::default()),
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		Arc::new(RecordingSink::default()),
 	);
 
 	assert!(matches!(
-		runtime.control().render(v01::ProductRendererRenderRequest {
-			context: v01::RenderContext::ChatMessage {
+		runtime.control().render(truapi::latest::ProductRendererRenderRequest {
+			context: truapi::latest::RenderContext::ChatMessage {
 				room_id: "room".into(),
 				message_id: "message".into(),
 				message_type: "vote".into(),
@@ -853,7 +850,7 @@ fn worker_connection_renders_and_receives_actions_without_a_session() {
 		Arc::new(StubPlatform::default()),
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		Arc::new(RecordingSink::default()),
 	);
 	let host = runtime.admin.product_runtime().clone();
@@ -870,14 +867,14 @@ fn worker_connection_renders_and_receives_actions_without_a_session() {
 
 	let _render = runtime
 		.control()
-		.render(v01::ProductRendererRenderRequest {
-			context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
+		.render(truapi::latest::ProductRendererRenderRequest {
+			context: truapi::latest::RenderContext::PocketCard { card_id: "loyalty".into() },
 			payload: vec![],
 		})
 		.expect("a signed-out Worker connection may render");
 
-	let published = v01::HostRendererActionSubscribeItem {
-		context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
+	let published = truapi::latest::HostRendererActionSubscribeItem {
+		context: truapi::latest::RenderContext::PocketCard { card_id: "loyalty".into() },
 		action_id: "vote".into(),
 		payload: vec![],
 	};
@@ -891,11 +888,12 @@ fn worker_connection_renders_and_receives_actions_without_a_session() {
 		core::task::Poll::Ready(Some(item)) => item,
 		other => panic!("a published renderer action must be ready, got {other:?}"),
 	};
-	let Ok(truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(delivered)) = delivered
+	let Ok(delivered @ truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(_)) =
+		delivered
 	else {
 		panic!("expected a renderer action item")
 	};
-	assert_eq!(delivered, published);
+	assert_eq!(truapi::versioned::IntoLatest::into_latest(delivered), published);
 }
 
 #[test]
@@ -923,7 +921,7 @@ fn an_open_render_holds_one_worker_reference() {
 		Arc::new(StubPlatform::default()),
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		Arc::new(RecordingSink::default()),
 	);
 	let services = runtime.admin.product_runtime().connection().services().clone();
@@ -936,8 +934,8 @@ fn an_open_render_holds_one_worker_reference() {
 
 	let render = runtime
 		.control()
-		.render(v01::ProductRendererRenderRequest {
-			context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
+		.render(truapi::latest::ProductRendererRenderRequest {
+			context: truapi::latest::RenderContext::PocketCard { card_id: "loyalty".into() },
 			payload: vec![],
 		})
 		.expect("a Worker connection may render");
@@ -967,7 +965,7 @@ fn render_runtime() -> (ProductRuntime, Arc<RecordingSink>) {
 		Arc::new(StubPlatform::default()),
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		sink.clone(),
 	);
 	(runtime, sink)
@@ -1028,11 +1026,69 @@ fn start_render(
 ) -> truapi::Subscription<v01::RendererNode, truapi::CallError<v01::GenericError>> {
 	runtime
 		.control()
-		.render(v01::ProductRendererRenderRequest {
-			context: v01::RenderContext::PocketCard { card_id: card_id.to_string() },
+		.render(truapi::latest::ProductRendererRenderRequest {
+			context: truapi::latest::RenderContext::PocketCard { card_id: card_id.to_string() },
 			payload: vec![],
 		})
 		.expect("a Worker connection may render")
+}
+
+#[test]
+fn only_a_footer_context_renders_in_v2() {
+	// A product on the published SDK decodes only V1 render requests, and a
+	// footer context exists only in V2, which the product that docked the card speaks.
+	let (runtime, sink) = render_runtime();
+	let footer = truapi::latest::ProductRendererRenderRequest {
+		context: truapi::latest::RenderContext::ChatRoomFooter {
+			room_id: "room".into(),
+			message_type: "register".into(),
+		},
+		payload: vec![1],
+	};
+	let message = truapi::latest::ProductRendererRenderRequest {
+		context: truapi::latest::RenderContext::ChatMessage {
+			room_id: "room".into(),
+			message_id: "message-1".into(),
+			message_type: "vote".into(),
+		},
+		payload: vec![2],
+	};
+
+	// When
+	let _renders = [footer.clone(), message]
+		.map(|request| runtime.control().render(request).expect("a Worker connection may render"));
+
+	// Then
+	let sent: Vec<_> = sink
+		.frames
+		.lock()
+		.expect("recording sink mutex poisoned")
+		.iter()
+		.map(|frame| {
+			let start =
+				ProtocolMessage::decode(&mut frame.as_slice()).expect("a start frame decodes");
+			truapi::versioned::renderer::ProductRendererRenderRequest::decode(
+				&mut start.payload.value.as_slice(),
+			)
+			.expect("a render request decodes")
+		})
+		.collect();
+	assert_eq!(
+		sent,
+		[
+			truapi::versioned::renderer::ProductRendererRenderRequest::V2(footer),
+			truapi::versioned::renderer::ProductRendererRenderRequest::V1(
+				v01::ProductRendererRenderRequest {
+					context: v01::RenderContext::ChatMessage {
+						room_id: "room".into(),
+						message_id: "message-1".into(),
+						message_type: "vote".into(),
+					},
+					payload: vec![2],
+				}
+			),
+		]
+	);
 }
 
 /// Request id of the render start frame sent at `index`.
@@ -1195,16 +1251,18 @@ fn app_connection_rejects_publishing_a_renderer_action() {
 		Arc::new(StubPlatform::default()),
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		Arc::new(RecordingSink::default()),
 	);
 
 	assert!(matches!(
-		runtime.control().publish_renderer_action(v01::HostRendererActionSubscribeItem {
-			context: v01::RenderContext::PocketCard { card_id: "card".into() },
-			action_id: "vote".into(),
-			payload: vec![],
-		}),
+		runtime.control().publish_renderer_action(
+			truapi::latest::HostRendererActionSubscribeItem {
+				context: truapi::latest::RenderContext::PocketCard { card_id: "card".into() },
+				action_id: "vote".into(),
+				payload: vec![],
+			}
+		),
 		Err(ProductRuntimeError::Denied)
 	));
 }
@@ -1216,7 +1274,7 @@ fn app_connection_rejects_publishing_a_chat_action() {
 		Arc::new(StubPlatform::default()),
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		Arc::new(RecordingSink::default()),
 	);
 
@@ -1242,7 +1300,7 @@ fn generated_filter_denies_chat_request_on_app_connection() {
 		Arc::new(StubPlatform::default()),
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		sink.clone(),
 	);
 	let ids = crate::frame::request_ids("chat_create_room").expect("known Chat request");
@@ -1285,7 +1343,7 @@ fn generated_filter_denies_chat_register_bot_on_app_connection() {
 		Arc::new(StubPlatform::default()),
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		sink.clone(),
 	);
 	let ids = crate::frame::request_ids("chat_register_bot").expect("known Chat request");
@@ -1328,7 +1386,7 @@ fn generated_filter_denies_chat_subscription_on_app_connection() {
 		Arc::new(StubPlatform::default()),
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		sink.clone(),
 	);
 	let ids = subscription_ids("chat_action_subscribe").expect("known Chat subscription");
@@ -1382,7 +1440,7 @@ fn a_dispatch_racing_dispose_does_not_reach_the_platform() {
 		platform,
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		Arc::new(RecordingSink::default()),
 	));
 
@@ -1437,7 +1495,7 @@ fn dispose_releases_the_demand_open_operations_hold() {
 		platform,
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		sink,
 	);
 	let host = runtime.admin.product_runtime().clone();
@@ -1479,7 +1537,7 @@ fn dispose_ends_the_operations_the_host_is_still_holding() {
 		platform.clone(),
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		sink,
 	);
 	let host = runtime.admin.product_runtime().clone();
@@ -1528,7 +1586,7 @@ fn dispose_cancels_active_subscriptions() {
 		platform,
 		host_config,
 		product,
-		test_spawner(),
+		Spawner::for_test(),
 		sink,
 	);
 
@@ -1575,14 +1633,11 @@ fn the_device_pairing_observer_is_installed_once() {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		[0xcc; 32],
-		"paseo".to_string(),
+		crate::test_support::paseo_test_stack(),
 	)
 	.expect("signing host config is valid");
 	let runtime =
-		SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
+		SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, Spawner::for_test());
 
 	assert!(runtime.set_device_pairing_observer(Arc::new(Inert)));
 	assert!(!runtime.set_device_pairing_observer(Arc::new(Inert)));
@@ -1603,14 +1658,11 @@ fn test_signing_runtime() -> (SigningHostRuntime, Arc<StubPlatform>) {
 	let config = SigningHostConfig::new(
 		host,
 		PlatformInfo::default(),
-		genesis.0,
-		genesis.1,
-		genesis.2,
-		"paseo".to_string(),
+		crate::test_support::test_stack("paseo", genesis.0, genesis.1, Some(genesis.2)),
 	)
 	.expect("signing host config is valid");
 	let platform = Arc::new(StubPlatform::default());
-	(SigningHostRuntime::new(platform.clone(), config, test_spawner()), platform)
+	(SigningHostRuntime::new(platform.clone(), config, Spawner::for_test()), platform)
 }
 
 /// Every durable consumer shares one core database: a second installer
@@ -1712,101 +1764,6 @@ fn the_durable_engine_starts_without_an_installation_provider() {
 }
 
 #[test]
-fn answer_sso_request_distinguishes_disconnect_from_ignorable_messages() {
-	use crate::{
-		host_internal::sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
-		platform::{HostInfo, PlatformInfo, SigningHostConfig},
-	};
-
-	const ENTROPY: [u8; 32] = [0xab; 32];
-
-	let config = SigningHostConfig::new(
-		HostInfo {
-			name: "Polkadot Mobile".to_string(),
-			icon: None,
-			version: None,
-			platform: truapi::latest::HostPlatform::Unknown,
-		},
-		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		[0xcc; 32],
-		"paseo".to_string(),
-	)
-	.expect("signing host config is valid");
-	let runtime =
-		SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
-	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-
-	let disconnected = RemoteMessage {
-		message_id: "m1".to_string(),
-		data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
-	};
-	let outcome = futures::executor::block_on(runtime.answer_sso_request(disconnected));
-	assert!(matches!(outcome, SsoRequestOutcome::Disconnected));
-
-	let response_variant = RemoteMessage {
-		message_id: "m2".to_string(),
-		data: RemoteMessageData::V1(v1::RemoteMessage::SignRawWithLegacyAccountResponse(
-			Response { responding_to: "m2".to_string(), payload: Ok(vec![]) },
-		)),
-	};
-	let outcome = futures::executor::block_on(runtime.answer_sso_request(response_variant));
-	assert!(matches!(outcome, SsoRequestOutcome::Ignored));
-}
-
-#[test]
-fn answer_sso_request_returns_a_correlated_response() {
-	use crate::{
-		host_internal::sso_messages::{
-			ProductSubtreeRequest, RemoteMessage, RemoteMessageData, v1,
-		},
-		platform::{HostInfo, PlatformInfo, SigningHostConfig},
-	};
-
-	const ENTROPY: [u8; 32] = [0xab; 32];
-
-	let config = SigningHostConfig::new(
-		HostInfo {
-			name: "Polkadot Mobile".to_string(),
-			icon: None,
-			version: None,
-			platform: truapi::latest::HostPlatform::Unknown,
-		},
-		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		[0xcc; 32],
-		"paseo".to_string(),
-	)
-	.expect("signing host config is valid");
-	let runtime =
-		SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
-	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-
-	let request = RemoteMessage {
-		message_id: "m3".to_string(),
-		data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeRequest(
-			ProductSubtreeRequest { product_id: ProductId::for_test("browse.dot") },
-		)),
-	};
-	let outcome = futures::executor::block_on(runtime.answer_sso_request(request));
-	let SsoRequestOutcome::Response { message } = outcome else {
-		panic!("expected a response outcome");
-	};
-	let response = RemoteMessage::decode(&mut message.as_slice()).expect("valid response encoding");
-	assert_eq!(response.message_id, "m3:response");
-	let RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(payload)) = response.data
-	else {
-		panic!("expected a product subtree response payload");
-	};
-	assert_eq!(payload.responding_to, "m3");
-	assert!(payload.payload.is_ok());
-}
-
-#[test]
 fn disconnect_paired_host_submits_one_disconnected_message_to_the_selected_peer() {
 	let platform = Arc::new(StubPlatform {
 		rpc_responses: vec![
@@ -1847,7 +1804,7 @@ fn disconnect_paired_host_submits_one_disconnected_message_to_the_selected_peer(
 		.iter()
 		.filter_map(|request| {
 			let value: serde_json::Value = serde_json::from_str(request).ok()?;
-			(value["method"] == "statement_submit").then_some(value)
+			(value["method"] == SUBMIT_STATEMENT_METHOD).then_some(value)
 		})
 		.collect::<Vec<_>>();
 	let [submit] = submits.as_slice() else {
@@ -1895,7 +1852,9 @@ fn disconnect_paired_host_propagates_submission_failure() {
 
 /// Signing-host config carrying `asset_hub`, otherwise the shape every
 /// other signing test here uses.
-fn signing_config_with_asset_hub(asset_hub: [u8; 32]) -> crate::platform::SigningHostConfig {
+fn signing_config_with_asset_hub(
+	asset_hub: Option<[u8; 32]>,
+) -> crate::platform::SigningHostConfig {
 	use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
 	SigningHostConfig::new(
@@ -1906,12 +1865,7 @@ fn signing_config_with_asset_hub(asset_hub: [u8; 32]) -> crate::platform::Signin
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		// Same-typed and positional, so a transposition only shows up if
-		// no two are equal.
-		[0xaa; 32],
-		[0xbb; 32],
-		asset_hub,
-		"paseo".to_string(),
+		crate::test_support::test_stack("paseo", [0xaa; 32], [0xbb; 32], asset_hub),
 	)
 	.expect("signing host config is valid")
 }
@@ -1923,8 +1877,8 @@ fn a_signing_host_runtime_carries_its_asset_hub_for_manifest_resolution() {
 	// consulted, which is why a seeded CLI looked healthy.
 	let runtime = SigningHostRuntime::new(
 		Arc::new(StubPlatform::default()),
-		signing_config_with_asset_hub([0xcc; 32]),
-		test_spawner(),
+		signing_config_with_asset_hub(Some([0xcc; 32])),
+		Spawner::for_test(),
 	);
 	assert_eq!(
 		runtime.services.asset_hub_chain_genesis_hash(),
@@ -1947,14 +1901,12 @@ fn a_pairing_host_runtime_carries_its_asset_hub_too() {
 			platform: truapi::latest::HostPlatform::Web,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		[0xdd; 32],
+		crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], Some([0xdd; 32])),
 		"polkadotapp".to_string(),
 	)
 	.expect("pairing host config is valid");
 	let runtime =
-		PairingHostRuntime::new(Arc::new(StubPlatform::default()), config, test_spawner());
+		PairingHostRuntime::new(Arc::new(StubPlatform::default()), config, Spawner::for_test());
 	assert_eq!(
 		runtime.services.asset_hub_chain_genesis_hash(),
 		Some([0xdd; 32]),
@@ -1968,8 +1920,8 @@ fn an_all_zero_asset_hub_is_how_a_signing_host_says_it_has_none() {
 	// second sentinel crossing the boundary.
 	let runtime = SigningHostRuntime::new(
 		Arc::new(StubPlatform::default()),
-		signing_config_with_asset_hub([0; 32]),
-		test_spawner(),
+		signing_config_with_asset_hub(None),
+		Spawner::for_test(),
 	);
 	// The hash is a constructor argument, so `None` here can only mean the
 	// configured zeros.
@@ -1989,10 +1941,8 @@ fn the_asset_hub_argument_reaches_the_asset_hub_slot() {
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		[0xaa; 32],
-		[0xbb; 32],
-		[0xcc; 32],
-		test_spawner(),
+		crate::test_support::test_stack("paseo", [0xaa; 32], [0xbb; 32], Some([0xcc; 32])),
+		Spawner::for_test(),
 	);
 	assert_eq!(
 		services.asset_hub_chain_genesis_hash(),
@@ -2011,7 +1961,7 @@ struct ManifestLookup {
 
 /// A cross-product storage read for `owner`, uncached, on a signing-role
 /// product runtime configured with `asset_hub`.
-fn signing_manifest_lookup_rpc(asset_hub: [u8; 32]) -> ManifestLookup {
+fn signing_manifest_lookup_rpc(asset_hub: Option<[u8; 32]>) -> ManifestLookup {
 	use truapi::{api::LocalStorage, versioned::local_storage::HostLocalStorageReadRequest};
 
 	// The stub serves no dotNS either way, so end the follow rather than
@@ -2020,7 +1970,7 @@ fn signing_manifest_lookup_rpc(asset_hub: [u8; 32]) -> ManifestLookup {
 	let runtime = SigningHostRuntime::new(
 		platform.clone(),
 		signing_config_with_asset_hub(asset_hub),
-		test_spawner(),
+		Spawner::for_test(),
 	);
 	let host = ProductRuntimeHost::from_services(
 		runtime.services.clone(),
@@ -2050,7 +2000,7 @@ fn signing_manifest_lookup_rpc(asset_hub: [u8; 32]) -> ManifestLookup {
 fn a_signing_host_takes_a_manifest_miss_to_the_chain() {
 	// The refusal is identical either way, so whether the core asked the
 	// chain is the only observable difference.
-	let configured = signing_manifest_lookup_rpc([0xcc; 32]);
+	let configured = signing_manifest_lookup_rpc(Some([0xcc; 32]));
 	assert!(
 		!configured.rpc.is_empty(),
 		"a configured signing role resolves an uncached manifest over dotNS"
@@ -2065,7 +2015,7 @@ fn a_signing_host_takes_a_manifest_miss_to_the_chain() {
          Bulletin ([0xbb; 32])"
 	);
 
-	let unconfigured = signing_manifest_lookup_rpc([0; 32]);
+	let unconfigured = signing_manifest_lookup_rpc(None);
 	assert!(
 		unconfigured.rpc.is_empty(),
 		"a signing role with no Asset Hub refuses without touching the chain"
@@ -2163,7 +2113,7 @@ fn contact_pairing_runtime(
 ) -> PairingHostRuntime {
 	let platform = Arc::new(StubPlatform::default());
 	let (config, _) = runtime_config("voting.dot");
-	let runtime = PairingHostRuntime::new(platform.clone(), config, test_spawner());
+	let runtime = PairingHostRuntime::new(platform.clone(), config, Spawner::for_test());
 	assert!(runtime.set_contacts_platform(contacts));
 	if let Some(session) = session {
 		install_session_after_boot(&runtime, &platform, session);

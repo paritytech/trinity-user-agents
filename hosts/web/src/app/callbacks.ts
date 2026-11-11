@@ -104,9 +104,7 @@ export function createHostCallbacks(
     contacts,
   } = options;
   const knownGenesis = new Set(
-    network.supportedChains.chains.map((chain) =>
-      chain.genesisHash.toLowerCase(),
-    ),
+    Object.values(network.genesis).map((genesis) => genesis.toLowerCase()),
   );
   let nextNotificationId = 1;
   let nextOperationId = 1;
@@ -187,7 +185,6 @@ export function createHostCallbacks(
         Promise.resolve({
           supported: knownGenesis.has(request.value.genesisHash.toLowerCase()),
         }),
-      supportedChains: () => Promise.resolve(network.supportedChains),
     },
 
     productStorage: storage.product,

@@ -15,18 +15,19 @@ use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
 use crate::{
+	Spawner,
 	chain::ExtrinsicService,
 	chain_runtime::{ChainRuntime, HostChainProvider},
-	host_logic::worker::WorkerLedger,
+	host_logic::{dotns_gateway::DotnsIdentity, worker::WorkerLedger},
 	platform::{
 		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, PaymentPlatform,
-		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, TopUpPlatform,
+		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, Stack, TopUpPlatform,
 	},
 	runtime::{
-		bulletin_rpc::BulletinRpc, sso_responder_service::DevicePairingObserver,
+		bulletin_rpc::BulletinRpc, identity::SessionAccounts, product_manifest::ManifestSource,
+		single_flight::SingleFlight, sso_responder_service::DevicePairingObserver,
 		statement_store_rpc::StatementStoreRpc,
 	},
-	subscription::Spawner,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::{
@@ -44,6 +45,31 @@ const PREIMAGE_CACHE_MAX_BYTES: usize = 16 * 1024 * 1024;
 /// Upper bound on accepted statements retained while the remote Statement
 /// Store catches up.
 const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
+
+/// dotNS reads running now. A read opens its own Asset Hub follow and holds it
+/// until it settles, so callers asking for the same thing while one runs wait
+/// for its answer, and a burst of them holds one follow slot, not one each.
+#[derive(Clone)]
+pub struct DotnsReads {
+	/// Root manifest reads, by product label.
+	pub root_manifests: SingleFlight<String, Result<Option<String>, ManifestSource>>,
+	/// Worker manifest reads, by product label.
+	pub worker_manifests: SingleFlight<String, Result<Option<String>, String>>,
+	/// Username lookups, by the accounts they read. The keys are never
+	/// written to storage or to a log.
+	pub identities: SingleFlight<SessionAccounts, Option<DotnsIdentity>>,
+}
+
+impl DotnsReads {
+	/// Reads spawned through `spawner`.
+	pub fn new(spawner: Spawner) -> Self {
+		Self {
+			root_manifests: SingleFlight::new(spawner.clone()),
+			worker_manifests: SingleFlight::new(spawner.clone()),
+			identities: SingleFlight::new(spawner),
+		}
+	}
+}
 
 /// Infrastructure shared by all product runtimes created from one host role.
 pub struct RuntimeServices {
@@ -80,6 +106,8 @@ pub struct RuntimeServices {
 	/// Contact handles already resolved, shared by every product runtime of
 	/// this host and emptied when the host says its contacts changed.
 	pub contact_handles: crate::runtime::contacts::ContactHandleCache,
+	/// dotNS reads running now, shared by the callers that overlap them.
+	pub dotns_reads: DotnsReads,
 	/// Host Game adapter, installed once at startup by a host that can hold
 	/// reminders. Unset leaves every product Game call `Unsupported`.
 	game_platform: OnceLock<Arc<dyn GamePlatform>>,
@@ -121,9 +149,8 @@ pub struct RuntimeServices {
 	/// recovery to whoever calls it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_work_observer: OnceLock<Arc<dyn DurableWorkObserver>>,
-	/// Asset Hub the dotNS contracts are deployed on. All-zero says this host
-	/// has none, which leaves every manifest unresolvable.
-	asset_hub_chain_genesis_hash: [u8; 32],
+	/// The stack the host runs, fixed for the life of the runtime.
+	stack: Stack,
 	/// Reference counts per product worker.
 	pub worker_ledger: WorkerLedger,
 	/// Shared chainHead-v1 runtime behind the Chain surface.
@@ -168,48 +195,32 @@ impl RuntimeServices {
 		};
 		let services = Arc::downgrade(self);
 		let product_id = product_id.clone();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			futures_timer::Delay::new(core::time::Duration::from_millis(wait_ms)).await;
 			if let Some(services) = services.upgrade() {
 				services.worker_ledger.restart(&product_id);
 			}
-		}));
+		});
 	}
 
 	/// Build role-neutral runtime services from the platform, the host
-	/// identity reported to products, the People-chain genesis hash used by
-	/// statement-store backed protocols, the Bulletin-chain genesis hash used
-	/// for in-core preimage submission, and the Asset Hub genesis hash product
-	/// manifests are resolved from.
-	///
-	/// The three genesis hashes are adjacent and same-typed, so a transposition
-	/// compiles. Each call site is pinned by its own test.
+	/// identity reported to products, and the stack whose People chain backs
+	/// the statement store, whose Bulletin chain takes in-core preimage
+	/// submissions, and whose Asset Hub product manifests resolve from.
 	pub fn new(
 		platform: Arc<dyn Platform>,
 		host_info: HostInfo,
-		people_chain_genesis_hash: [u8; 32],
-		bulletin_chain_genesis_hash: [u8; 32],
-		asset_hub_chain_genesis_hash: [u8; 32],
+		stack: Stack,
 		spawner: Spawner,
 	) -> Arc<Self> {
-		Self::with_chat_platform(
-			platform,
-			host_info,
-			people_chain_genesis_hash,
-			bulletin_chain_genesis_hash,
-			asset_hub_chain_genesis_hash,
-			spawner,
-			None,
-		)
+		Self::with_chat_platform(platform, host_info, stack, spawner, None)
 	}
 
 	/// Same as [`Self::new`], with the host's chat adapter installed.
 	pub fn with_chat_platform(
 		platform: Arc<dyn Platform>,
 		host_info: HostInfo,
-		people_chain_genesis_hash: [u8; 32],
-		bulletin_chain_genesis_hash: [u8; 32],
-		asset_hub_chain_genesis_hash: [u8; 32],
+		stack: Stack,
 		spawner: Spawner,
 		chat_platform: Option<Arc<dyn ChatPlatform>>,
 	) -> Arc<Self> {
@@ -218,12 +229,11 @@ impl RuntimeServices {
 		let statement_store = StatementStoreRpc::new(
 			platform.clone(),
 			chain.clone(),
-			people_chain_genesis_hash,
+			stack.chains().people,
 			spawner.clone(),
 		);
 		let extrinsics = Arc::new(ExtrinsicService::over_chain(chain.clone(), platform.clone()));
-		let bulletin =
-			BulletinRpc::new(chain.clone(), extrinsics.clone(), bulletin_chain_genesis_hash);
+		let bulletin = BulletinRpc::new(chain.clone(), extrinsics.clone(), stack.chains().bulletin);
 		// The funding registry follows sessions through the services it
 		// belongs to, so it is built holding them.
 		Arc::new_cyclic(|services| Self {
@@ -240,6 +250,7 @@ impl RuntimeServices {
 			balance_platform: OnceLock::new(),
 			contacts_platform: OnceLock::new(),
 			contact_handles: Default::default(),
+			dotns_reads: DotnsReads::new(spawner.clone()),
 			game_platform: OnceLock::new(),
 			scanner_platform: OnceLock::new(),
 			scan_open: AtomicBool::new(false),
@@ -260,7 +271,7 @@ impl RuntimeServices {
 			encrypted_storage: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_work_observer: OnceLock::new(),
-			asset_hub_chain_genesis_hash,
+			stack,
 			worker_ledger: WorkerLedger::default(),
 			chain,
 			extrinsics,
@@ -285,20 +296,18 @@ impl RuntimeServices {
 		self.permission_status.set(host).is_ok()
 	}
 
-	/// The Asset Hub dotNS reads run against, when one is configured.
+	/// The stack the host runs.
+	pub fn stack(&self) -> &Stack {
+		&self.stack
+	}
+
+	/// The Asset Hub dotNS reads run against, when the stack has one.
 	///
-	/// Taken by construction, so the chain a grant is adjudicated against
-	/// cannot move under a running product. It is deliberately not sourced from
-	/// `supported_chains()`, which is an uncached per-call host syscall
-	/// answering a different question, "which chains do I serve RPC for?", the
-	/// product-facing `get_chain_info` advertisement, rather than "which Asset
-	/// Hub is dotNS deployed on?". Taking it from there would let the anchor
-	/// change between two calls, at host discretion, with nothing recording it.
-	///
-	/// An all-zero hash is how a host says it has no Asset Hub. `None` fails
-	/// every manifest lookup closed: grants are refused rather than assumed.
+	/// Fixed by construction, so the chain a grant is adjudicated against
+	/// cannot move under a running product. `None` fails every manifest lookup
+	/// closed: grants are refused rather than assumed.
 	pub fn asset_hub_chain_genesis_hash(&self) -> Option<[u8; 32]> {
-		Some(self.asset_hub_chain_genesis_hash).filter(|hash| *hash != [0u8; 32])
+		self.stack.chains().asset_hub
 	}
 
 	/// The host's live OS permission-status adapter, when one is installed.

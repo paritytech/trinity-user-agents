@@ -46,10 +46,10 @@ fn the_claimed_account_is_the_one_create_proof_signs_with_for_that_product_and_i
 	let (services, authority) = signing_runtime();
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("the local session activates");
-	let session = authority.wallet().current_session().expect("a session is active");
+	let session = authority.wallet.current_session().expect("a session is active");
 	let claimed = |product: &str, index: [u8; 32]| {
 		authority
-			.wallet()
+			.wallet
 			.product_statement_account(&session, &ProductId::for_test(product), index)
 			.expect("the account derives")
 	};

@@ -380,10 +380,7 @@ describe("checkCustomStack", () => {
 
   // PCF's Polkadot stack: Polkadot's chains under the dot TLD, pinned to its own key.
   test("takes the Polkadot stack the CLI ships, as a custom stack", async () => {
-    const stacks = new URL(
-      "../../../../../rust/crates/truapi-host-cli/stacks/",
-      import.meta.url,
-    );
+    const stacks = new URL("../../../../../stacks/", import.meta.url);
     const check = await checkCustomStack(
       readFileSync(new URL("polkadot.link", stacks), "utf8"),
       {

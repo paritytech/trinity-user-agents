@@ -30,15 +30,9 @@ pub enum AllowanceAllocationError {
 	/// Signing host session or authority state was unavailable.
 	#[error("{0}")]
 	Authority(#[from] AuthorityError),
-	/// The host serves no chain for this role, so there is nothing to claim on.
-	#[error("host serves no {chain} chain")]
-	ChainNotServed {
-		/// Role that could not be resolved.
-		chain: &'static str,
-	},
-	/// Reading the host's chain set failed.
-	#[error("supported chains: {0}")]
-	SupportedChains(String),
+	/// The stack has no Asset Hub to claim the allowance on.
+	#[error("the stack has no Asset Hub")]
+	NoAssetHub,
 	/// Product-account key derivation failed.
 	#[error("{0}")]
 	ProductAccount(#[from] ProductAccountError),
@@ -607,9 +601,8 @@ impl WalletAccountHolder {
 	/// nothing: PGAS pre-warms a balance on an account the host already controls, so
 	/// there is no key to hand back.
 	///
-	/// Asset Hub is resolved through the host's chain set rather than a configured
-	/// hash, so a host that does not serve it says so instead of claiming against
-	/// whatever chain a stale hash happens to reach.
+	/// Fails with [`AllowanceAllocationError::NoAssetHub`] when the stack names no
+	/// Asset Hub.
 	pub async fn allocate_smart_contract_allowance(
 		&self,
 		session: &AuthoritySession,
@@ -617,13 +610,8 @@ impl WalletAccountHolder {
 		derivation_index: api::DerivationIndex,
 		policy: OnExistingAllowancePolicy,
 	) -> Result<(), AllowanceAllocationError> {
-		use truapi::latest::ChainIdentifier;
-
-		use crate::{
-			host_logic::features,
-			runtime::statement_allowance::{
-				self, ChainClient, collection::PersonhoodCollection, find_including_rings, pgas,
-			},
+		use crate::runtime::statement_allowance::{
+			self, ChainClient, collection::PersonhoodCollection, find_including_rings, pgas,
 		};
 
 		// PGAS credits the product account the caller named.
@@ -635,11 +623,10 @@ impl WalletAccountHolder {
 			.map(|key| key.public.to_bytes())
 		})?;
 
-		let chains = features::supported_chains(self.services.platform.as_ref())
-			.await
-			.map_err(|err| AllowanceAllocationError::SupportedChains(err.reason))?;
-		let asset_hub_genesis = features::genesis_for(&chains, ChainIdentifier::AssetHub)
-			.ok_or(AllowanceAllocationError::ChainNotServed { chain: "Asset Hub" })?;
+		let asset_hub_genesis = self
+			.services
+			.asset_hub_chain_genesis_hash()
+			.ok_or(AllowanceAllocationError::NoAssetHub)?;
 		let asset_hub_client = ChainClient::new(
 			statement_allowance::rpc::RpcClient::new(subxt_rpcs::RpcClient::new(
 				self.services

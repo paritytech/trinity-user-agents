@@ -89,8 +89,8 @@ fn current_period() -> u32 {
 	alloc::slot::current_period(now)
 }
 
-/// The stack's TLD is what the reserved `uid.<suffix>` and
-/// `peopl.<suffix>` derivations end in, so it has to be the suffix the chain
+/// The stack's TLD is what the reserved `peopl.<suffix>` account and
+/// ring-VRF derivations end in, so it has to be the suffix the chain
 /// itself scopes People contexts with, or the CLI derives a person no other
 /// host on this network recognises.
 #[tokio::test]

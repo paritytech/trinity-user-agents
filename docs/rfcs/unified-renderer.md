@@ -45,7 +45,7 @@ The design has three parts:
 ### Service
 
 `Renderer` is a worker service beside `Chat` in the canonical `truapi` crate, at `api/renderer.rs`. Its types live in
-`v01::renderer` and are re-exported through `truapi::latest`.
+`v02::renderer` and are re-exported through `truapi::latest`.
 
 ```rust
 /// Where a product-rendered body lives, and the id that names it there.
@@ -68,6 +68,18 @@ pub enum RenderContext {
     PocketCard {
         /// Card id, as declared in the product's worker manifest.
         card_id: String,
+    },
+    /// The back of a card in the host's Pocket collection.
+    PocketCardBack {
+        /// Card id, as declared in the product's worker manifest.
+        card_id: String,
+    },
+    /// The card a product docked under the messages of a room it created.
+    ChatRoomFooter {
+        /// Room the card is docked in.
+        room_id: String,
+        /// The `message_type` of the `ChatCustomMessage` the product set through `Chat::set_room_footer`.
+        message_type: String,
     },
 }
 
@@ -114,9 +126,11 @@ pub trait Renderer: Send + Sync {
 }
 ```
 
-`RenderContext` has one variant per surface, holding the ids that surface uses to name a body. The host scopes an id to
-the product that minted it, and for `InputWidget` also to the query the candidate answered. A render request and the
-actions inside it carry the same context verbatim, so a product correlates by equality. A new surface is a new variant.
+`RenderContext` has one variant per surface, or per body a surface draws apart, such as a Pocket card's back, holding
+the ids that surface uses to name a body. The host scopes an id to the product that minted it, and for `InputWidget`
+also to the query the candidate answered. For `ChatRoomFooter` the host scopes `room_id` to the product that created the
+room. A render request and the actions inside it carry the same context verbatim, so a product correlates by equality. A
+new surface, or a new kind of body on one, is a new variant.
 
 A product registers one `render` handler, and the host calls it for every context of a surface the product's manifest
 `includes`. A product that draws on more than one surface matches on `context`. Contexts for surfaces the product does
@@ -297,14 +311,16 @@ pub struct ButtonProps {
     pub click_action: Option<String>,
 }
 
-/// Where image bytes come from. The host fetches them; the tree carries no URL.
-/// The bytes are PNG, JPEG, WebP or SVG.
+/// Where image bytes come from: a place the host fetches them from, or the tree itself. The tree carries no URL.
+/// Fetched bytes are PNG, JPEG, WebP or SVG; inline bytes leave out SVG.
 pub enum ImageSource {
     /// A Bulletin chain blob, addressed by its CID.
     Bulletin(String),
     /// A file inside the product's executable archive, as a path relative to
     /// the archive root.
     Archive(String),
+    /// An image carried in the tree itself: PNG, JPEG or WebP, at most 64 KiB.
+    Inline(Vec<u8>),
 }
 
 pub enum ImageFit {
@@ -400,8 +416,16 @@ pub enum RendererNode {
 
 The host draws every node from its own design system.
 
-An `ImageSource` is fetched from the Bulletin IPFS gateway or the product's executable archive. An image that cannot be
-fetched draws as empty space. A tree nested deeper than the host's bound is a decode failure of the stream.
+An `ImageSource` is fetched from the Bulletin IPFS gateway or the product's executable archive, or carried `Inline` in
+the tree, for a picture the product makes at run time. An image that cannot be fetched draws as empty space. A tree
+nested deeper than the host's bound is a decode failure of the stream.
+
+An `Inline` image is PNG, JPEG or WebP, recognised by its first bytes, and at most 64 KiB. SVG is refused: an SVG can
+load outside addresses, a network request the person never sees, and can exhaust memory through its XML. A host decodes
+an inline image at no more than 1024 pixels on its longer side, so a small file cannot claim a huge picture. An inline
+image the host refuses draws as empty space at the image's size. In JSON, such as a Pocket card's static face file, the
+bytes are a hex string with a `0x` prefix, as the generated TypeScript types spell bytes. Hex doubles the size, which
+counts against any cap a host puts on such a file.
 
 ### Actions
 
@@ -441,11 +465,17 @@ The change is breaking for a product that renders `Custom` chat messages: its re
 tree-action handler is `renderer.actionSubscribe`, and its trees are `RendererNode`. A product that posts no `Custom`
 messages is unaffected. Hosts ship `Renderer` and the `Chat` change together.
 
+A host built before `ImageSource::Inline` cannot decode a tree that uses it and fails that render stream. A Pocket card
+keeps its cached face, and other surfaces draw as after any other render error.
+
 ## Trade-offs
 
 - Chat products that render custom messages break once.
 - A string `surface` field instead of the `RenderContext` enum would move the id set into an untyped payload and lose
   correlation by equality.
+- An inline image travels in the tree, so every redraw resends it; the 64 KiB cap bounds that. Uploading run-time images
+  to Bulletin instead would cost a chain write per image and publish it, and an archive file cannot change after the
+  product ships.
 
 ## Open questions
 

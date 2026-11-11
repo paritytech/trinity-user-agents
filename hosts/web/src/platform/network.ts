@@ -5,11 +5,7 @@ import initProvider, {
 import providerWasmUrl from "@parity/truapi-provider/truapi_provider_bg.wasm?url";
 import { bytesToHex } from "@parity/truapi/scale";
 import type { HexString } from "@parity/truapi/scale";
-import type {
-  ChainProvider,
-  HostChainSet,
-  JsonRpcConnection,
-} from "@parity/truapi-host";
+import type { ChainProvider, JsonRpcConnection } from "@parity/truapi-host";
 import { spreadFollows } from "./follow-spread.js";
 import { checkedPostingConnection } from "./statement-store.js";
 import {
@@ -49,7 +45,6 @@ export interface Network {
   /** dotNS TLD the signing host derives identities under. */
   networkSuffix: string;
   genesis: NetworkGenesis;
-  supportedChains: HostChainSet;
   chain: ChainProvider;
   /** The backend each chain is reached through. */
   backends: Record<ChainRole, ChainBackend>;
@@ -128,15 +123,6 @@ export async function connectNetwork(
     genesis,
     backends,
     postingReady: () => postingChecked && !postingUnknown,
-    supportedChains: {
-      network: config.chainInfoNetwork,
-      chains: [
-        { identifier: "Relay", genesisHash: genesis.relay },
-        { identifier: "AssetHub", genesisHash: genesis.assetHub },
-        { identifier: "People", genesisHash: genesis.people },
-        { identifier: "Bulletin", genesisHash: genesis.bulletin },
-      ],
-    },
     chain: {
       // The core multiplexes every product's follows over the connection it
       // opens here, and one light-client connection holds two.

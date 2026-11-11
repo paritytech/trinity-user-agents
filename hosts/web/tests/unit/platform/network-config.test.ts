@@ -9,6 +9,7 @@ import {
   builtInStack,
   bundledCopy,
   chainBackends,
+  coreStack,
   customPolicy,
   customStackId,
   networkConfig,
@@ -181,7 +182,7 @@ describe("NETWORKS", () => {
       ["previewnet", "previewnet"],
       ["pcf-devnet", "pcf-devnet"],
     ] as const) {
-      const stacks = "rust/crates/truapi-host-cli/stacks";
+      const stacks = "stacks";
       expect(BUILT_IN_STACKS[id].bundled).toEqual(
         new Uint8Array(readFileSync(repoFile(`${stacks}/${file}.json`))),
       );
@@ -495,6 +496,39 @@ describe("chainBackends", () => {
       assetHub: "rpc",
       people: "light-client",
       bulletin: "rpc",
+    });
+  });
+});
+
+// The core runs the stack the tab chose: a signed copy as served, an unsigned one as its parts.
+describe("coreStack", () => {
+  test("hands the core a signed copy as served, under its link", () => {
+    const network = NETWORKS["pcf-devnet"];
+    expect(coreStack(network)).toEqual({
+      stack: {
+        pointer: BUILT_IN_STACKS["pcf-devnet"].pointer,
+        descriptor: BUILT_IN_STACKS["pcf-devnet"].bundled,
+        allowsReservedValues: true,
+      },
+    });
+  });
+
+  test("hands the core an unsigned stack as its parts", () => {
+    const copy = bundledCopy(BUILT_IN_STACKS.previewnet);
+    const network = networkConfigFrom(customPolicy({ url: copy.pointer.url }), {
+      ...copy,
+      pointer: { url: copy.pointer.url },
+    });
+    expect(coreStack(network)).toEqual({
+      testStack: {
+        network: "paseo",
+        tld: "testnet",
+        relay: { genesisHash: network.genesis.relay },
+        assetHub: { genesisHash: network.genesis.assetHub },
+        people: { genesisHash: network.genesis.people },
+        bulletin: { genesisHash: network.genesis.bulletin },
+        allowsReservedValues: true,
+      },
     });
   });
 });

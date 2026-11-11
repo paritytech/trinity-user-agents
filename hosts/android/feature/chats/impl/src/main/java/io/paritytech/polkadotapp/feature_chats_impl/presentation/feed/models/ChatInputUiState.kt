@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.models
 
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatInputSlotRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ReplyPreview
 import io.paritytech.polkadotapp.feature_chats_impl.domain.models.ChatDraft
@@ -26,6 +27,8 @@ sealed class ChatInputUiState {
     object IdentitySigningConsent : ChatInputUiState()
 
     object Hidden : ChatInputUiState()
+
+    data class ExtensionCard(val renderer: CustomChatInputSlotRenderer) : ChatInputUiState()
 }
 
 enum class ChatRequestAnswerProgress {

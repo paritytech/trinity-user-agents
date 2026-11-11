@@ -19,6 +19,7 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 - [Building the apps for development](docs/local-app-builds.md)
 - [Development web host](hosts/web/README.md), including guarded best-ready chat allowances, restart-safe request and acceptance confirmation, and bounded retries
 - [Two-product field demo](hosts/web/README.md#two-product-field-demo-dev-server-only), with provider declarations, consent and a host-owned protected address view
+- [Moving an e2e suite to the TrUAPI test host](docs/migration/test-host.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -148,7 +149,8 @@ js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
                           (shared host types), `/web` (iframe + Web Worker),
-                          `/worker-runtime`, and the test host: `/testing`
+                          `/node` (worker thread), `/worker-runtime`, and the
+                          test host: `/testing`
                           (createMockHost), `/testing/playwright`,
                           `/testing/server`, `/testing/client`,
                           `/testing/dev-accounts`, `/testing/host-page`
@@ -173,6 +175,8 @@ hosts/web/                 TrUAPI Web Host: development web host that holds its 
                            locally, with no pairing; see hosts/web/README.md
 hosts/imports.json         Source repository and imported revision per host
 e2e/host-playground/       host-playground suite run inside the native host apps; see its README
+stacks/                    Link and signed descriptor of each Trinity stack a host build bundles;
+                           scripts/update-stacks.sh refreshes each descriptor from its link
 docs/                      Design docs, RFCs, feature proposals
 scripts/codegen.sh         Regenerate the TS client from the Rust source
 scripts/refresh-host-import.sh
@@ -226,13 +230,7 @@ native-only adapter types are limited to lifecycle and callback behavior.
 The core requests product worker transitions through `requestWorkerTransition`
 (`request_worker_transition` in Rust). `Start` requires the worker to run;
 `Stop` permits it to stop when no references remain.
-On iOS, a wallet host that manages its own statement-store SSO session can call
-`handleSsoRequest` (routes one decrypted remote message through the core,
-returning a typed outcome: response bytes to post back, a disconnect marker, or
-ignored; a `Cancel` returns at once, so the wallet passes it on without queueing
-it behind the request it withdraws) and `prepareDisconnectRequest` (builds the SCALE-encoded wire message
-for a wallet-initiated disconnect) on `TrUAPIHostRuntime`. Response posting and
-session-record cleanup remain on the wallet side.
+A native wallet that runs its own SSO transport opens one SSO service per peer with `openSsoService` and passes it each incoming message; `prepareDisconnectRequest` builds a wallet-initiated disconnect. The core binds each service to the wallet activation that authenticated the peer. The [iOS SDK guide](ios/truapi-host/README.md#sso-session-handling) gives the call sequence.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
 SSO session, responder identity and handshake payload structs zeroize their fields on drop; debug output redacts their secret fields.
@@ -249,6 +247,8 @@ a single package with tree-shakeable subpath entries:
   leave the device, on its own entry so reading telemetry policy pulls in no host runtime.
 - `@parity/truapi-host/web` wires the WASM provider into a browser host: the iframe
   MessageChannel handshake (`createIframeHost`) plus `createWebWorkerProvider`.
+- `@parity/truapi-host/node` runs the same pairing host in a Node process, with the core in
+  a `node:worker_threads` thread (`createNodePairingHostRuntime`, `createHeadlessHostCallbacks`).
 - `@parity/truapi-host/worker-runtime` is the Web Worker entrypoint so the WASM core can
   run off the page main thread.
 
@@ -322,7 +322,7 @@ runtime's type by name.
 ### Contract calls
 
 `chain::EvmContractCaller` reads pallet-revive contracts and prepares writes.
-`read` returns ABI data through a `RuntimeApiCaller` transport. For writes,
+`RuntimeApiCaller` transports support individual and batched reads of ABI data. For writes,
 `dry_run` simulates as the signer and returns a prepared transaction;
 `execute_until_finalized` submits it and waits for successful finalized dispatch.
 
@@ -433,8 +433,8 @@ A host without a core database, such as the browser core, answers
 
 ### Images
 
-Native hosts draw images with `loadImage(reference)`, the Bulletin part of the
-[image loader RFC](https://github.com/paritytech/trinity-user-agents/pull/1800).
+Native hosts draw images with `loadImage(reference)`, as described in the
+[image loader RFC](docs/rfcs/image-loader.md).
 A reference is a Bulletin CID, with the format its source declares if it
 declares one. The core reads the blob with `bitswap_v1_get` over its own
 Bulletin connection, the call the CLI host's preimage lookup also makes, and
@@ -444,7 +444,15 @@ rejects bytes in a format other than the declared one. A load asks again every
 6 seconds while Bulletin does not hold the blob, and a second after a failed
 request, such as a light client's before its first Bitswap peer connects, for
 up to 30 seconds in all. The content key it returns is the CID, for keying a
-host's disk cache. The browser core does not expose it.
+host's disk cache. JavaScript bindings are deferred.
+
+For avatars, `resolvePublicProfile(username, force)` resolves a
+[dotNS public profile](docs/rfcs/core-resolved-public-profiles.md#the-record). Native
+hosts cache records for one hour; `force` refreshes them. The returned avatar CID
+selects the host's image cache; only a miss needs `loadImage`. The Rust WASM
+resolver reads the chain on each call.
+
+Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
 
 ### Trinity stack descriptors
 
@@ -453,6 +461,8 @@ A stack descriptor describes one deployment of chains and services, as
 [`trinity-stack`](rust/crates/trinity-stack) crate holds every rule a reader applies and the
 conformance vectors. The plan for it and the tools on top of it is in
 [docs/design/trinity-stack-library.md](docs/design/trinity-stack-library.md).
+
+The core takes all of its chain configuration from one stack. See [RUNTIME.md](rust/crates/truapi/RUNTIME.md#stack).
 
 ### Wire debugger
 
@@ -491,6 +501,8 @@ A method returning `Subscription` generates a streaming handler. See the
 
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in their own trait and leave every other trait untouched. Trait 255 is permanently reserved for a correlated protocol error, allowing either peer to reject API messages introduced after it was released instead of leaving the caller pending.
 
+Rust embedders use `truapi::Spawner::new(handle)` with a Tokio runtime handle on native targets and `truapi::Spawner::default()` on WASM. Shared core code schedules background work with `spawner.spawn(async move { ... })`, which dispatches to the platform executor. The native runtime must remain alive to run its tasks; submissions after shutdown are cancelled.
+
 ## Develop
 
 Common tasks are wrapped in the top-level `Makefile`. Run `make help` for the full list.
@@ -510,7 +522,7 @@ CI and `make check` enforce Rust formatting, including the runtime module tree, 
 
 Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
 
-Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Unit tests schedule tasks with the `#[cfg(test)]` helpers in [`spawner.rs`](rust/crates/truapi/src/spawner.rs). Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
 Contract response fixtures encode the Revive result structs, re-exported only in test builds.
 Run the crate's runtime integration tests with `cargo test -p truapi --features mock`;
 their product fixtures use `ProductId::for_test` from that feature.

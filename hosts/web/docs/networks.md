@@ -30,9 +30,8 @@ Account → **Stack** selects the tab's Trinity stack. The host applies it by re
 
 ## Stack descriptors
 
-- The build bundles the signed copies the CLI ships, `rust/crates/truapi-host-cli/stacks/`, which
-  `scripts/update-stacks.sh` refreshes. Each must verify under the key in the stack's link, which `network-config.ts`
-  pins.
+- The build bundles the signed copies the CLI ships, `stacks/` at the repository root, which `scripts/update-stacks.sh`
+  refreshes. Each must verify under the key in the stack's link, which `network-config.ts` pins.
 - A tab starts from the newest copy it has, bundled or stored, without waiting on the network
   (`src/platform/stacks.ts`). After boot it fetches the published descriptor once. A newer copy this host can run is
   kept in `localStorage`, one per stack, and used from the next load; the Activity view says when it changes something
@@ -42,8 +41,9 @@ Account → **Stack** selects the tab's Trinity stack. The host applies it by re
   past `expiresAt`, changes the stack's `id` or `tld`, uses a TLD the core does not serve (`dot`, `paseo`, `testnet`),
   or lacks the Relay, Asset Hub, People and Bulletin chains, the DotNS content resolver, an IPFS gateway at `/ipfs/` or
   a web gateway.
-- The core still takes genesis hashes and the TLD, read from the copy in use. The bytes are kept with the config for
-  when it takes the stack itself.
+- The core takes its chains, TLD and `getChainInfo` network from the copy in use (`coreStack` in `network-config.ts`). A
+  signed copy goes as served, and the core checks it again under the link's key. An unsigned custom stack goes as its
+  parts, which only the `testing` bundle this host runs accepts.
 
 ## Custom stacks
 

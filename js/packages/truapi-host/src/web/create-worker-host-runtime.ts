@@ -427,8 +427,22 @@ function encodePermissionAuthorizationRequest(
 
 const DEV_LOG_LEVEL_KEY = "truapi:logLevel";
 
+/**
+ * The global `localStorage`, when it is usable. Node 25 defines the global
+ * without a working `getItem` unless `--localstorage-file` is set, and a
+ * browser that blocks storage throws on access.
+ */
+function devStorage(): Storage | undefined {
+  try {
+    const storage = globalThis.localStorage;
+    return typeof storage?.getItem === "function" ? storage : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function readPersistedLogLevel(): LogLevel | null {
-  return globalThis.localStorage?.getItem(DEV_LOG_LEVEL_KEY) ?? null;
+  return devStorage()?.getItem(DEV_LOG_LEVEL_KEY) ?? null;
 }
 
 /**
@@ -615,7 +629,7 @@ function reportDebuggerEnablement(e: DebuggerEnablement): void {
 }
 
 function persistLogLevel(level: LogLevel): void {
-  globalThis.localStorage?.setItem(DEV_LOG_LEVEL_KEY, level);
+  devStorage()?.setItem(DEV_LOG_LEVEL_KEY, level);
 }
 
 let devLogLevelOverride: LogLevel | null = readPersistedLogLevel();

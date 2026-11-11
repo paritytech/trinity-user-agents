@@ -7,8 +7,10 @@ struct AssetDetailsView: View {
     @State var viewModel: AssetDetailsViewModelProtocol
     var isExpanded: Bool = false
     var onCardTapped: () -> Void
-    var overscroll: CGFloat = 0
-    var onCollapse: (() -> Void)?
+    var overscroll: DSOverscroll?
+    var isCardHidden: Bool = false
+    var showsOpenedFace: Bool = false
+    var onCardFrame: (CGRect) -> Void = { _ in }
 
     #if DEBUG
         /// Which holdings the coins draw, for reviewing the depiction. Debug builds only.
@@ -25,21 +27,24 @@ struct AssetDetailsView: View {
         viewModel: AssetDetailsViewModelProtocol = AssetDetailsViewModel(),
         isExpanded: Bool = false,
         onCardTapped: @escaping () -> Void,
-        overscroll: CGFloat = 0,
-        onCollapse: (() -> Void)? = nil
+        overscroll: DSOverscroll? = nil,
+        isCardHidden: Bool = false,
+        showsOpenedFace: Bool = false,
+        onCardFrame: @escaping (CGRect) -> Void = { _ in }
     ) {
         _viewModel = State(initialValue: viewModel)
         self.isExpanded = isExpanded
         self.onCardTapped = onCardTapped
         self.overscroll = overscroll
-        self.onCollapse = onCollapse
+        self.isCardHidden = isCardHidden
+        self.showsOpenedFace = showsOpenedFace
+        self.onCardFrame = onCardFrame
     }
 
     var body: some View {
         DSExpandableCardLayout(
             isExpanded: isExpanded,
             overscroll: overscroll,
-            onCollapse: onCollapse,
             card: { headerCard },
             details: { expandedBody }
         )
@@ -50,6 +55,8 @@ struct AssetDetailsView: View {
         if let balanceCardModel = viewModel.balanceCardModel {
             balanceCard(balanceCardModel)
                 .onTapGesture { onCardTapped() }
+                .opacity(isCardHidden ? 0 : 1)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onCardFrame($0) }
         }
     }
 
@@ -109,7 +116,7 @@ struct AssetDetailsView: View {
         AssetDetailsBalanceCard(
             viewModel: balanceCardModel,
             isUpdating: viewModel.isUpdating,
-            isExpanded: isExpanded
+            isExpanded: isExpanded || showsOpenedFace
         )
     }
 

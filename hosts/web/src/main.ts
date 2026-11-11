@@ -1,5 +1,8 @@
 import { createWebWorkerPairingHostRuntime } from "@parity/truapi-host/web";
-import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
+import type {
+  WebWorkerHostConfig,
+  WorkerPairingHostRuntime,
+} from "@parity/truapi-host/web";
 import type { AuthState } from "@parity/truapi-host";
 import { TRUAPI_CODEC_VERSION, TRUAPI_WIRE_SCHEMA_HASH } from "@parity/truapi";
 import {
@@ -43,6 +46,7 @@ import {
   CHAIN_ROLES,
   NETWORKS,
   chainBackends,
+  coreStack,
   type ChainBackend,
   type ChainRole,
   type NetworkConfig,
@@ -2631,13 +2635,10 @@ async function boot(): Promise<void> {
     hostConfig: {
       host: { name: "TrUAPI Web Host", platform: "Web" },
       platform: { type: "browser", version: navigator.userAgent },
-      people: { genesisHash: connection.genesis.people },
-      bulletin: { genesisHash: connection.genesis.bulletin },
-      assetHub: { genesisHash: connection.genesis.assetHub },
       // Required by the config type; a signing host never pairs.
       pairing: { deeplinkScheme: "polkadotapp" },
-      networkSuffix: connection.networkSuffix,
-    },
+      ...coreStack(activeNetwork),
+    } as WebWorkerHostConfig,
   });
   coreStatus.textContent = `Core ready on ${activeNetwork.displayName} · wire schema ${runtime.coreWireSchemaHash?.slice(0, 12) ?? "unknown"}`;
   coreState = "ready";
