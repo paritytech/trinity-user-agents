@@ -81,7 +81,7 @@ export interface BundledStack {
   /**
    * The record the core last passed to {@link StackCallbacks.storeStackRecord}.
    * The core starts from the descriptor in it when that is newer than
-   * `descriptor`, so a stack that restarted since the build still starts.
+   * `descriptor`.
    */
   stored?: Uint8Array;
 }
@@ -115,8 +115,7 @@ export type StackFetchResponse =
 export interface StackStatus {
   /**
    * The verified descriptor the core runs, as plain descriptor JSON. The
-   * host's own features read their chains and services from it, so they run
-   * the same stack as the core.
+   * host's own features read their chains and services from it.
    */
   descriptor: string;
   /** Past `validUntil`: show the stack as stale and keep running on it. */
