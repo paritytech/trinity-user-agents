@@ -11,9 +11,6 @@ import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.bundledProducts
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.productSources
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
@@ -32,11 +29,9 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import uniffi.truapi.ProductId
-import uniffi.truapi.ProductSource
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TrUAPIWorkerSupervisorTest {
@@ -164,27 +159,7 @@ class TrUAPIWorkerSupervisorTest {
         assertEquals(listOf(workerPolicy) to workerScopes, policies to policyScopes)
     }
 
-    // The WebView of a worker the app ships serves its script from the bundle.
-    @Test
-    fun `a bundled worker's WebView serves it from the bundle`() = runTest {
-        val bundled = bundledProducts(
-            mapOf(
-                "bundled-products/worker.paseo/worker-manifest.json" to
-                    """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":{"chat":true}}""",
-                "bundled-products/worker.paseo/worker/index.js" to "export {}",
-            ),
-        )
-        val supervisor = supervisor(bundled)
-
-        supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
-        advanceUntilIdle()
-
-        assertTrue(configs.single().source is ProductSource.Bundled)
-    }
-
-    private fun TestScope.supervisor(
-        bundledProducts: BundledProducts = bundledProducts(emptyMap()),
-    ) = TrUAPIWorkerSupervisor(
+    private fun TestScope.supervisor() = TrUAPIWorkerSupervisor(
         runtimeProvider = {
             mockk<TrUAPIHostRuntimeProvider> { coEvery { runtime() } returns Result.success(runtime) }
         },
@@ -207,7 +182,6 @@ class TrUAPIWorkerSupervisorTest {
             }
         },
         bootstrapInstaller = bootstrapInstaller,
-        productSources = productSources(bundledProducts),
         refCounter = { mockk(relaxed = true) },
         navigation = mockk { every { policy(PRODUCT, capture(policyScopes)) } returns workerPolicy },
         dispatchers = testDispatchers(),

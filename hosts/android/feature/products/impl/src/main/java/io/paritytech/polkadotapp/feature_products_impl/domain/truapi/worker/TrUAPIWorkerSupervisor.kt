@@ -6,7 +6,6 @@ import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.logFailure
-import io.paritytech.polkadotapp.feature_products_impl.domain.browser.ProductSources
 import io.paritytech.polkadotapp.feature_products_impl.domain.jsRuntime.WebViewRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
@@ -61,7 +60,6 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val scriptResolver: ProductScriptResolver,
     private val webViewProviderFactory: ChatWebViewProvider.Factory,
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
-    private val productSources: ProductSources,
     private val refCounter: Lazy<ProductWorkerRefCounter>,
     private val navigation: ChatWorkerNavigation,
     dispatchers: CoroutineDispatchers,
@@ -133,13 +131,12 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     }
 
     private suspend fun boot(productId: ProductId, worker: RunningWorker): Result<TrUAPIProductExecution> {
-        val source = productSources.of(productId.value)
         val resolved = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
         val includesChat = resolved.includesChat
         val runtime = runtimeProvider.get().runtime().getOrElse { return Result.failure(it) }
         val workerScript = WorkerScript.of(resolved.scriptUrl)
 
-        val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript, source), worker.scope)
+        val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript), worker.scope)
         val webViewRuntime = WebViewRuntime(provider).also { worker.webViewRuntime = it }
         // The bootstrap publishes the loopback port and token, so it goes to the worker's own origin only.
         val installBootstrap = runCatching {

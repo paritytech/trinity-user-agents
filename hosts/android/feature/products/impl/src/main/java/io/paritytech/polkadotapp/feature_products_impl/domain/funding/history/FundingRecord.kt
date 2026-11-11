@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding.history
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
 import uniffi.truapi.FundingChoice
 import uniffi.truapi.FundingDirection
@@ -36,16 +35,6 @@ data class FundingRecord(
 ) {
     val rail: FundingRail?
         get() = choice?.rail
-
-    /**
-     * What the user paid for value in, or received for value out, in the quote's asset at the decimals it states;
-     * `null` without a quote.
-     */
-    val quotedAmount: String?
-        get() = choice?.let { choice ->
-            val units = if (direction == FundingDirection.IN) choice.quote.sendAmount else choice.quote.receiveAmount
-            FundingAssetUnit.of(choice.asset, choice.quote.assetDecimals.toInt()).format(units)
-        }
 
     companion object {
         /**
