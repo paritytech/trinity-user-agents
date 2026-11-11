@@ -414,8 +414,13 @@ impl Chain {
 	/// The genesis hash as bytes. Decodes hex that validation already checked, so it panics only
 	/// on a chain that skipped [`Descriptor::from_json`] and deserialisation.
 	pub fn genesis(&self) -> [u8; 32] {
+		self.try_genesis().expect("invalid genesisHash in a descriptor")
+	}
+
+	/// The genesis hash as bytes, for a chain that may have skipped validation. Fails when it is
+	/// not 32 bytes of lowercase 0x-prefixed hex.
+	pub fn try_genesis(&self) -> Result<[u8; 32], Error> {
 		format::hex_bytes("genesisHash", &self.genesis_hash)
-			.expect("invalid genesisHash in a descriptor")
 	}
 }
 

@@ -70,10 +70,7 @@ impl LightStack {
 	pub fn new(id: impl Into<String>, descriptor: &Descriptor) -> Result<Self, ProviderError> {
 		let mut chains: Vec<([u8; 32], Chain)> = Vec::with_capacity(descriptor.chains.len());
 		for chain in &descriptor.chains {
-			let genesis =
-				crate::config::genesis_from_hex(&chain.genesis_hash).ok_or_else(|| {
-					refused(Error::Malformed(format!("genesisHash {}", chain.genesis_hash)))
-				})?;
+			let genesis = chain.try_genesis().map_err(refused)?;
 			if chains.iter().any(|(known, _)| *known == genesis) {
 				return Err(refused(Error::Malformed(format!(
 					"genesisHash {} appears on more than one chain",
