@@ -1,16 +1,14 @@
 import SwiftUI
 import UIKit
+import UIKit_iOS
 
-/// A hosting controller shown as the funding sheet, over a clear background
-/// so the screen draws its own.
-class FundingSheetHostingController<Content: View>: UIHostingController<Content> {
+/// A hosting controller shown as the funding sheet, presented like the app's
+/// other bottom sheets: a rounded card between the safe area insets.
+class FundingSheetHostingController<Content: View>: UIHostingController<Content>, ModalSheetPresenterDelegate {
     override init(rootView: Content) {
         super.init(rootView: rootView)
 
-        modalPresentationStyle = .pageSheet
-        sheetPresentationController?.detents = [.custom { $0.maximumDetentValue * 0.92 }]
-        sheetPresentationController?.prefersGrabberVisible = true
-        sheetPresentationController?.preferredCornerRadius = 32
+        BottomSheetViewFacade.setupFullHeightSheet(from: self)
     }
 
     @available(*, unavailable)
@@ -20,7 +18,7 @@ class FundingSheetHostingController<Content: View>: UIHostingController<Content>
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .clear
+        view.backgroundColor = .bgSurfaceContainer
     }
 
     /// Dismisses the sheet, or completes at once when it is not on screen.
@@ -31,11 +29,23 @@ class FundingSheetHostingController<Content: View>: UIHostingController<Content>
         }
         dismiss(animated: true, completion: completion)
     }
+
+    /// The user dragged the sheet away or tapped outside it.
+    func userDismissed() {}
+
+    /// A drag moves the sheet only while its list is scrolled to the top, so
+    /// scrolling a list does not pull the sheet down.
+    func presenterCanDrag(_: ModalPresenterProtocol) -> Bool {
+        view.scrollViewsAtTop
+    }
+
+    func presenterDidHide(_: ModalPresenterProtocol) {
+        userDismissed()
+    }
 }
 
-/// The overlay sheet. A swipe down is the user leaving, the same as Close.
-final class FundingSheetController: FundingSheetHostingController<FundingSheetView>,
-    UIAdaptivePresentationControllerDelegate {
+/// The overlay sheet. Dragging it away is the user leaving, the same as Close.
+final class FundingSheetController: FundingSheetHostingController<FundingSheetView> {
     private let model: FundingFlowModel
     private var onAppear: (() -> Void)?
 
@@ -43,8 +53,6 @@ final class FundingSheetController: FundingSheetHostingController<FundingSheetVi
         self.model = model
         self.onAppear = onAppear
         super.init(rootView: FundingSheetView(model: model))
-
-        presentationController?.delegate = self
     }
 
     @available(*, unavailable)
@@ -69,8 +77,19 @@ final class FundingSheetController: FundingSheetHostingController<FundingSheetVi
         presenter.dismiss(animated: true, completion: completion)
     }
 
-    func presentationControllerDidDismiss(_: UIPresentationController) {
+    override func userDismissed() {
         model.close()
+    }
+}
+
+private extension UIView {
+    /// Whether every scroll view under this one shows its top.
+    var scrollViewsAtTop: Bool {
+        if let scrollView = self as? UIScrollView,
+           scrollView.contentOffset.y > -scrollView.adjustedContentInset.top {
+            return false
+        }
+        return subviews.allSatisfy(\.scrollViewsAtTop)
     }
 }
 

@@ -50,9 +50,7 @@ private extension FundingSheetView {
 extension View {
     /// Lays a screen out on the funding sheet.
     func fundingScreen() -> some View {
-        padding(.horizontal, DSSpacings.mediumIncreased)
-            .padding(.top, DSSpacings.mediumIncreased)
-            .padding(.bottom, DSSpacings.small)
+        padding(DSSpacings.mediumIncreased)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Color.bgSurfaceContainer.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
