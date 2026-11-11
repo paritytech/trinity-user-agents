@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import ChainRegistry
 import IssueMonitoring
+import os
 import SDKLogger
 @testable import polkadot_app
 
@@ -40,12 +41,14 @@ struct TrUAPIV2SpecConnectionPoolTests {
         ])
     }
 
-    /// A dead node is routine, so the pool tells the diagnostic about every transport death or failed dial and
-    /// every socket that did open, and leaves the threshold to it. A close the peer or the pool asked for is
-    /// not a failure.
-    @Test func transportDeathsAndFailedDialsAreFailuresAndOpensRecoveries() throws {
+    /// A dead node is routine, so the pool tells the diagnostic about every dial that died or timed out before
+    /// opening and every socket that did open, and leaves the threshold to it. A close the peer or the pool
+    /// asked for is not a failure.
+    @Test func failedDialsAreFailuresAndOpensRecoveries() throws {
         struct Refused: Error {}
         let sockets = [MockChainSocket(), MockChainSocket(), MockChainSocket()]
+        sockets[0].completesOpen = false
+        sockets[1].completesOpen = false
         let diagnostic = RecordingIssueDiagnostic()
         let pool = makePool(registry: makeRegistry(serving: sockets), issueDiagnostic: diagnostic)
         for _ in sockets { _ = try #require(pool.connect(genesisHash: genesis)) }
@@ -55,7 +58,44 @@ struct TrUAPIV2SpecConnectionPoolTests {
         sockets[2].simulateClose(.peerClosed)
 
         #expect(diagnostic.failureCount == 2)
-        #expect(diagnostic.recoveryCount == 3)
+        #expect(diagnostic.recoveryCount == 1)
+    }
+
+    /// One network blip kills every open socket with a transport error at once, which says nothing about the
+    /// node, so sockets that had opened never count towards the threshold.
+    @Test func transportDeathsOfOpenedSocketsAreNotFailures() throws {
+        struct Dropped: Error {}
+        let sockets = [MockChainSocket(), MockChainSocket(), MockChainSocket()]
+        let diagnostic = RecordingIssueDiagnostic()
+        let pool = makePool(registry: makeRegistry(serving: sockets), issueDiagnostic: diagnostic)
+        for _ in sockets { _ = try #require(pool.connect(genesisHash: genesis)) }
+
+        sockets.forEach { $0.simulateClose(.transport(Dropped())) }
+
+        #expect(diagnostic.failureCount == 0)
+    }
+
+    /// Dials that die before opening are the failures the threshold exists for.
+    @Test func transportDeathsOfNeverOpenedSocketsTripTheThreshold() throws {
+        struct Refused: Error {}
+        let sockets = [MockChainSocket(), MockChainSocket(), MockChainSocket()]
+        sockets.forEach { $0.completesOpen = false }
+        let reporter = RecordingIssueReporter()
+        let diagnostic = ThresholdIssueDiagnostic(
+            flow: "productLoad",
+            kind: "rpcConnectionFailing",
+            threshold: 3,
+            reporter: reporter
+        )
+        let pool = makePool(registry: makeRegistry(serving: sockets), issueDiagnostic: diagnostic)
+        for _ in sockets { _ = try #require(pool.connect(genesisHash: genesis)) }
+
+        sockets[0].simulateClose(.transport(Refused()))
+        sockets[1].simulateClose(.transport(Refused()))
+        #expect(reporter.issues.isEmpty)
+
+        sockets[2].simulateClose(.transport(Refused()))
+        #expect(reporter.issues.map(\.kind) == ["rpcConnectionFailing"])
     }
 
     @Test func eachConnectGetsItsOwnSocketAndId() throws {
@@ -306,6 +346,16 @@ struct TrUAPIV2SpecConnectionPoolTests {
         await pool.awaitLifecycleEvents()
 
         #expect(socket.probeTimeouts == [5])
+    }
+}
+
+private final class RecordingIssueReporter: IssueReporting, @unchecked Sendable {
+    private let recorded = OSAllocatedUnfairLock<[CriticalIssue]>(initialState: [])
+
+    var issues: [CriticalIssue] { recorded.withLock { $0 } }
+
+    func report(_ issue: CriticalIssue) {
+        recorded.withLock { $0.append(issue) }
     }
 }
 

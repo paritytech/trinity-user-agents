@@ -9,8 +9,8 @@ enum HostLoadIssueDiagnostics {
     /// moves to another.
     static let rpcConnection: IssueDiagnostic = make(kind: "rpcConnectionFailing", threshold: 3)
 
-    /// A product worker that failed to boot.
-    static let workerBoot: IssueDiagnostic = make(kind: "workerBootFailed", threshold: 1)
+    /// A product worker that keeps failing to boot; one failed boot is routine, as the next demand retries.
+    static let workerBoot: IssueDiagnostic = make(kind: "workerBootFailed", threshold: 3)
 
     private static func make(kind: StaticString, threshold: Int) -> IssueDiagnostic {
         guard IssueMonitoringFactory.isReportingSupported else { return NoopIssueDiagnostic() }

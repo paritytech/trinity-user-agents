@@ -273,7 +273,7 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             // clearing that would swallow a start the core never repeats.
             guard held[productId]?.belongsTo(boot) == true else { return }
 
-            if !(error is CancellationError) {
+            if Self.isReportableBootFailure(error) {
                 issueDiagnostic.recordFailure(for: "\(productId)", error: error, counters: [:])
             }
             logger.error("[truapi] \(productId)'s worker failed to start: \(error)")
@@ -282,6 +282,14 @@ actor TrUAPIWorkerManager: TrUAPIWorkerManaging {
             // so never sends another stop to clear it.
             await stop(productId)
         }
+    }
+
+    /// A cancelled boot was asked to stop, and a product that publishes no worker has nothing to boot, so
+    /// neither is the host failing.
+    private static func isReportableBootFailure(_ error: Error) -> Bool {
+        if error is CancellationError { return false }
+        if let workerError = error as? TrUAPIWorkerError, case .noWorker = workerError { return false }
+        return true
     }
 
     private func restart(_ productId: ProductId) async {

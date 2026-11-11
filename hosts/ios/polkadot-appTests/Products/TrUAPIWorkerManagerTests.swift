@@ -216,7 +216,7 @@ struct TrUAPIWorkerManagerTests {
     func reportsAWorkerThatFailedToBootAndClearsItOnceItBoots() async throws {
         let logger = MockLogger()
         let diagnostic = RecordingIssueDiagnostic()
-        let builder = StubWorkerBuilder(cannotBuild: true)
+        let builder = StubWorkerBuilder(engineFails: true)
         let manager = makeManager(builder: builder, logger: logger, issueDiagnostic: diagnostic)
 
         manager.demandChanged(productId: gameProductId, transition: .start)
@@ -225,11 +225,25 @@ struct TrUAPIWorkerManagerTests {
         #expect(diagnostic.failureCount == 1)
         #expect(diagnostic.recoveryCount == 0)
 
-        builder.cannotBuild = false
+        builder.engineFails = false
         manager.demandChanged(productId: gameProductId, transition: .start)
         try await execution(of: gameProductId, in: manager)
 
         #expect(diagnostic.recoveryCount == 1)
+    }
+
+    /// A product that publishes no worker has nothing to boot, so it is never a host failure to report.
+    @Test
+    func neverReportsAProductThatPublishesNoWorker() async throws {
+        let logger = MockLogger()
+        let diagnostic = RecordingIssueDiagnostic()
+        let builder = StubWorkerBuilder(cannotBuild: true)
+        let manager = makeManager(builder: builder, logger: logger, issueDiagnostic: diagnostic)
+
+        manager.demandChanged(productId: gameProductId, transition: .start)
+        try await logger.waitForError(containing: "failed to start")
+
+        #expect(diagnostic.failureCount == 0)
     }
 
     /// A stop for a product that never started is what the core sends when a

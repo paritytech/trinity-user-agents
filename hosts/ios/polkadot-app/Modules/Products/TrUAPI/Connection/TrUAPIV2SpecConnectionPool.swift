@@ -31,6 +31,8 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
         weak var eventHandler: TrUAPIChainEventHandling?
         var sockets: [UInt32: ChainSocketProtocol] = [:]
         var connectionIds: [ObjectIdentifier: UInt32] = [:]
+        /// Sockets that reached `didOpen`; their later transport death is a blip, not a failed dial.
+        var openedConnectionIds: Set<UInt32> = []
         var nextConnectionId: UInt32 = 1
         /// Grows per chain so a reconnect after a dead node lands on the next one.
         var nodeAttempts: [ChainModel.Id: Int] = [:]
@@ -111,6 +113,7 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
             let sockets = Array(state.sockets.values)
             state.sockets.removeAll()
             state.connectionIds.removeAll()
+            state.openedConnectionIds.removeAll()
             return sockets
         }
 
@@ -123,7 +126,14 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
 
 extension TrUAPIV2SpecConnectionPool: ChainSocketDelegate {
     public func chainSocketDidOpen(_ socket: ChainSocketProtocol) {
-        guard let connectionId = state.withLockUnchecked({ $0.connectionIds[ObjectIdentifier(socket)] }) else {
+        let connectionId = state.withLockUnchecked { state -> UInt32? in
+            guard let connectionId = state.connectionIds[ObjectIdentifier(socket)] else { return nil }
+
+            state.openedConnectionIds.insert(connectionId)
+            return connectionId
+        }
+
+        guard let connectionId else {
             return
         }
 
@@ -141,19 +151,21 @@ extension TrUAPIV2SpecConnectionPool: ChainSocketDelegate {
     }
 
     public func chainSocket(_ socket: ChainSocketProtocol, didCloseWith reason: ChainSocketCloseReason) {
-        let (connectionId, handler) = state.withLockUnchecked { state -> (UInt32?, TrUAPIChainEventHandling?) in
+        let (connectionId, wasOpened, handler) = state.withLockUnchecked {
+            state -> (UInt32?, Bool, TrUAPIChainEventHandling?) in
             guard let connectionId = state.connectionIds[ObjectIdentifier(socket)] else {
-                return (nil, nil)
+                return (nil, false, nil)
             }
 
+            let wasOpened = state.openedConnectionIds.contains(connectionId)
             _ = state.removeSocket(for: connectionId)
-            return (connectionId, state.eventHandler)
+            return (connectionId, wasOpened, state.eventHandler)
         }
 
         guard let connectionId else { return }
 
         logger.info("[truapi.chain] \(Self.closeLine(connectionId: connectionId, url: socket.url, reason: reason))")
-        reportFailure(of: socket.url, reason: reason)
+        reportFailure(of: socket.url, reason: reason, wasOpened: wasOpened)
         handler?.chainDidClose(connectionId: connectionId)
     }
 }
@@ -196,11 +208,14 @@ extension TrUAPIV2SpecConnectionPool {
 }
 
 private extension TrUAPIV2SpecConnectionPool {
-    /// A dial that never connected and a transport that died are failures to the product; a close the peer
-    /// or the pool asked for is not.
-    func reportFailure(of url: URL, reason: ChainSocketCloseReason) {
+    /// A dial that never connected is a failure to the product; a close the peer or the pool asked for is
+    /// not, and neither is a transport that dies after the socket opened: one network blip kills every open
+    /// socket at once and says nothing about the node.
+    func reportFailure(of url: URL, reason: ChainSocketCloseReason, wasOpened: Bool) {
         switch reason {
         case let .transport(error):
+            guard !wasOpened else { return }
+
             issueDiagnostic.recordFailure(for: url.absoluteString, error: error, counters: [:])
         case .connectTimeout:
             issueDiagnostic.recordFailure(for: url.absoluteString, error: nil, counters: [:])
@@ -275,6 +290,7 @@ private extension TrUAPIV2SpecConnectionPool.State {
 
     mutating func removeSocket(for connectionId: UInt32) -> ChainSocketProtocol? {
         guard let socket = sockets.removeValue(forKey: connectionId) else { return nil }
+        openedConnectionIds.remove(connectionId)
         connectionIds.removeValue(forKey: ObjectIdentifier(socket))
         return socket
     }

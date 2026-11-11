@@ -12,9 +12,13 @@ final class MockChainSocket: ChainSocketProtocol, @unchecked Sendable {
     private(set) var sent: [String] = []
 
     var onOpen: ((MockChainSocket) -> Void)?
+    /// Off, `open()` leaves the dial pending, as a node that never answers does.
+    var completesOpen = true
 
     func open() {
         openCallCount += 1
+        guard completesOpen else { return }
+
         delegate?.chainSocketDidOpen(self)
         onOpen?(self)
     }
