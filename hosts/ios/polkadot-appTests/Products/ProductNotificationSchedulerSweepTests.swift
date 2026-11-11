@@ -82,10 +82,11 @@ struct ProductNotificationSchedulerSweepTests {
         let booking = bookInBackground()
         try await center.waitUntilHeld()
         let cancelling = Task { try await cancellation() }
-        _ = try await center.anotherCallArrives()
+        let overlapped = try await center.anotherCallArrives()
         center.release()
         let nextId = try await booking.value
         try await cancelling.value
+        #expect(!overlapped)
         return nextId
     }
 
