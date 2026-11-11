@@ -234,42 +234,42 @@ does not check genesis hashes against the live chains.
 
 #### Descriptor refresh
 
-The core starts from the bundled copy or from the last copy it verified,
-whichever has the higher `sequence`, and never waits on the network to start.
-While it runs it fetches the descriptor again once its copy is an hour old, and
-whenever the host asks. The decision about a fetched copy is the
-`trinity-stack` crate's `StackReader`: a failed fetch, a refused copy or a
-lower `sequence` keeps the copy the core holds. The core also refuses a copy it
-could not start from, such as one without a People chain.
+The core starts from the bundled descriptor or the last one it verified,
+whichever has the higher `sequence`. It never waits on the network to start.
 
-The core has no HTTP client. The host makes each request and reports what it
-got:
+While it runs, the core fetches the published descriptor once its own is an
+hour old, and whenever the host asks. `trinity-stack`'s `StackReader` decides
+whether to take it: a failed fetch, a refused descriptor or a lower `sequence`
+keeps the current one. The core also refuses a descriptor it could not start
+from, such as one without a People chain.
+
+The core has no HTTP client, so the host fetches and reports what it got:
 
 | Host         | Fetch and status                                                                | Stored copy                                                 |
 | ------------ | ------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | iOS, Android | `NativeStackCallbacks`, installed with `set_stack_callbacks`                    | the core database                                           |
 
-The host sends a `GET` to the URL without following redirects, stops reading
-past `max_bytes` (1 MiB), and answers `Unreachable` for anything but `200` and
-`304`. The core gives up on an answer after 30 seconds. Without the callbacks
-the core stays on the copy it started from.
+Without the callbacks the core stays on the descriptor it started from.
 
-`stack_changed` reports a `StackStatus` when the refresh starts and on every
-change, and `stack_status` returns the current one:
+The host sends a `GET` without following redirects, stops reading at
+`max_bytes` (1 MiB), and answers `Unreachable` for anything but `200` and
+`304`. The core waits 30 seconds for an answer.
 
-- `descriptor` is the verified descriptor the core runs, as plain JSON. The
+`stack_changed` reports a `StackStatus` when a refresh starts and on every
+change. `stack_status` returns the current one:
+
+- `descriptor`: the verified descriptor the core runs, as plain JSON. The
   host's own features read their chains and services from it.
-- `stale` and `expired` say the newest copy is past `validUntil` or
-  `expiresAt`. The core keeps running on it. The host shows it.
-- `restart_required` says the core holds a newer copy that changes a genesis
-  hash, the network or the TLD, or that restarts the chains. The runtime's
-  chain services are built on the stack it started with, so that copy applies
-  from the next start: the host builds the runtime again. A newer copy that
-  changes none of these replaces `descriptor` at once.
-- `new_generation` says the chains restarted in that newer copy. The host drops
-  cached chain data, such as a light client's database, before the next start.
-- `last_refresh` is `Current`, `Unreachable` or `Refused` with the rule the
-  published copy breaks.
+- `stale`, `expired`: the newest descriptor is past `validUntil` or
+  `expiresAt`. The core keeps running on it, and the host shows the stack as
+  stale or as shut down.
+- `restart_required`: build the runtime again to apply a newer descriptor.
+  Set when it changes a genesis hash, the network or the TLD, or restarts the
+  chains. Any other change applies at once.
+- `new_generation`: the chains restarted. Drop cached chain data, such as a
+  light client's database, before the next start.
+- `last_refresh`: `Current`, `Unreachable`, or `Refused` with the rule the
+  published descriptor breaks.
 
 ### Core database
 
