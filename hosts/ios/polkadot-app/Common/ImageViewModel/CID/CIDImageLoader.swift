@@ -32,7 +32,6 @@ final class CIDImageLoader {
             .cacheSerializer(FormatIndicatedCacheSerializer.png),
             .memoryCacheExpiration(.never),
             .diskCacheExpiration(.never),
-            .diskCacheAccessExtendingExpiration(.expirationTime(.never)),
             .keepCurrentImageWhileLoading
         ]
         let provider = CIDImageDataProvider(reference: reference, runtimeProvider: runtimeProvider)
