@@ -35,6 +35,7 @@
 # one to get wrong.
 "area:core":
   - "rust/crates/**"
+  - "stacks/**"
 
 # The hosts are apart rather than together. An iOS-only change and an
 # Android-only change are reviewed by different people and break differently.

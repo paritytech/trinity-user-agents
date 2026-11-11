@@ -333,6 +333,90 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 	Arc::new(StubPlatform::default())
 }
 
+/// A stack on `tld` over these chains, without a relay. Reserved values are
+/// allowed, so a test may run on `dot`.
+pub fn test_stack(
+	tld: &str,
+	people: [u8; 32],
+	bulletin: [u8; 32],
+	asset_hub: Option<[u8; 32]>,
+) -> crate::platform::Stack {
+	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
+	crate::platform::Stack::new("paseo".to_string(), tld.to_string(), chains, true)
+		.expect("test stack is valid")
+}
+
+/// The stack most runtime tests run on: [`test_stack`] on `paseo` with People
+/// `[0; 32]`, Bulletin `[0xbb; 32]` and Asset Hub `[0xcc; 32]`.
+pub fn paseo_test_stack() -> crate::platform::Stack {
+	test_stack("paseo", [0; 32], [0xbb; 32], Some([0xcc; 32]))
+}
+
+/// The key [`sign_test_descriptor`] signs with.
+const TEST_STACK_SECRET: [u8; 32] = [0x5e; 32];
+
+/// A descriptor for a stack on `tld` over a relay and these chains, ready for
+/// [`sign_test_descriptor`]. Its `network` is always `paseo`; none of the TLD
+/// or reserved-value checks read it.
+pub fn test_descriptor(
+	tld: &str,
+	people: [u8; 32],
+	bulletin: [u8; 32],
+	asset_hub: Option<[u8; 32]>,
+) -> serde_json::Value {
+	let mut chains = vec![
+		test_descriptor_chain("Relay", [0x01; 32], None),
+		test_descriptor_chain("People", people, Some(1004)),
+		test_descriptor_chain("Bulletin", bulletin, Some(1010)),
+	];
+	chains.extend(asset_hub.map(|genesis| test_descriptor_chain("AssetHub", genesis, Some(1000))));
+	serde_json::json!({
+		"$v": 1,
+		"sequence": 1,
+		"generation": "test",
+		"id": "test",
+		"name": "Test",
+		"network": "paseo",
+		"tld": tld,
+		"chains": chains,
+		"services": [],
+	})
+}
+
+/// One `chains` entry of a test descriptor.
+pub fn test_descriptor_chain(
+	role: &str,
+	genesis: [u8; 32],
+	para_id: Option<u32>,
+) -> serde_json::Value {
+	let mut chain = serde_json::json!({
+		"role": role,
+		"genesisHash": format!("0x{}", hex::encode(genesis)),
+		"rpc": ["wss://rpc.test.invalid"],
+	});
+	if let Some(para_id) = para_id {
+		chain["paraId"] = para_id.into();
+	}
+	chain
+}
+
+/// `descriptor` signed with [`TEST_STACK_SECRET`], and the pointer link that
+/// verifies it.
+pub fn sign_test_descriptor(descriptor: &serde_json::Value) -> (String, Vec<u8>) {
+	let bytes = serde_json::to_vec(descriptor).expect("a JSON value serialises");
+	let signed = trinity_stack::sign(&bytes, &TEST_STACK_SECRET).expect("test descriptor is valid");
+	(test_stack_link(Some(&TEST_STACK_SECRET)), signed)
+}
+
+/// The link to the test stack's URL, keyed with the public key of `secret`
+/// when one is given.
+pub fn test_stack_link(secret: Option<&[u8; 32]>) -> String {
+	let key = secret.map(|secret| format!("0x{}", hex::encode(trinity_stack::public_key(secret))));
+	trinity_stack::Pointer::new("https://stack.test.invalid/stack.json", key.as_deref())
+		.expect("test pointer is valid")
+		.to_link(trinity_stack::DEFAULT_LINK_BASE)
+}
+
 /// Runtime configuration used by platform-backed runtime tests.
 pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 	(
@@ -344,9 +428,7 @@ pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			paseo_test_stack(),
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
@@ -399,9 +481,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		[0xcc; 32],
+		paseo_test_stack(),
 		"polkadotapp".to_string(),
 	)
 	.expect("test pairing config is valid");
@@ -1292,22 +1372,6 @@ impl PlatformFeatures for StubPlatform {
 		_request: v01::HostFeatureSupportedRequest,
 	) -> Result<v01::HostFeatureSupportedResponse, v01::GenericError> {
 		Ok(v01::HostFeatureSupportedResponse { supported: true })
-	}
-
-	async fn supported_chains(&self) -> Result<crate::platform::HostChainSet, v01::GenericError> {
-		Ok(crate::platform::HostChainSet {
-			network: "paseo".to_string(),
-			chains: vec![
-				crate::platform::HostChainEntry {
-					identifier: v01::ChainIdentifier::AssetHub,
-					genesis_hash: [0xaa; 32],
-				},
-				crate::platform::HostChainEntry {
-					identifier: v01::ChainIdentifier::People,
-					genesis_hash: [0x22; 32],
-				},
-			],
-		})
 	}
 }
 

@@ -357,7 +357,10 @@ pub struct RemoteChainTransactionBroadcastResponse {
 }
 
 /// Role of a chain within the host's configured environment.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
+///
+/// Each variant's name is the role a Trinity stack descriptor lists that chain
+/// under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::IntoStaticStr)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChainIdentifier {
 	/// The relay chain.

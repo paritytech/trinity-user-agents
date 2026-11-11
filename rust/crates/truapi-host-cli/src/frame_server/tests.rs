@@ -84,10 +84,7 @@ fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
 			platform: truapi::latest::HostPlatform::Cli,
 		},
 		truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-		network.genesis().people,
-		network.genesis().bulletin,
-		network.genesis().asset_hub,
-		network.tld().to_string(),
+		network.core_stack()?,
 	)?;
 	let executor = tokio::runtime::Builder::new_current_thread().build()?;
 	let spawner = Spawner::new(executor.handle().clone());
@@ -488,10 +485,7 @@ mod cross_product_storage {
 				platform: truapi::latest::HostPlatform::Cli,
 			},
 			truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-			network.genesis().people,
-			network.genesis().bulletin,
-			network.genesis().asset_hub,
-			network.tld().to_string(),
+			network.core_stack()?,
 		)?;
 		assert_eq!(
 			platform.routed_url(&asset_hub_genesis),

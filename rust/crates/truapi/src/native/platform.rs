@@ -273,13 +273,6 @@ impl Features for CallbackPlatform {
 		let supported = self.callbacks.feature_supported(request).await?;
 		Ok(v01::HostFeatureSupportedResponse { supported })
 	}
-
-	async fn supported_chains(&self) -> Result<crate::platform::HostChainSet, v01::GenericError> {
-		self.callbacks
-			.on_core_log(markers::NATIVE_SUPPORTED_CHAINS.target.to_string(), String::new());
-
-		self.callbacks.supported_chains().map_err(v01::GenericError::from)
-	}
 }
 
 #[async_trait::async_trait]
@@ -702,7 +695,7 @@ impl crate::platform::ChatPlatform for ChatCallbackPlatform {
 	async fn set_chat_room_footer(
 		&self,
 		_product: &ProductContext,
-		request: v01::HostChatSetRoomFooterRequest,
+		request: truapi::latest::HostChatSetRoomFooterRequest,
 	) -> Result<(), v01::GenericError> {
 		self.chat
 			.set_room_footer(request.room_id, request.footer)
