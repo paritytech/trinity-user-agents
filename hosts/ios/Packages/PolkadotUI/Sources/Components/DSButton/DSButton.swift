@@ -11,6 +11,7 @@ public struct DSButton: View {
     private let leadingIcon: ImageResource?
     private let trailingIcon: ImageResource?
     private let expands: Bool
+    private let isLoading: Bool
     private let action: () -> Void
 
     public init(
@@ -21,6 +22,7 @@ public struct DSButton: View {
         leadingIcon: ImageResource? = nil,
         trailingIcon: ImageResource? = nil,
         expands: Bool = false,
+        isLoading: Bool = false,
         action: @escaping () -> Void
     ) {
         title = String(localized: localized)
@@ -30,6 +32,7 @@ public struct DSButton: View {
         self.leadingIcon = leadingIcon
         self.trailingIcon = trailingIcon
         self.expands = expands
+        self.isLoading = isLoading
         self.action = action
     }
 
@@ -41,6 +44,7 @@ public struct DSButton: View {
         leadingIcon: ImageResource? = nil,
         trailingIcon: ImageResource? = nil,
         expands: Bool = false,
+        isLoading: Bool = false,
         action: @escaping () -> Void
     ) {
         self.title = title
@@ -50,23 +54,29 @@ public struct DSButton: View {
         self.leadingIcon = leadingIcon
         self.trailingIcon = trailingIcon
         self.expands = expands
+        self.isLoading = isLoading
         self.action = action
     }
 
     public var body: some View {
         Button(action: action) {
             HStack(spacing: DSSpacings.small) {
-                if let leadingIcon {
-                    icon(leadingIcon)
-                }
-                Text(title)
-                if let trailingIcon {
-                    icon(trailingIcon)
+                if isLoading {
+                    ProgressView().tint(.fgPrimaryInverted)
+                } else {
+                    if let leadingIcon {
+                        icon(leadingIcon)
+                    }
+                    Text(title)
+                    if let trailingIcon {
+                        icon(trailingIcon)
+                    }
                 }
             }
             .frame(maxWidth: expands ? .infinity : nil)
         }
         .buttonStyle(.ds(style: style, shape: shape, size: size))
+        .disabled(isLoading)
     }
 
     private func icon(_ resource: ImageResource) -> some View {

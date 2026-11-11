@@ -81,11 +81,9 @@ struct FundingPendingView: View {
                 Spacer()
                 Button(action: onHistory) {
                     Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.fgPrimary)
-                        .frame(width: 36, height: 36)
-                        .background(.bgSurfaceNested, in: Circle())
+                        .font(.system(size: 16, weight: .semibold))
                 }
+                .buttonStyle(.dsIcon(style: .secondary, shape: .pill, size: .small))
                 .accessibilityLabel(Text(.Funding.historyOpen))
             }
 
@@ -99,7 +97,7 @@ struct FundingPendingView: View {
                 }
             }
 
-            FundingPrimaryButton(title: buttonTitle, action: onNew)
+            DSButton(buttonTitle, expands: true, action: onNew)
         }
     }
 
@@ -320,11 +318,9 @@ enum FundingActivityDate {
 
     /// `template` names the fields; the locale orders and punctuates them.
     private static func format(_ date: Date, template: String, calendar: Calendar) -> String {
-        let formatter = DateFormatter()
+        let formatter = DateFormatter.localizableFormatterFromTemplate(template).value(for: calendar.locale ?? .current)
         formatter.calendar = calendar
-        formatter.locale = calendar.locale ?? .current
         formatter.timeZone = calendar.timeZone
-        formatter.setLocalizedDateFormatFromTemplate(template)
         return formatter.string(from: date)
     }
 }

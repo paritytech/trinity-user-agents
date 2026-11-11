@@ -142,6 +142,22 @@ class AssetBalanceFormatterFactory {
     }
 }
 
+extension AssetBalanceFormatterFactory {
+    /// An exact amount, never shortened to M, B or T: what the user pays or
+    /// receives must read in full.
+    func createExactFormatter(
+        for info: AssetBalanceDisplayInfo,
+        minimumFractionDigits: UInt16
+    ) -> LocalizableResource<LocalizableDecimalFormatting> {
+        createTokenFormatterCommon(
+            for: info,
+            minimumFractionDigits: minimumFractionDigits,
+            roundingMode: .down,
+            usesSuffixForBigNumbers: false
+        )
+    }
+}
+
 extension AssetBalanceFormatterFactory: AssetBalanceFormatterFactoryProtocol {
     private func createInputNumberFormatter() -> NumberFormatter {
         let numberFormatter = NumberFormatter()

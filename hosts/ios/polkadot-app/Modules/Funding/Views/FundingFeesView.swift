@@ -17,7 +17,7 @@ struct FundingFeesView: View {
 
             Spacer(minLength: 0)
 
-            FundingPrimaryButton(title: String(localized: .Funding.backAction), style: .secondary, action: model.back)
+            DSButton(.Funding.backAction, style: .secondary, expands: true, action: model.back)
         }
     }
 }
@@ -119,7 +119,8 @@ struct FundingFees: Equatable {
             rateNum = net
             rateDen = receive
         case .out:
-            let cent = FundingCash.scale(max(cashPrecision - 2, 0))
+            // Fees out are rounded up to the cent, so the user is never shown less than is taken.
+            let cent = pow(Decimal(10), Int(max(cashPrecision - 2, 0)))
             total = (fees / cent).fundingRounded(scale: 0, mode: .up) * cent
             rateNum = receive
             rateDen = net

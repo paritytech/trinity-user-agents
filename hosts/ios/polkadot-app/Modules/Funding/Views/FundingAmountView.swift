@@ -12,15 +12,19 @@ struct FundingAmountView: View {
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
             FundingScreenHeader(title: title, leadingTitle: true, onBack: nil) {
-                FundingCircleButton(systemImage: "clock.arrow.circlepath", action: model.showHistory)
-                    .overlay(alignment: .topTrailing) {
-                        // A session of this direction is still running.
-                        if FundingActivityCenter.shared.inFlight.contains(where: { $0.direction == model.direction }) {
-                            Circle()
-                                .fill(Color.fgError)
-                                .frame(width: 8, height: 8)
-                        }
+                Button(action: model.showHistory) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 16, weight: .semibold))
+                }
+                .buttonStyle(.dsIcon(style: .secondary, shape: .pill, size: .medium))
+                .overlay(alignment: .topTrailing) {
+                    // A session of this direction is still running.
+                    if FundingActivityCenter.shared.inFlight.contains(where: { $0.direction == model.direction }) {
+                        Circle()
+                            .fill(Color.fgError)
+                            .frame(width: 8, height: 8)
                     }
+                }
             }
 
             FundingRailTabs(selected: model.rail, available: model.availableRails) { rail in
@@ -46,9 +50,10 @@ struct FundingAmountView: View {
 
             FundingKeypad(text: $model.amountText)
 
-            FundingPrimaryButton(title: String(localized: .Funding.continueAction), isEnabled: model.canContinue) {
+            DSButton(.Funding.continueAction, expands: true) {
                 model.continueFromAmount()
             }
+            .disabled(!model.canContinue)
         }
         .onChange(of: model.amountText) { _, _ in model.amountChanged() }
     }
@@ -94,12 +99,9 @@ private extension FundingAmountView {
                     model.amountText = NSDecimalNumber(decimal: preset).stringValue
                 } label: {
                     DSAmount(amount: model.cash.figure(preset), symbol: model.cash.symbol, typography: .labelMedium)
-                        .foregroundStyle(.fgPrimary)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 36)
-                        .background(.bgSurfaceContainer, in: Capsule())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.ds(style: .tertiary, shape: .pill, size: .small))
             }
         }
     }
@@ -150,16 +152,10 @@ struct FundingRailTabs: View {
                 Image(systemName: rail.symbolName)
                     .font(.system(size: 12, weight: .semibold))
                 Text(rail.title)
-                    .typography(.labelMedium)
             }
-            .foregroundStyle(isSelected ? Color.fgPrimaryInverted : Color.fgPrimary)
-            .padding(.horizontal, DSSpacings.extraMedium)
-            .frame(height: 32)
-            .background(isSelected ? Color.bgActionPrimary : Color.bgSurfaceContainer, in: Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.ds(style: isSelected ? .primary : .tertiary, shape: .pill, size: .small))
         .disabled(!available.contains(rail))
-        .opacity(available.contains(rail) ? 1 : 0.4)
     }
 }
 

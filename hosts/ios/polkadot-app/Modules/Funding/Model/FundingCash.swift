@@ -1,4 +1,7 @@
+import BigInt
 import Foundation
+import FoundationExt
+import Foundation_iOS
 import SubstrateSdk
 import TrUAPIHost
 
@@ -13,7 +16,7 @@ struct FundingCash: Equatable {
 
     /// Nil when `units` is not a number.
     func decimal(_ units: U128) -> Decimal? {
-        Decimal(string: units).map { $0 / Self.scale(precision) }
+        BigUInt(units).flatMap { Decimal.fromSubstrateAmount($0, precision: precision) }
     }
 
     func decimal(_ units: U128?) -> Decimal? {
@@ -29,10 +32,7 @@ struct FundingCash: Equatable {
     func units(_ value: Decimal) -> U128? {
         guard value >= 0 else { return nil }
 
-        var scaled = value * Self.scale(precision)
-        var rounded = Decimal()
-        NSDecimalRound(&rounded, &scaled, 0, .down)
-        return NSDecimalNumber(decimal: rounded).stringValue
+        return value.toSubstrateAmount(precision: precision).map { String($0) }
     }
 
     /// `text`, a typed amount with `.` as its separator, in CASH units; nil
@@ -49,8 +49,18 @@ struct FundingCash: Equatable {
 
     /// "$50.20" for a dollar-pegged asset, with cents only when there are any.
     func figure(_ value: Decimal) -> String {
-        let digits = Self.figureFormatter(for: value).string(from: NSDecimalNumber(decimal: value))
-        return (fiat.symbol ?? fiat.code) + digits.orEmpty
+        let info = AssetBalanceDisplayInfo(
+            displayPrecision: 2,
+            assetPrecision: precision,
+            symbol: fiat.symbol ?? fiat.code,
+            symbolValueSeparator: "",
+            symbolPosition: .prefix,
+            icon: nil
+        )
+        return AssetBalanceFormatterFactory()
+            .createExactFormatter(for: info, minimumFractionDigits: value.hasFraction ? 2 : 0)
+            .value(for: .current)
+            .stringFromDecimal(value) ?? ""
     }
 
     /// "$50.20 CASH".
@@ -68,17 +78,6 @@ struct FundingCash: Equatable {
         let sign = direction == .in ? "+" : "-"
         return sign + label(value)
     }
-
-    static func scale(_ decimals: Int16) -> Decimal {
-        pow(Decimal(10), Int(max(decimals, 0)))
-    }
-}
-
-private extension FundingCash {
-    static func figureFormatter(for value: Decimal) -> NumberFormatter {
-        let hasCents = value != value.fundingRounded(scale: 0)
-        return FundingNumberFormatters.decimal(minimumDigits: hasCents ? 2 : 0, maximumDigits: 2)
-    }
 }
 
 extension Decimal {
@@ -92,8 +91,4 @@ extension Decimal {
 
 private extension Character {
     var isASCIIDigit: Bool { isASCII && isNumber }
-}
-
-private extension String? {
-    var orEmpty: String { self ?? "" }
 }

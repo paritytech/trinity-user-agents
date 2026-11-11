@@ -20,14 +20,10 @@ struct FundingDepositView: View {
             }
 
             if model.failure != nil {
-                FundingPrimaryButton(title: String(localized: .Funding.failureClose), action: model.close)
+                DSButton(.Funding.failureClose, expands: true, action: model.close)
             } else if model.hasStarted {
                 HStack(spacing: DSSpacings.small) {
-                    FundingPrimaryButton(
-                        title: String(localized: .Funding.depositCancel),
-                        style: .destructive,
-                        action: model.confirmCancel
-                    )
+                    DSButton(.Funding.depositCancel, style: .destructive, expands: true, action: model.confirmCancel)
                     waitingPill
                 }
             }
@@ -133,14 +129,10 @@ private extension FundingDepositView {
             HStack(spacing: DSSpacings.extraSmall) {
                 ProgressView().controlSize(.small).tint(.fgPrimary)
                 Text(.Funding.depositWaiting)
-                    .typography(.labelMedium)
-                    .foregroundStyle(.fgPrimary)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .background(.bgSurfaceNested, in: Capsule())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.ds(style: .tertiary, shape: .pill, size: .large))
     }
 
     /// Once the funds are seen or the session ends, the progress screen takes
@@ -211,13 +203,14 @@ struct FundingCancelConfirmView: View {
 
             Spacer(minLength: 0)
 
-            FundingPrimaryButton(
-                title: String(localized: .Funding.depositCancel),
+            DSButton(
+                .Funding.depositCancel,
                 style: .destructive,
+                expands: true,
                 isLoading: model.isCancelling,
                 action: model.requestCancel
             )
-            FundingPrimaryButton(title: String(localized: .Funding.cancelKeep), action: model.back)
+            DSButton(.Funding.cancelKeep, expands: true, action: model.back)
         }
     }
 

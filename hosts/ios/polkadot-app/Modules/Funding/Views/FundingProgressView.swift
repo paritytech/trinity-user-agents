@@ -122,11 +122,7 @@ private extension FundingProgressView {
             }
 
             if model.canRequestCancel {
-                FundingPrimaryButton(
-                    title: model.cancelTitle,
-                    style: .destructive,
-                    action: model.confirmCancel
-                )
+                DSButton(model.cancelTitle, style: .destructive, expands: true, action: model.confirmCancel)
             }
         }
         .fundingToast($copied)
@@ -439,14 +435,10 @@ struct FundingCancelOfferView: View {
 
             Spacer(minLength: 0)
 
-            FundingPrimaryButton(
-                title: String(localized: .Funding.offerAccept),
-                style: .destructive,
-                isLoading: model.isAnsweringOffer
-            ) {
+            DSButton(.Funding.offerAccept, style: .destructive, expands: true, isLoading: model.isAnsweringOffer) {
                 model.answerCancelOffer(accepting: CancelTerms(fee: fee, refund: refund))
             }
-            FundingPrimaryButton(title: String(localized: .Funding.offerKeepGoing)) {
+            DSButton(.Funding.offerKeepGoing, expands: true) {
                 model.answerCancelOffer(accepting: nil)
             }
         }

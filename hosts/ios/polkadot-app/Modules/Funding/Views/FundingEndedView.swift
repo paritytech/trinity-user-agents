@@ -181,17 +181,9 @@ private extension FundingEndedView {
     var bottomAction: some View {
         Group {
             if ended.succeeded {
-                FundingPrimaryButton(
-                    title: String(localized: .Funding.failureClose),
-                    style: .secondary,
-                    action: onClose
-                )
+                DSButton(.Funding.failureClose, style: .secondary, expands: true, action: onClose)
             } else {
-                FundingPrimaryButton(
-                    title: String(localized: .Funding.endedStartOver),
-                    style: .primary,
-                    action: onStartOver
-                )
+                DSButton(.Funding.endedStartOver, expands: true, action: onStartOver)
             }
         }
     }

@@ -1,4 +1,5 @@
 import DesignSystem
+import PolkadotUI
 import SwiftUI
 
 /// The networks the providers' crypto routes name, each closed to amounts
@@ -34,13 +35,12 @@ struct FundingNetworkView: View {
             return String(localized: LocalizedStringResource.Funding.networkMinimum(amount: label))
         }
 
-        return FundingSelectionRow(
-            title: network.name,
-            subtitle: subtitle,
-            isEnabled: minimum == nil,
-            mark: { FundingMonogram(text: network.monogram, tint: network.tint) },
-            action: { model.chooseNetwork(network.id) }
-        )
+        return DisclosureListRow(title: network.name, subtitle: subtitle, isEnabled: minimum == nil) {
+            FundingAssetMark(logo: network.logo, letter: network.monogram, tint: network.tint)
+        } onTap: {
+            model.chooseNetwork(network.id)
+        }
+        .fundingTile(isEnabled: minimum == nil)
     }
 }
 
@@ -61,7 +61,7 @@ struct FundingTokenView: View {
                     Text(verbatim: network.name)
                         .typography(.captionMedium)
                         .foregroundStyle(.fgPrimary)
-                    FundingMonogram(text: network.monogram, tint: network.tint, size: 16)
+                    FundingAssetMark(logo: network.logo, letter: network.monogram, tint: network.tint, size: .s20)
                 }
                 .padding(.horizontal, DSSpacings.smallIncreased)
                 .frame(height: 32)
@@ -71,13 +71,12 @@ struct FundingTokenView: View {
             ScrollView {
                 VStack(spacing: DSSpacings.small) {
                     ForEach(model.tokens) { token in
-                        FundingSelectionRow(
-                            title: token.symbol,
-                            subtitle: nil,
-                            isEnabled: true,
-                            mark: { FundingMonogram(text: token.monogram, tint: token.tint) },
-                            action: { model.chooseToken(token.symbol) }
-                        )
+                        DisclosureListRow(title: token.symbol) {
+                            FundingAssetMark(logo: token.logo, letter: token.monogram, tint: token.tint)
+                        } onTap: {
+                            model.chooseToken(token.symbol)
+                        }
+                        .fundingTile(isEnabled: true)
                     }
                 }
             }
@@ -85,36 +84,32 @@ struct FundingTokenView: View {
     }
 }
 
-/// A tile with a mark, a title, an optional reason line, and a chevron.
-struct FundingSelectionRow<Mark: View>: View {
-    let title: String
-    let subtitle: String?
-    let isEnabled: Bool
-    @ViewBuilder let mark: () -> Mark
-    let action: () -> Void
+/// A network's or token's mark: the app's logo where it has one, else its
+/// first letter in its colour.
+struct FundingAssetMark: View {
+    let logo: ImageResource?
+    let letter: String
+    let tint: Color
+    var size: DSLetterAvatar.Size = .s40
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: DSSpacings.smallIncreased) {
-                mark()
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: title)
-                        .typography(.bodyMediumEmphasized)
-                        .foregroundStyle(isEnabled ? Color.fgPrimary : Color.fgSecondary)
-                    if let subtitle {
-                        Text(verbatim: subtitle)
-                            .typography(.captionMedium)
-                            .foregroundStyle(.fgTertiary)
-                    }
-                }
-                Spacer()
-                if isEnabled {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.fgSecondary)
-                }
-            }
-            .padding(.horizontal, DSSpacings.medium)
+        if let logo {
+            Image(logo)
+                .resizable()
+                .scaledToFit()
+                .frame(width: size.dimension, height: size.dimension)
+                .clipShape(Circle())
+        } else {
+            DSLetterAvatar(letter: letter, background: tint, foreground: .white, size: size)
+        }
+    }
+}
+
+extension View {
+    /// The tile a selectable funding row sits on: filled while it can be
+    /// chosen, outlined when it is closed.
+    func fundingTile(isEnabled: Bool) -> some View {
+        padding(.horizontal, DSSpacings.medium)
             .frame(minHeight: 60)
             .background(
                 isEnabled ? Color.bgSurfaceNested : Color.clear,
@@ -125,8 +120,5 @@ struct FundingSelectionRow<Mark: View>: View {
                     RoundedRectangle(cornerRadius: DSRadii.large).stroke(Color.strokePrimary)
                 }
             }
-        }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
     }
 }
