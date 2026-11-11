@@ -116,8 +116,8 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
 private extension ProductNotificationScheduler {
     func book(productId: ProductId, request: ScheduledNotificationRequest) async throws -> UInt32 {
         let repository = createRepository()
-        let (currentCount, notificationId) = try await reporting(.storeFailed, productId: productId) {
-            try await sweep()
+        try await reporting(.sweepFailed, productId: productId) { try await sweep() }
+        let (currentCount, notificationId) = try await reporting(.readFailed, productId: productId) {
             let bookedCount = try await repository.fetchAllOperation(with: .init()).asyncExecute().count
             return try await (bookedCount, generateUniqueId(productId: productId))
         }

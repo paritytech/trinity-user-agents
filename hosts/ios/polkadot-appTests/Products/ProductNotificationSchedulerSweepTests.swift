@@ -41,13 +41,13 @@ struct ProductNotificationSchedulerSweepTests {
         expectedProductNotificationHostEvent("delivered", productId: Self.product, id: id, deliveredAt: firedAt)
     }
 
-    private func storeFailed(_ id: UInt32?) -> HostEvent {
+    private func notScheduled(_ id: UInt32?, reason: String) -> HostEvent {
         expectedProductNotificationHostEvent(
             "not_scheduled",
             productId: Self.product,
             id: id,
             level: .error,
-            tags: ["product_notification.reason": "store_failed"]
+            tags: ["product_notification.reason": reason]
         )
     }
 
@@ -180,7 +180,7 @@ struct ProductNotificationSchedulerSweepTests {
             _ = try await scheduler.schedule(productId: productId, request: request)
         }
 
-        #expect(recorder.events == [event("scheduled", id), storeFailed(nil)])
+        #expect(recorder.events == [event("scheduled", id), notScheduled(nil, reason: "sweep_failed")])
     }
 
     @Test func aRefusedStoreWriteLeavesNothingPending() async throws {
@@ -192,7 +192,7 @@ struct ProductNotificationSchedulerSweepTests {
 
         let id = try attemptedBookingId()
         #expect(await pendingIdentifiers() == [])
-        #expect(recorder.events == [storeFailed(id)])
+        #expect(recorder.events == [notScheduled(id, reason: "store_failed")])
     }
 
     @Test func aFailedPruneReportsTheStaleBookingOnlyOnTheRetry() async throws {
@@ -209,7 +209,7 @@ struct ProductNotificationSchedulerSweepTests {
         #expect(
             recorder.events == [
                 event("scheduled", lostId),
-                storeFailed(nil),
+                notScheduled(nil, reason: "sweep_failed"),
                 event("gone", lostId),
                 event("scheduled", nextId)
             ]

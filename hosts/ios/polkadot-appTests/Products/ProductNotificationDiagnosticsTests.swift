@@ -100,7 +100,9 @@ struct ProductNotificationDiagnosticsTests {
     }
 
     @Test(arguments: [
-        (ProductNotificationEvent.Reason.addFailed, "add_failed"),
+        (ProductNotificationEvent.Reason.sweepFailed, "sweep_failed"),
+        (.readFailed, "read_failed"),
+        (.addFailed, "add_failed"),
         (.storeFailed, "store_failed")
     ])
     func aFailedHandOverIsAnErrorCarryingTheBookingIdAndReason(reason: ProductNotificationEvent.Reason, tag: String) {
@@ -119,7 +121,9 @@ struct ProductNotificationDiagnosticsTests {
     }
 
     @Test(arguments: [
-        (ProductNotificationEvent.Reason.addFailed, "add-failed"),
+        (ProductNotificationEvent.Reason.sweepFailed, "sweep-failed"),
+        (.readFailed, "read-failed"),
+        (.addFailed, "add-failed"),
         (.storeFailed, "store-failed")
     ])
     func aFailedHandOverReportsAnIssueWithItsError(reason: ProductNotificationEvent.Reason, kind: String) {

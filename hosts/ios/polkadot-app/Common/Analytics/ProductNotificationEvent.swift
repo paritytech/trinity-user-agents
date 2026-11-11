@@ -30,6 +30,8 @@ struct ProductNotificationEvent: Equatable {
     /// Why a booking did not reach the system and the store.
     enum Reason: String {
         case limitReached = "limit_reached"
+        case sweepFailed = "sweep_failed"
+        case readFailed = "read_failed"
         case addFailed = "add_failed"
         case storeFailed = "store_failed"
     }
@@ -100,7 +102,7 @@ struct ProductNotificationEvent: Equatable {
             name: "host.product_notification.\(step.rawValue)",
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
-            level: reason == .addFailed || reason == .storeFailed ? .error : .info,
+            level: reason == nil || reason == .limitReached ? .info : .error,
             tags: tags,
             extras: extras
         )
