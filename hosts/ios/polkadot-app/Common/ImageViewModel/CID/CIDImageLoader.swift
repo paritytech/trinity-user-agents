@@ -10,7 +10,6 @@ protocol CIDImageLoading: Sendable {
         on imageView: UIImageView,
         settings: ImageViewModelSettings,
         animated: Bool,
-        keepsCurrentImageWhileLoading: Bool,
         completion: ((Bool) -> Void)?
     )
 
@@ -30,7 +29,6 @@ final class CIDImageLoader: CIDImageLoading {
         on imageView: UIImageView,
         settings: ImageViewModelSettings,
         animated: Bool,
-        keepsCurrentImageWhileLoading: Bool,
         completion: ((Bool) -> Void)?
     ) {
         let optionsFactory =
@@ -38,7 +36,7 @@ final class CIDImageLoader: CIDImageLoading {
             case let .bulletin(_, format): CIDImageOptionsFactory(format: format)
             }
         var options = optionsFactory.options(for: settings, animated: animated)
-        if keepsCurrentImageWhileLoading { options.append(.keepCurrentImageWhileLoading) }
+        options.append(.keepCurrentImageWhileLoading)
         let provider = CIDImageDataProvider(reference: reference, loadImage: loadImage)
         imageView.kf.setImage(with: provider, options: options) { result in
             switch result {

@@ -40,31 +40,27 @@ final class PublicProfileAvatarViewModel: IdentifiableImageViewModelProtocol {
         if self.imageView === imageView, task != nil { return }
         if let current = self.imageView { cancel(on: current) }
         self.imageView = imageView
+        imageView.image = nil
         let requestOptions = options
         task = Task { [weak self, profiles, username, requestOptions, imageLoader, weak imageView] in
             do {
                 try Task.checkCancellation()
                 let updates = try await profiles(username, requestOptions)
                 try Task.checkCancellation()
-                var keepsCurrentImage = false
                 for try await profile in updates {
                     try Task.checkCancellation()
                     guard let imageView else { return }
+                    imageLoader.cancel(on: imageView)
                     if let avatar = profile.avatar {
-                        if keepsCurrentImage { imageLoader.cancel(on: imageView) }
                         imageLoader.load(
                             .bulletin(cid: avatar.cid, declaredFormat: avatar.format),
                             on: imageView,
                             settings: settings,
                             animated: animated,
-                            keepsCurrentImageWhileLoading: keepsCurrentImage,
                             completion: completion
                         )
-                        keepsCurrentImage = true
                     } else {
-                        imageLoader.cancel(on: imageView)
                         imageView.image = nil
-                        keepsCurrentImage = false
                         completion?(false)
                     }
                 }

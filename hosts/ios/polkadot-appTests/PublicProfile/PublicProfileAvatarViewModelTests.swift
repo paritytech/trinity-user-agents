@@ -54,13 +54,15 @@ struct PublicProfileAvatarViewModelTests {
         updates.onTermination = { _ in termination.yield(()) }
         let images = RecordingCIDImageLoader()
         let viewModel = makeViewModel(profiles: profiles, images: images)
-        let imageView = UIImageView()
+        let previousImage = try #require(UIImage(systemName: "person"))
+        let imageView = UIImageView(image: previousImage)
         let coordinator = AsyncImageView(viewModel: viewModel).makeCoordinator()
         defer { coordinator.cancel(on: imageView) }
         coordinator.load(viewModel, on: imageView, settings: .originalImage, animated: false)
+        #expect(imageView.image == nil)
         updates.yield(PublicProfile(avatar: avatar("stored")))
         let first = try #require(await images.nextRequest())
-        let storedImage = UIImage()
+        let storedImage = try #require(UIImage(systemName: "person.fill"))
         images.complete(with: storedImage)
 
         let redrawn = makeViewModel(profiles: profiles, images: images)
@@ -69,10 +71,7 @@ struct PublicProfileAvatarViewModelTests {
         updates.yield(PublicProfile(avatar: avatar("resolved")))
         let second = try #require(await images.nextRequest())
 
-        #expect([first, second] == [
-            .init(reference: reference("stored"), keepsCurrentImage: false),
-            .init(reference: reference("resolved"), keepsCurrentImage: true)
-        ])
+        #expect([first, second] == [reference("stored"), reference("resolved")])
         #expect(imageView.image === storedImage)
         let cancellations = images.cancelledViews.count
         coordinator.cancel(on: imageView)
@@ -110,7 +109,7 @@ struct PublicProfileAvatarViewModelTests {
 
         let expectedImage: UIImage? = refreshFails ? storedImage : nil
         #expect(imageView.image === expectedImage)
-        #expect(images.requests == [.init(reference: reference("stored"), keepsCurrentImage: false)])
+        #expect(images.requests == [reference("stored")])
         updates.finish()
     }
 
@@ -137,14 +136,9 @@ struct PublicProfileAvatarViewModelTests {
 
 @MainActor
 private final class RecordingCIDImageLoader: CIDImageLoading {
-    struct Request: Equatable {
-        let reference: ImageReference
-        let keepsCurrentImage: Bool
-    }
-
-    private(set) var requests: [Request] = []
+    private(set) var requests: [ImageReference] = []
     private(set) var cancelledViews: [UIImageView] = []
-    private let requested = AsyncStream<Request>.makeStream()
+    private let requested = AsyncStream<ImageReference>.makeStream()
     private var pending: (view: UIImageView, completion: ((Bool) -> Void)?)?
 
     func load(
@@ -152,14 +146,11 @@ private final class RecordingCIDImageLoader: CIDImageLoading {
         on imageView: UIImageView,
         settings _: ImageViewModelSettings,
         animated _: Bool,
-        keepsCurrentImageWhileLoading: Bool,
         completion: ((Bool) -> Void)?
     ) {
-        let request = Request(reference: reference, keepsCurrentImage: keepsCurrentImageWhileLoading)
-        requests.append(request)
-        if !keepsCurrentImageWhileLoading { imageView.image = nil }
+        requests.append(reference)
         pending = (imageView, completion)
-        requested.continuation.yield(request)
+        requested.continuation.yield(reference)
     }
 
     func cancel(on imageView: UIImageView) {
@@ -177,7 +168,7 @@ private final class RecordingCIDImageLoader: CIDImageLoading {
         pending.completion?(true)
     }
 
-    func nextRequest() async -> Request? {
+    func nextRequest() async -> ImageReference? {
         var iterator = requested.stream.makeAsyncIterator()
         return await iterator.next()
     }
