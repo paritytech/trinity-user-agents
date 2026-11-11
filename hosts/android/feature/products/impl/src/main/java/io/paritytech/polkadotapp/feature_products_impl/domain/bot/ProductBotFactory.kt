@@ -2,7 +2,9 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_products_api.model.Product
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenderObserver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
@@ -19,6 +21,8 @@ class ProductBotFactory @Inject constructor(
     private val workerRefCounter: ProductWorkerRefCounter,
     private val imageResolver: ProductImageResolver,
     private val resolveProduct: ResolveProductUseCase,
+    private val dispatchers: CoroutineDispatchers,
+    private val renderObservers: Set<@JvmSuppressWildcards ProductMessageRenderObserver>,
 ) {
     fun create(product: Product, origin: ProductChatExtensionOrigin): ProductChatExtension {
         return ProductChatExtension(
@@ -27,6 +31,8 @@ class ProductBotFactory @Inject constructor(
             workerRefCounter = workerRefCounter,
             imageResolver = imageResolver,
             resolveProduct = resolveProduct,
+            dispatchers = dispatchers,
+            renderObservers = renderObservers,
             origin = origin,
         )
     }

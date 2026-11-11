@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import android.content.Context
+import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRequest
@@ -22,6 +23,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_api.model.productRoomId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatId
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenderObserver
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenders
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageRenderer
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
@@ -70,6 +73,8 @@ class ProductChatExtension(
     private val workerRefCounter: ProductWorkerRefCounter,
     imageResolver: ProductImageResolver,
     resolveProduct: ResolveProductUseCase,
+    dispatchers: CoroutineDispatchers,
+    renderObservers: Set<ProductMessageRenderObserver>,
     val origin: ProductChatExtensionOrigin = ProductChatExtensionOrigin.InstalledByUser,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
@@ -79,7 +84,8 @@ class ProductChatExtension(
     override val defaultRoomMetadata: DefaultRoomMetadata = DefaultRoomMetadata(product.name, icon = product.id.productIconUri())
 
     private val runningWorker = DeferredProductWorker()
-    private val messageRenderer = ProductsMessageRenderer(appContext, product, runningWorker, imageResolver, resolveProduct)
+    private val messageRenders = ProductMessageRenders(product, runningWorker, dispatchers.computation, renderObservers)
+    private val messageRenderer = ProductsMessageRenderer(appContext, product, messageRenders, imageResolver, resolveProduct)
 
     private class Disposed : Exception("the product's chat extension was disposed")
 
@@ -159,6 +165,7 @@ class ProductChatExtension(
         // Cancelling the scope runs the finally in startGlobalWork, which releases the worker lease.
         botScope?.cancel()
         botScope = null
+        messageRenders.close()
         chatMessaging = null
         Timber.d("Disposed product bot: ${product.name}")
     }

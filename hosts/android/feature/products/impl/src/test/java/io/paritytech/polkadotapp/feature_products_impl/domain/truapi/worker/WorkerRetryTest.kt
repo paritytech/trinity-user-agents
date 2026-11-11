@@ -45,4 +45,16 @@ class RenderConnectRetryTest {
         assertTrue(result.exceptionOrNull() is IllegalStateException)
         assertEquals(1, opened)
     }
+
+    @Test
+    fun `a stream reopened as many times as allowed then throws its last failure`() = runTest {
+        val result = runCatching {
+            renderThatConnectsAfter(failures = 10) { IllegalStateException("renderer gone") }
+                .reopenAfterFailure("face") { failures -> failures < 2 }
+                .toList()
+        }
+
+        assertTrue(result.exceptionOrNull() is IllegalStateException)
+        assertEquals(3, opened)
+    }
 }

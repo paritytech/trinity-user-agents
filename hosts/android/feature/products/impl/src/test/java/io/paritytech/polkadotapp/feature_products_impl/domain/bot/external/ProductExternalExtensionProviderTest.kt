@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot.external
 import android.content.Context
 import io.mockk.every
 import io.mockk.mockk
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.Product
@@ -12,11 +13,19 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotFact
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatExtension
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatExtensionOrigin
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
+import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Test
 import uniffi.truapi.ProductId
@@ -31,7 +40,14 @@ class ProductExternalExtensionProviderTest {
     private val hostPlacedProducts: HostPlacedProducts = mockk()
     private val provider = ProductExternalExtensionProvider(
         integrationRepository,
-        ProductBotFactory(mockk<Context>(relaxed = true), mockk(), mockk(), mockk()),
+        ProductBotFactory(
+            mockk<Context>(relaxed = true),
+            mockk(),
+            mockk(),
+            mockk(),
+            TestCoroutineDispatchers(Dispatchers.Unconfined),
+            emptySet(),
+        ),
         hostPlacedProducts,
     )
 
@@ -57,7 +73,7 @@ class ProductExternalExtensionProviderTest {
         }
         val provider = ProductExternalExtensionProvider(
             integrationRepository,
-            ProductBotFactory(context, mockk(), mockk(), mockk()),
+            ProductBotFactory(context, mockk(), mockk(), mockk(), TestCoroutineDispatchers(Dispatchers.Unconfined), emptySet()),
             HostPlacedProducts(context, tldProvider),
         )
         every { integrationRepository.observeProductsByType(IntegrationType.Chat) } returns flowOf(listOf(playground))
@@ -89,5 +105,43 @@ class ProductExternalExtensionProviderTest {
         val extensions = extensions(stored = listOf(installed), placed = listOf(jollity))
 
         assertEquals(listOf(jollity), extensions.map { it.product })
+    }
+
+    /** The lists emitted before and after [change]. */
+    private fun TestScope.listed(change: () -> Unit): List<List<ExternalExtension>> {
+        val lists = mutableListOf<List<ExternalExtension>>()
+        val collector = launch { provider.observeExtensions().collect { lists += it } }
+        runCurrent()
+        change()
+        runCurrent()
+        collector.cancel()
+        return lists
+    }
+
+    // The registry keeps running the first instance it was handed, while the feed draws through
+    // the latest list: a second instance would never be started and its cells would never draw.
+    @Test
+    fun `a product listed again keeps the extension it already has`() = runTest {
+        val installed = MutableStateFlow(emptyList<Product>())
+        every { integrationRepository.observeProductsByType(IntegrationType.Chat) } returns installed
+        every { hostPlacedProducts.observe() } returns flowOf(listOf(jollity))
+
+        val lists = listed { installed.value = listOf(playground) }
+
+        assertSame(lists[0].single(), lists[1].first())
+        assertEquals(listOf(jollity, playground), lists[1].map { (it as ProductChatExtension).product })
+    }
+
+    @Test
+    fun `a product whose listing changed gets a new extension, its unchanged neighbour keeps its own`() = runTest {
+        val installed = MutableStateFlow(listOf(playground))
+        every { integrationRepository.observeProductsByType(IntegrationType.Chat) } returns installed
+        every { hostPlacedProducts.observe() } returns flowOf(listOf(jollity))
+
+        val lists = listed { installed.value = listOf(Product(playground.id, "Playground", icon = null)) }
+
+        assertSame(lists[0][0], lists[1][0])
+        assertNotSame(lists[0][1], lists[1][1])
+        assertEquals(listOf(jollity.id, playground.id), lists[1].map { (it as ProductChatExtension).product.id })
     }
 }

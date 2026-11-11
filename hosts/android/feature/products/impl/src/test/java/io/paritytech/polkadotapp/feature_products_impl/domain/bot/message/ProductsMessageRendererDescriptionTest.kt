@@ -12,6 +12,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RecordingWorker
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -43,14 +45,15 @@ class ProductsMessageRendererDescriptionTest {
         assertEquals(Result.success("Custom message"), describe(custom(alt = null), description = null))
     }
 
-    private suspend fun describe(message: ChatMessage.Content.Custom<ProductsMessageContent>, description: String?): Result<String> {
+    private suspend fun TestScope.describe(message: ChatMessage.Content.Custom<ProductsMessageContent>, description: String?): Result<String> {
         val resolveProduct = mockk<ResolveProductUseCase> {
             coEvery { resolve(product.id) } returns Result.success(
                 ResolvedProduct(product, description, Executables(app = null, widget = null, worker = null))
             )
         }
 
-        return ProductsMessageRenderer(context, product, RecordingWorker(), mockk(), resolveProduct).formatNotificationContent(message)
+        val renders = ProductMessageRenders(product, RecordingWorker(), StandardTestDispatcher(testScheduler), emptySet())
+        return ProductsMessageRenderer(context, product, renders, mockk(), resolveProduct).formatNotificationContent(message)
     }
 
     private fun custom(alt: String?) = ChatMessage.Content.Custom(
