@@ -416,6 +416,7 @@ impl AccountHolder for RemoteAccountHolder {
 		policy: OnExistingAllowancePolicy,
 	) -> Result<BoxStream<'a, Result<AccountGrantOutcome, AuthorityError>>, AuthorityError> {
 		let session = require_current_session(&self.service.session_state(), invocation.session)?;
+		let resource_count = request.resources.len();
 		let request = ResourceAllocationRequest {
 			calling_product_id: invocation
 				.caller
@@ -431,7 +432,7 @@ impl AccountHolder for RemoteAccountHolder {
 				.await?
 				.map_err(remote_authority_error)
 		})
-		.flat_map(|result| {
+		.flat_map(move |result| {
 			stream::iter(match result {
 				Ok(outcomes) => outcomes
 					.into_iter()
@@ -445,7 +446,7 @@ impl AccountHolder for RemoteAccountHolder {
 						},
 					})
 					.collect::<Vec<_>>(),
-				Err(error) => vec![Err(error)],
+				Err(error) => allocation_failure_items(error, resource_count),
 			})
 		})
 		.boxed())
@@ -531,6 +532,15 @@ fn decode_grant(resource: SsoAllocatedResource) -> Result<AccountGrant, Authorit
 
 fn remote_authority_error(reason: String) -> AuthorityError {
 	SsoRemoteResponseError::from(reason).into()
+}
+
+/// Outcomes are matched to requested resources by position, so a failed call
+/// repeats its error once per resource.
+fn allocation_failure_items(
+	error: AuthorityError,
+	resource_count: usize,
+) -> Vec<Result<AccountGrantOutcome, AuthorityError>> {
+	(0..resource_count).map(|_| Err(error.clone())).collect()
 }
 
 /// Reason for an allocation that came back as a different resource kind; names
