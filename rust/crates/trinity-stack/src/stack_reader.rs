@@ -259,6 +259,7 @@ impl StackReader {
 	/// Seconds until the policy makes the stack's fetch due: `Some(0)` when [`StackReader::get`]
 	/// would hand one out now, and `None` while a fetch is out or when the policy never makes
 	/// one due. A caller sleeps this long instead of polling.
+	#[must_use]
 	pub fn due_in(&self, pointer: &Pointer, now_unix_seconds: i64) -> Option<u64> {
 		match self.stacks.get(&pointer.stack_id()) {
 			Some(stack) => stack.due_in(self.refresh, now_unix_seconds),
