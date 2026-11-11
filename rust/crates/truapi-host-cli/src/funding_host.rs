@@ -44,23 +44,23 @@ use tokio::sync::watch;
 use truapi::{
 	FundingFeed, SigningHostRuntime,
 	host_logic::{
-		funding::{CancelTerms, FundingCancel, FundingProgress, FundingSession},
+		funding::{CancelTerms, FundingCancel, FundingSession},
 		funding_providers::{
-			FUNDING_MIN_AMOUNT, FundingOptions, FundingProviderEntry, FundingProviderOrigin,
-			FundingSelection,
+			FUNDING_MIN_AMOUNT, FundingOptions, FundingProviderApp, FundingProviderEntry,
+			FundingProviderOrigin, FundingSelection,
 		},
 	},
 	latest::{
-		FundingDirection, FundingFrameOutcome, FundingFrameTarget, FundingQuoteAsk, FundingRail,
-		GenericError, HostFundingStatusSubscribeItem, HostPaymentError, HostPaymentRequest,
+		FundingDirection, FundingFrameOutcome, FundingFrameTarget, FundingRail, GenericError,
+		HostFundingStatusSubscribeItem, HostPaymentError, HostPaymentRequest,
 		HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem, HostPaymentTopUpError,
 		HostPaymentTopUpRequest, HostPaymentTopUpStatusSubscribeError,
 		HostPaymentTopUpStatusSubscribeItem,
 	},
 	platform::{
-		CoreStorage, FundingFrameContext, FundingPlatform, FundingPresentOutcome,
-		FundingPresentation, FundingQuoteList, FundingQuoteRow, FundingQuoteState, PaymentPlatform,
-		ProductContext, ProductId, TopUpPlatform,
+		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, FundingQuoteList,
+		FundingQuoteRow, FundingQuoteState, PaymentPlatform, ProductContext, ProductId,
+		TopUpPlatform,
 	},
 };
 
@@ -103,8 +103,10 @@ pub async fn offer_providers(
 		providers.push(FundingProviderEntry {
 			product_id,
 			worker_manifest: Some(SHIPPED_PROVIDER_MANIFEST.to_string()),
+			root_manifest: None,
 			origin: FundingProviderOrigin::Bundled,
-			has_app: None,
+			// The host links any App route through the dotNS gateway.
+			app: FundingProviderApp::Shipped,
 		});
 	}
 	runtime
@@ -230,9 +232,10 @@ impl CliFundingHost {
 	}
 
 	/// What session `intent`'s overlay offers once the user takes its
-	/// defaults: the first rail the core routes and, for crypto, the first token it
-	/// lists. The core answers a selection with the options it leads to
-	/// before `select_funding_options` returns.
+	/// defaults: the first rail the core routes and, for crypto, the first
+	/// token and then the first network it lists. The core answers a
+	/// selection with the options it leads to before `select_funding_options`
+	/// returns.
 	fn select_defaults(runtime: &SigningHostRuntime, intent: &str) -> Option<FundingOptions> {
 		let offered = runtime.funding_options(intent)?;
 		let rail = default_rail(&offered);
@@ -240,23 +243,42 @@ impl CliFundingHost {
 			FundingRail::Crypto => offered.tokens.first().cloned(),
 			FundingRail::Card | FundingRail::Bank => None,
 		};
-		runtime.select_funding_options(
-			intent,
-			FundingSelection { rail, asset: token, network: None, country: None, currency: None },
-		);
-		runtime.funding_options(intent)
+		let select = |network: Option<String>| {
+			runtime.select_funding_options(
+				intent,
+				FundingSelection {
+					rail,
+					asset: token.clone(),
+					network,
+					country: None,
+					currency: None,
+				},
+			);
+			runtime.funding_options(intent)
+		};
+		let options = select(None)?;
+		match rail {
+			FundingRail::Crypto => match options.networks.first() {
+				Some(network) => select(Some(network.network.clone())),
+				None => Some(options),
+			},
+			FundingRail::Card | FundingRail::Bank => Some(options),
+		}
 	}
 
-	/// Ask for session `intent`'s quotes and wait for the first list in
-	/// which every provider has answered, as a user waits on the list.
+	/// Ask for session `intent`'s quotes of `amount` on the selection, and
+	/// wait for the first list in which every provider has answered, as a
+	/// user waits on the list. Empty when the selection cannot be quoted.
 	async fn answered_quotes(
 		&self,
 		runtime: &SigningHostRuntime,
 		intent: &str,
-		ask: FundingQuoteAsk,
+		amount: u128,
 	) -> Vec<FundingQuoteRow> {
 		let mut pushed = self.quotes_pushed.subscribe();
-		let request_id = runtime.request_funding_quotes(intent, ask);
+		let Some(request_id) = runtime.request_funding_quotes(intent, amount) else {
+			return Vec::new();
+		};
 		loop {
 			let rows = runtime
 				.funding_quotes(intent)
@@ -282,24 +304,13 @@ fn default_rail(options: &FundingOptions) -> FundingRail {
 }
 
 /// What `session`'s overlay asks to be quoted on `options`, the defaults the
-/// user took: the selected rail and the asset the core names for it, on the
-/// first network it lists for crypto, for the amount the product asked or
-/// else the smallest one the selection takes. `None` when a crypto selection
-/// has no network to ask on.
-fn default_ask(options: &FundingOptions, session: &FundingPresentation) -> Option<FundingQuoteAsk> {
-	let rail = default_rail(options);
-	let network = match rail {
-		FundingRail::Crypto => Some(options.networks.first()?.network.clone()),
-		FundingRail::Card | FundingRail::Bank => None,
-	};
-	Some(FundingQuoteAsk {
-		direction: session.direction,
-		rail,
-		asset: options.asset.clone()?,
-		network,
-		amount: session.amount.or(options.limits.min).unwrap_or(FUNDING_MIN_AMOUNT),
-		country: None,
-	})
+/// user took: the amount the product asked, or else the smallest one the
+/// selection takes. `None` when a crypto selection has no network to ask on.
+fn default_amount(options: &FundingOptions, session: &FundingPresentation) -> Option<u128> {
+	if default_rail(options) == FundingRail::Crypto && options.networks.is_empty() {
+		return None;
+	}
+	Some(session.amount.or(options.limits.min).unwrap_or(FUNDING_MIN_AMOUNT))
 }
 
 /// Where a provider's App is opened: the web host that serves dotNS
@@ -352,7 +363,31 @@ pub async fn cancel(runtime: &SigningHostRuntime, intent: &str) -> Result<String
 
 #[async_trait::async_trait]
 impl FundingPlatform for CliFundingHost {
-	fn funding_quotes_changed(&self, _intent: String, _quotes: FundingQuoteList) {
+	/// Record the status the product is told, with the core's own status,
+	/// which shows what the product's item does not, such as a withdrawal
+	/// cancelled after its release.
+	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
+		let (tag, amount) = match status {
+			HostFundingStatusSubscribeItem::InProgress { .. } => ("InProgress", None),
+			HostFundingStatusSubscribeItem::Delivered { credited } => ("Delivered", Some(credited)),
+			HostFundingStatusSubscribeItem::Released { debited } => ("Released", Some(debited)),
+			HostFundingStatusSubscribeItem::Failed { .. } => ("Failed", None),
+		};
+		let progress = self
+			.runtime
+			.upgrade()
+			.and_then(|runtime| runtime.funding_session(&intent))
+			.map(|session| format!("{:?}", session.status(truapi::current_unix_millis())));
+		self.transcript.record(serde_json::json!({
+			"kind": "status",
+			"intent": intent,
+			"tag": tag,
+			"amount": amount.map(|amount| amount.to_string()),
+			"progress": progress,
+		}));
+	}
+
+	fn funding_quotes_changed(&self, _intent: String, _quotes: Option<FundingQuoteList>) {
 		self.quotes_pushed.send_modify(|pushed| *pushed = pushed.wrapping_add(1));
 	}
 
@@ -376,8 +411,8 @@ impl FundingPlatform for CliFundingHost {
 			.flat_map(|options| &options.candidates)
 			.map(|candidate| candidate.provider_id.clone())
 			.collect();
-		let rows = match options.and_then(|options| default_ask(&options, &session)) {
-			Some(ask) => self.answered_quotes(&runtime, &session.intent, ask).await,
+		let rows = match options.and_then(|options| default_amount(&options, &session)) {
+			Some(amount) => self.answered_quotes(&runtime, &session.intent, amount).await,
 			None => Vec::new(),
 		};
 		let mut chosen = None;
@@ -433,7 +468,6 @@ impl FundingPlatform for CliFundingHost {
 		provider: &ProductContext,
 		intent: String,
 		target: FundingFrameTarget,
-		context: FundingFrameContext,
 	) -> Result<FundingFrameOutcome, GenericError> {
 		let (link, finished) = match target {
 			FundingFrameTarget::App { route } => (
@@ -460,7 +494,9 @@ impl FundingPlatform for CliFundingHost {
 			"intent": intent,
 			"provider": provider.product_id.as_str(),
 			"link": link,
-			"awaits_user_transfer": context.awaits_user_transfer,
+			"awaits_user_transfer": self.runtime.upgrade()
+				.and_then(|runtime| runtime.funding_progress(&intent))
+				.is_some_and(|progress| progress.awaits_user_transfer),
 		}));
 		let outcome = if self.user.approval_policy() == ApprovalPolicy::AutoAccept {
 			finished
@@ -496,37 +532,15 @@ impl FundingPlatform for CliFundingHost {
 }
 
 impl FundingFeed for CliFundingHost {
-	fn funding_session_changed(
-		&self,
-		intent: String,
-		status: HostFundingStatusSubscribeItem,
-		session: Option<FundingSession>,
-		_progress: Option<FundingProgress>,
-	) {
-		let (tag, amount) = match status {
-			HostFundingStatusSubscribeItem::InProgress { .. } => ("InProgress", None),
-			HostFundingStatusSubscribeItem::Delivered { credited } => ("Delivered", Some(credited)),
-			HostFundingStatusSubscribeItem::Released { debited } => ("Released", Some(debited)),
-			HostFundingStatusSubscribeItem::Failed { .. } => ("Failed", None),
-		};
-		// The core's own status, which shows what the product's item does
-		// not, such as a withdrawal cancelled after its release.
-		let progress = session
-			.as_ref()
-			.map(|session| format!("{:?}", session.status(truapi::current_unix_millis())));
-		self.transcript.record(serde_json::json!({
-			"kind": "status",
-			"intent": intent,
-			"tag": tag,
-			"amount": amount.map(|amount| amount.to_string()),
-			"progress": progress,
-		}));
+	/// Put a cancel offer the session now carries to the user.
+	fn funding_session_changed(&self, intent: String) {
+		let session = self.runtime.upgrade().and_then(|runtime| runtime.funding_session(&intent));
 		self.ask_about_offer(intent, session.as_ref());
 	}
 
 	fn funding_in_progress_changed(&self, _in_progress: bool) {}
 
-	fn funding_options_changed(&self, _intent: String, _options: FundingOptions) {}
+	fn funding_options_changed(&self, _intent: String) {}
 }
 
 /// Top-up and payment engines over a ledger file: every top-up claims in full
