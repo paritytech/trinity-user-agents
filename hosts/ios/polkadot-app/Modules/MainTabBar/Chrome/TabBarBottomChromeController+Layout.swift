@@ -221,11 +221,11 @@ private extension TabBarBottomChromeController {
         }
     }
 
-    /// While the scan panel is open, the bar moves up until the keyboard covers the centre button's foot by
-    /// `keyboardButtonOverlap`, keeping the panel above it clear. Any other keyboard, or a closed panel, returns the
-    /// bar to rest.
+    /// While the scan panel's search is focused (the bar row is hidden for it), the bar moves up until the keyboard
+    /// covers the centre button's foot by `keyboardButtonOverlap`. Any other keyboard, an unfocused search, or a
+    /// closed panel returns the bar to rest.
     func currentKeyboardLift() -> CGFloat {
-        guard panelController.open == .content(.scan), let keyboardFrame else {
+        guard panelController.open == .content(.scan), barModel.isBarHidden, let keyboardFrame else {
             return 0
         }
         let keyboardTop = view.convert(keyboardFrame, from: nil).minY

@@ -295,11 +295,13 @@ that can't mean it:
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store
   on the People chain). The v2 wire protocol uses raw X25519 keys, HKDF-SHA256,
-  and ChaCha20-Poly1305. `PairingHost` keeps the paired session's account
-  material; [`SsoRequestService`](src/runtime/sso_request_service.rs) owns
+  and ChaCha20-Poly1305. `PairingHost` keeps the paired session's grants and
+  sends each wallet operation through `RemoteAccountHolder`;
+  [`SsoRequestService`](src/runtime/sso_request_service.rs) owns
   pairing and login state, persisted auth-session reload, remote signing-host
   liveness monitoring and the request channel, and reports session changes to
-  `PairingHost` through `PairedSessionOwner`.
+  `PairingHost` through `PairedSessionOwner`, holding back its grant writes
+  until each change and the cleanup it leaves are done.
 - **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
   from host-held secret material. Its public identity is the RFC-0028
@@ -344,13 +346,9 @@ the page.
 
 ### Inter-host SSO
 
-`SsoRequestService::call(request)` sends typed requests to
-[`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Handlers own
-consent and business logic; [`SsoResponderService`](src/runtime/sso_responder_service.rs)
-owns the transport loop: it answers pairing, serves the session and drops
-duplicate requests. Resource consent is bound to the request's signing session:
-account changes, disconnects, and reactivation invalidate pending approval before
-allocation or key return. Allocation failure details stay in local transcripts.
+On the signing host, [`SsoResponderService`](src/runtime/sso_responder_service.rs) owns the transport: it answers pairing, runs the serve loop, drops duplicate requests, and gives each peer its own [`SsoAccountHolderService`](src/runtime/sso_account_holder_service.rs). That service is bound to the wallet activation that authenticated the peer's channel and calls `WalletAccountHolder` directly; once that activation ends it answers only not-connected. A native wallet with its own transport opens the same per-peer service from the native runtime.
+
+On the paired host, `SsoRequestService::call(request)` sends typed requests to the peer's `SsoAccountHolderService`. That service confirms each signing, transaction, VRF and allocation request with the user before `WalletAccountHolder` acts on it, and approval is bound to the request's signing session, so account changes, disconnects and reactivation invalidate a pending one. Allocation failure details stay in local transcripts.
 Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
 Signing uses canonical request and result types. Product-scoped VRF requests use
 `ProductRequest<P>` to attach the caller to a canonical payload. Both product and
