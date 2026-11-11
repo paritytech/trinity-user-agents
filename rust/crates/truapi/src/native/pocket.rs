@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// Observer implemented by a native host to follow the Pocket collection.
-#[uniffi::export(callback_interface)]
+#[uniffi::export(foreign)]
 pub trait NativePocketObserver: Send + Sync {
 	/// Deliver every card, pinned first, now and after each change.
 	fn on_cards(&self, cards: Vec<PocketEntry>);

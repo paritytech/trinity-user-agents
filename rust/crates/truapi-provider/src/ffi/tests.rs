@@ -46,7 +46,7 @@ const fn nibble(byte: u8) -> Option<u8> {
 }
 
 /// Foreign listener stand-in: the real one lives in Swift or Kotlin, so this
-/// exercises the same `with_foreign` trait the bindings implement.
+/// exercises the same trait the bindings implement.
 struct Collector {
 	messages: Sender<String>,
 	closed: Mutex<Option<Sender<ChainCloseReason>>>,
@@ -460,7 +460,7 @@ fn a_genesis_hash_of_the_wrong_length_is_rejected() {
 }
 
 /// Foreign storage stand-in. The real one lives in Swift or Kotlin, so
-/// this exercises the same `with_foreign` trait the bindings implement.
+/// this exercises the same trait the bindings implement.
 /// Each call records its genesis hash, and the blob when it was a save.
 struct RecordingStore {
 	calls: Mutex<Vec<(Vec<u8>, Option<String>)>>,
