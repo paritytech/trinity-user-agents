@@ -22,11 +22,12 @@ card as it will look. A link can also name an instance, which the product's work
 definition can back many cards. The user removes a card, directly or through the owning product. Three privileged cards,
 Humanity, Balance and Scarcity, are always present and removable by no one.
 
-A face is drawn through the [Unified Renderer](https://github.com/paritytech/trinity-user-agents/pull/633)'s
-`PocketCard` context, or `PocketCardInstance` for an instance, and a card's back on `PocketCardBack`. The collection
-itself is one `Pocket` trait with three methods, a Pocket section in the Worker manifest, and a host-owned deeplink that
-names the Pocket. An opened card adds one `ExpandedCard` trait, through which the Widget moves the face out of the way
-and back, and turns a card with a back over.
+A plain card's face is drawn through the
+[Unified Renderer](https://github.com/paritytech/trinity-user-agents/pull/633)'s `PocketCard` context and its back on
+`PocketCardBack`; an instance's face and back are drawn on `PocketCardInstance` and `PocketCardInstanceBack`. The
+collection itself is one `Pocket` trait with three methods, a Pocket section in the Worker manifest, and a host-owned
+deeplink that names the Pocket. An opened card adds one `ExpandedCard` trait, through which the Widget moves the face
+out of the way and back, and turns a card with a back over.
 
 Tracking issue: [#563](https://github.com/paritytech/trinity-user-agents/issues/563).
 
@@ -50,10 +51,10 @@ host-placed card on their own and the add flow layers on top without changing th
   privileged card is always a plain card. An instance's **label** is the short text the product's worker gives it,
   naming it as the user knows it.
 - The **face** is the collapsed presentation, rendered natively from a `RendererNode` tree.
-- The **back** is an optional second face a card declares, drawn the same way and shown only by turning the opened card
-  over. The face shown otherwise is the card's front. The fixed theme, `faceShown` and `ExpandedCard::set_face_shown`
-  apply to the card whichever side is up. A turn is not a move of the face, and hiding and showing the face keeps the
-  side that was up.
+- The **back** is an optional second face a card's definition declares, drawn the same way and shown only by turning the
+  opened card over. The face shown otherwise is the card's front. The fixed theme, `faceShown` and
+  `ExpandedCard::set_face_shown` apply to the card whichever side is up. A turn is not a move of the face, and hiding
+  and showing the face keeps the side that was up.
 - The **expanded card** is the product's `widget` executable in a WebView.
 - The **worker** is the product's one Worker executable. It draws the faces, handles their actions, and is the only
   execution the `Pocket` trait is available to.
@@ -71,14 +72,14 @@ A face is a body drawn through [Renderer](https://github.com/paritytech/trinity-
 tree per item; presses and edits inside the tree arrive on `action_subscribe` under the same context, so one handler
 serves every card of the product. The back is drawn on `PocketCardBack { card_id }` and its presses arrive under that
 context, so a product tells the sides apart by context alone. The host requests a back only for a card whose definition
-declares one. An instance's face is drawn on `PocketCardInstance { card_id, instance_id }` instead, so a product tells
-its instances apart by context too.
+declares one. An instance's face and back are drawn on `PocketCardInstance { card_id, instance_id }` and
+`PocketCardInstanceBack { card_id, instance_id }` instead, so a product tells its instances apart by context too.
 
 Pocket adds two rules on top. First, the host caches the newest tree per card and side durably, so a face is shown
 offline and at cold start before the worker answers, and a privileged card has something to show on first run. Until the
 worker draws the back, the host shows the cached back, else the archive file the definition names, and a back render the
 worker refuses leaves that back in place rather than blanking it. A definition that stops declaring `back` discards the
-cached back, and an opened card showing its back returns to the front.
+cached back of every card it backs, and an opened card showing its back returns to the front.
 
 Second, the host draws every face in one fixed theme, whatever theme the user picked, so a card looks the same in every
 theme. In the Polkadot Android and iOS apps that theme is Berlin Night: `FgPrimary` is `#F4F4F5` and `BgSurfaceMain` is
@@ -122,8 +123,9 @@ changes the side the face shows when it comes back.
 
 ### Lifecycle
 
-Pocket holds a worker reference for each side on screen, and one while it waits for the worker to label an instance. A
-product cannot add a reference, only drop one by removing a card.
+Pocket holds a worker reference for each side on screen, and one while it waits for the worker to label an instance,
+which ends when the worker answers or the host stops waiting. A product cannot add a reference, only drop a card's
+references by removing the card.
 
 ### Adding a card (full iteration)
 
@@ -221,8 +223,8 @@ card, or a product whose manifest lacks `includes.pocket`, produces a host error
 A Pocket link names an instance with `instance=<instance_id>`, on `add` and `open` alike, for any published card that is
 not privileged. An instance is present or not on its own, so a link to an instance the user has yet to add leads to the
 dialog even when other instances of its card are present. A host that predates instances drops `instance` from an `add`
-and from an `open` that leads to the dialog, so it adds the plain card, and a worker draws a plain face for every card
-it publishes.
+and from an `open` that leads to the dialog, so it adds the plain card, and a worker draws every card it publishes as a
+plain card too, with its back when the definition declares one.
 
 `instance_id` is 1 to 128 bytes of ASCII letters, digits, `.`, `_`, `~` and `-`, compared byte for byte, so it passes
 through links and URLs unchanged. A link whose `instance` breaks that rule, or that names `instance` twice, is refused
@@ -238,7 +240,8 @@ message and no dialog, whoever wrote the link. The dialog shows the card's title
 host chrome shows the label wherever it names the card, attributed to the product. The host keeps the label given at the
 add. Until the worker draws a new instance, its face is the card's preview.
 
-The worker draws an instance whose id it can no longer resolve as unavailable rather than removing it.
+The worker draws an instance whose id it can no longer resolve as unavailable, on its back too when its card has one,
+rather than refusing the render or removing the card.
 
 ### Removing a card
 
@@ -337,13 +340,14 @@ which carries `instance_id` in `PocketCard` and `HostPocketRemoveCardRequest`; `
 built before instances speaks `V1`, so its list holds plain cards only and its removal names a plain card. A host that
 predates `V2` refuses a `V2` call as an unsupported version. `label_instance` starts at `V1`.
 `HostPocketRemoveCardResponse` carries no payload of its own: removal has nothing to report beyond success, so its
-envelope is the bare variant, as every other unit response is.
+envelope is the bare variant of the call's version, `V1` or `V2`.
 
 The back adds one variant to the renderer's `RenderContext`, `PocketCardBack { card_id }`, appended after `PocketCard`
 so existing contexts keep their encoding.
 
-Instances add one variant, `PocketCardInstance { card_id, instance_id }`, appended after `PocketCardBack` for the same
-reason. A worker on an SDK without the variant cannot label an instance either, so the host never asks it to draw one.
+Instances add two variants, `PocketCardInstance { card_id, instance_id }` for the face and
+`PocketCardInstanceBack { card_id, instance_id }` for the back, appended in that order after `PocketCardBack` for the
+same reason. A worker on an SDK without them cannot label an instance either, so the host never asks it to draw one.
 
 **Bounds.** `card_id` is a product-supplied identifier and carries the rules chat already applies to its own, through
 `normalize_chat_identifier`: trimmed, NFC-normalized, non-empty, at most `CHAT_FIELD_MAX_BYTES` (256) bytes once
@@ -424,10 +428,10 @@ pub enum HostExpandedCardSetBackShownError {
 }
 ```
 
-`HostExpandedCardSetFaceShownResponse` and `HostExpandedCardSetBackShownResponse` are bare `V1`s, as other unit
-responses are. Each call acts on the card above the Widget that made it, so no request names a card. An App or Worker
-caller is `Denied`, and a host without expanded cards, or one that cannot turn them, answers `Unsupported`. Both calls
-answer `UserMoving` while the user is moving the face or turning the card.
+`HostExpandedCardSetFaceShownResponse` and `HostExpandedCardSetBackShownResponse` are bare `V1`s. Each call acts on the
+card above the Widget that made it, so no request names a card. An App or Worker caller is `Denied`, and a host without
+expanded cards, or one that cannot turn them, answers `Unsupported`. Both calls answer `UserMoving` while the user is
+moving the face or turning the card.
 
 ## Trade-offs
 
@@ -445,12 +449,12 @@ answer `UserMoving` while the user is moving the face or turning the card.
   opened. The preview stays a static file; only the label comes from the worker, and like the live face it is the
   product's claim, which the host screens but does not check.
 - **Page parameters and slot cards fall short.** An `open` link's page parameters reach only the expanded card, and only
-  when that link opens it. A tap on the face opens the page with `card=` alone, and the face is drawn on
-  `PocketCard { card_id }` without them, so one card still stands for every object. A product can instead declare a
-  fixed set of slot cards and keep which object each stands for. Its worker can then draw the object on the live face,
-  but the title and preview, which the dialog and host chrome show, cannot name it. The number of slots caps the objects
-  that get a card and spends manifest budget. The product also tracks slots across adds, removals and reuse, and a link
-  made for a slot opens whatever object the slot stands for by then.
+  when that link opens it. A tap on the face opens the page with `card=` alone, and the card's face and back are drawn
+  on `PocketCard { card_id }` and `PocketCardBack { card_id }` without them, so one card still stands for every object.
+  A product can instead declare a fixed set of slot cards and keep which object each stands for. Its worker can then
+  draw the object on the live face, but the title and preview, which the dialog and host chrome show, cannot name it.
+  The number of slots caps the objects that get a card and spends manifest budget. The product also tracks slots across
+  adds, removals and reuse, and a link made for a slot opens whatever object the slot stands for by then.
 - **Expanded cards need a Widget.** A product with cards but no `widget` executable has faces that do not open. Products
   that want interaction without a WebView use face actions. `Pocket` is reachable only from the worker, so an expanded
   card that wants to offer "Remove from Pocket" has to reach its own worker to do it.
