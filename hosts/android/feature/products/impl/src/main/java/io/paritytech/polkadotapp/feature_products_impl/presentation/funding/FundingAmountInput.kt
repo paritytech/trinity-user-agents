@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.funding
+package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 /** A key on the funding keypad. */
 sealed interface FundingKey {

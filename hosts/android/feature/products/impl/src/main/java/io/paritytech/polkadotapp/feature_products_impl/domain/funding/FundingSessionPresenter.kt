@@ -2,13 +2,14 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.AppFundingOverlay
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import uniffi.truapi.FundingDirection
-import javax.inject.Inject
-import javax.inject.Singleton
 
 /** Opens funding sessions the user comes back to from the CASH card, and new ones once a screen has gone. */
 @Singleton

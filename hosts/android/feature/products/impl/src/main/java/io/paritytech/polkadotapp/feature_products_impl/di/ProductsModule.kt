@@ -42,6 +42,7 @@ import io.paritytech.polkadotapp.feature_products_impl.data.bundled.AssetBundled
 import io.paritytech.polkadotapp.feature_products_impl.data.config.FundingProvidersConfig
 import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigFundingDomainProvider
 import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigFundingProvidersConfig
+import io.paritytech.polkadotapp.feature_products_impl.data.funding.DeviceCountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.CorePocketCardRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.PocketCardRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.BrowserTabRepository
@@ -82,7 +83,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledPro
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.RealExploreProductsService
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.AppFundingOverlay
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProductsWarmUp
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingProductsWarmUp
@@ -130,8 +131,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RemoteFaceS
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductIconImageLoaderRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductRegistrar
-import io.paritytech.polkadotapp.feature_products_impl.data.funding.DeviceCountryDetector
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductContentWarmUp
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductImageResolver
@@ -161,16 +160,17 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RealWorkerB
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerBootFactory
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketScanContentParser
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.AppFundingOverlay
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.ProductWorkerInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.TopUpResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserFragment
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.RuntimeSelectingSpaHost
 import io.paritytech.polkadotapp.feature_scan_api.domain.ScanContentParser
-import okhttp3.Call
-import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
+import okhttp3.Call
+import okhttp3.OkHttpClient
 
 @Module
 @InstallIn(SingletonComponent::class)

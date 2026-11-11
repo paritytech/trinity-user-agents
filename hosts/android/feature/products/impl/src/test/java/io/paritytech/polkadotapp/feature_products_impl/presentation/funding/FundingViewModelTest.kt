@@ -11,12 +11,9 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingKey
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContext
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayContexts
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingOverlayMode
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import java.math.BigDecimal
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
@@ -42,8 +39,6 @@ import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingCandidate
 import uniffi.truapi.FundingChoice
-import uniffi.truapi.FundingSession
-import uniffi.truapi.FundingStage
 import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuote
@@ -53,8 +48,9 @@ import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingRoute
 import uniffi.truapi.FundingSelection
+import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingStage
 import uniffi.truapi.ProductId
-import java.math.BigDecimal
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
 class FundingViewModelTest {

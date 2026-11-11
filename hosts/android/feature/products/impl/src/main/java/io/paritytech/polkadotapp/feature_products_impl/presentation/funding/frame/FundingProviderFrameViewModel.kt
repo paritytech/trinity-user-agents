@@ -17,9 +17,9 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameContext
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.WebFileChooserExecutor
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFrameContext
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted

@@ -1,12 +1,11 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.funding
+package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
-import kotlinx.coroutines.CompletableDeferred
-import uniffi.truapi.FundingSelection
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.CompletableDeferred
 
 /** How the funding sheet was opened. */
 sealed interface FundingOverlayMode {
@@ -29,10 +28,6 @@ class FundingOverlayContext(
     @Volatile
     var isClosed: Boolean = false
         private set
-
-    /** What the user picked on the sheet, as last reported to the core. */
-    @Volatile
-    var selection: FundingSelection? = null
 
     /** Called by the sheet once it holds this context. */
     fun markShown() {
