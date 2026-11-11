@@ -1,4 +1,5 @@
 import Foundation
+import FoundationExt
 import TrUAPIHost
 
 /// One ended funding session as the history draws it: from the session the
@@ -159,7 +160,7 @@ extension FundingRecord.Payout {
 
 extension Date {
     init(milliseconds: UInt64) {
-        self.init(timeIntervalSince1970: TimeInterval(milliseconds) / 1_000)
+        self.init(timeIntervalSince1970: milliseconds.millisecondsToSeconds())
     }
 }
 
