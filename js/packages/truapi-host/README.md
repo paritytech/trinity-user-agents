@@ -357,7 +357,7 @@ const runtime = await createNodePairingHostRuntime(
     chain, // opens a JSON-RPC WebSocket per genesis hash
     auth: { authStateChanged: (state) => state.tag === "Pairing" && showQr(state.value.deeplink) },
     productStorage,
-    supportedChains,
+    servedChains, // genesis hashes `chain` can reach
     userConfirmation, // the user's answer to reviews, e.g. a CLI prompt
     permissions,
   }),
