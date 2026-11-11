@@ -273,6 +273,7 @@ struct FundingFlowModelQuoteTests {
     func choosingACountryReportsItsCurrencyAndAsksForTheCoresAsset() async throws {
         let runtime = MockFundingRuntime(candidates: [candidate("unrouted", routes: [])])
         let model = makeModel(runtime)
+        model.selectRail(.card)
         model.path.append(.country)
         model.chooseCountry(country("DE", currency: "EUR"))
         model.amountText = "50"

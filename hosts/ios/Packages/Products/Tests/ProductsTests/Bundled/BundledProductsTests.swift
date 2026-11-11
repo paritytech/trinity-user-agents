@@ -7,7 +7,11 @@ struct BundledProductsTests {
     @Test func readsEachProductUnderTheRoot() throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        try write("{\"$v\":1,\"displayName\":\"Provider\"}", to: root, "provider.dot/manifest.json")
+        try write(
+            #"{"$v":1,"displayName":"Provider","description":"Card top-ups","icon":{"cid":"bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy","format":"png"}}"#,
+            to: root,
+            "provider.dot/manifest.json"
+        )
         try write("export {}", to: root, "provider.dot/worker/index.js")
         try write("<html></html>", to: root, "provider.dot/app/index.html")
         try write("ignored", to: root, ".staging/worker/index.js")
