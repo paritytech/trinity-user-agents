@@ -177,7 +177,10 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   Archives are uploaded to the
   `@parity/truapi@<version>` release, followed by the `truapi-host-cli-stable`
   pointer that `scripts/truapi-host-installer.sh` and the CLI's own updater
-  read. Release asset URLs must percent-encode the tag
+  read, and then the `truapi-host-cli-v<version>` tag that workflows pin
+  `.github/actions/install-truapi-host` to; that action installs the CLI
+  version of the commit it is checked out at, so the tag installs its own
+  release. Release asset URLs must percent-encode the tag
   (`%40parity%2Ftruapi%40<version>`). `make cli-dist CLI_TARGET=<triple>`
   reproduces one archive locally, and `make e2e-cli-update` installs and
   self-updates it against a loopback release server.
