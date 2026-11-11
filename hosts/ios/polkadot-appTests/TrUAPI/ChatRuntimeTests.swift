@@ -62,7 +62,7 @@ private let chatProduct: ProductId = try! ProductId("test.dot")
 
 private func makeRustRuntime(
     workers: StubWorkerManager,
-    renderStartupWindow: Duration = .seconds(5)
+    renderStartupWindow: Duration = .hangGuard
 ) -> TrUAPIChatHandler {
     TrUAPIChatHandler(
         productId: chatProduct,
