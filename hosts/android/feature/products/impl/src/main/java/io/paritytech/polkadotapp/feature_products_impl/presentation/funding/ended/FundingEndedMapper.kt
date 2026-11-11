@@ -1,7 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended
 
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCashFormat
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
@@ -26,7 +27,10 @@ private const val SENDING_DOT = 5
  * Builds an ended session's detail screen from the core's summary of it. The core says how it went, what it moved and
  * where it stopped; the wording, the figures and the dots are the app's.
  */
-class FundingEndedMapper(private val cash: FundingCash) {
+class FundingEndedMapper(
+    private val cash: FundingCash,
+    private val format: FundingCashFormat,
+) {
     /** `null` for a session that has not ended. */
     fun map(summary: FundingSessionSummary): FundingEndedUiState? {
         val ended = summary.ended
@@ -39,7 +43,7 @@ class FundingEndedMapper(private val cash: FundingCash) {
         return FundingEndedUiState(
             succeeded = succeeded,
             icon = if (!succeeded) FundingEndedIcon.FAILED else if (inbound) FundingEndedIcon.IN else FundingEndedIcon.OUT,
-            figure = amount?.let { if (succeeded) (if (inbound) "+" else "-") + cash.figure(it) else cash.figure(it) },
+            figure = amount?.let { if (succeeded) (if (inbound) "+" else "-") + format.figure(it) else format.figure(it) },
             figureTone = when {
                 !succeeded -> FundingEndedTone.TERTIARY
                 inbound -> FundingEndedTone.SUCCESS
@@ -125,7 +129,7 @@ class FundingEndedMapper(private val cash: FundingCash) {
     }
 
     private fun withdrawNote(summary: FundingSessionSummary, reason: FundingFailureReason): FundingEndedText {
-        val amount = summary.ended.cashAmount?.let(::label) ?: "$${cash.symbol}"
+        val amount = summary.ended.cashAmount?.let(::label) ?: "$${format.symbol()}"
         return when (reason) {
             FundingFailureReason.Refunded -> res(RCommon.string.funding_ended_withdraw_refunded, amount)
             FundingFailureReason.Cancelled, FundingFailureReason.Expired, is FundingFailureReason.Other ->
@@ -178,7 +182,7 @@ class FundingEndedMapper(private val cash: FundingCash) {
         null -> null
     }
 
-    private fun label(units: U128): String = cash.label(cash.decimal(units))
+    private fun label(units: U128): String = format.label(cash.decimal(units))
 
     private fun res(res: Int, vararg args: String) = FundingEndedText.Res(res, args.toList())
 }

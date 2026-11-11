@@ -2,10 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.feature_products_api.presentation.funding.FundingReasonText
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FUNDING_RAIL_ORDER
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowState
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isPending
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
@@ -41,22 +38,21 @@ fun FundingFlowState.toAmountUiState(): FundingAmountUiState {
     return FundingAmountUiState(
         isWithdraw = withdraw,
         rails = FUNDING_RAIL_ORDER.map { FundingRailTab(it, selected = it == rail, enabled = it in available) }.toImmutableList(),
-        amount = cash.figure(amount),
-        digitCount = amountText.count { it.isDigit() },
+        amount = format.figure(amount),
         hasAmount = amount.signum() > 0,
-        available = spendable?.takeIf { withdraw }?.let(cash::label),
+        available = spendable?.takeIf { withdraw }?.let(format::label),
         note = amountNote(),
-        presets = if (withdraw) persistentListOf() else PRESETS.map { FundingPreset(it, cash.figure(it)) }.toImmutableList(),
+        presets = if (withdraw) persistentListOf() else PRESETS.map { FundingPreset(it, format.figure(it)) }.toImmutableList(),
         canContinue = canContinue,
     )
 }
 
 private fun FundingFlowState.amountNote(): FundingAmountNote? = when (val issue = amountIssue) {
-    is FundingAmountIssue.BelowMinimum -> FundingAmountNote.BelowMinimum(cash.label(cash.decimal(issue.min)))
-    is FundingAmountIssue.AboveMaximum -> FundingAmountNote.AboveMaximum(cash.label(cash.decimal(issue.max)))
-    FundingAmountIssue.NotEnoughBalance -> FundingAmountNote.NotEnough(cash.symbol)
+    is FundingAmountIssue.BelowMinimum -> FundingAmountNote.BelowMinimum(format.label(cash.decimal(issue.min)))
+    is FundingAmountIssue.AboveMaximum -> FundingAmountNote.AboveMaximum(format.label(cash.decimal(issue.max)))
+    FundingAmountIssue.NotEnoughBalance -> FundingAmountNote.NotEnough(format.symbol())
     null -> amountLimits.minimum?.let {
-        FundingAmountNote.Minimum(cash.label(it), withdraw = direction == FundingDirection.OUT)
+        FundingAmountNote.Minimum(format.label(it), withdraw = direction == FundingDirection.OUT)
     }
 }
 
@@ -75,14 +71,14 @@ fun FundingFlowState.toSummaryUiState(
     return FundingSummaryUiState(
         isWithdraw = !inbound,
         rail = rail,
-        headline = quote?.let { if (inbound) unitOf(it).format(it.sendAmount) else cash.label(cash.decimal(it.sendAmount)) },
+        headline = quote?.let { if (inbound) unitOf(it).format(it.sendAmount) else format.label(cash.decimal(it.sendAmount)) },
         isQuoting = isQuoting,
         showCountry = rail != FundingRail.CRYPTO,
         country = country?.toUi(refused = false, minimum = null, selected = true),
         provider = selectedProviderId?.let { brands.brandOf(it) },
-        payout = quote?.let { if (inbound) cash.label(cash.decimal(it.receiveAmount)) else unitOf(it).format(it.receiveAmount) },
+        payout = quote?.let { if (inbound) format.label(cash.decimal(it.receiveAmount)) else unitOf(it).format(it.receiveAmount) },
         eta = quote?.etaSecs?.let(::etaOf),
-        bankRateNoteSymbol = cash.symbol.takeIf { rail == FundingRail.BANK && inbound },
+        bankRateNoteSymbol = format.symbol().takeIf { rail == FundingRail.BANK && inbound },
         problem = summaryProblem(start),
         canStart = quote != null && !start.isStarting && !start.started,
         isStarting = start.isStarting,
@@ -94,8 +90,8 @@ private fun FundingFlowState.summaryProblem(start: FundingStartState): FundingSu
     start.failed -> FundingSummaryProblem.StartFailed
     !noProviderQuoted -> null
     else -> when (val issue = unavailableIssue) {
-        is FundingAmountIssue.BelowMinimum -> FundingSummaryProblem.Minimum(cash.label(cash.decimal(issue.min)))
-        is FundingAmountIssue.AboveMaximum -> FundingSummaryProblem.Maximum(cash.label(cash.decimal(issue.max)))
+        is FundingAmountIssue.BelowMinimum -> FundingSummaryProblem.Minimum(format.label(cash.decimal(issue.min)))
+        is FundingAmountIssue.AboveMaximum -> FundingSummaryProblem.Maximum(format.label(cash.decimal(issue.max)))
         FundingAmountIssue.NotEnoughBalance, null -> noProviderProblem()
     }
 }
@@ -129,7 +125,7 @@ fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
     val quote = selectedQuote ?: return null
     val inbound = direction == FundingDirection.IN
     val quoteUnit = unitOf(quote)
-    val feeText = { units: String -> if (inbound) quoteUnit.format(units) else cash.cost(cash.decimal(units)) }
+    val feeText = { units: String -> if (inbound) quoteUnit.format(units) else format.cost(cash.decimal(units)) }
     val total = quote.totalFee()
 
     return FundingFeesUiState(
@@ -142,7 +138,7 @@ fun FundingFlowState.toFeesUiState(): FundingFeesUiState? {
         providerFee = feeText(quote.providerFee),
         networkFee = feeText(quote.networkFee),
         totalFee = feeText(total.toString()),
-        pay = if (inbound) quoteUnit.format(quote.sendAmount) else cash.label(cash.decimal(quote.sendAmount)),
+        pay = if (inbound) quoteUnit.format(quote.sendAmount) else format.label(cash.decimal(quote.sendAmount)),
         rate = rateOf(quote),
     )
 }
@@ -164,7 +160,7 @@ private fun FundingFlowState.rateOf(quote: FundingQuote): FundingRate? {
     if (cashSide.signum() <= 0) return null
 
     val perCash = providerSide.divide(cashSide, RATE_SCALE, RoundingMode.HALF_EVEN)
-    return FundingRate(symbol = cash.symbol, perCash = quoteUnit.format(perCash))
+    return FundingRate(symbol = format.symbol(), perCash = quoteUnit.format(perCash))
 }
 
 fun FundingFlowState.toCountryUiState(
@@ -185,7 +181,7 @@ fun FundingFlowState.toCountryUiState(
     val minimums = countryMinimums.filterValues { it > amount }
     val showDetected = query.isBlank() && detected != null
     val toUi = { entry: FundingCountry ->
-        entry.toUi(refused = entry.code in refused, minimum = minimums[entry.code]?.let(cash::label), selected = entry == country)
+        entry.toUi(refused = entry.code in refused, minimum = minimums[entry.code]?.let(format::label), selected = entry == country)
     }
     val listed = matching.filter { !(showDetected && it == detected) }
 
@@ -245,8 +241,8 @@ private fun FundingFlowState.providerBadge(state: FundingQuoteState, isBest: Boo
     return when (val reason = state.reason) {
         FundingQuoteUnavailable.Timeout -> FundingProviderBadge.Unavailable
         is FundingQuoteUnavailable.Refused -> when (val refusal = reason.reason) {
-            is FundingQuoteRefusal.BelowMinimum -> FundingProviderBadge.Minimum(cash.label(cash.decimal(refusal.min)))
-            is FundingQuoteRefusal.AboveMaximum -> FundingProviderBadge.Maximum(cash.label(cash.decimal(refusal.max)))
+            is FundingQuoteRefusal.BelowMinimum -> FundingProviderBadge.Minimum(format.label(cash.decimal(refusal.min)))
+            is FundingQuoteRefusal.AboveMaximum -> FundingProviderBadge.Maximum(format.label(cash.decimal(refusal.max)))
             FundingQuoteRefusal.CountryUnsupported -> FundingProviderBadge.CountryUnsupported
             FundingQuoteRefusal.Unavailable, is FundingQuoteRefusal.Other -> FundingProviderBadge.Unavailable
         }
@@ -269,14 +265,10 @@ private fun FundingFlowState.providerPrice(state: FundingQuoteState, stale: Fund
 }
 
 private fun FundingFlowState.forAmount(quote: FundingQuote): String =
-    cash.label(cash.decimal(if (direction == FundingDirection.IN) quote.receiveAmount else quote.sendAmount))
+    format.label(cash.decimal(if (direction == FundingDirection.IN) quote.receiveAmount else quote.sendAmount))
 
 private fun Map<ProductId, FundingProviderBrand>.brandOf(providerId: ProductId) =
     get(providerId) ?: FundingProviderBrand(providerId = providerId, name = providerId.value, iconUrl = null)
-
-private const val SHORT_ADDRESS_MIN_LENGTH = 14
-private const val SHORT_ADDRESS_HEAD = 6
-private const val SHORT_ADDRESS_TAIL = 5
 
 /** A network stays closed to amounts below the least the core says it takes. */
 fun FundingFlowState.toNetworkRows(): ImmutableList<FundingNetworkRow> = networks.map { id ->
@@ -285,7 +277,7 @@ fun FundingFlowState.toNetworkRows(): ImmutableList<FundingNetworkRow> = network
         id = id,
         name = name,
         monogram = monogramOf(name),
-        minimum = minimum(id)?.takeIf { it > amount }?.let(cash::label),
+        minimum = minimum(id)?.takeIf { it > amount }?.let(format::label),
     )
 }.toImmutableList()
 
@@ -305,7 +297,6 @@ fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: Funding
             amount = FundingAssetUnit.of(deposit.asset, deposit.decimals.toInt()).format(deposit.amount),
             exact = deposit.exact,
             address = deposit.address,
-            shortAddress = shortened(deposit.address),
             networkName = fundingNetworkName(deposit.network),
         )
 
@@ -330,10 +321,10 @@ fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: Funding
         started = start.started,
         failed = start.failure != null,
         isCancelling = start.isCancelling,
-        cancel = start.cancel?.toUi(cash),
+        cancel = start.cancel?.toUi(cash, format),
         moneyMoved = progress?.moneyMoved == true,
         cancelAvailability = progress?.cancel ?: FundingCancelAvailability.UNAVAILABLE,
-        figure = cash.figure(amount),
+        figure = format.figure(amount),
         progress = progress?.takeIf { start.started }?.let { live ->
             FundingLiveProgressUi(
                 timeline = FundingTimeline.live(live.steps, live.band, direction, failed = start.failure != null),
@@ -362,8 +353,8 @@ fun FundingFlowState.bandLine(band: FundingBand, asset: String?): FundingBandUi?
         FundingBand.CHECKING_PAYMENT ->
             if (crypto) line(RCommon.string.funding_band_confirming_deposit, coin) else line(RCommon.string.funding_band_checking)
         FundingBand.ON_ITS_WAY -> line(RCommon.string.funding_band_on_its_way)
-        FundingBand.ADDING -> line(RCommon.string.funding_band_adding, cash.label(amount))
-        FundingBand.ADDED -> line(RCommon.string.funding_band_added, cash.label(amount))
+        FundingBand.ADDING -> line(RCommon.string.funding_band_adding, format.label(amount))
+        FundingBand.ADDED -> line(RCommon.string.funding_band_added, format.label(amount))
         FundingBand.CONVERTING -> line(RCommon.string.funding_band_converting)
         FundingBand.PREPARING_PAYOUT ->
             if (crypto) line(RCommon.string.funding_band_exchanging, coin) else line(RCommon.string.funding_band_preparing_payout)
@@ -389,17 +380,15 @@ fun FundingFlowState.bandLine(band: FundingBand, asset: String?): FundingBandUi?
     }
 }
 
-private fun FundingCancel.toUi(cash: FundingCash): FundingCancelUiState? = when (this) {
+private fun FundingCancel.toUi(cash: FundingCash, format: FundingCashFormat): FundingCancelUiState? = when (this) {
     FundingCancel.Requested -> FundingCancelUiState.Requested
     is FundingCancel.Refused -> FundingCancelUiState.Refused(reason)
     is FundingCancel.Offered -> FundingCancelUiState.Offered(
-        fee = cash.cost(cash.decimal(fee)),
-        refund = cash.label(cash.decimal(refund)),
+        fee = format.cost(cash.decimal(fee)),
+        refund = format.label(cash.decimal(refund)),
         expiresAtMs = expiresAt?.toLong(),
     )
     is FundingCancel.Accepted -> FundingCancelUiState.Cancelling
     FundingCancel.Declined, is FundingCancel.Overtaken -> null
 }
 
-private fun shortened(address: String): String =
-    if (address.length <= SHORT_ADDRESS_MIN_LENGTH) address else "${address.take(SHORT_ADDRESS_HEAD)}…${address.takeLast(SHORT_ADDRESS_TAIL)}"

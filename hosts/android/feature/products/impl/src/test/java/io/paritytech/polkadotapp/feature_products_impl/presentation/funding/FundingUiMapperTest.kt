@@ -1,8 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -102,7 +100,8 @@ class FundingUiMapperTest {
 
     private fun flow() = FundingFlowState.initial(
         direction = FundingDirection.IN,
-        cash = FundingCash(symbol = "CASH", precision = 6),
+        cash = FundingCash(precision = 6),
+        format = testCashFormat(),
         spendable = null,
         options = FundingOptions(
             candidates = listOf(candidate(providerA), candidate(providerB)),
@@ -165,10 +164,10 @@ class FundingUiMapperTest {
     /** A fee under a cent still costs something, so it rounds up. A balance rounding down is in FundingUnitsTest. */
     @Test
     fun `a fee rounds up to the cent`() {
-        val cash = FundingCash(symbol = "CASH", precision = 6)
+        val cash = FundingCash(precision = 6)
 
-        assertEquals("$0.01 CASH", cash.cost(cash.decimal("9000")))
-        assertEquals("$1,000.26 CASH", cash.cost(cash.decimal("1000250001")))
+        assertEquals("$0.01 CASH", testCashFormat().cost(cash.decimal("9000")))
+        assertEquals("$1,000.26 CASH", testCashFormat().cost(cash.decimal("1000250001")))
     }
 
     @Test

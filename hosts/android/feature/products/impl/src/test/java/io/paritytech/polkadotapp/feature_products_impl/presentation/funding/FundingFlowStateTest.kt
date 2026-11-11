@@ -1,5 +1,6 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.funding
+package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -30,7 +31,7 @@ class FundingFlowStateTest {
         const val REFRESH_AT_MS = 120_000uL
     }
 
-    private val cash = FundingCash(symbol = "CASH", precision = 6)
+    private val cash = FundingCash(precision = 6)
     private val germany = FundingCountry(code = "DE", name = "Germany", currencyCode = "EUR", currencyName = "Euro")
     private val providerA = ProductId.parse("a.dot").getOrThrow()
     private val providerB = ProductId.parse("b.dot").getOrThrow()
@@ -185,6 +186,7 @@ class FundingFlowStateTest {
     ) = FundingFlowState.initial(
         direction = direction,
         cash = cash,
+        format = testCashFormat(),
         spendable = BigDecimal("226.78"),
         options = options,
         amount = null,

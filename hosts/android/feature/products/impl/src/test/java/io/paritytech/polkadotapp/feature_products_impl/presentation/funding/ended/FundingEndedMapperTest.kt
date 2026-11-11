@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended
 
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingAssetUnit
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.testCashFormat
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDotState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
@@ -28,7 +29,7 @@ import io.paritytech.polkadotapp.common.R as RCommon
 // The core says how a session ended, what it moved and where it stopped; these check the screen reads those facts.
 class FundingEndedMapperTest {
     private val ramp = ProductId.parse("ramp.dot").getOrThrow()
-    private val mapper = FundingEndedMapper(FundingCash(symbol = "CASH", precision = 6))
+    private val mapper = FundingEndedMapper(FundingCash(precision = 6), testCashFormat())
 
     @Test
     fun `a top-up that went through is signed, green, with every milestone done`() {

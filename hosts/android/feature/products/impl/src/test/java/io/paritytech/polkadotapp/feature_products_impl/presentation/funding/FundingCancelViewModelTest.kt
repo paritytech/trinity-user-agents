@@ -61,11 +61,10 @@ class FundingCancelViewModelTest {
     private val models = mutableListOf<FundingViewModel>()
 
     private val interactor = mockk<FundingFlowInteractor> {
-        coEvery { cash() } returns FundingCash(symbol = "CASH", precision = 6)
+        coEvery { cash() } returns FundingCash(precision = 6)
         coEvery { spendable(any()) } returns null
         every { options("intent") } returns flowOf(null)
         coEvery { selectOptions("intent", any()) } returns Unit
-        every { countries() } returns emptyList()
         every { quoteLists("intent") } returns MutableSharedFlow()
         every { session("intent") } returns sessions
         coEvery { requestQuote("intent", any(), any()) } returns Result.success(1uL)
@@ -298,7 +297,7 @@ class FundingCancelViewModelTest {
 
     private fun TestScope.resumed(): FundingViewModel {
         publish()
-        val model = FundingViewModel(context, contexts, interactor, router, mockk(relaxed = true))
+        val model = FundingViewModel(context, contexts, interactor, router, mockk(relaxed = true), testCashFormat())
         models += model
         runCurrent()
         return model

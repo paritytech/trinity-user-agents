@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compose.components.digitalDollar
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,22 +21,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.common.presentation.formatters.time.LocalTimeFormatter
 import io.paritytech.polkadotapp.design.components.bottomsheet.NovaModalBottomSheet
+import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonShape
+import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
+import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
+import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowLeft
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowUpRight
 import io.paritytech.polkadotapp.design.components.icon.vectors.Clock
+import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.progress.NovaCircularProgressIndicator
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -60,9 +60,6 @@ private val ROW_SHAPE = RoundedCornerShape(16.dp)
 private val ROW_MIN_HEIGHT = 56.dp
 private val GLYPH_SIZE = 12.dp
 private val SPINNER_STROKE = 1.5.dp
-private val CROSS_STROKE = 1.6.dp
-private val HEADER_BUTTON_SIZE = 32.dp
-private val HEADER_ICON_SIZE = 20.dp
 private val PILL_SHAPE = RoundedCornerShape(8.dp)
 private const val OUT_ARROW_TURN = 180f
 
@@ -125,7 +122,13 @@ private fun FundingInProgressSheetContent(
                 style = PolkadotTheme.typography.title.small,
                 color = PolkadotTheme.colors.fg.primary,
             )
-            HeaderButton(icon = NovaIcons.Clock, onClick = onHistory)
+            PolkadotIconButton(
+                icon = NovaIcons.Clock,
+                onClick = onHistory,
+                style = PolkadotButtonStyle.tertiary(),
+                size = PolkadotIconButtonSize.extraSmall(),
+                shape = PolkadotButtonShape.pill,
+            )
         }
         LazyColumn(
             modifier = Modifier.weight(1f, fill = false),
@@ -156,7 +159,14 @@ private fun FundingHistorySheetContent(
         verticalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
     ) {
         Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Box(modifier = Modifier.align(Alignment.CenterStart)) { HeaderButton(icon = NovaIcons.ArrowLeft, onClick = onBack) }
+            PolkadotIconButton(
+                modifier = Modifier.align(Alignment.CenterStart),
+                icon = NovaIcons.ArrowLeft,
+                onClick = onBack,
+                style = PolkadotButtonStyle.tertiary(),
+                size = PolkadotIconButtonSize.extraSmall(),
+                shape = PolkadotButtonShape.pill,
+            )
             NovaText(
                 text = stringResource(RCommon.string.funding_history_title),
                 style = PolkadotTheme.typography.title.small,
@@ -195,18 +205,6 @@ private fun LazyListScope.section(
     items(rows, key = { it.id }, contentType = { "row" }) { row -> FundingActivityRow(row = row, onClick = { onRowClick(row.id) }) }
 }
 
-@Composable
-private fun HeaderButton(icon: ImageVector, onClick: () -> Unit) {
-    PolkadotSurface(
-        modifier = Modifier.size(HEADER_BUTTON_SIZE),
-        shape = PolkadotTheme.shapes.full,
-        color = PolkadotTheme.colors.bg.surface.nested,
-        contentAlignment = Alignment.Center,
-        onClick = onClick,
-    ) {
-        NovaIcon(modifier = Modifier.size(HEADER_ICON_SIZE), imageVector = icon, tint = PolkadotTheme.colors.fg.primary)
-    }
-}
 
 /** One session: a glyph and the amount, the rail in a pill, and the line under it. */
 @Composable
@@ -283,18 +281,14 @@ private fun RowGlyph(icon: FundingRowIcon) {
             tint = if (icon == FundingRowIcon.MOVED_IN) PolkadotTheme.colors.fg.success else PolkadotTheme.colors.fg.secondary,
         )
 
-        FundingRowIcon.FAILED -> Cross(tint = PolkadotTheme.colors.fg.error)
+        FundingRowIcon.FAILED -> NovaIcon(
+            modifier = Modifier.size(GLYPH_SIZE),
+            imageVector = NovaIcons.Close,
+            tint = PolkadotTheme.colors.fg.error,
+        )
     }
 }
 
-@Composable
-private fun Cross(tint: Color) {
-    Canvas(modifier = Modifier.size(GLYPH_SIZE)) {
-        val stroke = CROSS_STROKE.toPx()
-        drawLine(tint, Offset(0f, 0f), Offset(size.width, size.height), stroke, StrokeCap.Round)
-        drawLine(tint, Offset(size.width, 0f), Offset(0f, size.height), stroke, StrokeCap.Round)
-    }
-}
 
 @Composable
 private fun subtitle(subtitle: FundingRowSubtitle): String = when (subtitle) {

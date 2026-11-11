@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended
 
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCashFormat
 import androidx.lifecycle.SavedStateHandle
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
@@ -30,12 +31,13 @@ class FundingEndedViewModel @Inject constructor(
     private val presenter: FundingSessionPresenter,
     private val router: ProductsRouter,
     private val clipboard: ClipboardService,
+    private val cashFormat: FundingCashFormat,
 ) : BaseViewModel() {
     private val intent = savedStateHandle.get<String>(FundingEndedBottomSheet.INTENT).orEmpty()
 
     val state: StateFlow<LoadingState<FundingEndedScreenState>> = flow {
         val summary = interactor.endedSummary(intent)
-        val ended = summary?.let { FundingEndedMapper(interactor.cash()).map(it) }
+        val ended = summary?.let { FundingEndedMapper(interactor.cash(), cashFormat).map(it) }
         if (summary == null || ended == null) {
             close()
             return@flow

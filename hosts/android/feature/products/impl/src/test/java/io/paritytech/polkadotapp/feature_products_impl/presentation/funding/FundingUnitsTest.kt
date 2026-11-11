@@ -1,33 +1,23 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.funding
+package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import uniffi.truapi.FundingDirection
 import java.math.BigDecimal
 import java.text.Collator
 import java.util.Locale
 
 class FundingUnitsTest {
-    private val cash = FundingCash(symbol = "CASH", precision = 6)
+    private val cash = FundingCash(precision = 6)
 
     @Test
     fun `cash units read as the balance's decimals`() {
         assertEquals(BigDecimal("50.199999"), cash.decimal("50199999"))
     }
 
-    @Test
-    fun `a sub-cent balance rounds down, never up to what cannot be spent`() {
-        assertEquals("$9.99", cash.figure(BigDecimal("9.995")))
-        assertEquals("$1,000.25 CASH", cash.label(BigDecimal("1000.259")))
-    }
 
-    @Test
-    fun `cash figures show cents only when there are any`() {
-        assertEquals("+$50 CASH", cash.signed(BigDecimal("50"), FundingDirection.IN))
-        assertEquals("-$1,226.78 CASH", cash.signed(BigDecimal("1226.78"), FundingDirection.OUT))
-    }
 
     @Test
     fun `the stated decimals count, and a code ISO 4217 knows reads as money`() {

@@ -28,6 +28,9 @@ class RealTokenAmountMapper @Inject constructor() : TokenAmountMapper {
         )
     }
 
+    override fun digitalDollar(amount: BigDecimal): TokenAmountModel =
+        RealTokenAmountModel(amount = amount, appearance = TokenSymbolAppearance.DigitalDollar)
+
     private data class RealTokenAmountModel(
         override val amount: BigDecimal,
         override val appearance: TokenSymbolAppearance,

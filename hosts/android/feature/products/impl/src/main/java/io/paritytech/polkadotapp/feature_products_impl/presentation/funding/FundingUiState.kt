@@ -41,7 +41,6 @@ data class FundingAmountUiState(
     val isWithdraw: Boolean,
     val rails: ImmutableList<FundingRailTab>,
     val amount: String,
-    val digitCount: Int,
     val hasAmount: Boolean,
     val available: String?,
     val note: FundingAmountNote?,
@@ -302,7 +301,6 @@ sealed interface FundingDepositContent {
         val amount: String,
         val exact: Boolean,
         val address: String,
-        val shortAddress: String,
         val networkName: String,
     ) : FundingDepositContent
 

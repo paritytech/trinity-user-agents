@@ -14,6 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
@@ -117,7 +118,7 @@ fun FundingDepositScreen(
         if (state.failed) {
             PolkadotTextButton(
                 modifier = Modifier.fillMaxWidth(),
-                text = stringResource(RCommon.string.funding_failure_close),
+                text = stringResource(RCommon.string.common_close),
                 onClick = onClose,
             )
         } else if (state.started) {
@@ -198,7 +199,7 @@ private fun CryptoDeposit(content: FundingDepositContent.Crypto, onCopy: (String
             CopyRow(
                 title = stringResource(RCommon.string.funding_deposit_address_on, content.networkName),
                 value = content.address,
-                shown = content.shortAddress,
+                shown = content.address,
                 onCopy = onCopy,
             )
         }
@@ -257,10 +258,13 @@ private fun CopyRow(title: String, value: String, shown: String, onCopy: (String
             color = PolkadotTheme.colors.fg.primary,
         )
         NovaText(
+            modifier = Modifier.weight(1f, fill = false),
             text = shown,
             style = PolkadotTheme.typography.body.mediumEmphasized,
             color = PolkadotTheme.colors.fg.primary,
             textAlign = TextAlign.End,
+            maxLines = 1,
+            overflow = TextOverflow.MiddleEllipsis,
         )
         FundingCircleButton(icon = NovaIcons.ContentCopy, onClick = { onCopy(value) })
     }

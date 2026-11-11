@@ -11,10 +11,7 @@ import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.launchUnit
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountries
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCountry
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowState
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.failure
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isOpen
@@ -60,6 +57,7 @@ class FundingViewModel @AssistedInject constructor(
     private val interactor: FundingFlowInteractor,
     private val router: ProductsRouter,
     private val clipboard: ClipboardService,
+    private val cashFormat: FundingCashFormat,
 ) : BaseViewModel() {
     private companion object {
         val REQUOTE_DELAY = 600.milliseconds
@@ -87,7 +85,7 @@ class FundingViewModel @AssistedInject constructor(
     private val brands = MutableStateFlow<Map<ProductId, FundingProviderBrand>>(emptyMap())
     private val brandsLoading = mutableSetOf<ProductId>()
     private val countryQuery = MutableStateFlow("")
-    private val countries by lazy { interactor.countries() }
+    private val countries by lazy { FundingCountries.all() }
     private val detectedCountry = MutableStateFlow<FundingCountry?>(null)
 
     val state: StateFlow<LoadingState<FundingSheetUiState>> = combine(
@@ -291,6 +289,7 @@ class FundingViewModel @AssistedInject constructor(
         return FundingFlowState.initial(
             direction = request.direction.toCore(),
             cash = cash,
+            format = cashFormat,
             spendable = interactor.spendable(cash),
             options = options,
             amount = request.amount?.let { cash.decimal(it.value.toString()) },
