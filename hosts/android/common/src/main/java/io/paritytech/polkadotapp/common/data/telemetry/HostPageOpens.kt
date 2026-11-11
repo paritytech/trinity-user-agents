@@ -18,14 +18,15 @@ enum class HostOpenSource(val tag: String) {
  */
 data class HostPageOpen(
     val source: HostOpenSource,
-    val epochMs: Long = System.currentTimeMillis(),
-    val sessionId: String = UUID.randomUUID().toString(),
-)
+    val epochMs: Long,
+    val sessionId: String,
+) {
+    companion object {
+        fun now(source: HostOpenSource) =
+            HostPageOpen(source, System.currentTimeMillis(), UUID.randomUUID().toString())
+    }
+}
 
-/**
- * Holds the latest ask until the page it opens takes it, so the page can time itself from the tap.
- * Reports each ask as `host.pocket.opened` when it is held.
- */
 @Singleton
 class HostPageOpens @Inject constructor(
     private val originProvider: HostEventOriginProvider,
@@ -35,24 +36,33 @@ class HostPageOpens @Inject constructor(
 
     private val held = AtomicReference<Held?>(null)
 
-    /** [reused] when the page asked for is already open, so no session will start for it and adopt the ask's id. */
-    fun hold(productId: String, open: HostPageOpen, reused: Boolean = false) {
-        held.set(Held(productId, open))
+    fun hold(productId: String, open: HostPageOpen) {
+        held.getAndSet(Held(productId, open))?.let { report(it.open, reused = false) }
+    }
+
+    fun take(productId: String, nowEpochMs: Long = System.currentTimeMillis()): HostPageOpen? {
+        val open = settle(productId) ?: return null
+        report(open, reused = false)
+        return open.takeIf { nowEpochMs - it.epochMs in 0..MAX_AGE_MS }
+    }
+
+    fun reuse(productId: String) {
+        settle(productId)?.let { report(it, reused = true) }
+    }
+
+    fun giveUp(productId: String) {
+        settle(productId)?.let { report(it, reused = false) }
+    }
+
+    private fun settle(productId: String): HostPageOpen? {
+        val current = held.get()?.takeIf { it.productId == productId } ?: return null
+        return current.open.takeIf { held.compareAndSet(current, null) }
+    }
+
+    private fun report(open: HostPageOpen, reused: Boolean) {
         runCatching {
             capture.capture { originProvider.current().pocketOpened(open, reused) }
         }.logFailure("Failed to capture native host Pocket open event")
-    }
-
-    /** Drops the ask held for [productId], when the page it was for reuses a session and no new one will take it. */
-    fun discard(productId: String) {
-        held.get()?.takeIf { it.productId == productId }?.let { held.compareAndSet(it, null) }
-    }
-
-    /** Taken once, and only for the product it was held for; an ask older than [MAX_AGE_MS] is dropped. */
-    fun take(productId: String, nowEpochMs: Long = System.currentTimeMillis()): HostPageOpen? {
-        val current = held.get()?.takeIf { it.productId == productId } ?: return null
-        if (!held.compareAndSet(current, null)) return null
-        return current.open.takeIf { nowEpochMs - it.epochMs in 0..MAX_AGE_MS }
     }
 
     companion object {

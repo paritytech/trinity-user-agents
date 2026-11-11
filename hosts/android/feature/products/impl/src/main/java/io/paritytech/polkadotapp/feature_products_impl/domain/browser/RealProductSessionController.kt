@@ -6,6 +6,7 @@ import android.webkit.WebView
 import androidx.core.net.toUri
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpens
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.presentation.deeplink.handleAndProcessOutcomeWithSystemFallback
 import io.paritytech.polkadotapp.common.presentation.notification.AppNotifier
@@ -80,6 +81,7 @@ class RealProductSessionController @Inject constructor(
     private val dispatchers: CoroutineDispatchers,
     private val dotNsTldProvider: DotNsTldProvider,
     private val devServers: DevServers,
+    private val pageOpens: HostPageOpens,
 ) : ProductSessionController {
     private val appScope = CoroutineScope(SupervisorJob() + dispatchers.main)
 
@@ -166,6 +168,8 @@ class RealProductSessionController @Inject constructor(
         val tld = dotNsTldProvider.currentTldOrNull()
         val existing = tabs.value.firstOrNull { productKey(it.url.value, tld) == productKey(url, tld) }
         if (existing != null && loadsIntoOpenTab(existing.url.value, url)) existing.load(url)
+        // A live tab starts no session, so nothing would take the open a link held for its product.
+        if (existing?.isLive == true) productId(url, tld)?.let { pageOpens.reuse(it.value) }
         val tab = existing ?: Tab(nextId++, url).also { new -> tabs.update { it + new } }
         activate(tab)
     }

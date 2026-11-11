@@ -21,7 +21,7 @@ data class HostEvent(
     val name: String,
     val tags: Map<String, String>,
     val extras: Map<String, Any>,
-    val isFailure: Boolean = false,
+    val isFailure: Boolean,
 )
 
 const val PRODUCT_NOTIFICATION_INTENT_MARKER = "product_notification"
@@ -40,12 +40,14 @@ fun HostEventOrigin.productNotificationShown(productId: String) = HostEvent(
     name = "host.product_notification.shown",
     tags = baseTags() + ("product_notification.product_id" to productId),
     extras = baseExtras(),
+    isFailure = false,
 )
 
 fun HostEventOrigin.productNotificationTapped(productId: String) = HostEvent(
     name = "host.product_notification.tapped",
     tags = baseTags() + ("product_notification.product_id" to productId),
     extras = baseExtras(),
+    isFailure = false,
 )
 
 fun HostEventOrigin.pocketOpened(open: HostPageOpen, reused: Boolean) = HostEvent(
@@ -56,6 +58,7 @@ fun HostEventOrigin.pocketOpened(open: HostPageOpen, reused: Boolean) = HostEven
         "open.reused" to reused.toString(),
     ),
     extras = baseExtras(),
+    isFailure = false,
 )
 
 enum class HostLoadStage(val tag: String) {

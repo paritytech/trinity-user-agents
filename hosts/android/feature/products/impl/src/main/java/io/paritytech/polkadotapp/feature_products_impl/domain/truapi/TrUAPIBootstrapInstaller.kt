@@ -106,6 +106,6 @@ private data class HostTelemetryBootstrap(
     val osVersion: String?,
     val truapiHostVersion: String?,
     val schemaVersion: String,
-    val openedAtEpochMs: Long? = null,
-    val openSource: String? = null,
+    val openedAtEpochMs: Long?,
+    val openSource: String?,
 )

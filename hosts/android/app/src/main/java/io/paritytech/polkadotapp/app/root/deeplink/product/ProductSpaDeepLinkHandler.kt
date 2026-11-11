@@ -41,7 +41,7 @@ internal class ProductSpaDeepLinkHandler @Inject constructor(
     context(scope: ComputationalScope)
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> {
         // Read before any hop: the product page's load is timed from here.
-        val open = HostPageOpen(HostOpenSource.DEEPLINK)
+        val open = HostPageOpen.now(HostOpenSource.DEEPLINK)
         return withContext(coroutineDispatchers.io) {
             dotNsTldProvider.getTld().mapCatching { tld ->
                 accountRepository.awaitAccountsInitialized()

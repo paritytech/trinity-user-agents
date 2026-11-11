@@ -72,6 +72,7 @@ private fun HostEventOrigin.webViewCreated(
         listOfNotNull(open?.let { "open.source" to it.source.tag }),
     extras = baseExtras() + mapOf("event.monotonic_ms" to monotonicMs) +
         listOfNotNull(open?.let { "tap_ms" to nowEpochMs - it.epochMs }),
+    isFailure = false,
 )
 
 private fun HostEventOrigin.pageVisible(
@@ -85,4 +86,5 @@ private fun HostEventOrigin.pageVisible(
         listOfNotNull(open?.let { "open.source" to it.source.tag }),
     extras = baseExtras() + mapOf("webview_ms" to webViewMs) +
         listOfNotNull(open?.let { "tap_ms" to nowEpochMs - it.epochMs }),
+    isFailure = false,
 )

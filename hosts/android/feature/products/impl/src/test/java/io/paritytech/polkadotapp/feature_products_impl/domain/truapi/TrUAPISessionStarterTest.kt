@@ -94,7 +94,7 @@ class TrUAPISessionStarterTest {
 
     @Test
     fun `the tap that asked for the page is handed to its bootstrap once`() = runBlocking<Unit> {
-        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = System.currentTimeMillis())
+        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = System.currentTimeMillis(), sessionId = "open-session")
         pageOpens.hold(PRODUCT_ID.value, tap)
 
         repeat(2) {
@@ -107,7 +107,7 @@ class TrUAPISessionStarterTest {
 
     @Test
     fun `the session adopts the id minted at the tap and shows it to the product`() = runBlocking<Unit> {
-        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = System.currentTimeMillis())
+        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = System.currentTimeMillis(), sessionId = "open-session")
         pageOpens.hold(PRODUCT_ID.value, tap)
 
         startPage()
@@ -128,7 +128,7 @@ class TrUAPISessionStarterTest {
 
     @Test
     fun `the page is reported visible once, with the open that asked for it`() = runBlocking<Unit> {
-        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = System.currentTimeMillis())
+        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = System.currentTimeMillis(), sessionId = "open-session")
         pageOpens.hold(PRODUCT_ID.value, tap)
         startPage()
         yield()

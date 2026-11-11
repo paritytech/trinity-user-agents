@@ -47,7 +47,7 @@ class HostWebViewCreatedTelemetryTest {
 
         reporter.report(
             "bootstrap-session-42",
-            HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L),
+            HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, sessionId = "open-session"),
             nowEpochMs = 1_840L,
         )
 
@@ -77,7 +77,7 @@ class HostWebViewCreatedTelemetryTest {
         reporter.reportVisible(
             "bootstrap-session-42",
             webViewCreatedAtMs = 100L,
-            open = HostPageOpen(HostOpenSource.DEEPLINK, epochMs = 1_000L),
+            open = HostPageOpen(HostOpenSource.DEEPLINK, epochMs = 1_000L, sessionId = "open-session"),
             nowEpochMs = 2_100L,
         )
 

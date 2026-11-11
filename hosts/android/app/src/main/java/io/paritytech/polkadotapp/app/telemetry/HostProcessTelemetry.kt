@@ -88,6 +88,7 @@ private fun HostEventOrigin.processStarted(launchId: UUID, monotonicMs: Long) = 
         "app.launch_id" to launchId.toString(),
         "event.monotonic_ms" to monotonicMs,
     ),
+    isFailure = false,
 )
 
 private fun HostEvent.toSentryEvent() = SentryEvent().apply {

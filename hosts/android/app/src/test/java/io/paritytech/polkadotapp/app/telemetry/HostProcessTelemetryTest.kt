@@ -64,6 +64,7 @@ class HostProcessTelemetryTest {
                     "event.monotonic_ms" to 1_234L,
                     "host.app_build" to 42L,
                 ),
+                isFailure = false,
             ),
             event,
         )
@@ -117,6 +118,7 @@ class HostProcessTelemetryTest {
                 name = "host.process.started",
                 tags = mapOf("host.platform" to "android"),
                 extras = mapOf("host.app_build" to 42L),
+                isFailure = false,
             )
         }
 
@@ -137,11 +139,11 @@ class HostProcessTelemetryTest {
         )
         val otherBuild = origin.copy(appVariant = "debug", nativeAppVersion = "9.9.9", appBuild = 7L)
 
-        capture.capture { HostEvent(name = "host.one", tags = origin.baseTags(), extras = origin.baseExtras()) }
+        capture.capture { HostEvent("host.one", origin.baseTags(), origin.baseExtras(), isFailure = false) }
         capture.capture {
-            HostEvent(name = "host.one", tags = otherBuild.baseTags(), extras = otherBuild.baseExtras())
+            HostEvent("host.one", otherBuild.baseTags(), otherBuild.baseExtras(), isFailure = false)
         }
-        capture.capture { HostEvent(name = "host.two", tags = emptyMap(), extras = emptyMap()) }
+        capture.capture { HostEvent("host.two", emptyMap(), emptyMap(), isFailure = false) }
 
         assertEquals(listOf(listOf("host.one"), listOf("host.one"), listOf("host.two")), fingerprints)
     }
@@ -177,8 +179,8 @@ class HostProcessTelemetryTest {
         val expectedExtras = mapOf<String, Any>("host.app_build" to 42L)
         assertEquals(
             listOf(
-                HostEvent("host.product_notification.shown", expectedTags, expectedExtras),
-                HostEvent("host.product_notification.tapped", expectedTags, expectedExtras),
+                HostEvent("host.product_notification.shown", expectedTags, expectedExtras, isFailure = false),
+                HostEvent("host.product_notification.tapped", expectedTags, expectedExtras, isFailure = false),
             ),
             captured,
         )
