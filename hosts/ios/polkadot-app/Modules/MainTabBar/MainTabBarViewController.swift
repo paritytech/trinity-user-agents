@@ -30,10 +30,9 @@ final class MainTabBarViewController: UIViewController {
     private var chainStatusAnchorWidth: Constraint?
     private var statusTitleLeading: Constraint?
     private var statusTitleCenterY: Constraint?
-    private var scrollEdgeInteraction: UIInteraction?
 
     private let statusBarTitleButton = StatusBarTitleButton()
-    private let statusStripContainer = UIView()
+    private let statusStripContainer = StatusStripContainerView()
 
     lazy var container = TabBarContainer(hostController: self)
 
@@ -178,7 +177,6 @@ private extension MainTabBarViewController {
         additionalSafeAreaInsets.top = ChainConnectionStatusBarView.preferredHeight
 
         view.addSubview(statusStripContainer)
-        statusStripContainer.backgroundColor = .clear
         statusStripContainer.snp.makeConstraints { make in
             make.leading.trailing.top.equalToSuperview()
             make.bottom.equalTo(view.safeAreaLayoutGuide.snp.top)
@@ -211,13 +209,6 @@ private extension MainTabBarViewController {
         }
 
         statusBarHost.didMove(toParent: self)
-
-        if #available(iOS 26.0, *) {
-            let interaction = UIScrollEdgeElementContainerInteraction()
-            interaction.edge = .top
-            statusStripContainer.addInteraction(interaction)
-            scrollEdgeInteraction = interaction
-        }
     }
 
     static var statusTitleCenterInset: CGFloat {
@@ -453,19 +444,7 @@ extension MainTabBarViewController: TopmostChildProviding {
 
 extension MainTabBarViewController {
     func bindScrollEdgeInteraction() {
-        guard
-            #available(iOS 26.0, *),
-            let interaction = scrollEdgeInteraction as? UIScrollEdgeElementContainerInteraction
-        else {
-            return
-        }
-
-        let controller = container.selectedController
-        if let navigation = controller as? UINavigationController {
-            interaction.scrollView = navigation.topViewController?.contentScrollView(for: .top)
-        } else {
-            interaction.scrollView = controller?.contentScrollView(for: .top)
-        }
+        statusStripContainer.bindScrollEdge(toContentOf: container.selectedController)
     }
 
     func refreshChrome() {
