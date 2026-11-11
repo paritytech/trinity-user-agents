@@ -8,20 +8,6 @@ enum FundingNumberFormatters {
     private static let lock = NSLock()
     private nonisolated(unsafe) static var cache: [String: NumberFormatter] = [:]
 
-    /// A decimal figure in US style, with between `minimumDigits` and
-    /// `maximumDigits` fraction digits.
-    static func decimal(minimumDigits: Int, maximumDigits: Int) -> NumberFormatter {
-        formatter(key: "decimal \(minimumDigits) \(maximumDigits)") {
-            let formatter = NumberFormatter()
-            formatter.numberStyle = .decimal
-            formatter.locale = Locale(identifier: "en_US")
-            formatter.usesGroupingSeparator = true
-            formatter.minimumFractionDigits = minimumDigits
-            formatter.maximumFractionDigits = maximumDigits
-            return formatter
-        }
-    }
-
     /// A `code` currency amount in the user's locale.
     static func currency(code: String) -> NumberFormatter {
         formatter(key: "currency \(code)") {
