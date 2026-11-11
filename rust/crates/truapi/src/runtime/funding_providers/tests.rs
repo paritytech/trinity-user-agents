@@ -21,6 +21,8 @@ fn declared_networks_are_listed_once_in_order() {
 		routes,
 		unsupported: Vec::new(),
 		limits: Vec::new(),
+		declares_routes: true,
+		brand: None,
 	};
 	let candidates = [
 		candidate(vec![
@@ -74,7 +76,9 @@ fn providers(entries: &[(&str, Option<String>)]) -> FundingProviders {
 			.map(|(product_id, worker_manifest)| FundingProviderEntry {
 				product_id: ProductId::for_test(product_id),
 				worker_manifest: worker_manifest.clone(),
+				root_manifest: None,
 				origin: FundingProviderOrigin::Published,
+				app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 			})
 			.collect(),
 	)
@@ -125,7 +129,9 @@ fn a_bundled_provider_keeps_the_hosts_manifest() {
 		offered_providers(vec![FundingProviderEntry {
 			product_id: ProductId::for_test("bundled.dot"),
 			worker_manifest: Some(manifest(CARD_IN)),
+			root_manifest: None,
 			origin: FundingProviderOrigin::Bundled,
+			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}])
 		.expect("offered"),
 	);
@@ -146,7 +152,9 @@ fn an_unreadable_snapshot_is_refused_when_offered() {
 		offered_providers(vec![FundingProviderEntry {
 			product_id: ProductId::for_test("card.dot"),
 			worker_manifest: Some(worker_manifest.to_string()),
+			root_manifest: None,
 			origin: FundingProviderOrigin::Published,
+			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}])
 		.map(|offered| offered.len())
 		.map_err(|error| matches!(error, FundingSessionError::InvalidProvider { .. }))
@@ -190,7 +198,9 @@ fn an_answer_for_a_provider_no_longer_listed_is_dropped() {
 				.map(|product_id| FundingProviderEntry {
 					product_id: ProductId::for_test(product_id),
 					worker_manifest: Some(manifest(CARD_IN)),
+					root_manifest: None,
 					origin: FundingProviderOrigin::Published,
+					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 				})
 				.collect(),
 		)
@@ -269,4 +279,73 @@ fn quotes_go_to_the_providers_a_session_can_be_handed_to() {
 		),
 		(vec![ProductId::for_test("card.dot")], [true, false, false])
 	);
+}
+
+// A provider's candidate carries the name and icon its root manifest gives
+// it, so hosts load no brand of their own; a brand read later replaces the
+// shipped one.
+#[test]
+fn a_candidate_carries_its_providers_brand() {
+	let root = |name: &str| {
+		format!(
+			r#"{{"$v":1,"displayName":"{name}","description":"d","icon":{{"cid":"bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy","format":"png"}}}}"#
+		)
+	};
+	let providers = providers(&[]);
+	lock(&providers.entries).extend(
+		offered_providers(vec![FundingProviderEntry {
+			product_id: ProductId::for_test("bundled.dot"),
+			worker_manifest: Some(manifest(CARD_IN)),
+			root_manifest: Some(root("Shipped")),
+			origin: FundingProviderOrigin::Bundled,
+			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+		}])
+		.expect("offered"),
+	);
+	let branded = providers.branded(
+		&ProductId::for_test("bundled.dot"),
+		ProductBrand::parse(&root("Live")).expect("brand"),
+	);
+	let names = |providers: &FundingProviders| {
+		providers
+			.candidates(FundingDirection::In)
+			.into_iter()
+			.map(|candidate| candidate.brand.map(|brand| brand.display_name))
+			.collect::<Vec<_>>()
+	};
+
+	assert_eq!((branded, names(&providers)), (true, vec![Some("Live".to_string())]));
+}
+
+// A provider that does not route the rail has nothing to say about its
+// amounts, so its missing record leaves the bounds of the rail known.
+#[test]
+fn limits_count_only_the_providers_routing_the_rail() {
+	use crate::host_logic::funding_providers::{LearnedLimit, LimitScope};
+	let providers = providers(&[
+		("ramp.dot", Some(manifest(CARD_IN))),
+		("swap.dot", Some(manifest(CRYPTO_OUT))),
+	]);
+	let now_ms = current_unix_millis();
+	providers.learn(LearnedSupport {
+		provider_id: ProductId::for_test("ramp.dot"),
+		direction: FundingDirection::In,
+		rail: FundingRail::Card,
+		asset: "EUR".to_string(),
+		network: None,
+		country: None,
+		asked: 5,
+		supported: true,
+		min: Some(LearnedLimit { amount: 20_000_000, learned_at_ms: now_ms }),
+		max: Some(LearnedLimit { amount: 90_000_000, learned_at_ms: now_ms }),
+		learned_at_ms: now_ms,
+	});
+	let limits = providers.amount_limits(LimitScope {
+		direction: FundingDirection::In,
+		rail: FundingRail::Card,
+		asset: "EUR",
+		network: None,
+		country: None,
+	});
+	assert_eq!((limits.min, limits.max), (Some(20_000_000), Some(90_000_000)));
 }
