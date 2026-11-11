@@ -44,7 +44,8 @@ js/packages/
   truapi-host/            @parity/truapi-host: WASM-backed host runtime. Subpath entries:
                           `.` (shared host types), `/markers` (the core's
                           table of which log markers may leave the device),
-                          `/web` (iframe + Web Worker), `/worker-runtime`
+                          `/web` (iframe + Web Worker), `/node` (worker
+                          thread), `/worker-runtime`
                           (Worker entry), and the test host `/testing`
                           (createMockHost), `/testing/playwright` (fixture),
                           `/testing/server` (node server), `/testing/client`

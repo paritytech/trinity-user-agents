@@ -17,6 +17,7 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
 - [Labels](docs/labels.md)
 - [Building the apps for development](docs/local-app-builds.md)
+- [Moving an e2e suite to the TrUAPI test host](docs/migration/test-host.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -146,7 +147,8 @@ js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
                           (shared host types), `/web` (iframe + Web Worker),
-                          `/worker-runtime`, and the test host: `/testing`
+                          `/node` (worker thread), `/worker-runtime`, and the
+                          test host: `/testing`
                           (createMockHost), `/testing/playwright`,
                           `/testing/server`, `/testing/client`,
                           `/testing/dev-accounts`, `/testing/host-page`
@@ -245,6 +247,8 @@ a single package with tree-shakeable subpath entries:
   leave the device, on its own entry so reading telemetry policy pulls in no host runtime.
 - `@parity/truapi-host/web` wires the WASM provider into a browser host: the iframe
   MessageChannel handshake (`createIframeHost`) plus `createWebWorkerProvider`.
+- `@parity/truapi-host/node` runs the same pairing host in a Node process, with the core in
+  a `node:worker_threads` thread (`createNodePairingHostRuntime`, `createHeadlessHostCallbacks`).
 - `@parity/truapi-host/worker-runtime` is the Web Worker entrypoint so the WASM core can
   run off the page main thread.
 
