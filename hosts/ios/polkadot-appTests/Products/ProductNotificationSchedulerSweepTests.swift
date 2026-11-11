@@ -167,9 +167,15 @@ struct ProductNotificationSchedulerSweepTests {
             try await scheduler.cancelAll(forProductId: productId)
         }
 
-        let cancelled = event("cancelled", id).name
+        let byId: (HostEvent, HostEvent) -> Bool = {
+            String(describing: $0.extras["product_notification.id"])
+                < String(describing: $1.extras["product_notification.id"])
+        }
         #expect(Array(recorder.events.prefix(2)) == [event("scheduled", id), event("scheduled", nextId)])
-        #expect(recorder.events.dropFirst(2).map(\.name) == [cancelled, cancelled])
+        #expect(
+            recorder.events.dropFirst(2).sorted(by: byId)
+                == [event("cancelled", id), event("cancelled", nextId)].sorted(by: byId)
+        )
     }
 
     @Test func aRefusedStoreReadRecordsNotScheduledWithoutAnIdAndStillThrows() async throws {
