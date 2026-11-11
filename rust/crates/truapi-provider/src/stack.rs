@@ -15,9 +15,6 @@ use trinity_stack::{Chain, Descriptor, Error, Pointer};
 
 use crate::{ChainSource, ProviderError, config::ResolvedChain};
 
-/// The relay's `role` in a descriptor, which has exactly one such chain.
-const RELAY_ROLE: &str = "Relay";
-
 /// Where a chain's light spec is published.
 #[derive(Debug, PartialEq, Eq)]
 pub struct LightSpecSource {
@@ -78,11 +75,11 @@ impl LightStack {
 			}
 			chains.push((genesis, chain.clone()));
 		}
-		let relay = chains
-			.iter()
-			.find(|(_, chain)| chain.role == RELAY_ROLE)
-			.map(|(genesis, _)| *genesis)
-			.ok_or_else(|| refused(Error::RelayCount(0)))?;
+		let relay = descriptor
+			.relay()
+			.ok_or_else(|| refused(Error::RelayCount(0)))?
+			.try_genesis()
+			.map_err(refused)?;
 		Ok(Self {
 			id: id.into(),
 			generation: descriptor.generation.clone(),
