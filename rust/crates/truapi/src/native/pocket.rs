@@ -11,14 +11,14 @@ use truapi::latest::ProductRendererRenderItem;
 
 use super::renderer::{NativeRendererObserver, NativeSubscription, spawn_observation};
 use crate::{
+	Spawner,
 	platform::ProductId,
 	pocket_cards::{PocketCards, PocketEntry},
-	subscription::Spawner,
 	time::RealTimer,
 };
 
 /// Observer implemented by a native host to follow the Pocket collection.
-#[uniffi::export(callback_interface)]
+#[uniffi::export(foreign)]
 pub trait NativePocketObserver: Send + Sync {
 	/// Deliver every card, pinned first, now and after each change.
 	fn on_cards(&self, cards: Vec<PocketEntry>);
@@ -57,9 +57,9 @@ pub fn keeping_faces(
 ) -> Arc<dyn NativeRendererObserver> {
 	let (faces, drawn) = unbounded();
 	let keeper = cards.clone();
-	(spawner)(Box::pin(async move {
+	spawner.spawn(async move {
 		keeper.keep_faces(product_id, card_id, drawn, Arc::new(RealTimer)).await;
-	}));
+	});
 	Arc::new(FaceKeepingObserver { observer, faces, cards })
 }
 

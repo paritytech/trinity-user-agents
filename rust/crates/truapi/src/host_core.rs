@@ -35,6 +35,7 @@ use tracing::{instrument, warn};
 use truapi::{CallContext, CancellationReason, latest, v01};
 
 use crate::{
+	Spawner,
 	frame::ProtocolMessage,
 	host_logic::worker::WorkerLedger,
 	runtime::{
@@ -44,7 +45,7 @@ use crate::{
 		ResumePairingError, RuntimeServices, SigningHostRole, SsoAccountHolderService,
 		SsoResponderService,
 	},
-	subscription::{HostInitiatedSubscriptionManager, Spawner},
+	subscription::HostInitiatedSubscriptionManager,
 	transport::Transport,
 	truapi_core::TrUApiCore,
 };
@@ -185,6 +186,7 @@ fn product_context(product_id: &ProductId) -> ProductContext {
 pub struct PairingHostRuntime {
 	services: Arc<RuntimeServices>,
 	pairing_host: Arc<PairingHostRole>,
+	image_loader: crate::image_loader::ImageLoader,
 }
 
 impl PairingHostRuntime {
@@ -250,7 +252,39 @@ impl PairingHostRuntime {
 		}
 		let pairing_host = PairingHostRole::new(services.clone(), config);
 		pairing_host.session().clone().start_session_store_sync(spawner);
-		Self { services, pairing_host }
+		Self {
+			image_loader: crate::image_loader::ImageLoader::new(
+				services.clone(),
+				Arc::new(crate::time::RealTimer),
+			),
+			services,
+			pairing_host,
+		}
+	}
+
+	/// Resolves public profile metadata without loading image bytes.
+	///
+	/// Native records expire after one hour; `force` skips that cache. Browsers always
+	/// read the chain. Invalid usernames and lookup or storage failures return errors.
+	pub async fn resolve_public_profile(
+		&self,
+		username: &str,
+		force: bool,
+	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
+		crate::public_profile::PublicProfiles::new(self.services.clone())
+			.resolve(username, force)
+			.await
+	}
+
+	/// The image `reference` names, checked against its CID and the image policy.
+	///
+	/// Unsupported CIDs, unavailable bytes and image policy failures return errors.
+	/// Dropping the future cancels the load.
+	pub async fn load_image(
+		&self,
+		reference: crate::ImageReference,
+	) -> Result<crate::LoadedImage, crate::ImageError> {
+		self.image_loader.load(reference).await
 	}
 
 	/// Install the host's [`PermissionStatusHost`], which carries the reasoning
@@ -806,6 +840,87 @@ impl SigningHostRuntime {
 		self.services.funding().history()
 	}
 
+	/// Why `amount` cannot go ahead in funding session `intent`, if it
+	/// cannot, given what the user can spend; see the native
+	/// `funding_amount_issue`.
+	pub fn funding_amount_issue(
+		&self,
+		intent: &str,
+		amount: u128,
+		spendable: Option<u128>,
+	) -> Option<crate::platform::FundingAmountIssue> {
+		self.services.funding_amount_issue(intent, amount, spendable)
+	}
+
+	/// Ended funding session `intent`'s summary, held in full or compacted,
+	/// including a cancel that moved no money, which `funding_history`
+	/// leaves out.
+	pub fn funding_summary(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding::FundingSessionSummary> {
+		self.services.funding().summary(intent)
+	}
+
+	/// Funding session `intent` as the core holds it in full.
+	///
+	/// `None` once only its summary is kept, or for no such session.
+	pub fn funding_session(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding::FundingSession> {
+		self.services.funding().get(intent)
+	}
+
+	/// Funding session `intent`'s progress now, while the core holds it in
+	/// full.
+	pub fn funding_progress(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding::FundingProgress> {
+		self.funding_session(intent)
+			.map(|session| session.progress(crate::current_unix_millis()))
+	}
+
+	/// What funding session `intent`'s overlay offers while it is up,
+	/// worked out as it is read.
+	pub fn funding_options(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding_providers::FundingOptions> {
+		let presenting = self.services.funding().presenting();
+		if !presenting.iter().any(|up| up == intent) {
+			return None;
+		}
+		self.services.funding_options(intent)
+	}
+
+	/// Funding session `intent`'s latest quote list, while its overlay is up.
+	pub fn funding_quotes(&self, intent: &str) -> Option<crate::platform::FundingQuoteList> {
+		self.services.funding_quotes().list(intent)
+	}
+
+	/// The funding sessions the host has heard of that the core holds in
+	/// full, with their progress now, newest opened first.
+	pub fn funding_entries(&self) -> Vec<crate::host_logic::funding::FundingBookEntry> {
+		self.services.funding().entries(crate::current_unix_millis())
+	}
+
+	/// Offer the funding providers the remote configuration names, then the
+	/// `bundled` ones it does not.
+	///
+	/// Names that are not product ids are skipped and logged. A call listing
+	/// what the last one listed changes nothing, so the host calls it on
+	/// every configuration refresh.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_provider_config"))]
+	pub fn set_funding_provider_config(
+		&self,
+		published_names: Vec<String>,
+		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+	) -> Result<(), v01::GenericError> {
+		Ok(self.services.set_funding_provider_config(published_names, bundled)?)
+	}
+
 	/// Record that the host told the user how ended session `intent` went.
 	/// Until it does, the session is handed over again through
 	/// `funding_session_changed` each time funding resumes.
@@ -841,17 +956,39 @@ impl SigningHostRuntime {
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
-	/// Quotes for funding session `intent`, sent through
-	/// [`FundingPlatform::funding_quotes_changed`] until the session is handed
-	/// to a provider, ends or leaves the overlay, or the host asks for another
-	/// `ask`. Returns the request id each list carries.
-	pub fn request_funding_quotes(&self, intent: &str, ask: latest::FundingQuoteAsk) -> u64 {
-		self.services.request_funding_quotes(intent, ask)
+	/// Quotes of `amount` for funding session `intent` on the rail, asset,
+	/// network and country the user selected, sent through
+	/// [`FundingPlatform::funding_quotes_changed`] (natively `funding_changed`
+	/// with `Quotes`). An ask the running request already prices keeps it.
+	/// Returns the request id each list carries, `None` while the selection
+	/// names no asset or `amount` is zero.
+	pub fn request_funding_quotes(&self, intent: &str, amount: u128) -> Option<u64> {
+		self.services.request_selected_quotes(intent, amount)
+	}
+
+	/// Start funding session `intent` on the best quote of request
+	/// `request_id` once every provider answered it. A new request, a
+	/// selection, [`Self::cancel_funding_auto_start`] or a list with no usable
+	/// quote cancels it.
+	pub fn start_funding_when_quoted(&self, intent: &str, request_id: u64) {
+		self.services.start_funding_when_quoted(intent, request_id);
+	}
+
+	/// Disarm [`Self::start_funding_when_quoted`] for session `intent`.
+	pub fn cancel_funding_auto_start(&self, intent: &str) {
+		self.services.cancel_funding_auto_start(intent);
+	}
+
+	/// Whether the host offers any funding provider.
+	pub fn funding_available(&self) -> bool {
+		!self.services.funding_providers().is_empty()
 	}
 
 	/// Record what the user picked in funding session `intent`'s overlay;
 	/// the options it leads to arrive through
-	/// [`crate::runtime::FundingFeed::funding_options_changed`].
+	/// [`crate::runtime::FundingFeed::funding_options_changed`] (natively
+	/// `funding_changed` with `Options`). A selection naming another route
+	/// than the quote request withdraws it.
 	pub fn select_funding_options(
 		&self,
 		intent: &str,
@@ -1095,6 +1232,20 @@ impl SigningHostRuntime {
 		&self,
 	) -> Result<crate::store::DbStatus, crate::store::DbError> {
 		self.services.core_db()?.status().await
+	}
+
+	/// Resolves public profile metadata without loading image bytes.
+	///
+	/// Native records expire after one hour; `force` skips that cache. Browsers always
+	/// read the chain. Invalid usernames and lookup or storage failures return errors.
+	pub async fn resolve_public_profile(
+		&self,
+		username: &str,
+		force: bool,
+	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
+		crate::public_profile::PublicProfiles::new(self.services.clone())
+			.resolve(username, force)
+			.await
 	}
 
 	/// The image `reference` names, checked against its CID and the image policy.

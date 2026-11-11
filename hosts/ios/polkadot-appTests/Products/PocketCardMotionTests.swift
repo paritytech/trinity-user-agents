@@ -32,7 +32,14 @@ struct PocketCardMotionTests {
 
     @Test
     func nothingMovesWithoutAnOpenCard() {
-        #expect(motions(openAt: nil, cleared: true) == Array(repeating: .resting, count: 4))
+        #expect(motions(openAt: nil, cleared: false) == Array(repeating: .resting, count: 4))
+    }
+
+    /// The whole Pocket clears behind an item that is not in the stack, such as
+    /// Collectibles, so every card shrinks away while that item is open.
+    @Test
+    func everyCardShrinksAwayWhenThePocketClearsForAnItemOutsideTheStack() {
+        #expect(motions(openAt: nil, cleared: true) == Array(repeating: .shrunkAway, count: 4))
     }
 
     private func motions(openAt openIndex: Int?, cleared: Bool) -> [PocketCardMotion] {
