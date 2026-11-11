@@ -446,8 +446,8 @@ Native hosts emit cached metadata, then refresh missing or expired records
 (one-hour TTL). Required options: `force_fresh` bypasses the TTL; `skip_stale`
 suppresses expired cached values (false in app callers). Streams emit at most
 two profiles, suppress duplicates, and stop on cancellation or drop. Invalid
-usernames return an error subscription. SQLite retains the 1,000 most recently
-used profiles. Avatar CIDs key the image cache; only misses call `loadImage`.
+usernames return an error subscription. SQLite stores full records and keeps the
+1,000 most recently used. Avatar CIDs key the image cache; only misses call `loadImage`.
 WASM resolves once without caching.
 
 The Kotlin SDK's `observePublicProfile(username, options)` returns an ordered,

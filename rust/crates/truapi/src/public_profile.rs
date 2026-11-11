@@ -197,12 +197,11 @@ impl PublicProfiles {
 								return Ok(Some((profile, next)));
 							}
 						}
-						let record = profiles.refresh_record(&username).await?;
-						Ok(Some((PublicProfile { avatar: record.avatar() }, None)))
+						let profile = profiles.refresh_profile(&username).await?;
+						Ok(Some((profile, None)))
 					},
 					Resolution::Refresh(previous) => {
-						let record = profiles.refresh_record(&username).await?;
-						let profile = PublicProfile { avatar: record.avatar() };
+						let profile = profiles.refresh_profile(&username).await?;
 						let previous = PublicProfile { avatar: previous.avatar() };
 						if profile == previous { Ok(None) } else { Ok(Some((profile, None))) }
 					},
@@ -239,14 +238,15 @@ impl PublicProfiles {
 	}
 
 	#[cfg(not(target_arch = "wasm32"))]
-	async fn refresh_record(&self, username: &str) -> Result<ProfileRecord, PublicProfileError> {
+	async fn refresh_profile(&self, username: &str) -> Result<PublicProfile, PublicProfileError> {
 		let db = self.services.core_db()?;
 		let record = self.read_record(username).await?;
-		let (stored_username, stored_record) = (username.to_owned(), record.clone());
+		let profile = PublicProfile { avatar: record.avatar() };
+		let username = username.to_owned();
 		let expires_at = current_unix_secs() + RECORD_TTL_SECS;
-		db.write(move |tx| dao::store_record(tx, &stored_username, &stored_record, expires_at))
+		db.write(move |tx| dao::store_record(tx, &username, &record, expires_at))
 			.await?;
-		Ok(record)
+		Ok(profile)
 	}
 
 	async fn read_record(&self, username: &str) -> Result<ProfileRecord, PublicProfileError> {
