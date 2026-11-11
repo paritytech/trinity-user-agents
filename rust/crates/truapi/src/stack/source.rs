@@ -72,7 +72,7 @@ pub enum StackRefreshOutcome {
 pub struct StackStatus {
 	/// The verified descriptor the core runs, as plain descriptor JSON with
 	/// the fields this core knows. The host's own features read their chains
-	/// and services from it, so they run the same stack as the core.
+	/// and services from it.
 	pub descriptor: String,
 	/// The newest copy is past `validUntil`: show the stack as stale and keep
 	/// running on it.
