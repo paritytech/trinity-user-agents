@@ -179,21 +179,19 @@ impl PublicProfiles {
 			Refresh(ProfileRecord),
 		}
 
-		Subscription::new(stream::try_unfold(
-			Some((self, username, Resolution::Stored)),
-			move |state| async move {
-				let Some((profiles, username, resolution)) = state else { return Ok(None) };
+		Subscription::new(stream::try_unfold(Some(Resolution::Stored), move |state| {
+			let profiles = Self::new(self.services.clone());
+			let username = username.clone();
+			async move {
+				let Some(resolution) = state else { return Ok(None) };
 				match resolution {
 					Resolution::Stored => {
 						if let Some(cached) = profiles.stored_record(&username).await? {
 							let fresh = cached.is_fresh(current_unix_secs());
 							if fresh || !skip_stale {
 								let profile = PublicProfile { avatar: cached.record.avatar() };
-								let next = (force_fresh || !fresh).then_some((
-									profiles,
-									username,
-									Resolution::Refresh(cached.record),
-								));
+								let next = (force_fresh || !fresh)
+									.then_some(Resolution::Refresh(cached.record));
 								return Ok(Some((profile, next)));
 							}
 						}
@@ -206,8 +204,8 @@ impl PublicProfiles {
 						if profile == previous { Ok(None) } else { Ok(Some((profile, None))) }
 					},
 				}
-			},
-		))
+			}
+		}))
 	}
 
 	/// Resolves one profile without native storage.
