@@ -146,13 +146,16 @@ struct JsStackHost {
 
 #[async_trait::async_trait]
 impl StackHost for JsStackHost {
-	async fn fetch_stack_descriptor(&self, request: StackFetchRequest) -> StackFetchResponse {
+	async fn fetch_stack_descriptor(
+		&self,
+		request: StackFetchRequest,
+	) -> Result<StackFetchResponse, GenericError> {
 		let fetch = self.fetch.clone();
 		let answer = SendWrapper::new(async move {
 			let returned = call_js_function(&fetch, &[request_to_js(&request)])?;
 			response_from_js(&await_optional_promise(returned).await?)
 		});
-		answer.await.unwrap_or_else(|reason| StackFetchResponse::Unreachable { reason })
+		Ok(answer.await?)
 	}
 
 	fn stack_changed(&self, status: StackStatus) {
@@ -183,8 +186,7 @@ fn request_to_js(request: &StackFetchRequest) -> JsValue {
 	])
 }
 
-/// `{ status: "document", bytes, etag? }`, `{ status: "notModified" }` or
-/// `{ status: "unreachable", reason? }`.
+/// `{ status: "document", bytes, etag? }` or `{ status: "notModified" }`.
 fn response_from_js(response: &JsValue) -> Result<StackFetchResponse, String> {
 	const PATH: &str = "fetchStackDescriptor result";
 	let string_at = |name: &str| {
@@ -201,12 +203,7 @@ fn response_from_js(response: &JsValue) -> Result<StackFetchResponse, String> {
 			Ok(StackFetchResponse::Document { bytes: bytes.to_vec(), etag: string_at("etag")? })
 		},
 		"notModified" => Ok(StackFetchResponse::NotModified),
-		"unreachable" => Ok(StackFetchResponse::Unreachable {
-			reason: string_at("reason")?.unwrap_or_else(|| "unreachable".to_string()),
-		}),
-		other => Err(format!(
-			"{PATH}.status must be document, notModified or unreachable, got {other:?}"
-		)),
+		other => Err(format!("{PATH}.status must be document or notModified, got {other:?}")),
 	}
 }
 

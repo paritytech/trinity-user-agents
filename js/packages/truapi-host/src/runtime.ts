@@ -93,23 +93,21 @@ export interface StackFetchRequest {
   /** The `ETag` to send as `If-None-Match`, when the core holds one. */
   ifNoneMatch?: string;
   /**
-   * The largest body to read. Stop reading and answer `unreachable` once a
-   * body passes it.
+   * The largest body to read. Stop reading and throw once a body passes it.
    */
   maxBytes: number;
 }
 
-/** What a fetch of the stack's descriptor got. */
+/**
+ * What a fetch of the stack's descriptor got. Anything but these two is a
+ * failed fetch, which the callback throws: a transport error, a timeout, a
+ * redirect, another status or a body larger than `maxBytes`.
+ */
 export type StackFetchResponse =
   /** `200 OK`: the body as served and the response's `ETag`. */
   | { status: "document"; bytes: Uint8Array; etag?: string }
   /** `304 Not Modified`. */
-  | { status: "notModified" }
-  /**
-   * Anything else: a transport error, a timeout, a redirect, another status
-   * or a body larger than `maxBytes`. `reason` goes to the core's log.
-   */
-  | { status: "unreachable"; reason?: string };
+  | { status: "notModified" };
 
 /** The stack the core runs, and what the host shows and does about it. */
 export interface StackStatus {
@@ -152,8 +150,9 @@ export interface StackStatus {
  */
 export interface StackCallbacks {
   /**
-   * Fetch the stack's descriptor over HTTP. The core gives up after 30
-   * seconds. A rejection counts as `unreachable`.
+   * Fetch the stack's descriptor over HTTP. Throw or reject when the server
+   * gave no usable answer: the core keeps its copy and reports
+   * `unreachable`. The core gives up after 30 seconds.
    */
   fetchStackDescriptor?(
     request: StackFetchRequest,

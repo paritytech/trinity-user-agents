@@ -166,13 +166,15 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     const statuses: StackStatus[] = [];
     const records: Uint8Array[] = [];
     const answers: StackFetchResponse[] = [
-      { status: "unreachable", reason: "offline" },
       { status: "document", bytes: hostConfig.stack.descriptor, etag: '"v1"' },
     ];
+    let online = false;
     const stackCallbacks: StackCallbacks = {
       fetchStackDescriptor: async (request) => {
         requests.push(request);
-        return answers.shift() ?? { status: "unreachable" };
+        const answer = online ? answers.shift() : undefined;
+        if (!answer) throw new Error("offline");
+        return answer;
       },
       stackChanged: (status) => statuses.push(status),
       storeStackRecord: (record) => void records.push(record),
@@ -188,6 +190,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       hostConfig,
     );
     await settled();
+    online = true;
     runtime.refreshStack();
     await settled();
 

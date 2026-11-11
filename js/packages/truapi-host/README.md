@@ -47,7 +47,8 @@ The wasm core keeps the descriptor current when the host passes three raw
 callbacks to the runtime constructor, typed as `StackCallbacks`:
 
 - `fetchStackDescriptor(request)`: fetch `request.url` with a `GET`, without
-  following redirects, and answer `document`, `notModified` or `unreachable`.
+  following redirects, and answer `document` or `notModified`. Throw for
+  anything else.
   The core asks at start, again once its copy is an hour old, and on
   `refreshStack()`.
 - `stackChanged(status)`: the `StackStatus` at start and on each change. The
