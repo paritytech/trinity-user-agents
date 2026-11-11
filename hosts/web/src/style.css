@@ -609,6 +609,15 @@ textarea {
   color: var(--warning);
 }
 
+.stack-summary div[data-tone] dd,
+#custom-stack-status[data-tone="error"] {
+  color: var(--warning);
+}
+
+.stack-summary div[data-tone="error"] dd {
+  font-weight: 600;
+}
+
 .versions {
   margin: 0;
   display: grid;

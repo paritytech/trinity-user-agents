@@ -34,25 +34,32 @@ import { demoAllowed } from "../tools/demos/local-demo-route.js";
 import { createHostCallbacks } from "./app/callbacks.js";
 import { CONTACT_CHAT } from "./app/chat-products.js";
 import { fetchPreimage, gatewayPreimages } from "./products/preimage.js";
-import { connectNetwork, type Network } from "./platform/network.js";
+import {
+  connectNetwork,
+  lightClientChains,
+  type Network,
+} from "./platform/network.js";
 import {
   CHAIN_ROLES,
   NETWORKS,
   chainBackends,
-  networkConfig,
   type ChainBackend,
   type ChainRole,
   type NetworkConfig,
 } from "./platform/network-config.js";
+import { activeStack, type ActiveStack } from "./platform/stacks.js";
+import {
+  checkEndpoints,
+  type EndpointCheck,
+} from "./platform/endpoint-check.js";
 import { DEFAULT_NETWORK } from "./platform/network-scope.js";
 import {
   chosenNetwork,
-  rememberNetwork,
   savedChainBackends,
   tabProductKey,
   tabWalletKey,
-  type NetworkChoice,
 } from "./platform/network-choice.js";
+import { bindStackMenu, offeredStacks } from "./app/stack-menu.js";
 import { ask, setPromptArea, setRequesterDescriber } from "./app/prompt.js";
 import { describeRequester } from "./app/requester.js";
 import { CHAIN_LABELS, bindChainBackends } from "./app/chain-backends.js";
@@ -170,30 +177,64 @@ let peopleAccess: PeopleAccess | null = null;
 /** This host's directory on its origin, from the build's base. Mounted products live under it. */
 const BASE = hostBase(import.meta.env.BASE_URL, window.location.href);
 
-/** The networks the compact menu offers, from the one catalog this host serves. */
-const OFFERED_NETWORKS: NetworkChoice[] = Object.values(NETWORKS).map(
-  (network) => ({ id: network.id, label: network.displayName }),
-);
-
 /**
- * The network this tab runs on, chosen before the core starts.
+ * The stack this tab runs on, chosen before the core starts: a built-in one,
+ * or a custom one this browser keeps.
  *
  * The choice is per tab and applied by reloading, so the core, the wallet
- * session and every open product are built for one network and never switched
- * under a live page.
+ * session and every open product are built for one stack and never switched
+ * under a live page. It starts from the newest copy of the stack's descriptor
+ * already in the browser, without waiting on the network; a newer copy
+ * fetched after boot is kept for the next load ({@link refreshActiveStack}).
+ * A custom stack that cannot run stops the page ({@link stopOnFailedStack}).
  */
-const activeNetwork: NetworkConfig = networkConfig(
-  chosenNetwork(sessionStorage, OFFERED_NETWORKS, DEFAULT_NETWORK),
+const chosenStackId = chosenNetwork(
+  sessionStorage,
+  offeredStacks(localStorage),
+  DEFAULT_NETWORK,
 );
+const chosenStack = activeStack(chosenStackId, localStorage);
+if (chosenStack.status === "failed")
+  stopOnFailedStack(chosenStackId, chosenStack);
+const startup = chosenStack.startup;
+const refreshStackCopy = chosenStack.refresh;
+const activeNetwork: NetworkConfig = startup.config;
 
 /**
- * The backend each chain runs on in this tab, chosen before the core starts
- * and applied by reloading, like the network.
+ * The chains the light client can serve on this copy: those the provider's
+ * catalog holds under the same genesis hash. The catalog holds the chains of
+ * the copies this build bundles (a unit test holds that), so a copy whose
+ * chains restarted after the build, or a stack the catalog does not know, has
+ * none there.
  */
-const runningBackends: Record<ChainRole, ChainBackend> = chainBackends(
+const catalogCopy = Object.values(NETWORKS).find(
+  (network) =>
+    network.catalogNetwork !== null &&
+    network.catalogNetwork === activeNetwork.catalogNetwork,
+);
+const lightClientServes: ReadonlySet<ChainRole> =
+  catalogCopy === undefined
+    ? new Set()
+    : lightClientChains(activeNetwork, catalogCopy.genesis);
+
+/** The backend this tab chose for each chain, applied by reloading, like the network. */
+const chosenBackends = chainBackends(
   activeNetwork,
   savedChainBackends(sessionStorage, activeNetwork.id),
 );
+
+/**
+ * The backend each chain runs on in this tab: the chosen one, except that a
+ * chain the light client cannot serve on this copy runs on its RPC node.
+ */
+const runningBackends = Object.fromEntries(
+  CHAIN_ROLES.map((role) => [
+    role,
+    chosenBackends[role] === "light-client" && !lightClientServes.has(role)
+      ? "rpc"
+      : chosenBackends[role],
+  ]),
+) as Record<ChainRole, ChainBackend>;
 
 /** When a Statement Store account may post after its claim, on the People chain this tab reaches. */
 function currentPostingRule(): PostingRule {
@@ -204,7 +245,11 @@ function currentPostingRule(): PostingRule {
           wait: "finalized",
           why: "the core's People connection is not verified for best-block posting",
         }
-      : postingRule(activeNetwork, runningBackends.people, peopleAccess.genesis);
+      : postingRule(
+          activeNetwork,
+          runningBackends.people,
+          peopleAccess.genesis,
+        );
 }
 
 /**
@@ -229,6 +274,63 @@ const statements = new StatementLedger(
   Date.now,
   (error): boolean => devSession?.refusedHere(error) ?? false,
 );
+
+/**
+ * Stop the page on the custom stack `id`, which cannot run, without starting
+ * the core or switching stack. The Account view opens on why, and its Stack
+ * menu picks another stack or forgets this one; a reload tries again, with
+ * any newer descriptor the refresh stored.
+ */
+function stopOnFailedStack(
+  id: string,
+  failed: Extract<ActiveStack, { status: "failed" }>,
+): never {
+  const status = element("core-status");
+  status.textContent = `${failed.reason} Choose another stack, or reload to try again.`;
+  element("core-dot").dataset.state = "failed";
+  element("dev-toggle").dataset.state = "failed";
+  bindStackMenu({
+    ...stackMenuElements(),
+    active: null,
+    chosen: id,
+    storage: localStorage,
+    tab: sessionStorage,
+    reload: () => window.location.reload(),
+  });
+  bindChrome({
+    stage: element("stage"),
+    scrim: element("scrim"),
+    panel: element("devtools"),
+    focus: element<HTMLButtonElement>("dev-toggle"),
+    close: element<HTMLButtonElement>("devtools-close"),
+  }).show("account");
+  if (__STACK_REFRESH__ && failed.refresh !== null)
+    failed
+      .refresh()
+      .then((refresh) => {
+        if (refresh.outcome === "stored")
+          status.textContent = `${failed.reason} A newer descriptor is stored: reload to use it.`;
+      })
+      .catch(() => {});
+  throw new Error(failed.reason);
+}
+
+/** The menu's Stack section. */
+function stackMenuElements() {
+  return {
+    select: element<HTMLSelectElement>("network"),
+    trust: element("stack-trust"),
+    form: element<HTMLFormElement>("custom-stack-form"),
+    input: element<HTMLInputElement>("custom-stack-url"),
+    check: element<HTMLButtonElement>("custom-stack-check"),
+    status: element("custom-stack-status"),
+    summary: element("custom-stack-summary"),
+    actions: element("custom-stack-actions"),
+    use: element<HTMLButtonElement>("custom-stack-use"),
+    cancel: element<HTMLButtonElement>("custom-stack-cancel"),
+    forget: element<HTMLButtonElement>("stack-forget"),
+  };
+}
 
 function element<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
@@ -599,11 +701,14 @@ async function usernameOwner(username: string): Promise<HexString | null> {
  * Where the contact picker finds people by username: the other test users for
  * a test user; else this network's username index, through the dev server's
  * route on this machine; else, as in a build, the chain by exact username.
+ * The route reaches only the identity backends of the stacks this build
+ * ships, never a URL a custom stack names.
  */
 const usernameDirectory =
   devSession?.usernames ??
   (import.meta.env.DEV &&
   demoAllowed(true, window.location.hostname) &&
+  activeNetwork.origin === "built-in" &&
   activeNetwork.identityBackend !== null
     ? routeDirectory({
         base: BASE,
@@ -785,14 +890,13 @@ function renderVersions(coreSchema: string | undefined): void {
 }
 renderVersions(undefined);
 
-const networkSelect = element<HTMLSelectElement>("network");
-networkSelect.replaceChildren(
-  ...OFFERED_NETWORKS.map((choice) => new Option(choice.label, choice.id)),
-);
-networkSelect.value = activeNetwork.id;
-networkSelect.addEventListener("change", () => {
-  rememberNetwork(sessionStorage, networkSelect.value);
-  window.location.reload();
+bindStackMenu({
+  ...stackMenuElements(),
+  active: activeNetwork,
+  chosen: activeNetwork.id,
+  storage: localStorage,
+  tab: sessionStorage,
+  reload: () => window.location.reload(),
 });
 
 bindChainBackends({
@@ -802,6 +906,7 @@ bindChainBackends({
   defaults: element<HTMLButtonElement>("chain-backends-defaults"),
   network: activeNetwork,
   running: runningBackends,
+  lightClient: lightClientServes,
   storage: sessionStorage,
   reload: () => window.location.reload(),
 });
@@ -989,6 +1094,11 @@ async function prepareBackup(wallet: Wallet): Promise<void> {
   try {
     // The public development phrase keeps nothing of its own on the network.
     if (!backupOn(localStorage) || chatRefusal(wallet.entropy) !== null) return;
+    // A custom stack can share its People chain, and so the backup's pointer, with another.
+    if (!activeNetwork.backup) {
+      log(`Backup: off on ${activeNetwork.displayName}, a custom stack.`);
+      return;
+    }
     // On the light client, each People connection's statement subscription
     // replaces the topic filter every connection shares
     // (`platform/allowance-finality.ts`), so a backup read would take the
@@ -2340,8 +2450,127 @@ for (const { destination: id, button } of dockButtons)
 
 closeButton.addEventListener("click", closeFront);
 
+/** Record which copy of the stack descriptor this tab started from, and what it changed. */
+function reportStartupStack(): void {
+  const { descriptor, pointer } = activeNetwork.stack;
+  const problem = startup.problem;
+  activity.record({
+    category: "network",
+    action: "Stack descriptor",
+    subject: activeNetwork.displayName,
+    note: problem ?? undefined,
+    failed: problem !== null,
+    details: [
+      { label: "Descriptor", value: pointer.url },
+      {
+        label: "Signed by",
+        value:
+          pointer.key === undefined
+            ? "nobody: an unsigned custom stack"
+            : `${pointer.key}${activeNetwork.origin === "built-in" ? ", pinned by this build" : ", which you accepted"}`,
+      },
+      {
+        label: "Copy",
+        value:
+          startup.source === "bundled"
+            ? "bundled with this build"
+            : activeNetwork.origin === "built-in"
+              ? "stored, fetched earlier"
+              : "stored when added or fetched since",
+      },
+      { label: "Sequence", value: String(descriptor.sequence) },
+      { label: "Generation", value: descriptor.generation },
+      ...(startup.stale ? [{ label: "Stale", value: "past validUntil" }] : []),
+      ...CHAIN_ROLES.filter(
+        (role) => chosenBackends[role] !== runningBackends[role],
+      ).map((role) => ({
+        label: CHAIN_LABELS[role],
+        value:
+          "RPC node: the light client has no chain spec for this copy's chain",
+      })),
+    ],
+  });
+}
+
+/**
+ * Fetch the network's published stack descriptor once, after boot, and keep
+ * a newer copy this host can run for the next load. The running tab keeps the
+ * copy it started with.
+ */
+async function refreshActiveStack(): Promise<void> {
+  const refresh = await refreshStackCopy();
+  switch (refresh.outcome) {
+    case "stored":
+      log(
+        refresh.changes
+          ? `Stack descriptor: ${activeNetwork.displayName} published sequence ${refresh.sequence}${refresh.newGeneration ? ", whose chains restarted" : ""}. It is stored; reload to use it.`
+          : `Stack descriptor: stored ${activeNetwork.displayName}'s sequence ${refresh.sequence}; nothing this host reads changed.`,
+      );
+      return;
+    case "refused":
+      log(
+        `Stack descriptor: the published one is not used. ${refresh.reason}`,
+        true,
+      );
+      return;
+    case "unreachable":
+      log(
+        `Stack descriptor: ${activeNetwork.displayName}'s published descriptor could not be fetched; the copy in use stays.`,
+      );
+      return;
+    case "current":
+      return;
+  }
+}
+
+/**
+ * What each chain's RPC node answered when asked which chain it serves. A
+ * node serving another chain, or a People chain with another identity suffix,
+ * stops the boot: the core would sign for, and derive identities on, the
+ * wrong chain. A node that does not answer is only logged and fails on first
+ * use.
+ */
+async function checkRpcNodes(asked: Promise<EndpointCheck[]>): Promise<void> {
+  const checks = await asked;
+  for (const check of checks)
+    if (check.outcome === "unchecked")
+      log(
+        `${CHAIN_LABELS[check.role]} node ${check.rpc} was not checked: ${check.detail}.`,
+      );
+  const wrong = checks.filter((check) => check.outcome === "wrong");
+  if (wrong.length > 0)
+    throw new Error(
+      wrong
+        .map(
+          (check) =>
+            `The ${CHAIN_LABELS[check.role]} node ${check.rpc} does not serve ${activeNetwork.displayName}'s chain: ${check.detail}.`,
+        )
+        .join(" "),
+    );
+}
+
 async function boot(): Promise<void> {
+  reportStartupStack();
+  // Started first, so a stack that no longer boots can still pick up a fixed
+  // descriptor. A server started with WEB_SIGNING_STACK_REFRESH=0, as the
+  // offline browser tests start theirs, keeps the copy it has.
+  if (__STACK_REFRESH__)
+    refreshActiveStack().catch((error: unknown) =>
+      log(`Stack descriptor: the refresh failed: ${errorText(error)}`, true),
+    );
+  // The nodes are asked while the provider starts. Nothing reads the network,
+  // and the core does not start, before their answers are in.
+  const nodeChecks = checkEndpoints(
+    activeNetwork,
+    CHAIN_ROLES.filter((role) => runningBackends[role] === "rpc"),
+  );
   const network = await connectNetwork(activeNetwork, runningBackends);
+  try {
+    await checkRpcNodes(nodeChecks);
+  } catch (error) {
+    network.dispose();
+    throw error;
+  }
   const guarded = devSession?.guardNetwork(network) ?? network;
   // The core's and the host's People traffic are observed apart, labelled by who opened it.
   const observed = (source: TrafficSource): Network => ({

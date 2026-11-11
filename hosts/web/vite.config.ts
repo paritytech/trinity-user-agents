@@ -134,6 +134,9 @@ const allowedHosts = (process.env.WEB_SIGNING_ALLOWED_HOSTS ?? "")
 export default defineConfig({
   define: {
     __BUILD_INFO__: JSON.stringify(readBuildInfo()),
+    __STACK_REFRESH__: JSON.stringify(
+      process.env.WEB_SIGNING_STACK_REFRESH !== "0",
+    ),
   },
   plugins: [
     sandboxAssets(),

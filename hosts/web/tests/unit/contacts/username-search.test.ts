@@ -46,11 +46,12 @@ describe("searchUsernames", () => {
     expect(asked[0].redirect).toBe("manual");
   });
 
+  // PreviewNet's backend is served under a path, which the search keeps.
   test("a PreviewNet search reaches the PreviewNet backend, never Paseo's", async () => {
     const { asked, fetcher } = backend(() => json(PAGE));
     await search("network=previewnet&prefix=a", fetcher);
     expect(asked.map((request) => request.url)).toEqual([
-      "https://identity-previewnet.dotspark.app/api/v1/usernames/search?prefix=a",
+      "https://previewnet.substrate.dev/dub/api/v1/usernames/search?prefix=a",
     ]);
   });
 

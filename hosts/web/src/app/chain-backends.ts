@@ -43,6 +43,8 @@ export interface ChainBackendRow {
   defaultBackend: ChainBackend;
   /** The chain's RPC node. */
   rpc: string;
+  /** Whether the light client can serve this chain on this stack. */
+  lightClient: boolean;
 }
 
 /** Each chain's running and chosen backend, in the order the host connects them. */
@@ -50,14 +52,17 @@ export function chainBackendRows(
   config: NetworkConfig,
   running: Record<ChainRole, ChainBackend>,
   chosen: Record<ChainRole, ChainBackend>,
+  lightClient: ReadonlySet<ChainRole> = new Set(CHAIN_ROLES),
 ): ChainBackendRow[] {
   return CHAIN_ROLES.map((role) => ({
     role,
     label: CHAIN_LABELS[role],
     running: running[role],
-    chosen: chosen[role],
+    // A chain the light client cannot serve runs on its RPC node whatever was saved.
+    chosen: lightClient.has(role) ? chosen[role] : "rpc",
     defaultBackend: config.chains[role].backend,
     rpc: config.chains[role].rpc,
+    lightClient: lightClient.has(role),
   }));
 }
 
@@ -99,6 +104,8 @@ export interface ChainBackendsMenu {
   network: NetworkConfig;
   /** The backends this page connected with. */
   running: Record<ChainRole, ChainBackend>;
+  /** The chains the light client can serve on this stack. */
+  lightClient: ReadonlySet<ChainRole>;
   /** Where the tab's choice is saved. */
   storage: Storage;
   reload: () => void;
@@ -115,7 +122,12 @@ export function bindChainBackends(menu: ChainBackendsMenu): void {
       network,
       savedChainBackends(storage, network.id),
     );
-    const rows = chainBackendRows(network, menu.running, chosen);
+    const rows = chainBackendRows(
+      network,
+      menu.running,
+      chosen,
+      menu.lightClient,
+    );
     const choose = (role: ChainRole, backend: ChainBackend) => {
       saveChainBackends(
         storage,
@@ -154,13 +166,14 @@ function rowElement(
   select.id = id;
   select.dataset.chain = row.role;
   select.replaceChildren(
-    ...(["rpc", "light-client"] as const).map(
-      (backend) =>
-        new Option(
-          `${BACKEND_LABELS[backend]}${backend === row.defaultBackend ? " (default)" : ""}`,
-          backend,
-        ),
-    ),
+    ...(["rpc", "light-client"] as const).map((backend) => {
+      const option = new Option(
+        `${BACKEND_LABELS[backend]}${backend === row.defaultBackend ? " (default)" : ""}${backend === "light-client" && !row.lightClient ? " (no chain spec)" : ""}`,
+        backend,
+      );
+      option.disabled = backend === "light-client" && !row.lightClient;
+      return option;
+    }),
   );
   select.value = row.chosen;
   select.addEventListener("change", () =>

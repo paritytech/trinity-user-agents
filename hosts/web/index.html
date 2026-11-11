@@ -518,10 +518,47 @@
             <span id="core-dot" class="dev-dot" data-state="starting"></span>
             <span id="core-status">Starting the core…</span>
           </p>
-          <h2 id="network-title">Network</h2>
-          <label for="network" class="visually-hidden">Network</label>
+          <h2 id="network-title">Stack</h2>
+          <label for="network" class="visually-hidden">Stack</label>
           <select id="network"></select>
+          <p id="stack-trust" class="note"></p>
           <p class="note">Switching reloads the tab.</p>
+          <button id="stack-forget" type="button" hidden>
+            Forget this stack
+          </button>
+          <details class="fold" id="custom-stack">
+            <summary>Add a stack</summary>
+            <form id="custom-stack-form">
+              <label for="custom-stack-url">Descriptor URL or stack link</label>
+              <input
+                id="custom-stack-url"
+                type="text"
+                inputmode="url"
+                required
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck="false"
+                placeholder="https://…/.well-known/trinity-stack.json"
+              />
+              <p class="note">
+                A stack link with a key pins who signs the stack. A plain URL
+                pins nobody.
+              </p>
+              <button id="custom-stack-check" type="submit">Check</button>
+            </form>
+            <p id="custom-stack-status" class="note" role="status"></p>
+            <dl
+              id="custom-stack-summary"
+              class="versions stack-summary"
+              hidden
+            ></dl>
+            <div id="custom-stack-actions" class="row" hidden>
+              <button id="custom-stack-use" class="primary" type="button">
+                Add and use this stack
+              </button>
+              <button id="custom-stack-cancel" type="button">Cancel</button>
+            </div>
+          </details>
           <details class="fold" id="chain-backends">
             <summary>Chain connections</summary>
             <div id="chain-backend-rows" class="chain-backends"></div>

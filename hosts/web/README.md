@@ -28,6 +28,7 @@ From the repository root:
 make codegen                                   # also builds @parity/truapi
 npm run build --prefix js/packages/truapi-host
 npm run build --prefix js/packages/truapi-debugger
+npm run build --prefix js/packages/trinity-stack
 make wasm                                      # both truapi-host bundles and truapi-provider
 cd hosts/web && npm ci && npm run dev
 ```
@@ -197,18 +198,24 @@ servers are not disturbed. It refuses every request outside them and claims noth
 When running another host dev server beside an existing one, give it a separate Vite `cacheDir`. Concurrent servers
 sharing the dependency optimizer cache can fail with HTTP 504 `Outdated Optimize Dep`, before the core boots.
 
-## Networks and chains
+## Stacks and chains
 
-Account → **Network** selects the tab's network. A switch reloads the tab.
+Account → **Stack** selects the tab's Trinity stack. A switch reloads the tab.
 
-| Network       | TLD        |                             |
-| ------------- | ---------- | --------------------------- |
-| Paseo Next v2 | `.paseo`   | The default                 |
-| PreviewNet    | `.testnet` | The product preview network |
+| Stack         | TLD        |                                                  |
+| ------------- | ---------- | ------------------------------------------------ |
+| Paseo Next v2 | `.paseo`   | The default                                      |
+| Previewnet    | `.testnet` | The product preview network                      |
+| PCF Devnet    | `.dot`     | PCF's devnet on Paseo's chains, every chain RPC  |
 
-- Asset Hub, People and Bulletin use their RPC nodes by default. The relay uses the embedded light client.
-- Account → Network → **Chain connections** changes a chain's backend for the tab, applied on reload.
-- The host trusts the answers of a chain on its RPC node.
+- Each stack's chains, RPC nodes, TLD, DotNS resolver and services come from its descriptor. The build bundles the
+  CLI's signed copies; a newer published copy is fetched after boot and used from the next load.
+- **Add a stack** takes any descriptor URL or stack link. A link with a key pins its signer; a plain URL pins nobody.
+  Custom stacks run every chain on RPC, without backup or username search, and may reuse any stack's TLD or chains.
+- Asset Hub, People and Bulletin use their RPC nodes by default. The relay uses the embedded light client where the
+  provider's catalog holds it.
+- Account → Stack → **Chain connections** changes a chain's backend for the tab, applied on reload.
+- The host trusts the answers of a chain on its RPC node, after asking each node which chain it serves.
 
 Details: [docs/networks.md](docs/networks.md).
 
@@ -298,7 +305,7 @@ Three owners, kept apart by `tests/unit/boundaries.test.ts`:
 
 - `src/`: the host. `src/main.ts` is the composition root and `src/app/` the shell; `src/app/chat-products.ts` names the
   chat product every build bundles (Contact Chat).
-  - `src/platform/`: network, storage, wallets, the core's Web Worker, Statement Store access.
+  - `src/platform/`: stacks and their descriptors, network, storage, wallets, the core's Web Worker, Statement Store access.
   - `src/chat/`, `src/contacts/`, `src/products/`, `src/pocket/`, `src/notifications/`, `src/invitations/`,
     `src/backup/`: features. The host side of each bridge lives here too, such as `src/chat/draft/`.
   - `src/integrations/nova-chat/`: the host side of Nova Chat's own protocol (prototype): the key boundary that holds

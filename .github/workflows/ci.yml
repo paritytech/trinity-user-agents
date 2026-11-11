@@ -363,8 +363,9 @@ jobs:
 
           # The TrUAPI Web Host is typechecked against the TypeScript packages
           # and the provider's generated types, so it moves with their sources
-          # and with the generator behind the client.
-          gate host_web '^(hosts/web/|js/packages/(truapi|truapi-host|truapi-provider|truapi-debugger)/|rust/crates/(truapi|truapi-provider|truapi-codegen|truapi-macros)/|scripts/codegen\.sh$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'
+          # and with the generator behind the client. It bundles the CLI's
+          # signed stack descriptors and reads them with @parity/trinity-stack.
+          gate host_web '^(hosts/web/|js/packages/(truapi|truapi-host|truapi-provider|truapi-debugger|trinity-stack)/|rust/crates/(truapi|truapi-provider|truapi-codegen|truapi-macros|trinity-stack)/|rust/crates/truapi-host-cli/stacks/|scripts/codegen\.sh$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|\.github/workflows/ci\.yml$)'
 
           # The packaging path has its own inputs: the archive layout in the
           # Makefile, the runner bundle, the generated sources cli-dist refuses
@@ -737,13 +738,15 @@ jobs:
         run: npm ci --ignore-scripts
 
       # The host links these from this tree. The provider build supplies the
-      # types the host imports; no other WASM is built.
+      # types the host imports, and the trinity-stack build the WASM the host
+      # checks its stack descriptors with; no other WASM is built.
       - name: Build the packages the host links
         run: |
           npm run build --prefix js/packages/truapi
           npm run build --prefix js/packages/truapi-host
           npm run build --prefix js/packages/truapi-provider
           npm run build --prefix js/packages/truapi-debugger
+          npm run build --prefix js/packages/trinity-stack
 
       - name: Install host deps
         working-directory: hosts/web

@@ -4,6 +4,11 @@ import type { ContentSeed } from "./products/seed.js";
 declare global {
   /** Injected by `vite.config.ts` from the files this build serves. */
   const __BUILD_INFO__: BuildInfo;
+  /**
+   * Injected by `vite.config.ts`: whether a tab fetches its stack's published
+   * descriptor after boot. False with `WEB_SIGNING_STACK_REFRESH=0`.
+   */
+  const __STACK_REFRESH__: boolean;
   /** Injected by `browse-seed-plugin.ts`: the content this build ships, or null. */
   const __CONTENT_SEED__: ContentSeed | null;
   /** Injected by `contact-chat-plugin.ts`: whether this build holds Kettle Chat and the Chat tab. */

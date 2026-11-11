@@ -291,7 +291,7 @@ describe("product-name routing on PreviewNet", () => {
     expect(() => parseAddress("myapp.paseo", previewnet)).toThrow(
       "another network",
     );
-    expect(() => parseAddress("myapp.paseo", previewnet)).toThrow("PreviewNet");
+    expect(() => parseAddress("myapp.paseo", previewnet)).toThrow("Previewnet");
     expect(() => parseAddress("myapp.dot", previewnet)).toThrow(
       "another network",
     );

@@ -1,6 +1,7 @@
 import { asProductId, type ProductId } from "@parity/truapi";
 import {
   DEFAULT_NETWORK_CONFIG,
+  DOTNS_TLDS,
   type NetworkConfig,
 } from "../platform/network-config.js";
 import { parseProductUrl, productIdFor } from "../products/product.js";
@@ -20,12 +21,11 @@ export function normalizeAddress(raw: string): string {
 }
 
 /**
- * Every TLD the core treats as a dotNS name, one per network. It mirrors
- * `DOTNS_TLDS` in `rust/crates/truapi/src/dotns_name.rs`, and a test compares
- * the two. A host recognises all of them so that a name on another network
- * gets an explanation and is not opened as a web address.
+ * Every TLD the core treats as a dotNS name. A host recognises all of them so
+ * that a name on another stack gets an explanation and is not opened as a web
+ * address.
  */
-export const KNOWN_DOTNS_TLDS = ["dot", "paseo", "testnet"];
+export const KNOWN_DOTNS_TLDS = DOTNS_TLDS;
 
 /** What the address bar asks to open. */
 export type Address =

@@ -27,11 +27,12 @@ Three owners, which [`tests/unit/boundaries.test.ts`](../tests/unit/boundaries.t
     handle: a tap or a drag down closes it).
   - Prompts and callbacks: `callbacks.ts`, `prompt.ts`, `reviews.ts`, `requester.ts` (where the requester came from).
   - Account and Product tabs: `wallet-label.ts`, `wallet-panel.ts`, `account-status.ts`, `permissions-status.ts`,
-    `product-chain.ts`, `chain-backends.ts` (Chain connections), `versions.ts`.
+    `product-chain.ts`, `stack-menu.ts` (Stack), `chain-backends.ts` (Chain connections), `versions.ts`.
   - Helpers: `avatar-color.ts`, `copy.ts`, `serial-queue.ts`.
   - Bundled products: `chat-products.ts` (Contact Chat, in every build).
 - `platform/`: browser and chain facilities.
-  - Networks: `network.ts`, `network-config.ts`, `network-scope.ts`, `network-choice.ts`, `follow-spread.ts`.
+  - Networks: `network.ts`, `network-config.ts`, `stacks.ts`, `endpoint-check.ts`, `network-scope.ts`,
+    `network-choice.ts`, `follow-spread.ts`.
   - Storage and wallets: `storage.ts`, `wallets.ts`, `allowance-ledger.ts`, `dev-accounts.ts`.
   - Chain reads: `people-chain.ts`, `chain-directory.ts` (chat keys, usernames, owners), `subscription.ts`.
   - Statement Store: `statement-store.ts`, `statement-observer.ts`, `allowance-finality.ts` (grant reads, and the wait

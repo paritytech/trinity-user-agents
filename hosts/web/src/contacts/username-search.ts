@@ -13,8 +13,8 @@ import { NETWORKS, type NetworkConfig } from "../platform/network-config.js";
 /** Where the dev server answers username searches, under the host's base. */
 export const USERNAME_SEARCH_PATH = "__username-search";
 
-/** The backend's search route, on the network's `identityBackend` origin. */
-const UPSTREAM_PATH = "/api/v1/usernames/search";
+/** The backend's search route, under the network's `identityBackend` base URL. */
+const UPSTREAM_PATH = "api/v1/usernames/search";
 
 /** The search parameters passed on; the backend owns their rules. */
 const FORWARDED = ["prefix", "limit", "cursor"];

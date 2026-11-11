@@ -96,12 +96,16 @@ export interface RunningHost {
 
 /**
  * Start the host. `cacheDir` gives this server its own dependency cache, so it
- * cannot disturb a dev server that shares the default one.
+ * cannot disturb a dev server that shares the default one. `stackRefresh`
+ * lets its tabs fetch their stack's published descriptor.
  */
 export async function startHost(
-  options: { cacheDir?: string } = {},
+  options: { cacheDir?: string; stackRefresh?: boolean } = {},
 ): Promise<RunningHost> {
   const port = await freePort();
+  // A tab fetches its stack's published descriptor after boot. The specs refuse
+  // every request outside this host, so unless asked their tabs do not.
+  process.env.WEB_SIGNING_STACK_REFRESH = options.stackRefresh ? "1" : "0";
   const vite: ViteDevServer = await createViteServer({
     root: hostRoot,
     logLevel: "error",

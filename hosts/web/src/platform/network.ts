@@ -64,13 +64,30 @@ export interface Network {
 }
 
 /**
+ * The chains the light client can serve for `config`: those whose catalog
+ * chain spec has the stack's genesis hash, on a relay that does too. After a
+ * stack restarts from genesis, the bundled catalog describes chains that are
+ * gone until the provider ships new specs.
+ */
+export function lightClientChains(
+  config: NetworkConfig,
+  catalog: NetworkGenesis,
+): Set<ChainRole> {
+  const same = (role: ChainRole) =>
+    catalog[role].toLowerCase() === config.genesis[role].toLowerCase();
+  return new Set(same("relay") ? CHAIN_ROLES.filter((role) => same(role)) : []);
+}
+
+/**
  * Connect `config`'s network, each chain through the backend `backends` names.
  *
- * Genesis hashes come from the provider's bundled catalog rather than from
- * constants kept here, so the core config, the chain set reported to products
- * and the chains the light client syncs cannot disagree. Every chain starts
- * on the light client; a chain on `rpc` is then served by its RPC node
- * instead, and its answers are trusted from that node.
+ * Genesis hashes come from the stack's descriptor, so the core config, the
+ * chain set reported to products and the chains the provider routes cannot
+ * disagree. The light client starts from the provider's bundled catalog,
+ * which must hold the same chains: a chain on `light-client` whose catalog
+ * genesis differs, or of a stack with no catalog entry, is refused (see
+ * {@link lightClientChains}). A chain on
+ * `rpc` is served by its RPC node, and its answers are trusted from that node.
  */
 export async function connectNetwork(
   config: NetworkConfig,
@@ -79,17 +96,28 @@ export async function connectNetwork(
   await initProvider({ module_or_path: providerWasmUrl });
   const builder = new ChainProviderBuilder();
   builder.setConnectionTypes(hostConnectionTypes());
-  const chains = builder.addNetwork(config.catalogNetwork);
-  const genesis: NetworkGenesis = {
-    relay: chains.relay as HexString,
-    assetHub: chains.assethub as HexString,
-    people: chains.people as HexString,
-    bulletin: chains.bulletin as HexString,
-  };
-  chains.free();
-  for (const role of CHAIN_ROLES)
+  let servable = new Set<ChainRole>();
+  if (config.catalogNetwork !== null) {
+    const chains = builder.addNetwork(config.catalogNetwork);
+    servable = lightClientChains(config, {
+      relay: chains.relay as HexString,
+      assetHub: chains.assethub as HexString,
+      people: chains.people as HexString,
+      bulletin: chains.bulletin as HexString,
+    });
+    chains.free();
+  }
+  const genesis: NetworkGenesis = { ...config.genesis };
+  for (const role of CHAIN_ROLES) {
     if (backends[role] === "rpc")
       builder.addRpcChain(genesis[role], config.chains[role].rpc);
+    else if (!servable.has(role)) {
+      builder.free();
+      throw new Error(
+        `The light client has no chain spec for ${config.displayName}'s ${role} chain ${genesis[role]}; run it on its RPC node.`,
+      );
+    }
+  }
   const provider = builder.build();
 
   const open = new Set<JsonRpcConnection>();
@@ -101,7 +129,7 @@ export async function connectNetwork(
     backends,
     postingReady: () => postingChecked && !postingUnknown,
     supportedChains: {
-      network: config.id,
+      network: config.chainInfoNetwork,
       chains: [
         { identifier: "Relay", genesisHash: genesis.relay },
         { identifier: "AssetHub", genesisHash: genesis.assetHub },

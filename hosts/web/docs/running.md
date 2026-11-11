@@ -9,6 +9,7 @@ commit.
 make codegen                                        # also builds @parity/truapi
 npm run build --prefix js/packages/truapi-host
 npm run build --prefix js/packages/truapi-debugger
+npm run build --prefix js/packages/trinity-stack     # needs wasm-pack
 make wasm                                           # both truapi-host bundles and truapi-provider
 cd hosts/web && npm ci && npm run dev
 ```
@@ -18,6 +19,7 @@ Open <http://localhost:5180>. To try the playground, run `yarn dev` in `playgrou
 | Setting                                 | Effect                                                                     |
 | --------------------------------------- | -------------------------------------------------------------------------- |
 | `WEB_SIGNING_ALLOWED_HOSTS=a.example,…` | The dev server also answers these host names. By default only `localhost`. |
+| `WEB_SIGNING_STACK_REFRESH=0`           | Tabs keep their stack descriptor and do not fetch the published one.       |
 | `?product=<url>&productId=<id>`         | Fills the address and product id. It does not open the product.            |
 | `npm run dev -- --host`                 | Serves on every interface, for a phone on the same network.                |
 
