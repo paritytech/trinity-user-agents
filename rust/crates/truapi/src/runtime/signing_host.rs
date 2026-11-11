@@ -240,7 +240,7 @@ impl SigningHost {
 		&self.sso_withdrawals
 	}
 
-	/// Clear one product's grants and Allow once answers.
+	/// Clear one product's grants, Allow once answers and background renewal.
 	///
 	/// The wallet session and other products' grants are kept.
 	pub async fn clear_product_state(&self, product_id: &ProductId) -> Result<(), AuthorityError> {
@@ -250,6 +250,13 @@ impl SigningHost {
 			self.grants.lifecycle().revoke_product(product_id);
 			self.wallet.revoke_product(product_id);
 		}
+		// After the revision bump, so an allocation still in flight either
+		// records its target before this removes it or is refused.
+		self.wallet.untrack_product_renewal(product_id).await.map_err(|error| {
+			AuthorityError::Unavailable {
+				reason: format!("product renewal could not be stopped: {error}"),
+			}
+		})?;
 		if let Some(session) = self.wallet.current_session() {
 			let context = self.native_chat_context(&session).map_err(|error| {
 				AuthorityError::Unavailable {
@@ -618,6 +625,22 @@ impl ProductAuthority for SigningHost {
 		self.check_identity_activation(&context.activation_id)
 			.map_err(|error| error.reason)?;
 		Ok(self.wallet.current_session())
+	}
+
+	/// The revision bump first refuses any allocation for the product still in
+	/// flight, so it cannot record the target again after this removes it.
+	async fn statement_allowance_withdrawn(
+		&self,
+		product_id: &ProductId,
+		derivation_index: Option<&truapi::latest::DerivationIndex>,
+	) -> Result<(), AuthorityError> {
+		self.wallet.revoke_product(product_id);
+		self.wallet
+			.untrack_product_allowance_renewal(product_id, derivation_index)
+			.await
+			.map_err(|error| AuthorityError::Unavailable {
+				reason: format!("product renewal could not be stopped: {error}"),
+			})
 	}
 
 	async fn product_device_chat(

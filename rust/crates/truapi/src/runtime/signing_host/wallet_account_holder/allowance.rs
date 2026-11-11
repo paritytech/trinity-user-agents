@@ -1,6 +1,6 @@
 //! Wallet resource approval and allowance issuance.
 
-use tracing::debug;
+use tracing::{debug, warn};
 use truapi::latest as api;
 
 use super::WalletAccountHolder;
@@ -93,11 +93,19 @@ impl WalletAccountHolder {
 		let target = self.with_keys::<_, AllowanceAllocationError>(session, |keys| {
 			Ok(keys.statement_allowance_key(product_id)?.public.to_bytes())
 		})?;
-		// Release 0.30 also recorded a background renewal target here. Epoca
-		// keeps refusing product-scoped background renewal, which has no
-		// verified product authority (see `allowance_renewal`); a product asks
-		// again when its allowance lapses.
-		let period = self.ensure_statement_slot(session, product_id, target, policy).await?;
+		let revision = self.product_revision(session, product_id)?;
+		let period = self
+			.ensure_statement_slot(session, product_id, revision, target, policy)
+			.await?;
+		self.track_renewal(
+			session,
+			product_id,
+			revision,
+			super::allowance_renewal::StatementRenewalTarget::ProductStatementAllowance {
+				product_id: product_id.clone(),
+			},
+		)
+		.await;
 		self.with_keys(session, |keys| {
 			Ok(StatementStoreAllocation {
 				secret: keys.statement_allowance_key(product_id)?.secret.to_bytes().to_vec(),
@@ -118,21 +126,57 @@ impl WalletAccountHolder {
 			Ok(keys
 				.product_keypair(&api::ProductAccountId {
 					dot_ns_identifier: product_id.clone(),
-					derivation_index,
+					derivation_index: derivation_index.clone(),
 				})?
 				.public
 				.to_bytes())
 		})?;
-		self.ensure_statement_slot(session, product_id, target, policy)
-			.await
-			.map(|_| ())
+		let revision = self.product_revision(session, product_id)?;
+		self.ensure_statement_slot(session, product_id, revision, target, policy)
+			.await?;
+		self.track_renewal(
+			session,
+			product_id,
+			revision,
+			super::allowance_renewal::StatementRenewalTarget::product_account(
+				product_id,
+				&derivation_index,
+				target,
+			),
+		)
+		.await;
+		Ok(())
 	}
 
-	/// Find or register the statement slot `target` holds for this period.
+	/// Keep a product allowance renewed in the background, as release 0.30
+	/// does. A failed record leaves the allocation valid for this period; the
+	/// product's next request records it again.
+	async fn track_renewal(
+		&self,
+		session: &AuthoritySession,
+		product_id: &ProductId,
+		revision: u64,
+		target: super::allowance_renewal::StatementRenewalTarget,
+	) {
+		// Unchecked test allowances hold no slot on chain to renew.
+		#[cfg(feature = "test-host")]
+		if self.resource_controls.grants_allowances_unchecked() {
+			return;
+		}
+		if let Err(reason) =
+			self.track_product_renewal_for(session, product_id, revision, target).await
+		{
+			warn!(%product_id, %reason, "failed to record statement-store renewal target");
+		}
+	}
+
+	/// Find or register the statement slot `target` holds for this period,
+	/// fenced by the product `revision` the caller read.
 	async fn ensure_statement_slot(
 		&self,
 		session: &AuthoritySession,
 		product_id: &ProductId,
+		revision: u64,
 		target: [u8; 32],
 		policy: OnExistingAllowancePolicy,
 	) -> Result<u32, AllowanceAllocationError> {
@@ -142,7 +186,6 @@ impl WalletAccountHolder {
 			register_statement_account_pooled, scan_collections,
 		};
 
-		let revision = self.product_revision(session, product_id)?;
 		// Test signatures use real keys without claiming on-chain registration.
 		#[cfg(feature = "test-host")]
 		if self.resource_controls.grants_allowances_unchecked() {

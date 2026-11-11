@@ -881,9 +881,16 @@ impl ProductRuntimeHost {
 	) -> Result<(), latest::GenericError> {
 		let account_access =
 			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
+		let withdrawn = crate::host_core::withdrawn_statement_allowance(&request, status);
 		self.connection.set_permission_authorization_status(request, status).await?;
 		if account_access {
 			self.accounts.consent().forget_allowed_once_for(self.connection.product_id());
+		}
+		if let Some(derivation_index) = withdrawn {
+			self.accounts
+				.statement_allowance_withdrawn(derivation_index.as_ref())
+				.await
+				.map_err(|error| latest::GenericError { reason: error.to_string() })?;
 		}
 		Ok(())
 	}

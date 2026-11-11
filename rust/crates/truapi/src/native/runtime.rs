@@ -668,14 +668,32 @@ impl NativeTrUApiHostRuntime {
 			.permissions_service()
 			.set_canonical_authorization_status(&request, status)
 			.await
-			.map_err(Into::into);
+			.map_err(HostRejection::from);
 		if matches!(request, PermissionAuthorizationRequest::AccountAccess { .. }) {
 			self.runtime.forget_account_access_approvals(&product.product_id);
 		}
 		if status != PermissionAuthorizationStatus::Authorized {
 			self.close_permission_executions(&product.product_id, &request);
 		}
-		result
+		result?;
+		self.stop_withdrawn_allowance_renewal(&product.product_id, &request, status)
+			.await
+	}
+
+	async fn stop_withdrawn_allowance_renewal(
+		&self,
+		product_id: &ProductId,
+		request: &PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), HostRejection> {
+		if let Some(derivation_index) =
+			crate::host_core::withdrawn_statement_allowance(request, status)
+		{
+			self.runtime
+				.stop_statement_allowance_renewal(product_id, derivation_index.as_ref())
+				.await?;
+		}
+		Ok(())
 	}
 
 	/// Atomically commit a legacy prompt only if no settings edit superseded
@@ -703,6 +721,10 @@ impl NativeTrUApiHostRuntime {
 		}
 		if status != PermissionAuthorizationStatus::Authorized && !matches!(result, Ok(false)) {
 			self.close_permission_executions(&product.product_id, &request);
+		}
+		if matches!(result, Ok(true)) {
+			self.stop_withdrawn_allowance_renewal(&product.product_id, &request, status)
+				.await?;
 		}
 		result.map_err(Into::into)
 	}

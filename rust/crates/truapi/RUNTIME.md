@@ -118,11 +118,12 @@ quota (`Increase`) and always requires per-operation confirmation. Its initial a
 grant in that same review; cancelling an increase never revokes a previously authorized grant. Denied grants, storage
 failures, session changes, and changed administrative decisions block allocation.
 
-Revocation blocks subsequent provisioning but does not withdraw already issued on-chain quota. Product grants no longer
-create background renewal promises: the signing host's global storage cannot resolve an artifact-scoped decision. Old
-product-derived renewal entries are pruned; wallet and paired-device renewal remain enabled. Next-period provisioning
-happens on demand through the product's scoped runtime. A remote signing host retains its independent per-operation
-confirmation; the product grant does not silently authorize another host.
+Revocation blocks subsequent provisioning but does not withdraw already issued on-chain quota. A product's statement
+allowance (its allowance account, or its product account at an index) is recorded in the wallet's renewal ledger when it
+is allocated and renewed in the background with wallet and paired-device targets. Denying or resetting that grant, or
+clearing the product's state, removes the entry and bumps the product's wallet revision, so an allocation still in
+flight cannot record it again. The renewal pass itself runs only in native hosts. A remote signing host retains its
+independent per-operation confirmation; the product grant does not silently authorize another host.
 
 ```text
 Product app

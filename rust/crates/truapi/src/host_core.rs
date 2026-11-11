@@ -178,6 +178,22 @@ fn product_context(product_id: &ProductId) -> ProductContext {
 	ProductContext::new_with_execution(product_id.clone(), ExecutableKind::App)
 }
 
+/// The statement allowance a settings edit withdraws, if any: a denial or a
+/// reset of a `StatementStoreAllowance` grant ends its background renewal.
+pub(crate) fn withdrawn_statement_allowance(
+	request: &PermissionAuthorizationRequest,
+	status: PermissionAuthorizationStatus,
+) -> Option<Option<v01::DerivationIndex>> {
+	match request {
+		PermissionAuthorizationRequest::StatementStoreAllowance { derivation_index }
+			if status != PermissionAuthorizationStatus::Authorized =>
+		{
+			Some(derivation_index.clone())
+		},
+		_ => None,
+	}
+}
+
 /// A seedless pairing host: the user's keys live in an external wallet reached
 /// over the SSO pairing channel.
 ///
@@ -1382,6 +1398,7 @@ impl SigningHostRuntime {
 	) -> Result<(), v01::GenericError> {
 		let account_access =
 			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
+		// The product runtime also stops renewal of a withdrawn statement allowance.
 		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
 			.await?;
@@ -1389,6 +1406,23 @@ impl SigningHostRuntime {
 			self.signing_host.consent().forget_allowed_once_for(product_id);
 		}
 		Ok(())
+	}
+
+	/// Stop background renewal of a statement allowance after a native
+	/// settings edit, which writes the decision without the product runtime.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub(crate) async fn stop_statement_allowance_renewal(
+		&self,
+		product_id: &ProductId,
+		derivation_index: Option<&v01::DerivationIndex>,
+	) -> Result<(), v01::GenericError> {
+		crate::runtime::ProductAuthority::statement_allowance_withdrawn(
+			self.signing_host.as_ref(),
+			product_id,
+			derivation_index,
+		)
+		.await
+		.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
 	/// Drop execution-local account approvals after a native settings mutation.

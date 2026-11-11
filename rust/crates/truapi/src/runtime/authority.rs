@@ -781,6 +781,16 @@ pub trait ProductAuthority: Send + Sync {
 	async fn refresh_session_identity(&self) -> Result<Option<AuthoritySession>, String> {
 		Ok(self.current_session())
 	}
+
+	/// The user denied or reset a statement allowance grant for `product_id`:
+	/// stop renewing it in the background. Only a wallet renews allowances.
+	async fn statement_allowance_withdrawn(
+		&self,
+		_product_id: &ProductId,
+		_derivation_index: Option<&truapi::latest::DerivationIndex>,
+	) -> Result<(), AuthorityError> {
+		Ok(())
+	}
 	/// Sign an RFC-0023 Merlin transcript with a product account.
 	async fn sign_vrf(
 		&self,

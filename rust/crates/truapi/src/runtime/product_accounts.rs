@@ -54,6 +54,16 @@ impl ProductAccounts {
 		self.authority.refresh_session_identity().await
 	}
 
+	/// Stop background renewal of this product's withdrawn statement allowance.
+	pub async fn statement_allowance_withdrawn(
+		&self,
+		derivation_index: Option<&truapi::latest::DerivationIndex>,
+	) -> Result<(), AuthorityError> {
+		self.authority
+			.statement_allowance_withdrawn(&self.product.product_id, derivation_index)
+			.await
+	}
+
 	/// Core-owned observers retain a weak reference rather than extending authority lifetime.
 	pub(super) fn authority(&self) -> &Arc<dyn ProductAuthority> {
 		&self.authority

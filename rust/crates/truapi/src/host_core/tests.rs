@@ -57,6 +57,61 @@ fn activated_signing_runtime(platform: Arc<StubPlatform>) -> SigningHostRuntime 
 	runtime
 }
 
+/// Denying or resetting a statement allowance grant in settings stops its
+/// background renewal, and only that allowance's.
+#[test]
+fn a_withdrawn_allowance_grant_stops_its_background_renewal() {
+	use crate::{
+		platform::PermissionAuthorizationRequest,
+		runtime::{StatementRenewalTarget, TrackedStatementRenewalTarget},
+	};
+
+	let runtime = activated_signing_runtime(Arc::new(StubPlatform::default()));
+	let product_id = ProductId::for_test("myapp.dot");
+	let allowance =
+		StatementRenewalTarget::ProductStatementAllowance { product_id: product_id.clone() };
+	let account = |index: u32| StatementRenewalTarget::Account {
+		account_id: [index as u8 + 1; 32],
+		label: format!("product-account:myapp.dot:{index}"),
+	};
+	let renewed = || {
+		futures::executor::block_on(runtime.statement_renewal_targets())
+			.unwrap()
+			.into_iter()
+			.map(|TrackedStatementRenewalTarget { target, .. }| target)
+			.collect::<Vec<_>>()
+	};
+	futures::executor::block_on(runtime.track_statement_renewal_targets(vec![
+		allowance,
+		account(0),
+		account(1),
+	]))
+	.unwrap();
+
+	for (derivation_index, status) in [
+		(None, PermissionAuthorizationStatus::Denied),
+		(Some(v01::DerivationIndex::Index(0)), PermissionAuthorizationStatus::NotDetermined),
+	] {
+		futures::executor::block_on(runtime.set_permission_authorization_status(
+			&product_id,
+			PermissionAuthorizationRequest::StatementStoreAllowance { derivation_index },
+			status,
+		))
+		.unwrap();
+	}
+	assert_eq!(renewed(), vec![account(1)]);
+
+	futures::executor::block_on(runtime.set_permission_authorization_status(
+		&product_id,
+		PermissionAuthorizationRequest::StatementStoreAllowance {
+			derivation_index: Some(v01::DerivationIndex::Index(1)),
+		},
+		PermissionAuthorizationStatus::Authorized,
+	))
+	.unwrap();
+	assert_eq!(renewed(), vec![account(1)], "a grant does not stop renewal");
+}
+
 /// An answer changed in settings applies at once: a product that was allowed
 /// once is asked again after the user resets its account access.
 #[test]

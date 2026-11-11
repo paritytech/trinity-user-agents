@@ -22,12 +22,14 @@ An explicit approval can establish a missing durable grant in its single review;
 cancelling a subsequent increase does not revoke that grant. Durable grants
 authorize implicit provisioning, not unlimited additional funding.
 
-Product grant-derived background renewal is disabled, and old product ledger
-entries are pruned: the signing host cannot resolve artifact-scoped permission
-storage from a product id alone. Next-period provisioning happens on demand.
-Wallet and paired-device background renewal remain independent. Revocation
-stops subsequent provisioning, not already issued on-chain quota. Paired signing
-hosts retain their separate confirmation boundary.
+Product statement allowances are renewed in the background, as in release
+0.30, from the wallet's renewal ledger. Denying or resetting a product's
+statement allowance grant, or clearing the product's state, removes that
+allowance from the ledger and refuses allocations still in flight, so renewal
+never outlives the user's decision. Wallet and paired-device background
+renewal remain independent. Revocation does not withdraw quota already issued
+for the current period. Paired signing hosts retain their separate
+confirmation boundary.
 
 ## Motivation
 

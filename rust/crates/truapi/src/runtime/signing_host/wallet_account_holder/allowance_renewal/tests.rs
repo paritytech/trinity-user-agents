@@ -703,36 +703,66 @@ fn a_renewal_target_does_not_name_its_account_in_full() {
 	assert_eq!(written, r#"Account { account_id: abababab, label: "pairing peer" }"#);
 }
 
+/// Product allowances are renewed in the background, as release 0.30 does,
+/// until the user clears that product: then only its targets leave the ledger.
 #[test]
-fn background_renewal_rejects_and_prunes_unscoped_product_targets() {
+fn clearing_a_product_stops_only_its_background_renewal() {
 	let storage = Arc::new(MemStorage::default());
 	let wallet = wallet_for(storage.clone(), 7);
 	let session = wallet.current_session().unwrap();
-	let raw_product = StatementRenewalTarget::Account {
-		account_id: [8; 32],
-		label: "product-account:a.dot:0".to_string(),
-	};
+	let a = ProductId::for_test("a.dot");
+	let a_account = StatementRenewalTarget::product_account(
+		&a,
+		&truapi::latest::DerivationIndex::Index(0),
+		[8; 32],
+	);
 	futures::executor::block_on(async {
-		for target in [product("a.dot"), raw_product.clone()] {
-			assert!(matches!(
-				wallet.track_statement_renewal_targets(vec![target]).await,
-				Err(StatementRenewalError::ProductAuthorizationRequired)
-			));
+		for (product_id, target) in [
+			(&a, product("a.dot")),
+			(&a, a_account.clone()),
+			(&ProductId::for_test("b.dot"), product("b.dot")),
+		] {
+			let revision = wallet.product_revision(&session, product_id).unwrap();
+			wallet
+				.track_product_renewal_for(&session, product_id, revision, target)
+				.await
+				.unwrap();
 		}
-		assert_eq!(storage.writes(), 0);
-		let entries = vec![
-			TrackedStatementRenewalTarget::new(product("a.dot"), session.public_key),
-			TrackedStatementRenewalTarget::new(raw_product, session.public_key),
-			TrackedStatementRenewalTarget::new(
-				StatementRenewalTarget::WalletSso,
-				session.public_key,
-			),
-		];
-		write_entries(storage.as_ref(), &entries).await.unwrap();
-		assert_eq!(decode_entries(&entries.encode()).unwrap(), entries);
+		wallet
+			.track_statement_renewal_targets(vec![StatementRenewalTarget::WalletSso])
+			.await
+			.unwrap();
 		let (targets, pruned) = wallet.owned_targets(&session).await.unwrap();
-		assert_eq!(targets, vec![StatementRenewalTarget::WalletSso]);
-		assert_eq!(pruned, vec!["product:a.dot", "product-account:a.dot:0"]);
+		assert_eq!(
+			targets,
+			vec![product("a.dot"), a_account, product("b.dot"), StatementRenewalTarget::WalletSso]
+		);
+		assert!(pruned.is_empty());
+
+		wallet.untrack_product_renewal(&a).await.unwrap();
+		let (targets, _) = wallet.owned_targets(&session).await.unwrap();
+		assert_eq!(targets, vec![product("b.dot"), StatementRenewalTarget::WalletSso]);
+	});
+}
+
+/// An allocation that finishes after its product was reset must not leave a
+/// renewal promise behind for grants the user already withdrew.
+#[test]
+fn a_product_reset_refuses_a_late_renewal_record() {
+	let storage = Arc::new(MemStorage::default());
+	let wallet = wallet_for(storage.clone(), 7);
+	let session = wallet.current_session().unwrap();
+	let a = ProductId::for_test("a.dot");
+	futures::executor::block_on(async {
+		let revision = wallet.product_revision(&session, &a).unwrap();
+		wallet.revoke_product(&a);
+		assert!(
+			wallet
+				.track_product_renewal_for(&session, &a, revision, product("a.dot"))
+				.await
+				.is_err()
+		);
+		assert_eq!(storage.writes(), 0);
 	});
 }
 

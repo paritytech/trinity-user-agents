@@ -5,15 +5,13 @@
 //! the host rotates to a new root entropy. A pass resolves them against the
 //! active wallet and runs the chain-pure pass in `statement_allowance::renewal`.
 //!
-//! Background renewal has no verified artifact-scoped product authority.
-//! Product targets remain decodable for inspection and migration, but must be
-//! authorized on demand and are never retained as background grants.
+//! Product allowances are renewed in the background like every other target
+//! until the user clears the product's state, which drops them from the
+//! ledger so renewal cannot outlive the product's grants.
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::platform::CoreStorage;
 use crate::{
 	host_logic::product_account::ProductAccountError,
-	platform::{CoreStorageKey, ProductId},
+	platform::{CoreStorage, CoreStorageKey, ProductId},
 	runtime::{
 		authority::{AccountHolder, AuthorityError, AuthoritySession},
 		statement_allowance::StatementAllowanceError,
@@ -22,8 +20,9 @@ use crate::{
 };
 use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};
+use tracing::warn;
 #[cfg(not(target_arch = "wasm32"))]
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::PersonhoodCollection;
@@ -71,9 +70,6 @@ pub enum StatementRenewalError {
 		"signing account is not a member of any personhood ring; cannot renew statement-store allowances"
 	)]
 	MissingPersonhoodMembership,
-	/// Background work cannot recover the artifact-scoped product authorization.
-	#[error("product statement allowances require an authorized product request")]
-	ProductAuthorizationRequired,
 }
 
 impl From<StatementRenewalError> for GenericError {
@@ -104,14 +100,53 @@ pub enum StatementRenewalTarget {
 }
 
 impl StatementRenewalTarget {
-	#[cfg(not(target_arch = "wasm32"))]
-	fn is_product_grant(&self) -> bool {
+	/// The account a product's own key registered directly, at `index`.
+	pub(super) fn product_account(
+		product_id: &ProductId,
+		index: &truapi::latest::DerivationIndex,
+		account_id: [u8; 32],
+	) -> Self {
+		Self::Account { account_id, label: product_account_label(product_id, index) }
+	}
+
+	/// Whether renewing this target serves `product_id`'s grants.
+	fn serves(&self, product_id: &ProductId) -> bool {
 		match self {
-			Self::ProductStatementAllowance { .. } => true,
-			Self::Account { label, .. } => label.starts_with("product-account:"),
+			Self::ProductStatementAllowance { product_id: owner } => owner == product_id,
+			Self::Account { label, .. } => label
+				.strip_prefix("product-account:")
+				.and_then(|rest| rest.rsplit_once(':'))
+				.is_some_and(|(owner, _)| owner == product_id.as_str()),
 			Self::WalletSso => false,
 		}
 	}
+
+	/// Whether this target keeps the allowance one grant authorizes: the
+	/// allowance account (`None`) or the product account at an index.
+	fn renews_grant(
+		&self,
+		product_id: &ProductId,
+		derivation_index: Option<&truapi::latest::DerivationIndex>,
+	) -> bool {
+		match (self, derivation_index) {
+			(Self::ProductStatementAllowance { product_id: owner }, None) => owner == product_id,
+			(Self::Account { label, .. }, Some(index)) => {
+				*label == product_account_label(product_id, index)
+			},
+			_ => false,
+		}
+	}
+}
+
+fn product_account_label(
+	product_id: &ProductId,
+	index: &truapi::latest::DerivationIndex,
+) -> String {
+	let index = match index {
+		truapi::latest::DerivationIndex::Index(index) => index.to_string(),
+		truapi::latest::DerivationIndex::Raw(raw) => hex::encode(raw),
+	};
+	format!("product-account:{product_id}:{index}")
 }
 
 /// Renewal recipes follow the active wallet; fixed accounts belong to their recorded owner.
@@ -127,7 +162,6 @@ pub struct TrackedStatementRenewalTarget {
 
 impl TrackedStatementRenewalTarget {
 	/// Record `target` under `owner`, which only raw account ids retain.
-	#[cfg(not(target_arch = "wasm32"))]
 	fn new(target: StatementRenewalTarget, owner: [u8; 32]) -> Self {
 		let owner = match &target {
 			StatementRenewalTarget::Account { .. } => Some(owner),
@@ -189,7 +223,6 @@ impl RenewalState {
 }
 
 /// Discard unreadable entries; later allocations rebuild the ledger.
-#[cfg(not(target_arch = "wasm32"))]
 async fn read_entries(
 	storage: &(impl CoreStorage + ?Sized),
 ) -> Result<Vec<TrackedStatementRenewalTarget>, StatementRenewalError> {
@@ -209,7 +242,6 @@ async fn read_entries(
 	}
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 async fn write_entries(
 	storage: &(impl CoreStorage + ?Sized),
 	entries: &[TrackedStatementRenewalTarget],
@@ -310,13 +342,36 @@ impl WalletAccountHolder {
 		session: &AuthoritySession,
 		targets: Vec<StatementRenewalTarget>,
 	) -> Result<(), StatementRenewalError> {
-		if targets.iter().any(StatementRenewalTarget::is_product_grant) {
-			return Err(StatementRenewalError::ProductAuthorizationRequired);
-		}
+		self.track_targets(session, targets, None).await
+	}
+
+	/// Track `target` for `product_id` only while the product's state is still
+	/// the one `revision` observed. The check runs under the ledger lock that
+	/// [`Self::untrack_product_renewal`] takes, so a reset either removes the
+	/// entry afterwards or this refuses to write it.
+	pub(super) async fn track_product_renewal_for(
+		&self,
+		session: &AuthoritySession,
+		product_id: &ProductId,
+		revision: u64,
+		target: StatementRenewalTarget,
+	) -> Result<(), StatementRenewalError> {
+		self.track_targets(session, vec![target], Some((product_id, revision))).await
+	}
+
+	async fn track_targets(
+		&self,
+		session: &AuthoritySession,
+		targets: Vec<StatementRenewalTarget>,
+		product: Option<(&ProductId, u64)>,
+	) -> Result<(), StatementRenewalError> {
 		let _guard = self.renewal.ledger_lock().lock().await;
 		self.require_current_session(session)?;
 		let mut entries = read_entries(self.services.platform.as_ref()).await?;
 		self.require_current_session(session)?;
+		if let Some((product_id, revision)) = product {
+			self.require_product_revision(session, product_id, revision)?;
+		}
 		let mut changed = false;
 		for target in targets {
 			let entry = TrackedStatementRenewalTarget::new(target, session.public_key);
@@ -328,6 +383,40 @@ impl WalletAccountHolder {
 		if changed {
 			write_entries(self.services.platform.as_ref(), &entries).await?;
 			self.require_current_session(session)?;
+		}
+		Ok(())
+	}
+
+	/// Stop renewing every allowance kept for `product_id`, whichever identity
+	/// recorded it. Clearing a product's state calls this so background
+	/// renewal never outlives the grants the user withdrew.
+	pub async fn untrack_product_renewal(
+		&self,
+		product_id: &ProductId,
+	) -> Result<(), StatementRenewalError> {
+		self.untrack_where(|target| target.serves(product_id)).await
+	}
+
+	/// Stop renewing the allowance one withdrawn grant had authorized.
+	pub async fn untrack_product_allowance_renewal(
+		&self,
+		product_id: &ProductId,
+		derivation_index: Option<&truapi::latest::DerivationIndex>,
+	) -> Result<(), StatementRenewalError> {
+		self.untrack_where(|target| target.renews_grant(product_id, derivation_index))
+			.await
+	}
+
+	async fn untrack_where(
+		&self,
+		drop: impl Fn(&StatementRenewalTarget) -> bool,
+	) -> Result<(), StatementRenewalError> {
+		let _guard = self.renewal.ledger_lock().lock().await;
+		let mut entries = read_entries(self.services.platform.as_ref()).await?;
+		let original_len = entries.len();
+		entries.retain(|entry| !drop(&entry.target));
+		if entries.len() != original_len {
+			write_entries(self.services.platform.as_ref(), &entries).await?;
 		}
 		Ok(())
 	}
@@ -479,12 +568,11 @@ impl WalletAccountHolder {
 		self.require_current_session(session)?;
 		let entries = read_entries(self.services.platform.as_ref()).await?;
 		self.require_current_session(session)?;
-		let (owned, foreign): (Vec<_>, Vec<_>) = entries.into_iter().partition(|entry| {
-			entry.is_owned_by(session.public_key) && !entry.target.is_product_grant()
-		});
+		let (owned, foreign): (Vec<_>, Vec<_>) =
+			entries.into_iter().partition(|entry| entry.is_owned_by(session.public_key));
 		let pruned: Vec<String> = foreign.iter().map(|entry| target_label(&entry.target)).collect();
 		if !foreign.is_empty() {
-			warn!(dropped = ?pruned, "pruning foreign or unscoped product renewal targets");
+			warn!(dropped = ?pruned, "pruning renewal targets promised by a previous identity");
 			write_entries(self.services.platform.as_ref(), &owned).await?;
 		}
 		Ok((owned.into_iter().map(|entry| entry.target).collect(), pruned))
