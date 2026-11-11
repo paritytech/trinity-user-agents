@@ -64,7 +64,7 @@ private extension FundingCompletionGlyph {
             loader: 1,
             shaft: 0,
             legs: 0,
-            arrowScale: PurseMotion.Completion.arrowStartScale,
+            arrowScale: FundingActivityTiming.Completion.arrowStartScale,
             outline: 0,
             dot: 0,
             crossFirst: 0,
@@ -127,11 +127,11 @@ private extension FundingCompletionGlyph {
             var faded = Stage.rest
             faded.fade = 0
             stage = faded
-            withAnimation(.easeOut(duration: PurseMotion.Completion.outline)) { stage.fade = 1 }
+            withAnimation(.easeOut(duration: FundingActivityTiming.Completion.outline)) { stage.fade = 1 }
             return
         }
 
-        typealias Timing = PurseMotion.Completion
+        typealias Timing = FundingActivityTiming.Completion
         withAnimation(.easeOut(duration: Timing.loaderOut)) { stage.loader = 0 }
         if kind == .failed {
             withAnimation(.easeOut(duration: Timing.crossStroke).delay(Timing.crossFirstDelay)) { stage.crossFirst = 1 }
@@ -240,12 +240,12 @@ struct FundingArrival: ViewModifier {
     func body(content: Content) -> some View {
         content
             .opacity(settled ? 1 : 0)
-            .blur(radius: settled || reduceMotion ? 0 : PurseMotion.Arrival.blur)
-            .offset(y: settled || reduceMotion ? 0 : PurseMotion.Arrival.offset)
+            .blur(radius: settled || reduceMotion ? 0 : FundingActivityTiming.Arrival.blur)
+            .offset(y: settled || reduceMotion ? 0 : FundingActivityTiming.Arrival.offset)
             .onAppear {
                 guard !settled else { return }
 
-                let timing = PurseMotion.Arrival.self
+                let timing = FundingActivityTiming.Arrival.self
                 withAnimation(.easeOut(duration: timing.duration).delay(timing.delay)) { settled = true }
             }
     }

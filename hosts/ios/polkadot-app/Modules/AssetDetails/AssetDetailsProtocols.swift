@@ -9,6 +9,7 @@ import TrUAPIHost
 protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
     func didSetCards(viewModels: [WalletCardCreateViewModel])
     func didReceiveData(viewModel: WalletCardDataViewModel, index: Int)
+    func didReceive(readyAmount: BalanceViewModelProtocol?)
     func didReceive(paymentAsset: PaymentAssetViewModelProtocol)
     func didReceive(isRecoveryInProgress: Bool)
     func didShowBackupNotification()

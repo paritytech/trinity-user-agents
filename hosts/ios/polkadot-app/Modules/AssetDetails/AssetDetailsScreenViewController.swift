@@ -13,10 +13,9 @@ import UIKitExt
 final class AssetDetailsScreenViewController: UIViewController {
     private let viewModel: AssetDetailsViewModel
     private weak var origin: PocketOrigin?
-    private let cash: FundingCash
     private let state = AssetDetailsScreenState()
     private lazy var hosting = UIHostingController(
-        rootView: AssetDetailsScreenRoot(viewModel: viewModel, state: state, cash: cash)
+        rootView: AssetDetailsScreenRoot(viewModel: viewModel, state: state)
     )
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
     private let titleLabel: PolkadotUI.Label = .create { view in
@@ -24,14 +23,11 @@ final class AssetDetailsScreenViewController: UIViewController {
         view.textColor = .fgPrimary
     }
 
-    private let purseTitleView = PurseTitleView()
-
     private var isInFlight = false
 
-    init(viewModel: AssetDetailsViewModel, origin: PocketOrigin?, cash: FundingCash) {
+    init(viewModel: AssetDetailsViewModel, origin: PocketOrigin?) {
         self.viewModel = viewModel
         self.origin = origin
-        self.cash = cash
 
         super.init(nibName: nil, bundle: nil)
     }
@@ -47,7 +43,6 @@ final class AssetDetailsScreenViewController: UIViewController {
         view.backgroundColor = .bgSurfaceMain
         setupTitle()
         setupHistoryButton()
-        state.onCollapse = { [weak self] progress in self?.fadeTitle(progress: progress) }
         setupHosting()
         pullDown.install()
     }
@@ -154,7 +149,7 @@ private extension AssetDetailsScreenViewController {
         navigationItem.style = .navigator
 
         guard #available(iOS 26, *) else {
-            navigationItem.titleView = purseTitleView
+            navigationItem.title = title
             return
         }
 
@@ -178,13 +173,6 @@ private extension AssetDetailsScreenViewController {
         navigationItem.rightBarButtonItem = item
     }
 
-    /// The title gives way as the card shrinks into the header in its place.
-    func fadeTitle(progress: CGFloat) {
-        let opacity = PurseMotion.Collapse.titleOpacity(progress)
-        titleLabel.alpha = opacity
-        purseTitleView.apply(progress: progress)
-    }
-
     func setupHosting() {
         addChild(hosting)
         view.addSubview(hosting.view)
@@ -202,22 +190,14 @@ private extension AssetDetailsScreenViewController {
 private final class AssetDetailsScreenState {
     var isCardHidden = false
     @ObservationIgnored var cardFrame: CGRect = .zero
-    /// How far the card has shrunk into the header, 0 to 1.
-    @ObservationIgnored var onCollapse: ((CGFloat) -> Void)?
 }
 
-/// The Balance card with its details open, the details under the card. As the details scroll up, the card
-/// shrinks into the header and a bar with the current balance takes its place.
+/// The Balance card with its details open, the details under the card.
 private struct AssetDetailsScreenRoot: View {
     let viewModel: AssetDetailsViewModel
     let state: AssetDetailsScreenState
-    let cash: FundingCash
 
     @State private var overscroll = DSOverscroll()
-    @State private var card: PurseScroll.Card?
-    @State private var scrollOffset: CGFloat?
-    @State private var navigationBar: CGRect?
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView {
@@ -227,78 +207,12 @@ private struct AssetDetailsScreenRoot: View {
                 onCardTapped: {},
                 overscroll: overscroll,
                 isCardHidden: state.isCardHidden,
-                onCardFrame: { state.cardFrame = $0 },
-                cardOpacity: cardOpacity,
-                cash: cash
+                onCardFrame: { state.cardFrame = $0 }
             )
             .padding(.horizontal, PocketCardSize.sideMargin)
             .padding(.top, 16)
         }
         .modifier(OverscrollReader(overscroll: overscroll))
-        .modifier(ScrollOffsetReader(offset: $scrollOffset))
-        .coordinateSpace(name: PurseScroll.space)
-        .background { NavigationBarFrameReader { navigationBar = $0 } }
-        .onPreferenceChange(PurseScroll.CardKey.self) { card = $0 }
-        .onChange(of: collapse) { _, progress in state.onCollapse?(progress) }
-        .overlay(alignment: .top) { stickyBar }
-        .overlay { headerCard }
-    }
-}
-
-private extension AssetDetailsScreenRoot {
-    /// How far the details have scrolled from their top.
-    var offset: CGFloat {
-        if let scrollOffset { return max(0, scrollOffset) }
-        return card.map { PurseMotion.Collapse.scrollOffset(cardTop: $0.top) } ?? 0
-    }
-
-    var collapse: CGFloat {
-        PurseMotion.Collapse.progress(scrollOffset: offset)
-    }
-
-    /// The page's card before any scroll, in the window.
-    var restFrame: CGRect? {
-        guard let frame = card?.frame, frame.width > 0 else { return nil }
-        return frame.offsetBy(dx: 0, dy: offset)
-    }
-
-    var dockCentre: CGPoint? {
-        navigationBar.map { CGPoint(x: $0.midX, y: $0.midY) }
-    }
-
-    /// Whether the screen draws the card itself, shrinking into the header. Never while the Pocket draws it in
-    /// flight.
-    var cardFloats: Bool {
-        !state.isCardHidden && !reduceMotion && collapse > 0 && restFrame != nil && dockCentre != nil
-    }
-
-    var cardOpacity: Double {
-        if cardFloats { return 0 }
-        return reduceMotion ? PurseMotion.Collapse.cardOpacity(collapse) : 1
-    }
-
-    @ViewBuilder
-    var headerCard: some View {
-        if !state.isCardHidden, let dock = dockCentre {
-            if reduceMotion {
-                PurseDockedThumbnail(dock: dock, opacity: PurseMotion.Collapse.thumbnailOpacity(collapse))
-            } else if cardFloats, let rest = restFrame, let model = viewModel.balanceCardModel {
-                PurseFloatingCard(
-                    card: model,
-                    isUpdating: viewModel.isUpdating,
-                    rest: rest,
-                    scrollOffset: offset,
-                    dock: dock
-                )
-            }
-        }
-    }
-
-    @ViewBuilder
-    var stickyBar: some View {
-        if let bar = PurseScroll.bar(card: card) {
-            PurseStickyBar(bar: bar, cash: cash)
-        }
     }
 }
 
