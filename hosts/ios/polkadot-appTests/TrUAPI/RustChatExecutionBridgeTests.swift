@@ -49,6 +49,18 @@ struct RustChatExecutionBridgeTests {
         #expect(api.roomFooters.map(\.roomId) == ["r", "r"])
     }
 
+    @Test func setRoomFooterForwardsADockedCard() async throws {
+        let api = RecordingChatMessaging()
+        let bridge = await makeBridge(api: api)
+
+        try await bridge.setRoomFooter(
+            roomId: "r",
+            footer: .card(ChatCustomMessage(messageType: "register", payload: Data([1])))
+        )
+
+        #expect(api.roomFooters.map(\.footer) == [.card(messageType: "register", payload: Data([1]))])
+    }
+
     @Test func setRoomFooterRejectsAnEmptyRoom() async throws {
         let api = RecordingChatMessaging()
         let bridge = await makeBridge(api: api)

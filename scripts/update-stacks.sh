@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Refresh each stack descriptor in stacks/, the copies truapi-host bundles, from its link.
+# Refresh each stack descriptor in stacks/, the copies host builds bundle, from its link.
 # Fails when any stack was not refreshed; how the CLI uses the copies is in that crate's SPEC.md §14.1.
 # Usage: TRUAPI_HOST=<truapi-host binary, default `truapi-host` on PATH> bash scripts/update-stacks.sh
 
