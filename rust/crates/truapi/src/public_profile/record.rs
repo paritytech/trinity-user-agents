@@ -31,6 +31,14 @@ impl ProfileRecord {
 		Self::decode_all(&mut bytes.as_slice()).ok()
 	}
 
+	/// Encodes the record as the resolver's base64 text.
+	///
+	/// Returns `None` when the record is larger than the 16 KiB [`Self::from_text`] decodes.
+	pub fn to_text(&self) -> Option<String> {
+		let bytes = self.encode();
+		(bytes.len() <= MAX_RECORD_BYTES).then(|| STANDARD.encode(bytes))
+	}
+
 	/// Returns the first decodable avatar.
 	///
 	/// Unknown or malformed entries are skipped. Returns `None` when no avatar decodes.
