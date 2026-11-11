@@ -10,6 +10,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductRoomFooter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
+import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RecordingWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.flowOf
@@ -20,6 +21,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -49,6 +51,17 @@ class ProductRoomFooterCardViewModelTest {
         advanceUntilIdle()
 
         assertEquals(LoadingState.Error(failure), viewModel.state.value)
+    }
+
+    /** A runtime that cannot draw a docked card must say so, not spin forever. */
+    @Test
+    fun `a runtime that cannot draw a docked card shows the error`() = runTest(testDispatcher) {
+        val viewModel = ProductRoomFooterCardViewModel(ROOM, RecordingWorker())
+
+        viewModel.show(register)
+        advanceUntilIdle()
+
+        assertTrue(viewModel.state.value is LoadingState.Error)
     }
 
     /** A replaced card must stop drawing, or the old render keeps a stream open on the product. */

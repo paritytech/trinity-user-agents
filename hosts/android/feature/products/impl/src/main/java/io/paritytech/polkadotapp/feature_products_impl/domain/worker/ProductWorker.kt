@@ -7,7 +7,8 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.JsEventDispatcher
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.flowOf
+import timber.log.Timber
 
 /**
  * A booted product worker that the chat surface drives: it delivers user messages, renders custom
@@ -24,10 +25,12 @@ interface ProductWorker : JsEventDispatcher {
         messageData: DataByteArray,
     ): Flow<Result<JsWidget>>
 
-    /** Draws the card the product docked in the footer of [roomId]. Only a TrUAPI product docks one. */
+    /** Draws the card the product docked in the footer of [roomId]. Only a TrUAPI product docks one, so other runtimes fail. */
     fun renderRoomFooter(roomId: ProductChatIdParameter, messageType: String, payload: DataByteArray): Flow<Result<JsWidget>> =
-        emptyFlow()
+        flowOf(Result.failure(UnsupportedOperationException("This runtime cannot draw the $messageType card docked in ${roomId.value}")))
 
     /** A press inside the card the product docked in the footer of [roomId]. */
-    fun dispatchRoomFooterEvent(roomId: ProductChatIdParameter, messageType: String, actionId: String, eventType: JsUiEvent.Type) = Unit
+    fun dispatchRoomFooterEvent(roomId: ProductChatIdParameter, messageType: String, actionId: String, eventType: JsUiEvent.Type) {
+        Timber.w("This runtime cannot take the $actionId press on the $messageType card docked in ${roomId.value}")
+    }
 }
