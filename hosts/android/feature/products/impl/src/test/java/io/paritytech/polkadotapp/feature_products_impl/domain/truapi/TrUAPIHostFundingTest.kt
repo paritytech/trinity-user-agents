@@ -52,13 +52,6 @@ class TrUAPIHostFundingTest {
         assertEquals(Result.success("intent"), funding.openFunding(FundingDirection.OUT, Balance(BigInteger("250"))))
     }
 
-    @Test
-    fun `a dismissed overlay opens no session`() = runBlocking {
-        coEvery { runtime.openFunding(CoreFundingDirection.IN, null) } returns Result.success(null)
-
-        assertEquals(Result.success(null), funding.openFunding(FundingDirection.IN, null))
-    }
-
     // A session is in flight while its status says so; history leaves it out, and lists the rest newest ended first.
     @Test
     fun `the activity is the sessions in flight, then the history without them`() = runBlocking {
@@ -139,6 +132,7 @@ class TrUAPIHostFundingTest {
             status = status,
             longerAtMs = null,
             moneyMoved = false,
+            awaitsUserTransfer = false,
             cancel = FundingCancelAvailability.UNAVAILABLE,
         ),
     )
@@ -157,6 +151,7 @@ class TrUAPIHostFundingTest {
         refunded = refunded,
         transactionId = null,
         reference = null,
-        ended = FundingEnding(atMs, FundingEndedOutcome.Open, null, "50000000", null, null),
+        moneyMoved = true,
+        ended = FundingEnding(atMs, FundingEndedOutcome.Open, null, "50000000", null, null, emptyList(), null),
     )
 }

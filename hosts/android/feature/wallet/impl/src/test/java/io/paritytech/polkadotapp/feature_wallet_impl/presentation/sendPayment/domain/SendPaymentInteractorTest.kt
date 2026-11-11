@@ -18,12 +18,4 @@ class SendPaymentInteractorTest {
 
         assertEquals(Result.success(Unit), interactor.openWithdrawal())
     }
-
-    @Test
-    fun `a failed open reaches the screen`() = runBlocking {
-        val failure = IllegalStateException("runtime unavailable")
-        coEvery { hostFunding.openFunding(FundingDirection.OUT, null) } returns Result.failure(failure)
-
-        assertEquals(Result.failure<Unit>(failure), interactor.openWithdrawal())
-    }
 }

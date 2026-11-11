@@ -58,6 +58,10 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.Clock
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
+import io.paritytech.polkadotapp.design.components.topbar.PolkadotTopBar
+import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleAlignment
+import io.paritytech.polkadotapp.design.components.topbar.TopBarTitleSize
+import io.paritytech.polkadotapp.design.components.topbar.rememberTopBarAction
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.blurEffect
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
@@ -175,18 +179,13 @@ private fun DigitalDollarCardDetailsContent(
                 modifier = Modifier.onGloballyPositioned { topBarBounds = it.boundsInParent() },
                 contentAlignment = Alignment.Center
             ) {
+                // The status bar names the screen; this bar keeps back and the history action.
                 PolkadotTopBar(
                     title = "",
                     navigationAction = rememberTopBarAction(onBack),
                     titleAlignment = TopBarTitleAlignment.Center,
                     titleSize = TopBarTitleSize.Medium,
                     actions = if (hasActivity) persistentListOf(historyAction) else persistentListOf()
-                )
-                NovaText(
-                    modifier = Modifier.graphicsLayer { alpha = PocketCollapse.titleAlpha(collapse) },
-                    text = stringResource(RCommon.string.pocket_digital_dollar_title),
-                    style = PolkadotTheme.typography.title.medium,
-                    color = PolkadotTheme.colors.fg.primary
                 )
             }
 

@@ -20,7 +20,6 @@ object PocketMotion {
     val COLLAPSE_RANGE = 150.dp
     const val COLLAPSED_CARD_WIDTH = 60f
     const val CARD_WIDTH = 366f
-    const val TITLE_FADE_RATE = 2.5f
     const val BALANCE_FADE_RATE = 1.8f
 
     const val BALANCE_COUNT_UP_MILLIS = 650
@@ -41,8 +40,6 @@ object PocketCollapse {
     fun smoothstep(p: Float): Float = p * p * (3f - 2f * p)
 
     fun scale(progress: Float): Float = lerp(1f, PocketMotion.COLLAPSED_CARD_WIDTH / PocketMotion.CARD_WIDTH, progress)
-
-    fun titleAlpha(progress: Float): Float = (1f - PocketMotion.TITLE_FADE_RATE * progress).coerceIn(0f, 1f)
 
     fun balanceAlpha(progress: Float): Float = (1f - PocketMotion.BALANCE_FADE_RATE * progress).coerceIn(0f, 1f)
 
