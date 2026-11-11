@@ -276,7 +276,7 @@ async fn a_cached_record_survives_an_offline_chain_until_forced() {
 	let record = PublicProfile { avatar: None };
 	let now = current_unix_secs();
 	db.write(move |tx| {
-		dao::store_record(tx, "alice01", &ProfileRecord::default(), now, now + RECORD_TTL_SECS)
+		dao::store_record(tx, "alice01", &ProfileRecord::default(), now + RECORD_TTL_SECS)
 	})
 	.await
 	.unwrap();
@@ -318,7 +318,7 @@ async fn cached_metadata_never_loads_bulletin() {
 		let now = current_unix_secs();
 		let record = ProfileRecord { entries };
 		let expected = PublicProfile { avatar: record.avatar() };
-		db.write(move |tx| dao::store_record(tx, "alice.01", &record, now, now + RECORD_TTL_SECS))
+		db.write(move |tx| dao::store_record(tx, "alice.01", &record, now + RECORD_TTL_SECS))
 			.await
 			.unwrap();
 		assert!(services.install_core_db(db));
@@ -344,7 +344,7 @@ async fn expired_and_forced_profiles_only_read_asset_hub_and_do_not_cache_errors
 			))],
 		};
 		let stored = record.clone();
-		db.write(move |tx| dao::store_record(tx, "alice.01", &stored, now, now + expires_in))
+		db.write(move |tx| dao::store_record(tx, "alice.01", &stored, now + expires_in))
 			.await
 			.unwrap();
 		assert!(services.install_core_db(db.clone()));

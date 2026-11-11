@@ -1,58 +1,91 @@
-//! Resolved profile records in the core database.
+//! Resolved profile records retained by last use in the core database.
 
 use parity_scale_codec::{Decode, Encode};
-use rusqlite::{Connection, OptionalExtension, Transaction, named_params};
+use rusqlite::{OptionalExtension, Transaction, named_params};
 
 use super::{RECORD_TTL_SECS, record::ProfileRecord};
 use crate::store::DbError;
 
-/// Most rows the table holds; past it the rows closest to expiry go first.
+/// Most profile records retained, including stale and empty records.
 const MAX_ROWS: u32 = 1000;
 
-const SELECT_RECORD: &str = "SELECT public_record FROM public_profiles
-	WHERE username = :username AND expires_at > :now AND expires_at - :now <= :ttl";
+/// A stored record with a freshness deadline independent of its retention.
+pub struct CachedRecord {
+	/// Full record, including entries the current core does not understand.
+	pub record: ProfileRecord,
+	expires_at: u64,
+}
 
-/// Returns an unexpired record from native storage.
+impl CachedRecord {
+	/// Whether the record is fresh at Unix time `now`, in seconds.
+	///
+	/// A backward clock correction does not extend the record's freshness.
+	pub fn is_fresh(&self, now: u64) -> bool {
+		self.expires_at > now && self.expires_at - now <= RECORD_TTL_SECS
+	}
+}
+
+const SELECT_RECORD: &str = "SELECT public_record, expires_at FROM public_profiles
+	WHERE username = :username";
+
+const TOUCH_RECORD: &str = "UPDATE public_profiles
+	SET access_order = (SELECT coalesce(max(access_order), 0) + 1 FROM public_profiles)
+	WHERE username = :username";
+
+/// Reads stored metadata and marks it as most recently used in the same transaction.
 ///
-/// `now` is Unix time in seconds. Future-dated or undecodable rows count as missing;
+/// Expired records remain available. Undecodable rows count as missing; database
+/// failures return errors without committing the access-order update.
+pub fn stored_record(
+	tx: &Transaction<'_>,
+	username: &str,
+) -> Result<Option<CachedRecord>, DbError> {
+	let stored: Option<(Vec<u8>, u64)> = tx
+		.prepare_cached(SELECT_RECORD)?
+		.query_row(named_params! { ":username": username }, |row| Ok((row.get(0)?, row.get(1)?)))
+		.optional()?;
+	let Some((bytes, expires_at)) = stored else { return Ok(None) };
+	let Ok(record) = ProfileRecord::decode(&mut bytes.as_slice()) else { return Ok(None) };
+	tx.prepare_cached(TOUCH_RECORD)?
+		.execute(named_params! { ":username": username })?;
+	Ok(Some(CachedRecord { record, expires_at }))
+}
+
+/// Returns fresh metadata, updating its access order without renewing freshness.
+///
+/// `now` is Unix time in seconds. Missing or undecodable rows return `None`;
 /// database failures return errors.
 pub fn fresh_record(
-	conn: &Connection,
+	tx: &Transaction<'_>,
 	username: &str,
 	now: u64,
 ) -> Result<Option<ProfileRecord>, DbError> {
-	let bytes: Option<Vec<u8>> = conn
-		.prepare_cached(SELECT_RECORD)?
-		.query_row(
-			named_params! { ":username": username, ":now": now, ":ttl": RECORD_TTL_SECS },
-			|row| row.get(0),
-		)
-		.optional()?;
-	Ok(bytes.and_then(|bytes| ProfileRecord::decode(&mut bytes.as_slice()).ok()))
+	Ok(stored_record(tx, username)?
+		.filter(|cached| cached.is_fresh(now))
+		.map(|cached| cached.record))
 }
 
-const DELETE_EXPIRED: &str = "DELETE FROM public_profiles WHERE expires_at <= :now";
-
-const UPSERT_RECORD: &str = "INSERT INTO public_profiles (username, public_record, expires_at)
-	VALUES (:username, :public_record, :expires_at)
-	ON CONFLICT (username) DO UPDATE SET public_record = excluded.public_record, expires_at = excluded.expires_at";
+const UPSERT_RECORD: &str =
+	"INSERT INTO public_profiles (username, public_record, expires_at, access_order)
+	VALUES (:username, :public_record, :expires_at,
+		(SELECT coalesce(max(access_order), 0) + 1 FROM public_profiles))
+	ON CONFLICT (username) DO UPDATE SET public_record = excluded.public_record,
+		expires_at = excluded.expires_at, access_order = excluded.access_order";
 
 const DELETE_OVER_CAP: &str = "DELETE FROM public_profiles WHERE username IN (
-	SELECT username FROM public_profiles ORDER BY expires_at
+	SELECT username FROM public_profiles ORDER BY access_order, username
 	LIMIT max(0, (SELECT COUNT(*) FROM public_profiles) - :max_rows))";
 
-/// Caches a resolved record, pruning expired and excess rows.
+/// Stores a resolved record and evicts the least recently used records over capacity.
 ///
-/// `now` and `expires_at` are Unix times in seconds. Beyond 1,000 rows, the earliest
-/// expiry is removed first. Database failures return errors to the caller's transaction.
+/// `expires_at` is Unix time in seconds. Stale records are retained within the
+/// 1,000-row limit. Database failures return errors to the caller's transaction.
 pub fn store_record(
 	tx: &Transaction<'_>,
 	username: &str,
 	record: &ProfileRecord,
-	now: u64,
 	expires_at: u64,
 ) -> Result<(), DbError> {
-	tx.prepare_cached(DELETE_EXPIRED)?.execute(named_params! { ":now": now })?;
 	tx.prepare_cached(UPSERT_RECORD)?.execute(named_params! {
 		":username": username,
 		":public_record": record.encode(),

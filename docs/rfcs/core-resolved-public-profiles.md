@@ -10,7 +10,7 @@ status: draft
 
 This RFC lets hosts show a contact's avatar instead of a letter tile. A person publishes their profile in a `profile`
 text record under their dotNS username. The core reads that record and resolves the profile information it
-points at, such as the avatar, for the host. The native core caches the record for one hour. Hosts separately cache
+points at, such as the avatar, for the host. The native core serves stored metadata immediately and refreshes records when explicitly forced or older than one hour. Hosts separately cache
 verified image bytes by CID, so refreshing a profile does not download an unchanged avatar. The shared Rust resolver
 also builds for WASM, where it reads the chain on each lookup; JavaScript bindings are deferred.
 
@@ -27,7 +27,7 @@ Bulletin connection and applies one image policy across features.
 - **Publisher**: the app that writes the profile record and uploads the avatar to Bulletin, Seity today.
 - **Avatar**: the image a profile record points at, by Bulletin CID and format.
 - **Bulletin**: where the avatar bytes live, for 14 days after upload.
-- **Core cache**: the native core's SQLite table of profile records, one row per username, kept for one hour.
+- **Core cache**: the native core's SQLite table of profile records, one row per username, fresh for one hour and retained by last use within a 1,000-record limit.
 - **Host image cache**: Kingfisher on iOS, Coil on Android. Stores verified images by CID in memory and on disk.
   The bytes are immutable, so capacity limits and eviction determine retention, not a freshness timer.
 - **Letter tile**: the placeholder a host draws for a contact, the first letter of the username, with the avatar drawn
@@ -87,22 +87,42 @@ avatar on Bulletin past its 14 day retention is the publisher's job.
 
 ### The host calls
 
-Pairing and signing hosts resolve profile metadata before asking their image library for an image:
+Signing hosts observe a finite stream of profile metadata before asking their image library for an image:
 
 ```rust
-pub struct PublicProfile {
-    pub avatar: Option<ProfileAvatar>,
-}
-
-let profile = runtime.resolve_public_profile(&username, force).await?;
+let options = PublicProfileResolutionOptions {
+    force_fresh: false,
+    skip_stale: false,
+};
+let profiles = runtime.observe_public_profile(&username, options);
 ```
 
-The result is `Result<PublicProfile, PublicProfileError>`. The core selects the first
-understood avatar from the record. A missing or malformed record, or one without an
-understood avatar, returns `PublicProfile { avatar: None }`. Invalid usernames and
-chain or database failures return an error. Resolving a profile never reads Bulletin.
-`force` bypasses only the native profile record cache. The WASM resolver reads the
-chain on every lookup, regardless of `force`.
+The stream carries `Result<PublicProfile, PublicProfileError>` and emits at most two
+profiles. On native hosts it first emits a stored profile if one exists, including
+stale metadata unless `skip_stale` is true. Both option fields are required. A fresh record
+completes the stream without a chain lookup unless `force_fresh` is true. A forced
+observation or a stale or missing record triggers one lookup and stores the result.
+After a stored emission, the resolved profile is emitted only if it differs; an unchanged
+result still renews the record's freshness. When a stale stored value was skipped,
+the resolved profile is emitted even if it is unchanged, so the successful lookup
+still produces one value. A fresh stored value remains eligible for emission even
+when `skip_stale` is true. The stream then completes. Forcing
+does not skip the initial stored value or bypass the host's image cache.
+
+The core selects the first understood avatar from the record. A missing or
+malformed record, or one without an understood avatar, produces
+`PublicProfile { avatar: None }`, distinct from a cache miss or lookup failure.
+Invalid usernames and chain or database failures terminate the stream with an
+error. A lookup error after a cached emission leaves that cached value available
+to the host. With a skipped stale value, lookup failure emits only the error.
+Resolving a profile never reads Bulletin. The WASM resolver has no record cache
+and emits one profile from the chain regardless of these options.
+
+Native bindings deliver profiles, completion and errors through an observer and
+return a cancellable subscription. Cancelling the subscription drops the
+observation future. The existing one-shot `resolve_public_profile(username, force)`
+entry point also serves Android's avatar adapter; `force` bypasses freshness but
+does not clear retained metadata.
 
 The host looks up the returned CID in its image cache. Only a cache miss calls the
 shared [image loader](image-loader.md):
@@ -127,27 +147,32 @@ contract caller.
 
 ### The core cache
 
-The native core keeps each record in its SQLite database for one hour. The WASM core has no profile record cache.
+The native core retains records independently of their one-hour freshness deadline.
+The WASM core has no profile record cache.
 
 ```sql
 CREATE TABLE public_profiles (
     username      TEXT PRIMARY KEY,
     public_record BLOB NOT NULL,
-    expires_at    INTEGER NOT NULL
+    expires_at    INTEGER NOT NULL,
+    access_order  INTEGER NOT NULL
 );
+CREATE INDEX public_profiles_access_order ON public_profiles(access_order);
 ```
 
-`public_record` is the SCALE-encoded `ProfileRecord`, so a name without a record is cached too, as an empty one.
+`public_record` is the SCALE-encoded `ProfileRecord`, including unknown entries. A
+name without a record is cached too, as an empty one.
 
-- A row that has not expired is returned without touching the chain.
-- An expired or missing row, or `force`, reads the chain and replaces the row. Errors are not cached.
-- Expired rows are deleted before each write. The table holds at most 1000 rows; past that the rows
-  closest to expiry are deleted first.
+- Reading stored metadata advances its access order in the same transaction, without renewing freshness.
+- A successful chain lookup replaces the full record, renews its one-hour freshness deadline and advances access order.
+- Access order increases independently of wall-clock time, so simultaneous accesses and clock adjustments do not reorder eviction.
+- Expired metadata remains available for the initial emission. The table holds at most 1,000 rows; writes evict the least recently used rows over that limit.
+- Lookup errors do not replace stored metadata. Undecodable cache records count as missing.
 
 ### The host
 
 The host resolves the profile on each avatar load. A fresh native profile-cache entry
-avoids a dotNS read. The returned CID selects the image-library request, so an image
+avoids a dotNS read unless that observation explicitly forces one. The returned CID selects the image-library request, so an image
 cache hit cannot skip profile resolution. Hosts do not keep a second username-to-image
 freshness cache.
 
@@ -159,26 +184,36 @@ by a CID do not change. Library capacity limits, eviction and explicit cache cle
 still apply. After eviction, a later request fetches and verifies the bytes again.
 Cached bytes must still match the profile's declared format.
 
-Opening a chat resolves its profile with `force`, bypassing the core's record cache.
-The host still checks the CID image cache. An unchanged CID reuses existing bytes;
-a changed CID selects its own cached image or fetches it if absent. A profile without
-an avatar shows the letter tile even if bytes for its previous CID remain cached.
-Failures do not create profile or image cache entries. dotNS emits no text-change
-event, so a displayed avatar changes on a later lookup, not at the expiry instant.
+A streaming avatar adapter applies each profile to the image library. An unchanged
+avatar needs no replacement request. A changed avatar selects its own cached image
+or fetches it if absent, keeping the displayed image visible while the replacement
+loads. A successful profile without an avatar restores the letter tile. A metadata
+refresh error preserves the displayed image. Leaving the view cancels metadata
+observation and image loading.
 
-On native hosts, chat entry first resolves without `force` and displays the cached avatar,
-then forces a profile refresh in the background. The displayed image stays visible
-until its replacement is ready, including when refresh fails. A successful lookup
-without an avatar restores the letter tile. Leaving the view cancels its requests.
+dotNS emits no text-change event, so a displayed avatar changes on a later
+observation, not at the expiry instant. App callers explicitly set `skip_stale`
+to false. A new iOS chat screen requests a forced
+metadata observation. Repeated header rendering reuses that observation. Once it
+completes or fails, later image-size changes use ordinary freshness. Cancellation
+retains the pending forced intent for a restarted observation, while the
+`skip_stale` choice is preserved. Contact, search and
+chat-list cells explicitly choose ordinary freshness. Reappearance of a retained chat screen does not start another forced
+observation. Android's one-shot avatar adapter forces a metadata lookup on chat
+entry; consuming the profile stream in the Android UI is a follow-up.
 
 ```text
 Native avatar adapter            Core + SQLite                    dotNS
   |                                  |                              |
-  |-- resolve_public_profile ------->|                              |
-  |                                  |-- if stale or forced ------->|
+  |-- observe_public_profile ------->|                              |
+  |                                  |-- read and touch stored row  |
+  |<-- stored PublicProfile ---------| if available                 |
+  |                                  |                              |
+  |                                  |-- forced, stale or missing ->|
   |                                  |<-- profile record -----------|
-  |                                  |-- cache record for one hour  |
-  |<-- PublicProfile { avatar } -----|                              |
+  |                                  |-- store and renew freshness  |
+  |<-- resolved PublicProfile -------| only if different            |
+  |<-- complete --------------------|                              |
   |                                  |                              |
 
 Native avatar adapter       Coil / Kingfisher          Core image loader / Bulletin
@@ -201,5 +236,4 @@ Native avatar adapter       Coil / Kingfisher          Core image loader / Bulle
 - The host makes a metadata lookup before each image request, but the core serves fresh native records locally.
 - Cached CID bytes can remain usable after Bulletin drops the blob. A cache miss then requires the publisher to
   upload the blob again.
-- When dotNS is out of reach, a fresh cached profile can still select a cached image. An expired profile lookup
-  fails and leaves the placeholder; retaining old metadata on failure is not part of this cache policy.
+- A streaming observation can show a stale cached profile while dotNS is out of reach. LRU eviction can remove that metadata independently of whether its image bytes remain cached.
