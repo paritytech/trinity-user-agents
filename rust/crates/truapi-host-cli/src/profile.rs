@@ -12,10 +12,9 @@ use std::{
 use anyhow::{Context, Result, anyhow, ensure};
 use async_trait::async_trait;
 use image::ImageReader;
-use subxt::utils::WrapperKeepOpaque;
 use truapi::{
-	ImageFormat, MAX_IMAGE_BYTES, ProfileAvatar, ProfileEntry, ProfileRecord, PublicProfile,
-	SigningHostRuntime, check_image, preimage_key,
+	ImageFormat, MAX_IMAGE_BYTES, ProfileAvatar, ProfileRecord, PublicProfile, SigningHostRuntime,
+	check_image, preimage_key,
 };
 
 use crate::network::Stack;
@@ -74,21 +73,6 @@ fn read_image(path: &Path) -> Result<(ImageFormat, Vec<u8>)> {
 	Ok((format, bytes))
 }
 
-/// Replaces only the avatar readers show, so every other entry keeps its place.
-fn with_avatar(mut record: ProfileRecord, avatar: ProfileAvatar) -> ProfileRecord {
-	if let Some(index) = record
-		.entries
-		.iter()
-		.position(|entry| matches!(entry.try_decode(), Some(ProfileEntry::Avatar(_))))
-	{
-		record.entries.remove(index);
-	}
-	record
-		.entries
-		.insert(0, WrapperKeepOpaque::from_value(ProfileEntry::Avatar(avatar)));
-	record
-}
-
 #[async_trait]
 trait ProfileBackend: Send {
 	type Prepared: Send;
@@ -104,13 +88,13 @@ async fn publish_avatar(
 	(format, bytes): (ImageFormat, Vec<u8>),
 ) -> Result<ProfileRecord> {
 	let original = backend.read().await?;
-	let record = match original.as_deref() {
+	let mut record = match original.as_deref() {
 		Some(text) => ProfileRecord::from_text(text)
 			.context("existing profile record is malformed; refusing to overwrite it")?,
 		None => ProfileRecord::default(),
 	};
 	let key = preimage_key(&bytes);
-	let record = with_avatar(record, ProfileAvatar { cid: key.into(), format });
+	record.set_avatar(ProfileAvatar { cid: key.into(), format });
 	let text = record.to_text().context("profile record is too large for readers to decode")?;
 	let prepared = backend.prepare(&text).await?;
 	ensure!(backend.upload(bytes).await? == key, "uploaded avatar key does not match its bytes");

@@ -2,26 +2,6 @@ use std::collections::VecDeque;
 
 use super::*;
 
-fn avatar_entry(seed: u8) -> WrapperKeepOpaque<ProfileEntry> {
-	WrapperKeepOpaque::from_value(ProfileEntry::Avatar(ProfileAvatar {
-		cid: preimage_key(&[seed]).into(),
-		format: ImageFormat::Png,
-	}))
-}
-
-#[test]
-fn new_avatar_replaces_the_one_readers_show_and_keeps_other_writers_entries() {
-	let unknown = WrapperKeepOpaque::from_encoded(vec![7, 1, 2]);
-	let record = ProfileRecord { entries: vec![unknown.clone(), avatar_entry(1), avatar_entry(2)] };
-
-	let updated = with_avatar(
-		record,
-		ProfileAvatar { cid: preimage_key(&[3]).into(), format: ImageFormat::Png },
-	);
-
-	assert_eq!(updated, ProfileRecord { entries: vec![avatar_entry(3), unknown, avatar_entry(2)] });
-}
-
 #[derive(Debug, PartialEq)]
 enum Operation {
 	Read,
@@ -90,8 +70,8 @@ async fn the_record_is_written_only_after_its_avatar_is_stored_and_confirmed_aft
 
 #[tokio::test]
 async fn a_record_changed_during_the_upload_is_not_overwritten() {
-	let changed = ProfileRecord { entries: vec![avatar_entry(9)] }.to_text();
-	let mut backend = Backend { records: [None, changed].into(), ..Default::default() };
+	let mut backend =
+		Backend { records: [None, Some("changed".to_string())].into(), ..Default::default() };
 
 	let error = publish_avatar(&mut backend, (ImageFormat::Png, IMAGE.to_vec()))
 		.await

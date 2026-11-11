@@ -3862,9 +3862,7 @@ async fn execute_interactive_operation(
 			import_mnemonic_session(session, &mnemonic).await?;
 		},
 		ShellCommand::Renew => run_renew(session).await?,
-		ShellCommand::Profile(command) => {
-			ui.system(run_profile_command(session, command).await?);
-		},
+		ShellCommand::Profile(command) => run_profile_command(session, command).await?,
 		ShellCommand::Login => bail!("/login is only available on the pairing host"),
 		ShellCommand::Logout => bail!("/logout is only available on the pairing host"),
 		ShellCommand::Product(_) | ShellCommand::Devices(_) | ShellCommand::Approval(_) => {
@@ -4005,29 +4003,26 @@ async fn execute_non_interactive_command(
 			return Ok(Some(target));
 		},
 		ShellCommand::Renew => run_renew(session).await?,
-		ShellCommand::Profile(command) => {
-			println!("{}", run_profile_command(session, command).await?);
-		},
+		ShellCommand::Profile(command) => run_profile_command(session, command).await?,
 	}
 	Ok(None)
 }
 
-async fn run_profile_command(
-	session: &SigningHostSession,
-	command: ProfileCommand,
-) -> Result<String> {
-	match command {
+async fn run_profile_command(session: &SigningHostSession, command: ProfileCommand) -> Result<()> {
+	let output = match command {
 		ProfileCommand::Current => {
 			let (_, username) = profile_identity(session)?;
-			profile::read(&session.runtime, username).await
+			profile::read(&session.runtime, username).await?
 		},
-		ProfileCommand::Get(username) => profile::read(&session.runtime, &username).await,
+		ProfileCommand::Get(username) => profile::read(&session.runtime, &username).await?,
 		ProfileCommand::Upload(path) => {
 			let (signer, username) = profile_identity(session)?;
 			profile::upload(&session.runtime, &session.network, &signer.entropy, username, &path)
-				.await
+				.await?
 		},
-	}
+	};
+	terminal_ui::output_info(output);
+	Ok(())
 }
 
 fn profile_identity(session: &SigningHostSession) -> Result<(&ResolvedSigner, &str)> {
