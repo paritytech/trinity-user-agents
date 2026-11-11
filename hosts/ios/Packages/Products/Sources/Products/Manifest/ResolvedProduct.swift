@@ -65,4 +65,24 @@ public struct ResolvedProduct: Hashable, Sendable {
         guard let identifier else { throw ProductResolutionError.missingExecutable(id, kind) }
         return identifier
     }
+
+    /// The kind `strategy` serves for this product.
+    ///
+    /// Throws `missingExecutable` when the product publishes neither the asked kind nor, for a fallback, the app.
+    public func servedKind(for strategy: ExecutableKindStrategy) throws -> ExecutableKind {
+        let kind =
+            switch strategy {
+            case let .fixed(kind): kind
+            case let .withAppFallback(kind): publishes(kind) ? kind : .app
+            }
+
+        _ = try contentId(for: kind)
+        return kind
+    }
+}
+
+private extension ResolvedProduct {
+    func publishes(_ kind: ExecutableKind) -> Bool {
+        (try? contentId(for: kind)) != nil
+    }
 }

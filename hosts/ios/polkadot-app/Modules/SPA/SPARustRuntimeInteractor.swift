@@ -174,7 +174,7 @@ private extension SPARustRuntimeInteractor {
         case .dotNs:
             return try await contentLoader.open(
                 domain,
-                kind: .app,
+                strategy: .fixed(.app),
                 policy: .untilCancelled,
                 onPhase: phaseHandler()
             ).resolved

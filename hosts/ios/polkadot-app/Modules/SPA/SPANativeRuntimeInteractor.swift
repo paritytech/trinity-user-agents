@@ -232,7 +232,7 @@ private extension SPANativeRuntimeInteractor {
             // is what permission grants and web storage are keyed by.
             let content = try await contentLoader.open(
                 domain,
-                kind: .app,
+                strategy: .fixed(.app),
                 policy: .untilCancelled,
                 onPhase: phaseHandler()
             )
@@ -313,7 +313,8 @@ extension SPANativeRuntimeInteractor: SPAProductReloading {
         reloadTask?.cancel()
         reloadTask = Task { [weak self, contentLoader] in
             do {
-                let served = try await contentLoader.open(domain, kind: .app, policy: .untilCancelled).archive
+                let served = try await contentLoader.open(domain, strategy: .fixed(.app), policy: .untilCancelled)
+                    .archive
 
                 guard !Task.isCancelled else { return }
 

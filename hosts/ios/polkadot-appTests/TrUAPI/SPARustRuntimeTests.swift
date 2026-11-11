@@ -143,6 +143,7 @@ struct SPARustRuntimeTests {
         let url = try await runtime.start(with: engine)
 
         #expect(try loader.openedIds == [ProductId("test.dot")])
+        #expect(loader.openedStrategies == [.fixed(.app)])
         #expect(url.scheme == productContentScheme())
         #expect(url.host == "test.dot")
         #expect(url.path == "/")

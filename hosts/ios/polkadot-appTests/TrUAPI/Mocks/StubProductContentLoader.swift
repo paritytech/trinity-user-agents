@@ -9,6 +9,7 @@ import Products
 final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable {
     private struct State {
         var openedIds: [ProductId] = []
+        var openedStrategies: [ExecutableKindStrategy] = []
         var openedWorkerIds: [ProductId] = []
         var refreshedIds: [ProductId] = []
         var appliedUpdates: [ExecutableRelease] = []
@@ -31,6 +32,7 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
     }
 
     var openedIds: [ProductId] { state.withLock { $0.openedIds } }
+    var openedStrategies: [ExecutableKindStrategy] { state.withLock { $0.openedStrategies } }
     var openedWorkerIds: [ProductId] { state.withLock { $0.openedWorkerIds } }
     var refreshedIds: [ProductId] { state.withLock { $0.refreshedIds } }
     var appliedUpdates: [ExecutableRelease] { state.withLock { $0.appliedUpdates } }
@@ -60,16 +62,18 @@ final class StubProductContentLoader: ProductContentLoading, @unchecked Sendable
 
     func open(
         _ productId: ProductId,
-        kind: ExecutableKind,
+        strategy: ExecutableKindStrategy,
         policy _: ProductLoadPolicy,
         onPhase _: @escaping ProductLoadPhaseHandler
     ) async throws -> ProductContent {
         let contentHash = state.withLock { state in
             state.openedIds.append(productId)
+            state.openedStrategies.append(strategy)
             return state.contentHash
         }
 
         let resolved = product ?? .legacy(id: productId)
+        let kind = try resolved.servedKind(for: strategy)
         let archive = try DotNsResolvedContent(
             contentHash: contentHash,
             localURL: contentURL.appendingPathComponent(resolved.contentId(for: kind).rawValue)
