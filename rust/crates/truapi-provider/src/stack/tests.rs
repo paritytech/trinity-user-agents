@@ -161,7 +161,7 @@ fn a_descriptor_that_skipped_validation_is_refused() {
 	assert_eq!(
 		refusals,
 		[
-			malformed("genesisHash 0x1234".to_owned()),
+			ProviderError::Stack { source: Error::InvalidHex { field: "genesisHash", bytes: 32 } },
 			malformed(format!("genesisHash {people} appears on more than one chain")),
 			ProviderError::Stack { source: Error::RelayCount(0) },
 		]
