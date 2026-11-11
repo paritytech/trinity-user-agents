@@ -588,7 +588,7 @@ impl PreimageHost for CallbackPlatform {
 				.then(move |key| lookup_until_found(callbacks.clone(), key))
 				.map(|found| found.map(Some).map_err(v01::GenericError::from));
 			let current = current.map_err(v01::GenericError::from);
-			stream::once(future::ready(current)).chain(stream::select(rx, found))
+			stream::once(future::ready(current)).chain(stream::select(rx.map(Ok), found))
 		}
 		.flatten_stream()
 		.boxed()

@@ -13,15 +13,12 @@ use super::subscribers::Subscribers;
 pub struct NativeEventBus {
 	theme_changes: Mutex<Subscribers<(), Result<v01::HostThemeSubscribeItem, v01::GenericError>>>,
 	locale_changes: Mutex<Subscribers<(), Result<v01::HostLocaleSubscribeItem, v01::GenericError>>>,
-	preimage_changes: Mutex<Subscribers<Vec<u8>, PreimageChange>>,
+	preimage_changes: Mutex<Subscribers<Vec<u8>, Option<Vec<u8>>>>,
 	storage_changes:
 		Mutex<Subscribers<String, Result<v01::HostLocalStorageChangeItem, v01::GenericError>>>,
 	chain_events: Mutex<NativeChainEvents>,
 	chat_room_changes: Mutex<Subscribers<(), v01::HostChatListSubscribeItem>>,
 }
-
-/// What a preimage subscription receives: the value now stored under its key.
-type PreimageChange = Result<Option<Vec<u8>>, v01::GenericError>;
 
 #[derive(Default)]
 struct NativeChainEvents {
@@ -76,7 +73,7 @@ impl NativeEventBus {
 	pub fn subscribe_preimage_changes(
 		&self,
 		key: Vec<u8>,
-	) -> mpsc::UnboundedReceiver<Result<Option<Vec<u8>>, v01::GenericError>> {
+	) -> mpsc::UnboundedReceiver<Option<Vec<u8>>> {
 		let (tx, rx) = mpsc::unbounded();
 		self.preimage_changes
 			.lock()
@@ -90,7 +87,7 @@ impl NativeEventBus {
 		self.preimage_changes
 			.lock()
 			.expect("native preimage subscribers mutex poisoned")
-			.send(key, &Ok(value));
+			.send(key, &value);
 	}
 
 	/// Stream later changes to the product storage value under `key`.
