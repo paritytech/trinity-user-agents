@@ -29,7 +29,7 @@ struct WalletView: View {
                 .padding(.top, 16)
             }
             .scrollClipDisabled(isCardOpen)
-            .modifier(TopScrollEdgeEffect(hidden: isCardOpen))
+            .modifier(TopScrollEdgeEffectHidden(hidden: isCardOpen))
         }
         .modifier(
             ConditionalOverlayModifier(
@@ -138,16 +138,14 @@ private extension WalletView {
     }
 }
 
-/// The hard style keeps the status strip title readable over the cards. A card lifted out of the Pocket
-/// can sit under the title bar, where the effect would darken it, so it is hidden then.
-private struct TopScrollEdgeEffect: ViewModifier {
+/// A card lifted out of the Pocket can sit under the title bar, where iOS 26
+/// would darken it with the scroll view's top edge effect.
+private struct TopScrollEdgeEffectHidden: ViewModifier {
     let hidden: Bool
 
     func body(content: Content) -> some View {
         if #available(iOS 26, *) {
-            content
-                .scrollEdgeEffectStyle(.hard, for: .top)
-                .scrollEdgeEffectHidden(hidden, for: .top)
+            content.scrollEdgeEffectHidden(hidden, for: .top)
         } else {
             content
         }
