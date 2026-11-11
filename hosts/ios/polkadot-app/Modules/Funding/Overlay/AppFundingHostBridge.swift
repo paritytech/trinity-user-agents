@@ -1,20 +1,11 @@
 import Foundation
 import TrUAPIHost
 
-/// What the funding overlay UI implements: the screen a session is started
-/// from, the frame a provider's own screens are shown in, and the updates
-/// those screens and the in-flight pill draw from.
-///
-/// The core keeps the session live while `presentFunding` waits, so the UI
-/// quotes it and selects a provider through the runtime before it answers
-/// `.started`.
-protocol FundingOverlayPresenting: AnyObject, Sendable {
-    func presentFunding(
-        productId: ProductId?,
-        intent: String,
-        direction: FundingDirection,
-        amount: U128?
-    ) async -> FundingPresentOutcome
+/// What the core asks of the app's funding side: the flow a session is
+/// started from, the frame a provider's own screens are shown in, and the
+/// notices that something a session draws changed.
+protocol FundingCoreEventHandling: AnyObject, Sendable {
+    func presentFunding(intent: String, direction: FundingDirection, amount: U128?) async -> FundingPresentOutcome
 
     func presentProviderFrame(
         providerId: ProductId,
@@ -22,59 +13,32 @@ protocol FundingOverlayPresenting: AnyObject, Sendable {
         target: FundingFrameTarget
     ) async -> FundingFrameOutcome
 
-    /// The provider closed its frame for session `intent`: answer it
-    /// `.closed` and show the session sheet in its place.
+    /// The provider closed its frame for session `intent`.
     func closeProviderFrame(providerId: ProductId, intent: String)
 
-    /// Session `intent` changed in the core: read it back from the runtime.
-    func fundingSessionChanged(intent: String)
-
-    /// What session `intent`'s overlay offers changed in the core.
-    func fundingOptionsChanged(intent: String)
-
-    /// Session `intent`'s quote list changed in the core.
-    func fundingQuotesChanged(intent: String)
+    /// Something session `intent` draws changed in the core.
+    func fundingChanged(intent: String, kind: FundingChangeKind)
 
     /// Product `productId`'s worker keeps crashing while the core restarts it.
     func workerCrashing(productId: ProductId)
-
-    /// Shows session `intent` again after the user left it running.
-    func reopen(intent: String)
-
-    /// Shows an ended session's detail screen, from the session the core
-    /// pushed this run or else from its history record.
-    func showEnded(_ record: FundingRecord)
-
-    /// Shows the sessions in flight in `direction`, with a way to start
-    /// another.
-    func showPending(direction: FundingDirection)
-
-    /// Shows every session, in flight and ended.
-    func showHistory()
 }
 
 /// The runtime's funding overlay. Installed once, before any product
-/// execution opens. Forwards the core's calls and change notices to whatever
-/// draws the overlay, which reads what changed back from the runtime.
+/// execution opens, and hands the core's calls to the funding service.
 final class AppFundingHostBridge: FundingHostBridge, Sendable {
-    private let overlay: FundingOverlayPresenting
+    private let handler: FundingCoreEventHandling
 
-    init(overlay: FundingOverlayPresenting) {
-        self.overlay = overlay
+    init(handler: FundingCoreEventHandling) {
+        self.handler = handler
     }
 
     func presentFunding(
-        productId: ProductId?,
+        productId _: ProductId?,
         intent: String,
         direction: FundingDirection,
         amount: U128?
     ) async throws -> FundingPresentOutcome {
-        await overlay.presentFunding(
-            productId: productId,
-            intent: intent,
-            direction: direction,
-            amount: amount
-        )
+        await handler.presentFunding(intent: intent, direction: direction, amount: amount)
     }
 
     func presentProviderFrame(
@@ -82,25 +46,19 @@ final class AppFundingHostBridge: FundingHostBridge, Sendable {
         intent: String,
         target: FundingFrameTarget
     ) async throws -> FundingFrameOutcome {
-        await overlay.presentProviderFrame(providerId: providerId, intent: intent, target: target)
+        await handler.presentProviderFrame(providerId: providerId, intent: intent, target: target)
     }
 
     func closeProviderFrame(providerId: ProductId, intent: String) {
-        overlay.closeProviderFrame(providerId: providerId, intent: intent)
+        handler.closeProviderFrame(providerId: providerId, intent: intent)
     }
 
-    /// `.providers` needs nothing here: the entry points open the overlay
-    /// whether or not a provider is offered, and the overlay lists the
-    /// candidates the core names for the session.
+    /// A change with no session, such as the providers on offer, needs
+    /// nothing here: every screen reads the providers through a session.
     func fundingChanged(intent: String?, kind: FundingChangeKind) {
         guard let intent else { return }
 
-        switch kind {
-        case .session: overlay.fundingSessionChanged(intent: intent)
-        case .options: overlay.fundingOptionsChanged(intent: intent)
-        case .quotes: overlay.fundingQuotesChanged(intent: intent)
-        case .providers: break
-        }
+        handler.fundingChanged(intent: intent, kind: kind)
     }
 
     /// The device's region. The app holds no location permission, and iOS no
