@@ -444,9 +444,9 @@ host's disk cache. JavaScript bindings are deferred.
 [dotNS profile metadata](docs/rfcs/core-resolved-public-profiles.md#the-host-calls).
 Native hosts emit cached metadata, then refresh missing or expired records
 (one-hour TTL). Required options: `force_fresh` bypasses the TTL; `skip_stale`
-suppresses expired cached values (false in app callers). Streams emit at most
-two profiles, suppress duplicates, and stop on cancellation or drop. Invalid
-usernames return an error subscription. SQLite stores full records and keeps the
+suppresses expired cached values (false in app callers). Streams emit up to two
+distinct profiles; cancellation or drop stops resolution. Invalid usernames
+return an error subscription. SQLite stores full records and keeps the
 1,000 most recently used. Avatar CIDs key the image cache; only misses call `loadImage`.
 WASM resolves once without caching.
 
