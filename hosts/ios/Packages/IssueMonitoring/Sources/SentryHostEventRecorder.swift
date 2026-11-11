@@ -2,17 +2,28 @@
     import Foundation
     import Sentry
 
+    /// Sends host events as Sentry structured logs, not error events: they are measurements, and as events
+    /// Sentry filed each name as an issue of its own.
+    ///
+    /// Every tag and extra becomes a typed log attribute, so `host.session_id`, `open.source`, `tap_ms` and the
+    /// rest stay searchable. The log's body and `event.name` are the event's name; `tag` is `host.telemetry`,
+    /// the same attribute the host's other log lines carry.
     struct SentryHostEventRecorder: HostEventRecording {
         func record(_ event: @autoclosure () -> HostEvent) {
             let event = event()
-            let sentryEvent = Event(level: .info)
-            sentryEvent.message = SentryMessage(formatted: event.name)
-            sentryEvent.logger = "host.telemetry"
-            sentryEvent.fingerprint = [event.name]
-            sentryEvent.tags = event.tags
-            sentryEvent.extra = event.extras.mapValues(\.sentryValue)
+            SentrySDK.logger.info(event.name, attributes: event.sentryLogAttributes)
+        }
+    }
 
-            SentrySDK.capture(event: sentryEvent)
+    extension HostEvent {
+        var sentryLogAttributes: [String: Any] {
+            var attributes: [String: Any] = tags
+            for (key, value) in extras {
+                attributes[key] = value.sentryValue
+            }
+            attributes["event.name"] = name
+            attributes["tag"] = "host.telemetry"
+            return attributes
         }
     }
 
