@@ -440,20 +440,15 @@ request, such as a light client's before its first Bitswap peer connects, for
 up to 30 seconds in all. The content key it returns is the CID, for keying a
 host's disk cache. JavaScript bindings are deferred.
 
-For avatars, `observe_public_profile(username, options)` streams a
-[dotNS public profile](docs/rfcs/core-resolved-public-profiles.md#the-host-calls).
-Native hosts reject invalid usernames with an error subscription. They emit stored
-metadata immediately, including stale records, and read dotNS when explicitly
-forced or when the record is missing or older than one hour.
-Callers supply `PublicProfileResolutionOptions` with explicit `force_fresh` and
-`skip_stale` fields. The first bypasses metadata freshness; the second suppresses
-stale stored values. Current app callers set `skip_stale` to false. A changed result is the
-second and final value; an unchanged result renews freshness without another
-emission when a stored value was emitted. If a stale value was skipped, the
-resolved value is emitted even when unchanged. SQLite retains up to 1,000 records by last use, independently of
-freshness. The returned avatar CID selects the host's image cache; only a miss
-needs `loadImage`. A native subscription owns callback delivery and cancels its
-resolution when cancelled or dropped. The Rust WASM resolver reads the chain and emits one value.
+`observe_public_profile(username, options)` streams
+[dotNS profile metadata](docs/rfcs/core-resolved-public-profiles.md#the-host-calls).
+Native hosts emit cached metadata, then refresh missing or expired records
+(one-hour TTL). Required options: `force_fresh` bypasses the TTL; `skip_stale`
+suppresses expired cached values (false in app callers). Streams emit at most
+two profiles, suppress duplicates, and stop on cancellation or drop. Invalid
+usernames return an error subscription. SQLite retains the 1,000 most recently
+used profiles. Avatar CIDs key the image cache; only misses call `loadImage`.
+WASM resolves once without caching.
 
 Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
 
