@@ -3,12 +3,18 @@ package io.paritytech.polkadotapp.design.components.docklet
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
 enum class DockletStep { Rest, Step1, Step2 }
+
+enum class DockletDirection { Undecided, Vertical, Sideways }
 
 sealed interface DockletRelease {
     data object Open : DockletRelease
@@ -31,8 +37,18 @@ object DockletGestures {
     private val MaxReleaseDuration = 420.milliseconds
     private val SlowReleaseDuration = 340.milliseconds
     private const val KeyboardRequestShare = 0.6f
+    private const val DegreesPerRadian = (180.0 / PI).toFloat()
+    private const val UpVerticalDegrees = 30f
+    private const val DownVerticalDegrees = 45f
+    private const val CaughtVerticalDegrees = 60f
 
-    fun swipeUpStarted(drag: DpOffset): Boolean = -drag.y > DragSlop
+    fun direction(drag: DpOffset, settling: Boolean): DockletDirection {
+        if (hypot(drag.x.value, drag.y.value) < DragSlop.value) return DockletDirection.Undecided
+
+        val degrees = atan2(-drag.y.value, abs(drag.x.value)) * DegreesPerRadian
+        val vertical = if (settling) abs(degrees) > CaughtVerticalDegrees else degrees > UpVerticalDegrees || degrees < -DownVerticalDegrees
+        return if (vertical) DockletDirection.Vertical else DockletDirection.Sideways
+    }
 
     fun isTap(moved: Dp): Boolean = moved < TapSlop
 
