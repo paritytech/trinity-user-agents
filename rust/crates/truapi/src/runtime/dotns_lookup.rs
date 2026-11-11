@@ -62,6 +62,9 @@ pub enum DotnsLookupKind<'a> {
 	/// A product's Worker manifest, named by the product it belongs to.
 	#[display("executable:{_0}")]
 	WorkerManifest(&'a ProductId),
+	/// A product's App manifest, named by the product it belongs to.
+	#[display("app-executable:{_0}")]
+	AppManifest(&'a ProductId),
 	/// A person's public profile, without a user identifier in the follow id.
 	#[display("public-profile")]
 	PublicProfile,
