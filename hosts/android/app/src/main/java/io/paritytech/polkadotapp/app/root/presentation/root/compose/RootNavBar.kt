@@ -269,15 +269,8 @@ fun RootNavBar(
                     .pullOutGestures(pullState, forceShown, density)
                     .grabBandAbove(SWIPE_AREA_EXPANSION),
             ) {
-                ExpandablePanel(visible = appsExpanded, bottomGap = PolkadotTheme.spacings.tiny) {
-                    PolkadotSurface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(PanelCornerRadius),
-                        color = PolkadotTheme.colors.bg.surface.container,
-                        border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.primary),
-                    ) {
-                        OpenAppsRow(apps = apps, onAppClick = onAppClick, onAppClose = onAppClose)
-                    }
+                ExpandablePanel(visible = appsExpanded) {
+                    OpenAppsRow(apps = apps, onAppClick = onAppClick, onAppClose = onAppClose)
                 }
                 VerticalSpacer { DockletGeometry.PillProud }
                 Docklet(
@@ -296,13 +289,9 @@ fun RootNavBar(
                     cardProgress = { cardState.clampedProgress },
                     quietFade = hideState::quietFade,
                     backdrop = poseBackdrop,
-                ) {
-                    if (networkStatusItem) {
-                        ExpandablePanel(visible = networkStatusExpanded, bottomGap = DockletGeometry.NotchOverhang) {
-                            ChainHealthPanel(model = chainsHealth)
-                        }
-                    }
-                }
+                    contentAboveSlotsVisible = networkStatusOpen,
+                    contentAboveSlots = { ChainHealthPanel(model = chainsHealth) },
+                )
             }
 
             val cameraActive by remember(cardState) {
@@ -349,15 +338,22 @@ private fun DockletSlotTarget.title() = when (this) {
 }
 
 @Composable
-private fun ExpandablePanel(visible: Boolean, bottomGap: Dp, content: @Composable () -> Unit) {
+private fun ExpandablePanel(visible: Boolean, content: @Composable () -> Unit) {
     AnimatedVisibility(
         visible = visible,
         enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
         exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut(),
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            content()
-            VerticalSpacer { bottomGap }
+            PolkadotSurface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(PanelCornerRadius),
+                color = PolkadotTheme.colors.bg.surface.container,
+                border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.primary),
+            ) {
+                content()
+            }
+            VerticalSpacer { tiny }
         }
     }
 }

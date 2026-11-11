@@ -28,20 +28,20 @@ internal fun dockPath(size: Size, density: Float): Path {
     return if (shelfHeight > 0f) shelfDockPath(size, density, rowTop = shelfHeight) else restingDockPath(size, density)
 }
 
-// A full bowl, not the open cutout: the shelf above the row would otherwise paint over the Pill's ring.
+// The whole cutout circle, not only its open top: the shelf above the row would otherwise paint over the Pill's ring.
 private fun shelfDockPath(size: Size, density: Float, rowTop: Float): Path {
     val outline = Path().apply {
         addRoundRect(RoundRect(size.toRect(), CornerRadius(DockletGeometry.DockHeight.value * density / 2)))
     }
-    val bowl = Path().apply {
+    val cutout = Path().apply {
         addOval(
             Rect(
-                center = Offset(size.width / 2, rowTop + DockletGeometry.NotchCenterY.value * density),
-                radius = DockletGeometry.NotchRadius.value * density,
+                center = Offset(size.width / 2, rowTop + DockletGeometry.CutoutCenterY.value * density),
+                radius = DockletGeometry.CutoutRadius.value * density,
             ),
         )
     }
-    return Path().apply { op(outline, bowl, PathOperation.Difference) }
+    return Path().apply { op(outline, cutout, PathOperation.Difference) }
 }
 
 private fun restingDockPath(size: Size, density: Float): Path {

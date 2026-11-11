@@ -1,8 +1,13 @@
 package io.paritytech.polkadotapp.design.components.docklet
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.indication
@@ -47,6 +52,7 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.GlobeAltFilled
 import io.paritytech.polkadotapp.design.components.icon.vectors.SettingsFilled
 import io.paritytech.polkadotapp.design.components.icon.vectors.WalletFilled
 import io.paritytech.polkadotapp.design.components.navigationbar.NotificationDot
+import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.blurEffect
@@ -75,12 +81,13 @@ fun Docklet(
     cardProgress: () -> Float,
     quietFade: () -> Float,
     backdrop: DockletBackdrop?,
-    shelf: @Composable () -> Unit,
+    contentAboveSlotsVisible: Boolean,
+    contentAboveSlots: @Composable () -> Unit,
 ) {
     val haptics = rememberDockletHaptics()
     Box(modifier = modifier) {
         DockletGlassTheme {
-            DockSurface(slots, cardProgress, quietFade, backdrop, shelf) { slot ->
+            DockSurface(slots, cardProgress, quietFade, backdrop, contentAboveSlotsVisible, contentAboveSlots) { slot ->
                 if (cardProgress() <= 0f) haptics.perform(DockletMoment.SlotTap)
                 slot.onClick()
             }
@@ -94,7 +101,8 @@ private fun DockSurface(
     cardProgress: () -> Float,
     quietFade: () -> Float,
     backdrop: DockletBackdrop?,
-    shelf: @Composable () -> Unit,
+    contentAboveSlotsVisible: Boolean,
+    contentAboveSlots: @Composable () -> Unit,
     onSlotTap: (DockletSlot) -> Unit,
 ) {
     val palette = LocalDockletPalette.current
@@ -112,7 +120,16 @@ private fun DockSurface(
             }
             .clip(DockShape),
     ) {
-        shelf()
+        AnimatedVisibility(
+            visible = contentAboveSlotsVisible,
+            enter = expandVertically(expandFrom = Alignment.Bottom) + fadeIn(),
+            exit = shrinkVertically(shrinkTowards = Alignment.Bottom) + fadeOut(),
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                contentAboveSlots()
+                VerticalSpacer { DockletGeometry.CutoutOverhang }
+            }
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -237,7 +254,8 @@ private fun DockletPreview() {
             cardProgress = { 0f },
             quietFade = { 0f },
             backdrop = null,
-            shelf = {},
+            contentAboveSlotsVisible = false,
+            contentAboveSlots = {},
         )
     }
 }
