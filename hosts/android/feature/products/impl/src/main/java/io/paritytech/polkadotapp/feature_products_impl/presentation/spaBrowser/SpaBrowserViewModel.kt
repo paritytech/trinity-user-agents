@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSess
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.model.ResolvedProduct
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.ProductUpdater
 import io.paritytech.polkadotapp.feature_products_impl.domain.spaBrowser.SpaBrowserInteractor
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.statusBar.ProductMenu
@@ -48,6 +49,7 @@ import javax.inject.Inject
 class SpaBrowserViewModel @Inject constructor(
     private val productSessionController: ProductSessionController,
     private val interactor: SpaBrowserInteractor,
+    private val productUpdater: ProductUpdater,
     private val router: ProductsRouter,
     savedStateHandle: SavedStateHandle,
 ) : BaseViewModel(), SpaBrowserContract {
@@ -86,6 +88,10 @@ class SpaBrowserViewModel @Inject constructor(
         }
         .onStart { emit(PageLoad.NotAProduct) }
 
+    private val servedPageName: StateFlow<String?> = pageLoad
+        .map { load -> (load as? PageLoad.Serving)?.resolved?.executables?.app?.host?.value }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
     override val state: StateFlow<SpaBrowserUiState> = combine(
         activeTab,
         pageLoad,
@@ -119,7 +125,10 @@ class SpaBrowserViewModel @Inject constructor(
     }
 
     override fun onRefresh() {
-        productSessionController.reload()
+        launch {
+            val appliedUpdate = servedPageName.value?.let { productUpdater.applyPage(it) } == true
+            if (!appliedUpdate) productSessionController.reload()
+        }
     }
 
     // Back unwinds the active tab's page history first, then the tab visit history (tabs stay open), and
@@ -152,6 +161,13 @@ class SpaBrowserViewModel @Inject constructor(
     override fun onCloseAppClick() {
         productSessionController.closeActiveTab()
         closeAppRequested.value = true
+    }
+
+    override fun onScreenStarted() {
+        launch {
+            val productId = productIdOf(activeTab.first()?.url) ?: return@launch
+            productUpdater.check(productId).logFailure("Failed to check $productId for an update")
+        }
     }
 
     private fun leaveOnceClosed() {

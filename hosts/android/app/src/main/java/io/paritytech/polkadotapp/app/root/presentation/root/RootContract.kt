@@ -4,6 +4,7 @@ import androidx.compose.ui.unit.Dp
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
+import io.paritytech.polkadotapp.feature_products_api.domain.product.PendingProductUpdate
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -16,6 +17,7 @@ interface RootContract {
     val chainsHealth: StateFlow<ChainHealthIndicatorsModel>
     val isNetworkStatusTooltipVisible: StateFlow<Boolean>
     val isPaymentsSetupNoticeVisible: StateFlow<Boolean>
+    val productUpdateNotice: StateFlow<PendingProductUpdate?>
     val currentTab: StateFlow<BottomTab>
 
     fun onDevResetStartOverClick()
@@ -25,4 +27,8 @@ interface RootContract {
     fun dismissNetworkStatusTooltip()
 
     fun dismissPaymentsSetupNotice()
+
+    fun onProductUpdateClick()
+
+    fun dismissProductUpdateNotice()
 }

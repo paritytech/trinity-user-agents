@@ -83,6 +83,16 @@ class TrUAPIWorkerSupervisor @Inject constructor(
         }
     }
 
+    fun reload(productId: ProductId) {
+        scope.launch {
+            transitions.withLock {
+                if (productId !in workers) return@withLock
+                stop(productId)
+                start(productId)
+            }
+        }
+    }
+
     /** The product's worker execution while it runs, null otherwise. */
     fun execution(productId: ProductId): Flow<TrUAPIProductExecution?> =
         executionState(productId).map { (it as? WorkerExecutionState.Running)?.execution }.distinctUntilChanged()

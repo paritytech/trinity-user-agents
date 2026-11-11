@@ -4,6 +4,7 @@ import androidx.core.net.toUri
 import io.paritytech.polkadotapp.common.presentation.sharing.SharingManager
 import io.paritytech.polkadotapp.common.utils.Urls
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
+import io.paritytech.polkadotapp.common.utils.network.NetworkRetryPolicy
 import io.paritytech.polkadotapp.feature_chats_api.domain.ReadOnlyChatRoomRepository
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
@@ -44,7 +45,7 @@ class RealSpaBrowserInteractor @Inject constructor(
         productIdFromUrl(url.toUri(), dotNsTldProvider.getTldRetrying()).getOrNull()
 
     override suspend fun resolveProduct(productId: ProductId): Result<ResolvedProduct> =
-        resolveProductUseCase.resolve(productId)
+        resolveProductUseCase.resolve(productId, NetworkRetryPolicy.UntilCancelled)
 
     override suspend fun installChatAndAwaitRoomCreated(productId: ProductId): Result<ChatId> = runCancellableCatching {
         integrationRepository.install(productId, IntegrationType.Chat)
