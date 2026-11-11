@@ -21,6 +21,7 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
         var acknowledged: [String] = []
         var holdsSelection = false
         var heldSelection: CheckedContinuation<Void, Never>?
+        var quoteList: FundingQuoteList?
     }
 
     /// What the screens asked of the core's start when quoted.
@@ -83,6 +84,11 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
         state.withLock { $0.sessions[session.intent] = (session, progress) }
     }
 
+    /// Holds `list` as the core's latest quote list, or none.
+    func list(_ list: FundingQuoteList?) {
+        state.withLock { $0.quoteList = list }
+    }
+
     /// Lists `summaries` as the core's history.
     func record(history summaries: [FundingSessionSummary]) {
         state.withLock { $0.history = summaries }
@@ -91,7 +97,7 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
     func fundingSession(intent: String) -> FundingSession? { state.withLock { $0.sessions[intent]?.session } }
     func fundingProgress(intent: String) -> FundingProgress? { state.withLock { $0.sessions[intent]?.progress } }
     func fundingOptions(intent _: String) -> FundingOptions? { state.withLock { $0.options } }
-    func fundingQuotes(intent _: String) -> FundingQuoteList? { nil }
+    func fundingQuotes(intent _: String) -> FundingQuoteList? { state.withLock { $0.quoteList } }
     func fundingEntries() -> [FundingBookEntry] {
         state.withLock { state in
             state.sessions.values.compactMap { held in

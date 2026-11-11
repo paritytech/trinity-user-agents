@@ -182,7 +182,7 @@ private extension SPARustRuntime {
     /// which is what permission grants and web storage are keyed by.
     func serveFiles(at contentURL: URL) async throws -> URL {
         let domain = configuration.productDomain
-        let schemeHandler = ProductArchiveSchemeHandler(productId: domain, root: contentURL)
+        let schemeHandler = ProductArchiveSchemeHandler(productId: domain, root: contentURL, fileManager: .default)
 
         guard let productURL = schemeHandler.getBaseUrl() else {
             throw ScriptExecutorError.scriptNotFound(productId: domain)

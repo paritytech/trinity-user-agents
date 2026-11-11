@@ -7,12 +7,12 @@ import TrUAPIHost
 final class FundingBrands {
     private var loaded: [ProductId: FundingProviderBrand] = [:]
 
-    private let service: FundingFlowServiceProtocol
+    private let branding: FundingProviderBranding
     /// Brands being read, by provider.
     @ObservationIgnored private var reads: [ProductId: Task<Void, Never>] = [:]
 
-    init(service: FundingFlowServiceProtocol) {
-        self.service = service
+    init(branding: FundingProviderBranding) {
+        self.branding = branding
     }
 
     /// The brand read for `providerId`, or a placeholder until it is.
@@ -23,8 +23,8 @@ final class FundingBrands {
     /// Reads the brand of every provider not read or being read yet.
     func load(_ providerIds: [ProductId]) {
         for providerId in providerIds where loaded[providerId] == nil && reads[providerId] == nil {
-            reads[providerId] = Task { [service] in
-                loaded[providerId] = await service.brand(for: providerId)
+            reads[providerId] = Task { [branding] in
+                loaded[providerId] = await branding.brand(for: providerId)
                 reads[providerId] = nil
             }
         }

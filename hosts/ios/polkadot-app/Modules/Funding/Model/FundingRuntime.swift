@@ -30,19 +30,6 @@ protocol FundingRuntime: AnyObject, Sendable {
 
 extension TrUAPIHostRuntime: FundingRuntime {}
 
-extension FundingRuntime {
-    /// Tells the core the user was shown how session `intent` went. Only an
-    /// ended session the core still hands over is acknowledged; a failure is
-    /// logged, and the session comes through again on the next resume.
-    func acknowledgeShown(intent: String, logger: LoggerProtocol) async {
-        do {
-            try await acknowledgeFundingSession(intent: intent)
-        } catch {
-            logger.error("[funding] \(intent): acknowledging the ended session failed: \(error)")
-        }
-    }
-}
-
 extension FundingQuoteState {
     var quote: FundingQuote? {
         guard case let .quoted(quote) = self else { return nil }

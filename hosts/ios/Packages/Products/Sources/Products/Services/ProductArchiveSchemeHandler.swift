@@ -8,10 +8,12 @@ import WebKit
 public final class ProductArchiveSchemeHandler: NSObject {
     private let productId: ProductId
     private let root: URL
+    private let fileManager: FileManager
 
-    public init(productId: ProductId, root: URL) {
+    public init(productId: ProductId, root: URL, fileManager: FileManager) {
         self.productId = productId
         self.root = root
+        self.fileManager = fileManager
     }
 
     public func getBaseUrl() -> URL? {
@@ -29,7 +31,7 @@ public final class ProductArchiveSchemeHandler: NSObject {
             isMainFrame: isMainFrame,
             reader: FileBundleReader()
         ),
-            let data = FileManager.default.contents(atPath: file.path)
+            let data = fileManager.contents(atPath: file.path)
         else { return nil }
 
         return (data, file.mime)

@@ -33,8 +33,7 @@ struct FundingAssetUnit: Equatable {
 
     func format(decimal value: Decimal) -> String {
         if isFiat {
-            let formatter = FundingNumberFormatters.currency(code: code)
-            return formatter.string(from: NSDecimalNumber(decimal: value)) ?? "\(value) \(code)"
+            return withSign(value)
         }
 
         return withCode(value, maximumDigits: min(decimals, 6))
@@ -53,17 +52,52 @@ private extension FundingAssetUnit {
     static let isoCurrencyCodes = Set(Locale.Currency.isoCurrencies.map(\.identifier))
 
     func withCode(_ value: Decimal, maximumDigits: Int16, minimumDigits: Int16 = 0) -> String {
+        format(value, symbol: code, separator: " ", position: .suffix, digits: (minimumDigits, maximumDigits))
+    }
+
+    /// "€50.05": the currency's sign in the user's locale, and its minor unit.
+    func withSign(_ value: Decimal) -> String {
+        let sign = (Locale.current as NSLocale).displayName(forKey: .currencySymbol, value: code) ?? code
+        let minor = Self.minorDigits(of: code)
+        return format(value, symbol: sign, separator: "", position: .prefix, digits: (minor, minor))
+    }
+
+    func format(
+        _ value: Decimal,
+        symbol: String,
+        separator: String,
+        position: TokenSymbolPosition,
+        digits: (minimum: Int16, maximum: Int16)
+    ) -> String {
         let info = AssetBalanceDisplayInfo(
-            displayPrecision: UInt16(max(maximumDigits, 0)),
+            displayPrecision: UInt16(max(digits.maximum, 0)),
             assetPrecision: decimals,
-            symbol: code,
-            symbolValueSeparator: " ",
-            symbolPosition: .suffix,
+            symbol: symbol,
+            symbolValueSeparator: separator,
+            symbolPosition: position,
             icon: nil
         )
+        let minimum = UInt16(max(min(digits.minimum, digits.maximum), 0))
         return AssetBalanceFormatterFactory()
-            .createExactFormatter(for: info, minimumFractionDigits: UInt16(max(min(minimumDigits, maximumDigits), 0)))
+            .createExactFormatter(for: info, minimumFractionDigits: minimum)
             .value(for: .current)
             .stringFromDecimal(value) ?? "\(value) \(code)"
     }
+
+    /// The digits after the separator `code`'s amounts are written with: 2
+    /// for EUR, 0 for JPY.
+    static func minorDigits(of code: String) -> Int16 {
+        if wholeUnitCodes.contains(code) { return 0 }
+        if thousandthCodes.contains(code) { return 3 }
+        return 2
+    }
+
+    /// ISO 4217 currencies written without a minor unit.
+    static let wholeUnitCodes: Set<String> = [
+        "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG",
+        "RWF", "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF"
+    ]
+
+    /// ISO 4217 currencies written with three digits after the separator.
+    static let thousandthCodes: Set<String> = ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"]
 }
