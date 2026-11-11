@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
@@ -18,12 +19,18 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.tappableElement
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -45,21 +52,31 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
+import io.paritytech.polkadotapp.app.root.presentation.root.DockletInput
 import io.paritytech.polkadotapp.common.presentation.tabbar.DockletSlotAction
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarBaseInset
+import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarMode
 import io.paritytech.polkadotapp.common.presentation.tabbar.dockletSlotTap
 import io.paritytech.polkadotapp.common.presentation.tabs.BottomTab
+import io.paritytech.polkadotapp.design.components.docklet.DockletDrawbridge
+import io.paritytech.polkadotapp.design.components.docklet.DockletFrame
+import io.paritytech.polkadotapp.design.components.docklet.DockletGeometry
+import io.paritytech.polkadotapp.design.components.docklet.DockletLanding
 import io.paritytech.polkadotapp.design.components.docklet.DockletMaterials
 import io.paritytech.polkadotapp.design.components.docklet.DockletStep
 import io.paritytech.polkadotapp.design.components.docklet.dockletBackdrop
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletBackdrop
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletCardState
+import io.paritytech.polkadotapp.design.components.docklet.rememberDockletGlowMasks
+import io.paritytech.polkadotapp.design.components.docklet.rememberDockletHideState
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.design.utils.collectAsEffect
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.TabInfo
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.ImmutableMap
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.Flow
 import kotlin.math.abs
 
@@ -81,13 +98,12 @@ private const val BEHIND_CARD_DIM = 1f - DockletMaterials.BehindCardBrightness
 /**
  * Hosts the global navigation bar as a right-edge pull-out. The bar sits off-screen with only a [NUB_WIDTH]
  * nub showing; dragging it left reveals it, and it springs into place on release. Tapping outside collapses
- * it. Its current intrusion (dp) is reported via [onOffset] so screens can shift aside. When [hidden] it is
- * not shown at all. On each screen entry ([screenKey] changes) the bar snaps back to its default posture.
+ * it. Its current intrusion (dp) is reported via [onOffset] so screens can shift aside. Unless [barMode] shows
+ * the bar it is not shown at all. On each screen entry ([screenKey] changes) the bar snaps back to its default posture.
  */
 @Composable
 fun RootNavBarOverlay(
-    hidden: Boolean,
-    forceShown: Boolean,
+    barMode: TabBarMode,
     screenKey: String?,
     currentTab: BottomTab,
     tabWarnings: ImmutableMap<BottomTab, Boolean>,
@@ -95,162 +111,234 @@ fun RootNavBarOverlay(
     chainsHealth: ChainHealthIndicatorsModel,
     scannerTooltipVisible: Boolean,
     openScanPanelRequests: Flow<Unit>,
+    dockletTip: DockletTip?,
+    dockletInputs: Flow<DockletInput>,
     backdropSource: View?,
     onTabSelected: (BottomTab) -> Unit,
     onScannerTooltipDismiss: () -> Unit,
+    onDockletHidden: (DockletTip) -> Unit,
+    takeSessionPeek: () -> Boolean,
+    onDockletTipDismiss: () -> Unit,
     onAppClick: (Long) -> Unit,
     onAppClose: (Long) -> Unit,
     onOffset: (Dp) -> Unit,
     onBarHeight: (Dp) -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
-    val density = LocalDensity.current
-    val nubPx = with(density) { NUB_WIDTH.toPx() }
-    val flingVelocityPx = with(density) { FLING_VELOCITY_THRESHOLD.toPx() }
-    val pull = remember(scope, nubPx, flingVelocityPx) { TabBarPullState(scope, nubPx, flingVelocityPx) }
-    val cardState = rememberDockletCardState()
-    val backdrop = rememberDockletBackdrop(backdropSource)
-    val focusManager = LocalFocusManager.current
-    var keyboardRequested by remember { mutableStateOf(false) }
+    val navigationInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val threeButtonNavigation = WindowInsets.tappableElement.asPaddingValues().calculateBottomPadding() > 0.dp
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val dock = DockletGeometry.dockFrame(maxWidth, maxHeight, navigationInset, threeButtonNavigation)
+        val drawbridge = remember(dock, maxWidth, maxHeight) { DockletDrawbridge(dock, maxWidth, maxHeight) }
+        val scope = rememberCoroutineScope()
+        val density = LocalDensity.current
+        val nubPx = with(density) { NUB_WIDTH.toPx() }
+        val flingVelocityPx = with(density) { FLING_VELOCITY_THRESHOLD.toPx() }
+        val pull = remember(scope, nubPx, flingVelocityPx) { TabBarPullState(scope, nubPx, flingVelocityPx) }
+        val cardState = rememberDockletCardState()
+        val backdrop = rememberDockletBackdrop(backdropSource)
+        val focusManager = LocalFocusManager.current
+        var keyboardRequested by remember { mutableStateOf(false) }
+        val barShown = barMode.showsBar
 
-    // Snap to the screen's default posture on first measure, on force toggle, and on every screen entry, so
-    // a screen never inherits the previous one's pulled-out position.
-    LaunchedEffect(pull.maxOffset, forceShown, screenKey) {
-        pull.snapToDefault(forceShown)
-    }
-    // Report the bar's visible width off snapshots, so the per-frame drag doesn't recompose the overlay.
-    LaunchedEffect(Unit) {
-        snapshotFlow { pull.visibleWidthPx }.collect { onOffset(with(density) { it.toDp() }) }
-    }
-    // Both intrusions have to be surrendered on hide, not just the horizontal one: the height is only ever
-    // measured while the bar is composed, so without this screens keep reserving the band it used to
-    // occupy — and ChatExtensionOverlayHost reads a non-zero height as "a bar is there" and drops its own
-    // navigation-bar padding.
-    LaunchedEffect(hidden) {
-        if (hidden) {
-            onOffset(0.dp)
-            onBarHeight(0.dp)
+        // A screen never inherits the previous one's pulled-out position.
+        LaunchedEffect(pull.maxOffset, barShown, screenKey) {
+            pull.snapToDefault(barShown)
         }
-    }
-
-    val openCard: (DockletStep) -> Unit = { step ->
-        onScannerTooltipDismiss()
-        cardState.open(step)
-        pull.openScan()
-    }
-
-    openScanPanelRequests.collectAsEffect { _, _ -> openCard(DockletStep.Step1) }
-
-    LaunchedEffect(pull.scanExpanded) {
-        if (pull.scanExpanded) {
-            cardState.open(DockletStep.Step1)
-        } else {
-            keyboardRequested = false
-            focusManager.clearFocus()
-            cardState.close()
+        // Report the bar's visible width off snapshots, so the per-frame drag doesn't recompose the overlay.
+        LaunchedEffect(Unit) {
+            snapshotFlow { pull.visibleWidthPx }.collect { onOffset(with(density) { it.toDp() }) }
         }
-    }
-
-    val cardOpen = !hidden && pull.scanExpanded
-    // Composed only while open, so it registers after the screens' own BackHandlers and runs before them.
-    if (cardOpen) {
-        BackHandler { pull.collapsePanels() }
-        OverlayBackCallback { pull.collapsePanels() }
-    }
-
-    val scrimVisible by remember(hidden, forceShown) {
-        derivedStateOf { !hidden && (pull.panelExpanded || (pull.isOpen && !forceShown)) }
-    }
-
-    val tooltipVisible by remember(hidden, scannerTooltipVisible) {
-        derivedStateOf { !hidden && scannerTooltipVisible && pull.isFullyOpen }
-    }
-
-    val shade = PolkadotTheme.colors.bg.surface.overlay
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (!hidden) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .dockletBackdrop(
-                        backdrop = backdrop,
-                        shape = RectangleShape,
-                        sigma = { DockletMaterials.BehindCardBlurSigma * cardState.clampedProgress },
-                    )
-                    .drawBehind {
-                        drawRect(shade.copy(alpha = BEHIND_CARD_DIM * cardState.clampedProgress))
-                    },
-            )
+        // Both intrusions have to be surrendered on hide, not just the horizontal one: the height is only ever
+        // measured while the bar is composed, so without this screens keep reserving the band it used to
+        // occupy — and ChatExtensionOverlayHost reads a non-zero height as "a bar is there" and drops its own
+        // navigation-bar padding.
+        LaunchedEffect(barShown) {
+            if (!barShown) {
+                onOffset(0.dp)
+                onBarHeight(0.dp)
+            }
         }
 
-        if (scrimVisible) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                    ) {
-                        if (pull.panelExpanded) pull.collapsePanels() else pull.collapse()
-                    },
-            )
+        val openCard: (DockletStep) -> Unit = { step ->
+            onScannerTooltipDismiss()
+            cardState.open(step)
+            pull.openScan()
+        }
+        val changeCardStep: (DockletStep) -> Unit = { step ->
+            cardState.changeStep(step)
+            keyboardRequested = step == DockletStep.Step2
+            if (step == DockletStep.Step1) focusManager.clearFocus()
+        }
+        var searchAfterRestore by remember { mutableStateOf(false) }
+        var dockletAreas by remember { mutableStateOf<ImmutableList<DockletFrame>>(persistentListOf()) }
+        val hideState = rememberDockletHideState(drawbridge) { landing ->
+            when (landing) {
+                DockletLanding.HiddenBySwipe, DockletLanding.HiddenQuietly -> {
+                    pull.collapsePanels()
+                    onDockletHidden(if (landing == DockletLanding.HiddenQuietly) DockletTip.AutoHidden else DockletTip.Tucked)
+                    if (barShown && takeSessionPeek()) peek()
+                }
+                DockletLanding.Shown -> {
+                    onDockletTipDismiss()
+                    if (searchAfterRestore) {
+                        searchAfterRestore = false
+                        openCard(DockletStep.Step1)
+                    }
+                }
+            }
         }
 
-        val edgeOffset: (Int) -> Int = { -it }
-        AnimatedVisibility(
-            visible = !hidden,
-            enter = slideInHorizontally(initialOffsetX = edgeOffset) + fadeIn(),
-            exit = slideOutHorizontally(targetOffsetX = edgeOffset) + fadeOut(),
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { translationX = -pull.offset },
-            ) {
-                RootNavBar(
-                    cardState = cardState,
-                    backdrop = backdrop,
-                    currentTab = currentTab,
-                    tabWarnings = tabWarnings,
-                    apps = openApps,
-                    appsExpanded = pull.appsExpanded,
-                    chainsHealth = chainsHealth,
-                    networkStatusExpanded = pull.networkStatusExpanded,
-                    scannerTooltipVisible = tooltipVisible,
-                    keyboardRequested = keyboardRequested,
-                    pullState = pull,
-                    forceShown = forceShown,
-                    onSlotClick = { target ->
-                        when (val action = dockletSlotTap(target = target, currentTab = currentTab, onMain = forceShown, cardOpen = pull.scanExpanded)) {
-                            DockletSlotAction.CloseCard -> pull.collapsePanels()
-                            DockletSlotAction.ToggleApps -> pull.toggleApps()
-                            DockletSlotAction.ToggleNetworkStatus -> pull.toggleNetworkStatus()
-                            // Selecting the tab you are already on adds no back-stack entry, so the
-                            // panel would otherwise stay up with its tab deselected.
-                            is DockletSlotAction.SelectTab -> {
-                                pull.collapsePanels()
-                                onTabSelected(action.tab)
-                            }
-                        }
-                    },
-                    onOpenCard = openCard,
-                    onCloseCard = {
-                        pull.collapsePanels()
-                        cardState.close()
-                    },
-                    onCardStepChange = { step ->
-                        cardState.changeStep(step)
-                        keyboardRequested = step == DockletStep.Step2
-                        if (step == DockletStep.Step1) focusManager.clearFocus()
-                    },
-                    onKeyboardRequest = { keyboardRequested = true },
-                    onAppClick = onAppClick,
-                    onAppClose = onAppClose,
-                    onScanHandled = { navigate -> pull.collapsePanels(); navigate?.invoke() },
-                    onScannerTooltipDismiss = onScannerTooltipDismiss,
-                    onRestingHeightChange = { if (!hidden) onBarHeight(it) },
-                    onBarWidthChange = pull::setBarWidth,
+        LaunchedEffect(barMode) {
+            if (barMode is TabBarMode.TuckedOverScreen) hideState.tuck()
+        }
+        val glowMasks = rememberDockletGlowMasks()
+        val barVisibility = remember { MutableTransitionState(barShown) }
+        barVisibility.targetState = barShown
+        val barGone by remember { derivedStateOf { barVisibility.isIdle && !barVisibility.currentState } }
+        LaunchedEffect(barMode, barGone) {
+            if (barMode is TabBarMode.HiddenByScreen && barGone) hideState.untuck()
+        }
+
+        openScanPanelRequests.collectAsEffect { _, _ ->
+            if (hideState.countsAsHidden) {
+                searchAfterRestore = true
+                hideState.restore()
+            } else {
+                openCard(DockletStep.Step1)
+            }
+        }
+
+        LaunchedEffect(pull.scanExpanded) {
+            if (pull.scanExpanded) {
+                cardState.open(DockletStep.Step1)
+            } else {
+                keyboardRequested = false
+                focusManager.clearFocus()
+                cardState.close()
+            }
+        }
+
+        val cardOpen = barShown && pull.scanExpanded
+        // Composed only while open, so it registers after the screens' own BackHandlers and runs before them.
+        if (cardOpen) {
+            val searchBack = {
+                if (cardState.step == DockletStep.Step2) changeCardStep(DockletStep.Step1) else pull.collapsePanels()
+            }
+            BackHandler(onBack = searchBack)
+            OverlayBackCallback(onBack = searchBack)
+        }
+
+        val scrimVisible by remember(barShown) {
+            derivedStateOf { barShown && pull.panelExpanded }
+        }
+
+        val tooltipVisible by remember(barShown, scannerTooltipVisible) {
+            derivedStateOf { barShown && scannerTooltipVisible && pull.isFullyOpen }
+        }
+
+        val shade = PolkadotTheme.colors.bg.surface.overlay
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (barShown) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .dockletBackdrop(
+                            backdrop = backdrop,
+                            shape = RectangleShape,
+                            sigma = { DockletMaterials.BehindCardBlurSigma * cardState.clampedProgress },
+                        )
+                        .drawBehind {
+                            drawRect(shade.copy(alpha = BEHIND_CARD_DIM * cardState.clampedProgress))
+                        },
                 )
+            }
+
+            if (scrimVisible) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) {
+                            if (pull.panelExpanded) pull.collapsePanels() else pull.collapse()
+                        },
+                )
+            }
+
+            val edgeOffset: (Int) -> Int = { -it }
+            AnimatedVisibility(
+                visibleState = barVisibility,
+                enter = slideInHorizontally(initialOffsetX = edgeOffset) + fadeIn(),
+                exit = slideOutHorizontally(targetOffsetX = edgeOffset) + fadeOut(),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { translationX = -pull.offset },
+                ) {
+                    RootNavBar(
+                        cardState = cardState,
+                        backdrop = backdrop,
+                        currentTab = currentTab,
+                        tabWarnings = tabWarnings,
+                        apps = openApps,
+                        appsExpanded = pull.appsExpanded,
+                        chainsHealth = chainsHealth,
+                        networkStatusExpanded = pull.networkStatusExpanded,
+                        scannerTooltipVisible = tooltipVisible,
+                        keyboardRequested = keyboardRequested,
+                        pullState = pull,
+                        forceShown = barShown,
+                        hideState = hideState,
+                        dock = dock,
+                        onDockletAreas = { dockletAreas = it },
+                        onSlotClick = { target ->
+                            when (val action = dockletSlotTap(target = target, currentTab = currentTab, onMain = barMode == TabBarMode.Main, cardOpen = pull.scanExpanded)) {
+                                DockletSlotAction.CloseCard -> pull.collapsePanels()
+                                DockletSlotAction.ToggleApps -> pull.toggleApps()
+                                DockletSlotAction.ToggleNetworkStatus -> pull.toggleNetworkStatus()
+                                // Selecting the tab you are already on adds no back-stack entry, so the
+                                // panel would otherwise stay up with its tab deselected.
+                                is DockletSlotAction.SelectTab -> {
+                                    pull.collapsePanels()
+                                    onTabSelected(action.tab)
+                                }
+                            }
+                        },
+                        onOpenCard = openCard,
+                        onCloseCard = {
+                            pull.collapsePanels()
+                            cardState.close()
+                        },
+                        onCardStepChange = changeCardStep,
+                        onKeyboardRequest = { keyboardRequested = true },
+                        onAppClick = onAppClick,
+                        onAppClose = onAppClose,
+                        onScanHandled = { navigate -> pull.collapsePanels(); navigate?.invoke() },
+                        onScannerTooltipDismiss = onScannerTooltipDismiss,
+                        onRestingHeightChange = { if (barShown) onBarHeight(it) },
+                        onBarWidthChange = pull::setBarWidth,
+                    )
+                }
+            }
+
+            if (barShown) {
+                DockletAutoHideEffect(
+                    hideState = hideState,
+                    searchOpen = pull.scanExpanded,
+                    tipShown = (hideState.countsAsHidden && dockletTip != null) || tooltipVisible,
+                    panelExpanded = pull.appsExpanded || pull.networkStatusExpanded,
+                    dockletAreas = { dockletAreas },
+                    inputs = dockletInputs,
+                )
+                if (hideState.countsAsHidden && !pull.scanExpanded) {
+                    // A screen's own Back callback registers when it starts; re-registering on each tucked screen keeps this one on top.
+                    key(barMode) {
+                        HiddenDockBack(hideState = hideState, restoresOnBack = barMode == TabBarMode.Main)
+                    }
+                }
+                HiddenDockGlow(hideState = hideState, glowMasks = glowMasks, dockletTip = dockletTip, onTipDismiss = onDockletTipDismiss)
             }
         }
     }

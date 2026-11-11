@@ -24,7 +24,7 @@ use crate::{
 	dotns_views::{network_tld, protocol_component, protocol_registry, read_view, tld_node},
 	host_internal::{
 		permissions::authorization_status,
-		product_manifest::{Granted, RootManifest},
+		product_manifest::{Granted, ProductBrand, RootManifest},
 		sso_messages::RingVrfError,
 	},
 	host_logic::{
@@ -32,7 +32,7 @@ use crate::{
 			ContentResolver, DotnsCallError, DotnsError, DotnsRegistry, DotnsTransport,
 			namehash_under,
 		},
-		worker_manifest::WorkerManifest,
+		worker_manifest::{WorkerManifest, check_app_manifest},
 	},
 	runtime::{
 		dotns_lookup::{DotnsLookup, DotnsLookupKind},
@@ -47,6 +47,8 @@ const MANIFEST_RECORD_KEY: &str = "manifest";
 const EXECUTABLE_RECORD_KEY: &str = "executable";
 /// Subname label a product's Worker executable is published under.
 const WORKER_SUBNAME: &str = "worker";
+/// Subname label a product's App executable is published under.
+const APP_SUBNAME: &str = "app";
 
 /// Reads `product_id`'s root manifest JSON.
 ///
@@ -92,6 +94,25 @@ async fn fetch_worker_manifest(
 		DotnsLookupKind::WorkerManifest(product_id),
 		product_id,
 		Some(WORKER_SUBNAME),
+		EXECUTABLE_RECORD_KEY,
+	)
+	.await
+}
+
+/// Reads the JSON `product_id`'s `app.<product_id>.<tld>` subname publishes
+/// at its `executable` record, as [`fetch_worker_manifest`] reads the Worker's.
+#[instrument(skip_all, fields(runtime.method = "product_manifest.fetch_app"))]
+async fn fetch_app_manifest(
+	chain: &ChainRuntime,
+	asset_hub_chain_genesis_hash: [u8; 32],
+	product_id: &ProductId,
+) -> Result<Option<String>, DotnsError> {
+	fetch_text_record(
+		chain,
+		asset_hub_chain_genesis_hash,
+		DotnsLookupKind::AppManifest(product_id),
+		product_id,
+		Some(APP_SUBNAME),
 		EXECUTABLE_RECORD_KEY,
 	)
 	.await
@@ -730,6 +751,57 @@ pub async fn worker_manifest(
 /// [`CoreStorageKey::product_manifest`] is.
 pub fn worker_manifest_cache_key(product_id: &ProductId) -> CoreStorageKey {
 	CoreStorageKey::WorkerManifest { product_label: product_id.bare_label().to_string() }
+}
+
+/// Cache key for a product's App manifest, keyed as
+/// [`worker_manifest_cache_key`] is.
+pub fn app_manifest_cache_key(product_id: &ProductId) -> CoreStorageKey {
+	CoreStorageKey::AppManifest { product_label: product_id.bare_label().to_string() }
+}
+
+/// The name and icon `product_id`'s root manifest gives it, read through the
+/// root manifest cache. `Ok(None)` when it publishes no root manifest or
+/// one that gives no brand; `Err` when the chain could not be read.
+pub async fn product_brand(
+	services: &RuntimeServices,
+	platform: &dyn Platform,
+	product_id: &ProductId,
+) -> Result<Option<ProductBrand>, String> {
+	let (json, source) = root_manifest(services, platform, product_id).await;
+	if !matches!(source, ManifestSource::Cached { .. } | ManifestSource::Fetched) {
+		return Err(source.to_string());
+	}
+	Ok(json.and_then(|json| {
+		ProductBrand::parse(&json)
+			.inspect_err(|reason| warn!(%product_id, %reason, "root manifest gives no brand"))
+			.ok()
+	}))
+}
+
+/// Whether `product_id` publishes an App, cached as [`worker_manifest`]
+/// caches the Worker's. A published App manifest that does not parse is no
+/// App. `None` when that cannot be read within `ceiling`.
+pub async fn publishes_app(
+	services: &RuntimeServices,
+	platform: &dyn Platform,
+	product_id: &ProductId,
+	ceiling: Duration,
+) -> Option<bool> {
+	let read =
+		cached_dotns_json(services, platform, app_manifest_cache_key(product_id), || async {
+			fetch_app_manifest(&services.chain, asset_hub(services)?, product_id)
+				.await
+				.map_err(|error| error.reason())
+		});
+	let (json, _) = with_ceiling(ceiling, read)
+		.await?
+		.inspect_err(|reason| warn!(%product_id, %reason, "app manifest lookup failed"))
+		.ok()?;
+	Some(json.is_some_and(|json| {
+		check_app_manifest(&json)
+			.inspect_err(|reason| warn!(%product_id, %reason, "app manifest is unusable"))
+			.is_ok()
+	}))
 }
 
 /// Where [`cached_dotns_json`] read its answer.

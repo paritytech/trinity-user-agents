@@ -821,8 +821,8 @@ fn app_connection_rejects_rendering() {
 	);
 
 	assert!(matches!(
-		runtime.control().render(v01::ProductRendererRenderRequest {
-			context: v01::RenderContext::ChatMessage {
+		runtime.control().render(truapi::latest::ProductRendererRenderRequest {
+			context: truapi::latest::RenderContext::ChatMessage {
 				room_id: "room".into(),
 				message_id: "message".into(),
 				message_type: "vote".into(),
@@ -863,14 +863,14 @@ fn worker_connection_renders_and_receives_actions_without_a_session() {
 
 	let _render = runtime
 		.control()
-		.render(v01::ProductRendererRenderRequest {
-			context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
+		.render(truapi::latest::ProductRendererRenderRequest {
+			context: truapi::latest::RenderContext::PocketCard { card_id: "loyalty".into() },
 			payload: vec![],
 		})
 		.expect("a signed-out Worker connection may render");
 
-	let published = v01::HostRendererActionSubscribeItem {
-		context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
+	let published = truapi::latest::HostRendererActionSubscribeItem {
+		context: truapi::latest::RenderContext::PocketCard { card_id: "loyalty".into() },
 		action_id: "vote".into(),
 		payload: vec![],
 	};
@@ -884,11 +884,12 @@ fn worker_connection_renders_and_receives_actions_without_a_session() {
 		core::task::Poll::Ready(Some(item)) => item,
 		other => panic!("a published renderer action must be ready, got {other:?}"),
 	};
-	let Ok(truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(delivered)) = delivered
+	let Ok(delivered @ truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(_)) =
+		delivered
 	else {
 		panic!("expected a renderer action item")
 	};
-	assert_eq!(delivered, published);
+	assert_eq!(truapi::versioned::IntoLatest::into_latest(delivered), published);
 }
 
 #[test]
@@ -929,8 +930,8 @@ fn an_open_render_holds_one_worker_reference() {
 
 	let render = runtime
 		.control()
-		.render(v01::ProductRendererRenderRequest {
-			context: v01::RenderContext::PocketCard { card_id: "loyalty".into() },
+		.render(truapi::latest::ProductRendererRenderRequest {
+			context: truapi::latest::RenderContext::PocketCard { card_id: "loyalty".into() },
 			payload: vec![],
 		})
 		.expect("a Worker connection may render");
@@ -1021,11 +1022,69 @@ fn start_render(
 ) -> truapi::Subscription<v01::RendererNode, truapi::CallError<v01::GenericError>> {
 	runtime
 		.control()
-		.render(v01::ProductRendererRenderRequest {
-			context: v01::RenderContext::PocketCard { card_id: card_id.to_string() },
+		.render(truapi::latest::ProductRendererRenderRequest {
+			context: truapi::latest::RenderContext::PocketCard { card_id: card_id.to_string() },
 			payload: vec![],
 		})
 		.expect("a Worker connection may render")
+}
+
+#[test]
+fn only_a_footer_context_renders_in_v2() {
+	// A product on the published SDK decodes only V1 render requests, and a
+	// footer context exists only in V2, which the product that docked the card speaks.
+	let (runtime, sink) = render_runtime();
+	let footer = truapi::latest::ProductRendererRenderRequest {
+		context: truapi::latest::RenderContext::ChatRoomFooter {
+			room_id: "room".into(),
+			message_type: "register".into(),
+		},
+		payload: vec![1],
+	};
+	let message = truapi::latest::ProductRendererRenderRequest {
+		context: truapi::latest::RenderContext::ChatMessage {
+			room_id: "room".into(),
+			message_id: "message-1".into(),
+			message_type: "vote".into(),
+		},
+		payload: vec![2],
+	};
+
+	// When
+	let _renders = [footer.clone(), message]
+		.map(|request| runtime.control().render(request).expect("a Worker connection may render"));
+
+	// Then
+	let sent: Vec<_> = sink
+		.frames
+		.lock()
+		.expect("recording sink mutex poisoned")
+		.iter()
+		.map(|frame| {
+			let start =
+				ProtocolMessage::decode(&mut frame.as_slice()).expect("a start frame decodes");
+			truapi::versioned::renderer::ProductRendererRenderRequest::decode(
+				&mut start.payload.value.as_slice(),
+			)
+			.expect("a render request decodes")
+		})
+		.collect();
+	assert_eq!(
+		sent,
+		[
+			truapi::versioned::renderer::ProductRendererRenderRequest::V2(footer),
+			truapi::versioned::renderer::ProductRendererRenderRequest::V1(
+				v01::ProductRendererRenderRequest {
+					context: v01::RenderContext::ChatMessage {
+						room_id: "room".into(),
+						message_id: "message-1".into(),
+						message_type: "vote".into(),
+					},
+					payload: vec![2],
+				}
+			),
+		]
+	);
 }
 
 /// Request id of the render start frame sent at `index`.
@@ -1193,11 +1252,13 @@ fn app_connection_rejects_publishing_a_renderer_action() {
 	);
 
 	assert!(matches!(
-		runtime.control().publish_renderer_action(v01::HostRendererActionSubscribeItem {
-			context: v01::RenderContext::PocketCard { card_id: "card".into() },
-			action_id: "vote".into(),
-			payload: vec![],
-		}),
+		runtime.control().publish_renderer_action(
+			truapi::latest::HostRendererActionSubscribeItem {
+				context: truapi::latest::RenderContext::PocketCard { card_id: "card".into() },
+				action_id: "vote".into(),
+				payload: vec![],
+			}
+		),
 		Err(ProductRuntimeError::Denied)
 	));
 }
@@ -1696,95 +1757,6 @@ fn the_durable_engine_starts_without_an_installation_provider() {
 	runtime.start_core_services();
 
 	assert!(runtime.services.durable_engine().is_some());
-}
-
-#[test]
-fn answer_sso_request_distinguishes_disconnect_from_ignorable_messages() {
-	use crate::{
-		host_internal::sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
-		platform::{HostInfo, PlatformInfo, SigningHostConfig},
-	};
-
-	const ENTROPY: [u8; 32] = [0xab; 32];
-
-	let config = SigningHostConfig::new(
-		HostInfo {
-			name: "Polkadot Mobile".to_string(),
-			icon: None,
-			version: None,
-			platform: truapi::latest::HostPlatform::Unknown,
-		},
-		PlatformInfo::default(),
-		crate::test_support::paseo_test_stack(),
-	)
-	.expect("signing host config is valid");
-	let runtime =
-		SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, Spawner::for_test());
-	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-
-	let disconnected = RemoteMessage {
-		message_id: "m1".to_string(),
-		data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
-	};
-	let outcome = futures::executor::block_on(runtime.answer_sso_request(disconnected));
-	assert!(matches!(outcome, SsoRequestOutcome::Disconnected));
-
-	let response_variant = RemoteMessage {
-		message_id: "m2".to_string(),
-		data: RemoteMessageData::V1(v1::RemoteMessage::SignRawWithLegacyAccountResponse(
-			Response { responding_to: "m2".to_string(), payload: Ok(vec![]) },
-		)),
-	};
-	let outcome = futures::executor::block_on(runtime.answer_sso_request(response_variant));
-	assert!(matches!(outcome, SsoRequestOutcome::Ignored));
-}
-
-#[test]
-fn answer_sso_request_returns_a_correlated_response() {
-	use crate::{
-		host_internal::sso_messages::{
-			ProductSubtreeRequest, RemoteMessage, RemoteMessageData, v1,
-		},
-		platform::{HostInfo, PlatformInfo, SigningHostConfig},
-	};
-
-	const ENTROPY: [u8; 32] = [0xab; 32];
-
-	let config = SigningHostConfig::new(
-		HostInfo {
-			name: "Polkadot Mobile".to_string(),
-			icon: None,
-			version: None,
-			platform: truapi::latest::HostPlatform::Unknown,
-		},
-		PlatformInfo::default(),
-		crate::test_support::paseo_test_stack(),
-	)
-	.expect("signing host config is valid");
-	let runtime =
-		SigningHostRuntime::new(Arc::new(StubPlatform::default()), config, Spawner::for_test());
-	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-
-	let request = RemoteMessage {
-		message_id: "m3".to_string(),
-		data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeRequest(
-			ProductSubtreeRequest { product_id: ProductId::for_test("browse.dot") },
-		)),
-	};
-	let outcome = futures::executor::block_on(runtime.answer_sso_request(request));
-	let SsoRequestOutcome::Response { message } = outcome else {
-		panic!("expected a response outcome");
-	};
-	let response = RemoteMessage::decode(&mut message.as_slice()).expect("valid response encoding");
-	assert_eq!(response.message_id, "m3:response");
-	let RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(payload)) = response.data
-	else {
-		panic!("expected a product subtree response payload");
-	};
-	assert_eq!(payload.responding_to, "m3");
-	assert!(payload.payload.is_ok());
 }
 
 #[test]
