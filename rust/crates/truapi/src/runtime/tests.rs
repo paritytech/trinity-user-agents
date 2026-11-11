@@ -1741,9 +1741,7 @@ fn a_card_docks_in_the_footer_of_the_room_the_product_created() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		spawner.clone(),
 	);
 	let chat_platform = Arc::new(RecordingChatPlatform::default());
@@ -11183,9 +11181,7 @@ fn a_docked_card_is_screened_like_a_posted_custom_message() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		Spawner::for_test(),
 	);
 	let chat_platform = Arc::new(RecordingChatPlatform::default());
