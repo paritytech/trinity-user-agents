@@ -9,12 +9,7 @@ struct DSTabBarBarMaterial: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        if #available(iOS 27, *) {
-            Color.clear.glassEffect(
-                .regular,
-                in: RoundedRectangle(cornerRadius: DSTabBarStyle.cornerRadius, style: .continuous)
-            )
-        } else if #available(iOS 26, *) {
+        if #available(iOS 26, *) {
             Color.clear.glassEffect(
                 .regular.tint(Color.bgSurfaceMain.opacity(0.5)),
                 in: RoundedRectangle(cornerRadius: DSTabBarStyle.cornerRadius, style: .continuous)
@@ -44,9 +39,7 @@ struct DSTabBarCenterMaterial: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        if #available(iOS 27, *) {
-            Color.clear.glassEffect(.regular, in: DSTabBarMorphShape())
-        } else if #available(iOS 26, *) {
+        if #available(iOS 26, *) {
             Color.clear.glassEffect(.regular.tint(Color.bgSurfaceMain.opacity(0.5)), in: DSTabBarMorphShape())
         } else {
             DSTabBarVariableBlur(

@@ -84,14 +84,6 @@ private extension TabBarSlotView {
         index == model.selectedSlot
     }
 
-    var isEmphasized: Bool {
-        isSelected || index == model.activeActionItemIndex
-    }
-
-    var iconColor: Color {
-        isEmphasized ? .fgPrimary : .fgSecondary
-    }
-
     func slotButton(for item: TabBarBarItem) -> some View {
         Button {
             model.onSlotTapped?(index)
@@ -101,7 +93,7 @@ private extension TabBarSlotView {
                 if let title = item.title {
                     Text(title)
                         .font(Font(UIFont.labelSmallEmphasized))
-                        .foregroundStyle(iconColor)
+                        .foregroundStyle(.fgPrimary)
                         .padding(.top, 2)
                 }
             }
@@ -109,7 +101,6 @@ private extension TabBarSlotView {
             .padding(.vertical, item.title == nil ? 0 : 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
-            .animation(DSTabBarStyle.selectionCurve, value: isEmphasized)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(Text(item.accessibilityLabel))
@@ -126,10 +117,10 @@ private extension TabBarSlotView {
                 .renderingMode(.template)
                 .resizable()
                 .scaledToFit()
-                .foregroundStyle(iconColor)
+                .foregroundStyle(.fgPrimary)
                 .frame(width: Self.iconSize, height: Self.iconSize)
         case let .tabsGlyph(count):
-            TabsGlyph(count: count, isEmphasized: isEmphasized)
+            TabsGlyph(count: count)
                 .frame(width: Self.iconSize, height: Self.iconSize)
         }
     }
@@ -339,7 +330,6 @@ private extension TabBarScanPanelContent {
 /// Renders the open-apps count glyph from the bar's UIKit component.
 private struct TabsGlyph: UIViewRepresentable {
     let count: Int
-    let isEmphasized: Bool
 
     func makeUIView(context _: Context) -> DSTabBarTabsGlyphView {
         DSTabBarTabsGlyphView(frame: .zero)
@@ -347,6 +337,6 @@ private struct TabsGlyph: UIViewRepresentable {
 
     func updateUIView(_ view: DSTabBarTabsGlyphView, context _: Context) {
         view.count = count
-        view.glyphColor = isEmphasized ? .fgPrimary : .fgSecondary
+        view.glyphColor = .fgPrimary
     }
 }
