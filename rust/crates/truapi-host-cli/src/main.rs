@@ -1326,9 +1326,7 @@ async fn run_pairing_host(
 	let config = PairingHostConfig::new(
 		host_info("Headless Pairing Host"),
 		platform_info(),
-		network.genesis().people,
-		network.genesis().bulletin,
-		network.genesis().asset_hub,
+		network.core_stack().context("invalid stack")?,
 		DEEPLINK_SCHEME.to_string(),
 	)
 	.context("invalid pairing host config")?;
@@ -1873,10 +1871,7 @@ fn build_signing_runtime(
 	let config = SigningHostConfig::new(
 		host_info("Headless Signing Host"),
 		platform_info(),
-		network.genesis().people,
-		network.genesis().bulletin,
-		network.genesis().asset_hub,
-		network.tld().to_string(),
+		network.core_stack().context("invalid stack")?,
 	)
 	.context("invalid signing host config")?;
 	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;

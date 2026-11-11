@@ -24,11 +24,13 @@ use std::{
 
 #[cfg(feature = "wasm-signing-host")]
 use crate::platform::SigningHostConfig;
+#[cfg(feature = "test-host")]
+use crate::platform::StackChains;
 use crate::platform::{
 	ChainProvider, ChatPlatform, ContactsPlatform, ExecutableKind, GamePlatform, HostInfo,
 	JsonRpcConnection, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform,
 	ProductContext, ProductId, ProductIdError, ProviderError, RuntimeConfigValidationError,
-	ScannerPlatform,
+	ScannerPlatform, Stack,
 };
 use futures::{
 	channel::mpsc,
@@ -494,9 +496,6 @@ fn pairing_host_config_from_js(value: &JsValue) -> Result<PairingHostConfig, JsV
 
 	let host = get_required_object(value, "host", "runtimeConfig.host")?;
 	let platform = get_optional_object(value, "platform", "runtimeConfig.platform")?;
-	let people = get_required_object(value, "people", "runtimeConfig.people")?;
-	let bulletin = get_required_object(value, "bulletin", "runtimeConfig.bulletin")?;
-	let asset_hub = get_required_object(value, "assetHub", "runtimeConfig.assetHub")?;
 	let pairing = get_required_object(value, "pairing", "runtimeConfig.pairing")?;
 
 	PairingHostConfig::new(
@@ -522,9 +521,7 @@ fn pairing_host_config_from_js(value: &JsValue) -> Result<PairingHostConfig, JsV
 				.transpose()?
 				.flatten(),
 		},
-		get_required_bytes32_at(&people, "genesisHash", "runtimeConfig.people.genesisHash")?,
-		get_required_bytes32_at(&bulletin, "genesisHash", "runtimeConfig.bulletin.genesisHash")?,
-		get_required_bytes32_at(&asset_hub, "genesisHash", "runtimeConfig.assetHub.genesisHash")?,
+		stack_from_js(value)?,
 		get_required_string_at(&pairing, "deeplinkScheme", "runtimeConfig.pairing.deeplinkScheme")?,
 	)
 	.map_err(runtime_config_validation_to_js)
@@ -555,12 +552,6 @@ fn signing_host_config_from_js(value: &JsValue) -> Result<SigningHostConfig, JsV
 
 	let host = get_required_object(value, "host", "runtimeConfig.host")?;
 	let platform = get_optional_object(value, "platform", "runtimeConfig.platform")?;
-	let people = get_required_object(value, "people", "runtimeConfig.people")?;
-	let bulletin = get_required_object(value, "bulletin", "runtimeConfig.bulletin")?;
-	let asset_hub = get_required_object(value, "assetHub", "runtimeConfig.assetHub")?;
-	let network_suffix =
-		get_required_string_at(value, "networkSuffix", "runtimeConfig.networkSuffix")?;
-
 	SigningHostConfig::new(
 		HostInfo {
 			name: get_required_string_at(&host, "name", "runtimeConfig.host.name")?,
@@ -584,12 +575,71 @@ fn signing_host_config_from_js(value: &JsValue) -> Result<SigningHostConfig, JsV
 				.transpose()?
 				.flatten(),
 		},
-		get_required_bytes32_at(&people, "genesisHash", "runtimeConfig.people.genesisHash")?,
-		get_required_bytes32_at(&bulletin, "genesisHash", "runtimeConfig.bulletin.genesisHash")?,
-		get_required_bytes32_at(&asset_hub, "genesisHash", "runtimeConfig.assetHub.genesisHash")?,
-		network_suffix,
+		stack_from_js(value)?,
 	)
 	.map_err(runtime_config_validation_to_js)
+}
+
+/// The stack `runtimeConfig` names: `stack`, the pointer and descriptor copy a
+/// host build bundles, or, in a test-host build only, `testStack`, built from
+/// its parts because a test host has no descriptor to bundle.
+fn stack_from_js(value: &JsValue) -> Result<Stack, JsValue> {
+	#[cfg(feature = "test-host")]
+	if let Some(test_stack) = get_optional_object(value, "testStack", "runtimeConfig.testStack")? {
+		return test_stack_from_js(&test_stack);
+	}
+	let stack = get_required_object(value, "stack", "runtimeConfig.stack")?;
+	let pointer = get_required_string_at(&stack, "pointer", "runtimeConfig.stack.pointer")?;
+	let descriptor = Reflect::get(&stack, &JsValue::from_str("descriptor"))?
+		.dyn_into::<Uint8Array>()
+		.map_err(|_| JsValue::from_str("runtimeConfig.stack.descriptor must be a Uint8Array"))?
+		.to_vec();
+	let allows_reserved_values = get_optional_bool_at(
+		&stack,
+		"allowsReservedValues",
+		"runtimeConfig.stack.allowsReservedValues",
+	)?
+	.unwrap_or(false);
+	Stack::bundled(&pointer, &descriptor, allows_reserved_values)
+		.map_err(|error| JsValue::from_str(&format!("runtimeConfig.stack: {error}")))
+}
+
+/// `runtimeConfig.testStack`: `network`, `tld`, `people`, `bulletin` and the
+/// optional `assetHub` and `relay`, each `{ genesisHash }`, and
+/// `allowsReservedValues`, which defaults to false.
+#[cfg(feature = "test-host")]
+fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
+	let genesis = |role: &str| {
+		let path = format!("runtimeConfig.testStack.{role}");
+		get_optional_object(stack, role, &path)?
+			.map(|chain| {
+				get_required_bytes32_at(&chain, "genesisHash", &format!("{path}.genesisHash"))
+			})
+			.transpose()
+	};
+	let required = |role: &str| {
+		genesis(role)?.ok_or_else(|| {
+			JsValue::from_str(&format!("runtimeConfig.testStack.{role} is required"))
+		})
+	};
+	let chains = StackChains {
+		relay: genesis("relay")?,
+		asset_hub: genesis("assetHub")?,
+		people: required("people")?,
+		bulletin: required("bulletin")?,
+	};
+	Stack::new(
+		get_required_string_at(stack, "network", "runtimeConfig.testStack.network")?,
+		get_required_string_at(stack, "tld", "runtimeConfig.testStack.tld")?,
+		chains,
+		get_optional_bool_at(
+			stack,
+			"allowsReservedValues",
+			"runtimeConfig.testStack.allowsReservedValues",
+		)?
+		.unwrap_or(false),
+	)
+	.map_err(|error| JsValue::from_str(&format!("runtimeConfig.testStack: {error}")))
 }
 
 fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
@@ -620,10 +670,6 @@ fn runtime_config_field_to_js(field: &str) -> &str {
 	match field {
 		"host_info.name" => "host.name",
 		"pairing_deeplink_scheme" => "pairing.deeplinkScheme",
-		"people_chain_genesis_hash" => "people.genesisHash",
-		"bulletin_chain_genesis_hash" => "bulletin.genesisHash",
-		"asset_hub_chain_genesis_hash" => "assetHub.genesisHash",
-		"network_suffix" => "networkSuffix",
 		other => other,
 	}
 }
@@ -659,11 +705,6 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 		}) => JsValue::from_str(&format!(
 			"runtimeConfig.productId must be at most {limit} bytes, got {actual}"
 		)),
-		RuntimeConfigValidationError::InvalidNetworkSuffix { network_suffix } => {
-			JsValue::from_str(&format!(
-				"runtimeConfig.networkSuffix must be a supported dotNS TLD, got {network_suffix:?}"
-			))
-		},
 	}
 }
 
@@ -708,11 +749,23 @@ fn get_optional_string_at(
 		.ok_or_else(|| JsValue::from_str(&format!("{path} must be a string")))
 }
 
+fn get_optional_bool_at(value: &JsValue, name: &str, path: &str) -> Result<Option<bool>, JsValue> {
+	let property = Reflect::get(value, &JsValue::from_str(name))?;
+	if property.is_null() || property.is_undefined() {
+		return Ok(None);
+	}
+	property
+		.as_bool()
+		.map(Some)
+		.ok_or_else(|| JsValue::from_str(&format!("{path} must be a boolean")))
+}
+
 fn get_required_string_at(value: &JsValue, name: &str, path: &str) -> Result<String, JsValue> {
 	get_optional_string_at(value, name, path)?
 		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
+#[cfg(feature = "test-host")]
 fn get_optional_bytes32_at(
 	value: &JsValue,
 	name: &str,
@@ -736,11 +789,13 @@ fn get_optional_bytes32_at(
 	})
 }
 
+#[cfg(feature = "test-host")]
 fn get_required_bytes32_at(value: &JsValue, name: &str, path: &str) -> Result<[u8; 32], JsValue> {
 	get_optional_bytes32_at(value, name, path)?
 		.ok_or_else(|| JsValue::from_str(&format!("{path} is required")))
 }
 
+#[cfg(feature = "test-host")]
 fn parse_hex32(value: &str) -> Result<[u8; 32], String> {
 	let raw = value.strip_prefix("0x").unwrap_or(value);
 	if raw.len() != 64 {
@@ -1759,7 +1814,7 @@ impl WasmProductRuntime {
 		on_complete: Function,
 		on_error: Function,
 	) -> Result<WasmRendererSubscription, JsValue> {
-		let request = v01::ProductRendererRenderRequest::decode(&mut request.as_slice())
+		let request = truapi::latest::ProductRendererRenderRequest::decode(&mut request.as_slice())
 			.map_err(|err| JsValue::from_str(&format!("render request did not decode: {err}")))?;
 		let mut stream = self
 			.inner
@@ -1815,7 +1870,7 @@ impl WasmProductRuntime {
 	/// `HostRendererActionSubscribeItem`.
 	#[wasm_bindgen(js_name = publishRendererAction)]
 	pub fn publish_renderer_action(&self, item: Vec<u8>) -> Result<(), JsValue> {
-		let item = v01::HostRendererActionSubscribeItem::decode(&mut item.as_slice())
+		let item = truapi::latest::HostRendererActionSubscribeItem::decode(&mut item.as_slice())
 			.map_err(|err| JsValue::from_str(&format!("renderer action did not decode: {err}")))?;
 		self.inner
 			.core

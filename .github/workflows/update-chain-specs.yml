@@ -61,7 +61,7 @@ jobs:
         id: diff
         if: ${{ !cancelled() }}
         run: |
-          if git diff --quiet rust/crates/truapi-provider/networks/ rust/crates/truapi-host-cli/stacks/; then
+          if git diff --quiet rust/crates/truapi-provider/networks/ stacks/; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -78,7 +78,7 @@ jobs:
           title: "chore: refresh bundled chain specs and stack descriptors"
           body: |
             Automated refresh of the smoldot chain specs bundled in truapi-provider and the
-            stack descriptors bundled in truapi-host (`rust/crates/truapi-host-cli/stacks`), with
+            stack descriptors bundled in truapi-host (`stacks/`), with
             the changeset both need.
 
             This branch is rebuilt from main on every run, so a commit pushed to it is lost on the
