@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.bundledProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCard
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCards
 import io.paritytech.polkadotapp.test_shared.whenever
@@ -18,6 +19,7 @@ import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
+import org.mockito.Mockito.verifyNoInteractions
 import uniffi.truapi.ProductId
 
 private const val CID = "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
@@ -38,12 +40,42 @@ class RealResolveProductUseCaseTest {
         override fun setAppUrl(productId: ProductId, appUrl: String?) = Unit
     }
 
-    private fun useCase() = RealResolveProductUseCase(
+    private fun useCase(bundled: Map<String, String> = emptyMap()) = RealResolveProductUseCase(
         dotNsResolver,
         manifestParser,
         productRepository,
         debugPocketCards,
+        bundledProducts(bundled),
     )
+
+    // A product the app ships resolves from its files: its root manifest names it, and dotNS is not asked.
+    @Test
+    fun `a bundled product resolves from the files the app ships`() = runBlocking {
+        val resolved = useCase(
+            mapOf(
+                "bundled-products/$base/manifest.json" to rootJson(),
+                "bundled-products/$base/worker-manifest.json" to workerJson(),
+                "bundled-products/$base/worker/index.js" to "export {}",
+            ),
+        ).resolve(productId).getOrThrow()
+
+        assertEquals("Coinflip", resolved.product.name)
+        assertEquals("https://worker.$base/index.js", resolved.executables.worker?.scriptUrl)
+        assertTrue(resolved.executables.app == null)
+        verifyNoInteractions(dotNsResolver)
+    }
+
+    @Test
+    fun `a bundled Worker manifest the parser rejects fails the resolve`() = runBlocking {
+        val resolved = useCase(
+            mapOf(
+                "bundled-products/$base/worker-manifest.json" to """{"${'$'}v":1,"kind":"worker"}""",
+                "bundled-products/$base/worker/index.js" to "export {}",
+            ),
+        ).resolve(productId)
+
+        assertTrue(resolved.isFailure)
+    }
 
     private fun appJson() = """{"${'$'}v":1,"kind":"app","appVersion":[1,0,0]}"""
     private fun widgetJson() = """{"${'$'}v":1,"kind":"widget","appVersion":[1,0,0],"dimensions":{"height":[1,2]}}"""
