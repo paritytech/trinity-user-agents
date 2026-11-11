@@ -168,7 +168,7 @@ class ChatFeedViewModel @Inject constructor(
     }.shareInBackground()
 
     override val chatDisplay = interactor.observeChatDisplay(openChatRequest)
-        .mapResult { it.toUi(refreshAvatar = true) }
+        .mapResult { it.toUi(forceFresh = true) }
         .withLoading()
         .stateInBackground(initialValue = LoadingState.Loading)
 

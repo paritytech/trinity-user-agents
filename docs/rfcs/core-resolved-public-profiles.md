@@ -120,9 +120,8 @@ and emits one profile from the chain regardless of these options.
 
 Native bindings deliver profiles, completion and errors through an observer and
 return a cancellable subscription. Cancelling the subscription drops the
-observation future. The existing one-shot `resolve_public_profile(username, force)`
-entry point also serves Android's avatar adapter; `force` bypasses freshness but
-does not clear retained metadata.
+observation future. Both native apps collect profile updates outside their image
+libraries, passing each emitted avatar to a separate image request.
 
 The host looks up the returned CID in its image cache. Only a cache miss calls the
 shared [image loader](image-loader.md):
@@ -199,8 +198,10 @@ completes or fails, later image-size changes use ordinary freshness. Cancellatio
 retains the pending forced intent for a restarted observation, while the
 `skip_stale` choice is preserved. Contact, search and
 chat-list cells explicitly choose ordinary freshness. Reappearance of a retained chat screen does not start another forced
-observation. Android's one-shot avatar adapter forces a metadata lookup on chat
-entry; consuming the profile stream in the Android UI is a follow-up.
+observation. Android's composition-owned avatar collector forces metadata freshness
+on conversation entry and uses ordinary freshness in lists and search. It updates
+Coil request data for each emitted avatar without awaiting image loading. A
+username change or removal of the composition cancels collection and image work.
 
 ```text
 Native avatar adapter            Core + SQLite                    dotNS

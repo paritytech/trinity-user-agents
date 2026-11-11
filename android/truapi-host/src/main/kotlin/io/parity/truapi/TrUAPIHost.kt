@@ -1226,6 +1226,7 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         }.buffer(2)
 
     /** Profile metadata without image bytes. [force] bypasses the core's one-hour cache. */
+    @Deprecated("Collect observePublicProfile(username, options) instead.")
     @Throws(PublicProfileException::class)
     suspend fun resolvePublicProfile(username: String, force: Boolean): PublicProfile =
         inner.resolvePublicProfile(username, force)

@@ -3,8 +3,12 @@ package io.paritytech.polkadotapp.design.components.avatar
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.key
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Size
@@ -27,8 +31,8 @@ import coil.compose.AsyncImage
 import coil.compose.AsyncImagePainter
 import coil.compose.SubcomposeAsyncImage
 import coil.compose.SubcomposeAsyncImageContent
-import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
+import dagger.hilt.android.EntryPointAccessors
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
@@ -36,16 +40,20 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.configs.colors.AvatarColorScheme
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.typography.PolkadotTypography
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.collect
+import timber.log.Timber
 import kotlin.math.abs
 import kotlin.math.roundToInt
-
-const val AVATAR_REFRESH_PARAMETER = "avatar:refresh"
 
 sealed class AvatarUiModel {
     companion object;
 
-    /** [refresh] rereads profile metadata; immutable image bytes remain cached. */
-    data class Image(val url: String, val placeholder: Name? = null, val refresh: Boolean) : AvatarUiModel()
+    data class Image(val url: String, val placeholder: Name? = null) : AvatarUiModel()
+
+    data class PublicProfile(val username: String, val placeholder: Name?, val forceFresh: Boolean) : AvatarUiModel()
 
     data class Name(val name: String, val colorScheme: AvatarColorScheme) : AvatarUiModel()
 }
@@ -61,9 +69,19 @@ fun PolkadotAvatar(
             modifier = modifier,
             url = model.url,
             placeholder = model.placeholder,
-            refresh = model.refresh,
             onClick = onClick
         )
+
+        is AvatarUiModel.PublicProfile -> {
+            val context = LocalContext.current
+            val source = remember(context) {
+                EntryPointAccessors.fromApplication(
+                    context.applicationContext,
+                    PublicProfileAvatarSourceEntryPoint::class.java
+                ).publicProfileAvatarSource()
+            }
+            PublicProfileAvatar(model, source, modifier, onClick)
+        }
 
         is AvatarUiModel.Name -> LetterAvatar(
             modifier = modifier,
@@ -79,7 +97,6 @@ private fun ImageAvatar(
     modifier: Modifier,
     url: String,
     placeholder: AvatarUiModel.Name?,
-    refresh: Boolean,
     onClick: (() -> Unit)? = null
 ) {
     PolkadotSurface(
@@ -96,52 +113,69 @@ private fun ImageAvatar(
                 .build()
         }
 
-        if (refresh) {
-            key(url) { RefreshingAvatar(model, letter) }
-        } else {
-            AsyncImage(
-                model = model,
-                contentDescription = "",
-                contentScale = ContentScale.Crop,
-                transform = { state -> state.withLetter(letter) }
-            )
-        }
+        AsyncImage(
+            model = model,
+            contentDescription = "",
+            contentScale = ContentScale.Crop,
+            transform = { state -> state.withLetter(letter) }
+        )
     }
 }
 
+/** Follows metadata independently of image loading for the lifetime of this avatar. */
 @Composable
-private fun RefreshingAvatar(model: ImageRequest, letter: Painter?) {
-    SubcomposeAsyncImage(
-        model = model,
-        contentDescription = "",
-        contentScale = ContentScale.Crop,
-        transform = { state -> state.withLetter(letter) }
-    ) {
-        val resultRequest = when (val state = painter.state) {
-            is AsyncImagePainter.State.Success -> state.result.request
-            is AsyncImagePainter.State.Error -> state.result.request
-            else -> null
-        }
-        if (resultRequest == null) {
-            SubcomposeAsyncImageContent()
-        } else {
-            val refreshRequest = remember(model, resultRequest.sizeResolver) {
-                model.newBuilder()
-                    .size(resultRequest.sizeResolver)
-                    .setParameter(AVATAR_REFRESH_PARAMETER, true, memoryCacheKey = null)
-                    .build()
+fun PublicProfileAvatar(
+    model: AvatarUiModel.PublicProfile,
+    source: PublicProfileAvatarSource,
+    modifier: Modifier,
+    onClick: (() -> Unit)? = null
+) {
+    var request by remember(model.username) { mutableStateOf<ImageRequest?>(null) }
+    var retainedImage by remember(model.username) { mutableStateOf<Painter?>(null) }
+    var forceFresh by remember(model.username) { mutableStateOf(model.forceFresh) }
+
+    LaunchedEffect(source, model.username) {
+        try {
+            source.observe(model.username, forceFresh).collect { next ->
+                currentCoroutineContext().ensureActive()
+                if (next == null) retainedImage = null
+                request = next
             }
-            val refreshed = rememberAsyncImagePainter(
-                model = refreshRequest,
+            currentCoroutineContext().ensureActive()
+            forceFresh = false
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
+            forceFresh = false
+            Timber.w(error, "Public profile of %s", model.username)
+        }
+    }
+
+    PolkadotSurface(
+        modifier = modifier,
+        shape = PolkadotTheme.shapes.full,
+        color = PolkadotTheme.colors.bg.surface.container,
+        onClick = onClick
+    ) {
+        val letter = model.placeholder?.let { rememberLetterAvatarPainter(it.name, it.colorScheme) }
+        val currentRequest = request
+        if (currentRequest == null) {
+            if (letter != null) Image(letter, contentDescription = null, modifier = Modifier.fillMaxSize())
+        } else {
+            SubcomposeAsyncImage(
+                model = currentRequest,
+                contentDescription = "",
                 contentScale = ContentScale.Crop,
                 transform = { state -> state.withLetter(letter) }
-            )
-            val displayed = when (val state = refreshed.state) {
-                is AsyncImagePainter.State.Success -> refreshed
-                is AsyncImagePainter.State.Error -> if (state.result.throwable is AvatarNotFoundException) refreshed else painter
-                else -> painter
+            ) {
+                val state = painter.state
+                if (state is AsyncImagePainter.State.Success) {
+                    SideEffect { retainedImage = state.painter }
+                }
+                val displayed = if (state is AsyncImagePainter.State.Success) state.painter else retainedImage ?: painter
+                SubcomposeAsyncImageContent(painter = displayed)
             }
-            SubcomposeAsyncImageContent(painter = displayed)
         }
     }
 }

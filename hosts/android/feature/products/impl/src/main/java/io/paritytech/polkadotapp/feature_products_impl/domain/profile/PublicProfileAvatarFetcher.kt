@@ -102,7 +102,6 @@ internal class PublicProfileAvatarImageLoaderRegistrar @Inject constructor(
     private val runtimeProvider: TrUAPIHostRuntimeProvider,
 ) : ImageLoaderComponentRegistrar {
     override fun register(builder: ComponentRegistry.Builder) {
-        builder.add(PublicProfileAvatarInterceptor(runtimeProvider))
         builder.add(PublicProfileAvatarKeyer())
         builder.add(PublicProfileAvatarFetcher.Factory(runtimeProvider))
     }

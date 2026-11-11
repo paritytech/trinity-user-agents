@@ -77,7 +77,7 @@ class ChatRequestsListViewModel @Inject constructor(
     private fun ContactWithRequestTimestamp.toRequestItem(): ChatRequestsListUiState.ChatRequestItem {
         return ChatRequestsListUiState.ChatRequestItem(
             accountId = contact.accountId,
-            display = chatEngine.getContactChatDisplay(contact).toUi(),
+            display = chatEngine.getContactChatDisplay(contact).toUi(forceFresh = false),
             timestamp = requestTimestamp
         )
     }

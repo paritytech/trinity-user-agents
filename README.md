@@ -453,12 +453,20 @@ resolved value is emitted even when unchanged. SQLite retains up to 1,000 record
 freshness. The returned avatar CID selects the host's image cache; only a miss
 needs `loadImage`. The Rust WASM resolver reads the chain and emits one value.
 
-Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
-
 The Kotlin SDK's `observePublicProfile(username, options)` returns an ordered,
 finite `Flow<PublicProfile>` with cancellation and typed terminal errors. Callers
-explicitly supply both resolution options. The Android avatar adapter uses the one-shot
-`resolvePublicProfile(username, force)`; consuming the flow in those views is a follow-up.
+explicitly supply both resolution options. The one-shot
+`resolvePublicProfile(username, force)` API is deprecated.
+
+Android avatar views collect the profile stream for their composition's lifetime.
+Each emitted avatar becomes a Coil request whose data is the canonical
+`ProfileAvatar`; metadata resolution runs independently of image loading. Conversation
+entry forces freshness, while list and search loads use ordinary freshness. All
+callers explicitly set `skipStale` to false. Coil reuses CID-keyed original bytes
+on disk and decoded variants in memory without an image freshness expiry. The
+displayed image remains visible during replacement or a metadata error; a profile
+without an avatar restores the letter tile. Changing the username or removing the
+view cancels observation and image loading.
 
 iOS contacts and chat views consume `resolvePublicProfile(username:options:)`
 as a finite `AsyncThrowingStream`. New chat headers explicitly request forced

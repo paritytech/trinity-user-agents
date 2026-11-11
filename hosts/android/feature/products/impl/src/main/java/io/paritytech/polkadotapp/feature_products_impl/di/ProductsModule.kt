@@ -15,6 +15,7 @@ import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.utils.FeatureOption
 import io.paritytech.polkadotapp.common.utils.isEnabled
+import io.paritytech.polkadotapp.design.components.avatar.PublicProfileAvatarSource
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtensionProvider
 import io.paritytech.polkadotapp.feature_chats_api.domain.search.ChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
@@ -130,6 +131,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.RealProductBotManagementInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.profile.CorePublicProfileAvatarSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.profile.PublicProfileAvatarImageLoaderRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.runtime.PrefsProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.search.ProductChatSearchResultProvider
@@ -257,6 +259,10 @@ internal interface ProductsModule {
     @Binds
     @IntoSet
     fun bindPublicProfileAvatarImageLoaderRegistrar(impl: PublicProfileAvatarImageLoaderRegistrar): ImageLoaderComponentRegistrar
+
+    @Binds
+    @Singleton
+    fun bindPublicProfileAvatarSource(impl: CorePublicProfileAvatarSource): PublicProfileAvatarSource
 
     @Binds
     @IntoSet
