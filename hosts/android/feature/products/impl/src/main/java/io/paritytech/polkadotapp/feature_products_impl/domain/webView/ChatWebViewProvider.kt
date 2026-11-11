@@ -18,12 +18,11 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsWebViewClient
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
+import io.paritytech.polkadotapp.feature_products_impl.data.bundled.ProductContents
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import kotlinx.coroutines.CoroutineScope
 import uniffi.truapi.ProductId
-import uniffi.truapi.ProductSource
 
 class ChatWebViewProvider @AssistedInject constructor(
     @param:ApplicationContext private val context: Context,
@@ -33,7 +32,7 @@ class ChatWebViewProvider @AssistedInject constructor(
     private val dotNsResolver: DotNsResolver,
     private val dotNsTldProvider: DotNsTldProvider,
     private val servingHostResolver: DotNsServingHostResolver,
-    bundledProducts: BundledProducts,
+    productContents: ProductContents,
     @Assisted private val config: ChatWebViewConfig,
     @Assisted private val scope: CoroutineScope,
 ) : WebViewProvider(dispatchers) {
@@ -49,7 +48,7 @@ class ChatWebViewProvider @AssistedInject constructor(
 
     private val permissionClient = webViewPermissionClientFactory.create(callingProductIdProvider, workerScript.baseUrl)
 
-    private val bundledContent = (config.source as? ProductSource.Bundled)?.let { BundledProductContent.worker(it.entry, bundledProducts) }
+    private val ownContent = productContents.worker(config.productId)
 
     // Serves the worker's archive by host, so the entry module's relative imports resolve too.
     private val dotNsContentClient = DotNsWebViewClient(
@@ -90,7 +89,7 @@ class ChatWebViewProvider @AssistedInject constructor(
 
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest?): WebResourceResponse? {
                     return permissionClient.shouldInterceptRequest(view, request)
-                        ?: request?.let { bundledContent?.intercept(it) }
+                        ?: request?.let { ownContent?.intercept(it) }
                         ?: request?.let { dotNsContentClient.shouldInterceptRequest(view, it) }
                 }
             }
@@ -126,6 +125,4 @@ class ChatWebViewProvider @AssistedInject constructor(
 data class ChatWebViewConfig(
     val productId: ProductId,
     val workerScript: WorkerScript,
-    /** Where the worker runs from, decided when it boots; `null` for a published one. */
-    val source: ProductSource?,
 )

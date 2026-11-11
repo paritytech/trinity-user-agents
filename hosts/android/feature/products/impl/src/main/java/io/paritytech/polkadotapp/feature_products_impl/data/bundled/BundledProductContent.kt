@@ -1,9 +1,9 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.webView
+package io.paritytech.polkadotapp.feature_products_impl.data.bundled
 
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.ArchiveContent
-import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProducts
+import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.BundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.appHost
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.appRoot
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.workerHost
@@ -21,11 +21,11 @@ class BundledProductContent private constructor(
     private val content: ArchiveContent,
 ) {
     companion object {
-        fun worker(entry: BundleEntry, products: BundledProducts) =
-            BundledProductContent(entry.workerHost, entry.workerRoot, ArchiveContent(products.files, emptyMap()))
+        fun worker(entry: BundleEntry, files: BundledProductFiles) =
+            BundledProductContent(entry.workerHost, entry.workerRoot, ArchiveContent(files, emptyMap()))
 
-        fun app(entry: BundleEntry, products: BundledProducts, mainDocumentResponseHeaders: Map<String, String>) =
-            BundledProductContent(entry.appHost, entry.appRoot, ArchiveContent(products.files, mainDocumentResponseHeaders))
+        fun app(entry: BundleEntry, files: BundledProductFiles, mainDocumentResponseHeaders: Map<String, String>) =
+            BundledProductContent(entry.appHost, entry.appRoot, ArchiveContent(files, mainDocumentResponseHeaders))
     }
 
     fun serves(host: String?): Boolean = host.equals(this.host, ignoreCase = true)
