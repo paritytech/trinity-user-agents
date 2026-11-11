@@ -50,9 +50,12 @@ class TrUAPISessionStarterTest {
     private val installerOpen = slot<HostPageOpen?>()
     private val installerOpens = mutableListOf<HostPageOpen?>()
     private val reportedSessionId = slot<String>()
+    private val visibleOpen = slot<HostPageOpen?>()
     private val origin = HostEventOrigin("debug", "gp", "1.2.3", "android", "15", 123L)
     private val events = mutableListOf<HostEvent>()
     private val pageOpens = HostPageOpens({ origin }, { events += it() })
+    private val visibleListeners = mutableListOf<() -> Unit>()
+    private val visibleReports = mutableListOf<Triple<String, Long, HostPageOpen?>>()
     private val webViewSetups = mutableListOf<(WebView) -> Unit>()
 
     private val starter = TrUAPISessionStarter(
@@ -124,6 +127,30 @@ class TrUAPISessionStarterTest {
     }
 
     @Test
+    fun `the page is reported visible once, with the open that asked for it`() = runBlocking<Unit> {
+        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = System.currentTimeMillis())
+        pageOpens.hold(PRODUCT_ID.value, tap)
+        startPage()
+        yield()
+        invokeTelemetrySetupTwice()
+
+        repeat(3) { visibleListeners.single()() }
+
+        assertEquals(listOf(Triple(tap.sessionId, CREATED_AT_MS, tap)), visibleReports)
+    }
+
+    @Test
+    fun `a page nothing asked for is reported visible without an open`() = runBlocking<Unit> {
+        startPage()
+        yield()
+        invokeTelemetrySetupTwice()
+
+        visibleListeners.single()()
+
+        assertEquals(listOf(null), visibleReports.map { it.third })
+    }
+
+    @Test
     fun `a page that fails to start reports a page load failure under its session`() = runBlocking<Unit> {
         coEvery { runtimeProvider.runtime() } returns Result.failure(IllegalStateException("no runtime"))
 
@@ -166,6 +193,11 @@ class TrUAPISessionStarterTest {
         }
         coEvery { provider.addWebViewSetup(capture(webViewSetups)) } just Runs
         coEvery { provider.loadInitialContent() } just Runs
+        every { provider.addOnPageCommitVisibleListener(capture(visibleListeners)) } just Runs
+        every { telemetry.webViewCreatedAtMs() } returns CREATED_AT_MS
+        every { telemetry.reportVisible(any(), any(), captureNullable(visibleOpen), any()) } answers {
+            visibleReports += Triple(firstArg(), secondArg(), visibleOpen.captured)
+        }
         every { telemetry.report(capture(reportedSessionId), any(), any()) } just Runs
         coEvery { bridge.attach(any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
             arg<suspend (String) -> Unit>(7)("endpoint-bootstrap")
@@ -180,6 +212,7 @@ class TrUAPISessionStarterTest {
     }
 
     private companion object {
+        const val CREATED_AT_MS = 77L
         const val PRODUCT_URL = "https://product.paseo/app"
         val PRODUCT_ID = ProductId.parse("product.paseo").getOrThrow()
     }

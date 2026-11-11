@@ -23,6 +23,7 @@ abstract class WebViewProvider(
     private val webViewSetups = mutableListOf<(WebView) -> Unit>()
 
     private val onPageFinishedListeners = mutableListOf<() -> Unit>()
+    private val onPageCommitVisibleListeners = mutableListOf<() -> Unit>()
     private val onPageStartedListeners = mutableListOf<(String) -> Unit>()
     private val onWebViewDestroyedListeners = mutableListOf<() -> Unit>()
 
@@ -82,6 +83,11 @@ abstract class WebViewProvider(
         onPageFinishedListeners += listener
     }
 
+    /** Called on each main frame commit that is visible, so a listener wanting the first one only must keep count. */
+    fun addOnPageCommitVisibleListener(listener: () -> Unit) {
+        onPageCommitVisibleListeners += listener
+    }
+
     override fun addOnPageStartedListener(listener: (url: String) -> Unit) {
         onPageStartedListeners += listener
     }
@@ -106,6 +112,10 @@ abstract class WebViewProvider(
 
     protected fun notifyOnPageFinished() {
         onPageFinishedListeners.forEach { it.invoke() }
+    }
+
+    protected fun notifyOnPageCommitVisible() {
+        onPageCommitVisibleListeners.forEach { it.invoke() }
     }
 
     protected fun notifyOnPageStarted(url: String) {

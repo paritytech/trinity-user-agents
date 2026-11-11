@@ -56,6 +56,37 @@ class HostWebViewCreatedTelemetryTest {
     }
 
     @Test
+    fun `reports the first visible commit with the WebView time and no tap when nothing asked for the page`() {
+        var captured: HostEvent? = null
+        val reporter = reporter(capture = HostEventCapture { captured = it() })
+
+        reporter.reportVisible("bootstrap-session-42", webViewCreatedAtMs = 100L)
+
+        assertEquals("host.page.visible", captured?.name)
+        assertEquals("bootstrap-session-42", captured?.tags?.get("host.session_id"))
+        assertEquals(null, captured?.tags?.get("open.source"))
+        assertEquals(356L, captured?.extras?.get("webview_ms"))
+        assertEquals(null, captured?.extras?.get("tap_ms"))
+    }
+
+    @Test
+    fun `reports the time since the tap and its source on the visible commit when the page was opened by one`() {
+        var captured: HostEvent? = null
+        val reporter = reporter(capture = HostEventCapture { captured = it() })
+
+        reporter.reportVisible(
+            "bootstrap-session-42",
+            webViewCreatedAtMs = 100L,
+            open = HostPageOpen(HostOpenSource.DEEPLINK, epochMs = 1_000L),
+            nowEpochMs = 2_100L,
+        )
+
+        assertEquals("deeplink", captured?.tags?.get("open.source"))
+        assertEquals(1_100L, captured?.extras?.get("tap_ms"))
+        assertEquals(356L, captured?.extras?.get("webview_ms"))
+    }
+
+    @Test
     fun `keeps WebView metadata lazy when capture is disabled`() {
         var originRead = false
         var timeRead = false

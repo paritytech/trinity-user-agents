@@ -199,6 +199,11 @@ class BrowserWebViewProvider @AssistedInject constructor(
             notifyOnPageStarted(url)
         }
 
+        override fun onPageCommitVisible(view: WebView, url: String?) {
+            innerClient.onPageCommitVisible(view, url)
+            notifyOnPageCommitVisible()
+        }
+
         override fun onPageFinished(view: WebView, url: String?) {
             innerClient.onPageFinished(view, url)
             if (fixedProductId != null) servedPageProgress.value = DotNsLoadProgress.Completed

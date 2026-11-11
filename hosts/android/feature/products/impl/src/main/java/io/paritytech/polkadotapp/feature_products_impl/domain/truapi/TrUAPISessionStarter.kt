@@ -18,6 +18,7 @@ import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 /**
@@ -90,13 +91,23 @@ class TrUAPISessionStarter @Inject constructor(
 
         val kind = if (card != null) ExecutableKind.WIDGET else ExecutableKind.APP
         val webViewEventReported = AtomicBoolean(false)
+        val pageVisibleReported = AtomicBoolean(false)
+        val webViewCreatedAtMs = AtomicLong(NOT_CREATED)
         return bridge
             .attach(runtime, productId, chainDirectory.resolve(), navigation, kind, card = card) { bootstrap ->
                 val setup = installBootstrap(bootstrap)
                 provider.addWebViewSetup { webView ->
                     setup(webView)
                     if (webViewEventReported.compareAndSet(false, true)) {
+                        webViewCreatedAtMs.set(hostWebViewCreatedTelemetry.webViewCreatedAtMs())
                         hostWebViewCreatedTelemetry.report(hostSessionId, open)
+                    }
+                }
+                // Once per session: not again on a reload or an in-page navigation.
+                provider.addOnPageCommitVisibleListener {
+                    val createdAtMs = webViewCreatedAtMs.get()
+                    if (createdAtMs != NOT_CREATED && pageVisibleReported.compareAndSet(false, true)) {
+                        hostWebViewCreatedTelemetry.reportVisible(hostSessionId, createdAtMs, open)
                     }
                 }
             }
@@ -110,6 +121,10 @@ class TrUAPISessionStarter @Inject constructor(
     private fun failed(cause: Throwable, productId: ProductId, hostSessionId: String): Result<Unit> {
         loadFailures.report(HostLoadStage.PAGE, cause, productId.value, hostSessionId)
         return Result.failure(cause)
+    }
+
+    private companion object {
+        const val NOT_CREATED = -1L
     }
 
     private fun Uri.origin(): String = buildString {
