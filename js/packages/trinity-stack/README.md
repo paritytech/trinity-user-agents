@@ -81,9 +81,9 @@ A GitHub Actions job that runs the CLI, such as a scheduled `update`, installs i
 ```
 
 Every release tags the action `trinity-stack-v<version>`, and the action installs the package version of the commit it
-is checked out at, so that tag installs that release. Pass `version: latest` for the newest release or a version such
-as `version: 0.2.0`. The action installs under `RUNNER_TEMP`, puts `trinity-stack` on `PATH` for the rest of the job,
-and outputs the installed `version` and the executable's `path`.
+is checked out at, so that tag installs that release. Pass `version: latest` for the newest release or a version such as
+`version: 0.2.0`. The action installs under `RUNNER_TEMP`, puts `trinity-stack` on `PATH` for the rest of the job, and
+outputs the installed `version` and the executable's `path`.
 
 ## Publishing a stack
 
