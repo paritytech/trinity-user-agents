@@ -153,12 +153,7 @@ private extension TrUAPIWsBridgeTests {
     static func makeHostRuntimeConfig() throws -> HostRuntimeConfig {
         try HostRuntimeConfig(
             hostName: "truapi-host-tests",
-            peopleChainGenesisHash: Data(repeating: 0, count: 32),
-            bulletinChainGenesisHash: Data(repeating: 0, count: 32),
-            // Non-zero: all-zero is the "no Asset Hub" sentinel, and this
-            // fixture is not exercising that case.
-            assetHubChainGenesisHash: Data(repeating: 1, count: 32),
-            networkSuffix: "paseo",
+            stack: previewnetStack(),
             databaseDirectory: temporaryDatabaseDirectory()
         )
     }
@@ -230,6 +225,24 @@ final class StubCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
     }
 }
 
+/// The previewnet stack host builds bundle, read from the repository's
+/// `stacks/`, so the core verifies a real descriptor against its link.
+///
+/// The tests run on a simulator, which reads the host file system, so the
+/// path comes from this file's location rather than a test bundle resource.
+func previewnetStack() throws -> BundledStack {
+    let stacks = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .appendingPathComponent("../../../stacks")
+        .standardizedFileURL
+    let link = try String(contentsOf: stacks.appendingPathComponent("previewnet.link"), encoding: .utf8)
+    return try BundledStack(
+        pointer: link.trimmingCharacters(in: .whitespacesAndNewlines),
+        descriptor: Data(contentsOf: stacks.appendingPathComponent("previewnet.json")),
+        allowsReservedValues: false
+    )
+}
+
 // Conforms to HostBridge rather than the generated HostCallbacks, so the
 // protocol extension supplies every optional callback and a new one cannot
 // leave this file behind. Only the six requirements without a default are
@@ -294,7 +307,6 @@ final class StubHostBridge: HostBridge, @unchecked Sendable {
         request _: RemotePermission
     ) async throws -> PermissionDecision { nextRemoteDecision() }
     func featureSupported(request _: HostFeatureSupportedRequest) async throws -> Bool { true }
-    func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
     func localStorageRead(key: String) throws -> Data? { try storage.read(key: key) }
     
     func localStorageWrite(key: String, value: Data) throws {

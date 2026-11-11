@@ -7,6 +7,7 @@
 export {
   createMockHost,
   mockRuntimeConfig,
+  mockTestStack,
   MOCK_GENESIS,
 } from "./web/create-mock-host.js";
 export type {
@@ -15,8 +16,11 @@ export type {
   MockFaults,
   MockHost,
   MockHostConfig,
+  MockRuntimeConfig,
   PermissionLogEntry,
   PermissionKind,
   PermissionPolicy,
   SigningLogEntry,
+  TestStack,
+  TestStackChain,
 } from "./web/create-mock-host.js";

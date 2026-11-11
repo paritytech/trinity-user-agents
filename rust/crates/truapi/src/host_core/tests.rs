@@ -45,11 +45,7 @@ fn activated_signing_runtime(platform: Arc<StubPlatform>) -> SigningHostRuntime 
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		// Distinct from its siblings so a transposition stays visible.
-		[0xcc; 32],
-		"testnet".to_string(),
+		crate::test_support::test_stack("testnet", [0; 32], [0xbb; 32], Some([0xcc; 32])),
 	)
 	.expect("signing host config is valid");
 	let runtime = SigningHostRuntime::new(platform, config, Spawner::for_test());
@@ -1633,10 +1629,7 @@ fn the_device_pairing_observer_is_installed_once() {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		[0xcc; 32],
-		"paseo".to_string(),
+		crate::test_support::paseo_test_stack(),
 	)
 	.expect("signing host config is valid");
 	let runtime =
@@ -1661,10 +1654,7 @@ fn test_signing_runtime() -> (SigningHostRuntime, Arc<StubPlatform>) {
 	let config = SigningHostConfig::new(
 		host,
 		PlatformInfo::default(),
-		genesis.0,
-		genesis.1,
-		genesis.2,
-		"paseo".to_string(),
+		crate::test_support::test_stack("paseo", genesis.0, genesis.1, Some(genesis.2)),
 	)
 	.expect("signing host config is valid");
 	let platform = Arc::new(StubPlatform::default());
@@ -1858,7 +1848,9 @@ fn disconnect_paired_host_propagates_submission_failure() {
 
 /// Signing-host config carrying `asset_hub`, otherwise the shape every
 /// other signing test here uses.
-fn signing_config_with_asset_hub(asset_hub: [u8; 32]) -> crate::platform::SigningHostConfig {
+fn signing_config_with_asset_hub(
+	asset_hub: Option<[u8; 32]>,
+) -> crate::platform::SigningHostConfig {
 	use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
 	SigningHostConfig::new(
@@ -1869,12 +1861,7 @@ fn signing_config_with_asset_hub(asset_hub: [u8; 32]) -> crate::platform::Signin
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		// Same-typed and positional, so a transposition only shows up if
-		// no two are equal.
-		[0xaa; 32],
-		[0xbb; 32],
-		asset_hub,
-		"paseo".to_string(),
+		crate::test_support::test_stack("paseo", [0xaa; 32], [0xbb; 32], asset_hub),
 	)
 	.expect("signing host config is valid")
 }
@@ -1886,7 +1873,7 @@ fn a_signing_host_runtime_carries_its_asset_hub_for_manifest_resolution() {
 	// consulted, which is why a seeded CLI looked healthy.
 	let runtime = SigningHostRuntime::new(
 		Arc::new(StubPlatform::default()),
-		signing_config_with_asset_hub([0xcc; 32]),
+		signing_config_with_asset_hub(Some([0xcc; 32])),
 		Spawner::for_test(),
 	);
 	assert_eq!(
@@ -1910,9 +1897,7 @@ fn a_pairing_host_runtime_carries_its_asset_hub_too() {
 			platform: truapi::latest::HostPlatform::Web,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		[0xdd; 32],
+		crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], Some([0xdd; 32])),
 		"polkadotapp".to_string(),
 	)
 	.expect("pairing host config is valid");
@@ -1931,7 +1916,7 @@ fn an_all_zero_asset_hub_is_how_a_signing_host_says_it_has_none() {
 	// second sentinel crossing the boundary.
 	let runtime = SigningHostRuntime::new(
 		Arc::new(StubPlatform::default()),
-		signing_config_with_asset_hub([0; 32]),
+		signing_config_with_asset_hub(None),
 		Spawner::for_test(),
 	);
 	// The hash is a constructor argument, so `None` here can only mean the
@@ -1952,9 +1937,7 @@ fn the_asset_hub_argument_reaches_the_asset_hub_slot() {
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		[0xaa; 32],
-		[0xbb; 32],
-		[0xcc; 32],
+		crate::test_support::test_stack("paseo", [0xaa; 32], [0xbb; 32], Some([0xcc; 32])),
 		Spawner::for_test(),
 	);
 	assert_eq!(
@@ -1974,7 +1957,7 @@ struct ManifestLookup {
 
 /// A cross-product storage read for `owner`, uncached, on a signing-role
 /// product runtime configured with `asset_hub`.
-fn signing_manifest_lookup_rpc(asset_hub: [u8; 32]) -> ManifestLookup {
+fn signing_manifest_lookup_rpc(asset_hub: Option<[u8; 32]>) -> ManifestLookup {
 	use truapi::{api::LocalStorage, versioned::local_storage::HostLocalStorageReadRequest};
 
 	// The stub serves no dotNS either way, so end the follow rather than
@@ -2013,7 +1996,7 @@ fn signing_manifest_lookup_rpc(asset_hub: [u8; 32]) -> ManifestLookup {
 fn a_signing_host_takes_a_manifest_miss_to_the_chain() {
 	// The refusal is identical either way, so whether the core asked the
 	// chain is the only observable difference.
-	let configured = signing_manifest_lookup_rpc([0xcc; 32]);
+	let configured = signing_manifest_lookup_rpc(Some([0xcc; 32]));
 	assert!(
 		!configured.rpc.is_empty(),
 		"a configured signing role resolves an uncached manifest over dotNS"
@@ -2028,7 +2011,7 @@ fn a_signing_host_takes_a_manifest_miss_to_the_chain() {
          Bulletin ([0xbb; 32])"
 	);
 
-	let unconfigured = signing_manifest_lookup_rpc([0; 32]);
+	let unconfigured = signing_manifest_lookup_rpc(None);
 	assert!(
 		unconfigured.rpc.is_empty(),
 		"a signing role with no Asset Hub refuses without touching the chain"

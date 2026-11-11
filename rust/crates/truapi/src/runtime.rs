@@ -785,9 +785,7 @@ impl ProductRuntimeHost {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			crate::platform::PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			crate::test_support::paseo_test_stack(),
 			"polkadotapp".to_string(),
 		)
 		.expect("compat runtime config is valid")
@@ -829,9 +827,7 @@ impl ProductRuntimeHost {
 		let services = RuntimeServices::new(
 			platform.clone(),
 			host_config.host.host_info.clone(),
-			host_config.people_chain_genesis_hash,
-			host_config.bulletin_chain_genesis_hash,
-			host_config.asset_hub_chain_genesis_hash,
+			host_config.stack.clone(),
 			spawner.clone(),
 		);
 		let pairing_host = PairingHost::new(services.clone(), host_config);

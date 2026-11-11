@@ -28,8 +28,8 @@ import {
   mockRuntimeConfig,
   type MockHost,
   type MockHostConfig,
+  type MockRuntimeConfig,
 } from "../web/create-mock-host.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
 import {
   resolveAccount,
   type DevAccount,
@@ -41,7 +41,7 @@ export interface MockClientOptions {
   /** Behaviour knobs forwarded to {@link createMockHost}. */
   mock?: MockHostConfig;
   /** Overrides merged into {@link mockRuntimeConfig}. */
-  runtimeConfig?: Partial<ProductRuntimeConfig>;
+  runtimeConfig?: Partial<MockRuntimeConfig>;
   /** Account the host signs as. Defaults to `"alice"`. */
   account?: DevAccountName | DevAccount;
   /**
