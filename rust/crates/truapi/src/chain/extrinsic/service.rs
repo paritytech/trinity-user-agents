@@ -14,10 +14,10 @@ use super::{
 	version_map::VersionMapCache,
 };
 use crate::{
+	Spawner,
 	chain::{AccountNonces, HashAndNumber, WatchedStorage},
 	chain_runtime::{ChainRuntime, HostChainProvider},
 	platform::{ChainProvider, ExtrinsicVersionHost},
-	subscription::Spawner,
 };
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

@@ -19,6 +19,7 @@
 mod bundled_products;
 mod callbacks;
 mod config;
+mod engine_follow;
 mod errors;
 mod events;
 mod executor;
@@ -54,7 +55,7 @@ pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionCo
 pub use errors::{
 	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
 };
-pub use funding::{funding_amount_issue, funding_status_in_flight};
+pub use funding::funding_status_in_flight;
 pub use funding_feed::{FundingChangeKind, funding_resume_pending};
 pub use funding_page::{
 	funding_page_allows_media, funding_page_allows_navigation, funding_page_matches_return,

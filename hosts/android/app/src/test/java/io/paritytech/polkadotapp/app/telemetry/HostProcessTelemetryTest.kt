@@ -7,6 +7,8 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
+import io.paritytech.polkadotapp.common.data.telemetry.baseExtras
+import io.paritytech.polkadotapp.common.data.telemetry.baseTags
 import io.paritytech.polkadotapp.common.data.telemetry.isFreshNotificationLaunch
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationShown
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
@@ -121,8 +123,27 @@ class HostProcessTelemetryTest {
         assertEquals("host.process.started", sentryEvent?.message?.formatted)
         assertEquals(SentryLevel.INFO, sentryEvent?.level)
         assertEquals("host.telemetry", sentryEvent?.logger)
+        assertEquals(listOf("host.process.started"), sentryEvent?.fingerprints)
         assertEquals("android", sentryEvent?.getTag("host.platform"))
         assertEquals(42L, sentryEvent?.getExtra("host.app_build"))
+    }
+
+    @Test
+    fun `one event name is one Sentry group whatever else the event carries`() {
+        val fingerprints = mutableListOf<List<String>?>()
+        val capture = RealHostEventCapture(
+            enabledProvider = HostTelemetryEnabledProvider { true },
+            sentryCapture = SentryEventCapture { fingerprints += it.fingerprints },
+        )
+        val otherBuild = origin.copy(appVariant = "debug", nativeAppVersion = "9.9.9", appBuild = 7L)
+
+        capture.capture { HostEvent(name = "host.one", tags = origin.baseTags(), extras = origin.baseExtras()) }
+        capture.capture {
+            HostEvent(name = "host.one", tags = otherBuild.baseTags(), extras = otherBuild.baseExtras())
+        }
+        capture.capture { HostEvent(name = "host.two", tags = emptyMap(), extras = emptyMap()) }
+
+        assertEquals(listOf(listOf("host.one"), listOf("host.one"), listOf("host.two")), fingerprints)
     }
 
     @Test

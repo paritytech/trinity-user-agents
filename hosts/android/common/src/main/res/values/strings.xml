@@ -284,10 +284,10 @@
     <string name="product_bot_management_face_away_label">Open with the face away</string>
     <string name="product_bot_management_name_hint">product%1$s</string>
     <string name="product_bot_management_confirm">Save</string>
-    <string name="spa_browser_minimize">Minimize</string>
-    <string name="spa_browser_menu_open_chat">Open Chat</string>
-    <string name="spa_browser_menu_refresh">Refresh</string>
+    <string name="spa_browser_menu_proceed_in_chat">Proceed in Chat</string>
+    <string name="spa_browser_menu_reload">Reload</string>
     <string name="spa_browser_menu_share">Share</string>
+    <string name="spa_browser_menu_close_app">Close app</string>
     <string name="spa_browser_page_no_app_surface">This product doesn\'t have an app on this device.</string>
     <string name="product_resolution_error_malformed_manifest">This product published a manifest this app can\'t read. Contact the product\'s developer.</string>
     <string name="product_resolution_error_unknown">Couldn\'t load this product.</string>
@@ -649,7 +649,6 @@
 
     <string name="app_not_found_error">No App found</string>
 
-    <string name="chats_toolbar_title" translatable="false">Chats</string>
     <string name="chats_empty_state_title">Add your first contact</string>
     <string name="chats_empty_state_message">Tap the button below to find someone by username</string>
 
@@ -747,7 +746,6 @@
     <string name="chat_notification_payment">is sending you %1$s</string>
     <string name="chat_notification_request_approved">approved the chat request</string>
 
-    <string name="pocket_toolbar_title">Pocket</string>
     <string name="card_currency_title">Local currency</string>
     <string name="card_balance_will_be_available_soon">Available soon</string>
 
@@ -774,7 +772,6 @@
     <string name="send_transaction_failure_description">Please review the details of your transaction and try to send it again</string>
 
 
-    <string name="settings_toolbar_title">Settings</string>
 
     <string name="settings_section_general">General</string>
     <string name="settings_section_connections">Connections</string>
@@ -913,9 +910,7 @@
     <string name="splash_waiting_for_network_title">Waiting for network connection…</string>
     <string name="splash_waiting_for_network_message">Turn off Airplane Mode or check your internet</string>
 
-    <string name="pocket_digital_dollar_title">Purse</string>
     <string name="pocket_digital_dollar_faucet_top_up">Faucet Top Up</string>
-    <string name="pocket_collectibles_title">Collectibles</string>
     <string name="pocket_action_get">Get</string>
     <string name="pocket_action_get_description">Add %1$s via bank, crypto or credit card</string>
     <string name="pocket_action_send_description">Move %1$s to your bank, crypto wallet or contacts</string>
@@ -1043,6 +1038,8 @@
     <string name="debug_report_what_happened">What happened?</string>
     <string name="debug_report_placeholder">Tell us about the issue you encountered</string>
     <string name="debug_report_character_count">%1$d / %2$d</string>
+    <string name="debug_report_github_username">GitHub username (optional)</string>
+    <string name="debug_report_github_username_invalid">Enter a valid GitHub username</string>
     <string name="debug_report_attachments">Your report includes app logs and this screenshot.</string>
     <string name="debug_report_screenshot">Screenshot included in the report</string>
     <string name="debug_report_thanks">Thank you for your feedback!</string>

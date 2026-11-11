@@ -26,6 +26,7 @@ use super::{
 	sso_request_service::{PairedSessionOwner, SsoRequestService},
 };
 use crate::{
+	Spawner,
 	chain_runtime::ChainRuntime,
 	host_internal::{
 		extrinsic::{Sr25519Signer, build_signed_transaction, local_transaction_metadata},
@@ -42,7 +43,6 @@ use crate::{
 		session::{SessionInfo, SessionState},
 	},
 	runtime::vrf,
-	subscription::Spawner,
 };
 
 use crate::platform::{
@@ -328,7 +328,7 @@ impl PairingHost {
 		request: ProductRequest<HostAccountRegisterRingVrfKeyRequest>,
 	) {
 		let weak_self = self.weak_self.clone();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let Some(host) = weak_self.upgrade() else {
 				return;
 			};
@@ -339,7 +339,7 @@ impl PairingHost {
 			if let Err(error) = host.remote_register_ring_vrf_key(&cx, &session, request).await {
 				warn!(?error, "ring-VRF registration mirror failed");
 			}
-		}));
+		});
 	}
 
 	async fn product_subtree_public_key(

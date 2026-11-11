@@ -1,5 +1,149 @@
 # @parity/truapi-host
 
+## 0.30.0
+
+### Major Changes
+
+- 141ff32: Legacy-account sign payload, sign raw and create transaction reviews carry the account the core resolved the
+  signer to: the wallet's identity account or the product's account at index 0, so a host knows the signer without
+  resolving the request's address itself. Android's signing sheet uses it.
+
+### Minor Changes
+
+- baf831f: `createTransaction` moves to v0.2 and adds a `ChainUnavailable { reason }` error for a chain that stays
+  unreachable, such as during a halt. Nothing was signed, so a product can retry on it, with a bound on the attempts. A
+  paired wallet answering through the TrUAPI core reports a chain it cannot reach the same way. v0.1 callers still get
+  `Unknown`. A product built against this version needs a host that serves v0.2. Hosts from 0.27 refuse it with
+  `UnsupportedVersion`, which products see as `Unsupported`, and earlier ones answer with `MalformedFrame`.
+- 6cd2e50: Native hosts load images with `loadImage(reference)`. The core reads a Bulletin blob by CID over its own
+  Bulletin connection, returns it only once it hashes to the CID, passes on PNG, JPEG, GIF and WebP up to 2 MiB and 4096
+  pixels per side, and rejects bytes in a format other than the one the reference declares. The result carries the
+  bytes, their format and the CID as a content key. The browser core does not expose it.
+- 0caf6b0: `testHost.setLoginBehavior("success" | "reject", account?)` answers a product's login request while the test
+  host is signed out, as a user would on a real host. `"success"` signs in the first account, or the one named, and the
+  product gets `Success`. `"reject"` answers `Rejected`. Unset, a signed-out host still answers `Rejected`, unlike
+  `@parity/host-api-test-sdk`, which approved by default, so a suite relying on that calls
+  `setLoginBehavior("success")`. A withdrawn request is answered `Cancelled`, and `signOut`, `switchAccount` and
+  `setAccounts` wait for a sign-in a request started. The test host page answers the request itself, so the core is
+  unchanged, and a request made while signed in still reaches the core, which answers `AlreadyConnected`. The type
+  `setLoginBehavior` takes is exported as `LoginRequestBehavior`.
+- f108863: `setConfirmUserActions(confirm)` on the mock host and the Playwright `testHost`, and
+  `set_confirm_user_actions` on the Rust `MockPlatform`, change how reviews are answered while a test runs, so one test
+  can decline a signature without a fixture booted with `confirmUserActions: false`. A permission the core has cached
+  keeps its answer, and `reset` restores the configured value.
+- b1ddf79: The test host passes a deep link on to the product: the host page's path, its hash and every query parameter
+  it does not read as its own configuration reach the product's URL, as on a real host. `testHost.openDeepLink(link)`
+  opens the product at a link from the Playwright fixture, so one fixture serves every link, and
+  `deepLinkUrl(hostUrl, link)` from `@parity/truapi-host/testing/server` builds the same URL for a suite that starts the
+  server itself.
+- 0ea8ae3: Additions to the test host:
+  - A preimage lookup is live. `seedPreimage` delivers the value to lookups already open for its key, once, so a product
+    that subscribed before the seed receives it. The Rust `MockPlatform::insert_preimage` does the same.
+  - Product storage can be seeded. `productStorage` on the fixture and the host page config holds entries before the
+    product loads, for state a product reads once at startup, and a reload or `reset()` starts from it again.
+    `seedProductStorage(key, value, productId?)` on the host page and the fixture writes an entry while the product
+    runs. Both take the product's own key; the core builds the stored key through the new `productStorageKey` WASM
+    export. `MockHost.writeProductStorage` and `MockPlatform::write_product_storage` store an entry under the core's key
+    without counting as a host call.
+  - `createTestHostServer` accepts `networks` and `chain` and expands them the way the fixture does, with explicit
+    `mock` and `runtimeConfig` values winning. They need `productUrl`, as does every other page option, such as `mock`,
+    `accounts` and `productStorage`. Without one the server returns a bare base, so it refuses them rather than dropping
+    them. A value that only restates a default, such as `allowances: "granted"`, passes. It refuses a `uri` account as
+    the fixture does.
+  - `loopbackStatements: true` with no `networks` or `chain` is refused on the fixture and the server, since no declared
+    chain could carry the statement store.
+
+- 5d51bd0: `injectStatement` takes a statement's `channel`, `expiry` and `decryptionKey`, and the entries
+  `getStatements` and `getSubmittedStatements` return carry them, so a suite can inject a statement with those fields
+  and assert on the ones a product submits. `expiry` is a bigint, since the store packs a timestamp into its high 32
+  bits. A topic, channel or key that is not 32 bytes, and an expiry outside a `u64` or given as an unsafe integer, is
+  refused rather than encoded into a statement the store would misread.
+- 0ea8ae3: The mock host can report chains it does not serve as unsupported. `onlyServedChains: true` answers
+  `featureSupported` from `supportedChains`, as a real host does, so a product's "network unavailable" path is reachable
+  on a host that serves no chains. It defaults to `false`, and becomes the default in a later breaking release. The Rust
+  `MockConfig::only_served_chains` is the same option.
+- 81c6cd7: `@parity/truapi-host/markers` exports `CORE_MARKERS`, the core's marker table keyed on the dotted target, so
+  a web host reads what may leave the device from the same list the bindings carry to iOS and Android rather than
+  keeping a copy of its own. It sits on its own subpath so reading the table does not pull in the host runtime.
+
+### Patch Changes
+
+- 88cf440: A statement allowance or PGAS transaction that the pool drops or finds invalid fails as soon as the node
+  reports it, rather than after the two-minute submit timeout.
+
+  In the `truapi-host` CLI, a light-client chain keeps running after its last connection closes, so it syncs once per
+  process. Over RPC, a chain connection counts as dead after 50 seconds in which no data arrives at all, and a request
+  waiting on it fails after 30 seconds in which no message arrives or makes progress, so a large message that is still
+  downloading, such as a busy Bulletin block on a slow link, keeps both alive. The interactive status bar names the
+  chain backend next to the network, as in `paseo-next-v2 (light-client)`.
+
+- baf831f: While dotli redials a halted chain, the core retries the requests it refuses after 1, 2, 4, 8, 16 and 16
+  seconds. `createTransaction` and other chain reads wait out a short halt instead of failing with
+  `subscription dropped`. The error that ends a chain follow is logged at `warn`.
+- 922fca5: Contract reads and writes share `EvmContractCaller`. Rust callers prepare a contract transaction with its
+  signer, then execute the opaque request and wait for successful finalized dispatch. Revive wire types and resource
+  estimates are private; dotNS reads retain their transport's block context and distinguish reverts from failed
+  requests. Rust async trait implementations use `async-trait` directly.
+- a51239b: Keep the pairing host's and the signing host's grants in one `HostGrantStore`. Resetting a product no longer
+  ends other products' calls on a signing host or a session activation in progress on a paired host; it still discards
+  grants that a request began issuing before the reset, including an allocation confirmed while the reset happened. A
+  paired host now retries a failed deletion of a disconnected session's stored grants before the next session is
+  installed.
+- 5c8dbf4: A product that navigates its whole document inside an iframe host connects again.
+  - `@parity/truapi`: a product addresses its iframe handshake to the embedding page's origin, taken from
+    `location.ancestorOrigins` first. A referrer on the product's own origin, which is what a document loaded by the
+    product's own navigation carries, no longer stands in for the host.
+  - `@parity/truapi-host`: `createIframeHost` answers each new document's `truapi-ready` with a port of its own and
+    moves the connection to it once the document sends a frame. `onPort` is called again with that port, and the
+    function it returned for the previous port runs when it is replaced or the host is disposed. Each port is a new
+    product session, so a host gives it a core connection of its own rather than piping it into the previous one. A
+    stray ready from a document that already holds its port leaves its connection alone. With an opaque sandbox only the
+    first document is connected, since a page the frame navigates to reports the same `"null"` origin as the product.
+  - The test host gives each product document its own core, so a suite whose product sets `location.href` keeps talking
+    to the host.
+
+- 220baea: Refactor the Rust host runtime and browser provider to the workspace Rust guidance: unit tests live in their
+  own files, lint suppressions are removed by fixing their causes, unused functions and derives are dropped, and
+  truncating casts are checked. The JavaScript API and wire protocol are unchanged.
+- 4b58ce1: Group the signing host's wallet code under `signing_host/wallet_account_holder`: account operations,
+  allowance issuance and the renewal ledger with its native driver. Behavior is unchanged.
+- 4b58ce1: A signing host's wallet lives in one `WalletAccountHolder`, the only reader of the root entropy, and it
+  checks that the wallet activation a call began under is still installed each time it uses the keys. A wallet lock or
+  switch now fails a VRF signature confirmed under the previous wallet, a transaction whose chain metadata was still
+  loading, an alias or proof still preparing its ring, and a pairing answer still reading the device key, instead of
+  completing them with the new wallet's keys or the old one's. A lock during a resource allocation fails the request
+  instead of marking the remaining resources unavailable.
+- Updated dependencies [951466e]
+- Updated dependencies [c38ac5b]
+- Updated dependencies [c38ac5b]
+- Updated dependencies [88cf440]
+- Updated dependencies [c38ac5b]
+- Updated dependencies [f2175c9]
+- Updated dependencies [baf831f]
+- Updated dependencies [baf831f]
+- Updated dependencies [a066379]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [e92024d]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [e92024d]
+- Updated dependencies [e92024d]
+- Updated dependencies [e92024d]
+- Updated dependencies [e92024d]
+- Updated dependencies [73fef81]
+- Updated dependencies [5c8dbf4]
+- Updated dependencies [6cd2e50]
+- Updated dependencies [b19850d]
+- Updated dependencies [c38ac5b]
+- Updated dependencies [67eb927]
+- Updated dependencies [81c6cd7]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [e92024d]
+  - @parity/truapi@0.30.0
+
 ## 0.29.0
 
 ### Major Changes

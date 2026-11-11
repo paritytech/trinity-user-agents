@@ -48,8 +48,8 @@ use wasm_bindgen::{JsCast, prelude::*};
 use crate::SigningHostRuntime;
 use crate::{
 	ChannelId, DebugEvent, DebugSink, FrameSink, PairingHostRuntime,
-	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime,
-	host_logic::worker::WorkerTransition, subscription::Spawner,
+	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductRuntime, Spawner,
+	host_logic::worker::WorkerTransition,
 };
 
 mod generated_bridge;
@@ -947,9 +947,7 @@ impl WasmPairingHostRuntime {
 			game_platform,
 			scanner_platform,
 		} = wasm_platform(bridge);
-		let spawner: Spawner = Arc::new(|fut| {
-			wasm_bindgen_futures::spawn_local(fut);
-		});
+		let spawner = Spawner::default();
 		let host_config = pairing_host_config_from_js(&host_config)?;
 		let runtime = PairingHostRuntime::with_platforms(
 			platform,
@@ -1307,9 +1305,7 @@ impl WasmSigningHostRuntime {
 			game_platform,
 			scanner_platform,
 		} = wasm_platform(bridge);
-		let spawner: Spawner = Arc::new(|fut| {
-			wasm_bindgen_futures::spawn_local(fut);
-		});
+		let spawner = Spawner::default();
 		let host_config = signing_host_config_from_js(&host_config)?;
 		let runtime = SigningHostRuntime::with_platforms(
 			platform,
@@ -1622,9 +1618,7 @@ impl WasmProductRuntime {
 			game_platform,
 			scanner_platform,
 		} = wasm_platform(bridge);
-		let spawner: Spawner = Arc::new(|fut| {
-			wasm_bindgen_futures::spawn_local(fut);
-		});
+		let spawner = Spawner::default();
 		let (host_config, product) = runtime_config_from_js(&runtime_config)?;
 		// The optional adapters install on the host runtime the product hangs
 		// off, not on the product runtime itself.
