@@ -23,7 +23,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatInputSlotRenderer
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsImageResolver
 import io.paritytech.polkadotapp.feature_products_api.presentation.widget.JsWidgetRenderer
@@ -38,9 +38,9 @@ class ProductRoomFooterCardRenderer(
     val card: ProductRoomFooter.Card,
     private val worker: ProductWorker,
     private val imageResolver: JsImageResolver,
-) : CustomChatFooterRenderer {
+) : CustomChatInputSlotRenderer {
     @Composable
-    override fun drawFooter() {
+    override fun drawInputSlot() {
         val viewModel: ProductRoomFooterCardViewModel = hiltViewModel(
             key = "room-footer-${room.value}",
             creationCallback = { factory: ProductRoomFooterCardViewModel.Factory ->

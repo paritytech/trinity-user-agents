@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.models
 
 import io.paritytech.polkadotapp.common.domain.model.AccountId
-import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatInputSlotRenderer
 
 // TODO ideally we want to not hard-code knowledge about contact input states into chat module
 // One way to implement that would be to introduce customizable user input zone, similar to footer and headers
@@ -33,7 +33,7 @@ sealed class ChatUserInputState {
 
     data object Nothing : ChatUserInputState()
 
-    data class ExtensionCard(val renderer: CustomChatFooterRenderer) : ChatUserInputState()
+    data class ExtensionCard(val renderer: CustomChatInputSlotRenderer) : ChatUserInputState()
 }
 
 fun ChatUserInputState.canSendMessage(): Boolean {

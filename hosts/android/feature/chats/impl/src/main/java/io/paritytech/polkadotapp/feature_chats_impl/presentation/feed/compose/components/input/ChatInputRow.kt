@@ -84,7 +84,7 @@ internal fun ChatInputRow(
         .fillMaxWidth()
         .onSizeChanged { size -> onHeightChanged(with(density) { size.height.toDp() }) }
     if (inputState is ChatInputUiState.ExtensionCard) {
-        Box(modifier = measuredModifier) { inputState.renderer.drawFooter() }
+        Box(modifier = measuredModifier) { inputState.renderer.drawInputSlot() }
         return
     }
     PolkadotSurface(

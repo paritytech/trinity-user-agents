@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_chats_api.domain.extension
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotStateController
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatInputSlotRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatOpenHandler
@@ -72,5 +73,5 @@ sealed interface ChatExtensionInputSlot {
     data object Hidden : ChatExtensionInputSlot
 
     /** A card the extension draws itself, in place of the input. */
-    data class Card(val renderer: CustomChatFooterRenderer) : ChatExtensionInputSlot
+    data class Card(val renderer: CustomChatInputSlotRenderer) : ChatExtensionInputSlot
 }
