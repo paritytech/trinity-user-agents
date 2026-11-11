@@ -49,64 +49,52 @@ class FundingActivityCenterTest {
     }
     private val center = FundingActivityCenter(runtime)
 
+    // Reading the lists changes nothing in the core; only the screen showing a row acknowledges it.
     @Test
-    fun `an ended top-up is listed and acknowledged`() = runBlocking {
+    fun `an ended top-up is listed, and building the list acknowledges nothing`() = runBlocking {
         serve(session("in", FundingDirection.IN, FundingStage.Delivered("50", settledAtMs = 1uL)) to progress(FundingStatus.ToppedUp))
         recorded.value = listOf(summary("in", FundingStage.Delivered("50", settledAtMs = 1uL), FundingStatus.ToppedUp))
 
         val activity = center.observe().first()
+        center.observe().first()
 
-        coVerify(exactly = 1) { runtime.acknowledge("in") }
+        coVerify(exactly = 0) { runtime.acknowledge(any()) }
         assertEquals(listOf(FundingActivityStatus.ToppedUp), activity.history.map { it.status })
     }
 
-    // The core keeps a released withdrawal until its payout is reported, so the host need not hold it back.
     @Test
-    fun `a released withdrawal is acknowledged, and stays in progress until its payout`() = runBlocking {
+    fun `the rows shown are acknowledged`() = runBlocking {
+        center.acknowledgeShown(listOf("in", "out"))
+
+        coVerify(exactly = 1) { runtime.acknowledge("in") }
+        coVerify(exactly = 1) { runtime.acknowledge("out") }
+    }
+
+    // The core keeps a released withdrawal until its payout is reported.
+    @Test
+    fun `a released withdrawal stays in progress until its payout`() = runBlocking {
         serve(session("out", FundingDirection.OUT, FundingStage.Released("50", settledAtMs = 1uL)) to progress(FundingStatus.PreparingPayout))
         recorded.value = listOf(summary("out", FundingStage.Released("50", settledAtMs = 1uL), FundingStatus.PreparingPayout, FundingDirection.OUT))
 
         val activity = center.observe().first()
 
-        coVerify { runtime.acknowledge("out") }
         assertEquals(listOf(FundingActivityStep.PreparingPayout), activity.inFlight.map { (it.status as FundingActivityStatus.InProgress).step })
         assertEquals(emptyList<String>(), activity.history.map { it.id })
     }
 
-    // The core hands over an ending it has compacted as its summary only; its row tells the user how it went.
+    // The core hands over an ending it has compacted as its summary only.
     @Test
-    fun `an ending handed over as its summary is acknowledged as shown once its row is built`() = runBlocking {
+    fun `an ending handed over as its summary is listed`() = runBlocking {
         recorded.value = listOf(summary("in", FundingStage.Delivered("50", settledAtMs = 1uL), FundingStatus.ToppedUp))
 
         val activity = center.observe().first()
-        center.observe().first()
 
-        coVerify(exactly = 1) { runtime.acknowledge("in") }
         assertEquals(listOf("in"), activity.history.map { it.id })
     }
 
+    // A late payout or refund report hands the session back, and its row has to follow.
     @Test
-    fun `an acknowledged session is not acknowledged again`() = runBlocking {
-        serve(session("in", FundingDirection.IN, FundingStage.Delivered("50", settledAtMs = 1uL), acknowledged = true) to progress(FundingStatus.ToppedUp))
-
-        center.observe().first()
-
-        coVerify(exactly = 0) { runtime.acknowledge(any()) }
-    }
-
-    @Test
-    fun `a session is acknowledged once however often the list is built`() = runBlocking {
-        serve(session("in", FundingDirection.IN, FundingStage.Delivered("50", settledAtMs = 1uL)) to progress(FundingStatus.ToppedUp))
-
-        center.observe().first()
-        center.observe().first()
-
-        coVerify(exactly = 1) { runtime.acknowledge("in") }
-    }
-
-    // A late payout or refund report hands the session back unacknowledged, and its row has to follow.
-    @Test
-    fun `a failed payout's refund shows what came back, and is acknowledged again`() = runBlocking {
+    fun `a failed payout's refund shows what came back`() = runBlocking {
         val released = FundingStage.Released("50", settledAtMs = 1uL)
         serve(session("out", FundingDirection.OUT, released) to progress(FundingStatus.PayoutFailed(refunded = null), FundingPayout.Failed("rejected")))
         center.observe().first()
@@ -120,7 +108,6 @@ class FundingActivityCenterTest {
         )
         val activity = center.observe().first()
 
-        coVerify(exactly = 2) { runtime.acknowledge("out") }
         assertEquals(listOf(FundingActivityStatus.PayoutFailed(45.intoBalance())), activity.history.map { it.status })
     }
 
@@ -138,7 +125,6 @@ class FundingActivityCenterTest {
         assertEquals(listOf("newer", "older", "failed"), activity.history.map { it.id })
         assertEquals(listOf(40.intoBalance(), 30.intoBalance(), 50.intoBalance()), activity.history.map { it.amount })
         assertEquals(List(3) { FundingRailType.CARD }, activity.history.map { it.rail })
-        coVerify(exactly = 3) { runtime.acknowledge(any()) }
     }
 
     // The core loads its sessions once funding resumes, and pushes its activity again then.
@@ -326,7 +312,6 @@ class FundingActivityCenterTest {
         intent: String,
         direction: FundingDirection,
         stage: FundingStage,
-        acknowledged: Boolean = false,
     ) = FundingSession(
         intent = intent,
         ownerProductId = null,
@@ -335,7 +320,7 @@ class FundingActivityCenterTest {
         stage = stage,
         openedAtMs = 0uL,
         deadlineMs = 0uL,
-        acknowledged = acknowledged,
+        acknowledged = false,
         providerId = ramp,
         assignedAtMs = 0uL,
         cancel = null,

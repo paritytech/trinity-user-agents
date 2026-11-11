@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding.history
 
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAssetUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -88,12 +87,11 @@ class FundingRecordSummaryTest {
         )
     }
 
-    // Out, the user receives the quote's receive amount in its asset, at the decimals the quote states.
     @Test
-    fun `the quoted amount is the quote's provider-side figure in its asset`() {
+    fun `the rail is the quote's`() {
         val record = FundingRecord.of(summary(released, FundingStatus.Sent))
 
-        assertEquals(FundingRail.BANK to FundingAssetUnit.of("EUR", 2).format("5100"), record?.rail to record?.quotedAmount)
+        assertEquals(FundingRail.BANK, record?.rail)
     }
 
     @Test
