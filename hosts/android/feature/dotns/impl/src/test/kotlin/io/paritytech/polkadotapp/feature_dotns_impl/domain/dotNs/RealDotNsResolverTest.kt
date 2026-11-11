@@ -19,6 +19,8 @@ import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
+import java.io.File
+import java.io.IOException
 
 class RealDotNsResolverTest {
     private val contractApi: DotNsContractApi = mock()
@@ -85,7 +87,26 @@ class RealDotNsResolverTest {
         assertEquals(domain, events.single().tags["dotns.domain"])
     }
 
-    private fun TestScope.resolver() = RealDotNsResolver(
+    // The download is a different outage from the chain read, and the stage tag is what tells them apart.
+    @Test
+    fun `a failed archive download is reported under the bulletin stage, not as a failed chain read`() = runTest {
+        whenever(contentHashOverrides.getContentHashOverride(domain)).thenReturn("0x1220abcd")
+        val gatewayDown = object : CarFetcher {
+            override suspend fun fetchCar(contentHash: ByteArray) = Result.failure<ByteArray>(IOException("gateway down"))
+
+            override suspend fun fetchCarToFile(contentHash: ByteArray, onProgress: (Long, Long?) -> Unit) =
+                Result.failure<File>(IOException("gateway down"))
+        }
+        val resolver = resolver(gatewayDown)
+
+        val result = resolver.resolveToLocalUri(domain)
+
+        assertTrue(result.isFailure)
+        assertEquals("bulletin", events.single().tags["load.stage"])
+        assertEquals(domain, events.single().tags["dotns.domain"])
+    }
+
+    private fun TestScope.resolver(carFetcher: CarFetcher = this@RealDotNsResolverTest.carFetcher) = RealDotNsResolver(
         contractApi = contractApi,
         carFetcher = carFetcher,
         contentStorage = contentStorage,
