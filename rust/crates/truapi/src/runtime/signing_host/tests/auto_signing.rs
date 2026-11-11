@@ -4,7 +4,7 @@
 use super::*;
 use crate::{
 	host_internal::sso_messages::{RemoteMessage, RemoteMessageData, v1},
-	runtime::{signing_host::SigningHostSsoService, sso_service::Dispatch},
+	runtime::sso_service::Dispatch,
 };
 use truapi::versioned::{
 	account::HostAccountSignVrfRequest,
@@ -185,15 +185,15 @@ fn a_blessed_vrf_signature_skips_the_prompt_only_locally_for_its_own_account() {
 	};
 	let own_signed = sign_locally(request.clone());
 	let foreign_signed = sign_locally(vrf_request("other.paseo"));
-	let Dispatch::Response(answer) = futures::executor::block_on(
-		SigningHostSsoService::new(activation).answer(RemoteMessage::request(
+	let Ok(Dispatch::Response(answer)) =
+		futures::executor::block_on(sso_service(&activation).answer(RemoteMessage::request(
 			"relayed-vrf".to_string(),
 			ProductRequest {
 				calling_product_id: ProductId::for_test("dim2.paseo"),
 				payload: request,
 			},
-		)),
-	) else {
+		)))
+	else {
 		panic!("expected a VRF response")
 	};
 	let RemoteMessageData::V1(v1::RemoteMessage::SignVrfResponse(response)) = answer.message.data
@@ -222,15 +222,15 @@ fn a_relayed_vrf_signature_cannot_reuse_a_local_auto_signing_grant() {
 		.expect("activation succeeds");
 	grant_auto_signing(&product_runtime(services, activation.clone()));
 
-	let Dispatch::Response(answer) = futures::executor::block_on(
-		SigningHostSsoService::new(activation).answer(RemoteMessage::request(
+	let Ok(Dispatch::Response(answer)) =
+		futures::executor::block_on(sso_service(&activation).answer(RemoteMessage::request(
 			"relayed-vrf".to_string(),
 			ProductRequest {
 				calling_product_id: ProductId::for_test("myapp.dot"),
 				payload: vrf_request("myapp.dot"),
 			},
-		)),
-	) else {
+		)))
+	else {
 		panic!("expected a VRF response")
 	};
 	let RemoteMessageData::V1(v1::RemoteMessage::SignVrfResponse(response)) = answer.message.data
