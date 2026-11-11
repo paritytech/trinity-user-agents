@@ -346,16 +346,13 @@ impl ChainProvider {
 		Arc::new(Self { inner: EmbeddedChainProvider::builder().catalog().storage(client).build() })
 	}
 
-	/// Create a provider for the chains of a Trinity stack, with nowhere to
-	/// keep finalized state.
+	/// Create a provider for a Trinity stack, with nowhere to keep finalized
+	/// state.
 	///
-	/// `link` is the stack's link and `descriptor` its descriptor as served,
-	/// the pair a host gives the core. `light_specs` holds the specs the host
-	/// fetched from the URLs `stack_light_specs` lists. A chain left out is
-	/// unknown until [`add_light_spec`](Self::add_light_spec) supplies it, and
-	/// the rest of the stack runs. The bundled catalog is not consulted.
-	/// Create one provider per stack, and a new one when the stack's
-	/// generation changes.
+	/// `link` and `descriptor` are the stack's link and its descriptor as
+	/// served. `light_specs` are the specs fetched from the URLs
+	/// `stack_light_specs` lists. A chain left out is unknown until
+	/// [`add_light_spec`](Self::add_light_spec) supplies it.
 	///
 	/// Fails with `Stack` when the link or the descriptor is refused, and with
 	/// `LightSpec` when a spec is not the one the descriptor names.
@@ -383,8 +380,8 @@ impl ChainProvider {
 	}
 
 	/// Hand over the light spec of the stack's chain with `genesis_hash` after
-	/// the provider was created, so the chain comes up without a new one. A
-	/// chain that is already running keeps the spec it started with.
+	/// the provider was created. A chain that is already running keeps the
+	/// spec it started with.
 	///
 	/// Fails with `LightSpec` when the spec is not the one the descriptor
 	/// names or the chain is not in the stack, and with `Stack` on a provider

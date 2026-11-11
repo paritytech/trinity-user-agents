@@ -134,14 +134,13 @@ impl ChainProviderBuilder {
 		Ok(())
 	}
 
-	/// Serve the chains of a Trinity stack on the light client, instead of the
-	/// bundled catalog.
+	/// Serve the chains of a Trinity stack, not the bundled catalog.
 	///
-	/// `link` is the stack's link and `descriptor` its descriptor as served,
-	/// the pair a host gives the core. Throws when the link is malformed, the
-	/// descriptor is refused under it, or a stack was already set. Fetch what
-	/// [`light_specs`](Self::light_specs) lists and hand each spec to
-	/// [`add_light_spec`](Self::add_light_spec). Build one provider per stack.
+	/// `link` and `descriptor` are the stack's link and its descriptor as
+	/// served. Fetch what [`light_specs`](Self::light_specs) lists and hand
+	/// each spec to [`add_light_spec`](Self::add_light_spec). Throws when the
+	/// link is malformed, the descriptor is refused under it, or a stack was
+	/// already set.
 	#[cfg(feature = "smoldot")]
 	#[wasm_bindgen(js_name = setStack)]
 	pub fn set_stack(&mut self, link: &str, descriptor: &[u8]) -> Result<(), JsError> {
@@ -170,8 +169,7 @@ impl ChainProviderBuilder {
 	///
 	/// Throws when the bytes do not match the descriptor's `sha256` or imply
 	/// another genesis hash, when the chain is not in the stack, and before
-	/// [`set_stack`](Self::set_stack). A chain left without a spec is unknown
-	/// to the built provider until `addLightSpec` on the provider supplies it.
+	/// [`set_stack`](Self::set_stack).
 	#[cfg(feature = "smoldot")]
 	#[wasm_bindgen(js_name = addLightSpec)]
 	pub fn add_light_spec(
