@@ -630,6 +630,23 @@ impl AccountHolder for WalletAccountHolder {
 		Ok(public_key)
 	}
 
+	async fn record_ring_vrf_key(
+		&self,
+		invocation: AccountInvocation<'_>,
+		request: HostAccountRegisterRingVrfKeyRequest,
+		public_key: [u8; 32],
+	) -> Result<(), RingVrfError> {
+		self.require_current_session(invocation.session)?;
+		let handle = Self::caller_key_handle(&invocation, request.index)?;
+		if self.derive_ring_vrf_member(invocation.session, &handle).await? != public_key {
+			return Err(RingVrfError::Unknown {
+				reason: "the kept AutoSigning key derives a different ring-VRF key".to_string(),
+			});
+		}
+		self.record_registration(invocation.session, handle, request.ring, public_key)
+			.await
+	}
+
 	async fn list_ring_vrf_keys(
 		&self,
 		invocation: AccountInvocation<'_>,

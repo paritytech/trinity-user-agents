@@ -292,6 +292,165 @@ fn host_initiated_requests_register_result_handlers() {
 	assert!(!source.contains("this.#transport.request"), "{source}");
 }
 
+/// The host sends a v0.1 product the old request and a v0.2 product the new
+/// one, so a client that kept only its own version could not read the first.
+/// An item whose payload never changed goes out in its oldest version, which
+/// a host of either version decodes.
+#[test]
+fn a_host_initiated_request_decodes_every_version_and_answers_in_the_oldest_item() {
+	let mut method = request_method_with_wrappers(
+		"render",
+		Some(0),
+		"RenderRequest",
+		"RenderItem",
+		"RenderError",
+	);
+	let ReturnType::Result { ok, err } = method.return_type else {
+		unreachable!();
+	};
+	method.kind = MethodKind::Subscription;
+	method.return_type = ReturnType::Subscription { item: ok, interrupt: err };
+	method.wire.host_initiated = true;
+	let mut api = api(vec![method]);
+	api.public_trait_order = vec!["Example".to_string()];
+	api.types.push(versioned_tuple_wrapper_variants(
+		"RenderRequest",
+		&[(1, "V01RenderRequest"), (2, "V02RenderRequest")],
+	));
+	api.types.push(empty_struct("V01RenderRequest"));
+	api.types.push(empty_struct("V02RenderRequest"));
+	api.types
+		.push(versioned_tuple_wrapper_variants("RenderItem", &[(1, "Node"), (2, "Node")]));
+	api.types.push(empty_struct("Node"));
+	api.types
+		.push(versioned_tuple_wrapper_variants("RenderError", &[(1, "Failure"), (2, "Failure")]));
+	api.types.push(empty_struct("Failure"));
+
+	let types = generate_types(&api, 2).unwrap();
+	let client = generate_client(&api, 2, 2).unwrap();
+
+	assert!(
+		types.contains(
+			"S.indexedTaggedUnion({V1: [0, V01RenderRequest] as const, V2: [1, RenderRequest] as const})"
+		),
+		"{types}"
+	);
+	assert!(client.contains("T.VersionedRenderItem.enc({ tag: \"V1\", value: item })"), "{client}");
+	assert!(
+		types.contains(
+			"S.indexedTaggedUnion({V1: [0, Failure] as const, V2: [1, Failure] as const})"
+		),
+		"{types}"
+	);
+}
+
+/// A host-initiated request is answered in the one version the client
+/// registered, so a request in another version is refused rather than
+/// answered in a version the host did not ask in.
+#[test]
+fn a_host_initiated_request_decodes_only_the_version_it_answers_in() {
+	let mut method =
+		request_method_with_wrappers("ask", Some(0), "AskRequest", "AskResponse", "AskError");
+	method.wire.host_initiated = true;
+	let mut api = api(vec![method]);
+	api.public_trait_order = vec!["Example".to_string()];
+	api.types.push(versioned_tuple_wrapper_variants(
+		"AskRequest",
+		&[(1, "V01AskRequest"), (2, "V02AskRequest")],
+	));
+	api.types.push(empty_struct("V01AskRequest"));
+	api.types.push(empty_struct("V02AskRequest"));
+	api.types
+		.push(versioned_tuple_wrapper_variants("AskResponse", &[(1, "Answer"), (2, "Answer")]));
+	api.types.push(empty_struct("Answer"));
+	api.types
+		.push(versioned_tuple_wrapper_variants("AskError", &[(1, "Failure"), (2, "Failure")]));
+	api.types.push(empty_struct("Failure"));
+
+	let types = generate_types(&api, 2).unwrap();
+	let client = generate_client(&api, 2, 2).unwrap();
+
+	assert!(types.contains("S.indexedTaggedUnion({V2: [1, AskRequest] as const})"), "{types}");
+	assert!(
+		client.contains(
+			"if (request.tag !== \"V2\") throw new Error(\"unsupported request version\");"
+		),
+		"{client}"
+	);
+}
+
+/// Products built against the unit-only version pass plain strings, so the
+/// tagged version has to take them as well. A variant the older version
+/// never named stays tagged, and an enum with no unit-only ancestor is left
+/// alone.
+#[test]
+fn a_tagged_enum_keeps_the_plain_strings_of_its_unit_only_version() {
+	let unit = |name: &str| VariantDef {
+		name: name.to_string(),
+		fields: VariantFields::Unit,
+		docs: None,
+		codec_index: None,
+	};
+	let payload = |name: &str| VariantDef {
+		name: name.to_string(),
+		fields: VariantFields::Unnamed(vec![TypeRef::Primitive("bool".to_string())]),
+		docs: None,
+		codec_index: None,
+	};
+	let enum_type = |name: &str, variants: Vec<VariantDef>| TypeDef {
+		name: name.to_string(),
+		module_path: Vec::new(),
+		generic_params: Vec::new(),
+		kind: TypeDefKind::Enum(variants),
+		docs: None,
+	};
+	let mut method = request_method_with_wrappers(
+		"set_footer",
+		Some(0),
+		"FooterRequest",
+		"FooterResponse",
+		"FooterError",
+	);
+	method.docs = None;
+	let mut api = api(vec![method]);
+	api.public_trait_order = vec!["Example".to_string()];
+	api.types.push(versioned_tuple_wrapper_variants(
+		"FooterRequest",
+		&[(1, "V01FooterRequest"), (2, "V02FooterRequest")],
+	));
+	api.types.push(single_field_struct_of("V01FooterRequest", "V01Footer"));
+	api.types.push(single_field_struct_of("V02FooterRequest", "V02Footer"));
+	api.types.push(enum_type("V01Footer", vec![unit("Text"), unit("Empty")]));
+	api.types.push(enum_type(
+		"V02Footer",
+		vec![unit("Text"), unit("Empty"), unit("Hidden"), payload("Card")],
+	));
+	api.types.push(enum_type("V02Other", vec![unit("Text"), payload("Card")]));
+	api.types
+		.push(versioned_tuple_wrapper_variants("FooterResponse", &[(2, "V02Other")]));
+	api.types
+		.push(versioned_tuple_wrapper_variants("FooterError", &[(2, "V02Other")]));
+
+	let types = generate_types(&api, 2).unwrap();
+
+	assert!(
+		types.contains(
+			"S.withPlainVariants(S.TaggedUnion({Text: S._void, Empty: S._void, Hidden: S._void, Card: S.bool}), [\"Text\", \"Empty\"])"
+		),
+		"{types}"
+	);
+	assert!(types.contains("  | \"Text\"\n  | \"Empty\"\n;"), "{types}");
+	assert!(!types.contains("  | \"Hidden\""), "{types}");
+	assert_eq!(types.matches("S.withPlainVariants").count(), 1, "{types}");
+	assert!(
+		types.contains(
+			"  | { tag: \"Card\"; value: boolean }\n  | \"Text\"\n  | \"Empty\"\n;\n\nexport const Footer:"
+		),
+		"{types}"
+	);
+	assert!(types.contains("export type V01Footer = \"Text\" | \"Empty\";"), "{types}");
+}
+
 #[test]
 fn internal_visibility_preserves_wire_addresses_hash_and_decoding() {
 	let mut api = internal_api_fixture();
@@ -784,6 +943,20 @@ fn call_error_framework_types() -> Vec<TypeDef> {
 		},
 		single_field_struct("GenericError", "reason", "String"),
 	]
+}
+
+fn single_field_struct_of(name: &str, field_type: &str) -> TypeDef {
+	TypeDef {
+		name: name.to_string(),
+		module_path: Vec::new(),
+		generic_params: Vec::new(),
+		kind: TypeDefKind::Struct(vec![FieldDef {
+			name: "footer".to_string(),
+			type_ref: named_type(field_type),
+			docs: None,
+		}]),
+		docs: None,
+	}
 }
 
 fn single_field_struct(name: &str, field_name: &str, field_type: &str) -> TypeDef {

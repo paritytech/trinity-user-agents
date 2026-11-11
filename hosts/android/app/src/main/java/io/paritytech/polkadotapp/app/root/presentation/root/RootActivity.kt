@@ -5,7 +5,10 @@ import android.content.res.Resources
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
@@ -104,6 +107,12 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
 
     private val viewModel by viewModels<RootViewModel>()
 
+    private val dockletInputEvents = DockletInputEvents()
+
+    private val dockletEdgeTouchGate by lazy(LazyThreadSafetyMode.NONE) {
+        DockletEdgeTouchGate(ViewConfiguration.get(this).scaledTouchSlop.toFloat())
+    }
+
     private val navHostFragment: NavHostFragment by lazy(LazyThreadSafetyMode.NONE) {
         supportFragmentManager.findFragmentById(R.id.rootNavHost) as NavHostFragment
     }
@@ -144,6 +153,37 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
         setupChatExtensionOverlay()
         setupPaymentsSetupNotice()
         setupChainHealthBar()
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        val touch = when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> dockletEdgeTouchGate.onDown(DockletInput.Touch(ev.x, ev.y), onBackGestureEdge = isOnBackGestureEdge(ev.x))
+            MotionEvent.ACTION_MOVE -> dockletEdgeTouchGate.onMove(ev.x, ev.y)
+            MotionEvent.ACTION_UP -> dockletEdgeTouchGate.onUp()
+            MotionEvent.ACTION_CANCEL -> {
+                dockletEdgeTouchGate.onCancel()
+                null
+            }
+            else -> null
+        }
+        touch?.let(dockletInputEvents::report)
+        return super.dispatchTouchEvent(ev)
+    }
+
+    private fun isOnBackGestureEdge(x: Float): Boolean {
+        val decorView = window.decorView
+        val edges = ViewCompat.getRootWindowInsets(decorView)?.getInsets(WindowInsetsCompat.Type.systemGestures()) ?: return false
+        return x < edges.left || x >= decorView.width - edges.right
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN && event.keyCode != KeyEvent.KEYCODE_BACK) dockletInputEvents.report(DockletInput.Key)
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_SCROLL) dockletInputEvents.report(DockletInput.Wheel)
+        return super.dispatchGenericMotionEvent(ev)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -290,7 +330,12 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
             setContent {
                 val chainsHealth by viewModel.chainsHealth.collectAsStateWithLifecycle()
                 PolkadotTheme {
-                    RootNavBarHost(navController = navController, chainsHealth = chainsHealth, backdropSource = navHost)
+                    RootNavBarHost(
+                        navController = navController,
+                        chainsHealth = chainsHealth,
+                        dockletInputs = dockletInputEvents.events,
+                        backdropSource = navHost,
+                    )
                 }
             }
         }

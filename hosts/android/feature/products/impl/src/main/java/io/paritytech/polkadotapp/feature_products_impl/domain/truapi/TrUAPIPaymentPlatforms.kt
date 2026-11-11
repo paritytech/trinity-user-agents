@@ -6,20 +6,14 @@ import io.parity.truapi.TopUpHostBridge
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
-import io.paritytech.polkadotapp.common.domain.model.DataByteArray
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
-import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
-import io.paritytech.polkadotapp.common.presentation.subscribeIsForeground
-import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
-import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.PaymentStatus
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TotalBalanceUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.PaymentRequestError
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.ProductPaymentRequestId
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.RequestPaymentUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.ShortfallDisclosure
-import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.spendableByProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.subscribeSpendableByProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.PaymentTopUpId
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.PaymentTopUpSource
@@ -28,29 +22,20 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUp
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpStatus
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.isTerminal
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.transformWhile
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
-import uniffi.truapi.HostPaymentBalanceSubscribeException
 import uniffi.truapi.HostPaymentException
 import uniffi.truapi.HostPaymentRequest
+import uniffi.truapi.HostPaymentStatusSubscribeException
 import uniffi.truapi.HostPaymentStatusSubscribeItem
 import uniffi.truapi.HostPaymentTopUpException
 import uniffi.truapi.HostPaymentTopUpRequest
+import uniffi.truapi.HostPaymentTopUpStatusSubscribeException
 import uniffi.truapi.HostPaymentTopUpStatusSubscribeItem
 import uniffi.truapi.HostRejection
 import uniffi.truapi.ProductId
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import uniffi.truapi.PaymentTopUpSource as NativeTopUpSource
@@ -68,50 +53,18 @@ internal interface TrUAPIPaymentSink {
  * payment and balance engines the app's other product calls use. The core owns
  * BalanceAccess, so nothing here prompts for it.
  *
- * The core asks for an operation's current status once and expects every later
- * one pushed, so a start, or the first ask after a restart, forwards that
- * operation's engine status until it is terminal.
- *
- * The core never says when a product stops following the balance, so the
- * balance is pushed while the app is in the foreground, and pushed again on
- * returning to it.
+ * The core decides which operations and when the balance to follow, and keeps
+ * the latest status of each. A follow call forwards the engine's statuses until
+ * a terminal one or the end of its stream; the core cancels it when done.
  */
 @Singleton
 class TrUAPIPaymentPlatforms @Inject constructor(
     private val topUpService: TopUpService,
     private val requestPaymentUseCase: RequestPaymentUseCase,
     private val totalBalanceUseCase: TotalBalanceUseCase,
-    private val appLifecycleObserver: AppLifecycleObserver,
-    dispatchers: CoroutineDispatchers,
 ) : TopUpHostBridge, PaymentHostBridge, BalanceHostBridge {
-    private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
-
     @Volatile
     private var sink: TrUAPIPaymentSink? = null
-
-    private val topUps = StatusForwarder<TopUpStatus>(
-        scope = scope,
-        isTerminal = { it.isTerminal },
-        isNotFound = { it is TopUpError.NotFound },
-        unknownYet = TopUpStatus.Detecting,
-        abandoned = TopUpStatus.NotClaimed,
-        notify = { productId, id, status -> sink?.topUpStatus(productId, id, status.toNative()) },
-    )
-
-    private val payments = StatusForwarder<PaymentStatus>(
-        scope = scope,
-        isTerminal = { it !is PaymentStatus.Processing },
-        isNotFound = { it is PaymentRequestError.NotFound },
-        unknownYet = PaymentStatus.Processing,
-        abandoned = PaymentStatus.Failed("its status stream ended before a final status"),
-        notify = { productId, id, status ->
-            // Logged here, once per status the engine reports, rather than on every ask that reads a kept one.
-            if (status is PaymentStatus.Failed) Timber.tag(PAYMENTS_LOG_TAG).w("Payment failed: %s", status.reason)
-            sink?.paymentStatus(productId, id, status.toNative())
-        },
-    )
-
-    private val balanceForwarding = AtomicBoolean(false)
 
     fun install(runtime: TrUAPIHostRuntime) {
         attach(
@@ -123,7 +76,7 @@ class TrUAPIPaymentPlatforms @Inject constructor(
                     runtime.notifyPaymentStatus(productId, id, status)
 
                 override fun balance(available: Balance) =
-                    runtime.notifyBalance(purse = null, available = available.value.toString())
+                    runtime.notifyBalance(available.value.toString())
             }
         )
         runtime.setTopUp(this)
@@ -136,10 +89,7 @@ class TrUAPIPaymentPlatforms @Inject constructor(
     }
 
     override suspend fun topUp(productId: ProductId, request: HostPaymentTopUpRequest) {
-        val product = productId
-        val id = startTopUp(product, request).getOrElse { throw it }
-
-        topUps.follow(productId, request.id) { topUpService.status(product, id) }
+        startTopUp(productId, request).getOrElse { throw it }
     }
 
     private suspend fun startTopUp(product: ProductId, request: HostPaymentTopUpRequest): Result<PaymentTopUpId> {
@@ -155,19 +105,27 @@ class TrUAPIPaymentPlatforms @Inject constructor(
             .fold(onSuccess = { Result.success(id) }, onFailure = { Result.failure(it.asTopUpException()) })
     }
 
-    override fun topUpStatus(productId: ProductId, id: ByteArray): HostPaymentTopUpStatusSubscribeItem? {
-        val topUpId = PaymentTopUpId.fromBytes(id.toDataByteArray()).getOrElse { return null }
+    override suspend fun followTopUp(productId: ProductId, id: ByteArray) {
+        val topUpId = PaymentTopUpId.fromBytes(id.toDataByteArray())
+            .getOrElse { throw HostPaymentTopUpStatusSubscribeException.TopUpNotFound() }
 
-        return topUps.current(productId, id) {
-            topUpService.status(productId, topUpId)
-        }?.toNative()
+        forward(
+            statuses = topUpService.status(productId, topUpId),
+            isTerminal = { it.isTerminal },
+            push = { sink?.topUpStatus(productId, id, it.toNative()) },
+            failure = { error ->
+                if (error is TopUpError.NotFound) {
+                    HostPaymentTopUpStatusSubscribeException.TopUpNotFound()
+                } else {
+                    Timber.tag(PAYMENTS_LOG_TAG).w(error, "Top-up status stream failed for $productId")
+                    HostPaymentTopUpStatusSubscribeException.Unknown(STATUS_UNAVAILABLE)
+                }
+            },
+        )
     }
 
     override suspend fun requestPayment(productId: ProductId, request: HostPaymentRequest) {
-        val product = productId
-        val id = startPayment(product, request).getOrElse { throw it }
-
-        payments.follow(productId, request.id) { requestPaymentUseCase.subscribeStatus(product, id) }
+        startPayment(productId, request).getOrElse { throw it }
     }
 
     private suspend fun startPayment(product: ProductId, request: HostPaymentRequest): Result<ProductPaymentRequestId> {
@@ -186,47 +144,58 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         ).fold(onSuccess = { Result.success(id) }, onFailure = { Result.failure(it.asPaymentException()) })
     }
 
-    override fun paymentStatus(productId: ProductId, id: ByteArray): HostPaymentStatusSubscribeItem? {
-        val paymentId = ProductPaymentRequestId.fromBytes(id.toDataByteArray()).getOrElse { return null }
+    override suspend fun followPayment(productId: ProductId, id: ByteArray) {
+        val paymentId = ProductPaymentRequestId.fromBytes(id.toDataByteArray())
+            .getOrElse { throw HostPaymentStatusSubscribeException.PaymentNotFound() }
 
-        return payments.current(productId, id) {
-            requestPaymentUseCase.subscribeStatus(productId, paymentId)
-        }?.toNative()
-    }
-
-    override suspend fun balance(productId: ProductId, purse: UInt?): String {
-        if (purse != null) throw HostPaymentBalanceSubscribeException.Unknown(NO_PURSES)
-
-        // The core registers its follower before asking, so changes from here on reach it.
-        forwardBalance()
-
-        return totalBalanceUseCase.getBalance()
-            .map { it.spendableByProducts().value.toString() }
-            .getOrElse {
-                Timber.tag(PAYMENTS_LOG_TAG).w(it, "Balance unavailable")
-                throw HostPaymentBalanceSubscribeException.Unknown(BALANCE_UNAVAILABLE)
-            }
-    }
-
-    private fun forwardBalance() {
-        if (!balanceForwarding.compareAndSet(false, true)) return
-
-        // On a failure forwarding stops, and the core's next balance ask starts it again.
-        scope.launch {
-            try {
-                appLifecycleObserver.subscribeIsForeground().collectLatest { foreground ->
-                    if (!foreground) return@collectLatest
-                    totalBalanceUseCase.subscribeSpendableByProducts()
-                        .distinctUntilChanged()
-                        .collect { sink?.balance(it) }
+        forward(
+            statuses = requestPaymentUseCase.subscribeStatus(productId, paymentId),
+            isTerminal = { it !is PaymentStatus.Processing },
+            push = { status ->
+                if (status is PaymentStatus.Failed) Timber.tag(PAYMENTS_LOG_TAG).w("Payment failed: %s", status.reason)
+                sink?.paymentStatus(productId, id, status.toNative())
+            },
+            failure = { error ->
+                if (error is PaymentRequestError.NotFound) {
+                    HostPaymentStatusSubscribeException.PaymentNotFound()
+                } else {
+                    Timber.tag(PAYMENTS_LOG_TAG).w(error, "Payment status stream failed for $productId")
+                    HostPaymentStatusSubscribeException.Unknown(STATUS_UNAVAILABLE)
                 }
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (error: Throwable) {
-                Timber.tag(PAYMENTS_LOG_TAG).w(error, "Balance forwarding failed")
-            } finally {
-                balanceForwarding.set(false)
-            }
+            },
+        )
+    }
+
+    override suspend fun followBalance() {
+        forward(
+            statuses = totalBalanceUseCase.subscribeSpendableByProducts().distinctUntilChanged(),
+            isTerminal = { false },
+            push = { sink?.balance(it) },
+            failure = { error ->
+                Timber.tag(PAYMENTS_LOG_TAG).w(error, "Balance stream failed")
+                HostRejection.Rejected(BALANCE_UNAVAILABLE)
+            },
+        )
+    }
+
+    /** Push each of [statuses] until a terminal one or the stream's end, throwing [failure] of an engine error. */
+    private suspend fun <S> forward(
+        statuses: Flow<S>,
+        isTerminal: (S) -> Boolean,
+        push: (S) -> Unit,
+        failure: (Throwable) -> Throwable,
+    ) {
+        try {
+            statuses
+                .transformWhile { status ->
+                    emit(status)
+                    !isTerminal(status)
+                }
+                .collect { push(it) }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            throw failure(error)
         }
     }
 
@@ -236,138 +205,6 @@ class TrUAPIPaymentPlatforms @Inject constructor(
         const val INVALID_ID = "the id is not 32 bytes"
 
         const val BALANCE_UNAVAILABLE = "balance is unavailable"
-    }
-}
-
-/**
- * One run per (product, id) forwarding an engine's statuses until terminal, and
- * answering the core's synchronous ask from that run. A final status is kept,
- * so asking again about a settled operation answers at once; a run that ends
- * otherwise is forgotten, so the next ask reads the engine again.
- *
- * The ask runs on the core's thread, so it waits on the engine only briefly.
- * An operation the engine has not answered for by then reads as [unknownYet],
- * and its real status is pushed once the engine has it.
- *
- * A run ends at its first terminal status, or when the engine's statuses fail
- * or complete. Once the core has been told a non-terminal status, by a push or
- * by an ask, it waits for a terminal one, so a run ending without one pushes
- * [abandoned]. That status is not kept: the next ask reads the engine again and
- * answers its record, `null`, or the failure.
- */
-internal class StatusForwarder<S : Any>(
-    private val scope: CoroutineScope,
-    private val isTerminal: (S) -> Boolean,
-    private val isNotFound: (Throwable) -> Boolean,
-    private val unknownYet: S,
-    private val abandoned: S,
-    private val notify: (productId: ProductId, id: ByteArray, status: S) -> Unit,
-) {
-    private sealed interface Latest<out T> {
-        data object Pending : Latest<Nothing>
-
-        data class Known<T>(val status: T) : Latest<T>
-
-        data object NotFound : Latest<Nothing>
-
-        data object Failed : Latest<Nothing>
-    }
-
-    /** [latest] and [reported] change together under the run's lock, so a run ending races no ask. */
-    private class Run<S> {
-        val latest = MutableStateFlow<Latest<S>>(Latest.Pending)
-
-        var reported = false
-    }
-
-    private data class Key(val productId: ProductId, val id: DataByteArray)
-
-    private val runs = ConcurrentHashMap<Key, Run<S>>()
-
-    private val settled = object : LinkedHashMap<Key, S>() {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, S>) = size > SETTLED_KEPT
-    }
-
-    /** `null` when the engine knows no such operation. */
-    fun current(productId: ProductId, id: ByteArray, statuses: () -> Flow<S>): S? {
-        synchronized(settled) { settled[keyOf(productId, id)] }?.let { return it }
-
-        val run = runFor(productId, id, statuses)
-        if (run.latest.value is Latest.Pending) {
-            runBlocking { withTimeoutOrNull(FIRST_STATUS_WAIT_MS) { run.latest.first { it !is Latest.Pending } } }
-        }
-
-        val latest = synchronized(run) {
-            run.latest.value.also { if (it is Latest.Pending) run.reported = true }
-        }
-
-        return when (latest) {
-            is Latest.Known -> latest.status
-            Latest.NotFound -> null
-            // The run logged the engine's error; the core passes this reason on to the product.
-            Latest.Failed -> throw HostRejection.Rejected(STATUS_UNAVAILABLE)
-            Latest.Pending -> unknownYet
-        }
-    }
-
-    private fun keyOf(productId: ProductId, id: ByteArray) = Key(productId, id.toDataByteArray())
-
-    /** Forwards the operation's statuses unless a run for it is already going. */
-    fun follow(productId: ProductId, id: ByteArray, statuses: () -> Flow<S>) {
-        runFor(productId, id, statuses)
-    }
-
-    private fun runFor(productId: ProductId, id: ByteArray, statuses: () -> Flow<S>): Run<S> {
-        val key = keyOf(productId, id)
-        val fresh = Run<S>()
-        runs.putIfAbsent(key, fresh)?.let { return it }
-
-        scope.launch {
-            val failure: Latest<S>? = try {
-                statuses()
-                    .transformWhile { status ->
-                        emit(status)
-                        !isTerminal(status)
-                    }
-                    .collect { status ->
-                        if (isTerminal(status)) synchronized(settled) { settled[key] = status }
-                        synchronized(fresh) {
-                            fresh.latest.value = Latest.Known(status)
-                            fresh.reported = true
-                        }
-                        notify(productId, id, status)
-                    }
-                null
-            } catch (cancellation: CancellationException) {
-                throw cancellation
-            } catch (error: Throwable) {
-                val notFound = isNotFound(error)
-                if (!notFound) Timber.tag(PAYMENTS_LOG_TAG).w(error, "Status forwarding failed for $productId")
-                if (notFound) Latest.NotFound else Latest.Failed
-            }
-
-            val abandon = synchronized(fresh) {
-                val last = fresh.latest.value
-                // Statuses that complete without any status are an engine failure too.
-                fresh.latest.value = failure ?: last.takeIf { it !is Latest.Pending } ?: Latest.Failed
-                fresh.reported && !(last is Latest.Known && isTerminal(last.status))
-            }
-            if (abandon) {
-                runCancellableCatching { notify(productId, id, abandoned) }
-                    .onFailure { Timber.tag(PAYMENTS_LOG_TAG).w(it, "Ending status could not be pushed for $productId") }
-            }
-        }.invokeOnCompletion {
-            // Only after the ending push, so a later run's statuses cannot reach the core before it.
-            runs.remove(key, fresh)
-        }
-
-        return fresh
-    }
-
-    private companion object {
-        const val FIRST_STATUS_WAIT_MS = 250L
-
-        const val SETTLED_KEPT = 256
     }
 }
 
