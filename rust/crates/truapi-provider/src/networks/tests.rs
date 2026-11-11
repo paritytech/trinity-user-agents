@@ -52,7 +52,7 @@ fn every_catalog_genesis_hash_matches_its_bundled_spec() {
 			("bulletin", &network.bulletin),
 			("people", &network.people),
 		] {
-			let derived = genesis_hash_of_spec(chain.spec);
+			let derived = crate::test_stack::genesis(chain.spec);
 			assert_eq!(
 				format!("0x{}", hex::encode(derived)),
 				chain.genesis_hex,
@@ -63,11 +63,6 @@ fn every_catalog_genesis_hash_matches_its_bundled_spec() {
 			);
 		}
 	}
-}
-
-/// Hash of the genesis block a light chain spec describes.
-fn genesis_hash_of_spec(spec: &str) -> [u8; 32] {
-	trinity_stack::light_spec_genesis(spec.as_bytes()).expect("a bundled spec is a light spec")
 }
 
 #[test]
