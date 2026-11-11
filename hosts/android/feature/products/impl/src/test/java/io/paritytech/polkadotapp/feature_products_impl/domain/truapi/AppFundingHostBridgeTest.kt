@@ -15,7 +15,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.DeviceCountryDetector
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -30,7 +30,7 @@ import uniffi.truapi.FundingDirection as CoreFundingDirection
 class AppFundingHostBridgeTest {
     private val ramp = ProductId.parse("ramp.dot").getOrThrow()
     private val overlay = mockk<FundingOverlay>()
-    private val countryDetector = mockk<DeviceCountryDetector>()
+    private val countryDetector = mockk<CountryDetector>()
     private val funding = mockk<TrUAPIFundingRuntime>(relaxed = true)
     private val bridge = AppFundingHostBridge(Lazy { overlay }, Lazy { funding }, countryDetector)
 

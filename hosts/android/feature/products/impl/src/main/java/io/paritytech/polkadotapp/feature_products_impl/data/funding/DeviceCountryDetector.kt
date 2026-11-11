@@ -1,4 +1,6 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.funding
+package io.paritytech.polkadotapp.feature_products_impl.data.funding
+
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -27,8 +29,8 @@ import kotlin.time.Duration.Companion.milliseconds
 class DeviceCountryDetector @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val dispatchers: CoroutineDispatchers,
-) {
-    suspend fun detect(): String? = withContext(dispatchers.io) {
+) : CountryDetector {
+    override suspend fun detect(): String? = withContext(dispatchers.io) {
         locationCountry() ?: telephonyCountry() ?: Locale.getDefault().country.asAlpha2()
     }
 

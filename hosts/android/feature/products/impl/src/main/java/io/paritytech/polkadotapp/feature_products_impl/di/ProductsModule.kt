@@ -128,6 +128,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.RemoteFaceS
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductIconImageLoaderRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductRegistrar
+import io.paritytech.polkadotapp.feature_products_impl.data.funding.DeviceCountryDetector
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductContentWarmUp
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductImageResolver
@@ -188,6 +190,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindDevServerAddresses(impl: DevServers): DevServerAddresses
+
+    @Binds
+    fun bindCountryDetector(impl: DeviceCountryDetector): CountryDetector
 
     @Binds
     @Singleton
