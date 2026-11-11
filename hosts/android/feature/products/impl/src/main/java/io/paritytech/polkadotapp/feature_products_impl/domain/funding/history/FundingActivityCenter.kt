@@ -4,7 +4,6 @@ import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityItem
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStatus
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isOpen
@@ -30,8 +29,8 @@ import kotlin.time.Instant
 /**
  * The CASH card's funding lists: sessions still in flight, then the ended ones, which the core keeps.
  *
- * The ended list is read from the core's history each time it is built: on the first collection, whenever the core
- * pushes a session, and once funding resumes, which is when the core has loaded its sessions. Every ended session,
+ * The ended list is read from the core's history each time it is built: on the first collection and whenever the
+ * core pushes a session. Every ended session,
  * from this run or an earlier one, reads from its summary, which carries all its row and detail show.
  *
  * An ended session the core has not been told about is acknowledged once its row is built, since that row tells the
@@ -54,7 +53,7 @@ class FundingActivityCenter @Inject constructor(
     private val acknowledgedSummaries = mutableSetOf<String>()
 
     /**
-     * Built again whenever the core pushes a session or resumes funding; never completes, so the collector stops it.
+     * Built again whenever the core pushes a session; never completes, so the collector stops it.
      * Collecting it starts the core, which then pushes them, and acknowledges each ended session once its row is
      * built, so the core stops pushing it on resume.
      */
@@ -86,9 +85,8 @@ class FundingActivityCenter @Inject constructor(
 
         return FundingActivity(
             inFlight = inFlight,
-            // A top-up the user cancelled before paying leaves the lists; if its payment arrives anyway, the core
-            // hands the session back and it shows as received.
-            history = records.filterNot { it.cancelledBeforePaying }.sortedByDescending { it.settledAt }.map { it.toItem() },
+            // The core leaves a cancel that moved no money out of history.
+            history = records.sortedByDescending { it.settledAt }.map { it.toItem() },
         )
     }
 
@@ -131,9 +129,6 @@ class FundingActivityCenter @Inject constructor(
             status = status,
         )
     }
-
-    private val FundingRecord.cancelledBeforePaying: Boolean
-        get() = (outcome as? FundingRecordOutcome.Failed)?.reason == FundingFailureReason.Cancelled
 
     private fun FundingRecord.toItem() = FundingActivityItem(
         id = intent,

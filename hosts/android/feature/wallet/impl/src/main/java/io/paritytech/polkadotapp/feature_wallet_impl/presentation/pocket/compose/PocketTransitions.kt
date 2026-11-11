@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.compos
 
 import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.BoundsTransform
+import androidx.compose.animation.EnterExitState
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.SharedTransitionScope
@@ -52,6 +53,10 @@ private val CollectiblesLiftBoundsTransform = BoundsTransform { _, _ ->
 
 val LocalSharedTransitionScope = compositionLocalOf<SharedTransitionScope?> { null }
 val LocalNavAnimatedVisibilityScope = compositionLocalOf<AnimatedVisibilityScope?> { null }
+
+@Composable
+internal fun isPocketScreenLeaving(): Boolean =
+    LocalNavAnimatedVisibilityScope.current?.transition?.targetState == EnterExitState.PostExit
 val LocalPocketScreenTransition = compositionLocalOf<Transition<PocketScreenState>> {
     noLocalProvidedFor("LocalPocketScreenTransition")
 }

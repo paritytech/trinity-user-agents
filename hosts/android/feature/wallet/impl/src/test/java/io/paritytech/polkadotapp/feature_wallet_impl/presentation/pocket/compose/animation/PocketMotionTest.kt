@@ -35,9 +35,9 @@ class PocketMotionTest {
         assertEquals(28f, dockY + height * docked / 2f, DELTA)
 
         val (midX, midY) = PocketCollapse.offset(0.5f, 16f, 120f, 200f, 28f, width, height)
-        val half = PocketCollapse.scale(0.5f)
-        assertEquals((16f + 200f - width * half / 2f) / 2f, midX, DELTA)
-        assertEquals((120f + 28f - height * half / 2f) / 2f, midY, DELTA)
+        // Half way the card is 213 wide (half-way between 366 and 60), so 139.09 high.
+        assertEquals(54.75f, midX, DELTA)
+        assertEquals(39.2275f, midY, DELTA)
     }
 
     @Test

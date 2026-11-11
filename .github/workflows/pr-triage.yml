@@ -5,16 +5,21 @@ name: Pull request triage
 #
 # - `size:` from the lines changed, so a large pull request is visible as one
 #   before anyone opens it.
-# - `status:waiting-on-review` on a pull request that is ready and says nothing
-#   else about where it stands. Drafts get no status until they are marked
-#   ready, and a draft loses this one if it goes back.
+# - `status:` from the review decision: `ready-to-merge` once approved,
+#   `waiting-on-author` when changes are requested, `waiting-on-review`
+#   otherwise. `status:blocked` is set and cleared by hand and left alone.
+#   Drafts carry no status until they are marked ready.
 #
 # pull_request_target, so a pull request from a fork can be labelled too. It
 # never checks out the pull request's code: everything here reads the API.
+# A review on a fork's pull request runs with a read-only token, so that one
+# is skipped and the next push to it sets the status.
 
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
+  pull_request_review:
+    types: [submitted, dismissed]
 
 permissions:
   # contents to read .gitattributes from the base branch.
@@ -22,8 +27,10 @@ permissions:
   pull-requests: write
   issues: write
 
+# A review run labels only the status, so it gets its own group and never
+# cancels a run that is still setting the size.
 concurrency:
-  group: pr-triage-${{ github.event.pull_request.number }}
+  group: pr-triage-${{ github.event_name }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -39,6 +46,19 @@ jobs:
             const pr = context.payload.pull_request;
             const number = pr.number;
             const labels = pr.labels.map(l => l.name);
+
+            const review = context.eventName === 'pull_request_review';
+            if (review && pr.head.repo?.full_name !== `${owner}/${repo}`) {
+              core.info('Review on a fork: the token is read-only, so nothing to do.');
+              return;
+            }
+            // A comment review does not change who acts next, and keeps a
+            // status a reviewer set by hand.
+            if (review && context.payload.action === 'submitted'
+              && !['approved', 'changes_requested'].includes(context.payload.review.state)) {
+              core.info('Comment review: status unchanged.');
+              return;
+            }
 
             const add = async names => names.length && github.rest.issues.addLabels({
               owner, repo, issue_number: number, labels: names,
@@ -109,10 +129,41 @@ jobs:
             }
 
             // Decided from the pull request's state rather than the event, so a
-            // run cancelled by the next push leaves nothing the next run misses.
-            const waiting = 'status:waiting-on-review';
-            if (pr.draft) {
-              if (labels.includes(waiting)) await remove(waiting);
-            } else if (!labels.some(l => l.startsWith('status:'))) {
-              await add([waiting]);
+            // run cancelled by the next one leaves nothing the next run misses.
+            const managed = {
+              review: 'status:waiting-on-review',
+              author: 'status:waiting-on-author',
+              ready: 'status:ready-to-merge',
+            };
+            if (labels.includes('status:blocked')) {
+              core.info('Blocked: status left to whoever set it.');
+              return;
             }
+            let want = null;
+            if (!pr.draft) {
+              const { repository } = await github.graphql(`
+                query($owner: String!, $repo: String!, $number: Int!) {
+                  repository(owner: $owner, name: $repo) {
+                    pullRequest(number: $number) {
+                      reviewDecision
+                      latestOpinionatedReviews(first: 100) { nodes { state } }
+                    }
+                  }
+                }`, { owner, repo, number });
+              // reviewDecision is null where the base branch requires no
+              // review, so the latest approval or change request decides.
+              const { reviewDecision, latestOpinionatedReviews } = repository.pullRequest;
+              const states = latestOpinionatedReviews.nodes.map(r => r.state);
+              const decision = reviewDecision
+                ?? (states.includes('CHANGES_REQUESTED') ? 'CHANGES_REQUESTED'
+                  : states.includes('APPROVED') ? 'APPROVED'
+                  : null);
+              want = decision === 'APPROVED' ? managed.ready
+                : decision === 'CHANGES_REQUESTED' ? managed.author
+                : managed.review;
+              core.info(`Review decision ${decision}: ${want}`);
+            }
+            for (const l of labels.filter(l => Object.values(managed).includes(l) && l !== want)) {
+              await remove(l);
+            }
+            if (want && !labels.includes(want)) await add([want]);

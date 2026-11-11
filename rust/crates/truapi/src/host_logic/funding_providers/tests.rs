@@ -268,7 +268,7 @@ fn amount_limits_span_every_provider() {
 	);
 }
 
-// Divergence "Remote provider config": the host applies every refresh; the
+// The host applies every refresh; the
 // list puts the configured providers first, each once, then the bundled ones
 // the configuration does not name, and leaves out names that are no product.
 #[test]
@@ -276,8 +276,9 @@ fn the_provider_config_lists_published_then_unnamed_bundled() {
 	let bundled = |name: &str| FundingProviderEntry {
 		product_id: ProductId::for_test(name),
 		worker_manifest: Some("{}".to_string()),
+		root_manifest: None,
 		origin: FundingProviderOrigin::Bundled,
-		has_app: Some(true),
+		app: crate::host_logic::funding_providers::FundingProviderApp::Shipped,
 	};
 	let names = ["ramp.dot", "bank.dot", "ramp.dot", "not a product!"].map(str::to_string);
 	let (entries, invalid) =

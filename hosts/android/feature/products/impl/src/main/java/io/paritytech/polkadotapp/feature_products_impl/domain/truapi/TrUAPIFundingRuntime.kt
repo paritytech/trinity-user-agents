@@ -21,15 +21,16 @@ import kotlinx.coroutines.launch
 import uniffi.truapi.CancelConfirmation
 import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
+import uniffi.truapi.FundingAmountIssue
 import uniffi.truapi.FundingBookEntry
 import uniffi.truapi.FundingChangeKind
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingOptions
-import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.ProductId
+import uniffi.truapi.U128
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -46,6 +47,7 @@ class TrUAPIFundingRuntime @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.computation)
     private val notices = Channel<FundingChange>(Channel.UNLIMITED)
 
+    private val availableState = MutableStateFlow(false)
     private val entries = MutableStateFlow<Map<String, FundingBookEntry>>(emptyMap())
     private val historyState = MutableStateFlow<List<FundingSessionSummary>>(emptyList())
     private val optionsByIntent = MutableStateFlow<Map<String, FundingOptions>>(emptyMap())
@@ -72,7 +74,12 @@ class TrUAPIFundingRuntime @Inject constructor(
     override suspend fun openFunding(direction: FundingDirection): Result<String?> =
         runtimeProvider.runtime().mapCatching { it.openFunding(direction, null) }
 
-    override suspend fun start(): Result<Unit> = runtimeProvider.runtime().mapCatching { historyState.value = it.fundingHistory() }
+    override suspend fun start(): Result<Unit> = runtimeProvider.runtime().mapCatching {
+        availableState.value = it.fundingAvailable()
+        historyState.value = it.fundingHistory()
+    }
+
+    override val available: StateFlow<Boolean> = availableState.asStateFlow()
 
     override val sessions: StateFlow<Map<String, FundingBookEntry>> = entries.asStateFlow()
 
@@ -93,8 +100,11 @@ class TrUAPIFundingRuntime @Inject constructor(
             .logFailure("TrUAPI funding selection failed")
     }
 
-    override suspend fun requestQuote(intent: String, ask: FundingQuoteAsk): Result<ULong> =
-        runtimeProvider.runtime().mapCatching { it.getFundingQuote(intent, ask) }
+    override suspend fun requestQuote(intent: String, amount: U128): Result<ULong?> =
+        runtimeProvider.runtime().mapCatching { it.getFundingQuote(intent, amount) }
+
+    override suspend fun amountIssue(intent: String, amount: U128, spendable: U128?): Result<FundingAmountIssue?> =
+        runtimeProvider.runtime().mapCatching { it.fundingAmountIssue(intent, amount, spendable) }
 
     override suspend fun selectProvider(intent: String, providerId: ProductId, quoteId: String): Result<Boolean> =
         runtimeProvider.runtime().mapCatching { it.selectFundingProvider(intent, providerId, quoteId) }
@@ -108,7 +118,7 @@ class TrUAPIFundingRuntime @Inject constructor(
     override suspend fun acknowledge(intent: String): Result<Boolean> =
         runtimeProvider.runtime().mapCatching { it.acknowledgeFundingSession(intent) }
 
-    override fun quoteLists(intent: String): Flow<FundingQuoteList> =
+    override fun quoteLists(intent: String): Flow<FundingQuoteList?> =
         quoteLists.asSharedFlow().filter { it.intent == intent }.map { it.quotes }
 
     override fun sessionChanges(): Flow<String> = changedSessions.asSharedFlow()
@@ -129,17 +139,16 @@ class TrUAPIFundingRuntime @Inject constructor(
             }
 
             FundingChangeKind.QUOTES -> if (intent != null) {
-                runtime.fundingQuotes(intent)?.let { quoteLists.tryEmit(FundingQuoteListUpdate(intent, it)) }
+                quoteLists.tryEmit(FundingQuoteListUpdate(intent, runtime.fundingQuotes(intent)))
             }
 
-            // Funding resuming is when the core has loaded the ended sessions the history lists.
-            FundingChangeKind.IN_PROGRESS -> historyState.value = runtime.fundingHistory()
+            FundingChangeKind.PROVIDERS -> availableState.value = runtime.fundingAvailable()
         }
     }
 
     private data class FundingChange(val intent: String?, val kind: FundingChangeKind)
 
-    private data class FundingQuoteListUpdate(val intent: String, val quotes: FundingQuoteList)
+    private data class FundingQuoteListUpdate(val intent: String, val quotes: FundingQuoteList?)
 
     private companion object {
         const val EVENT_BUFFER = 64

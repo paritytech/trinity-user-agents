@@ -19,12 +19,12 @@ class FundingProviderBrandingTest {
     private val resolveProduct = mockk<ResolveProductUseCase>()
     private val bundledProducts = bundledProducts(
         mapOf(
-            "bundled-products/bundled.dot/manifest.json" to """{"${'$'}v":1,"displayName":"Bundled","icon":{"cid":"bafyicon"}}""",
+            "bundled-products/bundled.dot/manifest.json" to """{"${'$'}v":1,"displayName":"Bundled","description":"Card top-ups","icon":{"cid":"bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy","format":"png"}}""",
             "bundled-products/bundled.dot/worker/index.js" to "export {}",
             "bundled-products/unnamed.dot/worker/index.js" to "export {}",
         ),
     )
-    private val ipfs = mockk<IpfsContentLookup> { coEvery { getIpfsLinkFor("bafyicon") } returns Result.success(ICON_URL) }
+    private val ipfs = mockk<IpfsContentLookup> { coEvery { getIpfsLinkFor("bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy") } returns Result.success(ICON_URL) }
     private val branding = FundingProviderBranding(resolveProduct, ipfs, bundledProducts)
 
     @Test

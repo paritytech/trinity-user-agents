@@ -11,11 +11,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOver
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.DeviceCountryDetector
-import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.withTimeoutOrNull
 import uniffi.truapi.FundingChangeKind
-import uniffi.truapi.FundingFrameContext
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
 import uniffi.truapi.FundingPresentOutcome
@@ -23,7 +19,6 @@ import uniffi.truapi.ProductId
 import uniffi.truapi.U128
 import javax.inject.Inject
 import javax.inject.Singleton
-import kotlin.time.Duration.Companion.seconds
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
 /**
@@ -36,7 +31,6 @@ class AppFundingHostBridge @Inject constructor(
     private val overlay: Lazy<FundingOverlay>,
     private val funding: Lazy<TrUAPIFundingRuntime>,
     private val countryDetector: DeviceCountryDetector,
-    private val resolveProduct: ResolveProductUseCase,
 ) : FundingHostBridge {
     override suspend fun presentFunding(
         productId: ProductId?,
@@ -60,14 +54,13 @@ class AppFundingHostBridge @Inject constructor(
         providerId: ProductId,
         intent: String,
         target: FundingFrameTarget,
-        context: FundingFrameContext,
     ): FundingFrameOutcome {
         val frameTarget = when (target) {
             // The core checked the route, which is the path inside the App.
             is FundingFrameTarget.App -> ProviderFrameTarget.App(target.route)
             is FundingFrameTarget.Page -> ProviderFrameTarget.Page(target.url, target.returnUrl)
         }
-        return when (val outcome = overlay.get().presentProviderFrame(providerId, intent, frameTarget, context.awaitsUserTransfer)) {
+        return when (val outcome = overlay.get().presentProviderFrame(providerId, intent, frameTarget)) {
             ProviderFrameOutcome.Closed -> FundingFrameOutcome.Closed
             ProviderFrameOutcome.Dismissed -> FundingFrameOutcome.Dismissed
             is ProviderFrameOutcome.Returned -> FundingFrameOutcome.Returned(outcome.url)
@@ -78,24 +71,10 @@ class AppFundingHostBridge @Inject constructor(
         overlay.get().closeProviderFrame(providerId, intent)
     }
 
-    // Asked only for a published provider: a bundled one's entry says whether it ships an App. Its App comes from
-    // dotNS, as the frame opens it; one that cannot be resolved in time gets its App route through, so the frame fails
-    // as it did before.
-    override suspend fun providerHasApp(providerId: ProductId): Boolean {
-        val resolved = withTimeoutOrNull(APP_LOOKUP_TIMEOUT) { resolveProduct.resolve(providerId) }
-            ?: return true
-        resolved.exceptionOrNull()?.let { if (it is CancellationException) throw it }
-        return resolved.map { it.executables.app != null }.getOrDefault(true)
-    }
-
     override suspend fun detectedCountry(): String? = countryDetector.detect()
 
     override fun fundingChanged(intent: String?, kind: FundingChangeKind) {
         funding.get().onChanged(intent, kind)
-    }
-
-    private companion object {
-        val APP_LOOKUP_TIMEOUT = 10.seconds
     }
 }
 

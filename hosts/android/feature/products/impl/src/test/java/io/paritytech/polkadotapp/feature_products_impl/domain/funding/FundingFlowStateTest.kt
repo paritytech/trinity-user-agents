@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.funding
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.FundingAmountIssue
@@ -14,10 +13,10 @@ import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingNetworkLimits
 import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingQuote
-import uniffi.truapi.FundingQuoteAsk
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingQuoteRow
 import uniffi.truapi.FundingQuoteState
+import uniffi.truapi.FundingQuoteUnavailable
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.ProductId
@@ -47,21 +46,10 @@ class FundingFlowStateTest {
     }
 
     @Test
-    fun `a card ask names the asset the core resolved`() {
-        val ask = state(options(asset = "EUR"), amount = "50").currentAsk()
-
-        assertEquals(
-            FundingQuoteAsk(
-                direction = FundingDirection.IN,
-                rail = FundingRail.CARD,
-                asset = "EUR",
-                network = null,
-                amount = "50000000",
-                country = "DE",
-            ),
-            ask,
-        )
-        assertNull(state(options(asset = null), amount = "50").currentAsk())
+    fun `quotes are asked once the core names the asset`() {
+        assertEquals("50000000", state(options(asset = "EUR"), amount = "50").askAmount)
+        assertNull(state(options(asset = null), amount = "50").askAmount)
+        assertNull(state(options(asset = "EUR"), amount = "0").askAmount)
     }
 
     @Test
@@ -78,77 +66,53 @@ class FundingFlowStateTest {
 
         assertEquals("5000000", flow.units)
         assertNull(state(options(asset = "EUR"), amount = "abc").units)
-        assertNull(state(options(asset = "EUR"), amount = "abc").currentAsk())
+        assertNull(state(options(asset = "EUR"), amount = "abc").askAmount)
     }
 
     @Test
-    fun `the amount issue is the core's`() {
-        val limits = FundingAmountLimits(min = "10000000", max = "5000000000")
+    fun `the core's amount issue holds back continuing`() {
+        val issue = FundingAmountIssue.BelowMinimum("10000000")
 
-        assertEquals(FundingAmountIssue.BelowMinimum("10000000"), state(options(limits = limits), amount = "5").amountIssue)
-        assertFalse(state(options(limits = limits), amount = "5").canContinue)
-        assertEquals(FundingAmountIssue.NotEnoughBalance, state(options(), FundingDirection.OUT, amount = "300").amountIssue)
-        assertNull(state(options(limits = limits), amount = "50").amountIssue)
+        assertFalse(state(options(), amount = "5").withAmountIssue(issue).canContinue)
+        assertTrue(state(options(), amount = "50").withAmountIssue(null).canContinue)
     }
 
     @Test
-    fun `quoting lasts until the first list for the ask arrives`() {
-        val asked = state(options(asset = "EUR"), amount = "50").asked(1u)
+    fun `quoting lasts until every provider on the list answered`() {
+        val asked = state(options(asset = "EUR"), amount = "50").asked()
+        val pending = asked.receiving(list(FundingQuoteRow(providerA, FundingQuoteState.Pending), complete = false))
 
         assertTrue(asked.isQuoting)
+        assertTrue(pending.isQuoting)
         assertFalse(asked.receiving(list(quoted(providerA, send = "500"), best = providerA)).isQuoting)
     }
 
     @Test
-    fun `a list for an earlier request is dropped`() {
-        val asked = state(options(asset = "EUR"), amount = "50").asked(2u)
+    fun `a list the core withdrew drops the quotes`() {
+        val quoted = state(options(asset = "EUR"), amount = "50").asked()
+            .receiving(list(quoted(providerA, send = "500"), best = providerA))
 
-        val late = asked.receiving(list(quoted(providerA, send = "500"), best = providerA, requestId = 1u))
+        val withdrawn = quoted.receiving(null)
 
-        assertSame(asked, late)
-        assertNull(late.selectedProviderId)
-    }
-
-    // The core's id is not the previous one plus one: other asks share the counter, so only the returned id matches.
-    @Test
-    fun `only lists for the id the core returned are shown`() {
-        val first = state(options(asset = "EUR"), amount = "50").asked(1u)
-            .receiving(list(quoted(providerA, send = "5200"), best = providerA, requestId = 1u))
-        val asked = first.asked(5u)
-
-        assertSame(asked, asked.receiving(list(quoted(providerA, send = "5100"), best = providerA, requestId = 1u)))
-        assertSame(asked, asked.receiving(list(quoted(providerA, send = "5100"), best = providerA, requestId = 2u)))
-        assertEquals(providerB, asked.receiving(list(quoted(providerB, send = "5000"), best = providerB, requestId = 5u)).selectedProviderId)
+        assertNull(withdrawn.list)
+        assertNull(withdrawn.selectedProviderId)
+        assertNull(withdrawn.askedAmount)
     }
 
     @Test
-    fun `a list that arrives before the core's id shows once the id matches it`() {
-        val start = state(options(asset = "EUR"), amount = "50")
-        val asking = start.asking(requireNotNull(start.currentAsk()))
-        val early = asking.receiving(list(quoted(providerA, send = "5200"), best = providerA, requestId = 3u))
+    fun `the refusals' amount issue explains a list no provider quoted`() {
+        val issue = FundingAmountIssue.AboveMaximum("1000")
+        val refused = state(options(asset = "EUR"), amount = "50").asked()
+            .receiving(list(FundingQuoteRow(providerA, FundingQuoteState.Unavailable(FundingQuoteUnavailable.Timeout)), issue = issue))
 
-        assertNull(early.selectedProviderId)
-        assertEquals(providerA, early.requested(3u, early.askNumber).selectedProviderId)
-        assertNull(early.requested(4u, early.askNumber).selectedProviderId)
-    }
-
-    @Test
-    fun `the id of an ask replaced while on its way is not taken`() {
-        val start = state(options(asset = "EUR"), amount = "50")
-        val ask = requireNotNull(start.currentAsk())
-        val firstAsk = start.asking(ask)
-        val secondAsk = firstAsk.asking(ask)
-
-        val late = secondAsk.requested(1u, firstAsk.askNumber)
-
-        assertSame(secondAsk, late)
-        assertNull(late.receiving(list(quoted(providerA, send = "5200"), best = providerA, requestId = 1u)).list)
+        assertTrue(refused.noProviderQuoted)
+        assertEquals(issue, refused.unavailableIssue)
     }
 
     @Test
     fun `the core's best quote is selected until the user picks another`() {
         val quoted = state(options(asset = "EUR"), amount = "50").let { start ->
-            start.asked(1u)
+            start.asked()
                 .receiving(list(quoted(providerA, send = "5200"), quoted(providerB, send = "5100"), best = providerB))
         }
 
@@ -157,17 +121,14 @@ class FundingFlowStateTest {
         assertEquals(listOf(providerA, providerB), quoted.servingCandidates.map { it.providerId })
     }
 
-    // Asking the same ask again starts every row pending; the old price stays on screen, greyed, until the new one.
+    // Asking the same amount again starts every row pending; the old price stays on screen, greyed, until the new one.
     @Test
-    fun `a row pending after the same ask again keeps its last quote greyed`() {
+    fun `a row pending after the same amount again keeps its last quote greyed`() {
         val quote = quoted(providerA, send = "5200")
-        val refreshed = state(options(asset = "EUR"), amount = "50").let { start ->
-            val ask = requireNotNull(start.currentAsk())
-            start.asking(ask).let { it.requested(1u, it.askNumber) }
-                .receiving(list(quote, best = providerA))
-                .asking(ask).let { it.requested(2u, it.askNumber) }
-                .receiving(list(FundingQuoteRow(providerA, FundingQuoteState.Pending), requestId = 2u))
-        }
+        val refreshed = state(options(asset = "EUR"), amount = "50").asked()
+            .receiving(list(quote, best = providerA))
+            .asked()
+            .receiving(list(FundingQuoteRow(providerA, FundingQuoteState.Pending), requestId = 2u, complete = false))
 
         assertEquals(mapOf(providerA to (quote.state as FundingQuoteState.Quoted).quote), refreshed.staleQuotes)
         assertNull(refreshed.selectedProviderId)
@@ -208,15 +169,14 @@ class FundingFlowStateTest {
     @Test
     fun `changing the rail drops the network, token and quotes`() {
         val start = state(options(asset = "EUR"), amount = "50")
-        val flow = start.asking(requireNotNull(start.currentAsk())).withRail(FundingRail.CRYPTO).withNetwork("ethereum")
+        val flow = start.asked().withRail(FundingRail.CRYPTO).withNetwork("ethereum")
 
-        assertEquals(start.copy(rail = FundingRail.CRYPTO, railChosen = true, network = "ethereum", askNumber = 2), flow)
+        assertEquals(start.copy(rail = FundingRail.CRYPTO, railChosen = true, network = "ethereum"), flow)
         assertNull(flow.withRail(FundingRail.CARD).network)
     }
 
-    /** Asks for the quotes on screen, and takes [id] as the core's id for the ask. */
-    private fun FundingFlowState.asked(id: ULong): FundingFlowState =
-        asking(requireNotNull(currentAsk())).let { it.requested(id, it.askNumber) }
+    /** Asks for quotes of the amount on screen. */
+    private fun FundingFlowState.asked(): FundingFlowState = asking(requireNotNull(askAmount))
 
     private fun state(
         options: FundingOptions?,
@@ -253,16 +213,25 @@ class FundingFlowStateTest {
         routes = emptyList(),
         unsupported = emptyList(),
         limits = emptyList(),
+        declaresRoutes = true,
+        brand = null,
     )
 
-    private fun list(vararg rows: FundingQuoteRow, best: ProductId? = null, requestId: ULong = 1u) = FundingQuoteList(
+    private fun list(
+        vararg rows: FundingQuoteRow,
+        best: ProductId? = null,
+        requestId: ULong = 1u,
+        complete: Boolean = true,
+        issue: FundingAmountIssue? = null,
+    ) = FundingQuoteList(
         requestId = requestId,
         rows = rows.toList(),
         best = best,
         refreshAtMs = REFRESH_AT_MS,
         amount = "50000000",
         refusal = null,
-        issue = null,
+        issue = issue,
+        complete = complete,
     )
 
     private fun quoted(providerId: ProductId, send: String) = FundingQuoteRow(

@@ -28,12 +28,29 @@ pub struct FundingProviderEntry {
 	/// has read the live one. `None` waits for that read: until dotNS answers,
 	/// the provider is neither asked for quotes nor offered for a session.
 	pub worker_manifest: Option<String>,
-	/// Where the provider's Worker manifest comes from.
+	/// The root manifest JSON the host shipped for it, which its name and
+	/// icon are read from until the core has read the live one.
+	pub root_manifest: Option<String>,
+	/// Where the provider's manifests come from.
 	pub origin: FundingProviderOrigin,
-	/// Whether the provider ships an App, when the host knows, as for one
-	/// it bundles. `None` leaves the core to ask the host when an App route
-	/// is shown.
-	pub has_app: Option<bool>,
+	/// Whether the provider ships an App, as the host knows for one it
+	/// bundles.
+	pub app: FundingProviderApp,
+}
+
+/// Whether a funding provider ships an App, so an App route of its can be
+/// shown.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingProviderApp {
+	/// The host does not know: the core looks the App up on dotNS when an
+	/// App route is shown.
+	#[default]
+	Unknown,
+	/// It ships one.
+	Shipped,
+	/// It ships none, so it shows only external pages.
+	Absent,
 }
 
 /// The providers the host offers from its remote configuration's
@@ -54,8 +71,9 @@ pub fn provider_config(
 			entries.push(FundingProviderEntry {
 				product_id,
 				worker_manifest: None,
+				root_manifest: None,
 				origin: FundingProviderOrigin::Published,
-				has_app: None,
+				app: FundingProviderApp::Unknown,
 			});
 		}
 	}
@@ -67,16 +85,16 @@ pub fn provider_config(
 	(entries, invalid)
 }
 
-/// Where the core reads a provider's Worker manifest.
+/// Where the core reads a provider's manifests.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingProviderOrigin {
-	/// Published on dotNS: the core reads the live manifest, and goes by the
-	/// host's snapshot until it has.
+	/// Published on dotNS: the core reads the live manifests, and goes by the
+	/// host's snapshots until it has.
 	#[default]
 	Published,
-	/// Shipped inside the host: its `worker_manifest` is what the core goes
-	/// by, and dotNS is never read for it.
+	/// Shipped inside the host: its `worker_manifest` and `root_manifest` are
+	/// what the core goes by, and dotNS is never read for it.
 	Bundled,
 }
 
@@ -231,6 +249,11 @@ pub struct FundingCandidate {
 	pub unsupported: Vec<FundingUnsupported>,
 	/// The limits its recent quote refusals showed.
 	pub limits: Vec<FundingLimit>,
+	/// Whether its manifest declares routes. One that declares none may
+	/// serve any rail, whatever its answers confirmed so far.
+	pub declares_routes: bool,
+	/// The name and icon its root manifest gives it, once the core has one.
+	pub brand: Option<crate::host_internal::product_manifest::ProductBrand>,
 }
 
 impl FundingCandidate {
@@ -297,6 +320,8 @@ impl FundingCandidate {
 			routes,
 			unsupported,
 			limits,
+			declares_routes: declared.is_some(),
+			brand: None,
 		})
 	}
 }

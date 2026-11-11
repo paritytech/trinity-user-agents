@@ -22,8 +22,9 @@ rust/crates/
                          Asset Hub) and `nft_purse` (the NFT purses RFC over them)
                          modules keep NFT purses in the same database, transfer items
                          as scheduled durable transactions, and receive cheques over
-                         the statement store; its `image_loader` module reads the
-                         images hosts draw from Bulletin by CID and checks them
+                         the statement store; its `public_profile` domain resolves and caches
+                         profile records, and its `image_loader` reads the images they name
+                         from Bulletin by CID and checks them
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
                          also links the truapi crate to emit the core marker
                          table as TypeScript, which rustdoc JSON does not carry
@@ -43,7 +44,8 @@ js/packages/
   truapi-host/            @parity/truapi-host: WASM-backed host runtime. Subpath entries:
                           `.` (shared host types), `/markers` (the core's
                           table of which log markers may leave the device),
-                          `/web` (iframe + Web Worker), `/worker-runtime`
+                          `/web` (iframe + Web Worker), `/node` (worker
+                          thread), `/worker-runtime`
                           (Worker entry), and the test host `/testing`
                           (createMockHost), `/testing/playwright` (fixture),
                           `/testing/server` (node server), `/testing/client`
@@ -308,6 +310,16 @@ Two ways to lose work that involve no pushing at all:
   get the build it runs. Labels are defined in `.github/labels.yml`, so never
   create one with `gh label` or the web UI. `docs/labels.md` describes the
   system.
+
+## Host telemetry
+
+- Follow the Conventions section of `docs/design/host-telemetry.md` for anything
+  that sends telemetry from a host. Read it before adding an event, a log line
+  or a metric, and before touching a sender. It covers which Sentry product a
+  signal belongs in, which field a query can select on, why every captured event
+  sets a fingerprint, and what the core's marker table decides. Its `Adding a
+  signal` subsection shows what a host event looks like on each host, how a
+  core log line is registered and raised, and how to check one in Sentry.
 
 ## Scope of a change
 

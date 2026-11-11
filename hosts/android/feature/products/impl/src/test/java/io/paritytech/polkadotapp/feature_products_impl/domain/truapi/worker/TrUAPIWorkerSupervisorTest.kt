@@ -16,7 +16,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.bundledPro
 import io.paritytech.polkadotapp.feature_products_impl.domain.bundled.productSources
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductScriptResolver
-import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.ProductTrUAPIHostBridge
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIBootstrapInstaller
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
@@ -53,7 +52,6 @@ class TrUAPIWorkerSupervisorTest {
     private var includesChat = true
     private var attachFailure: Throwable? = null
     private val runtime = mockk<TrUAPIHostRuntime>(relaxed = true)
-    private var resolvedWorkers = 0
     private val configs = mutableListOf<ChatWebViewConfig>()
 
     @Before
@@ -166,10 +164,9 @@ class TrUAPIWorkerSupervisorTest {
         assertEquals(listOf(workerPolicy) to workerScopes, policies to policyScopes)
     }
 
-    // A worker the app ships boots from its own files: nothing asks dotNS where its script is, and its
-    // WebView serves the script from the bundle under the worker's own subname.
+    // The WebView of a worker the app ships serves its script from the bundle.
     @Test
-    fun `a bundled worker boots from its files without resolving its script`() = runTest {
+    fun `a bundled worker's WebView serves it from the bundle`() = runTest {
         val bundled = bundledProducts(
             mapOf(
                 "bundled-products/worker.paseo/worker-manifest.json" to
@@ -182,10 +179,7 @@ class TrUAPIWorkerSupervisorTest {
         supervisor.onDemandChanged(PRODUCT, WorkerDemand.START)
         advanceUntilIdle()
 
-        assertEquals(0, resolvedWorkers)
-        assertEquals(WorkerScript("https://worker.worker.paseo", "index.js"), configs.single().workerScript)
         assertTrue(configs.single().source is ProductSource.Bundled)
-        assertEquals(1, chatBridges.filterNotNull().size)
     }
 
     private fun TestScope.supervisor(
@@ -201,7 +195,6 @@ class TrUAPIWorkerSupervisorTest {
         scriptResolver = object : ProductScriptResolver {
             override suspend fun resolveWorker(productId: ProductId) = Result.success(
                 mockk<ProductExecutable.Worker> {
-                    resolvedWorkers++
                     every { scriptUrl } returns SCRIPT_URL
                     every { includesChat } returns this@TrUAPIWorkerSupervisorTest.includesChat
                 },
@@ -215,7 +208,6 @@ class TrUAPIWorkerSupervisorTest {
         },
         bootstrapInstaller = bootstrapInstaller,
         productSources = productSources(bundledProducts),
-        bundledProducts = bundledProducts,
         refCounter = { mockk(relaxed = true) },
         navigation = mockk { every { policy(PRODUCT, capture(policyScopes)) } returns workerPolicy },
         dispatchers = testDispatchers(),

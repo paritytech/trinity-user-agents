@@ -45,14 +45,13 @@ interface FundingOverlay {
     suspend fun present(request: FundingOverlayRequest): FundingOverlayOutcome
 
     /**
-     * Shows [target] for provider [providerId]'s session [intent] and answers how it closed. [awaitsUserTransfer] is
-     * the core saying the session waits on a transfer the user makes outside the frame.
+     * Shows [target] for provider [providerId]'s session [intent] and answers how it closed. Whether the session
+     * waits on a transfer the user makes outside the frame is on its progress.
      */
     suspend fun presentProviderFrame(
         providerId: ProductId,
         intent: String,
         target: ProviderFrameTarget,
-        awaitsUserTransfer: Boolean,
     ): ProviderFrameOutcome
 
     /**
