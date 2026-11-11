@@ -73,8 +73,8 @@ const UPSERT_RECORD: &str =
 		expires_at = excluded.expires_at, access_order = excluded.access_order";
 
 const DELETE_OVER_CAP: &str = "DELETE FROM public_profiles WHERE username IN (
-	SELECT username FROM public_profiles ORDER BY access_order, username
-	LIMIT max(0, (SELECT COUNT(*) FROM public_profiles) - :max_rows))";
+	SELECT username FROM public_profiles ORDER BY access_order DESC, username DESC
+	LIMIT -1 OFFSET :max_rows)";
 
 /// Stores a resolved record and evicts the least recently used records over capacity.
 ///
