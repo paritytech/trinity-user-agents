@@ -116,7 +116,11 @@ private struct FundingFrameTopBar: View {
 
     var body: some View {
         HStack {
-            FundingCircleButton(systemImage: "chevron.left", action: onBack)
+            Button(action: onBack) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 16, weight: .semibold))
+            }
+            .buttonStyle(.dsIcon(style: .secondary, shape: .pill, size: .medium))
             Spacer()
         }
         .padding(.horizontal, DSSpacings.medium)
@@ -129,7 +133,7 @@ private struct FundingFrameSentFundsBar: View {
     let onSentFunds: () -> Void
 
     var body: some View {
-        FundingPrimaryButton(title: String(localized: .Funding.frameSentFunds), action: onSentFunds)
+        DSButton(.Funding.frameSentFunds, expands: true, action: onSentFunds)
             .padding(.horizontal, DSSpacings.mediumIncreased)
             .frame(maxHeight: .infinity)
     }

@@ -68,7 +68,7 @@ private extension FundingProviderListView {
             model.chooseProvider(providerId)
         } label: {
             HStack(spacing: DSSpacings.smallIncreased) {
-                FundingProviderLogo(brand: brand, size: 36)
+                FundingProviderLogo(brand: brand)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(verbatim: brand.name)
                         .typography(.bodyMediumEmphasized)

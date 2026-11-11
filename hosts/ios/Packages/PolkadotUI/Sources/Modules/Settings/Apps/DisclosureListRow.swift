@@ -5,17 +5,22 @@ public struct DisclosureListRow<Leading: View>: View {
     private let title: String
     private let subtitle: String?
     private let leading: Leading
+    private let isEnabled: Bool
     private let onTap: () -> Void
 
+    /// A disabled row dims its title and drops the arrow; `subtitle` can say
+    /// why it is closed.
     public init(
         title: String,
         subtitle: String? = nil,
+        isEnabled: Bool = true,
         @ViewBuilder leading: () -> Leading,
         onTap: @escaping () -> Void
     ) {
         self.title = title
         self.subtitle = subtitle
         self.leading = leading()
+        self.isEnabled = isEnabled
         self.onTap = onTap
     }
 
@@ -27,7 +32,7 @@ public struct DisclosureListRow<Leading: View>: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .typography(.titleLarge)
-                        .foregroundColor(Color(.fgPrimary))
+                        .foregroundColor(isEnabled ? Color(.fgPrimary) : Color(.fgSecondary))
                         .lineLimit(1)
 
                     if let subtitle {
@@ -40,14 +45,17 @@ public struct DisclosureListRow<Leading: View>: View {
 
                 Spacer()
 
-                Image(.navigationArrowRight)
-                    .renderingMode(.template)
-                    .foregroundStyle(Color.fgPrimary)
+                if isEnabled {
+                    Image(.navigationArrowRight)
+                        .renderingMode(.template)
+                        .foregroundStyle(Color.fgPrimary)
+                }
             }
             .padding(.vertical, 4)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled)
     }
 }
 

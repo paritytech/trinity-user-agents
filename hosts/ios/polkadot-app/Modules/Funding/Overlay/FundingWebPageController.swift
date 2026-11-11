@@ -224,7 +224,11 @@ private struct FundingWebPageTopBar: View {
                 .lineLimit(1)
                 .truncationMode(.head)
             Spacer()
-            FundingCircleButton(systemImage: "xmark", action: onClose)
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .semibold))
+            }
+            .buttonStyle(.dsIcon(style: .secondary, shape: .pill, size: .medium))
         }
         .padding(.horizontal, DSSpacings.medium)
         .frame(maxHeight: .infinity)

@@ -36,12 +36,8 @@ struct FundingSummaryView: View {
 
             Spacer(minLength: 0)
 
-            FundingPrimaryButton(
-                title: String(localized: .Funding.continueAction),
-                isEnabled: model.selectedQuote != nil,
-                isLoading: model.isStarting,
-                action: model.start
-            )
+            DSButton(.Funding.continueAction, expands: true, isLoading: model.isStarting, action: model.start)
+                .disabled(model.selectedQuote == nil)
         }
     }
 }
@@ -130,7 +126,7 @@ private extension FundingSummaryView {
                 if let providerId = model.selectedProviderId {
                     let brand = model.brand(for: providerId)
                     HStack(spacing: DSSpacings.extraSmall) {
-                        FundingProviderLogo(brand: brand, size: 20)
+                        FundingProviderLogo(brand: brand, size: .s20)
                         Text(verbatim: brand.name)
                             .typography(.bodyLargeEmphasized)
                             .foregroundStyle(.fgPrimary)
