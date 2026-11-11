@@ -129,6 +129,7 @@ class FundingRecordSummaryTest {
         refunded = refunded,
         transactionId = "tx",
         reference = "ref",
-        ended = FundingEnding(0uL, FundingEndedOutcome.Open, null, null, null, null),
+        moneyMoved = false,
+        ended = FundingEnding(0uL, FundingEndedOutcome.Open, null, null, null, null, emptyList(), null),
     )
 }

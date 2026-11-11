@@ -28,6 +28,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import uniffi.truapi.FundingProviderEntry
+import uniffi.truapi.FundingProviderApp
 import uniffi.truapi.FundingProviderOrigin
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.NativeTrUApiHostRuntime
@@ -92,8 +93,9 @@ class TrUAPIHostRuntimeProviderTest {
     private fun bundled(name: String) = FundingProviderEntry(
         productId = ProductId.parse(name).getOrThrow(),
         workerManifest = "{}",
+        rootManifest = null,
         origin = FundingProviderOrigin.BUNDLED,
-        hasApp = true,
+        app = FundingProviderApp.SHIPPED,
     )
 
     // The Pocket is read from the runtime, so a runtime that waits on the chain for the network's

@@ -290,7 +290,8 @@ class FundingActivityCenterTest {
         refunded = refunded,
         transactionId = null,
         reference = null,
-        ended = FundingEnding(0uL, FundingEndedOutcome.Open, null, null, null, null),
+        moneyMoved = false,
+        ended = FundingEnding(0uL, FundingEndedOutcome.Open, null, null, null, null, emptyList(), null),
     )
 
     private fun serve(vararg entries: Pair<FundingSession, FundingProgress>) {
@@ -317,6 +318,7 @@ class FundingActivityCenterTest {
         status = status,
         longerAtMs = null,
         moneyMoved = false,
+        awaitsUserTransfer = false,
         cancel = FundingCancelAvailability.UNAVAILABLE,
     )
 
