@@ -1,5 +1,8 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.funding
+package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isPending
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
 import uniffi.truapi.FundingAmountIssue
 import uniffi.truapi.FundingAmountLimits
 import uniffi.truapi.FundingCandidate
