@@ -162,9 +162,9 @@ impl LightStack {
 		&self.generation
 	}
 
-	/// Whom the databases this stack's provider stores belong to.
-	pub fn owner(&self) -> crate::storage::Owner<'_> {
-		crate::storage::Owner { stack: &self.id, generation: &self.generation }
+	/// The header of the databases this stack's provider stores.
+	pub fn database_header(&self) -> crate::storage::Header<'_> {
+		crate::storage::Header { stack: &self.id, generation: &self.generation }
 	}
 
 	/// The relay `genesis_hash` syncs through. The relay itself, and a chain

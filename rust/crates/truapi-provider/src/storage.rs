@@ -85,31 +85,33 @@ pub trait StorageClient: Send + Sync {
 	) -> Result<(), StorageClientError>;
 }
 
-/// The stack and the generation a stored database belongs to.
-pub struct Owner<'a> {
+/// The first line of what a stack's provider stores: the stack and the
+/// generation the database belongs to.
+pub struct Header<'a> {
 	/// What identifies the stack.
 	pub stack: &'a str,
 	/// The stack's `generation` when the database was stored.
 	pub generation: &'a str,
 }
 
-impl Owner<'_> {
-	/// The first line of what this owner stores.
-	fn header(&self) -> serde_json::Value {
+impl Header<'_> {
+	/// The header as the JSON it is stored as.
+	fn json(&self) -> serde_json::Value {
 		serde_json::json!({ "stack": self.stack, "generation": self.generation })
 	}
 
-	/// What this owner stores for a chain: a line naming it, then `blob`.
+	/// What is stored for a chain: this header on a line of its own, then
+	/// `blob`.
 	pub fn seal(&self, blob: &str) -> String {
-		format!("{}\n{blob}", self.header())
+		format!("{}\n{blob}", self.json())
 	}
 
-	/// The blob inside `stored`, when [`seal`](Self::seal) wrote it for this
-	/// owner, and `None` for anything else.
+	/// The blob inside `stored`, when [`seal`](Self::seal) wrote it under
+	/// this header, and `None` for anything else.
 	pub fn unseal(&self, mut stored: String) -> Option<String> {
 		let end = stored.find('\n')?;
 		let named: serde_json::Value = serde_json::from_str(&stored[..end]).ok()?;
-		if named != self.header() {
+		if named != self.json() {
 			return None;
 		}
 		stored.drain(..=end);

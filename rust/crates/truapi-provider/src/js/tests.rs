@@ -175,7 +175,7 @@ async fn a_stack_provider_names_its_stack_to_the_client() {
 	builder
 		.set_storage(recording_client(
 			std::rc::Rc::clone(&calls),
-			crate::storage::Owner { stack: STACK_ID, generation: "one" }.seal("stored-blob"),
+			crate::storage::Header { stack: STACK_ID, generation: "one" }.seal("stored-blob"),
 		))
 		.expect("the client has load and save");
 	let provider = builder.build().expect("builds");
