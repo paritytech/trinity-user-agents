@@ -88,13 +88,13 @@ with every case.
 | `materials/material-format.v1.json` | PR #97 at `4fb610d1` | format version 1: verdicts, error codes, IDs |
 | `materials/body-seed.v1.json` | PR #97 at `4fb610d1` | the noise seed of a body's id |
 | `materials/noise.v1.json` | `f8251d2b` | the noise image of a seed |
-| `materials/webgpu-layout.v1.json` | PR #90 at `d5f5148d` | the uniform layout and texture order of a material's shaders |
 
-Copy them again from a commit on Shaderlab's `main` once PRs #90 and #97 merge, and update the table.
+Copy them again from a commit on Shaderlab's `main` once PR #97 merges, and update the table.
 
 `materials/compiled.v9.json` is not a vector but Shaderlab's own output: the shaders its
 compile step (`packages/shader/src/compiler.js` on `main`) writes for each material the
-shader tests use. Regenerate it from a shaderlab-spa checkout of `main`:
+shader tests use. The vertex shader and the float fallback's helpers, the same for every
+material, are written once. Regenerate it from a shaderlab-spa checkout of `main`:
 
 ```bash
 ( cd <shaderlab-spa> && bun install --ignore-scripts --filter @shaderlab/shader )

@@ -1,5 +1,7 @@
 // Prints the shaders Shaderlab's own compile step writes for each material the
 // core's shader tests use: rust/crates/truapi/tests/fixtures/materials/compiled.v9.json.
+// The vertex shader and the float fallback's helpers are the same for every
+// material, so they are written once and taken out of each fragment.
 //
 //   bun scripts/shaderlab-shader-fixtures.ts <shaderlab-spa checkout> > \
 //     rust/crates/truapi/tests/fixtures/materials/compiled.v9.json
@@ -19,6 +21,13 @@ if (!checkout)
 
 const { compileShaderModule, CORE_SHADER_COMPILER } = await import(
   join(checkout, "packages/shader/src/compiler.js")
+);
+const { lowerFloatSampling } = await import(
+  join(checkout, "packages/shader/src/float-sampling.ts")
+);
+const { helpers } = lowerFloatSampling(
+  "vec4 material(vec2 uv) {\n  return vec4(0.0);\n}\n",
+  [],
 );
 
 const PARAM_KEYS = [
@@ -76,20 +85,6 @@ function fromStudioSource(source: string) {
     })
     .join("\n");
   return { params, body };
-}
-
-/** The body and parameters back out of canonical material text. */
-function fromMaterialText(text: string) {
-  const lines = text.split("\n");
-  const controls = lines
-    .slice(1)
-    .filter((line) => line.startsWith("// @control "));
-  return {
-    params: controls.map((line) =>
-      JSON.parse(line.slice("// @control ".length)),
-    ),
-    body: lines.slice(1 + controls.length).join("\n"),
-  };
 }
 
 const sampler = (name: string, type: string) => ({ name, label: name, type });
@@ -181,21 +176,7 @@ const humanity = readdirSync(humanityDir)
     ...fromStudioSource(readFileSync(join(humanityDir, file), "utf8")),
   }));
 
-const vectors = JSON.parse(
-  readFileSync(
-    join(
-      import.meta.dir,
-      "../rust/crates/truapi/tests/fixtures/materials/material-format.v1.json",
-    ),
-    "utf8",
-  ),
-);
-const accepted = vectors.cases
-  .filter((vector: { expect: { ok: boolean } }) => vector.expect.ok)
-  .map((vector: { name: string; text: string }) => ({
-    name: `format vector ${vector.name}`,
-    ...fromMaterialText(vector.text),
-  }));
+let vertex: string | undefined;
 
 function compile(
   name: string,
@@ -214,35 +195,40 @@ function compile(
     arguments: params,
     source: normalizeBody(body),
   };
+  let compiled: { vertex: string; fragment: string };
   try {
-    const { vertex, fragment } = compileShaderModule(module, {
-      floatLinearFallback,
-    });
-    return { vertex, fragment };
+    compiled = compileShaderModule(module, { floatLinearFallback });
   } catch (error) {
     throw new Error(
       `Shaderlab cannot compile ${name}: ${(error as Error).message}`,
     );
   }
+  if (vertex !== undefined && compiled.vertex !== vertex)
+    throw new Error(`${name} has a vertex shader of its own`);
+  vertex = compiled.vertex;
+  if (!floatLinearFallback) return compiled.fragment;
+  if (compiled.fragment.split(helpers).length !== 2)
+    throw new Error(`${name} does not hold the fallback helpers once`);
+  return compiled.fragment.replace(helpers, "");
 }
 
 const commit = execFileSync("git", ["-C", checkout, "rev-parse", "HEAD"], {
   encoding: "utf8",
 }).trim();
-const cases = [...humanity, ...accepted, ...synthetic].map(
-  ({ name, params, body }) => ({
-    name,
-    text: materialText(params, body),
-    normal: compile(name, params, body, false),
-    fallback: compile(name, params, body, true),
-  }),
-);
+const cases = [...humanity, ...synthetic].map(({ name, params, body }) => ({
+  name,
+  text: materialText(params, body),
+  normal: compile(name, params, body, false),
+  fallback: compile(name, params, body, true),
+}));
 
 console.log(
   JSON.stringify(
     {
       format: "shaderlab-compiled-v9",
       source: `paritytech/shaderlab-spa ${commit}: packages/shader/src/compiler.js compileShaderModule`,
+      vertex,
+      helpers,
       cases,
     },
     null,

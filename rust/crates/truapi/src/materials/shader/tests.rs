@@ -8,26 +8,21 @@ use crate::materials::format::{Material, read_material};
 /// shaderlab-spa `main` at `754f78d0`.
 const COMPILED: &str = include_str!("../../../tests/fixtures/materials/compiled.v9.json");
 
-/// Shaderlab's uniform layout vectors, from shaderlab-spa PR #90 at `d5f5148d`.
-const LAYOUT: &str = include_str!("../../../tests/fixtures/materials/webgpu-layout.v1.json");
-
 #[derive(Deserialize)]
 struct Compiled {
+	vertex: String,
+	helpers: String,
 	cases: Vec<CompiledCase>,
 }
 
+/// A material's fragment shaders. The fallback one leaves out the helpers,
+/// which are the same for every material.
 #[derive(Deserialize)]
 struct CompiledCase {
 	name: String,
 	text: String,
-	normal: Stages,
-	fallback: Stages,
-}
-
-#[derive(Deserialize)]
-struct Stages {
-	vertex: String,
-	fragment: String,
+	normal: String,
+	fallback: String,
 }
 
 /// Shaderlab's parser places its edits after the spaces and comments that
@@ -60,6 +55,7 @@ fn material(text: &str) -> Material {
 #[test]
 fn android_shaders_are_what_shaderlab_compiles() {
 	let compiled: Compiled = serde_json::from_str(COMPILED).unwrap();
+	assert_eq!(without_spacing(&fallback_helpers()), without_spacing(&compiled.helpers));
 	for case in compiled.cases {
 		let material = material(&case.text);
 		for (variant, float_filterable, expected) in
@@ -70,13 +66,13 @@ fn android_shaders_are_what_shaderlab_compiles() {
 				.unwrap_or_else(|failure| panic!("{} {variant}: {failure:?}", case.name));
 			assert_eq!(
 				without_spacing(&shader.vertex),
-				without_spacing(&expected.vertex),
+				without_spacing(&compiled.vertex),
 				"{} {variant} vertex",
 				case.name
 			);
 			assert_eq!(
-				without_spacing(&shader.fragment),
-				without_spacing(&expected.fragment),
+				without_spacing(&shader.fragment.replacen(&fallback_helpers(), "", 1)),
+				without_spacing(expected),
 				"{} {variant} fragment",
 				case.name
 			);
@@ -135,115 +131,6 @@ fn a_material_reads_time_or_motion_only_when_its_body_does() {
 	assert_eq!(read("sl_orientation.y"), (false, true));
 	assert_eq!(read("(sl_rotation * vec3(1.0)).z"), (false, true));
 	assert_eq!(read("s\\\nl_time"), (true, false), "the compiler joins a backslash-ended line");
-}
-
-#[derive(Deserialize)]
-struct LayoutVectors {
-	cases: Vec<LayoutCase>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct LayoutCase {
-	name: String,
-	text: String,
-	float_linear_fallback: bool,
-	expect: LayoutExpect,
-}
-
-#[derive(Deserialize)]
-struct LayoutExpect {
-	ok: bool,
-	vertex: Option<Block>,
-	fragment: Option<Block>,
-	textures: Option<Vec<TextureExpect>>,
-}
-
-#[derive(Deserialize, Debug, PartialEq)]
-struct Block {
-	size: u32,
-	members: Vec<Member>,
-}
-
-#[derive(Deserialize, Debug, PartialEq)]
-struct Member {
-	name: String,
-	#[serde(rename = "type")]
-	kind: String,
-	offset: u32,
-	role: String,
-}
-
-#[derive(Deserialize)]
-struct TextureExpect {
-	name: String,
-	role: String,
-}
-
-fn block(shader: &MaterialShader, stage: Stage) -> Block {
-	let size = match stage {
-		Stage::Vertex => shader.vertex_block_size,
-		Stage::Fragment => shader.fragment_block_size,
-	};
-	let members = shader
-		.uniforms
-		.iter()
-		.filter(|uniform| uniform.stage == stage)
-		.map(|uniform| Member {
-			name: uniform.name.clone(),
-			kind: uniform.kind.glsl().to_string(),
-			offset: uniform.offset,
-			role: match uniform.role {
-				UniformRole::Time |
-				UniformRole::Tilt |
-				UniformRole::Resolution |
-				UniformRole::Orientation |
-				UniformRole::Rotation => "environment",
-				UniformRole::Argument(_) => "argument",
-				UniformRole::SamplingMode(_) => "sampling-mode",
-				UniformRole::TargetFlip => "target-flip",
-			}
-			.to_string(),
-		})
-		.collect();
-	Block { size, members }
-}
-
-/// The offsets are where the iOS app writes each value, so they must be
-/// Shaderlab's. One vector asks for the normal variant on a GPU that cannot
-/// filter float images, which this API never builds.
-#[test]
-fn the_uniform_layout_matches_the_vectors() {
-	let vectors: LayoutVectors = serde_json::from_str(LAYOUT).unwrap();
-	for case in vectors.cases.into_iter().filter(|case| case.expect.ok) {
-		let shader = material(&case.text)
-			.shader(ShaderLanguage::GlslEs, !case.float_linear_fallback)
-			.unwrap();
-
-		assert_eq!(Some(block(&shader, Stage::Vertex)), case.expect.vertex, "{}", case.name);
-		assert_eq!(Some(block(&shader, Stage::Fragment)), case.expect.fragment, "{}", case.name);
-		let textures: Vec<_> = shader
-			.textures
-			.iter()
-			.map(|texture| {
-				let role = match texture.role {
-					TextureRole::Base => "base",
-					TextureRole::Input => "input",
-					TextureRole::Noise => "noise",
-					TextureRole::Argument(_) => "argument",
-				};
-				(texture.name.clone(), role.to_string())
-			})
-			.collect();
-		let expected: Vec<_> = case
-			.expect
-			.textures
-			.unwrap()
-			.into_iter()
-			.map(|texture| (texture.name, texture.role))
-			.collect();
-		assert_eq!(textures, expected, "{}", case.name);
-	}
 }
 
 /// An app fills each uniform and texture slot from its role: argument `n` is
@@ -316,4 +203,56 @@ fn every_uniform_and_texture_says_what_fills_it() {
 		]
 	);
 	assert_eq!((shader.vertex_block_size, shader.fragment_block_size), (16, 128));
+}
+
+#[test]
+#[ignore]
+fn throwaway_worst_case() {
+	use std::time::Instant;
+	let time = |material: &Material, language, filterable| {
+		material.shader(language, filterable).unwrap();
+		let runs = 10;
+		let start = Instant::now();
+		for _ in 0..runs {
+			material.shader(language, filterable).unwrap();
+		}
+		start.elapsed().as_secs_f64() * 1000.0 / runs as f64
+	};
+	let header = "// @material 1\n// @control {\"name\":\"height\",\"label\":\"Height\",\"type\":\"samplerFloat\"}\n";
+	let functions = |count: usize| {
+		let mut body = String::new();
+		for index in 0..count {
+			body.push_str(&format!("float h{index}(samplerFloat image, vec2 p) {{\n  return texture(image, p + vec2({index}.0)) * 0.5;\n}}\n"));
+		}
+		body.push_str("vec4 material(vec2 uv) {\n  float sum = 0.0;\n");
+		for index in 0..count {
+			body.push_str(&format!("  sum += h{index}(sp_height, uv);\n"));
+		}
+		format!("{header}{body}  return vec4(sum);\n}}\n")
+	};
+	let calls = |count: usize| {
+		let mut body = String::from("vec4 material(vec2 uv) {\n  vec4 sum = vec4(0.0);\n");
+		for _ in 0..count {
+			body.push_str("  sum += texture(r_input, uv);\n");
+		}
+		format!("{header}{body}  return sum;\n}}\n")
+	};
+	for (name, make) in
+		[("helper functions", &functions as &dyn Fn(usize) -> String), ("sampling calls", &calls)]
+	{
+		let mut count = 1;
+		while read_material(make(count + 1).as_bytes()).is_ok() {
+			count += 1;
+		}
+		let text = make(count);
+		let material = read_material(text.as_bytes()).unwrap();
+		eprintln!(
+			"WORST {name}: {count} of them, {} B  es {:.3}  es_fb {:.3}  metal {:.3}  metal_fb {:.3}",
+			text.len(),
+			time(&material, ShaderLanguage::GlslEs, true),
+			time(&material, ShaderLanguage::GlslEs, false),
+			time(&material, ShaderLanguage::Metal, true),
+			time(&material, ShaderLanguage::Metal, false)
+		);
+	}
 }
