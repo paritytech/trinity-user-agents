@@ -14,7 +14,6 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.CustomChatAppearance
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 
 interface ChatExtension {
     val id: ChatExtensionId
@@ -57,12 +56,8 @@ interface ChatExtension {
      */
     fun animatesMessageReveal(chatId: ChatId): Boolean = false
 
-    fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> = flowOf(true)
-
     /** What the input slot of [chatId] holds. */
-    fun observeInputSlot(chatId: ChatId): Flow<ChatExtensionInputSlot> = observeUserInputAllowed(chatId).map { allowed ->
-        if (allowed) ChatExtensionInputSlot.TextInput else ChatExtensionInputSlot.Hidden
-    }
+    fun observeInputSlot(chatId: ChatId): Flow<ChatExtensionInputSlot> = flowOf(ChatExtensionInputSlot.TextInput)
     fun observeChatConfig(chatId: ChatId): Flow<ChatConfig> = flowOf(ChatConfig.Default)
 }
 
