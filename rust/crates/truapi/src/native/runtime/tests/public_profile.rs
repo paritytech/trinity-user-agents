@@ -2,6 +2,7 @@ use tokio::sync::mpsc;
 
 use super::*;
 use crate::{
+	PublicProfile, PublicProfileError,
 	native::tests::{native_host_runtime_config, native_host_runtime_no_session},
 	store::{Db, open_temporary_core_db},
 	test_support::StubPlatform,
