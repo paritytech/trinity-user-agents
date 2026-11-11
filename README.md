@@ -442,8 +442,9 @@ host's disk cache. JavaScript bindings are deferred.
 
 For avatars, `observe_public_profile(username, options)` streams a
 [dotNS public profile](docs/rfcs/core-resolved-public-profiles.md#the-host-calls).
-Native hosts emit stored metadata immediately, including stale records, and read
-dotNS when explicitly forced or when the record is missing or older than one hour.
+Native hosts reject invalid usernames with an error subscription. They emit stored
+metadata immediately, including stale records, and read dotNS when explicitly
+forced or when the record is missing or older than one hour.
 Callers supply `PublicProfileResolutionOptions` with explicit `force_fresh` and
 `skip_stale` fields. The first bypasses metadata freshness; the second suppresses
 stale stored values. Current app callers set `skip_stale` to false. A changed result is the
