@@ -26,7 +26,7 @@ use crate::{
 };
 
 /// Text record a username publishes its profile at.
-const PROFILE_RECORD_KEY: &str = "profile";
+pub const PROFILE_RECORD_KEY: &str = "profile";
 /// How long a resolved record is served before the chain is read again.
 #[cfg(not(target_arch = "wasm32"))]
 const RECORD_TTL_SECS: u64 = 60 * 60;
@@ -65,18 +65,21 @@ pub enum PublicProfileError {
 
 /// The node and contracts that hold a username's public profile.
 #[derive(Debug, PartialEq)]
-struct ProfileRecordLocation {
+pub struct ProfileRecordLocation {
 	/// Username namehash under the deployment's TLD.
-	node: [u8; 32],
+	pub node: [u8; 32],
 	/// Forward registry that determines the node's owner and delegates.
-	registry: [u8; 20],
+	pub registry: [u8; 20],
 	/// Content resolver registered by the deployment.
-	resolver: [u8; 20],
+	pub resolver: [u8; 20],
 }
 
 impl ProfileRecordLocation {
 	/// Finds the profile's content resolver without changing the node's resolver.
-	async fn resolve<T: DotnsTransport + ?Sized>(
+	///
+	/// Returns `None` when dotNS is not deployed. Invalid usernames and lookup failures
+	/// return errors.
+	pub async fn resolve<T: DotnsTransport + ?Sized>(
 		transport: &mut T,
 		username: &str,
 	) -> Result<Option<Self>, PublicProfileError> {
@@ -112,7 +115,9 @@ impl ProfileRecordLocation {
 	}
 
 	/// Reads the raw text so a writer can reject malformed records without losing them.
-	async fn read<T: DotnsTransport + ?Sized>(
+	///
+	/// An empty record is `None`. Lookup failures return errors.
+	pub async fn read<T: DotnsTransport + ?Sized>(
 		&self,
 		transport: &mut T,
 	) -> Result<Option<String>, DotnsError> {
