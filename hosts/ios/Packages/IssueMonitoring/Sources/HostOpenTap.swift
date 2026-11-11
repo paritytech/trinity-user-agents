@@ -17,6 +17,18 @@ public struct HostOpenTap: Sendable, Equatable {
         self.sessionID = sessionID
         openedAtEpochMilliseconds = openedAt.epochMilliseconds
     }
+
+    private init(source: Source, openedAtEpochMilliseconds: Int, sessionID: UUID) {
+        self.source = source
+        self.openedAtEpochMilliseconds = openedAtEpochMilliseconds
+        self.sessionID = sessionID
+    }
+
+    /// The same tap, joined to the session of a page it showed again rather than built, so its events and that
+    /// page's events share one host session id.
+    public func showing(sessionID: UUID) -> HostOpenTap {
+        HostOpenTap(source: source, openedAtEpochMilliseconds: openedAtEpochMilliseconds, sessionID: sessionID)
+    }
 }
 
 extension Date {

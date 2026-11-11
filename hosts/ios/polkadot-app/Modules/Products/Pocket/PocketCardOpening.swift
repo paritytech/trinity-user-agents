@@ -31,7 +31,8 @@ struct PocketCardOpening {
         navigator.openWallet { wallet, wasOnScreen in
             // A second screen would take the open card's page and leave it blank.
             guard !pocket.cardHosts.isOnDisplay(card.key) else {
-                recordOpened(tap, reused: true)
+                let heldSessionID = pocket.cardHosts.hostSessionID(for: card.key)
+                recordOpened(heldSessionID.map(tap.showing(sessionID:)) ?? tap, reused: true)
                 let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
                 pocket.cardHosts.reload(card.key, at: pageQuery) { view in
                     if let widgetURL { view.navigate(to: widgetURL) } else { view.navigate(to: page) }
@@ -39,13 +40,19 @@ struct PocketCardOpening {
                 return
             }
 
-            // A product the Pocket still holds is shown again without a new page, so no session takes this tap.
+            // A product the Pocket still holds is shown again without a new page, so the tap joins the session of
+            // the page it shows; a page built here adopts the tap's own id.
             var builtPage = false
-            guard let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: { _ in
-                builtPage = true
-                return makeView(for: card, page: page, pageQuery: pageQuery, tap: tap)
-            }) else { return }
-            recordOpened(tap, reused: !builtPage)
+            guard let product = pocket.cardHosts.product(
+                for: card.key,
+                pageQuery: pageQuery,
+                hostSessionID: tap.sessionID,
+                make: { _ in
+                    builtPage = true
+                    return makeView(for: card, page: page, pageQuery: pageQuery, tap: tap)
+                }
+            ) else { return }
+            recordOpened(tap.showing(sessionID: product.hostSessionID), reused: !builtPage)
 
             let origin = wallet.viewControllers.first as? PocketCardOrigin
             let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)

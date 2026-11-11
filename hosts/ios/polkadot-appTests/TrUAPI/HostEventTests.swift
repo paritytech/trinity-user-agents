@@ -117,6 +117,25 @@ struct HostEventTests {
         #expect(event.tags["open.reused"] == "true")
     }
 
+    @Test func aReusedOpenCarriesTheSessionIDOfThePageItShows() throws {
+        let pageSessionID = try #require(UUID(uuidString: "7AB1A66B-A1BB-41AF-899F-D74D1D1F64C7"))
+        let tap = HostOpenTap(source: .pocketCard, openedAt: Date(timeIntervalSince1970: 1_793_900_000.123))
+
+        let joined = tap.showing(sessionID: pageSessionID)
+        let event = HostEvent.pocketOpened(
+            tap: joined,
+            reused: true,
+            origin: testOrigin,
+            truapiHostVersion: "0.9.0",
+            monotonicMilliseconds: 12
+        )
+
+        #expect(joined.source == tap.source)
+        #expect(joined.openedAtEpochMilliseconds == tap.openedAtEpochMilliseconds)
+        #expect(event.tags["host.session_id"] == "7ab1a66b-a1bb-41af-899f-d74d1d1f64c7")
+        #expect(event.tags["open.reused"] == "true")
+    }
+
     @Test func pageVisibleAfterATapMeasuresTheWebViewAndTheTap() throws {
         let tap = HostOpenTap(source: .pocketCard, openedAt: Date(timeIntervalSince1970: 1_793_900_000.123))
 

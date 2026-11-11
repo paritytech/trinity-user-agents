@@ -89,7 +89,8 @@ public struct HostEvent: Sendable, Equatable {
     }
 
     /// The event for a tap that opens a Pocket card, sent at the tap. `reused` is whether the tap took a page that
-    /// was already open, in which case no later event carries `tap.sessionID`.
+    /// was already open; such a tap carries that page's session id (`HostOpenTap.showing(sessionID:)`), so the
+    /// reopen joins the events of the open that built the page.
     public static func pocketOpened(
         tap: HostOpenTap,
         reused: Bool,
