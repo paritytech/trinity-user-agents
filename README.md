@@ -458,8 +458,8 @@ New chat headers explicitly request forced
 freshness; cells and search explicitly use the ordinary policy. All app callers
 explicitly set `skipStale` to false. A cancelled header
 observation retains its forced intent until an observation completes or fails.
-[Shared CID loaders](hosts/ios/polkadot-app/Common/ImageViewModel/CID) use Kingfisher's
-cache without a freshness expiry, with a 100 MiB disk budget. CID loaders always keep
+[The CID image loader](hosts/ios/polkadot-app/Common/ImageViewModel/CID/CIDImageLoader.swift)
+uses Kingfisher's cache without a freshness expiry, with a 100 MiB disk budget. It keeps
 the current image while loading; avatar views cancel metadata observation and image work
 when their view is reused or released.
 

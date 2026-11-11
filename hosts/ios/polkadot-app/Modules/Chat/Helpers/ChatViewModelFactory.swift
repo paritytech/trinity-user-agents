@@ -37,6 +37,9 @@ final class ChatViewModelFactory {
 
     private static let replyPreviewMaxLength = 50
 
+    private let publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking
+    private var headerIcon: (icon: Chat.PeerMetadata.Icon, viewModel: AnyImageViewModel?)?
+
     let initialMessageId = UUID().uuidString
     let newMessagesId = UUID().uuidString
 
@@ -50,7 +53,6 @@ final class ChatViewModelFactory {
     let productRepository: AnyDataProviderRepository<Product>
     let productNameCache: ProductNameCaching
     let flowState: SPAFlowState
-    let headerIconViewModelFactory: ChatHeaderIconViewModelFactory
     let logger: LoggerProtocol
 
     init(
@@ -68,10 +70,7 @@ final class ChatViewModelFactory {
         productRepository = dependencies.productRepository
         productNameCache = dependencies.productNameCache
         flowState = dependencies.flowState
-        headerIconViewModelFactory = ChatHeaderIconViewModelFactory(
-            productFactory: dependencies.flowState.iconViewModelFactory,
-            publicProfileFactory: dependencies.publicProfileAvatarViewModelFactory
-        )
+        publicProfileAvatarViewModelFactory = dependencies.publicProfileAvatarViewModelFactory
         self.logger = logger
         customDecodersById = dependencies.customDecoders.reduce(into: [:]) {
             $0[$1.identifier.rawValue] = $1
@@ -87,7 +86,7 @@ extension ChatViewModelFactory: ChatViewModelMaking {
         footerConfiguration: (any HashableContentConfiguration)?
     ) -> ChatViewLayout.ViewModel {
         let headerConfiguration = metadata.chatMetadata.chatContactInfo(
-            icon: headerIconViewModelFactory.viewModel(for: metadata.chatMetadata.peerMetadata.icon)
+            icon: headerIconViewModel(for: metadata.chatMetadata.peerMetadata.icon)
         )
 
         let inputConfiguration = makeInputConfiguration(for: metadata.chatMetadata, actions: actions)
@@ -184,6 +183,20 @@ extension ChatViewModelFactory: ChatViewModelMaking {
 }
 
 private extension ChatViewModelFactory {
+    func headerIconViewModel(for icon: Chat.PeerMetadata.Icon) -> AnyImageViewModel? {
+        if let headerIcon, headerIcon.icon == icon {
+            return headerIcon.viewModel
+        }
+
+        let viewModel = icon.imageViewModel(
+            using: flowState.iconViewModelFactory,
+            publicProfileFactory: publicProfileAvatarViewModelFactory,
+            options: .init(forceFresh: true, skipStale: false)
+        )
+        headerIcon = (icon, viewModel)
+        return viewModel
+    }
+
     func convertToReactionViewModels(_ aggregates: [Chat.MessageReactionAggregate]) -> [ReactionViewModel] {
         aggregates.map { aggregate in
             ReactionViewModel(

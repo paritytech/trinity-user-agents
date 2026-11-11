@@ -5,11 +5,8 @@ import UIKit
 @MainActor
 final class PublicProfileAvatarViewModel: IdentifiableImageViewModelProtocol {
     private nonisolated let username: String
-    private let profiles: @Sendable (String, PublicProfileResolutionOptions) async throws -> AsyncThrowingStream<
-        PublicProfile,
-        Error
-    >
-    private let imageLoader: any CIDImageLoading
+    private let runtimeProvider: TrUAPIHostRuntimeProviding
+    private let imageLoader: CIDImageLoader
     private var options: PublicProfileResolutionOptions
     private var task: Task<Void, Never>?
     private weak var imageView: UIImageView?
@@ -19,15 +16,12 @@ final class PublicProfileAvatarViewModel: IdentifiableImageViewModelProtocol {
     nonisolated init(
         username: String,
         options: PublicProfileResolutionOptions,
-        profiles: @escaping @Sendable (String, PublicProfileResolutionOptions) async throws -> AsyncThrowingStream<
-            PublicProfile,
-            Error
-        >,
-        imageLoader: any CIDImageLoading
+        runtimeProvider: TrUAPIHostRuntimeProviding,
+        imageLoader: CIDImageLoader
     ) {
         self.username = username
         self.options = options
-        self.profiles = profiles
+        self.runtimeProvider = runtimeProvider
         self.imageLoader = imageLoader
     }
 
@@ -42,11 +36,12 @@ final class PublicProfileAvatarViewModel: IdentifiableImageViewModelProtocol {
         self.imageView = imageView
         imageView.image = nil
         let requestOptions = options
-        task = Task { [weak self, profiles, username, requestOptions, imageLoader, weak imageView] in
+        task = Task { [weak self, runtimeProvider, username, requestOptions, imageLoader, weak imageView] in
             do {
                 try Task.checkCancellation()
-                let updates = try await profiles(username, requestOptions)
+                let runtime = try await Self.sharedRuntime(from: runtimeProvider)
                 try Task.checkCancellation()
+                let updates = runtime.resolvePublicProfile(username: username, options: requestOptions)
                 for try await profile in updates {
                     try Task.checkCancellation()
                     guard let imageView else { return }
@@ -85,5 +80,12 @@ final class PublicProfileAvatarViewModel: IdentifiableImageViewModelProtocol {
     isolated deinit {
         task?.cancel()
         if let imageView { imageLoader.cancel(on: imageView) }
+    }
+
+    // Keep first-time runtime initialization off the main actor.
+    private nonisolated static func sharedRuntime(
+        from provider: TrUAPIHostRuntimeProviding
+    ) async throws -> TrUAPIHostRuntime {
+        try provider.sharedRuntime()
     }
 }
