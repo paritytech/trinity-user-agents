@@ -5,6 +5,9 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use std::{path::PathBuf, str::FromStr};
 
+#[cfg(test)]
+mod host_requests_tests;
+
 mod platform;
 mod platform_callbacks;
 mod rust;
@@ -92,6 +95,12 @@ struct Cli {
 	/// Only honored when `--platform-input` is also set.
 	#[arg(long)]
 	platform_rust_output: Option<PathBuf>,
+
+	/// Output directory for the core's marker table (optional). When set,
+	/// writes `markers.ts`, which carries the table to the web hosts that
+	/// UniFFI cannot reach.
+	#[arg(long)]
+	markers_ts_output: Option<String>,
 
 	/// Output directory for generated explorer metadata (optional). When set,
 	/// writes `codegen/types.ts` with the DataType list consumed by the
@@ -231,6 +240,11 @@ fn main() -> Result<()> {
 			"--platform-input is required for platform output; \
              --platform-wasm-adapter-output additionally requires --platform-ts-output"
 		);
+	}
+	if let Some(path) = &cli.markers_ts_output {
+		ts::generate_markers(path)
+			.with_context(|| format!("writing the marker table to {path}"))?;
+		println!("Generated marker table in {path}");
 	}
 	if let Some(path) = &cli.explorer_output {
 		ts::generate_explorer(&api, path, client_version)

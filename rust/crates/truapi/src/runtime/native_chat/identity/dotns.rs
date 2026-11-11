@@ -6,13 +6,11 @@
 //! one finalized pin. The registry, not the append-only LabelStore, owns names.
 
 use super::{NativeChatContext, normalize_username, rpc::Snapshot, schema};
-#[cfg(test)]
-use crate::host_logic::dotns_gateway as gateway;
 use crate::{
 	dotns_name::is_dns_label,
-	dotns_views::{network_tld, protocol_component, tld_node},
+	dotns_views::{network_tld, protocol_component, read_view, tld_node},
 	host_logic::dotns_gateway::{
-		DotnsTransport, account_to_h160, call_bytes32, call_no_args, decode_address, decode_bool,
+		DotnsError, DotnsPopController, DotnsRegistry, DotnsTransport, account_to_h160,
 		discover_pop_controller, is_pop_issued, namehash_under, resolve_labels,
 	},
 };
@@ -45,22 +43,28 @@ impl Directory {
 		let mut snapshot = Snapshot::open(context, genesis).await?;
 		let schema = schema::validate_gateway(&snapshot.metadata().await?)?;
 		let controller = discover_pop_controller(&mut snapshot)
-			.await?
+			.await
+			.map_err(|error| error.reason())?
 			.filter(|address| *address != [0; 20])
 			.ok_or("current Host network has no dotNS PoP controller")?;
-		let output = snapshot.view(&controller, call_no_args("protocolRegistry()")).await?;
-		let protocol = address(&output)?;
+		let protocol =
+			read_view(&mut snapshot, &controller, DotnsPopController::protocolRegistryCall {})
+				.await
+				.map_err(|error| DotnsError::ProtocolRegistry(error).reason())?
+				.into_array();
 		if protocol == [0; 20] {
 			return Err("dotNS protocol registry is unconfigured".into());
 		}
-		let tld = network_tld(&mut snapshot, &protocol).await?;
+		let tld = network_tld(&mut snapshot, &protocol).await.map_err(|error| error.reason())?;
 		// The Host's configured suffix is a consistency check, never permission
 		// to try another chain, contract or identity backend when lookup fails.
 		let suffix = tld.strip_prefix('.').ok_or("dotNS TLD has no leading dot")?;
 		if suffix != context.network_suffix || !is_dns_label(suffix) {
 			return Err("dotNS TLD differs from current Host network".into());
 		}
-		let registry = protocol_component(&mut snapshot, &protocol, "registry").await?;
+		let registry = protocol_component(&mut snapshot, &protocol, "registry")
+			.await
+			.map_err(|error| error.reason())?;
 		if registry == [0; 20] {
 			return Err("dotNS name registry is unconfigured".into());
 		}
@@ -107,7 +111,9 @@ impl Directory {
 	}
 
 	pub(super) async fn labels(&mut self, account: &[u8; 32]) -> Result<Vec<String>, String> {
-		let labels = resolve_labels(&mut self.snapshot, &self.controller, account).await?;
+		let labels = resolve_labels(&mut self.snapshot, &self.controller, account)
+			.await
+			.map_err(|error| error.reason())?;
 		Ok(labels
 			.into_iter()
 			.filter(|label| {
@@ -201,7 +207,9 @@ async fn forward_owner<T: DotnsTransport + ?Sized>(
 	username: &str,
 ) -> Result<Option<[u8; 20]>, String> {
 	if !(is_dns_label(username) || is_lite_username(username)) ||
-		!is_pop_issued(transport, controller, username).await?
+		!is_pop_issued(transport, controller, username)
+			.await
+			.map_err(|error| error.reason())?
 	{
 		return Ok(None);
 	}
@@ -225,31 +233,28 @@ async fn node_owner<T: DotnsTransport + ?Sized>(
 	registry: &[u8; 20],
 	node: &[u8; 32],
 ) -> Result<Option<[u8; 20]>, String> {
-	let exists = transport.view(registry, call_bytes32("recordExists(bytes32)", node)).await?;
-	if exists.len() != 32 {
-		return Err("dotNS recordExists returned a non-word".into());
-	}
-	if !decode_bool(&exists).map_err(|error| error.to_string())? {
+	let exists =
+		read_view(transport, registry, DotnsRegistry::recordExistsCall { node: (*node).into() })
+			.await
+			.map_err(|error| DotnsError::RecordExists(error).reason())?;
+	if !exists {
 		return Ok(None);
 	}
-	let owner = address(&transport.view(registry, call_bytes32("owner(bytes32)", node)).await?)?;
+	let owner = read_view(transport, registry, DotnsRegistry::ownerCall { node: (*node).into() })
+		.await
+		.map_err(|error| format!("DotnsRegistry.owner(): {error}"))?
+		.into_array();
 	if owner == [0; 20] {
 		return Err("existing dotNS record has a zero owner".into());
 	}
 	Ok(Some(owner))
 }
 
-fn address(bytes: &[u8]) -> Result<[u8; 20], String> {
-	if bytes.len() != 32 {
-		return Err("dotNS address is not one ABI word".into());
-	}
-	decode_address(bytes).map_err(|error| error.to_string())
-}
-
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use gateway::DotnsViewError;
+	use crate::chain::EvmContractError;
+	use alloy_sol_types::SolCall;
 	use std::collections::HashMap;
 
 	struct Registry {
@@ -257,21 +262,27 @@ mod tests {
 		owners: HashMap<[u8; 32], [u8; 20]>,
 	}
 
-	#[crate::platform::async_trait]
+	#[async_trait::async_trait]
 	impl DotnsTransport for Registry {
-		async fn storage(&mut self, _: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
+		async fn storage(&mut self, _: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
 			unreachable!()
 		}
-		async fn view(&mut self, _: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
+		async fn view(
+			&mut self,
+			dest: &[u8; 20],
+			input: Vec<u8>,
+		) -> Result<Vec<u8>, EvmContractError> {
 			let mut word = vec![0; 32];
-			if input[..4] == gateway::selector("isPopIssued(string)") {
+			if input[..4] == DotnsPopController::isPopIssuedCall::SELECTOR {
+				assert_eq!(dest, &[2; 20]);
 				word[31] = self.issued as u8;
 			} else {
+				assert_eq!(dest, &[3; 20]);
 				let node: [u8; 32] = input[4..].try_into().unwrap();
-				if input[..4] == gateway::selector("recordExists(bytes32)") {
+				if input[..4] == DotnsRegistry::recordExistsCall::SELECTOR {
 					word[31] = self.owners.contains_key(&node) as u8;
 				} else {
-					assert_eq!(input[..4], gateway::selector("owner(bytes32)"));
+					assert_eq!(input[..4], DotnsRegistry::ownerCall::SELECTOR);
 					word[12..].copy_from_slice(self.owners.get(&node).unwrap());
 				}
 			}

@@ -4,12 +4,18 @@
 // contributors. See truapi-coinage/NOTICE and LICENSE.
 
 use crate::{
-	host_internal::extrinsic::{Sr25519Signer, build_signed_extrinsic_v5},
-	runtime::statement_allowance::extension::{ChainState, Metadata},
+	chain::{
+		EncodedExtrinsic, ExtensionError, ExtrinsicBuilder, ExtrinsicService, ExtrinsicVersion,
+		HashAndNumber, InheritedImplication, RuntimeAtBirth, TransactionExtension,
+	},
+	host_internal::extrinsic::Sr25519Signer,
+	runtime::statement_allowance::extension::Metadata,
 };
-use parity_scale_codec::{Compact, Decode, Encode};
-use subxt::ext::frame_decode::extrinsics::ExtrinsicTypeInfo;
-use truapi::latest::TxPayloadExtension;
+use parity_scale_codec::{Decode, Encode};
+use subxt::ext::{
+	frame_decode::extrinsics::{ExtrinsicCallInfo, ExtrinsicTypeInfo},
+	scale_encode::{EncodeAsFields, EncodeAsType, Error as EncodeError, FieldIter, TypeResolver},
+};
 use truapi_coinage::DenominationBreakdownContext;
 
 pub(super) const AS_COINAGE: &str = "AsCoinage";
@@ -19,7 +25,9 @@ pub(super) struct Snapshot {
 	pub storage: std::sync::Arc<StorageLayouts>,
 	pub metadata: std::sync::Arc<Metadata>,
 	pub subxt: subxt::metadata::ArcMetadata,
-	pub state: ChainState,
+	pub genesis_hash: [u8; 32],
+	pub spec_version: u32,
+	pub transaction_version: u32,
 	pub at: [u8; 32],
 	pub number: u64,
 	pub period: u64,
@@ -56,13 +64,9 @@ impl Snapshot {
 			storage: std::sync::Arc::new(storage),
 			metadata: std::sync::Arc::new(metadata),
 			subxt,
-			state: ChainState {
-				spec_version,
-				transaction_version,
-				genesis_hash,
-				nonce: 0,
-				restrict_origins: false,
-			},
+			genesis_hash,
+			spec_version,
+			transaction_version,
 			at,
 			number,
 			period,
@@ -118,196 +122,163 @@ impl Snapshot {
 		Ok(context)
 	}
 
-	pub fn extensions(&self, nonce: u32) -> Result<Vec<TxPayloadExtension>, String> {
-		let mut state = self.state;
-		state.nonce = nonce;
-		let info = self
+	pub fn as_coin(&self) -> Result<Vec<u8>, String> {
+		let variant = self.authorization_variant("AsCoin")?;
+		if !variant.fields.is_empty() {
+			return Err("invalid AsCoinage.AsCoin fields".into());
+		}
+		Ok(vec![1, variant.index])
+	}
+
+	/// Resolve the authorization from the selected pipeline's explicit type,
+	/// not from a separate metadata facade. AsCoinage is Option<Info>, possibly
+	/// inside a single-field struct; neither wrapper may carry extra fields.
+	fn authorization_variant(
+		&self,
+		name: &str,
+	) -> Result<&scale_info::Variant<scale_info::form::PortableForm>, String> {
+		use scale_info::TypeDef;
+
+		let pipeline = self
 			.subxt
 			.extrinsic_extension_info(Some(self.metadata.extension_version()))
 			.map_err(|_| "invalid extension pipeline")?;
-		let encoded = self.metadata.encode_signed_extensions(&state);
-		if encoded.len() != info.extension_ids.len() {
-			return Err("extension pipeline mismatch".into());
-		}
-		let mut extensions: Vec<_> = info
+		let extension = pipeline
 			.extension_ids
 			.iter()
-			.zip(encoded)
-			.map(|(definition, bytes)| TxPayloadExtension {
-				id: definition.name.to_string(),
-				extra: bytes.extra,
-				additional_signed: bytes.additional_signed,
-			})
-			.collect();
-		let era = mortal_era(self.period, self.number)?;
-		replace(&mut extensions, "CheckMortality", era.to_vec(), self.at.to_vec())?;
-		if !extensions.iter().any(|e| e.id == AS_COINAGE) ||
-			!extensions.iter().any(|e| e.id == "VerifyMultiSignature")
+			.find(|extension| extension.name == AS_COINAGE)
+			.ok_or("missing AsCoinage extension")?;
+		let types = self.subxt.types();
+		let explicit = types.resolve(extension.id).ok_or("invalid AsCoinage type")?;
+		let option = match &explicit.type_def {
+			TypeDef::Composite(wrapper) => {
+				let [field] = wrapper.fields.as_slice() else {
+					return Err("invalid AsCoinage wrapper fields".into());
+				};
+				types.resolve(field.ty.id).ok_or("invalid AsCoinage option type")?
+			},
+			_ => explicit,
+		};
+		let TypeDef::Variant(option) = &option.type_def else {
+			return Err("invalid AsCoinage option shape".into());
+		};
+		let some = option
+			.variants
+			.iter()
+			.find(|variant| variant.name == "Some")
+			.ok_or("missing AsCoinage.Some")?;
+		let [field] = some.fields.as_slice() else {
+			return Err("invalid AsCoinage.Some fields".into());
+		};
+		let info = types.resolve(field.ty.id).ok_or("invalid AsCoinage authorization type")?;
+		let TypeDef::Variant(info) = &info.type_def else {
+			return Err("invalid AsCoinage authorization enum".into());
+		};
+		info.variants
+			.iter()
+			.find(|variant| variant.name == name)
+			.ok_or_else(|| format!("missing AsCoinage.{name}"))
+	}
+
+	/// Keep the runtime and mortality anchored to the same finalized snapshot
+	/// used to validate the inputs, rather than reading a newer head at signing.
+	fn extrinsics(&self, service: &ExtrinsicService) -> ExtrinsicService {
+		service.with_runtime_at(
+			self.genesis_hash.into(),
+			RuntimeAtBirth {
+				birth: HashAndNumber { hash: self.at.into(), number: self.number },
+				spec_version: self.spec_version,
+				transaction_version: self.transaction_version,
+				metadata: self.subxt.clone(),
+			},
+		)
+	}
+
+	fn build<'a>(
+		&self,
+		service: &'a ExtrinsicService,
+		call: &'a [u8],
+		nonce: u32,
+	) -> Result<ExtrinsicBuilder<'a>, String> {
+		let info = self.validate_call(call)?;
+		let pipeline = self
+			.subxt
+			.extrinsic_extension_info(Some(self.metadata.extension_version()))
+			.map_err(|_| "invalid extension pipeline")?;
+		if !pipeline.extension_ids.iter().any(|extension| extension.name == AS_COINAGE) ||
+			!pipeline
+				.extension_ids
+				.iter()
+				.any(|extension| extension.name == "VerifyMultiSignature")
 		{
 			return Err("Coinage authorization extensions missing".into());
 		}
-		// Unknown non-empty extensions must not silently authorize or charge anything.
-		for extension in &extensions {
-			let known =
-				matches!(
-					extension.id.as_str(),
-					"CheckNonce" |
-						"CheckSpecVersion" | "CheckTxVersion" |
-						"CheckGenesis" | "CheckMortality" |
-						"VerifyMultiSignature" |
-						"ChargeAssetTxPayment" |
-						"ChargeTransactionPayment" |
-						"RestrictOrigins" | "CheckMetadataHash" |
-						"AsCoinage"
-				);
-			if !known &&
-				extension
-					.extra
-					.iter()
-					.chain(&extension.additional_signed)
-					.any(|byte| *byte != 0)
-			{
-				return Err("Coinage runtime requires an unrecognized extension".into());
-			}
-		}
-		Ok(extensions)
+		Ok(service
+			.build_mortal_extrinsic(self.genesis_hash.into())
+			.with_extrinsic_version(ExtrinsicVersion::V5 {
+				extension_version: self.metadata.extension_version(),
+			})
+			.with_call_args(&info.pallet_name, &info.call_name, CallArgs(&call[2..]))
+			.with_nonce(u64::from(nonce))
+			.with_mortality_period(self.period))
 	}
 
-	pub fn as_coin(&self) -> Result<Vec<u8>, String> {
-		if self
-			.metadata
-			.extension_info_field_count(AS_COINAGE, "AsCoin")
-			.map_err(|_| "invalid AsCoinage.AsCoin shape")? !=
-			0
-		{
-			return Err("invalid AsCoinage.AsCoin fields".into());
-		}
-		Ok(vec![
-			1,
-			self.metadata
-				.extension_info_variant_index(AS_COINAGE, "AsCoin")
-				.map_err(|_| "missing AsCoinage.AsCoin")?,
-		])
-	}
-
-	pub fn signed(
+	pub async fn signed(
 		&self,
+		service: &ExtrinsicService,
 		keypair: &schnorrkel::Keypair,
 		call: &[u8],
 		nonce: u32,
-	) -> Result<Vec<u8>, String> {
-		self.validate_call(call)?;
-		let mut extensions = self.extensions(nonce)?;
-		replace(&mut extensions, AS_COINAGE, self.as_coin()?, Vec::new())?;
-		self.validate_extensions(&extensions)?;
-		extensions.retain(|extension| extension.id != "VerifyMultiSignature");
-		build_signed_extrinsic_v5(
-			&Sr25519Signer::from_keypair(keypair),
-			self.state.genesis_hash,
-			call,
-			&extensions,
-			self.metadata.extension_version(),
-			self.subxt.clone(),
-		)
-		.map_err(|_| "Coinage transaction cannot be signed against runtime metadata".into())
+	) -> Result<EncodedExtrinsic, String> {
+		let service = self.extrinsics(service);
+		let signer = Sr25519Signer::from_keypair(keypair);
+		let extrinsic = self
+			.build(&service, call, nonce)?
+			.with_signer(&signer)
+			.with_extension(CoinageAuthorization(std::cell::RefCell::new(
+				|_: &InheritedImplication| self.as_coin(),
+			)))
+			.build()
+			.await
+			.map_err(|error| format!("Coinage transaction cannot be signed: {error}"))?;
+		Ok(extrinsic.extrinsic)
 	}
 
-	pub fn implication(
+	/// The shared pipeline supplies the exact inherited implication to the
+	/// proof provider, then validates and assembles its authorization bytes.
+	pub async fn unsigned(
 		&self,
+		service: &ExtrinsicService,
 		call: &[u8],
-		extensions: &[TxPayloadExtension],
-	) -> Result<Vec<u8>, String> {
-		self.validate_call(call)?;
-		self.validate_extensions(extensions)?;
-		let index = extensions
-			.iter()
-			.position(|extension| extension.id == AS_COINAGE)
-			.ok_or("missing Coinage extension")?;
-		let mut result = vec![self.metadata.extension_version()];
-		result.extend_from_slice(call);
-		for extension in &extensions[index + 1..] {
-			result.extend_from_slice(&extension.extra);
-		}
-		for extension in &extensions[index + 1..] {
-			result.extend_from_slice(&extension.additional_signed);
-		}
-		Ok(result)
+		mut prove: impl FnMut(&InheritedImplication) -> Result<truapi_coinage::UnloadTokenProof, String>
+		+ Send,
+	) -> Result<EncodedExtrinsic, String> {
+		let service = self.extrinsics(service);
+		let extrinsic = self
+			.build(&service, call, 0)?
+			.with_extension(CoinageAuthorization(std::cell::RefCell::new(
+				|implication: &InheritedImplication| {
+					let proof = prove(implication)?;
+					let name = match proof.person_origin {
+						truapi_coinage::PersonOriginKind::Full => "AsUnloadTokenPeople",
+						truapi_coinage::PersonOriginKind::Lite => "AsUnloadTokenLitePeople",
+					};
+					let variant = self.authorization_variant(name)?.index;
+					let mut extra = proof.as_coinage_extension().encode();
+					if extra.len() < 2 {
+						return Err("invalid Coinage unload proof encoding".into());
+					}
+					extra[1] = variant;
+					Ok(extra)
+				},
+			)))
+			.build()
+			.await
+			.map_err(|error| format!("Coinage unload transaction cannot be built: {error}"))?;
+		Ok(extrinsic.extrinsic)
 	}
 
-	pub fn unsigned(
-		&self,
-		call: &[u8],
-		mut extensions: Vec<TxPayloadExtension>,
-		proof: &truapi_coinage::UnloadTokenProof,
-	) -> Result<Vec<u8>, String> {
-		let mut extra = proof.as_coinage_extension().encode();
-		let name = match proof.person_origin {
-			truapi_coinage::PersonOriginKind::Full => "AsUnloadTokenPeople",
-			truapi_coinage::PersonOriginKind::Lite => "AsUnloadTokenLitePeople",
-		};
-		let variant = self
-			.metadata
-			.extension_info_variant_index(AS_COINAGE, name)
-			.map_err(|_| "missing Coinage unload origin")?;
-		if extra.len() < 2 {
-			return Err("invalid Coinage unload proof encoding".into());
-		}
-		extra[1] = variant;
-		replace(&mut extensions, AS_COINAGE, extra, Vec::new())?;
-		self.validate_call(call)?;
-		self.validate_extensions(&extensions)?;
-		let mut body = vec![0x45, self.metadata.extension_version()];
-		for extension in &extensions {
-			body.extend_from_slice(&extension.extra);
-		}
-		body.extend_from_slice(call);
-		let mut output =
-			Compact(u32::try_from(body.len()).map_err(|_| "Coinage transaction too large")?)
-				.encode();
-		output.extend_from_slice(&body);
-		Ok(output)
-	}
-
-	fn validate_extensions(&self, extensions: &[TxPayloadExtension]) -> Result<(), String> {
-		use subxt::ext::scale_decode::visitor::{IgnoreVisitor, decode_with_visitor};
-		let info = self
-			.subxt
-			.extrinsic_extension_info(Some(self.metadata.extension_version()))
-			.map_err(|_| "invalid extension pipeline")?;
-		if info.extension_ids.len() != extensions.len() {
-			return Err("extension pipeline mismatch".into());
-		}
-		for (definition, extension) in info.extension_ids.iter().zip(extensions) {
-			if definition.name != extension.id {
-				return Err("extension order mismatch".into());
-			}
-			let mut bytes = extension.extra.as_slice();
-			decode_with_visitor(
-				&mut bytes,
-				definition.id,
-				self.subxt.types(),
-				IgnoreVisitor::new(),
-			)
-			.map_err(|_| "invalid Coinage extension encoding")?;
-			if !bytes.is_empty() {
-				return Err("Coinage extension has trailing bytes".into());
-			}
-			let mut implicit = extension.additional_signed.as_slice();
-			decode_with_visitor(
-				&mut implicit,
-				definition.implicit_id,
-				self.subxt.types(),
-				IgnoreVisitor::new(),
-			)
-			.map_err(|_| "invalid Coinage extension implicit")?;
-			if !implicit.is_empty() {
-				return Err("Coinage extension implicit has trailing bytes".into());
-			}
-		}
-		Ok(())
-	}
-
-	fn validate_call(&self, call: &[u8]) -> Result<(), String> {
+	fn validate_call(&self, call: &[u8]) -> Result<ExtrinsicCallInfo<'_, u32>, String> {
 		use subxt::ext::scale_decode::visitor::{IgnoreVisitor, decode_with_visitor};
 		let [pallet, index, ..] = call else {
 			return Err("Coinage call is truncated".into());
@@ -327,31 +298,65 @@ impl Snapshot {
 		if !bytes.is_empty() {
 			return Err("Coinage call has trailing arguments".into());
 		}
+		Ok(info)
+	}
+}
+
+/// Coinage's proof types already define their canonical SCALE bytes. The
+/// pipeline checks these against the runtime's explicit type before assembly.
+struct AuthorizationBytes(Vec<u8>);
+
+impl EncodeAsType for AuthorizationBytes {
+	fn encode_as_type_to<R: TypeResolver>(
+		&self,
+		_type_id: R::TypeId,
+		_types: &R,
+		out: &mut Vec<u8>,
+	) -> Result<(), EncodeError> {
+		out.extend_from_slice(&self.0);
 		Ok(())
 	}
 }
 
-pub(super) fn replace(
-	extensions: &mut [TxPayloadExtension],
-	name: &str,
-	extra: Vec<u8>,
-	additional_signed: Vec<u8>,
-) -> Result<(), String> {
-	let extension = extensions
-		.iter_mut()
-		.find(|extension| extension.id == name)
-		.ok_or("required Coinage extension missing")?;
-	extension.extra = extra;
-	extension.additional_signed = additional_signed;
-	Ok(())
+struct CoinageAuthorization<F>(std::cell::RefCell<F>);
+
+impl<F> TransactionExtension for CoinageAuthorization<F>
+where
+	F: FnMut(&InheritedImplication) -> Result<Vec<u8>, String> + Send,
+{
+	type Implicit = ();
+	type Explicit = AuthorizationBytes;
+
+	fn name(&self) -> &str {
+		AS_COINAGE
+	}
+
+	fn implicit(&self) {}
+
+	fn explicit(
+		&self,
+		implication: &InheritedImplication,
+	) -> Result<AuthorizationBytes, ExtensionError> {
+		(self.0.borrow_mut())(implication)
+			.map(AuthorizationBytes)
+			.map_err(|error| ExtensionError::new(std::io::Error::other(error)))
+	}
 }
 
-pub(super) fn mortal_era(period: u64, height: u64) -> Result<[u8; 2], String> {
-	if !(4..=256).contains(&period) || !period.is_power_of_two() {
-		return Err("invalid Coinage mortality period".into());
+/// Calls are validated against the pinned metadata before entering the
+/// builder; preserve their reviewed argument bytes exactly.
+struct CallArgs<'a>(&'a [u8]);
+
+impl EncodeAsFields for CallArgs<'_> {
+	fn encode_as_fields_to<R: TypeResolver>(
+		&self,
+		_fields: &mut dyn FieldIter<'_, R::TypeId>,
+		_types: &R,
+		out: &mut Vec<u8>,
+	) -> Result<(), EncodeError> {
+		out.extend_from_slice(self.0);
+		Ok(())
 	}
-	let phase = height % period;
-	Ok(((period.trailing_zeros() - 1) as u16 | ((phase as u16) << 4)).to_le_bytes())
 }
 
 pub(super) fn denomination_value(

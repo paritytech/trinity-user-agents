@@ -8,15 +8,23 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Vr
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.RawPayloadContent
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SignerPayloadJson
+import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRawLegacyPayload
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRawPayload
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
 import io.paritytech.polkadotapp.feature_products_api.model.signing.createTransaction.TxPayload
 import io.paritytech.polkadotapp.feature_transactions.api.data.extensions.EncodedTransactionExtensionValue
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.AllowanceAccountSelector
+import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import uniffi.truapi.AllocatableResource
 import uniffi.truapi.CreateTransactionReview
 import uniffi.truapi.DerivationIndex
 import uniffi.truapi.HostSignPayloadData
+import uniffi.truapi.LegacySigningAccount
+import uniffi.truapi.NftPurseDrainDestination
+import uniffi.truapi.NftPurseOwner
+import uniffi.truapi.ProductId
 import uniffi.truapi.RawPayload
 import uniffi.truapi.RingLocation
 import uniffi.truapi.SignPayloadReview
@@ -26,6 +34,31 @@ import uniffi.truapi.TxPayloadExtension
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.ProductAccountId as NativeProductAccountId
 
+
+/** Keep request keys for settings without importing or issuing any authorization. */
+internal suspend fun ProductPermissionRepository.rememberReview(product: ProductId, review: UserConfirmationReview) {
+    when (review) {
+        is UserConfirmationReview.ChatAuthority -> rememberRequest(product, ProductPermission.ChatAuthority)
+        is UserConfirmationReview.ProfileDisclosure -> rememberRequest(product, ProductPermission.ProfileDisclosure)
+        is UserConfirmationReview.IdentityDisclosure -> rememberRequest(product, ProductPermission.UserIdentityAccess)
+        is UserConfirmationReview.AccountAccess -> rememberRequest(product, ProductPermission.AccountAccess(review.v1.targetProductId))
+        is UserConfirmationReview.ResourceAllocation -> review.v1.resources.forEach { resource ->
+            when (resource) {
+                AllocatableResource.StatementStoreAllowance ->
+                    rememberRequest(product, ProductPermission.StatementStoreAllowance(null))
+                is AllocatableResource.ProductStatementStoreAllowance -> {
+                    val selector = when (val index = resource.v1) {
+                        is DerivationIndex.Index -> AllowanceAccountSelector.Index(index.v1)
+                        is DerivationIndex.Raw -> AllowanceAccountSelector.Raw(index.v1.toDataByteArray())
+                    }
+                    rememberRequest(product, ProductPermission.StatementStoreAllowance(selector))
+                }
+                else -> Unit // These resource operations do not create a saved permission.
+            }
+        }
+        else -> Unit // Signing/payment actions are confirmations, not persistent grants.
+    }
+}
 /**
  * Maps a core [UserConfirmationReview] onto the prompt the app shows for it.
  *
@@ -33,15 +66,19 @@ import uniffi.truapi.ProductAccountId as NativeProductAccountId
  * this compile rather than silently become a denial, which is how seven of the
  * eleven variants were being refused.
  */
-fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfirmation = when (this) {
+fun UserConfirmationReview.toConfirmation(callingProductId: ProductId?): TrUAPIConfirmation = when (this) {
     is UserConfirmationReview.SignPayload ->
-        TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody())
+        TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody(), v1.signingAccount())
     is UserConfirmationReview.SignRaw ->
-        TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody())
+        TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody(), v1.signingAccount())
     is UserConfirmationReview.CreateTransaction ->
-        TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody())
+        TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody(), v1.signingAccount())
     is UserConfirmationReview.SignVrf ->
-        TrUAPIConfirmation.Signing(v1.callingProductId, v1.toSigningRequestBody())
+        TrUAPIConfirmation.Signing(
+            v1.callingProductId,
+            v1.toSigningRequestBody(),
+            SigningAccount.Product(v1.request.account.toDomain()),
+        )
 
     is UserConfirmationReview.StatementStoreProductSign ->
         TrUAPIConfirmation.StatementSign(
@@ -68,7 +105,7 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
         TrUAPIConfirmation.IdentityDisclosure(requesterProductId = v1.productId)
 
     is UserConfirmationReview.ChatAuthority ->
-        TrUAPIConfirmation.ChatAuthority(requesterProductId = v1.productId)
+        TrUAPIConfirmation.ChatAuthority(requesterProductId = ProductId.parse(v1.productId).getOrThrow())
 
     is UserConfirmationReview.ResourceAllocation ->
         TrUAPIConfirmation.ResourceAllocation(
@@ -78,7 +115,7 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
 
     is UserConfirmationReview.MainPurseChatPayment ->
         TrUAPIConfirmation.MainPurseChatPayment(
-            requesterProductId = v1.callingProductId,
+            requesterProductId = ProductId.parse(v1.callingProductId).getOrThrow(),
             recipient = v1.recipientUsername ?: v1.recipientIdentity.hex(),
             amountCents = v1.amountCents,
             maxDebitCents = v1.maxDebitCents,
@@ -97,7 +134,24 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
         TrUAPIConfirmation.ProductSubtree(requesterProductId = v1.productId)
 
     is UserConfirmationReview.ProfileDisclosure ->
-        TrUAPIConfirmation.ProfileDisclosure(requesterProductId = v1.productId)
+        TrUAPIConfirmation.ProfileDisclosure(requesterProductId = ProductId.parse(v1.productId).getOrThrow())
+
+    is UserConfirmationReview.NftPurseDrain ->
+        TrUAPIConfirmation.NftPurseDrain(
+            requesterProductId = v1.callingProductId,
+            fromPurse = v1.fromPurse,
+            ownerProductId = (v1.owner as? NftPurseOwner.Product)?.v1,
+            itemCount = v1.itemCount,
+            destination = v1.destination.toDomain(),
+        )
+}
+
+@OptIn(ExperimentalStdlibApi::class)
+private fun NftPurseDrainDestination.toDomain(): TrUAPIConfirmation.NftPurseDrain.Destination = when (this) {
+    is NftPurseDrainDestination.Purse -> TrUAPIConfirmation.NftPurseDrain.Destination.Purse(purse)
+    is NftPurseDrainDestination.ExternalKey -> TrUAPIConfirmation.NftPurseDrain.Destination.ExternalKey(key.toHexString())
+    NftPurseDrainDestination.Cheque -> TrUAPIConfirmation.NftPurseDrain.Destination.Cheque
+    NftPurseDrainDestination.Refund -> TrUAPIConfirmation.NftPurseDrain.Destination.Refund
 }
 
 @OptIn(ExperimentalStdlibApi::class)
@@ -150,8 +204,28 @@ private fun SignPayloadReview.toSigningRequestBody(): SigningRequestBody = when 
         SigningRequestBody.Transaction(request.payload.toSignerPayloadJson(request.account.toDomain()))
     is SignPayloadReview.LegacyAccount ->
         SigningRequestBody.TransactionLegacy(
-            v1.payload.toSignerPayloadJson(v1.signer.parseLegacySigner().toDataByteArray()),
+            request.payload.toSignerPayloadJson(request.signer.parseLegacySigner().toDataByteArray()),
         )
+}
+
+private fun SignPayloadReview.signingAccount(): SigningAccount = when (this) {
+    is SignPayloadReview.Product -> SigningAccount.Product(request.account.toDomain())
+    is SignPayloadReview.LegacyAccount -> SigningAccount.Product(account.toDomain())
+}
+
+private fun SignRawReview.signingAccount(): SigningAccount = when (this) {
+    is SignRawReview.Product -> SigningAccount.Product(request.account.toDomain())
+    is SignRawReview.LegacyAccount -> account.toDomain()
+}
+
+private fun CreateTransactionReview.signingAccount(): SigningAccount = when (this) {
+    is CreateTransactionReview.Product -> SigningAccount.Product(payload.signer.toDomain())
+    is CreateTransactionReview.LegacyAccount -> account.toDomain()
+}
+
+private fun LegacySigningAccount.toDomain(): SigningAccount = when (this) {
+    LegacySigningAccount.Identity -> SigningAccount.IdentityAccount
+    is LegacySigningAccount.Product -> SigningAccount.Product(v1.toDomain())
 }
 
 private fun RawPayload.toContent(): RawPayloadContent = when (this) {
@@ -203,11 +277,11 @@ private fun CreateTransactionReview.toSigningRequestBody(): SigningRequestBody =
     )
     is CreateTransactionReview.LegacyAccount -> SigningRequestBody.CreateTransactionLegacy(
         TxPayload(
-            signer = v1.signer.toDataByteArray(),
-            genesisHash = v1.genesisHash.toDataByteArray(),
-            callData = v1.callData.toDataByteArray(),
-            extensions = v1.extensions.map { it.toDomain() },
-            txExtVersion = v1.txExtVersion,
+            signer = payload.signer.toDataByteArray(),
+            genesisHash = payload.genesisHash.toDataByteArray(),
+            callData = payload.callData.toDataByteArray(),
+            extensions = payload.extensions.map { it.toDomain() },
+            txExtVersion = payload.txExtVersion,
         ),
     )
 }

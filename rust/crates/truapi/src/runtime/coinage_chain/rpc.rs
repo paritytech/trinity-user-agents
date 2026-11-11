@@ -301,11 +301,11 @@ pub(super) fn dispatch_success(
 ) -> Result<(), String> {
 	use subxt::config::substrate::{SpecVersionForRange, SubstrateConfig};
 	let config = SubstrateConfig::builder()
-		.set_metadata_for_spec_versions([(snapshot.state.spec_version, snapshot.subxt.clone())])
+		.set_metadata_for_spec_versions([(snapshot.spec_version, snapshot.subxt.clone())])
 		.set_spec_version_for_block_ranges([SpecVersionForRange {
 			block_range: 0..u64::MAX,
-			spec_version: snapshot.state.spec_version,
-			transaction_version: snapshot.state.transaction_version,
+			spec_version: snapshot.spec_version,
+			transaction_version: snapshot.transaction_version,
 		}])
 		.build();
 	let client = subxt::OfflineClient::new_with_config(config);

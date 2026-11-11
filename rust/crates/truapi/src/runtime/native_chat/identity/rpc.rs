@@ -3,9 +3,9 @@
 
 use super::super::NativeChatContext;
 use crate::{
-	host_logic::dotns_gateway::{
-		DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, encode_revive_call, view_output,
-	},
+	chain::{EvmContractCaller, EvmContractError, RuntimeApiCaller},
+	chain_runtime::RuntimeFailure,
+	host_logic::dotns_gateway::{DotnsError, DotnsTransport},
 	host_rpc_client::HostRpcClient,
 	platform::JsonRpcConnection,
 };
@@ -25,7 +25,8 @@ const LOOKUP_TIMEOUT: Duration = Duration::from_secs(45);
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// A finalized hash, metadata, storage and runtime calls share this connection.
-/// HostRpcClient owns request correlation, cancellation and connection cleanup.
+/// HostRpcClient owns request correlation, cancellation and connection cleanup;
+/// the released contract caller owns Revive encoding and execution decoding.
 pub(super) struct Snapshot {
 	rpc: RpcClient,
 	at: [u8; 32],
@@ -115,27 +116,41 @@ impl Snapshot {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl DotnsTransport for Snapshot {
-	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-		self.storage_value(&key).await
+	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+		self.storage_value(&key).await.map_err(DotnsError::Storage)
 	}
 
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		let output = self
-			.runtime_call("ReviveApi_call", &encode_revive_call(&VIEW_CALL_ORIGIN, dest, &input))
-			.await
-			.map_err(DotnsViewError::Failed)?;
-		let output = view_output(&output)?;
-		validate_view_bounds(&input, &output).map_err(DotnsViewError::Failed)?;
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		let output = EvmContractCaller::read(self, dest, &input).await?;
+		validate_view_bounds(&input, &output)
+			.map_err(|reason| RuntimeFailure::host_failure("Chat dotNS contract view", reason))?;
 		Ok(output)
 	}
 }
 
+#[async_trait::async_trait]
+impl RuntimeApiCaller for Snapshot {
+	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
+		self.runtime_call(function, input).await.map_err(subxt::Error::other_str)
+	}
+}
+
 fn validate_view_bounds(input: &[u8], output: &[u8]) -> Result<(), String> {
-	use crate::host_logic::dotns_gateway::selector;
-	if input.get(..4) == Some(selector("getLabels(uint256,uint256)").as_slice()) ||
-		input.get(..4) == Some(selector("pendingClaims(address,uint256,uint256)").as_slice())
+	use crate::host_logic::dotns_gateway::{DotnsPopController, DotnsRegistry, LabelStore};
+	use alloy_sol_types::SolCall;
+
+	let selector = input.get(..4);
+	if (selector == Some(DotnsPopController::protocolRegistryCall::SELECTOR.as_slice()) ||
+		selector == Some(DotnsRegistry::recordExistsCall::SELECTOR.as_slice()) ||
+		selector == Some(DotnsRegistry::ownerCall::SELECTOR.as_slice())) &&
+		output.len() != 32
+	{
+		return Err("dotNS fixed-width view did not return one ABI word".into());
+	}
+	if selector == Some(LabelStore::getLabelsCall::SELECTOR.as_slice()) ||
+		selector == Some(DotnsPopController::pendingClaimsCall::SELECTOR.as_slice())
 	{
 		// Both shared gateway readers request pages of sixteen. Check dynamic
 		// array lengths before their ABI decoders allocate or follow offsets;
@@ -223,18 +238,47 @@ mod tests {
 
 	#[test]
 	fn dynamic_directory_pages_cannot_amplify_unbounded_claimed_counts() {
-		let input =
-			crate::host_logic::dotns_gateway::call_u256_pair("getLabels(uint256,uint256)", 0, 16);
-		let mut page = vec![0; 64];
-		page[31] = 32;
-		assert!(validate_view_bounds(&input, &page).is_ok());
-		page[63] = 17;
-		assert!(validate_view_bounds(&input, &page).is_err());
-		page[63] = 1;
-		assert!(validate_view_bounds(&input, &page).is_err());
-		page.resize(96, 0);
-		assert!(validate_view_bounds(&input, &page).is_ok());
-		page[32] = 1;
-		assert!(validate_view_bounds(&input, &page).is_err());
+		use crate::host_logic::dotns_gateway::{DotnsPopController, LabelStore};
+		use alloy_primitives::U256;
+		use alloy_sol_types::SolCall;
+
+		let inputs = [
+			LabelStore::getLabelsCall { offset: U256::ZERO, limit: U256::from(16u64) }.abi_encode(),
+			DotnsPopController::pendingClaimsCall {
+				user: [2; 20].into(),
+				offset: U256::ZERO,
+				limit: U256::from(16u64),
+			}
+			.abi_encode(),
+		];
+		for input in inputs {
+			let mut page = vec![0; 64];
+			page[31] = 32;
+			assert!(validate_view_bounds(&input, &page).is_ok());
+			page[63] = 17;
+			assert!(validate_view_bounds(&input, &page).is_err());
+			page[63] = 1;
+			assert!(validate_view_bounds(&input, &page).is_err());
+			page.resize(96, 0);
+			assert!(validate_view_bounds(&input, &page).is_ok());
+			page[32] = 1;
+			assert!(validate_view_bounds(&input, &page).is_err());
+		}
+	}
+
+	#[test]
+	fn fixed_width_directory_views_reject_truncated_and_trailing_words() {
+		use crate::host_logic::dotns_gateway::{DotnsPopController, DotnsRegistry};
+		use alloy_sol_types::SolCall;
+
+		for input in [
+			DotnsPopController::protocolRegistryCall {}.abi_encode(),
+			DotnsRegistry::recordExistsCall { node: [1; 32].into() }.abi_encode(),
+			DotnsRegistry::ownerCall { node: [1; 32].into() }.abi_encode(),
+		] {
+			assert!(validate_view_bounds(&input, &[0; 32]).is_ok());
+			assert!(validate_view_bounds(&input, &[0; 31]).is_err());
+			assert!(validate_view_bounds(&input, &[0; 64]).is_err());
+		}
 	}
 }

@@ -8,7 +8,10 @@
 //! runtime's extension pipeline, and signs only when the caller leaves
 //! `VerifyMultiSignature` to the host.
 
+use core::time::Duration;
 use std::collections::BTreeSet;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use parity_scale_codec::Encode;
 use schnorrkel::{PublicKey, SecretKey};
@@ -30,9 +33,18 @@ use subxt::{
 	tx::Signer,
 	utils::{AccountId32, H256, MultiAddress, MultiSignature},
 };
-use truapi::latest::{HostCreateTransactionResponse, TxPayloadExtension};
+use tracing::warn;
+use truapi::latest::TxPayloadExtension;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
-use crate::{chain_runtime::ChainRuntime, host_logic::product_account::SR25519_SIGNING_CONTEXT};
+use crate::{
+	chain_runtime::{ChainRuntime, CurrentBlockError, encode_hex},
+	host_logic::product_account::SR25519_SIGNING_CONTEXT,
+};
+
+/// Waiting longer than this for the current block is named in the host log.
+const SLOW_CURRENT_BLOCK: Duration = Duration::from_secs(2);
 
 /// The runtime name of the V5 authorization extension.
 ///
@@ -72,7 +84,7 @@ pub fn sr25519_secret_from_bytes(secret: &[u8; 64]) -> Result<SecretKey, String>
 pub struct Sr25519Signer {
 	#[debug("\"<redacted>\"")]
 	secret: SecretKey,
-	#[debug("{}", hex::encode(public.to_bytes()))]
+	#[debug("{}", crate::logging::Account::new(&public.to_bytes()))]
 	public: PublicKey,
 }
 
@@ -138,7 +150,7 @@ fn v4_signer_payload(call_data: &[u8], extensions: &[TxPayloadExtension]) -> Vec
 /// signed payload. The chain binding (genesis, spec/tx version, mortality
 /// anchor, nonce, tip) lives inside the caller's extension bytes, so nothing
 /// here is metadata-driven.
-pub fn build_signed_extrinsic_v4(
+fn build_signed_extrinsic_v4(
 	signer: &Sr25519Signer,
 	call_data: &[u8],
 	extensions: &[TxPayloadExtension],
@@ -297,7 +309,12 @@ pub enum LocalTransactionError {
 		/// Versions the runtime metadata declares.
 		declared: Vec<u8>,
 	},
-	/// The runtime metadata needed to choose and encode the format is unavailable.
+	/// The host could not connect to the chain, for instance because it serves
+	/// no such chain.
+	#[display("{_0}")]
+	NoChainConnection(String),
+	/// The node could not be asked for the current block or its runtime, such
+	/// as during a halt, or did not answer in time. A later call can succeed.
 	#[display("{_0}")]
 	ChainUnavailable(String),
 	/// The caller's extension list does not fit the runtime's pipeline.
@@ -308,30 +325,36 @@ pub enum LocalTransactionError {
 	Other(String),
 }
 
-/// Assemble a local transaction using the client's runtime metadata.
-pub async fn build_local_transaction(
+/// Runtime metadata for locally constructing a transaction.
+pub async fn local_transaction_metadata(
 	chain: &ChainRuntime,
-	keypair: &schnorrkel::Keypair,
 	genesis_hash: [u8; 32],
-	call_data: &[u8],
-	extensions: &[TxPayloadExtension],
-	tx_ext_version: u8,
-) -> Result<HostCreateTransactionResponse, LocalTransactionError> {
-	let client = chain.online_client(&genesis_hash).await.map_err(|error| {
-		LocalTransactionError::ChainUnavailable(format!("cannot load chain metadata: {error}"))
-	})?;
-	let at_block = client.at_current_block().await.map_err(|error| {
-		LocalTransactionError::ChainUnavailable(format!("cannot select a metadata block: {error}"))
-	})?;
-	let transaction = build_signed_transaction(
-		&Sr25519Signer::from_keypair(keypair),
-		genesis_hash,
-		call_data,
-		extensions,
-		tx_ext_version,
-		at_block.metadata(),
-	)?;
-	Ok(HostCreateTransactionResponse { transaction })
+) -> Result<ArcMetadata, LocalTransactionError> {
+	let started = Instant::now();
+	let at_block = chain.current_block(&genesis_hash).await.map_err(|error| match error {
+		CurrentBlockError::NoChainConnection(failure) => LocalTransactionError::NoChainConnection(
+			format!("cannot load chain metadata: {failure}"),
+		),
+		CurrentBlockError::ChainUnavailable(reason) => LocalTransactionError::ChainUnavailable(
+			format!("cannot select a metadata block: {reason}"),
+		),
+		CurrentBlockError::Other(reason) => {
+			LocalTransactionError::Other(format!("cannot select a metadata block: {reason}"))
+		},
+	});
+	let waited = started.elapsed();
+	if waited > SLOW_CURRENT_BLOCK || at_block.is_err() {
+		let genesis = encode_hex(&genesis_hash);
+		match &at_block {
+			Err(error) => warn!(
+				"createTransaction could not get the current block of {genesis} after {waited:?}: {error}"
+			),
+			Ok(_) => {
+				warn!("createTransaction waited {waited:?} for the current block of {genesis}")
+			},
+		}
+	}
+	Ok(at_block?.metadata())
 }
 
 /// Choose the extrinsic format for `tx_ext_version`, then assemble it.
@@ -432,7 +455,7 @@ fn traverse_exactly<R: TypeResolver>(
 /// caller that supplies it owns its bytes and gets no host signature, whether
 /// they say `Disabled` (authorizing with a proof in a later extension) or carry
 /// a signature the caller made itself.
-pub fn build_signed_extrinsic_v5(
+fn build_signed_extrinsic_v5(
 	signer: &Sr25519Signer,
 	genesis_hash: [u8; 32],
 	call_data: &[u8],
@@ -624,7 +647,6 @@ pub fn build_signed_extrinsic_v5(
 #[cfg(test)]
 pub mod tests {
 	use super::*;
-	use crate::runtime::statement_allowance::collection::PersonhoodCollection;
 	use parity_scale_codec::{Compact, Decode, Encode};
 	use scale_info::{PortableRegistry, TypeDef, TypeDefPrimitive};
 	use subxt::{
@@ -702,6 +724,13 @@ pub mod tests {
 	/// Output of the runtime calls a subxt client makes to load the bulletin
 	/// fixture: `Core_version` (spec 1) and the metadata calls.
 	pub fn bulletin_runtime_call(method: &str) -> Option<Vec<u8>> {
+		runtime_call_serving_metadata(BULLETIN_METADATA_BYTES, method)
+	}
+
+	/// Output of the runtime calls a subxt client makes to load `metadata`,
+	/// the bytes of a `RuntimeMetadataPrefixed`: `Core_version` (spec 1) and
+	/// the metadata calls.
+	pub fn runtime_call_serving_metadata(metadata: &[u8], method: &str) -> Option<Vec<u8>> {
 		Some(match method {
 			"Core_version" => {
 				("bulletin", "bulletin", 1u32, 1u32, 1u32, Vec::<([u8; 8], u32)>::new(), 1u32)
@@ -710,9 +739,8 @@ pub mod tests {
 			"Metadata_metadata_versions" => vec![14u32].encode(),
 			"Metadata_metadata_at_version" => {
 				let mut output = vec![1];
-				Compact(u32::try_from(BULLETIN_METADATA_BYTES.len()).unwrap())
-					.encode_to(&mut output);
-				output.extend_from_slice(BULLETIN_METADATA_BYTES);
+				Compact(u32::try_from(metadata.len()).unwrap()).encode_to(&mut output);
+				output.extend_from_slice(metadata);
 				output
 			},
 			_ => return None,
@@ -936,6 +964,13 @@ pub mod tests {
 		assert_eq!(tail, vec![0xbb, 0xaa, 0xff]);
 	}
 
+	/// `Some(ClaimLongTermStorage(proof, 3, 9, LitePeople))`, the `AsResources`
+	/// value for the V14 People fixture, whose variant indices are 3 and 1.
+	fn long_term_storage_claim_value() -> Vec<u8> {
+		[vec![0x01, 0x03], vec![0xEEu8; 785].encode(), 3u32.encode(), 9u32.encode(), vec![0x01]]
+			.concat()
+	}
+
 	/// Fixture extensions in metadata order, at their resting values.
 	fn fixture_extensions(
 		allowance_metadata: &AllowanceMetadata,
@@ -1145,32 +1180,18 @@ pub mod tests {
 		);
 	}
 
-	/// The proof-authorized path must lay the body out exactly like the
-	/// hand-rolled assembler behind chain-accepted allowance extrinsics. Both
-	/// sides source values from `encode_signed_extensions`, so this pins the
-	/// layout — preamble, ordering, no spliced signature — not the values.
+	/// The proof-authorized path must lay the body out exactly like
+	/// chain-accepted allowance extrinsics. The hash pins the 858-byte
+	/// reference body for these values: preamble, ordering, no spliced
+	/// signature.
 	#[test]
-	fn v5_proof_authorized_bytes_match_the_statement_allowance_assembler() {
-		use crate::runtime::statement_allowance::extrinsic::{
-			build_long_term_storage_extra, build_unsigned_extrinsic,
-		};
-
+	fn v5_proof_authorized_bytes_have_the_reference_layout() {
 		let metadata = Metadata::decode_from(FIXTURE_METADATA_BYTES).unwrap().arc();
 		let allowance_metadata = AllowanceMetadata::decode(FIXTURE_METADATA_BYTES).unwrap();
 		let state = fixture_chain_state();
 		let call_data = fixture_call_data();
 
-		let as_resources_extra = build_long_term_storage_extra(
-			&allowance_metadata,
-			&[0xEE; 785],
-			3,
-			9,
-			PersonhoodCollection::LitePeople,
-		)
-		.unwrap();
-		let expected =
-			build_unsigned_extrinsic(&allowance_metadata, &state, &call_data, &as_resources_extra)
-				.unwrap();
+		let as_resources_extra = long_term_storage_claim_value();
 
 		let as_resources_index = allowance_metadata.as_resources_index().unwrap();
 		let mut extensions = fixture_extensions(&allowance_metadata, &state);
@@ -1186,7 +1207,10 @@ pub mod tests {
 		)
 		.unwrap();
 
-		assert_eq!(transaction, expected);
+		assert_eq!(
+			hex::encode(sp_crypto_hashing::blake2_256(&transaction)),
+			"5d9c863271cc2aa0d8cdd9fece8098d356288b7ca346f3bb2c6b86330c178791"
+		);
 	}
 
 	/// A caller may also supply a `Signed` value; the host must not replace it.
@@ -1359,8 +1383,6 @@ pub mod tests {
 	/// ring-VRF claim is the whole point of the caller-authorized path.
 	#[test]
 	fn v5_accepts_a_real_as_resources_proof_value() {
-		use crate::runtime::statement_allowance::extrinsic::build_long_term_storage_extra;
-
 		let allowance_metadata = AllowanceMetadata::decode(FIXTURE_METADATA_BYTES).unwrap();
 		let state = fixture_chain_state();
 		let mut extensions = fixture_signed_extensions(&allowance_metadata, &state);
@@ -1368,14 +1390,7 @@ pub mod tests {
 			.iter_mut()
 			.find(|extension| extension.id == "AsResources")
 			.unwrap()
-			.extra = build_long_term_storage_extra(
-			&allowance_metadata,
-			&[0xEE; 785],
-			3,
-			9,
-			PersonhoodCollection::LitePeople,
-		)
-		.unwrap();
+			.extra = long_term_storage_claim_value();
 
 		build_signed_extrinsic_v5(
 			&test_signer(),
@@ -1520,12 +1535,15 @@ pub mod tests {
 				implicit: extension.additional_signed,
 			})
 			.collect();
-		let every_extension = (0..transaction_extensions.len() as u32).map(Compact).collect();
+		let every_extension = (0..u32::try_from(transaction_extensions.len())
+			.expect("extension count fits in u32"))
+			.map(Compact)
+			.collect();
 		let encoding_version_extensions = transaction_extensions
 			.iter()
 			.enumerate()
 			.filter(|(_, extension)| !omitted.contains(&extension.identifier.as_str()))
-			.map(|(index, _)| Compact(index as u32))
+			.map(|(index, _)| Compact(u32::try_from(index).expect("extension index fits in u32")))
 			.collect();
 
 		let pallets = v14

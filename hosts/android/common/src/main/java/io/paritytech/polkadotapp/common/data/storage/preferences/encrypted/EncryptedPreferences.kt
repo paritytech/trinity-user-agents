@@ -10,6 +10,11 @@ interface EncryptedPreferences {
         value: String,
     )
 
+    fun putEncryptedStringNow(
+        field: String,
+        value: String,
+    ): Boolean
+
     fun getDecryptedString(field: String): String?
 
     fun hasKey(field: String): Boolean

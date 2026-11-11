@@ -10,9 +10,10 @@ mod top_up;
 
 use super::NativeChatContext;
 use crate::{
-	platform::{MainPurseChatPaymentReview, UserConfirmationReview, async_trait},
+	platform::{MainPurseChatPaymentReview, UserConfirmationReview},
 	runtime::{coinage_chain::HostCoinageChain, coinage_store::HostCoinageStore},
 };
+use async_trait::async_trait;
 use engine::Engine;
 use futures::lock::Mutex;
 use parity_scale_codec::{Decode, Encode};

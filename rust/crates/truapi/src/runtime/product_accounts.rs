@@ -22,14 +22,18 @@ use crate::{
 	platform::{ProductContext, ProductId},
 };
 
-use super::authority::{
-	AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
-	CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
-	SignRawAuthorityRequest, StatementStoreAllowanceKey,
+use super::{
+	authority::{
+		AuthorityError, AuthoritySession, AutoSigningGrant, BulletinAllowanceKey,
+		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
+		SignRawAuthorityRequest, StatementStoreAllowanceKey,
+	},
+	product_consent::ProductConsent,
 };
 
 /// The host's account authority as one product connection sees it: every call
 /// acts for that product, and host-level operations stay out of reach.
+#[derive(Clone)]
 pub struct ProductAccounts {
 	authority: Arc<dyn ProductAuthority>,
 	product: ProductContext,
@@ -129,6 +133,11 @@ impl ProductAccounts {
 		product_id: &ProductId,
 	) -> Result<[u8; 32], AuthorityError> {
 		self.authority.product_subtree_public_key(cx, session, product_id).await
+	}
+
+	/// The host's account-access decisions and review prompts.
+	pub fn consent(&self) -> &ProductConsent {
+		self.authority.consent()
 	}
 
 	/// Whether resolving `product_id`'s subtree needs SSO and host consent.
@@ -250,15 +259,30 @@ impl ProductAccounts {
 		self.authority.ring_vrf_sign(cx, session, self.request(request)).await
 	}
 
+	/// Revision of the kept grants.
+	///
+	/// Read it before a review whose result must not outlive a reset.
+	pub fn grant_revision(&self) -> u64 {
+		self.authority.grant_revision()
+	}
+
+	pub fn grant_is_current(&self, session: &AuthoritySession, revision: u64) -> bool {
+		self.authority.grant_is_current(session, revision, &self.product.product_id)
+	}
+
 	/// Allocate resources for this product.
+	///
+	/// The grants are kept only while this host's grants are still at
+	/// `grant_revision`.
 	pub async fn allocate_resources(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
+		grant_revision: u64,
 		request: HostRequestResourceAllocationRequest,
 	) -> Result<HostRequestResourceAllocationResponse, AuthorityError> {
 		self.authority
-			.allocate_resources(cx, session, &self.product.product_id, request)
+			.allocate_resources(cx, session, grant_revision, &self.product.product_id, request)
 			.await
 	}
 

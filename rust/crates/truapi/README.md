@@ -66,7 +66,7 @@ use truapi::v01::{self, ProductAccount};
 
 struct MyHost;
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Account for MyHost {
     async fn get_account(
         &self,

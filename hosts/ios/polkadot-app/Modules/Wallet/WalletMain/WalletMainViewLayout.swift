@@ -14,6 +14,9 @@ struct WalletView: View {
     private let scrollTopAnchor = "walletScrollTop"
     @State private var overscroll: CGFloat = 0
 
+    static let sectionAnimationDuration: TimeInterval = 0.45
+    static var sectionAnimation: Animation { .spring(duration: sectionAnimationDuration, bounce: 0.15) }
+
     var body: some View {
         ZStack(alignment: .top) {
             ScrollViewReader { scrollProxy in
@@ -36,15 +39,10 @@ struct WalletView: View {
                 }
                 .scrollClipDisabled(viewModel.openPocketCard != nil)
                 .modifier(TopScrollEdgeEffectHidden(hidden: viewModel.openPocketCard != nil))
-                .safeAreaInset(edge: .bottom) {
-                    if viewModel.expandedSection == .assetDetails {
-                        AssetDetailsFundingBar(viewModel: viewModel.assetDetailsViewModel)
-                    }
-                }
                 .modifier(OverscrollReader(overscroll: $overscroll))
                 .onChange(of: viewModel.expandedSection) { _, newValue in
                     guard newValue == .none else { return }
-                    withAnimation(.spring(duration: 0.45, bounce: 0.15)) {
+                    withAnimation(Self.sectionAnimation) {
                         scrollProxy.scrollTo(scrollTopAnchor, anchor: .top)
                     }
                 }
@@ -56,27 +54,29 @@ struct WalletView: View {
                 overlay: { collectiblesCard }
             )
         )
-        .animation(.spring(duration: 0.45, bounce: 0.15), value: viewModel.expandedSection)
+        .animation(Self.sectionAnimation, value: viewModel.expandedSection)
     }
 
     /// Product-backed cards follow the host's own, and are hidden while a
     /// native card is expanded so they do not sit under it.
     @ViewBuilder
     private var pocketCards: some View {
-        if viewModel.expandedSection == .none {
-            ForEach(viewModel.pocketCards) { card in
+        if viewModel.expandedSection.showsSection(.collectiblesDetails) {
+            let openIndex = viewModel.pocketCards.firstIndex { $0.key == viewModel.openPocketCard }
+            ForEach(Array(viewModel.pocketCards.enumerated()), id: \.element.id) { index, card in
                 // A press takes the user into the product the card belongs
                 // to, at the page the card names. The shape is named so the
                 // peek a card shows is all of it that takes a press, the
                 // rest is under the card above.
                 PocketCollectionCardView(card: card)
+                    .pocketMotion(motion(ofCardAt: index, openAt: openIndex))
+                    .opacity(viewModel.expandedSection == .none ? 1 : 0)
+                    .allowsHitTesting(viewModel.expandedSection == .none)
                     .onGeometryChange(for: CGRect.self) { proxy in
                         proxy.frame(in: .global)
                     } action: {
                         viewModel.pocketCardFrames[card.key] = $0
                     }
-                    // Its screen draws the card while it is open.
-                    .opacity(viewModel.openPocketCard == card.key ? 0 : 1)
                     .contentShape(RoundedRectangle(cornerRadius: PocketCardSize.cornerRadius))
                     .onTapGesture { viewModel.onOpenPocketCard?(card) }
                     // A host-placed card is removable by nobody, so a long
@@ -89,6 +89,15 @@ struct WalletView: View {
                     }
             }
         }
+    }
+
+    private func motion(ofCardAt index: Int, openAt openIndex: Int?) -> PocketCardMotion {
+        PocketCardMotion.of(
+            cardAt: index,
+            openAt: openIndex,
+            openOffset: viewModel.openPocketCardOffset,
+            cleared: viewModel.isPocketCleared
+        )
     }
 
     @ViewBuilder
@@ -105,7 +114,6 @@ struct WalletView: View {
         .matchedGeometryEffect(id: "asset", in: cardNamespace)
         .scaleEffect(assetScale)
         .opacity(assetOpacity)
-        .offset(y: assetOffsetY)
         .zIndex(assetZIndex)
         .allowsHitTesting(assetHitTest)
     }
@@ -136,17 +144,6 @@ struct WalletView: View {
         }
     }
 
-    private var assetOffsetY: CGFloat {
-        switch viewModel.expandedSection {
-        case .none,
-             .assetDetails,
-             .identityDetails:
-            0
-        case .collectiblesDetails:
-            -offScreenOffset
-        }
-    }
-
     private var assetZIndex: Double {
         switch viewModel.expandedSection {
         case .none:
@@ -174,26 +171,23 @@ struct WalletView: View {
 private extension WalletView {
     @ViewBuilder
     var collectiblesCard: some View {
-        CollectiblesCardView(
-            isExpanded: viewModel.expandedSection == .collectiblesDetails,
-            onViewCollectibles: { viewModel.onViewCollectibles?() }
-        )
-        .padding(.horizontal, PocketCardSize.sideMargin)
-        .frame(maxHeight: viewModel.expandedSection == .collectiblesDetails ? .infinity : nil)
-        .alignmentGuide(.bottom) { dimensions in
-            switch viewModel.expandedSection {
-            case .none:
-                dimensions[.top] + collectiblesPeekHeight
-            case .collectiblesDetails:
-                dimensions[.bottom]
-            case .assetDetails,
-                 .identityDetails:
-                dimensions[.top] - offScreenOffset
+        CollectiblesCardView(isExpanded: viewModel.expandedSection == .collectiblesDetails)
+            .padding(.horizontal, PocketCardSize.sideMargin)
+            .frame(maxHeight: viewModel.expandedSection == .collectiblesDetails ? .infinity : nil)
+            .alignmentGuide(.bottom) { dimensions in
+                switch viewModel.expandedSection {
+                case .none:
+                    dimensions[.top] + collectiblesPeekHeight
+                case .collectiblesDetails:
+                    dimensions[.bottom]
+                case .assetDetails,
+                     .identityDetails:
+                    dimensions[.top] - offScreenOffset
+                }
             }
-        }
-        .opacity(viewModel.isPocketCleared ? 0 : collectiblesOpacity)
-        .onTapGesture { viewModel.onCollectibles?() }
-        .allowsHitTesting(collectiblesHitTest)
+            .opacity(viewModel.isPocketCleared ? 0 : collectiblesOpacity)
+            .onTapGesture { viewModel.onCollectibles?() }
+            .allowsHitTesting(collectiblesHitTest)
     }
 
     private var collectiblesOpacity: Double {

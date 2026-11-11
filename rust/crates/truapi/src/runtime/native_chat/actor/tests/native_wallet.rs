@@ -44,7 +44,7 @@ impl NativeService {
 	}
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl CoinageWalletHost for NativeService {
 	async fn native_coinage(
 		&self,

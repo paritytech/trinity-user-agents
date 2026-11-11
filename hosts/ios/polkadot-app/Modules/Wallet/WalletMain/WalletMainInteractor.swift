@@ -4,7 +4,6 @@ import Products
 final class WalletMainInteractor {
     weak var presenter: WalletMainInteractorOutputProtocol?
 
-    private let networkStatusObserver: NetworkStatusObserving
     private let pocketPrewarmer: PocketPrewarmer
     private let pocket: ProductPocketService?
     private let tldProvider: DotNsTldProviding
@@ -15,14 +14,12 @@ final class WalletMainInteractor {
     private var warming: Task<Void, Never>?
 
     init(
-        networkStatusObserver: NetworkStatusObserving,
         pocketPrewarmer: PocketPrewarmer,
         pocket: ProductPocketService?,
         tldProvider: DotNsTldProviding,
         hostProvider: ProductHostProviding,
         remoteConfig: RemoteConfigManaging
     ) {
-        self.networkStatusObserver = networkStatusObserver
         self.pocketPrewarmer = pocketPrewarmer
         self.pocket = pocket
         self.tldProvider = tldProvider
@@ -40,10 +37,6 @@ final class WalletMainInteractor {
 extension WalletMainInteractor: WalletMainInteractorInputProtocol {
     func setup() {
         guard resolutionTask == nil else { return }
-
-        networkStatusObserver.start { [weak self] status in
-            self?.presenter?.didReceive(networkStatus: status)
-        }
 
         followPocket()
 

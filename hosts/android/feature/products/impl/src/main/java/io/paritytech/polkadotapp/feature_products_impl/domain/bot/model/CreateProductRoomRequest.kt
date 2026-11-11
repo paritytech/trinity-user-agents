@@ -6,7 +6,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParamet
 class CreateProductRoomRequest(
     val chatIdParameter: ProductChatIdParameter,
     val name: String?,
-    val icon: String?,
+    val icon: ProductChatIcon?,
 )
 
 class CreateProductRoomResult(

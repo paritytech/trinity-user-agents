@@ -10,8 +10,8 @@ struct HostBridgeDefaultsTests {
     func defaultBeginOperationNamesEachOperationSeparately() async throws {
         let bridge = StubHostBridge()
 
-        let first = try await bridge.beginOperation(productId: "test.dot", label: "funding")
-        let second = try await bridge.beginOperation(productId: "test.dot", label: "")
+        let first = try await bridge.beginOperation(productId: ProductId("test.dot"), label: "funding")
+        let second = try await bridge.beginOperation(productId: ProductId("test.dot"), label: "")
 
         #expect(first != second)
         #expect(first != 0)
@@ -73,11 +73,12 @@ struct HostBridgeDefaultsTests {
             networkSuffix: "paseo",
             databaseDirectory: temporaryDatabaseDirectory()
         ))
+        let productId = try ProductId("demo.paseo")
         let product = try runtime.openProductExecution(
-            bridge: bridge, configuration: .init(productId: "demo.paseo", executionKind: .app)
+            bridge: bridge, configuration: .init(productId: productId, executionKind: .app)
         )
         let other = try runtime.openProductExecution(
-            bridge: bridge, configuration: .init(productId: "other.paseo", executionKind: .app)
+            bridge: bridge, configuration: .init(productId: try ProductId("other.paseo"), executionKind: .app)
         )
         defer {
             product.close()
@@ -85,23 +86,23 @@ struct HostBridgeDefaultsTests {
             runtime.disconnect()
         }
         let request = PermissionAuthorizationRequest.device(.camera)
-        try await runtime.setPermissionAuthorizationStatus(productId: "demo.paseo", request: request, status: .authorized)
+        try await runtime.setPermissionAuthorizationStatus(productId: productId, request: request, status: .authorized)
         #expect(!product.isClosed())
         #expect(try await runtime.permissionAuthorizationProducts().contains("demo.paseo"))
-        #expect(try await runtime.permissionAuthorizations(productId: "demo.paseo").contains {
+        #expect(try await runtime.permissionAuthorizations(productId: productId).contains {
             $0.request == request && $0.status == .authorized
         })
-        let revision = try runtime.permissionAuthorizationRevision(productId: "demo.paseo")
-        try await runtime.setPermissionAuthorizationStatus(productId: "demo.paseo", request: request, status: .notDetermined)
+        let revision = try runtime.permissionAuthorizationRevision(productId: productId)
+        try await runtime.setPermissionAuthorizationStatus(productId: productId, request: request, status: .notDetermined)
         #expect(product.isClosed())
         #expect(!other.isClosed())
         #expect(try await runtime.setPermissionAuthorizationStatusIfCurrent(
-            productId: "demo.paseo", request: request, status: .authorized, revision: revision
+            productId: productId, request: request, status: .authorized, revision: revision
         ) == false)
         _ = try await runtime.importPermissionAuthorizations(
-            productId: "demo.paseo", entries: [.init(request: request, status: .authorized)]
+            productId: productId, entries: [.init(request: request, status: .authorized)]
         )
-        #expect(try await runtime.permissionAuthorizations(productId: "demo.paseo").contains {
+        #expect(try await runtime.permissionAuthorizations(productId: productId).contains {
             $0.request == request && $0.status == .notDetermined
         })
         #expect(bridge.coreLogs.contains("permissions changed demo.paseo"))

@@ -1,4 +1,6 @@
+use crate::product_id::ProductId;
 use alloc::string::String;
+
 use derive_more::Display;
 use parity_scale_codec::{Decode, Encode};
 
@@ -12,13 +14,13 @@ use parity_scale_codec::{Decode, Encode};
 pub struct HostLocalStorageReadRequest {
 	/// Product whose storage is read. `None`, or the caller's own id, means the
 	/// caller, and consults no grant.
-	pub product: Option<String>,
+	pub product: Option<ProductId>,
 	/// Storage key to read.
 	pub key: String,
 }
 
 /// Local storage read failure.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display, derive_more::From)]
 pub enum HostLocalStorageReadError {
 	/// Storage quota exceeded.
 	#[display("storage quota exhausted")]
@@ -34,6 +36,7 @@ pub enum HostLocalStorageReadError {
 	AccessNotGranted,
 	/// Catch-all.
 	#[display("{reason}")]
+	#[from]
 	Unknown {
 		/// Human-readable failure reason.
 		reason: String,

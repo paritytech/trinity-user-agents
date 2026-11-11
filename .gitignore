@@ -80,3 +80,4 @@ js/packages/truapi/dist/generated/
 js/packages/truapi-host/src/generated/
 js/packages/truapi-host/dist/generated/
 js/packages/truapi-host/dist/wasm/
+__pycache__/

@@ -22,7 +22,8 @@ impl TestResourceControls {
 		self.unchecked.store(granted, Ordering::Relaxed);
 	}
 
-	/// Replace refused resource tags; SmartContractAllowance covers every index.
+	/// Replace refused resource tags; SmartContractAllowance and
+	/// ProductStatementStoreAllowance cover every index.
 	pub fn set_withheld_resources(&self, tags: Vec<String>) {
 		*self.withheld.lock().expect("withheld resource mutex poisoned") =
 			tags.into_iter().collect();
@@ -39,6 +40,9 @@ impl TestResourceControls {
 				"SmartContractAllowance"
 			},
 			truapi::latest::AllocatableResource::AutoSigning => "AutoSigning",
+			truapi::latest::AllocatableResource::ProductStatementStoreAllowance(_) => {
+				"ProductStatementStoreAllowance"
+			},
 		};
 		self.withheld.lock().expect("withheld resource mutex poisoned").contains(tag)
 	}

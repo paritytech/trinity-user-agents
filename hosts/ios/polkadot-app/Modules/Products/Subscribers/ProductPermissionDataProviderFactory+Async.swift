@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import AsyncExtensions
 import StructuredConcurrency
@@ -40,7 +41,7 @@ extension ProductPermissionDataProviderMaking {
                     forName: .productPermissionAuthorizationsChanged, object: nil, queue: nil
                 ) { notification in
                     if let productId, let changed = notification.object as? String,
-                       ProductPermission.bareProductLabel(changed) != ProductPermission.bareProductLabel(productId) {
+                       ProductPermission.bareProductLabel(changed) != ProductPermission.bareProductLabel(productId.rawValue) {
                         return
                     }
                     updates.yield(nil)

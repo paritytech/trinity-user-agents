@@ -19,14 +19,14 @@ enum TabBarHiddenPolicy {
         let pushed = stack[...targetIndex].dropFirst()
 
         if pushed.contains(where: \.hidesBottomBarWhenPushed) {
-            return .folded
+            return .tucked
         }
 
         return .none
     }
 
     static func isTabRoot(in stack: [UIViewController], showing target: UIViewController) -> Bool {
-        target === stack.first
+        target === stack.first || target is TabBarRootStandIn
     }
 
     static func stackAfterCancelledPop(

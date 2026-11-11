@@ -9,7 +9,9 @@ import dagger.hilt.components.SingletonComponent
 import io.paritytech.polkadotapp.common.data.storage.preferences.Preferences
 import io.paritytech.polkadotapp.database.AppDatabase
 import io.paritytech.polkadotapp.database.dao.BrowserTabDao
+import io.paritytech.polkadotapp.database.dao.ChatAcceptanceDao
 import io.paritytech.polkadotapp.database.dao.ChatDraftDao
+import io.paritytech.polkadotapp.database.dao.ChatIdentitySigningConsentDao
 import io.paritytech.polkadotapp.database.dao.ChatMessageCompactionDao
 import io.paritytech.polkadotapp.database.dao.ChatMessageDao
 import io.paritytech.polkadotapp.database.dao.ChatRequestDao
@@ -22,7 +24,6 @@ import io.paritytech.polkadotapp.database.dao.ContactDeviceDao
 import io.paritytech.polkadotapp.database.dao.ExternalPaymentDao
 import io.paritytech.polkadotapp.database.dao.FileDownloadDao
 import io.paritytech.polkadotapp.database.dao.FileUploadDao
-import io.paritytech.polkadotapp.database.dao.PocketCardDao
 import io.paritytech.polkadotapp.database.dao.ProductDao
 import io.paritytech.polkadotapp.database.dao.ProductFundingOperationDao
 import io.paritytech.polkadotapp.database.dao.ProductIntegrationDao
@@ -162,6 +163,15 @@ class DbModule {
 
     @Provides
     @Singleton
+    fun provideChatAcceptanceDao(appDatabase: AppDatabase): ChatAcceptanceDao = appDatabase.chatAcceptanceDao()
+
+    @Provides
+    @Singleton
+    fun provideChatIdentitySigningConsentDao(appDatabase: AppDatabase): ChatIdentitySigningConsentDao =
+        appDatabase.chatIdentitySigningConsentDao()
+
+    @Provides
+    @Singleton
     fun provideChatRequestSyncStateDao(appDatabase: AppDatabase): ChatRequestSyncStateDao = appDatabase.chatRequestSyncStateDao()
 
     @Provides
@@ -183,10 +193,6 @@ class DbModule {
     @Provides
     @Singleton
     fun provideProductIntegrationDao(appDatabase: AppDatabase): ProductIntegrationDao = appDatabase.productIntegrationDao()
-
-    @Provides
-    @Singleton
-    fun providePocketCardDao(appDatabase: AppDatabase): PocketCardDao = appDatabase.pocketCardDao()
 
     @Provides
     @Singleton

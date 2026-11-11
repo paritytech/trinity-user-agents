@@ -14,9 +14,11 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserFra
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameNotificationPublisher
 import io.paritytech.polkadotapp.feature_videogame_impl.data.calendar.RealProductGameCalendar
 import io.paritytech.polkadotapp.feature_videogame_impl.data.notifications.RealVideoGameNotificationPublisher
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.GameReminderAlarms
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameCalendar
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameNotificationAutoCanceller
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.ProductGameOsAccess
+import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealGameReminderAlarms
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealProductGameReminder
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.RealVideoGameReminderScheduler
 import io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications.VideoGameReminderScheduler
@@ -30,6 +32,9 @@ import io.paritytech.polkadotapp.feature_videogame_impl.presentation.notificatio
 internal interface VideoGameFeatureModule {
     @Binds
     fun bindVideoGameReminderScheduler(impl: RealVideoGameReminderScheduler): VideoGameReminderScheduler
+
+    @Binds
+    fun bindGameReminderAlarms(impl: RealGameReminderAlarms): GameReminderAlarms
 
     @Binds
     fun bindProductGameReminder(impl: RealProductGameReminder): ProductGameReminder

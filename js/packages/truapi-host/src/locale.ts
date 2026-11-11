@@ -1,9 +1,9 @@
 import type { LocaleHost } from "./generated/host-callbacks.js";
 
 /** Localize each instant using the requested zone's historical offset and DST. */
-export const localizeTimestamps: NonNullable<LocaleHost["localizeTimestamps"]> = async (
-  request,
-) => {
+export const localizeTimestamps: NonNullable<
+  LocaleHost["localizeTimestamps"]
+> = async (request) => {
   if (!request.languageTag.trim() || !request.timeZone.trim()) {
     throw new RangeError("A language tag and time zone are required");
   }

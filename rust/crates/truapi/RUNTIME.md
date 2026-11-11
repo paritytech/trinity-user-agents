@@ -100,12 +100,11 @@ and connection state go through the role's `HostSession`.
 Permission grants are scoped by product id and typed request, so a grant for one product never authorizes another
 product or another permission class.
 
-Trusted labels in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` receive
-default grants for generic remote permissions, identity disclosure and account
-access only when no stored decision exists. Explicit denial still wins. This is
-an intentional stricter integration policy than the upstream 0.26 blanket
-trusted-product bypass. Device permissions, JAM peer access, Chat authority,
-profile disclosure and Statement Store allowance retain their own consent.
+The released 0.30 permission service remains authoritative for trusted-product
+defaults, generic remote access, device permissions and account consent.
+Chat authority, Profile disclosure and Statement Store allowance require their
+own explicit decisions; trusted-product defaults never establish these grants.
+Validator custody also requires its separately execution-bound permission.
 
 Statement Store allocation uses the durable `StatementStoreAllowance { derivation_index }` decision: `None` is the
 legacy allowance account; `Some(index)` is that exact product-account selector. Both approval and denial survive runtime
@@ -147,7 +146,7 @@ PermissionsService(storage, platform, product_id)
         | builds storage key:
         |
         | CoreStorageKey::PermissionAuthorization {
-        |   product_id: "my-product",
+        |   product_id: ProductId("my-product.dot"),
         |   request: PermissionAuthorizationRequest::...
         | }
         v
@@ -186,16 +185,12 @@ CoreStorage lookup
 
 #### Auto-granted remote permissions
 
-A remote permission resolves in this order:
-
-1. `Remote { domains: [] }` is `Denied`. An empty bundle grants nothing, so failing closed outranks the whitelist.
-2. A stored decision wins — the exact slot for a non-domain variant, or the most specific matching
-   `remote_domain_candidates` entry for a domain.
-3. Nothing stored and the product's label is trusted: generic remote permissions are `Authorized`, with no prompt or write.
-4. Otherwise, including `JamPeers`: `NotDetermined`, so the lookup prompts and persists the answer.
-
-Because a trusted product's grant is never written, revoking its domain access means writing `Denied` for the `*`
-pattern; denying a single host leaves every other host granted.
+Remote permissions use the released 0.30 trusted-product and domain-matching
+policy. An empty domain bundle grants nothing. Trusted non-custody defaults are
+not persisted, and settings must not assume a stored denial overrides such a
+default. Validator custody is excluded from those defaults. Chat authority,
+Profile disclosure and allowance consent are separate request classes, not
+trusted remote permissions.
 
 Permission administration uses the same key without prompting:
 
@@ -273,12 +268,14 @@ responsibility for secure unlock.
 
 #### JAM peer transport
 
-The public permission codec keeps released `BalanceAccess` at index 5 and uses
-index 6 for `JamPeers`; trait 111 and its method IDs do not change. Obsolete
-explicit JAM permission frames (index 5 followed by a genesis hash) fail the
-dispatcher's full-payload decode. Private persisted permission keys retain the
-old JAM index 5 and use a separate stored index 6 for balance access, so existing
-JAM grants and denials neither disappear nor become balance permissions.
+The public permission codec retains released `BalanceAccess = 5` and
+`NftPurseRead = 6`, with `JamPeers = 111` and `Validator = 112`. JAM trait 111,
+including listener 7, send_chunk 8 and recv_chunk 9, keeps its existing v1 wire.
+Current consent uses the fresh outer `PermissionAuthorization = 128` storage
+namespace; historical grants never authorize current requests. Released
+WorkerManifest 14 and FundingSupport 15 remain unchanged. The feature's native
+Chat device and chunk records use 64 and 65; only a provenance-checked migration
+may move historical feature records out of 14 and 15.
 
 Native product runtimes (iOS, Android, CLI) serve `JamPeerTransport` (trait
 111) themselves over JAMNP-S QUIC, with one endpoint per product connection.
@@ -340,9 +337,30 @@ own SQLite database (`store` module, bundled SQLite through `rusqlite` and
 missing or unwritable directory stops it from starting. Keep the directory out
 of device backups: it holds durable-transaction state that must not be restored
 onto another device. The required `HostRuntimeConfig.database_directory` sets
-it on iOS and Android, `SigningHostRuntime::set_core_db` on any other embedder,
-and `core_database_status()` reports the SQLite version, schema version and
-path. Web hosts do not compile the store.
+it on iOS and Android, and `SigningHostRuntime::set_core_db` on any other
+embedder. Such an embedder also sets the `InstallationIdProvider` whose id NFT
+purse item keys are derived under with `set_installation_provider`, and the
+`EncryptedStorage` that keeps NFT receive key and deposited item secrets with
+`set_encrypted_storage`, then calls `start_core_services` once, which starts the durable engine and NFT purses over
+the database. `core_database_status()` reports the SQLite version, schema
+version and path. Web hosts do not compile the store.
+
+The database also holds the Pocket collection (`pocket_cards` module): the
+cards in the Pocket and the newest face of each. The host lists the cards it
+pins in `HostRuntimeConfig.pinned_pocket_cards`, adds the cards the user
+approves with `add_pocket_card`, and follows the collection with
+`observe_pocket_cards`. A card no longer pinned stays only if the user added
+it. The core keeps the newest face of a card from every
+`RenderContext::PocketCard` render, at most every two seconds and once more
+when the render stops, so a card has a face offline and at cold start.
+
+Secrets the database must not hold go to the host's `EncryptedStorage`: the
+Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
+It reads, writes and deletes values by key and cannot list them, so a feature
+keeps its public rows in the database and stores each secret under a key
+derived from its row. Native hosts install it from their callbacks; any other
+embedder calls `SigningHostRuntime::set_encrypted_storage`. Web hosts do not
+compile it.
 
 ### Durable transactions
 
@@ -367,7 +385,7 @@ presigned submission may carry a plan as well. When a verdict proves a
 transaction with a policy failed, the verdict writer asks the policy's
 `can_retry`, and a yes sends the row back to be built instead of failing it.
 It is built again after a cooldown that grows with the attempts the row
-records, so the wait survives a restart. The executor starts with the engine in `set_core_db` and again in every
+records, so the wait survives a restart. The executor starts with the engine in `start_core_services` and again in every
 recovery run.
 
 The engine reports whether work is pending, including rows waiting to be
@@ -404,16 +422,31 @@ that can't mean it:
   builds report them as unavailable) and do need metadata, which they take from
   the `RuntimeServices`-owned per-chain cache rather than re-reading it per
   call.
+- `WalletAccountHolder`: owns the active wallet on a signing host. Only its `with_keys` reads the root entropy, after checking that the call's session is still the installed wallet activation, so a lock or a wallet switch fails signing, issuance and pairing answers that began under the previous wallet.
+- `ProductConsent`: one per runtime. It holds account-access decisions and review rules, and runs account-access prompts one at a time for local product calls and paired requests alike. A paired caller never skips a review. A signature with another product's account is confirmed once per kind and owning product for the rest of the product execution.
+- `HostGrantStore`: holds the keys and public subtrees a host keeps for its products, per wallet on a signing host and per pairing on a paired host. A signing host keeps them in memory for one wallet activation. A product reset revokes that product's grants and fails grant work that began before it, without ending the wallet session or other products' calls.
 
 `host_logic` stays pure: the orchestrators above call into it for codecs, session/SSO crypto, key derivation, and
 permission policy, while all I/O (statement-store RPC, storage, prompts, chain RPC) stays in the layers above.
 
-`host_logic::worker::WorkerLedger` holds the reference count per product worker from the Worker Lifecycle RFC, one per
-host in `RuntimeServices`. Both bindings expose it as `acquire_worker` and `release_worker`. Every `Start` or `Stop` the
-counts produce is reported on one channel, the host's `worker_demand_changed` callback, in the order the ledger produced
-it and one at a time, whether the host asked for the transition or the core took the reference itself for an open
-render. The host runs the executable and the core keeps the count; on the web `@parity/truapi-host` pushes the wanted
-level to the page.
+`host_logic::worker::WorkerLedger` holds the reference count per product
+worker from the Worker Lifecycle RFC, one per host in `RuntimeServices`. Both
+bindings expose it as `acquire_worker` and `release_worker`, and the host
+reports a worker that stopped without being asked, because it crashed, failed
+to boot or the system killed it, with `worker_exited`: while references remain
+the ledger requests `Start` again, and the core hands the restarted worker its
+funding sessions once it connects. Exits less than a minute apart form a run:
+the first restart is immediate, then each waits 1 s, doubling up to 5 min, and
+a restart still waiting is dropped once nothing holds the worker or it was
+started meanwhile. On the run's third crash the host hears
+`worker_crashing(product_id, crashes)` and tells the user that product is not
+working. Every `Start` or
+`Stop` the counts produce is requested through the host's
+`request_worker_transition` callback, in the order the ledger produced it and one
+at a time, whether the host asked for the transition or the core took the
+reference itself for an open render. The host runs the executable and the core
+keeps the count; on the web `@parity/truapi-host` pushes the wanted level to
+the page.
 
 ### Inter-host SSO
 
@@ -489,7 +522,7 @@ flows, permission state, and auth state transitions.
 
 Most host-facing wire types are imported from `truapi::latest` by this module and
 are exposed through the trait signatures below. `ProductContext` and
-`ProductExecutionKind` are defined here instead, and codegen emits their host
+`ExecutableKind` are defined here instead, and codegen emits their host
 codecs from these definitions. Both are SCALE-encodable so they can cross the
 wasm callback boundary, where every parameter is encoded with
 `parity-scale-codec`; `ProductContext` holds a `ProductId`, which decodes by
@@ -542,8 +575,8 @@ for raw bytes signed inside the `<Bytes>` watermark.
 - `PermissionStatusHost`: report the OS status of a device capability without
   prompting, so a stored grant can be revalidated before it is acted on.
 - `PocketPlatform`: stream the product's Pocket card collection and remove a
-  card from it. The host owns the collection and decides which cards are
-  privileged.
+  card from it. Native hosts do not implement it: the core serves it from its
+  own database (see Core database). The CLI host passes an in-memory one.
 - `ContactsPlatform`: resolve opaque handles to contacts, render single or multiple
   selection pickers, and place host-owned contact names over product surfaces.
   `contacts` is the only required method; `pick_contact` and `pick_contacts`
@@ -570,32 +603,231 @@ for raw bytes signed inside the `<Bytes>` watermark.
   overlay is installed.
   Native hosts reach this through `NativeTrUApiHostRuntime`:
   `set_funding_callbacks` (the overlay), `open_funding`,
-  `funding_session`, `funding_sessions`, `funding_history`,
-  `cancel_funding` and `acknowledge_funding_session`. Amounts cross the FFI as decimal strings.
-  The host owns the funding history. A session is stored only once the user
-  starts it in the overlay. `funding_sessions` lists sessions in flight first,
-  then ended ones the host has not recorded, each newest first. An ended
+  `set_funding_providers`, `get_funding_quote`, `select_funding_options`, `select_funding_provider`, `cancel_funding`,
+  `confirm_funding_cancel` and `acknowledge_funding_session`. Each of these
+  reports something the user did or the host owns. The host reads back only
+  `funding_history`, whenever it shows history. Everything else it draws,
+  the core pushes through the callbacks, the
+  `FundingFeed` a Rust host installs with `set_funding_feed` before its
+  funding platform:
+  `funding_session_changed` carries a session's status, the session as the
+  core holds it (choice, cancel offer, amounts) and its progress;
+  `funding_options_changed` carries what the overlay offers;
+  `funding_in_progress_changed` comes once each time funding resumes and
+  again whenever it changes, so the host
+  keeps a launch marker that starts funding at its next launch. Amounts
+  cross the FFI as decimal strings.
+  Sessions are stored in the core database, one row each; a row the core
+  cannot read is skipped and left in place.
+  The core owns the funding history. A session is stored only once the user
+  starts it in the overlay. When funding resumes, every session in flight
+  and every ended one the host has not acknowledged comes through
+  `funding_session_changed` again. An ended
   session is handed to the host through `funding_session_changed` each time
-  funding resumes until the host calls `acknowledge_funding_session`, so the
-  host's history writes every outcome once. After that the core keeps the
-  newest 64 recorded sessions per product in full and compacts older ones
-  into the session pack (intent, owner, direction, amounts, outcome and
-  times), which it never trims, so a product watching a compacted session
-  still gets its terminal item. It keeps the 200 newest ended sessions the
-  host has not recorded in full too, and compacts older ones the same way.
-  `funding_history` lists every ended session the host recorded or the core
-  compacted, as a summary newest first, so a host that lost its history
-  rebuilds it from there. A product opens a session with
-  `request({ id, direction, amount? })` and watches it with
-  `statusSubscribe({ id })`; the core keeps it under the id hashed with the
-  product, so a product that reloads under the overlay still finds it, and a
-  reused id answers `AlreadyExists`. The overlay runs on a task of its own,
-  so a request that goes away cannot leave the session presenting; one the
-  user dismisses ends its watchers as `Failed { Cancelled }`. Sessions and
-  the pack are versioned blobs: a corrupt one is set aside under
-  `FundingSessionsUnreadable`, and one in a newer format is left untouched
-  while funding answers a host failure. Products see a session in flight as
+  funding resumes until the host calls `acknowledge_funding_session` once it
+  has told the user how it ended. A released withdrawal whose
+  provider still owes its payout outcome, or the refund of a failed payout,
+  is kept and served whether or not the host acknowledged it, and is handed
+  over again when the provider reports; one refunded after an accepted
+  cancel stays in full until its payout outcome is in. A cancelled top-up a late payment may
+  still open stays in full for its window too. Every other ended session is
+  compacted into the session pack once it ends, acknowledged or not (intent,
+  owner, direction, amounts, outcome and times, the provider, rail and asset,
+  the row's status, the payout, the refund and the provider's references),
+  which it never trims, so a product watching a compacted session still gets
+  its terminal item. The pack keeps whether the host acknowledged each
+  session: the host is handed the session in full with the change that ended
+  it, and the 200 newest it has not acknowledged come through again, as
+  summaries, when funding resumes.
+  `funding_history()` returns every ended session, held in full or
+  compacted, as a summary newest first. A product opens a session with
+  `request({ direction, amount? })`, which answers at once with its `intent`,
+  and watches it with `statusSubscribe({ intent })`; another product's
+  session reads as `NotFound`. The overlay runs on a task of its own, so no
+  call waits on it; a session the user dismisses ends its watchers as
+  `Failed { Cancelled }`. Sessions and the pack live in the core database,
+  one versioned row per session: a row that does not decode or is of an older
+  format is skipped and left in place, and one in a newer format is left
+  untouched while funding answers a host failure. Funding
+  needs the core database: natively the configured `database_directory`,
+  otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.
+  The host lists its providers with `set_funding_providers`, each with the
+  Worker manifest it ships for it. Before the overlay shows, the core sends
+  `funding_options_changed(intent, options)`: `candidates` are the
+  providers serving that session's direction, with their routes, from what the
+  `includes.funding` configuration of each provider's Worker manifest declares:
+  dotNS's answer once the core has read it (cached for a day, re-checked in the
+  background on every query), the shipped snapshot until then, so the list
+  renders with no chain read. A provider whose manifest no longer serves
+  Funding drops out. A provider whose `origin` is `Bundled` ships inside
+  the host: its shipped manifest is what the core goes by, and dotNS is never
+  read for it.
+  `get_funding_quote(intent, ask)` prices an ask (rail, asset, amount,
+  country) with every funding provider, whatever its manifest says it serves,
+  since a provider can serve more or less than it last published: the core
+  calls each provider's worker with `quote`, holding the worker while it
+  waits, and the worker answers priced from its own API. Every provider's
+  worker is held from the moment the overlay opens until it closes, so it
+  is up before the first quote; a provider handed the session keeps its
+  worker after that. A quote already asked keeps its provider's worker
+  until it is answered or times out, overlay closed or not, unless the
+  session is handed to another provider: then every quote still waiting
+  ends at once and lets its worker go. The manifest names no backend: a provider signs in to its own API
+  itself and keeps its tokens with the host.
+  Each provider's row is `Pending`, then `Quoted` or `Unavailable`, and a
+  provider that does not answer within 10 seconds is unavailable. A provider's
+  answer is reused for the same ask for 30 seconds. What an answer shows (a
+  quote or an out-of-range amount: served; a refused country: not served
+  there, only for an ask that named the country) is stored under
+  `FundingSupport` and folded into the candidates for 12 hours, as
+  routes the manifest did not declare and as `unsupported` entries the host
+  can filter by the user's country, while the provider's current manifest
+  serves Funding. A crypto ask names the `network` it moves on, one a route's
+  `networks` declares, and the networks quotes confirmed join the candidate's
+  routes. A refusal of only the amount is kept as the candidate's `limits`
+  (minimum and maximum per rail, asset, network and country), each for 12
+  hours from its own refusal: a later quote does not renew it, and a quote at
+  an amount it rules out clears it. The host reports the user's rail,
+  asset, network and country with `select_funding_options(intent,
+  selection)` whenever one changes, and the options pushed back carry
+  `limits`, which combine them across every provider into the
+  range the amount screen enforces: the smallest minimum and the largest
+  maximum, with no bound while any provider has not shown one. For a crypto selection, the options' `networks`
+  give the same range on each network a candidate's route declares, for
+  the network picker: for the picked asset, or the widest across the
+  network's assets before one is picked. The host's
+  own product floor applies on top. A quote carries its asset's
+  `asset_decimals`, so the host shows asset amounts without knowing the
+  asset.
+  An ask that names no country takes the one the host's
+  `detected_country` answers (coarse location if already permitted, then
+  SIM or network country, then locale region, without any permission
+  prompt), kept only when it is an ISO 3166-1 alpha-2 code and reused for an
+  hour, or asked again after a minute when it found none; the user's own
+  choice is passed as the ask's country. The options' `countries` say what
+  the core knows about each country for the selection's rail and asset, for
+  the host's picker: `Supported` with the lowest
+  minimum a provider showed there, from manifest routes and recent answers,
+  or `Unsupported` when every answer naming it refused it; a country nothing
+  names is left out.
+  Natively the list arrives through `funding_quotes_changed` as a
+  `FundingQuoteList`: the `request_id` `get_funding_quote` returned, the
+  rows in the host's provider order, `best` (the least to pay inbound, the
+  most to receive outbound, the earliest row on a tie, among providers the
+  session can be handed to), which the host selects until the user picks
+  another, and `refresh_at_ms`. The core asks every provider again each
+  minute, each row keeping its answer until the provider answers again,
+  until the session is assigned, ends or leaves the overlay, or the host asks
+  for another ask; from then on no list of that request arrives, mid round
+  too, and the quotes still asked end with the workers they held. The
+  options are sent again after each list, since a refusal can teach the core
+  new limits. At most eight providers are asked at once, each with its own
+  deadline. A session can be handed only a quote from the list its host was
+  last shown, so a quote never crosses sessions. A quote that does not price
+  the ask's amount, moves nothing, charges more in fees than the user sends,
+  has an unusable id or has expired shows as the provider being unable to
+  serve the ask.
+  `select_funding_provider` hands a session to the provider the user chose,
+  on the quote they chose it by, which must be one the core offered for the
+  session, not yet expired and, when the session has an amount, pricing that
+  amount in balance units (what it credits inbound, what it debits outbound);
+  a session opened without an amount takes the quote's. The provider
+  receives it in `assign`, and the
+  session keeps it with the rail and asset it priced. A session's offered
+  quotes are dropped once it is assigned or ends.
+  A native host's `funding_session_changed` carries the session's
+  progress, so the host never reads it back: the milestones it draws, each with when it was reached: in, `Started`, `Received` (the
+  provider saw the payment) and `Added`; out, `Started`, `Received` (released
+  to the provider) and `Sent` (paid out). A milestone the provider skipped
+  takes the time of the first later one. `band` is the line under them, what
+  is happening now (`AwaitingPayment`, `CheckingPayment`, `OnItsWay`,
+  `Adding`, `Added` in; `Converting`, `PreparingPayout`, `Sending`, `Sent`
+  out; `Retrying`, `Delayed`, `Cancel` or `Ended` otherwise), and
+  `last_heard_at_ms` when the provider last reported, for "Checked with the
+  provider 12s ago". `detail` is the line under the band: the provider's
+  latest `Progress` fact for the current step (confirmations, parts, a
+  countdown, a bank's send, an attempt, or an untranslated `Other` text of at
+  most 80 characters), cleared when the step moves on and never stored; each
+  `Progress` also moves `last_heard_at_ms`. It also carries
+  when the session failed, the latest transaction id and reference the
+  provider reported with `Details`, the latest `Deposit` instructions for the
+  host to draw (a crypto address with network, asset, amount, whether it is
+  exact, an optional payment URI for the QR code and expiry, or bank details
+  with the reference), and what arrived when a `PaymentReceived` reports a
+  short or wrong-asset payment. `Deposit` is inbound only and allowed until
+  funds move, so a provider can ask for the rest of a short payment.
+  It is `retrying` once the provider names a second top-up after a partial
+  claim. After an outbound session is released the provider reports
+  `Converting` once as it prepares the payout and then
+  `Payout { PaidOut | Failed }` once, and in between `PayoutRetrying` each
+  time a payout attempt fails and it tries again; the outcome shows as the session's
+  `payout`, beside the `Released` outcome, and either before the release is
+  out of order. After a failed payout the provider gives the user's CASH
+  back with a `payment.topUp`, recorded on that session (the provider's one
+  such session whose debit matches the amount, otherwise each of them), and
+  names it once in `Refunding { top_up_id, amount }`; the core follows its
+  claims and keeps what they returned as `refunded`. Nothing expires a
+  session waiting for its refund.
+  The progress carries one `status` for the host to word: in flight by rail
+  (`WaitingForTransfer`, `WaitingForPayment`, `WaitingForDeposit`, then
+  `ConvertingToCash` and `AddingToBalance`; out, `TransactionInitiated`, then after release
+  `ConvertingTo { asset }` on crypto or `PreparingPayout`, and `RetryingPayout`
+  while the provider's latest word is that it retries the payout), `Retrying`, and
+  `TakingLonger` once the provider has been silent for longer than the
+  chosen quote's `eta_secs` (`longer_at_ms` says when, so the host reads the
+  progress again then; `None` while a top-up waits on the user's payment,
+  until money moved); ended, `ToppedUp`, `Sent`, `Refunded`,
+  `PayoutFailed { refunded }` or `Failed { reason }`. An inbound payment
+  the provider returned ends as `Failed { Refunded }`, one the user's bank or
+  card issuer refused as `Failed { Declined }`. A top-up the user cancelled
+  before paying stays open for 7 days to a payment that arrives anyway: when
+  its provider starts a top-up for it, with no other session in flight
+  taking it, the session opens again, is handed to the host again and
+  settles as delivered.
+  That provider's worker runs it through the `FundingProvider` trait. The
+  core calls the worker with host-initiated calls the worker answers with one
+  item: `assign` hands it a session, `cancel` asks it to stop one, and
+  `settleCancel` passes on the user's answer to its offer. When a worker's
+  connection completes its handshake, the core assigns it every session it
+  still serves, a released withdrawal awaiting its payout included, with its
+  last step, and repeats any cancel or decision it
+  never answered; the worker keeps its own state in its storage. The worker
+  calls the core: `report` stores each update on the session (only from the
+  assigned provider, only forward; `Details` may come at any point while the
+  session is open), `presentFrame` asks the host to
+  show one of its screens through `present_provider_frame` (an App route only
+  when `provider_has_app` says the provider ships one, otherwise `NoApp`), and
+  `closeFrame`
+  closes it through `close_provider_frame` once the provider is done with it,
+  such as a card payment the user made: the open `presentFrame` answers
+  `Closed` and the host shows the session sheet in its place. The core holds the
+  provider's worker while a session is assigned and open, and stores an
+  assigned session from then on, even while its overlay is up. It records each
+  top-up (inbound) or payment request (outbound) the worker starts while
+  serving a session, and a `Crediting` or `Collecting` report must name one of
+  those records at its amount, once. It ends a session as `Delivered` or
+  `Released` itself, from the recorded amounts of the named top-ups once their
+  claims are final (`Crediting`, then `Delivered`) or of the named payment once
+  it completes (`Collecting`); a partial claim counts what the host claimed.
+  Statuses are read again with backoff until the host decides, and a top-up
+  or payment the host still does not know an hour after it was named counts
+  as nothing moved. Money moved once the provider started funds for the
+  session, named or not, or saw the user's payment; from then on only the
+  provider ends the session, and it cannot fail it once funds started.
+  Before that, an unassigned session expires 24 hours after it opened and an
+  assigned one 7 days after its provider last reported. `cancel_funding`
+  answers what a cancel did: it ends an unassigned session; before money
+  moved it asks the provider and ends the session when asked again; after,
+  it asks the provider, who answers `Refused` or `Offer`, one offer per
+  cancel, and the host answers the offer with
+  `confirm_funding_cancel(intent, terms)`, passing the fee and refund it
+  showed (`None` declines), which the provider hears through `settleCancel`;
+  terms other than the offer's answer `NoOffer`, and an inbound session whose
+  credit started answers `TooLate`. A provider asked before money moved
+  answers `Stopped`, and the core ends the session as cancelled. An overlay closed after the user chose a
+  provider keeps the session as started and asks the provider to stop unless
+  money moved.
 - `BalancePlatform`: stream what a payment request can spend right now, the
   current value first and then each change. Installed with
   `set_balance_platform`; native hosts use `set_balance_callbacks` with

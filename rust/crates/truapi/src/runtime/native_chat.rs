@@ -318,16 +318,24 @@ impl NativeChatRegistry {
 		&self,
 		context: NativeChatContext,
 		product: ProductId,
-		request: truapi::v01::HostPaymentTopUpRequest,
+		request: truapi::latest::HostPaymentTopUpRequest,
 	) -> impl Future<Output = Result<(), truapi::v01::HostPaymentTopUpError>> + Send + '_ {
 		// Construct the guard before returning the future, including when the
 		// caller cancels it without ever polling wallet initialization.
 		let request = crate::host_internal::sso_messages::PaymentTopUpRequest {
 			calling_product_id: product,
-			payload: truapi::versioned::payment::HostPaymentTopUpRequest::V1(request),
+			payload: truapi::versioned::payment::HostPaymentTopUpRequest::V2(request),
 		};
 		async move {
-			let truapi::versioned::payment::HostPaymentTopUpRequest::V1(payload) = &request.payload;
+			let truapi::versioned::payment::HostPaymentTopUpRequest::V2(payload) = &request.payload
+			else {
+				unreachable!("native top-up uses latest request")
+			};
+			if payload.funding.is_some() {
+				return Err(truapi::v01::HostPaymentTopUpError::Unknown {
+					reason: "Funding session is not served by native custody".into(),
+				});
+			}
 			if payload.into.is_some_and(|purse| purse != truapi::v01::MAIN_PURSE) ||
 				!matches!(&payload.source, truapi::v01::PaymentTopUpSource::Coins { .. })
 			{
@@ -342,7 +350,18 @@ impl NativeChatRegistry {
 			// a caller may disappear while that task commits its first memo.
 			self.resume_wallet_recovery(context.clone());
 			let (product, request) = request.into_parts();
-			wallet.top_up(&context, product.as_str(), request).await
+			wallet
+				.top_up(
+					&context,
+					product.as_str(),
+					truapi::v01::HostPaymentTopUpRequest {
+						id: request.id,
+						into: request.into,
+						amount: request.amount,
+						source: request.source,
+					},
+				)
+				.await
 		}
 	}
 

@@ -10,8 +10,7 @@ use std::{
 };
 
 use crate::platform::{
-	PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
-	ProductExecutionKind,
+	ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus, ProductContext,
 };
 use futures::{
 	FutureExt,
@@ -162,7 +161,7 @@ pub(super) async fn require_authorized(
 	// one that may serve the Chat modality.
 	let product_context = ProductContext::new_with_execution(
 		product.parse().map_err(|_| ChatError::AccessNotGranted)?,
-		ProductExecutionKind::Worker,
+		ExecutableKind::Worker,
 	);
 	let permissions = PermissionsService::new(platform, platform, &product_context);
 	// A stored decision always wins, so a denial or revocation ends a
@@ -198,7 +197,7 @@ pub(super) async fn require_upload_authorized(
 	// one that may serve the Chat modality.
 	let product = ProductContext::new_with_execution(
 		product.parse().map_err(|_| ChatError::AccessNotGranted)?,
-		ProductExecutionKind::Worker,
+		ExecutableKind::Worker,
 	);
 	let permissions = PermissionsService::new(platform, platform, &product);
 	if permissions

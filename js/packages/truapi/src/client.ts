@@ -50,6 +50,12 @@ const KNOWN_WIRE_IDS = new Set<string>(
 );
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
+const MAX_EARLY_HOST_STOPS = 64;
+const FRAMEWORK_INTERRUPT = S.Result(S._void, S.CallError(S._void));
+
+function frameworkInterrupt(failure: S.CallErrorValue<never>): Uint8Array {
+  return FRAMEWORK_INTERRUPT.enc({ success: false, value: failure });
+}
 
 /** A request received no matching response before its transport deadline. */
 export class RequestTimeoutError extends Error {
@@ -172,8 +178,29 @@ function pairKey(traitId: number, methodId: number): string {
 }
 
 /**
- * Decode `V1(UnsupportedMessage { trait_id, method_id })` from the reserved
- * `(255, 255)` address.
+ * `VersionedProtocolError`, the payload on the reserved `(255, 255)` address,
+ * as Rust declares it, followed by whatever bytes it leaves unread.
+ */
+const PROTOCOL_ERROR = S.Tuple(
+  S.indexedTaggedUnion({
+    V1: [
+      0,
+      S.indexedTaggedUnion({
+        UnsupportedMessage: [0, S.Struct({ traitId: S.u8, methodId: S.u8 })],
+        UnsupportedVersion: [
+          1,
+          S.Struct({ traitId: S.u8, methodId: S.u8, newestVersion: S.u8 }),
+        ],
+      }),
+    ],
+  }),
+  S.Bytes(Infinity),
+);
+
+/**
+ * Decode a protocol error from the reserved `(255, 255)` address.
+ * `UnsupportedMessage` and `UnsupportedVersion` both mean the peer cannot
+ * handle the call they name; `newestVersion` is set only for the second.
  *
  * `undefined` is a protocol error this build does not know: a version or a
  * variant index it has never heard of, from a peer built against a later
@@ -182,28 +209,44 @@ function pairKey(traitId: number, methodId: number): string {
  * transport, so a build that rejected an unfamiliar payload here could never be
  * told anything new without the whole connection dying.
  *
- * A payload this build does recognise stays strict: codec 2 addresses a frame
- * by a pair, so `V1(UnsupportedMessage)` is exactly four bytes (version index,
- * variant index, then the trait and method the peer could not handle), and a
- * truncated or over-long one is corruption rather than a newer peer.
+ * A payload this build does recognise stays strict: a truncated or over-long
+ * one is corruption rather than a newer peer.
  */
-function decodeUnsupportedMessage(
+function decodeProtocolError(
   payload: Uint8Array,
-): { traitId: number; methodId: number } | undefined {
+): { traitId: number; methodId: number; newestVersion?: number } | undefined {
   if (payload.length === 0) {
     throw new Error("Malformed protocol error payload: empty");
   }
-  if (payload[0] !== 0 || (payload.length > 1 && payload[1] !== 0)) {
-    // A version or variant from a later protocol. Its length is unknowable
-    // here, so the remaining bytes are not validated.
-    return undefined;
+  let decoded: ReturnType<typeof PROTOCOL_ERROR.dec>;
+  try {
+    decoded = PROTOCOL_ERROR.dec(payload);
+  } catch (cause) {
+    // An unknown version or error means a newer peer. We don't know its
+    // layout, so we don't check the rest.
+    if (cause instanceof S.UnknownDiscriminantError) return undefined;
+    throw new Error("Malformed protocol error payload: truncated", { cause });
   }
-  if (payload.length !== 4) {
-    throw new Error(
-      `Malformed protocol error payload: expected 4 bytes, received ${payload.length}`,
-    );
+  const [error, unread] = decoded;
+  if (unread.length > 0) {
+    throw new Error("Malformed protocol error payload: trailing bytes");
   }
-  return { traitId: payload[2], methodId: payload[3] };
+  return error.value.value;
+}
+
+/** Warns that the host refused a call's version, naming the newest it accepts. */
+function reportRefusedVersion(
+  requestId: string,
+  {
+    traitId,
+    methodId,
+    newestVersion,
+  }: { traitId: number; methodId: number; newestVersion?: number },
+): void {
+  if (newestVersion === undefined) return;
+  console.warn(
+    `[truapi] the host refused request ${requestId} for (${traitId}, ${methodId}): it accepts versions up to V${newestVersion}`,
+  );
 }
 
 /**
@@ -255,12 +298,17 @@ export function createTransport(
     declinePayload: Uint8Array;
     bufferCapacity: number;
     buffered: BufferedHostStart[];
-    handler?: HostInitiatedSubscriptionHandler<unknown, unknown, unknown>;
+    singleResponse?: { requestVersion: number };
+    handler?: {
+      call: HostInitiatedSubscriptionHandler<unknown, unknown, unknown>;
+    };
     instances: Map<string, { unsubscribe(): void }>;
   };
   // Keyed by the full (trait, method) pair: a bare method id would collide
   // the moment two traits both number a subscription the same.
   const hostRoutes = new Map<string, HostRoute>();
+  const earlyHostStops = new Map<string, HostRoute>();
+  let hostConnectionGeneration = 0;
 
   /**
    * Normalize arbitrary thrown values into `Error` instances.
@@ -305,17 +353,24 @@ export function createTransport(
   }
 
   function interruptOperations(error: Error) {
-    const requests = [...pending.keys()].map(
-      (requestId) => takePending(requestId)!,
-    );
-    const streams = [...subscriptions.values()];
-    subscriptions.clear();
+    hostConnectionGeneration++;
+    const closing = closedError !== null;
+    const requests = [...pending]
+      .filter(([, request]) => request.sent || closing)
+      .map(([requestId]) => takePending(requestId)!);
+    const streams = [...subscriptions]
+      .filter(([, stream]) => stream.sent || closing)
+      .map(([requestId, stream]) => {
+        subscriptions.delete(requestId);
+        return stream;
+      });
     const instances: { unsubscribe(): void }[] = [];
     for (const route of hostRoutes.values()) {
       route.buffered.length = 0;
       instances.push(...route.instances.values());
       route.instances.clear();
     }
+    earlyHostStops.clear();
 
     for (const request of requests) request.reject(error);
     // Product callbacks must not stop the provider's remaining close listeners.
@@ -331,7 +386,7 @@ export function createTransport(
     }
   }
 
-  /** Close permanently; a provider reset only interrupts current operations. */
+  /** Close permanently. A provider reset interrupts only the work the host may have started. */
   function closeWithError(error: unknown) {
     if (closedError) return;
     closedError = toError(error);
@@ -363,9 +418,9 @@ export function createTransport(
       payload.traitId === PROTOCOL_ERROR_TRAIT_ID &&
       payload.methodId === PROTOCOL_ERROR_METHOD_ID
     ) {
-      let unsupported: { traitId: number; methodId: number } | undefined;
+      let unsupported: ReturnType<typeof decodeProtocolError>;
       try {
-        unsupported = decodeUnsupportedMessage(payload.value);
+        unsupported = decodeProtocolError(payload.value);
       } catch (error) {
         onProtocolError(toError(error));
         return;
@@ -400,6 +455,7 @@ export function createTransport(
         request?.ids.trait === unsupported.traitId &&
         request?.ids.method === unsupported.methodId
       ) {
+        reportRefusedVersion(requestId, unsupported);
         takePending(requestId)?.resolveUnsupported();
         return;
       }
@@ -409,6 +465,7 @@ export function createTransport(
         subscription?.ids.trait === unsupported.traitId &&
         subscription?.ids.method === unsupported.methodId
       ) {
+        reportRefusedVersion(requestId, unsupported);
         subscriptions.delete(requestId);
         subscription.onClose?.(
           new UnsupportedMessageError(
@@ -487,6 +544,15 @@ export function createTransport(
         if (instance) {
           hostRoute.instances.delete(requestId);
           instance.unsubscribe();
+        } else if (
+          bufferedIndex < 0 &&
+          hostRoute.singleResponse &&
+          !earlyHostStops.has(requestId)
+        ) {
+          if (earlyHostStops.size === MAX_EARLY_HOST_STOPS) {
+            earlyHostStops.delete(earlyHostStops.keys().next().value!);
+          }
+          earlyHostStops.set(requestId, hostRoute);
         }
       } else {
         reportProtocolViolation(
@@ -678,11 +744,17 @@ export function createTransport(
     requestId: string,
     payload: Uint8Array,
   ) {
+    const generation = hostConnectionGeneration;
     const instance = route.instances.get(requestId);
     if (instance) {
       route.instances.delete(requestId);
       instance.unsubscribe();
     }
+    if (
+      generation !== hostConnectionGeneration ||
+      route.instances.has(requestId)
+    )
+      return;
     try {
       send({
         requestId,
@@ -703,15 +775,75 @@ export function createTransport(
     requestId: string,
     payload: Uint8Array,
   ) {
+    const generation = hostConnectionGeneration;
+    if (route.singleResponse) {
+      if (
+        [...hostRoutes.values()].some(
+          (candidate) =>
+            candidate.instances.has(requestId) ||
+            candidate.buffered.some((start) => start.requestId === requestId),
+        )
+      )
+        return;
+      if (earlyHostStops.get(requestId) === route) {
+        earlyHostStops.delete(requestId);
+        return;
+      }
+      const { requestVersion } = route.singleResponse;
+      if (payload.length === 0 || payload[0]! < requestVersion - 1) {
+        interruptHostSubscription(
+          route,
+          requestId,
+          frameworkInterrupt(
+            payload.length === 0
+              ? {
+                  tag: "MalformedFrame",
+                  value: { reason: "host request payload did not decode" },
+                }
+              : { tag: "Unsupported" },
+          ),
+        );
+        return;
+      }
+      if (payload[0] !== requestVersion - 1) {
+        try {
+          send({
+            requestId,
+            payload: {
+              traitId: PROTOCOL_ERROR_TRAIT_ID,
+              methodId: PROTOCOL_ERROR_METHOD_ID,
+              messageType: MESSAGE_TYPE_RESPONSE,
+              value: PROTOCOL_ERROR.enc([
+                {
+                  tag: "V1",
+                  value: {
+                    tag: "UnsupportedVersion",
+                    value: {
+                      traitId: route.ids.trait,
+                      methodId: route.ids.method,
+                      newestVersion: requestVersion,
+                    },
+                  },
+                },
+                new Uint8Array(),
+              ]),
+            },
+          });
+        } catch {}
+        return;
+      }
+    }
     const previous = route.instances.get(requestId);
     if (previous) {
       route.instances.delete(requestId);
       previous.unsubscribe();
     }
+    if (generation !== hostConnectionGeneration || closedError) return;
 
     const handler = route.handler;
     if (!handler) {
-      if (route.buffered.length === route.bufferCapacity) {
+      route.buffered.push({ requestId, payload });
+      if (route.buffered.length > route.bufferCapacity) {
         const evicted = route.buffered.shift();
         if (evicted)
           interruptHostSubscription(
@@ -720,15 +852,6 @@ export function createTransport(
             route.declinePayload,
           );
       }
-      route.buffered.push({ requestId, payload });
-      return;
-    }
-
-    let request: unknown;
-    try {
-      request = route.decodeRequest(payload);
-    } catch {
-      interruptHostSubscription(route, requestId, route.declinePayload);
       return;
     }
 
@@ -742,21 +865,33 @@ export function createTransport(
       },
     };
     route.instances.set(requestId, instance);
+    let request: unknown;
+    try {
+      request = route.decodeRequest(payload);
+    } catch {
+      if (active)
+        interruptHostSubscription(route, requestId, route.declinePayload);
+      return;
+    }
+    if (!active) return;
 
     const sendItem = (item: unknown) => {
       if (!active) return;
       try {
+        const value = route.encodeItem(item);
+        if (!active) return;
         send({
           requestId,
           payload: {
             traitId: route.ids.trait,
             methodId: route.ids.method,
             messageType: MESSAGE_TYPE_RECEIVE,
-            value: route.encodeItem(item),
+            value,
           },
         });
       } catch {
-        interruptHostSubscription(route, requestId, route.declinePayload);
+        if (active)
+          interruptHostSubscription(route, requestId, route.declinePayload);
       }
     };
 
@@ -768,14 +903,15 @@ export function createTransport(
       } catch {
         encoded = route.declinePayload;
       }
-      interruptHostSubscription(route, requestId, encoded);
+      if (active) interruptHostSubscription(route, requestId, encoded);
     };
 
     try {
-      teardown = handler(request, sendItem, interrupt);
+      teardown = handler.call(request, sendItem, interrupt);
       if (!active) teardown?.();
     } catch {
-      interruptHostSubscription(route, requestId, route.declinePayload);
+      if (active)
+        interruptHostSubscription(route, requestId, route.declinePayload);
     }
   }
 
@@ -965,12 +1101,28 @@ export function createTransport(
       encodeInterrupt,
       declinePayload,
       bufferCapacity,
+      singleResponse,
     }: RegisterHostInitiatedSubscriptionParams<Request, Item, Reason>) {
       const key = pairKey(ids.trait, ids.method);
       if (hostRoutes.has(key)) {
         throw new Error(
           `host-initiated subscription (${ids.trait}, ${ids.method}) is already registered`,
         );
+      }
+      if (singleResponse) {
+        const { requestVersion } = singleResponse;
+        if (
+          !Number.isInteger(requestVersion) ||
+          requestVersion < 1 ||
+          requestVersion > 255
+        ) {
+          throw new RangeError(
+            "requestVersion must be an integer from 1 to 255",
+          );
+        }
+        if (!Number.isInteger(bufferCapacity) || bufferCapacity < 1) {
+          throw new RangeError("bufferCapacity must be a positive integer");
+        }
       }
       const route: HostRoute = {
         ids,
@@ -979,6 +1131,7 @@ export function createTransport(
         encodeInterrupt: encodeInterrupt as (reason?: unknown) => Uint8Array,
         declinePayload,
         bufferCapacity,
+        singleResponse,
         buffered: [],
         instances: new Map(),
       };
@@ -987,13 +1140,18 @@ export function createTransport(
         setHandler(
           handler: HostInitiatedSubscriptionHandler<Request, Item, Reason>,
         ) {
-          const installed = handler as HostInitiatedSubscriptionHandler<
-            unknown,
-            unknown,
-            unknown
-          >;
+          const installed = {
+            call: handler as HostInitiatedSubscriptionHandler<
+              unknown,
+              unknown,
+              unknown
+            >,
+          };
           route.handler = installed;
-          for (const start of route.buffered.splice(0)) {
+          for (const start of [...route.buffered]) {
+            const index = route.buffered.indexOf(start);
+            if (index < 0) continue;
+            route.buffered.splice(index, 1);
             startHostSubscription(route, start.requestId, start.payload);
           }
           return {

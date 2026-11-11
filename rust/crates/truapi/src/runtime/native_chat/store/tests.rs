@@ -60,6 +60,74 @@ fn slot() -> CoreStorageKey {
 	}
 }
 
+#[test]
+fn migrated_storage_keys_keep_the_pinned_cipher_format() {
+	for (storage_key, old_tag, new_tag) in [
+		(slot(), 14u8, 64u8),
+		(
+			CoreStorageKey::NativeChatFileChunk {
+				root_public_key: [1; 32],
+				genesis_hash: [2; 32],
+				product_id: "chat.test".into(),
+				attachment_id: [7; 32],
+				chunk_index: 9,
+			},
+			15u8,
+			65u8,
+		),
+	] {
+		assert_eq!(storage_key.encode()[0], new_tag);
+		let mut old_key = vec![old_tag];
+		old_key.extend_from_slice(&[1; 32]);
+		old_key.extend_from_slice(&[2; 32]);
+		"chat.test".encode_to(&mut old_key);
+		if old_tag == 15 {
+			old_key.extend_from_slice(&[7; 32]);
+			9u32.encode_to(&mut old_key);
+		}
+		let mut old_aad = b"truapi/host/native-chat/snapshot\0".to_vec();
+		old_aad.extend_from_slice(MAGIC);
+		old_aad.extend_from_slice(&VERSION.to_le_bytes());
+		old_aad.extend_from_slice(&old_key);
+		let mut old_secret = Zeroizing::new([0u8; 32]);
+		Hkdf::<Sha256>::new(Some(b"truapi/host/native-chat/snapshot-key/v1"), &[3; 32])
+			.expand(&old_aad, &mut *old_secret)
+			.unwrap();
+		let nonce = [5u8; 24];
+		let state = initial().unwrap();
+		let mut ciphertext = codec::encode(&state).unwrap();
+		XChaCha20Poly1305::new((&*old_secret).into())
+			.encrypt_in_place(XNonce::from_slice(&nonce), &old_aad, &mut *ciphertext)
+			.unwrap();
+		let mut envelope = MAGIC.to_vec();
+		envelope.extend_from_slice(&VERSION.to_le_bytes());
+		envelope.extend_from_slice(&nonce);
+		envelope.extend_from_slice(&ciphertext);
+		let cipher = SnapshotCipher::new(&storage_key, &[3; 32]).unwrap();
+		assert_eq!(snapshot(&cipher.decrypt::<State>(&envelope).unwrap()), snapshot(&state));
+		for other_wallet in [false, true] {
+			let mut wrong = storage_key.clone();
+			match &mut wrong {
+				CoreStorageKey::NativeChatDevice { root_public_key, product_id, .. } |
+				CoreStorageKey::NativeChatFileChunk { root_public_key, product_id, .. } => {
+					if other_wallet {
+						*root_public_key = [8; 32];
+					} else {
+						*product_id = "other.test".into();
+					}
+				},
+				_ => unreachable!(),
+			}
+			assert!(
+				SnapshotCipher::new(&wrong, &[3; 32])
+					.unwrap()
+					.decrypt::<State>(&envelope)
+					.is_err()
+			);
+		}
+	}
+}
+
 #[derive(Default)]
 struct DurableSlot {
 	values: SyncMutex<BTreeMap<Vec<u8>, Vec<u8>>>,

@@ -20,7 +20,7 @@ use truapi::{
 
 use crate::runtime::{
 	ProductRuntimeHost, RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
-	remote_authority_call, remote_authority_context_with_default, until_cancelled,
+	authority::AuthorityError, remote_authority_call, remote_authority_context_with_default,
 	versioning::version,
 };
 
@@ -33,8 +33,9 @@ impl ProductRuntimeHost {
 		derivation_index: Option<latest::DerivationIndex>,
 	) -> Result<(), String> {
 		let product_id = self.connection.product_id();
+		let revision = self.accounts.grant_revision();
 		let require_session = || {
-			if self.accounts.session_is_current(session) {
+			if self.accounts.grant_is_current(session, revision) {
 				Ok(())
 			} else {
 				Err("Statement allowance session changed".to_string())
@@ -54,19 +55,17 @@ impl ProductRuntimeHost {
 				Some(index) => latest::AllocatableResource::ProductStatementStoreAllowance(index),
 				None => latest::AllocatableResource::StatementStoreAllowance,
 			};
-			let confirmed = self
-				.connection
-				.platform
-				.confirm_user_action(UserConfirmationReview::ResourceAllocation(
-					ResourceAllocationReview {
-						calling_product_id: product_id.clone(),
-						resources: vec![resource],
-					},
-				))
-				.await
-				.map_err(|err| {
-					format!("statement allowance confirmation failed: {}", err.reason)
-				})?;
+			let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
+				calling_product_id: product_id.clone(),
+				resources: vec![resource],
+			});
+			let confirmed = match self.confirm(&CallContext::default(), review).await {
+				Ok(()) => true,
+				Err(AuthorityError::Rejected) => false,
+				Err(error) => {
+					return Err(format!("statement allowance confirmation failed: {error}"));
+				},
+			};
 			require_session()?;
 			// An administrative decision made while the prompt was open wins.
 			status = service.authorization_status(&request).await.map_err(|err| {
@@ -137,15 +136,16 @@ impl ResourceAllocation for ProductRuntimeHost {
 						reason: "No active session".to_string(),
 					})
 				})?;
+				let grant_revision = self.accounts.grant_revision();
 
 				let product_id = self.connection.product_id();
 				let require_session = || {
-					if self.accounts.session_is_current(&session) {
+					if self.accounts.grant_is_current(&session, grant_revision) {
 						Ok(())
 					} else {
-						Err(CallError::HostFailure {
-							reason: "Resource allocation session changed".to_string(),
-						})
+						Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
+							reason: AuthorityError::Disconnected.to_string(),
+						}))
 					}
 				};
 				let service = self.connection.permissions_service();
@@ -179,24 +179,24 @@ impl ResourceAllocation for ProductRuntimeHost {
 				// confirm it, even when implicit provisioning has a durable grant. The
 				// same review establishes any missing grants without a second prompt.
 				// A withdrawn call stops waiting on the review and authorizes nothing.
-				let confirmed = until_cancelled(
-					cx,
-					self.connection.platform.confirm_user_action(
-						UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
-							calling_product_id: product_id.clone(),
-							resources: inner.resources.clone(),
-						}),
-					),
-				)
-				.await
-				.map_err(|err| {
-					CallError::Domain(latest::ResourceAllocationError::Unknown {
-						reason: err.to_string(),
-					})
-				})?
-				.map_err(|err| CallError::HostFailure {
-					reason: format!("resource allocation confirmation failed: {err:?}"),
-				})?;
+				let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
+					calling_product_id: product_id.clone(),
+					resources: inner.resources.clone(),
+				});
+				let confirmed = match self.confirm(cx, review).await {
+					Ok(()) => true,
+					Err(AuthorityError::Rejected) => false,
+					Err(AuthorityError::ConfirmationFailed(error)) => {
+						return Err(CallError::HostFailure {
+							reason: format!("resource allocation confirmation failed: {error:?}"),
+						});
+					},
+					Err(error) => {
+						return Err(CallError::Domain(latest::ResourceAllocationError::Unknown {
+							reason: error.to_string(),
+						}));
+					},
+				};
 				require_session()?;
 				for (request, before) in &grants {
 					let current = service
@@ -244,19 +244,22 @@ impl ResourceAllocation for ProductRuntimeHost {
 					cx,
 					RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
 				);
-				remote_authority_call(&cx, self.accounts.allocate_resources(&cx, &session, inner))
-					.await
-					.map_err(|err| {
-						CallError::Domain(latest::ResourceAllocationError::Unknown {
-							reason: err.to_string(),
-						})
+				remote_authority_call(
+					&cx,
+					self.accounts.allocate_resources(&cx, &session, grant_revision, inner),
+				)
+				.await
+				.map_err(|err| {
+					CallError::Domain(latest::ResourceAllocationError::Unknown {
+						reason: err.to_string(),
 					})
+				})
 			})
 			.await
 	}
 }
 
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Entropy for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "entropy.derive"))]
 	async fn derive(

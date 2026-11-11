@@ -1,8 +1,8 @@
 //! Wallet-free receiving owner for a host-origin service worker.
 
 use super::{
-	generic, get_function, get_optional_function, invoke_bool, invoke_optional_bytes_return,
-	invoke_unit, receiving_error_to_js,
+	get_function, get_optional_function, invoke_bool, invoke_optional_bytes_return, invoke_unit,
+	receiving_error_to_js,
 };
 use crate::{
 	latest::{self, HostNotificationReceivingError as Error},
@@ -23,7 +23,7 @@ struct JsReceivingBackend {
 	save: SendWrapper<Function>,
 }
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl ReceivingBackend for JsReceivingBackend {
 	async fn receiver_authority(
 		&self,
@@ -74,6 +74,10 @@ impl ReceivingBackend for JsReceivingBackend {
 			.await
 			.map_err(generic)
 	}
+}
+
+fn generic(reason: String) -> latest::GenericError {
+	latest::GenericError { reason }
 }
 
 fn decode_exact<T: Decode>(bytes: &[u8]) -> Result<T, String> {

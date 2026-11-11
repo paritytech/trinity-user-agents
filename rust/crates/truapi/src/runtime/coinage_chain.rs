@@ -15,10 +15,12 @@ mod tests;
 mod transaction;
 
 use crate::{
+	chain::ExtrinsicService,
 	host_rpc_client::HostRpcClient,
-	platform::{JsonRpcConnection, Platform, async_trait},
+	platform::{JsonRpcConnection, Platform},
 	subscription::Spawner,
 };
+use async_trait::async_trait;
 use core::time::Duration;
 pub(crate) use crypto::HostVoucherCryptography;
 use futures::{StreamExt, stream::BoxStream};
@@ -56,6 +58,7 @@ struct Inner {
 	recovery: Mutex<Option<([u8; 32], u64)>>,
 	crypto: Arc<HostVoucherCryptography>,
 	runtime: futures::lock::Mutex<Option<transaction::Snapshot>>,
+	extrinsics: ExtrinsicService,
 	denominations: Mutex<Option<DenominationBreakdownContext>>,
 }
 
@@ -78,6 +81,8 @@ impl HostCoinageChain {
 		let crypto = Arc::new(HostVoucherCryptography::new(session_valid.clone(), vrf));
 		let coins = CoinKeypairFactory::new(&entropy);
 		let vouchers = VoucherKeypairFactory::new(&entropy);
+		let extrinsics =
+			ExtrinsicService::from_provider(platform.clone(), spawner.clone(), platform.clone());
 		Self {
 			inner: Arc::new(Inner {
 				platform,
@@ -93,6 +98,7 @@ impl HostCoinageChain {
 				recovery: Mutex::new(None),
 				crypto,
 				runtime: futures::lock::Mutex::new(None),
+				extrinsics,
 				denominations: Mutex::new(None),
 			}),
 		}
@@ -175,31 +181,31 @@ impl HostCoinageChain {
 			.map_err(|_| "invalid runtime spec version")?;
 		let tx = u32::try_from(rpc::number(&version["transactionVersion"])?)
 			.map_err(|_| "invalid runtime transaction version")?;
-		let mut snapshot = if let Some(snapshot) =
-			cached.as_deref().and_then(Option::as_ref).filter(|snapshot| {
-				snapshot.state.spec_version == spec && snapshot.state.transaction_version == tx
+		let mut snapshot =
+			if let Some(snapshot) = cached.as_deref().and_then(Option::as_ref).filter(|snapshot| {
+				snapshot.spec_version == spec && snapshot.transaction_version == tx
 			}) {
-			let mut snapshot = snapshot.clone();
-			snapshot.at = at;
-			snapshot.number = number;
-			snapshot
-		} else {
-			let metadata = rpc::metadata(rpc, at).await?;
-			Self::ensure_current(session_valid)?;
-			let snapshot = transaction::Snapshot::new(
-				metadata,
-				at,
-				number,
-				genesis_hash,
-				spec,
-				tx,
-				coinage_instance_id,
-			)?;
-			if let Some(cached) = cached {
-				*cached = Some(snapshot.clone());
-			}
-			snapshot
-		};
+				let mut snapshot = snapshot.clone();
+				snapshot.at = at;
+				snapshot.number = number;
+				snapshot
+			} else {
+				let metadata = rpc::metadata(rpc, at).await?;
+				Self::ensure_current(session_valid)?;
+				let snapshot = transaction::Snapshot::new(
+					metadata,
+					at,
+					number,
+					genesis_hash,
+					spec,
+					tx,
+					coinage_instance_id,
+				)?;
+				if let Some(cached) = cached {
+					*cached = Some(snapshot.clone());
+				}
+				snapshot
+			};
 		if let Some(key) = snapshot.instance_asset_key()? {
 			let row = rpc::query(rpc, &[key], at)
 				.await?
@@ -468,10 +474,10 @@ impl ExternalCoinTransferBackend for HostCoinageChain {
 		let call = truapi_coinage::pallet::transfer_call(pallet, call_index, &request.recipient);
 		let nonce = self.nonce(&rpc, &request.source_public, &snapshot).await?;
 		self.ensure_session()?;
-		let extrinsic = snapshot.signed(&keypair, &call, nonce)?;
+		let extrinsic = snapshot.signed(&self.inner.extrinsics, &keypair, &call, nonce).await?;
 		// The external-claim service persisted the source/destination plan before
 		// entering this method. An ambiguous result leaves that plan recoverable.
-		let finalized = self.broadcast(&rpc, &extrinsic, &snapshot).await?;
+		let finalized = self.broadcast(&rpc, extrinsic.bytes(), &snapshot).await?;
 		let finalized_snapshot = self.snapshot(&rpc, finalized).await?;
 		let after =
 			Self::coins_at(&rpc, &[request.source_public, request.recipient], &finalized_snapshot)

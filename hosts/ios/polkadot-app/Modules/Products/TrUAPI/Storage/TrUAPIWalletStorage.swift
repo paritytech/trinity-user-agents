@@ -8,14 +8,14 @@ import TrUAPIHost
 /// UserDefaults slots are unchanged. One process-wide lock covers all bridges.
 final class TrUAPIWalletStorage: @unchecked Sendable {
     static let shared = TrUAPIWalletStorage()
-    private let lock = NSLock()
+    private let lock = NSRecursiveLock()
 
     /// Stable SCALE discriminants from truapi_platform::CoreStorageKey.
     /// The remaining encoded bytes include wallet root, genesis, and (for the
     /// device) product. They are all included in the backing filename digest.
     static func owns(_ key: Data) -> Bool {
         switch key.first {
-        case 13, 14, 15, 16: true
+        case 13, 16, 64, 65: true
         default: false
         }
     }
@@ -29,7 +29,23 @@ final class TrUAPIWalletStorage: @unchecked Sendable {
             return try Data(contentsOf: file)
         } catch let error as NSError
             where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError {
-            return nil
+            guard let legacyKey = try legacyKey(for: key) else { return nil }
+            let legacyFile = try fileURL(key: legacyKey)
+            let value: Data
+            do {
+                value = try Data(contentsOf: legacyFile)
+            } catch let legacyError as NSError
+                where legacyError.domain == NSCocoaErrorDomain && legacyError.code == NSFileReadNoSuchFileError {
+                return nil
+            }
+            // Core preserves the old inner cipher AAD. Only the lookup filename changes;
+            // the strict native decoder proves that both keys identify the same record.
+            try write(key: key, value: value)
+            guard legacyFile.path.withCString({ Darwin.unlink($0) }) == 0 || errno == ENOENT else {
+                throw failure("retire migrated snapshot", ambiguous: true)
+            }
+            try syncDirectory(legacyFile.deletingLastPathComponent(), ambiguous: true)
+            return value
         }
     }
 
@@ -91,6 +107,13 @@ final class TrUAPIWalletStorage: @unchecked Sendable {
         let file = try fileURL(key: key)
         let removed = file.path.withCString { Darwin.unlink($0) }
         guard removed == 0 || errno == ENOENT else { throw failure("remove wallet snapshot") }
+        if let legacyKey = try legacyKey(for: key) {
+            let legacyFile = try fileURL(key: legacyKey)
+            let legacyRemoved = legacyFile.path.withCString { Darwin.unlink($0) }
+            guard legacyRemoved == 0 || errno == ENOENT else {
+                throw failure("remove historical snapshot", ambiguous: true)
+            }
+        }
         try syncDirectory(file.deletingLastPathComponent(), ambiguous: true)
     }
 
@@ -103,6 +126,22 @@ final class TrUAPIWalletStorage: @unchecked Sendable {
                 reason: "main-purse custody unavailable: native CoinageService owns this wallet"
             )
         }
+    }
+
+    private func legacyKey(for key: Data) throws -> Data? {
+        let legacyKind: UInt8
+        switch key.first {
+        case 64: legacyKind = 14
+        case 65: legacyKind = 15
+        default: return nil
+        }
+        var legacy = key
+        legacy[legacy.startIndex] = legacyKind
+        let migration = try migrateEpoca026CoreStorageKey(encoded: legacy)
+        guard migration.key == key else {
+            throw HostRejection.Rejected(reason: "Historical snapshot does not match the requested storage key")
+        }
+        return legacy
     }
 
     private func fileURL(key: Data) throws -> URL {

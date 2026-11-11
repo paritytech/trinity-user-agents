@@ -21,7 +21,15 @@
 
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -183,70 +191,125 @@ async function writeCompressedSidecars(wasmPath) {
 async function buildCore(outName, target, outDir, features, env) {
   const crateDir = resolve(repoRoot, "rust/crates/truapi");
   const cargoArgs = [
-    "--manifest-path", resolve(crateDir, "Cargo.toml"),
+    "--manifest-path",
+    resolve(crateDir, "Cargo.toml"),
     "--no-default-features",
-    "--features", features.join(","),
+    "--features",
+    features.join(","),
   ];
   const options = {
     cwd: repoRoot,
     env: { ...process.env, ...env },
     maxBuffer: 32 * 1024 * 1024,
   };
-  const { stdout: metadataJson } = await execFileAsync("cargo", [
-    "metadata", "--format-version", "1",
-    "--filter-platform", "wasm32-unknown-unknown",
-    ...cargoArgs,
-  ], options);
+  const { stdout: metadataJson } = await execFileAsync(
+    "cargo",
+    [
+      "metadata",
+      "--format-version",
+      "1",
+      "--filter-platform",
+      "wasm32-unknown-unknown",
+      ...cargoArgs,
+    ],
+    options,
+  );
   const metadata = JSON.parse(metadataJson);
   const pkg = metadata.packages.find((pkg) => pkg.name === "truapi");
   const coreNode = metadata.resolve.nodes.find((node) => node.id === pkg.id);
-  const bindgenId = coreNode.deps.find((dep) => dep.name === "wasm_bindgen").pkg;
-  const bindgenVersion = metadata.packages.find((pkg) => pkg.id === bindgenId).version;
-  const { stdout: cliVersion } = await execFileAsync("wasm-bindgen", ["--version"], options);
+  const bindgenId = coreNode.deps.find(
+    (dep) => dep.name === "wasm_bindgen",
+  ).pkg;
+  const bindgenVersion = metadata.packages.find(
+    (pkg) => pkg.id === bindgenId,
+  ).version;
+  const { stdout: cliVersion } = await execFileAsync(
+    "wasm-bindgen",
+    ["--version"],
+    options,
+  );
   if (cliVersion.trim() !== `wasm-bindgen ${bindgenVersion}`) {
     throw new Error(
       `wasm-bindgen CLI must match ${bindgenVersion}; run ` +
-      `cargo install wasm-bindgen-cli --version ${bindgenVersion} --locked --force`,
+        `cargo install wasm-bindgen-cli --version ${bindgenVersion} --locked --force`,
     );
   }
-  const { stdout, stderr } = await execFileAsync("cargo", [
-    "rustc", "--lib", "--crate-type", "cdylib",
-    "--target", "wasm32-unknown-unknown",
-    ...(wasmProfile === "dev" ? [] : ["--release"]),
-    "--message-format", "json-render-diagnostics",
-    ...cargoArgs,
-  ], options);
+  const { stdout, stderr } = await execFileAsync(
+    "cargo",
+    [
+      "rustc",
+      "--lib",
+      "--crate-type",
+      "cdylib",
+      "--target",
+      "wasm32-unknown-unknown",
+      ...(wasmProfile === "dev" ? [] : ["--release"]),
+      "--message-format",
+      "json-render-diagnostics",
+      ...cargoArgs,
+    ],
+    options,
+  );
   process.stderr.write(stderr);
-  const artifacts = stdout.trim().split("\n").map((line) => JSON.parse(line));
+  const artifacts = stdout
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
   const wasmFiles = artifacts
-    .filter((artifact) => artifact.reason === "compiler-artifact" && artifact.package_id === pkg.id)
+    .filter(
+      (artifact) =>
+        artifact.reason === "compiler-artifact" &&
+        artifact.package_id === pkg.id,
+    )
     .flatMap((artifact) => artifact.filenames)
     .filter((file) => file.endsWith(".wasm"));
   if (wasmFiles.length !== 1) {
-    throw new Error(`Expected one truapi Wasm artifact, found ${wasmFiles.length}`);
+    throw new Error(
+      `Expected one truapi Wasm artifact, found ${wasmFiles.length}`,
+    );
   }
 
   const profile = pkg.metadata["wasm-pack"]?.profile?.[wasmProfile] ?? {};
   const bindgen = profile["wasm-bindgen"] ?? {};
   await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
-  await execFileAsync("wasm-bindgen", [
-    wasmFiles[0], "--out-dir", outDir, "--out-name", outName,
-    "--target", target, "--typescript",
-    ...((bindgen["debug-js-glue"] ?? (wasmProfile === "dev")) ? ["--debug"] : []),
-    ...(bindgen["demangle-name-section"] === false ? ["--no-demangle"] : []),
-    ...(bindgen["dwarf-debug-info"] ? ["--keep-debug"] : []),
-    ...(bindgen["omit-default-module-path"] ? ["--omit-default-module-path"] : []),
-    ...(bindgen["split-linked-modules"] ? ["--split-linked-modules"] : []),
-  ], options);
-  const optimize = profile["wasm-opt"] ?? (wasmProfile !== "dev");
+  await execFileAsync(
+    "wasm-bindgen",
+    [
+      wasmFiles[0],
+      "--out-dir",
+      outDir,
+      "--out-name",
+      outName,
+      "--target",
+      target,
+      "--typescript",
+      ...((bindgen["debug-js-glue"] ?? wasmProfile === "dev")
+        ? ["--debug"]
+        : []),
+      ...(bindgen["demangle-name-section"] === false ? ["--no-demangle"] : []),
+      ...(bindgen["dwarf-debug-info"] ? ["--keep-debug"] : []),
+      ...(bindgen["omit-default-module-path"]
+        ? ["--omit-default-module-path"]
+        : []),
+      ...(bindgen["split-linked-modules"] ? ["--split-linked-modules"] : []),
+    ],
+    options,
+  );
+  const optimize = profile["wasm-opt"] ?? wasmProfile !== "dev";
   if (optimize !== false) {
     const wasmPath = resolve(outDir, `${outName}_bg.wasm`);
     const optimizedPath = resolve(outDir, `${outName}_bg.wasm-opt.wasm`);
-    await execFileAsync("wasm-opt", [
-      wasmPath, "-o", optimizedPath,
-      ...(Array.isArray(optimize) ? optimize : ["-O"]),
-    ], options);
+    await execFileAsync(
+      "wasm-opt",
+      [
+        wasmPath,
+        "-o",
+        optimizedPath,
+        ...(Array.isArray(optimize) ? optimize : ["-O"]),
+      ],
+      options,
+    );
     await rename(optimizedPath, wasmPath);
   }
 
@@ -263,31 +326,53 @@ async function buildCore(outName, target, outDir, features, env) {
     await cp(resolve(crateDir, pkg.readme), resolve(outDir, "README.md"));
   }
   if (pkg.license_file) {
-    await cp(resolve(crateDir, pkg.license_file), resolve(outDir, basename(pkg.license_file)));
+    await cp(
+      resolve(crateDir, pkg.license_file),
+      resolve(outDir, basename(pkg.license_file)),
+    );
   }
   const generatedFiles = await readdir(outDir);
   const dependencies = generatedFiles.includes("package.json")
     ? JSON.parse(await readFile(resolve(outDir, "package.json"), "utf8"))
     : undefined;
-  await writeFile(resolve(outDir, "package.json"), JSON.stringify({
-    name: pkg.name,
-    ...(target === "web" ? { type: "module", sideEffects: ["./snippets/*"] } : {}),
-    description: pkg.description,
-    version: pkg.version,
-    license: pkg.license ?? (pkg.license_file ? `SEE LICENSE IN ${basename(pkg.license_file)}` : undefined),
-    ...(pkg.repository ? { repository: { type: "git", url: pkg.repository } } : {}),
-    ...(pkg.homepage ? { homepage: pkg.homepage } : {}),
-    ...(pkg.authors.length ? { collaborators: pkg.authors } : {}),
-    ...(pkg.keywords.length ? { keywords: pkg.keywords } : {}),
-    files: [
-      `${outName}_bg.wasm`, `${outName}.js`, `${outName}.d.ts`,
-      ...generatedFiles.filter((file) => file.startsWith("LICENSE") && file !== "LICENSE"),
-      ...(generatedFiles.includes("snippets") ? ["snippets"] : []),
-    ],
-    main: `${outName}.js`,
-    types: `${outName}.d.ts`,
-    dependencies,
-  }, null, 2) + "\n");
+  await writeFile(
+    resolve(outDir, "package.json"),
+    JSON.stringify(
+      {
+        name: pkg.name,
+        ...(target === "web"
+          ? { type: "module", sideEffects: ["./snippets/*"] }
+          : {}),
+        description: pkg.description,
+        version: pkg.version,
+        license:
+          pkg.license ??
+          (pkg.license_file
+            ? `SEE LICENSE IN ${basename(pkg.license_file)}`
+            : undefined),
+        ...(pkg.repository
+          ? { repository: { type: "git", url: pkg.repository } }
+          : {}),
+        ...(pkg.homepage ? { homepage: pkg.homepage } : {}),
+        ...(pkg.authors.length ? { collaborators: pkg.authors } : {}),
+        ...(pkg.keywords.length ? { keywords: pkg.keywords } : {}),
+        files: [
+          `${outName}_bg.wasm`,
+          `${outName}.js`,
+          `${outName}.d.ts`,
+          ...generatedFiles.filter(
+            (file) => file.startsWith("LICENSE") && file !== "LICENSE",
+          ),
+          ...(generatedFiles.includes("snippets") ? ["snippets"] : []),
+        ],
+        main: `${outName}.js`,
+        types: `${outName}.d.ts`,
+        dependencies,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
 }
 
 async function build(crate, outName, target, subdir, features = [], env = {}) {

@@ -10,14 +10,24 @@ use super::{
 use crate::runtime::vrf::{self, Vrf};
 
 /// Keep personhood secret use synchronous with its owner's session validation.
+///
+/// A key ordinal is local to its collection and stable for this signer's
+/// lifetime. Keep the same signer for discovery, scans and submission: selecting
+/// a ring never changes which key another operation uses.
 pub trait PersonhoodSigner: Send + Sync {
-	/// The public member used to discover this collection's rings.
-	fn member(&self, collection: PersonhoodCollection)
-	-> Result<[u8; 32], StatementAllowanceError>;
-	/// The public alias for a collection-specific resource context.
+	/// Number of candidate keys for a collection, in primary-first order.
+	fn key_count(&self, collection: PersonhoodCollection) -> usize;
+	/// The public member used to discover a particular key's rings.
+	fn member(
+		&self,
+		collection: PersonhoodCollection,
+		key_index: usize,
+	) -> Result<[u8; 32], StatementAllowanceError>;
+	/// The public alias for a specific key's collection-scoped resource context.
 	fn alias(
 		&self,
 		collection: PersonhoodCollection,
+		key_index: usize,
 		context: &[u8],
 	) -> Result<[u8; 32], StatementAllowanceError>;
 	/// Prove membership in the selected ring for one resource operation.
@@ -46,29 +56,43 @@ impl<'a> FixedPersonhoodSigner<'a> {
 	fn entropy(
 		&self,
 		collection: PersonhoodCollection,
+		key_index: usize,
 	) -> Result<&[u8; 32], StatementAllowanceError> {
 		self.candidates
 			.iter()
-			.find(|candidate| candidate.collection == collection)
+			.filter(|candidate| candidate.collection == collection)
+			.nth(key_index)
 			.map(|candidate| &candidate.entropy)
 			.ok_or_else(|| SlotError::NoCollectionMembership.into())
 	}
 }
 
 impl PersonhoodSigner for FixedPersonhoodSigner<'_> {
+	fn key_count(&self, collection: PersonhoodCollection) -> usize {
+		self.candidates
+			.iter()
+			.filter(|candidate| candidate.collection == collection)
+			.count()
+	}
+
 	fn member(
 		&self,
 		collection: PersonhoodCollection,
+		key_index: usize,
 	) -> Result<[u8; 32], StatementAllowanceError> {
-		Ok(self.vrf.member(self.entropy(collection)?).map_err(vrf_error)?)
+		Ok(self.vrf.member(self.entropy(collection, key_index)?).map_err(vrf_error)?)
 	}
 
 	fn alias(
 		&self,
 		collection: PersonhoodCollection,
+		key_index: usize,
 		context: &[u8],
 	) -> Result<[u8; 32], StatementAllowanceError> {
-		Ok(self.vrf.alias(self.entropy(collection)?, context).map_err(vrf_error)?)
+		Ok(self
+			.vrf
+			.alias(self.entropy(collection, key_index)?, context)
+			.map_err(vrf_error)?)
 	}
 
 	fn prove(
@@ -80,7 +104,7 @@ impl PersonhoodSigner for FixedPersonhoodSigner<'_> {
 		ring_vrf_proof(
 			&self.vrf,
 			domain_for_ring_exponent(ring.exponent)?,
-			self.entropy(ring.collection)?,
+			self.entropy(ring.collection, ring.key_index)?,
 			&ring.members,
 			context,
 			message,

@@ -12,6 +12,7 @@ import java.util.Locale
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import uniffi.truapi.HostLocaleSubscribeItem
+import android.util.Log
 import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -31,10 +32,10 @@ import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
+import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toUri
 import io.paritytech.polkadotapp.feature_products_impl.di.TrUAPIChainHttpClient
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
@@ -47,7 +48,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.Permis
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.RemotePermissionRequest
-import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.PocketCardStore
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +58,7 @@ import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.ExpandedCardFaceOutcome
+import uniffi.truapi.ExtensionVersionMap
 import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
@@ -65,11 +66,16 @@ import uniffi.truapi.HostNavigateToException
 import uniffi.truapi.HostPushNotificationRequest
 import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
+import uniffi.truapi.MarkerClass
+import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
+import uniffi.truapi.Severity
 import uniffi.truapi.ThemeName
 import uniffi.truapi.UserConfirmationReview
+import uniffi.truapi.coreMarkers
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
@@ -94,13 +100,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val encryptedPreferences: EncryptedPreferences,
     private val confirmationLauncher: TrUAPIConfirmationLauncher,
     private val appLifecycleObserver: AppLifecycleObserver,
+    private val networkStateService: NetworkStateService,
     private val dotNsTldProvider: DotNsTldProvider,
-    private val pocketCardStore: PocketCardStore,
     @param:ApplicationContext private val context: Context,
     private val appLanguageProvider: AppLanguageProvider,
     private val permissionRepository: Lazy<ProductPermissionRepository>,
     private val permissionChanges: PermissionAuthorizationChanges,
     private val productGameReminder: ProductGameReminder,
+    private val extensionVersions: TrUAPIExtensionVersions,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -124,11 +131,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // would stall unrelated TrUAPI traffic.
         resolver = { genesisHash -> cachedChains.get().endpoints[genesisHash.hexKey()].orEmpty() },
         client = chainHttpClient,
-        onLog = { Timber.tag("truapi.chain").d("%s", it) },
+        onLog = { Timber.tag("truapi.chain").i("%s", it) },
     )
 
     private var execution: TrUAPIProductExecution? = null
-    private var pocketBridge: ProductPocketHostBridge? = null
     private val cachedLanguageTag = AtomicReference(Locale.getDefault().toLanguageTag())
     private var localeJob: Job? = null
     private var localeReceiver: BroadcastReceiver? = null
@@ -157,7 +163,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         // Core permission writes are reported to the process bridge, not execution bridges.
         override fun permissionAuthorizationsChanged(productId: String) = Unit
         override val storage: HostStorage =
-            EncryptedHostStorage(encryptedPreferences, callingProductId.value)
+            EncryptedHostStorage(encryptedPreferences, callingProductId)
 
         override val coreStorage: HostCoreStorage = EncryptedHostCoreStorage(encryptedPreferences)
 
@@ -165,7 +171,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             this@ProductTrUAPIHostBridge.currentLocale()
 
         override fun onCoreLog(marker: String, detail: String) {
-            Timber.tag("truapi.core").d("%s: %s", marker, detail)
+            logCoreLine(marker, detail)
         }
 
         /**
@@ -218,14 +224,14 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
          * ([TrUAPIHostRuntimeProvider.sessionState]); an execution only logs it.
          */
         override fun authStateChanged(state: AuthState) {
-            Timber.tag("truapi.auth").d("%s: %s", callingProductId.value, state.marker())
+            Timber.tag("truapi.auth").i("%s: %s", callingProductId.value, state.marker())
         }
 
         override suspend fun confirmUserAction(review: UserConfirmationReview): Boolean =
-            confirmationLauncher.decide(review, requesterFallback = callingProductId.value)
+            confirmationLauncher.decide(review, requesterFallback = callingProductId)
 
         override suspend fun confirmPermission(review: UserConfirmationReview): TrUAPIPermissionDecision =
-            confirmationLauncher.decidePermission(review, requesterFallback = callingProductId.value)
+            confirmationLauncher.decidePermission(review, requesterFallback = callingProductId)
 
         override suspend fun devicePermission(
             product: ProductExecutionConfig,
@@ -249,6 +255,8 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         ): TrUAPIPermissionDecision =
             when (request) {
                 RemotePermission.BalanceAccess -> hostApiInteractor.requestBalanceAccessDecision(callingProductId)
+                is RemotePermission.NftPurseRead ->
+                    hostApiInteractor.requestNftPurseReadDecision(callingProductId, request.owner.productId)
                 else -> hostApiInteractor.requestRemotePermissionDecision(callingProductId, request.toRemoteAccessRequest())
             }
                 .getOrElse { throw it }
@@ -269,6 +277,9 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
 
         override fun supportedChains(): HostChainSet = cachedChains.get().advertised
 
+        override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
+            extensionVersions.resolve().getOrElse { throw it }
+
         override fun chainConnect(genesisHash: ByteArray): UInt? = chainProvider.connect(genesisHash)
 
         override fun chainSend(connectionId: UInt, request: String) =
@@ -285,7 +296,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             productGameReminder.schedule(callingProductId, startsAt.toLong())
                 .getOrElse { throw HostRejection.Rejected(it.message.orEmpty()) }
 
-        override suspend fun cancelReminder() = productGameReminder.cancel(callingProductId)
+        override suspend fun cancelReminder() = productGameReminder.cancelByProduct(callingProductId)
     }
 
     /**
@@ -302,7 +313,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         productId: ProductId,
         chains: TrUAPIChains,
         navigationPolicy: NavigationPolicy,
-        kind: ProductExecutionKind,
+        kind: ExecutableKind,
         chat: ChatHostBridge? = null,
         card: ExpandedCardFace? = null,
         onPermissionRevoked: suspend () -> Unit,
@@ -318,19 +329,15 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             permissionRepository.get().getAllByProduct(productId)
             cachedChains.set(chains)
             cachedLanguageTag.set(appLanguageProvider.languageTag.first())
-            val pocket = ProductPocketHostBridge(productId, pocketCardStore, scope)
             val opened = runtime.openProductExecution(
                 bridge = buildBridge(productId, navigationPolicy, card),
-                configuration = ProductExecutionConfig(productId.value, kind),
+                configuration = ProductExecutionConfig(productId, kind),
                 chat = chat,
-                pocket = pocket,
                 game = gameBridge(productId),
             )
             execution = opened
-            pocketBridge = pocket
             // Anything failing past this point leaves a live execution behind, and
             // `execution != null` would then block every re-attach; tear it down.
-            pocket.start(opened::notifyPocketCardsChanged)
             chainProvider.attach(
                 onResponse = opened::notifyChainResponse,
                 onClosed = opened::notifyChainClosed,
@@ -347,6 +354,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
                     }
                 }
             }
+            scope.closeChainSocketsOnNetworkSwitch(networkStateService, chainProvider)
             onReadyToInject(LocalhostBridgeBootstrap.script(endpoint.port, endpoint.token))
             opened
         }.onFailure { stop() }
@@ -412,10 +420,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         localeJob = null
         localeReceiver?.let(context::unregisterReceiver)
         localeReceiver = null
-        // Before the execution closes: a card change arriving afterwards would republish through a
-        // handle that no longer exists.
-        pocketBridge?.stop()
-        pocketBridge = null
         chainProvider.detach()
         chainProvider.closeAll()
         opened.stopWsBridge()
@@ -431,11 +435,11 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
  * answers yes/no and never produces a signature. A review the app cannot
  * describe fails closed, but that is a mapping bug rather than the normal
  * path. [requesterFallback] names the requester for the one review that does
- * not carry a product id itself.
+ * not carry a product id itself; null denotes the host.
  */
 internal suspend fun TrUAPIConfirmationLauncher.decide(
     review: UserConfirmationReview,
-    requesterFallback: String,
+    requesterFallback: ProductId? = null,
 ): Boolean {
     val confirmation = runCatching { review.toConfirmation(requesterFallback) }
         .getOrElse {
@@ -449,7 +453,7 @@ internal suspend fun TrUAPIConfirmationLauncher.decide(
 /** Only an explicit user answer becomes authority; mapping and prompt failures propagate. */
 internal suspend fun TrUAPIConfirmationLauncher.decidePermission(
     review: UserConfirmationReview,
-    requesterFallback: String,
+    requesterFallback: ProductId? = null,
 ): TrUAPIPermissionDecision {
     return if (awaitDecision(review.toConfirmation(requesterFallback))) {
         TrUAPIPermissionDecision.ALLOW_ALWAYS
@@ -483,7 +487,8 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
 
 /**
  * The request this host's remote-access prompt shows for `this`. Balance access
- * has its own prompt (`ProductPermission.BalanceAccess`) and never reaches here.
+ * and NFT purse reads have their own prompts (`ProductPermission.BalanceAccess`,
+ * `ProductPermission.NftPurseRead`) and never reach here.
  */
 private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = when (this) {
     is RemotePermission.Remote -> RemotePermissionRequest.Remote(domains)
@@ -493,12 +498,46 @@ private fun RemotePermission.toRemoteAccessRequest(): RemotePermissionRequest = 
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
     is RemotePermission.JamPeers -> RemotePermissionRequest.JamPeers(genesis.toHexString(withPrefix = true))
     RemotePermission.BalanceAccess -> error("balance access has its own prompt")
+    is RemotePermission.NftPurseRead -> error("NFT purse reads have their own prompt")
 }
+
+/** The owning product, or `null` for purses of the user's own account. */
+private val NftPurseOwner.productId: ProductId?
+    get() = when (this) {
+        is NftPurseOwner.Product -> v1
+        NftPurseOwner.Root -> null
+    }
 
 private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {
     PermissionDecision.AllowOnce -> TrUAPIPermissionDecision.ALLOW_ONCE
     PermissionDecision.AllowAlways -> TrUAPIPermissionDecision.ALLOW_ALWAYS
     PermissionDecision.Deny -> TrUAPIPermissionDecision.DENY
+}
+
+// Logs one core line at the severity its marker carries, which is what decides whether the line
+// leaves the device and how loud it is when it lands.
+internal fun logCoreLine(marker: String, detail: String) {
+    val priority = CORE_MARKER_PRIORITIES[marker] ?: Log.DEBUG
+    Timber.tag("truapi.core").log(priority, "%s: %s", marker, detail)
+}
+
+// The priority each core marker is logged at, read once from the core's own table. A marker the
+// table keeps on the device, or does not list at all, has no priority here and is logged below the
+// level `SentryLogTree` forwards. Read lazily rather than in the file's initializer, so a core that
+// cannot answer costs the log line instead of every top-level helper in this file.
+private val CORE_MARKER_PRIORITIES: Map<String, Int> by lazy {
+    coreMarkers().mapNotNull { (marker, markerClass) ->
+        when (markerClass) {
+            is MarkerClass.Export ->
+                marker to when (markerClass.severity) {
+                    Severity.INFO -> Log.INFO
+                    Severity.WARN -> Log.WARN
+                    Severity.ERROR -> Log.ERROR
+                }
+
+            MarkerClass.Local -> null
+        }
+    }.toMap()
 }
 
 internal fun AuthState.marker(): String = when (this) {

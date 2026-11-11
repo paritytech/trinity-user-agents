@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
@@ -8,6 +9,10 @@ import UIKit
 import UIKitExt
 
 @testable import polkadot_app
+
+private let productId = try! ProductId("test-product.dot")
+private let productA = try! ProductId("product-a.dot")
+private let productB = try! ProductId("product-b.dot")
 
 @Suite("ProductPermissionRepository Tests")
 struct ProductPermissionRepositoryTests {
@@ -21,7 +26,6 @@ struct ProductPermissionRepositoryTests {
     @Test("grant persists and getPermissionState returns allowedAlways")
     func grantAndGetState() async throws {
         let sut = makeSUT()
-        let productId = "test-product"
         let permission = ProductPermission.deviceCapability(.camera)
 
         let initial = try await sut.getPermissionState(
@@ -44,10 +48,10 @@ struct ProductPermissionRepositoryTests {
         let sut = makeSUT()
         let permission = ProductPermission.deviceCapability(.camera)
 
-        try await sut.grant(productId: "product-a", permission: permission)
+        try await sut.grant(productId: productA, permission: permission)
 
         let state = try await sut.getPermissionState(
-            productId: "product-b",
+            productId: productB,
             permission: permission
         )
         #expect(state == .notDetermined)
@@ -56,7 +60,6 @@ struct ProductPermissionRepositoryTests {
     @Test("getPermissionState returns notDetermined for different permission")
     func getStateIsolatedByPermission() async throws {
         let sut = makeSUT()
-        let productId = "test-product"
 
         try await sut.grant(productId: productId, permission: .deviceCapability(.camera))
 
@@ -77,25 +80,25 @@ struct ProductPermissionRepositoryTests {
             genesis: "0x10c123f0" + String(repeating: "cd", count: 28)
         )
 
-        try await sut.grant(productId: "product-a", permission: first)
+        try await sut.grant(productId: productA, permission: first)
         #expect(try await sut.getPermissionState(
-            productId: "product-a", permission: second
+            productId: productA, permission: second
         ) == .notDetermined)
         #expect(try await sut.getPermissionState(
-            productId: "product-b", permission: first
+            productId: productB, permission: first
         ) == .notDetermined)
 
-        try await sut.grant(productId: "product-a", permission: second)
-        let restored = try await sut.getAllByProduct(productId: "product-a")
+        try await sut.grant(productId: productA, permission: second)
+        let restored = try await sut.getAllByProduct(productId: productA)
         #expect(restored.contains { $0.permission == first })
         #expect(restored.contains { $0.permission == second })
 
-        try await sut.revoke(productId: "product-a", permission: first)
+        try await sut.revoke(productId: productA, permission: first)
         #expect(try await sut.getPermissionState(
-            productId: "product-a", permission: first
+            productId: productA, permission: first
         ) == .notDetermined)
         #expect(try await sut.getPermissionState(
-            productId: "product-a", permission: second
+            productId: productA, permission: second
         ) == .allowedAlways)
     }
 
@@ -104,7 +107,6 @@ struct ProductPermissionRepositoryTests {
     @Test("deny persists and getPermissionState returns denied")
     func denyAndGetState() async throws {
         let sut = makeSUT()
-        let productId = "test-product"
         let permission = ProductPermission.networkAccess(domain: "evil.com")
 
         try await sut.deny(productId: productId, permission: permission)
@@ -119,7 +121,6 @@ struct ProductPermissionRepositoryTests {
     @Test("deny overrides previously granted permission")
     func denyOverridesGrant() async throws {
         let sut = makeSUT()
-        let productId = "test-product"
         let permission = ProductPermission.deviceCapability(.camera)
 
         try await sut.grant(productId: productId, permission: permission)
@@ -142,7 +143,6 @@ struct ProductPermissionRepositoryTests {
     @Test("deny clears one-time grant")
     func denyClearsOneTime() async throws {
         let sut = makeSUT()
-        let productId = "test-product"
         let permission = ProductPermission.deviceCapability(.camera)
 
         sut.grantOneTime(productId: productId, permission: permission)
@@ -157,7 +157,6 @@ struct ProductPermissionRepositoryTests {
     @Test("getPermissionState returns allowedOnce for one-time grant")
     func getStateOneTimeGrant() async throws {
         let sut = makeSUT()
-        let productId = "test-product"
         let permission = ProductPermission.deviceCapability(.camera)
 
         sut.grantOneTime(productId: productId, permission: permission)
@@ -174,7 +173,6 @@ struct ProductPermissionRepositoryTests {
     @Test("revoke removes a granted permission")
     func revokeSingle() async throws {
         let sut = makeSUT()
-        let productId = "test-product"
         let permission = ProductPermission.networkAccess(domain: "example.com")
 
         try await sut.grant(productId: productId, permission: permission)
@@ -197,7 +195,6 @@ struct ProductPermissionRepositoryTests {
     @Test("revoke clears one-time grant")
     func revokeClearsOneTime() async throws {
         let sut = makeSUT()
-        let productId = "test-product"
         let permission = ProductPermission.networkAccess(domain: "example.com")
 
         sut.grantOneTime(productId: productId, permission: permission)
@@ -215,22 +212,22 @@ struct ProductPermissionRepositoryTests {
         let camera = ProductPermission.deviceCapability(.camera)
         let network = ProductPermission.networkAccess(domain: "api.example.com")
 
-        try await sut.grant(productId: "product-a", permission: camera)
-        try await sut.grant(productId: "product-a", permission: network)
-        try await sut.grant(productId: "product-b", permission: camera)
+        try await sut.grant(productId: productA, permission: camera)
+        try await sut.grant(productId: productA, permission: network)
+        try await sut.grant(productId: productB, permission: camera)
 
-        try await sut.revokeAllByProduct(productId: "product-a")
+        try await sut.revokeAllByProduct(productId: productA)
 
         let stateA1 = try await sut.getPermissionState(
-            productId: "product-a",
+            productId: productA,
             permission: camera
         )
         let stateA2 = try await sut.getPermissionState(
-            productId: "product-a",
+            productId: productA,
             permission: network
         )
         let stateB = try await sut.getPermissionState(
-            productId: "product-b",
+            productId: productB,
             permission: camera
         )
 
@@ -247,20 +244,20 @@ struct ProductPermissionRepositoryTests {
         let camera = ProductPermission.deviceCapability(.camera)
         let mic = ProductPermission.deviceCapability(.microphone)
 
-        try await sut.grant(productId: "product-a", permission: camera)
-        try await sut.grant(productId: "product-a", permission: mic)
-        try await sut.grant(productId: "product-b", permission: camera)
+        try await sut.grant(productId: productA, permission: camera)
+        try await sut.grant(productId: productA, permission: mic)
+        try await sut.grant(productId: productB, permission: camera)
 
-        let grants = try await sut.getAllByProduct(productId: "product-a")
+        let grants = try await sut.getAllByProduct(productId: productA)
         #expect(grants.count == 2)
-        #expect(grants.allSatisfy { $0.productId == "product-a" })
+        #expect(grants.allSatisfy { $0.productId.rawValue == "product-a.dot" })
     }
 
     @Test("getAllByProduct returns empty for unknown product")
     func getAllByProductEmpty() async throws {
         let sut = makeSUT()
 
-        let grants = try await sut.getAllByProduct(productId: "nonexistent")
+        let grants = try await sut.getAllByProduct(productId: try! ProductId("nonexistent.dot"))
         #expect(grants.isEmpty)
     }
 
@@ -269,7 +266,6 @@ struct ProductPermissionRepositoryTests {
     @Test("isAnyAlwaysGranted returns true when one of the keys matches")
     func isAnyAlwaysGrantedMatch() async throws {
         let sut = makeSUT()
-        let productId = "test-product"
 
         try await sut.grant(
             productId: productId,
@@ -288,7 +284,6 @@ struct ProductPermissionRepositoryTests {
     @Test("isAnyAlwaysGranted returns false when no keys match")
     func isAnyAlwaysGrantedNoMatch() async throws {
         let sut = makeSUT()
-        let productId = "test-product"
 
         try await sut.grant(
             productId: productId,
@@ -309,7 +304,7 @@ struct ProductPermissionRepositoryTests {
         let sut = makeSUT()
 
         let result = try await sut.isAnyAlwaysGranted(
-            productId: "test-product",
+            productId: productId,
             typeName: ProductPermission.networkAccessTypeName,
             keys: []
         )
@@ -320,7 +315,6 @@ struct ProductPermissionRepositoryTests {
     @Test("isAnyAlwaysGranted ignores denied permissions")
     func isAnyAlwaysGrantedIgnoresDenied() async throws {
         let sut = makeSUT()
-        let productId = "test-product"
 
         try await sut.deny(
             productId: productId,
@@ -341,7 +335,6 @@ struct ProductPermissionRepositoryTests {
     @Test("grantOneTime and consumeOneTimeGrant work as expected")
     func oneTimeGrantConsumed() {
         let sut = makeSUT()
-        let productId = "test-product"
         let permission = ProductPermission.deviceCapability(.camera)
 
         #expect(!sut.consumeOneTimeGrant(productId: productId, permission: permission))
@@ -354,7 +347,6 @@ struct ProductPermissionRepositoryTests {
     @Test("one-time grant does not affect persistent storage")
     func oneTimeGrantNotPersisted() async throws {
         let sut = makeSUT()
-        let productId = "test-product"
         let permission = ProductPermission.deviceCapability(.microphone)
 
         sut.grantOneTime(productId: productId, permission: permission)
@@ -368,34 +360,34 @@ struct ProductPermissionRepositoryTests {
         let sut = makeSUT()
         let permission = ProductPermission.deviceCapability(.camera)
 
-        sut.grantOneTime(productId: "product-a", permission: permission)
+        sut.grantOneTime(productId: productA, permission: permission)
 
-        #expect(!sut.consumeOneTimeGrant(productId: "product-b", permission: permission))
-        #expect(sut.consumeOneTimeGrant(productId: "product-a", permission: permission))
+        #expect(!sut.consumeOneTimeGrant(productId: productB, permission: permission))
+        #expect(sut.consumeOneTimeGrant(productId: productA, permission: permission))
     }
 }
 
 /// Host-only fixture: models atomic import/CAS and explicit reset tombstones.
 private final class PermissionAuthorityFixture: ProductPermissionAuthority, @unchecked Sendable {
     private let lock = NSLock()
-    private var records: [String: [PermissionAuthorizationEntry]] = [:]
-    private var revisions: [String: UInt64] = [:]
+    private var records: [ProductId: [PermissionAuthorizationEntry]] = [:]
+    private var revisions: [ProductId: UInt64] = [:]
     var failWrites = false
 
     func permissionAuthorizationProducts() async throws -> [String] {
-        lock.withLock { Array(records.keys) }
+        lock.withLock { records.keys.map(\.rawValue) }
     }
 
-    func permissionAuthorizations(productId: String) async throws -> [PermissionAuthorizationEntry] {
+    func permissionAuthorizations(productId: ProductId) async throws -> [PermissionAuthorizationEntry] {
         lock.withLock { records[productId] ?? [] }
     }
 
-    func permissionAuthorizationRevision(productId: String) throws -> UInt64 {
+    func permissionAuthorizationRevision(productId: ProductId) throws -> UInt64 {
         lock.withLock { revisions[productId, default: 0] }
     }
 
     func importPermissionAuthorizations(
-        productId: String, entries: [PermissionAuthorizationEntry]
+        productId: ProductId, entries: [PermissionAuthorizationEntry]
     ) async throws -> [PermissionAuthorizationEntry] {
         lock.withLock {
             for entry in entries where !(records[productId] ?? []).contains(where: { $0.request == entry.request }) {
@@ -406,7 +398,7 @@ private final class PermissionAuthorityFixture: ProductPermissionAuthority, @unc
     }
 
     func setPermissionAuthorizationStatus(
-        productId: String, request: PermissionAuthorizationRequest, status: PermissionAuthorizationStatus
+        productId: ProductId, request: PermissionAuthorizationRequest, status: PermissionAuthorizationStatus
     ) async throws {
         try lock.withLock {
             revisions[productId, default: 0] += 1
@@ -415,7 +407,7 @@ private final class PermissionAuthorityFixture: ProductPermissionAuthority, @unc
     }
 
     func setPermissionAuthorizationStatusIfCurrent(
-        productId: String, request: PermissionAuthorizationRequest,
+        productId: ProductId, request: PermissionAuthorizationRequest,
         status: PermissionAuthorizationStatus, revision: UInt64
     ) async throws -> Bool {
         try lock.withLock {
@@ -427,7 +419,7 @@ private final class PermissionAuthorityFixture: ProductPermissionAuthority, @unc
     }
 
     private func persist(
-        productId: String, request: PermissionAuthorizationRequest, status: PermissionAuthorizationStatus
+        productId: ProductId, request: PermissionAuthorizationRequest, status: PermissionAuthorizationStatus
     ) throws {
         if failWrites { throw NSError(domain: "permission write failed", code: 1) }
         records[productId, default: []].removeAll { $0.request == request }
@@ -439,11 +431,11 @@ private struct PermissionPromptFixture: ProductPermissionRequesting {
     let decision: Products.PermissionDecision
     let whilePrompting: @Sendable () async throws -> Void
 
-    func prompt(productId: String, permission: ProductPermission) async -> Products.PermissionDecision {
+    func prompt(productId: ProductId, permission: ProductPermission) async -> Products.PermissionDecision {
         await promptBatched(productId: productId, permissions: [permission])
     }
 
-    func promptBatched(productId _: String, permissions _: [ProductPermission]) async -> Products.PermissionDecision {
+    func promptBatched(productId _: ProductId, permissions _: [ProductPermission]) async -> Products.PermissionDecision {
         do { try await whilePrompting() } catch { Issue.record(error) }
         return decision
     }
@@ -460,28 +452,28 @@ extension ProductPermissionRepositoryTests {
             storage.createRepository(mapper: AnyCoreDataMapper(ProductPermissionGrantMapper()))
         )
         let rows = [camera, microphone, .balanceAccess].map {
-            ProductPermissionGrant(productId: "demo.paseo", permission: $0, granted: true, grantedAt: nil)
+            ProductPermissionGrant(productId: try! ProductId("demo.paseo"), permission: $0, granted: true, grantedAt: nil)
         }
         try await legacy.saveOperation({ rows }, { [] }).asyncExecute()
         try await authority.setPermissionAuthorizationStatus(
-            productId: "demo.paseo", request: .device(.camera), status: .denied
+            productId: try! ProductId("demo.paseo"), request: .device(.camera), status: .denied
         )
         try await authority.setPermissionAuthorizationStatus(
-            productId: "demo.paseo", request: .identityDisclosure, status: .authorized
+            productId: try! ProductId("demo.paseo"), request: .identityDisclosure, status: .authorized
         )
         let sut = ProductPermissionRepository(storageFacade: storage, authority: { authority })
-        let grants = try await sut.getAllByProduct(productId: "demo.paseo")
+        let grants = try await sut.getAllByProduct(productId: try! ProductId("demo.paseo"))
         #expect(grants.count == 4)
         #expect(grants.first { $0.permission == camera }?.granted == false)
         #expect(grants.first { $0.permission == microphone }?.granted == true)
         #expect(grants.first { $0.permission == .balanceAccess }?.granted == true)
-        #expect(try await authority.permissionAuthorizations(productId: "demo.paseo").contains {
+        #expect(try await authority.permissionAuthorizations(productId: try! ProductId("demo.paseo")).contains {
             $0.request == .remote(.init(permission: .balanceAccess)) && $0.status == .authorized
         })
         #expect(grants.first { $0.permission == .userIdentityAccess }?.granted == true)
-        try await sut.revoke(productId: "demo.paseo", permission: microphone)
-        #expect(try await sut.getPermissionState(productId: "demo.paseo", permission: microphone) == .notDetermined)
-        #expect(try await sut.getPermissionState(productId: "demo.paseo", permission: microphone) == .notDetermined)
+        try await sut.revoke(productId: try! ProductId("demo.paseo"), permission: microphone)
+        #expect(try await sut.getPermissionState(productId: try! ProductId("demo.paseo"), permission: microphone) == .notDetermined)
+        #expect(try await sut.getPermissionState(productId: try! ProductId("demo.paseo"), permission: microphone) == .notDetermined)
         #expect(try await sut.settingsGrants(legacy: []).contains { $0.permission == .userIdentityAccess })
     }
 
@@ -489,15 +481,15 @@ extension ProductPermissionRepositoryTests {
     func nativeBundleIsNotFlattened() async throws {
         let authority = PermissionAuthorityFixture()
         let request = PermissionAuthorizationRequest.remote(.init(permission: .remote(domains: ["a.test", "b.test"])))
-        try await authority.setPermissionAuthorizationStatus(productId: "demo.paseo", request: request, status: .denied)
+        try await authority.setPermissionAuthorizationStatus(productId: try! ProductId("demo.paseo"), request: request, status: .denied)
         let sut = ProductPermissionRepository(storageFacade: UserDataStorageTestFacade(), authority: { authority })
-        let grants = try await sut.getAllByProduct(productId: "demo.paseo")
+        let grants = try await sut.getAllByProduct(productId: try! ProductId("demo.paseo"))
         let grant = try #require(grants.first)
         #expect(grants.count == 1)
         #expect(grant.permission == .networkAccessBundle(domains: ["a.test", "b.test"]))
-        #expect(try await sut.getPermissionState(productId: "demo.paseo", permission: .networkAccess(domain: "a.test")) == .notDetermined)
-        try await sut.revoke(productId: "demo.paseo", permission: grant.permission)
-        let entries = try await authority.permissionAuthorizations(productId: "demo.paseo")
+        #expect(try await sut.getPermissionState(productId: try! ProductId("demo.paseo"), permission: .networkAccess(domain: "a.test")) == .notDetermined)
+        try await sut.revoke(productId: try! ProductId("demo.paseo"), permission: grant.permission)
+        let entries = try await authority.permissionAuthorizations(productId: try! ProductId("demo.paseo"))
         #expect(entries.count == 1)
         #expect(entries.first?.request == request)
         #expect(entries.first?.status == .notDetermined)
@@ -511,11 +503,11 @@ extension ProductPermissionRepositoryTests {
         let settings = ProductPermissionRepository(storageFacade: storage, authority: { authority })
         let permission = ProductPermission.networkAccess(domain: "example.com")
         let requester = PermissionPromptFixture(decision: decision) {
-            try await settings.revoke(productId: "demo.paseo", permission: permission)
+            try await settings.revoke(productId: try! ProductId("demo.paseo"), permission: permission)
         }
-        #expect(try await reader.promptPermission(productId: "demo.paseo", permission: permission, requester: requester) == false)
-        #expect(try await reader.getPermissionState(productId: "demo.paseo", permission: permission) == .notDetermined)
-        #expect(!reader.consumeOneTimeGrant(productId: "demo.paseo", permission: permission))
+        #expect(try await reader.promptPermission(productId: try! ProductId("demo.paseo"), permission: permission, requester: requester) == false)
+        #expect(try await reader.getPermissionState(productId: try! ProductId("demo.paseo"), permission: permission) == .notDetermined)
+        #expect(!reader.consumeOneTimeGrant(productId: try! ProductId("demo.paseo"), permission: permission))
     }
 
     @Test("Revocation invalidates sibling one-time grants without touching another product")
@@ -524,18 +516,18 @@ extension ProductPermissionRepositoryTests {
         let reader = ProductPermissionRepository(storageFacade: UserDataStorageTestFacade(), authority: { authority })
         let settings = ProductPermissionRepository(storageFacade: UserDataStorageTestFacade(), authority: { authority })
         let permission = ProductPermission.deviceCapability(.camera)
-        reader.grantOneTime(productId: "demo.paseo", permission: permission)
-        reader.grantOneTime(productId: "other.paseo", permission: permission)
-        try await settings.revoke(productId: "demo.paseo", permission: permission)
-        #expect(!reader.consumeOneTimeGrant(productId: "demo.paseo", permission: permission))
-        #expect(reader.consumeOneTimeGrant(productId: "other.paseo", permission: permission))
+        reader.grantOneTime(productId: try! ProductId("demo.paseo"), permission: permission)
+        reader.grantOneTime(productId: try! ProductId("other.paseo"), permission: permission)
+        try await settings.revoke(productId: try! ProductId("demo.paseo"), permission: permission)
+        #expect(!reader.consumeOneTimeGrant(productId: try! ProductId("demo.paseo"), permission: permission))
+        #expect(reader.consumeOneTimeGrant(productId: try! ProductId("other.paseo"), permission: permission))
     }
 
-    @Test("Domain and account mapping retain existing core scopes")
+    @Test("Domain mapping normalizes hosts and account mapping retains the full product identity")
     func canonicalPermissionMapping() throws {
         #expect(try ProductPermission.networkAccess(domain: " *.Example.COM. ").canonicalPermission() == .networkAccess(domain: "*.example.com"))
         #expect(try ProductPermission.networkAccess(domain: "Bücher.example").canonicalPermission() == .networkAccess(domain: "xn--bcher-kva.example"))
-        #expect(try ProductPermission.accountAccess(targetProductId: "app.peopl.paseo").authorizationRequest() == .accountAccess(targetProductId: "peopl"))
+        #expect(try ProductPermission.accountAccess(targetProductId: ProductId("app.peopl.paseo")).authorizationRequest() == .accountAccess(targetProductId: ProductId("app.peopl.paseo")))
         #expect(throws: ProductPermissionMappingError.self) {
             try ProductPermission.networkAccess(domain: "https://example.com/path").authorizationRequest()
         }
@@ -601,7 +593,7 @@ extension ProductPermissionRepositoryTests {
         )
         presenter.view = view
         presenter.didReceive(grants: [
-            ProductPermissionGrant(productId: "demo.paseo", permission: .deviceCapability(.camera), granted: true, grantedAt: nil)
+            ProductPermissionGrant(productId: try! ProductId("demo.paseo"), permission: .deviceCapability(.camera), granted: true, grantedAt: nil)
         ])
         let item = try #require(view.items.first)
         presenter.toggle(item, isOn: false)
@@ -624,12 +616,12 @@ extension ProductPermissionRepositoryTests {
     func failedRevokeDoesNotClaimSuccess() async throws {
         let authority = PermissionAuthorityFixture()
         let sut = ProductPermissionRepository(storageFacade: UserDataStorageTestFacade(), authority: { authority })
-        try await sut.grant(productId: "demo.paseo", permission: .deviceCapability(.camera))
+        try await sut.grant(productId: try! ProductId("demo.paseo"), permission: .deviceCapability(.camera))
         authority.failWrites = true
         await #expect(throws: NSError.self) {
-            try await sut.revoke(productId: "demo.paseo", permission: .deviceCapability(.camera))
+            try await sut.revoke(productId: try! ProductId("demo.paseo"), permission: .deviceCapability(.camera))
         }
-        #expect(try await sut.getPermissionState(productId: "demo.paseo", permission: .deviceCapability(.camera)) == .allowedAlways)
+        #expect(try await sut.getPermissionState(productId: try! ProductId("demo.paseo"), permission: .deviceCapability(.camera)) == .allowedAlways)
     }
 }
 
@@ -640,13 +632,13 @@ extension ProductPermissionRepositoryTests {
         let repository = ProductPermissionRepository(storageFacade: storage, authority: { authority })
         let factory = ProductPermissionDataProviderFactory(storageFacade: storage, permissionRepository: repository)
         try await authority.setPermissionAuthorizationStatus(
-            productId: "native.paseo", request: .device(.camera), status: .authorized
+            productId: try! ProductId("native.paseo"), request: .device(.camera), status: .authorized
         )
         var iterator = factory.subscribeAllGrants(grantedOnly: true).makeAsyncIterator()
         let first = try await iterator.next()
         let initial = try #require(first)
-        #expect(initial.contains { $0.productId == "native.paseo" && $0.permission == .deviceCapability(.camera) })
-        try await repository.revoke(productId: "native.paseo", permission: .deviceCapability(.camera))
+        #expect(initial.contains { $0.productId.rawValue == "native.paseo" && $0.permission == .deviceCapability(.camera) })
+        try await repository.revoke(productId: try! ProductId("native.paseo"), permission: .deviceCapability(.camera))
         NotificationCenter.default.post(name: .productPermissionAuthorizationsChanged, object: "native.paseo")
         while let snapshot = try await iterator.next() {
             if snapshot.isEmpty { return }
@@ -676,10 +668,10 @@ extension ProductPermissionRepositoryTests {
         let authority = PermissionAuthorityFixture()
         let storage = UserDataStorageTestFacade()
         let repository = ProductPermissionRepository(storageFacade: storage, authority: { authority })
-        try await repository.grant(productId: "demo.paseo", permission: .deviceCapability(.camera))
+        try await repository.grant(productId: try! ProductId("demo.paseo"), permission: .deviceCapability(.camera))
         authority.failWrites = true
         let interactor = AppPermissionsInteractor(
-            productId: "demo.paseo",
+            productId: try! ProductId("demo.paseo"),
             providerFactory: ProductPermissionDataProviderFactory(storageFacade: storage, permissionRepository: repository),
             repository: repository,
             notificationScheduler: MockNotificationScheduler()
@@ -733,7 +725,7 @@ extension ProductPermissionRepositoryTests {
             #expect(try restored.authorizationRequest() == request)
             #expect(!permission.isRemoteAccess)
             #expect(identifiers.insert(ProductPermissionGrant.makeIdentifier(
-                productId: "chat.paseo", permission: permission
+                productId: try! ProductId("chat.paseo"), permission: permission
             )).inserted)
         }
         for key in ["", "index:-1", "index:4294967296", "raw:AA==", "raw:invalid", "other"] {
@@ -751,33 +743,33 @@ extension ProductPermissionRepositoryTests {
         let repository = ProductPermissionRepository(storageFacade: storage, authority: { authority })
         for (index, request) in Self.featureRequests.enumerated() {
             try await authority.setPermissionAuthorizationStatus(
-                productId: "chat.paseo", request: request, status: index.isMultiple(of: 2) ? .authorized : .denied
+                productId: try! ProductId("chat.paseo"), request: request, status: index.isMultiple(of: 2) ? .authorized : .denied
             )
             try await authority.setPermissionAuthorizationStatus(
-                productId: "other.paseo", request: request, status: .authorized
+                productId: try! ProductId("other.paseo"), request: request, status: .authorized
             )
         }
-        let grants = try await repository.settingsGrants(legacy: []).filter { $0.productId == "chat.paseo" }
+        let grants = try await repository.settingsGrants(legacy: []).filter { $0.productId.rawValue == "chat.paseo" }
         #expect(grants.count == Self.featureRequests.count)
         for (index, request) in Self.featureRequests.enumerated() {
             let permission = try #require(ProductPermission.fromAuthorization(request).first)
             let grant = try #require(grants.first { $0.permission == permission })
             #expect(grant.granted == index.isMultiple(of: 2))
             let reader = ProductPermissionRepository(storageFacade: storage, authority: { authority })
-            #expect(try await reader.getPermissionState(productId: "chat.paseo", permission: permission)
+            #expect(try await reader.getPermissionState(productId: try! ProductId("chat.paseo"), permission: permission)
                 == (grant.granted ? .allowedAlways : .denied))
-            reader.grantOneTime(productId: "chat.paseo", permission: permission)
-            try await repository.revoke(productId: "chat.paseo", permission: permission)
-            #expect(!reader.consumeOneTimeGrant(productId: "chat.paseo", permission: permission))
-            #expect(try await reader.getPermissionState(productId: "chat.paseo", permission: permission) == .notDetermined)
-            let entries = try await authority.permissionAuthorizations(productId: "chat.paseo")
+            reader.grantOneTime(productId: try! ProductId("chat.paseo"), permission: permission)
+            try await repository.revoke(productId: try! ProductId("chat.paseo"), permission: permission)
+            #expect(!reader.consumeOneTimeGrant(productId: try! ProductId("chat.paseo"), permission: permission))
+            #expect(try await reader.getPermissionState(productId: try! ProductId("chat.paseo"), permission: permission) == .notDetermined)
+            let entries = try await authority.permissionAuthorizations(productId: try! ProductId("chat.paseo"))
             #expect(entries.first { $0.request == request }?.status == .notDetermined)
             for untouched in Self.featureRequests.dropFirst(index + 1) {
                 #expect(entries.first { $0.request == untouched }?.status != .notDetermined)
             }
-            #expect(try await reader.getPermissionState(productId: "other.paseo", permission: permission) == .allowedAlways)
+            #expect(try await reader.getPermissionState(productId: try! ProductId("other.paseo"), permission: permission) == .allowedAlways)
         }
-        #expect(try await repository.getAllByProduct(productId: "chat.paseo").isEmpty)
+        #expect(try await repository.getAllByProduct(productId: try! ProductId("chat.paseo")).isEmpty)
     }
 
     @Test("Persisted feature grants cannot overwrite a core denial or revocation")
@@ -789,23 +781,23 @@ extension ProductPermissionRepositoryTests {
         )
         let permissions = try Self.featureRequests.flatMap { try ProductPermission.fromAuthorization($0) }
         let rows = permissions.map {
-            ProductPermissionGrant(productId: "chat.paseo", permission: $0, granted: true, grantedAt: nil)
+            ProductPermissionGrant(productId: try! ProductId("chat.paseo"), permission: $0, granted: true, grantedAt: nil)
         }
         try await legacy.saveOperation({ rows }, { [] }).asyncExecute()
         for request in Self.featureRequests {
             try await authority.setPermissionAuthorizationStatus(
-                productId: "chat.paseo", request: request, status: .denied
+                productId: try! ProductId("chat.paseo"), request: request, status: .denied
             )
         }
         let repository = ProductPermissionRepository(storageFacade: storage, authority: { authority })
-        let grants = try await repository.getAllByProduct(productId: "chat.paseo")
+        let grants = try await repository.getAllByProduct(productId: try! ProductId("chat.paseo"))
         #expect(grants.count == permissions.count)
         #expect(grants.allSatisfy { !$0.granted })
-        try await repository.revokeAllByProduct(productId: "chat.paseo")
+        try await repository.revokeAllByProduct(productId: try! ProductId("chat.paseo"))
         let reader = ProductPermissionRepository(storageFacade: storage, authority: { authority })
-        #expect(try await reader.getAllByProduct(productId: "chat.paseo").isEmpty)
+        #expect(try await reader.getAllByProduct(productId: try! ProductId("chat.paseo")).isEmpty)
         for permission in permissions {
-            #expect(try await reader.getPermissionState(productId: "chat.paseo", permission: permission) == .notDetermined)
+            #expect(try await reader.getPermissionState(productId: try! ProductId("chat.paseo"), permission: permission) == .notDetermined)
         }
     }
 
@@ -814,7 +806,7 @@ extension ProductPermissionRepositoryTests {
     func featureSettingsDisplayAndRevoke() throws {
         let permissions = try Self.featureRequests.flatMap { try ProductPermission.fromAuthorization($0) }
         let grants = permissions.map {
-            ProductPermissionGrant(productId: "chat.paseo", permission: $0, granted: true, grantedAt: nil)
+            ProductPermissionGrant(productId: try! ProductId("chat.paseo"), permission: $0, granted: true, grantedAt: nil)
         }
         let view = PermissionSettingsViewFixture()
         let interactor = PermissionSettingsInteractorFixture()
@@ -851,16 +843,16 @@ extension ProductPermissionRepositoryTests {
         let repository = ProductPermissionRepository(storageFacade: UserDataStorageTestFacade(), authority: { authority })
         let permissions = try Self.featureRequests.flatMap { try ProductPermission.fromAuthorization($0) }
         for permission in permissions {
-            try await repository.grant(productId: "chat.paseo", permission: permission)
+            try await repository.grant(productId: try! ProductId("chat.paseo"), permission: permission)
         }
         authority.failWrites = true
         for permission in permissions {
             await #expect(throws: NSError.self) {
-                try await repository.revoke(productId: "chat.paseo", permission: permission)
+                try await repository.revoke(productId: try! ProductId("chat.paseo"), permission: permission)
             }
-            #expect(try await repository.getPermissionState(productId: "chat.paseo", permission: permission) == .allowedAlways)
+            #expect(try await repository.getPermissionState(productId: try! ProductId("chat.paseo"), permission: permission) == .allowedAlways)
         }
-        #expect(try await repository.getAllByProduct(productId: "chat.paseo").count == permissions.count)
+        #expect(try await repository.getAllByProduct(productId: try! ProductId("chat.paseo")).count == permissions.count)
     }
 
     @Test("Profile prompt decisions remain separate from Chat and other products",
@@ -868,26 +860,26 @@ extension ProductPermissionRepositoryTests {
     func profilePromptDecisions(decision: Products.PermissionDecision) async throws {
         let authority = PermissionAuthorityFixture()
         let repository = ProductPermissionRepository(storageFacade: UserDataStorageTestFacade(), authority: { authority })
-        try await repository.grant(productId: "profile.paseo", permission: .chatAuthority)
-        #expect(try await repository.getPermissionState(productId: "profile.paseo", permission: .profileDisclosure) == .notDetermined)
+        try await repository.grant(productId: try! ProductId("profile.paseo"), permission: .chatAuthority)
+        #expect(try await repository.getPermissionState(productId: try! ProductId("profile.paseo"), permission: .profileDisclosure) == .notDetermined)
         let requester = PermissionPromptFixture(decision: decision, whilePrompting: {})
         #expect(try await repository.promptPermission(
-            productId: "profile.paseo", permission: .profileDisclosure, requester: requester
+            productId: try! ProductId("profile.paseo"), permission: .profileDisclosure, requester: requester
         ) == (decision != .deny))
-        let entries = try await authority.permissionAuthorizations(productId: "profile.paseo")
+        let entries = try await authority.permissionAuthorizations(productId: try! ProductId("profile.paseo"))
         let status = entries.first { $0.request == .profileDisclosure }?.status ?? .notDetermined
         switch decision {
         case .allowAlways:
             #expect(status == .authorized)
         case .allowOnce:
             #expect(status == .notDetermined)
-            #expect(repository.consumeOneTimeGrant(productId: "profile.paseo", permission: .profileDisclosure))
-            #expect(!repository.consumeOneTimeGrant(productId: "profile.paseo", permission: .profileDisclosure))
+            #expect(repository.consumeOneTimeGrant(productId: try! ProductId("profile.paseo"), permission: .profileDisclosure))
+            #expect(!repository.consumeOneTimeGrant(productId: try! ProductId("profile.paseo"), permission: .profileDisclosure))
         case .deny:
             #expect(status == .denied)
         }
-        #expect(try await repository.getPermissionState(productId: "profile.paseo", permission: .chatAuthority) == .allowedAlways)
-        #expect(try await repository.getPermissionState(productId: "other.paseo", permission: .profileDisclosure) == .notDetermined)
+        #expect(try await repository.getPermissionState(productId: try! ProductId("profile.paseo"), permission: .chatAuthority) == .allowedAlways)
+        #expect(try await repository.getPermissionState(productId: try! ProductId("other.paseo"), permission: .profileDisclosure) == .notDetermined)
     }
 
     @Test("Profile revocation fences pending consent",
@@ -898,12 +890,12 @@ extension ProductPermissionRepositoryTests {
         let reader = ProductPermissionRepository(storageFacade: storage, authority: { authority })
         let settings = ProductPermissionRepository(storageFacade: storage, authority: { authority })
         let requester = PermissionPromptFixture(decision: decision) {
-            try await settings.revoke(productId: "profile.paseo", permission: .profileDisclosure)
+            try await settings.revoke(productId: try! ProductId("profile.paseo"), permission: .profileDisclosure)
         }
         #expect(try await reader.promptPermission(
-            productId: "profile.paseo", permission: .profileDisclosure, requester: requester
+            productId: try! ProductId("profile.paseo"), permission: .profileDisclosure, requester: requester
         ) == false)
-        #expect(try await reader.getPermissionState(productId: "profile.paseo", permission: .profileDisclosure) == .notDetermined)
-        #expect(!reader.consumeOneTimeGrant(productId: "profile.paseo", permission: .profileDisclosure))
+        #expect(try await reader.getPermissionState(productId: try! ProductId("profile.paseo"), permission: .profileDisclosure) == .notDetermined)
+        #expect(!reader.consumeOneTimeGrant(productId: try! ProductId("profile.paseo"), permission: .profileDisclosure))
     }
 }

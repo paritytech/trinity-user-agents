@@ -1,5 +1,4 @@
 import Foundation
-import AsyncExtensions
 import PolkadotUI
 import Products
 import Testing
@@ -44,7 +43,7 @@ struct ChatCardImagesTests {
         gateway: URL
     ) throws -> WidgetImageResolver {
         let factory = ProductBotFactory(
-            productFileProvider: NoScripts(),
+            productFileProvider: NoChatProductFiles(),
             runtimeProvider: NoRuntime(),
             workers: { nil },
             workerManager: NoWorkers(),
@@ -59,14 +58,10 @@ struct ChatCardImagesTests {
 
 private struct Unavailable: Error {}
 
-private struct NoScripts: ChatProductFileProviding {
-    func load(for _: ProductId, relativePath _: String) -> Data? { nil }
-    func manualScriptEntryPath(productId _: ProductId) -> String? { nil }
-}
-
 private final class NoRuntime: TrUAPIHostRuntimeProviding {
     func sharedRuntime() throws -> TrUAPIHostRuntime { throw Unavailable() }
     @MainActor func setPresentationView(_: ControllerBackedProtocol) {}
+    @MainActor var presentationView: ControllerBackedProtocol? { nil }
     func attach(workerManager _: any TrUAPIWorkerManaging) {}
 }
 
@@ -78,7 +73,7 @@ private struct NoWorkers: ProductWorkerManaging {
 
 private func gameProduct() -> ResolvedProduct {
     ResolvedProduct(
-        id: "game.paseo",
+        id: try! ProductId("game.paseo"),
         displayName: "Game",
         description: nil,
         icon: nil,
@@ -86,7 +81,7 @@ private func gameProduct() -> ResolvedProduct {
             app: nil,
             widget: nil,
             worker: ProductExecutable.Worker(
-                identifier: "worker.game.paseo",
+                identifier: try! ProductId("worker.game.paseo"),
                 appVersion: .zero,
                 entrypoint: "index.js",
                 modalities: [.chat]
@@ -122,11 +117,6 @@ private final class RecordingResolver: DotNsResolverProtocol, @unchecked Sendabl
     func resolveToLocalURL(dotNsName: String) async throws -> URL {
         lock.withLock { names.append(dotNsName) }
         return root
-    }
-
-    func getMetadataEntry(dotNsName _: String, key _: String) async throws -> String? { nil }
-    func progressStream(dotNsName _: String) -> AnyAsyncSequence<DotNsLoadProgress> {
-        AsyncStream<DotNsLoadProgress> { $0.finish() }.eraseToAnyAsyncSequence()
     }
 
     func clearCache() throws {}

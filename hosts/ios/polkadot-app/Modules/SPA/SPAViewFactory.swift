@@ -19,7 +19,7 @@ enum SPAViewFactory {
     ) -> SPAViewProtocol? {
         let truapiEnabled = SettingsManager.shared.isTrUAPIRuntimeEnabled
 
-        if truapiEnabled {
+        if truapiEnabled || configuration.contentSource.isRustOnly {
             return createRustView(configuration: configuration, flowState: flowState)
         }
 
@@ -72,7 +72,7 @@ enum SPAViewFactory {
             chainRegistry: chainRegistry,
             usernameStorage: UsernameStorage(),
             localStorage: ProductsLocalStorage(
-                productId: configuration.page.host.toDotDomain(),
+                productId: configuration.productDomain,
                 settingsManager: SettingsManager.shared
             ),
             notificationService: UserNotificationService.shared,
@@ -87,7 +87,7 @@ enum SPAViewFactory {
         )
 
         let nativeApi = nativeApiFactory.makeApi(
-            productId: configuration.page.host.toDotDomain(),
+            productId: configuration.productDomain,
             routers: routers
         )
 
@@ -100,15 +100,16 @@ enum SPAViewFactory {
         let interactor = SPANativeRuntimeInteractor(
             nativeApi: nativeApi,
             scriptsFactory: scriptsFactory,
-            dotNsResolver: flowState.dotNsResolver,
-            productResolver: flowState.productResolver,
+            contentLoader: flowState.contentLoader,
+            presenceRegistry: RootDependencyLocator.getDependency(),
             schemeHandlerProxy: schemeHandlerProxy,
             configuration: configuration,
             logger: Logger.shared,
             productRepository: ProductRepositoryFactory().createRepository(),
             chatProviderFactory: ChatContactDataProviderFactory(),
             workerManager: workerFacade.manager,
-            workerProductId: configuration.page.host.toDotDomain()
+            workerProductId: configuration.productDomain,
+            chainStatusProvider: chainStatusProvider(for: configuration)
         )
 
         let presenter = SPAPresenter(
@@ -204,8 +205,7 @@ extension SPAViewFactory {
         let runtimeFactory = SPARustRuntimeFactory(environment: .init(
             rust: rustEnvironment,
             configuration: configuration,
-            dotNsResolver: flowState.dotNsResolver,
-            productResolver: flowState.productResolver,
+            contentLoader: flowState.contentLoader,
             schemeHandlerProxy: schemeHandlerProxy,
             routers: routers
         ))
@@ -213,10 +213,13 @@ extension SPAViewFactory {
         let interactor = SPARustRuntimeInteractor(
             runtimeFactory: runtimeFactory,
             productResolver: flowState.productResolver,
+            contentLoader: flowState.contentLoader,
+            presenceRegistry: RootDependencyLocator.getDependency(),
             configuration: configuration,
             logger: Logger.shared,
             productRepository: ProductRepositoryFactory().createRepository(),
-            chatProviderFactory: ChatContactDataProviderFactory()
+            chatProviderFactory: ChatContactDataProviderFactory(),
+            chainStatusProvider: chainStatusProvider(for: configuration)
         )
 
         let presenter = SPAPresenter(
@@ -256,8 +259,21 @@ private extension SPAViewFactory {
         schemeHandlerProxy: SchemeHandlerProxy,
         hostProvider: ProductHostProviding
     ) -> SPAViewProtocol {
-        if configuration.presentation == .sheet {
-            return SPASimplifiedViewController(
+        switch configuration.presentation {
+        case .sheet,
+             .fullScreen:
+            let controller = SPASimplifiedViewController(
+                presenter: presenter,
+                configuration: configuration,
+                schemeHandlerProxy: schemeHandlerProxy,
+                logger: Logger.shared,
+                hostProvider: hostProvider
+            )
+            controller.modalPresentationStyle = configuration.presentation == .fullScreen ? .fullScreen : .pageSheet
+            return controller
+        case .pushed,
+             .browserTab:
+            return SPAViewController(
                 presenter: presenter,
                 configuration: configuration,
                 schemeHandlerProxy: schemeHandlerProxy,
@@ -265,12 +281,18 @@ private extension SPAViewFactory {
                 hostProvider: hostProvider
             )
         }
-        return SPAViewController(
-            presenter: presenter,
-            configuration: configuration,
-            schemeHandlerProxy: schemeHandlerProxy,
-            logger: Logger.shared,
-            hostProvider: hostProvider
-        )
+    }
+
+    /// Only the full-screen product shows the chain status strip, so only it gets the provider.
+    @MainActor
+    static func chainStatusProvider(for configuration: SPAConfiguration) -> ChainStatusProviding? {
+        guard
+            configuration.presentation == .fullScreen,
+            let chainStatusProvider: ChainStatusProviding = RootDependencyLocator.getDependency()
+        else {
+            return nil
+        }
+
+        return chainStatusProvider
     }
 }

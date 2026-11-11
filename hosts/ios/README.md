@@ -20,6 +20,8 @@ If you experience problems with any product or service that was built on or depl
 
 </div>
 
+The app uses the in-tree TrUAPIHost SDK in this repository. A standalone host checkout requires a published SDK with `ProductId` support. Its version is pinned in `AppDependencies`, `Products`, `KeyDerivation`, and `Coinage`; update all four pins together.
+
 ## Features
 
 - **Identity** — On-chain username with an allowance for free transactions, verified by Proof-of-Unique-Device.
@@ -93,7 +95,7 @@ the placeholder plists point at nothing. [docs/PUBLISHING.md](./docs/PUBLISHING.
 lists every Remote Config parameter and build-time variable and the brand
 identity keys in `Configs/brand.xcconfig`; the identity backend is open source
 as [device-uniqueness-backend-community](https://github.com/paritytech/device-uniqueness-backend-community). Optional
-integrations (fiat on-ramp, crash reporting) are enabled by filling in
+integrations (crash reporting) are enabled by filling in
 `polkadot-app/env-vars.sh`.
 
 The app talks to Polkadot system chains (People Chain, Asset Hub, Bulletin Chain); the chain set is
@@ -110,15 +112,6 @@ xcodebuild -project polkadot-app.xcodeproj -scheme polkadot-app -configuration D
 xcodebuild test -project polkadot-app.xcodeproj -scheme polkadot-appTests \
   -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
-
-The iOS CI test job runs `RUN_IN_CI=true bundle exec fastlane run_unit_tests`
-from `hosts/ios`. It retains the `.xcresult` bundle, raw xcodebuild log,
-simulator logs, and available crash reports in
-`test-artifacts-<run-id>-<attempt>` for three days, even when tests fail.
-The job log also contains the `xcresulttool` test summary and test list.
-Download the artifact from the workflow run and open its `.xcresult` in Xcode
-to inspect individual failures and diagnostics. `debug:true` adds raw console
-output without changing whether test failures fail the job.
 
 ## How it works
 
@@ -148,7 +141,9 @@ Consent prompts and app settings share permission descriptions and icon metadata
 
 Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** for every feature module: code is split between the main app target and 28 local Swift packages under [`Packages/`](./Packages) with `AppDependencies` as the root package, chain access goes through [substrate-sdk-ios](https://github.com/novasamatech/substrate-sdk-ios) (JSON-RPC, storage subscriptions, extrinsics), and local data lives in CoreData.
 
-Permission prompts and revocation settings share the `ProductPermission` presentation metadata so capability descriptions stay consistent. JAM peer consent displays the full network genesis and remains scoped to that network and product; it does not grant accounts or signing.
+Non-release TrUAPI SPA runtimes publish an immutable `globalThis.__trinityHostTelemetry` schema-v1 object before
+the product container starts. It contains the WebView's `hostSessionId` plus the native app version, build, variant,
+platform, OS version and TrUAPI host version used to correlate product diagnostics with `host.webview.created`.
 
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time
@@ -159,6 +154,11 @@ own secrets, signing repo, and runners before the pipeline runs green.
 Architecture conventions, module layout, and coding standards are documented in [CLAUDE.md](./CLAUDE.md).
 Working on a Pocket card, through the face-preview loop and the live-card loop, is documented in
 [docs/pocket-card-dev-loop.md](./docs/pocket-card-dev-loop.md).
+
+The native mobile permission adapters retain JAM peer consent scoped to the full network genesis,
+alongside the 0.30 balance and NFT purse permissions. Validator requests are denied: these hosts do
+not provide protected validator custody. Regenerate native bindings from the integrated Rust
+contract before building the mobile shells.
 
 ## Contributing
 

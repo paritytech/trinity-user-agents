@@ -1,6 +1,7 @@
 import BigInt
 import Coinage
 import Foundation
+import struct TrUAPIHost.ProductId
 
 extension TrUAPINativeCoinage {
     /// Narrow service seam used by the regression harness; production always wraps the coordinator's service.
@@ -37,11 +38,11 @@ extension TrUAPINativeCoinage {
             }
             accept = { amount, keys, id, product in
                 try await service.incomingPaymentService.accept(
-                    amount: amount, descriptor: .coins(secretKeys: keys), paymentId: id, productId: product
+                    amount: amount, descriptor: .coins(secretKeys: keys), paymentId: id, productId: try ProductId(product)
                 )
             }
             incomingStatus = { id, product in
-                let stream = try await service.incomingPaymentService.subscribeStatus(for: id, productId: product)
+                let stream = try await service.incomingPaymentService.subscribeStatus(for: id, productId: try ProductId(product))
                 for try await status in stream { return status }
                 throw CancellationError()
             }

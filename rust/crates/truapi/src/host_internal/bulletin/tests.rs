@@ -1,0 +1,137 @@
+use std::sync::Arc;
+
+use futures::executor::block_on;
+use parity_scale_codec::Decode;
+use subxt::{
+	ext::{
+		frame_decode::extrinsics::encode_call_data,
+		frame_metadata::{RuntimeMetadata, RuntimeMetadataPrefixed, v14},
+	},
+	metadata::Metadata,
+};
+
+use super::*;
+use crate::chain::{Node, V4OnlyHost, serve};
+
+const GENESIS: H256 = H256([0xab; 32]);
+
+fn allowance_fixture() -> BulletinAllowanceKey {
+	let secret = hex::decode(
+		"0eef5183411d40c32446bb1cbaabd70004a17af6012a577c735d054f04059208\
+         573dfc9b6ffeb1c786a16349e70f9836876a743c31c0a7a2a70727a852eec372",
+	)
+	.unwrap();
+	BulletinAllowanceKey::from_secret_bytes(secret).unwrap()
+}
+
+fn signer_fixture() -> Sr25519Signer {
+	allowance_signer(&allowance_fixture()).unwrap()
+}
+
+/// A service over a scripted node serving the Bulletin fixture runtime.
+fn bulletin_service() -> ExtrinsicService {
+	let (_node, _provider, chain) = serve(Node::new(4, 6));
+	ExtrinsicService::over_chain(chain, Arc::new(V4OnlyHost))
+}
+
+/// Decode the fixture metadata down to its mutable v14 representation.
+fn bulletin_metadata_v14() -> v14::RuntimeMetadataV14 {
+	let prefixed = RuntimeMetadataPrefixed::decode(
+		&mut &crate::host_internal::extrinsic::tests::BULLETIN_METADATA_BYTES[..],
+	)
+	.unwrap();
+	match prefixed.1 {
+		RuntimeMetadata::V14(metadata) => metadata,
+		other => panic!("expected v14 fixture metadata, got {other:?}"),
+	}
+}
+
+fn metadata_from_v14(metadata: v14::RuntimeMetadataV14) -> Metadata {
+	let prefixed =
+		RuntimeMetadataPrefixed(u32::from_le_bytes(*b"meta"), RuntimeMetadata::V14(metadata));
+	Metadata::try_from(prefixed).unwrap()
+}
+
+#[test]
+fn preimage_key_is_blake2b_256() {
+	assert_eq!(
+		hex::encode(preimage_key(b"")),
+		"0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8"
+	);
+}
+
+/// If the runtime's `store` stops taking bytes, the call is refused at
+/// encoding rather than sent with a shape the node rejects.
+#[test]
+fn rejects_mutated_store_argument_type() {
+	// Point the store call's `data` field at a non-byte type: the
+	// CheckSpecVersion additional (u32) borrowed from the extension list.
+	let mut metadata = bulletin_metadata_v14();
+	let u32_type = metadata
+		.extrinsic
+		.signed_extensions
+		.iter()
+		.find(|extension| extension.identifier == "CheckSpecVersion")
+		.unwrap()
+		.additional_signed;
+	let calls_type_id = metadata
+		.pallets
+		.iter()
+		.find(|pallet| pallet.name == STORE_PALLET_NAME)
+		.unwrap()
+		.calls
+		.as_ref()
+		.unwrap()
+		.ty
+		.id;
+	let calls_type = metadata.types.types.iter_mut().find(|ty| ty.id == calls_type_id).unwrap();
+	let scale_info::TypeDef::Variant(variants) = &mut calls_type.ty.type_def else {
+		panic!("calls type is not a variant");
+	};
+	let store = variants
+		.variants
+		.iter_mut()
+		.find(|variant| variant.name == STORE_CALL_NAME)
+		.unwrap();
+	store.fields[0].ty = u32_type;
+	let metadata = metadata_from_v14(metadata);
+	let args = StoreCallArgs { data: &[1, 2, 3] };
+
+	let error =
+		encode_call_data(STORE_PALLET_NAME, STORE_CALL_NAME, &args, &metadata, metadata.types())
+			.unwrap_err();
+
+	assert!(error.to_string().contains("Error at data"), "{error}");
+}
+
+#[test]
+fn builds_large_preimage_without_pathological_cost() {
+	// Keep a generous bound around the call encoding so a future library
+	// change cannot make large preimages pathological. A debug build
+	// encodes the bytes one at a time, which takes several seconds on a
+	// busy CI runner.
+	let data = vec![0x5au8; 8 * 1024 * 1024];
+	let service = bulletin_service();
+	let signer = signer_fixture();
+	let start = std::time::Instant::now();
+
+	let built =
+		block_on(build_signed_store_transaction(&service, GENESIS, &signer, &data)).unwrap();
+
+	let elapsed = start.elapsed();
+	assert!(built.extrinsic.bytes().len() > data.len());
+	assert!(
+		elapsed < std::time::Duration::from_secs(30),
+		"building an 8 MiB store extrinsic took {elapsed:?}"
+	);
+}
+
+#[test]
+fn rejects_secret_of_wrong_shape() {
+	assert_eq!(
+		BulletinAllowanceKey::from_secret_bytes(vec![0xff; 64]).map(|_| ()),
+		Err(crate::runtime::AuthorityError::Unavailable {
+			reason: "invalid bulletin allowance key".to_string()
+		})
+	);
+}

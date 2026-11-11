@@ -130,7 +130,7 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
 
     public func connect(genesisHash: Data) -> UInt32? {
         guard let socket = makeSocket(for: genesisHash) else {
-            logger.debug("TrUAPI chain \(genesisHash.toHex()) has no host-managed connection; unsupported")
+            logger.info("[truapi.chain] chain \(genesisHash.toHex()) has no host-managed connection; unsupported")
             return nil
         }
 
@@ -139,6 +139,7 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
         let connection = Connection(socket: socket)
         // Registered before open so a close fired during open resolves to this id.
         guard let connectionId = state.withLockUnchecked({ $0.register(connection) }) else { return nil }
+        logger.info("[truapi.chain] chain connection \(connectionId) dialling \(socket.url)")
         connection.open()
 
         return connectionId
@@ -215,10 +216,26 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
                 handler?.chainDidClose(connectionId: id)
             }
         }
+        let chainCount = connections.values.filter { !$0.isHop }.count
+        if chainCount > 0 {
+            logger.info("[truapi.chain] closing \(chainCount) chain connections")
+        }
     }
 }
 
 extension TrUAPIV2SpecConnectionPool: ChainSocketDelegate {
+    public func chainSocketDidOpen(_ socket: ChainSocketProtocol) {
+        guard let connectionId = state.withLockUnchecked({ state in
+            guard let id = state.connectionIds[ObjectIdentifier(socket)],
+                  state.connections[id]?.isHop == false else { return nil as UInt32? }
+            return id
+        }) else {
+            return
+        }
+
+        logger.info("[truapi.chain] chain connection \(connectionId) open on \(socket.url)")
+    }
+
     public func chainSocket(_ socket: ChainSocketProtocol, didReceive text: String) {
         let (connectionId, handler) = state.withLockUnchecked { state in
             (state.connectionIds[ObjectIdentifier(socket)], state.eventHandler)
@@ -240,7 +257,7 @@ extension TrUAPIV2SpecConnectionPool: ChainSocketDelegate {
 
         connection?.close()
         if connection?.isHop != true {
-            logger.debug("TrUAPI chain connection \(connectionId) closed: \(reason)")
+            logger.info("[truapi.chain] \(Self.closeLine(connectionId: connectionId, url: socket.url, reason: reason))")
         }
         handler?.chainDidClose(connectionId: connectionId)
     }
@@ -264,6 +281,22 @@ extension TrUAPIV2SpecConnectionPool {
     /// Waits until every background/foreground notification received so far has been handled.
     func awaitLifecycleEvents() async {
         await state.withLockUnchecked { $0.lifecycleTask }?.value
+    }
+}
+
+extension TrUAPIV2SpecConnectionPool {
+    /// A transport death reads as a failure and anything else as a close, as on the Android host.
+    static func closeLine(connectionId: UInt32, url: URL, reason: ChainSocketCloseReason) -> String {
+        switch reason {
+        case let .transport(error):
+            "chain connection \(connectionId) failed on \(url): \(error.map { String(describing: $0) } ?? "transport closed")"
+        case .peerClosed,
+             .connectTimeout,
+             .livenessTimeout,
+             .pathLost,
+             .resumed:
+            "chain connection \(connectionId) closed on \(url): \(reason)"
+        }
     }
 }
 
@@ -337,10 +370,10 @@ private extension TrUAPIV2SpecConnectionPool {
         guard !sockets.isEmpty else { return }
 
         if duration >= resumePolicy.expiryThreshold {
-            logger.debug("TrUAPI expiring \(sockets.count) chain sockets after \(Int(duration))s in background")
+            logger.info("[truapi.chain] expiring \(sockets.count) chain sockets after \(Int(duration))s in background")
             sockets.forEach { $0.expire() }
         } else {
-            logger.debug("TrUAPI probing \(sockets.count) chain sockets after \(Int(duration))s in background")
+            logger.info("[truapi.chain] probing \(sockets.count) chain sockets after \(Int(duration))s in background")
             sockets.forEach { $0.probe(timeout: resumePolicy.probeTimeout) }
         }
     }

@@ -9,8 +9,8 @@ use serde_json::{Value, json};
 use sp_crypto_hashing::twox_128;
 
 use super::{
-	CollectionCandidate, FixedPersonhoodSigner, PersonhoodSigner, collection::PersonhoodCollection,
-	extension::Metadata, pgas, proof, ring, rpc::RpcClient, slot, view,
+	PersonhoodSigner, collection::PersonhoodCollection, extension::Metadata, pgas, proof, ring,
+	rpc::RpcClient, slot, view,
 };
 
 const STORAGE_BATCH: usize = 32;
@@ -244,6 +244,13 @@ pub(crate) struct ProductAccounts {
 	pub product_id: String,
 	pub pgas: [u8; 32],
 	pub bulletin: [u8; 32],
+}
+
+/// The allocator's first usable key in one collection; absent membership uses
+/// the primary key for observing assignments without claiming usable capacity.
+pub(crate) struct InspectionMembership {
+	collection: PersonhoodCollection,
+	key_index: Option<usize>,
 }
 
 pub(crate) struct ReadOnlyChain<'a> {
@@ -484,23 +491,22 @@ impl<'a> ReadOnlyChain<'a> {
 	/// current record can point at an unbaked ring while an older proof works.
 	pub(crate) async fn memberships(
 		&self,
-		candidates: &[CollectionCandidate],
-	) -> Result<Vec<bool>, String> {
+		signer: &dyn PersonhoodSigner,
+	) -> Result<Vec<InspectionMembership>, String> {
 		self.storage_type("Members", "Collections")?;
 		self.storage_type("Members", "CurrentRingIndex")?;
 		self.storage_type("Members", "RingKeysStatus")?;
 		self.storage_type("Members", "RingKeys")?;
-		let signer = FixedPersonhoodSigner::new(candidates).await.map_err(reason)?;
-		let mut result = Vec::with_capacity(candidates.len());
-		for candidate in candidates {
+		let mut result = Vec::with_capacity(2);
+		for collection in PersonhoodCollection::ALL {
 			let values = self
 				.storage_many(&[
-					ring::collections_key(candidate.collection),
-					ring::current_ring_index_key(candidate.collection),
+					ring::collections_key(collection),
+					ring::current_ring_index_key(collection),
 				])
 				.await?;
 			let Some(info) = &values[0] else {
-				result.push(false);
+				result.push(InspectionMembership { collection, key_index: None });
 				continue;
 			};
 			let info: ring::CollectionInfo = self.decode_storage("Members", "Collections", info)?;
@@ -511,12 +517,16 @@ impl<'a> ReadOnlyChain<'a> {
 				.map(|bytes| self.decode_storage("Members", "CurrentRingIndex", bytes))
 				.transpose()?
 				.unwrap_or(0);
-			(self.guard)()?;
-			let member = signer.member(candidate.collection).map_err(reason)?;
-			result.push(
-				self.has_including_ring(candidate.collection, &member, exponent, current)
-					.await?,
-			);
+			let mut key_index = None;
+			for index in 0..signer.key_count(collection) {
+				(self.guard)()?;
+				let member = signer.member(collection, index).map_err(reason)?;
+				if self.has_including_ring(collection, &member, exponent, current).await? {
+					key_index = Some(index);
+					break;
+				}
+			}
+			result.push(InspectionMembership { collection, key_index });
 		}
 		Ok(result)
 	}
@@ -605,8 +615,8 @@ impl<'a> ReadOnlyChain<'a> {
 
 	pub(crate) async fn statement(
 		&self,
-		candidates: &[CollectionCandidate],
-		memberships: &[bool],
+		signer: &dyn PersonhoodSigner,
+		memberships: &[InspectionMembership],
 		suffix: &[u8],
 		labels: &AccountLabels,
 	) -> Result<StatementAllowanceSnapshot, String> {
@@ -617,11 +627,12 @@ impl<'a> ReadOnlyChain<'a> {
 		let grace_seconds = self.policy("get_stmt_store_grace_window").await?;
 		let replacement_cooldown_seconds =
 			self.policy("get_stmt_store_replacement_cooldown").await?;
-		let signer = FixedPersonhoodSigner::new(candidates).await.map_err(reason)?;
-		let mut pools = Vec::with_capacity(candidates.len());
-		for (candidate, &member) in candidates.iter().zip(memberships) {
-			let limit =
-				bounded_limit(self.policy(candidate.collection.slots_per_period_view()).await?)?;
+		let mut pools = Vec::with_capacity(memberships.len());
+		for membership in memberships {
+			let collection = membership.collection;
+			let key_index = membership.key_index.unwrap_or(0);
+			let member = membership.key_index.is_some();
+			let limit = bounded_limit(self.policy(collection.slots_per_period_view()).await?)?;
 			let mut slots = Vec::new();
 			for start in (0..limit).step_by(STORAGE_BATCH) {
 				(self.guard)()?;
@@ -629,7 +640,7 @@ impl<'a> ReadOnlyChain<'a> {
 				let mut keys = Vec::with_capacity((end - start) as usize);
 				for index in start..end {
 					let alias =
-						slot::slot_alias(&signer, candidate.collection, suffix, period, index)
+						slot::slot_alias(signer, collection, key_index, suffix, period, index)
 							.map_err(reason)?;
 					keys.push(slot::statement_store_allowance_key(period, &alias));
 				}
@@ -653,7 +664,7 @@ impl<'a> ReadOnlyChain<'a> {
 					});
 				}
 			}
-			pools.push(pool(candidate.collection, member, member, limit, slots)?);
+			pools.push(pool(collection, member, member, limit, slots)?);
 		}
 		Ok(StatementAllowanceSnapshot {
 			claims: AllowanceClaims { period, resets_at, pools },
@@ -664,7 +675,8 @@ impl<'a> ReadOnlyChain<'a> {
 
 	async fn claimed_slots(
 		&self,
-		candidate: &CollectionCandidate,
+		signer: &dyn PersonhoodSigner,
+		membership: &InspectionMembership,
 		suffix: &[u8],
 		period: u32,
 		limit: u32,
@@ -677,9 +689,6 @@ impl<'a> ReadOnlyChain<'a> {
 			("Pgas", "ClaimedGasAliases")
 		};
 		self.storage_type(pallet, entry)?;
-		let signer = FixedPersonhoodSigner::new(std::slice::from_ref(candidate))
-			.await
-			.map_err(reason)?;
 		let mut slots = Vec::new();
 		for start in (0..limit).step_by(STORAGE_BATCH) {
 			(self.guard)()?;
@@ -689,8 +698,9 @@ impl<'a> ReadOnlyChain<'a> {
 				keys.push(if bulletin {
 					let counter = u8::try_from(index).map_err(reason)?;
 					let alias = slot::long_term_storage_alias(
-						&signer,
-						candidate.collection,
+						signer,
+						membership.collection,
+						membership.key_index.unwrap_or(0),
 						suffix,
 						period,
 						counter,
@@ -698,9 +708,15 @@ impl<'a> ReadOnlyChain<'a> {
 					.map_err(reason)?;
 					slot::spent_long_term_storage_alias_key(period, &alias)
 				} else {
-					let alias =
-						slot::pgas_alias(&signer, candidate.collection, suffix, period, index)
-							.map_err(reason)?;
+					let alias = slot::pgas_alias(
+						signer,
+						membership.collection,
+						membership.key_index.unwrap_or(0),
+						suffix,
+						period,
+						index,
+					)
+					.map_err(reason)?;
 					slot::claimed_gas_alias_key(period, &alias)
 				});
 			}
@@ -722,8 +738,8 @@ impl<'a> ReadOnlyChain<'a> {
 
 	pub(crate) async fn pgas_claims(
 		&self,
-		candidates: &[CollectionCandidate],
-		memberships: &[bool],
+		signer: &dyn PersonhoodSigner,
+		memberships: &[InspectionMembership],
 		membership_observation: &AllowanceObservation,
 		suffix: &[u8],
 	) -> Result<PgasClaimsSnapshot, String> {
@@ -732,13 +748,20 @@ impl<'a> ReadOnlyChain<'a> {
 		let claim_amount: u128 = self.constant("Pgas", "PgasClaimAmount")?;
 		let (period, resets_at) =
 			period(self.observation.chain_timestamp, slot::STATEMENT_STORE_PERIOD_SECONDS)?;
-		let selected = memberships.iter().position(|member| *member);
-		let mut pools = Vec::with_capacity(candidates.len());
-		for (index, (candidate, &member)) in candidates.iter().zip(memberships).enumerate() {
+		let selected = memberships.iter().position(|membership| membership.key_index.is_some());
+		let mut pools = Vec::with_capacity(memberships.len());
+		for (index, membership) in memberships.iter().enumerate() {
 			let limit: u32 =
-				self.constant("Pgas", candidate.collection.pgas_claims_per_period_constant())?;
-			let slots = self.claimed_slots(candidate, suffix, period, limit, false).await?;
-			pools.push(pool(candidate.collection, member, selected == Some(index), limit, slots)?);
+				self.constant("Pgas", membership.collection.pgas_claims_per_period_constant())?;
+			let slots =
+				self.claimed_slots(signer, membership, suffix, period, limit, false).await?;
+			pools.push(pool(
+				membership.collection,
+				membership.key_index.is_some(),
+				selected == Some(index),
+				limit,
+				slots,
+			)?);
 		}
 		Ok(PgasClaimsSnapshot {
 			claims: AllowanceClaims { period, resets_at, pools },
@@ -750,8 +773,8 @@ impl<'a> ReadOnlyChain<'a> {
 
 	pub(crate) async fn bulletin_claims(
 		&self,
-		candidates: &[CollectionCandidate],
-		memberships: &[bool],
+		signer: &dyn PersonhoodSigner,
+		memberships: &[InspectionMembership],
 		suffix: &[u8],
 	) -> Result<AllowanceClaims, String> {
 		self.require_suffix(suffix).await?;
@@ -760,15 +783,23 @@ impl<'a> ReadOnlyChain<'a> {
 		let limit = self.policy("get_long_term_storage_claims_per_period").await?;
 		u8::try_from(limit)
 			.map_err(|_| "Bulletin claim limit exceeds the native counter width".to_string())?;
-		let selected = candidates
+		let selected = memberships
 			.iter()
-			.zip(memberships)
-			.position(|(c, m)| *m && c.collection == PersonhoodCollection::LitePeople)
-			.or_else(|| memberships.iter().position(|member| *member));
-		let mut pools = Vec::with_capacity(candidates.len());
-		for (index, (candidate, &member)) in candidates.iter().zip(memberships).enumerate() {
-			let slots = self.claimed_slots(candidate, suffix, period, limit, true).await?;
-			pools.push(pool(candidate.collection, member, selected == Some(index), limit, slots)?);
+			.position(|membership| {
+				membership.key_index.is_some() &&
+					membership.collection == PersonhoodCollection::LitePeople
+			})
+			.or_else(|| memberships.iter().position(|membership| membership.key_index.is_some()));
+		let mut pools = Vec::with_capacity(memberships.len());
+		for (index, membership) in memberships.iter().enumerate() {
+			let slots = self.claimed_slots(signer, membership, suffix, period, limit, true).await?;
+			pools.push(pool(
+				membership.collection,
+				membership.key_index.is_some(),
+				selected == Some(index),
+				limit,
+				slots,
+			)?);
 		}
 		Ok(AllowanceClaims { period, resets_at, pools })
 	}
@@ -1134,8 +1165,10 @@ mod tests {
 		}
 		let collection = PersonhoodCollection::LitePeople;
 		let candidates = slot::testing::lite_people([7; 32]);
-		let signer = futures::executor::block_on(FixedPersonhoodSigner::new(&candidates)).unwrap();
-		let member = signer.member(collection).unwrap();
+		let signer =
+			futures::executor::block_on(super::super::FixedPersonhoodSigner::new(&candidates))
+				.unwrap();
+		let member = signer.member(collection, 0).unwrap();
 		let entries = [
 			(ring::ring_keys_status_key(collection, 1), (1u32, 0u32, None::<u64>).encode()),
 			(ring::ring_keys_key(collection, 1, 0), vec![member].encode()),

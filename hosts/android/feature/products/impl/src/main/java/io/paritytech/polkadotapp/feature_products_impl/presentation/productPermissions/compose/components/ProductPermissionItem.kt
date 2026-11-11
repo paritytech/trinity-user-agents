@@ -14,6 +14,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
+import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose.ownerName
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -57,9 +58,10 @@ internal fun ProductPermissionItem(
 private fun ProductPermission.displayName(): String {
     return when (this) {
         is ProductPermission.DeviceCapability -> stringResource(capability.nameRes())
-        is ProductPermission.AccountAccess -> targetProductId
+        is ProductPermission.AccountAccess -> targetProductId.value
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_type_balance_access)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_type_user_identity_access)
+        is ProductPermission.NftPurseRead -> ownerName()
         ProductPermission.ChatAuthority -> stringResource(RCommon.string.product_permission_type_chat_authority)
         ProductPermission.ProfileDisclosure -> stringResource(RCommon.string.product_permission_type_profile_disclosure)
         is ProductPermission.StatementStoreAllowance -> {
@@ -110,6 +112,7 @@ private fun ProductPermission.descriptionRes(): Int = when (this) {
     is ProductPermission.AccountAccess -> RCommon.string.product_permission_type_account_access
     is ProductPermission.BalanceAccess -> RCommon.string.product_permission_type_balance_access_description
     is ProductPermission.UserIdentityAccess -> RCommon.string.product_permission_type_user_identity_access_description
+    is ProductPermission.NftPurseRead -> RCommon.string.product_permission_type_nft_purse_read_description
     ProductPermission.ChatAuthority -> RCommon.string.product_permission_chat_authority_description
     ProductPermission.ProfileDisclosure -> RCommon.string.product_permission_profile_disclosure_description
     is ProductPermission.StatementStoreAllowance -> RCommon.string.product_permission_allowance_description

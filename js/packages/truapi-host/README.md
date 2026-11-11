@@ -22,6 +22,7 @@ The package exposes tree-shakeable subpath exports — import only what your env
 | `@parity/truapi-host/wasm/testing`         | The raw glue for the signing-enabled bundle the test host runs on.                                                                   |
 | `@parity/truapi-host/browser-receiving` | Trusted host-page client for the durable service-worker receiving owner. |
 | `@parity/truapi-host/browser-receiving-worker` | Service-worker installation helper with an injected canonical WASM factory. |
+| `@parity/truapi-host/markers` | `CORE_MARKERS`, the core's table of which log markers may leave the device and how loud each one is. |
 
 `scripts/build-wasm.mjs` builds two WASM bundles, both `--no-default-features`. `wasm/web` is the production browser
 host and excludes `WasmSigningHostRuntime`; `wasm/testing` adds the Rust `wasm-signing-host` and `test-host` features,
@@ -449,11 +450,12 @@ It is asynchronous, it takes the account and product to derive rather than a
 public key, and it loads the testing WASM bundle itself:
 
 ```ts
+import { asProductId } from "@parity/truapi";
 import { productAccountAddress } from "@parity/truapi-host/testing/playwright";
 
 const address = await productAccountAddress({
   account: "bob", // a dev account name, or a `DevAccount`
-  productId: "tx-demo.dot",
+  productId: asProductId("tx-demo.dot"),
   index: 0, // optional, defaults to 0
 });
 ```
@@ -560,14 +562,19 @@ const runtime = await createWebWorkerPairingHostRuntime(new HostWorker(), callba
   hostConfig,
 });
 
-const firstProvider = await runtime.createProvider({ productId: "first.dot" });
+const firstProvider = await runtime.createProvider({ productId: await runtime.parseProductId("first.dot") });
 const secondProvider = await runtime.createProvider({
-  productId: "second.dot",
+  productId: await runtime.parseProductId("second.dot"),
 });
 ```
 
-`@parity/truapi-host/web` also exports `createIframeHost` for the protocol-iframe MessageChannel handshake. Host code
-creates one worker runtime and then opens one provider per product id.
+`@parity/truapi-host/web` also exports `createIframeHost` for the
+protocol-iframe MessageChannel handshake. A product that navigates its whole document
+connects again: `onPort` is called with a fresh port once the new document
+sends a frame, and the function `onPort` returned for the previous port runs
+then. Each port is a new product session, so give it a core connection of its
+own. With an opaque sandbox only the first document is connected. Host code creates one worker runtime
+and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
 
 When UI callbacks capture a product label, pass that product's typed callbacks as the second argument to
 `runtime.createProvider(product, callbacks)`. The worker routes these callbacks to that execution without replacing the
@@ -608,7 +615,7 @@ const runtime = await createWebWorkerPairingHostRuntime(new HostWorker(), callba
 // there was nothing to restore.
 await runtime.activateStoredSession().catch(() => {});
 
-const provider = await runtime.createProvider({ productId: "first.dot" });
+const provider = await runtime.createProvider({ productId: await runtime.parseProductId("first.dot") });
 ```
 
 ### Statement-store traffic of the host's own

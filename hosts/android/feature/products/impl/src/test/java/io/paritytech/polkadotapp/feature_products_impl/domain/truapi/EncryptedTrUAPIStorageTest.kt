@@ -11,13 +11,15 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostRejection
+import uniffi.truapi.ProductId
 
 class EncryptedTrUAPIStorageTest {
     private val prefs = FakeEncryptedPreferences()
 
     @Test
     fun `an empty value is a value, not a miss`() = runTest {
-        val storage = EncryptedHostStorage(prefs, "a.dot")
+        val storage = EncryptedHostStorage(prefs, ProductId.parse("a.dot").getOrThrow())
 
         storage.write("k", ByteArray(0))
 
@@ -28,7 +30,7 @@ class EncryptedTrUAPIStorageTest {
     /** `EncryptionUtil` returns "" instead of throwing when encryption fails. */
     @Test
     fun `a silently failed write is reported`() = runTest {
-        val storage = EncryptedHostStorage(prefs.swallowingWrites(), "a.dot")
+        val storage = EncryptedHostStorage(prefs.swallowingWrites(), ProductId.parse("a.dot").getOrThrow())
 
         val failure = runCatching { storage.write("k", byteArrayOf(9)) }.exceptionOrNull()
 
@@ -37,7 +39,7 @@ class EncryptedTrUAPIStorageTest {
 
     @Test
     fun `an undecryptable value reads as a miss, not empty bytes`() = runTest {
-        val storage = EncryptedHostStorage(prefs, "a.dot")
+        val storage = EncryptedHostStorage(prefs, ProductId.parse("a.dot").getOrThrow())
         storage.write("k", byteArrayOf(9))
         prefs.corrupt()
 
@@ -46,26 +48,26 @@ class EncryptedTrUAPIStorageTest {
 
     @Test
     fun `products cannot read each other's keys`() = runTest {
-        EncryptedHostStorage(prefs, "a.dot").write("shared", byteArrayOf(7))
+        EncryptedHostStorage(prefs, ProductId.parse("a.dot").getOrThrow()).write("shared", byteArrayOf(7))
 
-        assertNull(EncryptedHostStorage(prefs, "b.dot").read("shared"))
+        assertNull(EncryptedHostStorage(prefs, ProductId.parse("b.dot").getOrThrow()).read("shared"))
     }
 
     /** The core addresses a granted foreign read with the owner's key. */
     @Test
     fun `a foreign read reaches the owner's storage`() = runTest {
         val key = "truapi:product-storage:v1:13:counter.paseo:count"
-        EncryptedHostStorage(prefs, "counter.paseo").write(key, byteArrayOf(7))
+        EncryptedHostStorage(prefs, ProductId.parse("counter.paseo").getOrThrow()).write(key, byteArrayOf(7))
 
-        assertArrayEquals(byteArrayOf(7), EncryptedHostStorage(prefs, "oracle.paseo").read(key))
+        assertArrayEquals(byteArrayOf(7), EncryptedHostStorage(prefs, ProductId.parse("oracle.paseo").getOrThrow()).read(key))
     }
 
     /** Only reads follow the owner in the key, so another product's store can never be written or cleared. */
     @Test
     fun `writes and clears stay in the caller's namespace`() = runTest {
         val key = "truapi:product-storage:v1:13:counter.paseo:count"
-        val owner = EncryptedHostStorage(prefs, "counter.paseo")
-        val other = EncryptedHostStorage(prefs, "oracle.paseo")
+        val owner = EncryptedHostStorage(prefs, ProductId.parse("counter.paseo").getOrThrow())
+        val other = EncryptedHostStorage(prefs, ProductId.parse("oracle.paseo").getOrThrow())
         owner.write(key, byteArrayOf(1))
 
         other.write(key, byteArrayOf(2))
@@ -77,16 +79,16 @@ class EncryptedTrUAPIStorageTest {
     @Test
     fun `own keys keep their physical key`() = runTest {
         val key = "truapi:product-storage:v1:13:counter.paseo:count"
-        EncryptedHostStorage(prefs, "counter.paseo").write(key, byteArrayOf(1))
+        EncryptedHostStorage(prefs, ProductId.parse("counter.paseo").getOrThrow()).write(key, byteArrayOf(1))
 
         assertNotNull(prefs.getDecryptedString("truapi/product/counter.paseo/$key"))
     }
 
     @Test
     fun `the owner is read from the core key format`() {
-        assertEquals("counter.paseo", productStorageKeyOwner("truapi:product-storage:v1:13:counter.paseo:a:b"))
-        assertEquals("caf\u00e9.p", productStorageKeyOwner("truapi:product-storage:v1:7:caf\u00e9.p:k"))
+        assertEquals(ProductId.parse("counter.paseo").getOrThrow(), productStorageKeyOwner("truapi:product-storage:v1:13:counter.paseo:a:b"))
         listOf(
+            "truapi:product-storage:v1:7:caf\u00e9.p:k",
             "truapi:product-storage:v1:13:counter.paseo",
             "truapi:product-storage:v1:12:counter.paseo:k",
             "truapi:product-storage:v1:99:counter.paseo:k",
@@ -104,37 +106,76 @@ class EncryptedTrUAPIStorageTest {
         assertArrayEquals(byteArrayOf(42), EncryptedHostCoreStorage(prefs).read(byteArrayOf(1)))
     }
 
+    /** Secrets must not collide with, or be cleared as, a core storage slot of the same key. */
     @Test
-    fun `enumeration discovers preexisting core keys without a grant catalog`() = runTest {
-        prefs.putEncryptedString("truapi/core/0102", "v1:09")
-        prefs.putEncryptedString("truapi/core/0304", "v1:08")
-        prefs.putEncryptedString("truapi/product/a.dot/key", "v1:07")
-        prefs.putEncryptedString("wallet-secret", "unrelated")
+    fun `encrypted values stay apart from core storage`() = runTest {
+        val core = EncryptedHostCoreStorage(prefs)
+        val encrypted = EncryptedHostValues(prefs)
 
-        assertEquals(setOf(listOf<Byte>(1, 2), listOf<Byte>(3, 4)),
-            EncryptedHostCoreStorage(prefs).keys().map { it.toList() }.toSet())
+        core.write(byteArrayOf(1), byteArrayOf(10))
+        encrypted.write(byteArrayOf(1), byteArrayOf(20))
+        core.clear(byteArrayOf(1))
+
+        assertArrayEquals(byteArrayOf(20), encrypted.read(byteArrayOf(1)))
+    }
+
+    /** An absent secret and an unreadable one must not look alike to the core. */
+    @Test
+    fun `an encrypted value that never was stored is a miss, an undecryptable one an error`() = runTest {
+        val encrypted = EncryptedHostValues(prefs)
+        encrypted.write(byteArrayOf(1), byteArrayOf(20))
+        prefs.corrupt()
+
+        assertNull(encrypted.read(byteArrayOf(2)))
+        val failure = runCatching { encrypted.read(byteArrayOf(1)) }.exceptionOrNull()
+        assertTrue(failure is HostRejection)
+    }
+
+    /** The core records what a secret belongs to right after the write, so a secret still in memory could be lost with it. */
+    @Test
+    fun `an encrypted value not written to disk is reported`() = runTest {
+        val encrypted = EncryptedHostValues(prefs.failingCommits())
+
+        val failure = runCatching { encrypted.write(byteArrayOf(1), byteArrayOf(20)) }.exceptionOrNull()
+
+        assertTrue("expected HostRejection, got $failure", failure is HostRejection)
     }
 
     @Test
-    fun `malformed persisted core keys surface an enumeration failure`() = runTest {
-        prefs.putEncryptedString("truapi/core/not-hex", "v1:09")
-        assertTrue(runCatching { EncryptedHostCoreStorage(prefs).keys() }.isFailure)
+    fun `a deleted encrypted value is a miss, and deleting none succeeds`() = runTest {
+        val encrypted = EncryptedHostValues(prefs)
+        encrypted.write(byteArrayOf(1), byteArrayOf(20))
+        encrypted.write(byteArrayOf(2), byteArrayOf(30))
+
+        encrypted.delete(byteArrayOf(1))
+        encrypted.delete(byteArrayOf(3))
+
+        assertNull(encrypted.read(byteArrayOf(1)))
+        assertArrayEquals(byteArrayOf(30), encrypted.read(byteArrayOf(2)))
     }
 }
 
 private class FakeEncryptedPreferences(
     private val dropWrites: Boolean = false,
+    private val failCommits: Boolean = false,
 ) : EncryptedPreferences {
     private val values = mutableMapOf<String, String>()
-    override fun keys(): Set<String> = values.keys
 
     /** Mirrors EncryptionUtil storing "" when it cannot encrypt. */
     fun swallowingWrites() = FakeEncryptedPreferences(dropWrites = true)
+
+    /** Keeps values in memory, as `apply()` does, but never reaches the disk. */
+    fun failingCommits() = FakeEncryptedPreferences(failCommits = true)
 
     fun corrupt() = values.keys.forEach { values[it] = "" }
 
     override fun putEncryptedString(field: String, value: String) {
         values[field] = if (dropWrites) "" else value
+    }
+
+    override fun putEncryptedStringNow(field: String, value: String): Boolean {
+        putEncryptedString(field, value)
+        return !failCommits
     }
 
     override fun getDecryptedString(field: String): String? = values[field]

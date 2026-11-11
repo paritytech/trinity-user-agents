@@ -10,6 +10,7 @@ use subxt_rpcs::client::RpcClient as NativeRpcClient;
 use subxt_rpcs::{
 	RpcClient as HostRpcClient,
 	client::{RpcParams, rpc_params},
+	methods::legacy::TransactionStatus,
 };
 use thiserror::Error;
 
@@ -18,7 +19,7 @@ use super::StatementAllowanceError;
 /// Timeout for an allowance registration extrinsic to reach a block.
 const SUBMIT_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Error from the host-backed JSON-RPC surface used by allowance allocation.
+/// Error from the native JSON-RPC surface used by allowance allocation.
 #[derive(Debug, Error)]
 pub enum RpcError {
 	/// Opening a direct RPC URL failed.
@@ -141,7 +142,6 @@ impl RpcClient {
 		let response = self.call("state_queryStorageAt", json!([hex_keys, at])).await?;
 		decode_storage_batch_at(&hex_keys, at, response)
 	}
-
 	async fn get_storage_maybe_at(
 		&self,
 		key: &[u8],
@@ -224,7 +224,7 @@ impl RpcClient {
 		let extrinsic_hex = format!("0x{}", hex::encode(extrinsic));
 		let mut subscription = self
 			.inner
-			.subscribe::<Value>(
+			.subscribe::<TransactionStatus<String>>(
 				"author_submitAndWatchExtrinsic",
 				rpc_params![extrinsic_hex],
 				"author_unwatchExtrinsic",
@@ -250,10 +250,10 @@ impl RpcClient {
 				() = timeout => return Err(RpcError::SubmitTimeout.into()),
 			};
 			tracing::debug!(?status, "allowance extrinsic status");
-			match extrinsic_status(&status) {
+			match extrinsic_status(status) {
 				ExtrinsicStatus::Included(hash) => return Ok(hash),
 				ExtrinsicStatus::Rejected(reason) => {
-					return Err(RpcError::ExtrinsicRejected { status: reason }.into());
+					return Err(RpcError::ExtrinsicRejected { status: reason.to_owned() }.into());
 				},
 				ExtrinsicStatus::Pending => {},
 			}
@@ -264,32 +264,24 @@ impl RpcClient {
 #[derive(Debug, PartialEq)]
 enum ExtrinsicStatus {
 	Included(String),
-	Rejected(String),
+	Rejected(&'static str),
 	Pending,
 }
 
-/// Classify one legacy `author_extrinsicUpdate` payload.
-///
-/// `TransactionStatus` serializes its unit variants (`future`, `ready`,
-/// `dropped`, `invalid`) as bare strings and the rest as single-key objects.
-fn extrinsic_status(status: &Value) -> ExtrinsicStatus {
-	if let Some(unit) = status.as_str() {
-		return match unit {
-			"dropped" | "invalid" => ExtrinsicStatus::Rejected(unit.to_string()),
-			_ => ExtrinsicStatus::Pending,
-		};
+fn extrinsic_status(status: TransactionStatus<String>) -> ExtrinsicStatus {
+	match status {
+		TransactionStatus::InBlock(hash) | TransactionStatus::Finalized(hash) => {
+			ExtrinsicStatus::Included(hash)
+		},
+		TransactionStatus::Future | TransactionStatus::Ready | TransactionStatus::Broadcast(_) => {
+			ExtrinsicStatus::Pending
+		},
+		TransactionStatus::Invalid => ExtrinsicStatus::Rejected("invalid"),
+		TransactionStatus::Dropped => ExtrinsicStatus::Rejected("dropped"),
+		TransactionStatus::Usurped(_) => ExtrinsicStatus::Rejected("usurped"),
+		TransactionStatus::Retracted(_) => ExtrinsicStatus::Rejected("retracted"),
+		TransactionStatus::FinalityTimeout(_) => ExtrinsicStatus::Rejected("finalityTimeout"),
 	}
-	for key in ["finalized", "inBlock"] {
-		if let Some(hash) = status.get(key).and_then(Value::as_str) {
-			return ExtrinsicStatus::Included(hash.to_string());
-		}
-	}
-	for key in ["usurped", "retracted", "finalityTimeout"] {
-		if status.get(key).is_some() {
-			return ExtrinsicStatus::Rejected(key.to_string());
-		}
-	}
-	ExtrinsicStatus::Pending
 }
 
 fn value_to_params(value: Value) -> Result<RpcParams, StatementAllowanceError> {
@@ -347,7 +339,6 @@ fn decode_storage_batch_at(
 		})
 		.collect()
 }
-
 #[cfg(test)]
 pub mod testing {
 	//! Scripted JSON-RPC transport for exercising request shapes in tests.
@@ -477,120 +468,4 @@ pub mod testing {
 }
 
 #[cfg(test)]
-mod tests {
-	use serde_json::json;
-
-	use super::{
-		ExtrinsicStatus, HostRpcClient, RpcClient, decode_storage_batch_at, extrinsic_status,
-		testing::ScriptedRpc,
-	};
-
-	#[test]
-	fn snapshot_batches_distinguish_explicit_absence_from_incomplete_responses() {
-		let keys = vec!["0x01".to_string(), "0x02".to_string()];
-		let complete = json!([{ "block": "0xat", "changes": [["0x02", "0x"], ["0x01", null]] }]);
-		assert_eq!(
-			decode_storage_batch_at(&keys, "0xat", complete).unwrap(),
-			vec![None, Some(Vec::new())],
-		);
-		for response in [
-			json!([]),
-			json!([{ "block": "0xat", "changes": [["0x01", null]] }]),
-			json!([{ "block": "0xother", "changes": [["0x01", null], ["0x02", null]] }]),
-			json!([{ "block": "0xat", "changes": [["0x01", null], ["0x01", null], ["0x02", null]] }]),
-			json!([{ "block": "0xat", "changes": [["0x01", false], ["0x02", null]] }]),
-			json!([{ "block": "0xat", "changes": [["0x01", "0xzz"], ["0x02", null]] }]),
-			json!([{ "block": "0xat", "changes": [["0x01", null], ["0x02", null], ["0x03", null]] }]),
-		] {
-			assert!(decode_storage_batch_at(&keys, "0xat", response).is_err());
-		}
-	}
-
-	#[test]
-	fn in_block_status_completes_submission() {
-		let status = extrinsic_status(&json!({"inBlock": "0x1234"}));
-
-		assert!(matches!(status, ExtrinsicStatus::Included(hash) if hash == "0x1234"));
-	}
-
-	#[test]
-	fn finalized_status_completes_submission() {
-		let status = extrinsic_status(&json!({"finalized": "0xabcd"}));
-
-		assert!(matches!(status, ExtrinsicStatus::Included(hash) if hash == "0xabcd"));
-	}
-
-	#[test]
-	fn terminal_pool_statuses_reject_the_submission() {
-		let statuses: Vec<ExtrinsicStatus> = [
-			json!("invalid"),
-			json!("dropped"),
-			json!({"usurped": "0x1234"}),
-			json!({"retracted": "0x1234"}),
-			json!({"finalityTimeout": "0x1234"}),
-		]
-		.iter()
-		.map(extrinsic_status)
-		.collect();
-
-		assert_eq!(
-			statuses,
-			vec![
-				ExtrinsicStatus::Rejected("invalid".to_string()),
-				ExtrinsicStatus::Rejected("dropped".to_string()),
-				ExtrinsicStatus::Rejected("usurped".to_string()),
-				ExtrinsicStatus::Rejected("retracted".to_string()),
-				ExtrinsicStatus::Rejected("finalityTimeout".to_string()),
-			],
-		);
-	}
-
-	#[test]
-	fn progress_statuses_keep_waiting() {
-		for status in [json!("future"), json!("ready"), json!({"broadcast": ["12D3KooW"]})] {
-			assert_eq!(extrinsic_status(&status), ExtrinsicStatus::Pending, "{status}");
-		}
-	}
-
-	#[test]
-	fn get_storage_at_pins_the_read_to_a_block() {
-		let scripted = ScriptedRpc::new([r#""0x0102""#]);
-		let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
-
-		let value = futures::executor::block_on(rpc.get_storage_at(b"key", "0xat")).unwrap();
-
-		assert_eq!(value, Some(vec![0x01, 0x02]));
-		assert_eq!(
-			scripted.calls(),
-			vec![("state_getStorage".to_string(), r#"["0x6b6579","0xat"]"#.to_string(),)],
-		);
-	}
-
-	#[test]
-	fn get_storage_reads_at_the_current_block() {
-		let scripted = ScriptedRpc::new(["null"]);
-		let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
-
-		let value = futures::executor::block_on(rpc.get_storage(b"key")).unwrap();
-
-		assert_eq!(value, None);
-		assert_eq!(
-			scripted.calls(),
-			vec![("state_getStorage".to_string(), r#"["0x6b6579"]"#.to_string())],
-		);
-	}
-
-	#[test]
-	fn finalized_head_returns_the_hash() {
-		let scripted = ScriptedRpc::new([r#""0xfeed""#]);
-		let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
-
-		let head = futures::executor::block_on(rpc.finalized_head()).unwrap();
-
-		assert_eq!(head, "0xfeed");
-		assert_eq!(
-			scripted.calls(),
-			vec![("chain_getFinalizedHead".to_string(), "[]".to_string())],
-		);
-	}
-}
+mod tests;

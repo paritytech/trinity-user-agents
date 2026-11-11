@@ -93,9 +93,9 @@ impl PlacementAuthority {
 	fn is_current(&self, owner: ProfileOwner) -> bool {
 		self.session.as_ref().is_some_and(|session| {
 			session.public_key == owner.root_public_key &&
-				self.authority.upgrade().is_some_and(|authority| {
-					authority.current_session().as_ref() == Some(session)
-				})
+				self.authority
+					.upgrade()
+					.is_some_and(|authority| authority.session_is_current(session, None))
 		})
 	}
 }

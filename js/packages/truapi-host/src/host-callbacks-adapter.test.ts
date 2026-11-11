@@ -1,3 +1,4 @@
+import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
 import { hexToBytes, str, Vector } from "@parity/truapi/scale";
@@ -38,7 +39,7 @@ import {
   PlacedAvatars,
   PresentedContactProfile,
   ProductContext,
-  ProductExecutionKind,
+  ExecutableKind,
   UserConfirmationReview,
 } from "./generated/host-callbacks.js";
 import { makeHostCallbacks, settle } from "./test-support.js";
@@ -52,14 +53,18 @@ import { createNotificationReceiverCallbacks } from "./runtime.js";
 const GENESIS = `0x${"11".repeat(32)}` as `0x${string}`;
 
 it("keeps receiving state at its native SCALE slot rather than another host capability's slot", () => {
-  expect(CoreStorageKey.enc({ tag: "NotificationReceiving" })).toEqual(new Uint8Array([20]));
-  expect(CoreStorageKey.dec(new Uint8Array([20])).tag).toBe("NotificationReceiving");
+  expect(CoreStorageKey.enc({ tag: "NotificationReceiving" })).toEqual(
+    new Uint8Array([20]),
+  );
+  expect(CoreStorageKey.dec(new Uint8Array([20])).tag).toBe(
+    "NotificationReceiving",
+  );
 });
 
 it("preserves one-use permission decisions across the WASM callback", async () => {
   const review = {
     tag: "IdentityDisclosure" as const,
-    value: { productId: "playground.dot" },
+    value: { productId: asProductId("playground.dot") },
   };
   for (const decision of ["AllowOnce", "AllowAlways", "Deny"] as const) {
     const reviews: UserConfirmationReview[] = [];
@@ -85,39 +90,61 @@ it("preserves one-use permission decisions across the WASM callback", async () =
 
 it("keeps receiving authority host-owned and preserves forever mute across SCALE", async () => {
   const authority: ReceivingAuthority = {
-    productId: "playground.dot", account: "11".repeat(32), environment: "paseo",
-    artifact: "22".repeat(32), genesis: "33".repeat(32), generation: 7n,
-    osPermission: true, transportReady: false,
+    productId: "playground.dot",
+    account: "11".repeat(32),
+    environment: "paseo",
+    artifact: "22".repeat(32),
+    genesis: "33".repeat(32),
+    generation: 7n,
+    osPermission: true,
+    transportReady: false,
   };
-  const watches: ReceivingWatch[] = [{
-    id: "group", genesis: authority.genesis, channel: "44".repeat(32),
-    topics: ["55".repeat(32)], senders: ["66".repeat(32)],
-    expiresAt: 1_800_000_000_000n, mutedUntil: (1n << 64n) - 1n, route: "/group",
-  }];
-  const calls: unknown[] = [];
-  const raw = createWasmRawCallbacks(makeHostCallbacks({
-    notifications: {
-      receiverAuthority: async (productId) => {
-        calls.push(productId);
-        return authority;
-      },
-      receiverConsent: async (scope, policies) => {
-        calls.push({ scope, policies });
-        return false;
-      },
-      receiverCommand: async (productId, action, payload) => {
-        calls.push({ productId, action, payload });
-        throw new Error("owner unavailable");
-      },
+  const watches: ReceivingWatch[] = [
+    {
+      id: "group",
+      genesis: authority.genesis,
+      channel: "44".repeat(32),
+      topics: ["55".repeat(32)],
+      senders: ["66".repeat(32)],
+      expiresAt: 1_800_000_000_000n,
+      mutedUntil: (1n << 64n) - 1n,
+      route: "/group",
     },
-  }));
+  ];
+  const calls: unknown[] = [];
+  const raw = createWasmRawCallbacks(
+    makeHostCallbacks({
+      notifications: {
+        receiverAuthority: async (productId) => {
+          calls.push(productId);
+          return authority;
+        },
+        receiverConsent: async (scope, policies) => {
+          calls.push({ scope, policies });
+          return false;
+        },
+        receiverCommand: async (productId, action, payload) => {
+          calls.push({ productId, action, payload });
+          throw new Error("owner unavailable");
+        },
+      },
+    }),
+  );
   const encoded = await raw.receiverAuthority("playground.dot");
   expect(ReceivingAuthority.dec(encoded!)).toEqual(authority);
-  expect(await raw.receiverConsent(ReceivingAuthority.enc(authority), Vector(ReceivingWatch).enc(watches))).toBe(false);
+  expect(
+    await raw.receiverConsent(
+      ReceivingAuthority.enc(authority),
+      Vector(ReceivingWatch).enc(watches),
+    ),
+  ).toBe(false);
   const payload = new Uint8Array([1, 2]);
-  await expect(raw.receiverCommand("playground.dot", 4, payload)).rejects.toThrow("owner unavailable");
+  await expect(
+    raw.receiverCommand("playground.dot", 4, payload),
+  ).rejects.toThrow("owner unavailable");
   expect(calls).toEqual([
-    "playground.dot", { scope: authority, policies: watches },
+    "playground.dot",
+    { scope: authority, policies: watches },
     { productId: "playground.dot", action: 4, payload },
   ]);
 });
@@ -125,26 +152,44 @@ it("keeps receiving authority host-owned and preserves forever mute across SCALE
 it("does not claim receiving support when callbacks are absent", async () => {
   const raw = createWasmRawCallbacks(makeHostCallbacks());
   expect(await raw.receiverAuthority("playground.dot")).toBeUndefined();
-  expect(await raw.receiverCommand("playground.dot", 2, new Uint8Array())).toBeUndefined();
-  await expect(raw.receiverChanged()).rejects.toThrow("background receiving unsupported");
+  expect(
+    await raw.receiverCommand("playground.dot", 2, new Uint8Array()),
+  ).toBeUndefined();
+  await expect(raw.receiverChanged()).rejects.toThrow(
+    "background receiving unsupported",
+  );
   const standalone = createNotificationReceiverCallbacks({
     readReceivingState: () => undefined,
-    writeReceivingState: () => { throw new Error("storage unavailable"); },
+    writeReceivingState: () => {
+      throw new Error("storage unavailable");
+    },
   });
   expect(await standalone.receiverAuthority("playground.dot")).toBeUndefined();
-  await expect(standalone.receiverConsent(new Uint8Array(), new Uint8Array())).rejects.toThrow("background receiving unsupported");
-  await expect(standalone.receiverChanged()).rejects.toThrow("background receiving unsupported");
-  await expect(standalone.writeReceivingState(new Uint8Array())).rejects.toThrow("storage unavailable");
+  await expect(
+    standalone.receiverConsent(new Uint8Array(), new Uint8Array()),
+  ).rejects.toThrow("background receiving unsupported");
+  await expect(standalone.receiverChanged()).rejects.toThrow(
+    "background receiving unsupported",
+  );
+  await expect(
+    standalone.writeReceivingState(new Uint8Array()),
+  ).rejects.toThrow("storage unavailable");
 });
 
 it("preserves confirmed versus pending display in the receipt wire payload", () => {
   expect(ReceivingReceiptKind.enc("Foreground")).toEqual(new Uint8Array([0]));
   expect(ReceivingReceiptKind.enc("Read")).toEqual(new Uint8Array([1]));
   expect(ReceivingReceiptKind.enc("Displayed")).toEqual(new Uint8Array([2]));
-  expect(HostNotificationReceiptResult.enc({ displayed: false, displayPending: true }))
-    .toEqual(new Uint8Array([0, 1]));
-  expect(HostNotificationReceiptResult.dec(new Uint8Array([1, 0])))
-    .toEqual({ displayed: true, displayPending: false });
+  expect(
+    HostNotificationReceiptResult.enc({
+      displayed: false,
+      displayPending: true,
+    }),
+  ).toEqual(new Uint8Array([0, 1]));
+  expect(HostNotificationReceiptResult.dec(new Uint8Array([1, 0]))).toEqual({
+    displayed: true,
+    displayPending: false,
+  });
 });
 
 const defaultTheme = (variant: ThemeVariant): HostThemeSubscribeItemValue => ({
@@ -160,11 +205,11 @@ const namedTheme = (
   variant,
 });
 const PRODUCT_ACCOUNT = {
-  dotNsIdentifier: "playground.dot",
+  dotNsIdentifier: asProductId("playground.dot"),
   derivationIndex: { tag: "Index" as const, value: 0 },
 };
 const PROOF_CONTEXT = {
-  productId: "playground.dot",
+  productId: asProductId("playground.dot"),
   suffix: { tag: "Index" as const, value: 0 },
 };
 const RING_LOCATION = {
@@ -364,7 +409,7 @@ describe("createWasmRawCallbacks", () => {
     const cancelled: number[] = [];
     const askedBy: ProductContext[] = [];
     const worker: ProductContext = {
-      productId: "camera.dot",
+      productId: asProductId("camera.dot"),
       executionKind: "Worker",
     };
     const raw = createWasmRawCallbacks(
@@ -574,7 +619,7 @@ describe("createWasmRawCallbacks", () => {
           value: {
             tag: "Product",
             value: {
-              callingProductId: "playground.dot",
+              callingProductId: asProductId("playground.dot"),
               request: {
                 account: PRODUCT_ACCOUNT,
                 payload: SIGN_PAYLOAD,
@@ -591,7 +636,7 @@ describe("createWasmRawCallbacks", () => {
           value: {
             tag: "Product",
             value: {
-              callingProductId: "playground.dot",
+              callingProductId: asProductId("playground.dot"),
               request: {
                 account: PRODUCT_ACCOUNT,
                 payload: {
@@ -612,7 +657,7 @@ describe("createWasmRawCallbacks", () => {
           value: {
             tag: "Product",
             value: {
-              callingProductId: "playground.dot",
+              callingProductId: asProductId("playground.dot"),
               payload: {
                 signer: PRODUCT_ACCOUNT,
                 genesisHash: GENESIS,
@@ -631,7 +676,7 @@ describe("createWasmRawCallbacks", () => {
         UserConfirmationReview.enc({
           tag: "AccountAlias",
           value: {
-            callingProductId: "playground.dot",
+            callingProductId: asProductId("playground.dot"),
             context: PROOF_CONTEXT,
             ringLocation: RING_LOCATION,
           },
@@ -643,7 +688,7 @@ describe("createWasmRawCallbacks", () => {
         UserConfirmationReview.enc({
           tag: "CreateProof",
           value: {
-            callingProductId: "playground.dot",
+            callingProductId: asProductId("playground.dot"),
             context: PROOF_CONTEXT,
             ringLocation: RING_LOCATION,
             message: new Uint8Array([7, 8]),
@@ -656,8 +701,8 @@ describe("createWasmRawCallbacks", () => {
         UserConfirmationReview.enc({
           tag: "AccountAccess",
           value: {
-            requestingProductId: "playground.dot",
-            targetProductId: "wallet.dot",
+            requestingProductId: asProductId("playground.dot"),
+            targetProductId: asProductId("wallet.dot"),
           },
         }),
       ),
@@ -667,7 +712,7 @@ describe("createWasmRawCallbacks", () => {
         UserConfirmationReview.enc({
           tag: "ResourceAllocation",
           value: {
-            callingProductId: "playground.dot",
+            callingProductId: asProductId("playground.dot"),
             resources: [{ tag: "StatementStoreAllowance" }],
           },
         }),
@@ -713,7 +758,7 @@ describe("createWasmRawCallbacks", () => {
     );
 
     const product = ProductContext.enc({
-      productId: "chat.dot",
+      productId: asProductId("chat.dot"),
       executionKind: "Worker",
     });
     const request = HostChatCreateRoomRequest.enc({
@@ -1007,7 +1052,10 @@ describe("createWasmRawCallbacks", () => {
         async presentProfile() {
           throw new Error("Contact presentation must not use the fallback");
         },
-        async presentContactProfile(presentationProduct: ProductContext, contact: PresentedContactProfile) {
+        async presentContactProfile(
+          presentationProduct: ProductContext,
+          contact: PresentedContactProfile,
+        ) {
           expect(presentationProduct).toEqual(ProductContext.dec(product));
           this.presentations.push(contact);
         },
@@ -1016,21 +1064,31 @@ describe("createWasmRawCallbacks", () => {
         ...makeHostCallbacks(),
         profile: host as never,
       });
-      await raw.presentContactProfile!(product, PresentedContactProfile.enc(presented));
+      await raw.presentContactProfile!(
+        product,
+        PresentedContactProfile.enc(presented),
+      );
       await raw.presentContactProfile!(
         product,
         PresentedContactProfile.enc({ ...presented, shared: undefined }),
       );
-      await expect(raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)))
-        .resolves.toBeUndefined();
-      expect(host.presentations).toEqual([presented, { ...presented, shared: undefined }]);
+      await expect(
+        raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)),
+      ).resolves.toBeUndefined();
+      expect(host.presentations).toEqual([
+        presented,
+        { ...presented, shared: undefined },
+      ]);
     });
 
     it("preserves placement and its receiver when only contact presentation is missing", async () => {
       const host = {
         placements: [] as PlacedAvatars[],
         async presentProfile() {},
-        async placeContactAvatars(placementProduct: ProductContext, placement: PlacedAvatars) {
+        async placeContactAvatars(
+          placementProduct: ProductContext,
+          placement: PlacedAvatars,
+        ) {
           expect(placementProduct).toEqual(ProductContext.dec(product));
           this.placements.push(placement);
         },
@@ -1049,15 +1107,18 @@ describe("createWasmRawCallbacks", () => {
         failure,
         async presentProfile() {},
         async presentContactProfile() {},
-        async placeContactAvatars() { throw this.failure; },
+        async placeContactAvatars() {
+          throw this.failure;
+        },
       };
       expect(profileHostAdapter(host)).toBe(host);
       const raw = createWasmRawCallbacks({
         ...makeHostCallbacks(),
         profile: host,
       });
-      await expect(raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)))
-        .rejects.toBe(failure);
+      await expect(
+        raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)),
+      ).rejects.toBe(failure);
     });
 
     it("preserves shared profiles without fabricating a reference for empty feedback on older hosts", async () => {
@@ -1087,8 +1148,9 @@ describe("createWasmRawCallbacks", () => {
         ),
       ).rejects.toThrow("Contact profile feedback is unavailable");
       expect(references).toEqual([presented.shared.reference]);
-      await expect(raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)))
-        .resolves.toBeUndefined();
+      await expect(
+        raw.placeContactAvatars!(product, PlacedAvatars.enc(placed)),
+      ).resolves.toBeUndefined();
     });
   });
 });
@@ -1101,11 +1163,14 @@ describe("ProductContext codec", () => {
   // ProductContext travels the wasm callback boundary encoded in Rust and
   // decoded here.
   it("product context encoding matches the Rust platform codec", () => {
-    expect([...ProductExecutionKind.enc("App")]).toEqual([0]);
-    expect([...ProductExecutionKind.enc("Widget")]).toEqual([1]);
-    expect([...ProductExecutionKind.enc("Worker")]).toEqual([2]);
+    expect([...ExecutableKind.enc("App")]).toEqual([0]);
+    expect([...ExecutableKind.enc("Widget")]).toEqual([1]);
+    expect([...ExecutableKind.enc("Worker")]).toEqual([2]);
 
-    const context = { productId: "app.dot", executionKind: "Worker" } as const;
+    const context = {
+      productId: asProductId("app.dot"),
+      executionKind: "Worker",
+    } as const;
     expect([...ProductContext.enc(context)]).toEqual([
       28,
       ...new TextEncoder().encode("app.dot"),

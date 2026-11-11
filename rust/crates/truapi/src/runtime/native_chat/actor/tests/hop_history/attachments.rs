@@ -100,7 +100,7 @@ async fn authorize_upload(platform: &StubPlatform) {
 	set_product_grants(platform, PRODUCT, PermissionAuthorizationStatus::Authorized).await;
 	let product = crate::platform::ProductContext::new_with_execution(
 		crate::product_id::ProductId::for_test(PRODUCT),
-		crate::platform::ProductExecutionKind::Worker,
+		crate::platform::ExecutableKind::Worker,
 	);
 	crate::host_internal::permissions::PermissionsService::new(platform, platform, &product)
 		.set_authorization_status(

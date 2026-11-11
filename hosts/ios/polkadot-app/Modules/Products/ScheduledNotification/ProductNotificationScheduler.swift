@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Operation_iOS
 import Products
@@ -54,7 +55,7 @@ actor ProductNotificationScheduler: ProductNotificationScheduling {
         )
 
         let content = UNMutableNotificationContent()
-        content.title = productId
+        content.title = productId.rawValue
         content.body = request.text
         content.sound = .default
 
@@ -134,7 +135,7 @@ private extension ProductNotificationScheduler {
         let filter = NSPredicate(
             format: "%K == %@",
             #keyPath(CDScheduledNotification.productId),
-            productId
+            productId.rawValue
         )
 
         return AnyDataProviderRepository(

@@ -94,6 +94,20 @@ class AndroidHostCoreStorage(context: Context, namespace: String) : HostCoreStor
         Unit
     }
 
+    override suspend fun keys(): List<ByteArray> = storageCall {
+        database.readableDatabase.query(
+            "core_slots", arrayOf("slot"), null, null, null, null, "slot",
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val key = android.util.Base64.decode(cursor.getString(0), android.util.Base64.NO_WRAP)
+                    check(key.isNotEmpty()) { "Empty core storage key" }
+                    add(key)
+                }
+            }
+        }
+    }
+
     private inline fun durableMutation(operation: (SQLiteDatabase) -> Unit) {
         val db = database.writableDatabase
         db.beginTransaction()

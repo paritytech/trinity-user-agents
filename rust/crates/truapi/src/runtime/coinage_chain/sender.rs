@@ -8,7 +8,7 @@ use super::{
 	rpc,
 	transaction::{Snapshot, constant, decode_exact, denomination_value, storage_key},
 };
-use crate::platform::async_trait;
+use async_trait::async_trait;
 use parity_scale_codec::Encode;
 use scale_decode::DecodeAsType;
 use std::{
@@ -334,9 +334,9 @@ impl RegularTransferSubmitter for HostCoinageChain {
 			.map_err(|_| "invalid Coinage split call")?;
 		let nonce = self.nonce(&rpc, &source, &snapshot).await?;
 		self.ensure_session()?;
-		let extrinsic = snapshot.signed(&keypair, &call, nonce)?;
+		let extrinsic = snapshot.signed(&self.inner.extrinsics, &keypair, &call, nonce).await?;
 		self.checkpoint(&submission.wal_entry_id, &snapshot).await?;
-		let finalized = self.broadcast(&rpc, &extrinsic, &snapshot).await?;
+		let finalized = self.broadcast(&rpc, extrinsic.bytes(), &snapshot).await?;
 		let finalized_snapshot = self.snapshot(&rpc, finalized).await?;
 		if Self::coins_at(&rpc, &[source], &finalized_snapshot).await?[0].is_some() {
 			return Err("finalized Coinage split left its source unconsumed".into());
@@ -420,27 +420,32 @@ impl RegularTransferSubmitter for HostCoinageChain {
 			0,
 		)
 		.map_err(|_| "invalid Coinage unload call")?;
-		let extensions = snapshot.extensions(0)?;
-		let implication = snapshot.implication(&call, &extensions)?;
-		self.ensure_session()?;
-		let proof = provider
-			.unload_proof(&UnloadProofRequest {
-				recycler: fresh.draft.recycler,
-				voucher_derivation_indices: indices,
-				recycler_ring: fresh.origin.recycler_ring,
-				person_origin: fresh.origin.person_origin,
-				people_ring: fresh.origin.people_ring,
-				token: fresh.origin.token,
-				inherited_implication: implication,
+		let mut proof_request = UnloadProofRequest {
+			recycler: fresh.draft.recycler,
+			voucher_derivation_indices: indices,
+			recycler_ring: fresh.origin.recycler_ring,
+			person_origin: fresh.origin.person_origin,
+			people_ring: fresh.origin.people_ring,
+			token: fresh.origin.token,
+			inherited_implication: Vec::new(),
+		};
+		let extrinsic = snapshot
+			.unsigned(&self.inner.extrinsics, &call, |implication| {
+				self.ensure_session()?;
+				proof_request.inherited_implication = implication.encoded().to_vec();
+				let proof = provider
+					.unload_proof(&proof_request)
+					.map_err(|_| "Coinage unload proof failed")?;
+				if proof.aliases != aliases {
+					return Err("Coinage proof aliases changed".into());
+				}
+				self.ensure_session()?;
+				Ok(proof)
 			})
-			.map_err(|_| "Coinage unload proof failed")?;
-		if proof.aliases != aliases {
-			return Err("Coinage proof aliases changed".into());
-		}
+			.await?;
 		self.ensure_session()?;
-		let extrinsic = snapshot.unsigned(&call, extensions, &proof)?;
 		self.checkpoint(&fresh.draft.wal_entry_id, &snapshot).await?;
-		let finalized = self.broadcast(&rpc, &extrinsic, &snapshot).await?;
+		let finalized = self.broadcast(&rpc, extrinsic.bytes(), &snapshot).await?;
 		let finalized_snapshot = self.snapshot(&rpc, finalized).await?;
 		let values = rpc::query(&rpc, &alias_keys(&finalized_snapshot)?, finalized).await?;
 		for value in values {

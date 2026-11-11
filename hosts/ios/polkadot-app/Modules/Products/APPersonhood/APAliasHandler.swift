@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Individuality
 import KeyDerivation
@@ -7,6 +8,7 @@ import SubstrateSdk
 /// RFC-0004 Accounts Protocol `get_account_alias` backed by host-held member keys.
 protocol APAliasHandling: Sendable {
     func getContextualAlias(
+        keyHandle: RingVrfKeyHandle,
         context: ProductProofContext,
         ring: RingLocation
     ) async throws -> ContextualAlias
@@ -17,7 +19,7 @@ final class APAliasHandler: APBaseMembershipHandler, @unchecked Sendable {
 
     init(
         callingProductId: ProductId?,
-        options: [CreateProofOrAliasOption],
+        builtInKeys: BuiltInPersonhoodKeysProviding,
         depsResolver: MembershipDepsResolving,
         accountAccessHandler: AccountAccessPermissionHandling,
         logger: LoggerProtocol
@@ -26,7 +28,7 @@ final class APAliasHandler: APBaseMembershipHandler, @unchecked Sendable {
 
         super.init(
             callingProductId: callingProductId,
-            options: options,
+            builtInKeys: builtInKeys,
             depsResolver: depsResolver,
             logger: logger
         )
@@ -35,11 +37,12 @@ final class APAliasHandler: APBaseMembershipHandler, @unchecked Sendable {
 
 extension APAliasHandler: APAliasHandling {
     func getContextualAlias(
+        keyHandle: RingVrfKeyHandle,
         context: ProductProofContext,
         ring: RingLocation
     ) async throws -> ContextualAlias {
         do {
-            return try await performGetContextualAlias(context: context, ring: ring)
+            return try await performGetContextualAlias(keyHandle: keyHandle, context: context, ring: ring)
         } catch {
             logger.error("Get contextual alias failed: \(error)")
             throw GetAliasError.wrapping(error)
@@ -51,6 +54,7 @@ private extension APAliasHandler {
     // Derive-only by design: an alias is available even before the user reaches
     // full personhood, so ring membership is not checked here.
     func performGetContextualAlias(
+        keyHandle: RingVrfKeyHandle,
         context: ProductProofContext,
         ring: RingLocation
     ) async throws -> ContextualAlias {
@@ -60,13 +64,9 @@ private extension APAliasHandler {
             throw GetAliasError.ringNotFound
         }
 
-        guard let collectionId = requestedCollection(for: ring),
-              let option = options.first(where: { $0.collectionId == collectionId }) ?? options.first else {
-            throw GetAliasError.unknown("No ring keys configured")
-        }
-
+        let keyManager = try resolveKeyManager(handle: keyHandle, ring: ring)
         let contextBytes = try context.contextBytes()
-        let alias = try option.keyManager.deriveAlias(for: contextBytes)
+        let alias = try keyManager.deriveAlias(for: contextBytes)
 
         return ContextualAlias(context: contextBytes, alias: alias)
     }
@@ -85,6 +85,16 @@ private extension APAliasHandler {
 
         guard granted else {
             throw GetAliasError.rejected
+        }
+    }
+
+    func resolveKeyManager(handle: RingVrfKeyHandle, ring: RingLocation) throws -> BandersnatchKeyManaging {
+        do {
+            return try builtInKeys.resolve(handle: handle, ring: ring)
+        } catch BuiltInPersonhoodKeyError.keyNotRegistered {
+            throw GetAliasError.keyNotRegistered
+        } catch BuiltInPersonhoodKeyError.keyNotInRing {
+            throw GetAliasError.keyNotInRing
         }
     }
 }

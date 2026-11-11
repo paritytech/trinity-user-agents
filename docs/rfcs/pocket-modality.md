@@ -132,6 +132,10 @@ polkadotapp://pocket/open?product=<product_id>.<tld>&card=<id>      Expand a car
 without naming a card. Arguments are ignored. Expanding a card opens the Pocket on that card, the same view a tap on it
 gives (see [Expanded card](#expanded-card)).
 
+An `open` link's other query parameters, URL-encoded and up to 2048 bytes, are passed on to the card's page after
+`card`, so a product can pick the screen its card opens on. Anyone can write the link, so the page reads them as a hint,
+never proof.
+
 The same link works from a product, a QR code or a web page. A link that names an action the host does not serve, or
 names no product or no card, is refused with a message. Products reach a Pocket link from their own web UI through
 `system.navigate_to`, which lets it through without the `OpenUrl` grant other `polkadotapp://` links need, so an "Add to
@@ -187,7 +191,7 @@ Pocket methods append within the trait.
 /// Pocket cards backed by the calling product.
 #[wire_trait(id = 18)]
 #[crate::service(required_execution = Worker)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Pocket: Send + Sync {
     /// The calling product's cards, whole set on subscribe and on every change.
     #[wire(id = 0)]
@@ -246,7 +250,7 @@ applies to a whole trait, so the call is a trait of its own, `23`, with `set_fac
 /// The face drawn above the calling Widget when the Widget is an expanded card.
 #[wire_trait(id = 23)]
 #[crate::service(required_execution = Widget)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait ExpandedCard: Send + Sync {
     /// Show or hide the face above the calling Widget. Succeeds when the face is already in that state.
     #[wire(id = 0)]
@@ -314,4 +318,4 @@ that made it, so no request names a card. An App or Worker caller is `Denied`, a
   root listing the cards, with the manifest carrying only `includes.pocket`.
 - **Material effects on a face.** Predefined surface effects a card picks, animated by device orientation. Not specified
   here: a privileged card is host-placed, so a host can attach one by card identity, and anything a third-party card
-  picks belongs in the renderer's `Effect` vocabulary.
+  picks is a [material](materials.md).

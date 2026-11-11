@@ -1,6 +1,8 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
+import TrUAPIHost
 @testable import polkadot_app
 
 struct AssetPinnedPocketCardsTests {
@@ -10,18 +12,16 @@ struct AssetPinnedPocketCardsTests {
     /// id is a function of the network the app is on.
     @Test
     func placesHumanityOnThePersonhoodProduct() async {
-        #expect(await pinned.cards() == [
-            PocketCardEntry(
-                key: PocketCardKey(productId: "peopl.paseo", cardId: PocketCardId(value: "humanity")),
-                title: "Humanity",
-                privileged: true
-            )
-        ])
+        #expect(pinned.cards() == [PinnedPocketCard(
+            productId: try! ProductId("peopl.paseo"),
+            cardId: "humanity",
+            title: "Humanity"
+        )])
     }
 
     @Test
     func namesAPinnedCardWithoutAwaiting() {
-        let key = PocketCardKey(productId: "peopl.paseo", cardId: PocketCardId(value: "humanity"))
+        let key = PocketCardKey(productId: try! ProductId("peopl.paseo"), cardId: PocketCardId(value: "humanity"))
 
         #expect(pinned.pinned(key)?.privileged == true)
     }
@@ -30,14 +30,14 @@ struct AssetPinnedPocketCardsTests {
     /// product cannot claim permanence by naming someone else's card.
     @Test
     func doesNotPinTheSameCardIdOnAnotherProduct() {
-        let impostor = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "humanity"))
+        let impostor = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "humanity"))
 
         #expect(pinned.pinned(impostor) == nil)
     }
 
     @Test
     func doesNotPinAnUnknownCardOnTheRightProduct() {
-        let unknown = PocketCardKey(productId: "peopl.paseo", cardId: PocketCardId(value: "loyalty"))
+        let unknown = PocketCardKey(productId: try! ProductId("peopl.paseo"), cardId: PocketCardId(value: "loyalty"))
 
         #expect(pinned.pinned(unknown) == nil)
     }
@@ -49,10 +49,31 @@ struct AssetPinnedPocketCardsTests {
     func bundledFaceDecodesThroughTheRendererPath() async throws {
         let face = try #require(await pinned.face(for: PocketCardId(value: "humanity")))
 
-        guard case let .column(_, _, children) = face else {
-            Issue.record("expected the bundled face to be a column, got \(face)")
+        guard case .box = face else {
+            Issue.record("expected the bundled face to be a box, got \(face)")
             return
         }
-        #expect(children.count == 2)
+    }
+
+    /// A missing file is a hole in the card at first launch, which nothing
+    /// else would notice.
+    @Test
+    func everyImageTheBundledFaceDrawsShipsWithTheApp() throws {
+        let url = try #require(Bundle.main.url(forResource: "pocket-humanity", withExtension: "json"))
+        let json = try String(contentsOf: url, encoding: .utf8)
+        let paths = json.matches(of: #/"tag"\s*:\s*"Archive"\s*,\s*"value"\s*:\s*"([^"]+)"/#)
+            .map { String($0.1) }
+
+        #expect(!paths.isEmpty)
+        for path in paths {
+            #expect(AssetPinnedPocketCards.image(at: path) != nil, "not shipped: \(path)")
+        }
+    }
+
+    @Test(arguments: [
+        "pocket/wordmark-light.png", "pocket/../pocket/card-mark.webp", "card-mark.webp", "pocket-card-mark.webp"
+    ])
+    func aPathTheAppDoesNotShipIsLeftToTheProductsArchive(path: String) {
+        #expect(AssetPinnedPocketCards.image(at: path) == nil)
     }
 }

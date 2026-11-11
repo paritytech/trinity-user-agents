@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 /// Permission a product can request from the host.
@@ -15,6 +16,7 @@ public enum ProductPermission: Equatable, Sendable {
     public static let statementSubmitAccessTypeName = "statement_submit"
     public static let jamPeersAccessTypeName = "jam_peers"
     public static let userIdentityAccessTypeName = "user_identity_access"
+    public static let nftPurseReadTypeName = "nft_purse_read"
     public static let chatAuthorityTypeName = "chat_authority"
     public static let profileDisclosureTypeName = "profile_disclosure"
     public static let statementStoreAllowanceTypeName = "statement_store_allowance"
@@ -23,7 +25,7 @@ public enum ProductPermission: Equatable, Sendable {
     case networkAccess(domain: String)
     /// Exact native domain-set decision; not equivalent to separate domain decisions.
     case networkAccessBundle(domains: [String])
-    case accountAccess(targetProductId: String)
+    case accountAccess(targetProductId: ProductId)
     case balanceAccess
     case webRtcAccess
     case chainSubmitAccess
@@ -37,6 +39,8 @@ public enum ProductPermission: Equatable, Sendable {
     case profileDisclosure
     /// `nil` is the legacy allowance account, distinct from every product selector.
     case statementStoreAllowance(derivationIndex: ProductAccountSelector?)
+    /// Reading the NFT purses of another owner: a product, or the user's own account when `nil`.
+    case nftPurseRead(ownerProductId: ProductId?)
 
     /// Whether this is one of the core's `RemotePermission` cases: a product's
     /// own outbound access.
@@ -52,7 +56,7 @@ public enum ProductPermission: Equatable, Sendable {
              .statementSubmitAccess, .jamPeersAccess:
             true
         case .deviceCapability, .accountAccess, .balanceAccess, .userIdentityAccess,
-             .chatAuthority, .profileDisclosure, .statementStoreAllowance:
+             .chatAuthority, .profileDisclosure, .statementStoreAllowance, .nftPurseRead:
             false
         }
     }
@@ -93,6 +97,8 @@ public enum ProductPermission: Equatable, Sendable {
             Self.profileDisclosureTypeName
         case .statementStoreAllowance:
             Self.statementStoreAllowanceTypeName
+        case .nftPurseRead:
+            Self.nftPurseReadTypeName
         }
     }
 
@@ -105,7 +111,7 @@ public enum ProductPermission: Equatable, Sendable {
         case let .networkAccessBundle(domains):
             domains.joined(separator: "\n")
         case let .accountAccess(targetProductId):
-            targetProductId
+            targetProductId.rawValue
         case let .jamPeersAccess(genesis):
             genesis
         case let .statementStoreAllowance(derivationIndex):
@@ -117,6 +123,8 @@ public enum ProductPermission: Equatable, Sendable {
             case let .raw(bytes):
                 "raw:\(bytes.base64EncodedString())"
             }
+        case let .nftPurseRead(ownerProductId):
+            ownerProductId?.rawValue ?? ""
         case .balanceAccess,
              .webRtcAccess,
              .chainSubmitAccess,
@@ -141,7 +149,8 @@ public enum ProductPermission: Equatable, Sendable {
         case networkAccessBundleTypeName:
             return .networkAccessBundle(domains: key.components(separatedBy: "\n"))
         case accountAccessTypeName:
-            return .accountAccess(targetProductId: key)
+            guard let target = try? ProductId(key) else { return nil }
+            return .accountAccess(targetProductId: target)
         case balanceAccessTypeName:
             return .balanceAccess
         case webRtcAccessTypeName:
@@ -172,6 +181,10 @@ public enum ProductPermission: Equatable, Sendable {
                 return .statementStoreAllowance(derivationIndex: .raw(bytes))
             }
             return nil
+        case nftPurseReadTypeName:
+            if key.isEmpty { return .nftPurseRead(ownerProductId: nil) }
+            guard let owner = try? ProductId(key) else { return nil }
+            return .nftPurseRead(ownerProductId: owner)
         default:
             return nil
         }

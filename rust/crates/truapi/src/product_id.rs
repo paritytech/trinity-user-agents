@@ -1,13 +1,16 @@
 //! Normalized product identifiers.
 
-use alloc::string::{String, ToString};
+use alloc::{
+	format,
+	string::{String, ToString},
+};
 use core::str::FromStr;
 
 use parity_scale_codec::{Decode, Encode};
 
 use crate::{
 	CallError,
-	dotns_name::{has_dotns_tld, is_dns_label},
+	dotns_name::{DOTNS_TLDS, has_dotns_tld, is_dns_label},
 };
 
 /// Largest accepted product identifier, in bytes. Manifest lookups are cached
@@ -41,19 +44,23 @@ const LOCALHOST_PORT_PREFIX: &str = "localhost:";
 /// Accepted forms are defined in host-spec C.7:
 /// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L109-L128>
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Encode, derive_more::Display)]
+#[cfg_attr(feature = "runtime", derive(serde::Serialize))]
+#[cfg_attr(feature = "runtime", serde(transparent))]
 pub struct ProductId(String);
 
 /// Why a string is not a product identifier.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi(flat_error))]
 pub enum ProductIdError {
 	/// The identifier was empty or whitespace-only.
 	#[display("product_id must not be empty")]
 	Empty,
 	/// The identifier was not a dotNS or localhost product identifier.
-	#[display("product_id must be a dotNS or localhost product identifier, got {product_id:?}")]
+	#[display("product_id must be a dotNS or localhost product identifier, got {input:?}")]
 	Invalid {
 		/// The identifier as received.
-		product_id: String,
+		input: String,
 	},
 	/// The identifier was longer than [`PRODUCT_ID_MAX_BYTES`] after normalization.
 	///
@@ -93,7 +100,7 @@ impl FromStr for ProductId {
 			});
 		}
 		if !has_well_formed_labels(&normalized) {
-			return Err(ProductIdError::Invalid { product_id: product_id.to_string() });
+			return Err(ProductIdError::Invalid { input: product_id.to_string() });
 		}
 		if is_localhost_form(&normalized) {
 			return Ok(Self(normalized));
@@ -106,12 +113,21 @@ impl FromStr for ProductId {
 		if has_dotns_tld(&normalized) && !reserves_localhost {
 			Ok(Self(normalized))
 		} else {
-			Err(ProductIdError::Invalid { product_id: product_id.to_string() })
+			Err(ProductIdError::Invalid { input: product_id.to_string() })
 		}
 	}
 }
 
 impl ProductId {
+	/// Construct a dotNS identity from its full name and explicit network suffix.
+	pub fn from_name(name: &str, network_suffix: &str) -> Result<Self, ProductIdError> {
+		let input = format!("{name}.{network_suffix}");
+		if !DOTNS_TLDS.contains(&network_suffix) {
+			return Err(ProductIdError::Invalid { input });
+		}
+		input.parse()
+	}
+
 	/// A product id for a test fixture. Panics when `product_id` does not parse.
 	#[cfg(any(test, feature = "mock"))]
 	pub fn for_test(product_id: &str) -> Self {
@@ -145,20 +161,26 @@ impl ProductId {
 	/// Whether `other` carries the same TLD. Two localhost identifiers carry
 	/// none, so they share a network.
 	pub fn on_one_network(&self, other: &Self) -> bool {
-		self.tld() == other.tld()
+		self.network_suffix() == other.network_suffix()
 	}
 
-	fn tld(&self) -> Option<&str> {
+	/// The network suffix, or `None` for a localhost development identity.
+	pub fn network_suffix(&self) -> Option<&str> {
 		self.0.rsplit_once('.').map(|(_, tld)| tld)
 	}
 
 	/// Everything before the TLD: `app.dim2` for `app.dim2.dot`. `None` for a
 	/// localhost identifier.
-	fn dotns_label(&self) -> Option<&str> {
+	pub fn dotns_name(&self) -> Option<&str> {
 		if !has_dotns_tld(&self.0) {
 			return None;
 		}
 		self.0.rsplit_once('.').map(|(label, _tld)| label)
+	}
+
+	/// Whether this dotNS identity belongs to the explicitly configured network.
+	pub fn matches_network(&self, network_suffix: &str) -> bool {
+		self.network_suffix() == Some(network_suffix)
 	}
 
 	/// Whether this is a development localhost identifier: exactly
@@ -176,7 +198,7 @@ impl ProductId {
 	///
 	/// [`RemotePermission`]: truapi::latest::RemotePermission
 	pub fn has_trusted_remote_permissions(&self) -> bool {
-		self.dotns_label()
+		self.dotns_name()
 			.is_some_and(|label| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
 	}
 
@@ -189,7 +211,7 @@ impl ProductId {
 	/// Whether this is the game product, Jollity, on any network. `app.dim2.dot`
 	/// is not.
 	pub fn is_game_product(&self) -> bool {
-		self.dotns_label() == Some(GAME_PRODUCT_LABEL)
+		self.dotns_name() == Some(GAME_PRODUCT_LABEL)
 	}
 }
 
@@ -227,9 +249,6 @@ impl<'de> serde::Deserialize<'de> for ProductId {
 	}
 }
 
-// UniFFI parses a `ProductId` argument before the call runs. If that fails in
-// a Swift call that can't throw, the app crashes, so only take one in calls
-// that return a `Result`.
 #[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
 uniffi::custom_type!(ProductId, String, {
 	lower: |product_id| product_id.0,
@@ -263,228 +282,113 @@ fn has_well_formed_labels(normalized: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN};
+mod tests;
 
-	#[test]
-	fn trusted_remote_permission_labels_match_the_bare_product_label() {
-		for product_id in [
-			"peopl.dot",
-			"peopl.paseo",
-			"peopl.testnet",
-			"dim2.dot",
-			"dim2.paseo",
-			"dim2.testnet",
-			"stash.dot",
-		] {
-			assert!(
-				ProductId::normalizes_to_trusted_remote_permissions(product_id),
-				"{product_id} must hold remote permissions without a prompt"
-			);
+#[cfg(feature = "runtime")]
+mod runtime {
+	use super::{ProductId, ProductIdError};
+	use crate::{host_logic::dotns::PRODUCT_SHARE_SUFFIX, platform::ExecutableKind};
+
+	impl ProductId {
+		/// Parse only a supported share host, without a URL or network lookup.
+		pub fn from_share_host(input: &str) -> Option<Self> {
+			let hostname = crate::dotns_name::normalize_host(input);
+			let identifier = hostname.strip_suffix(PRODUCT_SHARE_SUFFIX)?.parse::<Self>().ok()?;
+			identifier.network_suffix()?;
+			Some(identifier)
 		}
-		for product_id in [
-			"app.peopl.dot",
-			"sub.dim2.paseo",
-			"app.dim2.testnet",
-			"dim2.com",
-			"notdim2.dot",
-			"peopl",
-			"peopl.com",
-			"peoplx.dot",
-			"my-peopl.dot",
-			"localhost",
-			"localhost:3000",
-			"",
-			"dot",
-		] {
-			assert!(
-				!ProductId::normalizes_to_trusted_remote_permissions(product_id),
-				"{product_id} is a separate product and must prompt"
-			);
+
+		/// The public share host on this identity's network, excluding local development.
+		pub fn to_share_host(&self) -> Option<String> {
+			self.network_suffix()?;
+			Some(format!("{self}{PRODUCT_SHARE_SUFFIX}"))
+		}
+
+		/// Name an executable without changing its product's nested namespace.
+		pub fn executable(&self, kind: ExecutableKind) -> Result<Self, ProductIdError> {
+			format!("{}.{self}", kind.dotns_label()).parse()
+		}
+
+		/// Remove one executable prefix while keeping a complete, valid product name.
+		pub fn executable_owner(&self) -> Result<Self, ProductIdError> {
+			if let Some((prefix, owner)) = self.as_str().split_once('.') {
+				let is_executable =
+					[ExecutableKind::App, ExecutableKind::Widget, ExecutableKind::Worker]
+						.iter()
+						.any(|kind| kind.dotns_label() == prefix);
+				if is_executable && owner.contains('.') {
+					return owner.parse();
+				}
+			}
+			Ok(self.clone())
 		}
 	}
 
-	#[test]
-	fn a_published_product_cannot_take_the_localhost_label() {
-		// Hosts grant a development wildcard to a localhost product, so the
-		// label must not be reachable from dotNS.
-		for product_id in ["localhost.dot", "localhost.paseo", "LOCALHOST.DOT"] {
-			assert!(
-				product_id.parse::<ProductId>().is_err(),
-				"{product_id} must not be a valid product identifier"
-			);
-			assert!(
-				!is_localhost_form(product_id),
-				"{product_id} must not read as the development wildcard"
-			);
-		}
-		for product_id in ["localhost", "localhost:3000"] {
-			assert!(is_localhost_form(product_id), "{product_id}");
-		}
-		// A prefix test would admit these; the whole identifier has to match.
-		for product_id in ["localhost:3000.evil.dot", "localhost:", "localhost:80a"] {
-			assert!(
-				!is_localhost_form(product_id),
-				"{product_id} must not read as the development wildcard"
-			);
-			assert!(
-				product_id.parse::<ProductId>().is_err(),
-				"{product_id} must not pass as a dotNS name either"
-			);
-		}
-		// Still a normal product, sharing only the prefix.
-		assert!("localhosting.dot".parse::<ProductId>().is_ok());
-	}
+	#[cfg(test)]
+	mod tests {
+		use super::*;
 
-	#[test]
-	fn trusted_remote_permissions_normalize_the_spellings_a_host_holds() {
-		// Both the UniFFI and wasm exports parse before asking, and a host
-		// holds an id in whatever spelling it received rather than the
-		// normalized form the core passes internally.
-		for product_id in
-			["peopl.dot", "PEOPL.DOT", "  peopl.dot  ", "dim2.paseo", " DIM2.TESTNET ", "stash.dot"]
-		{
-			assert!(
-				ProductId::normalizes_to_trusted_remote_permissions(product_id),
-				"{product_id} is a first-party product in any accepted spelling"
+		#[test]
+		fn share_hosts_require_supported_dotns_identities() {
+			assert_eq!(
+				ProductId::from_share_host("BROWSE.TESTNET.LI"),
+				Some(ProductId::for_test("browse.testnet"))
 			);
+			for input in ["browse.test.li", "browse.dot", "https://browse.dot.li", "localhost.li"] {
+				assert_eq!(ProductId::from_share_host(input), None, "{input}");
+			}
 		}
-		for product_id in ["app.peopl.dot", "peopl", "notpeopl.dot", "localhost:3000", "", "   "] {
-			assert!(
-				!ProductId::normalizes_to_trusted_remote_permissions(product_id),
-				"{product_id} must not be read as trusted"
-			);
-		}
-	}
 
-	#[test]
-	fn every_trusted_remote_permission_label_is_a_product_identifier() {
-		// A label that product-id validation rejects would never reach the
-		// permission engine, so the whitelist entry would be silently inert.
-		for label in REMOTE_PERMISSION_TRUSTED_LABELS {
-			for tld in DOTNS_TLDS {
-				let product_id = format!("{label}.{tld}");
-				assert!(
-					product_id.parse::<ProductId>().is_ok(),
-					"{product_id} must be an accepted product identifier"
-				);
-				assert!(
-					ProductId::normalizes_to_trusted_remote_permissions(&product_id),
-					"{product_id} must be recognized as trusted"
+		#[test]
+		fn share_hosts_preserve_the_product_network() {
+			for (input, expected) in [
+				("browse.dot", Some("browse.dot.li")),
+				("browse.paseo", Some("browse.paseo.li")),
+				("widget.browse.testnet", Some("widget.browse.testnet.li")),
+				("localhost", None),
+				("localhost:3000", None),
+			] {
+				assert_eq!(ProductId::for_test(input).to_share_host().as_deref(), expected);
+			}
+		}
+
+		#[test]
+		fn executable_owners_preserve_nested_product_names() {
+			let owner = ProductId::for_test("arena.coinflip.paseo");
+			for (kind, expected) in [
+				(ExecutableKind::App, "app.arena.coinflip.paseo"),
+				(ExecutableKind::Widget, "widget.arena.coinflip.paseo"),
+				(ExecutableKind::Worker, "worker.arena.coinflip.paseo"),
+			] {
+				let executable = owner.executable(kind).unwrap();
+				assert_eq!(executable, ProductId::for_test(expected));
+				assert_eq!(executable.executable_owner().unwrap(), owner);
+			}
+		}
+
+		#[test]
+		fn only_an_executable_prefix_with_a_complete_owner_is_removed() {
+			for (input, expected) in [
+				("app.dot", "app.dot"),
+				("arena.coinflip.dot", "arena.coinflip.dot"),
+				("app.worker.coinflip.dot", "worker.coinflip.dot"),
+				("localhost:3000", "localhost:3000"),
+			] {
+				assert_eq!(
+					ProductId::for_test(input).executable_owner().unwrap(),
+					ProductId::for_test(expected)
 				);
 			}
 		}
-	}
 
-	#[test]
-	fn trusted_remote_permission_labels_are_bare_lowercase_labels() {
-		// The predicate compares against the label of an already-normalized id,
-		// so an entry carrying a TLD or an uppercase letter can never match.
-		for label in REMOTE_PERMISSION_TRUSTED_LABELS {
-			assert!(!label.contains('.'), "{label} must not carry a TLD");
-			assert_eq!(*label, label.to_lowercase(), "{label} must be lowercase");
+		#[test]
+		fn executable_names_cannot_create_invalid_product_ids() {
+			assert!(ProductId::for_test("app.localhost.dot").executable_owner().is_err());
+			assert!(ProductId::for_test("localhost:3000").executable(ExecutableKind::App).is_err());
+			let label = "a".repeat(63);
+			let longest =
+				ProductId::for_test(&format!("{label}.{label}.{label}.{}.dot", "b".repeat(60)));
+			assert!(longest.executable(ExecutableKind::Worker).is_err());
 		}
-	}
-
-	#[test]
-	fn an_identifier_carrying_no_name_is_rejected() {
-		// Each of these would reach the manifest grant key, the cache key, the
-		// only consent prompt in this design and every log line.
-		for id in [
-			"dim2\u{0}.dot",        // NUL, into a prompt rendered verbatim
-			"\u{202e}dim2.dot",     // right-to-left override
-			"dim2\u{200b}.dot",     // zero width space
-			"a b c.dot",            // whitespace
-			"../../etc/passwd.dot", // path separators
-			"dim2..dot",            // empty label: collapses onto other ids
-			".dot",                 // same empty label
-		] {
-			assert!(
-				id.parse::<ProductId>().is_err(),
-				"{id:?} carries no product name and must not normalize"
-			);
-		}
-	}
-
-	#[test]
-	fn only_a_name_dotns_can_register_is_an_identifier() {
-		let longest_label = "a".repeat(MAX_DNS_LABEL_LEN);
-		for id in ["Dim2.DOT", "dim2-two.dot", "0x.dot", &format!("{longest_label}.dot")] {
-			assert!(id.parse::<ProductId>().is_ok(), "{id:?} is a name dotNS can register");
-		}
-		// dotNS refuses each of these at registration, so none can ever resolve.
-		for id in [
-			"tést.dot",
-			"münchen.dot",
-			"my_app.dot",
-			"-dim2.dot",
-			"dim2-.dot",
-			"\u{ff44}\u{ff49}\u{ff4d}2.dot",
-			"dim2\u{ad}.dot",
-			&format!("{longest_label}a.dot"),
-		] {
-			assert!(id.parse::<ProductId>().is_err(), "{id:?} is not a name dotNS can register");
-		}
-	}
-
-	#[test]
-	fn an_overlong_product_id_is_not_an_identifier() {
-		// Every label is well formed, so without the cap any length would be
-		// a valid, distinct cache key taken from the wire.
-		let full_label = "a".repeat(MAX_DNS_LABEL_LEN);
-		let at_cap = format!("{full_label}.{full_label}.{full_label}.{}.dot", "a".repeat(60));
-		assert_eq!(at_cap.len(), PRODUCT_ID_MAX_BYTES);
-		assert!(at_cap.parse::<ProductId>().is_ok(), "an id exactly at the cap is still valid");
-
-		let overlong = format!("{full_label}.{full_label}.{full_label}.{}.dot", "a".repeat(61));
-		assert!(
-			overlong.parse::<ProductId>().is_err(),
-			"a product id past the cap must be rejected, not stored"
-		);
-	}
-
-	#[test]
-	fn the_bare_label_drops_the_tld() {
-		assert_eq!(ProductId::for_test("dim2.dot").bare_label(), "dim2");
-		assert_eq!(ProductId::for_test("dim2.paseo").bare_label(), "dim2");
-		assert_eq!(ProductId::for_test("localhost").bare_label(), "localhost");
-	}
-
-	#[test]
-	fn an_executable_carries_the_label_of_the_product_it_belongs_to() {
-		assert_eq!(ProductId::for_test("app.dim2.dot").bare_label(), "dim2");
-		assert_eq!(ProductId::for_test("widget.dim2.dot").bare_label(), "dim2");
-		assert_eq!(ProductId::for_test("worker.dim2.paseo").bare_label(), "dim2");
-		assert_eq!(ProductId::for_test("funding.dim2.dot").bare_label(), "dim2");
-	}
-
-	#[test]
-	fn a_subname_of_another_domain_takes_that_domains_label() {
-		assert_eq!(ProductId::for_test("dim2.attacker.dot").bare_label(), "attacker");
-	}
-
-	#[test]
-	fn one_product_on_one_network_is_its_executables_under_one_tld() {
-		assert!(
-			ProductId::for_test("app.dim2.dot")
-				.same_product_on_one_network(&ProductId::for_test("dim2.dot"))
-		);
-		assert!(
-			!ProductId::for_test("dim2.paseo")
-				.same_product_on_one_network(&ProductId::for_test("dim2.dot"))
-		);
-		assert!(
-			!ProductId::for_test("dim2.attacker.dot")
-				.same_product_on_one_network(&ProductId::for_test("dim2.dot"))
-		);
-	}
-
-	#[test]
-	fn decoding_normalizes_and_rejects_what_parsing_rejects() {
-		let frame = "DIM2.Dot".to_string().encode();
-		assert_eq!(ProductId::decode(&mut frame.as_slice()), Ok(ProductId::for_test("dim2.dot")));
-		let frame = "evil.com".to_string().encode();
-		assert!(ProductId::decode(&mut frame.as_slice()).is_err());
 	}
 }

@@ -49,7 +49,7 @@ pub fn generate_wasm_bridge(
         use wasm_bindgen::JsValue;
 
         use super::{{
-            WasmPlatform, call_js_function, decode_bytes, decode_js_item, generic, get_function,
+            WasmPlatform, call_js_function, decode_bytes, decode_js_item, get_function,
             get_optional_function, invoke_bool, invoke_bytes_return, invoke_js_subscription,
             invoke_optional_bytes_return, invoke_optional_string_return, invoke_unit, missing_callback, parse_optional_bytes_item,
             absent_optional_callback,
@@ -279,7 +279,7 @@ fn emit_trait_impl(
 ) -> Result<String> {
 	let mut out = String::new();
 	if trait_def.methods.iter().any(|method| method.return_shape.is_async) {
-		out.push_str("#[crate::platform::async_trait]\n");
+		out.push_str("#[async_trait::async_trait]\n");
 	}
 	writeln!(out, "impl crate::platform::{} for WasmPlatform {{", trait_def.name).unwrap();
 	for (idx, method) in trait_def.methods.iter().enumerate() {
@@ -319,27 +319,33 @@ fn emit_result_method(
 	let ret = format!("Result<{}, {}>", rust_type(ok, ctx)?, rust_type(err, ctx)?);
 	let params = rust_params(method, ctx)?;
 	let map_err = error_mapper(err, ctx)?;
-
 	let body = if is_unit(ok) {
-		await_chain(&bridge_call("invoke_unit", &method.name, &args, &[]), &map_err)
+		formatdoc! {
+			"{call}.await{map_err}?;
+			Ok(())",
+			call = bridge_call("invoke_unit", &method.name, &args, &[]),
+		}
 	} else if is_bool(ok) {
-		await_chain(&bridge_call("invoke_bool", &method.name, &args, &[]), &map_err)
+		format!("Ok({}.await{map_err}?)", bridge_call("invoke_bool", &method.name, &args, &[]),)
 	} else if is_bytes(ok) {
-		await_chain(&bridge_call("invoke_bytes_return", &method.name, &args, &[]), &map_err)
+		format!(
+			"Ok({}.await{map_err}?)",
+			bridge_call("invoke_bytes_return", &method.name, &args, &[]),
+		)
 	} else if matches!(ok, TypeRef::Option(inner) if is_string(inner)) {
-		await_chain(
-			&bridge_call("invoke_optional_string_return", &method.name, &args, &[]),
-			&map_err,
+		format!(
+			"Ok({}.await{map_err}?)",
+			bridge_call("invoke_optional_string_return", &method.name, &args, &[]),
 		)
 	} else if is_optional_bytes(ok) {
-		await_chain(
-			&bridge_call(
+		format!(
+			"Ok({}.await{map_err}?)",
+			bridge_call(
 				"invoke_optional_bytes_return",
 				&method.name,
 				&args,
 				&[format!("{:?}", format!("{raw} must resolve to Uint8Array, null or undefined"))],
 			),
-			&map_err,
 		)
 	} else if let TypeRef::Option(inner) = ok &&
 		ctx.is_encoded_codec(inner)
@@ -354,8 +360,9 @@ fn emit_result_method(
 		formatdoc! {
 			r#"
             let bytes = {call}.await{map_err}?;
-            bytes.map(|bytes| decode_bytes::<{inner_type}>(bytes, "{raw} response did not decode"){map_err}).transpose()
-            "#
+            bytes.map(|bytes| decode_bytes::<{inner_type}>(bytes, "{raw} response did not decode"){decode_err}).transpose()
+            "#,
+			decode_err = if map_err.is_empty() { ".map_err(Into::into)" } else { map_err.as_str() },
 		}
 	} else if ctx.is_encoded_codec(ok) || is_scale_vector_result(ok) {
 		formatdoc_decode_result(method, ok, &raw, &args, &map_err, ctx)?
@@ -446,11 +453,14 @@ fn formatdoc_decode_result(
 ) -> Result<String> {
 	let ty = rust_type(ok, ctx)?;
 	let call = bridge_call("invoke_bytes_return", &method.name, args, &[]);
-	let await_bytes = await_chain(&call, &format!("{map_err}?"));
-	Ok(format!(
-		"let bytes = {await_bytes};\ndecode_bytes::<{ty}>(\n    bytes,\n    {:?},\n)\n{map_err}",
-		format!("{raw} response did not decode"),
-	))
+	Ok(formatdoc! {
+		"let bytes = {call}.await{map_err}?;
+        Ok(decode_bytes::<{ty}>(
+            bytes,
+            {message:?},
+        ){map_err}?)",
+		message = format!("{raw} response did not decode"),
+	})
 }
 
 fn rust_params(method: &PlatformMethod, ctx: &BridgeCtx<'_>) -> Result<String> {
@@ -508,14 +518,6 @@ fn bridge_call(name: &str, field: &str, second_arg: &str, extra_args: &[String])
 	}
 	out.push(')');
 	out
-}
-
-fn await_chain(call: &str, map_err: &str) -> String {
-	if call.contains('\n') {
-		format!("{call}\n.await\n{map_err}")
-	} else {
-		format!("{call}\n    .await\n    {map_err}")
-	}
 }
 
 fn rust_type(ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
@@ -611,6 +613,9 @@ fn js_arg_expr(name: &str, ty: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> 
 		}
 	}
 	if let Some(primitive) = ctx.alias_primitive(ty) {
+		if primitive == "str" {
+			return Ok(format!("JsValue::from_str({name}.as_str())"));
+		}
 		return numeric_js_arg(name, primitive);
 	}
 	if let TypeRef::Primitive(primitive) = ty {
@@ -672,15 +677,6 @@ fn stream_parser(
 	bail!("unsupported stream item type: {ok:?}")
 }
 
-fn error_mapper(err: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
-	let name = named_type_name(err)?;
-	if name == "GenericError" {
-		return Ok(".map_err(generic)".to_string());
-	}
-	let err_ty = rust_type(err, ctx)?;
-	Ok(format!(".map_err(|reason| {err_ty}::Unknown {{ reason }})"))
-}
-
 fn validate_errors(traits: &[&PlatformTrait], ctx: &BridgeCtx<'_>) -> Result<()> {
 	for trait_def in traits {
 		for method in &trait_def.methods {
@@ -740,17 +736,7 @@ fn validate_error_def<'a>(
 	let TypeDefKind::Enum(variants) = &type_def.kind else {
 		bail!("platform error type `{name}` must resolve to an enum");
 	};
-	let has_unknown_reason = variants.iter().any(|variant| {
-		variant.name == "Unknown" &&
-			matches!(
-				&variant.fields,
-				VariantFields::Named(fields)
-					if fields.iter().any(|field| {
-						field.name == "reason" && is_string(&field.type_ref)
-					})
-			)
-	});
-	if !has_unknown_reason {
+	if !has_unknown_reason(variants) {
 		let versioned_payloads = variants
 			.iter()
 			.filter_map(|variant| match &variant.fields {
@@ -767,6 +753,34 @@ fn validate_error_def<'a>(
 		bail!("platform error type `{name}` must define `Unknown {{ reason: String }}`");
 	}
 	Ok(())
+}
+
+fn has_unknown_reason(variants: &[crate::rustdoc::VariantDef]) -> bool {
+	variants.iter().any(|variant| {
+		variant.name == "Unknown" &&
+			matches!(
+				&variant.fields,
+				VariantFields::Named(fields)
+					if fields.iter().any(|field| {
+						field.name == "reason" && is_string(&field.type_ref)
+					})
+			)
+	})
+}
+
+/// A callback's string failure as the method's error. `GenericError` and
+/// versioned envelopes convert through `From<String>`; a protocol DTO named
+/// under `latest` or a `vNN` module has no such conversion, so the failure
+/// becomes its `Unknown { reason }`, which validation requires it to define.
+/// The decision follows the emitted path, not `api_types`: a DTO and its
+/// versioned envelope share a simple name there.
+fn error_mapper(err: &TypeRef, ctx: &BridgeCtx<'_>) -> Result<String> {
+	let name = named_type_name(err)?;
+	let path = rust_type(err, ctx)?;
+	if name == "GenericError" || path.starts_with("truapi::versioned::") {
+		return Ok(String::new());
+	}
+	Ok(format!(".map_err(|reason| {path}::Unknown {{ reason }})"))
 }
 
 fn resolve_alias_type<'a>(name: &'a str, ctx: &BridgeCtx<'a>) -> Option<&'a TypeDef> {
@@ -874,7 +888,7 @@ mod tests {
 		};
 		let output = emit_result_method(&method, &ok, &error, &context()).unwrap();
 		assert!(output.contains("product: &str"), "{output}");
-		assert!(output.contains(".await.map_err(generic)?;"), "{output}");
+		assert!(output.contains(".await?;"), "{output}");
 		assert!(
 			output
 				.contains("bytes.map(|bytes| decode_bytes::<crate::platform::ReceivingAuthority>"),

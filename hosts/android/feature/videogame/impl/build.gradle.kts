@@ -46,3 +46,5 @@ dependencies {
     testImplementation(libs.mockk)
     testImplementation(project(":test-shared"))
 }
+
+apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))

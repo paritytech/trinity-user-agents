@@ -8,7 +8,7 @@ import io.mockk.mockk
 import io.parity.truapi.TrUAPIHostRuntime
 import io.paritytech.polkadotapp.database.dao.ProductPermissionGrantDao
 import io.paritytech.polkadotapp.database.model.ProductPermissionGrantLocal
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.AllowanceAccountSelector
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
@@ -39,8 +39,8 @@ import uniffi.truapi.PermissionAuthorizationStatus
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ProductPermissionRepositoryTest {
-    private val product = ProductId.fromStoredValue("game.paseo")
-    private val other = ProductId.fromStoredValue("other.paseo")
+    private val product = ProductId.parse("game.paseo").getOrThrow()
+    private val other = ProductId.parse("other.paseo").getOrThrow()
     private val camera = ProductPermission.DeviceCapability(DeviceCapabilityType.Camera)
     private val microphone = ProductPermission.DeviceCapability(DeviceCapabilityType.Microphone)
     private val authorized = PermissionAuthorizationStatus.AUTHORIZED
@@ -168,7 +168,7 @@ class ProductPermissionRepositoryTest {
     fun `failed persistence is surfaced without claiming a successful revoke`() = runTest {
         val f = Fixture()
         f.saved(product)[camera.canonicalRequest()] = authorized
-        coEvery { f.runtime.setPermissionAuthorizationStatus(product.value, any(), denied) } throws IllegalStateException("disk full")
+        coEvery { f.runtime.setPermissionAuthorizationStatus(product, any(), denied) } throws IllegalStateException("disk full")
 
         val result = runCatching { f.repository.revoke(product, camera) }
 
@@ -216,7 +216,7 @@ class ProductPermissionRepositoryTest {
     @Test
     fun `core conditional rejection fences revoke that races the platform revision check`() = runTest {
         val f = Fixture()
-        coEvery { f.runtime.setPermissionAuthorizationStatusIfCurrent(product.value, any(), authorized, any()) } returns false
+        coEvery { f.runtime.setPermissionAuthorizationStatusIfCurrent(product, any(), authorized, any()) } returns false
         assertFalse(f.repository.withPermissionRequest(product) {
             f.repository.grant(product, camera)
             true
@@ -264,7 +264,7 @@ class ProductPermissionRepositoryTest {
         assertEquals("xn--bcher-kva.example", canonicalDomain(" Bücher.example. "))
         assertEquals("*.example.com", canonicalDomain("*.Example.COM"))
         assertEquals("[::1]", canonicalDomain("[0:0:0:0:0:0:0:1]"))
-        assertEquals(PermissionAuthorizationRequest.AccountAccess("other"), ProductPermission.AccountAccess("app.other.paseo").canonicalRequest())
+        assertEquals(PermissionAuthorizationRequest.AccountAccess(other), ProductPermission.AccountAccess(ProductId.parse("app.other.paseo").getOrThrow()).canonicalRequest())
         assertTrue(runCatching { canonicalDomain("https://example.com") }.isFailure)
     }
 
@@ -331,28 +331,28 @@ class ProductPermissionRepositoryTest {
         private val revisions = mutableMapOf<String, ULong>()
         val repository = RealProductPermissionRepository(dao, Lazy { provider }, changes)
         fun saved(product: ProductId) = records.getOrPut(product.value) { linkedMapOf() }
-        private fun entries(product: String) = records[product].orEmpty().map { PermissionAuthorizationEntry(it.key, it.value) }
+        private fun entries(product: ProductId) = records[product.value].orEmpty().map { PermissionAuthorizationEntry(it.key, it.value) }
 
         init {
             coEvery { provider.runtime() } returns Result.success(runtime)
             coEvery { dao.getAllByProduct(any()) } answers { legacy.value.filter { it.productId == firstArg<String>() } }
             every { dao.observeAllByProduct(any()) } returns legacy
-            every { runtime.permissionAuthorizationRevision(any()) } answers { revisions[firstArg<String>()] ?: 0uL }
+            every { runtime.permissionAuthorizationRevision(any()) } answers { revisions[firstArg<ProductId>().value] ?: 0uL }
             coEvery { runtime.permissionAuthorizations(any()) } answers { entries(firstArg()) }
             coEvery { runtime.importPermissionAuthorizations(any(), any()) } answers {
-                val product = firstArg<String>()
-                val stored = records.getOrPut(product) { linkedMapOf() }
+                val product = firstArg<ProductId>()
+                val stored = records.getOrPut(product.value) { linkedMapOf() }
                 secondArg<List<PermissionAuthorizationEntry>>().forEach { stored.putIfAbsent(it.request, it.status) }
                 entries(product)
             }
             coEvery { runtime.setPermissionAuthorizationStatus(any(), any(), any()) } answers {
-                val product = firstArg<String>()
+                val product = firstArg<ProductId>().value
                 records.getOrPut(product) { linkedMapOf() }[secondArg()] = thirdArg()
                 revisions[product] = (revisions[product] ?: 0uL) + 1uL
                 changes.changed(product)
             }
             coEvery { runtime.setPermissionAuthorizationStatusIfCurrent(any(), any(), any(), any()) } answers {
-                val product = firstArg<String>()
+                val product = firstArg<ProductId>().value
                 if (arg<ULong>(3) != (revisions[product] ?: 0uL)) false else {
                     records.getOrPut(product) { linkedMapOf() }[secondArg()] = thirdArg()
                     changes.changed(product)

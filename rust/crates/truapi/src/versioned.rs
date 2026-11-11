@@ -12,6 +12,10 @@
 //! encoded inside any of these payloads.
 
 /// A versioned message envelope.
+///
+/// The first encoded byte is `version() - 1`. Retained versions are contiguous
+/// through [`LATEST`](Self::LATEST), but an older prefix may have been retired.
+/// The dispatcher rejects newer versions; decoding rejects retired variants.
 pub trait Versioned: Sized {
 	/// The newest version's payload. Handlers operate exclusively on this.
 	type Latest;
@@ -43,10 +47,12 @@ pub mod contacts;
 pub mod entropy;
 pub mod expanded_card;
 pub mod funding;
+pub mod funding_provider;
 pub mod game;
 pub mod jam_peer_transport;
 pub mod local_storage;
 pub mod locale;
+pub mod nft_purse;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;
@@ -63,143 +69,4 @@ pub mod theme;
 pub mod worker;
 
 #[cfg(test)]
-mod tests {
-	use alloc::{vec, vec::Vec};
-	use parity_scale_codec::{Decode, Encode};
-
-	#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-	struct ProbeV1 {
-		a: u32,
-	}
-
-	#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-	struct ProbeV2 {
-		b: Vec<u8>,
-	}
-
-	truapi_macros::versioned_type! {
-		enum MultiVersionProbe {
-			V1 => ProbeV1,
-			V2 => ProbeV2,
-		}
-		enum RetiredPrefixProbe {
-			V3 => ProbeV1,
-		}
-	}
-
-	// SCALE indices are anchored to protocol versions, not the set of retained
-	// variants: V1 -> 0, V2 -> 1, even after an older prefix is retired.
-	#[test]
-	fn multi_version_codec_indices_are_positional() {
-		use super::Versioned;
-
-		let v1 = MultiVersionProbe::V1(ProbeV1 { a: 7 });
-		let v2 = MultiVersionProbe::V2(ProbeV2 { b: b"hello".to_vec() });
-
-		assert_eq!(v1.encode()[0], 0, "V1 encodes codec index 0");
-		assert_eq!(v2.encode()[0], 1, "V2 encodes codec index 1");
-		assert_eq!(v1.version(), 1);
-		assert_eq!(v2.version(), 2);
-		assert_eq!(MultiVersionProbe::LATEST, 2);
-	}
-
-	#[test]
-	fn retired_prefix_keeps_wire_tag_and_rejects_old_envelopes() {
-		use super::{FromLatest, IntoLatest, Versioned};
-		let payload = ProbeV1 { a: 7 };
-		let envelope = RetiredPrefixProbe::from_latest(payload.clone(), 3);
-		let encoded = envelope.encode();
-		assert_eq!(encoded, vec![2, 7, 0, 0, 0]);
-		assert_eq!(RetiredPrefixProbe::LATEST, 3);
-		let decoded = RetiredPrefixProbe::decode(&mut &encoded[..]).unwrap();
-		assert_eq!(decoded.version(), 3);
-		assert_eq!(decoded.into_latest(), payload);
-		for retired in [0, 1] {
-			let bytes = [retired, 7, 0, 0, 0];
-			assert!(RetiredPrefixProbe::decode(&mut &bytes[..]).is_err());
-		}
-	}
-
-	#[test]
-	fn v1_discriminant_is_zero() {
-		let v1 = super::permissions::HostDevicePermissionRequest::V1(
-			crate::v01::HostDevicePermissionRequest::Camera,
-		);
-		assert_eq!(v1.encode()[0], 0, "V1 must encode discriminant 0");
-	}
-
-	#[test]
-	fn device_permission_discriminants_are_append_only() {
-		// Every grant the user has ever given is persisted under this
-		// discriminant. Inserting a variant rather than appending one silently
-		// repoints all of them, on every device, with nothing to notice it.
-		use crate::v01::HostDevicePermissionRequest::*;
-		for (index, permission) in [
-			Notifications,
-			Camera,
-			Microphone,
-			Bluetooth,
-			NFC,
-			Location,
-			Clipboard,
-			OpenUrl,
-			Biometrics,
-			Motion,
-		]
-		.into_iter()
-		.enumerate()
-		{
-			assert_eq!(
-				permission.encode(),
-				vec![index as u8],
-				"{permission} must keep discriminant {index}"
-			);
-		}
-	}
-
-	#[test]
-	fn public_remote_permissions_keep_release_balance_tag() {
-		use crate::v01::{RemotePermission, RemotePermissionRequest};
-		use parity_scale_codec::DecodeAll;
-		let balance = super::permissions::RemotePermissionRequest::V1(RemotePermissionRequest {
-			permission: RemotePermission::BalanceAccess,
-		});
-		assert_eq!(balance.encode(), vec![0, 5]);
-		assert_eq!(
-			super::permissions::RemotePermissionRequest::decode_all(&mut &[0, 5][..]).unwrap(),
-			balance,
-		);
-		let jam = super::permissions::RemotePermissionRequest::V1(RemotePermissionRequest {
-			permission: RemotePermission::JamPeers { genesis: [7; 32] },
-		});
-		assert_eq!(&jam.encode()[..2], &[0, 6]);
-		let mut retired = vec![0, 5];
-		retired.extend_from_slice(&[7; 32]);
-		assert!(
-			super::permissions::RemotePermissionRequest::decode_all(&mut retired.as_slice())
-				.is_err()
-		);
-	}
-
-	#[test]
-	fn unit_response_roundtrip() {
-		let original = super::system::HostNavigateToResponse::V1;
-		let decoded = super::system::HostNavigateToResponse::decode(&mut &original.encode()[..])
-			.expect("decode");
-		assert_eq!(original, decoded);
-	}
-
-	#[test]
-	fn struct_variant_roundtrip() {
-		let original = super::local_storage::HostLocalStorageWriteRequest::V1(
-			crate::v01::HostLocalStorageWriteRequest {
-				key: "greeting".into(),
-				value: b"hello".to_vec(),
-			},
-		);
-		let decoded =
-			super::local_storage::HostLocalStorageWriteRequest::decode(&mut &original.encode()[..])
-				.expect("decode");
-		assert_eq!(original, decoded);
-	}
-}
+mod tests;

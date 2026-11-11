@@ -3,11 +3,15 @@
 // declaration in `src/wasm/web/truapi_server.d.ts` types that module against
 // these interfaces so the worker can name it in a statically analysable import.
 
+import type { ProductId } from "@parity/truapi";
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
 import type { LocalIdentity } from "./worker-protocol.js";
 import type { WalletAllowanceSnapshot } from "./wallet-allowances.js";
 import type { NativeChatContactsSnapshot } from "./runtime.js";
-import type { RawNotificationReceiver, RawReceivingRuntime } from "./runtime.js";
+import type {
+  RawNotificationReceiver,
+  RawReceivingRuntime,
+} from "./runtime.js";
 
 /** Cancellable handle on one live render stream inside the core. */
 export interface WorkerRendererSubscription {
@@ -50,7 +54,8 @@ export interface WorkerProductRuntime {
 export type WorkerTransition = "Start" | "Stop";
 
 /** Runtime operations shared by paired and browser-local signing hosts. */
-export interface WorkerHostRuntime extends PermissionAuthorizationRuntime, RawReceivingRuntime {
+export interface WorkerHostRuntime
+  extends PermissionAuthorizationRuntime, RawReceivingRuntime {
   productRuntime(
     product: unknown,
     coreCallbacks: unknown,
@@ -59,20 +64,19 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime, RawRe
   disconnectSession(): Promise<void>;
   notifyContactsChanged(): void;
   sessionChatIdentityKey(): Uint8Array | undefined;
-  deviceStatementKey(): Uint8Array | undefined;
   deviceEncryptionKey(): Promise<Uint8Array>;
-  clearProductState(productId: string): Promise<void>;
+  clearProductState(productId: ProductId): Promise<void>;
   /** Only on a core built with `test-host`. */
   setSubmitPreimagesLocally?(local: boolean): void;
   /**
    * Take one reference on the product's worker. The first one reports
-   * `"Start"` through the runtime's `workerDemandChanged` callback.
+   * `"Start"` through the runtime's `requestWorkerTransition` callback.
    */
-  acquireWorker(productId: string): void;
+  acquireWorker(productId: ProductId): void;
   /**
    * Release one reference. The last one reports `"Stop"` the same way.
    */
-  releaseWorker(productId: string): void;
+  releaseWorker(productId: ProductId): void;
   free(): void;
 }
 
@@ -81,8 +85,9 @@ export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
   getNativeChatContacts(): Promise<NativeChatContactsSnapshot>;
   cancelPairing(): void;
   notifySessionStoreChanged(): void;
+  deviceStatementKey(): Uint8Array | undefined;
   productSubtreePublicKey(
-    productId: string,
+    productId: ProductId,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
   activateStoredSession(): Promise<void>;
@@ -100,7 +105,7 @@ export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
  */
 export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
   /** Derived from the active session root, so it never waits. */
-  productSubtreePublicKey(productId: string): Uint8Array | undefined;
+  productSubtreePublicKey(productId: ProductId): Uint8Array | undefined;
   activateLocalSession(secret: Uint8Array): Promise<void>;
   /**
    * Activate and give the session a display name, which is what
@@ -127,6 +132,14 @@ export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
     activationId: string,
     productIds: string[],
   ): Promise<WalletAllowanceSnapshot>;
+  ensureLegacyLitePersonProvider(
+    peopleChainId: Uint8Array,
+    owner: ProductId,
+  ): Promise<void>;
+  prewarmSmartContractAllowance(
+    productId: ProductId,
+    derivationIndex: Uint8Array,
+  ): Promise<void>;
   getNativeChatContacts(): Promise<NativeChatContactsSnapshot>;
   /** Only on a core built with the non-production `test-host` feature. */
   setWithheldResources?(tags: string[]): void;
@@ -137,6 +150,25 @@ export interface WasmModuleShape {
   default: (input?: unknown) => Promise<unknown>;
   /** Wallet-free receiver for the host's single durable service-worker owner. */
   WasmNotificationReceiver: new (callbacks: unknown) => RawNotificationReceiver;
+  /** Validate and normalize an identifier using the core's canonical parser. */
+  parseProductId: (value: string) => ProductId;
+  /** Strict current-key metadata for trusted host storage routing. */
+  describeCoreStorageKey(encoded: Uint8Array): {
+    kind: string;
+    productId?: string;
+    productLabel?: string;
+  };
+  /** Frozen metadata for cleaning the historical namespace, never current consent. */
+  describeEpoca026CoreStorageKey(encoded: Uint8Array): {
+    kind: string;
+    productId?: string;
+  };
+  /** Convert a canonical historical key, rejecting all retired permission decisions. */
+  migrateEpoca026CoreStorageKey(encoded: Uint8Array): {
+    key: Uint8Array;
+    legacyDescription: { kind: string; productId?: string };
+    description: { kind: string; productId?: string; productLabel?: string };
+  };
   WasmPairingHostRuntime: new (
     callbacks: unknown,
     hostConfig: unknown,
@@ -162,6 +194,9 @@ export interface WasmModuleShape {
   ) => Uint8Array;
   /** SS58 address for a product account public key, at the core's prefix. */
   productAccountAddress: (publicKey: Uint8Array) => string;
+  pgasAssetId: (metadataScale: Uint8Array) => number;
+  pgasAssetAccountKey: (assetId: number, accountIdHex: string) => string;
+  pgasDecodeAssetAccountBalance: (valueHex: string) => string;
   /**
    * The core's own `TRUAPI_WIRE_SCHEMA_HASH`, exported by `truapi`'s wasm
    * bridge. Optional because `dist/wasm/web/` is gitignored and built by hand, so

@@ -16,6 +16,7 @@ final class SettingsPresenter {
     private var appVersion: String?
     private var selectedCurrencyCode: String?
     private var selectedPrivacyStrategy: RecyclingStrategyType?
+    private var paymentsBackupStatus: CoinageAccountBackupStatus?
     private var isTabBarLabelsEnabled = false
 
     init(
@@ -50,6 +51,7 @@ private extension SettingsPresenter {
             selectedCurrencyCode: selectedCurrencyCode,
             selectedThemeName: selectedThemeName,
             selectedPrivacyStrategy: selectedPrivacyStrategy,
+            paymentsBackupStatus: paymentsBackupStatus,
             appVersion: appVersion,
             isTabBarLabelsEnabled: isTabBarLabelsEnabled,
             onSelect: { [weak self] cellType in
@@ -91,6 +93,8 @@ extension SettingsPresenter: SettingsPresenterProtocol {
             wireframe.showLegalSupport(from: view)
         case .backup:
             wireframe.showBackupFlow(from: view)
+        case .paymentsBackup:
+            break
         case .theme:
             wireframe.showThemeSelection(from: view) { [weak self] in
                 self?.refreshContent()
@@ -143,6 +147,12 @@ extension SettingsPresenter: SettingsInteractorOutputProtocol {
     func didReceiveTabBarLabelsEnabled(_ isEnabled: Bool) {
         guard isEnabled != isTabBarLabelsEnabled else { return }
         isTabBarLabelsEnabled = isEnabled
+        refreshContent()
+    }
+
+    func didReceivePaymentsBackupStatus(_ status: CoinageAccountBackupStatus) {
+        guard status != paymentsBackupStatus else { return }
+        paymentsBackupStatus = status
         refreshContent()
     }
 }

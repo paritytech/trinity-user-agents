@@ -36,7 +36,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Si
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.VrfSignature
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.VrfTranscriptItem
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SignedTransaction
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
@@ -49,6 +48,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.resourceAllocation
 import io.paritytech.polkadotapp.feature_products_impl.domain.resourceAllocationRequest.ResourceAllocationRequestContextHolder
 import io.paritytech.polkadotapp.feature_products_impl.domain.signTransaction.ProductSigningScreenLauncher
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
+import uniffi.truapi.ProductId
 import java.util.concurrent.CancellationException
 import javax.inject.Inject
 
@@ -194,14 +194,14 @@ class RealAccountsProtocol @Inject constructor(
     ): Boolean {
         return permissionGuard.requestPermission(
             callingProductId,
-            ProductPermission.AccountAccess(context.productId.value),
+            ProductPermission.AccountAccess(context.productId),
         )
     }
 
     // Listing another product's registry is an ordinary read, so it reuses the persisted
     // account-access grant rather than a one-time prompt.
     private suspend fun ensureOwnerAccessApproved(callingProductId: ProductId, owner: ProductId): Boolean {
-        return permissionGuard.requestPermission(callingProductId, ProductPermission.AccountAccess(owner.value))
+        return permissionGuard.requestPermission(callingProductId, ProductPermission.AccountAccess(owner))
     }
 
     private fun List<RegisteredRingVrfKey>.applyDisclosure(
@@ -216,7 +216,7 @@ class RealAccountsProtocol @Inject constructor(
         keyHandle: ProductAccountId,
         message: ByteArray,
     ): Boolean {
-        val owner = ProductId.fromStoredValue(keyHandle.productId)
+        val owner = keyHandle.productId
         if (owner == callingProductId) return true
 
         return awaitCrossProductApproval(callingProductId, owner, keyHandle.index, message)

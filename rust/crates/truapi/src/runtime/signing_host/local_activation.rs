@@ -1,16 +1,9 @@
-use super::{SigningHost, product_authority_error};
-use crate::{
-	host_logic::{
-		product_account::{derive_identity_keypair, derive_root_keypair_from_entropy},
-		session::SessionInfo,
-		sso::pairing::derive_identity_chat_private_key,
-	},
-	runtime::{
-		authority::AuthorityError, connected_session_ui_info, identity::lookup_session_identity,
-	},
+use super::SigningHost;
+use crate::runtime::{
+	authority::{AccountHolder, AuthorityError},
+	connected_session_ui_info,
+	identity::lookup_session_identity,
 };
-
-use zeroize::Zeroizing;
 
 /// Activate the wallet from entropy supplied by the embedding host.
 #[async_trait::async_trait]
@@ -39,54 +32,44 @@ impl LocalActivation for SigningHost {
 		secret: Vec<u8>,
 		lite_username: Option<String>,
 	) -> Result<(), AuthorityError> {
-		let secret = Zeroizing::new(secret);
-		let root = derive_root_keypair_from_entropy(&secret).map_err(product_authority_error)?;
-		let public_key = root.public.to_bytes();
-		let identity_account_id = derive_identity_keypair(&secret, self.network_suffix())
-			.map_err(product_authority_error)?
-			.public
-			.to_bytes();
-		let identity_chat_private_key = derive_identity_chat_private_key(&secret);
-		let session = SessionInfo {
-			public_key,
-			sso: None,
-			root_entropy_source: None,
-			identity_account_id: Some(identity_account_id),
-			identity_chat_private_key: Some(identity_chat_private_key),
-			// A local session has no answering remote device to address.
-			device_enc_public_key: None,
-			lite_username,
-			full_username: None,
-		};
-		let ui_info = connected_session_ui_info(&session);
-		let generation = self.install_local_session(secret, session.clone());
-		self.auth_state.connected(&ui_info);
+		let activation = self.wallet.prepare_activation(secret, lite_username)?;
+		let permissions = self.services.permissions.invalidate_pending(None).await;
+		let (session, selected) = self.change_activation(|| {
+			let session = self.wallet.install(activation);
+			let selected = self.wallet.current_session().expect("just installed wallet session");
+			(session, selected)
+		});
+		drop(permissions);
+		self.auth_state.connected(&connected_session_ui_info(&session));
 
 		let services = self.services.clone();
-		let session_state = self.session_state.clone();
 		let auth_state = self.auth_state.clone();
-		let local_grants = self.local_grants.clone();
+		let wallet = self.wallet.clone();
 		(self.services.spawner)(Box::pin(async move {
-			let Ok(Some(identity)) = lookup_session_identity(
+			let identity = match lookup_session_identity(
 				&services.chain,
 				services.asset_hub_chain_genesis_hash().unwrap_or_default(),
 				&session,
 			)
 			.await
+			{
+				Ok(Some(identity)) => identity,
+				Ok(None) => return,
+				Err(reason) => {
+					tracing::warn!(
+						%reason,
+						"dotNS username resolution failed; the session stays without one"
+					);
+					return;
+				},
+			};
+			let (lite_username, full_username) = identity.into_usernames();
+			let Ok(named) =
+				wallet.install_resolved_identity(&selected, lite_username, full_username)
 			else {
 				return;
 			};
-			let (lite_username, full_username) = identity.into_usernames();
-			let named = SessionInfo { lite_username, full_username, ..session.clone() };
-			let grants = local_grants.lock().expect("local AutoSigning grant mutex poisoned");
-			if grants.require_generation(generation).is_err() {
-				return;
-			}
-			let replaced = session_state.replace_session_if_current(&session, named.clone());
-			drop(grants);
-			if replaced {
-				auth_state.connected(&connected_session_ui_info(&named));
-			}
+			auth_state.connected(&connected_session_ui_info(&named));
 		}));
 		Ok(())
 	}

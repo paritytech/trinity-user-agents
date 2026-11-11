@@ -24,6 +24,7 @@
 
 use core::{
 	net::SocketAddr,
+	ops::ControlFlow,
 	sync::atomic::{AtomicU64, AtomicUsize, Ordering},
 	time::Duration,
 };
@@ -40,6 +41,7 @@ use tracing::debug;
 use crate::{
 	generated::wire_table::TRUAPI_WIRE_SCHEMA_HASH,
 	host_core::{DebugEvent, DebugSink},
+	time::Backoff,
 };
 
 /// Bounded so a stalled or absent debugger applies backpressure as counted
@@ -66,11 +68,9 @@ const WIRE_CODEC_VERSION: u32 = truapi::WIRE_CODEC_VERSION as u32;
 /// reaches the debugger instead of HTTP's port 80.
 const DEBUGGER_DEFAULT_PORT: u16 = 9231;
 
-/// Initial reconnect delay; doubles on each failed dial up to [`MAX_BACKOFF`].
-const INITIAL_BACKOFF: Duration = Duration::from_millis(200);
-
-/// Cap on the reconnect backoff.
-const MAX_BACKOFF: Duration = Duration::from_secs(5);
+/// Pauses between attempts to reach the debugger, doubling until a frame gets
+/// through.
+const RECONNECT_PAUSES: Backoff = Backoff::new(Duration::from_millis(200), Duration::from_secs(5));
 
 /// Cap on a single dial + WS handshake; a port that accepts TCP but never
 /// completes the upgrade must not park the writer task forever.
@@ -98,9 +98,7 @@ pub enum DebugSinkError {
 /// the browser host sends.
 pub struct WsDebugSink {
 	outbound: mpsc::Sender<QueuedFrame>,
-	dropped: Arc<AtomicU64>,
-	pending_dropped: Arc<AtomicU64>,
-	queued_bytes: Arc<AtomicUsize>,
+	link: Arc<LinkState>,
 }
 
 /// One serialized envelope on its way to the writer task, plus the number of
@@ -110,6 +108,47 @@ pub struct WsDebugSink {
 struct QueuedFrame {
 	line: String,
 	shed: u64,
+}
+
+/// Counters the sink and its writer task share about frames in transit.
+#[derive(Default)]
+struct LinkState {
+	/// Bytes of the envelopes waiting in the queue, held under [`MAX_QUEUE_BYTES`].
+	queued_bytes: AtomicUsize,
+	/// Lifetime total of lost frames, for logging and [`WsDebugSink::dropped`].
+	dropped: AtomicU64,
+	/// Drops not yet stamped on an envelope; the next one carries them.
+	pending_dropped: AtomicU64,
+}
+
+impl LinkState {
+	/// Reserve room for a `len`-byte envelope, or return `false` with nothing
+	/// reserved if it would exceed the budget.
+	///
+	/// Reserve BEFORE handing the line to the channel: the writer task can recv
+	/// and [`Self::release`] the instant `try_send` succeeds, so adding after
+	/// would let that release run first and wrap the counter, an overflow panic
+	/// in debug builds, on the frame path.
+	fn reserve(&self, len: usize) -> bool {
+		if self.queued_bytes.fetch_add(len, Ordering::Relaxed) + len > MAX_QUEUE_BYTES {
+			self.release(len);
+			return false;
+		}
+		true
+	}
+
+	/// Return a `len`-byte reservation, once its envelope has left the queue or
+	/// never entered it.
+	fn release(&self, len: usize) {
+		self.queued_bytes.fetch_sub(len, Ordering::Relaxed);
+	}
+
+	/// Count one lost frame and put back the `carried` drops its envelope was
+	/// reporting, so the next envelope reports them. Returns the lifetime total.
+	fn count_drop(&self, carried: u64) -> u64 {
+		self.pending_dropped.fetch_add(carried + 1, Ordering::Relaxed);
+		self.dropped.fetch_add(1, Ordering::Relaxed) + 1
+	}
 }
 
 /// The wire envelope, matching the debugger's `parseWireMessage` / ingest
@@ -150,7 +189,7 @@ fn observed_at_millis() -> Option<u64> {
 	std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)
 		.ok()
-		.map(|since| since.as_millis() as u64)
+		.map(|since| u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// Validate a debug URL and resolve it to the addresses to dial, in resolver
@@ -216,53 +255,35 @@ impl WsDebugSink {
 		}
 
 		let (outbound, inbox) = mpsc::channel::<QueuedFrame>(QUEUE_CAPACITY);
-		let dropped = Arc::new(AtomicU64::new(0));
-		let pending_dropped = Arc::new(AtomicU64::new(0));
-		let queued_bytes = Arc::new(AtomicUsize::new(0));
-		tokio::spawn(writer_loop(
-			url.to_string(),
-			addrs,
-			inbox,
-			Arc::clone(&dropped),
-			Arc::clone(&pending_dropped),
-			Arc::clone(&queued_bytes),
-		));
-		Ok(Arc::new(Self { outbound, dropped, pending_dropped, queued_bytes }))
+		let link = Arc::new(LinkState::default());
+		tokio::spawn(writer_loop(url.to_string(), addrs, inbox, Arc::clone(&link)));
+		Ok(Arc::new(Self { outbound, link }))
 	}
 
 	/// Number of frames dropped because the outbound queue was full (debugger
 	/// absent or slower than the observed session). Never affects the session.
 	pub fn dropped(&self) -> u64 {
-		self.dropped.load(Ordering::Relaxed)
+		self.link.dropped.load(Ordering::Relaxed)
 	}
 
-	/// The count waiting to ride the next envelope. Test-only: the re-add in
-	/// [`Self::count_drop`] is load-bearing and is otherwise only observable
-	/// through a live socket, which makes it easy to leave untested.
+	/// The count waiting to ride the next envelope, which tests can't see on the wire.
 	#[cfg(test)]
 	fn pending_dropped(&self) -> u64 {
-		self.pending_dropped.load(Ordering::Relaxed)
+		self.link.pending_dropped.load(Ordering::Relaxed)
 	}
 
-	/// Account for one lost frame: `carried` drops had been drained onto the
-	/// envelope that never made it, so they go back on the pending count
-	/// alongside this one and ride the next envelope instead. Returns the new
-	/// lifetime total, for logging.
-	fn count_drop(&self, carried: u64) -> u64 {
-		self.pending_dropped.fetch_add(carried + 1, Ordering::Relaxed);
-		self.dropped.fetch_add(1, Ordering::Relaxed) + 1
+	/// Count a frame `emit` could not queue, carrying `carried` earlier drops.
+	fn shed(&self, carried: u64, full: &str) {
+		let dropped = self.link.count_drop(carried);
+		debug!("truapi debug sink: {full} full, frame dropped (total {dropped})");
 	}
 }
 
 impl DebugSink for WsDebugSink {
 	fn emit(&self, event: DebugEvent) {
 		let DebugEvent::Frame { channel_id, dir, bytes } = event;
-		// Drain the drops accumulated since the previous envelope and stamp them
-		// on this one, as the web link does: a shed frame must reach the debugger
-		// as a counted gap in the link, not as a host that never answered. If
-		// this envelope is itself lost, `count_drop` puts the count back so it
-		// rides the next one.
-		let shed = self.pending_dropped.swap(0, Ordering::Relaxed);
+		// Stamp the drops since the previous envelope on this one.
+		let shed = self.link.pending_dropped.swap(0, Ordering::Relaxed);
 		let message = WireMessage {
 			v: WIRE_ENVELOPE_VERSION,
 			codec: WIRE_CODEC_VERSION,
@@ -275,31 +296,15 @@ impl DebugSink for WsDebugSink {
 			dropped: shed,
 		};
 		let Ok(line) = serde_json::to_string(&message) else {
-			self.count_drop(shed);
+			self.link.count_drop(shed);
 			return;
 		};
-		// Byte budget on top of the channel's count cap: one frame can be MBs, so
-		// a count-only bound could still grow RSS without limit while the debugger
-		// is absent. Reserve the frame's bytes BEFORE handing the line to the
-		// channel: the writer task can recv and release (fetch_sub) the instant
-		// try_send succeeds, so adding *after* would let that sub run first and
-		// wrap the counter - an overflow panic in debug builds, on the frame path.
-		// Reserve atomically, then release on any failure.
 		let len = line.len();
-		if self.queued_bytes.fetch_add(len, Ordering::Relaxed) + len > MAX_QUEUE_BYTES {
-			// This reservation pushed us past the budget: back it out and drop.
-			self.queued_bytes.fetch_sub(len, Ordering::Relaxed);
-			let dropped = self.count_drop(shed);
-			debug!("truapi debug sink: byte budget full, frame dropped (total {dropped})");
-			return;
-		}
-		if self.outbound.try_send(QueuedFrame { line, shed }).is_err() {
-			// Not enqueued after all: release the reservation. The frame is lost
-			// (never the session); count it and log so the gap is attributable to
-			// the link, not to the host.
-			self.queued_bytes.fetch_sub(len, Ordering::Relaxed);
-			let dropped = self.count_drop(shed);
-			debug!("truapi debug sink: outbound queue full, frame dropped (total {dropped})");
+		if !self.link.reserve(len) {
+			self.shed(shed, "byte budget");
+		} else if self.outbound.try_send(QueuedFrame { line, shed }).is_err() {
+			self.link.release(len);
+			self.shed(shed, "outbound queue");
 		}
 	}
 }
@@ -336,525 +341,58 @@ async fn writer_loop(
 	url: String,
 	addrs: Vec<SocketAddr>,
 	mut inbox: mpsc::Receiver<QueuedFrame>,
-	dropped: Arc<AtomicU64>,
-	pending_dropped: Arc<AtomicU64>,
-	queued_bytes: Arc<AtomicUsize>,
+	link: Arc<LinkState>,
 ) {
-	let mut backoff = INITIAL_BACKOFF;
+	let mut pauses = RECONNECT_PAUSES;
 	loop {
-		let Some(stream) = dial(url.as_str(), &addrs).await else {
-			tokio::time::sleep(backoff).await;
-			backoff = (backoff * 2).min(MAX_BACKOFF);
-			// The sink was dropped while we were retrying: give up.
-			if inbox.is_closed() {
-				return;
-			}
-			continue;
-		};
-		let (mut write, mut read) = stream.split();
-		// Drain queued frames to the wire, and also poll the read half so
-		// tokio-tungstenite answers server pings and observes a Close; being
-		// forward-only, any inbound message is ignored. Reset backoff only on a
-		// *delivered* frame, so an accept-then-close server still backs off
-		// instead of spinning on zero-delay reconnects.
-		loop {
-			tokio::select! {
-				queued = inbox.recv() => match queued {
-					Some(QueuedFrame { line, shed }) => {
-						// Off the queue now: release its bytes from the budget
-						// before the (moving) send so the counter can't drift.
-						queued_bytes.fetch_sub(line.len(), Ordering::Relaxed);
-						match write.send(Message::Text(line)).await {
-							Ok(()) => backoff = INITIAL_BACKOFF,
-							Err(_) => {
-								debug!("truapi debug sink: socket closed, reconnecting");
-								// The in-flight line is lost across this reconnect.
-								dropped.fetch_add(1, Ordering::Relaxed);
-								// It carried `shed` earlier drops that therefore
-								// never reached the debugger: make them pending
-								// again (with this frame) so the next delivered
-								// envelope still reports the whole gap.
-								pending_dropped.fetch_add(shed + 1, Ordering::Relaxed);
-								break;
-							}
-						}
-					}
-					// All senders dropped: the sink is gone, so is the host. Done.
-					None => return,
-				},
-				inbound = read.next() => match inbound {
-					Some(Ok(_)) => {} // forward-only: ignore any inbound message
-					Some(Err(_)) | None => {
-						debug!("truapi debug sink: read side closed, reconnecting");
-						break;
-					}
-				},
-			}
+		if let Some(stream) = dial(url.as_str(), &addrs).await &&
+			forward(stream, &mut inbox, &mut pauses, &link).await.is_break()
+		{
+			return;
 		}
-		// Reconnect after an established socket dropped: back off here too.
-		tokio::time::sleep(backoff).await;
-		backoff = (backoff * 2).min(MAX_BACKOFF);
+		tokio::time::sleep(pauses.next_pause()).await;
+		// The sink was dropped while we were retrying: give up.
 		if inbox.is_closed() {
 			return;
 		}
 	}
 }
 
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::host_core::{ChannelId, FrameDirection};
-
-	use tokio::{net::TcpListener, sync::oneshot};
-	use tokio_tungstenite::accept_async;
-
-	#[tokio::test]
-	async fn emits_base64_envelope_with_product_vantage_dir() {
-		let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-		let port = listener.local_addr().unwrap().port();
-
-		// Server side: accept one connection, capture the first text message.
-		let (tx, rx) = oneshot::channel::<String>();
-		tokio::spawn(async move {
-			let (stream, _peer) = listener.accept().await.unwrap();
-			let ws = accept_async(stream).await.unwrap();
-			let (_write, mut read) = ws.split();
-			let message = read.next().await.unwrap().unwrap();
-			tx.send(message.into_text().unwrap()).unwrap();
-		});
-
-		let sink = WsDebugSink::connect(&format!("ws://127.0.0.1:{port}")).unwrap();
-		// `In` = product→core, i.e. the frame *left* the product → product-vantage "out".
-		sink.emit(DebugEvent::Frame {
-			channel_id: ChannelId("myapp.dot".to_string()),
-			dir: FrameDirection::In,
-			bytes: vec![1, 2, 3, 4],
-		});
-
-		let text = tokio::time::timeout(Duration::from_secs(5), rx)
-			.await
-			.expect("debugger did not receive a frame")
-			.unwrap();
-		let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-
-		assert_eq!(value["channelId"], "myapp.dot");
-		// Identity the debugger checks before decoding. Asserted as literals: a
-		// constant on both sides would agree with itself even if the value the
-		// debugger expects changed.
-		assert_eq!(value["v"], 1);
-		assert_eq!(value["codec"], 3);
-		assert_eq!(value["v"], WIRE_ENVELOPE_VERSION);
-		assert_eq!(value["codec"], WIRE_CODEC_VERSION);
-		assert_eq!(value["schema"], TRUAPI_WIRE_SCHEMA_HASH);
-		// Guard against re-inversion: In must serialize as product-vantage "out".
-		assert_eq!(value["dir"], FrameDirection::In.wire_str());
-		assert_eq!(value["dir"], "out");
-		assert_eq!(value["frame"], BASE64.encode([1, 2, 3, 4]));
-		// Nothing was shed, so the envelope stays exactly as the web link's:
-		// `dropped` is absent rather than a noisy zero.
-		assert!(
-			value.get("dropped").is_none(),
-			"a frame with no preceding drops must not carry a dropped count"
-		);
-	}
-
-	/// `observedAt` is the link's clock when it took the frame, not when the frame
-	/// reached the debugger. Proven against a debugger that accepts late: the
-	/// frame sits in the queue while the socket is down, so an arrival-time stamp
-	/// would read the flush instant and collapse the gap this test opens.
-	#[tokio::test]
-	async fn observed_at_is_stamped_when_the_frame_is_taken_not_when_it_flushes() {
-		const ACCEPT_DELAY: Duration = Duration::from_millis(500);
-
-		let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-		let port = listener.local_addr().unwrap().port();
-
-		let (tx, rx) = oneshot::channel::<String>();
-		tokio::spawn(async move {
-			// Hold the frame in the sink's queue: the sink dials, the accept waits.
-			tokio::time::sleep(ACCEPT_DELAY).await;
-			let (stream, _peer) = listener.accept().await.unwrap();
-			let ws = accept_async(stream).await.unwrap();
-			let (_write, mut read) = ws.split();
-			let message = read.next().await.unwrap().unwrap();
-			tx.send(message.into_text().unwrap()).unwrap();
-		});
-
-		let sink = WsDebugSink::connect(&format!("ws://127.0.0.1:{port}")).unwrap();
-		let before = observed_at_millis().expect("clock");
-		sink.emit(DebugEvent::Frame {
-			channel_id: ChannelId("myapp.dot".to_string()),
-			dir: FrameDirection::Out,
-			bytes: vec![7, 7],
-		});
-		let after = observed_at_millis().expect("clock");
-
-		let text = tokio::time::timeout(Duration::from_secs(10), rx)
-			.await
-			.expect("debugger did not receive a frame")
-			.unwrap();
-		let arrived = observed_at_millis().expect("clock");
-		let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-
-		let observed = value["observedAt"].as_u64().expect("envelope carries observedAt");
-		assert!(
-			(before..=after).contains(&observed),
-			"observedAt {observed} is outside the emit window {before}..={after}"
-		);
-		// The flush really did happen later, so the previous assertion is not
-		// vacuous: an arrival stamp would have landed here instead.
-		assert!(
-			arrived - observed >= ACCEPT_DELAY.as_millis() as u64 / 2,
-			"expected a gap between the stamp and the flush; stamped {observed}, arrived {arrived}"
-		);
-	}
-
-	/// A drop that happens while an earlier drop is still pending must ADD to the
-	/// pending count, not replace it. `count_drop(carried)` re-adds the `carried`
-	/// drops that had already been drained onto the envelope now being discarded -
-	/// without that, the first drop is silently swallowed and the wire reports one
-	/// loss where two happened.
-	///
-	/// Asserted on the pending counter rather than the wire because the wire only
-	/// shows the total, and a total of "1 then 1" is indistinguishable from
-	/// "1 then 2" unless you catch both envelopes.
-	///
-	/// Covers the BUDGET path only. Two sibling invariants remain uncovered, stated
-	/// here rather than left to be rediscovered:
-	///   - `writer_loop`'s reconnect re-add (`pending_dropped.fetch_add(shed + 1)`) is the same
-	///     invariant on the socket-death path. Reaching it needs a live socket killed while an
-	///     envelope carrying a shed count is in flight; mutating that `shed + 1` to `1` passes
-	///     today.
-	///   - the byte budget's `>` boundary. Hitting exactly `MAX_QUEUE_BYTES` needs a frame sized
-	///     against base64 plus JSON overhead; `>` vs `>=` passes today.
-	///   - the ATOMICITY of the re-add. `emit` always swaps pending to 0 before calling
-	///     `count_drop`, so this test never observes a non-zero pending and `fetch_add` -> `store`
-	///     passes. `store` would clobber a concurrent re-add from `writer_loop`, which is the whole
-	///     reason it is `fetch_add`.
-
-	#[tokio::test]
-	async fn a_drop_while_one_is_pending_accumulates_rather_than_replaces() {
-		let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-		let port = listener.local_addr().unwrap().port();
-		drop(listener);
-
-		let sink = WsDebugSink::connect(&format!("ws://127.0.0.1:{port}")).unwrap();
-		let big = vec![0u8; 4 * 1024 * 1024];
-		let emit = |sink: &WsDebugSink| {
-			sink.emit(DebugEvent::Frame {
-				channel_id: ChannelId("myapp.dot".to_string()),
-				dir: FrameDirection::Out,
-				bytes: big.clone(),
-			});
-		};
-
-		// 1st fills the queue's byte budget; 2nd is shed with nothing pending.
-		emit(&sink);
-		emit(&sink);
-		assert_eq!(sink.pending_dropped(), 1, "the first shed is pending");
-
-		// 3rd drains that 1 onto its envelope, is itself shed, and must put the
-		// drained count BACK alongside its own.
-		emit(&sink);
-		assert_eq!(sink.pending_dropped(), 2, "the drained count must be re-added, not replaced");
-		assert_eq!(sink.dropped(), 2, "and the lifetime total counts both");
-	}
-
-	/// The mixed-resolution case, which no URL-level test reaches: every input a
-	/// real resolver produces here is homogeneous (all loopback, or all not), so
-	/// `all` vs `any` is indistinguishable through `resolve_loopback_target`. A
-	/// name resolving to both must be refused - that is the split-horizon and
-	/// DNS-rebinding shape the predicate exists for.
-	#[test]
-	fn a_mixed_resolution_is_not_loopback() {
-		use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-
-		let loopback_v4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 9231);
-		let loopback_v6 = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 9231);
-		let routable = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)), 9231);
-
-		assert!(all_loopback(&[loopback_v4]));
-		assert!(all_loopback(&[loopback_v4, loopback_v6]));
-		assert!(!all_loopback(&[]), "an empty resolution is not loopback");
-		assert!(!all_loopback(&[routable]));
-		// The two orderings that `any` would wrongly accept.
-		assert!(
-			!all_loopback(&[loopback_v4, routable]),
-			"loopback first must not launder a routable sibling"
-		);
-		assert!(
-			!all_loopback(&[routable, loopback_v4]),
-			"a routable address must be refused whatever its position"
-		);
-	}
-
-	/// A shed frame must reach the debugger as a counted gap in the link. The
-	/// debugger sums `dropped` per channel into `/stats.droppedByHost`, so
-	/// without it a 4096-frame or 8 MiB shed reads as a host that never answered.
-	#[tokio::test]
-	async fn a_shed_frame_is_reported_as_dropped_on_the_next_envelope() {
-		// Reserve a loopback port, then free it: with nothing listening the queue
-		// cannot drain, so the byte budget sheds a frame deterministically.
-		let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-		let port = listener.local_addr().unwrap().port();
-		drop(listener);
-
-		let sink = WsDebugSink::connect(&format!("ws://127.0.0.1:{port}")).unwrap();
-		// 4 MiB → ~5.6 MiB of base64 per envelope: the first fits the 8 MiB
-		// budget, the second pushes past it and is shed.
-		let big = vec![0u8; 4 * 1024 * 1024];
-		for _ in 0..2 {
-			sink.emit(DebugEvent::Frame {
-				channel_id: ChannelId("myapp.dot".to_string()),
-				dir: FrameDirection::Out,
-				bytes: big.clone(),
-			});
-		}
-		assert_eq!(sink.dropped(), 1, "the byte budget must shed exactly one");
-
-		// Bring the debugger up on that port and let the writer connect.
-		let listener = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
-		// The reader reports a pair: (count on the envelope that carried it, count
-		// on the NEXT envelope).
-		// The second is what pins the reset: `dropped` is
-		// `skip_serializing_if = "is_zero"`, so once the pending count is drained
-		// the following envelope must OMIT the field entirely. Without asserting
-		// that, dropping the reset leaves this test green - the first envelope
-		// looks identical either way.
-		let (tx, rx) = oneshot::channel::<(u64, Option<u64>)>();
-		tokio::spawn(async move {
-			let (stream, _peer) = listener.accept().await.unwrap();
-			let ws = accept_async(stream).await.unwrap();
-			let (_write, mut read) = ws.split();
-			let mut carried: Option<u64> = None;
-			while let Some(Ok(message)) = read.next().await {
-				let Ok(text) = message.into_text() else {
-					continue;
+/// Drain queued frames to `stream` until the socket closes, resetting `pauses`
+/// after each delivered frame. Returns `Break` once the sink is dropped.
+async fn forward(
+	stream: WebSocketStream<TcpStream>,
+	inbox: &mut mpsc::Receiver<QueuedFrame>,
+	pauses: &mut Backoff,
+	link: &LinkState,
+) -> ControlFlow<()> {
+	let (mut write, mut read) = stream.split();
+	// Poll the read half too, so tokio-tungstenite answers pings and notices a Close.
+	loop {
+		tokio::select! {
+			queued = inbox.recv() => {
+				let Some(QueuedFrame { line, shed }) = queued else {
+					return ControlFlow::Break(());
 				};
-				let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-				let dropped = value["dropped"].as_u64();
-				match carried {
-					// Still waiting for the envelope that carries the shed count.
-					None => {
-						if let Some(d) = dropped {
-							carried = Some(d);
-						}
-					},
-					// Got it; this is the next envelope after it.
-					Some(first) => {
-						tx.send((first, dropped)).unwrap();
-						return;
-					},
+				link.release(line.len());
+				if write.send(Message::Text(line)).await.is_err() {
+					debug!("truapi debug sink: socket closed, reconnecting");
+					link.count_drop(shed);
+					return ControlFlow::Continue(());
 				}
+				// Only a delivered frame resets, so an accept-then-close server
+				// still backs off instead of spinning on zero-delay reconnects.
+				pauses.reset();
 			}
-		});
-
-		// The shed happened while the queue held an already-serialized envelope,
-		// so the count rides the next frame emitted after it - exactly the web
-		// link's "piggyback onto the next live frame".
-		let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
-		let mut rx = rx;
-		loop {
-			sink.emit(DebugEvent::Frame {
-				channel_id: ChannelId("myapp.dot".to_string()),
-				dir: FrameDirection::Out,
-				bytes: vec![7],
-			});
-			match tokio::time::timeout(Duration::from_millis(250), &mut rx).await {
-				Ok(received) => {
-					let (first, next) = received.unwrap();
-					assert_eq!(first, 1, "the shed frame must be reported once, on the wire");
-					assert_eq!(
-						next, None,
-						"the pending count must reset after it rides an envelope, \
-                         so the next one omits `dropped` entirely"
-					);
-					return;
-				},
-				Err(_) => {
-					assert!(
-						tokio::time::Instant::now() < deadline,
-						"no envelope ever carried the shed frame's drop count"
-					)
-				},
+			inbound = read.next() => {
+				let Some(Ok(_)) = inbound else {
+					debug!("truapi debug sink: read side closed, reconnecting");
+					return ControlFlow::Continue(());
+				};
 			}
 		}
-	}
-
-	#[test]
-	fn rejects_non_loopback_and_non_ws_urls() {
-		// 192.0.2.1 (TEST-NET-1) is a non-loopback IP literal, so no DNS is hit.
-		assert!(WsDebugSink::connect("wss://127.0.0.1:9231").is_err());
-		assert!(WsDebugSink::connect("ws://192.0.2.1:9231").is_err());
-		assert!(WsDebugSink::connect("http://127.0.0.1:9231").is_err());
-		assert!(WsDebugSink::connect("not a url").is_err());
-	}
-
-	#[tokio::test]
-	async fn accepts_loopback_forms_at_validation() {
-		for url in ["ws://127.0.0.1:9231", "ws://localhost:9231", "ws://[::1]:9231"] {
-			assert!(WsDebugSink::connect(url).is_ok(), "should accept {url}");
-		}
-	}
-
-	/// Accepting a URL is not the same as being able to deliver on it: on macOS
-	/// `localhost` resolves to `::1` first while the debugger binds v4 only, so a
-	/// sink that pins the first resolved address retries an address that can
-	/// never deliver, forever. Every candidate must be tried.
-	#[tokio::test]
-	async fn delivers_through_localhost_to_a_v4_only_debugger() {
-		let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-		let port = listener.local_addr().unwrap().port();
-		// The bug only exists when the name resolves to something before the v4
-		// address; on a v4-only resolver this still passes, it just proves less.
-		let resolved = resolve_loopback_target(&format!("ws://localhost:{port}")).unwrap();
-		assert!(!resolved.is_empty(), "localhost must resolve to at least one loopback address");
-
-		let (tx, rx) = oneshot::channel::<String>();
-		tokio::spawn(async move {
-			let (stream, _peer) = listener.accept().await.unwrap();
-			let ws = accept_async(stream).await.unwrap();
-			let (_write, mut read) = ws.split();
-			let message = read.next().await.unwrap().unwrap();
-			tx.send(message.into_text().unwrap()).unwrap();
-		});
-
-		let sink = WsDebugSink::connect(&format!("ws://localhost:{port}")).unwrap();
-		sink.emit(DebugEvent::Frame {
-			channel_id: ChannelId("myapp.dot".to_string()),
-			dir: FrameDirection::Out,
-			bytes: vec![9],
-		});
-
-		let text = tokio::time::timeout(Duration::from_secs(20), rx)
-			.await
-			.expect("a v4-only debugger never received the frame via localhost")
-			.unwrap();
-		let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-		assert_eq!(value["frame"], BASE64.encode([9]));
-	}
-
-	/// A port-less debug URL must target the debugger, not HTTP's port 80.
-	#[test]
-	fn a_url_without_a_port_targets_the_debugger_port() {
-		let addrs = resolve_loopback_target("ws://127.0.0.1").unwrap();
-		assert_eq!(addrs.first().unwrap().port(), 9231);
-		for addr in resolve_loopback_target("ws://localhost").unwrap() {
-			assert_eq!(addr.port(), 9231, "every candidate uses the default port");
-		}
-	}
-
-	/// The codec version stamped on the envelope is hand-mirrored from the
-	/// generated TS `TRUAPI_CODEC_VERSION` (codegen emits only the schema hash to
-	/// Rust). Bind it to the Rust-side authority on the same number: the codec
-	/// version this host accepts in the handshake. A `--codec-version` bump that
-	/// forgets this constant then fails here instead of stamping a frame the
-	/// debugger reads as a foreign contract.
-	#[test]
-	fn stamped_codec_version_is_the_one_the_host_negotiates() {
-		use truapi::{
-			CallContext, CallError,
-			api::System,
-			v01,
-			versioned::system::{
-				HostFeatureSupportedError, HostFeatureSupportedRequest,
-				HostFeatureSupportedResponse, HostHandshakeRequest, HostInfoError, HostInfoRequest,
-				HostInfoResponse, HostNavigateToError, HostNavigateToRequest,
-				HostNavigateToResponse,
-			},
-		};
-
-		/// Exercises only `System::handshake`'s default (host-side) codec check.
-		struct HandshakeOnly;
-
-		#[truapi::async_trait]
-		impl System for HandshakeOnly {
-			async fn feature_supported(
-				&self,
-				_cx: &CallContext,
-				_request: HostFeatureSupportedRequest,
-			) -> Result<HostFeatureSupportedResponse, CallError<HostFeatureSupportedError>> {
-				unreachable!("handshake-only host")
-			}
-
-			async fn navigate_to(
-				&self,
-				_cx: &CallContext,
-				_request: HostNavigateToRequest,
-			) -> Result<HostNavigateToResponse, CallError<HostNavigateToError>> {
-				unreachable!("handshake-only host")
-			}
-
-			async fn host_info(
-				&self,
-				_cx: &CallContext,
-				_request: HostInfoRequest,
-			) -> Result<HostInfoResponse, CallError<HostInfoError>> {
-				unreachable!("handshake-only host")
-			}
-		}
-
-		let handshake = |codec: u32| {
-			let cx = CallContext::with_request_id("codec:1".to_string());
-			let codec_version = u8::try_from(codec).expect("codec version fits a u8");
-			futures::executor::block_on(HandshakeOnly.handshake(
-				&cx,
-				HostHandshakeRequest::V1(v01::HostHandshakeRequest { codec_version }),
-			))
-		};
-
-		assert!(
-			handshake(WIRE_CODEC_VERSION).is_ok(),
-			"the host must accept the codec version its debug envelopes stamp"
-		);
-		assert!(
-			handshake(WIRE_CODEC_VERSION + 1).is_err(),
-			"the stamped codec version must be the newest one the host accepts"
-		);
-	}
-
-	#[tokio::test]
-	async fn emit_is_nonblocking_and_counts_drops_when_debugger_absent() {
-		// A loopback port with nothing listening: dials never succeed, so the
-		// bounded queue fills and further frames are dropped, never blocking emit.
-		let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-		let port = listener.local_addr().unwrap().port();
-		drop(listener); // free the port; nothing is listening now
-
-		let sink = WsDebugSink::connect(&format!("ws://127.0.0.1:{port}")).unwrap();
-		for _ in 0..(QUEUE_CAPACITY + 50) {
-			sink.emit(DebugEvent::Frame {
-				channel_id: ChannelId("myapp.dot".to_string()),
-				dir: FrameDirection::Out,
-				bytes: vec![1],
-			});
-		}
-		assert!(sink.dropped() > 0, "a full queue must count drops, not block");
-	}
-
-	#[tokio::test]
-	async fn byte_budget_drops_large_frames_before_the_count_cap() {
-		// Nothing listening: the writer never drains, so queued bytes accumulate.
-		let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-		let port = listener.local_addr().unwrap().port();
-		drop(listener);
-
-		let sink = WsDebugSink::connect(&format!("ws://127.0.0.1:{port}")).unwrap();
-		// ~2 MiB per frame; a handful blows past the 8 MiB byte budget long before
-		// the 4096-frame count cap, so the BYTE cap is what drops here. Also
-		// exercises reserve-before-send: emit must never panic on the counter even
-		// as the writer task races it.
-		let big = vec![0u8; 2 * 1024 * 1024];
-		for _ in 0..8 {
-			sink.emit(DebugEvent::Frame {
-				channel_id: ChannelId("myapp.dot".to_string()),
-				dir: FrameDirection::Out,
-				bytes: big.clone(),
-			});
-		}
-		assert!(
-			sink.dropped() > 0,
-			"the byte budget must drop large frames well under the count cap"
-		);
 	}
 }
+
+#[cfg(test)]
+mod tests;

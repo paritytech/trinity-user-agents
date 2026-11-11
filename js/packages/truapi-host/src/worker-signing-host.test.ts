@@ -120,5 +120,8 @@ suite("worker serving a signing host", () => {
     await expect(runtime.activateStoredSession()).rejects.toThrow(
       "activateStoredSession needs a pairing host; this runtime is a signing host",
     );
+    await expect(runtime.getDeviceStatementKey()).rejects.toThrow(
+      "getDeviceStatementKey needs a pairing host; this runtime is a signing host",
+    );
   });
 });

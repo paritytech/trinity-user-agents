@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import KeyDerivation
@@ -84,7 +85,7 @@ final class StubSourceResolver: IncomingPaymentSourceResolving, @unchecked Senda
 /// Acknowledger stub — records what it was asked to surface.
 final class StubAcknowledger: IncomingPaymentAcknowledging, @unchecked Sendable {
     struct Call: Equatable {
-        let productId: String
+        let productId: ProductId
         let paymentId: IncomingPaymentId
         let requestedAmount: Balance
         let outcome: IncomingPaymentTerminalOutcome
@@ -93,7 +94,7 @@ final class StubAcknowledger: IncomingPaymentAcknowledging, @unchecked Sendable 
     private let lock = OSAllocatedUnfairLock(initialState: [Call]())
 
     func acknowledge(
-        productId: String,
+        productId: ProductId,
         paymentId: IncomingPaymentId,
         requestedAmount: Balance,
         outcome: IncomingPaymentTerminalOutcome

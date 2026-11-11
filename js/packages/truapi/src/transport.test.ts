@@ -214,6 +214,8 @@ describe("createWebSocketProvider", () => {
             [WebSocket.prototype, "binaryType"],
             [EventTarget.prototype, "addEventListener"],
             [MessageEvent.prototype, "data"],
+            [globalThis, "URL"],
+            [URL.prototype, "origin"],
         ].map(([owner, key]) => ({
             owner: owner as object,
             key: key as string,

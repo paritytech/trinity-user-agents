@@ -15,6 +15,10 @@ struct AssetDetailsView: View {
         @State private var testDataMode = CoinageTestDataMode.live
         /// Plain or varied coins, while the two are being compared. Debug builds only.
         @State private var coinSet = CoinageScene.CoinSet.shipped
+        /// The light and the coins held still by the dials, for looking at the depiction from a
+        /// chosen angle. Debug builds only.
+        @State private var fixedLight: CoinageTilt.Turn?
+        @State private var fixedLean: CoinageTilt.Turn?
     #endif
 
     init(
@@ -52,9 +56,6 @@ struct AssetDetailsView: View {
     @ViewBuilder
     private var expandedBody: some View {
         VStack(spacing: 16) {
-            if viewModel.showsAccountBackupPending {
-                AccountBackupPendingView()
-            }
             if viewModel.showsBackupNotification {
                 backupCard()
             } else {
@@ -66,7 +67,9 @@ struct AssetDetailsView: View {
                 if viewModel.balanceCardModel != nil {
                     CoinageBalanceBreakdownView(
                         breakdown: testDataMode.applied(to: viewModel.coinageBreakdown ?? .testDataPlaceholder),
-                        coinSet: coinSet
+                        coinSet: coinSet,
+                        fixedLight: fixedLight,
+                        fixedLean: fixedLean
                     )
                 }
             #else
@@ -90,6 +93,8 @@ struct AssetDetailsView: View {
                 CoinageTestDataSwitch(mode: $testDataMode)
 
                 CoinageCoinSetSwitch(set: $coinSet)
+
+                CoinageLightPad(turn: $fixedLight, lean: $fixedLean)
             #endif
 
             #if TESTNET_FEATURE
@@ -211,23 +216,4 @@ struct AssetDetailsView: View {
             .disabled(viewModel.isTestnetTopUpInProgress)
         }
     #endif
-}
-
-/// Funding progress banner. Pinned by the wallet host while the asset card is expanded.
-struct AssetDetailsFundingBar: View {
-    @Bindable var viewModel: AssetDetailsViewModel
-
-    var body: some View {
-        if !viewModel.fundingStates.isEmpty {
-            AssetFundingStatusView(
-                states: $viewModel.fundingStates,
-                isExpanded: $viewModel.isFundingExpanded,
-                configuration: .fundingDigitalDollarConfiguration(
-                    onCompletedAction: viewModel.onFundingCompleted,
-                    onFailedAction: viewModel.onFundingFailed
-                )
-            )
-            .frame(maxWidth: .infinity)
-        }
-    }
 }

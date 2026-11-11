@@ -2,6 +2,8 @@ use alloc::{string::String, vec::Vec};
 use derive_more::Display;
 use parity_scale_codec::{Decode, Encode};
 
+use super::NftPurseOwner;
+
 /// Device-capability permission requested from the host (RFC 0002).
 ///
 /// Lasting grants and denials survive app restarts. A host may also offer a
@@ -14,9 +16,9 @@ use parity_scale_codec::{Decode, Encode};
 /// grant that is merely undetermined does not change the answer, because the OS
 /// resolves its own gate when the capability is used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, Display)]
-#[allow(clippy::upper_case_acronyms)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 #[cfg_attr(test, derive(strum::VariantArray))]
+#[cfg_attr(feature = "mock", derive(strum::IntoStaticStr))]
 pub enum HostDevicePermissionRequest {
 	/// Showing system notifications.
 	#[display("notifications")]
@@ -58,6 +60,7 @@ pub enum HostDevicePermissionRequest {
 /// when not yet granted (`JamPeerTransport::dial` for `JamPeers`).
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(feature = "mock", derive(strum::IntoStaticStr))]
 pub enum RemotePermission {
 	/// Outbound HTTP/WebSocket access to a set of domains. External navigation
 	/// uses [`HostDevicePermissionRequest::OpenUrl`] instead.
@@ -93,10 +96,18 @@ pub enum RemotePermission {
 	/// than by the user.
 	#[display("see your balance")]
 	BalanceAccess,
+	/// Reading the NFT purses of an owner other than the caller: listing them,
+	/// querying their items and creating item keys in them. A grant covers
+	/// that owner only.
+	#[display("see the NFT purses of {owner}")]
+	NftPurseRead {
+		/// Whose purses.
+		owner: NftPurseOwner,
+	},
 	/// Peer access over JAMNP-S QUIC/WebTransport, scoped to the genesis hash.
 	/// This conveys no account, signing or submission authority. The guest
 	/// still verifies chain membership and chain data itself.
-	#[codec(index = 6)]
+	#[codec(index = 111)]
 	#[display("connections to JAM network 0x{:02x}{:02x}{:02x}{:02x}…", genesis[0], genesis[1], genesis[2], genesis[3])]
 	JamPeers {
 		/// Genesis header hash under which peer access is authorized.

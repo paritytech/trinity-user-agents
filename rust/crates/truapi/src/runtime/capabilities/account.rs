@@ -1,7 +1,7 @@
 //! Product-facing account operations and login lifecycle.
 
 use crate::platform::{
-	PermissionAuthorizationStatus, ProductId, ProductSubtreeReview, UserConfirmationReview,
+	PermissionAuthorizationStatus, ProductSubtreeReview, UserConfirmationReview,
 };
 use futures::StreamExt;
 use tracing::instrument;
@@ -29,7 +29,13 @@ use truapi::{
 use crate::{
 	host_internal::permissions::ChatAuthorityConsent,
 	platform::PermissionAuthorizationRequest,
-	runtime::{authority::chat_requires_preimage_submit, product_device_chat_authority_error},
+	runtime::{
+		ProductRuntimeHost, account_get_authority_error, authority::chat_requires_preimage_submit,
+		product_consent::AccountAccessError, product_device_chat_authority_error, product_manifest,
+		remote_authority_call, remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error,
+		ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error, until_cancelled,
+		validate_vrf_transcript, versioning::version, vrf_call_error,
+	},
 };
 use truapi::versioned::{
 	IntoLatest,
@@ -38,17 +44,7 @@ use truapi::versioned::{
 	},
 };
 
-use crate::{
-	host_internal::product_manifest::Granted,
-	runtime::{
-		ProductRuntimeHost, account_access_authorization, account_get_authority_error,
-		remote_authority_call, remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error,
-		ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error, until_cancelled,
-		validate_vrf_transcript, versioning::version, vrf_call_error,
-	},
-};
-
-#[truapi::async_trait]
+#[async_trait::async_trait]
 impl Account for ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "account.get_account"))]
 	async fn get_account(
@@ -65,15 +61,26 @@ impl Account for ProductRuntimeHost {
 					.ok_or(CallError::Domain(latest::HostAccountGetError::NotConnected))?;
 
 				if &owner != self.connection.product_id() {
-					match account_access_authorization(
-						self.connection.platform.as_ref(),
-						&self.connection.services.permissions,
+					let access = self.accounts.consent().account_disclosure(
 						self.connection.product_id(),
 						&owner,
-					)
-					.await
-					.map_err(|err| CallError::HostFailure { reason: err.to_string() })?
-					{
+						self.connection.platform.as_ref(),
+						|| self.accounts.session_is_current(&session),
+					);
+					let decision = until_cancelled(cx, access).await;
+					// Session withdrawal takes precedence over a prompt's cancellation or
+					// failure, including reactivation of the same wallet.
+					if !self.accounts.session_is_current(&session) {
+						return Err(CallError::Domain(latest::HostAccountGetError::NotConnected));
+					}
+					match decision.map_err(account_get_authority_error)?.map_err(|error| {
+						match error {
+							AccountAccessError::Superseded => {
+								CallError::Domain(latest::HostAccountGetError::Rejected)
+							},
+							error => CallError::HostFailure { reason: error.to_string() },
+						}
+					})? {
 						PermissionAuthorizationStatus::Authorized => {},
 						PermissionAuthorizationStatus::Denied |
 						PermissionAuthorizationStatus::NotDetermined => {
@@ -89,20 +96,10 @@ impl Account for ProductRuntimeHost {
 				.await
 				.map_err(account_get_authority_error)?
 				{
-					let approved = until_cancelled(
-						&remote_authority_context(cx),
-						self.connection.confirm_user_action_if_needed(
-							UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
-								product_id: owner.clone(),
-							}),
-						),
-					)
-					.await
-					.map_err(account_get_authority_error)?
-					.map_err(|err| CallError::HostFailure { reason: err.reason })?;
-					if !approved {
-						return Err(CallError::Domain(latest::HostAccountGetError::Rejected));
-					}
+					let review = UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
+						product_id: owner.clone(),
+					});
+					self.confirm(cx, review).await.map_err(account_get_authority_error)?;
 				}
 
 				let public_key = self
@@ -151,22 +148,37 @@ impl Account for ProductRuntimeHost {
 	) -> Result<HostAccountCreateProofResponse, CallError<HostAccountCreateProofError>> {
 		version(request)
 			.exec(|request| async move {
-				let owner = request.key_handle.dot_ns_identifier.clone();
 				let session = self
 					.accounts
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostAccountCreateProofError::Rejected))?;
 
 				let cx = remote_authority_context(cx);
-				if !self.holds_cross_product_scope_within(&owner, Granted::Context, &cx).await {
-					tracing::info!(
-						caller = %self.connection.product_id(),
-						owner = %request.key_handle.dot_ns_identifier,
-						"cross-product ring-VRF access refused at the runtime frontend"
-					);
-					return Err(CallError::Domain(
-						latest::HostAccountCreateProofError::NotAllowlisted,
-					));
+				// Only the reserved Lite handle may defer this check to the holder.
+				// The holder still requires a migrated registry key, own context and consent.
+				let legacy_lite = request.key_handle.derivation_index ==
+					latest::DerivationIndex::Index(1) &&
+					crate::platform::DOTNS_TLDS.iter().any(|tld| {
+						request.key_handle.dot_ns_identifier ==
+							crate::host_logic::product_account::personhood_product_id(tld)
+					});
+				if !legacy_lite {
+					let Ok(Ok(_)) = until_cancelled(
+						&cx,
+						product_manifest::ring_vrf_key_access_granted_within(
+							&self.connection.services,
+							self.connection.platform.as_ref(),
+							self.connection.product_id().clone(),
+							&request.key_handle,
+							cx.timeout(),
+						),
+					)
+					.await
+					else {
+						return Err(CallError::Domain(
+							latest::HostAccountCreateProofError::NotAllowlisted,
+						));
+					};
 				}
 				remote_authority_call(&cx, self.accounts.create_proof(&session, &cx, request))
 					.await
@@ -205,11 +217,10 @@ impl Account for ProductRuntimeHost {
 		request: HostAccountListRingVrfKeysRequest,
 	) -> Result<HostAccountListRingVrfKeysResponse, CallError<HostAccountListRingVrfKeysError>> {
 		version(request)
-			.exec(|mut request| async move {
+			.exec(|request| async move {
 				let session = self.accounts.current_session().ok_or(CallError::Domain(
 					latest::HostAccountListRingVrfKeysError::NotConnected,
 				))?;
-				request.owner = request.owner.parse::<ProductId>()?.into();
 				let cx = remote_authority_context(cx);
 				remote_authority_call(&cx, self.accounts.list_ring_vrf_keys(&session, &cx, request))
 					.await
@@ -226,22 +237,27 @@ impl Account for ProductRuntimeHost {
 	) -> Result<HostAccountRingVrfSignResponse, CallError<HostAccountRingVrfSignError>> {
 		version(request)
 			.exec(|request| async move {
-				let owner = request.key_handle.dot_ns_identifier.clone();
 				let session = self
 					.accounts
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostAccountRingVrfSignError::NotConnected))?;
 				let cx = remote_authority_context(cx);
-				if !self.holds_cross_product_scope_within(&owner, Granted::Context, &cx).await {
-					tracing::info!(
-						caller = %self.connection.product_id(),
-						owner = %request.key_handle.dot_ns_identifier,
-						"cross-product ring-VRF access refused at the runtime frontend"
-					);
+				let Ok(Ok(_)) = until_cancelled(
+					&cx,
+					product_manifest::ring_vrf_key_access_granted_within(
+						&self.connection.services,
+						self.connection.platform.as_ref(),
+						self.connection.product_id().clone(),
+						&request.key_handle,
+						cx.timeout(),
+					),
+				)
+				.await
+				else {
 					return Err(CallError::Domain(
 						latest::HostAccountRingVrfSignError::NotAllowlisted,
 					));
-				}
+				};
 				remote_authority_call(&cx, self.accounts.ring_vrf_sign(&session, &cx, request))
 					.await
 					.map_err(|err| CallError::Domain(ring_vrf_sign_error(err)))
@@ -266,6 +282,7 @@ impl Account for ProductRuntimeHost {
 				latest::HostProductDeviceChatError::NotConnected,
 			)));
 		};
+		let grant_revision = self.accounts.grant_revision();
 		// A session-only grant lives with the authority, so a new execution of
 		// the same product reuses it without prompting again.
 		let consent = if self.accounts.chat_session_granted(&session) &&
@@ -296,6 +313,11 @@ impl Account for ProductRuntimeHost {
 					),
 				)
 				.await?;
+		}
+		if !self.accounts.grant_is_current(&session, grant_revision) {
+			return Err(CallError::Domain(HostProductDeviceChatError::V1(
+				latest::HostProductDeviceChatError::NotConnected,
+			)));
 		}
 		let cx = remote_authority_context(cx);
 		remote_authority_call(
@@ -358,29 +380,30 @@ impl Account for ProductRuntimeHost {
 	) -> Result<HostGetUserIdResponse, CallError<HostGetUserIdError>> {
 		version(request)
 			.exec(|()| async move {
+				let grant_revision = self.accounts.grant_revision();
 				let session = self
 					.accounts
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostGetUserIdError::NotConnected))?;
 
-				match self.connection.identity_disclosure_authorization().await {
-					Ok(PermissionAuthorizationStatus::Authorized) => {},
-					Ok(
-						PermissionAuthorizationStatus::Denied |
-						PermissionAuthorizationStatus::NotDetermined,
-					) => {
-						return Err(CallError::Domain(
-							latest::HostGetUserIdError::PermissionDenied,
-						));
-					},
-					Err(reason) => return Err(CallError::HostFailure { reason }),
+				let denied = latest::HostGetUserIdError::PermissionDenied;
+				let disclosure = self
+					.connection
+					.require_identity_disclosure(denied, || {
+						self.accounts.grant_is_current(&session, grant_revision)
+					})
+					.await;
+				if !self.accounts.grant_is_current(&session, grant_revision) {
+					return Err(CallError::Domain(latest::HostGetUserIdError::NotConnected));
 				}
+				disclosure?;
 
 				if session.primary_username().is_none() {
-					self.accounts
-						.refresh_session_identity()
-						.await
-						.map_err(|reason| CallError::HostFailure { reason })?;
+					let refreshed = self.accounts.refresh_session_identity().await;
+					if !self.accounts.grant_is_current(&session, grant_revision) {
+						return Err(CallError::Domain(latest::HostGetUserIdError::NotConnected));
+					}
+					refreshed.map_err(|reason| CallError::HostFailure { reason })?;
 				}
 				let current = self
 					.accounts
@@ -388,7 +411,7 @@ impl Account for ProductRuntimeHost {
 					.filter(|current| {
 						current.public_key == session.public_key &&
 							current.identity_account_id == session.identity_account_id &&
-							self.accounts.session_is_current(&session)
+							self.accounts.grant_is_current(&session, grant_revision)
 					})
 					.ok_or(CallError::Domain(latest::HostGetUserIdError::NotConnected))?;
 				let primary_username =

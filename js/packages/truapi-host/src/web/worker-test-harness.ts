@@ -12,6 +12,7 @@
  */
 
 import { expect } from "bun:test";
+import { asProductId } from "@parity/truapi";
 
 import { makeHostCallbacks } from "../test-support.js";
 import type { ProductRuntimeConfig } from "../runtime.js";
@@ -73,7 +74,7 @@ export function runtimeConfig(
   overrides: Partial<ProductRuntimeConfig> = {},
 ): ProductRuntimeConfig {
   return {
-    productId: "dotli.dot",
+    productId: asProductId("dotli.dot"),
     host: {
       name: "Polkadot Web",
       icon: "https://dot.li/dotli.png",

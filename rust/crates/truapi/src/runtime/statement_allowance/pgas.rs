@@ -24,10 +24,10 @@ use thiserror::Error;
 use web_time::Instant;
 
 use super::{
-	ChainContext, StatementAllowanceError,
+	StatementAllowanceError,
 	collection::PersonhoodCollection,
-	duplicate_submit_error, extension,
-	extension::{AS_PGAS, Metadata, MetadataError},
+	duplicate_submit_error,
+	extension::{Metadata, MetadataError},
 	extrinsic,
 	key_hash::{blake2_128_concat, twox_64_concat},
 	ring::{self, RingParams},
@@ -41,6 +41,13 @@ const RING_REVISION_WAIT: Duration = Duration::from_secs(60);
 
 /// Longest a single poll sleeps while waiting for a revision to land.
 const RING_REVISION_POLL: Duration = Duration::from_secs(1);
+
+/// How long to wait for the claimed PGAS balance to become visible to a
+/// follow-up product transaction.
+const CLAIM_VISIBILITY_WAIT: Duration = Duration::from_secs(30);
+
+/// Longest a single poll sleeps while waiting for the claim balance.
+const CLAIM_VISIBILITY_POLL: Duration = Duration::from_secs(1);
 
 /// Error while claiming a PGAS allowance.
 #[derive(Debug, Error)]
@@ -81,11 +88,18 @@ pub enum PgasError {
 		/// Slot claimed.
 		slot_index: u32,
 	},
+	/// The claim was included but the product account's PGAS balance was still
+	/// absent when the visibility deadline expired.
+	#[error("claim reached block {block_hash} but its PGAS balance is not visible")]
+	ClaimNotVisible {
+		/// Block the claim reached.
+		block_hash: String,
+	},
 }
 
 /// One `MembersSubscriber.RingRoots` record, projected to the field that decides
 /// whether a proof can be verified.
-#[derive(Debug, DecodeAsType)]
+#[derive(DecodeAsType)]
 struct RingCommitmentRecord {
 	revision: u32,
 }
@@ -143,8 +157,10 @@ fn ring_roots_key(generation: u32, collection: PersonhoodCollection, ring_index:
 pub struct PgasClaim<'a> {
 	/// Asset Hub connection the claim is submitted on.
 	pub asset_hub_rpc: &'a RpcClient,
-	/// Asset Hub metadata and signed-extension state, from the per-chain cache.
-	pub asset_hub: &'a ChainContext,
+	/// Asset Hub metadata.
+	pub asset_hub_metadata: &'a Metadata,
+	/// Where the claim extrinsic is built on Asset Hub.
+	pub asset_hub_target: super::ExtrinsicTarget<'a>,
 	/// People-chain connection the ring revision is read from.
 	pub people_rpc: &'a RpcClient,
 	/// People-chain metadata.
@@ -160,7 +176,7 @@ pub struct PgasClaim<'a> {
 }
 
 /// `Assets.Account[(asset_id, who)]` storage key on Asset Hub.
-pub(super) fn pgas_balance_key(asset_id: u32, who: &[u8; 32]) -> Vec<u8> {
+pub fn pgas_balance_key(asset_id: u32, who: &[u8; 32]) -> Vec<u8> {
 	[
 		twox_128(b"Assets").as_slice(),
 		twox_128(b"Account").as_slice(),
@@ -168,6 +184,13 @@ pub(super) fn pgas_balance_key(asset_id: u32, who: &[u8; 32]) -> Vec<u8> {
 		&blake2_128_concat(who),
 	]
 	.concat()
+}
+
+/// Decode the leading `u128` balance from an Assets `AssetAccount`.
+///
+/// Trailing fields belong to the rest of the runtime record and are accepted.
+pub fn decode_asset_account_balance(bytes: &[u8]) -> Result<u128, PgasError> {
+	u128::decode(&mut &bytes[..]).map_err(PgasError::BalanceDecode)
 }
 
 /// Whether `target` already holds a full claim's worth of PGAS.
@@ -188,8 +211,27 @@ pub async fn holds_a_full_claim(
 	let Some(bytes) = rpc.get_storage(&pgas_balance_key(asset_id, target)).await? else {
 		return Ok(false);
 	};
-	let balance = u128::decode(&mut &bytes[..]).map_err(PgasError::BalanceDecode)?;
-	Ok(balance >= claim_amount)
+	Ok(decode_asset_account_balance(&bytes)? >= claim_amount)
+}
+
+/// Wait until a just-included claim is visible through the same storage query
+/// products use before constructing their first contract transaction.
+pub async fn await_full_claim(
+	rpc: &RpcClient,
+	metadata: &Metadata,
+	target: &[u8; 32],
+	block_hash: &str,
+) -> Result<(), StatementAllowanceError> {
+	let started = Instant::now();
+	loop {
+		if holds_a_full_claim(rpc, metadata, target).await? {
+			return Ok(());
+		}
+		let Some(remaining) = CLAIM_VISIBILITY_WAIT.checked_sub(started.elapsed()) else {
+			return Err(PgasError::ClaimNotVisible { block_hash: block_hash.to_string() }.into());
+		};
+		futures_timer::Delay::new(remaining.min(CLAIM_VISIBILITY_POLL)).await;
+	}
 }
 
 /// Claim one PGAS allowance for `target`, proving membership in the
@@ -203,7 +245,8 @@ pub async fn claim_pgas(
 ) -> Result<PgasClaimOutcome, StatementAllowanceError> {
 	let PgasClaim {
 		asset_hub_rpc,
-		asset_hub,
+		asset_hub_metadata,
+		asset_hub_target,
 		people_rpc,
 		people_metadata,
 		signer,
@@ -211,8 +254,6 @@ pub async fn claim_pgas(
 		target,
 		ring,
 	} = params;
-	let asset_hub_metadata = asset_hub.metadata.as_ref();
-	let asset_hub_state = &asset_hub.state;
 	// The day is Asset Hub's, because its runtime checks the claim against its
 	// own clock. Periods are a UTC day here as they are for statement store.
 	let day = slot::current_period(slot::read_chain_now_seconds(asset_hub_rpc).await?);
@@ -239,6 +280,7 @@ pub async fn claim_pgas(
 			asset_hub_rpc,
 			asset_hub_metadata,
 			ring.collection,
+			ring.key_index,
 			signer,
 			network_suffix,
 			day,
@@ -246,32 +288,25 @@ pub async fn claim_pgas(
 		)
 		.await?;
 		let context = slot::derive_pgas_context(network_suffix, day, slot_index);
-		let call = extrinsic::build_claim_pgas_call(asset_hub_metadata, slot_index, target)?;
-		let message = extension::build_proof_message_after_extension(
-			asset_hub_metadata,
-			&call,
-			asset_hub_state,
-			AS_PGAS,
-		)?;
-		let alias = slot::pgas_alias(signer, ring.collection, network_suffix, day, slot_index)?;
-		let ring_proof = signer.prove(ring, &context, &message)?;
-		let extra = extrinsic::build_as_pgas_extra(
-			asset_hub_metadata,
-			&ring_proof,
-			ring.ring_index,
-			revision,
-			day,
+		let alias = slot::pgas_alias(
+			signer,
 			ring.collection,
+			ring.key_index,
+			network_suffix,
+			day,
+			slot_index,
 		)?;
-		let claim = extrinsic::build_unsigned_extrinsic_with_extra(
-			asset_hub_metadata,
-			asset_hub_state,
-			&call,
-			AS_PGAS,
-			&extra,
-		)?;
+		let proof = super::RingProof { signer, ring, context, revision };
+		let call = extrinsic::ClaimPgasCallArgs { slot_index, target: *target };
+		let claim = asset_hub_target
+			.extrinsics
+			.build_mortal_extrinsic(asset_hub_target.genesis)
+			.with_call_args("Pgas", "claim_pgas", call)
+			.with_extension(super::AsPgasExtension::new(proof, day))
+			.build()
+			.await?;
 
-		match asset_hub_rpc.submit_and_watch(&claim).await {
+		match asset_hub_rpc.submit_and_watch(claim.extrinsic.bytes()).await {
 			Ok(block_hash) => {
 				// Inclusion is not success. `Pgas.claim_pgas` can dispatch-error —
 				// `AlreadyClaimed`, `PgasMintFailed` — and the extrinsic still lands,
@@ -297,7 +332,7 @@ pub async fn claim_pgas(
 
 /// What Asset Hub's held ring roots say about the revision a proof was built
 /// against.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum RevisionStatus {
 	/// Asset Hub holds it, so the proof can be verified.
 	Imported,
@@ -386,313 +421,4 @@ async fn wait_before_next_ring_revision_poll(
 }
 
 #[cfg(test)]
-mod tests {
-	use subxt_rpcs::RpcClient as HostRpcClient;
-
-	use super::{
-		super::{rpc::testing::ScriptedRpc, test_fixtures},
-		*,
-	};
-
-	/// The collection the captured roots were read from. The fixture only means
-	/// anything paired with this identifier.
-	const CAPTURED_COLLECTION: PersonhoodCollection = PersonhoodCollection::LitePeople;
-	const TEST_GENERATION: u32 = 7;
-
-	/// The captured ring-5 roots as a scripted `state_getStorage` result, with the
-	/// transport handle so the key that was read can be checked.
-	fn scripted_ring_5_roots() -> (RpcClient, ScriptedRpc) {
-		let value = format!(r#""0x{}""#, hex::encode(test_fixtures::ASSET_HUB_RING_5_ROOTS));
-		let generation = format!(r#""0x{}""#, hex::encode(TEST_GENERATION.to_le_bytes()));
-		let scripted = ScriptedRpc::new([generation.as_str(), value.as_str()]);
-		(RpcClient::new(HostRpcClient::new(scripted.clone())), scripted)
-	}
-
-	/// `ScriptedRpc` replays by position and ignores the key, so without this the
-	/// collection paired with the captured blob would be a comment rather than a
-	/// fact: re-capturing the blob against another collection, or editing the
-	/// constant, would leave every test in this module green.
-	///
-	/// The expected key is built from the identifier literal the fixtures README
-	/// records the capture under, not from `CAPTURED_COLLECTION`. Deriving both
-	/// sides from the constant would move them together and assert nothing.
-	fn assert_read_ring_5_of(scripted: &ScriptedRpc) {
-		const CAPTURED_UNDER: &[u8; 32] = b"pop:polkadot.network/people-lite";
-		assert_eq!(
-			CAPTURED_COLLECTION.identifier(),
-			CAPTURED_UNDER,
-			"the committed blob was read under the lite-people identifier",
-		);
-		let current_generation = format!(
-			r#"["0x{}"]"#,
-			hex::encode(
-				[
-					twox_128(b"MembersSubscriber").as_slice(),
-					twox_128(b"CurrentGeneration").as_slice(),
-				]
-				.concat()
-			)
-		);
-		let generation = twox_64_concat(&TEST_GENERATION.to_le_bytes());
-		let ring_roots = format!(
-			r#"["0x{}"]"#,
-			hex::encode(
-				[
-					twox_128(b"MembersSubscriber").as_slice(),
-					twox_128(b"RingRoots").as_slice(),
-					&generation,
-					&blake2_128_concat(CAPTURED_UNDER),
-					&blake2_128_concat(&5u32.to_le_bytes()),
-				]
-				.concat()
-			)
-		);
-		let reads: Vec<String> = scripted
-			.calls()
-			.into_iter()
-			.filter(|(method, _)| method == "state_getStorage")
-			.map(|(_, params)| params)
-			.collect();
-		assert_eq!(
-			reads,
-			vec![current_generation, ring_roots],
-			"the roots read must use the current generation and the fixture collection"
-		);
-	}
-
-	/// `RingCommitmentRecord` takes one field out of a much wider runtime struct,
-	/// so decode a captured value rather than a hand-built one: the projection is
-	/// the part that a changed record layout would silently break.
-	#[test]
-	fn captured_ring_roots_project_to_their_revisions() {
-		let metadata = test_fixtures::asset_hub();
-		let value_type = metadata.storage_value_type("MembersSubscriber", "RingRoots").expect(
-			"the metadata fixture declares MembersSubscriber; \
-                 re-capture it and the roots blob together",
-		);
-
-		let records = Vec::<RingCommitmentRecord>::decode_as_type(
-			&mut &test_fixtures::ASSET_HUB_RING_5_ROOTS[..],
-			value_type,
-			metadata.registry(),
-		)
-		.unwrap();
-
-		assert_eq!(
-			records.iter().map(|record| record.revision).collect::<Vec<_>>(),
-			vec![105, 106, 108],
-		);
-	}
-
-	/// End to end over the real path, against roots Asset Hub actually served: a
-	/// revision the window skipped reports as pruned instead of being waited out.
-	///
-	/// Only the two terminating outcomes are reachable here. Pending keeps
-	/// polling until `RING_REVISION_WAIT` expires, so it is covered by the
-	/// `revision_status` table instead.
-	#[test]
-	fn a_skipped_revision_reports_as_pruned_against_captured_roots() {
-		let (rpc, scripted) = scripted_ring_5_roots();
-		let err = futures::executor::block_on(await_ring_revision(
-			&rpc,
-			test_fixtures::asset_hub(),
-			CAPTURED_COLLECTION,
-			5,
-			107,
-		))
-		.expect_err("revision 107 is missing from the captured window");
-		assert_read_ring_5_of(&scripted);
-
-		assert!(
-			err.to_string().contains("pruned"),
-			"a skipped revision should not be waited out: {err}"
-		);
-	}
-
-	/// And one the window holds returns without a second poll.
-	#[test]
-	fn a_held_revision_returns_against_captured_roots() {
-		let (rpc, scripted) = scripted_ring_5_roots();
-		futures::executor::block_on(await_ring_revision(
-			&rpc,
-			test_fixtures::asset_hub(),
-			CAPTURED_COLLECTION,
-			5,
-			106,
-		))
-		.expect("revision 106 is in the captured window");
-		assert_read_ring_5_of(&scripted);
-	}
-
-	/// A wrong key hasher makes imported roots look absent until timeout.
-	#[test]
-	fn subscriber_ring_key_matches_the_runtime_layout() {
-		assert_eq!(
-			ring_roots_key(7, PersonhoodCollection::LitePeople, 136),
-			hex::decode(
-				"c8d053ab324196afc756c5ae3fbd29178034a4ffd558299b9ac8097424772405\
-                 0e0d969b0e48cab7070000000bf6e234fafa085fd6710b952081ed8d706f703a\
-                 706f6c6b61646f742e6e6574776f726b2f70656f706c652d6c697465751c83\
-                 d291ed9a90887239b8a92828a688000000"
-			)
-			.unwrap(),
-		);
-	}
-
-	#[test]
-	fn missing_current_generation_uses_the_runtime_default() {
-		let scripted = ScriptedRpc::new(["null"]);
-		let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
-
-		let generation =
-			futures::executor::block_on(read_current_generation(&rpc, test_fixtures::asset_hub()))
-				.unwrap();
-
-		assert_eq!(
-			(generation, scripted.calls()),
-			(
-				0,
-				vec![(
-					"state_getStorage".to_string(),
-					r#"["0xc8d053ab324196afc756c5ae3fbd2917c2dbc4fc2f665a39ada06f0965cccf86"]"#
-						.to_string(),
-				)],
-			),
-		);
-	}
-
-	/// Caching the generation would leave later polls on abandoned roots.
-	#[test]
-	fn a_generation_change_during_wait_moves_the_ring_root_read() {
-		let first_generation = format!(r#""0x{}""#, hex::encode(7u32.to_le_bytes()));
-		let second_generation = format!(r#""0x{}""#, hex::encode(8u32.to_le_bytes()));
-		let roots = format!(r#""0x{}""#, hex::encode(test_fixtures::ASSET_HUB_RING_5_ROOTS));
-		let scripted = ScriptedRpc::new([
-			first_generation.as_str(),
-			"null",
-			second_generation.as_str(),
-			roots.as_str(),
-		]);
-		let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
-
-		futures::executor::block_on(await_ring_revision(
-			&rpc,
-			test_fixtures::asset_hub(),
-			CAPTURED_COLLECTION,
-			5,
-			106,
-		))
-		.unwrap();
-
-		let storage_call = |key: Vec<u8>| {
-			("state_getStorage".to_string(), format!(r#"["0x{}"]"#, hex::encode(key)))
-		};
-		assert_eq!(
-			scripted.calls(),
-			vec![
-				storage_call(current_generation_key()),
-				storage_call(ring_roots_key(7, CAPTURED_COLLECTION, 5)),
-				storage_call(current_generation_key()),
-				storage_call(ring_roots_key(8, CAPTURED_COLLECTION, 5)),
-			],
-		);
-	}
-
-	/// A trailing byte means the entry is no longer a bare `u32`, which is the
-	/// same layout drift the three-key ring-root key exists to track. Taking the
-	/// first four bytes would build keys for a generation nothing answers, and
-	/// the wait would read as "the ring never arrived".
-	#[test]
-	fn a_current_generation_that_is_not_a_bare_u32_is_rejected() {
-		let overlong = format!(r#""0x{}""#, hex::encode([7u8, 0, 0, 0, 0]));
-		let scripted = ScriptedRpc::new([overlong.as_str()]);
-		let rpc = RpcClient::new(HostRpcClient::new(scripted));
-
-		let err =
-			futures::executor::block_on(read_current_generation(&rpc, test_fixtures::asset_hub()))
-				.expect_err("a five-byte value is not a u32");
-
-		assert_eq!(
-			err.to_string(),
-			"MembersSubscriber.CurrentGeneration: Input buffer has still data left after decoding!"
-		);
-	}
-
-	/// An absent value is only the `ValueQuery` default if the runtime declares
-	/// the entry at all. A renamed pallet or item reads as absent too, and
-	/// defaulting there would key every ring-root read at generation 0.
-	#[test]
-	fn a_runtime_without_current_generation_is_named_rather_than_defaulted() {
-		// Real metadata, because the regression depends on the pallet being absent.
-		let people = test_fixtures::people();
-		let scripted = ScriptedRpc::new(["null"]);
-		let rpc = RpcClient::new(HostRpcClient::new(scripted.clone()));
-
-		let err = futures::executor::block_on(read_current_generation(&rpc, people))
-			.expect_err("the People runtime declares no MembersSubscriber");
-
-		assert_eq!(
-			(err.to_string(), scripted.calls()),
-			("MembersSubscriber.CurrentGeneration type not in metadata".to_string(), vec![],),
-			"the metadata check comes before the read, so nothing is asked of the chain",
-		);
-	}
-
-	/// `holds_a_full_claim` reads both of these from the runtime, and compares a
-	/// balance against the claim amount. A missing constant would make the warm
-	/// check answer the same way for every account.
-	#[test]
-	fn the_asset_hub_fixture_declares_the_pgas_asset_and_claim_amount() {
-		let metadata = test_fixtures::asset_hub();
-
-		assert_eq!(metadata.constant_u32("Pgas", "PgasAssetId").unwrap(), 2_000_000_000);
-		assert_eq!(metadata.constant_u128("Pgas", "PgasClaimAmount").unwrap(), 50_000_000_000,);
-	}
-
-	/// The window holds it, so the proof can be verified.
-	#[test]
-	fn a_held_revision_is_imported() {
-		assert_eq!(revision_status(&[105, 106, 108], 106), RevisionStatus::Imported);
-		assert_eq!(revision_status(&[106], 106), RevisionStatus::Imported);
-	}
-
-	/// Nothing newer is held, so ours may still be on its way. An empty window
-	/// reaches this if the entry exists but holds no roots; an absent entry
-	/// skips the classification entirely and goes straight to the next poll.
-	#[test]
-	fn a_revision_newer_than_the_window_is_pending() {
-		assert_eq!(revision_status(&[], 106), RevisionStatus::Pending);
-		assert_eq!(revision_status(&[103, 104, 105], 106), RevisionStatus::Pending);
-	}
-
-	/// A revision the window skipped is as unreachable as one that fell off the
-	/// front. Testing the oldest held root instead would wait this one out.
-	#[test]
-	fn a_skipped_revision_is_pruned_rather_than_pending() {
-		assert_eq!(revision_status(&[105, 106, 108], 107), RevisionStatus::Pruned);
-	}
-
-	/// Evicted off the front of the window.
-	#[test]
-	fn a_revision_older_than_the_window_is_pruned() {
-		assert_eq!(revision_status(&[105, 106, 108], 42), RevisionStatus::Pruned);
-	}
-
-	/// Storage does not promise an order, so the rule cannot depend on one.
-	#[test]
-	fn the_held_order_does_not_change_the_answer() {
-		assert_eq!(revision_status(&[108, 105, 106], 107), RevisionStatus::Pruned);
-		assert_eq!(revision_status(&[108, 105, 106], 106), RevisionStatus::Imported);
-	}
-
-	/// A claim is authorized against one revision, so the day it is built for and
-	/// the revision it proves must both reach the runtime unchanged.
-	#[test]
-	fn a_pruned_revision_is_distinguished_from_one_still_arriving() {
-		let pruned = PgasError::RingRevisionPruned { ring_index: 2, revision: 100 };
-		let waiting = PgasError::RingRevisionTimeout { ring_index: 2, revision: 100 };
-
-		assert!(pruned.to_string().contains("pruned"));
-		assert!(waiting.to_string().contains("has not imported"));
-	}
-}
+mod tests;

@@ -4,6 +4,7 @@
 <dict>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
+		<string>$(PRODUCT_BUNDLE_IDENTIFIER).statement-renewal</string>
 		<string>io.novatech.truapi.durable.recovery</string>
 	</array>
 	<key>BrandAppGroup</key>
@@ -28,6 +29,8 @@
 	<string>$(BRAND_SHARE_ROOT)</string>
 	<key>BrandTermsHost</key>
 	<string>$(BRAND_TERMS_HOST)</string>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -77,15 +80,17 @@
 	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
 	<string>Polkadot adds upcoming events to your calendar and reminds you before they start.</string>
 	<key>NSCameraUsageDescription</key>
-	<string>Please allow camera access to interact with features in the Polkadot app</string>
+	<string>Polkadot uses your camera for video calls and to scan a contact's QR code, so you can start a chat by scanning the code from their phone.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Face ID is used to authorize in Polkadot App</string>
+	<string>Polkadot uses Face ID to confirm it's you before showing your account backup or restoring your account.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Polkadot uses your local network for peer-to-peer games and linked devices.</string>
+	<string>Polkadot uses your local network to connect calls directly when you call a contact on the same Wi‑Fi network.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Please allow location access to interact with features in the Polkadot app</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Please allow microphone access to interact with features in the Polkadot app</string>
+	<string>Polkadot uses your microphone so contacts can hear you during voice and video calls.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>App needs access to save chat attachments to your photo library.</string>
+	<string>Polkadot saves a photo or video from a chat to your library when you tap Save Image.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -121,5 +126,7 @@
 	</array>
 	<key>UIUserInterfaceStyle</key>
 	<string>Dark</string>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 </dict>
 </plist>

@@ -86,13 +86,13 @@ fn emit_method(
 	} else {
 		"Direction::ProductToHost"
 	};
-	let kind = match method.kind {
+	let kind = match method.wire_kind() {
 		MethodKind::Request => "MethodKind::Request",
 		MethodKind::Subscription => "MethodKind::Subscription",
 	};
 	let trait_id = wire_table::trait_wire_id(service)?;
 	let method_id = wire_table::method_wire_id(service, method)?;
-	let wire_kind = match method.kind {
+	let wire_kind = match method.wire_kind() {
 		MethodKind::Request => "Request",
 		MethodKind::Subscription => "Subscription",
 	};
@@ -131,7 +131,7 @@ fn emit_method(
 	writeln!(out, "}}")?;
 
 	let request = request_type(method, &module)?;
-	match (&method.kind, &method.return_type, method.wire.host_initiated) {
+	match (&method.wire_kind(), &method.return_type, method.wire.host_initiated) {
 		(MethodKind::Request, ReturnType::Result { ok, err }, false) => {
 			let response = rust_type(ok, &module)?;
 			let error = rust_type(call_error_domain(err)?, &module)?;
@@ -142,15 +142,17 @@ fn emit_method(
 			writeln!(out, "    const DESCRIPTOR: MethodDescriptor = Self::DESCRIPTOR;")?;
 			writeln!(out, "}}\n")?;
 		},
-		(
-			MethodKind::Subscription,
-			ReturnType::Subscription { item, interrupt },
-			host_initiated,
-		) => {
+		// One-shot host callbacks use subscription frames too: the host
+		// consumes the first item or interrupt, then stops the exchange.
+		(MethodKind::Subscription, ReturnType::Result { ok: item, err: interrupt }, true) |
+		(MethodKind::Subscription, ReturnType::Subscription { item, interrupt }, _) => {
 			let item = rust_type(item, &module)?;
 			let error = rust_type(call_error_domain(interrupt)?, &module)?;
-			let subscription_trait =
-				if host_initiated { "HostSubscriptionMethod" } else { "SubscriptionMethod" };
+			let subscription_trait = if method.wire.host_initiated {
+				"HostSubscriptionMethod"
+			} else {
+				"SubscriptionMethod"
+			};
 			writeln!(out, "impl {subscription_trait} for {marker} {{")?;
 			writeln!(out, "    type Request = {request};")?;
 			writeln!(out, "    type Error = {error};")?;

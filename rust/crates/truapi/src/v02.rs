@@ -8,10 +8,14 @@ mod account;
 mod chat;
 mod local_storage;
 mod locale;
+mod payment;
 mod profile;
+mod transaction;
 
 pub use account::*;
 pub use chat::*;
 pub use local_storage::*;
 pub use locale::*;
+pub use payment::*;
 pub use profile::*;
+pub use transaction::*;

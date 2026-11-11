@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 
 public protocol ProductPermissionGuarding: Sendable {
@@ -5,32 +6,32 @@ public protocol ProductPermissionGuarding: Sendable {
     /// already granted. Otherwise prompts for `AllowAlways`, `AllowOnce`, or
     /// `Deny`. One-time grants issued here can later be consumed by
     /// ``consumePermission(productId:permission:)``.
-    func requestPermission(productId: String, permission: ProductPermission) async throws -> Bool
+    func requestPermission(productId: ProductId, permission: ProductPermission) async throws -> Bool
 
     /// Requests multiple permissions in a single batched prompt. Filters out
     /// already-granted permissions, prompts for the rest, and returns `true`
     /// only if all are granted.
     func requestPermissionsBatched(
-        productId: String,
+        productId: ProductId,
         permissions: [ProductPermission]
     ) async throws -> Bool
 
     func requestDevicePermissionDecision(
-        productId: String,
+        productId: ProductId,
         capability: DeviceCapabilityType
     ) async throws -> PermissionDecision
 
     func requestPermissionsDecision(
-        productId: String,
+        productId: ProductId,
         permissions: [ProductPermission]
     ) async throws -> PermissionDecision
 
     /// Consumes a previously-issued permission. Falls back to
     /// ``requestPermission(productId:permission:)`` if permission wasn't granted.
-    func consumePermission(productId: String, permission: ProductPermission) async throws -> Bool
+    func consumePermission(productId: ProductId, permission: ProductPermission) async throws -> Bool
 
     /// Read-only permission check. Does not prompt the user.
-    func check(productId: String, permission: ProductPermission) async throws -> Bool
+    func check(productId: ProductId, permission: ProductPermission) async throws -> Bool
 }
 
 /// Dispatches permission requests to the matching handler.
@@ -59,7 +60,7 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
     }
 
     public func requestPermission(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) async throws -> Bool {
         switch permission {
@@ -82,13 +83,14 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
              .userIdentityAccess,
              .chatAuthority,
              .profileDisclosure,
-             .statementStoreAllowance:
+             .statementStoreAllowance,
+             .nftPurseRead:
             try await remoteHandler.request(productId: productId, permission: permission)
         }
     }
 
     public func requestPermissionsBatched(
-        productId: String,
+        productId: ProductId,
         permissions: [ProductPermission]
     ) async throws -> Bool {
         guard !permissions.isEmpty else { return true }
@@ -110,14 +112,14 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
     }
 
     public func requestDevicePermissionDecision(
-        productId: String,
+        productId: ProductId,
         capability: DeviceCapabilityType
     ) async throws -> PermissionDecision {
         try await deviceHandler.requestDecision(productId: productId, capability: capability)
     }
 
     public func requestPermissionsDecision(
-        productId: String,
+        productId: ProductId,
         permissions: [ProductPermission]
     ) async throws -> PermissionDecision {
         var undecided: [ProductPermission] = []
@@ -133,7 +135,7 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
     }
 
     public func consumePermission(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) async throws -> Bool {
         if try await check(productId: productId, permission: permission) {
@@ -152,7 +154,7 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
     }
 
     public func check(
-        productId: String,
+        productId: ProductId,
         permission: ProductPermission
     ) async throws -> Bool {
         switch permission {
@@ -175,7 +177,8 @@ public final class ProductPermissionGuard: ProductPermissionGuarding, @unchecked
              .userIdentityAccess,
              .chatAuthority,
              .profileDisclosure,
-             .statementStoreAllowance:
+             .statementStoreAllowance,
+             .nftPurseRead:
             try await remoteHandler.isGranted(productId: productId, permission: permission)
         }
     }

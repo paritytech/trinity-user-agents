@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import BigInt
 import FoundationExt
@@ -70,7 +71,7 @@ public protocol CoinageServicing: Actor {
     /// Register an external payment identified by `(productId, paymentId)`.
     /// Throws `ExternalPaymentError.alreadyExists` on replay.
     func initiateExternalPayment(
-        productId: String,
+        productId: ProductId?,
         paymentId: String,
         amountInPlanks: Balance,
         destination: AccountId
@@ -79,7 +80,7 @@ public protocol CoinageServicing: Actor {
     /// Subscribe to the status of an external payment identified by `(productId, paymentId)`; the
     /// stream fails with `ExternalPaymentError.notFound` for an unknown identity.
     nonisolated func subscribeExternalPaymentStatus(
-        productId: String,
+        productId: ProductId?,
         paymentId: String
     ) -> AnyAsyncSequence<ExternalPaymentStatus>
 
@@ -115,6 +116,12 @@ public protocol CoinageServicing: Actor {
     /// Whether this installation is registered on chain — see ``CoinageAccountBackupStatus``.
     nonisolated func subscribeAccountBackupStatus() -> AnyAsyncSequence<CoinageAccountBackupStatus>
 
+    /// Whether an allocation is waiting for that registration to complete.
+    nonisolated func subscribeAwaitingInstallationBackup() -> AnyAsyncSequence<Bool>
+
+    /// The current installation once its on-chain registration has completed, as allocations get it.
+    nonisolated var backedUpInstallationProvider: any CoinageBackedUpInstallationProviding { get }
+
     /// See `TransferClaimServicing.transferCoinsFromSecretKeys`.
     func transferCoinsFromSecretKeys(
         secretKeys: [Data],
@@ -149,6 +156,7 @@ public actor CoinageService {
     private let voucherLocationService: VoucherLocationService
     private let recoveryService: any CoinageBackupRecoveryServicing
     private let installationRegistrar: any CoinageInstallationRegistering
+    private let backedUpInstallation: any CoinageBackedUpInstallationProviding
     public nonisolated let recyclingService: any CoinageRecyclingServicing
 
     // Recycling strategy evaluation — the evaluator is built lazily once the context resolves.
@@ -211,6 +219,7 @@ public actor CoinageService {
         databaseFactory: any DatabaseDependencyFactoring,
         recoveryService: any CoinageBackupRecoveryServicing,
         installationRegistrar: any CoinageInstallationRegistering,
+        backedUpInstallation: any CoinageBackedUpInstallationProviding,
         incomingPaymentService: any IncomingPaymentServicing,
         logger: SDKLoggerProtocol? = nil,
         lifecycle: CoinageLifecycle? = nil
@@ -233,6 +242,7 @@ public actor CoinageService {
         self.databaseFactory = databaseFactory
         self.recoveryService = recoveryService
         self.installationRegistrar = installationRegistrar
+        self.backedUpInstallation = backedUpInstallation
         self.txService = txService
         self.claimCoinsService = claimCoinsService
         self.transferStatusService = transferStatusService
@@ -263,7 +273,7 @@ extension CoinageService: CoinageServicing {
     }
 
     public func initiateExternalPayment(
-        productId: String,
+        productId: ProductId?,
         paymentId: String,
         amountInPlanks: Balance,
         destination: AccountId
@@ -279,7 +289,7 @@ extension CoinageService: CoinageServicing {
     }
 
     public nonisolated func subscribeExternalPaymentStatus(
-        productId: String,
+        productId: ProductId?,
         paymentId: String
     ) -> AnyAsyncSequence<ExternalPaymentStatus> {
         externalPaymentService.subscribePaymentStatus(productId: productId, paymentId: paymentId)
@@ -497,6 +507,14 @@ extension CoinageService: CoinageServicing {
 
     public nonisolated func subscribeAccountBackupStatus() -> AnyAsyncSequence<CoinageAccountBackupStatus> {
         installationRegistrar.subscribeStatus()
+    }
+
+    public nonisolated func subscribeAwaitingInstallationBackup() -> AnyAsyncSequence<Bool> {
+        backedUpInstallation.subscribeAwaitingBackup()
+    }
+
+    public nonisolated var backedUpInstallationProvider: any CoinageBackedUpInstallationProviding {
+        backedUpInstallation
     }
 
     public func recoverSpentCoinsOnChain() async throws -> BigUInt {

@@ -5,7 +5,7 @@ import io.parity.truapi.HostStorage
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import uniffi.truapi.HostLocalStorageReadException
 import uniffi.truapi.HostRejection
-import java.text.Normalizer
+import uniffi.truapi.ProductId
 
 /**
  * Product-scoped storage for the Rust core, encrypted at rest.
@@ -16,10 +16,8 @@ import java.text.Normalizer
  */
 class EncryptedHostStorage(
     private val preferences: EncryptedPreferences,
-    private val productId: String,
+    private val productId: ProductId,
 ) : HostStorage {
-    private val normalizedProductId = normalizeProductId(productId)
-
     override suspend fun read(key: String): ByteArray? = readValue(preferences, "${productStorageNamespace(ownerOf(key))}/$key")
 
     override suspend fun write(key: String, value: ByteArray) {
@@ -34,8 +32,7 @@ class EncryptedHostStorage(
 
     private fun qualify(key: String) = "${productStorageNamespace(productId)}/$key"
 
-    private fun ownerOf(key: String): String =
-        productStorageKeyOwner(key)?.takeUnless { it == normalizedProductId } ?: productId
+    private fun ownerOf(key: String): ProductId = productStorageKeyOwner(key) ?: productId
 }
 
 /**
@@ -76,25 +73,64 @@ class EncryptedHostCoreStorage(
     }
 }
 
+/**
+ * Secrets the core keeps encrypted at rest, apart from its core storage slots.
+ * Shared preferences are excluded from backups, and the AndroidKeyStore key
+ * wrapping them never leaves the device.
+ *
+ * Unlike core storage, a stored value that no longer decrypts is an error, not
+ * a miss: the core must not mistake an unreadable secret for an unknown key.
+ */
+class EncryptedHostValues(
+    private val preferences: EncryptedPreferences,
+) {
+    suspend fun read(key: ByteArray): ByteArray? {
+        val field = qualify(key)
+        if (!preferences.hasKey(field)) return null
+        return readValue(preferences, field)
+            ?: throw HostRejection.Rejected("encrypted storage: $field is stored but does not decrypt")
+    }
+
+    // The core records what a secret belongs to right after this returns, so
+    // the secret must already be on disk.
+    suspend fun write(key: ByteArray, value: ByteArray) {
+        writeValue(preferences, qualify(key), value, persist = ::persistNow)
+            ?.let { throw HostRejection.Rejected("encrypted storage: $it") }
+    }
+
+    private fun persistNow(field: String, tagged: String) {
+        check(preferences.putEncryptedStringNow(field, tagged)) { "not written to disk" }
+    }
+
+    fun delete(key: ByteArray) {
+        runCatching { preferences.removeKey(qualify(key)) }
+            .getOrElse { throw HostRejection.Rejected("encrypted storage: failed to delete: ${it.message}") }
+    }
+
+    private fun qualify(key: ByteArray) = "$ENCRYPTED_NAMESPACE/${key.toHex()}"
+
+    private companion object {
+        const val ENCRYPTED_NAMESPACE = "truapi/encrypted"
+    }
+}
+
 /** Namespace for one product's core-facing local storage. */
-fun productStorageNamespace(productId: String): String = "truapi/product/$productId"
+fun productStorageNamespace(productId: ProductId): String = "truapi/product/$productId"
 
 private const val PRODUCT_STORAGE_KEY_PREFIX = "truapi:product-storage:v1:"
 
 /** Mirrors `ProductStorageKey::decode` in truapi: `truapi:product-storage:v1:<byte length>:<product id>:<key>`. */
-internal fun productStorageKeyOwner(key: String): String? {
+internal fun productStorageKeyOwner(key: String): ProductId? {
     if (!key.startsWith(PRODUCT_STORAGE_KEY_PREFIX)) return null
     val rest = key.removePrefix(PRODUCT_STORAGE_KEY_PREFIX).encodeToByteArray()
     val colon = rest.indexOf(':'.code.toByte()).takeIf { it > 0 } ?: return null
     val length = rest.decodeToString(0, colon).toIntOrNull()?.takeIf { it > 0 } ?: return null
     val start = colon + 1
     if (length > rest.size - start - 1 || rest[start + length] != ':'.code.toByte()) return null
-    return runCatching { rest.decodeToString(start, start + length, throwOnInvalidSequence = true) }.getOrNull()
+    val productIdValue = runCatching { rest.decodeToString(start, start + length, throwOnInvalidSequence = true) }.getOrNull()
+        ?: return null
+    return ProductId.parse(productIdValue).getOrNull()
 }
-
-/** Matches the normalization in the core's `ProductId::parse`, the form written into keys. */
-internal fun normalizeProductId(productId: String): String =
-    Normalizer.normalize(productId.trim(), Normalizer.Form.NFC).lowercase()
 
 /**
  * `EncryptionUtil` reports both a failed encrypt and a failed decrypt by
@@ -113,9 +149,14 @@ private fun readValue(preferences: EncryptedPreferences, key: String): ByteArray
 }
 
 /** Returns null on success, or a reason to report to the core. */
-private fun writeValue(preferences: EncryptedPreferences, key: String, value: ByteArray): String? {
+private fun writeValue(
+    preferences: EncryptedPreferences,
+    key: String,
+    value: ByteArray,
+    persist: (String, String) -> Unit = preferences::putEncryptedString,
+): String? {
     val tagged = VALUE_TAG + value.toHex()
-    val failure = runCatching { preferences.putEncryptedString(key, tagged) }.exceptionOrNull()
+    val failure = runCatching { persist(key, tagged) }.exceptionOrNull()
     if (failure != null) return "failed to persist $key: ${failure.message}"
 
     // The encrypt path swallows its own exceptions, so the only reliable

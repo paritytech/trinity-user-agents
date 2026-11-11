@@ -30,6 +30,10 @@ internal fun createFakeTokenStore(): JWTTokenStore {
         private val storage = mutableMapOf<String, String>()
         override fun keys(): Set<String> = storage.keys
         override fun putEncryptedString(field: String, value: String) { storage[field] = value }
+        override fun putEncryptedStringNow(field: String, value: String): Boolean {
+            storage[field] = value
+            return true
+        }
         override fun getDecryptedString(field: String): String? = storage[field]
         override fun hasKey(field: String): Boolean = storage.containsKey(field)
         override fun removeKey(field: String) { storage.remove(field) }

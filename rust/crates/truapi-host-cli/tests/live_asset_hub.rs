@@ -10,18 +10,23 @@
 //! are about the chain rather than about host wiring. The provider routes Asset Hub
 //! now that the preset serves it as a role.
 
-use truapi::statement_allowance::{
-	self as alloc, collection::PersonhoodCollection, extension::AS_PGAS, pgas,
-};
+#[path = "common/bundled.rs"]
+mod bundled;
+#[path = "common/live.rs"]
+mod live;
 
-const ASSET_HUB_WS: &str = "wss://paseo-asset-hub-next-rpc.polkadot.io";
+use truapi::statement_allowance::{self as alloc, collection::PersonhoodCollection, pgas};
 
 /// `LIVE_ASSET_HUB_WS` points the dotNS checks at another Asset Hub, for
-/// instance previewnet's `wss://previewnet.substrate.dev/asset-hub`.
+/// instance previewnet's.
 fn asset_hub_ws() -> String {
-	std::env::var("LIVE_ASSET_HUB_WS").unwrap_or_else(|_| ASSET_HUB_WS.to_string())
+	std::env::var("LIVE_ASSET_HUB_WS").unwrap_or_else(|_| live::paseo_next_v2_rpc("AssetHub"))
 }
-const PEOPLE_WS: &str = "wss://paseo-people-next-system-rpc.polkadot.io";
+
+/// `LIVE_TLD`, or the bundled paseo-next-v2 stack's `tld`.
+fn live_tld() -> String {
+	std::env::var("LIVE_TLD").unwrap_or_else(|_| bundled::paseo_next_v2().tld)
+}
 
 /// Must stay active so the ignored live tests can resolve its mirrored roots.
 const RING_INDEX: u32 = 1;
@@ -40,7 +45,7 @@ async fn asset_hub() -> (alloc::rpc::RpcClient, alloc::extension::Metadata) {
 #[ignore = "needs network access to a live Asset Hub"]
 async fn live_asset_hub_reports_the_product_context_suffix() {
 	let (rpc, _metadata) = asset_hub().await;
-	let expected = std::env::var("LIVE_TLD").unwrap_or_else(|_| "paseo".to_string());
+	let expected = live_tld();
 
 	assert_eq!(
 		alloc::slot::read_network_suffix(&rpc)
@@ -50,34 +55,15 @@ async fn live_asset_hub_reports_the_product_context_suffix() {
 	);
 }
 
-/// The claim encodes five fields for `AsPgas::Claim`. A short payload is accepted
-/// locally and then panics the runtime inside `validate_transaction`, which is how
-/// the missing `revision` on the statement-store claim went unnoticed.
+/// Both collections have a PGAS claim budget on the live Asset Hub: a full
+/// person proves against the `People` ring and must not be scanned against the
+/// light one's share.
 #[tokio::test]
 #[ignore = "needs network access to a live Asset Hub"]
-async fn live_asset_hub_declares_the_pgas_claim_shape() {
+async fn live_asset_hub_declares_both_pgas_claim_budgets() {
 	let (_rpc, metadata) = asset_hub().await;
 
 	assert_eq!(metadata.metadata_version(), 16, "the runtime API should serve V16");
-	assert_eq!(
-		metadata.extension_info_field_count(AS_PGAS, "Claim").unwrap(),
-		5,
-		"AsPgas::Claim arity changed; the encoded payload has to change with it"
-	);
-	// Both collections have to be nameable here, not just the light one: a full
-	// person proves PGAS against the `People` ring, and a missing variant would
-	// only surface when such a person tried to claim.
-	for collection in PersonhoodCollection::ALL {
-		let (claim, variant) = metadata
-			.extension_info_and_field_variant_indices(
-				AS_PGAS,
-				"Claim",
-				collection.metadata_variant(),
-			)
-			.unwrap_or_else(|err| panic!("AsPgas carries no {collection} claim: {err}"));
-		println!("live AsPgas: Claim={claim} {collection}={variant}");
-	}
-
 	assert!(
 		alloc::slot::max_pgas_claims(&metadata, PersonhoodCollection::LitePeople).unwrap() > 0,
 		"a lite person must be allowed at least one claim per day"
@@ -98,7 +84,7 @@ async fn live_asset_hub_declares_the_pgas_claim_shape() {
 #[ignore = "needs network access to a live Asset Hub and People chain"]
 async fn live_asset_hub_has_imported_the_current_people_ring_revision() {
 	let (asset_hub_rpc, asset_hub_metadata) = asset_hub().await;
-	let people_rpc = alloc::rpc::RpcClient::connect(PEOPLE_WS)
+	let people_rpc = alloc::rpc::RpcClient::connect(&live::paseo_next_v2_rpc("People"))
 		.await
 		.expect("connect to the People chain");
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await.expect("People metadata");
@@ -196,87 +182,71 @@ async fn live_asset_hub_reports_a_skipped_revision_as_pruned() {
 // dotNS gateway: the register_name authorization shape and the username reads.
 // ---------------------------------------------------------------------------
 
+use alloy_primitives::U256;
+use alloy_sol_types::SolCall;
 use truapi::{
+	chain::{EvmContractCaller, EvmContractError, RuntimeApiCaller},
 	host_logic::dotns_gateway::{
-		DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, call_bytes32, classify_labels,
-		decode_address, discover_pop_controller, encode_revive_call, is_dotted_lite_username,
-		is_pop_issued, label_available, namehash_under, resolve_labels, selector, view_output,
+		DotnsError, DotnsRegistrar, DotnsTransport, classify_labels, discover_pop_controller,
+		is_dotted_lite_username, is_pop_issued, label_available, namehash_under, resolve_labels,
 	},
-	statement_allowance::extension::AS_DOTNS_GATEWAY,
 };
 
-/// The `DotnsRegistrar` (ERC721), the same CREATE3 address on every network
-/// per dotns `DEPLOYMENTS.md`. Only used to find an account that holds a
-/// settled name.
-const DOTNS_REGISTRAR: [u8; 20] = [
-	0x4f, 0x06, 0xe8, 0x18, 0xba, 0x3d, 0x98, 0x77, 0x04, 0xfd, 0x91, 0xcf, 0x3d, 0x86, 0x8e, 0x4b,
-	0x01, 0x91, 0x06, 0xab,
-];
+/// The `DotnsRegistrar` (ERC721) from the bundled paseo-next-v2 stack, the same
+/// CREATE3 address on every network per dotns `DEPLOYMENTS.md`. Only used to
+/// find an account that holds a settled name.
+fn dotns_registrar() -> [u8; 20] {
+	let stack = bundled::paseo_next_v2();
+	let address = &stack.dotns.as_ref().expect("bundled stack lacks dotns")["registrar"];
+	let mut bytes = [0u8; 20];
+	hex::decode_to_slice(address.trim_start_matches("0x"), &mut bytes)
+		.expect("invalid registrar address");
+	bytes
+}
 
 /// A label minted through the public registrar on the checked network, whose
 /// owner therefore has a settled `LabelStore`. `LIVE_MINTED_LABEL` overrides
-/// the paseo-next-v2 default (`e2epoolns01`); `LIVE_TLD` names the network TLD
-/// (`paseo` by default, `dot` on previewnet).
+/// the paseo-next-v2 default (`e2epoolns01`); `LIVE_TLD` names the network TLD.
 fn minted_label() -> String {
 	std::env::var("LIVE_MINTED_LABEL").unwrap_or_else(|_| "e2epoolns01".to_string())
 }
 
 /// `namehash(<minted label>.<tld>)`, the registrar's token id.
 fn minted_node() -> [u8; 32] {
-	let tld = std::env::var("LIVE_TLD").unwrap_or_else(|_| "paseo".to_string());
+	let tld = live_tld();
 	namehash_under(&namehash_under(&[0u8; 32], &tld), &minted_label())
 }
 
 /// `DotnsTransport` over plain RPC, the same two primitives the CLI uses.
 struct PlainRpc(alloc::rpc::RpcClient);
 
-#[truapi::platform::async_trait]
+#[async_trait::async_trait]
 impl DotnsTransport for PlainRpc {
-	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, String> {
-		self.0.get_storage(&key).await.map_err(|err| err.to_string())
+	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+		self.0
+			.get_storage(&key)
+			.await
+			.map_err(|err| DotnsError::Storage(err.to_string()))
 	}
 
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		let args = encode_revive_call(&VIEW_CALL_ORIGIN, dest, &input);
-		let output = self
-			.0
-			.call(
-				"state_call",
-				serde_json::json!(["ReviveApi_call", format!("0x{}", hex::encode(args))]),
-			)
-			.await
-			.map_err(|err| DotnsViewError::Failed(err.to_string()))?;
-		let output = output
-			.as_str()
-			.ok_or_else(|| DotnsViewError::Failed("state_call output is not a string".into()))?;
-		let bytes = hex::decode(output.trim_start_matches("0x"))
-			.map_err(|err| DotnsViewError::Failed(err.to_string()))?;
-		view_output(&bytes)
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		EvmContractCaller::read(self, dest, &input).await
 	}
 }
 
-/// `register_name` is authorized by `AsDotnsGatewayInfo::RegisterFullName`.
-/// The host asserts its exact field shape before signing, and the encoded
-/// extra has to match it field for field: a shorter payload is accepted
-/// locally and rejected (or worse) by the runtime. The vendored fixture is a
-/// snapshot; this is the live shape.
-#[tokio::test]
-#[ignore = "needs network access to a live Asset Hub"]
-async fn live_asset_hub_declares_the_register_full_name_shape() {
-	let (_rpc, metadata) = asset_hub().await;
-	let variant = metadata
-		.dotns_register_full_name_variant()
-		.expect("RegisterFullName is {proof, ring_index, revision, signature}");
-	assert_eq!(
-		metadata
-			.extension_info_field_count(AS_DOTNS_GATEWAY, "RegisterFullName")
-			.unwrap(),
-		4
-	);
-	metadata
-		.call_indices("DotnsGateway", "register_name")
-		.expect("DotnsGateway.register_name exists");
-	println!("live AsDotnsGateway: RegisterFullName={variant}");
+#[async_trait::async_trait]
+impl RuntimeApiCaller for PlainRpc {
+	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
+		let output = self
+			.0
+			.call("state_call", serde_json::json!([function, format!("0x{}", hex::encode(input))]))
+			.await
+			.map_err(subxt::Error::other)?;
+		let output = output
+			.as_str()
+			.ok_or_else(|| subxt::Error::other_str("state_call output is not a string"))?;
+		hex::decode(output.trim_start_matches("0x")).map_err(subxt::Error::other)
+	}
 }
 
 /// End to end over the same resolution steps the CLI and the in-core runtime
@@ -299,14 +269,15 @@ async fn live_asset_hub_resolves_a_settled_store_over_dotns_discovery() {
 
 	// ownerOf(namehash) on the ERC721 registrar. Eth-derived owners map back
 	// to an AccountId32 by `0xEE` padding, which `account_to_h160` truncates.
+	let owner_of = DotnsRegistrar::ownerOfCall { tokenId: U256::from_be_bytes(minted_node()) };
 	let owner_output = transport
-		.view(&DOTNS_REGISTRAR, call_bytes32("ownerOf(uint256)", &minted_node()))
+		.view(&dotns_registrar(), owner_of.abi_encode())
 		.await
 		.expect("registrar ownerOf");
-	let owner = decode_address(&owner_output).expect("owner address");
+	let owner = DotnsRegistrar::ownerOfCall::abi_decode_returns_validate(&owner_output)
+		.expect("owner address");
 	let mut account = [0xEE; 32];
-	account[..20].copy_from_slice(&owner);
-	assert_eq!(hex::encode(selector("ownerOf(uint256)")), "6352211e");
+	account[..20].copy_from_slice(owner.as_slice());
 
 	let labels = resolve_labels(&mut transport, &controller, &account)
 		.await

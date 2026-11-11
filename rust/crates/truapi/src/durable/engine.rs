@@ -8,7 +8,6 @@ mod registration;
 mod reporting;
 mod tracker;
 mod verdict;
-mod wake;
 
 use std::sync::Arc;
 
@@ -21,15 +20,15 @@ use super::{
 	model::{DomainId, DurableTxId, DurableTxState, DurableTxStatus, GroupId},
 	oracle::DurableRegistry,
 	ownership::Ownership,
-	time::Timer,
 };
 use crate::{
 	chain::{BlockBackend, ChainHeads, TxSubmitter, TxValidator},
 	store::{Db, DbError},
 	subscription::Spawner,
+	time::Timer,
+	wake::WakeSignal,
 };
 use executor::SubmissionExecutor;
-use wake::WakeSignal;
 
 pub use recovery::RecoveryError;
 pub use registration::{DurableRequest, DurableSubmission, EmptyRequest, RegistrationError};
@@ -141,38 +140,4 @@ impl DurableTxEngine {
 }
 
 #[cfg(test)]
-mod tests {
-	use futures::{StreamExt, executor::block_on};
-
-	use super::*;
-	use crate::{
-		chain::MortalExtrinsic,
-		durable::testing::{FakeChain, extrinsic, test_engine, without_plan},
-	};
-
-	fn domain() -> DomainId {
-		DomainId::new("test")
-	}
-
-	fn request(extrinsics: Vec<MortalExtrinsic>) -> DurableRequest {
-		DurableRequest::presigned(domain(), Some(GroupId::new("op")), without_plan(extrinsics))
-			.unwrap()
-	}
-
-	#[test]
-	fn status_reads_and_streams_follow_the_ledger() {
-		let chain = FakeChain::new(130, 140);
-		let (_dir, engine, _timer) = test_engine(&chain);
-		let id = block_on(engine.execute(request(vec![extrinsic(1, 100, 64)]))).unwrap()[0];
-		let mut status = engine.observe_status(id);
-		let mut group = engine.observe_group(&domain(), &GroupId::new("op"));
-
-		assert_eq!(block_on(status.next()).unwrap().unwrap(), Some(DurableTxStatus::Pending));
-		assert_eq!(
-			block_on(group.next()).unwrap().unwrap(),
-			vec![DurableTxState { id, status: DurableTxStatus::Pending }]
-		);
-		assert_eq!(block_on(engine.status(id)).unwrap(), Some(DurableTxStatus::Pending));
-		assert_eq!(block_on(engine.status(DurableTxId(99))).unwrap(), None);
-	}
-}
+mod tests;

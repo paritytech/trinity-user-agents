@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 
 import dagger.Lazy
 import io.paritytech.polkadotapp.database.dao.ProductPermissionGrantDao
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionDeniedException
@@ -18,6 +17,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import uniffi.truapi.PermissionAuthorizationEntry
 import uniffi.truapi.PermissionAuthorizationStatus
+import uniffi.truapi.ProductId
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import kotlin.coroutines.AbstractCoroutineContextElement
@@ -66,10 +66,10 @@ class RealProductPermissionRepository @Inject constructor(
         // Import every legacy grant, including balance access, before capturing the core revision.
         getAllByProduct(productId)
         val product = id(productId)
-        val revision = RequestRevision(product, runtime().permissionAuthorizationRevision(product))
+        val revision = RequestRevision(product, runtime().permissionAuthorizationRevision(productId))
         return withContext(revision) {
             try {
-                block() && revision.core == runtime().permissionAuthorizationRevision(product)
+                block() && revision.core == runtime().permissionAuthorizationRevision(productId)
             } catch (_: ProductPermissionDeniedException) {
                 false
             }
@@ -79,7 +79,7 @@ class RealProductPermissionRepository @Inject constructor(
     private suspend fun checkRevision(productId: ProductId, permission: ProductPermission) {
         val revision = currentCoroutineContext()[RequestRevision] ?: return
         check(revision.product == id(productId))
-        if (revision.core != runtime().permissionAuthorizationRevision(revision.product)) {
+        if (revision.core != runtime().permissionAuthorizationRevision(productId)) {
             throw ProductPermissionDeniedException(permission)
         }
     }
@@ -140,8 +140,8 @@ class RealProductPermissionRepository @Inject constructor(
         val runtime = runtime()
         val status = if (granted) PermissionAuthorizationStatus.AUTHORIZED else PermissionAuthorizationStatus.DENIED
         if (revision == null) {
-            runtime.setPermissionAuthorizationStatus(product, request, status)
-        } else if (!runtime.setPermissionAuthorizationStatusIfCurrent(product, request, status, revision.core)) {
+            runtime.setPermissionAuthorizationStatus(productId, request, status)
+        } else if (!runtime.setPermissionAuthorizationStatusIfCurrent(productId, request, status, revision.core)) {
             throw ProductPermissionDeniedException(permission)
         }
         // Conditional authorization preserves the core revision. Never recapture it here:
@@ -149,7 +149,7 @@ class RealProductPermissionRepository @Inject constructor(
     }
 
     override suspend fun getAllByProduct(productId: ProductId): List<ProductPermissionStatus> {
-        val legacy = dao.getAllByProduct(productId.value).map {
+        val legacy = dao.getAllByProduct(productId).map {
             ProductPermissionStatus(ProductPermission.fromLocal(it.permissionType, it.permissionKey), it.granted)
         }
         val canonical = canonicalEntries(productId, legacy)
@@ -165,7 +165,7 @@ class RealProductPermissionRepository @Inject constructor(
         productId: ProductId,
         legacy: List<ProductPermissionStatus>? = null,
     ): List<PermissionAuthorizationEntry> {
-        val rows = legacy ?: dao.getAllByProduct(productId.value).map {
+        val rows = legacy ?: dao.getAllByProduct(productId).map {
             ProductPermissionStatus(ProductPermission.fromLocal(it.permissionType, it.permissionKey), it.granted)
         }
         val imports = rows.map { row ->
@@ -175,8 +175,8 @@ class RealProductPermissionRepository @Inject constructor(
             )
         }
         val runtime = runtime()
-        return if (imports.isEmpty()) runtime.permissionAuthorizations(id(productId))
-            else runtime.importPermissionAuthorizations(id(productId), imports)
+        return if (imports.isEmpty()) runtime.permissionAuthorizations(productId)
+            else runtime.importPermissionAuthorizations(productId, imports)
     }
 
     private fun effectiveStatuses(
@@ -187,7 +187,7 @@ class RealProductPermissionRepository @Inject constructor(
     }
 
     override fun observeAllByProduct(productId: ProductId): Flow<List<ProductPermissionStatus>> =
-        combine(dao.observeAllByProduct(productId.value), changes.observe(id(productId))) { _, _ -> getAllByProduct(productId) }
+        combine(dao.observeAllByProduct(productId), changes.observe(id(productId))) { _, _ -> getAllByProduct(productId) }
 
     override fun observeHasAnyPermissionRequested(productId: ProductId): Flow<Boolean> =
         observeAllByProduct(productId).map { it.isNotEmpty() }

@@ -59,6 +59,7 @@ private class NoOpPreferences : Preferences {
     override fun putString(field: String, value: String?) = Unit
     override fun getString(field: String, defaultValue: String) = defaultValue
     override fun getString(field: String): String? = null
+    override fun putStringNow(field: String, value: String?) = true
     override fun putBoolean(field: String, value: Boolean) = Unit
     override fun getBoolean(field: String, defaultValue: Boolean) = defaultValue
     override fun putInt(field: String, value: Int) = Unit

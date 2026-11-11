@@ -140,7 +140,25 @@ impl SnapshotCipher {
 		let mut aad = b"truapi/host/native-chat/snapshot\0".to_vec();
 		aad.extend_from_slice(MAGIC);
 		aad.extend_from_slice(&VERSION.to_le_bytes());
-		storage_key.encode_to(&mut aad);
+		// Cipher format v1 predates the storage namespace migration. Its
+		// discriminants are part of both the authenticated data and HKDF info,
+		// not the current lookup key: changing them would strand custody.
+		match storage_key {
+			CoreStorageKey::NativeChatDevice { root_public_key, genesis_hash, product_id } => {
+				(14u8, root_public_key, genesis_hash, product_id).encode_to(&mut aad);
+			},
+			CoreStorageKey::NativeChatFileChunk {
+				root_public_key,
+				genesis_hash,
+				product_id,
+				attachment_id,
+				chunk_index,
+			} => {
+				(15u8, root_public_key, genesis_hash, product_id, attachment_id, chunk_index)
+					.encode_to(&mut aad);
+			},
+			_ => return Err(ChatError::StorageUnavailable),
+		}
 		let mut key = Zeroizing::new([0; 32]);
 		Hkdf::<Sha256>::new(Some(b"truapi/host/native-chat/snapshot-key/v1"), entropy)
 			.expand(&aad, &mut *key)

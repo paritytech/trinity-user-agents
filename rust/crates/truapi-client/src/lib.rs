@@ -405,6 +405,38 @@ mod tests {
 	};
 
 	#[test]
+	fn one_shot_provider_callbacks_use_subscription_payloads() {
+		use truapi::versioned::funding_provider::{
+			ProductFundingCancelRequest, ProductFundingCancelResponse,
+		};
+
+		let request = decode_host_subscription_start::<FundingProviderCancel>(&[
+			12, b'h', b':', b'1', 24, 2, 0, 0, 4, b'x',
+		])
+		.unwrap();
+		assert_eq!(request.request_id, "h:1");
+		assert_eq!(
+			request.value,
+			ProductFundingCancelRequest::V1(v01::ProductFundingCancelRequest {
+				intent: "x".into(),
+			})
+		);
+		// A response is the bare versioned item, not a request/response
+		// Result envelope. The host consumes it once and sends Stop.
+		assert_eq!(
+			encode_host_subscription_item::<FundingProviderCancel>(
+				"h:1",
+				&ProductFundingCancelResponse::V1(v01::FundingCancelAnswer::Stopped),
+			),
+			[12, b'h', b':', b'1', 24, 2, 1, 0, 0],
+		);
+		assert_eq!(
+			is_host_subscription_stop::<FundingProviderCancel>(&[12, b'h', b':', b'1', 24, 2, 3,]),
+			Ok(true),
+		);
+	}
+
+	#[test]
 	fn request_and_response_use_canonical_envelopes() {
 		let request = HostHandshakeRequest::V1(v01::HostHandshakeRequest { codec_version: 2 });
 		assert_eq!(
@@ -455,7 +487,7 @@ mod tests {
 					identity_account_id: [1; 32],
 					identity_chat_public_key: [2; 32],
 					product_account: v01::ProductAccountId {
-						dot_ns_identifier: "chat.dot".into(),
+						dot_ns_identifier: "chat.dot".parse().unwrap(),
 						derivation_index: v01::DerivationIndex::Index(0),
 					},
 					account_id: [3; 32],

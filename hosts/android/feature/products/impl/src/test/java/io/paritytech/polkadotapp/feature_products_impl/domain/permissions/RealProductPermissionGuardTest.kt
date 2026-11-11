@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.permissions
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.ProductPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.PermissionDecision
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
@@ -24,6 +23,7 @@ import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
+import uniffi.truapi.ProductId
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlin.math.max
@@ -35,9 +35,10 @@ class RealProductPermissionGuardTest {
     private val deviceHandler: ProductPermissionHandler<ProductPermission.DeviceCapability> = mock()
     private val identityHandler: ProductPermissionHandler<ProductPermission.UserIdentityAccess> = mock()
     private val repository: ProductPermissionRepository = mockk(relaxed = true)
+    private val nftPurseReadHandler: ProductPermissionHandler<ProductPermission.NftPurseRead> = mock()
     private val requester: ProductPermissionRequester = mock()
 
-    private val productId = ProductId.fromStoredValue("acme.dot")
+    private val productId = ProductId.parse("acme.dot").getOrThrow()
     private val permission = RemotePermission.WebRtcAccess
 
     private lateinit var guard: RealProductPermissionGuard
@@ -278,6 +279,7 @@ class RealProductPermissionGuardTest {
         balanceHandler,
         deviceHandler,
         identityHandler,
+        nftPurseReadHandler,
         repository,
         requester,
     )

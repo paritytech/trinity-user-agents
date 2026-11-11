@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import BigInt
 import Coinage
 import Foundation
@@ -15,7 +16,11 @@ struct IncomingPaymentCoreDataStoreTests {
         IncomingPaymentCoreDataStore(storageFacade: UserDataStorageTestFacade())
     }
 
-    private func payment(_ id: String, productId: String = "prod", amount: Balance = 100) -> IncomingPayment {
+    private func payment(
+        _ id: String,
+        productId: ProductId = try! ProductId("prod.dot"),
+        amount: Balance = 100
+    ) -> IncomingPayment {
         IncomingPayment(paymentId: id, productId: productId, amount: amount, createdAt: createdAt,
                         outcome: nil, ownerId: ownerId)
     }
@@ -27,8 +32,8 @@ struct IncomingPaymentCoreDataStoreTests {
 
         try await store.save(saved, authorization: {})
 
-        #expect(try await store.fetch(groupId: "top up:prod:p1") == saved)
-        #expect(try await store.fetch(groupId: "top up:other:p1") == nil)
+        #expect(try await store.fetch(groupId: "top up:prod.dot:p1") == saved)
+        #expect(try await store.fetch(groupId: "top up:other.dot:p1") == nil)
     }
 
     @Test func activePaymentsExcludeSettledOnes() async throws {
@@ -36,7 +41,7 @@ struct IncomingPaymentCoreDataStoreTests {
         try await store.save(payment("active"), authorization: {})
         try await store.save(payment("done"), authorization: {})
 
-        try await store.settle(groupId: "top up:prod:done", ownerId: ownerId, outcome: .claimed, authorization: {})
+        try await store.settle(groupId: "top up:prod.dot:done", ownerId: ownerId, outcome: .claimed, authorization: {})
 
         let active = try await store.fetchActivePayments()
         #expect(active.map(\.paymentId) == ["active"])
@@ -46,9 +51,9 @@ struct IncomingPaymentCoreDataStoreTests {
         let store = makeStore()
         try await store.save(payment("p1", amount: 250), authorization: {})
 
-        try await store.settle(groupId: "top up:prod:p1", ownerId: ownerId, outcome: .claimedPartially(actualClaimed: 40), authorization: {})
+        try await store.settle(groupId: "top up:prod.dot:p1", ownerId: ownerId, outcome: .claimedPartially(actualClaimed: 40), authorization: {})
 
-        let settled = try #require(try await store.fetch(groupId: "top up:prod:p1"))
+        let settled = try #require(try await store.fetch(groupId: "top up:prod.dot:p1"))
         #expect(settled.outcome == .claimedPartially(actualClaimed: 40))
         #expect(settled.amount == 250)
         #expect(settled.createdAt == createdAt)
@@ -58,7 +63,7 @@ struct IncomingPaymentCoreDataStoreTests {
         let store = makeStore()
 
         await #expect(throws: (any Error).self) {
-            try await store.settle(groupId: "top up:prod:ghost", ownerId: ownerId, outcome: .notClaimed, authorization: {})
+            try await store.settle(groupId: "top up:prod.dot:ghost", ownerId: ownerId, outcome: .notClaimed, authorization: {})
         }
     }
 
@@ -68,7 +73,7 @@ struct IncomingPaymentCoreDataStoreTests {
         await #expect(throws: Revoked.session) {
             try await store.save(payment("stale"), authorization: { throw Revoked.session })
         }
-        #expect(try await store.fetch(groupId: "top up:prod:stale") == nil)
+        #expect(try await store.fetch(groupId: "top up:prod.dot:stale") == nil)
         #expect(try await store.fetchActivePayments().isEmpty)
     }
 
@@ -88,7 +93,7 @@ struct IncomingPaymentCoreDataStoreTests {
     @Test func unownedLegacyCustodyCannotBeAdoptedOrOverwritten() async throws {
         let facade = UserDataStorageTestFacade()
         let original = IncomingPaymentCoreDataStore(storageFacade: facade)
-        let legacy = IncomingPayment(paymentId: "legacy", productId: "prod", amount: 500,
+        let legacy = IncomingPayment(paymentId: "legacy", productId: try ProductId("prod.dot"), amount: 500,
                                      createdAt: createdAt, outcome: nil, ownerId: nil)
         try await original.save(legacy, authorization: {})
         let restarted = IncomingPaymentCoreDataStore(storageFacade: facade)
@@ -107,7 +112,7 @@ struct IncomingPaymentCoreDataStoreTests {
         let store = makeStore()
         try await store.save(payment("active"), authorization: {})
         try await store.save(payment("done"), authorization: {})
-        try await store.settle(groupId: "top up:prod:done", ownerId: ownerId, outcome: .claimed, authorization: {})
+        try await store.settle(groupId: "top up:prod.dot:done", ownerId: ownerId, outcome: .claimed, authorization: {})
 
         for try await snapshot in store.observeActivePayments() {
             #expect(snapshot.map(\.paymentId) == ["active"])

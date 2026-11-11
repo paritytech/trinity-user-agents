@@ -14,7 +14,7 @@ use std::{fs::OpenOptions, io::Write, path::PathBuf, sync::Arc};
 use sha2::{Digest, Sha256};
 use truapi::{
 	latest::{HostProfilePresentError, HostProfilePresentRequest},
-	platform::{ProductContext, ProfilePlatform, async_trait},
+	platform::{ProductContext, ProfilePlatform},
 };
 
 /// A presenter that shows nothing and remembers everything it was asked.
@@ -58,7 +58,7 @@ fn reference_kind(reference: &str) -> &str {
 	&reference[..end]
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl ProfilePlatform for CliProfileHost {
 	async fn present_profile(
 		&self,

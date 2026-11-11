@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import ChainRegistry
+import Keystore_iOS
 import Products
 import SubstrateSdk
 import TrUAPIHost
@@ -8,7 +9,7 @@ import TrUAPIHost
 
 // MARK: - Helpers
 
-private let testProduct = ProductExecutionConfig(productId: "host.product", executionKind: .app)
+private let testProduct = ProductExecutionConfig(productId: try! ProductId("host.product.dot"), executionKind: .app)
 
 private func makeHostDefaults() -> UserDefaults {
     UserDefaults(suiteName: "io.polkadotapp.tests.truapi-host-bridge") ?? .standard
@@ -30,6 +31,8 @@ private func makeHostBridge(
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
         chatFiles: UnavailableNativeChatFiles(),
+        backedUpInstallation: TrUAPIBackedUpInstallation(),
+        encryptedStorage: TrUAPIEncryptedStorage(keychain: InMemoryKeychain()),
         logger: Logger.shared
     )
 }
@@ -78,7 +81,7 @@ struct RustHostRuntimeBridgeTests {
         let bridge = makeHostBridge(confirmationPresenter: presenter)
 
         let review = UserConfirmationReview.accountAccess(
-            AccountAccessReview(requestingProductId: "a.dot", targetProductId: "b.dot")
+            AccountAccessReview(requestingProductId: try! ProductId("a.dot"), targetProductId: try! ProductId("b.dot"))
         )
         let result = try await bridge.confirmUserAction(review: review)
 
@@ -103,7 +106,7 @@ struct RustHostRuntimeBridgeTests {
         presenter.permissionDecisionToReturn = decision
         let bridge = makeHostBridge(confirmationPresenter: presenter)
         let review = UserConfirmationReview.identityDisclosure(
-            IdentityDisclosureReview(productId: "caller.dot")
+            IdentityDisclosureReview(productId: try! ProductId("caller.dot"))
         )
 
         let result = try await bridge.confirmPermission(review: review)

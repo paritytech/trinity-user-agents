@@ -1,0 +1,641 @@
+use alloc::string::String;
+
+use parity_scale_codec::{Decode, Encode};
+
+use super::funding::{FundingDirection, FundingFailure};
+
+/// A funding session as the provider serving it receives it.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct FundingAssignment {
+	/// Session id, used in every report about it.
+	pub intent: String,
+	/// Which way value moves.
+	pub direction: FundingDirection,
+	/// Amount sought, in the user's payment balance units. `None` when the
+	/// user left it to the provider's screens.
+	pub amount: Option<u128>,
+	/// When the session ends as `Expired` if nothing changes, in Unix
+	/// milliseconds: 7 days after the provider's last update while no funds
+	/// move. `None` once a top-up or payment request is moving funds, as only
+	/// its outcome ends the session then.
+	pub expires_at: Option<u64>,
+	/// The last update the provider reported, so a restarted worker resumes
+	/// where it stopped.
+	pub last_update: Option<FundingUpdate>,
+	/// The quote the user chose this provider on, when it was quoted.
+	pub quote: Option<FundingQuote>,
+}
+
+/// How the user pays or is paid.
+///
+/// Parses from the name a Worker manifest's route `mode` uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::EnumString)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[strum(serialize_all = "UPPERCASE")]
+pub enum FundingRail {
+	/// A card payment.
+	#[codec(index = 0)]
+	Card,
+	/// A bank transfer.
+	#[codec(index = 1)]
+	Bank,
+	/// A crypto transfer.
+	#[codec(index = 2)]
+	Crypto,
+}
+
+/// What the host asks a provider to price.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingQuoteAsk {
+	/// Which way value moves.
+	pub direction: FundingDirection,
+	/// How the user pays or is paid.
+	pub rail: FundingRail,
+	/// Symbol the user pays with (In) or receives (Out), as the provider's
+	/// manifest names it.
+	pub asset: String,
+	/// Crypto only: the network the asset moves on, one the provider's route
+	/// declares, such as `polkadot`.
+	pub network: Option<String>,
+	/// Amount in the user's payment balance units: credited for In, debited
+	/// for Out.
+	pub amount: u128,
+	/// ISO 3166-1 alpha-2 code of the user's country, when the host knows it.
+	pub country: Option<String>,
+}
+
+/// A provider's price for an ask.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingQuote {
+	/// The provider's id for this quote, handed back when the user picks it.
+	pub quote_id: String,
+	/// What the user pays, in the smallest unit of the ask's asset for In and
+	/// in balance units for Out.
+	pub send_amount: u128,
+	/// What the user receives, in balance units for In and in the smallest
+	/// unit of the ask's asset for Out.
+	pub receive_amount: u128,
+	/// The provider's fee, in the unit of `send_amount`.
+	pub provider_fee: u128,
+	/// Network fees, in the unit of `send_amount`.
+	pub network_fee: u128,
+	/// Expected seconds until the funds arrive, when the provider says.
+	pub eta_secs: Option<u64>,
+	/// When the provider stops honouring the quote, in Unix milliseconds.
+	pub expires_at: Option<u64>,
+	/// Decimals of the ask's asset, so the host shows its amounts without
+	/// knowing the asset.
+	pub asset_decimals: u8,
+}
+
+/// Why a provider will not price an ask.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingQuoteRefusal {
+	/// Not offered in the user's country.
+	#[codec(index = 0)]
+	CountryUnsupported,
+	/// Below the provider's minimum, in the ask's balance units.
+	#[codec(index = 1)]
+	BelowMinimum {
+		/// The smallest amount the provider takes.
+		min: u128,
+	},
+	/// Above the provider's maximum, in the ask's balance units.
+	#[codec(index = 2)]
+	AboveMaximum {
+		/// The largest amount the provider takes.
+		max: u128,
+	},
+	/// The provider cannot serve the ask right now.
+	#[codec(index = 3)]
+	Unavailable,
+	/// Outcome not covered above.
+	#[codec(index = 4)]
+	Other {
+		/// Human-readable reason.
+		message: String,
+	},
+}
+
+/// A provider's answer to an ask.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum FundingQuoteAnswer {
+	/// The provider's price.
+	#[codec(index = 0)]
+	Quoted {
+		/// The quote.
+		quote: FundingQuote,
+	},
+	/// The provider will not price it.
+	#[codec(index = 1)]
+	Refused {
+		/// Why.
+		reason: FundingQuoteRefusal,
+	},
+}
+
+/// Progress a provider reports for a session it serves.
+///
+/// Steps only move forward, each in the direction of its session; `Details`
+/// and `Deposit` sit outside that order, and a session keeps a bounded
+/// number of each. Once funds are moving the host decides the outcome: an
+/// inbound session is delivered from the claims of the top-ups it names, an
+/// outbound one is released once the user's payment completes.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingUpdate {
+	/// A step of an inbound session.
+	#[codec(index = 0)]
+	In(FundingInboundUpdate),
+	/// A step of an outbound session.
+	#[codec(index = 1)]
+	Out(FundingOutboundUpdate),
+	/// The session ended without success, before any funds moved.
+	#[codec(index = 2)]
+	Failed {
+		/// Why it ended.
+		reason: FundingFailure,
+	},
+	/// The provider's own references for the session, which the user can
+	/// quote to it. Allowed at any point while the session is open, outside
+	/// the order of the others; the latest value of each is shown.
+	#[codec(index = 3)]
+	Details {
+		/// The provider's transaction id.
+		transaction_id: Option<String>,
+		/// A reference the user pays with or quotes, such as a bank
+		/// transfer reference.
+		reference: Option<String>,
+	},
+	/// What the provider is doing within the current step, for the line
+	/// under the host's status, such as the deposit's confirmations. Allowed
+	/// while the provider works on the session, as often as it checks; the
+	/// latest is shown until the session moves to another step. Each one
+	/// counts as hearing from the provider but is not kept in the session's
+	/// history.
+	#[codec(index = 4)]
+	Progress {
+		/// The fact and its time.
+		detail: FundingDetail,
+	},
+}
+
+/// A step of an inbound session: the user pays the provider, which credits
+/// the user's balance.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingInboundUpdate {
+	/// Waiting for the user to pay the provider.
+	#[codec(index = 0)]
+	AwaitingPayment,
+	/// The provider has seen the user's payment.
+	#[codec(index = 1)]
+	PaymentReceived {
+		/// Whether the payment can no longer be reversed.
+		finalized: bool,
+		/// What arrived, when it differs from what the user was asked to
+		/// send: less, or another asset.
+		mismatch: Option<FundingReceived>,
+	},
+	/// The provider is converting the payment to the user's balance asset.
+	#[codec(index = 2)]
+	Converting,
+	/// The provider started a top-up with `payment.topUp` to credit the user.
+	/// A partial claim may be followed by further top-ups.
+	#[codec(index = 3)]
+	Crediting {
+		/// Id the top-up was started with.
+		top_up_id: [u8; 32],
+		/// Amount the top-up asks to credit.
+		amount: u128,
+	},
+	/// The provider started every top-up it will. The session is delivered
+	/// with what they claimed.
+	#[codec(index = 4)]
+	Delivered,
+	/// Where and what the user pays, for the host to draw. Allowed until
+	/// funds move, outside the order of the others, so a provider can ask
+	/// for the rest of a short payment; the latest is shown.
+	#[codec(index = 5)]
+	Deposit {
+		/// The instructions.
+		deposit: FundingDeposit,
+	},
+}
+
+/// A step of an outbound session: the provider collects the user's balance
+/// and pays the user out.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingOutboundUpdate {
+	/// The provider asked the user to pay it with `payment.request`. The
+	/// session is released once that payment completes.
+	#[codec(index = 0)]
+	Collecting {
+		/// Id the payment request was made with.
+		payment_id: [u8; 32],
+		/// Amount the payment asks for.
+		amount: u128,
+	},
+	/// After release, the provider is converting what it collected before
+	/// paying the user out. Reported at most once, before `Payout`.
+	#[codec(index = 1)]
+	Converting,
+	/// How the provider's payout went after the session was released.
+	/// Allowed once, after `Released`.
+	#[codec(index = 2)]
+	Payout {
+		/// The payout's outcome.
+		outcome: FundingPayout,
+	},
+	/// After a failed payout, or a cancel the user accepted, the provider
+	/// started a top-up with `payment.topUp` to give the user back what it
+	/// holds. Allowed once. The session records what the top-up claimed as
+	/// refunded.
+	#[codec(index = 3)]
+	Refunding {
+		/// Id the top-up was started with.
+		top_up_id: [u8; 32],
+		/// Amount the top-up asks to credit.
+		amount: u128,
+	},
+	/// A payout attempt failed and the provider is trying again. Allowed
+	/// after `Released` and before `Payout`, as often as it retries.
+	#[codec(index = 4)]
+	PayoutRetrying,
+}
+
+/// The line under a session's status: a fact about the current step, and
+/// when it happened or is due. The host words it.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingDetail {
+	/// What the provider reports.
+	pub fact: FundingFact,
+	/// When it happened, in Unix milliseconds, shown as an age ("3s ago"),
+	/// or when it is due, shown as a countdown ("about 12s left").
+	pub at_ms: Option<u64>,
+}
+
+/// A fact a provider reports within a step, which the host words in the
+/// user's language.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingFact {
+	/// The provider checked and nothing changed: "Checked with the
+	/// provider".
+	#[codec(index = 0)]
+	Checked,
+	/// A crypto transfer's confirmations: "Confirmation 7 of 13", with the
+	/// time of the last block. Crypto sessions only.
+	#[codec(index = 1)]
+	Confirmations {
+		/// Confirmations so far, at most `required`.
+		done: u32,
+		/// Confirmations needed, more than zero.
+		required: u32,
+	},
+	/// The provider is waiting for a stable price: "Price checked".
+	#[codec(index = 2)]
+	PriceChecked,
+	/// The conversion runs in parts: "Part 2 of 4", with the time of the
+	/// last part.
+	#[codec(index = 3)]
+	Parts {
+		/// Parts done, at most `total`.
+		done: u32,
+		/// Parts in all, more than zero.
+		total: u32,
+	},
+	/// The next step is scheduled: "About 12s left" until `at_ms`.
+	#[codec(index = 4)]
+	Scheduled,
+	/// The user's bank sent the transfer: "Sent by your bank", at `at_ms`.
+	/// Inbound bank sessions only.
+	#[codec(index = 5)]
+	SentByBank,
+	/// The money is expected to arrive by `at_ms`: "Expected by Thu 3 Nov".
+	#[codec(index = 6)]
+	ExpectedBy,
+	/// The provider is reviewing the payment: "The provider is reviewing
+	/// the payment".
+	#[codec(index = 7)]
+	InReview,
+	/// The provider is retrying: "Attempt 2 of 3", with the next try at
+	/// `at_ms`.
+	#[codec(index = 8)]
+	Attempt {
+		/// This attempt, from 1.
+		n: u32,
+		/// Attempts it will make, when it knows, at least `n`.
+		of: Option<u32>,
+	},
+	/// Last resort, for a step none of the others describes. Shown as given,
+	/// so not translated: at most [`FUNDING_DETAIL_MAX_CHARS`] characters
+	/// and [`FUNDING_DETAIL_MAX_BYTES`] bytes of plain text on one line.
+	#[codec(index = 9)]
+	Other {
+		/// The text.
+		text: String,
+	},
+}
+
+/// Most characters a provider's update text holds: a [`FundingFact::Other`]
+/// text, or a transaction id, reference or address.
+pub const FUNDING_DETAIL_MAX_CHARS: usize = 80;
+/// Most UTF-8 bytes a provider's update text holds.
+pub const FUNDING_DETAIL_MAX_BYTES: usize = 320;
+
+/// How a provider's payout to the user went after an outbound session was
+/// released.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingPayout {
+	/// The funds reached the user's bank, card or wallet.
+	#[codec(index = 0)]
+	PaidOut,
+	/// The payout failed; the provider holds the funds until it refunds
+	/// them, reported with `Refunding`.
+	#[codec(index = 1)]
+	Failed {
+		/// Human-readable reason.
+		reason: String,
+	},
+}
+
+/// Where and what the user pays a provider.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingDeposit {
+	/// A transfer to an address on a chain.
+	#[codec(index = 0)]
+	Crypto {
+		/// The address to send to.
+		address: String,
+		/// The network it is on, as the user should see it.
+		network: String,
+		/// Symbol of the asset to send.
+		asset: String,
+		/// Amount in the asset's smallest unit.
+		amount: u128,
+		/// Decimals of the asset.
+		decimals: u8,
+		/// Whether `amount` is exact, rather than an estimate or a minimum.
+		exact: bool,
+		/// A payment URI for the QR code, such as BIP21 or EIP-681. The host
+		/// shows the bare address when there is none.
+		uri: Option<String>,
+		/// When the address stops accepting payment, in Unix milliseconds.
+		expires_at: Option<u64>,
+	},
+	/// A bank transfer.
+	#[codec(index = 1)]
+	Bank {
+		/// Amount in the currency's minor unit, fees included.
+		amount: u128,
+		/// ISO 4217 currency code.
+		currency: String,
+		/// Decimals of the currency.
+		decimals: u8,
+		/// The account holder to pay.
+		beneficiary: Option<String>,
+		/// The account to pay, such as an IBAN.
+		account: Option<String>,
+		/// The bank's code, such as a BIC or sort code.
+		bank_code: Option<String>,
+		/// The reference the transfer must carry.
+		reference: String,
+		/// When the details stop being valid, in Unix milliseconds.
+		expires_at: Option<u64>,
+	},
+}
+
+/// What arrived for a payment that differs from what was asked.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+pub struct FundingReceived {
+	/// Symbol of the asset that arrived.
+	pub asset: String,
+	/// Amount in that asset's smallest unit.
+	pub amount: u128,
+}
+
+/// A session the core hands to the provider the user chose.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct ProductFundingAssignRequest {
+	/// The session, with the provider's last update when it resumes one.
+	pub session: FundingAssignment,
+}
+
+/// A session the user wants to cancel.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct ProductFundingCancelRequest {
+	/// The session to stop.
+	pub intent: String,
+}
+
+/// How a provider answers a cancel.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum FundingCancelAnswer {
+	/// No money had moved and the provider stopped. The core ends the
+	/// session as cancelled.
+	#[codec(index = 0)]
+	Stopped,
+	/// Money has moved, and the provider can return `refund` and keep `fee`.
+	/// The user accepts or declines in the host.
+	#[codec(index = 1)]
+	Offer {
+		/// What the provider keeps, in the user's payment balance units.
+		fee: u128,
+		/// What the user gets back, in the user's payment balance units.
+		refund: u128,
+		/// When the offer lapses, in Unix milliseconds. A lapsed offer is
+		/// declined.
+		expires_at: Option<u64>,
+	},
+	/// The provider will not stop. The session carries on.
+	#[codec(index = 2)]
+	Refused {
+		/// Why, shown to the user.
+		reason: String,
+	},
+}
+
+/// The user's answer to a provider's cancel offer.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct ProductFundingSettleCancelRequest {
+	/// The session the offer was made for.
+	pub intent: String,
+	/// What the user decided.
+	pub decision: FundingCancelDecision,
+}
+
+/// What the user decided about a cancel offer.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum FundingCancelDecision {
+	/// Accepted on these terms, as the host showed them. The provider returns
+	/// `refund`: it refunds an outbound session with `Refunding`, or ends an
+	/// inbound one with `Failed { Refunded }`.
+	#[codec(index = 0)]
+	Accepted {
+		/// What the provider keeps, in the user's payment balance units.
+		fee: u128,
+		/// What the user gets back, in the user's payment balance units.
+		refund: u128,
+	},
+	/// Declined, or the offer lapsed. The session carries on.
+	#[codec(index = 1)]
+	Declined,
+}
+
+/// Request to report progress on a session.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostFundingReportRequest {
+	/// Session the update is about.
+	pub intent: String,
+	/// The update.
+	pub update: FundingUpdate,
+}
+
+/// Error from [`crate::api::FundingProvider::report`].
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostFundingReportError {
+	/// No open session with this id is assigned to the caller.
+	#[codec(index = 0)]
+	NotFound,
+	/// The update does not follow the session's last one, or does not fit
+	/// its direction.
+	#[codec(index = 1)]
+	OutOfOrder,
+	/// The top-up or payment request it names was not started by the
+	/// caller with `payment.topUp` or `payment.request` for this session since
+	/// it was assigned, asks a different amount, or was already named.
+	#[codec(index = 2)]
+	NotStarted,
+	/// An update that breaks its limits: a `Progress` fact that does not fit
+	/// the session, such as a count past its total or a fact for another
+	/// rail; a text too long, on several lines or with control or invisible
+	/// characters; deposit instructions that name nothing to pay, have
+	/// expired or do not match the quote the user chose; or more `Details`
+	/// or `Deposit` updates than a session keeps.
+	#[codec(index = 4)]
+	InvalidDetail,
+	/// Catch-all.
+	#[codec(index = 3)]
+	Unknown {
+		/// Human-readable failure reason.
+		reason: String,
+	},
+}
+
+/// Request to show one of the provider's screens for a session.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostFundingPresentFrameRequest {
+	/// Session the screen belongs to.
+	pub intent: String,
+	/// What the frame shows.
+	pub target: FundingFrameTarget,
+}
+
+/// What a provider frame shows.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingFrameTarget {
+	/// A route of the provider's own App, such as its KYC or card entry.
+	#[codec(index = 0)]
+	App {
+		/// The route.
+		route: String,
+	},
+	/// An external https page, such as an onramp's widget, shown with its
+	/// origin visible.
+	#[codec(index = 1)]
+	Page {
+		/// The page to open.
+		url: String,
+		/// An https URL the page navigates to when it is done. The host
+		/// closes the frame on reaching it and answers `Returned`.
+		return_url: Option<String>,
+	},
+}
+
+/// How a provider screen closed.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+pub enum FundingFrameOutcome {
+	/// The provider's screen finished and closed itself.
+	#[codec(index = 0)]
+	Closed,
+	/// The user closed it.
+	#[codec(index = 1)]
+	Dismissed,
+	/// The page navigated to the request's `return_url`.
+	#[codec(index = 2)]
+	Returned {
+		/// The full URL it navigated to, query included.
+		url: String,
+	},
+}
+
+/// Response of [`crate::api::FundingProvider::present_frame`].
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostFundingPresentFrameResponse {
+	/// How the screen closed.
+	pub outcome: FundingFrameOutcome,
+}
+
+/// Error from [`crate::api::FundingProvider::present_frame`].
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostFundingPresentFrameError {
+	/// No open session with this id is assigned to the caller.
+	#[codec(index = 0)]
+	NotFound,
+	/// An App route that leaves the provider's App, or a page or return URL
+	/// that is not an https URL with a host, or that carries credentials.
+	#[codec(index = 1)]
+	InvalidUrl,
+	/// Catch-all.
+	#[codec(index = 2)]
+	Unknown {
+		/// Human-readable failure reason.
+		reason: String,
+	},
+	/// An App route from a provider that ships no App; such a provider shows
+	/// external pages instead.
+	#[codec(index = 3)]
+	NoApp,
+}
+
+/// Request to close the provider screen open for a session.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostFundingCloseFrameRequest {
+	/// Session the screen belongs to.
+	pub intent: String,
+}
+
+/// Error from [`crate::api::FundingProvider::close_frame`].
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostFundingCloseFrameError {
+	/// No open session with this id is assigned to the caller.
+	#[codec(index = 0)]
+	NotFound,
+	/// Catch-all.
+	#[codec(index = 1)]
+	Unknown {
+		/// Human-readable failure reason.
+		reason: String,
+	},
+}
+
+/// An ask for the provider to price.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct ProductFundingQuoteRequest {
+	/// What the user wants to move, by which rail, in which country.
+	pub ask: FundingQuoteAsk,
+}
+
+/// Longest payment URI deposit instructions may carry, in UTF-8 bytes.
+pub const FUNDING_DEPOSIT_URI_MAX_BYTES: usize = 512;

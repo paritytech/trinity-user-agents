@@ -28,6 +28,20 @@ on:
         required: false
         type: string
         default: ""
+      ref:
+        description: >-
+          The commit to build. Empty builds the head of release_branch, which
+          also names the release in its notes.
+        required: false
+        type: string
+        default: ""
+      core_artifact:
+        description: >-
+          An artifact an earlier job in the calling run packed the in-tree core
+          into. Empty builds the core here.
+        required: false
+        type: string
+        default: ""
     outputs:
       build_number:
         value: ${{ jobs.prepare_build_metadata.outputs.build_number }}
@@ -62,8 +76,6 @@ on:
         required: true
       MATCH_PASSWORD:
         required: true
-      MELD_BASIC_AUTH_TOKEN:
-        required: false
       NOTIFICATION_BOT_TOKEN:
         required: false
       NOTIFICATION_BOT_URL:
@@ -96,18 +108,17 @@ jobs:
     # number needs fastlane and Xcode, and the hosted macOS queue can hold this
     # short job for hours.
     runs-on: parity-macos-large
-    # actions: read is what lets the pull request lookup below find the run
-    # this one follows. check_build_result declares it for the same call.
+    # Reading two numbers. A hung job here holds the night's concurrency group,
+    # and with it every retry, so it is bounded.
+    timeout-minutes: 15
     permissions:
       contents: read
-      actions: read
       pull-requests: read
     outputs:
       build_number: ${{ steps.build_version.outputs.build_number }}
       marketing_version: ${{ steps.build_version.outputs.marketing_version }}
       release_notes: ${{ steps.release_notes.outputs.notes }}
-      pr_list_markdown: ${{ steps.collect_prs_markdown.outputs.release_notes
-        || steps.collect_prs_since_last_build.outputs.release_notes }}
+      pr_list_markdown: ${{ steps.collect_prs_markdown.outputs.release_notes }}
     steps:
       # Safetynet ships from the app repository, which produces it from its
       # nightly pipeline. Every upload to Apple passes through this workflow,
@@ -125,27 +136,47 @@ jobs:
           fi
           echo "${BUILD_CONFIGURATION} is published from this repository."
 
-      - name: Security Check - Verify bot-initiated workflow
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      # Who may upload to TestFlight. A dispatch is the prepare pipeline's, as
+      # the bot, or a person's, who must be in IOS_SIGNING_ACTORS. A schedule's
+      # first attempt is started by nobody; any later attempt is a re-run by a
+      # person, who must be in the same list. A malformed list allows no one.
+      - name: Security Check - Verify who started this upload
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RELEASE_BRANCH: ${{ inputs.release_branch }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          SIGNING_ACTORS: ${{ vars.IOS_SIGNING_ACTORS }}
         with:
           github-token: ${{ github.token }}
           script: |
             const eventName = context.eventName;
-            console.log(`Event: ${eventName}`);
+            const attempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            const triggeringActor = process.env.TRIGGERING_ACTOR;
+            console.log(`Event: ${eventName}, attempt ${attempt}, triggered by ${triggeringActor}`);
             console.log(`Release branch: ${process.env.RELEASE_BRANCH}`);
 
+            let allowed = [];
+            try {
+              const parsed = JSON.parse(process.env.SIGNING_ACTORS || 'null');
+              if (Array.isArray(parsed) && parsed.every(a => typeof a === 'string')) allowed = parsed;
+            } catch (e) {
+              core.warning('IOS_SIGNING_ACTORS is not a JSON array of logins, so no person may start this.');
+            }
+            const signer = allowed.includes(triggeringActor);
+
             if (eventName === 'workflow_dispatch') {
-              const triggeringActor = process.env.TRIGGERING_ACTOR;
-              console.log(`Triggering actor: ${triggeringActor}`);
-              if (triggeringActor !== 'github-actions[bot]') {
-                core.setFailed(`Security: workflow_dispatch must be triggered by github-actions[bot], got: ${triggeringActor}`);
+              if (triggeringActor !== 'github-actions[bot]' && !signer) {
+                core.setFailed(`Security: ${triggeringActor} is neither the prepare pipeline nor in IOS_SIGNING_ACTORS`);
                 return;
               }
               console.log('Actor verification passed for workflow_dispatch');
+            } else if (eventName === 'schedule') {
+              if (attempt > 1 && !signer) {
+                core.setFailed(`Security: a re-run by ${triggeringActor}, who is not in IOS_SIGNING_ACTORS`);
+                return;
+              }
+              console.log('Actor verification passed for schedule');
             } else if (eventName === 'pull_request') {
               const prUser = process.env.PR_AUTHOR;
               console.log(`PR author: ${prUser}`);
@@ -158,14 +189,14 @@ jobs:
             console.log('Security checks passed!');
 
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.release_branch }}
+          ref: ${{ inputs.ref || inputs.release_branch }}
           fetch-depth: 0
 
       - name: Prepare TestFlight release notes
         id: release_notes
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RELEASE_PR_NUMBER: ${{ inputs.release_pr_number }}
           RELEASE_BRANCH: ${{ inputs.release_branch }}
@@ -224,10 +255,11 @@ jobs:
           asc_key_base64: ${{ secrets.ASC_KEY_BASE64 }}
 
       # A release branch carries the pull requests that main does not yet have,
-      # so the diff between the two is the list.
+      # so the diff between the two is the list the release announcement shows.
+      # The nightly announcement links to its prerelease notes instead.
       - name: Collect merged PRs from the release branch
         id: collect_prs_markdown
-        if: inputs.release_branch != env.MAIN_BRANCH || inputs.build_configuration != 'Nightly'
+        if: inputs.build_configuration != 'Nightly'
         uses: novasamatech/github-actions/collect-prs@8c20aeac07cb19b3c2ce1310d1ef2947a373ca5e # v5
         with:
           github_token: ${{ github.token }}
@@ -235,21 +267,9 @@ jobs:
           dst_ref: ${{ env.MAIN_BRANCH }}
           release_notes_format: markdown
 
-      # A nightly builds main itself, where that diff compares the branch with
-      # itself and is empty by construction. The range is the one since the last
-      # successful run of this pipeline instead. Narrowed to the nightly: a
-      # Release built straight from main reaches here too, and it carries its
-      # own notes rather than a range since the last nightly.
-      - name: Collect merged PRs since the last successful build
-        id: collect_prs_since_last_build
-        if: inputs.release_branch == env.MAIN_BRANCH && inputs.build_configuration == 'Nightly'
-        uses: ./.github/actions/collect-prs-since-last-build
-        with:
-          github_token: ${{ github.token }}
-
   check_and_build:
     # The configuration is part of the name so that a caller invoking this workflow
-    # twice in one run (nightly_distribution builds Nightly and Release together)
+    # twice in one run (ios-nightly.yml has a Nightly and a Safetynet leg)
     # produces distinct job names — check-job-conclusion matches by name suffix and
     # would otherwise resolve both lookups to the same leg.
     name: Check and Build TestFlight (${{ inputs.build_configuration }})
@@ -257,12 +277,72 @@ jobs:
     # timing-sensitive tests exceed their limits on shared hosted runners.
     runs-on: parity-macos-large
     needs: prepare_build_metadata
+    # Twice the longest upload in October. A hung upload holds the night's
+    # concurrency group, and with it every retry, so it is bounded.
+    timeout-minutes: 90
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      # Again here, because "Re-run failed jobs" re-runs this job without the
+      # metadata job, so the check there does not see a re-run's actor.
+      #
+      # Who may upload to TestFlight. A dispatch is the prepare pipeline's, as
+      # the bot, or a person's, who must be in IOS_SIGNING_ACTORS. A schedule's
+      # first attempt is started by nobody; any later attempt is a re-run by a
+      # person, who must be in the same list. A malformed list allows no one.
+      - name: Security Check - Verify who started this upload
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RELEASE_BRANCH: ${{ inputs.release_branch }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          SIGNING_ACTORS: ${{ vars.IOS_SIGNING_ACTORS }}
         with:
-          ref: ${{ inputs.release_branch }}
+          github-token: ${{ github.token }}
+          script: |
+            const eventName = context.eventName;
+            const attempt = Number(process.env.GITHUB_RUN_ATTEMPT);
+            const triggeringActor = process.env.TRIGGERING_ACTOR;
+            console.log(`Event: ${eventName}, attempt ${attempt}, triggered by ${triggeringActor}`);
+            console.log(`Release branch: ${process.env.RELEASE_BRANCH}`);
+
+            let allowed = [];
+            try {
+              const parsed = JSON.parse(process.env.SIGNING_ACTORS || 'null');
+              if (Array.isArray(parsed) && parsed.every(a => typeof a === 'string')) allowed = parsed;
+            } catch (e) {
+              core.warning('IOS_SIGNING_ACTORS is not a JSON array of logins, so no person may start this.');
+            }
+            const signer = allowed.includes(triggeringActor);
+
+            if (eventName === 'workflow_dispatch') {
+              if (triggeringActor !== 'github-actions[bot]' && !signer) {
+                core.setFailed(`Security: ${triggeringActor} is neither the prepare pipeline nor in IOS_SIGNING_ACTORS`);
+                return;
+              }
+              console.log('Actor verification passed for workflow_dispatch');
+            } else if (eventName === 'schedule') {
+              if (attempt > 1 && !signer) {
+                core.setFailed(`Security: a re-run by ${triggeringActor}, who is not in IOS_SIGNING_ACTORS`);
+                return;
+              }
+              console.log('Actor verification passed for schedule');
+            } else if (eventName === 'pull_request') {
+              const prUser = process.env.PR_AUTHOR;
+              console.log(`PR author: ${prUser}`);
+              if (prUser !== 'github-actions[bot]') {
+                core.setFailed(`Security: PR must be created by github-actions[bot], got: ${prUser}`);
+                return;
+              }
+              console.log('PR author verification passed');
+            }
+            console.log('Security checks passed!');
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || inputs.release_branch }}
           fetch-depth: 0
+
+      - uses: ./.github/actions/mac-preflight
 
       - name: Setup iOS Environment
         uses: ./hosts/ios/.github/actions/install
@@ -275,7 +355,14 @@ jobs:
       # this tree. The app repository got the core as a published package and
       # needed none of this; here it has to be generated before any build.
       - name: Bootstrap the in-tree core
+        if: inputs.core_artifact == ''
         uses: ./.github/actions/bootstrap-ios-core
+
+      - name: Restore the in-tree core
+        if: inputs.core_artifact != ''
+        uses: ./.github/actions/restore-ios-core
+        with:
+          name: ${{ inputs.core_artifact }}
 
       - name: Distribute TestFlight build
         uses: ./hosts/ios/.github/actions/distribute-testflight
@@ -300,11 +387,40 @@ jobs:
           google_service_info_dev_base64: ${{ secrets.GOOGLE_SERVICE_INFO_DEV_BASE64 }}
           google_service_info_release_base64: ${{ inputs.build_configuration == 'Safetynet' && secrets.GOOGLE_SERVICE_INFO_SAFETY_BASE64 || secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
           sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
-          meld_basic_auth_token: ${{ secrets.MELD_BASIC_AUTH_TOKEN }}
+
+      # The distribute action runs the unit tests before it archives. xcpretty
+      # drops the failing test names, and on a reused runner the result bundle
+      # does not outlive the next job, so both are taken here.
+      - name: Report failed tests
+        if: failure()
+        working-directory: hosts/ios
+        run: |
+          result=fastlane/test_output/polkadot-app.xcresult
+          if [[ -d "$result" ]]; then
+            summary="$(xcrun xcresulttool get test-results summary --path "$result")"
+            echo "$summary"
+            {
+              echo "### Unit test results for this failed build"
+              echo '```json'
+              echo "$summary"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No result bundle: the run failed before the tests"
+          fi
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results-${{ inputs.build_configuration }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: hosts/ios/fastlane/test_output/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Comment on PR with build info
         if: inputs.release_pr_number != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           BUILD_NUMBER: ${{ needs.prepare_build_metadata.outputs.build_number }}
           MARKETING_VERSION: ${{ needs.prepare_build_metadata.outputs.marketing_version }}
@@ -336,7 +452,7 @@ jobs:
         if: >-
           github.event_name == 'workflow_dispatch' &&
           inputs.release_pr_number != ''
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           RELEASE_PR_NUMBER: ${{ inputs.release_pr_number }}
           # Statuses are keyed by context, so each configuration needs its own — a nightly
@@ -381,7 +497,7 @@ jobs:
       succeeded: ${{ steps.check.outputs.succeeded }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Check the build result
         id: check
         uses: ./hosts/ios/.github/actions/check-job-conclusion

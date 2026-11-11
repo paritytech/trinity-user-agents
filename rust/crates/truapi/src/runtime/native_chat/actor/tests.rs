@@ -125,7 +125,7 @@ impl Fixture {
 			entropy: Zeroizing::new(vec![0x44; 16]),
 			session_valid: Arc::new(move || live.load(Ordering::Acquire)),
 			chat_session_granted: Arc::new(|_| false),
-			network_suffix: "test".into(),
+			network_suffix: "testnet".into(),
 			genesis_hash: [2; 32],
 			coinage_instance_id: None,
 		};
@@ -461,7 +461,7 @@ async fn set_product_grants(
 	};
 	let product = crate::platform::ProductContext::new_with_execution(
 		crate::product_id::ProductId::for_test(product),
-		crate::platform::ProductExecutionKind::Worker,
+		crate::platform::ExecutableKind::Worker,
 	);
 	let permissions = PermissionsService::new(platform, platform, &product);
 	permissions

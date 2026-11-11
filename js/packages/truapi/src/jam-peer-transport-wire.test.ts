@@ -27,10 +27,10 @@ test("JamPeerTransport is namespace 111 with methods 0..6 in contract order", ()
   });
 });
 
-test("the JamPeers permission is RemotePermission index 5 carrying the genesis, as in Rust", () => {
+test("JamPeers uses permission index 111 outside the released permission range", () => {
   const permission = { tag: "JamPeers", value: { genesis: GENESIS } } as const;
   const encoded = T.RemotePermission.enc(permission);
-  expect([...encoded]).toEqual([5, ...S.hexToBytes(GENESIS)]);
+  expect([...encoded]).toEqual([111, ...S.hexToBytes(GENESIS)]);
   expect(T.RemotePermission.dec(encoded)).toEqual(permission);
   expect([...T.RemotePermission.enc({ tag: "StatementSubmit" })]).toEqual([4]);
 });

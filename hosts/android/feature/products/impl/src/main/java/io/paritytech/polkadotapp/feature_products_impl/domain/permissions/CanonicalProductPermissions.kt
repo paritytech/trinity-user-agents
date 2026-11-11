@@ -12,6 +12,7 @@ import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.RemotePermissionRequest
+import uniffi.truapi.NftPurseOwner
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.util.Locale
 
@@ -27,7 +28,10 @@ internal fun ProductPermission.canonicalRequest(): PermissionAuthorizationReques
             is AllowanceAccountSelector.Raw -> DerivationIndex.Raw(selector.value.value)
         }
     )
-    is ProductPermission.AccountAccess -> PermissionAuthorizationRequest.AccountAccess(bareProductLabel(targetProductId))
+    is ProductPermission.AccountAccess -> PermissionAuthorizationRequest.AccountAccess(targetProductId)
+    is ProductPermission.NftPurseRead -> PermissionAuthorizationRequest.Remote(
+        RemotePermissionRequest(RemotePermission.NftPurseRead(ownerProductId?.let { NftPurseOwner.Product(it) } ?: NftPurseOwner.Root))
+    )
     is ProductPermission.DeviceCapability -> PermissionAuthorizationRequest.Device(capability.native())
     is ProductPermission.RemotePermission -> PermissionAuthorizationRequest.Remote(RemotePermissionRequest(when (this) {
         is ProductPermission.RemotePermission.NetworkAccess -> RemotePermission.Remote(listOf(canonicalDomain(domain)))
@@ -68,7 +72,14 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
         RemotePermission.PreimageSubmit -> ProductPermission.RemotePermission.PreimageSubmitAccess
         is RemotePermission.JamPeers -> ProductPermission.RemotePermission.JamPeersAccess(remote.genesis.toHexString(withPrefix = true))
         RemotePermission.BalanceAccess -> ProductPermission.BalanceAccess
+        is RemotePermission.NftPurseRead -> ProductPermission.NftPurseRead(
+            when (val owner = remote.owner) {
+                is NftPurseOwner.Product -> owner.v1
+                NftPurseOwner.Root -> null
+            }
+        )
     }
+    is PermissionAuthorizationRequest.CrossProductSignature -> error("Cross-product signature permission cannot be mapped to a product permission")
 }
 
 private fun DeviceCapabilityType.native(): HostDevicePermissionRequest = when (this) {

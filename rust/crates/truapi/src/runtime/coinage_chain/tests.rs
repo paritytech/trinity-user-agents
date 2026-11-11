@@ -3,7 +3,7 @@
 // Copyright the Brevity contributors. See truapi-coinage/NOTICE and LICENSE.
 
 use super::{
-	transaction::{AS_COINAGE, Snapshot, constant, mortal_era, replace},
+	transaction::{AS_COINAGE, Snapshot, constant},
 	*,
 };
 use parity_scale_codec::{Compact, Decode, Encode};
@@ -18,6 +18,52 @@ const METADATA: &[u8] = include_bytes!("../../../tests/fixtures/paseo-next-v2-me
 
 fn snapshot() -> Snapshot {
 	Snapshot::new(METADATA.to_vec(), [3; 32], 1_025, [4; 32], 3_000_000, 1, Some(0)).unwrap()
+}
+
+fn extrinsics() -> ExtrinsicService {
+	let platform = Arc::new(crate::test_support::StubPlatform::default());
+	ExtrinsicService::from_provider(platform.clone(), crate::test_support::test_spawner(), platform)
+}
+
+/// Independent legacy reference bytes, used only to verify the service's
+/// signature still covers the original fee, nonce and finalized context.
+fn reference_extensions(
+	snapshot: &Snapshot,
+	nonce: u32,
+) -> Vec<truapi::latest::TxPayloadExtension> {
+	use crate::runtime::statement_allowance::extension::ChainState;
+	let values = snapshot.metadata.encode_signed_extensions(&ChainState {
+		spec_version: snapshot.spec_version,
+		transaction_version: snapshot.transaction_version,
+		genesis_hash: snapshot.genesis_hash,
+		nonce,
+		restrict_origins: false,
+	});
+	snapshot
+		.metadata
+		.extension_ids()
+		.into_iter()
+		.zip(values)
+		.map(|(id, value)| {
+			let (extra, additional_signed) = if id == "CheckMortality" {
+				(
+					mortal_era(snapshot.period, snapshot.number).unwrap().to_vec(),
+					snapshot.at.to_vec(),
+				)
+			} else {
+				(value.extra, value.additional_signed)
+			};
+			truapi::latest::TxPayloadExtension { id: id.into(), extra, additional_signed }
+		})
+		.collect()
+}
+
+fn mortal_era(period: u64, height: u64) -> Result<[u8; 2], String> {
+	if !(4..=256).contains(&period) || !period.is_power_of_two() {
+		return Err("invalid Coinage mortality period".into());
+	}
+	let phase = height % period;
+	Ok(((period.trailing_zeros() - 1) as u16 | ((phase as u16) << 4)).to_le_bytes())
 }
 fn source() -> schnorrkel::Keypair {
 	schnorrkel::MiniSecretKey::from_bytes(&[17; 32])
@@ -361,20 +407,195 @@ fn presence_only_recycler_runtime_is_rejected_before_queries_or_spending() {
 	assert!(Snapshot::new(metadata.to_vec(), [3; 32], 1_025, [4; 32], 1_000_032, 1, None).is_err());
 }
 
+fn snapshot_with_authorization(
+	mutate: impl FnOnce(&mut frame_metadata::v16::RuntimeMetadataV16, [u32; 3]),
+) -> Snapshot {
+	let mut metadata = frame_metadata::RuntimeMetadataPrefixed::decode(&mut &METADATA[..]).unwrap();
+	let frame_metadata::RuntimeMetadata::V16(runtime) = &mut metadata.1 else {
+		panic!("V16 fixture")
+	};
+	let wrapper = runtime
+		.extrinsic
+		.transaction_extensions
+		.iter()
+		.find(|extension| extension.identifier == AS_COINAGE)
+		.unwrap()
+		.ty
+		.id;
+	let option = match &runtime.types.resolve(wrapper).unwrap().type_def {
+		TypeDef::Composite(wrapper) => {
+			assert_eq!(wrapper.fields.len(), 1);
+			wrapper.fields[0].ty.id
+		},
+		_ => wrapper,
+	};
+	let TypeDef::Variant(variants) = &runtime.types.resolve(option).unwrap().type_def else {
+		panic!("AsCoinage option")
+	};
+	let some = variants.variants.iter().find(|variant| variant.name == "Some").unwrap();
+	assert_eq!(some.fields.len(), 1);
+	let info = some.fields[0].ty.id;
+	mutate(runtime, [wrapper, option, info]);
+	Snapshot::new(metadata.encode(), [3; 32], 1_025, [4; 32], 3_000_000, 1, Some(0)).unwrap()
+}
+
+#[test]
+fn coin_authorization_uses_runtime_variant_index_with_or_without_wrapper() {
+	for unwrapped in [false, true] {
+		let snapshot = snapshot_with_authorization(|runtime, [_, option, info]| {
+			if unwrapped {
+				runtime
+					.extrinsic
+					.transaction_extensions
+					.iter_mut()
+					.find(|extension| extension.identifier == AS_COINAGE)
+					.unwrap()
+					.ty = option.into();
+			}
+			let ty = runtime.types.types.iter_mut().find(|ty| ty.id == info).unwrap();
+			let TypeDef::Variant(variants) = &mut ty.ty.type_def else { panic!("AsCoinage info") };
+			variants
+				.variants
+				.iter_mut()
+				.find(|variant| variant.name == "AsCoin")
+				.unwrap()
+				.index = 17;
+		});
+		assert_eq!(snapshot.as_coin().unwrap(), [1, 17]);
+	}
+}
+
+#[test]
+fn coin_authorization_rejects_non_enum_metadata_and_missing_variant() {
+	for layer in 0..3 {
+		let snapshot = snapshot_with_authorization(|runtime, ids| {
+			let ty = runtime.types.types.iter_mut().find(|ty| ty.id == ids[layer]).unwrap();
+			ty.ty.type_def = TypeDef::Primitive(TypeDefPrimitive::U8);
+		});
+		assert!(snapshot.as_coin().is_err(), "authorization layer {layer}");
+	}
+	let snapshot = snapshot_with_authorization(|runtime, [_, _, info]| {
+		let ty = runtime.types.types.iter_mut().find(|ty| ty.id == info).unwrap();
+		let TypeDef::Variant(variants) = &mut ty.ty.type_def else { panic!("AsCoinage info") };
+		variants.variants.retain(|variant| variant.name != "AsCoin");
+	});
+	assert!(snapshot.as_coin().is_err());
+}
+
+#[test]
+fn coin_authorization_rejects_extra_fields_even_when_they_encode_no_bytes() {
+	for layer in 0..3 {
+		let snapshot = snapshot_with_authorization(|runtime, ids| {
+			let unit = runtime
+				.types
+				.types
+				.iter()
+				.find(
+					|ty| matches!(&ty.ty.type_def, TypeDef::Tuple(tuple) if tuple.fields.is_empty()),
+				)
+				.unwrap()
+				.id;
+			let TypeDef::Variant(option) = &runtime.types.resolve(ids[1]).unwrap().type_def else {
+				panic!("AsCoinage option")
+			};
+			let mut field =
+				option.variants.iter().find(|variant| variant.name == "Some").unwrap().fields[0]
+					.clone();
+			field.ty = unit.into();
+			let ty = runtime.types.types.iter_mut().find(|ty| ty.id == ids[layer]).unwrap();
+			match &mut ty.ty.type_def {
+				TypeDef::Composite(wrapper) => wrapper.fields.push(field),
+				TypeDef::Variant(variants) => {
+					let name = if layer == 1 { "Some" } else { "AsCoin" };
+					variants
+						.variants
+						.iter_mut()
+						.find(|variant| variant.name == name)
+						.unwrap()
+						.fields
+						.push(field);
+				},
+				_ => panic!("AsCoinage authorization"),
+			}
+		});
+		assert!(snapshot.as_coin().is_err(), "authorization layer {layer}");
+	}
+}
+
+#[test]
+fn unload_authorization_binds_each_person_origin_to_its_runtime_variant() {
+	use truapi_coinage::PersonOriginKind;
+
+	let snapshot = snapshot_with_authorization(|runtime, [_, _, info]| {
+		let ty = runtime.types.types.iter_mut().find(|ty| ty.id == info).unwrap();
+		let TypeDef::Variant(variants) = &mut ty.ty.type_def else { panic!("AsCoinage info") };
+		for (name, index) in [("AsUnloadTokenPeople", 17), ("AsUnloadTokenLitePeople", 18)] {
+			variants.variants.iter_mut().find(|variant| variant.name == name).unwrap().index =
+				index;
+		}
+	});
+	let [pallet, index] =
+		snapshot.metadata.call_indices("Coinage", "unload_recycler_into_coins").unwrap();
+	let call = truapi_coinage::pallet::unload_recycler_into_coins_call(
+		pallet,
+		index,
+		snapshot.storage.instance_id,
+		&[[7; 32]],
+		0,
+		1,
+		2,
+		&[],
+		0,
+	)
+	.unwrap();
+	let extensions = reference_extensions(&snapshot, 0);
+	let offset = 2 + extensions
+		.iter()
+		.take_while(|extension| extension.id != AS_COINAGE)
+		.map(|extension| extension.extra.len())
+		.sum::<usize>();
+	for (person_origin, variant) in [(PersonOriginKind::Full, 17), (PersonOriginKind::Lite, 18)] {
+		let proof = truapi_coinage::UnloadTokenProof {
+			person_origin,
+			people_proof: vec![7; 32],
+			people_ring_index: 3,
+			people_ring_revision: 4,
+			period: 5,
+			counter: 6,
+			aliases: Vec::new(),
+			alias_proofs: Vec::new(),
+		};
+		let mut expected = proof.as_coinage_extension().encode();
+		expected[1] = variant;
+		let transaction =
+			futures::executor::block_on(
+				snapshot.unsigned(&extrinsics(), &call, |_| Ok(proof.clone())),
+			)
+			.unwrap();
+		let mut body = transaction.bytes();
+		let size = Compact::<u32>::decode(&mut body).unwrap().0 as usize;
+		assert_eq!(size, body.len());
+		assert_eq!(&body[offset..offset + expected.len()], expected);
+	}
+}
+
 #[test]
 fn coin_signature_binds_runtime_coin_origin_nonce_checkpoint_and_call() {
 	let snapshot = snapshot();
 	let source = source();
 	let [pallet, index] = snapshot.metadata.call_indices("Coinage", "transfer").unwrap();
 	let call = truapi_coinage::pallet::transfer_call(pallet, index, &[9; 32]);
-	let transaction = snapshot.signed(&source, &call, 7).unwrap();
-	let mut extensions = snapshot.extensions(7).unwrap();
-	replace(&mut extensions, AS_COINAGE, snapshot.as_coin().unwrap(), vec![]).unwrap();
+	let transaction =
+		futures::executor::block_on(snapshot.signed(&extrinsics(), &source, &call, 7)).unwrap();
+	let mut extensions = reference_extensions(&snapshot, 7);
+	let as_coinage = extensions.iter_mut().find(|extension| extension.id == AS_COINAGE).unwrap();
+	as_coinage.extra = snapshot.as_coin().unwrap();
+	as_coinage.additional_signed.clear();
 	let verify = extensions
 		.iter()
 		.position(|extension| extension.id == "VerifyMultiSignature")
 		.unwrap();
-	let mut body = transaction.as_slice();
+	let mut body = transaction.bytes();
 	let size = Compact::<u32>::decode(&mut body).unwrap().0 as usize;
 	assert_eq!(size, body.len());
 	let offset = 2 + extensions[..verify]
@@ -402,6 +623,44 @@ fn coin_signature_binds_runtime_coin_origin_nonce_checkpoint_and_call() {
 			.is_err()
 	);
 	assert!(body.ends_with(&call));
+}
+
+#[test]
+fn unload_pipeline_preserves_proof_implication_and_propagates_authorization_failure() {
+	let snapshot = snapshot();
+	let [pallet, index] =
+		snapshot.metadata.call_indices("Coinage", "unload_recycler_into_coins").unwrap();
+	let call = truapi_coinage::pallet::unload_recycler_into_coins_call(
+		pallet,
+		index,
+		snapshot.storage.instance_id,
+		&[[7; 32]],
+		0,
+		1,
+		2,
+		&[],
+		0,
+	)
+	.unwrap();
+	let extensions = reference_extensions(&snapshot, 0);
+	let origin = extensions.iter().position(|extension| extension.id == AS_COINAGE).unwrap();
+	let mut expected = vec![snapshot.metadata.extension_version()];
+	expected.extend_from_slice(&call);
+	for extension in &extensions[origin + 1..] {
+		expected.extend_from_slice(&extension.extra);
+	}
+	for extension in &extensions[origin + 1..] {
+		expected.extend_from_slice(&extension.additional_signed);
+	}
+	let mut invoked = false;
+	let result =
+		futures::executor::block_on(snapshot.unsigned(&extrinsics(), &call, |implication| {
+			invoked = true;
+			assert_eq!(implication.encoded(), expected);
+			Err("Coinage signing session expired".into())
+		}));
+	assert!(invoked);
+	assert!(result.unwrap_err().contains("Coinage signing session expired"));
 }
 
 #[test]

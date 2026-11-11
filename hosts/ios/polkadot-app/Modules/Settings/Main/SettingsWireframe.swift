@@ -51,7 +51,9 @@ final class SettingsWireframe: SettingsWireframeProtocol {
     }
 
     func showBlockedUsers(from view: (any SettingsViewProtocol)?) {
-        guard let blockedUsersView = BlockedUsersViewFactory.createView() else {
+        guard let blockedUsersView = BlockedUsersViewFactory.createView(
+            allowanceCleanupService: serviceCoordinator.allowanceManagerFacade.cleanupService
+        ) else {
             return
         }
 

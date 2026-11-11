@@ -80,7 +80,7 @@ struct Receipt {
 
 /// Minimal trusted backend for a receiver-only browser worker. No wallet,
 /// product execution or chain provider is required to validate incoming frames.
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 pub trait ReceivingBackend: Send + Sync {
 	/// Resolve the host's current verified scope; absence means unsupported.
 	async fn receiver_authority(
@@ -103,7 +103,7 @@ pub trait ReceivingBackend: Send + Sync {
 
 struct PlatformBackend(Arc<dyn Platform>);
 
-#[crate::platform::async_trait]
+#[async_trait::async_trait]
 impl ReceivingBackend for PlatformBackend {
 	async fn receiver_authority(
 		&self,
@@ -509,6 +509,10 @@ impl ReceivingService {
 		let mut ledger = self.load().await?;
 		let mut changed = false;
 		let mut available = [true; MAX_REGISTRATIONS];
+		#[allow(
+			clippy::needless_range_loop,
+			reason = "`available` is indexed in step while each record is mutated across an await"
+		)]
 		for index in 0..ledger.records.len() {
 			if !ledger.records[index].enabled {
 				continue;

@@ -27,8 +27,9 @@ import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.HostRuntimeConfig
+import uniffi.truapi.ProductId
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
 import java.io.Closeable
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -45,16 +46,12 @@ import kotlin.io.path.createTempDirectory
 @RunWith(AndroidJUnit4::class)
 class ContainerHttpAuthorizationTest {
     @Test
-    fun appSharesOneUseHttpGrantsWithRustAndRecovers() = verifyAuthorization(ProductExecutionKind.APP)
+    fun appSharesOneUseHttpGrantsWithRustAndRecovers() = verifyAuthorization(ExecutableKind.APP)
 
     @Test
-    fun hiddenWorkerSharesOneUseHttpGrantsWithRustAndRecovers() = verifyAuthorization(ProductExecutionKind.WORKER)
+    fun hiddenWorkerSharesOneUseHttpGrantsWithRustAndRecovers() = verifyAuthorization(ExecutableKind.WORKER)
 
-    private fun verifyAuthorization(kind: ProductExecutionKind) {
-        listOf("script", "image", "fetch", "xhr").forEach { verifyAuthorization(kind, it) }
-    }
-
-    private fun verifyAuthorization(kind: ProductExecutionKind, operation: String) {
+    private fun verifyAuthorization(kind: ExecutableKind) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val container = ContainerScriptBundle.load(context)
@@ -73,13 +70,7 @@ class ContainerHttpAuthorizationTest {
         )
 
         TrUAPIHostRuntime(bridge, config).use { runtime ->
-            runBlocking {
-                runtime.setPermissionAuthorizationStatus(
-                    "http-policy.paseo", PermissionAuthorizationRequest.Remote(permission),
-                    PermissionAuthorizationStatus.NOT_DETERMINED,
-                )
-            }
-            runtime.openProductExecution(bridge, ProductExecutionConfig("http-policy.paseo", kind)).use { execution ->
+            runtime.openProductExecution(bridge, ProductExecutionConfig(ProductId.parse("http-policy.paseo").getOrThrow(), kind)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 BridgeProxy(endpoint.port.toInt()).use { proxy ->
                     MockWebServer().use { server ->
@@ -141,25 +132,32 @@ class ContainerHttpAuthorizationTest {
 
                         try {
                             assertTrue("product script did not load", reports.ready.await(15, TimeUnit.SECONDS))
-                            bridge.decisions.add(PermissionDecision.ALLOW_ONCE)
-                            call("requestPermission()", "true")
-                            call("loadResource('$operation', '${server.url("/$operation-allowed")}')", "true")
-                            assertEquals(listOf("/$operation-allowed"), hits.toList())
-                            assertEquals(listOf(permission.permission), bridge.requests.toList())
-                            assertEquals(listOf(1, 1), listOf(authorizedLoads.get(), proxy.connections.get()))
+                            val operations = listOf("script", "image", "fetch", "xhr")
+                            for (operation in operations) {
+                                execution.setPermissionAuthorizationStatus(
+                                    PermissionAuthorizationRequest.Remote(permission), PermissionAuthorizationStatus.NOT_DETERMINED,
+                                )
+                                bridge.decisions.add(PermissionDecision.ALLOW_ONCE)
+                                call("requestPermission()", "true")
+                                call("loadResource('$operation', '${server.url("/$operation-allowed")}')", "true")
+                                bridge.decisions.add(PermissionDecision.DENY)
+                                call("loadResource('$operation', '${server.url("/$operation-denied")}')", "false")
+                            }
+                            assertEquals(operations.map { "/$it-allowed" }, hits.toList())
+                            assertEquals(List(8) { permission.permission }, bridge.requests.toList())
+                            assertEquals(listOf(8, 1), listOf(authorizedLoads.get(), proxy.connections.get()))
 
                             proxy.disconnect()
                             assertTrue("socket loss did not notify the page", reports.reset.await(15, TimeUnit.SECONDS))
+                            execution.setPermissionAuthorizationStatus(
+                                PermissionAuthorizationRequest.Remote(permission), PermissionAuthorizationStatus.NOT_DETERMINED,
+                            )
                             bridge.decisions.add(PermissionDecision.ALLOW_ONCE)
                             call("requestPermission()", "true")
                             call("loadResource('fetch', '${server.url("/reconnected")}')", "true")
-                            assertEquals(listOf("/$operation-allowed", "/reconnected"), hits.toList())
-                            assertEquals(List(2) { permission.permission }, bridge.requests.toList())
-                            assertEquals(listOf(2, 2), listOf(authorizedLoads.get(), proxy.connections.get()))
-                            bridge.decisions.add(PermissionDecision.DENY)
-                            call("loadResource('$operation', '${server.url("/$operation-denied")}')", "false")
-                            assertEquals(listOf("/$operation-allowed", "/reconnected"), hits.toList())
-                            assertEquals(List(3) { permission.permission }, bridge.requests.toList())
+                            assertEquals(operations.map { "/$it-allowed" } + "/reconnected", hits.toList())
+                            assertEquals(List(9) { permission.permission }, bridge.requests.toList())
+                            assertEquals(listOf(9, 2), listOf(authorizedLoads.get(), proxy.connections.get()))
                         } finally {
                             instrumentation.runOnMainSync { webView.destroy() }
                         }
@@ -170,7 +168,6 @@ class ContainerHttpAuthorizationTest {
     }
 
     private class PermissionBridge : HostBridge {
-        override fun permissionAuthorizationsChanged(productId: String) = Unit
         val decisions = LinkedBlockingQueue<PermissionDecision>()
         val requests = LinkedBlockingQueue<RemotePermission>()
         private val memory = MemoryStorage()
@@ -188,8 +185,6 @@ class ContainerHttpAuthorizationTest {
 
     private class MemoryStorage : HostStorage, HostCoreStorage {
         private val values = ConcurrentHashMap<Any, ByteArray>()
-        override suspend fun keys(): List<ByteArray> =
-            values.keys.filterIsInstance<List<Byte>>().map { it.toByteArray() }
         override suspend fun read(key: String): ByteArray? = values[key]
         override suspend fun write(key: String, value: ByteArray) { values[key] = value }
         override suspend fun clear(key: String) { values.remove(key) }

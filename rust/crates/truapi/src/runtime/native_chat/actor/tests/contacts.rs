@@ -59,7 +59,7 @@ fn contacts_restore_authenticated_rosters_and_isolate_wallet_network_and_grants(
 
 		let product = ProductContext::new_with_execution(
 			crate::product_id::ProductId::for_test(PRODUCT),
-			crate::platform::ProductExecutionKind::Worker,
+			crate::platform::ExecutableKind::Worker,
 		);
 		crate::host_internal::permissions::PermissionsService::new(
 			fixture.platform.as_ref(),

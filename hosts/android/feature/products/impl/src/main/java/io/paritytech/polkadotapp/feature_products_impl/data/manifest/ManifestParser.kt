@@ -4,13 +4,14 @@ import com.google.gson.Gson
 import io.paritytech.polkadotapp.common.utils.enumValueOfOrNull
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.ExecutableHost
-import io.paritytech.polkadotapp.feature_products_api.model.ExecutableKind
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardDefinition
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
 import io.paritytech.polkadotapp.feature_products_api.model.ProductIcon
 import io.paritytech.polkadotapp.tools_ipfs_api.Cid
 import timber.log.Timber
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.executableKindLabel
 import uniffi.truapi.screenPocketCardId
 import uniffi.truapi.screenPocketCardTitle
 import javax.inject.Inject
@@ -24,11 +25,10 @@ internal class ManifestParser @Inject constructor(
 
         require(remote.version == SCHEMA_VERSION) { "unsupported \$v=${remote.version}" }
         val displayName = requireNotNull(remote.displayName) { "missing displayName" }
-        // Unused here, but required by RFC-0001: a stricter Host must not see a different manifest.
-        requireNotNull(remote.description) { "missing description" }
+        val description = requireNotNull(remote.description) { "missing description" }
         val icon = requireNotNull(remote.icon) { "missing icon" }
 
-        RootManifest(displayName = displayName, icon = icon.toDomain())
+        RootManifest(displayName = displayName, description = description.ifBlank { null }, icon = icon.toDomain())
     }
 
     /** [host] is the subname read from, and the executable's serving host. */
@@ -37,8 +37,9 @@ internal class ManifestParser @Inject constructor(
             val remote = requireNotNull(gson.fromJson(rawText, ExecutableManifestRemote::class.java)) { "empty manifest" }
 
             require(remote.version == SCHEMA_VERSION) { "unsupported \$v=${remote.version}" }
-            require(remote.kind == expectedKind.manifestKind) {
-                "kind '${remote.kind}' does not match subname kind '${expectedKind.manifestKind}'"
+            val expectedLabel = executableKindLabel(expectedKind)
+            require(remote.kind == expectedLabel) {
+                "kind '${remote.kind}' does not match subname kind '$expectedLabel'"
             }
             val appVersion = requireNotNull(remote.appVersion) { "missing appVersion" }
 

@@ -11,9 +11,7 @@ protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
     func didReceiveData(viewModel: WalletCardDataViewModel, index: Int)
     func didReceive(readyAmount: BalanceViewModelProtocol?)
     func didReceive(paymentAsset: PaymentAssetViewModelProtocol)
-    func didReceive(fundingStates: [AssetFundingStatusView.FundingState])
     func didReceive(isRecoveryInProgress: Bool)
-    func didReceive(isAccountBackupPending: Bool)
     func didShowBackupNotification()
     func didHideBackupNotification()
 
@@ -30,8 +28,6 @@ protocol AssetDetailsPresenterProtocol: AnyObject {
     func setup()
     func onSendMoney()
     func onAddMoney()
-    func onFundingCompletedAction()
-    func onFundingFailedAction()
     func onBackupSync()
     func onBackupCancel()
     func onBackupWhyUpdate()
@@ -44,8 +40,6 @@ protocol AssetDetailsPresenterProtocol: AnyObject {
 
 protocol AssetDetailsInteractorInputProtocol: AnyObject {
     func setup()
-    func removeCompletedFiatOnrampTransactions()
-    func removeFailedFiatOnrampTransactions()
     func triggerSync()
     func cancelBackupNotification()
 
@@ -61,9 +55,7 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
     func didReceive(balance: Decimal)
 
     func didReceive(price: PriceData?)
-    func didReceive(fiatOnrampStatuses: Set<FiatOnrampTransactionStatusPayload>)
     func didReceive(isRecoveryInProgress: Bool)
-    func didReceive(isAccountBackupPending: Bool)
     func didReceive(showsRecoveredBalance: Bool)
 
     func didResolveTopUpProduct(_ result: Result<ProductPage, Error>)

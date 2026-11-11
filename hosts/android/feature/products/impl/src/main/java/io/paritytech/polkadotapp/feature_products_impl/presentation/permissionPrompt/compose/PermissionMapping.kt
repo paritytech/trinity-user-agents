@@ -21,6 +21,7 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.Share
 import io.paritytech.polkadotapp.design.components.icon.vectors.WiFi
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 internal val ProductPermission.icon: ImageVector
@@ -29,6 +30,7 @@ internal val ProductPermission.icon: ImageVector
         is ProductPermission.AccountAccess -> NovaIcons.PeopleOutline
         is ProductPermission.BalanceAccess -> NovaIcons.Dollar
         is ProductPermission.UserIdentityAccess -> NovaIcons.PeopleOutline
+        is ProductPermission.NftPurseRead -> NovaIcons.Dollar
         ProductPermission.ChatAuthority -> NovaIcons.PeopleOutline
         ProductPermission.ProfileDisclosure -> NovaIcons.PeopleOutline
         is ProductPermission.StatementStoreAllowance -> NovaIcons.CloudOn
@@ -56,11 +58,12 @@ private val DeviceCapabilityType.icon: ImageVector
     }
 
 @Composable
-internal fun ProductPermission.title(productId: String): String {
+internal fun ProductPermission.title(productId: ProductId): String {
     return when (this) {
         is ProductPermission.AccountAccess -> stringResource(RCommon.string.product_permission_account_title, productId, targetProductId)
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_balance_title, productId)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_user_identity_title, productId)
+        is ProductPermission.NftPurseRead -> stringResource(RCommon.string.product_permission_nft_purse_read_title, productId, ownerName())
         ProductPermission.ChatAuthority -> stringResource(RCommon.string.product_permission_chat_authority_title, productId)
         ProductPermission.ProfileDisclosure -> stringResource(RCommon.string.product_permission_profile_disclosure_title, productId)
         is ProductPermission.StatementStoreAllowance -> stringResource(RCommon.string.product_permission_allowance_title, productId)
@@ -76,7 +79,7 @@ internal fun ProductPermission.title(productId: String): String {
 }
 
 @Composable
-private fun DeviceCapabilityType.title(productId: String): String {
+private fun DeviceCapabilityType.title(productId: ProductId): String {
     val resId = when (this) {
         DeviceCapabilityType.Camera -> RCommon.string.product_permission_device_camera_title
         DeviceCapabilityType.Bluetooth -> RCommon.string.product_permission_device_bluetooth_title
@@ -99,6 +102,7 @@ internal fun ProductPermission.subtitle(): String {
         is ProductPermission.AccountAccess -> stringResource(RCommon.string.product_permission_account_subtitle, manageLater)
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_balance_subtitle, manageLater)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_user_identity_subtitle, manageLater)
+        is ProductPermission.NftPurseRead -> stringResource(RCommon.string.product_permission_nft_purse_read_subtitle, manageLater)
         ProductPermission.ChatAuthority -> stringResource(RCommon.string.product_permission_chat_authority_description)
         ProductPermission.ProfileDisclosure -> stringResource(RCommon.string.product_permission_profile_disclosure_description)
         is ProductPermission.StatementStoreAllowance -> stringResource(RCommon.string.product_permission_allowance_description)
@@ -142,3 +146,8 @@ internal fun ProductPermission.RemotePermission.shortLabel(): String {
         is ProductPermission.RemotePermission.JamPeersAccess -> stringResource(RCommon.string.product_permission_jam_peers_label, genesis)
     }
 }
+
+/** Whose purses an NFT purse read covers, as the user reads it. */
+@Composable
+internal fun ProductPermission.NftPurseRead.ownerName(): String =
+    ownerProductId?.value ?: stringResource(RCommon.string.product_permission_nft_purse_read_owner_account)

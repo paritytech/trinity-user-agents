@@ -1,13 +1,16 @@
 use std::path::PathBuf;
 
-use crate::platform::{
-	HostInfo, PlatformInfo, ProductContext, ProductExecutionKind, ProductId,
-	RuntimeConfigValidationError, SigningHostConfig,
+use crate::{
+	platform::{
+		ExecutableKind, HostInfo, PlatformInfo, ProductContext, ProductId,
+		RuntimeConfigValidationError, SigningHostConfig,
+	},
+	pocket_cards::PinnedPocketCard,
 };
 use truapi::latest::HostPlatform;
 
 /// Process-owned native host configuration shared by every product execution.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct HostRuntimeConfig {
 	/// Host name shown by the wallet during SSO pairing.
 	pub host_name: String,
@@ -45,6 +48,11 @@ pub struct HostRuntimeConfig {
 	/// Existing, writable directory for core-owned databases, kept out of
 	/// device backups. The runtime opens its database there at startup.
 	pub database_directory: String,
+	/// Cards the host pins in the Pocket: listed first, removable by nobody.
+	/// A card pinned on an earlier start and missing here stays only if the
+	/// user added it.
+	#[uniffi(default)]
+	pub pinned_pocket_cards: Vec<PinnedPocketCard>,
 	/// Optional local signing-host secret material (raw BIP-39 entropy).
 	#[uniffi(default)]
 	pub local_session_secret: Option<Vec<u8>>,
@@ -58,12 +66,12 @@ pub struct HostRuntimeConfig {
 }
 
 /// Trusted identity attached by a native host to one executable connection.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct ProductExecutionConfig {
 	/// Canonical product identifier used for policy, storage, and derivation.
 	pub product_id: ProductId,
 	/// Trusted executable kind selected before product code starts.
-	pub execution_kind: ProductExecutionKind,
+	pub execution_kind: ExecutableKind,
 }
 
 /// [`HostRuntimeConfig`] once validated, in the shape the runtime is built from.
@@ -77,6 +85,8 @@ pub struct NativeResolvedHostRuntimeConfig {
 	pub local_session_lite_username: Option<String>,
 	/// Directory the core database lives in.
 	pub database_directory: PathBuf,
+	/// Cards the host pins in the Pocket.
+	pub pinned_pocket_cards: Vec<PinnedPocketCard>,
 }
 
 /// Why a native runtime or product configuration was refused.
@@ -115,7 +125,7 @@ impl From<RuntimeConfigValidationError> for NativeRuntimeConfigError {
 }
 
 /// A 32-byte genesis hash handed over as bytes, or the error naming `field`.
-pub fn genesis_hash(field: &str, bytes: &[u8]) -> Result<[u8; 32], NativeRuntimeConfigError> {
+fn genesis_hash(field: &str, bytes: &[u8]) -> Result<[u8; 32], NativeRuntimeConfigError> {
 	bytes.try_into().map_err(|_| NativeRuntimeConfigError::Invalid {
 		reason: format!("{field} must be exactly 32 bytes, got {}", bytes.len()),
 	})
@@ -162,6 +172,12 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 			local_session_secret: config.local_session_secret,
 			local_session_lite_username: config.local_session_lite_username,
 			database_directory: PathBuf::from(config.database_directory),
+			pinned_pocket_cards: config
+				.pinned_pocket_cards
+				.into_iter()
+				.map(PinnedPocketCard::screened)
+				.collect::<Result<_, _>>()
+				.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })?,
 		})
 	}
 }

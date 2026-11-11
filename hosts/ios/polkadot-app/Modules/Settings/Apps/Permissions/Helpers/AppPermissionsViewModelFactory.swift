@@ -33,7 +33,7 @@ extension ProductPermission {
         case let .networkAccessBundle(domains):
             String(localized: .Products.permissionBodyNetworkAccess(domain: domains.joined(separator: ", ")))
         case let .accountAccess(targetProductId):
-            String(localized: .Products.permissionBodyAccountAccess(targetProductId: targetProductId))
+            String(localized: .Products.permissionBodyAccountAccess(targetProductId: targetProductId.rawValue))
         case .balanceAccess: String(localized: .Products.permissionBodyBalanceAccess)
         case .webRtcAccess: String(localized: .Products.permissionBodyWebRtc)
         case .chainSubmitAccess: String(localized: .Products.permissionBodyChainSubmit)
@@ -46,6 +46,8 @@ extension ProductPermission {
         case .profileDisclosure: String(localized: .Products.permissionBodyProfileDisclosure)
         case let .statementStoreAllowance(derivationIndex):
             ProductPermission.statementStoreAllowanceDescription(derivationIndex: derivationIndex)
+        case let .nftPurseRead(ownerProductId):
+            NftPurseReadCopy.description(ownerProductId: ownerProductId)
         }
     }
 
@@ -64,6 +66,7 @@ extension ProductPermission {
         case .chatAuthority: "message.badge.shield"
         case .profileDisclosure: "person.crop.square"
         case .statementStoreAllowance: "externaldrive.badge.plus"
+        case .nftPurseRead: "square.stack.3d.up.fill"
         }
     }
 
@@ -82,6 +85,7 @@ extension ProductPermission {
         case .chatAuthority: String(localized: .Products.appPermissionChatAuthorityTitle)
         case .profileDisclosure: String(localized: .Products.appPermissionProfileDisclosureTitle)
         case .statementStoreAllowance: String(localized: .Products.appPermissionStatementStoreAllowanceTitle)
+        case .nftPurseRead: String(localized: .Products.appPermissionNftPursesTitle)
         }
     }
 }

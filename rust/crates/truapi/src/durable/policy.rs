@@ -38,13 +38,19 @@ pub trait SubmissionPolicy: Send + Sync {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Preparation {
 	/// Signed and ready to submit.
-	Ready(MortalExtrinsic),
+	Ready {
+		/// The attempt.
+		extrinsic: MortalExtrinsic,
+		/// Params that replace the row's from this attempt on, for what the
+		/// policy learned while building it. `None` keeps the row's.
+		params: Option<PolicyParams>,
+	},
 	/// It can never be built. The transaction fails.
 	GiveUp,
 }
 
 /// Why a policy could not answer for a batch this time.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 #[error("submission policy could not prepare its batch: {reason}")]
 pub struct PolicyError {
 	/// What went wrong.

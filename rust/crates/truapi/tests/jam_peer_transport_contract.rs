@@ -40,10 +40,11 @@ fn a_genesis_has_one_spelling_and_names_its_alpn() {
 	}
 }
 
-/// `JamPeers` is appended last, so every earlier permission keeps the SCALE
-/// index stored decisions and older peers already use.
+/// `JamPeers` sits at index 111, clear of the released sequential range, so
+/// every released permission keeps the SCALE index stored decisions and older
+/// peers already use.
 #[test]
-fn jam_peers_is_the_last_remote_permission_and_names_its_genesis() {
+fn jam_peers_stays_clear_of_released_permissions_and_names_its_genesis() {
 	for (permission, index) in [
 		(latest::RemotePermission::Remote { domains: Vec::new() }, 0u8),
 		(latest::RemotePermission::WebRtc, 1),
@@ -54,7 +55,7 @@ fn jam_peers_is_the_last_remote_permission_and_names_its_genesis() {
 		assert_eq!(permission.encode()[0], index, "{permission:?}");
 	}
 	let jam = latest::RemotePermission::JamPeers { genesis: genesis() };
-	let mut expected = vec![5u8];
+	let mut expected = vec![111u8];
 	expected.extend_from_slice(&genesis());
 	assert_eq!(jam.encode(), expected);
 	assert_eq!(latest::RemotePermission::decode(&mut &expected[..]), Ok(jam.clone()));

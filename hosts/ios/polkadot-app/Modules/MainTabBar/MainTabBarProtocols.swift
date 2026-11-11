@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import UIKit
 import PolkadotUI
 import UIKitExt
@@ -38,11 +39,13 @@ protocol MainTabBarInteractorOutputProtocol: AnyObject {
     func didReceiveChainStatus(_ rows: [ChainConnectionStatusViewModel])
     func didReceiveTabBarLabelsEnabled(_ isEnabled: Bool)
     func didReceiveProductGamePill(_ pill: ProductGamePill?)
+    func didReceivePaymentsSetupWaiting(_ isWaiting: Bool)
 }
 
 @MainActor
 protocol MainTabBarWireframeProtocol: AnyObject {
     func showPolkadotSignIn(with url: URL, view: MainTabBarViewProtocol?)
+    func showPaymentsSetupNotice(isVisible: Bool)
     func openProduct(productId: ProductId)
     func openChat(_ model: ChatOpenModel)
     func showConnectionStatus(_ viewModel: ConnectionStatusSheetViewModel, from view: MainTabBarViewProtocol?)
@@ -66,12 +69,12 @@ enum TabBarItem: String, CaseIterable {
         return asset.withRenderingMode(.alwaysTemplate)
     }
 
-    var title: String {
+    var title: LocalizedStringResource {
         switch self {
-        case .chat: String(localized: .tabChat)
-        case .wallet: String(localized: .tabWallet)
-        case .browse: String(localized: .tabBrowse)
-        case .settings: String(localized: .tabSettings)
+        case .chat: .tabChat
+        case .wallet: .tabWallet
+        case .browse: .tabBrowse
+        case .settings: .tabSettings
         }
     }
 }
@@ -91,6 +94,5 @@ extension TabBarItem {
 protocol SPAHosting: AnyObject {
     func openProduct(page: ProductPage)
     func presentProduct(page: ProductPage)
-    func minimizeSPA()
     func closeSPA(tabId: UUID)
 }

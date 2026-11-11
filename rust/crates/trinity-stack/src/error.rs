@@ -23,6 +23,9 @@ pub enum Error {
 	/// `tld` is not one lowercase DNS label without the leading dot.
 	#[error("tld {0:?} must be one lowercase label of a-z, 0-9 and -")]
 	InvalidTld(String),
+	/// A dotNS name is not lowercase DNS labels joined by dots.
+	#[error("name {0:?} must be labels of a-z, 0-9 and - joined by dots")]
+	InvalidName(String),
 	/// A field that must not be empty is empty.
 	#[error("{0} is empty")]
 	Empty(&'static str),
@@ -41,9 +44,16 @@ pub enum Error {
 	/// A `paraId` is missing on a parachain, present on the relay, or repeated.
 	#[error("paraId: {0}")]
 	ParaId(String),
-	/// `Asset.chain` or `coinage.chain` names a role no chain has.
+	/// `Asset.chain` or `coinage.chain` names a role no chain has, or `dotns` is set on a stack
+	/// without an `AssetHub`.
 	#[error("no chain has role {0:?}")]
 	UnknownChainRole(String),
+	/// A `dotns` key is not 1 to 32 ASCII letters and digits.
+	#[error("dotns key {0:?} must be 1 to 32 ASCII letters and digits")]
+	DotnsKey(String),
+	/// A `dotns` address is the zero address, which the registry returns for an unset key.
+	#[error("dotns key {0:?} has the zero address; leave an unset key out")]
+	DotnsZeroAddress(String),
 	/// A hex value is not lowercase, 0x-prefixed and of the right length.
 	#[error("{field} is not {bytes} bytes of lowercase 0x-prefixed hex")]
 	InvalidHex {
@@ -125,27 +135,4 @@ impl Error {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	/// Codes are a published contract: readers in other languages match on them.
-	#[test]
-	fn codes_keep_their_published_spelling() {
-		let codes = [
-			(Error::NotJson(String::new()), "not-json"),
-			(Error::InvalidBase64, "invalid-base64"),
-			(Error::NonCanonicalR, "non-canonical-r"),
-			(Error::ParaId(String::new()), "para-id"),
-			(Error::InvalidHex { field: "f", bytes: 1 }, "invalid-hex"),
-			(
-				Error::EnvelopeVersionMismatch { envelope: 1, payload: 2 },
-				"envelope-version-mismatch",
-			),
-			(Error::ForkSignedWithSourceKey, "fork-signed-with-source-key"),
-			(Error::SecretKeyLength(3), "secret-key-length"),
-		];
-		for (error, code) in codes {
-			assert_eq!(error.code(), code);
-		}
-	}
-}
+mod tests;

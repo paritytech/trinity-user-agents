@@ -26,7 +26,6 @@ import io.parity.truapi.TrUAPIProductExecution
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.HostApiInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
@@ -35,6 +34,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -54,14 +54,15 @@ import org.mockito.Mockito.mockStatic
 import org.mockito.stubbing.Answer
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.HostRejection
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import uniffi.truapi.WsBridgeEndpoint
 
 class ProductTrUAPIHostBridgeTest {
     private val refusingCore = Answer<Any> { throw IllegalStateException("loopback port unavailable") }
 
     private val gameReminder = mockk<ProductGameReminder>(relaxUnitFun = true)
-    private val game = ProductId.fromStoredValue("game.dot")
+    private val game = ProductId.parse("game.dot").getOrThrow()
 
     private fun TestScope.bridge(
         launcher: TrUAPIConfirmationLauncher = mock(TrUAPIConfirmationLauncher::class.java),
@@ -73,8 +74,8 @@ class ProductTrUAPIHostBridgeTest {
         encryptedPreferences = mock(EncryptedPreferences::class.java),
         confirmationLauncher = launcher,
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
+        networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
         dotNsTldProvider = mock(DotNsTldProvider::class.java),
-        pocketCardStore = mockk { every { observeCards() } returns emptyFlow() },
         context = mock(Context::class.java),
         appLanguageProvider = object : AppLanguageProvider {
             override val languageTag = flowOf("en-US")
@@ -82,6 +83,7 @@ class ProductTrUAPIHostBridgeTest {
         permissionRepository = Lazy { mockk { coEvery { getAllByProduct(any()) } returns emptyList() } },
         permissionChanges = PermissionAuthorizationChanges(),
         productGameReminder = gameReminder,
+        extensionVersions = mockk(),
         scope = scope,
     )
 
@@ -89,10 +91,10 @@ class ProductTrUAPIHostBridgeTest {
     fun `a core that refuses to open the execution fails the attach instead of throwing`() = runTest {
         val outcome = bridge().attach(
             runtime = mock(TrUAPIHostRuntime::class.java, refusingCore),
-            productId = ProductId.fromStoredValue("game.dot"),
+            productId = ProductId.parse("game.dot").getOrThrow(),
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
-            kind = ProductExecutionKind.APP,
+            kind = ExecutableKind.APP,
             onPermissionRevoked = {},
             onReadyToInject = {},
         )
@@ -108,10 +110,10 @@ class ProductTrUAPIHostBridgeTest {
         })
         val outcome = bridge(launcher).attach(
             runtime = runtime,
-            productId = ProductId.fromStoredValue("game.dot"),
+            productId = ProductId.parse("game.dot").getOrThrow(),
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
-            kind = ProductExecutionKind.APP,
+            kind = ExecutableKind.APP,
             onPermissionRevoked = {},
             onReadyToInject = {},
         )
@@ -137,7 +139,7 @@ class ProductTrUAPIHostBridgeTest {
                 }
 
                 val confirmation = prompted.await() as TrUAPIConfirmation.ProfileDisclosure
-                assertEquals("seity.paseo", confirmation.requesterProductId)
+                assertEquals(ProductId.parse("seity.paseo").getOrThrow(), confirmation.requesterProductId)
                 assertFalse(pending.isCompleted)
                 answer.complete(approved)
                 val expected: Any = if (permissionCallback) {
@@ -169,7 +171,9 @@ class ProductTrUAPIHostBridgeTest {
 
     @Test
     fun `supported permission preserves explicit approval and denial through product callbacks`() = runTest {
-        val review = UserConfirmationReview.AccountAccess(AccountAccessReview("game.dot", "target.dot"))
+        val review = UserConfirmationReview.AccountAccess(
+            AccountAccessReview(game, ProductId.parse("target.dot").getOrThrow()),
+        )
         for (approved in listOf(true, false)) {
             val prompts = mutableListOf<TrUAPIConfirmation>()
             val launcher = mockk<TrUAPIConfirmationLauncher>()
@@ -181,8 +185,8 @@ class ProductTrUAPIHostBridgeTest {
                 callbacks.confirmPermission(review),
             )
             val prompt = prompts.single() as TrUAPIConfirmation.AccountAccess
-            assertEquals("game.dot", prompt.requesterProductId)
-            assertEquals("target.dot", prompt.targetProductId)
+            assertEquals(game, prompt.requesterProductId)
+            assertEquals(ProductId.parse("target.dot").getOrThrow(), prompt.targetProductId)
         }
     }
 
@@ -200,9 +204,10 @@ class ProductTrUAPIHostBridgeTest {
                 mockConstruction(IntentFilter::class.java).use {
                     val execution = mockk<TrUAPIProductExecution>(relaxUnitFun = true) {
                         every { startWsBridge(any()) } returns WsBridgeEndpoint(port = 1u, token = "token")
+                        every { isClosed() } returns false
                     }
                     val runtime = mockk<TrUAPIHostRuntime> {
-                        every { openProductExecution(any(), any(), any(), any(), any()) } returns execution
+                        every { openProductExecution(any(), any(), any(), any()) } returns execution
                     }
                     val bridge = bridge(
                         scope = scope,
@@ -214,7 +219,7 @@ class ProductTrUAPIHostBridgeTest {
                         productId = game,
                         chains = EMPTY_CHAINS,
                         navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
-                        kind = ProductExecutionKind.WORKER,
+                        kind = ExecutableKind.WORKER,
                         onPermissionRevoked = {},
                         onReadyToInject = {},
                     )
@@ -244,7 +249,7 @@ class ProductTrUAPIHostBridgeTest {
             productId = game,
             chains = EMPTY_CHAINS,
             navigationPolicy = NavigationPolicy.DeeplinkNavigation(onDeeplinkNavigation = {}),
-            kind = ProductExecutionKind.WIDGET,
+            kind = ExecutableKind.WIDGET,
             card = card,
             onPermissionRevoked = {},
             onReadyToInject = {},
@@ -285,7 +290,7 @@ class ProductTrUAPIHostBridgeTest {
 
         coVerify {
             gameReminder.schedule(game, 1_000)
-            gameReminder.cancel(game)
+            gameReminder.cancelByProduct(game)
         }
     }
 

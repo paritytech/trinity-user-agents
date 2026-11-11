@@ -12,17 +12,17 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
-use futures::future::BoxFuture;
-use parity_scale_codec::Encode;
+use futures::future::{self, BoxFuture};
+use parity_scale_codec::{Decode, DecodeAll, Encode};
 use tracing::{error, instrument};
-use truapi::CancellationToken;
+use truapi::{CancellationToken, versioned::Versioned};
 
 use crate::{
 	frame::{
 		MESSAGE_TYPE_CANCEL, MESSAGE_TYPE_INTERRUPT, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
 		MESSAGE_TYPE_START, MESSAGE_TYPE_STOP, PROTOCOL_ERROR_KEY, PROTOCOL_ERROR_METHOD_ID,
 		PROTOCOL_ERROR_TRAIT_ID, Payload, ProtocolErrorV1, ProtocolMessage, VersionedProtocolError,
-		encode_cancelled_response,
+		encode_cancelled_response, encode_malformed_frame_error,
 	},
 	generated::wire_table::MethodIds,
 	subscription::{Spawner, SubscriptionManager, SubscriptionStream},
@@ -55,13 +55,32 @@ pub type SubscriptionHandler = Arc<
 /// A registered request handler plus the discriminants it replies on.
 pub struct RequestEntry {
 	ids: MethodIds,
+	newest_version: u8,
 	handler: RequestHandler,
 }
 
 /// A registered subscription handler plus the discriminants its frames carry.
 pub struct SubscriptionEntry {
 	ids: MethodIds,
+	newest_version: u8,
 	handler: SubscriptionHandler,
+}
+
+/// Answer `request_id` on the reserved protocol-error address.
+fn send_protocol_error(
+	transport: &dyn Transport,
+	request_id: String,
+	error: VersionedProtocolError,
+) {
+	transport.send(ProtocolMessage {
+		request_id,
+		payload: Payload {
+			trait_id: PROTOCOL_ERROR_TRAIT_ID,
+			method_id: PROTOCOL_ERROR_METHOD_ID,
+			message_type: MESSAGE_TYPE_RESPONSE,
+			value: error.encode(),
+		},
+	});
 }
 
 /// Routes incoming protocol messages to registered handlers, keyed on the
@@ -72,7 +91,7 @@ pub struct Dispatcher {
 	subscriptions: SubscriptionManager,
 	/// Trusted executable kind bound to this connection; `None` leaves the
 	/// surface unrestricted for direct dispatcher embeddings.
-	execution: Option<crate::platform::ProductExecutionKind>,
+	execution: Option<crate::platform::ExecutableKind>,
 	/// `(trait, method)` pairs already reported on this connection. A peer
 	/// whose wire table disagrees with ours is exactly what these reports are
 	/// for, and exactly what would repeat them once per frame, so each pair is
@@ -166,10 +185,7 @@ impl Dispatcher {
 	}
 
 	/// Construct a dispatcher bound to a trusted executable kind.
-	pub fn for_execution(
-		spawner: Spawner,
-		execution: crate::platform::ProductExecutionKind,
-	) -> Self {
+	pub fn for_execution(spawner: Spawner, execution: crate::platform::ExecutableKind) -> Self {
 		Self { execution: Some(execution), ..Self::new(spawner) }
 	}
 
@@ -187,8 +203,39 @@ impl Dispatcher {
 		}
 	}
 
+	/// Returns the error to send back when `payload` is in a version newer than
+	/// `newest_version`. The first byte of a request is its version, starting
+	/// at 0 for `V1`.
+	fn unsupported_version(
+		&self,
+		ids: MethodIds,
+		newest_version: u8,
+		payload: &[u8],
+	) -> Option<VersionedProtocolError> {
+		let index = *payload.first()?;
+		if index < newest_version {
+			return None;
+		}
+		// The first byte is all a refusal reads, so a corrupt payload is
+		// refused too. An implausible version tells the two apart.
+		self.report_once((ids.trait_id, ids.method_id), || {
+			error!(
+				trait_id = ids.trait_id,
+				method_id = ids.method_id,
+				version = u16::from(index) + 1,
+				newest_version,
+				"refusing a request in a version this host does not know"
+			);
+		});
+		Some(VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedVersion {
+			trait_id: ids.trait_id,
+			method_id: ids.method_id,
+			newest_version,
+		}))
+	}
+
 	/// Return whether this connection may access a service execution kind.
-	pub fn allows_execution(&self, required: crate::platform::ProductExecutionKind) -> bool {
+	pub fn allows_execution(&self, required: crate::platform::ExecutableKind) -> bool {
 		self.execution.is_none_or(|actual| actual == required)
 	}
 
@@ -197,15 +244,31 @@ impl Dispatcher {
 	/// entry if any; callers (the generated `dispatcher::register`) should
 	/// treat `Some` as a programming error since each discriminant pair must
 	/// own exactly one handler.
-	pub fn on_request<F>(&mut self, ids: MethodIds, handler: F) -> Option<RequestEntry>
+	///
+	/// The handler takes the decoded `Request`. Without running it, the
+	/// dispatcher answers a version newer than `Request::LATEST` with an
+	/// `UnsupportedVersion` protocol error, and bytes that do not decode with
+	/// `MalformedFrame`.
+	pub fn on_request<Request, F>(&mut self, ids: MethodIds, handler: F) -> Option<RequestEntry>
 	where
-		F: Fn(String, Vec<u8>, CancellationToken) -> BoxFuture<'static, Vec<u8>>
+		Request: Versioned + Decode + 'static,
+		F: Fn(String, Request, CancellationToken) -> BoxFuture<'static, Vec<u8>>
 			+ Send
 			+ Sync
 			+ 'static,
 	{
-		self.by_request
-			.insert((ids.trait_id, ids.method_id), RequestEntry { ids, handler: Arc::new(handler) })
+		let decode_then_handle: RequestHandler =
+			Arc::new(move |request_id, bytes, cancel| match Request::decode_all(&mut &bytes[..]) {
+				Ok(request) => handler(request_id, request, cancel),
+				Err(error) => {
+					let malformed = encode_malformed_frame_error(error.to_string());
+					Box::pin(future::ready(malformed))
+				},
+			});
+		self.by_request.insert(
+			(ids.trait_id, ids.method_id),
+			RequestEntry { ids, newest_version: Request::LATEST, handler: decode_then_handle },
+		)
 	}
 
 	/// Register a subscription handler, keyed on
@@ -213,16 +276,33 @@ impl Dispatcher {
 	/// address — [`dispatch`](Self::dispatch) checks its `message_type` and
 	/// routes it to [`SubscriptionManager::handle_stop`] directly, without
 	/// invoking this handler. Returns the previously registered entry if any.
-	pub fn on_subscription<F>(&mut self, ids: MethodIds, handler: F) -> Option<SubscriptionEntry>
+	///
+	/// The handler takes the decoded `Start` payload, which the dispatcher
+	/// checks as for [`on_request`](Self::on_request), ending the stream with a
+	/// `MalformedFrame` interrupt when it does not decode.
+	pub fn on_subscription<Request, F>(
+		&mut self,
+		ids: MethodIds,
+		handler: F,
+	) -> Option<SubscriptionEntry>
 	where
-		F: Fn(String, Vec<u8>) -> BoxFuture<'static, Result<SubscriptionStream, Vec<u8>>>
+		Request: Versioned + Decode + 'static,
+		F: Fn(String, Request) -> BoxFuture<'static, Result<SubscriptionStream, Vec<u8>>>
 			+ Send
 			+ Sync
 			+ 'static,
 	{
+		let decode_then_handle: SubscriptionHandler =
+			Arc::new(move |request_id, bytes| match Request::decode_all(&mut &bytes[..]) {
+				Ok(request) => handler(request_id, request),
+				Err(error) => {
+					let malformed = encode_malformed_frame_error(error.to_string());
+					Box::pin(future::ready(Err(malformed)))
+				},
+			});
 		self.by_start.insert(
 			(ids.trait_id, ids.method_id),
-			SubscriptionEntry { ids, handler: Arc::new(handler) },
+			SubscriptionEntry { ids, newest_version: Request::LATEST, handler: decode_then_handle },
 		)
 	}
 
@@ -288,15 +368,27 @@ impl Dispatcher {
 				},
 				Reservation::AlreadyWithdrawn => encode_cancelled_response(),
 				Reservation::Start(cancel) => {
-					let value =
-						(entry.handler)(request_id.clone(), message.payload.value, cancel).await;
-					// The single terminal `Response` is how a peer learns its
-					// cancel was heard, so it wins over whatever the handler
-					// returned.
-					if self.release_request(&request_id) {
-						encode_cancelled_response()
-					} else {
-						value
+					let outcome = match self.unsupported_version(
+						entry.ids,
+						entry.newest_version,
+						&message.payload.value,
+					) {
+						Some(refusal) => Err(refusal),
+						None => {
+							Ok((entry.handler)(request_id.clone(), message.payload.value, cancel)
+								.await)
+						},
+					};
+					// The single terminal answer is how a peer learns its cancel
+					// was heard, so a `Cancel` wins over a refusal and over
+					// whatever the handler returned.
+					match (self.release_request(&request_id), outcome) {
+						(true, _) => encode_cancelled_response(),
+						(false, Ok(value)) => value,
+						(false, Err(refusal)) => {
+							send_protocol_error(transport.as_ref(), request_id, refusal);
+							return;
+						},
 					}
 				},
 			};
@@ -335,6 +427,15 @@ impl Dispatcher {
 			// subscription instead of racing the registration.
 			let request_id = message.request_id.clone();
 			let token = self.subscriptions.reserve(request_id.clone());
+			// Refused the way a `Start` that fails to decode is: the reservation
+			// has already replaced any live subscription under this id.
+			if let Some(error) =
+				self.unsupported_version(entry.ids, entry.newest_version, &message.payload.value)
+			{
+				self.subscriptions.cancel_reservation(token);
+				send_protocol_error(transport.as_ref(), request_id, error);
+				return;
+			}
 			let result = (entry.handler)(request_id, message.payload.value).await;
 			match result {
 				Ok(stream) => {
@@ -375,19 +476,14 @@ impl Dispatcher {
 			});
 			// A codec 2 peer that asked for something unimplemented can read
 			// the answer, and dropping it would leave the peer waiting forever.
-			transport.send(ProtocolMessage {
-				request_id: message.request_id,
-				payload: Payload {
-					trait_id: PROTOCOL_ERROR_TRAIT_ID,
-					method_id: PROTOCOL_ERROR_METHOD_ID,
-					message_type: MESSAGE_TYPE_RESPONSE,
-					value: VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedMessage {
-						trait_id,
-						method_id,
-					})
-					.encode(),
-				},
-			});
+			send_protocol_error(
+				transport.as_ref(),
+				message.request_id,
+				VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedMessage {
+					trait_id,
+					method_id,
+				}),
+			);
 		}
 	}
 
@@ -457,653 +553,4 @@ impl Dispatcher {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::frame::{MESSAGE_TYPE_RECEIVE, MESSAGE_TYPE_REQUEST};
-	use std::sync::Mutex;
-
-	fn test_spawner() -> Spawner {
-		#[cfg(not(target_arch = "wasm32"))]
-		{
-			crate::subscription::thread_per_subscription_spawner()
-		}
-		#[cfg(target_arch = "wasm32")]
-		{
-			Arc::new(futures::executor::block_on)
-		}
-	}
-
-	#[derive(Default)]
-	struct RecordingTransport {
-		sent: Mutex<Vec<ProtocolMessage>>,
-	}
-
-	impl RecordingTransport {
-		fn sent(&self) -> Vec<ProtocolMessage> {
-			self.sent.lock().unwrap().clone()
-		}
-	}
-
-	impl Transport for RecordingTransport {
-		fn send(&self, message: ProtocolMessage) {
-			self.sent.lock().unwrap().push(message);
-		}
-		fn on_message(
-			&self,
-			_handler: Box<dyn Fn(ProtocolMessage) + Send + Sync>,
-		) -> Box<dyn FnOnce()> {
-			Box::new(|| {})
-		}
-	}
-
-	/// A frame naming `request_id`, for the tests that need more than one.
-	fn frame_for(
-		request_id: &str,
-		trait_id: u8,
-		method_id: u8,
-		message_type: u8,
-	) -> ProtocolMessage {
-		ProtocolMessage {
-			request_id: request_id.into(),
-			payload: Payload { trait_id, method_id, message_type, value: Vec::new() },
-		}
-	}
-
-	/// The `Response` `request_id` is answered with.
-	fn response_for(
-		request_id: &str,
-		trait_id: u8,
-		method_id: u8,
-		value: Vec<u8>,
-	) -> ProtocolMessage {
-		ProtocolMessage {
-			request_id: request_id.into(),
-			payload: Payload { trait_id, method_id, message_type: MESSAGE_TYPE_RESPONSE, value },
-		}
-	}
-
-	/// The `Response` a request at `(trait_id, method_id)` answers with.
-	fn expect_response(trait_id: u8, method_id: u8, value: Vec<u8>) -> Vec<ProtocolMessage> {
-		vec![response_for("p:1", trait_id, method_id, value)]
-	}
-
-	fn make_frame(
-		trait_id: u8,
-		method_id: u8,
-		message_type: u8,
-		value: Vec<u8>,
-	) -> ProtocolMessage {
-		ProtocolMessage {
-			request_id: "p:1".into(),
-			payload: Payload { trait_id, method_id, message_type, value },
-		}
-	}
-
-	#[test]
-	fn dispatch_unknown_id_sends_correlated_protocol_error() {
-		let dispatcher = Dispatcher::new(test_spawner());
-		let transport = Arc::new(RecordingTransport::default());
-		let transport_dyn: Arc<dyn Transport> = transport.clone();
-		let frame = make_frame(250, 251, MESSAGE_TYPE_REQUEST, Vec::new());
-		futures::executor::block_on(dispatcher.dispatch(frame, transport_dyn));
-		// 250 != 251 on purpose: the reply must echo the pair in the order it
-		// arrived, and equal values would let a transposition pass.
-		assert_eq!(
-			transport.sent(),
-			vec![ProtocolMessage {
-				request_id: "p:1".into(),
-				payload: Payload {
-					trait_id: PROTOCOL_ERROR_TRAIT_ID,
-					method_id: PROTOCOL_ERROR_METHOD_ID,
-					message_type: MESSAGE_TYPE_RESPONSE,
-					value: VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedMessage {
-						trait_id: 250,
-						method_id: 251,
-					})
-					.encode(),
-				},
-			}]
-		);
-	}
-
-	#[test]
-	fn dispatch_protocol_error_does_not_send_another_error() {
-		let dispatcher = Dispatcher::new(test_spawner());
-		let transport = Arc::new(RecordingTransport::default());
-		let frame = make_frame(
-			PROTOCOL_ERROR_TRAIT_ID,
-			PROTOCOL_ERROR_METHOD_ID,
-			MESSAGE_TYPE_RESPONSE,
-			VersionedProtocolError::V1(ProtocolErrorV1::UnsupportedMessage {
-				trait_id: 250,
-				method_id: 251,
-			})
-			.encode(),
-		);
-		futures::executor::block_on(dispatcher.dispatch(frame, transport.clone()));
-		assert_eq!(transport.sent(), Vec::<ProtocolMessage>::new());
-	}
-
-	/// A handler error already owns the complete response payload. The
-	/// dispatcher only routes it back to the same address the request
-	/// arrived on — request and response now share one id.
-	#[test]
-	fn dispatch_request_handler_error_emits_response_payload() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
-		let ids = MethodIds { trait_id: 7, method_id: 200 };
-		dispatcher.on_request(ids, |_request_id, _bytes, _cancel| {
-			// A method's failure is a `Result` inside the response payload, so
-			// an error path still hands back bytes to send.
-			Box::pin(async move { vec![9, 8, 7] })
-		});
-		let transport = Arc::new(RecordingTransport::default());
-		let frame = make_frame(7, 200, MESSAGE_TYPE_REQUEST, Vec::new());
-		futures::executor::block_on(dispatcher.dispatch(frame, transport.clone()));
-		let sent = transport.sent();
-		assert_eq!(sent.len(), 1, "exactly one response expected");
-		assert_eq!(sent[0].payload.trait_id, 7);
-		assert_eq!(sent[0].payload.method_id, 200);
-		assert_eq!(sent[0].payload.value, vec![9, 8, 7]);
-	}
-
-	/// Registering two handlers under the same key must not silently
-	/// overwrite. The contract chosen here is "loud": `on_request`
-	/// returns the previous handler, so callers can detect collisions.
-	#[test]
-	fn register_request_twice_returns_previous_handler() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
-		let ids = MethodIds { trait_id: 7, method_id: 200 };
-		let prev = dispatcher
-			.on_request(ids, |_request_id, _bytes, _cancel| Box::pin(async move { Vec::new() }));
-		assert!(prev.is_none(), "first registration has no predecessor");
-		let prev = dispatcher
-			.on_request(ids, |_request_id, _bytes, _cancel| Box::pin(async move { Vec::new() }));
-		assert!(prev.is_some(), "second registration must return the previous handler");
-	}
-
-	/// A `Stop` frame (`message_type == MESSAGE_TYPE_STOP`) arrives at the
-	/// same address as `Start` and must route to
-	/// `SubscriptionManager::handle_stop` directly — never invoking the
-	/// registered handler, which would otherwise try to start a second
-	/// subscription instead of cancelling the first.
-	#[test]
-	fn stop_frame_never_invokes_the_subscription_handler() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
-		let ids = MethodIds { trait_id: 7, method_id: 50 };
-		let invoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
-		let invoked_in_handler = invoked.clone();
-		dispatcher.on_subscription(ids, move |_request_id, _bytes| {
-			invoked_in_handler.store(true, std::sync::atomic::Ordering::SeqCst);
-			Box::pin(async move { Ok(Box::pin(futures::stream::empty()) as SubscriptionStream) })
-		});
-		let transport = Arc::new(RecordingTransport::default());
-		let transport_dyn: Arc<dyn Transport> = transport.clone();
-		let frame = make_frame(7, 50, MESSAGE_TYPE_STOP, Vec::new());
-		futures::executor::block_on(dispatcher.dispatch(frame, transport_dyn));
-		assert!(
-			!invoked.load(std::sync::atomic::Ordering::SeqCst),
-			"a Stop frame must not invoke the subscription handler"
-		);
-		assert!(transport.sent().is_empty(), "handle_stop on an unknown request id emits no frame");
-	}
-
-	/// A request method's `Response` shares its address. Reading the leg off
-	/// `message_type` is the only thing that stops an inbound `Response`, or
-	/// any other leg, from being run as a fresh request and answered.
-	/// `Cancel` is the one other leg this address accepts, and it is covered
-	/// by its own tests rather than listed here.
-	#[test]
-	fn a_request_method_ignores_every_leg_but_request_and_cancel() {
-		for message_type in [MESSAGE_TYPE_RESPONSE, MESSAGE_TYPE_INTERRUPT, MESSAGE_TYPE_STOP, 99] {
-			let mut dispatcher = Dispatcher::new(test_spawner());
-			let ids = MethodIds { trait_id: 7, method_id: 50 };
-			let invoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
-			let invoked_in_handler = invoked.clone();
-			dispatcher.on_request(ids, move |_request_id, _bytes, _cancel| {
-				invoked_in_handler.store(true, std::sync::atomic::Ordering::SeqCst);
-				Box::pin(async move { Vec::new() })
-			});
-			let transport = Arc::new(RecordingTransport::default());
-			let transport_dyn: Arc<dyn Transport> = transport.clone();
-			let frame = make_frame(7, 50, message_type, Vec::new());
-			futures::executor::block_on(dispatcher.dispatch(frame, transport_dyn));
-			assert!(
-				!invoked.load(std::sync::atomic::Ordering::SeqCst),
-				"message_type {message_type} must not invoke a request handler"
-			);
-			assert!(
-				transport.sent().is_empty(),
-				"message_type {message_type} must not be answered"
-			);
-		}
-	}
-
-	/// The whole point of the leg: a `Cancel` naming a call in flight fires
-	/// the token that call's handler is holding, and the call still settles
-	/// with exactly one `Response`.
-	#[test]
-	fn cancel_fires_the_in_flight_token_and_the_call_still_answers_once() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
-		let ids = MethodIds { trait_id: 7, method_id: 60 };
-		// The handler parks on its token, so the response it produces is
-		// proof the cancel arrived rather than a race the test won by luck.
-		dispatcher.on_request(ids, move |_request_id, _bytes, cancel| {
-			Box::pin(async move {
-				cancel.cancelled().await;
-				vec![1, 2, 3]
-			})
-		});
-		let transport = Arc::new(RecordingTransport::default());
-
-		let request_transport: Arc<dyn Transport> = transport.clone();
-		let cancel_transport: Arc<dyn Transport> = transport.clone();
-		// `join` polls in argument order, so the request reaches its
-		// registration before the cancel looks for it.
-		futures::executor::block_on(futures::future::join(
-			dispatcher
-				.dispatch(make_frame(7, 60, MESSAGE_TYPE_REQUEST, Vec::new()), request_transport),
-			dispatcher
-				.dispatch(make_frame(7, 60, MESSAGE_TYPE_CANCEL, Vec::new()), cancel_transport),
-		));
-
-		assert_eq!(
-			transport.sent(),
-			expect_response(7, 60, encode_cancelled_response()),
-			"a withdrawn call answers Cancelled exactly once"
-		);
-	}
-
-	/// The substituted payload has to decode as *any* method's response leg,
-	/// because the dispatcher holds only bytes and cannot name either of a
-	/// method's payload types. Decoded here against a real generated pair to
-	/// prove the shape rather than assert the two bytes back at themselves.
-	#[test]
-	fn a_cancelled_response_decodes_against_a_real_methods_leg() {
-		use parity_scale_codec::DecodeAll;
-		use truapi::versioned::account::{HostAccountGetError, HostAccountGetResponse};
-
-		let bytes = encode_cancelled_response();
-		let decoded: Result<HostAccountGetResponse, truapi::CallError<HostAccountGetError>> =
-			DecodeAll::decode_all(&mut &bytes[..]).expect("decodes as a response leg");
-		assert_eq!(decoded, Err(truapi::CallError::Cancelled));
-
-		// Same bytes, a method whose payload types share nothing with the one
-		// above: the encoding depends on neither.
-		use truapi::versioned::system::{HostInfoError, HostInfoResponse};
-		let decoded: Result<HostInfoResponse, truapi::CallError<HostInfoError>> =
-			DecodeAll::decode_all(&mut &bytes[..]).expect("decodes as a response leg");
-		assert_eq!(decoded, Err(truapi::CallError::Cancelled));
-	}
-
-	/// A `Cancel` names a call by id alone, so two live calls sharing one id
-	/// would leave neither of them addressable. The second is refused, and
-	/// the first stays the one that id reaches.
-	///
-	/// Driven through the registry rather than two dispatches: a duplicate
-	/// that took the entry would park the first handler forever, and a test
-	/// that reports a hang says less than one that names what broke.
-	#[test]
-	fn a_request_whose_id_is_already_in_flight_is_refused() {
-		let dispatcher = Dispatcher::new(test_spawner());
-
-		let Reservation::Start(first) = dispatcher.reserve_request("p:1") else {
-			panic!("the first call registers");
-		};
-		assert!(
-			matches!(dispatcher.reserve_request("p:1"), Reservation::Duplicate),
-			"an id already in flight must be refused, not replaced"
-		);
-
-		dispatcher.handle_cancel("p:1");
-		assert!(first.is_cancelled(), "the first call is still the one that id cancels");
-	}
-
-	/// The registry is the only thing holding a peer-supplied id, so a call
-	/// that settles has to give its entry back. Without this the map grows
-	/// for the life of the connection.
-	#[test]
-	fn a_settled_call_leaves_no_entry_behind() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
-		let ids = MethodIds { trait_id: 7, method_id: 62 };
-		dispatcher.on_request(ids, move |_request_id, _bytes, _cancel| {
-			Box::pin(async move { vec![9, 9] })
-		});
-		let transport = Arc::new(RecordingTransport::default());
-
-		let transport_dyn: Arc<dyn Transport> = transport.clone();
-		futures::executor::block_on(
-			dispatcher.dispatch(make_frame(7, 62, MESSAGE_TYPE_REQUEST, Vec::new()), transport_dyn),
-		);
-
-		assert!(
-			dispatcher
-				.requests
-				.lock()
-				.expect("dispatcher request registry mutex poisoned")
-				.in_flight
-				.is_empty(),
-			"a settled call must release its id"
-		);
-	}
-
-	/// A handler the peer never withdrew keeps its own result, so a runtime
-	/// timeout still reports through the method's own error type and the
-	/// `Cancelled` variant stays off the wire for a peer that never asked.
-	#[test]
-	fn a_call_no_one_withdrew_keeps_its_own_result() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
-		let ids = MethodIds { trait_id: 7, method_id: 63 };
-		// The handler fires its own token, standing in for an attached
-		// timeout, and answers normally.
-		dispatcher.on_request(ids, move |_request_id, _bytes, cancel| {
-			Box::pin(async move {
-				cancel.cancel();
-				vec![9, 9]
-			})
-		});
-		let transport = Arc::new(RecordingTransport::default());
-		let transport_dyn: Arc<dyn Transport> = transport.clone();
-		futures::executor::block_on(
-			dispatcher.dispatch(make_frame(7, 63, MESSAGE_TYPE_REQUEST, Vec::new()), transport_dyn),
-		);
-		assert_eq!(
-			transport.sent(),
-			expect_response(7, 63, vec![9, 9]),
-			"only a Cancel frame substitutes the response"
-		);
-	}
-
-	/// Transports spawn a task per frame, so the ordered pair a client wrote
-	/// to the socket can reach dispatch the other way round. The withdrawal
-	/// has to survive that, or a product that aborts on navigation waits out
-	/// its full deadline while the host keeps working.
-	#[test]
-	fn a_cancel_that_overtakes_its_request_still_withdraws_it() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
-		let ids = MethodIds { trait_id: 7, method_id: 64 };
-		let invocations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-		let handler_invocations = invocations.clone();
-		dispatcher.on_request(ids, move |_request_id, _bytes, _cancel| {
-			handler_invocations.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-			Box::pin(async move { vec![1, 2, 3] })
-		});
-		let transport = Arc::new(RecordingTransport::default());
-
-		let cancel_transport: Arc<dyn Transport> = transport.clone();
-		futures::executor::block_on(
-			dispatcher
-				.dispatch(make_frame(7, 64, MESSAGE_TYPE_CANCEL, Vec::new()), cancel_transport),
-		);
-		let request_transport: Arc<dyn Transport> = transport.clone();
-		futures::executor::block_on(
-			dispatcher
-				.dispatch(make_frame(7, 64, MESSAGE_TYPE_REQUEST, Vec::new()), request_transport),
-		);
-
-		assert_eq!(
-			invocations.load(std::sync::atomic::Ordering::SeqCst),
-			0,
-			"a call withdrawn before it started must never run"
-		);
-		assert_eq!(
-			transport.sent(),
-			expect_response(7, 64, encode_cancelled_response()),
-			"the overtaking cancel still withdraws the call it names"
-		);
-	}
-
-	/// A tombstone is spent by the call it withdraws. Leaving it behind makes
-	/// the id permanently unusable on that connection: every later `Request`
-	/// naming it answers `Cancelled` and its handler never runs, which is a
-	/// withdrawal the peer did not ask for.
-	#[test]
-	fn an_early_withdrawal_is_spent_by_the_call_it_withdraws() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
-		let ids = MethodIds { trait_id: 7, method_id: 65 };
-		let invocations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-		let handler_invocations = invocations.clone();
-		dispatcher.on_request(ids, move |_request_id, _bytes, _cancel| {
-			handler_invocations.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-			Box::pin(async move { vec![4, 5, 6] })
-		});
-		let transport = Arc::new(RecordingTransport::default());
-
-		let dispatch = |message_type: u8| {
-			let transport: Arc<dyn Transport> = transport.clone();
-			futures::executor::block_on(
-				dispatcher.dispatch(make_frame(7, 65, message_type, Vec::new()), transport),
-			);
-		};
-		dispatch(MESSAGE_TYPE_CANCEL);
-		dispatch(MESSAGE_TYPE_REQUEST);
-		dispatch(MESSAGE_TYPE_REQUEST);
-
-		assert_eq!(
-			invocations.load(std::sync::atomic::Ordering::SeqCst),
-			1,
-			"the second call reuses a spent id, so its handler must run"
-		);
-		assert_eq!(
-			transport.sent(),
-			[
-				expect_response(7, 65, encode_cancelled_response()),
-				expect_response(7, 65, vec![4, 5, 6]),
-			]
-			.concat(),
-			"the withdrawal answers the first call only; the second gets its own result"
-		);
-	}
-
-	/// The refusal has to be visible where frames arrive, not just in the
-	/// registry: a duplicate must leave without answering, where a withdrawn
-	/// call answers `Cancelled`. Crossing those two would either answer a
-	/// duplicate twice or swallow a withdrawal.
-	#[test]
-	fn a_duplicate_request_frame_is_never_answered() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
-		let ids = MethodIds { trait_id: 7, method_id: 66 };
-		let invocations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-		let handler_invocations = invocations.clone();
-		dispatcher.on_request(ids, move |_request_id, _bytes, cancel| {
-			handler_invocations.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-			Box::pin(async move {
-				cancel.cancelled().await;
-				vec![1, 2, 3]
-			})
-		});
-		let transport = Arc::new(RecordingTransport::default());
-
-		let first: Arc<dyn Transport> = transport.clone();
-		let duplicate: Arc<dyn Transport> = transport.clone();
-		// The cancel is third so the parked first handler finishes and this
-		// test reports an assertion rather than hanging.
-		let cancel: Arc<dyn Transport> = transport.clone();
-		futures::executor::block_on(futures::future::join3(
-			dispatcher.dispatch(make_frame(7, 66, MESSAGE_TYPE_REQUEST, Vec::new()), first),
-			dispatcher.dispatch(make_frame(7, 66, MESSAGE_TYPE_REQUEST, Vec::new()), duplicate),
-			dispatcher.dispatch(make_frame(7, 66, MESSAGE_TYPE_CANCEL, Vec::new()), cancel),
-		));
-
-		assert_eq!(
-			invocations.load(std::sync::atomic::Ordering::SeqCst),
-			1,
-			"the duplicate must not run the handler a second time"
-		);
-		assert_eq!(
-			transport.sent(),
-			expect_response(7, 66, encode_cancelled_response()),
-			"the duplicate adds no frame: exactly one Response settles the id"
-		);
-	}
-
-	/// The queue is bounded, so a peer cancelling ids it never sends cannot
-	/// grow it without limit. Eviction is oldest first, and costs only the
-	/// race this mechanism exists to close.
-	#[test]
-	fn the_oldest_early_withdrawal_is_evicted_once_the_queue_is_full() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
-		let ids = MethodIds { trait_id: 7, method_id: 65 };
-		dispatcher
-			.on_request(ids, move |_request_id, _bytes, _cancel| Box::pin(async move { vec![7] }));
-		let transport = Arc::new(RecordingTransport::default());
-
-		// One more than the queue holds, so `p:0` is pushed back out.
-		for n in 0..=MAX_EARLY_WITHDRAWALS {
-			let cancel: Arc<dyn Transport> = transport.clone();
-			futures::executor::block_on(
-				dispatcher
-					.dispatch(frame_for(&format!("p:{n}"), 7, 65, MESSAGE_TYPE_CANCEL), cancel),
-			);
-		}
-
-		let evicted: Arc<dyn Transport> = transport.clone();
-		futures::executor::block_on(
-			dispatcher.dispatch(frame_for("p:0", 7, 65, MESSAGE_TYPE_REQUEST), evicted),
-		);
-		let remembered: Arc<dyn Transport> = transport.clone();
-		futures::executor::block_on(dispatcher.dispatch(
-			frame_for(&format!("p:{MAX_EARLY_WITHDRAWALS}"), 7, 65, MESSAGE_TYPE_REQUEST),
-			remembered,
-		));
-
-		assert_eq!(
-			transport.sent(),
-			vec![
-				response_for("p:0", 7, 65, vec![7]),
-				response_for(
-					&format!("p:{MAX_EARLY_WITHDRAWALS}"),
-					7,
-					65,
-					encode_cancelled_response()
-				),
-			],
-			"the evicted id runs normally; the one still remembered is withdrawn"
-		);
-	}
-
-	/// A `Cancel` that names nothing in flight is the ordinary lost race: the
-	/// handler must not run and nothing may be sent back.
-	#[test]
-	fn cancel_for_an_unknown_request_id_is_a_no_op() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
-		let ids = MethodIds { trait_id: 7, method_id: 61 };
-		let invoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
-		let invoked_in_handler = invoked.clone();
-		dispatcher.on_request(ids, move |_request_id, _bytes, _cancel| {
-			invoked_in_handler.store(true, std::sync::atomic::Ordering::SeqCst);
-			Box::pin(async move { Vec::new() })
-		});
-		let transport = Arc::new(RecordingTransport::default());
-		let transport_dyn: Arc<dyn Transport> = transport.clone();
-		let frame = make_frame(7, 61, MESSAGE_TYPE_CANCEL, Vec::new());
-		futures::executor::block_on(dispatcher.dispatch(frame, transport_dyn));
-		assert!(
-			!invoked.load(std::sync::atomic::Ordering::SeqCst),
-			"a cancel must never invoke a request handler"
-		);
-		assert!(
-			transport.sent().is_empty(),
-			"a cancel is never answered, least of all one that names nothing"
-		);
-	}
-
-	/// A handler that ignores its token is unaffected: cancelling is a
-	/// request, and the call settles on the handler's own result.
-	#[test]
-	fn cancel_does_not_change_the_result_of_a_handler_that_ignores_it() {
-		let mut dispatcher = Dispatcher::new(test_spawner());
-		let ids = MethodIds { trait_id: 7, method_id: 62 };
-		dispatcher.on_request(ids, move |_request_id, _bytes, _cancel| {
-			Box::pin(async move { vec![4, 5] })
-		});
-		let transport = Arc::new(RecordingTransport::default());
-		let transport_dyn: Arc<dyn Transport> = transport.clone();
-		futures::executor::block_on(
-			dispatcher.dispatch(make_frame(7, 62, MESSAGE_TYPE_REQUEST, Vec::new()), transport_dyn),
-		);
-		let transport_dyn: Arc<dyn Transport> = transport.clone();
-		futures::executor::block_on(
-			dispatcher.dispatch(make_frame(7, 62, MESSAGE_TYPE_CANCEL, Vec::new()), transport_dyn),
-		);
-		assert_eq!(
-			transport.sent(),
-			expect_response(7, 62, vec![4, 5]),
-			"the cancel arrived too late and is dropped"
-		);
-	}
-
-	/// `Receive` and `Interrupt` flow host to product and share the start
-	/// address, so they must not start a subscription when they arrive here.
-	#[test]
-	fn a_subscription_starts_only_on_a_start_leg() {
-		for message_type in [MESSAGE_TYPE_RECEIVE, MESSAGE_TYPE_INTERRUPT, 99] {
-			let mut dispatcher = Dispatcher::new(test_spawner());
-			let ids = MethodIds { trait_id: 7, method_id: 50 };
-			let invoked = Arc::new(std::sync::atomic::AtomicBool::new(false));
-			let invoked_in_handler = invoked.clone();
-			dispatcher.on_subscription(ids, move |_request_id, _bytes| {
-				invoked_in_handler.store(true, std::sync::atomic::Ordering::SeqCst);
-				Box::pin(
-					async move { Ok(Box::pin(futures::stream::empty()) as SubscriptionStream) },
-				)
-			});
-			let transport = Arc::new(RecordingTransport::default());
-			let transport_dyn: Arc<dyn Transport> = transport.clone();
-			let frame = make_frame(7, 50, message_type, Vec::new());
-			futures::executor::block_on(dispatcher.dispatch(frame, transport_dyn));
-			assert!(
-				!invoked.load(std::sync::atomic::Ordering::SeqCst),
-				"message_type {message_type} must not start a subscription"
-			);
-			assert!(
-				transport.sent().is_empty(),
-				"message_type {message_type} must not be answered"
-			);
-		}
-	}
-
-	/// A peer whose table is skewed sends the same unroutable pair on every
-	/// frame. Each pair is answered every time, so the peer is never left
-	/// waiting, but reported once so it cannot flood the log.
-	#[test]
-	fn an_unroutable_pair_is_answered_every_time_but_reported_once() {
-		let dispatcher = Dispatcher::new(test_spawner());
-		let transport = Arc::new(RecordingTransport::default());
-		let transport_dyn: Arc<dyn Transport> = transport.clone();
-		for _ in 0..3 {
-			let frame = make_frame(250, 251, MESSAGE_TYPE_REQUEST, Vec::new());
-			futures::executor::block_on(dispatcher.dispatch(frame, transport_dyn.clone()));
-		}
-		assert_eq!(
-			transport.sent().len(),
-			3,
-			"every unroutable frame still earns its own protocol error"
-		);
-		assert_eq!(
-			dispatcher.reported_violations.lock().expect("violation set").len(),
-			1,
-			"the pair is recorded once, so it is logged once"
-		);
-	}
-
-	#[test]
-	fn execution_filter_is_bound_to_the_connection() {
-		let app =
-			Dispatcher::for_execution(test_spawner(), crate::platform::ProductExecutionKind::App);
-		let widget = Dispatcher::for_execution(
-			test_spawner(),
-			crate::platform::ProductExecutionKind::Widget,
-		);
-		let worker = Dispatcher::for_execution(
-			test_spawner(),
-			crate::platform::ProductExecutionKind::Worker,
-		);
-
-		assert!(!app.allows_execution(crate::platform::ProductExecutionKind::Worker));
-		assert!(!widget.allows_execution(crate::platform::ProductExecutionKind::Worker));
-		assert!(worker.allows_execution(crate::platform::ProductExecutionKind::Worker));
-		assert!(widget.allows_execution(crate::platform::ProductExecutionKind::Widget));
-		assert!(!app.allows_execution(crate::platform::ProductExecutionKind::Widget));
-		assert!(!worker.allows_execution(crate::platform::ProductExecutionKind::Widget));
-	}
-}
+mod tests;

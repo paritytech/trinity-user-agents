@@ -16,7 +16,8 @@ import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.ProductExecutionConfig
-import uniffi.truapi.ProductExecutionKind
+import uniffi.truapi.ExecutableKind
+import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -36,41 +37,43 @@ class PermissionAdministrationTest {
             databaseDirectory = createTempDirectory("truapi-permissions").toString(),
         )
         val request = PermissionAuthorizationRequest.Device(HostDevicePermissionRequest.CAMERA)
+        val product = ProductId.parse("game.paseo").getOrThrow()
+        val otherProduct = ProductId.parse("other.paseo").getOrThrow()
         TrUAPIHostRuntime(bridge, config).use { runtime ->
-            runtime.setPermissionAuthorizationStatus("game.paseo", request, PermissionAuthorizationStatus.AUTHORIZED)
+            runtime.setPermissionAuthorizationStatus(product, request, PermissionAuthorizationStatus.AUTHORIZED)
         }
         // A fresh process runtime must enumerate existing backend keys, not just its new prompt history.
         TrUAPIHostRuntime(bridge, config).use { runtime ->
             assertEquals(listOf(PermissionAuthorizationEntry(request, PermissionAuthorizationStatus.AUTHORIZED)),
-                runtime.permissionAuthorizations("game.paseo"))
-            runtime.openProductExecution(bridge, ProductExecutionConfig("game.paseo", ProductExecutionKind.APP)).use { execution ->
-                runtime.openProductExecution(bridge, ProductExecutionConfig("other.paseo", ProductExecutionKind.APP)).use { other ->
-                    val revision = runtime.permissionAuthorizationRevision("game.paseo")
-                    runtime.setPermissionAuthorizationStatus("game.paseo", request, PermissionAuthorizationStatus.DENIED)
+                runtime.permissionAuthorizations(product))
+            runtime.openProductExecution(bridge, ProductExecutionConfig(product, ExecutableKind.APP)).use { execution ->
+                runtime.openProductExecution(bridge, ProductExecutionConfig(otherProduct, ExecutableKind.APP)).use { other ->
+                    val revision = runtime.permissionAuthorizationRevision(product)
+                    runtime.setPermissionAuthorizationStatus(product, request, PermissionAuthorizationStatus.DENIED)
                     assertTrue(execution.isClosed())
                     assertFalse(other.isClosed())
                     assertTrue(bridge.changed.contains("game.paseo"))
                     assertFalse(runtime.setPermissionAuthorizationStatusIfCurrent(
-                        "game.paseo", request, PermissionAuthorizationStatus.AUTHORIZED, revision,
+                        product, request, PermissionAuthorizationStatus.AUTHORIZED, revision,
                     ))
                     assertEquals(listOf(PermissionAuthorizationEntry(request, PermissionAuthorizationStatus.DENIED)),
-                        runtime.importPermissionAuthorizations("game.paseo", listOf(
+                        runtime.importPermissionAuthorizations(product, listOf(
                             PermissionAuthorizationEntry(request, PermissionAuthorizationStatus.AUTHORIZED),
                         )))
                 }
             }
-            runtime.setPermissionAuthorizationStatus("game.paseo", request, PermissionAuthorizationStatus.NOT_DETERMINED)
-            runtime.openProductExecution(bridge, ProductExecutionConfig("game.paseo", ProductExecutionKind.APP)).use { reopened ->
+            runtime.setPermissionAuthorizationStatus(product, request, PermissionAuthorizationStatus.NOT_DETERMINED)
+            runtime.openProductExecution(bridge, ProductExecutionConfig(product, ExecutableKind.APP)).use { reopened ->
                 assertFalse(reopened.isClosed())
-                assertEquals(PermissionAuthorizationStatus.NOT_DETERMINED, runtime.permissionAuthorizations("game.paseo").single().status)
-                runtime.setPermissionAuthorizationStatus("game.paseo", request, PermissionAuthorizationStatus.DENIED)
+                assertEquals(PermissionAuthorizationStatus.NOT_DETERMINED, runtime.permissionAuthorizations(product).single().status)
+                runtime.setPermissionAuthorizationStatus(product, request, PermissionAuthorizationStatus.DENIED)
                 assertTrue(reopened.isClosed())
             }
             bridge.store.failWrites = true
             assertTrue(runCatching {
-                runtime.setPermissionAuthorizationStatus("game.paseo", request, PermissionAuthorizationStatus.AUTHORIZED)
+                runtime.setPermissionAuthorizationStatus(product, request, PermissionAuthorizationStatus.AUTHORIZED)
             }.isFailure)
-            assertEquals(PermissionAuthorizationStatus.DENIED, runtime.permissionAuthorizations("game.paseo").single().status)
+            assertEquals(PermissionAuthorizationStatus.DENIED, runtime.permissionAuthorizations(product).single().status)
         }
     }
 

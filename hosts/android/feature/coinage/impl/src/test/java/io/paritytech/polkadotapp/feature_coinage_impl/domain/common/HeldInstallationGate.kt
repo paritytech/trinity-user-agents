@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.domain.common
 
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageInstallationId
-import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.CurrentInstallationProvider
+import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CurrentInstallationProvider
 import kotlinx.coroutines.CompletableDeferred
 
 class HeldInstallationGate : CurrentInstallationProvider {

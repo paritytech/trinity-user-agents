@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import AsyncExtensions
 import Foundation
 import os
@@ -63,7 +64,7 @@ public extension IncomingPaymentService {
         amount: Balance,
         descriptor: IncomingPaymentSourceDescriptor,
         paymentId: IncomingPaymentId,
-        productId: String
+        productId: ProductId
     ) async throws {
         do {
             let operation = try lifecycle?.captureOperation()
@@ -84,7 +85,7 @@ public extension IncomingPaymentService {
 
     func subscribeStatus(
         for paymentId: IncomingPaymentId,
-        productId: String
+        productId: ProductId
     ) async throws -> AnyAsyncSequence<IncomingPaymentStatus> {
         let groupId = IncomingPayment.groupId(productId: productId, paymentId: paymentId)
 
@@ -140,7 +141,7 @@ private extension IncomingPaymentService {
         amount: Balance,
         descriptor: IncomingPaymentSourceDescriptor,
         paymentId: IncomingPaymentId,
-        productId: String,
+        productId: ProductId,
         operation: CoinageLifecycle.Operation?
     ) async throws {
         if amount == 0 {
