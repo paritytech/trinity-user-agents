@@ -37,6 +37,7 @@ runtime = [
     # only with codec's own serde support.
     "parity-scale-codec/serde",
     "dep:truapi-provider",
+    "dep:trinity-stack",
     "dep:futures-timer",
     "dep:scale-decode",
     "dep:frame-metadata",
@@ -105,6 +106,7 @@ hex = { workspace = true }
 parity-scale-codec = { workspace = true, features = ["derive"] }
 
 truapi-provider = { path = "../truapi-provider", default-features = false, optional = true }
+trinity-stack = { path = "../trinity-stack", optional = true }
 futures-timer = { workspace = true, optional = true }
 scale-decode = { workspace = true, features = ["derive"], optional = true }
 # Metadata decoding backs allowance registration, which both the native and the

@@ -37,14 +37,13 @@ use truapi::{CallContext, CancellationReason, latest, v01};
 use crate::{
 	Spawner,
 	frame::ProtocolMessage,
-	host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome},
 	host_logic::worker::WorkerLedger,
 	runtime::{
-		ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
-		FundingProviderLink, HostSession, LocalActivation, PairedSsoPeer, PairingHostRole,
-		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, ResumePairingError,
-		RuntimeServices, SigningHostRole, SigningHostSsoService, SsoResponderService,
-		sso_service::Dispatch,
+		ActionChannel, AuthorityError, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+		DevicePairingObserver, FundingProviderLink, HostSession, LocalActivation, PairedSsoPeer,
+		PairingHostRole, ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit,
+		ResumePairingError, RuntimeServices, SigningHostRole, SsoAccountHolderService,
+		SsoResponderService,
 	},
 	subscription::HostInitiatedSubscriptionManager,
 	transport::Transport,
@@ -785,15 +784,14 @@ impl SigningHostRuntime {
 			);
 		}
 		let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
-		let sso_responder = SsoResponderService::new(services.clone(), signing_host.clone());
 		Self {
 			image_loader: crate::image_loader::ImageLoader::new(
 				services.clone(),
 				Arc::new(crate::time::RealTimer),
 			),
 			services,
+			sso_responder: signing_host.sso_responder(),
 			signing_host,
-			sso_responder,
 		}
 	}
 
@@ -1536,19 +1534,14 @@ impl SigningHostRuntime {
 		self.sso_responder.disconnect_paired_host(peer).await.map_err(Into::into)
 	}
 
-	/// Answer one SSO request using this signing host.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
-	pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
-		let service = SigningHostSsoService::new(self.signing_host.clone());
-		match service.answer(message).await {
-			Dispatch::Response(answer) => {
-				SsoRequestOutcome::Response { message: answer.message.encode() }
-			},
-			Dispatch::Disconnected => SsoRequestOutcome::Disconnected,
-			Dispatch::NotARequest(_) | Dispatch::Withdraw(_) | Dispatch::Withdrawn => {
-				SsoRequestOutcome::Ignored
-			},
-		}
+	/// Bind an external SSO transport to the wallet matching both of its keys.
+	pub fn open_sso_service(
+		&self,
+		own_statement_account_id: [u8; 32],
+		own_encryption_public_key: [u8; 32],
+	) -> Result<SsoAccountHolderService, AuthorityError> {
+		self.sso_responder
+			.open_service(own_statement_account_id, own_encryption_public_key)
 	}
 }
 
