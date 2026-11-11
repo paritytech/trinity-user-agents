@@ -1705,13 +1705,31 @@ impl FundingProvider for ProductRuntimeHost {
 				}
 				let target = crate::host_logic::funding::checked_frame_target(target)
 					.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
-				if matches!(target, latest::FundingFrameTarget::App { .. }) &&
-					!platform.provider_has_app(&self.connection.product).await
-				{
-					return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+				let services = &self.connection.services;
+				let provider = &self.connection.product;
+				if matches!(target, latest::FundingFrameTarget::App { .. }) {
+					use crate::host_logic::funding_providers::FundingProviderApp;
+					let has_app = match services.funding_providers().app(&provider.product_id) {
+						FundingProviderApp::Shipped => true,
+						FundingProviderApp::Absent => false,
+						FundingProviderApp::Unknown => {
+							crate::runtime::product_manifest::publishes_app(
+								services,
+								services.platform.as_ref(),
+								&provider.product_id,
+								APP_LOOKUP_CEILING,
+							)
+							.await
+							.unwrap_or(false)
+						},
+					};
+					if !has_app {
+						return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+					}
 				}
+				let _frame = services.funding().track_frame(&intent, provider.clone());
 				let outcome = platform
-					.present_provider_frame(&self.connection.product, intent, target)
+					.present_provider_frame(provider, intent, target)
 					.await
 					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
 				Ok(latest::HostFundingPresentFrameResponse { outcome })
@@ -1936,6 +1954,10 @@ fn bulletin_allowance_error_reason(err: AuthorityError) -> String {
 		other => other.to_string(),
 	}
 }
+
+/// How long the core waits for dotNS to say whether a provider ships an App
+/// before showing it as having none.
+const APP_LOOKUP_CEILING: core::time::Duration = core::time::Duration::from_secs(10);
 
 #[cfg(test)]
 mod tests;
