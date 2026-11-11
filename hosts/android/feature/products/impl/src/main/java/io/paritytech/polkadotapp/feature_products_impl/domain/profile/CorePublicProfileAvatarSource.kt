@@ -6,6 +6,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.design.components.avatar.PublicProfileAvatarSource
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
@@ -22,7 +23,7 @@ class CorePublicProfileAvatarSource @Inject constructor(
             runtime.observePublicProfile(
                 username,
                 PublicProfileResolutionOptions(forceFresh = forceFresh, skipStale = false),
-            ).map { profile ->
+            ).distinctUntilChangedBy { it.avatar }.map { profile ->
                 profile.avatar?.let { avatar ->
                     ImageRequest.Builder(context)
                         .data(avatar)

@@ -455,7 +455,7 @@ finite `Flow<PublicProfile>` with cancellation and typed terminal errors. Caller
 explicitly supply both resolution options.
 
 Android avatar views collect the profile stream for their composition's lifetime.
-Each emitted avatar becomes a Coil request whose data is the canonical
+Each distinct avatar becomes a Coil request whose data is the canonical
 `ProfileAvatar`; metadata resolution runs independently of image loading. Conversation
 entry forces freshness, while list and search loads use ordinary freshness. All
 callers explicitly set `skipStale` to false. Coil reuses CID-keyed original bytes
