@@ -638,6 +638,7 @@ jobs:
 
   host-wasm:
     name: "@parity/truapi-host (wasm bridge)"
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     needs: codegen
     env:
@@ -831,7 +832,7 @@ jobs:
         uses: ./.github/actions/bundle-size
         with:
           assets: |
-            truapi-host      js/packages/truapi-host/dist  !wasm/testing/ !testing/ !testing.js !web/create-mock-host.js
+            truapi-host      js/packages/truapi-host/dist  !wasm/testing/ !testing/ !testing.js !web/create-mock-host.js !node/
             truapi-provider  js/packages/truapi-provider/dist
             truapi           js/packages/truapi/dist
             trinity-stack    js/packages/trinity-stack  !node_modules/ !src/ !scripts/
