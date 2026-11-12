@@ -93,8 +93,9 @@ impl LightStack {
 	/// The stack a `link` points to, from its `descriptor` as served.
 	///
 	/// The descriptor is opened under the link's rules, so a link with a key
-	/// accepts only a document signed with it. Fails when the link or the
-	/// descriptor is refused.
+	/// accepts only a document signed with it. Its `validUntil`, `expiresAt`
+	/// and `sequence` are not read: hand over the copy the stack's reader
+	/// accepted. Fails when the link or the descriptor is refused.
 	pub fn open(link: &str, descriptor: &[u8]) -> Result<Self, ProviderError> {
 		let pointer = Pointer::from_link(link).map_err(refused)?;
 		let verified = trinity_stack::open(descriptor, &pointer).map_err(refused)?;

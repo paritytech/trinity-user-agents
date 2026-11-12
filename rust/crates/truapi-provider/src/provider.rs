@@ -373,11 +373,12 @@ impl EmbeddedChainProvider {
 		.boxed())
 	}
 
-	/// The relay `genesis_hash` syncs through, from the registry, the stack or
-	/// the catalog. A chain that is not a parachain has none.
+	/// The relay a connect to `genesis_hash` brings up, from where the chain
+	/// resolves: the registry, then the stack, then the catalog. A chain that
+	/// is not a parachain has none.
 	pub fn relay_of(&self, genesis_hash: [u8; 32]) -> Option<[u8; 32]> {
-		if let Some(relay) = self.relays.get(&genesis_hash) {
-			return Some(*relay);
+		if self.chains.contains_key(&genesis_hash) {
+			return self.relays.get(&genesis_hash).copied();
 		}
 		if let Some(stack) = &self.stack {
 			return stack.relay_of(genesis_hash);
