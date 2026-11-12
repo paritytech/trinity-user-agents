@@ -424,7 +424,7 @@ val runtimeConfig = HostRuntimeConfig(
         // The link the bundled descriptor was published under.
         pointer = "polkadotapp://stack?key=0x…&url=…",
         descriptor = webView.context.assets.open("trinity-stack.json").use { it.readBytes() },
-        reservedValues = ReservedValues(allowed = false),
+        reservedValues = ReservedValuesPolicy(allowed = false),
     ),
     // Optional: activate a local signing session from host-held BIP-39 entropy
     // (no SSO pairing). Omit for the QR pairing flow.

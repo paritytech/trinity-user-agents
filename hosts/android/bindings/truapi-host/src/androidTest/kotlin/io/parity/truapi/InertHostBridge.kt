@@ -9,7 +9,7 @@ import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.PermissionDecision
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.RemotePermission
-import uniffi.truapi.ReservedValues
+import uniffi.truapi.ReservedValuesPolicy
 
 /** A bridge that refuses everything a product could ask for, for runtime-level tests. */
 class InertHostBridge(
@@ -54,6 +54,6 @@ fun previewnetStack(): BundledStack {
     return BundledStack(
         pointer = asset("stacks/previewnet.link").decodeToString().trim(),
         descriptor = asset("stacks/previewnet.json"),
-        reservedValues = ReservedValues(allowed = false),
+        reservedValues = ReservedValuesPolicy(allowed = false),
     )
 }

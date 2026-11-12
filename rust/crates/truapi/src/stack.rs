@@ -3,9 +3,9 @@
 //!
 //! The core takes all of its chain configuration from the stack.
 //! [`Stack::bundled`] checks the descriptor against the key in the stack's
-//! link and against the build's [`ReservedValues`]. The [`Stack`] it returns
-//! holds the network, the dotNS TLD and each chain's genesis hash, and answers
-//! `get_chain_info`.
+//! link and against the build's [`ReservedValuesPolicy`]. The [`Stack`] it
+//! returns holds the network, the dotNS TLD and each chain's genesis hash, and
+//! answers `get_chain_info`.
 
 use trinity_stack::{Chain, Pointer, open};
 use truapi::latest::{
@@ -48,14 +48,14 @@ const RESERVED_GENESIS_HASHES: [[u8; 32]; 4] = [
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
 
-/// A host build's rule on reserved values for its stack.
+/// A host build's policy on reserved values for its stack.
 ///
 /// The core reserves Polkadot's genesis hashes and the `dot` TLD. A build can
 /// reserve more here and cannot reserve fewer. A stack that names a reserved
 /// value starts only when `allowed` is set.
 #[derive(Clone, Default)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
-pub struct ReservedValues {
+pub struct ReservedValuesPolicy {
 	/// Whether the stack may name reserved values. Only a Polkadot or
 	/// Polkadot-fork build sets it.
 	pub allowed: bool,
@@ -67,7 +67,7 @@ pub struct ReservedValues {
 	pub extra_tlds: Vec<String>,
 }
 
-impl ReservedValues {
+impl ReservedValuesPolicy {
 	/// Allows the stack every reserved value and reserves no extra ones.
 	pub const ALLOWED: Self =
 		Self { allowed: true, extra_genesis_hashes: Vec::new(), extra_tlds: Vec::new() };
@@ -182,7 +182,7 @@ pub enum StackError {
 impl Stack {
 	/// The stack a host build bundles: `pointer` is the stack's link
 	/// (`polkadotapp://stack?key=0x…&url=…`), `descriptor` the signed copy the
-	/// build ships, and `reserved_values` the build's rule on reserved values.
+	/// build ships, and `reserved_values` the build's policy on reserved values.
 	///
 	/// Fails with a [`StackError`] naming the rule the copy breaks. `validUntil`
 	/// and `expiresAt` are not checked, because the bundled copy is the only one
@@ -190,7 +190,7 @@ impl Stack {
 	pub fn bundled(
 		pointer: &str,
 		descriptor: &[u8],
-		reserved_values: &ReservedValues,
+		reserved_values: &ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
 		let pointer = Pointer::from_link(pointer).map_err(StackError::Pointer)?;
 		if pointer.key().is_none() {
@@ -219,7 +219,7 @@ impl Stack {
 		network: String,
 		tld: String,
 		chains: StackChains,
-		reserved_values: &ReservedValues,
+		reserved_values: &ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
 		if !DOTNS_TLDS.contains(&tld.as_str()) {
 			return Err(StackError::UnsupportedTld { tld });

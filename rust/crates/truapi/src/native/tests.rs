@@ -543,7 +543,7 @@ fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::Bundle
 	crate::native::BundledStack {
 		pointer,
 		descriptor,
-		reserved_values: crate::platform::ReservedValues::default(),
+		reserved_values: crate::platform::ReservedValuesPolicy::default(),
 	}
 }
 

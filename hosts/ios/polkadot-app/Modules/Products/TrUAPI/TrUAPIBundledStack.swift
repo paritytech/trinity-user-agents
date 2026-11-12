@@ -25,7 +25,7 @@ enum TrUAPIBundledStack {
             return try BundledStack(
                 pointer: pointer.trimmingCharacters(in: .whitespacesAndNewlines),
                 descriptor: Data(contentsOf: url(of: "json", in: bundle)),
-                reservedValues: ReservedValues(allowed: allowsReservedValues)
+                reservedValues: ReservedValuesPolicy(allowed: allowsReservedValues)
             )
         }
     }

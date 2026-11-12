@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 
 import { CoreStorageKey } from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
-import type { BundledStack, ReservedValues } from "../runtime.js";
+import type { BundledStack, ReservedValuesPolicy } from "../runtime.js";
 import { bundledTestStack } from "../test-support.js";
 import { wasmIsBuilt } from "../testing/require-wasm.js";
 
@@ -160,7 +160,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     const envelope = JSON.parse(new TextDecoder().decode(stack.descriptor));
     const genesisHash: string = JSON.parse(atob(envelope.payload)).chains[0]
       .genesisHash;
-    const reserving = (reservedValues: ReservedValues) => () =>
+    const reserving = (reservedValues: ReservedValuesPolicy) => () =>
       start({ ...stack, reservedValues });
 
     expect(reserving({ extraTlds: ["testnet"] })).toThrow(

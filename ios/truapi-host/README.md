@@ -619,7 +619,7 @@ let runtimeConfig = HostRuntimeConfig(
         // The link the bundled descriptor was published under.
         pointer: "polkadotapp://stack?key=0x…&url=…",
         descriptor: try Data(contentsOf: descriptorURL),
-        reservedValues: ReservedValues(allowed: false)
+        reservedValues: ReservedValuesPolicy(allowed: false)
     )
 )
 let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)

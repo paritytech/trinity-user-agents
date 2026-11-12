@@ -240,7 +240,7 @@ fn test_refresh_expired_error() {
 fn the_core_stack_reports_what_an_app_bundling_it_reports() {
 	for network in Network::value_variants() {
 		let built_in = network.built_in_stack();
-		let allowed = truapi::platform::ReservedValues::ALLOWED;
+		let allowed = truapi::platform::ReservedValuesPolicy::ALLOWED;
 		let bundled =
 			truapi::platform::Stack::bundled(built_in.link.trim(), built_in.bundle, &allowed)
 				.expect("the bundled copy starts an app");

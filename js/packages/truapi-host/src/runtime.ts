@@ -61,11 +61,11 @@ export interface ChainConnection {
 export type LogLevel = string;
 
 /**
- * A host build's rule on reserved values for its stack. The core reserves
+ * A host build's policy on reserved values for its stack. The core reserves
  * Polkadot's genesis hashes and the `dot` TLD. A build can reserve more here
  * and cannot reserve fewer.
  */
-export interface ReservedValues {
+export interface ReservedValuesPolicy {
   /**
    * Whether the stack may name reserved values. Only a Polkadot or
    * Polkadot-fork build sets it. Defaults to `false`.
@@ -89,8 +89,8 @@ export interface BundledStack {
    * under the pointer's key.
    */
   descriptor: Uint8Array;
-  /** The build's rule on reserved values. Defaults to refusing the core's. */
-  reservedValues?: ReservedValues;
+  /** The build's policy on reserved values. Defaults to refusing the core's. */
+  reservedValues?: ReservedValuesPolicy;
 }
 
 /** Configuration for one product runtime hosted by the wasm core. */

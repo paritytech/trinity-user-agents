@@ -14,8 +14,8 @@ const POLKADOT_ASSET_HUB: [u8; 32] = [
 ];
 
 /// A build that reserves two genesis hashes and the `testnet` TLD.
-fn reserving_extras(allowed: bool) -> ReservedValues {
-	ReservedValues {
+fn reserving_extras(allowed: bool) -> ReservedValuesPolicy {
+	ReservedValuesPolicy {
 		allowed,
 		extra_genesis_hashes: vec![[0xc3; 32], [0xd4; 32]],
 		extra_tlds: vec!["testnet".to_string()],
@@ -35,7 +35,7 @@ fn with_an_unread_role(genesis_hash: [u8; 32]) -> serde_json::Value {
 
 fn bundled(
 	descriptor: &serde_json::Value,
-	reserved_values: &ReservedValues,
+	reserved_values: &ReservedValuesPolicy,
 ) -> Result<Stack, StackError> {
 	let (pointer, bytes) = sign_test_descriptor(descriptor);
 	Stack::bundled(&pointer, &bytes, reserved_values)
@@ -54,7 +54,7 @@ fn info(
 fn a_bundled_stack_answers_get_chain_info_from_its_descriptor() {
 	let stack = bundled(
 		&test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None),
-		&ReservedValues::default(),
+		&ReservedValuesPolicy::default(),
 	)
 	.expect("stack is valid");
 
@@ -83,7 +83,8 @@ fn a_bundled_stack_answers_get_chain_info_from_its_descriptor() {
 fn a_pointer_that_is_not_a_stack_link_is_refused() {
 	let (_, bytes) = sign_test_descriptor(&test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None));
 
-	let refused = Stack::bundled("https://example.invalid", &bytes, &ReservedValues::default());
+	let refused =
+		Stack::bundled("https://example.invalid", &bytes, &ReservedValuesPolicy::default());
 	assert!(matches!(refused, Err(StackError::Pointer(_))), "{refused:?}");
 }
 
@@ -94,7 +95,7 @@ fn a_pointer_without_a_key_is_refused() {
 	let (_, bytes) = sign_test_descriptor(&test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None));
 
 	assert_eq!(
-		Stack::bundled(&test_stack_link(None), &bytes, &ReservedValues::default()),
+		Stack::bundled(&test_stack_link(None), &bytes, &ReservedValuesPolicy::default()),
 		Err(StackError::Unsigned)
 	);
 }
@@ -106,7 +107,7 @@ fn a_copy_signed_by_another_key_is_refused() {
 	let (_, bytes) = sign_test_descriptor(&test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None));
 	let other_key = test_stack_link(Some(&[0x42; 32]));
 
-	let refused = Stack::bundled(&other_key, &bytes, &ReservedValues::default())
+	let refused = Stack::bundled(&other_key, &bytes, &ReservedValuesPolicy::default())
 		.expect_err("another key's copy");
 	assert!(
 		matches!(&refused, StackError::Descriptor(error) if error.code() == "bad-signature"),
@@ -124,7 +125,7 @@ fn a_stack_without_people_or_bulletin_is_refused() {
 			.as_array_mut()
 			.expect("chains is an array")
 			.retain(|chain| chain["role"] != role);
-		bundled(&descriptor, &ReservedValues::default())
+		bundled(&descriptor, &ReservedValuesPolicy::default())
 	};
 
 	assert_eq!(
@@ -147,14 +148,14 @@ fn a_tld_the_core_does_not_serve_is_refused() {
 			"paseo".into(),
 			tld.into(),
 			chains.clone(),
-			&ReservedValues::ALLOWED
+			&ReservedValuesPolicy::ALLOWED
 		)),
 		tlds.map(|tld| Err(StackError::UnsupportedTld { tld: tld.into() })),
 	);
 	assert_eq!(
 		bundled(
 			&test_descriptor("kusama", [0xa1; 32], [0xb2; 32], None),
-			&ReservedValues::default()
+			&ReservedValuesPolicy::default()
 		),
 		Err(StackError::UnsupportedTld { tld: "kusama".to_string() })
 	);
@@ -173,8 +174,8 @@ fn reserved_values_need_the_builds_permission() {
 	assert_eq!(
 		[&on_dot, &on_polkadot_asset_hub, &polkadot_people_as_another_role].map(|descriptor| {
 			(
-				bundled(descriptor, &ReservedValues::default()).err(),
-				bundled(descriptor, &ReservedValues::ALLOWED).is_ok(),
+				bundled(descriptor, &ReservedValuesPolicy::default()).err(),
+				bundled(descriptor, &ReservedValuesPolicy::ALLOWED).is_ok(),
 			)
 		}),
 		[
@@ -197,10 +198,11 @@ fn a_stack_from_parts_is_held_to_the_reserved_values() {
 				"polkadot".into(),
 				"paseo".into(),
 				chains.clone(),
-				&ReservedValues::default()
+				&ReservedValuesPolicy::default()
 			)
 			.err(),
-			Stack::new("polkadot".into(), "paseo".into(), chains, &ReservedValues::ALLOWED).is_ok(),
+			Stack::new("polkadot".into(), "paseo".into(), chains, &ReservedValuesPolicy::ALLOWED)
+				.is_ok(),
 		),
 		(Some(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }), true)
 	);
@@ -217,7 +219,7 @@ fn a_builds_extra_reserved_values_need_its_permission() {
 	assert_eq!(
 		[&on_extra_tld, &on_extra_asset_hub, &extra_hash_as_another_role].map(|descriptor| {
 			(
-				bundled(descriptor, &ReservedValues::default()).is_ok(),
+				bundled(descriptor, &ReservedValuesPolicy::default()).is_ok(),
 				bundled(descriptor, &reserving_extras(false)).err(),
 				bundled(descriptor, &reserving_extras(true)).is_ok(),
 			)
@@ -258,7 +260,7 @@ fn an_all_zero_genesis_hash_is_refused() {
 	};
 
 	assert_eq!(
-		Stack::new("paseo".into(), "paseo".into(), chains, &ReservedValues::ALLOWED),
+		Stack::new("paseo".into(), "paseo".into(), chains, &ReservedValuesPolicy::ALLOWED),
 		Err(StackError::ZeroGenesis { chain: ChainIdentifier::AssetHub })
 	);
 }

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use crate::{
 	platform::{
-		ExecutableKind, HostInfo, PlatformInfo, ProductContext, ProductId, ReservedValues,
+		ExecutableKind, HostInfo, PlatformInfo, ProductContext, ProductId, ReservedValuesPolicy,
 		RuntimeConfigValidationError, SigningHostConfig, Stack,
 	},
 	pocket_cards::PinnedPocketCard,
@@ -47,7 +47,7 @@ pub struct HostRuntimeConfig {
 }
 
 /// The stack a host build ships: its pointer, its signed descriptor, and the
-/// build's rule on reserved values.
+/// build's policy on reserved values.
 #[derive(Clone, uniffi::Record)]
 pub struct BundledStack {
 	/// The stack's link, `polkadotapp://stack?key=0x…&url=…`. It must carry a
@@ -56,8 +56,8 @@ pub struct BundledStack {
 	/// The bundled descriptor's bytes, as served: a signed envelope that
 	/// verifies under the pointer's key.
 	pub descriptor: Vec<u8>,
-	/// The build's rule on reserved values.
-	pub reserved_values: ReservedValues,
+	/// The build's policy on reserved values.
+	pub reserved_values: ReservedValuesPolicy,
 }
 
 /// Trusted identity attached by a native host to one executable connection.

@@ -221,13 +221,13 @@ Relay, Asset Hub, People and Bulletin genesis hashes, the network
 
 A native or browser shell builds it with `Stack::bundled` from the stack's
 pointer, the signed descriptor its build bundles, and the build's
-`ReservedValues`. A Rust host that resolves its chains itself, such as the CLI,
-uses `Stack::new`, and a test-host browser bundle passes
+`ReservedValuesPolicy`. A Rust host that resolves its chains itself, such as
+the CLI, uses `Stack::new`, and a test-host browser bundle passes
 `runtimeConfig.testStack`. Each constructor documents what it refuses.
 
 The core reserves Polkadot's genesis hashes and the `dot` TLD, and a build can
-reserve more in `ReservedValues` but not fewer. A stack that names a reserved
-value under any chain role starts only when the build sets `allowed`.
+reserve more in `ReservedValuesPolicy` but not fewer. A stack that names a
+reserved value under any chain role starts only when the build sets `allowed`.
 
 Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have

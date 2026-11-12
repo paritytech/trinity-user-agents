@@ -29,7 +29,7 @@ use crate::platform::StackChains;
 use crate::platform::{
 	ChainProvider, ChatPlatform, ContactsPlatform, ExecutableKind, GamePlatform, HostInfo,
 	JsonRpcConnection, PairingHostConfig, PermissionStatusHost, PlatformInfo, PocketPlatform,
-	ProductContext, ProductId, ProductIdError, ProviderError, ReservedValues,
+	ProductContext, ProductId, ProductIdError, ProviderError, ReservedValuesPolicy,
 	RuntimeConfigValidationError, ScannerPlatform, Stack,
 };
 use futures::{
@@ -601,11 +601,11 @@ fn stack_from_js(value: &JsValue) -> Result<Stack, JsValue> {
 
 /// A stack config's optional `reservedValues`, at `path`. Each of its fields
 /// is optional.
-fn reserved_values_from_js(stack: &JsValue, path: &str) -> Result<ReservedValues, JsValue> {
+fn reserved_values_from_js(stack: &JsValue, path: &str) -> Result<ReservedValuesPolicy, JsValue> {
 	let Some(reserved_values) = get_optional_object(stack, "reservedValues", path)? else {
-		return Ok(ReservedValues::default());
+		return Ok(ReservedValuesPolicy::default());
 	};
-	Ok(ReservedValues {
+	Ok(ReservedValuesPolicy {
 		allowed: get_optional_bool_at(&reserved_values, "allowed", &format!("{path}.allowed"))?
 			.unwrap_or(false),
 		extra_genesis_hashes: get_optional_array_at(
