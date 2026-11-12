@@ -61,6 +61,8 @@ const provider = builder.build();
 
 - `setStack` throws when the link is malformed or the descriptor is refused
   under it. A link with a key accepts only a descriptor signed with that key.
+  The descriptor's `validUntil`, `expiresAt` and `sequence` are not read, so
+  pass a copy a stack reader accepted.
 - `addLightSpec` throws when the bytes differ from the descriptor's `sha256` or
   imply another genesis hash, and names the chain's role. Pass the bytes as
   served, because the digest covers them. A wrong spec is what a stale

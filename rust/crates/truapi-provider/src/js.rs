@@ -138,9 +138,10 @@ impl ChainProviderBuilder {
 	///
 	/// `link` and `descriptor` are the stack's link and its descriptor as
 	/// served. Fetch what [`light_specs`](Self::light_specs) lists and hand
-	/// each spec to [`add_light_spec`](Self::add_light_spec). Throws when the
-	/// link is malformed, the descriptor is refused under it, or a stack was
-	/// already set.
+	/// each spec to [`add_light_spec`](Self::add_light_spec). The descriptor's
+	/// `validUntil`, `expiresAt` and `sequence` are not read, so pass a copy a
+	/// stack reader accepted. Throws when the link is malformed, the
+	/// descriptor is refused under it, or a stack was already set.
 	#[cfg(feature = "smoldot")]
 	#[wasm_bindgen(js_name = setStack)]
 	pub fn set_stack(&mut self, link: &str, descriptor: &[u8]) -> Result<(), JsError> {
