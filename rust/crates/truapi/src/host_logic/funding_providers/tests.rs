@@ -268,21 +268,12 @@ fn amount_limits_span_every_provider() {
 	);
 }
 
-// The host applies every refresh; the
-// list puts the configured providers first, each once, then the bundled ones
-// the configuration does not name, and leaves out names that are no product.
+// The host applies every refresh; the list puts the configured providers in
+// order, each once, and leaves out names that are no product.
 #[test]
-fn the_provider_config_lists_published_then_unnamed_bundled() {
-	let bundled = |name: &str| FundingProviderEntry {
-		product_id: ProductId::for_test(name),
-		worker_manifest: Some("{}".to_string()),
-		root_manifest: None,
-		origin: FundingProviderOrigin::Bundled,
-		app: crate::host_logic::funding_providers::FundingProviderApp::Shipped,
-	};
+fn the_provider_config_lists_each_published_name_once() {
 	let names = ["ramp.dot", "bank.dot", "ramp.dot", "not a product!"].map(str::to_string);
-	let (entries, invalid) =
-		provider_config(&names, vec![bundled("bank.dot"), bundled("fundtest.dot")]);
+	let (entries, invalid) = provider_config(&names);
 	assert_eq!(
 		(
 			entries
@@ -295,7 +286,6 @@ fn the_provider_config_lists_published_then_unnamed_bundled() {
 			vec![
 				("ramp.dot".to_string(), FundingProviderOrigin::Published),
 				("bank.dot".to_string(), FundingProviderOrigin::Published),
-				("fundtest.dot".to_string(), FundingProviderOrigin::Bundled),
 			],
 			vec!["not a product!".to_string()],
 		)

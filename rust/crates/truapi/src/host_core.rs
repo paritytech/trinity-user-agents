@@ -902,8 +902,7 @@ impl SigningHostRuntime {
 		self.services.funding().entries(crate::current_unix_millis())
 	}
 
-	/// Offer the funding providers the remote configuration names, then the
-	/// `bundled` ones it does not.
+	/// Offer the funding providers the remote configuration names.
 	///
 	/// Names that are not product ids are skipped and logged. A call listing
 	/// what the last one listed changes nothing, so the host calls it on
@@ -912,9 +911,8 @@ impl SigningHostRuntime {
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
 	) -> Result<(), v01::GenericError> {
-		Ok(self.services.set_funding_provider_config(published_names, bundled)?)
+		Ok(self.services.set_funding_provider_config(published_names)?)
 	}
 
 	/// Record that the host told the user how ended session `intent` went.

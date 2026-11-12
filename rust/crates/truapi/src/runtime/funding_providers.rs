@@ -327,16 +327,14 @@ impl RuntimeServices {
 	}
 
 	/// Offer the providers the host's remote configuration lists by name,
-	/// then the `bundled` ones it does not name, telling the feed when the
-	/// list changed. A name that is not a product id is skipped and logged.
-	/// A call listing what the last one did changes nothing the host sees,
-	/// so the host can call it on every refresh.
+	/// telling the feed when the list changed. A name that is not a product
+	/// id is skipped and logged. A call listing what the last one did changes
+	/// nothing the host sees, so the host can call it on every refresh.
 	pub fn set_funding_provider_config(
 		self: &Arc<Self>,
 		published_names: Vec<String>,
-		bundled: Vec<FundingProviderEntry>,
 	) -> Result<(), FundingSessionError> {
-		let (entries, invalid) = provider_config(&published_names, bundled);
+		let (entries, invalid) = provider_config(&published_names);
 		for name in invalid {
 			warn!(%name, "funding provider configuration names no product");
 		}
