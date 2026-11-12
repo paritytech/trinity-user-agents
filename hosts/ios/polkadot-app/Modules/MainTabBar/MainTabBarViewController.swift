@@ -144,6 +144,15 @@ final class MainTabBarViewController: UIViewController {
             applyWidgetLayout(for: chromeContext(for: container.selectedController))
         }
 
+        chromeController.onDockletStateCommitted = { [weak self] in
+            guard let self else {
+                return
+            }
+            DSTabBarStyle.animateCenterChange(in: view) {
+                self.applyWidgetLayout(for: self.chromeContext(for: self.container.selectedController))
+            }
+        }
+
         presenter.setup()
     }
 
