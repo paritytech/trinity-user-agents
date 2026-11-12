@@ -13,10 +13,7 @@ data class FundingProviderBrand(
     val iconUrl: String?,
 )
 
-/**
- * Reads a provider's brand from its product's root manifest, which a bundled provider ships with its files; the bare
- * id stands in until it resolves.
- */
+/** Reads a provider's brand from its product's root manifest; the bare id stands in until it resolves. */
 class FundingProviderBranding @Inject constructor(
     private val resolveProductUseCase: ResolveProductUseCase,
     private val ipfsContentLookup: IpfsContentLookup,

@@ -11,9 +11,7 @@ import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestPar
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.RootManifest
 import uniffi.truapi.BundleEntry
 import uniffi.truapi.ExecutableKind
-import uniffi.truapi.FundingProviderEntry
 import uniffi.truapi.ProductId
-import uniffi.truapi.bundledFundingProviders
 import javax.inject.Inject
 import javax.inject.Singleton
 import uniffi.truapi.bundledProducts as coreBundledProducts
@@ -44,10 +42,6 @@ class BundledProducts @Inject internal constructor(
     fun entry(id: ProductId): BundleEntry? = entries.firstOrNull { it.productId == id }
 
     fun workerManifest(entry: BundleEntry): String? = files.readText("${entry.path}/$WORKER_MANIFEST")
-
-    /** The bundled products that serve Funding, as the core reads them: the manifest shipped is the one it goes by. */
-    fun fundingProviders(): List<FundingProviderEntry> =
-        if (files.enabled) bundledFundingProviders(BundledProductFiles.ROOT, files) else emptyList()
 
     /**
      * [entry] resolved from its files as a published product resolves from dotNS: the root manifest it ships names it,
