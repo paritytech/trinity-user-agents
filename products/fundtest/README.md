@@ -12,7 +12,8 @@ The product has two executables:
 - **Worker** (`worker/`): serves the `FundingProvider` trait. It answers quote asks, runs each assigned session and
   reports its progress.
 - **App** (`app/`): the provider's own screens, which the worker shows with `presentFrame`: `/card` (card form and Pay),
-  `/bank` (bank details and "I've sent funds") and `/payout` (where an outbound payout goes).
+  `/bank` (bank details and "I've sent funds"), `/wallet` (a crypto deposit's address and Send) and `/payout` (where an
+  outbound payout goes).
 
 ## What is real and what is simulated
 
@@ -123,13 +124,16 @@ transfer clears before `PaymentReceived { finalized: true }`.
 
 **Crypto in.** The worker sizes the deposit for the chosen asset (CASH needs no conversion, USDT goes through the PSM,
 USDC through the PSM or the pool, PAS through the pool), reports `Deposit { Crypto }` with the session account's address
-on network `polkadot`, and watches the account. A short payment is answered with a new `Deposit` for the rest. In demo
-mode the session account asks the faucet for a drip after 20 seconds, unless a deposit has started to arrive; a session
-that asked for USDT, USDC or CASH switches to the PAS route first, since the faucet gives only PAS. A real transfer from
-a wallet is taken either way. After 30 minutes with nothing received the session fails as `Expired`. Once the deposit
-is final on Asset Hub the session waits for block confirmations (3 by default), each shown as a `Progress` with
-`Confirmations { done, required }`, then reports `PaymentReceived { finalized: true }`. A demo
-deposit is also named by a mock transaction hash; the worker reads balances, so a wallet transfer's hash is not shown.
+on network `polkadot`, shows `/wallet` with the same address and amount, and watches the account. A short payment is
+answered with a new `Deposit` for the rest. In demo mode the session account asks the faucet for a drip after 20
+seconds, unless a deposit has started to arrive; a session that asked for USDT, USDC or CASH switches to the PAS route
+first, since the faucet gives only PAS. Send on `/wallet` stands in for the user's wallet: it asks for the faucet's
+network access and makes the drip at once. A real transfer from a wallet is taken either way, and leaving `/wallet` does
+not end the session; the worker closes it once the deposit has arrived. After 30 minutes with nothing received the
+session fails as `Expired`. Once the deposit is final on Asset Hub the session waits for block confirmations (3 by
+default), each shown as a `Progress` with `Confirmations { done, required }`, then reports
+`PaymentReceived { finalized: true }`. A demo deposit is also named by a mock transaction hash; the worker reads
+balances, so a wallet transfer's hash is not shown.
 
 **Out, any rail.** `Details`, then `/payout` for where to send the money. The worker calls `payment.request` for the
 user's CASH to the reserve account and reports `Collecting { paymentId, amount }`. Once the host reports the payment
@@ -293,7 +297,7 @@ fundtest is published on Paseo Next v2, the network the apps' testnet builds run
 | dotNS name                       | Text record  | Holds                                                         |
 | -------------------------------- | ------------ | ------------------------------------------------------------- |
 | `fundtest-provider.paseo`        | `manifest`   | The root manifest: name, `description`, icon                  |
-| `app.fundtest-provider.paseo`    | `executable` | The App (`dist/app`): `/card`, `/bank`, `/payout`             |
+| `app.fundtest-provider.paseo`    | `executable` | The App (`dist/app`): `/card`, `/bank`, `/wallet`, `/payout`  |
 | `worker.fundtest-provider.paseo` | `executable` | The Worker (`dist/worker`), with `includes.funding` as routes |
 
 The label has a base of 9 characters or more because Paseo Next v2 sells no 6 to 8 character names

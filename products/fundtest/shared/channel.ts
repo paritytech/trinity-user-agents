@@ -6,7 +6,7 @@
 import { fromHex, toHex } from "./hex";
 
 /** Route of each provider screen the worker presents. */
-export type ScreenRoute = "/card" | "/bank" | "/payout";
+export type ScreenRoute = "/card" | "/bank" | "/payout" | "/wallet";
 
 /** What a screen shows, written by the worker before it presents the screen. */
 export interface SessionView {
@@ -30,6 +30,20 @@ export interface SessionView {
     bankCode: string;
     reference: string;
   };
+  /** Where a crypto deposit goes. */
+  crypto?: {
+    /** The session account, SS58. */
+    address: string;
+    network: string;
+    /** Symbol of the token the deposit is made in. */
+    asset: string;
+    /** The deposit, in the token's base units, as a decimal string. */
+    amount: string;
+    decimals: number;
+    /** Whether the provider makes the deposit itself from the faucet, so the
+     *  screen's send stands in for a wallet. */
+    demo: boolean;
+  };
 }
 
 /** What the user did on a screen. `amount`, in CASH base units as a decimal
@@ -37,7 +51,8 @@ export interface SessionView {
 export type ScreenAction =
   | { kind: "card-paid"; amount?: string }
   | { kind: "bank-sent"; amount?: string }
-  | { kind: "payout-confirmed"; destination: string };
+  | { kind: "payout-confirmed"; destination: string }
+  | { kind: "wallet-sent" };
 
 /** Storage key of a session's own state, its checkpoint, which a restarted
  *  worker resumes from. */

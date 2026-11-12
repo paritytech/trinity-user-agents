@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fundtest wallet</title>
+  </head>
+  <body>
+    <main>
+      <h1>Send from your wallet</h1>
+      <p class="note" id="note">
+        Test provider. Send the amount below to the deposit address.
+      </p>
+      <div class="amount" id="price">…</div>
+      <dl>
+        <dt>Deposit address</dt>
+        <dd id="address">…</dd>
+        <dt>Network</dt>
+        <dd id="network">…</dd>
+      </dl>
+      <button id="send" disabled>Send</button>
+      <p id="status"></p>
+    </main>
+    <script type="module" src="../src/wallet.ts"></script>
+  </body>
+</html>

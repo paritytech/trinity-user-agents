@@ -98,7 +98,7 @@ export async function presentScreen<K extends ScreenAction["kind"]>(
     // Whichever settles first: the action, or the frame closing without one.
     const action = await Promise.race([acted, closed]);
     // Closing a frame the user already closed does nothing.
-    if (action) await closeFrame(intent);
+    if (action) await closeScreen(intent);
     return action;
   } finally {
     signal.removeEventListener("abort", stop);
@@ -110,8 +110,9 @@ export async function presentScreen<K extends ScreenAction["kind"]>(
   }
 }
 
-/** Closes the session's screen, so the host shows the session in its place. */
-async function closeFrame(intent: string): Promise<void> {
+/** Closes the session's screen, so the host shows the session in its place.
+ *  Closing a screen that is not open does nothing. */
+export async function closeScreen(intent: string): Promise<void> {
   const client = await truapi();
   await client.fundingProvider.closeFrame({ intent }).match(
     () => undefined,

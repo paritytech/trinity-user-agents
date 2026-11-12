@@ -76,6 +76,7 @@ import { readSaved, storeSaved, type Saved } from "./saved";
 import {
   forgetSession,
   markKilled,
+  closeScreen,
   presentScreen,
   wasKilled,
   writeView,
@@ -924,12 +925,42 @@ export class Session {
         },
       });
     await reportDeposit(deposit);
+    await writeView(
+      this.view({
+        crypto: {
+          address: account.address,
+          network: CRYPTO_NETWORK,
+          asset: displaySymbol(token),
+          amount: deposit.toString(),
+          decimals: token.decimals,
+          demo: CONFIG.demoCrypto,
+        },
+      }),
+    );
+    // The wallet screen stands in for the user's wallet. The deposit is read
+    // from the chain either way, so leaving the screen does not end the
+    // session.
+    const walletSent = presentScreen(
+      this.intent,
+      "/wallet",
+      "wallet-sent",
+      this.signal,
+    ).catch((error: unknown) => {
+      if (!(error instanceof Aborted)) {
+        console.warn(`[fundtest] ${this.intent}: /wallet: ${describe(error)}`);
+      }
+      return undefined;
+    });
 
     if (CONFIG.demoCrypto) {
-      const arrival = this.stage(
-        "receive",
-        this.arrivalMs(this.inStages.receive),
-      );
+      // Sending from the wallet screen makes the demo deposit at once;
+      // otherwise it comes after the rail's arrival wait.
+      const arrival = Promise.race([
+        this.stage("receive", this.arrivalMs(this.inStages.receive)),
+        walletSent.then((action) =>
+          action ? undefined : new Promise<never>(() => undefined),
+        ),
+      ]);
       if (this.trigger === "refund") {
         await arrival;
         await this.report({
@@ -984,6 +1015,7 @@ export class Session {
       return undefined;
     });
     await this.markPaymentSeen();
+    await closeScreen(this.intent);
     await this.report({ tag: "PaymentReceived", value: { finalized: false } });
     // The worker reads balances and never sees a wallet transfer's hash, so
     // only a demo deposit names one, a mock.

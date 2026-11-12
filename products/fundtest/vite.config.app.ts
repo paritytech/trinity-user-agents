@@ -21,6 +21,7 @@ export default defineConfig({
         card: resolve(root, "card/index.html"),
         bank: resolve(root, "bank/index.html"),
         payout: resolve(root, "payout/index.html"),
+        wallet: resolve(root, "wallet/index.html"),
       },
     },
   },
