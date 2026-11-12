@@ -17,9 +17,10 @@ protocol FundingServiceProtocol: AnyObject, Sendable {
     func subscribeEntryState(_ entryId: String) -> AnyAsyncSequence<FundingEntry>
 
     /// Opens a session from the host's side. Its screens are asked for
-    /// through ``events`` as `presentationRequested`; returns once the core
-    /// answered whether the session started.
-    func open(_ direction: FundingDirection, amount: U128?) async throws
+    /// through ``events`` as `presentationRequested`. Answers the session's
+    /// id once it started, or nil when the user left its screens first.
+    @discardableResult
+    func open(_ direction: FundingDirection, amount: U128?) async throws -> String?
 
     /// Tells the core what the user picked, in order with the asks made
     /// after it. What it offers for it comes back on the session's state, as
