@@ -463,7 +463,7 @@ explicitly set `skipStale` to false. A cancelled header
 observation retains its forced intent until an observation completes or fails.
 [The CID image loader](hosts/ios/polkadot-app/Common/ImageViewModel/CID/CIDImageLoader.swift)
 uses Kingfisher's cache without a freshness expiry, including on cache hits,
-with a 100 MiB disk budget. It keeps
+with a 100 MiB disk budget configured during root setup, before onboarding. It keeps
 the current image while loading; avatar views cancel metadata observation and image work
 when their view is reused or released.
 
