@@ -172,9 +172,9 @@ export interface StackCallbacks {
   /**
    * Keep `record` and pass it back as {@link BundledStack.stored} at the next
    * start. Each call replaces the record before it. Throw or reject when the
-   * record could not be kept. Without this callback, or while it fails, the
-   * core never sets `restartRequired`: the next start could not read the
-   * newer copy.
+   * record could not be kept. The core gives up after 30 seconds. Without
+   * this callback, or while it fails, the core never sets `restartRequired`:
+   * the next start could not read the newer copy.
    */
   storeStackRecord?(record: Uint8Array): void | Promise<void>;
 }
