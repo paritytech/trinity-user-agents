@@ -335,6 +335,20 @@ class RealFundingServiceTest {
         assertEquals(listOf("newest", "intent", "older"), entries.map { it.id })
     }
 
+    // The core's history leaves out a top-up cancelled before anything settled or was refunded.
+    @Test
+    fun `an ended session's row reads its summary from the history`() = runTest {
+        val failed = FundingStage.Failed(FundingFailure.Cancelled, 2uL)
+        core.sessions["intent"] = FakeFundingCore.session("intent", providerId = ramp, stage = failed)
+        core.summaries["intent"] = summary("intent", openedAtMs = 1uL)
+        val service = service()
+
+        val entry = service.entries().first().single()
+
+        assertEquals(FundingPhase.ENDED, entry.phase)
+        assertNull(entry.summary)
+    }
+
     @Test
     fun `acknowledging an ended session lists the sessions again`() = runTest {
         val service = service()
