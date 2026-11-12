@@ -265,3 +265,23 @@ fn a_fork_and_its_source_share_no_stored_state() {
 		assert_eq!(read_slots(&source).await, slots().map(|_| Some(b"source's".to_vec())));
 	});
 }
+
+/// The core keys stored state by the id and drops chain caches by the
+/// generation, so a stack that names neither cannot be told from another.
+#[test]
+fn a_stack_without_an_id_or_a_generation_is_refused() {
+	let chains =
+		StackChains { relay: None, asset_hub: None, people: [0xa1; 32], bulletin: [0xb2; 32] };
+	let stack = |id: &str, generation: &str| {
+		let identity = StackIdentity { id: id.to_string(), generation: generation.to_string() };
+		Stack::new(identity, "paseo".into(), "paseo".into(), chains.clone(), false).err()
+	};
+
+	assert_eq!(
+		(stack("", "generation"), stack("stack", "")),
+		(
+			Some(StackError::EmptyIdentity { field: "id" }),
+			Some(StackError::EmptyIdentity { field: "generation" }),
+		)
+	);
+}

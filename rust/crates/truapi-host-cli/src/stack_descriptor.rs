@@ -53,12 +53,15 @@ pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<
 	}
 }
 
-/// The descriptor a `--stack` value points to, with the identity of its pointer: a link or a URL,
-/// fetched and checked against the key a link carries, or a local descriptor file, signed or not.
+/// The descriptor a `--stack` value points to, with the stack's id: a link or a URL, fetched and
+/// checked against the key a link carries or `key`, or a local descriptor file, signed or not.
 /// Fails when it is unreachable, breaks a rule or is past `expiresAt`; warns when it is past
 /// `validUntil`.
-pub async fn load_descriptor(stack: &str) -> Result<(String, Descriptor)> {
-	let (pointer, bytes) = read_stack(stack, None).await?;
+///
+/// The id is the pointer's. A local file has no pointer of its own, so its id is its canonical
+/// path: two files are two stacks, and a file that moves becomes another stack.
+pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<(String, Descriptor)> {
+	let (pointer, bytes) = read_stack(stack, key).await?;
 	let accepted = accept(&pointer, None, Fetched::Document(&bytes), unix_now() as i64)
 		.map_err(|error| anyhow!("stack {stack} is {}", refused(error)))?;
 	if accepted.expired {
@@ -67,7 +70,16 @@ pub async fn load_descriptor(stack: &str) -> Result<(String, Descriptor)> {
 	if accepted.stale {
 		tracing::warn!("stack {stack} is past validUntil; its operator should republish");
 	}
-	Ok((pointer.stack_id(), accepted.stack.descriptor))
+	let stack_id = match (pointer_of(stack, key)?, pointer.key()) {
+		(None, None) => local_file_id(stack)?,
+		_ => pointer.stack_id(),
+	};
+	Ok((stack_id, accepted.stack.descriptor))
+}
+
+fn local_file_id(path: &str) -> Result<String> {
+	let canonical = fs::canonicalize(path).with_context(|| format!("cannot resolve {path}"))?;
+	Ok(format!("file:{}", canonical.display()))
 }
 
 /// One value for each chain role a host routes.

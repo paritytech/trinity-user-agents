@@ -1814,6 +1814,12 @@ refused with `--stack`, since the light client syncs only the networks
 without a trailing `-fork`, which must be a lowercase label; the `polkadot-fork`
 namespace is its full `id`, so it does not share the `polkadot` namespace.
 
+The stack's id, which the core takes with the descriptor's `generation`, is the
+key of the link when it has one, and otherwise the URL. The URL of a built-in
+stack with no key is read with that stack's key, so it is verified and is the
+same stack as under its network name. A local file's id is its canonical path:
+two files are two stacks, and a file that moves becomes another stack.
+
 #### `network-check`
 
 A stack is the only source of a network's routing: a fork or a local network
