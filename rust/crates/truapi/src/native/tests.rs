@@ -3238,6 +3238,8 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 
 	fn close_provider_frame(&self, _provider_id: ProductId, _intent: String) {}
 
+	fn provider_frame_requested(&self, _provider_id: ProductId, _intent: String) {}
+
 	async fn detected_country(&self) -> Option<String> {
 		None
 	}
@@ -3324,11 +3326,8 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	let funding = Arc::new(RecordingNativeFunding::default());
 	assert!(host.set_funding_callbacks(funding.clone()));
 	let configure = |names: &[&str]| {
-		host.set_funding_provider_config(
-			names.iter().map(|name| name.to_string()).collect(),
-			vec![],
-		)
-		.expect("configured");
+		host.set_funding_provider_config(names.iter().map(|name| name.to_string()).collect())
+			.expect("configured");
 		let changes = funding.changes.lock().expect("changes mutex poisoned");
 		let announced =
 			changes.iter().filter(|change| **change == (None, FundingChangeKind::Providers));
@@ -3338,10 +3337,10 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	assert_eq!(
 		(
 			host.funding_available(),
-			configure(&["ramp.dot"]),
-			configure(&["ramp.dot"]),
+			configure(&["ramp"]),
+			configure(&["ramp"]),
 			configure(&[]),
-			configure(&["ramp.dot"])
+			configure(&["ramp"])
 		),
 		(false, (1, true), (1, true), (2, false), (3, true))
 	);
