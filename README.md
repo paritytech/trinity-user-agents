@@ -37,7 +37,7 @@ The interactive playground lets you browse every method, edit request payloads, 
 curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 ```
 
-Prebuilt for macOS on Apple silicon and Linux on x86_64 and arm64. No Rust toolchain or checkout needed, and it keeps itself up to date. `/script` opens a persistent TypeScript project with the Product SDK quickstart, pinned published dependencies, and editor types. Use `/script --run` to rerun it or `/script --edit` to edit without running. Projects survive session cleanup. See the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for setup and existing project scripts. Release checks install and typecheck the default SDK template against the public registry.
+Prebuilt for macOS on Apple silicon and Linux on x86_64 and arm64. No Rust toolchain or checkout needed, and it keeps itself up to date. A workflow installs the same binaries with [`install-truapi-host`](rust/crates/truapi-host-cli/README.md#in-github-actions), pinned to a CLI release. `/script` opens a persistent TypeScript project with the Product SDK quickstart, pinned published dependencies, and editor types. Use `/script --run` to rerun it or `/script --edit` to edit without running. Projects survive session cleanup. See the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for setup and existing project scripts. Release checks install and typecheck the default SDK template against the public registry.
 
 `truapi-host signing-host --session <name>` opens an interactive session and
 restores or creates its signer. `/session <name>` switches to the saved account
@@ -167,7 +167,7 @@ ios/truapi-host/           Swift host adapter package over the truapi UniFFI cor
 ios/truapi-provider/       TrUAPIProvider Swift package: chain transport over UniFFI
 playground/                Interactive Next.js playground (truapi-playground dotNS label)
 hosts/ios/                 iOS host app; resolves the core from this tree
-hosts/android/             Android host app
+hosts/android/             Android host app; resolves the core from this tree
 hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
 e2e/host-playground/       host-playground suite run inside the native host apps; see its README
@@ -458,6 +458,11 @@ resolver reads the chain on each call.
 
 Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
 
+The [CLI](rust/crates/truapi-host-cli/README.md#interactive-terminal-ui) resolves
+avatar metadata with `/profile [username]`. `/profile upload <image>` publishes an
+avatar as the identity's Humanity product, calling the core's TrUAPI resource
+allocation and preimage methods directly.
+
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as
@@ -708,10 +713,10 @@ pull request means running the command above and deleting the file.
 
 ### Working on the iOS host
 
-`hosts/ios/` is the iOS app, and it resolves the core from this tree rather than
-from a published version. The core's bindings, xcframework and FFI headers are
-gitignored build outputs, so a fresh clone cannot load the app's package graph
-until they exist. Generate them once:
+`hosts/ios/` is the iOS app, and it resolves the core from this tree. The
+core's bindings, xcframework and FFI headers are gitignored build outputs, so a
+fresh clone cannot load the app's package graph until they exist. Generate them
+once:
 
 ```bash
 make ios-bootstrap
@@ -902,70 +907,10 @@ Each job removes what it materialised, and the last verdict is carried into the
 pull request summary, so it is visible before someone starts a release rather
 than after. A workflow that has never run reports as never run, not as healthy.
 
-### Building the standalone iOS host app
+### Chat diagnosis on Android
 
-The targets below build `polkadot-app-ios-v2`, a separate checkout set by
-`IOS_HOST`, not `hosts/ios`. To build the playground in Simulator against it:
-
-```bash
-make ios-run
-```
-
-The target regenerates the UniFFI Swift bindings, builds the matching Rust
-simulator library, and builds the sibling `polkadot-app-ios-v2` checkout with the Nightly feature
-flags and release Firebase app used by the Nightly TestFlight build. Native
-Chat and the Paseo chain catalog come from the same Nightly Remote Config as
-TestFlight. The executable keeps the development bundle and app-group identity
-so Simulator can reuse its already registered wallet; keychain data cannot be
-transferred to the production bundle. The simulator also adds the
-`IOS_PASEO_E2E` conveniences needed to start on the real `browse.dot` Browse tab
-and activate the embedded signing host. Embedded product host sessions use the
-same Paseo People and Bulletin chains selected by the Nightly app
-configuration. The launcher starts the playground at `http://localhost:3100`
-when needed and uses that local source only after Browse opens
-`truapi-playground.dot`. It refuses to launch if the local URL belongs to a
-different app. Override the product, URL, or simulator with `IOS_PRODUCT_HOST`,
-`IOS_PRODUCT_URL`, or `TRUAPI_IOS_E2E_DEVICE`. The simulator launch reuses the
-wallet and registered username already stored by the iOS app. Opening a product
-activates the embedded `truapi-host` signing-host session from that wallet; it
-does not provision or pair a signer-bot user.
-
-To exercise the shared-core Chat path with the first-party TrUAPI Playground
-worker, build and serve the local product, install its worker into the
-simulator app's product storage, and open its native Chat application. The
-worker drives all five Chat methods and both Renderer methods, so a host
-without bot registration reports that row red:
-
-```bash
-make ios-chat-run
-```
-
-The launcher verifies the Chat connection and runs a correlated Chat-only
-diagnosis. The worker proves create-room idempotency, observes the new room on
-the live list subscription, posts text and custom messages, receives
-`!diagnose` through `chat_action_subscribe`, and serves live renderer trees.
-The launcher also verifies that a renderer update reaches native code and that
-the final Markdown report reaches CoreData. It writes the host-labelled report
-to `playground/test-results/ios-chat/diagnosis-report.md`. The product builds
-against the workspace-linked `@parity/truapi`. Override the product source,
-identity, SPA URL, room, input, or report path with
-`IOS_CHAT_PRODUCT_DIR`, `IOS_CHAT_PRODUCT_HOST`, `IOS_CHAT_PRODUCT_URL`,
-`TRUAPI_IOS_E2E_CHAT_ROOM_ID`, `TRUAPI_IOS_E2E_CHAT_MESSAGE`, or
-`TRUAPI_IOS_E2E_CHAT_REPORT`.
-
-The same harness can run the legacy Product SDK worker from the sibling
-`host-playground` checkout. This target builds the current TrUAPI client, links
-it over Host Playground's transitive `@parity/truapi`, then builds and runs
-that product:
-
-```bash
-make ios-chat-host-playground-run
-```
-
-Run both integrations with one iOS build using `make ios-chat-all`.
-
-The Android twin of that launcher runs the same TrUAPI Playground worker
-against the shared core inside a headless emulator, and writes its report to
+`make android-chat-playground-run` runs the TrUAPI Playground worker against the
+shared core inside a headless emulator, and writes its report to
 `playground/test-results/android-chat/diagnosis-report.md`:
 
 ```bash
@@ -984,8 +929,7 @@ Prerequisites:
   must pass `TRUAPI_ANDROID_E2E_PACKAGE`
 
 The `TRUAPI_ANDROID_E2E_*` environment variables override every default
-(device, APK, product, room, message, username, URL, report path); they
-mirror the iOS `TRUAPI_IOS_E2E_*` ones.
+(device, APK, product, room, message, username, URL, report path).
 
 The public `host-playground` test list runs inside the native host apps; see [e2e/host-playground/README.md](e2e/host-playground/README.md).
 
