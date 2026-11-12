@@ -400,6 +400,12 @@ pub fn test_descriptor_chain(
 	chain
 }
 
+/// The People chain the test stack is published on.
+pub const TEST_STACK_PEOPLE: [u8; 32] = [0xa1; 32];
+
+/// The People chain the test stack is published on after a wipe.
+pub const TEST_STACK_WIPED_PEOPLE: [u8; 32] = [0xa2; 32];
+
 /// The test stack's descriptor as published at `sequence` in `generation`,
 /// with People on `people`, Bulletin on `[0xbb; 32]` and Asset Hub on
 /// `[0xcc; 32]`. A wipe is a higher `sequence`, another `generation` and
