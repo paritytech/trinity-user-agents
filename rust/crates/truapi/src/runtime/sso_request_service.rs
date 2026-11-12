@@ -294,7 +294,7 @@ impl SsoRequestService {
 		let resolved = resolve_session_identity_with_chain(
 			&self.dotns_reads,
 			&self.chain,
-			self.host_config.asset_hub_chain_genesis_hash,
+			self.host_config.stack.chains().asset_hub,
 			session,
 		)
 		.await;
@@ -357,7 +357,7 @@ impl SsoRequestService {
 		let resolved = resolve_session_identity_with_chain(
 			&self.dotns_reads,
 			&self.chain,
-			self.host_config.asset_hub_chain_genesis_hash,
+			self.host_config.stack.chains().asset_hub,
 			session,
 		)
 		.await;
@@ -724,14 +724,14 @@ impl SsoRequestService {
 			let selection = self.selection.lock().expect("session selection mutex poisoned");
 			(self.session_state.current()?, selection.session_epoch)
 		};
-		if current.has_username() || self.host_config.asset_hub_chain_genesis_hash == [0; 32] {
+		if current.has_username() || self.host_config.stack.chains().asset_hub.is_none() {
 			return Some(authority_session(&current));
 		}
 
 		let resolved = resolve_session_identity_with_chain(
 			&self.dotns_reads,
 			&self.chain,
-			self.host_config.asset_hub_chain_genesis_hash,
+			self.host_config.stack.chains().asset_hub,
 			current.clone(),
 		)
 		.await;

@@ -8,7 +8,7 @@ use super::{ChainEndpoint, Stack};
 
 /// The bundle `built_in` ships, included here rather than read from
 /// `built_in`, whose tests use this module.
-const PASEO_NEXT_V2_BUNDLE: &[u8] = include_bytes!("../../stacks/paseo-next-v2.json");
+const PASEO_NEXT_V2_BUNDLE: &[u8] = include_bytes!("../../../../../stacks/paseo-next-v2.json");
 
 /// The bundled paseo-next-v2 descriptor, edited, as plain JSON bytes.
 pub fn edit_descriptor(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
@@ -50,6 +50,16 @@ impl Stack {
 			ChainIdentifier::AssetHub => Some(&self.chains.asset_hub),
 			ChainIdentifier::Relay => None,
 		}
+	}
+
+	/// The chain roles this network serves, each with its genesis hash.
+	pub fn served_roles(&self) -> [(ChainIdentifier, [u8; 32]); 3] {
+		let genesis = self.genesis();
+		[
+			(ChainIdentifier::People, genesis.people),
+			(ChainIdentifier::Bulletin, genesis.bulletin),
+			(ChainIdentifier::AssetHub, genesis.asset_hub),
+		]
 	}
 
 	/// This stack with its descriptor edited as JSON.
