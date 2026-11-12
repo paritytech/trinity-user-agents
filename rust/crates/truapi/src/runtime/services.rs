@@ -108,6 +108,8 @@ pub struct RuntimeServices {
 	pub contact_handles: crate::runtime::contacts::ContactHandleCache,
 	/// dotNS reads running now, shared by the callers that overlap them.
 	pub dotns_reads: DotnsReads,
+	/// Public profile resolution and native cache retention shared by host callers.
+	pub public_profiles: Arc<crate::public_profile::PublicProfilesService>,
 	/// Host Game adapter, installed once at startup by a host that can hold
 	/// reminders. Unset leaves every product Game call `Unsupported`.
 	game_platform: OnceLock<Arc<dyn GamePlatform>>,
@@ -243,6 +245,11 @@ impl RuntimeServices {
 	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
+		let public_profiles = Arc::new(crate::public_profile::PublicProfilesService::new(
+			chain.clone(),
+			asset_hub_chain_genesis_hash,
+			spawner.clone(),
+		));
 		let statement_store = StatementStoreRpc::new(
 			platform.clone(),
 			chain.clone(),
@@ -269,6 +276,7 @@ impl RuntimeServices {
 			contacts_platform: OnceLock::new(),
 			contact_handles: Default::default(),
 			dotns_reads: DotnsReads::new(spawner.clone()),
+			public_profiles,
 			game_platform: OnceLock::new(),
 			scanner_platform: OnceLock::new(),
 			scan_open: AtomicBool::new(false),
@@ -467,10 +475,12 @@ impl RuntimeServices {
 	/// Install the core database, which also stores the funding sessions.
 	///
 	/// Set-once, so durable state cannot move to another file under a running
-	/// consumer. Returns whether this call installed it.
+	/// consumer. Returns `None` if a database was already installed.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub(crate) fn install_core_db(&self, db: Db) -> bool {
-		self.core_db.set(db.clone()).is_ok() && self.funding.install_db(db)
+	pub(crate) fn install_core_db(&self, db: Db) -> Option<()> {
+		self.core_db.set(db.clone()).ok()?;
+		self.public_profiles.install_db(db.clone())?;
+		self.funding.install_db(db).then_some(())
 	}
 
 	/// The core database.

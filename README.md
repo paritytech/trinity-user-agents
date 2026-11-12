@@ -447,7 +447,9 @@ Native hosts emit cached metadata, then refresh missing or expired records
 suppresses expired cached values (false in app callers). Streams emit up to two
 distinct profiles; cancellation or drop stops resolution. Invalid usernames
 return an error subscription. SQLite stores full records and keeps the
-1,000 most recently used. Avatar CIDs key the image cache; only misses call `loadImage`.
+1,000 most recently used. Cache reads use the reader pool; recency updates are
+batched with profile writes or after one second. Avatar CIDs key the image cache;
+only misses call `loadImage`.
 WASM resolves once without caching.
 
 Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
