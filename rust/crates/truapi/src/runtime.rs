@@ -368,7 +368,7 @@ pub struct ProductConnection {
 	renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
 	pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
 	game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
-	/// Control of the card face above this connection's Widget, when the host draws one.
+	/// Control of the card face under this connection's Widget, when the host draws one.
 	expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
 	open_operations: Mutex<HashSet<u32>>,
 }
