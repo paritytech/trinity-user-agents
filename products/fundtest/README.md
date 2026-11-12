@@ -292,7 +292,7 @@ npm run build    # dist/app and dist/worker
 
 ## Deploy
 
-fundtest is published on Paseo Next v2, the network the apps' testnet builds run on, as `fundtest-provider.paseo`:
+fundtest is published on Paseo Next v2, the network the apps' Nightly builds run on, as `fundtest-provider.paseo`:
 
 | dotNS name                       | Text record  | Holds                                                         |
 | -------------------------------- | ------------ | ------------------------------------------------------------- |
@@ -304,6 +304,10 @@ The label has a base of 9 characters or more because Paseo Next v2 sells no 6 to
 (`PopRules.shortNamesEnabled` is off), so `fundtest.paseo` cannot be registered. The name must carry the network's TLD
 and equal `domain` in `bulletin-deploy.config.ts` byte for byte; set `FUNDTEST_DOTNS_NAME` to deploy a copy under
 another name.
+
+A copy is also published on previewnet, the network the apps' Debug builds run on, as `fundtest-provider.testnet` (the
+same records under that name). It is the same build, so its on-chain leg still runs on Paseo Next v2; whether a
+previewnet host serves it end to end is not verified.
 
 Deploys are manual; no workflow runs them. To redeploy:
 
@@ -323,6 +327,9 @@ Deploys are manual; no workflow runs them. To redeploy:
    /tmp/bd/node_modules/.bin/bulletin-deploy ./dist/app fundtest-provider.paseo \
      --js-merkle --env paseo-next-v2 --config ./bulletin-deploy.config.ts
    ```
+
+   For the previewnet copy, run it with `FUNDTEST_DOTNS_NAME=fundtest-provider.testnet`, the name
+   `fundtest-provider.testnet` and `--env preview`.
 
    This uploads the App and the Worker to Bulletin and writes the three text records above. It needs no keys: without
    a session, bulletin-deploy signs with its shared testnet account, which therefore owns the name, as it does for
