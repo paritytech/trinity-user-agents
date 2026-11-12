@@ -114,6 +114,13 @@ pub enum StackError {
 		/// The role with the all-zero hash.
 		chain: ChainIdentifier,
 	},
+	/// The stack's id or generation is empty. Stored state is told apart by
+	/// them.
+	#[display("stack {field} is empty")]
+	EmptyIdentity {
+		/// `id` or `generation`.
+		field: &'static str,
+	},
 	/// The TLD is not one the core serves dotNS names under.
 	#[display("stack tld {tld:?} is not one of {}", DOTNS_TLDS.join(", "))]
 	UnsupportedTld {
@@ -183,6 +190,10 @@ impl Stack {
 		chains: StackChains,
 		allows_reserved_values: bool,
 	) -> Result<Self, StackError> {
+		let fields = [("id", &identity.id), ("generation", &identity.generation)];
+		if let Some((field, _)) = fields.into_iter().find(|(_, value)| value.is_empty()) {
+			return Err(StackError::EmptyIdentity { field });
+		}
 		if !DOTNS_TLDS.contains(&tld.as_str()) {
 			return Err(StackError::UnsupportedTld { tld });
 		}
