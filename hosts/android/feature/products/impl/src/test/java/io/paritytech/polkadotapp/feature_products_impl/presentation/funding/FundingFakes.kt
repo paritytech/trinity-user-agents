@@ -76,7 +76,9 @@ class FakeFundingService : FundingService {
 
     override suspend fun acknowledge(id: String) = Unit
 
-    override val events: Flow<FundingEvent> = emptyFlow()
+    val eventQueue = MutableSharedFlow<FundingEvent>(extraBufferCapacity = 16)
+
+    override val events: Flow<FundingEvent> = eventQueue
 
     override fun openProviderFrame(request: FundingFrameRequest) = Unit
 
