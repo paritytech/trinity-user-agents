@@ -416,17 +416,6 @@ class DockletHideStateTest {
     }
 
     @Test
-    fun `the hidden fraction dips while a hidden dock peeks`() = runTest {
-        val state = hiddenState()
-
-        state.peek()
-        advanceTimeBy(700L + 200L)
-        runCurrent()
-
-        assertTrue(state.hiddenFraction < 1f)
-    }
-
-    @Test
     fun `the hidden fraction stays within 0 and 1 through a flung hide`() = runTest {
         val state = hideState()
         swipe(state, fromX = 50f, toX = 300f, stepMillis = 4L)

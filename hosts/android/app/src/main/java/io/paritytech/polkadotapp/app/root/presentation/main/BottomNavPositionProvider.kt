@@ -15,7 +15,7 @@ class BottomNavPositionProvider @Inject constructor() {
     private val mutableHiddenFraction = MutableStateFlow(0f)
     val hiddenFraction: StateFlow<Float> = mutableHiddenFraction
 
-    fun set(heightDp: Dp) {
+    fun setHeight(heightDp: Dp) {
         mutableHeightDp.value = heightDp
     }
 

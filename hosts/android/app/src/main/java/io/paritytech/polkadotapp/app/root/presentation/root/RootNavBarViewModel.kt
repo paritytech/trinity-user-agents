@@ -83,7 +83,7 @@ class RootNavBarViewModel @Inject constructor(
     }
 
     fun setBarHeight(value: Dp) {
-        bottomNavPositionProvider.set(value)
+        bottomNavPositionProvider.setHeight(value)
     }
 
     fun setBarHiddenFraction(value: Float) {

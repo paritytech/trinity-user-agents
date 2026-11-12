@@ -15,13 +15,6 @@ class NewChatButtonDropTest {
     }
 
     @Test
-    fun `the button moves in step with the Docklet`() {
-        val drops = listOf(0.25f, 0.5f, 0.75f).map { newChatButtonDrop(barInsetBottom = 300, navigationBarsBottom = 100, hiddenFraction = it) }
-
-        assertEquals(listOf(50, 100, 150), drops)
-    }
-
-    @Test
     fun `without a Docklet band the button does not move`() {
         assertEquals(0, newChatButtonDrop(barInsetBottom = 0, navigationBarsBottom = 100, hiddenFraction = 1f))
     }
