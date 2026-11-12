@@ -384,9 +384,8 @@ provider is offered, read again on `.providers`.
 says whether a session's overlay can be shown again. Ended sessions keep being
 handed over on each resume until the host records each with
 `acknowledgeFundingSession(intent:)`, which it calls only while the history is
-on screen. `setFundingProviderConfig(publishedNames:bundled:)` lists the
-providers the remote configuration names and the ones the host ships, on every
-refresh; amounts cross as decimal strings of CASH units. Free functions hold
+on screen. `setFundingProviderConfig(publishedNames:)` lists the providers the
+remote configuration names, on every refresh; amounts cross as decimal strings of CASH units. Free functions hold
 the rules both apps share: the `fundingPage*` checks
 for a provider's page, `productSource(...)` and `archiveFile(...)` for where a
 product runs from and which file answers a request, and
