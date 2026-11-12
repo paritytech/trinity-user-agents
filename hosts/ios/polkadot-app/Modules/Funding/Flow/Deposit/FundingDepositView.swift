@@ -7,30 +7,36 @@ import TrUAPIHost
 /// Where to send the funds, as the provider reported it, while the session
 /// waits for them.
 struct FundingDepositView: View {
-    let model: FundingFlowModel
+    let model: FundingScreenModel
+    let presenter: FundingDepositPresenterProtocol
 
     @State private var copied: String?
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
-            FundingScreenHeader(title: title, onBack: model.hasStarted ? model.showProgress : model.back)
+            FundingScreenHeader(title: title, onBack: presenter.back)
 
             ScrollView {
                 content
             }
 
             if model.failure != nil {
-                DSButton(.Funding.failureClose, expands: true, action: model.close)
+                DSButton(.Funding.failureClose, expands: true, action: presenter.close)
             } else if model.hasStarted {
                 HStack(spacing: DSSpacings.small) {
-                    DSButton(.Funding.depositCancel, style: .destructive, expands: true, action: model.confirmCancel)
+                    DSButton(
+                        .Funding.depositCancel,
+                        style: .destructive,
+                        expands: true,
+                        action: presenter.confirmCancel
+                    )
                     waitingPill
                 }
             }
         }
         .fundingToast($copied)
         .onChange(of: paymentSeen, initial: true) { _, seen in
-            if seen { model.showProgress() }
+            if seen { presenter.showProgress() }
         }
     }
 }
@@ -125,7 +131,7 @@ private extension FundingDepositView {
 
     /// Opens the progress screen the deposit sits over.
     var waitingPill: some View {
-        Button(action: model.showProgress) {
+        Button(action: presenter.showProgress) {
             HStack(spacing: DSSpacings.extraSmall) {
                 ProgressView().controlSize(.small).tint(.fgPrimary)
                 Text(.Funding.depositWaiting)
@@ -141,7 +147,7 @@ private extension FundingDepositView {
         guard model.hasStarted else { return false }
 
         let ended = model.session.map { !$0.stage.isOpen } ?? false
-        return ended || model.hasReached(.received)
+        return ended || model.state.hasReached(.received)
     }
 
     static func shortened(_ address: String) -> String {
@@ -181,41 +187,5 @@ struct FundingQRCode: View {
         guard let output = filter.outputImage,
               let cgImage = CIContext().createCGImage(output, from: output.extent) else { return nil }
         return UIImage(cgImage: cgImage)
-    }
-}
-
-/// Asks before cancelling: a deposit the user may already have paid, or a
-/// session the provider is working on.
-struct FundingCancelConfirmView: View {
-    let model: FundingFlowModel
-
-    var body: some View {
-        VStack(spacing: DSSpacings.medium) {
-            FundingScreenHeader(title: "", onBack: model.back)
-
-            Text(model.direction == .in ? .Funding.cancelTitle : .Funding.cancelTitleWithdraw)
-                .typography(.headlineMedium)
-                .foregroundStyle(.fgPrimary)
-            Text(message)
-                .typography(.bodyMedium)
-                .foregroundStyle(.fgPrimary)
-                .multilineTextAlignment(.center)
-
-            Spacer(minLength: 0)
-
-            DSButton(
-                .Funding.depositCancel,
-                style: .destructive,
-                expands: true,
-                isLoading: model.isCancelling,
-                action: model.requestCancel
-            )
-            DSButton(.Funding.cancelKeep, expands: true, action: model.back)
-        }
-    }
-
-    private var message: LocalizedStringResource {
-        guard model.isUnpaidTopUp else { return .Funding.cancelBodyProvider }
-        return model.rail == .bank ? .Funding.cancelBodyBank : .Funding.cancelBody
     }
 }

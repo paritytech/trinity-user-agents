@@ -5,14 +5,19 @@ import SwiftUI
 /// which countries a provider serves, with the smallest amount it takes
 /// there, and which none does: those cannot be picked.
 struct FundingCountryView: View {
-    let model: FundingFlowModel
+    let model: FundingScreenModel
+    let presenter: FundingCountryPresenterProtocol
 
     @State private var query = ""
     private let countries = FundingCountries.all()
 
     var body: some View {
         VStack(spacing: DSSpacings.medium) {
-            FundingScreenHeader(title: String(localized: .Funding.countryTitle), leadingTitle: true, onBack: model.back)
+            FundingScreenHeader(
+                title: String(localized: .Funding.countryTitle),
+                leadingTitle: true,
+                onBack: presenter.back
+            )
             searchField
 
             ScrollView {
@@ -52,11 +57,13 @@ private extension FundingCountryView {
     }
 
     var open: [PaymentCountry] {
-        matching.filter { !model.unsupportedCountries.contains($0.code) && model.minimum(country: $0.code) == nil }
+        matching
+            .filter { !model.unsupportedCountries.contains($0.code) && model.state.minimum(country: $0.code) == nil }
     }
 
     var withMinimum: [PaymentCountry] {
-        matching.filter { !model.unsupportedCountries.contains($0.code) && model.minimum(country: $0.code) != nil }
+        matching
+            .filter { !model.unsupportedCountries.contains($0.code) && model.state.minimum(country: $0.code) != nil }
     }
 
     var unsupported: [PaymentCountry] {
@@ -90,7 +97,7 @@ private extension FundingCountryView {
         let isSelected = country == model.country
 
         return Button {
-            model.chooseCountry(country)
+            presenter.chooseCountry(country)
         } label: {
             HStack(spacing: DSSpacings.smallIncreased) {
                 Text(verbatim: country.flag)
@@ -117,7 +124,7 @@ private extension FundingCountryView {
             Text(.Funding.countryRefused)
                 .typography(.bodySmall)
                 .foregroundStyle(.fgTertiary)
-        } else if let minimum = model.minimum(country: country.code) {
+        } else if let minimum = model.state.minimum(country: country.code) {
             Text(.Funding.countryMinimum(amount: model.cash.label(minimum)))
                 .typography(.bodySmall)
                 .foregroundStyle(.fgSecondary)

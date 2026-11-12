@@ -5,11 +5,12 @@ import SwiftUI
 /// The networks the providers' crypto routes name, each closed to amounts
 /// below the lowest minimum a provider has refused with there.
 struct FundingNetworkView: View {
-    let model: FundingFlowModel
+    let model: FundingScreenModel
+    let presenter: FundingNetworkPresenterProtocol
 
     var body: some View {
         VStack(spacing: DSSpacings.medium) {
-            FundingScreenHeader(title: String(localized: .Funding.networkTitle), onBack: model.back)
+            FundingScreenHeader(title: String(localized: .Funding.networkTitle), onBack: presenter.back)
 
             if model.networks.isEmpty {
                 Text(.Funding.errorNoProvider)
@@ -29,7 +30,7 @@ struct FundingNetworkView: View {
     }
 
     private func row(_ network: FundingNetwork) -> some View {
-        let minimum = model.minimum(network: network.id).flatMap { $0 > model.amount ? $0 : nil }
+        let minimum = model.state.minimum(network: network.id).flatMap { $0 > model.amount ? $0 : nil }
         let subtitle = minimum.map { minimum -> String in
             let label = model.cash.label(minimum)
             return String(localized: LocalizedStringResource.Funding.networkMinimum(amount: label))
@@ -38,54 +39,12 @@ struct FundingNetworkView: View {
         return DisclosureListRow(title: network.name, subtitle: subtitle, isEnabled: minimum == nil) {
             FundingAssetMark(logo: network.logo, letter: network.monogram, tint: network.tint)
         } onTap: {
-            model.chooseNetwork(network.id)
+            presenter.chooseNetwork(network.id)
         }
         .fundingTile(isEnabled: minimum == nil)
     }
 }
 
-/// The tokens the providers take on the chosen network.
-struct FundingTokenView: View {
-    let model: FundingFlowModel
-
-    var body: some View {
-        VStack(spacing: DSSpacings.medium) {
-            FundingScreenHeader(title: String(localized: .Funding.tokenTitle), onBack: model.back)
-
-            if let network = model.network.map(FundingNetwork.init(id:)) {
-                HStack {
-                    Text(.Funding.tokenNetworkSelected)
-                        .typography(.captionMedium)
-                        .foregroundStyle(.fgSecondary)
-                    Spacer()
-                    Text(verbatim: network.name)
-                        .typography(.captionMedium)
-                        .foregroundStyle(.fgPrimary)
-                    FundingAssetMark(logo: network.logo, letter: network.monogram, tint: network.tint, size: .s20)
-                }
-                .padding(.horizontal, DSSpacings.smallIncreased)
-                .frame(height: 32)
-                .background(.bgSurfaceMain, in: Capsule())
-            }
-
-            ScrollView {
-                VStack(spacing: DSSpacings.small) {
-                    ForEach(model.tokens) { token in
-                        DisclosureListRow(title: token.symbol) {
-                            FundingAssetMark(logo: token.logo, letter: token.monogram, tint: token.tint)
-                        } onTap: {
-                            model.chooseToken(token.symbol)
-                        }
-                        .fundingTile(isEnabled: true)
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// A network's or token's mark: the app's logo where it has one, else its
-/// first letter in its colour.
 struct FundingAssetMark: View {
     let logo: ImageResource?
     let letter: String

@@ -6,15 +6,15 @@ import TrUAPIHost
 /// Top-ups and withdrawals on one screen: those in flight under In progress,
 /// the ended ones under Completed, newest first. A row opens its session.
 struct FundingHistoryView: View {
+    let model: FundingActivityViewModel
+    let presenter: FundingActivityPresenterProtocol
     let cash: FundingCash
-    var center: FundingActivityCenter = .shared
-    var onBack: () -> Void
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
-            FundingScreenHeader(title: String(localized: .Funding.historyTitle), onBack: onBack)
+            FundingScreenHeader(title: String(localized: .Funding.historyTitle), onBack: presenter.back)
 
-            if center.inFlight.isEmpty, center.history.isEmpty {
+            if model.state.inFlight.isEmpty, model.state.history.isEmpty {
                 Text(.Funding.historyEmpty)
                     .typography(.bodyMedium)
                     .foregroundStyle(.fgSecondary)
@@ -25,13 +25,12 @@ struct FundingHistoryView: View {
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: DSSpacings.large) {
-                        section(String(localized: .Funding.activityInProgress), items: center.inFlight)
-                        section(String(localized: .Funding.activityCompleted), items: center.history)
+                        section(String(localized: .Funding.activityInProgress), items: model.state.inFlight)
+                        section(String(localized: .Funding.activityCompleted), items: model.state.history)
                     }
                 }
             }
         }
-        .task { await follow() }
     }
 
     @ViewBuilder
@@ -42,22 +41,11 @@ struct FundingHistoryView: View {
                     .typography(.bodyLargeEmphasized)
                     .foregroundStyle(.fgPrimary)
                 ForEach(items) { item in
-                    FundingActivityRow(item: item, cash: cash, arrives: center.isArriving(item.id))
+                    FundingActivityRow(item: item, cash: cash, arrives: model.state.arriving.contains(item.id))
                         .contentShape(Rectangle())
-                        .onTapGesture { center.openDetail(item) }
+                        .onTapGesture { presenter.open(item) }
                 }
             }
-        }
-    }
-
-    /// Refreshes while the screen is open, so a step reached without a status
-    /// change still shows.
-    private func follow() async {
-        center.beginShowingHistory()
-        defer { center.endShowingHistory() }
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(10))
-            center.refresh()
         }
     }
 }
@@ -67,10 +55,9 @@ struct FundingHistoryView: View {
 /// history, and a button to start another.
 struct FundingPendingView: View {
     let direction: FundingDirection
+    let model: FundingActivityViewModel
+    let presenter: FundingActivityPresenterProtocol
     let cash: FundingCash
-    var center: FundingActivityCenter = .shared
-    var onHistory: () -> Void
-    var onNew: () -> Void
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
@@ -79,7 +66,7 @@ struct FundingPendingView: View {
                     .typography(.bodyLargeEmphasized)
                     .foregroundStyle(.fgPrimary)
                 Spacer()
-                Button(action: onHistory) {
+                Button(action: presenter.showHistory) {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.system(size: 16, weight: .semibold))
                 }
@@ -92,17 +79,17 @@ struct FundingPendingView: View {
                     ForEach(items) { item in
                         FundingActivityRow(item: item, cash: cash)
                             .contentShape(Rectangle())
-                            .onTapGesture { center.openDetail(item) }
+                            .onTapGesture { presenter.open(item) }
                     }
                 }
             }
 
-            DSButton(buttonTitle, expands: true, action: onNew)
+            DSButton(buttonTitle, expands: true, action: presenter.startNew)
         }
     }
 
     private var items: [FundingActivityItem] {
-        center.inFlight.filter { $0.direction == direction }
+        model.state.inFlight
     }
 
     private var title: String {

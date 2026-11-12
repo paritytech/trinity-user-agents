@@ -44,45 +44,7 @@ class FundingSheetHostingController<Content: View>: UIHostingController<Content>
     }
 }
 
-/// The overlay sheet. Dragging it away is the user leaving, the same as Close.
-final class FundingSheetController: FundingSheetHostingController<FundingSheetView> {
-    private let model: FundingFlowModel
-    private var onAppear: (() -> Void)?
-
-    init(model: FundingFlowModel, onAppear: (() -> Void)? = nil) {
-        self.model = model
-        self.onAppear = onAppear
-        super.init(rootView: FundingSheetView(model: model))
-    }
-
-    @available(*, unavailable)
-    @MainActor dynamic required init?(coder _: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        let onAppear = onAppear
-        self.onAppear = nil
-        onAppear?()
-    }
-
-    /// Dismisses from the presenter, so a provider's screen still over the
-    /// sheet goes with it.
-    override func dismissIfPresented(completion: (() -> Void)? = nil) {
-        guard let presenter = presentingViewController, !isBeingDismissed else {
-            completion?()
-            return
-        }
-        presenter.dismiss(animated: true, completion: completion)
-    }
-
-    override func userDismissed() {
-        model.close()
-    }
-}
-
-private extension UIView {
+extension UIView {
     /// Whether every scroll view under this one shows its top.
     var scrollViewsAtTop: Bool {
         if let scrollView = self as? UIScrollView,
@@ -90,17 +52,6 @@ private extension UIView {
             return false
         }
         return subviews.allSatisfy(\.scrollViewsAtTop)
-    }
-}
-
-/// A list of sessions, on the same sheet as the overlay.
-final class FundingListSheetController: FundingSheetHostingController<AnyView> {
-    convenience init() {
-        self.init(rootView: AnyView(EmptyView()))
-    }
-
-    func show(_ content: some View) {
-        rootView = AnyView(content.fundingScreen())
     }
 }
 

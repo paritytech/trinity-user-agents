@@ -115,3 +115,21 @@ extension Date {
         self.init(timeIntervalSince1970: milliseconds.millisecondsToSeconds())
     }
 }
+
+extension FundingActivityItem {
+    /// The sessions in flight, newest first, and the ended ones, most
+    /// recently ended first.
+    static func lists(from entries: [FundingEntry])
+        -> (inFlight: [FundingActivityItem], history: [FundingActivityItem]) {
+        let inFlight = entries
+            .filter { $0.progress?.status.isInFlight == true }
+            .compactMap { entry in entry.session.map { FundingActivityItem(session: $0, progress: entry.progress) } }
+            .sorted { $0.date > $1.date }
+        let inFlightIds = Set(inFlight.map(\.id))
+        let history = entries
+            .filter { !inFlightIds.contains($0.id) }
+            .compactMap { $0.summary.flatMap(FundingActivityItem.init(summary:)) }
+            .sorted { $0.date > $1.date }
+        return (inFlight, history)
+    }
+}

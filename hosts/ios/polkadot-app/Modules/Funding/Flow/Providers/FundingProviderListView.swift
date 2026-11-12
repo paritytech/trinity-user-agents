@@ -6,11 +6,12 @@ import TrUAPIHost
 /// Every provider's live quote for the ask, the one the core marks best
 /// tagged, with how long until the core asks every provider again.
 struct FundingProviderListView: View {
-    let model: FundingFlowModel
+    let model: FundingScreenModel
+    let presenter: FundingProvidersPresenterProtocol
 
     var body: some View {
         VStack(spacing: DSSpacings.medium) {
-            FundingScreenHeader(title: String(localized: .Funding.providersTitle), onBack: model.back)
+            FundingScreenHeader(title: String(localized: .Funding.providersTitle), onBack: presenter.back)
 
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 countdown(now: context.date)
@@ -61,11 +62,11 @@ private extension FundingProviderListView {
 
     func row(_ providerId: ProductId) -> some View {
         let state = model.rows[providerId] ?? .pending
-        let brand = model.brand(for: providerId)
+        let brand = model.state.brand(for: providerId)
         let isSelected = providerId == model.selectedProviderId
 
         return Button {
-            model.chooseProvider(providerId)
+            presenter.chooseProvider(providerId)
         } label: {
             HStack(spacing: DSSpacings.smallIncreased) {
                 FundingProviderLogo(brand: brand)
@@ -112,7 +113,7 @@ private extension FundingProviderListView {
             let providerSide = model.direction == .in ? quote.sendAmount : quote.receiveAmount
             let cashSide = model.direction == .in ? quote.receiveAmount : quote.sendAmount
             VStack(alignment: .trailing, spacing: 2) {
-                if let providerAmount = model.quoteUnit(quote).formatWithCode(providerSide) {
+                if let providerAmount = model.state.quoteUnit(quote).formatWithCode(providerSide) {
                     Text(verbatim: "≈ " + providerAmount)
                         .typography(.bodyMediumEmphasized)
                         .foregroundStyle(.fgPrimary)

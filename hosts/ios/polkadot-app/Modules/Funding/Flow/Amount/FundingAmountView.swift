@@ -5,14 +5,15 @@ import TrUAPIHost
 
 /// The overlay's first screen: which rail, and how much.
 struct FundingAmountView: View {
-    @Bindable var model: FundingFlowModel
+    let model: FundingScreenModel
+    let presenter: FundingAmountPresenterProtocol
 
     private static let presets: [Decimal] = [10, 50, 100]
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
             FundingScreenHeader(title: title, leadingTitle: true, onBack: nil) {
-                Button(action: model.showHistory) {
+                Button(action: presenter.showHistory) {
                     Image(systemName: "clock.arrow.circlepath")
                         .font(.system(size: 16, weight: .semibold))
                 }
@@ -28,7 +29,7 @@ struct FundingAmountView: View {
             }
 
             FundingRailTabs(selected: model.rail, available: model.availableRails) { rail in
-                model.selectRail(rail)
+                presenter.selectRail(rail)
             }
 
             VStack(spacing: DSSpacings.extraSmall) {
@@ -48,14 +49,13 @@ struct FundingAmountView: View {
 
             Spacer(minLength: 0)
 
-            FundingKeypad(text: $model.amountText)
+            FundingKeypad(text: Binding(get: { model.amountText }, set: presenter.amountTextChanged))
 
             DSButton(.Funding.continueAction, expands: true) {
-                model.continueFromAmount()
+                presenter.continueFromAmount()
             }
             .disabled(!model.canContinue)
         }
-        .onChange(of: model.amountText) { _, _ in model.amountChanged() }
     }
 }
 
@@ -96,7 +96,7 @@ private extension FundingAmountView {
         HStack(spacing: DSSpacings.small) {
             ForEach(Self.presets, id: \.self) { preset in
                 Button {
-                    model.amountText = NSDecimalNumber(decimal: preset).stringValue
+                    presenter.amountTextChanged(NSDecimalNumber(decimal: preset).stringValue)
                 } label: {
                     DSAmount(amount: model.cash.figure(preset), symbol: model.cash.symbol, typography: .labelMedium)
                         .frame(maxWidth: .infinity)

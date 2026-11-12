@@ -6,11 +6,12 @@ import TrUAPIHost
 /// What the chosen provider will charge and pay, before the session is handed
 /// to it.
 struct FundingSummaryView: View {
-    @Bindable var model: FundingFlowModel
+    let model: FundingScreenModel
+    let presenter: FundingSummaryPresenterProtocol
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
-            FundingScreenHeader(title: title, onBack: model.back)
+            FundingScreenHeader(title: title, onBack: presenter.back)
 
             VStack(spacing: DSSpacings.small) {
                 headline
@@ -36,7 +37,7 @@ struct FundingSummaryView: View {
 
             Spacer(minLength: 0)
 
-            DSButton(.Funding.continueAction, expands: true, isLoading: model.isStarting, action: model.start)
+            DSButton(.Funding.continueAction, expands: true, isLoading: model.isStarting, action: presenter.start)
                 .disabled(model.selectedQuote == nil)
         }
     }
@@ -58,7 +59,8 @@ private extension FundingSummaryView {
     @ViewBuilder
     var headline: some View {
         if let quote = model.selectedQuote,
-           let figure = model.quoteUnit(quote).format(model.direction == .in ? quote.sendAmount : quote.receiveAmount) {
+           let figure = model.state.quoteUnit(quote)
+           .format(model.direction == .in ? quote.sendAmount : quote.receiveAmount) {
             Text(verbatim: figure)
                 .typography(.displayLarge)
                 .foregroundStyle(.fgPrimary)
@@ -75,7 +77,7 @@ private extension FundingSummaryView {
 
     var feesLink: some View {
         Button {
-            model.path.append(.fees)
+            presenter.showFees()
         } label: {
             HStack(spacing: DSSpacings.extraSmall) {
                 Text(feesCaption)
@@ -100,7 +102,7 @@ private extension FundingSummaryView {
     var countryRow: some View {
         FundingValueRow(
             title: String(localized: .Funding.summaryCountry),
-            action: { model.path.append(.country) },
+            action: presenter.showCountry,
             value: {
                 if let country = model.country {
                     HStack(spacing: DSSpacings.extraSmall) {
@@ -121,10 +123,10 @@ private extension FundingSummaryView {
     var providerRow: some View {
         FundingValueRow(
             title: String(localized: .Funding.summaryProvider),
-            action: { model.path.append(.providers) },
+            action: presenter.showProviders,
             value: {
                 if let providerId = model.selectedProviderId {
-                    let brand = model.brand(for: providerId)
+                    let brand = model.state.brand(for: providerId)
                     HStack(spacing: DSSpacings.extraSmall) {
                         FundingProviderLogo(brand: brand, size: .s20)
                         Text(verbatim: brand.name)
@@ -161,7 +163,7 @@ private extension FundingSummaryView {
     func payout(_ quote: FundingQuote) -> String? {
         model.direction == .in
             ? model.cash.label(units: quote.receiveAmount)
-            : model.quoteUnit(quote).format(quote.receiveAmount)
+            : model.state.quoteUnit(quote).format(quote.receiveAmount)
     }
 
     var arrivesRow: some View {

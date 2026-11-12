@@ -7,7 +7,8 @@ import TrUAPIHost
 /// its direction and rail, and what the user may still need, such as the bank
 /// details to pay to. Once the session ends it shows the ended screen.
 struct FundingProgressView: View {
-    let model: FundingFlowModel
+    let model: FundingScreenModel
+    let presenter: FundingProgressPresenterProtocol
 
     @State private var copied: String?
 
@@ -18,9 +19,9 @@ struct FundingProgressView: View {
                     ended: ended,
                     cash: model.cash,
                     branding: model.branding,
-                    onFees: model.showFees,
-                    onClose: model.close,
-                    onStartOver: model.startOver
+                    onFees: presenter.showFees,
+                    onClose: presenter.close,
+                    onStartOver: presenter.startOver
                 )
             } else {
                 inProgress
@@ -29,7 +30,7 @@ struct FundingProgressView: View {
         .task(id: model.progress?.longerAtMs) { await follow() }
         .sheet(isPresented: offerShown) {
             if let offer = model.cancelOffer {
-                FundingCancelOfferView(model: model, fee: offer.fee, refund: offer.refund)
+                FundingCancelOfferView(model: model, presenter: presenter, fee: offer.fee, refund: offer.refund)
                     .presentationDetents([.medium])
                     .interactiveDismissDisabled()
             }
@@ -102,7 +103,7 @@ private extension FundingProgressView {
     }
 
     var quotedSendAmount: String? {
-        model.chosenQuote.flatMap { model.quoteUnit($0).format($0.sendAmount) }
+        model.chosenQuote.flatMap { model.state.quoteUnit($0).format($0.sendAmount) }
     }
 }
 
@@ -111,7 +112,7 @@ private extension FundingProgressView {
 private extension FundingProgressView {
     var inProgress: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
-            FundingScreenHeader(title: "", onBack: model.hasStarted ? model.close : model.back)
+            FundingScreenHeader(title: "", onBack: presenter.close)
 
             ScrollView {
                 VStack(spacing: DSSpacings.medium) {
@@ -122,7 +123,7 @@ private extension FundingProgressView {
             }
 
             if model.canRequestCancel {
-                DSButton(model.cancelTitle, style: .destructive, expands: true, action: model.confirmCancel)
+                DSButton(model.cancelTitle, style: .destructive, expands: true, action: presenter.confirmCancel)
             }
         }
         .fundingToast($copied)
@@ -193,7 +194,7 @@ private extension FundingProgressView {
             case (.out, _):
                 feesRow(
                     String(localized: .Funding.summaryWithdrawCaption),
-                    model.chosenQuote.flatMap { model.quoteUnit($0).format($0.receiveAmount) }
+                    model.chosenQuote.flatMap { model.state.quoteUnit($0).format($0.receiveAmount) }
                 )
                 arrivesRow
             }
@@ -202,7 +203,7 @@ private extension FundingProgressView {
 
     /// "Send this exact amount" until the transfer is seen, then what was sent.
     var bankAmountTitle: String {
-        model.hasReached(.received)
+        model.state.hasReached(.received)
             ? String(localized: .Funding.progressYouSent)
             : String(localized: .Funding.summaryBankCaption)
     }
@@ -220,7 +221,7 @@ private extension FundingProgressView {
             feesRow(bankAmountTitle, quotedSendAmount)
             if let reference = model.progress?.reference {
                 copyRow(String(localized: .Funding.depositReference), reference)
-            } else if !model.hasReached(.received) {
+            } else if !model.state.hasReached(.received) {
                 pending(.Funding.depositPreparing)
             }
         }
@@ -230,11 +231,11 @@ private extension FundingProgressView {
     /// While the funds are not seen, the way back to the address to pay.
     @ViewBuilder
     var cryptoRow: some View {
-        if !model.hasReached(.received) {
+        if !model.state.hasReached(.received) {
             if case let .crypto(_, _, asset, amount, decimals, exact, _, _)? = model.progress?.deposit {
                 FundingValueRow(
                     title: String(localized: exact ? .Funding.depositExactAmount : .Funding.depositAtLeast),
-                    action: model.showDeposit
+                    action: presenter.showDeposit
                 ) {
                     FundingAssetUnit(code: asset, decimals: decimals).format(amount).map { value($0) }
                 }
@@ -266,7 +267,7 @@ private extension FundingProgressView {
 
 private extension FundingProgressView {
     func feesRow(_ title: String, _ amount: String?) -> some View {
-        let showFees: (() -> Void)? = model.chosenQuote == nil ? nil : { model.showFees() }
+        let showFees: (() -> Void)? = model.chosenQuote == nil ? nil : { presenter.showFees() }
         return FundingValueRow(title: title, action: showFees) {
             if let amount {
                 value(amount)
@@ -309,7 +310,7 @@ private extension FundingProgressView {
             try? await Task.sleep(for: .seconds(wait))
         }
         guard !Task.isCancelled else { return }
-        model.refreshSession()
+        presenter.refresh()
     }
 }
 
@@ -335,55 +336,79 @@ struct FundingLiveLine: View {
     }
 
     static func text(detail: FundingDetail?, heardAt: Date?, now: Date) -> String? {
-        let at = detail?.atMs.map(Date.init(milliseconds:))
-        let ago = at.flatMap { $0 <= now ? duration(Int(now.timeIntervalSince($0))) : nil }
-        let left = at.flatMap { $0 > now ? duration(Int($0.timeIntervalSince(now).rounded(.up))) : nil }
+        let reportedAt = detail?.atMs.map(Date.init(milliseconds:))
         let parts: [String?] =
-            switch detail?.fact {
-            case .none,
-                 .checked?:
-                [(at ?? heardAt).map { text(heardAt: $0, now: now) }]
-            case let .confirmations(done, required)?:
-                [
-                    String(localized: .Funding.liveConfirmation(done: "\(done)", required: "\(required)")),
-                    ago.map { String(localized: .Funding.liveLastBlock(time: $0)) },
-                ]
-            case .priceChecked?:
-                [
-                    String(localized: .Funding.livePriceChecked),
-                    ago.map { String(localized: .Funding.liveAgo(time: $0)) }
-                ]
-            case let .parts(done, total)?:
-                [
-                    String(localized: .Funding.livePart(done: "\(done)", total: "\(total)")),
-                    ago.map { String(localized: .Funding.liveLastPart(time: $0)) },
-                ]
-            case .scheduled?:
-                [left
-                    .map { String(localized: .Funding.liveTimeLeft(time: $0)) } ??
-                    String(localized: .Funding.liveAnyMoment)]
-            case .sentByBank?:
-                [String(localized: .Funding.liveSentByBank), at.map(moment)]
-            case .expectedBy?:
-                [at
-                    .map {
-                        String(localized: .Funding
-                            .liveExpectedBy(date: $0.formatted(.dateTime.weekday().day().month())))
-                    }]
-            case .inReview?:
-                [String(localized: .Funding.liveInReview), ago.map { String(localized: .Funding.liveAgo(time: $0)) }]
-            case let .attempt(attempt, attempts)?:
-                [
-                    attempts.map { String(localized: .Funding.liveAttemptOf(n: "\(attempt)", of: "\($0)")) }
-                        ?? String(localized: .Funding.liveAttempt(n: "\(attempt)")),
-                    left.map { String(localized: .Funding.liveNextTry(time: $0)) },
-                ]
-            case let .other(text)?:
-                [text, ago.map { String(localized: .Funding.liveAgo(time: $0)) }]
+            if let fact = detail?.fact, fact != .checked {
+                parts(of: fact, at: reportedAt, now: now)
+            } else {
+                [(reportedAt ?? heardAt).map { text(heardAt: $0, now: now) }]
             }
         let line = parts.compactMap(\.self).joined(separator: " · ")
         if line.isEmpty, let heardAt { return text(heardAt: heardAt, now: now) }
         return line.isEmpty ? nil : line
+    }
+
+    /// What the provider reported, then how long ago it was or how long is
+    /// left until it is due.
+    static func parts(of fact: FundingFact, at reportedAt: Date?, now: Date) -> [String?] {
+        let ago = reportedAt.flatMap { $0 <= now ? duration(Int(now.timeIntervalSince($0))) : nil }
+        let left = reportedAt.flatMap { $0 > now ? duration(Int($0.timeIntervalSince(now).rounded(.up))) : nil }
+        switch fact {
+        case .checked:
+            return []
+        case let .confirmations(done, required):
+            return [
+                String(localized: .Funding.liveConfirmation(done: "\(done)", required: "\(required)")),
+                ago.map { String(localized: .Funding.liveLastBlock(time: $0)) }
+            ]
+        case let .parts(done, total):
+            return [
+                String(localized: .Funding.livePart(done: "\(done)", total: "\(total)")),
+                ago.map { String(localized: .Funding.liveLastPart(time: $0)) }
+            ]
+        case let .attempt(attempt, attempts):
+            return [
+                attempts.map { String(localized: .Funding.liveAttemptOf(n: "\(attempt)", of: "\($0)")) }
+                    ?? String(localized: .Funding.liveAttempt(n: "\(attempt)")),
+                left.map { String(localized: .Funding.liveNextTry(time: $0)) }
+            ]
+        case .scheduled,
+             .sentByBank,
+             .expectedBy:
+            return [timed(fact, at: reportedAt, left: left)]
+        case .priceChecked,
+             .inReview,
+             .other:
+            return [labelled(fact), ago.map { String(localized: .Funding.liveAgo(time: $0)) }]
+        }
+    }
+
+    /// A fact read against a moment: when it happened or when it is due.
+    static func timed(_ fact: FundingFact, at reportedAt: Date?, left: String?) -> String? {
+        switch fact {
+        case .scheduled:
+            left.map { String(localized: .Funding.liveTimeLeft(time: $0)) } ?? String(localized: .Funding.liveAnyMoment)
+        case .sentByBank:
+            [String(localized: .Funding.liveSentByBank), reportedAt.map(moment)]
+                .compactMap(\.self)
+                .joined(separator: " · ")
+        case .expectedBy:
+            reportedAt.map {
+                String(localized: .Funding.liveExpectedBy(date: $0.formatted(.dateTime.weekday().day().month())))
+            }
+        default:
+            nil
+        }
+    }
+
+    /// A fact's own words, before its age.
+    static func labelled(_ fact: FundingFact) -> String? {
+        switch fact {
+        case .priceChecked: String(localized: .Funding.livePriceChecked)
+        case .inReview: String(localized: .Funding.liveInReview)
+        case let .other(text): text
+        default: nil
+        }
     }
 
     static func text(heardAt: Date, now: Date) -> String {
@@ -412,7 +437,8 @@ struct FundingLiveLine: View {
 /// The provider's terms for cancelling: what it keeps and what comes back to
 /// the balance, accepted or declined by the user.
 struct FundingCancelOfferView: View {
-    let model: FundingFlowModel
+    let model: FundingScreenModel
+    let presenter: FundingProgressPresenterProtocol
     let fee: U128
     let refund: U128
 
@@ -436,10 +462,10 @@ struct FundingCancelOfferView: View {
             Spacer(minLength: 0)
 
             DSButton(.Funding.offerAccept, style: .destructive, expands: true, isLoading: model.isAnsweringOffer) {
-                model.answerCancelOffer(accepting: CancelTerms(fee: fee, refund: refund))
+                presenter.answerCancelOffer(accepting: CancelTerms(fee: fee, refund: refund))
             }
             DSButton(.Funding.offerKeepGoing, expands: true) {
-                model.answerCancelOffer(accepting: nil)
+                presenter.answerCancelOffer(accepting: nil)
             }
         }
         .padding(DSSpacings.medium)

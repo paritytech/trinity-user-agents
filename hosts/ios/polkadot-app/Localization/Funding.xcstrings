@@ -760,6 +760,28 @@
         }
       }
     },
+    "providerFrameRequested" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$(provider)@ wants to show a screen"
+          }
+        }
+      }
+    },
+    "providerFrameShow" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show"
+          }
+        }
+      }
+    },
     "providers.countryUnsupported" : {
       "extractionState" : "manual",
       "localizations" : {

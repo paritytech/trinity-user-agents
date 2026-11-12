@@ -5,11 +5,12 @@ import TrUAPIHost
 
 /// How the chosen quote's charge breaks down.
 struct FundingFeesView: View {
-    let model: FundingFlowModel
+    let model: FundingScreenModel
+    let presenter: FundingFeesPresenterProtocol
 
     var body: some View {
         VStack(spacing: DSSpacings.mediumIncreased) {
-            FundingScreenHeader(title: String(localized: .Funding.feesTitle), onBack: model.back)
+            FundingScreenHeader(title: String(localized: .Funding.feesTitle), onBack: presenter.back)
 
             if let quote = model.chosenQuote {
                 breakdown(quote)
@@ -17,7 +18,7 @@ struct FundingFeesView: View {
 
             Spacer(minLength: 0)
 
-            DSButton(.Funding.backAction, style: .secondary, expands: true, action: model.back)
+            DSButton(.Funding.backAction, style: .secondary, expands: true, action: presenter.back)
         }
     }
 }
@@ -27,7 +28,7 @@ private extension FundingFeesView {
     /// the balance for value out.
     func feeText(_ units: U128, of quote: FundingQuote) -> String? {
         if model.direction == .in {
-            return model.quoteUnit(quote).format(units)
+            return model.state.quoteUnit(quote).format(units)
         }
         return model.cash.label(units: units)
     }
@@ -75,12 +76,12 @@ private extension FundingFeesView {
     /// What one CASH is worth in the provider-side asset, net of fees as the
     /// amount line above it.
     func rate(_ fees: FundingFees, of quote: FundingQuote) -> String? {
-        guard let providerSide = model.quoteUnit(quote).decimal(fees.rateNum.units),
+        guard let providerSide = model.state.quoteUnit(quote).decimal(fees.rateNum.units),
               let cashSide = model.cash.decimal(fees.rateDen.units),
               cashSide > 0
         else { return nil }
 
-        let perCash = model.quoteUnit(quote).format(decimal: (providerSide / cashSide).fundingRounded(scale: 4))
+        let perCash = model.state.quoteUnit(quote).format(decimal: (providerSide / cashSide).fundingRounded(scale: 4))
         return String(localized: .Funding.feesRateValue(cash: model.cash.label(1), value: perCash))
     }
 
