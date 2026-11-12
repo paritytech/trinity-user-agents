@@ -10,7 +10,7 @@ use trinity_stack::{Descriptor, Fetched, Pointer, Status, accept};
 use super::{Network, Stack};
 use crate::{
 	chain::ChainBackend,
-	stack_descriptor::{FetchError, describe_pin_change, fetch, reads_same, unix_now},
+	stack_descriptor::{FetchError, describe_pin_change, fetch, pointer_of, reads_same, unix_now},
 };
 
 /// How long a command waits for a built-in stack's published descriptor
@@ -66,6 +66,22 @@ pub fn polkadot_reference() -> &'static Descriptor {
 	static REFERENCE: LazyLock<Descriptor> =
 		LazyLock::new(|| POLKADOT_REFERENCE_STACK.open_bundled());
 	&REFERENCE
+}
+
+/// The key of the built-in stack published at `stack`, when `stack` is that URL with no key of
+/// its own. A built-in stack named by its bare URL is then verified, and is the same stack as
+/// under its network name.
+pub fn built_in_key(stack: &str) -> Option<String> {
+	let unsigned = pointer_of(stack, None)
+		.ok()
+		.flatten()
+		.filter(|pointer| pointer.key().is_none())?;
+	Network::value_variants().iter().find_map(|network| {
+		let built_in = network.built_in_stack().pointer();
+		let published = Pointer::new(built_in.url().as_str(), None).ok()?;
+		let key = built_in.key().filter(|_| published.same_stack(&unsigned))?;
+		Some(format!("0x{}", hex::encode(key)))
+	})
 }
 
 /// Fails when `descriptor`, fetched from `pointer`, is a built-in network's

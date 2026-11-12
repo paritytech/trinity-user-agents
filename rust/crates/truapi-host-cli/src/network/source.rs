@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow, bail, ensure};
 
 use super::{
 	Network, NetworkChoice, NetworkSource, Stack, StackArg,
-	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin},
+	built_in::{BUILT_IN_REFRESH_TIMEOUT, BuiltInCopy, BuiltInOrigin, built_in_key},
 	checks::{refuse_light_client, verify_chains},
 };
 use crate::{
@@ -82,7 +82,8 @@ impl NetworkSource {
 	) -> Result<(Stack, Option<BuiltInOrigin>)> {
 		let (stack, built_in) = match &self.network {
 			NetworkChoice::Stack(stack_arg) => {
-				let stack = load_descriptor(&stack_arg.value)
+				let key = built_in_key(&stack_arg.value);
+				let stack = load_descriptor(&stack_arg.value, key.as_deref())
 					.await
 					.and_then(|(stack_id, descriptor)| {
 						Stack::new(stack_id, descriptor, self.chain_backend)
