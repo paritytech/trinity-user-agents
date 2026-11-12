@@ -5,8 +5,9 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.app.root.domain.main.DockletTip
 import io.paritytech.polkadotapp.app.root.domain.main.MainInteractor
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
-import io.paritytech.polkadotapp.app.root.presentation.main.BottomNavPositionProvider
+import io.paritytech.polkadotapp.app.root.presentation.main.BottomNavHeightProvider
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
+import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarHiddenFractionHolder
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarMode
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarOffsetHolder
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarVisibilityHolder
@@ -39,7 +40,8 @@ class RootNavBarViewModel @Inject constructor(
     private val productSessionController: ProductSessionController,
     private val tabBarVisibilityHolder: TabBarVisibilityHolder,
     private val tabBarOffsetHolder: TabBarOffsetHolder,
-    private val bottomNavPositionProvider: BottomNavPositionProvider,
+    private val tabBarHiddenFractionHolder: TabBarHiddenFractionHolder,
+    private val bottomNavHeightProvider: BottomNavHeightProvider,
     private val tabSelection: BottomTabSelection,
     scanPanelRequests: ScanPanelRequests,
 ) : BaseViewModel() {
@@ -83,11 +85,11 @@ class RootNavBarViewModel @Inject constructor(
     }
 
     fun setBarHeight(value: Dp) {
-        bottomNavPositionProvider.setHeight(value)
+        bottomNavHeightProvider.set(value)
     }
 
     fun setBarHiddenFraction(value: Float) {
-        bottomNavPositionProvider.setHiddenFraction(value)
+        tabBarHiddenFractionHolder.setFraction(value)
     }
 
     fun onDockletHidden(tip: DockletTip) {

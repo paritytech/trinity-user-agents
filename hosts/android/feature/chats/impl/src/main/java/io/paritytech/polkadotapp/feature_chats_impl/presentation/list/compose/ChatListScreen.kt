@@ -24,12 +24,12 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.common.presentation.tabbar.LocalTabBarHiddenFraction
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonShape
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
 import io.paritytech.polkadotapp.design.components.docklet.DockletGlassTheme
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletGlassButtonStyle
-import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarHiddenFraction
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -72,7 +72,7 @@ private fun ChatListScreenInternal(
     val newChatButtonBottomOffset = PolkadotTheme.spacings.mediumIncreased
     val barInsets = LocalAppNavigationBarInsets.current
     val navigationBars = WindowInsets.navigationBars
-    val barHiddenFraction = LocalAppNavigationBarHiddenFraction.current
+    val barHiddenFraction = LocalTabBarHiddenFraction.current.collectAsStateWithLifecycle()
 
     PolkadotSurface {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -101,7 +101,7 @@ private fun ChatListScreenInternal(
                     .windowInsetsPadding(barInsets)
                     .padding(end = PolkadotTheme.spacings.large, bottom = newChatButtonBottomOffset)
                     .offset {
-                        IntOffset(0, newChatButtonDrop(barInsets.getBottom(this), navigationBars.getBottom(this), barHiddenFraction()))
+                        IntOffset(0, newChatButtonOffsetYPx(barInsets.getBottom(this), navigationBars.getBottom(this), barHiddenFraction.value))
                     }
                     .onSizeChanged { newChatButtonHeight = with(density) { it.height.toDp() } }
                     .testTag(ChatTestTags.NEW_CHAT_BUTTON),
