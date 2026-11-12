@@ -18,12 +18,15 @@ use truapi::{
 
 #[cfg(test)]
 use crate::host_logic::session::SessionInfo;
-use crate::{host_internal::sso_messages::RingVrfError, platform::ProductId};
+use crate::{
+	host_internal::sso_messages::RingVrfError,
+	platform::{ProductId, UserConfirmationReview},
+};
 
 use super::{
 	HostAccounts, ProductConnection,
 	authority::{
-		AccountHolder, AuthorityError, AuthoritySession, BulletinAllowanceKey,
+		AccountCaller, AccountHolder, AuthorityError, AuthoritySession, BulletinAllowanceKey,
 		CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 		StatementStoreAllowanceKey,
 	},
@@ -63,6 +66,21 @@ impl<H: AccountHolder> ProductAccounts<H> {
 	/// The host's account-access decisions and review prompts.
 	pub fn consent(&self) -> &ProductConsent {
 		self.accounts.consent()
+	}
+
+	/// Confirm `review` with the user on this product's connection, unless
+	/// the product may skip it.
+	///
+	/// Fails `Rejected` when the user declines.
+	pub async fn confirm(
+		&self,
+		cx: &CallContext,
+		review: UserConfirmationReview,
+	) -> Result<(), AuthorityError> {
+		let caller = AccountCaller::Local { product: &self.connection.product };
+		self.consent()
+			.review(cx, caller, self.connection.platform.as_ref(), review)
+			.await
 	}
 
 	/// Public key of `account`, after any account-access check it needs.

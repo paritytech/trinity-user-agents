@@ -12,10 +12,7 @@ use crate::{
 	nft::{AllocateItemsError, ItemKey, PurseId, StartOperationError},
 	nft_purse::{NftPurses, drain_needs_confirmation},
 	platform::{NftPurseDrainDestination, NftPurseDrainReview, UserConfirmationReview},
-	runtime::{
-		AccountHolder, ProductRuntimeHost,
-		authority::{AccountCaller, AuthorityError},
-	},
+	runtime::{AccountHolder, ProductRuntimeHost, authority::AuthorityError},
 };
 
 /// How one call's error type names the refusals its operation can meet.
@@ -183,9 +180,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			item_count: drain.item_count,
 			destination: drain.destination,
 		});
-		let caller = AccountCaller::Local { product: &self.connection.product };
-		let prompt = self.connection.platform.as_ref();
-		match self.accounts.consent().review(cx, caller, prompt, review).await {
+		match self.accounts.confirm(cx, review).await {
 			Ok(()) => Ok(()),
 			Err(AuthorityError::Rejected) => Err(CallError::Domain(denied)),
 			Err(error) => Err(host_failure(error)),
