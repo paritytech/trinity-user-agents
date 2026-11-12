@@ -98,6 +98,7 @@ private extension TabBarSlotView {
         } label: {
             VStack(spacing: 0) {
                 icon(for: item)
+                    .attentionDot(model.showsSettingsAttention && index == model.appsItemIndex)
                 if let title = item.title {
                     Text(title)
                         .font(Font(UIFont.labelSmallEmphasized))
