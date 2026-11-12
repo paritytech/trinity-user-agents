@@ -116,6 +116,67 @@ async fn a_default_reverse_resolver_does_not_hide_the_public_profile() {
 	assert_eq!(PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap(), record);
 }
 
+/// Text records by the node they are published at.
+struct TextRecords(std::collections::HashMap<[u8; 32], String>);
+
+#[async_trait::async_trait]
+impl DotnsTransport for TextRecords {
+	async fn storage(&mut self, _key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+		unreachable!("a round reads only text records")
+	}
+
+	async fn views(
+		&mut self,
+		dest: &[u8; 20],
+		inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		assert!(
+			inputs.len() <= VIEWS_AT_ONCE,
+			"a round sends at most {VIEWS_AT_ONCE} views at once"
+		);
+		let mut outputs = Vec::new();
+		for input in inputs {
+			outputs.push(self.view(dest, input).await);
+		}
+		outputs
+	}
+
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		assert_eq!(dest, &[0x44; 20]);
+		let call = ContentResolver::textCall::abi_decode(&input).unwrap();
+		Ok(ContentResolver::textCall::abi_encode_returns(&self.0[&call.node.0]))
+	}
+}
+
+/// A round of more usernames than one batch of views answers each with the
+/// record published at its own node.
+#[tokio::test]
+async fn a_round_answers_each_username_with_its_own_record() {
+	let record = |byte| ProfileRecord {
+		entries: vec![subxt::utils::WrapperKeepOpaque::from_encoded(vec![byte])],
+	};
+	let usernames: Vec<String> =
+		(10..10 + VIEWS_AT_ONCE as u8 + 2).map(|n| format!("alice.{n}")).collect();
+	let mut transport = TextRecords(
+		usernames
+			.iter()
+			.zip(10..)
+			.map(|(username, byte)| {
+				(username_node(".paseo", username), STANDARD.encode(record(byte).encode()))
+			})
+			.collect(),
+	);
+	let directory =
+		ProfileDirectory { tld: ".paseo".to_string(), registry: [0x33; 20], resolver: [0x44; 20] };
+
+	let records = read_records(&mut transport, Some(&directory), &usernames).await;
+
+	assert_eq!(
+		records.into_iter().map(Result::unwrap).collect::<Vec<_>>(),
+		(10..).take(usernames.len()).map(record).collect::<Vec<_>>()
+	);
+}
+
 #[tokio::test]
 async fn a_profile_location_uses_the_deployments_contracts_and_tld() {
 	let mut transport = ProfileContracts::new(Ok(String::new()));
