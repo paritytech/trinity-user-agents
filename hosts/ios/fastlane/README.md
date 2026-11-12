@@ -103,6 +103,42 @@ Submit a new build to Apple TestFlight
 
 Example usage: fastlane upload_testflight changelog:'Release notes' distribute_external:true groups:['Group Name']
 
+### ios upload_testflight_binary
+
+```sh
+[bundle exec] fastlane ios upload_testflight_binary
+```
+
+Upload a build to TestFlight and return without waiting for Apple to process it
+
+finish_testflight then distributes it, so a failure while Apple processes the
+
+build is retried without uploading again.
+
+### ios finish_testflight
+
+```sh
+[bundle exec] fastlane ios finish_testflight
+```
+
+Wait for an uploaded build to finish processing, then set its changelog and hand it to the external group
+
+Reads BUILD_NUMBER, MARKETING_VERSION, RELEASE_NOTES and EXTERNAL_GROUP_NAME.
+
+Example usage: BUILD_NUMBER=42 MARKETING_VERSION=1.0 EXTERNAL_GROUP_NAME='Group' fastlane finish_testflight
+
+### ios testflight_build_uploaded
+
+```sh
+[bundle exec] fastlane ios testflight_build_uploaded
+```
+
+Report whether a build number is already in App Store Connect, processed or not
+
+Prints 'TestFlight build <n> uploaded: true|false' for the workflow to read.
+
+Example usage: BUILD_NUMBER=42 fastlane testflight_build_uploaded
+
 ### ios load_asc_api_key
 
 ```sh
