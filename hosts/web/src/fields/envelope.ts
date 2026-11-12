@@ -206,14 +206,16 @@ const malformed = () =>
 /**
  * Open `envelope` with the recipient's pair and check it is for `expected`.
  * Throws `invalid` when it does not open, its contents break a rule, or it
- * names another product, account or context; `unsupported` for a version
- * or suite this host does not read.
+ * names another product, account or context; `unsupported` for a version,
+ * suite, field kind or schema this host does not read. Either refuses the
+ * whole envelope. Answers the fields and which of `expected.accounts` the
+ * envelope names.
  */
 export function openEnvelope(
   pair: X25519Pair,
   envelope: Uint8Array,
   expected: { product: string; accounts: readonly string[]; context: string },
-): SealedField[] {
+): { account: string; fields: SealedField[] } {
   envelopeKeyId(envelope);
   const header = envelope.subarray(0, HEADER_BYTES);
   const plaintext = openSealed(
@@ -274,6 +276,21 @@ export function openEnvelope(
       value: field.value as string,
     };
   });
+  // A field this host does not read refuses the whole envelope, as
+  // `unsupported`, so the product can tell it from a broken one.
+  if (
+    fields.some(
+      (field) =>
+        typeof field.kind === "string" &&
+        typeof field.schema === "string" &&
+        (!isFieldKind(field.kind) ||
+          field.schema !== FIELD_SCHEMAS[field.kind]),
+    )
+  )
+    throw new FieldError(
+      "unsupported",
+      "This envelope holds a field kind or schema this host does not read.",
+    );
   if (!validFields(fields)) throw malformed();
-  return fields;
+  return { account: inner.account, fields };
 }

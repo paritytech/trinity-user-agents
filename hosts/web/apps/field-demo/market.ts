@@ -564,7 +564,11 @@ try {
         node(
           "p",
           "fine",
-          error instanceof Error ? error.message : "Details unavailable.",
+          error instanceof FieldError && error.code === "missing-key"
+            ? "This order's details are sealed to a receiving key this device does not have, so they cannot be opened here. If the order is real, ask the buyer to order again."
+            : error instanceof Error
+              ? error.message
+              : "Details unavailable.",
         ),
       );
     }

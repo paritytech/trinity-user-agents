@@ -123,10 +123,18 @@ interface Held {
    * and when it expires. An image already drawn stays drawn.
    */
   images: Map<() => Promise<void>, number>;
+  /** Images being issued now: they count against the limit before they exist. */
+  issuing: number;
 }
 
 /** The most handles one connection holds at once. */
 const MAX_HANDLES = 64;
+/**
+ * The most calls one connection has unanswered at once. More fail `busy`.
+ * A cancel never counts, and a `release` is never refused, so cleanup always
+ * goes through.
+ */
+const MAX_PENDING = 32;
 /** The most images of one handle the service may serve at once. */
 const MAX_IMAGES = 50;
 const MAX_LABEL_LINES = 6;
@@ -235,8 +243,16 @@ export class FieldHost {
     const session = this.session;
     const controller = new AbortController();
     const heldValues = new Map<string, Held>();
-    let queue = Promise.resolve();
-    const active = (): FieldSession => {
+    /** Requests, one at a time: each may show the user a sheet. */
+    let requests = Promise.resolve();
+    /** Calls not answered yet, by id, so the product can withdraw one. */
+    const pending = new Map<number, AbortController>();
+    /**
+     * The session, while the connection lasts and `signal`'s call stands.
+     * Every operation checks it after each wait, so a withdrawn call never
+     * holds, seals or keeps anything after it was withdrawn.
+     */
+    const active = (signal: AbortSignal = controller.signal): FieldSession => {
       if (
         session === null ||
         session !== this.session ||
@@ -246,6 +262,8 @@ export class FieldHost {
           "session",
           "Session ended. Sign in and reopen the app.",
         );
+      if (signal.aborted)
+        throw new FieldError("timeout", "The app withdrew this request.");
       return session;
     };
     const blank = async (held: Held): Promise<void> => {
@@ -262,14 +280,18 @@ export class FieldHost {
       this.connections.delete(close);
     };
     this.connections.add(close);
-    const ask = async <T>(request: PromptRequest<T>): Promise<T> => {
-      active();
+    const ask = async <T>(
+      request: PromptRequest<T>,
+      signal: AbortSignal,
+    ): Promise<T> => {
+      active(signal);
+      // Aborting closes the sheet, or never shows it.
       const result = await this.options.ask({
         ...request,
         from: product,
-        signal: controller.signal,
+        signal,
       });
-      active();
+      active(signal);
       return result;
     };
     const hold = (fields: readonly SealedField[]): FieldDescriptor[] => {
@@ -284,6 +306,7 @@ export class FieldHost {
           kind: field.kind,
           lines: valueLines(field.kind, field.value),
           images: new Map(),
+          issuing: 0,
         });
         return {
           id: field.id,
@@ -298,7 +321,7 @@ export class FieldHost {
         typeof handle === "string" ? heldValues.get(handle) : undefined;
       if (found === undefined)
         throw new FieldError(
-          "unavailable",
+          "missing-handle",
           "This field is no longer held. Open it again.",
         );
       return found;
@@ -326,7 +349,18 @@ export class FieldHost {
         // No sheet: only apps the host made providers reach this, declaring
         // discloses and spends nothing, and every disclosure later asks.
         const known = this.providers.get(product);
-        if (known !== undefined) return { registered: known.fields };
+        if (known !== undefined) {
+          if (
+            known.name !== name ||
+            known.fields.length !== fields.length ||
+            !known.fields.every((kind) => fields.includes(kind))
+          )
+            throw new FieldError(
+              "invalid",
+              "This app already declared another name or other fields.",
+            );
+          return { registered: known.fields };
+        }
         this.providers.set(product, {
           name,
           fields: fields as FieldKind[],
@@ -340,25 +374,31 @@ export class FieldHost {
           throw new FieldError("invalid", "Declare fields first.");
         if (typeof request.values !== "object" || request.values === null)
           throw new FieldError("invalid", "Invalid values.");
+        // A full replacement: every declared kind, a value or null, and no other.
+        const values = request.values as Record<string, unknown>;
+        if (
+          Object.keys(values).length !== found.fields.length ||
+          !found.fields.every((kind) => Object.hasOwn(values, kind))
+        )
+          throw new FieldError(
+            "invalid",
+            "Give every declared field, null for none, and no other.",
+          );
         const next: Partial<Record<FieldKind, string>> = {};
-        for (const [kind, value] of Object.entries(request.values)) {
-          if (value === "" || value === undefined) continue;
-          if (
-            !found.fields.includes(kind as FieldKind) ||
-            !validValue(kind as FieldKind, value)
-          )
+        for (const kind of found.fields) {
+          const value = values[kind];
+          if (value === null) continue;
+          if (!validValue(kind, value))
             throw new FieldError(
               "invalid",
-              "Use declared fields, each 1 to 160 characters, an address in at most 6 lines.",
+              "Use 1 to 160 characters for each field, an address in at most 6 lines.",
             );
-          if (
-            !fitsField(kind as FieldKind, valueLines(kind as FieldKind, value))
-          )
+          if (!fitsField(kind, valueLines(kind, value)))
             throw new FieldError(
               "invalid",
-              `This ${KIND_NAMES[kind as FieldKind]} is too long to show. Shorten it.`,
+              `This ${KIND_NAMES[kind]} is too long to show. Shorten it.`,
             );
-          next[kind as FieldKind] = value;
+          next[kind] = value;
         }
         found.values = next;
         return { saved: Object.keys(next) };
@@ -381,39 +421,77 @@ export class FieldHost {
 
     const createReceiveKey = async (
       request: Record<string, unknown>,
+      signal: AbortSignal,
     ): Promise<ReceiveKey> => {
-      const current = active();
+      const current = active(signal);
       if (!isHex32(request.index))
         throw new FieldError("invalid", "An account index is 32 bytes of hex.");
-      const record = this.keys.ensure(product);
-      const unsigned = {
-        keyId: record.keyId,
-        publicKey: record.publicKey,
-        network: current.people.toLowerCase(),
+      const index = request.index;
+      const network = current.people.toLowerCase();
+      // No sheet: the key is new or this account's own, the signature is
+      // under a context only bindings use, and nothing is disclosed or spent.
+      // The core resolves the account from the index; the caller names none.
+      const bind = async (key: { keyId: string; publicKey: string }) => {
+        const signed = await this.options.binder.sign(
+          product,
+          fromHex(index),
+          bindingBytes({ ...key, network }),
+        );
+        active(signal);
+        const answer: ReceiveKey = {
+          v: 1,
+          keyId: key.keyId,
+          publicKey: key.publicKey,
+          network,
+          product,
+          account: toHex(signed.account),
+          binding: {
+            kind: "host-signature",
+            signature: toHex(signed.signature),
+          },
+        };
+        return answer;
       };
-      // No sheet: the key is new or this app's own, the signature is under
-      // a context only bindings use, and nothing is disclosed or spent.
-      const signed = await this.options.binder.sign(
-        product,
-        fromHex(request.index),
-        bindingBytes(unsigned),
-      );
-      active();
-      const account = toHex(signed.account);
-      this.keys.bound(product, account);
-      return {
-        v: 1,
-        ...unsigned,
-        product,
-        account,
-        binding: { kind: "host-signature", signature: toHex(signed.signature) },
+      const rebind = async (kept: {
+        keyId: string;
+        publicKey: string;
+        account: string;
+      }) => {
+        const key = await bind(kept);
+        if (key.account !== kept.account)
+          throw new FieldError(
+            "invalid",
+            "The stored receiving key is for another account.",
+          );
+        return key;
       };
+      const kept = this.keys.find(product, index);
+      if (kept !== null) return rebind(kept);
+      const fresh = this.keys.prepare();
+      let key: ReceiveKey;
+      try {
+        key = await bind(fresh);
+      } catch (error) {
+        fresh.secret.fill(0);
+        throw error;
+      }
+      try {
+        this.keys.keep(product, index, key.account, fresh);
+        return key;
+      } catch (error) {
+        // Another call stored this account's key meanwhile: answer that one.
+        const stored = this.keys.find(product, index);
+        if (error instanceof FieldError && error.code === "busy" && stored)
+          return rebind(stored);
+        throw error;
+      }
     };
 
     const request = async (
       input: Record<string, unknown>,
+      signal: AbortSignal,
     ): Promise<FieldGrant> => {
-      const current = active();
+      const current = active(signal);
       const items = readItems(input.fields);
       const purpose = shortText(input.purpose, 80);
       if (purpose === null)
@@ -445,7 +523,7 @@ export class FieldHost {
           bindingBytes(recipient),
           fromHex(recipient.binding.signature),
         );
-        active();
+        active(signal);
         if (!valid)
           throw new FieldError(
             "invalid",
@@ -483,7 +561,7 @@ export class FieldHost {
       if (options.length === 0)
         throw new FieldError(
           "unavailable",
-          `No details app holds your ${wanted} yet. Save it in one first, such as Field notebook.`,
+          `No details app holds your ${wanted} yet. Save it in one first.`,
         );
       const describe = (fields: readonly SealedField[]) =>
         fields
@@ -492,57 +570,60 @@ export class FieldHost {
               `${KIND_NAMES[field.kind]}: ${valueLines(field.kind, field.value).join(", ")}`,
           )
           .join(" · ");
-      const chosen = await ask<number | null>({
-        title:
-          recipient === null
-            ? `Show your ${wanted} in this app?`
-            : `Send your ${wanted}?`,
-        subtitle: `The app says: “${purpose}”`,
-        fields: [
-          {
-            label: "Goes to",
-            value:
-              recipient === null
-                ? "Nobody. Your host draws it in this app; the app's scripts cannot read it."
-                : `Account ${shortAccount(recipient.account)} in ${product}. Its host made the receiving key and signed for it.`,
-          },
-        ],
-        details: {
-          summary: "Who can read it",
+      const chosen = await ask<number | null>(
+        {
+          title:
+            recipient === null
+              ? `Show your ${wanted} in this app?`
+              : `Send your ${wanted}?`,
+          subtitle: `The app says: “${purpose}”`,
           fields: [
             {
-              label: "Readers",
+              label: "Goes to",
               value:
                 recipient === null
-                  ? "You, your host and the details app it comes from. Not the app's scripts."
-                  : "The person who holds that account, through their host, can read and copy these values. Your host and the details app know them too. The app's scripts, on either side, get none.",
-            },
-            ...(recipient === null
-              ? []
-              : [
-                  {
-                    label: "Recipient check",
-                    value:
-                      "Their host signed this key as that account, with a signature apps cannot make. It does not prove who the person is, or that their host is honest.",
-                  },
-                ]),
-            {
-              label: "Limits",
-              value:
-                "Web prototype, not a sandbox or a production key store. No revocation.",
+                  ? "Nobody. Your host draws it in this app; the app's scripts cannot read it."
+                  : `Account ${shortAccount(recipient.account)} in ${product}. Its host made the receiving key and signed for it.`,
             },
           ],
+          details: {
+            summary: "Who can read it",
+            fields: [
+              {
+                label: "Readers",
+                value:
+                  recipient === null
+                    ? "You, your host and the details app it comes from. Not the app's scripts."
+                    : "The person who holds that account, through their host, can read and copy these values. Your host and the details app know them too. The app's scripts, on either side, get none.",
+              },
+              ...(recipient === null
+                ? []
+                : [
+                    {
+                      label: "Recipient check",
+                      value:
+                        "Their host signed this key as that account, with a signature apps cannot make. It does not prove who the person is, or that their host is honest.",
+                    },
+                  ]),
+              {
+                label: "Limits",
+                value:
+                  "Web prototype, not a sandbox or a production key store. No revocation.",
+              },
+            ],
+          },
+          layout: "list",
+          choices: [
+            ...options.map((option, index) => ({
+              label: `Share ${describe(option.fields)} · from ${option.from}`,
+              value: index,
+            })),
+            { label: "Cancel", value: null, tone: "cancel" as const },
+          ],
+          dismissed: null,
         },
-        layout: "list",
-        choices: [
-          ...options.map((option, index) => ({
-            label: `Share ${describe(option.fields)} · from ${option.from}`,
-            value: index,
-          })),
-          { label: "Cancel", value: null, tone: "cancel" as const },
-        ],
-        dismissed: null,
-      });
+        signal,
+      );
       if (chosen === null)
         throw new FieldError("cancelled", "You chose not to share.");
       const fields = options[chosen]!.fields;
@@ -576,16 +657,22 @@ export class FieldHost {
       const key = this.keys.open(product, envelopeKeyId(bytes));
       if (key === null)
         throw new FieldError(
-          "invalid",
-          "This envelope is not sealed to this app's receiving key.",
+          "missing-key",
+          "No receiving key of this app on this device matches this envelope, so it cannot be opened here. If it was meant for this account, ask the sender to send it again.",
         );
       try {
-        const fields = openEnvelope(key.pair, bytes, {
+        // A legacy shared key may name several accounts: the envelope opens
+        // once, for the one it names, which the answer reports.
+        const opened = openEnvelope(key.pair, bytes, {
           product,
           accounts: key.accounts,
           context: input.context,
         });
-        return { envelopeId: envelopeId(bytes), fields: hold(fields) };
+        return {
+          envelopeId: envelopeId(bytes),
+          account: opened.account,
+          fields: hold(opened.fields),
+        };
       } finally {
         key.pair.secret.fill(0);
       }
@@ -610,34 +697,38 @@ export class FieldHost {
 
     const display = async (
       input: Record<string, unknown>,
+      signal: AbortSignal,
     ): Promise<{ surface: WebImageSurface }> => {
       const value = held(input.handle);
       const theme: FieldTheme = input.theme === "dark" ? "dark" : "paper";
       const now = this.now();
       for (const [revoke, expires] of value.images)
         if (expires <= now) value.images.delete(revoke);
-      if (value.images.size >= MAX_IMAGES)
+      if (value.images.size + value.issuing >= MAX_IMAGES)
         throw new FieldError("limit", "Too many views. Open it again.");
       const svg = fieldSvg(value.kind, value.lines, theme);
+      // The slot is taken before the wait, so concurrent displays cannot
+      // all pass the check above.
+      value.issuing += 1;
       let image: Awaited<ReturnType<FieldHostOptions["images"]["issue"]>>;
       try {
         image = await this.options.images.issue({ product, svg });
       } catch {
-        active();
+        active(signal);
         throw new FieldError(
           "unavailable",
           "The host could not draw this field. Try again.",
         );
+      } finally {
+        value.issuing -= 1;
       }
-      // The handle may have been released, or the session ended, meanwhile.
-      if (
-        controller.signal.aborted ||
-        heldValues.get(input.handle as string) !== value
-      ) {
+      // The handle may have been released, the call withdrawn or the
+      // session ended meanwhile.
+      if (signal.aborted || heldValues.get(input.handle as string) !== value) {
         void image.revoke();
-        active();
+        active(signal);
         throw new FieldError(
-          "unavailable",
+          "missing-handle",
           "This field is no longer held. Open it again.",
         );
       }
@@ -645,7 +736,10 @@ export class FieldHost {
       return { surface: { platform: "web-image", url: image.url } };
     };
 
-    const print = async (input: Record<string, unknown>) => {
+    const print = async (
+      input: Record<string, unknown>,
+      signal: AbortSignal,
+    ) => {
       const title = shortText(input.title, MAX_LABEL_CHARS);
       const lines = Array.isArray(input.lines) ? input.lines : [];
       const handles = Array.isArray(input.handles) ? input.handles : [];
@@ -675,51 +769,97 @@ export class FieldHost {
             lines: lines.map((line) => shortText(line, MAX_LABEL_CHARS)!),
             fields,
           },
-          controller.signal,
+          signal,
         );
       } finally {
         this.printing = false;
       }
-      active();
+      active(signal);
       return { printed: true };
     };
 
-    const call = async (input: Record<string, unknown>): Promise<unknown> => {
-      active();
+    const call = async (
+      input: Record<string, unknown>,
+      signal: AbortSignal,
+    ): Promise<unknown> => {
+      active(signal);
       if (role === "provider") return provider(input);
       switch (input.op) {
         case "createReceiveKey":
-          return createReceiveKey(input);
+          return createReceiveKey(input, signal);
         case "request":
-          return request(input);
+          return request(input, signal);
         case "open":
           return open(input);
         case "release":
           return release(input);
         case "display":
-          return display(input);
+          return display(input, signal);
         case "print":
-          return print(input);
+          return print(input, signal);
       }
       throw new FieldError("unsupported", "Operation not supported.");
     };
+    // `request`s wait for each other, so the user sees one sheet at a time
+    // per app. Every other call runs at once: `display` and `release` do not
+    // wait behind an open sheet. `{ cancel: id }` withdraws a call not yet
+    // answered, queued or running: it is answered `timeout` at once, any
+    // sheet it opened closes, and it keeps nothing it would have made. A
+    // call already answered is not withdrawn; its answer went first.
     port.onmessage = (event: MessageEvent<unknown>) => {
       const input = event.data;
       if (typeof input !== "object" || input === null) return;
       const record = input as Record<string, unknown>;
+      if (typeof record.cancel === "number") {
+        const withdrawn = pending.get(record.cancel);
+        if (withdrawn === undefined) return;
+        pending.delete(record.cancel);
+        withdrawn.abort();
+        port.postMessage({
+          id: record.cancel,
+          error: {
+            code: "timeout",
+            message: "The app stopped waiting for this.",
+          } satisfies FieldErrorReply,
+        });
+        return;
+      }
       if (typeof record.id !== "number" || !Number.isSafeInteger(record.id))
         return;
       const id = record.id;
-      queue = queue.then(async () => {
+      if (pending.has(id)) return;
+      if (
+        pending.size >= MAX_PENDING &&
+        !(role === "consumer" && record.op === "release")
+      ) {
+        port.postMessage({
+          id,
+          error: {
+            code: "busy",
+            message: "Too many calls at once. Wait for some to answer.",
+          } satisfies FieldErrorReply,
+        });
+        return;
+      }
+      const withdrawn = new AbortController();
+      pending.set(id, withdrawn);
+      const signal = AbortSignal.any([controller.signal, withdrawn.signal]);
+      const run = async () => {
         try {
-          const result = await call(record);
-          active();
+          if (signal.aborted) return;
+          const result = await call(record, signal);
+          active(signal);
           port.postMessage({ id, result });
         } catch (error) {
-          if (!controller.signal.aborted)
+          if (!signal.aborted)
             port.postMessage({ id, error: errorReply(error) });
+        } finally {
+          if (pending.get(id) === withdrawn) pending.delete(id);
         }
-      });
+      };
+      if (role === "consumer" && record.op === "request")
+        requests = requests.then(run);
+      else void run();
     };
     port.start();
     port.postMessage({ protocol: FIELDS_PROTOCOL, role });

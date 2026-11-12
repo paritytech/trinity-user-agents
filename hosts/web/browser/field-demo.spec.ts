@@ -508,13 +508,32 @@ describe("the draft field bridge demo", () => {
         await restarted.getByRole("tab", { name: /Orders/ }).click();
         await restarted.locator("#to-ship .row").first().click();
         expect(await viewShows(bob, HOME[1]!)).toBe(true);
+        const restartedSheets = [...run.sheets.bob!];
+
+        // The receiving keys are lost, as when site data is cleared: the
+        // order cannot be opened, and the market says why.
+        await bob.close();
+        bob = await boot(run, "bob");
+        await bob.evaluate(() => {
+          for (const name of Object.keys(localStorage))
+            if (name.startsWith("truapi-web-signing-host:fields:"))
+              localStorage.removeItem(name);
+        });
+        await open(bob, MARKET);
+        const keyless = app(bob, MARKET);
+        await keyless.getByRole("tab", { name: /Orders/ }).click();
+        await keyless.locator("#to-ship .row").first().click();
+        await keyless
+          .locator("#slip-address")
+          .filter({ hasText: "receiving key this device does not have" })
+          .waitFor();
 
         // Bound key, open and draw ask nothing; posting asks the core once
         // for the allowance and the submit permission.
         expect({
           sheets: {
             bob: bobFirstTab,
-            restarted: run.sheets.bob,
+            restarted: restartedSheets,
             alice: run.sheets.alice,
           },
           plaintext: await noPlaintext([alice, bob]),

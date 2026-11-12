@@ -41,10 +41,36 @@ export type FieldRole = "provider" | "consumer";
 
 /**
  * Why a bridge request failed, for a product to choose its reaction without
- * reading the message: `cancelled` is the user's choice in a host sheet.
+ * reading the message.
+ *
+ * - `cancelled`: the user declined in a host sheet.
+ * - `timeout`: the call took too long and the client withdrew it. The host
+ *   stopped its pending work: a sheet closes, and nothing it would have
+ *   returned (handles, an envelope, a key, an image) is kept. Work already
+ *   done stays done, such as handles a `release` had let go, so retry.
+ * - `missing-key`: no receiving key of this app on this device matches the
+ *   envelope's key id, such as after site data was cleared, on another
+ *   device, or for bytes that were never sealed here. Nothing restores a lost
+ *   key. It says nothing about who sealed the envelope or for whom: if it
+ *   was meant for this account, the sender has to send again.
+ * - `missing-handle`: the handle was released, or belongs to another
+ *   connection or document. Open or request the field again.
+ * - `unavailable`: what was asked for is not there now, such as no provider
+ *   holding a requested kind, the host failing to draw, or this device's
+ *   stored receiving keys being unreadable (they are kept, not replaced).
+ * - `unsupported`: a version, suite, field kind or schema, role or operation
+ *   this host does not handle.
+ * - `invalid`: malformed input, or an envelope that does not open or check
+ *   out (changed bytes, another key, product, account or context).
+ * - `limit`, `busy`, `session`: a bound was reached; a single-use resource is
+ *   in use or too many calls are unanswered at once; the session or
+ *   connection ended.
  */
 export type FieldErrorCode =
   | "cancelled"
+  | "timeout"
+  | "missing-key"
+  | "missing-handle"
   | "invalid"
   | "unavailable"
   | "limit"
@@ -117,8 +143,9 @@ export interface KeyBinding {
 }
 
 /**
- * A recipient's public receiving key, as its host made it: one per wallet
- * and product. Public: the product publishes it however it delivers.
+ * A recipient's public receiving key, as its host made it: one per wallet,
+ * network, product and product account, so two accounts never share one.
+ * Public: the product publishes it however it delivers.
  */
 export interface ReceiveKey {
   v: 1;
@@ -160,6 +187,8 @@ export interface FieldGrant {
 export interface OpenedEnvelope {
   /** 32 bytes, `0x` hex: the same for the same envelope bytes, for the product's own dedupe. */
   envelopeId: string;
+  /** The product account, `0x` hex, the envelope was sealed for. */
+  account: string;
   fields: FieldDescriptor[];
 }
 
@@ -176,7 +205,11 @@ export type FieldTheme = "paper" | "dark";
 
 /** The consumer operations, typed in one place. */
 export interface ConsumerCalls {
-  /** This app's receiving key, bound to its account at `Raw(index)` (32 bytes, `0x` hex). */
+  /**
+   * The receiving key of this app's account at `Raw(index)` (32 bytes, `0x`
+   * hex): made on first use, then the same one for that account. Another
+   * index gets another key.
+   */
   createReceiveKey(input: { index: string }): ReceiveKey;
   request(input: FieldRequest): FieldGrant;
   open(input: { envelope: string; context: string }): OpenedEnvelope;
@@ -194,13 +227,28 @@ export interface ConsumerCalls {
   };
 }
 
+/**
+ * A provider's complete set of values for `save`: every kind it declared,
+ * each a value or `null` for none, and no other kind.
+ */
+export type FieldValues = Partial<Record<FieldKind, string | null>>;
+
 /** The provider operations. */
 export interface ProviderCalls {
   status(input: Record<string, never>): ProviderStatus;
+  /**
+   * Say which kinds this app holds and what to call it. Declaring the same
+   * name and kinds again answers as the first time; a different declaration
+   * fails with `invalid`, as nothing updates one yet.
+   */
   declare(input: { name: string; fields: FieldKind[] }): {
     registered: FieldKind[];
   };
-  save(input: { values: Partial<Record<FieldKind, string>> }): {
+  /**
+   * Replace every saved value: `values` names each declared kind, a value or
+   * `null`, and the kinds not `null` are what is saved. It never merges.
+   */
+  save(input: { values: FieldValues }): {
     saved: FieldKind[];
   };
 }

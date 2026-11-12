@@ -14,10 +14,12 @@ declare global {
 /** Connect this page's field bridge in `role`, recording what the host sends. */
 export function connect<Role extends FieldRole>(role: Role) {
   window.__fieldDemoReceived = [];
-  return connectFields(role, (message) => {
-    window.__fieldDemoReceived.push(message);
-    if (window.__fieldDemoReceived.length > 100)
-      window.__fieldDemoReceived.shift();
+  return connectFields(role, {
+    observe: (message) => {
+      window.__fieldDemoReceived.push(message);
+      if (window.__fieldDemoReceived.length > 100)
+        window.__fieldDemoReceived.shift();
+    },
   });
 }
 

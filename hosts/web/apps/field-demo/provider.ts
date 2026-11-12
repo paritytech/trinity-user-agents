@@ -63,9 +63,16 @@ try {
         await fields.declare({ name: NAME, fields: FIELDS });
         registered = true;
       }
-      const values = { address: address.value, phone: phone.value.trim() };
+      // `save` replaces every value: an empty field is saved as none.
+      const values = {
+        address: address.value.trim() || null,
+        phone: phone.value.trim() || null,
+      };
       const { saved: kept } = await fields.save({ values });
-      showSaved(kept, values);
+      showSaved(kept, {
+        address: values.address ?? "",
+        phone: values.phone ?? "",
+      });
       toast("Saved. Shops can now ask to ship to you.", "success");
     } catch (error) {
       const text = error instanceof Error ? error.message : "Not saved.";

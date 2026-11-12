@@ -64,12 +64,15 @@ describe("the field envelope", () => {
   test("opens for its recipient into the same fields, in padded buckets", () => {
     const sealed = sealEnvelope(recipient, binding, FIELDS, random);
     expect({
-      fields: openEnvelope(pair, sealed, expected),
+      opened: openEnvelope(pair, sealed, {
+        ...expected,
+        accounts: [`0x${"ef".repeat(32)}`, ACCOUNT],
+      }),
       keyId: envelopeKeyId(sealed),
       bucketed: (sealed.length - 18 - 48) % 256,
       id: envelopeId(sealed) === envelopeId(sealed.slice()),
     }).toEqual({
-      fields: FIELDS,
+      opened: { account: ACCOUNT, fields: FIELDS },
       keyId: recipient.keyId,
       bucketed: 0,
       id: true,
@@ -219,10 +222,23 @@ describe("the field envelope", () => {
       unknownKind: failure(() =>
         openEnvelope(pair, craft([{ ...FIELDS[0], kind: "email" }]), expected),
       ),
+      // A known kind in a schema version this host does not read, beside a field it does.
+      newerSchema: failure(() =>
+        openEnvelope(
+          pair,
+          craft([{ ...FIELDS[0], schema: "postal-address/2" }, FIELDS[1]]),
+          expected,
+        ),
+      ),
+      kindNotText: failure(() =>
+        openEnvelope(pair, craft([{ ...FIELDS[0], kind: 7 }]), expected),
+      ),
     }).toEqual({
-      valid: [FIELDS[0]!],
+      valid: { account: ACCOUNT, fields: [FIELDS[0]!] },
       twice: "invalid",
-      unknownKind: "invalid",
+      unknownKind: "unsupported",
+      newerSchema: "unsupported",
+      kindNotText: "invalid",
     });
   });
 });

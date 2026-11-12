@@ -61,15 +61,17 @@ URL or browser store, so iOS and Android could implement the same calls later; o
 are the web form of drawing a field. Nothing here changes TrUAPI wire ids, traits or the native apps.
 
 - A **provider** app (Field notebook, and the same app as Travel notebook on a second origin) declares `address` and
-  `phone` and saves values. The host keeps them in memory.
+  `phone` and saves values. The host keeps them in memory. Declaring the same name and kinds again is harmless; a
+  different declaration fails `invalid`. `save` replaces every value and names each declared kind, `null` for none.
 - A **consumer** app (Small Market) asks for typed fields: here a required address and an optional phone. The host shows
   the exact values per provider in one sheet, and answers with descriptors `{ id, kind, schema, handle }` and, when the
   request names a recipient, a sealed envelope. The app never gets a value.
-- The recipient's market asks its host for a **receiving key**. The host makes one random X25519 key per wallet and
-  product, keeps it encrypted, and returns its public key, key id, the product account it is bound to and a binding
-  signature. The core signs that binding as the market's product account under its own sr25519 signing context, which no
-  product signing call uses (`rust/crates/truapi/src/host_logic/field_key_binding.rs`, a prototype core extension). The
-  buyer's host checks the signature through the core before it asks anything; the buyer does not compare keys by hand.
+- The recipient's market asks its host for a **receiving key** for one of its accounts, by account index. The host
+  makes one random X25519 key per wallet, network, product and product account, keeps it encrypted, and returns its
+  public key, key id, the product account the core resolved the index to, and a binding signature. The core signs that
+  binding as the market's product account under its own sr25519 signing context, which no product signing call uses
+  (`rust/crates/truapi/src/host_logic/field_key_binding.rs`, a prototype core extension). The buyer's host checks the
+  signature through the core before it asks anything; the buyer does not compare keys by hand.
 - **Delivery is the product's.** The host's calls and the envelope name no transport, order or topic: a product carries
   receiving keys and envelopes as opaque bytes over whatever it uses, such as the Statement Store now or a contract
   later. Its size limit, lifetime, delivery and replay handling are its own. Small Market posts listings and orders to
@@ -114,15 +116,27 @@ that snapshot is what gets sealed.
 **Envelope** (`src/fields/envelope.ts`): `version (1) || suite (1) || key id (16) || sealed`, where `sealed` is X25519,
 HKDF-SHA256 and ChaCha20-Poly1305 from `src/invitations/sealing.ts`, and the key derivation binds the version, suite, key
 id and recipient public key. Inside, padded to 256-byte buckets with at most 1,024 bytes: the product, the recipient
-account, the context and the fields with their schemas. Opening refuses a changed byte, an unknown version or suite,
-another key, product, account or context, a duplicate field id or kind, and an unknown schema. The context labels one
-use (here the listing and the order); it does not prove a purchase or who sent it. The sender is not authenticated.
-Opening the same bytes twice gives the same `envelopeId` and new handles; spotting a replay is the product's job. The
-suite is a prototype choice and is not reviewed for envelopes kept long term, for example on a chain: anyone who keeps the
-bytes keeps them, and the suite is not post-quantum.
+account, the context and the fields with their schemas. Opening refuses a changed byte, another key, product, account or
+context, and a duplicate field id or kind as `invalid`; an unknown version, suite, field kind or schema as
+`unsupported`; either refuses the whole envelope. An envelope whose key id matches no receiving key on this device fails
+`missing-key`: nothing restores a lost key, so if the envelope was meant for this account, the sender has to send again.
+The code says nothing about who sealed it or for whom. The context labels one use (here the listing and the order); it
+does not prove a purchase or who sent it. The sender is not authenticated. Opening the same bytes twice gives the same
+`envelopeId` and new handles; spotting a replay is the product's job. The suite is a prototype choice and is not
+reviewed for envelopes kept long term, for example on a chain: anyone who keeps the bytes keeps them, and the suite is
+not post-quantum.
 
 **Handles** are random, held per bridge connection, and end on `release`, on the next load or close of the document, and
-on sign-out. The product chooses where a field goes and how wide; the host chooses what it shows.
+on sign-out; a handle that ended fails `missing-handle`. The product chooses where a field goes and how wide; the host
+chooses what it shows.
+
+**Calls:** a product's `request`s wait for each other, so the user sees one sheet at a time; every other call runs at
+once, so `display` and `release` do not wait behind an open sheet. At most 32 calls per connection wait at once; more
+fail `busy`. A call the client still has no answer for after 180 seconds is cancelled at the host (`{ cancel: id }`):
+the host stops its pending work, its sheet closes, nothing it would have returned is kept, and it fails `timeout`. Work
+already done stays done, such as handles a `release` had let go, so retry. A result the host sent before it saw the
+cancel is still the answer. The user's own Cancel fails `cancelled`. The codes are listed on `FieldErrorCode` in
+`bridges/fields/protocol.ts`.
 
 **Drawing:** `display` gives the product a surface only the platform adapter places. On the web it is an image URL the
 product embeds with `<img>`. The host draws the value as SVG with `src/fields/svg.ts`: text only, escaped, no script,
@@ -141,12 +155,17 @@ and receive the SVG, value included, and a page of the product's origin in anoth
 image already shown stays on screen after release; sign-out closes the product's document. The dev server's 500 tokens
 are shared by every product, so one product can fill them for a minute. A screen reader gets only the image's alt text.
 
-**Receiving keys** (`src/fields/keys.ts`): one per wallet, network and product, reused for every order. The secret is
-encrypted with XChaCha20-Poly1305 under a key derived from the signed-in wallet's entropy and kept in this origin's
-`localStorage`; sign-out forgets the derived key and keeps the record. This development host keeps its wallets' recovery
-phrases in the same `localStorage` in plain text, so this is no stronger than the wallet store and is not a production
-key store. Same device only: no rotation, backup, other device or recovery. Clearing site data loses the key and every
-order sealed to it. Use synthetic data only.
+**Receiving keys** (`src/fields/keys.ts`): one per wallet, network, product and product account, reused for every order
+to that account, so two accounts of one product publish different keys. `open` reports the account an envelope was
+sealed for. The secret is encrypted with XChaCha20-Poly1305 under a key derived from the signed-in wallet's entropy and
+kept in this origin's `localStorage`, bound to its account; sign-out forgets the derived key and keeps the records.
+Earlier builds kept one key per product, shared by its accounts: such a key is still read, only to open envelopes
+already sealed to it, and is never bound again. Its accounts were linkable by anyone who saw both bindings, and they
+stay so; new keys do not undo that. A stored record that cannot be read is kept as it is: no new key is written over it,
+and opening or fetching a key then fails `unavailable` rather than `missing-key`. This development host keeps its
+wallets' recovery phrases in the same `localStorage` in plain text, so this is no stronger than the wallet store and is
+not a production key store. Same device only: no rotation, backup, other device or recovery. Clearing site data loses
+the key and every order sealed to it. Use synthetic data only.
 
 **What the binding proves:** that a holder of the account's wallet keys, through a host, bound the key to that product
 account on that network. It does not prove who the person is, that the account is the seller the market says it is, or
@@ -169,7 +188,7 @@ it is open. No revocation, payments, contracts or multi-device recovery. Public 
 
 Unit checks: `bun test tests/unit/fields tests/unit/field-image-plugin.test.ts tests/unit/boundaries.test.ts` (envelope,
 receiving keys, the SVG drawing, the host's bridge with a stand-in binder and image service, the dev server's image
-service over HTTP, and the import boundaries). The
+service over HTTP, the calls a product stops waiting for, and the import boundaries). The
 binding signature has Rust tests: `cargo test -p truapi --lib field_key_binding`. Browser check, run by hand (CI does not
 run it): `bun test browser/field-demo.spec.ts --timeout 300000`. It runs both providers, the market and two host tabs on
 the simulated store, with its own Vite servers and caches, and refuses every request outside them.
