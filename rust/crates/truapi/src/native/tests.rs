@@ -1,14 +1,14 @@
 use super::*;
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex, atomic::Ordering},
+	sync::{Arc, Mutex, atomic::Ordering, mpsc},
 };
 
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, ExecutableKind, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, ThemeHost,
-	UserConfirmation, UserConfirmationReview,
+	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, StackFetchRequest,
+	StackFetchResponse, StackStatus, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -1828,22 +1828,19 @@ fn each_descriptor_chain_reaches_its_own_role() {
 /// each status the core reports.
 struct PublishedStack {
 	document: Vec<u8>,
-	statuses: std::sync::mpsc::Sender<crate::platform::StackStatus>,
+	statuses: mpsc::Sender<StackStatus>,
 }
 
 #[async_trait::async_trait]
-impl crate::native::NativeStackCallbacks for PublishedStack {
+impl NativeStackCallbacks for PublishedStack {
 	async fn fetch_stack_descriptor(
 		&self,
-		_request: crate::platform::StackFetchRequest,
-	) -> Result<crate::platform::StackFetchResponse, crate::native::HostRejection> {
-		Ok(crate::platform::StackFetchResponse::Document {
-			bytes: self.document.clone(),
-			etag: None,
-		})
+		_request: StackFetchRequest,
+	) -> Result<StackFetchResponse, HostRejection> {
+		Ok(StackFetchResponse::Document { bytes: self.document.clone(), etag: None })
 	}
 
-	fn stack_changed(&self, status: crate::platform::StackStatus) {
+	fn stack_changed(&self, status: StackStatus) {
 		let _ = self.statuses.send(status);
 	}
 }
@@ -1863,7 +1860,7 @@ fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 		"second",
 		crate::test_support::TEST_STACK_WIPED_PEOPLE,
 	);
-	let (told, statuses) = std::sync::mpsc::channel();
+	let (told, statuses) = mpsc::channel();
 	let published = PublishedStack {
 		document: crate::test_support::sign_test_descriptor(&wiped).1,
 		statuses: told,
@@ -1873,7 +1870,7 @@ fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 			.recv_timeout(std::time::Duration::from_secs(10))
 			.expect("the host is told the stack's status")
 	};
-	let sequence = |status: &crate::platform::StackStatus| {
+	let sequence = |status: &StackStatus| {
 		serde_json::from_str::<serde_json::Value>(&status.descriptor)
 			.expect("the status carries descriptor JSON")["sequence"]
 			.clone()
