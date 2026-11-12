@@ -290,6 +290,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       cli_package: ${{ steps.filter.outputs.cli_package }}
+      install_action: ${{ steps.filter.outputs.install_action }}
       workflows: ${{ steps.filter.outputs.workflows }}
       needs_changeset: ${{ steps.filter.outputs.needs_changeset }}
       adds_changeset: ${{ steps.filter.outputs.adds_changeset }}
@@ -343,6 +344,7 @@ jobs:
           if [ -z "$base" ]; then
             {
               echo "cli_package=true"
+              echo "install_action=true"
               echo "workflows=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
@@ -364,11 +366,12 @@ jobs:
           # survive. `@parity/truapi` is here because the runner inlines it from
           # source, and bundling it is a step no other job performs. A release
           # is the wrong place to find out one of them moved.
-          gate cli_package '^(rust/crates/(truapi-host-cli|truapi|truapi-codegen|truapi-macros|trinity-stack)/|js/container/|js/packages/truapi/(src/|package\.json$|tsconfig[^/]*\.json$)|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|scripts/(codegen\.sh|build-cli-runner\.ts|cli-runner-package\.test\.ts)$|\.github/workflows/(ci|cli-package|release-cli)\.yml$)'
+          gate cli_package '^(rust/crates/(truapi-host-cli|truapi|truapi-codegen|truapi-macros|trinity-stack)/|stacks/|js/container/|js/packages/truapi/(src/|package\.json$|tsconfig[^/]*\.json$)|Makefile$|nightly-toolchain$|Cargo\.toml$|Cargo\.lock$|package\.json$|package-lock\.json$|scripts/(codegen\.sh|build-cli-runner\.ts|cli-runner-package\.test\.ts)$|\.github/workflows/(ci|cli-package|release-cli)\.yml$)'
+          gate install_action '^(\.github/actions/install-(truapi-host|trinity-stack)/|scripts/truapi-host-installer\.sh$|\.github/workflows/ci\.yml$)'
 
           # Include generators, dependency pins and package build configuration:
           # these can change a published artifact without touching its sources.
-          gate needs_changeset '^(rust/crates/(truapi(-server|-provider|-macros|-host-cli|-codegen)?|trinity-stack)/|js/packages/[^/]+/(src/|scripts/|package\.json$|tsconfig[^/]*\.json$)|Cargo\.(toml|lock)$|package(-lock)?\.json$|rust-toolchain(\.toml)?$|nightly-toolchain$|\.cargo/|Makefile$|scripts/(codegen\.sh|bundle-truapi-dts\.mjs|regen-explorer-versions\.mjs)$)'
+          gate needs_changeset '^(rust/crates/(truapi(-server|-provider|-macros|-host-cli|-codegen)?|trinity-stack)/|stacks/|js/packages/[^/]+/(src/|scripts/|package\.json$|tsconfig[^/]*\.json$)|Cargo\.(toml|lock)$|package(-lock)?\.json$|rust-toolchain(\.toml)?$|nightly-toolchain$|\.cargo/|Makefile$|scripts/(codegen\.sh|bundle-truapi-dts\.mjs|regen-explorer-versions\.mjs)$)'
 
           # Deleting, editing or renaming an old changeset does not declare a
           # new change. README.md is Changesets' documentation, not a release.
@@ -552,6 +555,111 @@ jobs:
       contents: read
     uses: ./.github/workflows/cli-package.yml
 
+  # Installs the stable releases the way another repository's workflow would.
+  # Each action's own default is the version of this commit, which is not
+  # published until the release lands, so this asks for `latest` instead.
+  install-action:
+    name: install actions
+    needs: changes
+    if: needs.changes.outputs.install_action == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            .github/actions/install-truapi-host/
+            .github/actions/install-trinity-stack/
+            scripts/truapi-host-installer.sh
+
+      - id: install
+        uses: ./.github/actions/install-truapi-host
+        with:
+          version: latest
+
+      - name: Check the installed binary runs from PATH
+        env:
+          INSTALLED_VERSION: ${{ steps.install.outputs.version }}
+          INSTALLED_PATH: ${{ steps.install.outputs.path }}
+        run: |
+          set -euo pipefail
+          [ "$(command -v truapi-host)" = "${INSTALLED_PATH}" ]
+          [ "$(truapi-host --version)" = "truapi-host ${INSTALLED_VERSION}" ]
+          [ "${TRUAPI_HOST_NO_UPDATE}" = 1 ]
+
+      # An older published release installs when asked for by version, which is
+      # the pinning path a consumer uses to hold a CLI version.
+      - id: pinned
+        uses: ./.github/actions/install-truapi-host
+        with:
+          version: 0.29.0
+
+      - name: Check the pinned install reports the version asked for
+        env:
+          PINNED_PATH: ${{ steps.pinned.outputs.path }}
+        run: |
+          set -euo pipefail
+          [ "$("${PINNED_PATH}" --version)" = "truapi-host 0.29.0" ]
+
+      - name: Check an invalid version is rejected
+        id: invalid
+        continue-on-error: true
+        uses: ./.github/actions/install-truapi-host
+        with:
+          version: 0.30
+
+      - name: Check the rejection failed the step
+        env:
+          INVALID_OUTCOME: ${{ steps.invalid.outcome }}
+        run: |
+          set -euo pipefail
+          [ "${INVALID_OUTCOME}" = failure ]
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+
+      - id: stack
+        uses: ./.github/actions/install-trinity-stack
+        with:
+          version: latest
+
+      - name: Check trinity-stack runs from PATH
+        env:
+          STACK_PATH: ${{ steps.stack.outputs.path }}
+        run: |
+          set -euo pipefail
+          [ "$(command -v trinity-stack)" = "${STACK_PATH}" ]
+          trinity-stack --help
+
+      - id: stack-pinned
+        uses: ./.github/actions/install-trinity-stack
+        with:
+          version: 0.2.0
+
+      - name: Check the pinned trinity-stack is the version asked for
+        env:
+          PINNED_VERSION: ${{ steps.stack-pinned.outputs.version }}
+        run: |
+          set -euo pipefail
+          [ "${PINNED_VERSION}" = 0.2.0 ]
+
+      - name: Check an invalid trinity-stack version is rejected
+        id: stack-invalid
+        continue-on-error: true
+        uses: ./.github/actions/install-trinity-stack
+        with:
+          version: 0.2
+
+      - name: Check the trinity-stack rejection failed the step
+        env:
+          INVALID_OUTCOME: ${{ steps.stack-invalid.outcome }}
+        run: |
+          set -euo pipefail
+          [ "${INVALID_OUTCOME}" = failure ]
+
   ts-client:
     name: "@parity/truapi"
     timeout-minutes: 10
@@ -638,6 +746,7 @@ jobs:
 
   host-wasm:
     name: "@parity/truapi-host (wasm bridge)"
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     needs: codegen
     env:
@@ -831,7 +940,7 @@ jobs:
         uses: ./.github/actions/bundle-size
         with:
           assets: |
-            truapi-host      js/packages/truapi-host/dist  !wasm/testing/ !testing/ !testing.js !web/create-mock-host.js
+            truapi-host      js/packages/truapi-host/dist  !wasm/testing/ !testing/ !testing.js !web/create-mock-host.js !node/
             truapi-provider  js/packages/truapi-provider/dist
             truapi           js/packages/truapi/dist
             trinity-stack    js/packages/trinity-stack  !node_modules/ !src/ !scripts/
@@ -1219,6 +1328,7 @@ jobs:
         ios-app,
         android-app,
         cli-package,
+        install-action,
         ts-client,
         ts-host,
         host-wasm,
@@ -1268,7 +1378,7 @@ jobs:
           REQUIRED: >-
             rust headless-install wasm-provider licenses codegen ios-bindings changes
             android-bindings provider-android-bindings ios-app android-app
-            cli-package ts-client
+            cli-package install-action ts-client
             ts-host host-wasm ts-debugger ts-trinity-stack bundle-size playground explorer e2e workflow-lint
             release-guard changeset-guard
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

@@ -3,7 +3,12 @@
 // by the Playwright fixture and the node server, so a suite gets the same
 // chains whichever one it configures.
 
-import type { MockHostConfig } from "../web/create-mock-host.js";
+import {
+  mockTestStack,
+  type MockHostConfig,
+  type MockRuntimeConfig,
+  type TestStack,
+} from "../web/create-mock-host.js";
 
 /** One chain, in `@parity/host-api-test-sdk`'s shape. */
 export interface NetworkConfig {
@@ -16,25 +21,23 @@ export interface NetworkConfig {
   tokenDecimals?: number;
 }
 
-/** Role and network implied by a `NetworkConfig.id`. */
+/** Network, and the {@link TestStack} role, implied by a `NetworkConfig.id`. */
 function splitChainId(id: string): {
   network: string;
-  identifier: "AssetHub" | "People" | "Bulletin" | "Relay";
-  configKey?: "assetHub" | "people" | "bulletin";
+  role: "assetHub" | "people" | "bulletin" | "relay";
 } {
   const suffixes = [
-    ["-asset-hub", "AssetHub", "assetHub"],
-    ["-people", "People", "people"],
-    ["-bulletin", "Bulletin", "bulletin"],
+    ["-asset-hub", "assetHub"],
+    ["-people", "people"],
+    ["-bulletin", "bulletin"],
   ] as const;
-  for (const [suffix, identifier, configKey] of suffixes) {
+  for (const [suffix, role] of suffixes) {
     if (id.endsWith(suffix)) {
-      return { network: id.slice(0, -suffix.length), identifier, configKey };
+      return { network: id.slice(0, -suffix.length), role };
     }
   }
-  // No suffix: the id names the network and the chain is its relay. The
-  // runtime config has no relay slot, so there is no key to declare it under.
-  return { network: id, identifier: "Relay" };
+  // No suffix: the id names the network and the chain is its relay.
+  return { network: id, role: "relay" };
 }
 
 /**
@@ -48,7 +51,11 @@ function splitChainId(id: string): {
 export type LoopbackStatements = boolean | "default";
 
 /**
- * Expand `networks` into the three settings that have to agree.
+ * Expand `networks` into the settings that have to agree: the proxies that
+ * route each chain, the chains `featureSupported` reports served, and the test
+ * stack the core answers `getChainInfo` from. A role `networks` leaves out
+ * keeps the {@link mockTestStack} chain, because the core needs People and
+ * Bulletin to start.
  *
  * A single proxy carries no genesis hash: an unhashed proxy takes every
  * request, so routing survives a chain reset while only the DECLARED hash --
@@ -63,22 +70,14 @@ export function fromNetworks(
   networks: NetworkConfig[],
   loopbackStatements: LoopbackStatements = false,
 ): {
-  mock: Pick<MockHostConfig, "chainProxies" | "supportedChains">;
-  runtimeConfig: Record<string, unknown>;
+  mock: Pick<MockHostConfig, "chainProxies" | "servedChains">;
+  runtimeConfig: { testStack: TestStack };
 } {
-  const runtimeConfig: Record<string, unknown> = {};
-  const chains: { identifier: string; genesisHash: string }[] = [];
-  let network = "paseo";
+  const testStack: TestStack = { ...mockTestStack(), network: "paseo" };
   for (const entry of networks) {
     const split = splitChainId(entry.id);
-    network = split.network || network;
-    chains.push({
-      identifier: split.identifier,
-      genesisHash: entry.genesisHash,
-    });
-    if (split.configKey) {
-      runtimeConfig[split.configKey] = { genesisHash: entry.genesisHash };
-    }
+    testStack.network = split.network || testStack.network;
+    testStack[split.role] = { genesisHash: entry.genesisHash };
   }
   // Only the People chain carries the statement store, so serving it locally on
   // the hub as well would claim a store where none exists. A suite that declares
@@ -87,7 +86,7 @@ export function fromNetworks(
   // chains and no People among them there is no request this could attach to,
   // and attaching it to a hub would answer statement reads a real hub refuses.
   const peopleChains = networks.filter(
-    (entry) => splitChainId(entry.id).identifier === "People",
+    (entry) => splitChainId(entry.id).role === "people",
   );
   const carried = peopleChains.length > 0 || networks.length === 1;
   // Loud only for the suite that named the store: it asked for something these
@@ -106,9 +105,7 @@ export function fromNetworks(
   const servesStatements = (entry: NetworkConfig): boolean =>
     loopbackStatements !== false &&
     carried &&
-    (peopleChains.length > 0
-      ? splitChainId(entry.id).identifier === "People"
-      : true);
+    (peopleChains.length > 0 ? splitChainId(entry.id).role === "people" : true);
 
   return {
     mock: {
@@ -117,9 +114,9 @@ export function fromNetworks(
         rpcUrl: entry.rpcUrl,
         ...(servesStatements(entry) ? { loopbackStatements: true } : {}),
       })),
-      supportedChains: { network, chains },
-    } as Pick<MockHostConfig, "chainProxies" | "supportedChains">,
-    runtimeConfig,
+      servedChains: networks.map((entry) => entry.genesisHash),
+    },
+    runtimeConfig: { testStack },
   };
 }
 
@@ -128,7 +125,7 @@ export interface NetworkOptions {
   networks?: NetworkConfig[];
   chain?: NetworkConfig;
   mock?: MockHostConfig;
-  runtimeConfig?: Record<string, unknown>;
+  runtimeConfig?: Partial<MockRuntimeConfig>;
 }
 
 /**
@@ -139,7 +136,7 @@ export interface NetworkOptions {
 export function withNetworks(
   options: NetworkOptions,
   loopbackStatements: LoopbackStatements = false,
-): { mock?: MockHostConfig; runtimeConfig?: Record<string, unknown> } {
+): { mock?: MockHostConfig; runtimeConfig?: Partial<MockRuntimeConfig> } {
   if (options.chain && options.networks) {
     throw new Error(
       "testHost: pass either `chain` (one chain, the older " +

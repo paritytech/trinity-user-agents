@@ -47,9 +47,7 @@ fn a_withdrawn_request_already_published_is_cancelled_on_the_phone() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		Spawner::for_test(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -104,9 +102,7 @@ fn a_request_that_times_out_is_not_withdrawn_from_the_phone() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		Spawner::for_test(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -154,9 +150,7 @@ fn a_withdrawn_request_with_a_newer_one_behind_it_sends_no_cancel() {
 	let services = RuntimeServices::new(
 		platform.clone(),
 		host_config.host.host_info.clone(),
-		host_config.people_chain_genesis_hash,
-		host_config.bulletin_chain_genesis_hash,
-		host_config.asset_hub_chain_genesis_hash,
+		host_config.stack.clone(),
 		Spawner::for_test(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -236,7 +230,7 @@ fn idle_peer_disconnect_monitor_clears_session_store_and_broadcasts() {
 		)
 	);
 
-	pairing_host.session().start_session_supervision_for_current_session();
+	pairing_host.session().start_remote_monitor_for_current_session();
 
 	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
 	let disconnected = loop {
@@ -808,10 +802,7 @@ fn store_notification_during_external_activation_restores_persisted_session() {
 	});
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
-	pairing_host
-		.session()
-		.clone()
-		.start_session_store_sync_for_tests(Spawner::for_test());
+	pairing_host.session().clone().start_session_store_sync(Spawner::for_test());
 	wait_until(
 		|| host.test_session_state().current() == Some(persisted.clone()),
 		"initial persisted session was not restored",
@@ -922,10 +913,7 @@ fn session_store_sync_restores_valid_blob_from_tick() {
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
-	pairing_host
-		.session()
-		.clone()
-		.start_session_store_sync_for_tests(Spawner::for_test());
+	pairing_host.session().clone().start_session_store_sync(Spawner::for_test());
 	wait_until(
 		|| host.test_session_state().current() == Some(stored.clone()),
 		"session store sync did not restore valid blob",
@@ -953,10 +941,7 @@ fn session_store_sync_announces_a_signed_out_boot() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
-	pairing_host
-		.session()
-		.clone()
-		.start_session_store_sync_for_tests(Spawner::for_test());
+	pairing_host.session().clone().start_session_store_sync(Spawner::for_test());
 
 	wait_until(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
@@ -978,10 +963,7 @@ fn session_store_sync_announces_a_restored_boot_once() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
-	pairing_host
-		.session()
-		.clone()
-		.start_session_store_sync_for_tests(Spawner::for_test());
+	pairing_host.session().clone().start_session_store_sync(Spawner::for_test());
 
 	wait_until(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
@@ -1005,10 +987,7 @@ fn session_store_sync_stays_silent_on_an_unchanged_tick() {
 	let (_host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
-	pairing_host
-		.session()
-		.clone()
-		.start_session_store_sync_for_tests(Spawner::for_test());
+	pairing_host.session().clone().start_session_store_sync(Spawner::for_test());
 	wait_until(
 		|| !platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty(),
 		"boot reconcile did not report the restored session",
@@ -1043,10 +1022,7 @@ fn session_store_sync_replaces_valid_blob_and_broadcasts_connected() {
 	let mut statuses = host.test_session_state().subscribe();
 	let _ = futures::executor::block_on(statuses.next());
 
-	pairing_host
-		.session()
-		.clone()
-		.start_session_store_sync_for_tests(Spawner::for_test());
+	pairing_host.session().clone().start_session_store_sync(Spawner::for_test());
 
 	assert_eq!(
 		futures::executor::block_on(statuses.next()).unwrap(),
@@ -1064,10 +1040,7 @@ fn session_store_sync_clears_invalid_blob() {
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 	install_pairing_session(&host, sso_session_info());
 
-	pairing_host
-		.session()
-		.clone()
-		.start_session_store_sync_for_tests(Spawner::for_test());
+	pairing_host.session().clone().start_session_store_sync(Spawner::for_test());
 	wait_until(
 		|| host.test_session_state().current().is_none(),
 		"session store sync did not clear invalid blob",
@@ -1099,10 +1072,7 @@ fn session_store_sync_clears_unreadable_blob() {
 	);
 	install_pairing_session(&host, sso_session_info());
 
-	pairing_host
-		.session()
-		.clone()
-		.start_session_store_sync_for_tests(Spawner::for_test());
+	pairing_host.session().clone().start_session_store_sync(Spawner::for_test());
 	wait_until(
 		|| *session_clears.lock().unwrap() == 1,
 		"session store sync did not clear unreadable blob",
@@ -1127,10 +1097,7 @@ fn session_store_sync_clears_once_on_initial_persistent_read_error() {
 	);
 	install_pairing_session(&host, sso_session_info());
 
-	pairing_host
-		.session()
-		.clone()
-		.start_session_store_sync_for_tests(Spawner::for_test());
+	pairing_host.session().clone().start_session_store_sync(Spawner::for_test());
 
 	wait_until(|| *session_clears.lock().unwrap() == 1, "clear_stored_session was never called");
 	assert_eq!(*session_clears.lock().unwrap(), 1);
@@ -1146,10 +1113,7 @@ fn disconnect_emits_disconnected_auth_state_after_store_sync_connected() {
 	});
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
-	pairing_host
-		.session()
-		.clone()
-		.start_session_store_sync_for_tests(Spawner::for_test());
+	pairing_host.session().clone().start_session_store_sync(Spawner::for_test());
 	wait_until(
 		|| platform.auth_states.lock().expect("auth state list mutex poisoned").len() == 1,
 		"session store sync did not emit connected auth state",
@@ -1227,6 +1191,58 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
 		Ok(RemotePreimageLookupSubscribeItem::V1(v01::RemotePreimageLookupSubscribeItem {
 			value: Some(value)
 		}))
+	);
+}
+
+/// The paired host's account holder keeps its copy of what the phone
+/// registered, so the host's own provider list shows the phone's answer.
+#[test]
+fn a_paired_registration_records_the_phones_key_locally() {
+	use crate::host_internal::sso_messages::{RemoteMessage, RemoteMessageData, Response, v1};
+
+	let session = sso_session_info();
+	let public_key = [7; 32];
+	let platform = Arc::new(StubPlatform {
+		sso_response_script: Some(sso_success_response_script(
+			&session,
+			RemoteMessage {
+				message_id: "wallet-register".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::RegisterRingVrfKeyResponse(
+					Response { responding_to: "register".to_string(), payload: Ok(public_key) },
+				)),
+			},
+		)),
+		..Default::default()
+	});
+	let (host_config, product) = runtime_config("myapp.dot");
+	let (host, pairing) = ProductRuntimeHost::new_pairing_for_tests(
+		platform,
+		host_config,
+		product,
+		Spawner::for_test(),
+	);
+	install_pairing_session(&host, session);
+	let authority_session = ProductAuthority::current_session(pairing.as_ref()).unwrap();
+
+	let registered = futures::executor::block_on(ProductAuthority::register_ring_vrf_key(
+		pairing.as_ref(),
+		&CallContext::with_request_id("register".to_string()),
+		&authority_session,
+		crate::host_internal::sso_messages::ProductRequest {
+			calling_product_id: ProductId::for_test("myapp.dot"),
+			payload: v01::HostAccountRegisterRingVrfKeyRequest {
+				index: v01::DerivationIndex::Index(0),
+				ring: ring_location_fixture(),
+			},
+		},
+	));
+
+	assert_eq!(
+		(
+			registered,
+			futures::executor::block_on(pairing.ring_vrf_providers(&ring_location_fixture())),
+		),
+		(Ok(public_key), Ok(vec![account_id("myapp.dot", 0)])),
 	);
 }
 

@@ -47,6 +47,8 @@ final class MainTabBarViewController: UIViewController {
     private var isSearchSwipePending = false
     /// Set while the landing focuses search, so the bar's hide plays no feedback.
     private var isFocusingFromSwipe = false
+    /// The Tab index the user tapped while an outgoing navigation transition was running.
+    private var pendingSelectionIndex: Int?
 
     init(
         presenter: MainTabBarPresenterProtocol,
@@ -304,8 +306,30 @@ extension MainTabBarViewController {
             return
         }
 
-        container.select(index: index)
-        refreshChrome()
+        selectWhenOutgoingTransitionEnds(index: index)
+    }
+}
+
+private extension MainTabBarViewController {
+    /// Applies a Tab switch once the outgoing tab's navigation transition has finished.
+    /// A transition must not finish off screen: UIKit then skips `didMove(toParent:)` on the
+    /// popped screen, so that screen never clears its state.
+    func selectWhenOutgoingTransitionEnds(index: Int) {
+        guard let coordinator = (container.selectedController as? UINavigationController)?.transitionCoordinator else {
+            container.select(index: index)
+            refreshChrome()
+            return
+        }
+
+        let wasPending = pendingSelectionIndex != nil
+        pendingSelectionIndex = index
+        guard !wasPending else { return }
+
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+            guard let self, let pendingIndex = pendingSelectionIndex else { return }
+            pendingSelectionIndex = nil
+            selectWhenOutgoingTransitionEnds(index: pendingIndex)
+        }
     }
 }
 
@@ -384,6 +408,10 @@ extension MainTabBarViewController {
     func openBackupSettings() {
         chromeController.setPanel(nil)
         presenter.didRequestBackupSettings()
+    }
+
+    func closeScanPanel() {
+        chromeController.closeCenterPanel(duration: nil)
     }
 
     func makeScanPanel() -> UIViewController? {

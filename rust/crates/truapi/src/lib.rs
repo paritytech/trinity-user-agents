@@ -94,10 +94,10 @@ pub mod latest {
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
 		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
-		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
-		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
+		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
+		ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
+		ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
+		EffectProps, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
 		FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
 		FundingDeposit, FundingDetail, FundingDirection, FundingFact, FundingFailure,
 		FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate,
@@ -116,13 +116,15 @@ pub mod latest {
 		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
 		RemotePermission, RemoteStatementStoreCreateProofError,
 		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
-		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
-		SignedStatement, Size, Statement, StatementProof, StatementTopic, StorageQueryItem,
-		StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
-		TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
+		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RendererNode,
+		ResourceAllocationError, RingLocation, RingLocationJunction, RingVrfKeyDisclosure,
+		RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size,
+		Statement, StatementProof, StatementTopic, StorageQueryItem, StorageQueryType,
+		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
+		TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
 	};
+
+	pub use crate::v02::{ChatRoomFooter, RenderContext};
 
 	/// Latest payload type of a versioned envelope.
 	pub type LatestOf<T> = <T as Versioned>::Latest;
@@ -860,6 +862,8 @@ mod dotns_views;
 #[cfg(feature = "runtime")]
 mod dynamic_vrf;
 #[cfg(feature = "runtime")]
+mod evm_contract;
+#[cfg(feature = "runtime")]
 pub mod frame;
 #[cfg(feature = "runtime")]
 mod host_core;
@@ -879,11 +883,15 @@ pub mod platform;
 #[cfg(feature = "runtime")]
 mod protocol_error;
 #[cfg(feature = "runtime")]
+mod public_profile;
+#[cfg(feature = "runtime")]
 mod runtime;
 #[cfg(feature = "runtime")]
 mod session_usernames;
 #[cfg(feature = "runtime")]
 mod spawner;
+#[cfg(feature = "runtime")]
+mod stack;
 #[cfg(feature = "runtime")]
 mod stream_extensions;
 #[cfg(feature = "runtime")]
@@ -991,6 +999,8 @@ pub use platform::{
 	PairingHostConfig, PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform,
 	ProductContext, SigningHostConfig, describe_core_storage_key,
 };
+#[cfg(feature = "runtime")]
+pub use public_profile::{ProfileAvatar, PublicProfile, PublicProfileError};
 #[cfg(feature = "runtime")]
 pub use runtime::StatementRenewalTarget;
 #[cfg(feature = "runtime")]

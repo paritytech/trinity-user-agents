@@ -5,6 +5,8 @@ use parity_scale_codec::Encode;
 use parking_lot::{Condvar, Mutex as ParkingMutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod call_batch;
+
 /// A stop the node acknowledges.
 const STOPPED: &str = r#""result":null"#;
 
