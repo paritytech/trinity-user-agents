@@ -359,14 +359,19 @@ fn a_product_is_asked_on_its_own_connection() {
 	let _ = futures::executor::block_on(
 		runtime.sign_payload(&CallContext::default(), payload_request(account_id("myapp.dot", 0))),
 	);
+	let _ = futures::executor::block_on(runtime.sign_vrf(
+		&CallContext::default(),
+		truapi::versioned::account::HostAccountSignVrfRequest::V1(vrf_request("myapp.dot")),
+	));
 
 	let reviews = |platform: &StubPlatform| {
 		(
 			platform.account_access_reviews.lock().unwrap().len(),
 			platform.sign_payload_reviews.lock().unwrap().len(),
+			platform.sign_vrf_reviews.lock().unwrap().len(),
 		)
 	};
-	assert_eq!((reviews(&connection_platform), reviews(&runtime_platform)), ((1, 1), (0, 0)));
+	assert_eq!((reviews(&connection_platform), reviews(&runtime_platform)), ((1, 1, 1), (0, 0, 0)));
 }
 
 /// A product that gives up on its request stops waiting for the account-access
