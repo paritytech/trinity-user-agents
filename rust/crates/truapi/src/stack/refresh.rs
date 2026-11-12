@@ -20,7 +20,9 @@ use super::{
 	signed_pointer, source::StackSource,
 };
 use crate::{
-	Spawner, background_task::BackgroundTask, time::Timer, unix_time::current_unix_secs,
+	Spawner,
+	background_task::BackgroundTask,
+	time::{Clock, Timer},
 	wake::WakeSignal,
 };
 
@@ -52,14 +54,15 @@ pub struct StackRefresh {
 	shared: Arc<Shared>,
 	/// The refresh loop, once started.
 	task: OnceLock<BackgroundTask>,
+	/// Asks the loop for a fetch now. The loop ends once this drops.
+	refresh_requests: WakeSignal,
 }
 
 struct Shared {
 	source: Mutex<StackSource>,
 	records: Box<dyn StackRecords>,
 	timer: Arc<dyn Timer>,
-	/// Asks the loop for a fetch now.
-	refresh_requests: WakeSignal,
+	clock: Box<dyn Clock>,
 }
 
 impl StackRefresh {
@@ -72,28 +75,32 @@ impl StackRefresh {
 	/// and never waits on the network. Fails with a [`StackError`] naming the
 	/// rule `bundled` breaks. A record that cannot be read is logged and
 	/// ignored.
+	///
+	/// `clock` tells how old a copy is and `timer` waits for the next fetch.
 	pub fn load(
 		pointer: &str,
 		bundled: &[u8],
 		allows_reserved_values: bool,
 		records: Box<dyn StackRecords>,
 		timer: Arc<dyn Timer>,
+		clock: Box<dyn Clock>,
 	) -> Result<Self, StackError> {
 		let pointer = signed_pointer(pointer)?;
 		let stored = records.read_stack_record(&pointer.stack_id()).unwrap_or_else(|error| {
 			tracing::warn!("stored stack descriptor could not be read: {error}");
 			None
 		});
-		let source =
-			StackSource::load(pointer, bundled, stored.as_deref(), allows_reserved_values, now())?;
+		let source = StackSource::load(
+			pointer,
+			bundled,
+			stored.as_deref(),
+			allows_reserved_values,
+			unix_now(clock.as_ref()),
+		)?;
 		Ok(Self {
-			shared: Arc::new(Shared {
-				source: Mutex::new(source),
-				records,
-				timer,
-				refresh_requests: WakeSignal::default(),
-			}),
+			shared: Arc::new(Shared { source: Mutex::new(source), records, timer, clock }),
 			task: OnceLock::new(),
+			refresh_requests: WakeSignal::default(),
 		})
 	}
 
@@ -112,22 +119,26 @@ impl StackRefresh {
 	/// drops. Reports the current status to `host` first.
 	///
 	/// Set-once: answers whether this call started the refresh.
+	#[must_use = "`false` means the refresh was already running and `host` was dropped"]
 	pub fn start(&self, host: Box<dyn StackHost>, spawner: &Spawner) -> bool {
 		let mut started = false;
 		self.task.get_or_init(|| {
 			started = true;
-			let requests = self.shared.refresh_requests.subscribe();
+			let requests = self.refresh_requests.subscribe();
 			BackgroundTask::spawn(spawner, self.shared.clone().run(host, requests))
 		});
 		started
 	}
 
-	/// Fetches the descriptor now instead of when the copy is old enough, as
-	/// after a chain answers with another genesis hash. Returns at once.
-	/// Requests made while a fetch is out lead to one more fetch, not one
-	/// each. Does nothing before [`Self::start`].
+	/// Fetches the descriptor now instead of when the copy is old enough.
+	///
+	/// A host asks when its app returns to the foreground, because a sleeping
+	/// device can stretch the wait for the next fetch, and when a chain
+	/// answers with another genesis hash. Returns at once. Requests made
+	/// while a fetch is out lead to one more fetch, not one each. Does
+	/// nothing before [`Self::start`].
 	pub fn refresh_now(&self) {
-		self.shared.refresh_requests.wake();
+		self.refresh_requests.wake();
 	}
 }
 
@@ -136,15 +147,19 @@ impl Shared {
 		self.source.lock().expect("stack source mutex poisoned")
 	}
 
+	fn now(&self) -> i64 {
+		unix_now(self.clock.as_ref())
+	}
+
 	async fn run(self: Arc<Self>, host: Box<dyn StackHost>, mut forced: mpsc::Receiver<()>) {
 		let mut reported = self.source().status();
 		host.stack_changed(reported.clone());
 		let mut force = false;
 		loop {
 			let request = if force {
-				self.source().forced_fetch(now())
+				self.source().forced_fetch(self.now())
 			} else {
-				self.source().due_fetch(now())
+				self.source().due_fetch(self.now())
 			};
 			if let Some(request) = request {
 				self.fetch(host.as_ref(), request).await;
@@ -154,7 +169,7 @@ impl Shared {
 					host.stack_changed(reported.clone());
 				}
 			}
-			let next_fetch_in = self.source().next_fetch_in(now());
+			let next_fetch_in = self.source().next_fetch_in(self.now());
 			let until_due = match next_fetch_in {
 				Some(wait) => self.timer.sleep(wait),
 				None => pending().boxed(),
@@ -200,7 +215,7 @@ impl Shared {
 		};
 		let (stack_id, record) = {
 			let mut source = self.source();
-			(source.stack_id(), source.fetched(served, now()))
+			(source.stack_id(), source.fetched(served, self.now()))
 		};
 		let Some(record) = record else { return };
 		if let Err(error) = self.records.write_stack_record(&stack_id, record).await {
@@ -209,8 +224,8 @@ impl Shared {
 	}
 }
 
-fn now() -> i64 {
-	i64::try_from(current_unix_secs()).unwrap_or(i64::MAX)
+fn unix_now(clock: &dyn Clock) -> i64 {
+	i64::try_from(clock.unix_secs()).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]
