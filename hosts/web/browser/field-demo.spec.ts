@@ -260,7 +260,7 @@ async function viewShows(page: Page, text: string): Promise<boolean> {
 }
 
 /** The titles of the Locket bridge's own sheets. Every other sheet is the core's. */
-const FIELD_SHEETS = /^(Send your|Show your)/;
+const FIELD_SHEETS = /^(Share your|Show your)/;
 
 /**
  * Answer the core's sheets as they come, until `done` resolves: approve a
@@ -386,9 +386,12 @@ describe("the draft Locket bridge demo", () => {
         expect({
           title: await share.locator("h2").innerText(),
           choices: choices.filter((label) => label.startsWith("Share")),
-          checked: (await share.textContent())!.includes("signed for it"),
+          checked: (await share.textContent())!.includes(
+            "the account signed the binding for its recipient key",
+          ),
         }).toEqual({
-          title: "Send your address?",
+          title:
+            "Share your address, and optionally your phone, with this recipient?",
           choices: [
             `Share address: ${HOME.join(", ")} · phone: ${HOME_PHONE} · from Field notebook · localhost:5182`,
             `Share address: ${HOME.join(", ")} · from Field notebook · localhost:5182`,
@@ -544,8 +547,8 @@ describe("the draft Locket bridge demo", () => {
             bob: ["Allocate resources", "Remote permission"],
             restarted: [],
             alice: [
-              "Send your address?",
-              "Send your address?",
+              "Share your address, and optionally your phone, with this recipient?",
+              "Share your address, and optionally your phone, with this recipient?",
               "Allocate resources",
               "Remote permission",
             ],

@@ -567,6 +567,12 @@ export class LocketHost {
           "unavailable",
           `No details app holds your ${wanted} yet. Save it in one first.`,
         );
+      const asked =
+        optional.length === 0
+          ? wanted
+          : `${wanted}, and optionally your ${optional
+              .map((item) => KIND_NAMES[item.kind])
+              .join(" and ")},`;
       const describe = (details: readonly SealedDetail[]) =>
         details
           .map(
@@ -578,8 +584,8 @@ export class LocketHost {
         {
           title:
             recipient === null
-              ? `Show your ${wanted} in this app?`
-              : `Send your ${wanted}?`,
+              ? `Show your ${asked} in this app?`
+              : `Share your ${asked} with this recipient?`,
           subtitle: `The app says: “${purpose}”`,
           fields: [
             {
@@ -587,7 +593,7 @@ export class LocketHost {
               value:
                 recipient === null
                   ? "Nobody. Your host draws it in this app; the app's scripts cannot read it."
-                  : `Account ${shortAccount(recipient.account)} in ${product}. Its host made the receiving key and signed for it.`,
+                  : `Account ${shortAccount(recipient.account)} in ${product}. The recipient can read and copy what you share.`,
             },
           ],
           details: {
@@ -598,15 +604,15 @@ export class LocketHost {
                 value:
                   recipient === null
                     ? "You, your host and the details app it comes from. Not the app's scripts."
-                    : "The person who holds that account, through their host, can read and copy these values. Your host and the details app know them too. The app's scripts, on either side, get none.",
+                    : "Whoever holds the recipient account can read and copy these values. Your host and the details app know them too. The app's scripts, on either side, get none.",
               },
               ...(recipient === null
                 ? []
                 : [
                     {
-                      label: "Recipient check",
+                      label: "Recipient",
                       value:
-                        "Their host signed this key as that account, with a signature apps cannot make. It does not prove who the person is, or that their host is honest.",
+                        "The app chose this account, and the account signed the binding for its recipient key. That does not show who the person is.",
                     },
                   ]),
               {

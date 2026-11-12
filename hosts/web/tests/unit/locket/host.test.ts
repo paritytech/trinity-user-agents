@@ -388,7 +388,8 @@ describe("the draft Locket bridge", () => {
       kinds: grant.details.map((field) => field.kind),
       envelope: typeof grant.envelope,
     }).toEqual({
-      title: "Send your address?",
+      title:
+        "Share your address, and optionally your phone, with this recipient?",
       from: MARKET,
       choices: [
         `Share address: ${ADDRESS_LINES.join(", ")} · phone: ${PHONE} · from notes · notes.example`,
