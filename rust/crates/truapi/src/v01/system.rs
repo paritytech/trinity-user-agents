@@ -13,7 +13,7 @@ pub struct HostGetProductContextResponse {
 
 /// Request to query whether a feature is supported by the host.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum HostFeatureSupportedRequest {
 	/// Ask whether the host can interact with the chain identified by genesis hash.
 	Chain {
@@ -24,7 +24,7 @@ pub enum HostFeatureSupportedRequest {
 
 /// Error from [`crate::api::System::navigate_to`].
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display, derive_more::From)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
 pub enum HostNavigateToError {
 	/// The target host is not authorized for outbound access: the user answered
 	/// no to the prompt, a stored decision already refused it, or no prompt
@@ -76,7 +76,7 @@ pub struct HostNavigateToRequest {
 }
 
 /// Platform category a host runs on.
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostPlatform {
 	/// Browser-embedded product (an iframe inside a web host).

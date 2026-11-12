@@ -2133,7 +2133,7 @@ pub struct FundingPresentation {
 
 /// The providers' quotes for one ask, as the host draws its provider list.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingQuoteList {
 	/// The request this list answers, as `request_funding_quotes` returned
 	/// it. The core keeps only the current request's list, so a list read
@@ -2165,7 +2165,7 @@ pub struct FundingQuoteList {
 
 /// Why an amount cannot go ahead.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingAmountIssue {
 	/// A withdrawal of more than the user can spend.
 	NotEnoughBalance,
@@ -2183,7 +2183,7 @@ pub enum FundingAmountIssue {
 
 /// One provider's place in the list a quote request fills in.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingQuoteRow {
 	/// The provider.
 	pub provider_id: ProductId,
@@ -2193,7 +2193,7 @@ pub struct FundingQuoteRow {
 
 /// Where a provider's quote stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingQuoteState {
 	/// Asked, not answered yet.
 	Pending,
@@ -2212,7 +2212,7 @@ pub enum FundingQuoteState {
 
 /// Why a provider cannot be offered for an ask.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingQuoteUnavailable {
 	/// The provider refused to price it.
 	Refused {

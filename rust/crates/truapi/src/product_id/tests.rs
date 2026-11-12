@@ -203,7 +203,6 @@ fn an_overlong_product_id_is_not_an_identifier() {
 	);
 }
 
-#[cfg(feature = "runtime")]
 #[test]
 fn persisted_json_is_a_canonical_string_and_validates_on_restore() {
 	let id = ProductId::for_test(" App.Peopl.DOT ");

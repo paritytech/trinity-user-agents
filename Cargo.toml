@@ -23,6 +23,7 @@ base64 = "0.22"
 binary-merkle-tree = { version = "16.1.2", default-features = false }
 bip39 = "2"
 blake2b_simd = { version = "1", default-features = false }
+cfg-if = "1"
 chacha20poly1305 = { version = "0.10", default-features = false }
 clap = "4"
 console_error_panic_hook = "0.1"
