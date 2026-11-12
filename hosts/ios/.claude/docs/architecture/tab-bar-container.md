@@ -255,7 +255,7 @@ A tab root follows the same order and can be tucked by a user override. Tab-root
 
 The derived state comes from `TabBarHiddenPolicy.deriveFoldState(in:showing:)`. It is `hidden` when the target opts out. It is `tucked` when any controller above the root, up to the target, sets `hidesBottomBarWhenPushed`. The root is excluded, so a tab root that sets the flag does not tuck. A mounted product also derives `tucked`. The grab zone can bring the bar back over it.
 
-A screen that conforms to `TabBarRootStandIn` counts as a tab root (`TabBarHiddenPolicy.isTabRoot`), wherever it sits in the stack. It keeps the root's clearance and ignores a tap on the selected tab. The only conformer is `PocketCardScreenViewController`, an open Pocket card pushed over the Wallet.
+A screen that conforms to `TabBarRootStandIn` counts as a tab root (`TabBarHiddenPolicy.isTabRoot`), wherever it sits in the stack. It keeps the root's clearance and ignores a tap on the selected tab. The only conformer is `ExpandedPocketCardViewController`, an open Pocket card pushed over the Wallet.
 
 `TabBarFoldController` holds one user override, not one per screen: `none`, `shown` or `tucked`. A user tuck or restore sets it, and so does an auto-hide tuck. The value lives in memory, so a relaunch starts with the bar shown. The fold controller ignores override requests while the bar is `hidden`.
 
