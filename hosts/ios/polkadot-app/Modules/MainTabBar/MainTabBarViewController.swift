@@ -277,17 +277,25 @@ private extension MainTabBarViewController {
     }
 
     /// Animates the widgets and the Clearance together for a Docklet state committed in place. A main scroll view
-    /// resting at its bottom is pinned there in the same animation, so its last row moves with the Clearance.
+    /// keeps its distance from the bottom edge when the Clearance moves that edge, so its last row moves with it.
     func applyDockletStateCommitted() {
         let mainScrollView = container.selectedController?.viewIfLoaded
             .flatMap(TabBarScrollToTopLocator.scrollView(in:))
-        let isMainScrollViewAtBottom = mainScrollView.map(TabBarScrollToTopLocator.isScrolledToBottom) ?? false
+        let positionBefore = mainScrollView.flatMap(TabBarScrollToTopLocator.bottomPosition(of:))
 
         DSTabBarStyle.animateCenterChange(in: view) {
             self.applyWidgetLayout(for: self.chromeContext(for: self.container.selectedController))
             self.view.layoutIfNeeded()
-            if isMainScrollViewAtBottom, let mainScrollView {
-                TabBarScrollToTopLocator.pinToBottom(mainScrollView)
+            guard
+                let mainScrollView,
+                let positionBefore,
+                let positionAfter = TabBarScrollToTopLocator.bottomPosition(of: mainScrollView)
+            else {
+                return
+            }
+            let bottomShift = abs(positionAfter.bottomOffset - positionBefore.bottomOffset)
+            if bottomShift > 0, positionBefore.distanceToBottom <= bottomShift {
+                TabBarScrollToTopLocator.keepDistanceToBottom(mainScrollView, distance: positionBefore.distanceToBottom)
             }
         }
     }

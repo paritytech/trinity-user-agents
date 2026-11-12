@@ -25,21 +25,24 @@ enum TabBarScrollToTopLocator {
         scrollView.setContentOffset(CGPoint(x: scrollView.contentOffset.x, y: top), animated: true)
     }
 
-    /// Whether a scroll view rests at its bottom edge. Content that fits in the visible height is never at its bottom.
-    static func isScrolledToBottom(_ scrollView: UIScrollView) -> Bool {
+    /// The offset that rests a scroll view at its bottom edge, and how far it sits above that offset. Nil when its
+    /// content fits in the visible height.
+    static func bottomPosition(of scrollView: UIScrollView) -> (bottomOffset: CGFloat, distanceToBottom: CGFloat)? {
         let top = -scrollView.adjustedContentInset.top
         let bottom = bottomOffset(of: scrollView)
 
         guard bottom > top + tolerance else {
-            return false
+            return nil
         }
 
-        return scrollView.contentOffset.y >= bottom - tolerance
+        return (bottom, max(0, bottom - scrollView.contentOffset.y))
     }
 
-    /// Moves a scroll view to its bottom edge without animation, so the caller's animation carries it there.
-    static func pinToBottom(_ scrollView: UIScrollView) {
-        let offsetY = max(-scrollView.adjustedContentInset.top, bottomOffset(of: scrollView))
+    /// Scrolls a view to sit `distance` above its bottom edge, without animation, so the caller's animation carries
+    /// it there.
+    static func keepDistanceToBottom(_ scrollView: UIScrollView, distance: CGFloat) {
+        let top = -scrollView.adjustedContentInset.top
+        let offsetY = max(top, bottomOffset(of: scrollView) - distance)
         scrollView.contentOffset = CGPoint(x: scrollView.contentOffset.x, y: offsetY)
     }
 }
