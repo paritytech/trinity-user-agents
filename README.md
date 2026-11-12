@@ -450,6 +450,11 @@ resolver reads the chain on each call.
 
 Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
 
+The [CLI](rust/crates/truapi-host-cli/README.md#interactive-terminal-ui) resolves
+avatar metadata with `/profile [username]`. `/profile upload <image>` publishes an
+avatar as the identity's Humanity product, calling the core's TrUAPI resource
+allocation and preimage methods directly.
+
 ### Trinity stack descriptors
 
 A stack descriptor describes one deployment of chains and services, as
