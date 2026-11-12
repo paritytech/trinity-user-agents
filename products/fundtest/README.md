@@ -1,11 +1,11 @@
 # fundtest: reference funding provider for Paseo Next v2
 
 `fundtest` is a TrUAPI product that serves the funding modality on the Paseo Next v2 testnet, so the CASH card and the
-funding overlay can be run end to end on a dev device. The hosts bundle it into their testnet builds (below), so it
-needs no dotNS name or deployment. It simulates only the off-chain leg (the card charge, the bank transfer, the payout).
-Everything on chain is real: the money a payment would bring is PAS from the public Paseo faucet, dripped to a
-per-session account on Asset Hub, getcash's pipeline swaps it to CASH and sends it to People, and `payment.topUp` claims
-it into the user's balance.
+funding overlay can be run end to end on a dev device. It is published on dotNS as `fundtest-provider.paseo`, and the
+apps offer it once their Remote Config lists that name (below). It simulates only the off-chain leg (the card charge,
+the bank transfer, the payout). Everything on chain is real: the money a payment would bring is PAS from the public
+Paseo faucet, dripped to a per-session account on Asset Hub, getcash's pipeline swaps it to CASH and sends it to People,
+and `payment.topUp` claims it into the user's balance.
 
 The product has two executables:
 
@@ -286,57 +286,69 @@ npm run build    # dist/app and dist/worker
 `npm install` builds against `js/packages/truapi`, so that package has to be generated and built first
 (`./scripts/codegen.sh`, then `npm run build` in `js/packages/truapi`).
 
-## Bundling it into a host
-
-Testnet builds of both apps ship fundtest as the bundled product `fundtest-provider.dot`. Before building the app, run
-`hosts/ios/Runscripts/bundle-funding-provider.sh` or `hosts/android/scripts/bundle-funding-provider.sh`. Each builds
-this directory from the branch `funding/reference-provider` (or `FUNDTEST_REF`) and copies `worker-manifest.json`,
-`dist/worker/index.js` and `dist/app` into the app. An app built without running it has no bundled provider.
-
 ## Deploy
 
-Deploying is optional: dev devices use the bundled copy. Deploys are manual; no workflow runs them.
+fundtest is published on Paseo Next v2, the network the apps' testnet builds run on, as `fundtest-provider.paseo`:
 
-1. Build (above).
-2. Sign in to `bulletin-deploy` (`bulletin-deploy login`, with the account that should own the name), then from this
-   directory:
+| dotNS name                       | Text record  | Holds                                                         |
+| -------------------------------- | ------------ | ------------------------------------------------------------- |
+| `fundtest-provider.paseo`        | `manifest`   | The root manifest: name, `description`, icon                  |
+| `app.fundtest-provider.paseo`    | `executable` | The App (`dist/app`): `/card`, `/bank`, `/payout`             |
+| `worker.fundtest-provider.paseo` | `executable` | The Worker (`dist/worker`), with `includes.funding` as routes |
+
+The label has a base of 9 characters or more because Paseo Next v2 sells no 6 to 8 character names
+(`PopRules.shortNamesEnabled` is off), so `fundtest.paseo` cannot be registered. The name must carry the network's TLD
+and equal `domain` in `bulletin-deploy.config.ts` byte for byte; set `FUNDTEST_DOTNS_NAME` to deploy a copy under
+another name.
+
+Deploys are manual; no workflow runs them. To redeploy:
+
+1. Build (above), from the branch head.
+2. Install bulletin-deploy into a scratch directory and let it take `includes.funding` as an object. Up to at least
+   0.24.1 it accepts only a boolean there, which the core fails to parse, and the Worker manifest carries its routes
+   only in that object form:
 
    ```bash
-   bulletin-deploy ./dist/app fundtest.paseo --js-merkle --env paseo-next-v2
+   mkdir -p /tmp/bd && npm install --prefix /tmp/bd bulletin-deploy@0.24.1
+   node scripts/patch-bulletin-deploy.mjs /tmp/bd/node_modules/bulletin-deploy
    ```
 
-   `bulletin-deploy.config.ts` describes the App (`dist/app`) and the Worker (`dist/worker`), and the Worker's
-   `includes` come from `worker-manifest.json`, so the published manifest and the snapshot a host ships are the same
-   file. The name passed must match `domain` in the config byte for byte; set `FUNDTEST_DOTNS_NAME` to deploy under
-   another name.
+3. From this directory:
 
-Two things stand in the way today:
+   ```bash
+   /tmp/bd/node_modules/.bin/bulletin-deploy ./dist/app fundtest-provider.paseo \
+     --js-merkle --env paseo-next-v2 --config ./bulletin-deploy.config.ts
+   ```
 
-- `bulletin-deploy` 0.22.0 validates `includes.funding` as a boolean and rejects the object the core reads
-  (`includes.funding must be a boolean when present`). Publishing `"funding": true` instead would not help: the core
-  fails to parse that manifest. Until bulletin-deploy accepts the object form, deploy the content with `--content-only`
-  and write the `executable` text record of `worker.fundtest.paseo` with the contents of `worker-manifest.json` through
-  dotNS directly.
-- `fundtest` has an 8-character base. bulletin-deploy's naming notes say older dotNS generations put 6 to 8 characters
-  in the band that needs proof of personhood to register. If registration is refused, register it with a
-  personhood-holding account or pick a label with a base of 9 or more characters, such as `fundtest-provider`.
+   This uploads the App and the Worker to Bulletin and writes the three text records above. It needs no keys: without
+   a session, bulletin-deploy signs with its shared testnet account, which therefore owns the name, as it does for
+   `truapi-playground.paseo`. To own it yourself, `bulletin-deploy login` with your Polkadot app first, or afterwards
+   run `bulletin-deploy transfer fundtest-provider.paseo` while signed in.
+
+The worker's `includes` come from `worker-manifest.json`, so the published manifest and any snapshot a host ships are
+the same file. `https://fundtest-provider.paseo.li/card` opens the App through dot.li; outside a session it shows the
+provider's description.
 
 ### Making phones offer it
 
-The core lists a provider once the host names it in `set_funding_providers`, with the Worker manifest it ships for it.
-Give the host the label `fundtest` and `worker-manifest.json` as that snapshot; the core then reads the published
-manifest from dotNS and prefers it once it has. Discovering providers from the browse registry is not wired into the
-core yet.
+The apps list the providers named in Remote Config `funding_config.providers`, read once per launch. Add the name:
+
+```json
+{ "onrampUrl": "…", "offrampUrl": "…", "providers": ["fundtest-provider.paseo"] }
+```
+
+The core then reads both manifests from dotNS and offers the provider once the Worker manifest has been read. Relaunch
+the app after changing Remote Config.
 
 ### Publishing to browse
 
 browse lists products registered in its Publisher contract. Publishing is done from browse's Developer Portal
 (`apps/portal` in `paritytech/browse`, documented in its `docs/publishing-registry.md`):
 
-1. Deploy as above, so `fundtest.paseo` is owned by your account.
+1. Own `fundtest-provider.paseo` (step 3 above).
 2. Open the Developer Portal in a host signed in with the account that owns the name. It lists the names you own.
-3. Publish `fundtest`. The portal dry-runs `Publisher.publish(label, proof)` first, then signs it with your root
-   account. The call needs a proof of personhood: Lite allows one publish a day, Full five.
+3. Publish `fundtest-provider`. The portal dry-runs `Publisher.publish(label, proof)` first, then signs it with your
+   root account. The call needs a proof of personhood: Lite allows one publish a day, Full five.
 
 This needs the owning account and its personhood, so it is not scripted here.
 
@@ -345,7 +357,8 @@ This needs the owning account and its personhood, so it is not scripted here.
 The chain leg of a card session ran live on Paseo Next v2 outside a host, with the worker's own functions over direct
 WebSocket clients: a signed drip to a fresh account (5000 PAS landed on Asset Hub Next, less 0.0006 PAS of teleport
 fee), the deposit sizing for 10 CASH (4.25 PAS), the sweep of the surplus, and getcash's pipeline, after which People
-held 10.22 CASH claimable by the account. Nothing has run inside a host. In particular:
+held 10.22 CASH claimable by the account. A card session has since run end to end in the iOS simulator. Not checked in
+a host yet:
 
 - the worker's `fetch` reaching the faucet through a host's network gate, and how a host presents the `Remote` prompt
   when a demo crypto deposit asks for it from the headless worker;
