@@ -1209,11 +1209,11 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.fundingEntries()
     }
 
-    /// Offer the providers the remote configuration names, in order, then
-    /// the `bundled` ones it does not name. Call it on every remote config
-    /// refresh: a call listing what the last one did changes nothing.
-    public func setFundingProviderConfig(publishedNames: [String], bundled: [FundingProviderEntry]) throws {
-        try inner.setFundingProviderConfig(publishedNames: publishedNames, bundled: bundled)
+    /// Offer the providers the remote configuration names, in order. Call it
+    /// on every remote config refresh: a call listing what the last one did
+    /// changes nothing.
+    public func setFundingProviderConfig(publishedNames: [String]) throws {
+        try inner.setFundingProviderConfig(publishedNames: publishedNames, bundled: [])
     }
 
     /// Ask every provider routing the selected rail to price `amount` for

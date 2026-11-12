@@ -3,7 +3,7 @@ import Foundation
 /// The parts of the `funding_config` remote object the iOS host reads:
 /// `{ "providers": ["ramp.dot", …] }`, the dotNS names of the funding
 /// providers the overlay offers. The core offers only the providers the host
-/// lists, so a build with none configured (and none bundled) offers none.
+/// lists, so a build with none configured offers none.
 enum FundingConfig {
     enum Key {
         static let providers = "providers"
