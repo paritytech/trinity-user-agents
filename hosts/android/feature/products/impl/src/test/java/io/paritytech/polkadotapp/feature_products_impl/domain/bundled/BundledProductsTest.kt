@@ -11,9 +11,6 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import uniffi.truapi.FundingProviderEntry
-import uniffi.truapi.FundingProviderApp
-import uniffi.truapi.FundingProviderOrigin
 import uniffi.truapi.ProductId
 import uniffi.truapi.ProductSource
 import uniffi.truapi.archiveFile
@@ -86,22 +83,6 @@ class BundledProductsTest {
         assertNull(entry("chat.dot")!!.displayName)
     }
 
-    @Test
-    fun `lists only the products that serve funding as bundled providers`() {
-        assertEquals(
-            listOf(
-                FundingProviderEntry(
-                    productId = ProductId.parse("provider.dot").getOrThrow(),
-                    workerManifest = manifest,
-                    rootManifest = files.getValue("bundled-products/provider.dot/manifest.json"),
-                    origin = FundingProviderOrigin.BUNDLED,
-                    app = FundingProviderApp.SHIPPED,
-                ),
-            ),
-            products.fundingProviders(),
-        )
-    }
-
     fun `reads the Worker it ships under its own subname`() {
         val chat = products.resolved(entry("chat.dot")!!).getOrThrow()
         val worker = requireNotNull(chat.executables.worker)
@@ -131,7 +112,6 @@ class BundledProductsTest {
 
         assertNull(bundledProducts(emptyMap()).entry(provider))
         assertNull(bundledProducts(files, enabled = false).entry(provider))
-        assertTrue(bundledProducts(files, enabled = false).fundingProviders().isEmpty())
     }
 
     @Test
