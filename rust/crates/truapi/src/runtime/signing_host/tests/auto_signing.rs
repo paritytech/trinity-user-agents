@@ -246,33 +246,40 @@ fn a_relayed_vrf_signature_cannot_reuse_a_local_auto_signing_grant() {
 
 /// A paired host on an older core can still relay a request for a product
 /// this stack does not serve. It is refused before the user is asked, since
-/// an approval could never be honoured.
+/// an approval could never be honoured. The caller and the account are
+/// checked alike, and a relayed raw signature names no caller at all.
 #[test]
-fn a_relayed_request_from_an_unserved_product_never_prompts() {
+fn a_relayed_request_naming_an_unserved_product_never_prompts() {
 	let platform = granting_platform();
 	let (_services, activation) = signing_runtime_with_platform(platform.clone());
 	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
+	let service = sso_service(&activation);
+	let relay = |message| {
+		futures::executor::block_on(service.answer(message)).expect("the request is answered");
+	};
 
-	let Ok(Dispatch::Response(answer)) =
-		futures::executor::block_on(sso_service(&activation).answer(RemoteMessage::request(
-			"relayed-vrf".to_string(),
+	for (caller, account) in [("myapp.paseo", "myapp.paseo"), ("myapp.dot", "other.paseo")] {
+		relay(RemoteMessage::request(
+			format!("vrf-{caller}"),
 			ProductRequest {
-				calling_product_id: ProductId::for_test("myapp.paseo"),
-				payload: vrf_request("myapp.paseo"),
+				calling_product_id: ProductId::for_test(caller),
+				payload: vrf_request(account),
 			},
-		)))
-	else {
-		panic!("expected a VRF response")
-	};
-	let RemoteMessageData::V1(v1::RemoteMessage::SignVrfResponse(response)) = answer.message.data
-	else {
-		panic!("expected a VRF signing response")
-	};
+		));
+	}
+	let HostSignRawRequest::V1(raw) = raw_request("other.paseo");
+	relay(RemoteMessage::request(
+		"raw".to_string(),
+		crate::host_internal::sso_messages::SignRequest::Raw(raw),
+	));
 
 	assert_eq!(
-		(response.payload.is_err(), platform.sign_vrf_reviews.lock().unwrap().len()),
-		(true, 0),
+		(
+			platform.sign_vrf_reviews.lock().unwrap().len(),
+			platform.sign_raw_reviews.lock().unwrap().len()
+		),
+		(0, 0),
 	);
 }
 

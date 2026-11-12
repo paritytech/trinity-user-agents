@@ -1944,6 +1944,66 @@ pub enum UserConfirmationReview {
 	NftPurseDrain(NftPurseDrainReview),
 }
 
+impl UserConfirmationReview {
+	/// Every product the review names to the user: the caller, and the owner
+	/// of each account, context or purse it asks about.
+	pub fn products(&self) -> Vec<&ProductId> {
+		fn account<'a>(
+			calling: &'a Option<ProductId>,
+			account: &'a ProductAccountId,
+		) -> Vec<&'a ProductId> {
+			calling.iter().chain([&account.dot_ns_identifier]).collect()
+		}
+		fn legacy(account: &LegacySigningAccount) -> Vec<&ProductId> {
+			match account {
+				LegacySigningAccount::Identity => vec![],
+				LegacySigningAccount::Product(account) => vec![&account.dot_ns_identifier],
+			}
+		}
+		match self {
+			Self::SignPayload(SignPayloadReview::Product { calling_product_id, request }) => {
+				account(calling_product_id, &request.account)
+			},
+			Self::SignPayload(SignPayloadReview::LegacyAccount { account, .. }) => {
+				vec![&account.dot_ns_identifier]
+			},
+			Self::SignRaw(SignRawReview::Product { calling_product_id, request, .. }) => {
+				account(calling_product_id, &request.account)
+			},
+			Self::SignRaw(SignRawReview::LegacyAccount { account, .. }) => legacy(account),
+			Self::StatementStoreProductSign(review) => {
+				account(&review.calling_product_id, &review.account)
+			},
+			Self::CreateTransaction(CreateTransactionReview::Product {
+				calling_product_id,
+				payload,
+			}) => account(calling_product_id, &payload.signer),
+			Self::CreateTransaction(CreateTransactionReview::LegacyAccount { account, .. }) => {
+				legacy(account)
+			},
+			Self::AccountAlias(review) => {
+				vec![&review.calling_product_id, &review.context.product_id]
+			},
+			Self::CreateProof(review) => {
+				vec![&review.calling_product_id, &review.context.product_id]
+			},
+			Self::IdentityDisclosure(review) => vec![&review.product_id],
+			Self::ResourceAllocation(review) => vec![&review.calling_product_id],
+			Self::AccountAccess(review) => {
+				vec![&review.requesting_product_id, &review.target_product_id]
+			},
+			Self::SignVrf(review) => {
+				vec![&review.calling_product_id, &review.request.account.dot_ns_identifier]
+			},
+			Self::ProductSubtree(review) => vec![&review.product_id],
+			Self::NftPurseDrain(review) => match &review.owner {
+				NftPurseOwner::Product(owner) => vec![&review.calling_product_id, owner],
+				NftPurseOwner::Root => vec![&review.calling_product_id],
+			},
+		}
+	}
+}
+
 /// Local user confirmation UI for sensitive core-owned operations.
 #[async_trait::async_trait]
 pub trait UserConfirmation: Send + Sync {

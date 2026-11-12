@@ -580,3 +580,23 @@ fn an_execution_opens_only_for_a_product_the_stack_serves() {
 	assert!(open("myapp.dot").is_ok());
 	assert!(matches!(open("myapp.elsewhere"), Err(NativeRuntimeConfigError::Invalid { .. })));
 }
+
+/// A worker reference for a product the stack does not serve is dropped: the
+/// worker could never open, so the host would be asked to start it for good.
+#[test]
+fn a_worker_reference_for_an_unserved_product_starts_nothing() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+	)
+	.expect("host runtime config should be valid");
+
+	host.acquire_worker(ProductId::for_test("shared.elsewhere"));
+	host.acquire_worker(ProductId::for_test("shared.dot"));
+
+	assert_eq!(
+		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
+		vec![(ProductId::for_test("shared.dot"), crate::WorkerTransition::Start)]
+	);
+}

@@ -287,6 +287,10 @@ pub enum ManifestSource {
 	/// The lookup ran past [`MANIFEST_RESOLUTION_CEILING`].
 	#[display("dotNS lookup timed out")]
 	TimedOut,
+	/// The product is under a TLD the stack does not serve, so nothing was
+	/// read for it.
+	#[display("not a product of this stack")]
+	Unserved,
 }
 
 /// Why a grant lookup refused, with what it judged by.
@@ -675,6 +679,11 @@ async fn root_manifest(
 	platform: &dyn Platform,
 	target: &ProductId,
 ) -> (Option<String>, ManifestSource) {
+	// The read below drops the id's TLD and is cached by bare label, so an
+	// unserved id would be answered with its namesake's manifest.
+	if services.stack().require_served(target).is_err() {
+		return (None, ManifestSource::Unserved);
+	}
 	let read = cached_dotns_json(platform, CoreStorageKey::product_manifest(target), || async {
 		let genesis_hash =
 			services.asset_hub_chain_genesis_hash().ok_or(ManifestSource::NoAssetHub)?;
@@ -714,6 +723,9 @@ pub async fn worker_manifest(
 	platform: &dyn Platform,
 	product_id: &ProductId,
 ) -> Result<Option<WorkerManifest>, String> {
+	if services.stack().require_served(product_id).is_err() {
+		return Ok(None);
+	}
 	let (json, _) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), || async {
 		let genesis_hash = asset_hub(services)?;
 		let (chain, product) = (services.chain.clone(), product_id.clone());
@@ -778,6 +790,9 @@ pub async fn publishes_app(
 	product_id: &ProductId,
 	ceiling: Duration,
 ) -> Option<bool> {
+	if services.stack().require_served(product_id).is_err() {
+		return Some(false);
+	}
 	let read = cached_dotns_json(platform, app_manifest_cache_key(product_id), || async {
 		fetch_app_manifest(&services.chain, asset_hub(services)?, product_id)
 			.await

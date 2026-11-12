@@ -654,9 +654,10 @@ impl NativeTrUApiHostRuntime {
 
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one requests [`WorkerTransition::Start`]; pair every call with
-	/// one [`Self::release_worker`].
+	/// one [`Self::release_worker`]. A product the stack does not serve is
+	/// logged and dropped.
 	pub fn acquire_worker(&self, product_id: ProductId) {
-		self.runtime.worker_ledger().acquire(&product_id);
+		self.runtime.acquire_worker(&product_id);
 	}
 
 	/// Report that the product's worker stopped running without being asked

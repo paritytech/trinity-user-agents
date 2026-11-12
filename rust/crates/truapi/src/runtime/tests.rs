@@ -4630,6 +4630,55 @@ fn cross_product_storage_rejects_invalid_targets_before_dispatch() {
 	assert!(HostLocalStorageReadRequest::decode(&mut frame.as_slice()).is_ok());
 }
 
+/// The manifest readers drop the TLD an id carries and cache by bare label,
+/// so an id on an unserved TLD would be answered with its namesake's manifest.
+/// They answer that it publishes nothing.
+#[test]
+fn an_unserved_product_is_not_answered_with_its_namesakes_manifest() {
+	use futures::executor::block_on;
+
+	let platform = stub_platform();
+	let granting = ProductId::for_test("granting.dot");
+	cache_manifest(&platform, "granting.dot", r#"{"unknown":["storage"]}"#, 0);
+	for (key, json) in [
+		(
+			product_manifest::worker_manifest_cache_key(&granting),
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"chat":true}}"#,
+		),
+		(
+			product_manifest::app_manifest_cache_key(&granting),
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"app","entrypoint":"index.html"}"#,
+		),
+	] {
+		let entry =
+			CachedManifest { fetched_at_secs: current_unix_secs(), json: Some(json.to_string()) };
+		block_on(platform.write_core_storage(key, entry.encode()))
+			.expect("stub core storage accepts the entry");
+	}
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	let connection = &host.connection;
+	let (services, platform) = (&connection.services, connection.platform.as_ref());
+
+	let reads = |target: &str| {
+		let target = ProductId::for_test(target);
+		[
+			block_on(connection.holds_cross_product_scope(&target, Granted::Storage)),
+			block_on(product_manifest::worker_manifest(services, platform, &target))
+				.is_ok_and(|manifest| manifest.is_some()),
+			block_on(product_manifest::publishes_app(
+				services,
+				platform,
+				&target,
+				Duration::from_secs(1),
+			)) == Some(true),
+		]
+	};
+
+	assert_eq!(reads("granting.dot"), [true; 3]);
+	assert_eq!(reads("granting.paseo"), [true; 3]);
+	assert_eq!(reads("granting.com"), [false; 3]);
+}
+
 fn is_malformed<T, E>(result: Result<T, CallError<E>>) -> bool {
 	matches!(result, Err(CallError::MalformedFrame { .. }))
 }

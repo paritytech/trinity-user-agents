@@ -1208,11 +1208,12 @@ impl WasmPairingHostRuntime {
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports `"Start"` to the host's `requestWorkerTransition`
 	/// callback. Pair every call with one `releaseWorker`. An id that is not a
-	/// product id is logged and dropped.
+	/// product id, or names a product the stack does not serve, is logged and
+	/// dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, raw_product_id: String) {
 		match raw_product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
+			Ok(product_id) => self.runtime.acquire_worker(&product_id),
 			Err(error) => {
 				tracing::warn!(%error, "worker reference for an id that is not a product id")
 			},
@@ -1512,11 +1513,12 @@ impl WasmSigningHostRuntime {
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports `"Start"` to the host's `requestWorkerTransition`
 	/// callback. Pair every call with one `releaseWorker`. An id that is not a
-	/// product id is logged and dropped.
+	/// product id, or names a product the stack does not serve, is logged and
+	/// dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, raw_product_id: String) {
 		match raw_product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
+			Ok(product_id) => self.runtime.acquire_worker(&product_id),
 			Err(error) => {
 				tracing::warn!(%error, "worker reference for an id that is not a product id")
 			},

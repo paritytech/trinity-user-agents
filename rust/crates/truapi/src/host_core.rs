@@ -484,6 +484,13 @@ impl PairingHostRuntime {
 		&self.services.worker_ledger
 	}
 
+	/// Take one reference on the product's worker for a modality holder. A
+	/// product the stack does not serve is logged and dropped, since its
+	/// worker can never open.
+	pub fn acquire_worker(&self, product_id: &ProductId) {
+		self.services.acquire_worker(product_id);
+	}
+
 	/// Report that the product's worker stopped without being asked to:
 	/// it is started again while something holds it, with a growing wait
 	/// when it keeps crashing.
@@ -1345,6 +1352,13 @@ impl SigningHostRuntime {
 	/// this host.
 	pub fn worker_ledger(&self) -> &WorkerLedger {
 		&self.services.worker_ledger
+	}
+
+	/// Take one reference on the product's worker for a modality holder. A
+	/// product the stack does not serve is logged and dropped, since its
+	/// worker can never open.
+	pub fn acquire_worker(&self, product_id: &ProductId) {
+		self.services.acquire_worker(product_id);
 	}
 
 	/// Report that the product's worker stopped without being asked to:

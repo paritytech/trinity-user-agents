@@ -466,7 +466,11 @@ a product enters the runtime:
   storage owner, a purse owner) answers `MalformedFrame` for one the stack does
   not serve.
 - The signing role's wallet derives no key for one, and refuses a paired host's
-  request from one before it asks the user.
+  request before it asks the user when the review names one.
+- The manifest readers answer that one publishes nothing. They drop the id's
+  TLD and cache by bare label, so they would otherwise answer with a namesake's
+  manifest.
+- A host's worker reference for one is logged and dropped.
 - `parse_navigate` reads a name as dotNS only under a served TLD and passes any
   other host on as external. A dotNS name resolves back into the host's own
   product surface, so it bypasses the outbound domain grant.

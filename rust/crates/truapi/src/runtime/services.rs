@@ -185,6 +185,18 @@ pub struct RuntimeServices {
 }
 
 impl RuntimeServices {
+	/// Take one reference on `product_id`'s worker for a host's modality
+	/// holder.
+	///
+	/// A product the stack does not serve is logged and dropped. Its worker
+	/// can never open, so a reference would keep the host starting it again.
+	pub fn acquire_worker(&self, product_id: &crate::platform::ProductId) {
+		match self.stack.require_served(product_id) {
+			Ok(()) => self.worker_ledger.acquire(product_id),
+			Err(error) => tracing::warn!(%error, "worker reference for an unserved product"),
+		}
+	}
+
 	/// The host reports that `product_id`'s worker stopped without being
 	/// asked to. While something holds it, it is started again once the
 	/// ledger's backoff for its run of crashes has passed.
