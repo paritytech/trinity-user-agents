@@ -2,7 +2,7 @@
 
 `fundtest` is a TrUAPI product that serves the funding modality on the Paseo Next v2 testnet, so the CASH card and the
 funding overlay can be run end to end on a dev device. It is published on dotNS as `fundtest-provider.paseo`, and the
-apps offer it once their Remote Config lists that name (below). It simulates only the off-chain leg (the card charge,
+apps offer it once their Remote Config lists `fundtest-provider` (below). It simulates only the off-chain leg (the card charge,
 the bank transfer, the payout). Everything on chain is real: the money a payment would bring is PAS from the public
 Paseo faucet, dripped to a per-session account on Asset Hub, getcash's pipeline swaps it to CASH and sends it to People,
 and `payment.topUp` claims it into the user's balance.
@@ -335,10 +335,12 @@ provider's description.
 
 ### Making phones offer it
 
-The apps list the providers named in Remote Config `funding_config.providers`, read once per launch. Add the name:
+The apps list the providers named in Remote Config `funding_config.providers`, read once per launch. Each entry is a
+bare label: the core reads it as `<label>.<tld>` with the TLD of the network the app is connected to, and skips an entry
+that carries a TLD. Add the label:
 
 ```json
-{ "onrampUrl": "…", "offrampUrl": "…", "providers": ["fundtest-provider.paseo"] }
+{ "onrampUrl": "…", "offrampUrl": "…", "providers": ["fundtest-provider"] }
 ```
 
 The core then reads both manifests from dotNS and offers the provider once the Worker manifest has been read. Relaunch
