@@ -36,7 +36,10 @@ use super::{
 };
 use crate::{
 	host_internal::sso_messages::{OnExistingAllowancePolicy, ProductRequest, RingVrfError},
-	host_logic::session::{SessionInfo, SessionState},
+	host_logic::{
+		field_key_binding::FIELD_KEY_BINDING_LEN,
+		session::{SessionInfo, SessionState},
+	},
 	runtime::{auth_state::AuthStateMachine, statement_allowance},
 };
 use futures::StreamExt;
@@ -264,6 +267,19 @@ impl SigningHost {
 	pub fn sign_backup_pointer(&self, payload: &[u8]) -> Result<[u8; 64], BackupError> {
 		let session = self.wallet.current_session().ok_or(AuthorityError::Disconnected)?;
 		self.wallet.sign_backup_pointer(&session, payload)
+	}
+
+	/// PROTOTYPE. Sign a field key binding as `product_id`'s account at
+	/// `Raw(index)` under the active wallet session; answers the account and
+	/// the signature. See [`crate::host_logic::field_key_binding`].
+	pub fn sign_field_key_binding(
+		&self,
+		product_id: &ProductId,
+		index: [u8; 32],
+		binding: &[u8; FIELD_KEY_BINDING_LEN],
+	) -> Result<([u8; 32], [u8; 64]), AuthorityError> {
+		let session = self.wallet.current_session().ok_or(AuthorityError::Disconnected)?;
+		self.wallet.sign_field_key_binding(&session, product_id, index, binding)
 	}
 
 	/// Store an encrypted backup snapshot on Bulletin under the backup

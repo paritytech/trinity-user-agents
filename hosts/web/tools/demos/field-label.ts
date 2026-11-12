@@ -1,10 +1,10 @@
-import type { ShippingLabel } from "../../src/fields/host.js";
+import type { FieldLabel } from "../../src/fields/host.js";
 
 /**
- * DEV ONLY. Prints a shipping label from a host document. Product frames run
+ * DEV ONLY. Prints a label from a host document. Product frames run
  * sandboxed without `allow-modals`, so a product cannot call `print()`; the
- * host composes the label from its own records (the order, the listing it
- * saw, the opened address) and prints that. Nothing here reaches a product.
+ * host composes the label from the product's public title and lines and the
+ * values its handles hold, and prints that. Nothing here reaches a product.
  */
 
 const LABEL_CSS = `
@@ -37,47 +37,38 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-/** The order code a person reads: the start of the order id, upper case. */
-export const orderCode = (order: string): string =>
-  `#${order.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+const KIND_LABELS = { address: "Address", phone: "Phone" } as const;
 
-/** Fill `doc` with the label for `label`. Text only, through `textContent`. */
-export function drawLabel(doc: Document, label: ShippingLabel): void {
-  doc.title = `Shipping label ${orderCode(label.order)}`;
+/** Fill `doc` with `label`. Text only, through `textContent`. */
+export function drawLabel(doc: Document, label: FieldLabel): void {
+  doc.title = label.title;
   const style = doc.createElement("style");
   style.textContent = LABEL_CSS;
   doc.head.append(style);
   const top = el(doc, "div", "top");
   top.append(
-    el(doc, "span", "brand", "Shipping label"),
-    el(doc, "span", "code", orderCode(label.order)),
-  );
-  const to = el(doc, "section", "");
-  const address = el(doc, "address", "");
-  for (const line of label.address) address.append(el(doc, "span", "", line));
-  to.append(el(doc, "p", "k", "Ship to"), address);
-  const contents = el(doc, "div", "row");
-  contents.append(
-    el(doc, "span", "", `1 × ${label.item}`),
-    el(
-      doc,
-      "span",
-      "",
-      new Date(label.at || Date.now()).toLocaleDateString(undefined, {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-      }),
-    ),
-  );
-  const foot = el(
-    doc,
-    "p",
-    "foot",
-    `Printed by your Polkadot host for ${label.product}. The app never received this address.`,
+    el(doc, "span", "brand", label.title),
+    el(doc, "span", "code", label.lines[0] ?? ""),
   );
   const sheet = el(doc, "main", "label");
-  sheet.append(top, to, contents, foot);
+  sheet.append(top);
+  for (const field of label.fields) {
+    const section = el(doc, "section", "");
+    const value = el(doc, "address", "");
+    for (const line of field.lines) value.append(el(doc, "span", "", line));
+    section.append(el(doc, "p", "k", KIND_LABELS[field.kind]), value);
+    sheet.append(section);
+  }
+  for (const line of label.lines.slice(1))
+    sheet.append(el(doc, "div", "row", line));
+  sheet.append(
+    el(
+      doc,
+      "p",
+      "foot",
+      `Printed by your Polkadot host for ${label.product}. The app never received these details.`,
+    ),
+  );
   doc.body.replaceChildren(sheet);
 }
 
@@ -91,7 +82,7 @@ const LABEL_LIFETIME_MS = 60_000;
  * browser cannot be recalled.
  */
 export function printLabel(
-  label: ShippingLabel,
+  label: FieldLabel,
   signal: AbortSignal,
 ): Promise<void> {
   if (signal.aborted) return Promise.reject(new Error("Session ended."));

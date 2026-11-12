@@ -59,7 +59,8 @@ Three owners, which [`tests/unit/boundaries.test.ts`](../tests/unit/boundaries.t
 - `backup/`: the wallet's backup on the network: `host-backup.ts` (keeping and restoring), `snapshot.ts` (what is
   copied), `sealing.ts` (keys and envelopes), `pointer.ts`. See [Backup](backup.md).
 - `assets/`: fonts and Pocket artwork, with licence notices.
-- `fields/`: the host side of the field demo, dev server only: `host.ts`, `transport.ts`.
+- `fields/`: the host side of the draft field bridge, dev server only: `host.ts` (the bridge), `envelope.ts` (the sealed
+  envelope), `keys.ts` (receiving keys kept encrypted).
 
 ## `bridges/`
 
@@ -70,7 +71,8 @@ What the host and its products both read. The contracts are drafts, not TrUAPI.
 - `host-requests/`: the request service's contract, `contract.ts`, and the product's end, `product.ts`.
 - `nova-chat/`: `nova-chat/1` between the host and Nova Chat's worker, `contract.ts`, and the Nova apps' wire,
   `wire.ts`.
-- `fields/protocol.ts`: `web-field-demo/1`.
+- `fields/`: the draft field bridge `web-fields/2`: `protocol.ts` (the contract), `product.ts` (the product end),
+  `web.ts` and `protected-field.ts` (how a web product places a host-drawn field).
 - `diagnostics.ts`: what a product worker reports about its conversations to the developer tools.
 - `worker-probe.ts`: a chat worker's status on its console, and the test probe a dev server tab may ask for.
 - `primitives/`: `bytes.ts` (hex, UTF-8, randomness), `codec.ts` and `scale-reader.ts` (SCALE), `crypto.ts` (hashes,
@@ -89,9 +91,9 @@ The products the host runs, each loaded through the ordinary loader.
 - `nova-chat/`: the Nova Chat prototype, wherever Kettle Chat is: `worker.ts`, `session.ts`, `transport.ts`, `route.ts`.
   See [Nova Chat](nova-chat.md).
 - `field-demo/`: the provider app (`provider.html`, run as Field notebook and as Travel notebook) and Small Market
-  (`market.html`), dev only, served on their own origins by `field-products.config.ts`. Only the origins in `FIELD_APPS`
-  (`tools/demos/field-demo.ts`) get the field bridge.
-- `shared/product-storage.ts`: a chat product's storage over its TrUAPI `localStorage`.
+  (`market.html`, with its own board in `board.ts` and messages in `messages.ts`), dev only, served on their own origins
+  by `field-products.config.ts`. Only the origins in `FIELD_APPS` (`tools/demos/field-demo.ts`) get the field bridge.
+- `shared/product-storage.ts`: a product's storage over its TrUAPI `localStorage`.
 
 ## `tools/`
 

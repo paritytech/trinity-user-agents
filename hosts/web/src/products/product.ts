@@ -8,6 +8,10 @@ import {
 } from "../../bridges/chat-v2/contract.js";
 import type { FrameTap } from "./tap.js";
 import {
+  FIELDS_OFFER,
+  FIELDS_PROTOCOL,
+} from "../../bridges/fields/protocol.js";
+import {
   readDiagnosticsMessage,
   type DiagnosticsReport,
 } from "../../bridges/diagnostics.js";
@@ -229,7 +233,7 @@ export async function openProduct(
       () => frame.iframe.contentWindow,
     );
     target.postMessage(
-      { type: "web-field-demo-offer", protocol: "web-field-demo/1" },
+      { type: FIELDS_OFFER, protocol: FIELDS_PROTOCOL },
       url.origin,
       [channel.port2],
     );

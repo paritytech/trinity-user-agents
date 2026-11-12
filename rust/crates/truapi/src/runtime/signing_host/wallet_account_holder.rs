@@ -3,6 +3,7 @@
 mod account;
 mod allowance;
 mod allowance_renewal;
+mod field_key_binding;
 mod pairing;
 #[cfg(test)]
 mod tests;

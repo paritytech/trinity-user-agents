@@ -148,6 +148,23 @@ export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
   signBackupPointer(payload: Uint8Array): Uint8Array;
   /** Store an encrypted backup snapshot on Bulletin; answers its 32-byte preimage key. Host only. */
   storeBackupBlob(value: Uint8Array): Promise<Uint8Array>;
+  /**
+   * PROTOTYPE. Sign an 80-byte field key binding as `productId`'s account at
+   * `Raw(index)`; answers the 32-byte account then the 64-byte signature.
+   * Host only.
+   */
+  signFieldKeyBinding(
+    productId: string,
+    index: Uint8Array,
+    binding: Uint8Array,
+  ): Uint8Array;
+  /** PROTOTYPE. Whether `signature` is `account`'s field key binding of `binding` for `productId`. */
+  verifyFieldKeyBinding(
+    productId: string,
+    account: Uint8Array,
+    binding: Uint8Array,
+    signature: Uint8Array,
+  ): boolean;
 }
 
 /** Module surface the wasm-pack glue exports. */

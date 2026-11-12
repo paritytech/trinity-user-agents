@@ -1204,6 +1204,20 @@ impl SigningHostRuntime {
 			.map_err(|err| truapi::latest::GenericError { reason: err.to_string() })
 	}
 
+	/// PROTOTYPE. Sign a field key binding as `product_id`'s account at
+	/// `Raw(index)`; answers the account and the signature. Host only. See
+	/// [`crate::host_logic::field_key_binding`].
+	pub fn sign_field_key_binding(
+		&self,
+		product_id: &ProductId,
+		index: [u8; 32],
+		binding: &[u8; crate::host_logic::field_key_binding::FIELD_KEY_BINDING_LEN],
+	) -> Result<([u8; 32], [u8; 64]), truapi::latest::GenericError> {
+		self.signing_host
+			.sign_field_key_binding(product_id, index, binding)
+			.map_err(|err| truapi::latest::GenericError { reason: err.to_string() })
+	}
+
 	/// Store `value`, an encrypted backup snapshot, on Bulletin under the
 	/// host's backup Bulletin account, claiming long-term storage first when
 	/// its authorization cannot hold it. Answers the preimage key once the

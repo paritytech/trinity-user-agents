@@ -111,6 +111,26 @@ export type BackupResult =
   | { op: "signPointer"; signature: Uint8Array }
   | { op: "storeBlob"; key: Uint8Array };
 
+/**
+ * PROTOTYPE. One call on the host's field key bindings (signing hosts only):
+ * sign a binding as a product's account, or check one. See the core's
+ * `host_logic::field_key_binding`.
+ */
+export type FieldKeyBindingCall =
+  | { op: "sign"; productId: string; index: Uint8Array; binding: Uint8Array }
+  | {
+      op: "verify";
+      productId: string;
+      account: Uint8Array;
+      binding: Uint8Array;
+      signature: Uint8Array;
+    };
+
+/** What a {@link FieldKeyBindingCall} answered, by the same `op`. */
+export type FieldKeyBindingResult =
+  | { op: "sign"; account: Uint8Array; signature: Uint8Array }
+  | { op: "verify"; valid: boolean };
+
 export type MainToWorker =
   | {
       kind: "init";
@@ -220,6 +240,8 @@ export type MainToWorker =
     }
   /** A call on the host's backup accounts. Signing hosts only. */
   | { kind: "backup"; requestId: number; call: BackupCall }
+  /** A call on the host's field key bindings. Signing hosts only. */
+  | { kind: "fieldKeyBinding"; requestId: number; call: FieldKeyBindingCall }
   | { kind: "getDeviceStatementKey"; requestId: number }
   | { kind: "getDeviceEncryptionKey"; requestId: number }
   | {
@@ -391,6 +413,18 @@ export type WorkerToMain =
       result: BackupResult;
     }
   | { kind: "backupResponse"; requestId: number; ok: false; error: string }
+  | {
+      kind: "fieldKeyBindingResponse";
+      requestId: number;
+      ok: true;
+      result: FieldKeyBindingResult;
+    }
+  | {
+      kind: "fieldKeyBindingResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
   | {
       kind: "deviceStatementKeyResponse";
       requestId: number;

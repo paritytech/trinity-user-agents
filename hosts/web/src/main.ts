@@ -943,15 +943,7 @@ const fieldDemo =
   import.meta.env.DEV && devTools
     ? (await import("../tools/demos/field-demo.js")).createFieldDemo({
         runtime: coreRuntime,
-        network: activeNetwork.displayName,
-        usable: usableAllowance,
-        store: async () => {
-          const access = chainAccess;
-          if (access === null) throw new Error("The chains are not connected.");
-          return new StatementStore(
-            await access.chain.connect(hexToBytes(access.genesis.people)),
-          );
-        },
+        log: (line) => log(line),
       })
     : null;
 /** The product in front, the ones held behind it, and how each is opened. */
@@ -1613,8 +1605,16 @@ document.addEventListener(
 /** Give the Chat screen and everything else of the session the tab's session, or none. */
 function syncChatSession(): void {
   const signedIn = lastAuthState.tag === "Connected";
-  fieldDemo?.setScope(
-    signedIn ? `${activeNetwork.id}:${tabSession.activeId()}` : null,
+  const wallet = walletSession.active;
+  fieldDemo?.setSession(
+    signedIn && wallet !== null
+      ? {
+          network: activeNetwork.id,
+          people: activeNetwork.genesis.people,
+          walletId: wallet.id,
+          entropy: wallet.entropy,
+        }
+      : null,
   );
   // The label goes into copied evidence: it names no wallet.
   const { id, who } = tabSession.evidence();
@@ -2575,7 +2575,8 @@ async function boot(): Promise<void> {
     network.dispose();
     throw error;
   }
-  const guarded = devSession?.guardNetwork(network) ?? network;
+  const devGuarded = devSession?.guardNetwork(network) ?? network;
+  const guarded = fieldDemo?.network(devGuarded) ?? devGuarded;
   // The core's and the host's People traffic are observed apart, labelled by who opened it.
   const observed = (source: TrafficSource): Network => ({
     ...guarded,
@@ -2640,6 +2641,7 @@ async function boot(): Promise<void> {
       ...coreStack(activeNetwork),
     } as WebWorkerHostConfig,
   });
+  await fieldDemo?.started(runtime);
   coreStatus.textContent = `Core ready on ${activeNetwork.displayName} · wire schema ${runtime.coreWireSchemaHash?.slice(0, 12) ?? "unknown"}`;
   coreState = "ready";
   renderShelf();

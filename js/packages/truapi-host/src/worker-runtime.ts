@@ -9,6 +9,8 @@ import { isLoopbackWsUrl } from "./worker-protocol.js";
 import type {
   BackupCall,
   BackupResult,
+  FieldKeyBindingCall,
+  FieldKeyBindingResult,
   MainToWorker,
   SubscriptionName,
   WorkerToMain,
@@ -745,6 +747,9 @@ ctx.addEventListener("message", (ev: MessageEvent<MainToWorker>) => {
     case "backup":
       void handleBackup(msg.requestId, msg.call);
       break;
+    case "fieldKeyBinding":
+      handleFieldKeyBinding(msg.requestId, msg.call);
+      break;
     case "getDeviceStatementKey":
       handleGetDeviceStatementKey(msg.requestId);
       break;
@@ -1269,6 +1274,54 @@ async function handleBackup(
                 key: await signing.storeBackupBlob(call.value),
               };
     postToMain({ kind: "backupResponse", requestId, ok: true, result });
+  } catch (err) {
+    fail(errorMessage(err));
+  }
+}
+
+function handleFieldKeyBinding(
+  requestId: number,
+  call: FieldKeyBindingCall,
+): void {
+  const fail = (error: string) =>
+    postToMain({
+      kind: "fieldKeyBindingResponse",
+      requestId,
+      ok: false,
+      error,
+    });
+  if (!host) return fail("field key binding received before runtime is ready");
+  try {
+    const signing = signingRuntime(host, "field key binding");
+    let result: FieldKeyBindingResult;
+    if (call.op === "sign") {
+      const signed = signing.signFieldKeyBinding(
+        call.productId,
+        call.index,
+        call.binding,
+      );
+      result = {
+        op: "sign",
+        account: signed.slice(0, 32),
+        signature: signed.slice(32),
+      };
+    } else {
+      result = {
+        op: "verify",
+        valid: signing.verifyFieldKeyBinding(
+          call.productId,
+          call.account,
+          call.binding,
+          call.signature,
+        ),
+      };
+    }
+    postToMain({
+      kind: "fieldKeyBindingResponse",
+      requestId,
+      ok: true,
+      result,
+    });
   } catch (err) {
     fail(errorMessage(err));
   }

@@ -54,18 +54,36 @@ npm run build                      # served from the root
 
 Details, the username search route and phones: [docs/running.md](docs/running.md).
 
-## Two-product field demo (dev server only)
+## Field bridge demo (dev server only)
 
-Two small independent SPAs test a field-provider boundary, not a canonical protocol. The provider app declares `address`
-and `phone`; it runs as two separate providers on two origins, Field notebook and Travel notebook. Small Market requests
-only `address`. The host registers declarations, asks the buyer once, in a sheet that shows the exact address and the
-app it comes from (a choice when both providers hold one), and seals the address to the seller's separate X25519 key.
-The address then appears inside the market's own packing slip and order confirmation, drawn by the host: the market
-embeds a host-origin frame (`tools/demos/field-view.html`) where the address goes, and the host fills it. Neither
-marketplace receives the address in its bridge replies, DOM, storage or frame text. The provider does know its own
-values.
+A web-only DRAFT of a generic field bridge (`web-fields/2`), not TrUAPI. The contract in `bridges/fields/` names no DOM,
+URL or browser store, so iOS and Android could implement the same calls later; only `web.ts` and `protected-field.ts`
+are the web form of drawing a field. Nothing here changes TrUAPI wire ids, traits or the native apps.
 
-From `hosts/web`, run these in separate terminals, with the normal host prerequisites above already built:
+- A **provider** app (Field notebook, and the same app as Travel notebook on a second origin) declares `address` and
+  `phone` and saves values. The host keeps them in memory.
+- A **consumer** app (Small Market) asks for typed fields: here a required address and an optional phone. The host shows
+  the exact values per provider in one sheet, and answers with descriptors `{ id, kind, schema, handle }` and, when the
+  request names a recipient, a sealed envelope. The app never gets a value.
+- The recipient's market asks its host for a **receiving key**. The host makes one random X25519 key per wallet and
+  product, keeps it encrypted, and returns its public key, key id, the product account it is bound to and a binding
+  signature. The core signs that binding as the market's product account under its own sr25519 signing context, which no
+  product signing call uses (`rust/crates/truapi/src/host_logic/field_key_binding.rs`, a prototype core extension). The
+  buyer's host checks the signature through the core before it asks anything; the buyer does not compare keys by hand.
+- **Delivery is the product's.** The host's calls and the envelope name no transport, order or topic: a product carries
+  receiving keys and envelopes as opaque bytes over whatever it uses, such as the Statement Store now or a contract
+  later. Its size limit, lifetime, delivery and replay handling are its own. Small Market posts listings and orders to
+  its own board through its TrUAPI
+  `statementStore` (`createProofAuthorized`, `submit`, `subscribe`) after `resourceAllocation` for a Statement Store
+  allowance, and keeps its listings, sales and purchases in its TrUAPI storage (`apps/field-demo/board.ts`). The host
+  does not post, list or buy.
+- The seller's market gives the stored envelope and its order context back to `open`, and gets fresh handles. It places
+  `mountProtectedField` (`bridges/fields/protected-field.ts`) where the address and phone go; the host draws them in a
+  host-origin frame (`tools/demos/field-view.html`). `print` prints the market's own title and lines with the held values
+  from a host document.
+
+From `hosts/web`, run these in separate terminals, with the normal host prerequisites above already built. The binding
+calls need a core built from this tree (`make wasm`):
 
 ```bash
 npm run dev                       # host, localhost:5180
@@ -75,125 +93,71 @@ npm run dev:field-market           # separate origin, localhost:5183
 ```
 
 Only these exact origins and pages may use the field bridge (`FIELD_APPS` in `tools/demos/field-demo.ts`); any other URL
-gets no bridge. The second provider is optional: with one, the flow below works the same.
+gets no bridge. Use two host tabs, each signed in through **Account**, and open each URL from **Product**:
 
-Use two host tabs, not two standalone product tabs. In each host, sign in through **Account**. In **Product**, enter the
-exact URL, leave the product id derived from the address, and select **Open**:
+1. Alice opens `http://localhost:5182/provider.html` and saves a made-up address and, optionally, a phone. Optionally she
+   does the same in `http://localhost:5185/provider.html`.
+2. Bob opens `http://localhost:5183/market.html`, goes to **Sell** and lists an item. The first post asks his host for
+   the posting allowance and the submit permission (the core's own sheets).
+3. Alice opens the market in the same tab, opens the item and selects **Buy now**. One host sheet shows the app's purpose,
+   the recipient account and, per provider, the exact values: address with phone, or address only. Her first post then
+   asks for the allowance and permission. Her receipt shows her details, drawn by her host.
+4. Bob's **Orders** shows the order. Opening it shows the packing slip with the address and phone drawn by his host.
+   **Print shipping label** prints from the host with no further sheet. A new host tab for Bob, signed in to the same
+   wallet, opens the order again.
 
-1. Alice opens `http://localhost:5182/provider.html`, enters a made-up address and phone and selects **Save to my
-   Polkadot host**. No host sheet: see Host sheets below. Optionally she does the same with different made-up values in
-   `http://localhost:5185/provider.html`.
-2. Alice opens `http://localhost:5183/market.html` in the same host tab. Do not reload or sign out.
-3. Bob opens `http://localhost:5183/market.html` in his host tab, goes to **Sell** and lists an item. His host sheet
-   says where the listing goes and shows its full delivery key. Keep the key for comparison, then select **Publish**.
-4. The listing appears in Alice's **Shop** within about 2 seconds. She opens the item card and selects **Buy now**. One
-   host sheet shows the item, the exact address, the app it comes from and the seller's key; with two providers, each
-   choice names its address and app. She compares the FULL key against Bob's host sheet and selects **Keys match, share
-   address** (or the provider she wants). Her market opens the order confirmation, with her address drawn by her host.
-5. Bob's **Orders** tab shows the order. Opening it shows the packing slip with the ship-to address drawn by his host.
-   **Print shipping label** asks the host to print. Phone is never sent.
+**Host sheets:** a sheet asks only when something leaves the host, spends a limited resource or is a real choice. Saving
+in a provider, making the receiving key, opening an envelope, drawing and printing ask nothing. Sending fields asks once,
+with the exact values. Posting is the core's allowance and permission sheets. A sheet's values are read when it opens;
+that snapshot is what gets sealed.
 
-**Host sheets:** a sheet asks only when something leaves the host, spends a limited resource or is a real choice.
+**Envelope** (`src/fields/envelope.ts`): `version (1) || suite (1) || key id (16) || sealed`, where `sealed` is X25519,
+HKDF-SHA256 and ChaCha20-Poly1305 from `src/invitations/sealing.ts`, and the key derivation binds the version, suite, key
+id and recipient public key. Inside, padded to 256-byte buckets with at most 1,024 bytes: the product, the recipient
+account, the context and the fields with their schemas. Opening refuses a changed byte, an unknown version or suite,
+another key, product, account or context, a duplicate field id or kind, and an unknown schema. The context labels one
+use (here the listing and the order); it does not prove a purchase or who sent it. The sender is not authenticated.
+Opening the same bytes twice gives the same `envelopeId` and new handles; spotting a replay is the product's job. The
+suite is a prototype choice and is not reviewed for envelopes kept long term, for example on a chain: anyone who keeps the
+bytes keeps them, and the suite is not post-quantum.
 
-| Action                          | Sheet                                               | Why                                                                                                                                                                                                                                                |
-| ------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Provider registers (first save) | none                                                | Only apps the host made providers (`field-demo.ts`) can register; it discloses and spends nothing. The disclosure sheet later names the app and its verified id.                                                                                   |
-| Provider saves values           | none                                                | The user typed them into that app; nothing leaves the host.                                                                                                                                                                                        |
-| Seller lists an item            | **Publish "item"?**                                 | Posts publicly and, live, may use a daily posting slot. Shows the delivery key for manual pairing. Making the key is internal and asks nothing.                                                                                                    |
-| Buyer buys                      | **Share your address with the seller?** (one sheet) | Discloses the address to one recipient and posts. Shows the exact address sealed, the app and its verified id, and the key to compare. With several providers, each choice names the address and app. The former separate provider picker is gone. |
-| Viewing an order's address      | none                                                | The order was approved; the host still checks session, order and frame for every view.                                                                                                                                                             |
-| Print shipping label            | none in the host                                    | The user asked; the browser's print dialog is the step.                                                                                                                                                                                            |
+**Handles** are random, held per bridge connection, and end on `release`, on the next load or close of the document, and
+on sign-out, which also blanks every drawn view. A view token is single use, valid for 60 seconds, and only a host-origin
+frame whose parent is the exact product frame it was issued to can redeem it. The product chooses where a field goes and
+its size; the host chooses what it shows. The host-origin frame is this web host's way to draw it, not part of the
+contract: another platform would draw a native view behind the same `display` call. Native drawing and screen-reader
+behavior are not built or checked.
 
-The address shown is read once, when the sheet opens, and is what gets sealed even if the provider saves a new value
-meanwhile.
+**Receiving keys** (`src/fields/keys.ts`): one per wallet, network and product, reused for every order. The secret is
+encrypted with XChaCha20-Poly1305 under a key derived from the signed-in wallet's entropy and kept in this origin's
+`localStorage`; sign-out forgets the derived key and keeps the record. This development host keeps its wallets' recovery
+phrases in the same `localStorage` in plain text, so this is no stronger than the wallet store and is not a production
+key store. Same device only: no rotation, backup, other device or recovery. Clearing site data loses the key and every
+order sealed to it. Use synthetic data only.
 
-**How the host draws the address:** the market asks its bridge for a view of one order and gets a URL with a single-use
-token, valid for 60 seconds. The host redeems the token only for a host-origin frame whose parent is the exact product
-frame the token was issued to, then sends that frame the address over a `MessageChannel`. Replaying a used token,
-nesting the frame one level deeper, opening it in another product or another host session shows "Address unavailable".
-Ending the connection or the session blanks drawn views. This is the web form of the host-rendered names and images:
-this host cannot intercept a product's image requests, so it uses a nested frame instead of an `<img>`. The product can
-place and size the frame; the origin boundary keeps its text and pixels out of the product.
+**What the binding proves:** that a holder of the account's wallet keys, through a host, bound the key to that product
+account on that network. It does not prove who the person is, that the account is the seller the market says it is, or
+that the host is honest: a modified host or anyone with the recovery phrase can bind any key. Only signing hosts can
+sign or check bindings; a pairing host would need a new SSO request to its wallet, which does not exist.
 
-**Printing:** product frames are sandboxed without `allow-modals`, so a product cannot call `print()`. The host prints a
-label it composes from its own records (order, listing, opened address) in a hidden host frame, and the reply to the
-product says only that it printed. Closing the product or signing out removes that frame and prints nothing not yet
-handed to the browser. The browser reports the dialog, not whether a printer printed.
+**Who can read the values:** the provider app, the buyer's host, the recipient's host, and the person holding the
+recipient account, who can copy them. Not the market's scripts on either side. This host is not a sandbox: do not open
+hostile or same-origin products beside the demo. Read [Trust model](#trust-model).
 
-**Transport:** the default is the selected network's real People-chain Statement Store, using the host's configured
-connection, not a guessed endpoint. The core signs as Small market's own product account at a dedicated raw index; the
-encryption key is random and separate. Posting claims one general Statement Store allowance and waits for finalized
-allowance. Use disposable test-network accounts already registered with a free allowance slot. The host neither
-registers nor funds them. Errors stop the operation and name the reason; there is no mock fallback. No username lookup
-is needed. There are no contracts or payments.
+**Simulation:** `http://localhost:5180/?field-demo=simulation` makes that tab's whole People Statement Store the
+browser-local simulated one (`fixtures/statements/local-statement-node.ts`) and has the core grant allowances without
+claiming them. Use the same host origin in both tabs. Nothing reaches a chain and no allowance is used. Without the flag
+the market posts to the selected network through the core, which claims a real allowance; that path has not been run
+since the bridge became generic.
 
-Live check, 2026-11-10 on Paseo Next v2: the built-in Alice and Bob test accounts (`testalice.10`, `testbob.10`) are
-lite people in ring 61 at the finalized head, so each can claim from its own 10 general slots per UTC day. Anyone
-holding their public phrases can use those slots too. A listing reached the other host about 10 seconds after
-**Publish**, and an order reached the seller about a second after it was placed (repeated after the UI redesign: 9 s and
-1 s); both `statement_submit` calls answered `new` from the configured People RPC node. One earlier attempt posted
-nothing within four minutes and was not diagnosed. Each run uses one slot per account per day.
+**Limits:** the store keeps the latest listing and order per allowance account and channel, for one hour, so a seller
+who is away can miss an order. A purchase's receipt draws the buyer's details only while the market document that made
+it is open. No revocation, payments, contracts or multi-device recovery. Public statement metadata is not hidden.
 
-Repeated later on 2026-11-10 with both providers, after the expiry and cache changes: the listing was posted 10 s after
-**Publish** and seen by the buyer 4 s later; the order reached the seller 2 s after it was placed. The seller's slip
-showed the chosen provider's address. Both `statement_submit` calls answered `new` from
-`paseo-people-next-system-rpc.polkadot.io`.
-
-**Offline boundary check:** explicitly open BOTH host tabs at `http://localhost:5180/?field-demo=simulation` and use the
-built-in Alice and Bob test accounts. This selects the existing browser-local simulated Statement Store and skips real
-allowance claims. The market shows **Simulated network**, and the host sheets' **Demo limits** say **SIMULATED**.
-Product signing, encryption, the normal loader, provider bridge, consent and host-drawn views remain real. This mode
-proves neither live delivery nor funding. The simulated store is this host origin's `localStorage`, so both tabs need
-the same host address and port in the same browser profile. Use a fresh browser profile for a clean simulated board. The
-flag controls this demo only, not the host's other services.
-
-**Limits and trust:** this is web-only `web-field-demo/1`, not shared TrUAPI. iOS, Android and the Rust contracts are
-unchanged on purpose. Recipient setup is manually trusted demo pairing, NOT verified host-custody attestation. A signed
-listing, self-signed key or product-account signature cannot prove host-only custody. These fixture URLs use separate
-origins, so the browser blocks their access to the host and provider DOM/storage; that does not make the whole web host
-a sandbox. Do not open hostile or same-origin named products alongside this demo. Read [Trust model](#trust-model).
-
-Values and private keys live only in host memory, outside product storage and backup. Reload/sign-out loses them;
-reopening the marketplace in the same signed-in tab retains its recipient keys. No recovery, revocation, payments,
-automatic updates or push. A store acceptance is not delivery proof. The store channels retain only the latest listing
-and latest purchase per product account, with one-hour expiry, so a seller who was not online misses an earlier order.
-
-What the open tab keeps:
-
-- A listing leaves the shop when its statement expires, and **Buy now** refuses it, also when the sheet was answered
-  after it expired. Statements that expire more than two hours ahead are not this demo's and are dropped.
-- At most 50 listings from others. When full, an expired one makes room, or else the one that arrived first; a new
-  listing is never the one dropped. The seller's own listings are always kept.
-- A seller keeps only orders for its own listings that its key opens; other orders and noise take no room. At most 50,
-  made room for the same way. The seller names an order by its id and its buyer, so another signer's copy of an id is a
-  separate order and never replaces the first. Anyone can read a listing's key and order, so a full order list can push
-  out the oldest real order.
-
-Keep both sessions open for the one-listing, one-purchase flow, and use one tab per wallet: two tabs of one wallet post
-as the same account without coordinating. Public statement metadata is not hidden or padded.
-
-**Bridge contract** (`bridges/fields/protocol.ts`): failures carry a `FieldErrorCode` (`cancelled` when the user
-dismisses a host sheet, `invalid`, `unavailable`, `limit`, `busy`, `network`, `session`, `unsupported`); unexpected
-errors cross only as a generic message. The market's snapshot names its network as
-`{ kind: "live" | "simulated", name }`. A provider declares a display name with its fields; host sheets always show that
-name beside the verified product id, and `status` tells a provider which fields it saved, never their values. The
-product chooses the view frame's size; the host view shrinks text to fit, so the address's length does not change
-layout.
-
-The host offers the bridge to each document after it loads (`web-field-demo-offer`), and the next load or closing the
-product revokes it with its pending sheets and unused view tokens. The role comes from the exact URL the user opened
-(origin and path, listed in `FIELD_APPS`) and the derived product id; a same-origin page the fixture navigates to keeps
-that role. This is an opening policy for trusted fixtures, not verification of a hostile document. No protected values
-go through the ordinary inspector's wire tap.
-
-Focused unit checks: `bun test tests/unit/fields`. They cover provider choice, undeclared fields, denial, ciphertext
-context, conflicting message ids, view-token binding, replay and expiry, revocation on session end, the printed label,
-session reset, print cancellation, address-line limits, released views, cancellation during transport initialization,
-listing expiry, full caches and which orders a seller keeps, and which received statements are read.
-
-Browser check, run by hand (CI does not run it): `bun test browser/field-demo.spec.ts --timeout 300000`. It runs both
-providers, the market and two host tabs on the simulated store, with its own Vite servers and caches, so running dev
-servers are not disturbed. It refuses every request outside them and claims nothing.
+Unit checks: `bun test tests/unit/fields` (envelope, receiving keys, the host's bridge with a stand-in binder). The
+binding signature has Rust tests: `cargo test -p truapi --lib field_key_binding`. Browser check, run by hand (CI does not
+run it): `bun test browser/field-demo.spec.ts --timeout 300000`. It runs both providers, the market and two host tabs on
+the simulated store, with its own Vite servers and caches, and refuses every request outside them.
 
 When running another host dev server beside an existing one, give it a separate Vite `cacheDir`. Concurrent servers
 sharing the dependency optimizer cache can fail with HTTP 504 `Outdated Optimize Dep`, before the core boots.
@@ -311,13 +275,13 @@ Three owners, kept apart by `tests/unit/boundaries.test.ts`:
   - `src/integrations/nova-chat/`: the host side of Nova Chat's own protocol (prototype): the key boundary that holds
     the user's keys, the request host, and `start.ts`, which the Chat tab's Nova Chat spec hands the host. Only the
     composition wires it in.
-  - `src/fields/`: the host side of the noncanonical web-only field demo: provider declarations, consent, sealing and
-    host-drawn view tokens, loaded only on the dev server. `tools/demos/field-demo.ts` wires its live or explicit
-    simulated transport; `field-view.*` is the host-origin view a product embeds and `field-label.ts` prints the
-    shipping label.
+  - `src/fields/`: the host side of the draft field bridge: provider declarations, consent, the envelope, receiving
+    keys, handles and host-drawn view tokens, loaded only on the dev server. `tools/demos/field-demo.ts` wires it and
+    the explicit simulation; `field-view.*` is the host-origin view a product embeds and `field-label.ts` prints a
+    label.
 - `apps/`: the products the host runs, each in its own folder: `contact-chat/`, `kettle-chat/` (with Kettle's engine as
-  WebAssembly in `wasm/`, built with `npm run build:kettle`), `nova-chat/`, and `field-demo/` (the two independent demo
-  SPAs, served on separate origins by `field-products.config.ts`). `apps/shared/` is code the chat products share.
+  WebAssembly in `wasm/`, built with `npm run build:kettle`), `nova-chat/`, and `field-demo/` (the provider and Small
+  Market, served on separate origins by `field-products.config.ts`). `apps/shared/` is code the products share.
 - `bridges/`: what both sides read: the draft contracts between the host and its products (`chat-v2/`, `host-requests/`,
   `nova-chat/`, `fields/`, `diagnostics.ts`, `worker-probe.ts`) and the pure byte, SCALE, hash and statement code they
   are written with (`primitives/`).

@@ -16,6 +16,7 @@ pub mod dotns;
 pub mod dotns_gateway;
 pub mod entropy;
 pub mod features;
+pub mod field_key_binding;
 pub mod funding;
 pub mod funding_providers;
 pub mod funding_view;

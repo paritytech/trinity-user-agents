@@ -2,7 +2,8 @@ import "./field-view.css";
 
 /**
  * DEV ONLY. Runs in a host-origin frame that a product embeds where a private
- * field belongs, such as the ship-to block of a packing slip. It redeems the
+ * field belongs, such as the ship-to block of a packing slip. It is the web
+ * form of the draft field bridge's `display`. It redeems the
  * single-use token in its fragment with the host page (`window.top`), which
  * answers only a frame whose parent is the product the token was issued to.
  * The product chooses where the frame goes and its size, never its content:
@@ -47,8 +48,8 @@ function show(lines: readonly string[] | null, note: string): void {
 }
 
 /**
- * Shrink the text until the whole address fits the frame the product chose.
- * The frame's size is the product's; the address never changes it, so its
+ * Shrink the text until the whole value fits the frame the product chose.
+ * The frame's size is the product's; the value never changes it, so its
  * length does not leak through layout, and no line is cut.
  */
 function fit(): void {
@@ -61,7 +62,7 @@ addEventListener("resize", fit);
 
 const top = window.top;
 if (top === null || top === window || !/^[0-9a-f]{32}$/.test(token)) {
-  show(null, "Address unavailable here.");
+  show(null, "Unavailable here.");
 } else {
   let answered = false;
   const channel = new MessageChannel();
@@ -76,9 +77,8 @@ if (top === null || top === window || !/^[0-9a-f]{32}$/.test(token)) {
       data.lines.every((line) => typeof line === "string")
     )
       show(data.lines as string[], "Private · shown by your Polkadot host");
-    else if (data?.clear === true)
-      show(null, "Access ended. Reopen the order.");
-    else show(null, "Address unavailable. Reopen the order.");
+    else if (data?.clear === true) show(null, "Access ended. Open it again.");
+    else show(null, "Unavailable. Open it again.");
   };
   // Tell the host when this view goes away, so it can drop the view's port.
   addEventListener("pagehide", () => {
@@ -89,6 +89,6 @@ if (top === null || top === window || !/^[0-9a-f]{32}$/.test(token)) {
     channel.port2,
   ]);
   setTimeout(() => {
-    if (!answered) show(null, "Address unavailable here.");
+    if (!answered) show(null, "Unavailable here.");
   }, 5_000);
 }

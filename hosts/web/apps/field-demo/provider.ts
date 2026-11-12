@@ -1,6 +1,6 @@
-import { connectFields, element, FieldError } from "./client.js";
+import { connect, element, FieldError } from "./client.js";
 import { createToast, fillIcons } from "./ui.js";
-import type { Field, ProviderStatus } from "../../bridges/fields/protocol.js";
+import type { FieldKind } from "../../bridges/fields/protocol.js";
 
 /**
  * The name this app gives itself, set per server by `VITE_FIELD_PROVIDER_NAME`
@@ -8,7 +8,7 @@ import type { Field, ProviderStatus } from "../../bridges/fields/protocol.js";
  */
 const NAME: string =
   import.meta.env.VITE_FIELD_PROVIDER_NAME ?? "Field notebook";
-const FIELDS: Field[] = ["address", "phone"];
+const FIELDS: FieldKind[] = ["address", "phone"];
 
 fillIcons();
 document.title = NAME;
@@ -24,7 +24,7 @@ const phone = element<HTMLInputElement>("phone");
 type Shown = { address: string; phone: string } | null;
 
 /** Show the form, or the summary of what this app gave the host. */
-function showSaved(fields: Field[], values: Shown): void {
+function showSaved(fields: FieldKind[], values: Shown): void {
   const any = fields.length > 0;
   form.hidden = any;
   saved.hidden = !any;
@@ -38,12 +38,14 @@ function showSaved(fields: Field[], values: Shown): void {
   if (!any) return;
   const kept = "Kept in your host. Edit to replace it.";
   element("saved-address").textContent = values?.address ?? kept;
-  element("saved-phone").textContent = values?.phone ?? kept;
+  element("saved-phone").textContent = fields.includes("phone")
+    ? (values?.phone ?? kept)
+    : "Not set";
 }
 
 try {
-  const call = await connectFields("provider");
-  const status = (await call({ op: "status" })) as ProviderStatus;
+  const fields = await connect("provider");
+  const status = await fields.status({});
   showSaved(status.saved, null);
   let registered = status.registered;
   save.disabled = false;
@@ -58,12 +60,12 @@ try {
     save.textContent = "Saving…";
     try {
       if (!registered) {
-        await call({ op: "declare", name: NAME, fields: FIELDS });
+        await fields.declare({ name: NAME, fields: FIELDS });
         registered = true;
       }
-      const values = { address: address.value, phone: phone.value };
-      await call({ op: "save", values });
-      showSaved(FIELDS, values);
+      const values = { address: address.value, phone: phone.value.trim() };
+      const { saved: kept } = await fields.save({ values });
+      showSaved(kept, values);
       toast("Saved. Shops can now ask to ship to you.", "success");
     } catch (error) {
       const text = error instanceof Error ? error.message : "Not saved.";

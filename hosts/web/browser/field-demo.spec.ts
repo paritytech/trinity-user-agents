@@ -1,15 +1,18 @@
 /**
- * The two-product field demo (dev server only) between two host tabs, Alice's
- * and Bob's, on the simulated Statement Store (`?field-demo=simulation`): two
- * providers on their own origins, Small Market, the host's sheets, the
- * host-drawn address and printing.
+ * The draft field bridge (dev server only) between two host tabs, Alice's
+ * and Bob's, on the simulated Statement Store (`?field-demo=simulation`):
+ * two providers on their own origins and Small Market, which posts its own
+ * listings and orders through its TrUAPI Statement Store. The host binds
+ * Bob's receiving key with the core, checks it in Alice's tab, asks her once
+ * which details to send, seals them, and draws them in both markets; Bob's
+ * host opens the order again after a restart.
  *
  * The field apps run on this test's own Vite servers, and the browser reaches
  * them under the exact origins the host allows (`FIELD_APPS` in
  * `tools/demos/field-demo.ts`), so the host's own allowlist decides their
  * roles. Every other request outside the host is refused and every socket is
- * closed: nothing reaches a chain and no allowance is used. The host and the
- * field apps use their own Vite caches, so a running dev server is not
+ * closed: nothing reaches a chain and no allowance is claimed. The host and
+ * the field apps use their own Vite caches, so a running dev server is not
  * disturbed. It needs a Chromium: playwright-core finds the one it installs,
  * or set CHROMIUM_PATH.
  */
@@ -199,7 +202,38 @@ async function viewShows(page: Page, text: string): Promise<boolean> {
   return false;
 }
 
-/** Save `address` and `phone` in the provider at `url`. No host sheet asks. */
+/** The titles of the field bridge's own sheets. Every other sheet is the core's. */
+const FIELD_SHEETS = /^(Send your|Show your)/;
+
+/**
+ * Answer the core's sheets as they come, until `done` resolves: approve a
+ * review, allow a permission. The field bridge's own sheets are left to the
+ * test.
+ */
+async function approveCore(page: Page, done: Promise<unknown>): Promise<void> {
+  let finished = false;
+  void done.finally(() => (finished = true)).catch(() => {});
+  while (!finished) {
+    const open = sheet(page);
+    if ((await open.count()) > 0) {
+      const title =
+        (await open
+          .locator("h2")
+          .innerText()
+          .catch(() => "")) ?? "";
+      if (!FIELD_SHEETS.test(title)) {
+        const approve = open.getByRole("button", {
+          name: /^(Approve|Always allow)$/,
+        });
+        if ((await approve.count()) > 0) await approve.first().click();
+      }
+    }
+    await page.waitForTimeout(150);
+  }
+  await done;
+}
+
+/** Save `address` and, when given, `phone` in the provider at `url`. No host sheet asks. */
 async function saveDetails(
   run: Run,
   page: Page,
@@ -210,7 +244,7 @@ async function saveDetails(
   await open(page, url);
   const provider = app(page, url);
   await provider.getByLabel("Shipping address").fill(address.join("\n"));
-  await provider.getByLabel("Phone").fill(phone);
+  await provider.getByLabel("Phone (optional)").fill(phone);
   const before = run.sheets.alice!.length;
   await provider
     .getByRole("button", { name: "Save to my Polkadot host" })
@@ -219,19 +253,17 @@ async function saveDetails(
   expect(run.sheets.alice!.length).toBe(before);
 }
 
-/** List `item` from Bob's market; answers the delivery key his host showed. */
-async function list(page: Page, item: string): Promise<string> {
+/** List `item` from Bob's market, approving the core's posting allowance. */
+async function list(page: Page, item: string): Promise<void> {
   await open(page, MARKET);
   const market = app(page, MARKET);
   await market.getByRole("tab", { name: "Sell" }).click();
   await market.getByLabel("What are you selling?").fill(item);
   await market.getByRole("button", { name: "List item" }).click();
-  const key = (await sheet(page).textContent())!.match(/0x[0-9a-f]{64}/)![0];
-  await sheet(page)
-    .getByRole("button", { name: "Publish", exact: true })
-    .click();
-  await market.locator("#toast").filter({ hasText: "Listed" }).waitFor();
-  return key;
+  await approveCore(
+    page,
+    market.locator("#toast").filter({ hasText: "Listed" }).waitFor(),
+  );
 }
 
 /** Open `item` in Alice's shop, from the list even if an item is still open. */
@@ -243,7 +275,7 @@ async function openItem(page: Page, item: string): Promise<void> {
   await market.locator(".card", { hasText: item }).click();
 }
 
-/** No market document, storage or the simulated store holds a protected value. */
+/** No market document or storage, and no host storage, holds a protected value. */
 async function noPlaintext(pages: Page[]): Promise<string[]> {
   const found: string[] = [];
   for (const page of pages) {
@@ -253,49 +285,36 @@ async function noPlaintext(pages: Page[]): Promise<string[]> {
         () =>
           document.documentElement.outerHTML +
           JSON.stringify({ ...localStorage }) +
-          JSON.stringify({ ...sessionStorage }),
+          JSON.stringify({ ...sessionStorage }) +
+          JSON.stringify(window.__fieldDemoReceived),
       );
       for (const secret of SECRETS)
         if (text.includes(secret)) found.push(`market: ${secret}`);
     }
-    // The simulated Statement Store lives in the host origin's storage.
+    // The simulated store, the market's TrUAPI storage and the receiving
+    // keys all live in the host origin's storage.
     const store = await page.evaluate(() =>
       JSON.stringify({ ...localStorage }),
     );
     for (const secret of SECRETS)
-      if (store.includes(secret)) found.push(`store: ${secret}`);
+      if (store.includes(secret)) found.push(`host storage: ${secret}`);
   }
   return found;
 }
 
-describe("the two-product field demo", () => {
+describe("the draft field bridge demo", () => {
   test(
-    "a buyer who opens later finds the listing, chooses one of two providers in one sheet, and only hosts draw the address",
+    "a buyer sends address and optional phone to a bound key, only hosts draw them, and the seller's host opens the order again after a restart",
     async () => {
       const run = await offline();
       try {
-        const bob = await boot(run, "bob");
-        await open(bob, MARKET);
-        const bobMarket = app(bob, MARKET);
-        await bobMarket.getByRole("tab", { name: "Sell" }).click();
-        await bobMarket.getByLabel("What are you selling?").fill("Brass lamp");
-        await bobMarket.getByRole("button", { name: "List item" }).click();
-        expect(await sheet(bob).textContent()).toContain(
-          "SIMULATED Statement Store",
-        );
-        await sheet(bob)
-          .getByRole("button", { name: "Cancel", exact: true })
-          .click();
-        await bobMarket
-          .locator("#toast")
-          .filter({ hasText: "Listing cancelled" })
-          .waitFor();
-        const key = await list(bob, "Brass lamp");
+        let bob = await boot(run, "bob");
+        await list(bob, "Brass lamp");
 
         // Alice opens only now: the listing reaches her from the store.
         const alice = await boot(run, "alice");
         await saveDetails(run, alice, PROVIDER, HOME, HOME_PHONE);
-        await saveDetails(run, alice, SECOND_PROVIDER, TRAVEL, TRAVEL_PHONE);
+        await saveDetails(run, alice, SECOND_PROVIDER, TRAVEL, "");
         expect(
           await app(alice, SECOND_PROVIDER).locator(".brand-name").innerText(),
         ).toBe("Travel notebook");
@@ -306,36 +325,40 @@ describe("the two-product field demo", () => {
         await aliceMarket.getByRole("button", { name: "Buy now" }).click();
         const share = sheet(alice);
         await share.waitFor();
-        const shown = (await share.textContent())!;
+        const choices = await share.getByRole("button").allInnerTexts();
         expect({
           title: await share.locator("h2").innerText(),
-          key: shown.includes(key),
-          home: shown.includes(
-            `${HOME.join(", ")} · from Field notebook · localhost:5182`,
-          ),
-          travel: shown.includes(
-            `${TRAVEL.join(", ")} · from Travel notebook · localhost:5185`,
-          ),
+          choices: choices.filter((label) => label.startsWith("Share")),
+          checked: (await share.textContent())!.includes("signed for it"),
         }).toEqual({
-          title: "Share your address with the seller?",
-          key: true,
-          home: true,
-          travel: true,
+          title: "Send your address?",
+          choices: [
+            `Share address: ${HOME.join(", ")} · phone: ${HOME_PHONE} · from Field notebook · localhost:5182`,
+            `Share address: ${HOME.join(", ")} · from Field notebook · localhost:5182`,
+            `Share address: ${TRAVEL.join(", ")} · from Travel notebook · localhost:5185`,
+          ],
+          checked: true,
         });
         await share
           .getByRole("button", { name: "Cancel", exact: true })
           .click();
         await aliceMarket
           .locator("#toast")
-          .filter({ hasText: "Purchase cancelled" })
+          .filter({ hasText: "You chose not to share" })
           .waitFor();
 
         await aliceMarket.getByRole("button", { name: "Buy now" }).click();
         await sheet(alice)
-          .getByRole("button", { name: /Travel notebook/ })
+          .getByRole("button", {
+            name: new RegExp(`phone: ${HOME_PHONE.replace(/\+/g, "\\+")}`),
+          })
           .click();
-        await aliceMarket.locator("#order-screen:not([hidden])").waitFor();
-        expect(await viewShows(alice, TRAVEL[1]!)).toBe(true);
+        await approveCore(
+          alice,
+          aliceMarket.locator("#order-screen:not([hidden])").waitFor(),
+        );
+        expect(await viewShows(alice, HOME[1]!)).toBe(true);
+        expect(await viewShows(alice, HOME_PHONE)).toBe(true);
 
         // The market can place the view but not read it, and its token opens once.
         const marketFrame = appFrame(alice, MARKET);
@@ -351,7 +374,6 @@ describe("the two-product field demo", () => {
           }
           const replay = document.createElement("iframe");
           replay.src = frame.src;
-          replay.dataset.replay = "";
           document.body.append(replay);
           await new Promise((resolve) =>
             replay.addEventListener("load", resolve),
@@ -359,14 +381,18 @@ describe("the two-product field demo", () => {
           return { readable, contentDocument: frame.contentDocument === null };
         });
         expect(probe).toEqual({ readable: false, contentDocument: true });
-        expect(await viewShows(alice, "Address unavailable")).toBe(true);
+        expect(await viewShows(alice, "Unavailable. Open it again.")).toBe(
+          true,
+        );
 
-        // Bob's packing slip shows the chosen address, and printing asks nothing.
+        // Bob's packing slip shows what Alice chose, and printing asks nothing.
         await bob.bringToFront();
+        const bobMarket = app(bob, MARKET);
         await bobMarket.getByRole("tab", { name: /Orders/ }).click();
         await bobMarket.locator("#to-ship .row").first().click();
-        expect(await viewShows(bob, TRAVEL[2]!)).toBe(true);
-        expect(await viewShows(bob, HOME[1]!)).toBe(false);
+        expect(await viewShows(bob, HOME[2]!)).toBe(true);
+        expect(await viewShows(bob, HOME_PHONE)).toBe(true);
+        expect(await viewShows(bob, TRAVEL[1]!)).toBe(false);
         await bob.evaluate(() => {
           const counter = window as unknown as { __printed: number };
           counter.__printed = 0;
@@ -397,17 +423,36 @@ describe("the two-product field demo", () => {
         ).toBe(1);
         expect(run.sheets.bob!.length).toBe(bobSheets);
 
+        // Bob restarts: a new host tab, with only what the browser kept.
+        const bobFirstTab = run.sheets.bob!;
+        await bob.close();
+        bob = await boot(run, "bob");
+        await open(bob, MARKET);
+        const restarted = app(bob, MARKET);
+        await restarted.getByRole("tab", { name: /Orders/ }).click();
+        await restarted.locator("#to-ship .row").first().click();
+        expect(await viewShows(bob, HOME[1]!)).toBe(true);
+
+        // Bound key, open and draw ask nothing; posting asks the core once
+        // for the allowance and the submit permission.
         expect({
-          sheets: run.sheets,
+          sheets: {
+            bob: bobFirstTab,
+            restarted: run.sheets.bob,
+            alice: run.sheets.alice,
+          },
           plaintext: await noPlaintext([alice, bob]),
           leaks: run.leaks,
           errors: run.errors,
         }).toEqual({
           sheets: {
-            bob: ["Publish “Brass lamp”?", "Publish “Brass lamp”?"],
+            bob: ["Allocate resources", "Remote permission"],
+            restarted: [],
             alice: [
-              "Share your address with the seller?",
-              "Share your address with the seller?",
+              "Send your address?",
+              "Send your address?",
+              "Allocate resources",
+              "Remote permission",
             ],
           },
           plaintext: [],
@@ -422,7 +467,7 @@ describe("the two-product field demo", () => {
   );
 
   test(
-    "no provider asks nothing, a reloaded market ends its open sheet and old views, and sign-out blanks what is drawn",
+    "no provider asks nothing, a reloaded market ends its open sheet, and sign-out blanks what is drawn",
     async () => {
       const run = await offline();
       try {
@@ -435,11 +480,11 @@ describe("the two-product field demo", () => {
         await market.getByRole("button", { name: "Buy now" }).click();
         await market
           .locator("#toast")
-          .filter({ hasText: "No address saved" })
+          .filter({ hasText: "No details app holds your address" })
           .waitFor();
         expect(run.sheets.alice).toEqual([]);
 
-        await saveDetails(run, alice, PROVIDER, HOME, HOME_PHONE);
+        await saveDetails(run, alice, PROVIDER, HOME, "");
         await open(alice, MARKET);
         await openItem(alice, "Oak shelf");
         await market.getByRole("button", { name: "Buy now" }).click();
@@ -457,28 +502,12 @@ describe("the two-product field demo", () => {
         await openItem(alice, "Oak shelf");
         await market.getByRole("button", { name: "Buy now" }).click();
         await sheet(alice)
-          .getByRole("button", { name: "Keys match, share address" })
+          .getByRole("button", { name: /^Share address/ })
           .click();
-        await market.locator("#order-screen:not([hidden])").waitFor();
-        expect(await viewShows(alice, HOME[1]!)).toBe(true);
-        const oldView = await appFrame(alice, MARKET).evaluate(
-          () =>
-            [...document.querySelectorAll("iframe")].find((frame) =>
-              frame.src.includes("/field-view.html"),
-            )!.src,
+        await approveCore(
+          alice,
+          market.locator("#order-screen:not([hidden])").waitFor(),
         );
-
-        // A view token outlives neither its market document nor the session.
-        await appFrame(alice, MARKET).evaluate(() => location.reload());
-        await market.locator(".card", { hasText: "Oak shelf" }).waitFor();
-        await appFrame(alice, MARKET).evaluate((src) => {
-          const replay = document.createElement("iframe");
-          replay.src = src;
-          document.body.append(replay);
-        }, oldView);
-        expect(await viewShows(alice, "Address unavailable")).toBe(true);
-        await market.getByRole("tab", { name: /Orders/ }).click();
-        await market.locator("#bought .row").first().click();
         expect(await viewShows(alice, HOME[1]!)).toBe(true);
         await alice.getByRole("tab", { name: "Account", exact: true }).click();
         await alice.locator("#sign-out").click();

@@ -57,10 +57,11 @@ a Chromium (`npx playwright-core install chromium`, or set `CHROMIUM_PATH`).
   archive, no dev demos, and a wallet running Kettle Chat alone from it. Skipped until `npm run build:kettle` has run.
 - [`nova-chat.spec.ts`](../browser/nova-chat.spec.ts): Nova Chat between three demo users, over the simulated Statement
   Store, both directions and a reload, and its conversation in the inspector's Chat view with no test probe.
-- [`field-demo.spec.ts`](../browser/field-demo.spec.ts): the two-product field demo on the simulated store: a buyer who
-  opens after the listing, two providers in one sheet, cancel, a protected receipt the market cannot read or replay,
-  printing with no host sheet, no provider, a market reloaded during its sheet, and sign-out. Its own Vite servers and
-  caches; nothing leaves the test.
+- [`field-demo.spec.ts`](../browser/field-demo.spec.ts): the draft field bridge on the simulated store: a seller's key
+  bound by the core and checked in the buyer's tab, two providers and an optional phone in one sheet, cancel, the market
+  posting through its own TrUAPI Statement Store, protected receipt and slip the market cannot read or replay, printing
+  with no host sheet, the seller's order reopened from a new host tab, no provider, a market reloaded during its sheet,
+  and sign-out. Its own Vite servers and caches; nothing leaves the test.
 - [`guarded-posting.spec.ts`](../browser/guarded-posting.spec.ts): Contact Chat, Kettle and Nova on controlled
   best-ready allowances, first messages and provisional renewal; Nova acceptance confirmation after reload, identical
   `noAllowance` retries and visible reorg recovery; Contact Chat's failed window and explicit retry; and a simulated

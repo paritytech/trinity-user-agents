@@ -34,6 +34,8 @@ import { isLoopbackWsUrl } from "../worker-protocol.js";
 import type {
   BackupCall,
   BackupResult,
+  FieldKeyBindingCall,
+  FieldKeyBindingResult,
   CallbackName,
   HostRole,
   MainToWorker,
@@ -151,6 +153,27 @@ export interface WorkerPairingHostRuntime {
    * once the store is in a block.
    */
   storeBackupBlob(value: Uint8Array): Promise<Uint8Array>;
+  /**
+   * PROTOTYPE. Sign `binding`, 80 bytes (a field receiving key's 16-byte id,
+   * its X25519 public key and the People chain's genesis hash), as
+   * `productId`'s account at `Raw(index)`, under the core's field key
+   * binding context, which no product signing call uses.
+   *
+   * Signing hosts only. Host only: products have no call that reaches this,
+   * so only a key the host made gets bound. Rejects without a session.
+   */
+  signFieldKeyBinding(
+    productId: string,
+    index: Uint8Array,
+    binding: Uint8Array,
+  ): Promise<{ account: Uint8Array; signature: Uint8Array }>;
+  /** PROTOTYPE. Whether `signature` is `account`'s field key binding of `binding` for `productId`. Signing hosts only. */
+  verifyFieldKeyBinding(
+    productId: string,
+    account: Uint8Array,
+    binding: Uint8Array,
+    signature: Uint8Array,
+  ): Promise<boolean>;
   /**
    * Restore the session persisted in the core's `AuthSession` slot. Resolves
    * once product frames may use it, so a host can await this at boot before
@@ -364,6 +387,13 @@ interface RuntimeState {
       reject: (error: Error) => void;
     }
   >;
+  pendingFieldKeyBindings: Map<
+    number,
+    {
+      resolve: (result: FieldKeyBindingResult) => void;
+      reject: (error: Error) => void;
+    }
+  >;
   pendingDeviceStatementKeys: Map<
     number,
     {
@@ -412,6 +442,7 @@ let nextContactHandlesRequestId = 0;
 let nextNotificationClaimRequestId = 0;
 let nextStatementAccountClaimRequestId = 0;
 let nextBackupRequestId = 0;
+let nextFieldKeyBindingRequestId = 0;
 let nextDeviceEncryptionKeyRequestId = 0;
 let nextProductSubtreePublicKeyRequestId = 0;
 let nextProductIdRequestId = 0;
@@ -1026,6 +1057,19 @@ function handleBackupResponse(
   );
 }
 
+function handleFieldKeyBindingResponse(
+  state: RuntimeState,
+  msg:
+    | { requestId: number; ok: true; result: FieldKeyBindingResult }
+    | { requestId: number; ok: false; error: string },
+): void {
+  settlePending(
+    state.pendingFieldKeyBindings,
+    msg.requestId,
+    msg.ok ? { ok: true, value: msg.result } : { ok: false, error: msg.error },
+  );
+}
+
 function handleDeviceStatementKeyResponse(
   state: RuntimeState,
   msg:
@@ -1076,6 +1120,7 @@ function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingNotificationClaims, error);
   rejectAll(state.pendingStatementAccountClaims, error);
   rejectAll(state.pendingBackupCalls, error);
+  rejectAll(state.pendingFieldKeyBindings, error);
   rejectAll(state.pendingDeviceStatementKeys, error);
   rejectAll(state.pendingDeviceEncryptionKeys, error);
   rejectAll(state.pendingProductSubtreePublicKeys, error);
@@ -1124,6 +1169,22 @@ function backupCall(
     () => ++nextBackupRequestId,
     { op: "account", account: new Uint8Array() },
     (requestId) => ({ kind: "backup", requestId, call }),
+  );
+}
+
+/** Send one field key binding call, rejecting once the runtime is gone. */
+function fieldKeyBindingCall(
+  state: RuntimeState,
+  call: FieldKeyBindingCall,
+): Promise<FieldKeyBindingResult> {
+  if (state.disposed)
+    return Promise.reject(new Error("worker host runtime is disposed"));
+  return sendWorkerRequest<FieldKeyBindingResult>(
+    state,
+    state.pendingFieldKeyBindings,
+    () => ++nextFieldKeyBindingRequestId,
+    { op: "verify", valid: false },
+    (requestId) => ({ kind: "fieldKeyBinding", requestId, call }),
   );
 }
 
@@ -1275,6 +1336,7 @@ export function createWebWorkerPairingHostRuntime(
       pendingNotificationClaims: new Map(),
       pendingStatementAccountClaims: new Map(),
       pendingBackupCalls: new Map(),
+      pendingFieldKeyBindings: new Map(),
       pendingProductSubtreePublicKeys: new Map(),
       pendingProductIds: new Map(),
       pendingDeviceStatementKeys: new Map(),
@@ -1356,6 +1418,9 @@ export function createWebWorkerPairingHostRuntime(
           break;
         case "backupResponse":
           handleBackupResponse(state, msg);
+          break;
+        case "fieldKeyBindingResponse":
+          handleFieldKeyBindingResponse(state, msg);
           break;
         case "deviceStatementKeyResponse":
           handleDeviceStatementKeyResponse(state, msg);
@@ -1818,6 +1883,38 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
       if (result.op !== "storeBlob")
         throw new Error("the core answered another backup call");
       return result.key;
+    },
+    async signFieldKeyBinding(
+      productId: string,
+      index: Uint8Array,
+      binding: Uint8Array,
+    ): Promise<{ account: Uint8Array; signature: Uint8Array }> {
+      const result = await fieldKeyBindingCall(state, {
+        op: "sign",
+        productId,
+        index,
+        binding,
+      });
+      if (result.op !== "sign")
+        throw new Error("the core answered another field key binding call");
+      return { account: result.account, signature: result.signature };
+    },
+    async verifyFieldKeyBinding(
+      productId: string,
+      account: Uint8Array,
+      binding: Uint8Array,
+      signature: Uint8Array,
+    ): Promise<boolean> {
+      const result = await fieldKeyBindingCall(state, {
+        op: "verify",
+        productId,
+        account,
+        binding,
+        signature,
+      });
+      if (result.op !== "verify")
+        throw new Error("the core answered another field key binding call");
+      return result.valid;
     },
     acquireWorker(productId: ProductId): void {
       postUnlessDisposed(state, { kind: "acquireWorker", productId });

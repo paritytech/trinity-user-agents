@@ -1630,6 +1630,55 @@ impl WasmSigningHostRuntime {
 			.map_err(JsValue::from)
 	}
 
+	/// PROTOTYPE. Sign a field key binding, 80 bytes (key id, X25519 public
+	/// key, People genesis hash), as `product_id`'s account at `Raw(index)`;
+	/// answers the 32-byte account followed by the 64-byte signature. Host
+	/// only. See [`crate::host_logic::field_key_binding`].
+	#[wasm_bindgen(js_name = signFieldKeyBinding)]
+	pub fn sign_field_key_binding(
+		&self,
+		product_id: String,
+		index: Vec<u8>,
+		binding: Vec<u8>,
+	) -> Result<Vec<u8>, JsValue> {
+		use crate::host_logic::field_key_binding::FIELD_KEY_BINDING_LEN;
+
+		let index = <[u8; 32]>::try_from(index.as_slice())
+			.map_err(|_| JsValue::from_str("a product account index is 32 bytes"))?;
+		let binding = <[u8; FIELD_KEY_BINDING_LEN]>::try_from(binding.as_slice())
+			.map_err(|_| JsValue::from_str("a field key binding is 80 bytes"))?;
+		let (account, signature) = self
+			.runtime
+			.sign_field_key_binding(&product_id_from_js(&product_id)?, index, &binding)
+			.map_err(JsValue::from)?;
+		Ok([account.as_slice(), signature.as_slice()].concat())
+	}
+
+	/// PROTOTYPE. Whether `signature` is `account`'s field key binding of
+	/// `binding` for `product_id`. False for any malformed input.
+	#[wasm_bindgen(js_name = verifyFieldKeyBinding)]
+	pub fn verify_field_key_binding(
+		&self,
+		product_id: String,
+		account: Vec<u8>,
+		binding: Vec<u8>,
+		signature: Vec<u8>,
+	) -> bool {
+		use crate::host_logic::field_key_binding::{
+			FIELD_KEY_BINDING_LEN, verify_field_key_binding,
+		};
+
+		let (Ok(product_id), Ok(account), Ok(binding), Ok(signature)) = (
+			product_id.parse::<ProductId>(),
+			<[u8; 32]>::try_from(account.as_slice()),
+			<[u8; FIELD_KEY_BINDING_LEN]>::try_from(binding.as_slice()),
+			<[u8; 64]>::try_from(signature.as_slice()),
+		) else {
+			return false;
+		};
+		verify_field_key_binding(&product_id, &account, &binding, &signature)
+	}
+
 	/// Revoke one product's grants from the current local activation.
 	#[wasm_bindgen(js_name = clearProductState)]
 	pub async fn clear_product_state(&self, raw_product_id: String) -> Result<(), JsValue> {
