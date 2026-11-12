@@ -326,10 +326,11 @@ impl Stack {
 			Refresh::Never => None,
 			Refresh::Once => self.fetches.requested_at.is_none().then_some(0),
 			Refresh::MaxAge(age) => {
-				// A fetch time ahead of the clock was recorded under a skewed one, so it is
-				// ignored.
-				let fetched_at = copy.fetched_at.filter(|at| *at <= now_unix_seconds);
-				let Some(last) = fetched_at.max(self.fetches.requested_at) else { return Some(0) };
+				// A time ahead of the clock was recorded under a skewed one, so it is ignored.
+				let not_ahead = |at: &i64| *at <= now_unix_seconds;
+				let fetched_at = copy.fetched_at.filter(not_ahead);
+				let requested_at = self.fetches.requested_at.filter(not_ahead);
+				let Some(last) = fetched_at.max(requested_at) else { return Some(0) };
 				let age = i64::try_from(age).unwrap_or(i64::MAX);
 				let remaining = age.saturating_sub(now_unix_seconds.saturating_sub(last));
 				Some(u64::try_from(remaining).unwrap_or(0))

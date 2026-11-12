@@ -1889,15 +1889,16 @@ fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
 		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
 			.expect("host runtime config should be valid");
 
+	let rebuilt_status = rebuilt.stack_status();
 	assert_eq!(
 		(
 			sequence(&at_start),
 			sequence(&after_fetch),
 			after_fetch.restart_required,
-			after_fetch.new_generation,
-			sequence(&rebuilt.stack_status()),
+			sequence(&rebuilt_status),
+			rebuilt_status.generation.as_str(),
 		),
-		(1.into(), 1.into(), true, true, 2.into())
+		(1.into(), 1.into(), true, 2.into(), "second")
 	);
 }
 

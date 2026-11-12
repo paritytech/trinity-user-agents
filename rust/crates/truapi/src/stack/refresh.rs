@@ -188,38 +188,30 @@ impl Shared {
 		let request = StackFetchRequest { url, if_none_match, max_bytes: MAX_DESCRIPTOR_BYTES };
 		let answer = select(host.fetch_stack_descriptor(request), self.timer.sleep(FETCH_TIMEOUT));
 		let response = match answer.await {
-			Either::Left((response, _)) => response,
-			Either::Right(_) => {
-				Err(format!("no answer within {}s", FETCH_TIMEOUT.as_secs()).into())
-			},
+			Either::Left((response, _)) => response.map_err(|error| error.reason),
+			Either::Right(_) => Err(format!("no answer within {}s", FETCH_TIMEOUT.as_secs())),
 		};
 		let served = match &response {
 			Ok(StackFetchResponse::Document { bytes, etag }) => match u32::try_from(bytes.len()) {
 				Ok(length) if length <= MAX_DESCRIPTOR_BYTES => {
-					Served::Document { bytes, etag: etag.as_deref() }
+					Ok(Served::Document { bytes, etag: etag.as_deref() })
 				},
-				_ => {
-					tracing::warn!(
-						"stack descriptor fetch ignored: {} bytes is larger than \
-						 {MAX_DESCRIPTOR_BYTES}",
-						bytes.len()
-					);
-					Served::Unreachable
-				},
+				_ => Err(format!("{} bytes is larger than {MAX_DESCRIPTOR_BYTES}", bytes.len())),
 			},
-			Ok(StackFetchResponse::NotModified) => Served::NotModified,
-			Err(error) => {
-				tracing::debug!("stack descriptor fetch failed: {error}");
-				Served::Unreachable
-			},
+			Ok(StackFetchResponse::NotModified) => Ok(Served::NotModified),
+			Err(reason) => Err(reason.clone()),
 		};
+		if let Err(reason) = &served {
+			tracing::debug!("stack descriptor fetch failed: {reason}");
+		}
 		let (stack_id, record) = {
 			let mut source = self.source();
 			(source.stack_id(), source.fetched(served, self.now()))
 		};
 		let Some(record) = record else { return };
-		if let Err(error) = self.records.write_stack_record(&stack_id, record).await {
-			tracing::warn!("stack descriptor could not be stored: {error}");
+		match self.records.write_stack_record(&stack_id, record).await {
+			Ok(()) => self.source().record_stored(),
+			Err(error) => tracing::warn!("stack descriptor could not be stored: {error}"),
 		}
 	}
 }

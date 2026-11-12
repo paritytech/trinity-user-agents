@@ -268,9 +268,13 @@ every change, and `stack_status` returns the current one. The type documents
 each field.
 
 A newer descriptor that changes a genesis hash, the network, the TLD or the
-`generation` applies from the next start. The status then has
-`restart_required` set, and the host builds the runtime again. Any other change
-shows in the status at once.
+`generation` applies from the next start. Once the core has stored it, the
+status has `restart_required` set, and the host builds the runtime again. Any
+other change shows in the status at once.
+
+The status names the `generation` the core runs, which changes when the stack
+restarts its chains. A host keys cached chain data by it, such as a light
+client's database, so data from before a restart of the chains is not reused.
 
 ### Core database
 
