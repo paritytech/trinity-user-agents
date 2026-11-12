@@ -152,8 +152,11 @@ async fn test_light_spec_wrong_or_unreachable() {
 		.expect_err("each chain is served the other's spec");
 	assert!(error.to_string().contains(&trinity_stack::Error::SpecDigest.to_string()), "{error}");
 
+	// Its own directory: People's spec is fetched and kept here, and the next
+	// case needs it missing.
 	let large = format!("{server}/large.json");
-	let oversized = bundled.with_light_specs_at(&large, &people, directory.path());
+	let oversized_directory = tempfile::tempdir().expect("temporary directory");
+	let oversized = bundled.with_light_specs_at(&large, &people, oversized_directory.path());
 	let error = verify_chains(&oversized, None)
 		.await
 		.expect("no chain has one of Polkadot's genesis hashes")
