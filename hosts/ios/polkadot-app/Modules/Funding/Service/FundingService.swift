@@ -151,7 +151,7 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     }
 
     func openProviderFrame(_ request: FundingFrameRequest) {
-        // TODO(#2057): call the core's `open_provider_frame(intent)` here, and route its
+        // Frame gating (#2057): call the core's `open_provider_frame(intent)` here, and route its
         // `provider_frame_requested(provider_id, intent)` callback to `providerFrameRequested`
         // below; until then the core presents frames through `present_provider_frame` unasked.
         logger.debug("[funding] \(request.entryId): opening \(request.providerId)'s screen")

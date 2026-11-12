@@ -192,7 +192,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         paymentsBridge?.install(on: runtime)
         // Also before any execution opens: the core offers only the providers
         // the host lists, the ones `funding_config` names, then the ones it ships.
-        followFundingProviders(on: runtime)
+        listFundingProviders(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
@@ -279,13 +279,17 @@ extension TrUAPIHostRuntimeProvider {
 }
 
 private extension TrUAPIHostRuntimeProvider {
-    /// List the providers known now, then list them again on every remote
-    /// config refresh, which the core ignores when it names the same ones.
-    /// Remote config usually lands after the runtime is built, so startup
-    /// never waits for it.
-    func followFundingProviders(on runtime: TrUAPIHostRuntime) {
+    /// List the providers `funding_config` names once per launch: the config
+    /// already applied, or else the first one remote config delivers, as it
+    /// usually lands after the runtime is built. Later refreshes are not
+    /// followed until known products carry the funding providers.
+    func listFundingProviders(on runtime: TrUAPIHostRuntime) {
         let bundled = bundledProducts.fundingProviders()
-        apply(publishedNames: appliedConfig()?.fundingProviders ?? [], bundled: bundled, on: runtime)
+        if let config = appliedConfig() {
+            apply(publishedNames: config.fundingProviders, bundled: bundled, on: runtime)
+            return
+        }
+        apply(publishedNames: [], bundled: bundled, on: runtime)
 
         guard let stream = remoteConfig?.remoteConfigStream() else { return }
 
@@ -296,6 +300,7 @@ private extension TrUAPIHostRuntimeProvider {
                     guard let self, let runtime, !Task.isCancelled else { return }
 
                     apply(publishedNames: config.fundingProviders, bundled: bundled, on: runtime)
+                    return
                 }
             } catch {
                 self?.logger.error("[truapi] funding providers stopped following remote config: \(error)")
