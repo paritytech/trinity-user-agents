@@ -88,7 +88,7 @@ Shared rust infrastructure lives in `TrUAPI/`: `RustRuntimeEnvironment` +
 `RustRuntimeSessionParams` (per-runtime core assembly), `RustRuntimeBridge`
 (HostCallbacks), `TrUAPIConfirmationPresenter`, `Connection/` (per-lease raw socket pool
 `TrUAPIV2SpecConnectionPool` + the `TrUAPIChainConnecting` seam), `Storage/` (`TrUAPILocalStorage`), and `Preimage/`
-(`TrUAPIPreimageCache`). The rust core itself is the remote `TrUAPIHost` SPM package. The
+(`TrUAPIPreimageCache`). The rust core itself is the `TrUAPIHost` SPM package from the enclosing trinity-user-agents tree. The
 debug playground lives in `Modules/DebugSettings/` (`TrUAPIPlaygroundViewFactory`,
 presented by `DebugSettingsWireframe.showTrUAPIPlayground(from:)`), and assembles its SPA
 view via `SPAViewFactory.createRustView`; it runs the production session (root entropy +
