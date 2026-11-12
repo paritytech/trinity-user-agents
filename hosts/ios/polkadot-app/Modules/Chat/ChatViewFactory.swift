@@ -105,6 +105,7 @@ enum ChatViewFactory {
         )
 
         let view = ChatViewController(presenter: presenter)
+        view.hidesBottomBarWhenPushed = true
 
         documentAdapter.use(presenter: view)
         presenter.view = view
