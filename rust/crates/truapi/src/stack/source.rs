@@ -8,7 +8,7 @@
 use core::time::Duration;
 
 use trinity_stack::{
-	Descriptor, FetchRequest, Pointer, Refresh, Served, StackReader, Status, Verified,
+	Descriptor, FetchRequest, Pointer, Refresh, Served, StackReader, Status, Verified, open,
 };
 
 use super::{Stack, StackError};
@@ -54,7 +54,11 @@ pub enum StackRefreshOutcome {
 	/// The published descriptor is the copy the core holds.
 	Current,
 	/// The descriptor could not be fetched. The core keeps the copy it holds.
-	Unreachable,
+	Unreachable {
+		/// Why the fetch failed: the host's error, or the limit of the core's
+		/// that the answer broke.
+		reason: String,
+	},
 	/// The published descriptor was refused. The core keeps the copy it holds.
 	Refused {
 		/// The rule the published descriptor breaks.
@@ -70,18 +74,22 @@ pub struct StackStatus {
 	/// the fields this core knows. The host's own features read their chains
 	/// and services from it.
 	pub descriptor: String,
-	/// The newest copy is past `validUntil`: show the stack as stale and keep
-	/// running on it.
+	/// The descriptor's `generation`, which changes when the stack restarts
+	/// its chains. Key cached chain data by it, such as a light client's
+	/// database: data kept under another generation is for chains that are
+	/// gone.
+	pub generation: String,
+	/// The newest copy was past `validUntil` when the core last looked, at
+	/// start and after each fetch: show the stack as stale and keep running
+	/// on it.
 	pub stale: bool,
-	/// The newest copy is past `expiresAt`: the stack has shut down.
+	/// The newest copy was past `expiresAt` when the core last looked, at
+	/// start and after each fetch: the stack has shut down.
 	pub expired: bool,
-	/// The core holds a newer copy that changes a chain, the network or the
-	/// TLD. It runs that copy from its next start, so build the runtime again
-	/// to follow it.
+	/// The core stored a newer copy that changes a chain, the network, the
+	/// TLD or the generation. It runs that copy from its next start, so build
+	/// the runtime again to follow it.
 	pub restart_required: bool,
-	/// The stack restarted its chains in that newer copy: drop cached chain
-	/// data, such as a light client's database, before the next start.
-	pub new_generation: bool,
 	/// The last finished fetch, or `None` before the first one.
 	pub last_refresh: Option<StackRefreshOutcome>,
 }
@@ -146,7 +154,10 @@ pub struct StackSource {
 	/// The fetch the reader handed out when it was loaded.
 	first_fetch: Option<FetchRequest>,
 	running: HeldCopy,
-	/// A newer copy the core runs from its next start.
+	/// A newer copy the core runs from its next start, once its record is
+	/// stored.
+	unstored: Option<HeldCopy>,
+	/// A newer copy, stored, that the core runs from its next start.
 	next_start: Option<HeldCopy>,
 	stale: bool,
 	expired: bool,
@@ -183,6 +194,7 @@ impl StackSource {
 			reader,
 			first_fetch,
 			running,
+			unstored: None,
 			next_start: None,
 			stale,
 			expired,
@@ -205,12 +217,10 @@ impl StackSource {
 		StackStatus {
 			descriptor: serde_json::to_string(&self.running.descriptor)
 				.expect("a descriptor always serialises"),
+			generation: self.running.descriptor.generation.clone(),
 			stale: self.stale,
 			expired: self.expired,
 			restart_required: self.next_start.is_some(),
-			new_generation: self.next_start.as_ref().is_some_and(|next| {
-				next.descriptor.generation != self.running.descriptor.generation
-			}),
 			last_refresh: self.last_refresh.clone(),
 		}
 	}
@@ -243,13 +253,30 @@ impl StackSource {
 			.or_else(|| self.reader.refresh(&self.pointer, now_unix_seconds))
 	}
 
-	/// Takes the answer to a fetch, and returns the record to store when it
-	/// changed. The record goes back to [`Self::load`] as `stored`.
+	/// Takes the answer to a fetch, or why the fetch failed, and returns the
+	/// record to store when it changed. Store it, then call
+	/// [`Self::record_stored`]. The record goes back to [`Self::load`] as
+	/// `stored`.
 	///
 	/// A copy the core cannot run is refused like one that breaks a
 	/// descriptor rule: it is not stored, so the core never starts from it.
 	#[must_use = "the record is the copy the next start reads"]
-	pub fn fetched(&mut self, served: Served, now_unix_seconds: i64) -> Option<Vec<u8>> {
+	pub fn fetched(
+		&mut self,
+		answer: Result<Served, String>,
+		now_unix_seconds: i64,
+	) -> Option<Vec<u8>> {
+		// The reader judges every later fetch against a copy it takes, so one
+		// the core cannot run never reaches it.
+		let (served, unusable) = match answer {
+			Ok(served) => match self.refusal(served) {
+				Some(reason) => {
+					(Served::Unreachable, Some(StackRefreshOutcome::Refused { reason }))
+				},
+				None => (served, None),
+			},
+			Err(reason) => (Served::Unreachable, Some(StackRefreshOutcome::Unreachable { reason })),
+		};
 		let refreshed = match self.reader.fetched(&self.pointer, served, now_unix_seconds) {
 			Ok(refreshed) => refreshed,
 			Err(error) => {
@@ -259,14 +286,16 @@ impl StackSource {
 			},
 		};
 		let accepted = refreshed.accepted;
-		let outcome = match &accepted.status {
+		let outcome = unusable.unwrap_or_else(|| match &accepted.status {
 			Status::Updated | Status::Unchanged => StackRefreshOutcome::Current,
-			Status::Unreachable => StackRefreshOutcome::Unreachable,
+			status @ Status::Unreachable => {
+				StackRefreshOutcome::Unreachable { reason: status.code().to_string() }
+			},
 			Status::Refused(error) => StackRefreshOutcome::Refused { reason: error.to_string() },
 			status @ (Status::Conflict | Status::Rollback) => {
 				StackRefreshOutcome::Refused { reason: status.code().to_string() }
 			},
-		};
+		});
 		let held = match HeldCopy::try_new(accepted.stack, self.allows_reserved_values) {
 			Ok(held) => held,
 			Err(error) => {
@@ -284,11 +313,32 @@ impl StackSource {
 		self.expired = accepted.expired;
 		if self.running.runs_as(&held) {
 			self.running = held;
+			self.unstored = None;
 			self.next_start = None;
-		} else {
-			self.next_start = Some(held);
+		} else if refreshed.stored.is_some() {
+			self.unstored = Some(held);
 		}
 		refreshed.stored
+	}
+
+	/// Says the record the last [`Self::fetched`] returned is stored. A newer
+	/// copy that waits for the next start is reported only from here on: a
+	/// host told to restart before the record is stored would start from the
+	/// old copy again.
+	pub fn record_stored(&mut self) {
+		if let Some(copy) = self.unstored.take() {
+			self.next_start = Some(copy);
+		}
+	}
+
+	/// Why the core cannot run a served document that verifies under the
+	/// pointer. `None` for one it can run, and for one the reader refuses.
+	fn refusal(&self, served: Served) -> Option<String> {
+		let Served::Document { bytes, .. } = served else { return None };
+		let verified = open(bytes, &self.pointer).ok()?;
+		Stack::from_descriptor(&verified.descriptor, self.allows_reserved_values)
+			.err()
+			.map(|error| error.to_string())
 	}
 }
 
