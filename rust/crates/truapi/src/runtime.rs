@@ -1760,12 +1760,13 @@ impl FundingProvider for ProductRuntimeHost {
 				if !self.serves(&intent) {
 					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
 				}
-				// Closes the screen on show and drops one still waiting; a call
-				// that only dropped a waiting screen leaves the host nothing to close.
+				// Closes the screen on show, one the host opened but the worker
+				// has not presented yet, and one still waiting; a call that only
+				// dropped a waiting screen leaves the host nothing to close.
 				let funding = self.connection.services.funding();
 				let dropped =
 					funding.drop_waiting_frame(&intent, latest::FundingFrameOutcome::Closed);
-				if !dropped || funding.frame_open(&intent) {
+				if funding.close_open_frame(&intent) || !dropped {
 					platform.close_provider_frame(&self.connection.product, intent);
 				}
 				Ok(())

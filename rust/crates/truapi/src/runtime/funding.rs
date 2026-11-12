@@ -830,8 +830,14 @@ impl FundingRegistry {
 		// `close_moved_frame` found nothing to drop.
 		if self.frame_done(intent) {
 			self.take_waiting(intent, Some(frame), FrameGate::Answer(FundingFrameOutcome::Closed));
-		} else if let Some(platform) = self.platform() {
+		} else if let Some(platform) = self.platform().filter(|_| self.holds_waiting(intent, frame))
+		{
 			platform.provider_frame_requested(&provider, intent.to_string());
+			// A payment that moved while the host was told dropped the frame:
+			// the host reads that nothing waits and takes its notice down.
+			if !self.holds_waiting(intent, frame) {
+				self.retell(intent);
+			}
 		}
 		FrameTicket { registry: self, intent: intent.to_string(), frame, receiver: Some(receiver) }
 	}
@@ -871,6 +877,35 @@ impl FundingRegistry {
 	/// Whether session `intent` has a provider frame on screen.
 	pub fn frame_open(&self, intent: &str) -> bool {
 		self.lock_frames().get(intent).is_some_and(|frames| frames.open.is_some())
+	}
+
+	/// Close session `intent`'s open provider frame, so one the host opened
+	/// but the worker has not presented yet shows nothing. Returns whether
+	/// one was open.
+	pub fn close_open_frame(&self, intent: &str) -> bool {
+		let mut frames = self.lock_frames();
+		let Some(session) = frames.get_mut(intent) else {
+			return false;
+		};
+		let closed = session.open.take().is_some();
+		if session.is_empty() {
+			frames.remove(intent);
+		}
+		closed
+	}
+
+	/// Whether frame number `frame` of session `intent` is still held.
+	fn holds_waiting(&self, intent: &str, frame: u64) -> bool {
+		self.lock_frames().get(intent).is_some_and(|frames| {
+			frames.waiting.as_ref().is_some_and(|(number, _, _)| *number == frame)
+		})
+	}
+
+	/// Whether frame number `frame` of session `intent` is the open one.
+	fn holds_open(&self, intent: &str, frame: u64) -> bool {
+		self.lock_frames()
+			.get(intent)
+			.is_some_and(|frames| frames.open.as_ref().is_some_and(|(number, _)| *number == frame))
 	}
 
 	/// Drop session `intent`'s held frame, answering its provider `outcome`.
@@ -1855,9 +1890,12 @@ impl FrameTicket<'_> {
 	pub async fn opened(&mut self) -> Option<FundingFrameOutcome> {
 		let receiver = self.receiver.take()?;
 		match receiver.await {
-			// The payment may have moved between the host opening the frame
-			// and the worker running again.
-			Ok(FrameGate::Present) if self.registry.frame_done(&self.intent) => {
+			// The payment may have moved, or the worker closed the frame,
+			// between the host opening it and the worker running again.
+			Ok(FrameGate::Present)
+				if self.registry.frame_done(&self.intent) ||
+					!self.registry.holds_open(&self.intent, self.frame) =>
+			{
 				Some(FundingFrameOutcome::Closed)
 			},
 			Ok(FrameGate::Present) => None,

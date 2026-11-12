@@ -1075,6 +1075,40 @@ fn a_replaced_frame_leaves_its_successor_tracked() {
 	assert_eq!((tracked, registry.frame_open("fs_1")), (true, false));
 }
 
+// A frame asked for once the payment moved is answered at once, so the
+// worker never waits on a screen the host will not open.
+#[test]
+fn a_frame_asked_for_after_the_payment_moved_is_closed_at_once() {
+	let registry = registry_on(&open_memory_core_db());
+	insert(
+		&registry,
+		FundingSession {
+			stage: FundingStage::Failed { reason: FundingFailure::Declined, settled_at_ms: NOW },
+			..session("fs_1", NOW)
+		},
+	);
+	let mut frame = registry.request_frame("fs_1", worker("ramp.dot"));
+
+	assert_eq!(
+		futures::FutureExt::now_or_never(frame.opened()),
+		Some(Some(FundingFrameOutcome::Closed))
+	);
+	assert!(!registry.frame_waiting("fs_1"));
+}
+
+// A worker that closes its frame after the host opened it, but before the
+// worker presented it, shows nothing.
+#[test]
+fn a_frame_closed_before_it_is_presented_shows_nothing() {
+	let registry = FundingRegistry::default();
+	let mut frame = registry.request_frame("fs_1", worker("ramp.dot"));
+	assert!(registry.open_frame("fs_1"));
+	assert!(registry.close_open_frame("fs_1"));
+
+	assert_eq!(block_on(frame.opened()), Some(FundingFrameOutcome::Closed));
+	assert!(!registry.frame_open("fs_1"));
+}
+
 // A cancel that moved no money is left out of history, yet its summary still
 // answers for the session's own ending screen.
 #[test]
