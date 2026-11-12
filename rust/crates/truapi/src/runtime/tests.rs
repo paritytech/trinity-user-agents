@@ -6404,6 +6404,34 @@ fn resource_allocation_accepts_confirmation_then_returns_sso_response() {
 	));
 }
 
+/// A paired host is granted nothing when its session drops while the phone is
+/// asked, so the product gets the same failure as for a session lost before
+/// the call, not an answer that reads as unavailable resources.
+#[test]
+fn a_paired_allocation_fails_when_the_session_drops_during_the_wait() {
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		resource_allocation_confirmed: true,
+		sso_response_script: Some(sso_peer_disconnect_response_script(&session)),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	install_pairing_session(&host, session);
+
+	let response = futures::executor::block_on(ResourceAllocation::request(
+		&host,
+		&CallContext::with_request_id("alloc-disconnect".to_string()),
+		resource_allocation_request(),
+	));
+
+	assert_eq!(
+		response,
+		Err(CallError::Domain(HostRequestResourceAllocationError::V1(
+			v01::ResourceAllocationError::Unknown { reason: "Disconnected".to_string() }
+		)))
+	);
+}
+
 pub fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<StubPlatform> {
 	let root =
 		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
