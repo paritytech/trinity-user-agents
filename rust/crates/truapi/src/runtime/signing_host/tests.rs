@@ -70,6 +70,8 @@ const ENTROPY: [u8; 16] = [0xAB; 16];
 struct StubRingResolver {
 	/// Holds the next ring validation until the test releases it.
 	validation_gate: Arc<std::sync::Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
+	/// Holds the next ring resolution until the test releases it.
+	resolution_gate: Arc<std::sync::Mutex<Option<futures::channel::oneshot::Receiver<()>>>>,
 	collection: [u8; 32],
 	ring: ResolvedRing,
 }
@@ -93,6 +95,10 @@ impl RingResolver for StubRingResolver {
 		_location: &v01::RingLocation,
 		candidates: &[MemberCandidate],
 	) -> Result<ResolvedRing, RingVrfError> {
+		let gate = self.resolution_gate.lock().unwrap().take();
+		if let Some(gate) = gate {
+			gate.await.unwrap();
+		}
 		assert!(
 			candidates.contains(&self.ring.selected),
 			"signing host offered the explicitly registered key"
@@ -265,6 +271,7 @@ fn full_person_ring_resolver() -> Arc<StubRingResolver> {
 		.expect("full-person member");
 	Arc::new(StubRingResolver {
 		validation_gate: Default::default(),
+		resolution_gate: Default::default(),
 		collection: *b"pop:polkadot.network/people     ",
 		ring: ResolvedRing {
 			selected: MemberCandidate { member: full_member },

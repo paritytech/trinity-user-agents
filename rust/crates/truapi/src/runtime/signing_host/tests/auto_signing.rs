@@ -288,19 +288,25 @@ fn a_kept_key_registers_through_the_hosts_ring_resolver() {
 	assert_eq!(registered, Ok(member));
 }
 
-/// A product with a kept AutoSigning key proves membership with that key
-/// itself, so the proof carries the alias its own key has in the context and
-/// the ring the host resolved.
-#[test]
-fn a_kept_key_proves_with_its_own_alias() {
-	let product_id = ProductId::for_test("myapp.dot");
+/// A signing host on which `myapp.dot` keeps its AutoSigning key, registered in
+/// a ring of that key alone.
+///
+/// The host's resolver holds the first ring resolution until
+/// `resolution_gate`, when given, is released.
+fn kept_key_in_its_own_ring(
+	resolution_gate: Option<futures::channel::oneshot::Receiver<()>>,
+) -> Arc<SigningHostRole> {
+	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
 	let entropy =
-		derive_ring_vrf_entropy(&ENTROPY, &product_id, &v01::DerivationIndex::Index(0)).unwrap();
-	let vrf =
-		futures::executor::block_on(crate::runtime::vrf::load()).expect("verifiable is linked");
-	let member = vrf.member(&entropy).unwrap();
+		derive_ring_vrf_entropy(&ENTROPY, &product.product_id, &v01::DerivationIndex::Index(0))
+			.unwrap();
+	let member = futures::executor::block_on(crate::runtime::vrf::load())
+		.expect("verifiable is linked")
+		.member(&entropy)
+		.unwrap();
 	let resolver = Arc::new(StubRingResolver {
 		validation_gate: Default::default(),
+		resolution_gate: Arc::new(std::sync::Mutex::new(resolution_gate)),
 		collection: *b"pop:polkadot.network/people     ",
 		ring: ResolvedRing {
 			selected: MemberCandidate { member },
@@ -317,19 +323,9 @@ fn a_kept_key_proves_with_its_own_alias() {
 		.expect("activation succeeds");
 	grant_auto_signing(&product_runtime(services, activation.clone()));
 	let session = activation.accounts().current_session().expect("an active wallet");
-	let cx = CallContext::default();
-	let product = ProductContext::new(product_id.clone());
-	let handle = v01::ProductAccountId {
-		dot_ns_identifier: product_id.clone(),
-		derivation_index: v01::DerivationIndex::Index(0),
-	};
-	let context = v01::ProductProofContext {
-		product_id: product_id.clone(),
-		suffix: v01::DerivationIndex::Index(0),
-	};
 	futures::executor::block_on(activation.accounts().register_ring_vrf_key(
 		&session,
-		&cx,
+		&CallContext::default(),
 		&product,
 		HostAccountRegisterRingVrfKeyRequest {
 			index: v01::DerivationIndex::Index(0),
@@ -337,26 +333,80 @@ fn a_kept_key_proves_with_its_own_alias() {
 		},
 	))
 	.expect("the kept key registers");
+	activation
+}
+
+/// A proof with `myapp.dot`'s first account in its own context.
+fn own_proof_request() -> HostAccountCreateProofRequest {
+	let product_id = ProductId::for_test("myapp.dot");
+	HostAccountCreateProofRequest {
+		key_handle: v01::ProductAccountId {
+			dot_ns_identifier: product_id.clone(),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+		context: v01::ProductProofContext { product_id, suffix: v01::DerivationIndex::Index(0) },
+		ring_location: full_person_ring_location(),
+		message: b"prove me".to_vec(),
+	}
+}
+
+/// A product with a kept AutoSigning key proves membership with that key
+/// itself, so the proof carries the alias its own key has in the context and
+/// the ring the host resolved.
+#[test]
+fn a_kept_key_proves_with_its_own_alias() {
+	let activation = kept_key_in_its_own_ring(None);
+	let session = activation.accounts().current_session().expect("an active wallet");
+	let product_id = ProductId::for_test("myapp.dot");
+	let request = own_proof_request();
+	let context = crate::runtime::signing_host::ring_vrf::context_bytes(&request.context);
 
 	let proof = futures::executor::block_on(activation.accounts().create_proof(
 		&session,
-		&cx,
-		&product,
-		HostAccountCreateProofRequest {
-			key_handle: handle,
-			context: context.clone(),
-			ring_location: full_person_ring_location(),
-			message: b"prove me".to_vec(),
-		},
+		&CallContext::default(),
+		&ProductContext::new(product_id.clone()),
+		request,
 	))
 	.expect("the kept key proves");
 
-	let context = crate::runtime::signing_host::ring_vrf::context_bytes(&context);
+	let entropy =
+		derive_ring_vrf_entropy(&ENTROPY, &product_id, &v01::DerivationIndex::Index(0)).unwrap();
+	let vrf =
+		futures::executor::block_on(crate::runtime::vrf::load()).expect("verifiable is linked");
 	let alias =
 		v01::ContextualAlias { context, alias: vrf.alias(&entropy, &context).unwrap().to_vec() };
 	assert_eq!(
 		(proof.contextual_alias, proof.ring_index, proof.ring_revision, proof.proof.is_empty()),
 		(alias, 7, 11, false)
+	);
+}
+
+/// A product reset revokes the kept key a ring proof is being made with, so a
+/// proof that finishes after the reset is refused and never reaches the
+/// product.
+#[test]
+fn a_kept_key_proof_finished_after_a_product_reset_is_refused() {
+	let (release, gate) = futures::channel::oneshot::channel();
+	let activation = kept_key_in_its_own_ring(Some(gate));
+	let runtime = product_runtime(activation.services.clone(), activation.clone());
+	let cx = CallContext::default();
+	let proof = runtime.create_account_proof(
+		&cx,
+		truapi::versioned::account::HostAccountCreateProofRequest::V1(own_proof_request()),
+	);
+	futures::pin_mut!(proof);
+	assert!(proof.as_mut().now_or_never().is_none(), "the proof waits on its ring");
+
+	activation.clear_product_state(&ProductId::for_test("myapp.dot"));
+	release.send(()).unwrap();
+
+	assert_eq!(
+		futures::executor::block_on(proof).map(|_| ()),
+		Err(CallError::Domain(truapi::versioned::account::HostAccountCreateProofError::V1(
+			v01::HostAccountCreateProofError::Unknown {
+				reason: AuthorityError::Disconnected.to_string()
+			}
+		)))
 	);
 }
 
