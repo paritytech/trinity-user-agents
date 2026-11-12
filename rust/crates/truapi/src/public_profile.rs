@@ -2,6 +2,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 mod dao;
+mod reads;
 mod record;
 
 use std::sync::Arc;
@@ -10,6 +11,7 @@ use alloy_primitives::B256;
 use alloy_sol_types::SolCall;
 use tracing::{instrument, warn};
 
+pub(crate) use reads::ProfileReads;
 #[cfg(test)]
 use record::ProfileEntry;
 pub use record::{ProfileAvatar, ProfileRecord};
@@ -24,14 +26,14 @@ use crate::{
 		namehash_under,
 	},
 	platform::is_dns_label,
-	runtime::{
-		DotnsLookup, DotnsLookupKind,
-		services::{READ_ENDED_UNANSWERED, RuntimeServices},
-	},
+	runtime::services::RuntimeServices,
 };
 
 /// Text record a username publishes its profile at.
 pub const PROFILE_RECORD_KEY: &str = "profile";
+/// Profile record views one round sends at once, well inside the operations
+/// a node runs at once on one follow.
+const VIEWS_AT_ONCE: usize = 8;
 /// How long a resolved record is served before the chain is read again.
 #[cfg(not(target_arch = "wasm32"))]
 const RECORD_TTL_SECS: u64 = 60 * 60;
@@ -89,13 +91,46 @@ impl ProfileRecordLocation {
 		username: &str,
 	) -> Result<Option<Self>, PublicProfileError> {
 		validate_username(username)?;
-		Ok(Self::locate(transport, username).await?)
+		let directory = ProfileDirectory::find(transport).await?;
+		Ok(directory.map(|directory| directory.location(username)))
 	}
 
-	/// [`Self::resolve`] for a username already validated.
-	async fn locate<T: DotnsTransport + ?Sized>(
+	/// Reads the raw text so a writer can reject malformed records without losing them.
+	///
+	/// An empty record is `None`. Lookup failures return errors.
+	pub async fn read<T: DotnsTransport + ?Sized>(
+		&self,
 		transport: &mut T,
-		username: &str,
+	) -> Result<Option<String>, DotnsError> {
+		let text = read_view(
+			transport,
+			&self.resolver,
+			ContentResolver::textCall {
+				node: self.node.into(),
+				key: PROFILE_RECORD_KEY.to_string(),
+			},
+		)
+		.await
+		.map_err(DotnsError::TextRecord)?;
+		Ok((!text.is_empty()).then_some(text))
+	}
+}
+
+/// The deployment's contracts every username's profile is read from.
+struct ProfileDirectory {
+	/// Top-level domain usernames are named under.
+	tld: String,
+	/// Forward registry that determines a node's owner and delegates.
+	registry: [u8; 20],
+	/// Content resolver that holds the profile records.
+	resolver: [u8; 20],
+}
+
+impl ProfileDirectory {
+	/// Finds the deployment's TLD, registry and content resolver. `None` when
+	/// dotNS is not deployed.
+	async fn find<T: DotnsTransport + ?Sized>(
+		transport: &mut T,
 	) -> Result<Option<Self>, DotnsError> {
 		let Some(protocol_registry) = protocol_registry(transport).await? else {
 			return Ok(None);
@@ -124,28 +159,61 @@ impl ProfileRecordLocation {
 			return Ok(None);
 		}
 		let tld = network_tld_from_view(transport, tld, &registry).await?;
-		Ok(Some(Self { node: username_node(&tld, username), registry, resolver }))
+		Ok(Some(Self { tld, registry, resolver }))
 	}
 
-	/// Reads the raw text so a writer can reject malformed records without losing them.
-	///
-	/// An empty record is `None`. Lookup failures return errors.
-	pub async fn read<T: DotnsTransport + ?Sized>(
-		&self,
-		transport: &mut T,
-	) -> Result<Option<String>, DotnsError> {
-		let text = read_view(
-			transport,
-			&self.resolver,
-			ContentResolver::textCall {
-				node: self.node.into(),
-				key: PROFILE_RECORD_KEY.to_string(),
-			},
-		)
-		.await
-		.map_err(DotnsError::TextRecord)?;
-		Ok((!text.is_empty()).then_some(text))
+	/// Where `username`'s profile record is.
+	fn location(&self, username: &str) -> ProfileRecordLocation {
+		ProfileRecordLocation {
+			node: username_node(&self.tld, username),
+			registry: self.registry,
+			resolver: self.resolver,
+		}
 	}
+}
+
+/// Reads each of `usernames`' records from `directory`, at most
+/// [`VIEWS_AT_ONCE`] views at a time on the transport. Without a directory
+/// every record is empty.
+async fn read_records<T: DotnsTransport + ?Sized>(
+	transport: &mut T,
+	directory: Option<&ProfileDirectory>,
+	usernames: &[String],
+) -> Vec<Result<ProfileRecord, DotnsError>> {
+	let Some(directory) = directory else {
+		return usernames.iter().map(|_| Ok(ProfileRecord::default())).collect();
+	};
+	let mut records = Vec::with_capacity(usernames.len());
+	for chunk in usernames.chunks(VIEWS_AT_ONCE) {
+		let calls = chunk
+			.iter()
+			.map(|username| {
+				ContentResolver::textCall {
+					node: directory.location(username).node.into(),
+					key: PROFILE_RECORD_KEY.to_string(),
+				}
+				.abi_encode()
+			})
+			.collect();
+		let outputs = transport.views(&directory.resolver, calls).await;
+		records.extend(outputs.into_iter().map(|output| {
+			let text =
+				decode_view::<ContentResolver::textCall>(output).map_err(DotnsError::TextRecord)?;
+			Ok(record_from_text(&text))
+		}));
+	}
+	records
+}
+
+/// The record `text` holds. Empty or malformed text is an empty record.
+fn record_from_text(text: &str) -> ProfileRecord {
+	if text.is_empty() {
+		return ProfileRecord::default();
+	}
+	ProfileRecord::from_text(text).unwrap_or_else(|| {
+		warn!("the profile record does not decode; treating it as none");
+		ProfileRecord::default()
+	})
 }
 
 /// Resolves public profile records through the host's shared services.
@@ -209,47 +277,29 @@ impl PublicProfiles {
 		Ok(PublicProfile { avatar: record.avatar() })
 	}
 
-	/// Reads `username`'s record from the chain. Reads of one username that
-	/// overlap share one read, and reads of different usernames take turns on
-	/// the profile read slots, so a burst of them holds a bounded number of
-	/// Asset Hub follows.
+	/// Reads `username`'s record from the chain, in the next round of the
+	/// task that reads every queued profile over one Asset Hub follow.
 	async fn read_record(&self, username: &str) -> Result<ProfileRecord, PublicProfileError> {
 		let genesis = self
 			.services
 			.asset_hub_chain_genesis_hash()
 			.ok_or(PublicProfileError::AssetHubNotConfigured)?;
-		let (services, owned) = (self.services.clone(), username.to_owned());
-		self.services
-			.dotns_reads
-			.public_profiles
-			.run(username.to_owned(), move || async move {
-				let _slot = services.dotns_reads.public_profile_slots.take().await;
-				let mut lookup = DotnsLookup::pinned_to_best_block(
-					&services.chain,
-					genesis,
-					DotnsLookupKind::PublicProfile,
-				)
-				.await?;
-				Ok(Self::read_record_from(&mut lookup, &owned).await?)
-			})
+		reads::read(&self.services, genesis, username)
 			.await
-			.unwrap_or_else(|| Err(Arc::new(DotnsError::Follow(READ_ENDED_UNANSWERED.to_string()))))
 			.map_err(PublicProfileError::Dotns)
 	}
 
+	/// Reads one username's record over `transport`.
+	#[cfg(test)]
 	async fn read_record_from<T: DotnsTransport + ?Sized>(
 		transport: &mut T,
 		username: &str,
 	) -> Result<ProfileRecord, DotnsError> {
-		let Some(location) = ProfileRecordLocation::locate(transport, username).await? else {
-			return Ok(ProfileRecord::default());
-		};
-		let text = location.read(transport).await?;
-		let record = text.as_deref().map(ProfileRecord::from_text);
-		if let Some(None) = record {
-			warn!("the profile record does not decode; treating it as none");
-		}
-		Ok(record.flatten().unwrap_or_default())
+		let directory = ProfileDirectory::find(transport).await?;
+		read_records(transport, directory.as_ref(), &[username.to_owned()])
+			.await
+			.pop()
+			.expect("one username has one record")
 	}
 }
 

@@ -53,8 +53,10 @@ impl DotnsTransport for ProfileContracts {
 		dest: &[u8; 20],
 		inputs: Vec<Vec<u8>>,
 	) -> Vec<Result<Vec<u8>, EvmContractError>> {
-		self.batches += 1;
-		assert_eq!(inputs.len(), 3);
+		if dest == &[0x22; 20] {
+			self.batches += 1;
+			assert_eq!(inputs.len(), 3);
+		}
 		let mut results = Vec::new();
 		for input in inputs {
 			results.push(self.view(dest, input).await);
@@ -383,28 +385,21 @@ async fn an_invalid_username_does_not_need_storage_or_a_chain() {
 	));
 }
 
-/// Profile reads of one username that overlap share one read, so they hold one
-/// Asset Hub follow between them.
+/// A burst of profile reads, of one username and of many, reads over one
+/// Asset Hub follow instead of one each.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn overlapping_reads_of_one_username_open_one_follow() {
-	assert_eq!(follows_opened_by(["alice01"; 4]), 1);
-}
-
-/// Profile reads of different usernames take turns, so a screen of avatars
-/// holds two follows, not the four a connection has room for.
-#[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn reads_of_many_usernames_hold_two_follows_at_a_time() {
+fn a_burst_of_profile_reads_opens_one_follow() {
 	assert_eq!(
-		follows_opened_by(["alice01", "bob01", "carol01", "dave01", "erin01", "frank01"]),
-		crate::runtime::services::PUBLIC_PROFILE_READS_AT_ONCE
+		follows_opened_by([
+			"alice01", "alice01", "bob01", "carol01", "dave01", "erin01", "frank01"
+		]),
+		1
 	);
 }
 
 /// The follows a burst of profile reads opens while the chain answers none of
-/// them. Counted well inside the time an unanswered follow is given, so no
-/// read has given up and handed its turn on.
+/// them, counted well inside the time an unanswered follow is given.
 #[cfg(not(target_arch = "wasm32"))]
 fn follows_opened_by<const N: usize>(usernames: [&str; N]) -> usize {
 	let platform = Arc::new(StubPlatform::default());

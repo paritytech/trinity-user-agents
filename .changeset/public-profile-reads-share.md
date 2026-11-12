@@ -2,4 +2,4 @@
 "@parity/truapi": patch
 ---
 
-Public profile reads hold a bounded number of Asset Hub follows. Reads of one username that overlap share one read and one follow, and reads of different usernames run two at a time, so a screen of avatars resolving at once holds at most two of a connection's four follows.
+Public profile reads share one Asset Hub follow. Reads asked for at once queue for a single task that finds the profile resolver once and reads every queued username's record side by side on that follow, so a screen of avatars resolving at once holds one of a connection's four follows and resolves as fast as one profile.

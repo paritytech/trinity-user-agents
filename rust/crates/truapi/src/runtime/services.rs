@@ -18,19 +18,16 @@ use crate::{
 	Spawner,
 	chain::ExtrinsicService,
 	chain_runtime::{ChainRuntime, HostChainProvider},
-	host_logic::{
-		dotns_gateway::{DotnsError, DotnsIdentity},
-		worker::WorkerLedger,
-	},
+	host_logic::{dotns_gateway::DotnsIdentity, worker::WorkerLedger},
 	platform::{
 		BalancePlatform, ChatPlatform, ContactsPlatform, GamePlatform, HostInfo, PaymentPlatform,
 		PermissionStatusHost, Platform, PocketPlatform, ScannerPlatform, Stack, TopUpPlatform,
 	},
-	public_profile::ProfileRecord,
+	public_profile::ProfileReads,
 	runtime::{
 		bulletin_rpc::BulletinRpc, identity::SessionAccounts, product_manifest::ManifestSource,
-		read_slots::ReadSlots, single_flight::SingleFlight,
-		sso_responder_service::DevicePairingObserver, statement_store_rpc::StatementStoreRpc,
+		single_flight::SingleFlight, sso_responder_service::DevicePairingObserver,
+		statement_store_rpc::StatementStoreRpc,
 	},
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -62,17 +59,10 @@ pub struct DotnsReads {
 	/// Username lookups, by the accounts they read. The keys are never
 	/// written to storage or to a log.
 	pub identities: SingleFlight<SessionAccounts, Option<DotnsIdentity>>,
-	/// Public profile reads, by username.
-	pub public_profiles: SingleFlight<String, Result<ProfileRecord, Arc<DotnsError>>>,
-	/// What public profile reads of different usernames take turns on, so a
-	/// screen of avatars holds at most [`PUBLIC_PROFILE_READS_AT_ONCE`]
-	/// follows however many it asks for at once.
-	pub public_profile_slots: Arc<ReadSlots>,
+	/// Public profile reads, queued for the one task that reads them all over
+	/// a single follow.
+	pub public_profiles: Arc<ProfileReads>,
 }
-
-/// Public profile reads of different usernames that run at once. Half of the
-/// four follows a connection has room for.
-pub const PUBLIC_PROFILE_READS_AT_ONCE: usize = 2;
 
 /// Why a shared dotNS read gave no answer: its task ended first.
 pub(crate) const READ_ENDED_UNANSWERED: &str = "the dotNS read ended without answering";
@@ -83,9 +73,8 @@ impl DotnsReads {
 		Self {
 			root_manifests: SingleFlight::new(spawner.clone()),
 			worker_manifests: SingleFlight::new(spawner.clone()),
-			identities: SingleFlight::new(spawner.clone()),
-			public_profiles: SingleFlight::new(spawner),
-			public_profile_slots: Arc::new(ReadSlots::new(PUBLIC_PROFILE_READS_AT_ONCE)),
+			identities: SingleFlight::new(spawner),
+			public_profiles: Arc::default(),
 		}
 	}
 }

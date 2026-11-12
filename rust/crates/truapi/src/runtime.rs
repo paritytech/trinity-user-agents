@@ -33,7 +33,6 @@ mod product_accounts;
 mod product_consent;
 pub mod product_manifest;
 mod product_subtree;
-mod read_slots;
 mod remote_account_holder;
 mod renderer;
 mod ring_vrf_registry;
