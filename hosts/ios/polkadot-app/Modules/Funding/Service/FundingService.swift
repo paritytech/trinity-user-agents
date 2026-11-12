@@ -52,8 +52,8 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
         return stream.eraseToAnyAsyncSequence()
     }
 
-    func open(_ direction: FundingDirection, amount: U128?) async throws {
-        _ = try await runtime.openFunding(direction: direction, amount: amount)
+    func open(_ direction: FundingDirection, amount: U128?) async throws -> String? {
+        try await runtime.openFunding(direction: direction, amount: amount)
     }
 
     func select(_ selection: FundingSelection, for entryId: String) {
