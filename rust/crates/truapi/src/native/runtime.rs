@@ -13,7 +13,7 @@ use crate::{
 		CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
 		ProductContext, ProductId, StackRefresh, StackStatus,
 	},
-	time::RealTimer,
+	time::{RealTimer, SystemClock},
 };
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
@@ -143,6 +143,7 @@ impl NativeTrUApiHostRuntime {
 			*allows_reserved_values,
 			Box::new(core_db.clone()),
 			Arc::new(RealTimer),
+			Box::new(SystemClock),
 		)
 		.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })?;
 		let mut signing = runtime_config.signing;

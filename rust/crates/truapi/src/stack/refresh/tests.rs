@@ -1,8 +1,8 @@
 use std::{
 	collections::{HashMap, VecDeque},
 	sync::{
-		atomic::{AtomicUsize, Ordering},
-		mpsc::{Receiver, Sender, channel},
+		atomic::{AtomicU64, AtomicUsize, Ordering},
+		mpsc::{Receiver, RecvTimeoutError, Sender, channel},
 	},
 };
 
@@ -18,6 +18,22 @@ use crate::{
 };
 
 const ANSWER_WAIT: Duration = Duration::from_secs(10);
+
+/// The time the tests start at, in seconds since the Unix epoch.
+const START: u64 = 1_800_000_000;
+
+/// A clock that moves only when a test advances it.
+struct ManualClock(AtomicU64);
+
+impl Clock for Arc<ManualClock> {
+	fn unix_secs(&self) -> u64 {
+		self.0.load(Ordering::SeqCst)
+	}
+}
+
+fn manual_clock() -> Arc<ManualClock> {
+	Arc::new(ManualClock(AtomicU64::new(START)))
+}
 
 fn published(descriptor: &serde_json::Value) -> Result<StackFetchResponse, GenericError> {
 	Ok(StackFetchResponse::Document { bytes: sign_test_descriptor(descriptor).1, etag: None })
@@ -80,6 +96,7 @@ struct Started {
 	refresh: StackRefresh,
 	fetches: Arc<AtomicUsize>,
 	timer: Arc<ManualTimer>,
+	clock: Arc<ManualClock>,
 	statuses: Receiver<StackStatus>,
 }
 
@@ -90,6 +107,12 @@ impl Started {
 			.expect("the host is told the stack's status")
 	}
 
+	/// Lets `by` pass: the clock moves, then every wait that is over ends.
+	fn advance(&self, by: Duration) {
+		self.clock.0.fetch_add(by.as_secs(), Ordering::SeqCst);
+		self.timer.advance(by);
+	}
+
 	/// Waits until the refresh loop has started its `sleeps`-th wait.
 	fn wait_for_sleeps(&self, sleeps: usize) {
 		while self.timer.sleeps() < sleeps {
@@ -98,10 +121,14 @@ impl Started {
 	}
 }
 
-fn load(records: Arc<MemoryRecords>, timer: Arc<ManualTimer>) -> StackRefresh {
+fn load(
+	records: Arc<MemoryRecords>,
+	timer: Arc<ManualTimer>,
+	clock: Arc<ManualClock>,
+) -> StackRefresh {
 	let (link, bundled) =
 		sign_test_descriptor(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE));
-	StackRefresh::load(&link, &bundled, false, Box::new(records), timer)
+	StackRefresh::load(&link, &bundled, false, Box::new(records), timer, Box::new(clock))
 		.expect("bundled copy is valid")
 }
 
@@ -111,7 +138,8 @@ fn start(
 	responses: Vec<Result<StackFetchResponse, GenericError>>,
 ) -> Started {
 	let timer = Arc::new(ManualTimer::default());
-	let refresh = load(records, timer.clone());
+	let clock = manual_clock();
+	let refresh = load(records, timer.clone(), clock.clone());
 	let (told, statuses) = channel();
 	let fetches = Arc::<AtomicUsize>::default();
 	let host = QueuedHost {
@@ -120,7 +148,7 @@ fn start(
 		statuses: Mutex::new(told),
 	};
 	assert!(refresh.start(Box::new(host), &Spawner::for_test()));
-	Started { refresh, fetches, timer, statuses }
+	Started { refresh, fetches, timer, clock, statuses }
 }
 
 /// A host that is offline at launch still runs: the stack comes from the
@@ -157,7 +185,7 @@ fn a_newer_sequence_is_reported_and_starts_the_next_runtime() {
 			started.refresh.stack().chains().people,
 			after_fetch.restart_required,
 			after_fetch.new_generation,
-			load(records, Arc::default()).stack().chains().people,
+			load(records, Arc::default(), manual_clock()).stack().chains().people,
 		),
 		(TEST_STACK_PEOPLE, true, true, TEST_STACK_WIPED_PEOPLE)
 	);
@@ -200,7 +228,7 @@ fn a_host_that_never_answers_counts_as_unreachable() {
 	let _at_start = started.next_status();
 
 	started.wait_for_sleeps(1);
-	started.timer.advance(FETCH_TIMEOUT);
+	started.advance(FETCH_TIMEOUT);
 
 	assert_eq!(started.next_status().last_refresh, Some(StackRefreshOutcome::Unreachable));
 }
@@ -217,11 +245,11 @@ fn requests_made_during_a_fetch_lead_to_one_more_fetch() {
 	for _ in 0..3 {
 		started.refresh.refresh_now();
 	}
-	started.timer.advance(FETCH_TIMEOUT);
+	started.advance(FETCH_TIMEOUT);
 	// The first fetch gave up; the loop waited, woke for the requests and
 	// started the second.
 	started.wait_for_sleeps(3);
-	started.timer.advance(FETCH_TIMEOUT);
+	started.advance(FETCH_TIMEOUT);
 	started.wait_for_sleeps(4);
 	std::thread::sleep(Duration::from_millis(50));
 
@@ -251,11 +279,48 @@ fn the_loop_sleeps_until_the_next_fetch_is_due() {
 	let _after_fetch = started.next_status();
 	started.wait_for_sleeps(2);
 
-	let until_due = *started.timer.remaining().last().expect("the loop is sleeping");
-	assert!(
-		(Duration::from_secs(3598)..=Duration::from_secs(3600)).contains(&until_due),
-		"{until_due:?}"
+	assert_eq!(started.timer.remaining().last(), Some(&Duration::from_secs(60 * 60)));
+}
+
+/// A stack can be wiped while the app stays open. The host asks for nothing,
+/// so only the loop's own fetch, an hour after the last, brings the change.
+#[test]
+fn a_copy_an_hour_old_is_fetched_again() {
+	let started = start(
+		Arc::default(),
+		vec![
+			published(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE)),
+			published(&published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE)),
+		],
 	);
+	let _at_start = started.next_status();
+	let before_the_wipe = started.next_status();
+	started.wait_for_sleeps(2);
+
+	started.advance(Duration::from_secs(60 * 60));
+	let after_the_wipe = started.next_status();
+
+	assert_eq!(
+		(
+			before_the_wipe.restart_required,
+			after_the_wipe.restart_required,
+			started.fetches.load(Ordering::SeqCst),
+		),
+		(false, true, 2)
+	);
+}
+
+/// A runtime the host tears down takes its refresh with it. A loop left
+/// running would keep calling into a host that is gone.
+#[test]
+fn dropping_the_refresh_stops_the_loop() {
+	let Started { refresh, statuses, .. } = start(Arc::default(), vec![]);
+	let _at_start = statuses.recv_timeout(ANSWER_WAIT);
+
+	drop(refresh);
+
+	// The loop owns the host, and the host the only sender of statuses.
+	assert_eq!(statuses.recv_timeout(ANSWER_WAIT), Err(RecvTimeoutError::Disconnected));
 }
 
 /// Two refresh loops would fetch twice and report every change twice.
