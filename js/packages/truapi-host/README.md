@@ -72,7 +72,8 @@ After a wipe a stack has the same id and new chains. The core sees that by the
 chains: cached manifests, the usernames in the session, allowance keys and the
 ring-VRF registry. The session and stored permissions are kept. A host that
 keeps the session blob itself gets the session back without usernames until
-they resolve on the new chains, and should store what the core then reports.
+they resolve on the new chains, and should store what the core then reports:
+the core ignores the usernames in that blob only until it next starts.
 
 ## Bundler requirements
 

@@ -40,6 +40,12 @@ use truapi::{
 	latest::{HostRequestLoginError, HostRequestLoginResponse},
 };
 
+/// `session` without its usernames, so they are looked up on the chains the
+/// stack runs now.
+fn without_usernames(session: SessionInfo) -> SessionInfo {
+	SessionInfo { lite_username: None, full_username: None, ..session }
+}
+
 /// Keeps grants for the paired session and hears when that session changes.
 #[async_trait::async_trait]
 pub trait PairedSessionOwner: Send + Sync {
@@ -300,7 +306,10 @@ impl SsoRequestService {
 	async fn install_external_session(&self, blob: &[u8]) -> Result<(), String> {
 		let _activation = self.session_store_activation.lock().await;
 		let session = crate::host_logic::session::decode_persisted_session(blob)?;
-		let session = self.without_usernames_of_an_earlier_run(session).await;
+		// The host keeps this session, so it can hand over the same copy after
+		// the run is recorded, still naming what was read in the earlier one.
+		let stale = self.chain_run.started_earlier(&self.storage(), &self.host_config.stack).await;
+		let session = if stale { without_usernames(session) } else { session };
 		self.invalidate_login_attempts();
 		let activation_epoch = self.advance_session_lifecycle();
 		let resolved = resolve_session_identity_with_chain(
@@ -366,7 +375,11 @@ impl SsoRequestService {
 				return Err(StoredSessionActivationError::Invalid(error));
 			},
 		};
-		let session = self.without_usernames_of_an_earlier_run(session).await;
+		let stored_run = self.chain_run.stored(&self.storage(), &self.host_config.stack).await;
+		let session = match stored_run {
+			Some(StoredRun::Earlier) => without_usernames(session),
+			_ => session,
+		};
 		let resolved = resolve_session_identity_with_chain(
 			&self.dotns_reads,
 			&self.chain,
@@ -672,17 +685,6 @@ impl SsoRequestService {
 			None | Some(StoredRun::Current) => false,
 			Some(StoredRun::Unrecorded) => true,
 			Some(StoredRun::Earlier) => hold.owner.forget_chain_data(&hold.barrier, session).await,
-		}
-	}
-
-	/// `session` without the usernames it carries from an earlier run of the
-	/// stack's chains, so they are looked up on the chains it runs now.
-	async fn without_usernames_of_an_earlier_run(&self, session: SessionInfo) -> SessionInfo {
-		match self.chain_run.stored(&self.storage(), &self.host_config.stack).await {
-			Some(StoredRun::Earlier) => {
-				SessionInfo { lite_username: None, full_username: None, ..session }
-			},
-			_ => session,
 		}
 	}
 

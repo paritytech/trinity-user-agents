@@ -1404,3 +1404,35 @@ fn a_wipe_drops_what_the_stored_session_read_from_the_old_chains() {
 		);
 	}
 }
+
+/// A host that keeps the session itself hands the core the same copy on every
+/// activation. Once the first activation after a wipe has recorded the new
+/// run, a second one must still not bring back the username read from the old
+/// chains.
+#[test]
+fn a_session_the_host_keeps_never_brings_back_a_username_from_before_a_wipe() {
+	let session = crate::host_logic::session::SessionInfo {
+		lite_username: Some("alice".to_string()),
+		..sso_session_info()
+	};
+	let blob = crate::host_logic::session::encode_persisted_session(&session);
+	let platform = Arc::new(StubPlatform::default());
+	let earlier = parity_scale_codec::Encode::encode(&test_run(Some([0x99; 32])));
+	futures::executor::block_on(
+		test_storage(platform.as_ref()).write(CoreStorageKey::ChainRun, earlier),
+	)
+	.expect("stub core storage writes");
+	let pairing_host = pairing_host_without_asset_hub(platform);
+
+	let usernames = [(); 2].map(|()| {
+		futures::executor::block_on(pairing_host.session().activate_external_session(&blob))
+			.expect("the external session activates");
+		pairing_host
+			.session()
+			.session_state()
+			.current()
+			.map(|session| session.lite_username)
+	});
+
+	assert_eq!(usernames, [Some(None), Some(None)]);
+}

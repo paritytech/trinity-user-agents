@@ -27,7 +27,14 @@ pub enum StoredRun {
 /// [`Self::record`] replaces it.
 #[derive(Default)]
 pub struct ChainRun {
-	known: futures::lock::Mutex<Option<StoredRun>>,
+	known: futures::lock::Mutex<Option<Known>>,
+}
+
+#[derive(Clone, Copy)]
+struct Known {
+	stored: StoredRun,
+	/// The first read found an earlier run.
+	started_earlier: bool,
 }
 
 impl ChainRun {
@@ -39,23 +46,38 @@ impl ChainRun {
 		stack: &Stack,
 	) -> Option<StoredRun> {
 		let mut known = self.known.lock().await;
-		if known.is_some() {
-			return *known;
+		if let Some(known) = *known {
+			return Some(known.stored);
 		}
 		let recorded = storage
 			.read(CoreStorageKey::ChainRun)
 			.await
 			.inspect_err(|error| warn!(reason = %error.reason, "reading the chain run failed"))
 			.ok()?;
-		*known = Some(match recorded {
+		let stored = match recorded {
 			None => StoredRun::Unrecorded,
 			// A record that does not decode names no run the stack is in.
 			Some(bytes) if StackRun::decode(&mut bytes.as_slice()) == Ok(stack.run()) => {
 				StoredRun::Current
 			},
 			Some(_) => StoredRun::Earlier,
-		});
-		*known
+		};
+		*known = Some(Known { stored, started_earlier: stored == StoredRun::Earlier });
+		Some(stored)
+	}
+
+	/// Whether the core started with chain data from an earlier run.
+	///
+	/// Unlike [`Self::stored`], this stays true after [`Self::record`]. A
+	/// session the host keeps itself was written in that earlier run, and the
+	/// host can hand the same copy over again after the core has moved on.
+	pub async fn started_earlier(
+		&self,
+		storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
+		stack: &Stack,
+	) -> bool {
+		self.stored(storage, stack).await;
+		self.known.lock().await.is_some_and(|known| known.started_earlier)
 	}
 
 	/// Records that the stored chain data belongs to the run the stack is
@@ -71,7 +93,10 @@ impl ChainRun {
 	) {
 		let mut known = self.known.lock().await;
 		match storage.write(CoreStorageKey::ChainRun, stack.run().encode()).await {
-			Ok(()) => *known = Some(StoredRun::Current),
+			Ok(()) => {
+				let started_earlier = known.is_some_and(|known| known.started_earlier);
+				*known = Some(Known { stored: StoredRun::Current, started_earlier });
+			},
 			Err(error) => warn!(reason = %error.reason, "recording the chain run failed"),
 		}
 	}
