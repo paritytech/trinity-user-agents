@@ -1,5 +1,6 @@
 import UIKit
 import PolkadotUI
+import TrUAPIHost
 
 @MainActor
 final class MainTabBarPresenter {
@@ -51,6 +52,32 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
 }
 
 extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
+    func didReceive(fundingService: FundingServiceProtocol) {
+        wireframe.attachFunding(service: fundingService, view: view)
+    }
+
+    func didReceive(fundingEvent: FundingEvent) {
+        switch fundingEvent {
+        case let .presentationRequested(entry):
+            wireframe.presentFunding(entry)
+        case let .frameRequested(request):
+            showWhenOnScreen(request, show: { [interactor] in interactor.openProviderFrame(request) }, dismissed: {})
+        case let .frameOpened(frame):
+            // The core presents a provider's screen without asking first, so
+            // one for a session the user is not looking at waits behind the
+            // notice, and is answered dismissed when the notice is closed.
+            showWhenOnScreen(
+                FundingFrameRequest(entryId: frame.entryId, providerId: frame.providerId),
+                show: { [wireframe] in wireframe.presentProviderFrame(frame) },
+                dismissed: { [interactor] in interactor.answer(frame: frame.id, with: .dismissed) }
+            )
+        case let .frameClosed(entryId):
+            wireframe.closeProviderFrames(entryId: entryId)
+        case let .providerNotWorking(providerId):
+            wireframe.showProviderNotWorking(providerId)
+        }
+    }
+
     func didReceivePaymentsSetupWaiting(_ isWaiting: Bool) {
         wireframe.showPaymentsSetupNotice(isVisible: isWaiting)
     }
@@ -96,5 +123,21 @@ extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
             )
         }
         view?.showProductGamePill(viewModel)
+    }
+}
+
+private extension MainTabBarPresenter {
+    /// Shows a provider's screen at once while its session is on screen, and
+    /// otherwise after the user taps the notice about it.
+    func showWhenOnScreen(
+        _ request: FundingFrameRequest,
+        show: @escaping () -> Void,
+        dismissed: @escaping () -> Void
+    ) {
+        if wireframe.isShowingFunding(entryId: request.entryId) {
+            show()
+        } else {
+            wireframe.showProviderFrameNotice(for: request, onShow: show, onDismiss: dismissed)
+        }
     }
 }

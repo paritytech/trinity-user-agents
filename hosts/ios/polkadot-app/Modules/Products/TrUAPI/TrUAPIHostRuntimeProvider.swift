@@ -14,6 +14,8 @@ import Keystore_iOS
 /// Runtime configuration error raised while assembling the shared host config.
 enum TrUAPIRuntimeConfigError: Error {
     case missingGenesisHash(chain: String)
+    /// The runtime was built without its funding service.
+    case fundingServiceMissing
 }
 
 /// Vends the process-wide ``TrUAPIHostRuntime``. Product executions open off
@@ -48,7 +50,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
-    private let fundingOverlay: FundingOverlayPresenting?
+    private let fundingServiceSlot = FundingServiceSlot()
     private let bundledProducts: BundledProducts
     private let remoteConfig: RemoteConfigObserving?
     private let appliedConfig: () -> RemoteAppConfig?
@@ -74,7 +76,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
-        fundingOverlay: FundingOverlayPresenting? = nil,
         bundledProducts: BundledProducts = .app,
         remoteConfig: RemoteConfigObserving? = nil,
         appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
@@ -86,7 +87,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
-        self.fundingOverlay = fundingOverlay
         self.bundledProducts = bundledProducts
         self.remoteConfig = remoteConfig
         self.appliedConfig = appliedConfig
@@ -193,14 +193,12 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         // Also before any execution opens, so a product's Funding request
         // never answers unsupported. The core offers only the providers the
         // host lists: the ones `funding_config` names, then the ones it ships.
-        let router = confirmationRouterFacade
-        let overlay = fundingOverlay ?? AppFundingOverlay(runtime: runtime) { [bundledProducts] in
-            AppFundingEnvironment(router: router.productsRouter, bundledProducts: bundledProducts)
+        let fundingService = FundingService(runtime: runtime, logger: logger)
+        runtime.setFunding(AppFundingHostBridge(handler: fundingService))
+        bridge.onWorkerCrashing { [weak fundingService] productId in
+            fundingService?.workerCrashing(productId: productId)
         }
-        runtime.setFunding(AppFundingHostBridge(overlay: overlay))
-        bridge.onWorkerCrashing { [weak overlay] productId in overlay?.workerCrashing(productId: productId) }
         followFundingProviders(on: runtime)
-        FundingActivityCenter.attach(runtime: runtime, overlay: overlay)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
@@ -214,7 +212,22 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         try runtime.activateLocalSession(secret: secret, liteUsername: settingsManager.string(for: .username))
 
         cachedRuntime = runtime
+        fundingServiceSlot.fill(fundingService)
         return runtime
+    }
+}
+
+extension TrUAPIHostRuntimeProvider: FundingServiceProviding {
+    func fundingService() throws -> FundingServiceProtocol {
+        _ = try sharedRuntime()
+        guard let service = fundingServiceSlot.service else {
+            throw TrUAPIRuntimeConfigError.fundingServiceMissing
+        }
+        return service
+    }
+
+    func builtFundingService() -> AsyncStream<FundingServiceProtocol> {
+        fundingServiceSlot.built()
     }
 }
 

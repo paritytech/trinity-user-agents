@@ -1,4 +1,5 @@
 import struct TrUAPIHost.ProductId
+import enum TrUAPIHost.FundingFrameOutcome
 import UIKit
 import PolkadotUI
 import UIKitExt
@@ -25,6 +26,9 @@ protocol MainTabBarPresenterProtocol: AnyObject {
 
 protocol MainTabBarInteractorInputProtocol: AnyObject {
     func setup()
+    /// Lets the core present the provider's screen `request` asked for.
+    func openProviderFrame(_ request: FundingFrameRequest)
+    func answer(frame: FundingFrame.ID, with outcome: FundingFrameOutcome)
 }
 
 @MainActor
@@ -40,6 +44,8 @@ protocol MainTabBarInteractorOutputProtocol: AnyObject {
     func didReceiveTabBarLabelsEnabled(_ isEnabled: Bool)
     func didReceiveProductGamePill(_ pill: ProductGamePill?)
     func didReceivePaymentsSetupWaiting(_ isWaiting: Bool)
+    func didReceive(fundingService: FundingServiceProtocol)
+    func didReceive(fundingEvent: FundingEvent)
 }
 
 @MainActor
@@ -50,6 +56,18 @@ protocol MainTabBarWireframeProtocol: AnyObject {
     func openChat(_ model: ChatOpenModel)
     func showConnectionStatus(_ viewModel: ConnectionStatusSheetViewModel, from view: MainTabBarViewProtocol?)
     func showSettings(from view: MainTabBarViewProtocol?)
+
+    func attachFunding(service: FundingServiceProtocol, view: MainTabBarViewProtocol?)
+    func presentFunding(_ entry: FundingEntry)
+    func isShowingFunding(entryId: String) -> Bool
+    func presentProviderFrame(_ frame: FundingFrame)
+    func closeProviderFrames(entryId: String)
+    func showProviderFrameNotice(
+        for request: FundingFrameRequest,
+        onShow: @escaping () -> Void,
+        onDismiss: @escaping () -> Void
+    )
+    func showProviderNotWorking(_ providerId: ProductId)
 }
 
 enum TabBarItem: String, CaseIterable {

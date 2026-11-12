@@ -44,8 +44,10 @@ enum FundingOpened {
     }
 }
 
-struct RuntimeFundingOpener: FundingOpening {
-    let runtimeProvider: TrUAPIHostRuntimeProviding?
+/// Opens a session through the funding service, after showing the sessions
+/// already in flight in that direction, if any.
+struct ServiceFundingOpener: FundingOpening {
+    let serviceProvider: FundingServiceProviding?
     /// Shows the sessions in flight in a direction, answering false when
     /// there are none.
     var showPending: @Sendable (FundingDirection) async -> Bool = { direction in
@@ -53,14 +55,14 @@ struct RuntimeFundingOpener: FundingOpening {
     }
 
     func openFunding(direction: FundingDirection) async throws -> String? {
-        guard let runtimeProvider else {
-            Logger.shared.error("[funding] opening the overlay failed: no runtime provider")
+        guard let serviceProvider else {
+            Logger.shared.error("[funding] opening the overlay failed: no funding service provider")
             throw FundingOpeningError.runtimeUnavailable
         }
         if await showPending(direction) { return nil }
 
         do {
-            return try await runtimeProvider.sharedRuntime().openFunding(direction: direction)
+            return try await serviceProvider.fundingService().open(direction, amount: nil)
         } catch let error as CancellationError {
             throw error
         } catch {

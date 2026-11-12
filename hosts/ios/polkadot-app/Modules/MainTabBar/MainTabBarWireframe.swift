@@ -1,4 +1,4 @@
-import struct TrUAPIHost.ProductId
+import TrUAPIHost
 import UIKit
 import PolkadotUI
 import Products
@@ -14,6 +14,7 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
     private weak var windowScene: UIWindowScene?
     private var paymentsSetupNotice: TopNoticeWindow?
     private var isPaymentsSetupNoticeDismissed = false
+    private var funding: FundingScreens?
 
     init(
         serviceCoordinator: ServiceCoordinatorProtocol,
@@ -77,6 +78,51 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
         }
         presentedSettings = settings
         view?.controller.topmostPresented.present(settings, animated: true)
+    }
+}
+
+extension MainTabBarWireframe {
+    func attachFunding(service: FundingServiceProtocol, view: MainTabBarViewProtocol?) {
+        guard funding == nil else { return }
+
+        let router = ProductsRouter()
+        if let view { router.setPresentationView(view) }
+        let screens = FundingScreens(
+            service: service,
+            environment: AppFundingEnvironment(router: router),
+            notice: FundingFrameNoticePresenter(application: UIApplication.shared),
+            logger: Logger.shared
+        )
+        funding = screens
+        FundingActivityCenter.attach(service: service, router: screens.router)
+    }
+
+    func presentFunding(_ entry: FundingEntry) {
+        funding?.present(entry)
+    }
+
+    func isShowingFunding(entryId: String) -> Bool {
+        funding?.isShowing(entryId: entryId) ?? false
+    }
+
+    func presentProviderFrame(_ frame: FundingFrame) {
+        funding?.present(frame)
+    }
+
+    func closeProviderFrames(entryId: String) {
+        funding?.closeFrames(entryId: entryId)
+    }
+
+    func showProviderFrameNotice(
+        for request: FundingFrameRequest,
+        onShow: @escaping () -> Void,
+        onDismiss: @escaping () -> Void
+    ) {
+        funding?.showFrameNotice(for: request, onShow: onShow, onDismiss: onDismiss)
+    }
+
+    func showProviderNotWorking(_ providerId: ProductId) {
+        funding?.showProviderNotWorking(providerId)
     }
 }
 

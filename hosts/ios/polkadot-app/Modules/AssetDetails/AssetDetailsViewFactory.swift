@@ -26,7 +26,7 @@ enum AssetDetailsViewFactory {
             chainAsset: chainAsset,
             coinageService: context.coinageService,
             coinageBackupSyncService: context.coinageBackupSyncService,
-            fundingOpener: RuntimeFundingOpener(runtimeProvider: RootDependencyLocator.getDependency())
+            fundingOpener: ServiceFundingOpener(serviceProvider: RootDependencyLocator.getDependency())
         )
 
         #if TESTNET_FEATURE

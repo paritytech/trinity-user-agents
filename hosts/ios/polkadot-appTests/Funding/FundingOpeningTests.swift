@@ -30,7 +30,7 @@ struct FundingOpeningTests {
     @Test
     func withoutARuntimeItCannotOpen() async {
         let pending = PendingRecorder(shows: false)
-        let opener = RuntimeFundingOpener(runtimeProvider: nil, showPending: pending.show)
+        let opener = ServiceFundingOpener(serviceProvider: nil, showPending: pending.show)
 
         await #expect(throws: FundingOpeningError.runtimeUnavailable) {
             try await opener.openFunding(direction: .in)
@@ -42,7 +42,7 @@ struct FundingOpeningTests {
     func sessionsInFlightAreShownInsteadOfOpening() async throws {
         let runtime = FailingRuntime(error: Unavailable())
         let pending = PendingRecorder(shows: true)
-        let opener = RuntimeFundingOpener(runtimeProvider: runtime, showPending: pending.show)
+        let opener = ServiceFundingOpener(serviceProvider: runtime, showPending: pending.show)
 
         let session = try await opener.openFunding(direction: .out)
 
@@ -54,7 +54,7 @@ struct FundingOpeningTests {
     @Test
     func aRuntimeThatCannotBeBuiltIsARefusal() async {
         let runtime = FailingRuntime(error: Unavailable())
-        let opener = RuntimeFundingOpener(runtimeProvider: runtime, showPending: PendingRecorder(shows: false).show)
+        let opener = ServiceFundingOpener(serviceProvider: runtime, showPending: PendingRecorder(shows: false).show)
 
         await #expect(throws: FundingOpeningError.refused) {
             try await opener.openFunding(direction: .in)
@@ -64,8 +64,8 @@ struct FundingOpeningTests {
 
     @Test
     func aCancellationIsPassedOnAsIs() async {
-        let opener = RuntimeFundingOpener(
-            runtimeProvider: FailingRuntime(error: CancellationError()),
+        let opener = ServiceFundingOpener(
+            serviceProvider: FailingRuntime(error: CancellationError()),
             showPending: PendingRecorder(shows: false).show
         )
 
@@ -104,7 +104,8 @@ private final class PendingRecorder: Sendable {
     }
 }
 
-private final class FailingRuntime: TrUAPIHostRuntimeProviding, @unchecked Sendable {
+/// A runtime that cannot be built, so neither can its funding service.
+private final class FailingRuntime: FundingServiceProviding, @unchecked Sendable {
     private let error: Error
     private let state = OSAllocatedUnfairLock(initialState: 0)
     var builds: Int { state.withLock { $0 } }
@@ -113,12 +114,12 @@ private final class FailingRuntime: TrUAPIHostRuntimeProviding, @unchecked Senda
         self.error = error
     }
 
-    func sharedRuntime() throws -> TrUAPIHostRuntime {
+    func fundingService() throws -> FundingServiceProtocol {
         state.withLock { $0 += 1 }
         throw error
     }
 
-    @MainActor func setPresentationView(_: ControllerBackedProtocol) {}
-    @MainActor var presentationView: ControllerBackedProtocol? { nil }
-    func attach(workerManager _: any TrUAPIWorkerManaging) {}
+    func builtFundingService() -> AsyncStream<FundingServiceProtocol> {
+        AsyncStream { $0.finish() }
+    }
 }

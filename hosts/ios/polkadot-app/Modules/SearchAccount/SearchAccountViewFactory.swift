@@ -56,7 +56,7 @@ enum SearchAccountViewFactory {
             chatOpenResolver: ChatOpenModelResolver(),
             chainAsset: chainAsset,
             logger: logger,
-            fundingOpener: RuntimeFundingOpener(runtimeProvider: RootDependencyLocator.getDependency())
+            fundingOpener: ServiceFundingOpener(serviceProvider: RootDependencyLocator.getDependency())
         )
         let wireframe = SearchAccountWireframe(coinageServicing: coinageServicing)
         let presenter = SearchAccountPresenter(
