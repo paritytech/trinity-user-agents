@@ -404,14 +404,13 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_entries()
 	}
 
-	/// Offer the funding providers the remote configuration names, then the
-	/// `bundled` ones; see [`SigningHostRuntime::set_funding_provider_config`].
+	/// Offer the funding providers the remote configuration names; see
+	/// [`SigningHostRuntime::set_funding_provider_config`].
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
 	) -> Result<(), HostRejection> {
-		Ok(self.runtime.set_funding_provider_config(published_names, bundled)?)
+		Ok(self.runtime.set_funding_provider_config(published_names)?)
 	}
 
 	/// Every ended funding session, as summaries newest first. The host

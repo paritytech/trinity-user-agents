@@ -20,7 +20,6 @@ use crate::{
 
 /// A provider the host offers, as the host supplies it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingProviderEntry {
 	/// The provider's product id.
 	pub product_id: ProductId,
@@ -41,7 +40,6 @@ pub struct FundingProviderEntry {
 /// Whether a funding provider ships an App, so an App route of its can be
 /// shown.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingProviderApp {
 	/// The host does not know: the core looks the App up on dotNS when an
 	/// App route is shown.
@@ -54,12 +52,9 @@ pub enum FundingProviderApp {
 }
 
 /// The providers the host offers from its remote configuration's
-/// `published_names`, in order and each once, then the `bundled` ones the
-/// configuration does not name, with the names that are not product ids.
-pub fn provider_config(
-	published_names: &[String],
-	bundled: Vec<FundingProviderEntry>,
-) -> (Vec<FundingProviderEntry>, Vec<String>) {
+/// `published_names`, in order and each once, with the names that are not
+/// product ids.
+pub fn provider_config(published_names: &[String]) -> (Vec<FundingProviderEntry>, Vec<String>) {
 	let mut entries: Vec<FundingProviderEntry> = Vec::new();
 	let mut invalid = Vec::new();
 	for name in published_names {
@@ -77,17 +72,11 @@ pub fn provider_config(
 			});
 		}
 	}
-	for entry in bundled {
-		if entries.iter().all(|known| known.product_id != entry.product_id) {
-			entries.push(entry);
-		}
-	}
 	(entries, invalid)
 }
 
 /// Where the core reads a provider's manifests.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingProviderOrigin {
 	/// Published on dotNS: the core reads the live manifests, and goes by the
 	/// host's snapshots until it has.

@@ -3326,11 +3326,8 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	let funding = Arc::new(RecordingNativeFunding::default());
 	assert!(host.set_funding_callbacks(funding.clone()));
 	let configure = |names: &[&str]| {
-		host.set_funding_provider_config(
-			names.iter().map(|name| name.to_string()).collect(),
-			vec![],
-		)
-		.expect("configured");
+		host.set_funding_provider_config(names.iter().map(|name| name.to_string()).collect())
+			.expect("configured");
 		let changes = funding.changes.lock().expect("changes mutex poisoned");
 		let announced =
 			changes.iter().filter(|change| **change == (None, FundingChangeKind::Providers));
