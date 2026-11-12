@@ -12,10 +12,10 @@ struct FundingActivityItem: Identifiable, Equatable {
         case refunded
         /// The payout failed after the balance was debited; `refunded` is what
         /// the provider's refund returned, once final.
-        case payoutFailed(refunded: U128?)
+        case payoutFailed(refunded: Balance?)
         /// Cancelled at the user's request; `refunded` is what came back when
         /// money had moved.
-        case cancelled(refunded: U128?)
+        case cancelled(refunded: Balance?)
         case failed(FundingFailure)
     }
 
@@ -49,7 +49,10 @@ extension FundingActivityItem {
         rail = record.rail
         amount = (record.settledAmount ?? record.requestedAmount).flatMap { Balance($0) }
         date = record.settledAt
-        status = record.outcome.activityStatus(payout: record.payout, refunded: record.refundedAmount)
+        status = record.outcome.activityStatus(
+            payout: record.payout,
+            refunded: record.refundedAmount.flatMap { Balance($0) }
+        )
     }
 
     var isInProgress: Bool {
@@ -67,7 +70,7 @@ extension FundingActivityItem {
 private extension FundingRecord.Outcome {
     /// The row's status for a record that ended this way; a release whose
     /// payout failed reads as a failed payout.
-    func activityStatus(payout: FundingRecord.Payout?, refunded: U128?) -> FundingActivityItem.Status {
+    func activityStatus(payout: FundingRecord.Payout?, refunded: Balance?) -> FundingActivityItem.Status {
         switch self {
         case .delivered:
             .toppedUp

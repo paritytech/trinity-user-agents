@@ -151,9 +151,9 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     }
 
     func openProviderFrame(_ request: FundingFrameRequest) {
-        // FRAME GATING STUB: the one place that calls the core's `open_provider_frame(intent)` once
-        // it lands; the core then presents the frame through `present_provider_frame`, as it does
-        // today unasked.
+        // TODO(#2057): call the core's `open_provider_frame(intent)` here, and route its
+        // `provider_frame_requested(provider_id, intent)` callback to `providerFrameRequested`
+        // below; until then the core presents frames through `present_provider_frame` unasked.
         logger.debug("[funding] \(request.entryId): opening \(request.providerId)'s screen")
     }
 
@@ -221,8 +221,7 @@ extension FundingService: FundingCoreEventHandling {
     }
 
     /// A provider asks to show a screen; the app opens it when the user is
-    /// looking at the session, or after a tap on a notice. FRAME GATING STUB:
-    /// the core's `provider_frame_requested` callback lands here once it exists.
+    /// looking at the session, or after a tap on a notice.
     func providerFrameRequested(intent: String, providerId: ProductId) {
         eventSink.yield(.frameRequested(FundingFrameRequest(entryId: intent, providerId: providerId)))
     }

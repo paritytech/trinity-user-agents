@@ -47,7 +47,7 @@ struct FundingActivityStatusTests {
         ))
 
         #expect(FundingActivityItem(record: pending).status == .payoutFailed(refunded: nil))
-        #expect(FundingActivityItem(record: refunded).status == .payoutFailed(refunded: "49000000"))
+        #expect(FundingActivityItem(record: refunded).status == .payoutFailed(refunded: 49_000_000))
     }
 
     @Test
@@ -68,7 +68,7 @@ struct FundingActivityStatusTests {
         ))
 
         #expect(record.outcome == .cancelled)
-        #expect(FundingActivityItem(record: record).status == .cancelled(refunded: "49000000"))
+        #expect(FundingActivityItem(record: record).status == .cancelled(refunded: 49_000_000))
     }
 
     @Test
