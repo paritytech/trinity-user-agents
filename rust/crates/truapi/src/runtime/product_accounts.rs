@@ -35,8 +35,12 @@ use super::{
 	product_consent::ProductConsent,
 };
 
-/// The host's accounts as one product connection sees them: every call acts
-/// for that connection's product, and host-level operations stay out of reach.
+/// The host's accounts as one product connection sees them.
+///
+/// Its account calls act for that connection's product, except
+/// [`Self::product_subtree_public_key_within`], which serves host
+/// administration for any product. [`Self::consent`] is the runtime's consent,
+/// shared by every product.
 pub struct ProductAccounts<H: AccountHolder> {
 	accounts: Arc<HostAccounts<H>>,
 	connection: Arc<ProductConnection>,

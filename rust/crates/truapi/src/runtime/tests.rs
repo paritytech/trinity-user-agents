@@ -7563,11 +7563,11 @@ fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
 	);
 }
 
-/// The pairing authority holds a grantee's proof context to the same rule as
-/// the signing authority: a third product's context needs that product's own
+/// A pairing host's `HostAccounts` holds a grantee's proof context to the same
+/// rule as a signing host: a third product's context needs that product's own
 /// `context` grant.
 ///
-/// Driven at the authority, as `sso_responder` would. The admitted case is
+/// Driven at the pairing host's `HostAccounts`. The admitted case is
 /// asserted as "not refused by the gate", since the stub has no AutoSigning key
 /// or ring to finish the proof with; what it pins is that the context guard
 /// let it through.

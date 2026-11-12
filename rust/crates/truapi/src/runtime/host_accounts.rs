@@ -45,6 +45,13 @@ use truapi::{CallContext, CancellationReason, latest as api};
 use zeroize::Zeroizing;
 
 /// Receives, retains and uses product grants from one selected account holder.
+///
+/// A host role builds one and shares it with every product connection. Each
+/// product call is bound to the calling product and to the session it started
+/// under, and a signing, transaction, VRF or allocation request is confirmed
+/// with the user before the account holder acts on it. Kept grants are read
+/// under a revision that a product reset, a lock or a session change advances;
+/// grant work that began before the change fails `Disconnected`.
 pub struct HostAccounts<H: AccountHolder> {
 	services: Arc<RuntimeServices>,
 	holder: Arc<H>,
@@ -560,6 +567,9 @@ impl<H: AccountHolder> HostAccounts<H> {
 
 	/// Forget the product's kept Statement Store key only if it is still
 	/// `public_key`, preserving any replacement.
+	///
+	/// A paired host serves its stored key again on the next call: the phone
+	/// renews the sponsorships it issued.
 	pub fn forget_statement_store_allowance_key(
 		&self,
 		product_id: &ProductId,
@@ -1023,8 +1033,10 @@ impl<H: AccountHolder> HostAccounts<H> {
 	}
 
 	/// Whether `product` may act on `handle`'s ring-VRF key, by its owner's
-	/// published manifest rather than the request. Every refusal, including
-	/// a lookup that outlives the call, answers `NotAllowlisted`.
+	/// published manifest rather than the request.
+	///
+	/// Every refusal, including a lookup that outlives the call, answers
+	/// `NotAllowlisted`.
 	async fn require_ring_vrf_key_access(
 		&self,
 		cx: &CallContext,
