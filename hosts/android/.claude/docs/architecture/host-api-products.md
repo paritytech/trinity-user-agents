@@ -171,12 +171,10 @@ The product's `@parity/truapi` client talks to the shared Rust core
 loopback WebSocket. The core owns wire framing, dispatch, subscriptions, and
 orchestration; the Android side implements only native platform callbacks.
 
-The core is compiled from a checkout outside this repo, pinned by SHA as
-`truapi_ref` in `.github/actions/install/action.yaml`. `scripts/setup-truapi.py`
-puts that checkout in place and points `truapi.dir` at it. The pin and the
-Android `HostBridge` implementation move together: bumping one without checking
-the other is how a callback goes silently dead, because the generated interface
-defaults most members.
+The core is compiled from the enclosing `trinity-user-agents` tree, two levels up.
+The core and the Android `HostBridge` implementation move together: changing one
+without checking the other is how a callback goes silently dead, because the
+generated interface defaults most members.
 
 ### Runtime and executions
 
