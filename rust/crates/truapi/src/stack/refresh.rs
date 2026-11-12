@@ -141,9 +141,10 @@ impl Shared {
 		host.stack_changed(reported.clone());
 		let mut force = false;
 		loop {
-			let request = match force {
-				true => self.source().forced_fetch(now()),
-				false => self.source().due_fetch(now()),
+			let request = if force {
+				self.source().forced_fetch(now())
+			} else {
+				self.source().due_fetch(now())
 			};
 			if let Some(request) = request {
 				self.fetch(host.as_ref(), request).await;
@@ -153,7 +154,8 @@ impl Shared {
 					host.stack_changed(reported.clone());
 				}
 			}
-			let until_due = match self.source().next_fetch_in(now()) {
+			let next_fetch_in = self.source().next_fetch_in(now());
+			let until_due = match next_fetch_in {
 				Some(wait) => self.timer.sleep(wait),
 				None => pending().boxed(),
 			};
