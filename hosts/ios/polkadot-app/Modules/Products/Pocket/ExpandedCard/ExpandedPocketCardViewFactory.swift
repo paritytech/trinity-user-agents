@@ -39,11 +39,26 @@ enum ExpandedPocketCardViewFactory {
             configuration: configuration,
             logger: Logger.shared
         )
-        let presenter = ExpandedPocketCardPresenter(interactor: interactor, wireframe: ExpandedPocketCardWireframe())
+        let presenter = ExpandedPocketCardPresenter(
+            interactor: interactor,
+            wireframe: ExpandedPocketCardWireframe(),
+            hostProvider: flowState.hostProvider
+        )
+        let widgetView = WidgetView(cardInset: cardInset, schemeHandler: schemeHandlerProxy)
+        let engine = SPAJSEngine(
+            webView: widgetView.webView,
+            navigationDecisionHandler: navigationDecisionHandler(
+                for: configuration,
+                hostProvider: flowState.hostProvider
+            ),
+            logger: Logger.shared
+        )
         let view = ExpandedPocketCardViewController(
             presenter: presenter,
-            cardInset: cardInset,
-            schemeHandlerProxy: schemeHandlerProxy
+            card: card,
+            productId: configuration.page.host.toDotDomain(),
+            widgetView: widgetView,
+            engine: engine
         )
 
         presenter.view = view
@@ -51,6 +66,25 @@ enum ExpandedPocketCardViewFactory {
         routers.setPresentationView(view)
 
         return view
+    }
+}
+
+private extension ExpandedPocketCardViewFactory {
+    static func navigationDecisionHandler(
+        for configuration: SPAConfiguration,
+        hostProvider: ProductHostProviding
+    ) -> SPANavigationDecisionHandling {
+        switch configuration.contentSource {
+        case .dotNs,
+             .bundled:
+            DotNsNavigationDecisionHandler(baseHost: configuration.page.host, hostProvider: hostProvider)
+        case let .directURL(url):
+            DirectURLNavigationDecisionHandler(baseURL: url)
+        #if DEBUG
+            case let .devServer(url, _):
+                DirectURLNavigationDecisionHandler(baseURL: url)
+        #endif
+        }
     }
 }
 

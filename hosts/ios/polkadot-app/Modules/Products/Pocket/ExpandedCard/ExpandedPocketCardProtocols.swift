@@ -4,11 +4,28 @@ import Products
 import enum TrUAPIHost.ExpandedCardFaceOutcome
 import UIKitExt
 
-protocol ExpandedPocketCardViewProtocol: ControllerBackedProtocol {}
+@MainActor
+protocol ExpandedPocketCardViewProtocol: ControllerBackedProtocol {
+    var isOnDisplay: Bool { get }
+
+    func navigate(to url: URL)
+    func navigate(to page: ProductPage)
+    func reload()
+    func showLoading()
+    func hideLoading()
+    func showLoadFailure(_ content: ErrorContent)
+    func updateLoadPhase(_ phase: ProductLoadPhase)
+    func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome
+    func applyOpeningFace(shown: Bool)
+}
 
 @MainActor
 protocol ExpandedPocketCardPresenterProtocol: AnyObject {
-    func setup()
+    func setup(engine: JSEngineProtocol)
+    func didBecomeVisible()
+    func didTapRetry()
+    func didInterceptNavigation(to url: URL)
+    func didRequestDeeplink(_ url: URL)
 }
 
 @MainActor
@@ -27,7 +44,11 @@ protocol ExpandedPocketCardInteractorOutputProtocol: AnyObject {
     func didRequestFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome
 }
 
-protocol ExpandedPocketCardWireframeProtocol: AnyObject, AlertPresentable, ErrorPresentable {}
+@MainActor
+protocol ExpandedPocketCardWireframeProtocol: AnyObject, AlertPresentable, ErrorPresentable {
+    func showProductSPA(productHost: ProductHost)
+    func openDeeplink(_ url: URL)
+}
 
 @MainActor
 protocol ExpandedPocketCardRuntimeMaking {
