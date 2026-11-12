@@ -71,7 +71,10 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
         guard let handler = runtime as? TrUAPIChatHandler else {
             if refusedRoomFooters[roomId] != footer {
                 refusedRoomFooters[roomId] = footer
-                logger.warning("[truapi.product] A \(messageType) card is docked, but only the TrUAPI chat runtime can draw one")
+                logger
+                    .warning(
+                        "[truapi.product] A \(messageType) card is docked, but only the TrUAPI chat runtime can draw one"
+                    )
             }
             return nil
         }
