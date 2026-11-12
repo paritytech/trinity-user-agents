@@ -1167,10 +1167,12 @@ impl<H: AccountHolder> HostAccounts<H> {
 					.ring_resolver
 					.resolve(&request.ring_location, &[MemberCandidate { member }])
 					.await?;
-				let _lifecycle = self.hold_grant(session, revision)?;
 				let context = context_bytes(&request.context);
+				// Proved outside the grant lock, which would otherwise stall every
+				// grant use, lock and wallet switch for the whole proof.
 				let (proof, alias) =
 					create_proof(&vrf, &entropy, &resolved, &context, &request.message)?;
+				self.hold_grant(session, revision)?;
 				return Ok(api::HostAccountCreateProofResponse {
 					proof,
 					contextual_alias: api::ContextualAlias { context, alias: alias.to_vec() },

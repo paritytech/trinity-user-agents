@@ -288,6 +288,78 @@ fn a_kept_key_registers_through_the_hosts_ring_resolver() {
 	assert_eq!(registered, Ok(member));
 }
 
+/// A product with a kept AutoSigning key proves membership with that key
+/// itself, so the proof carries the alias its own key has in the context and
+/// the ring the host resolved.
+#[test]
+fn a_kept_key_proves_with_its_own_alias() {
+	let product_id = ProductId::for_test("myapp.dot");
+	let entropy =
+		derive_ring_vrf_entropy(&ENTROPY, &product_id, &v01::DerivationIndex::Index(0)).unwrap();
+	let vrf =
+		futures::executor::block_on(crate::runtime::vrf::load()).expect("verifiable is linked");
+	let member = vrf.member(&entropy).unwrap();
+	let resolver = Arc::new(StubRingResolver {
+		validation_gate: Default::default(),
+		collection: *b"pop:polkadot.network/people     ",
+		ring: ResolvedRing {
+			selected: MemberCandidate { member },
+			ring_index: 7,
+			ring_revision: 11,
+			domain_size: crate::runtime::vrf::DOMAIN_2E11,
+			members: vec![member],
+		},
+	});
+	let platform =
+		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
+	let (services, activation) = signing_runtime_with_ring_resolver(platform, resolver);
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	grant_auto_signing(&product_runtime(services, activation.clone()));
+	let session = activation.accounts().current_session().expect("an active wallet");
+	let cx = CallContext::default();
+	let product = ProductContext::new(product_id.clone());
+	let handle = v01::ProductAccountId {
+		dot_ns_identifier: product_id.clone(),
+		derivation_index: v01::DerivationIndex::Index(0),
+	};
+	let context = v01::ProductProofContext {
+		product_id: product_id.clone(),
+		suffix: v01::DerivationIndex::Index(0),
+	};
+	futures::executor::block_on(activation.accounts().register_ring_vrf_key(
+		&session,
+		&cx,
+		&product,
+		HostAccountRegisterRingVrfKeyRequest {
+			index: v01::DerivationIndex::Index(0),
+			ring: full_person_ring_location(),
+		},
+	))
+	.expect("the kept key registers");
+
+	let proof = futures::executor::block_on(activation.accounts().create_proof(
+		&session,
+		&cx,
+		&product,
+		HostAccountCreateProofRequest {
+			key_handle: handle,
+			context: context.clone(),
+			ring_location: full_person_ring_location(),
+			message: b"prove me".to_vec(),
+		},
+	))
+	.expect("the kept key proves");
+
+	let context = crate::runtime::signing_host::ring_vrf::context_bytes(&context);
+	let alias =
+		v01::ContextualAlias { context, alias: vrf.alias(&entropy, &context).unwrap().to_vec() };
+	assert_eq!(
+		(proof.contextual_alias, proof.ring_index, proof.ring_revision, proof.proof.is_empty()),
+		(alias, 7, 11, false)
+	);
+}
+
 /// A product that withdrew its call gets no statement proof signed for it,
 /// even when a kept key could sign without asking anyone.
 #[test]
