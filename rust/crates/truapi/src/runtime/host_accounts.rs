@@ -43,7 +43,7 @@ use crate::{
 use core::time::Duration;
 use futures::{FutureExt, StreamExt, pin_mut};
 use std::sync::Arc;
-use truapi::{CallContext, CallError, CancellationReason, latest as api};
+use truapi::{CallContext, CancellationReason, latest as api};
 use zeroize::Zeroizing;
 
 /// Receives, retains and uses product grants from one selected account holder.
@@ -222,15 +222,17 @@ impl<H: AccountHolder> HostAccounts<H> {
 	}
 
 	/// Disclose an account only after the calling product may access it.
+	///
+	/// Fails `Disconnected` while signed out, `Rejected` when the product may
+	/// not use the owner's accounts, and `ConfirmationFailed` when that
+	/// decision can be neither read nor asked.
 	pub async fn get_account(
 		&self,
 		cx: &CallContext,
 		connection: &ProductConnection,
 		account: api::ProductAccountId,
-	) -> Result<[u8; 32], CallError<api::HostAccountGetError>> {
-		let session = self
-			.current_session()
-			.ok_or(CallError::Domain(api::HostAccountGetError::NotConnected))?;
+	) -> Result<[u8; 32], AuthorityError> {
+		let session = self.current_session().ok_or(AuthorityError::Disconnected)?;
 		let product = &connection.product;
 		let owner = &account.dot_ns_identifier;
 		if *owner != product.product_id {
@@ -239,28 +241,22 @@ impl<H: AccountHolder> HostAccounts<H> {
 				owner,
 				connection.platform.as_ref(),
 			);
-			match super::until_cancelled(cx, access)
-				.await
-				.map_err(super::account_get_authority_error)?
-				.map_err(|err| CallError::HostFailure { reason: err.to_string() })?
-			{
+			match super::until_cancelled(cx, access).await?.map_err(|err| {
+				AuthorityError::ConfirmationFailed(api::GenericError { reason: err.to_string() })
+			})? {
 				PermissionAuthorizationStatus::Authorized => {},
 				PermissionAuthorizationStatus::Denied |
-				PermissionAuthorizationStatus::NotDetermined => {
-					return Err(CallError::Domain(api::HostAccountGetError::Rejected));
-				},
+				PermissionAuthorizationStatus::NotDetermined => return Err(AuthorityError::Rejected),
 			}
 		}
-		let review = (*owner == product.product_id).then(|| {
-			UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
+		let confirm = (*owner == product.product_id).then(|| {
+			let review = UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
 				product_id: owner.clone(),
-			})
+			});
+			(connection, review)
 		});
-		let subtree = self
-			.resolve_product_subtree(&session, cx, connection, owner, review)
-			.await
-			.map_err(super::account_get_authority_error)?;
-		Self::derive_account(subtree, &account).map_err(super::account_get_authority_error)
+		let subtree = self.resolve_product_subtree(&session, cx, product, owner, confirm).await?;
+		Self::derive_account(subtree, &account)
 	}
 
 	/// Derive an account beneath a subtree selected by an already authorized operation.
@@ -272,7 +268,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		account: &api::ProductAccountId,
 	) -> Result<[u8; 32], AuthorityError> {
 		let subtree = self
-			.product_subtree_public_key(session, cx, product, &account.dot_ns_identifier)
+			.resolve_product_subtree(session, cx, product, &account.dot_ns_identifier, None)
 			.await?;
 		Self::derive_account(subtree, account)
 	}
@@ -283,28 +279,6 @@ impl<H: AccountHolder> HostAccounts<H> {
 	) -> Result<[u8; 32], AuthorityError> {
 		derive_product_public_key(subtree, derivation_index_bytes(&account.derivation_index))
 			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
-	}
-
-	/// Resolve a retained subtree before asking the holder to resolve it.
-	pub async fn product_subtree_public_key(
-		&self,
-		session: &AuthoritySession,
-		cx: &CallContext,
-		product: &ProductContext,
-		product_id: &ProductId,
-	) -> Result<[u8; 32], AuthorityError> {
-		let cx = super::remote_authority_context(cx);
-		let (current, revision) = self.grant_session(session)?;
-		if let Some(key) = self.grants.known_product_subtree(&current, product_id).await {
-			self.holder.require_current_session(session)?;
-			return Ok(key);
-		}
-		let resolution = self
-			.holder
-			.product_subtree_public_key(local_invocation(&cx, session, product), product_id)
-			.await?;
-		self.keep_product_subtree(&cx, session, &current, revision, product_id, resolution)
-			.await
 	}
 
 	/// `product_id`'s hard-subtree public key under the current session, for
@@ -326,7 +300,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		let mut cx = CallContext::default();
 		cx.set_timeout(timeout);
 		let product = ProductContext::new(product_id.clone());
-		let call = self.product_subtree_public_key(&session, &cx, &product, product_id).fuse();
+		let call = self.resolve_product_subtree(&session, &cx, &product, product_id, None).fuse();
 		let deadline = futures_timer::Delay::new(timeout).fuse();
 		pin_mut!(call, deadline);
 		futures::select! {
@@ -343,15 +317,19 @@ impl<H: AccountHolder> HostAccounts<H> {
 		}
 	}
 
-	/// Resolve `product_id`'s subtree for `connection`, confirming `review`
-	/// only when the account holder must be asked for it.
+	/// Resolve `product_id`'s subtree for `product` from the kept grants, or
+	/// else from the account holder.
+	///
+	/// When the holder has to ask for it, the user first approves the review
+	/// in `confirm` on its connection; a kept subtree, or one the holder
+	/// derives itself, needs no review.
 	async fn resolve_product_subtree(
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		connection: &ProductConnection,
+		product: &ProductContext,
 		product_id: &ProductId,
-		review: Option<UserConfirmationReview>,
+		confirm: Option<(&ProductConnection, UserConfirmationReview)>,
 	) -> Result<[u8; 32], AuthorityError> {
 		let (current, revision) = self.grant_session(session)?;
 		if let Some(key) = self.grants.known_product_subtree(&current, product_id).await {
@@ -359,12 +337,11 @@ impl<H: AccountHolder> HostAccounts<H> {
 			return Ok(key);
 		}
 		let cx = super::remote_authority_context(cx);
-		let product = &connection.product;
 		let resolution = self
 			.holder
 			.product_subtree_public_key(local_invocation(&cx, session, product), product_id)
 			.await?;
-		if let Some(review) = review &&
+		if let Some((connection, review)) = confirm &&
 			matches!(resolution, SubtreeResolution::Ask(_))
 		{
 			self.confirm(&cx, session, connection, review).await?;
@@ -510,7 +487,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 			},
 			AccountGrant::AutoSigning(key) => {
 				let expected = self
-					.product_subtree_public_key(session, cx, product, &product.product_id)
+					.resolve_product_subtree(session, cx, product, &product.product_id, None)
 					.await?;
 				self.grants
 					.remember_auto_signing_key(

@@ -4,10 +4,10 @@ use core::time::Duration;
 use std::sync::Arc;
 
 use truapi::{
-	CallContext, CallError,
+	CallContext,
 	latest::{
 		HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasRequest,
-		HostAccountGetAliasResponse, HostAccountGetError, HostAccountListRingVrfKeysRequest,
+		HostAccountGetAliasResponse, HostAccountListRingVrfKeysRequest,
 		HostAccountListRingVrfKeysResponse, HostAccountRegisterRingVrfKeyRequest,
 		HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignRequest,
 		HostAccountRingVrfSignResponse, HostAccountSignVrfRequest, HostCreateTransactionResponse,
@@ -70,7 +70,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		&self,
 		cx: &CallContext,
 		account: ProductAccountId,
-	) -> Result<[u8; 32], CallError<HostAccountGetError>> {
+	) -> Result<[u8; 32], AuthorityError> {
 		self.accounts.get_account(cx, &self.connection, account).await
 	}
 
