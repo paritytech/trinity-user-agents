@@ -16,7 +16,7 @@ final class SettingsWireframe: SettingsWireframeProtocol {
     }
 
     func showBackupFlow(from view: (any SettingsViewProtocol)?) {
-        guard let backup = BackupViewFactory.createView() else {
+        guard let backup = BackupViewFactory.createView(serviceCoordinator: serviceCoordinator) else {
             return
         }
 
