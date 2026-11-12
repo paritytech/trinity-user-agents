@@ -388,7 +388,8 @@ pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
 }
 
 /// Whether `product_id` is a first-party product the host grants every
-/// [`truapi::latest::RemotePermission`] without prompting.
+/// [`truapi::latest::RemotePermission`] without prompting: a trusted label
+/// under a TLD the stack on `network_suffix` serves.
 ///
 /// Trusted products bypass recorded permissions and permission prompts. Device
 /// permissions still need the OS grant. Hosts mediating product network access

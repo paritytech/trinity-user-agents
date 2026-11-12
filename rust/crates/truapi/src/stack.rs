@@ -11,7 +11,7 @@ use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
-use crate::{ProductId, dotns_name::is_dns_label};
+use crate::{CallError, ProductId, dotns_name::is_dns_label};
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -50,10 +50,12 @@ const RESERVED_TLD: &str = "dot";
 /// The dotNS TLDs a stack on `stack_tld` serves names under: Polkadot's
 /// reserved TLD, then the stack's own when it is another one.
 ///
-/// This is the only list of TLDs the core accepts. Product ids, dotNS links
-/// and share hosts are all judged against it.
+/// The core has no other list of TLDs. Product ids, dotNS links and share
+/// hosts are all judged against this one.
 pub fn served_tlds(stack_tld: &str) -> impl Iterator<Item = &str> {
-	[RESERVED_TLD].into_iter().chain((stack_tld != RESERVED_TLD).then_some(stack_tld))
+	[RESERVED_TLD]
+		.into_iter()
+		.chain((stack_tld != RESERVED_TLD).then_some(stack_tld))
 }
 
 /// Whether `tld` is one of the [`served_tlds`] of a stack on `stack_tld`.
@@ -61,10 +63,36 @@ pub fn serves_tld(stack_tld: &str, tld: &str) -> bool {
 	served_tlds(stack_tld).any(|served| served == tld)
 }
 
-/// [`Stack::serves`] for a caller that holds only the stack's TLD, such as a
-/// host asking over FFI.
+/// Whether a stack on `stack_tld` runs `product_id`: a localhost development
+/// id, or a name under one of its [`served_tlds`].
 pub fn serves(stack_tld: &str, product_id: &ProductId) -> bool {
 	product_id.network_suffix().is_none_or(|tld| serves_tld(stack_tld, tld))
+}
+
+/// [`serves`] as a check: fails with the product and the stack's TLD.
+pub fn require_served(stack_tld: &str, product_id: &ProductId) -> Result<(), UnservedProduct> {
+	if serves(stack_tld, product_id) {
+		return Ok(());
+	}
+	Err(UnservedProduct { product_id: product_id.clone(), stack_tld: stack_tld.to_owned() })
+}
+
+/// A product under a TLD the stack does not serve.
+#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
+#[display("product {product_id} is not under a TLD the {stack_tld} stack serves")]
+pub struct UnservedProduct {
+	/// The product that was named.
+	pub product_id: ProductId,
+	/// The stack's own TLD.
+	pub stack_tld: String,
+}
+
+/// A request naming such a product is malformed, as one whose id does not
+/// parse is.
+impl<D> From<UnservedProduct> for CallError<D> {
+	fn from(error: UnservedProduct) -> Self {
+		CallError::MalformedFrame { reason: error.to_string() }
+	}
 }
 
 /// Whether a stack on `stack_tld` gives `product_id` every `RemotePermission`
@@ -229,10 +257,10 @@ impl Stack {
 		&self.tld
 	}
 
-	/// Whether this stack runs `product_id`: a localhost development id, or a
-	/// name under Polkadot's reserved TLD or the stack's own.
-	pub fn serves(&self, product_id: &ProductId) -> bool {
-		serves(&self.tld, product_id)
+	/// Fails unless this stack runs `product_id`: a localhost development id,
+	/// or a name under Polkadot's reserved TLD or the stack's own.
+	pub fn require_served(&self, product_id: &ProductId) -> Result<(), UnservedProduct> {
+		require_served(&self.tld, product_id)
 	}
 
 	/// The stack's chains.

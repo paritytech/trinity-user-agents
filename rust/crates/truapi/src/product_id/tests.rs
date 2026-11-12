@@ -116,10 +116,7 @@ fn trusted_remote_permissions_normalize_the_spellings_a_host_holds() {
 		);
 	}
 	for product_id in ["app.peopl.dot", "peopl", "notpeopl.dot", "localhost:3000", "", "   "] {
-		assert!(
-			!has_trusted_label(product_id),
-			"{product_id} must not be read as trusted"
-		);
+		assert!(!has_trusted_label(product_id), "{product_id} must not be read as trusted");
 	}
 }
 
@@ -134,10 +131,7 @@ fn every_trusted_remote_permission_label_is_a_product_identifier() {
 				product_id.parse::<ProductId>().is_ok(),
 				"{product_id} must be an accepted product identifier"
 			);
-			assert!(
-				has_trusted_label(&product_id),
-				"{product_id} must be recognized as trusted"
-			);
+			assert!(has_trusted_label(&product_id), "{product_id} must be recognized as trusted");
 		}
 	}
 }

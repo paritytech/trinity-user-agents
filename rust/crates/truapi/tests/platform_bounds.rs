@@ -5,6 +5,7 @@
 use truapi::platform::{
 	ExecutableKind, HostIdentity, HostInfo, PairingHostConfig, Platform, PlatformInfo,
 	ProductContext, ProductId, ProductIdError, ProductStorageKey, RuntimeConfigValidationError,
+	UnservedProduct,
 };
 
 fn _assert_platform_bounds<T: Platform + Send + Sync + 'static>() {}
@@ -146,10 +147,7 @@ fn a_host_runs_only_products_its_stack_serves() {
 	}
 	for unserved in ["example.com", "browse.testnet", "dotli.dotty"] {
 		let (error, product_id) = run(unserved).expect_err("the stack serves dot and paseo only");
-		assert_eq!(
-			error,
-			RuntimeConfigValidationError::UnservedProduct { product_id, tld: "paseo".to_string() }
-		);
+		assert_eq!(error, UnservedProduct { product_id, stack_tld: "paseo".to_string() }.into());
 	}
 }
 

@@ -100,7 +100,7 @@ use crate::{
 };
 
 /// Default product served by the pairing host's frame endpoint. Product ids
-/// must be a dotNS name (`.dot`, `.paseo` or `.testnet`) or a `localhost`
+/// must be a dotNS name under `.dot` or the stack's TLD, or a `localhost`
 /// identifier (host-spec product id).
 const DEFAULT_PRODUCT_ID: &str = "headless-playground.dot";
 /// Deeplink scheme advertised by the pairing host.

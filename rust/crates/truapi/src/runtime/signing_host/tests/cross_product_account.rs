@@ -250,10 +250,8 @@ fn a_refused_cross_product_signature_asks_again() {
 
 	for _ in 0..2 {
 		futures::executor::block_on(
-			runtime.sign_payload(
-				&CallContext::default(),
-				payload_request(account_id("dim2.dot", 0)),
-			),
+			runtime
+				.sign_payload(&CallContext::default(), payload_request(account_id("dim2.dot", 0))),
 		)
 		.expect_err("the user refused");
 	}

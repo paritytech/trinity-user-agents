@@ -454,13 +454,25 @@ builds a `ProductId`, so holding one means the id is normalized. Code that reads
 an id uses its methods, such as `bare_label` and `has_trusted_remote_permissions`,
 and `CoreStorageKey::product_manifest` keys its manifest cache entry.
 
-`DOTNS_TLDS` (`dot`, `paseo`, `testnet`) backs it: the TLDs dotNS deployments
-register product names under, one entry per network a host can be pointed at. A
-name ending in one of them is also what navigation resolves back into the host's
-own product surface, so it bypasses the outbound domain grant.
+Parsing checks syntax only: a TLD is any DNS label, because a wire frame or a
+stored record is decoded with no stack in hand. The stack decides which names
+are products. `Stack::require_served` accepts a localhost id and a name under the
+reserved `dot` TLD or the stack's own TLD, and nothing else. It is asked where
+a product enters the runtime:
 
-`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels across
-all networks in `DOTNS_TLDS`. These products bypass recorded permissions and
+- `ProductContext::served_by` builds the product a host asks the core to run,
+  for the wasm, native and CLI bridges alike.
+- Each call that names another product (an account owner, a proof context, a
+  storage owner) answers `MalformedFrame` for one the stack does not serve.
+- The signing role's wallet derives no key for one, so a paired host's request
+  is covered too.
+- `parse_navigate` reads a name as dotNS only under a served TLD and passes any
+  other host on as external. A dotNS name resolves back into the host's own
+  product surface, so it bypasses the outbound domain grant.
+- `product_share_hosts` lists one share host per served TLD.
+
+`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels. A label is
+trusted under a TLD the stack serves. These products bypass recorded permissions and
 permission prompts. Device permissions still need the OS grant. The runtime grants
 account access, username disclosure, signing with their own product accounts and
 AutoSigning without approval. Legacy-account signing still asks the user, except

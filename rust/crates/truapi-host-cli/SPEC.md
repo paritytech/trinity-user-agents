@@ -597,7 +597,7 @@ Fetches refuse redirects, time out after ten seconds and read at most 1 MiB.
 
 Accepted product identifiers are:
 
-- a name ending in a dotNS TLD (`.dot`, `.paseo` or `.testnet`);
+- a name ending in `.dot` or in the TLD of the stack the host runs;
 - `localhost`; or
 - a string beginning with `localhost:`.
 
@@ -1717,8 +1717,7 @@ compared because the Polkadot comparison below contacts the reference's nodes.
 A published copy that changes none of them makes no notice print (below).
 
 A descriptor that lacks one of the three roles, gives two of them the same
-genesis hash (the host routes each role by its genesis), has a `tld` the core
-does not serve (`dot`, `paseo`, `testnet`), has the id `polkadot`, or has no
+genesis hash (the host routes each role by its genesis), has the id `polkadot`, or has no
 `dub` service or no `dotns.popController` is an error for every command. The
 CLI's own username reads (`register-name`, `identity-check`, `attest`) go
 through that controller without looking it up on chain; the signing host's

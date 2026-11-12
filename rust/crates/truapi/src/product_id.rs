@@ -32,9 +32,8 @@ const LOCALHOST_PORT_PREFIX: &str = "localhost:";
 /// Only [`FromStr`] builds one, so two values are equal exactly when they name
 /// the same product executable. Encodes as the identifier string.
 ///
-/// Parsing checks syntax only and accepts any TLD that is a DNS label. Whether
-/// a host runs the product is its stack's decision, since only the stack knows
-/// which TLDs it serves.
+/// Parsing checks syntax only: any DNS label is a TLD. Which names a host
+/// runs as products is its stack's decision.
 ///
 /// Accepted forms are defined in host-spec C.7:
 /// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L109-L128>

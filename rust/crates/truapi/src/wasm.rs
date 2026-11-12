@@ -706,7 +706,7 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 		}) => JsValue::from_str(&format!(
 			"runtimeConfig.productId must be at most {limit} bytes, got {actual}"
 		)),
-		unserved @ RuntimeConfigValidationError::UnservedProduct { .. } => {
+		RuntimeConfigValidationError::UnservedProduct(unserved) => {
 			JsValue::from_str(&format!("runtimeConfig.productId: {unserved}"))
 		},
 	}
@@ -1246,7 +1246,8 @@ impl WasmPairingHostRuntime {
 }
 
 /// Whether `productId` is a first-party product the host grants every
-/// `RemotePermission` without prompting.
+/// `RemotePermission` without prompting: a trusted label under a TLD the stack
+/// on `networkSuffix` serves.
 ///
 /// Trusted products bypass recorded permissions and permission prompts. Device
 /// permissions still need the OS grant. Hosts mediating product network access

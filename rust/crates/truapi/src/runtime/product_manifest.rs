@@ -55,11 +55,9 @@ const APP_SUBNAME: &str = "app";
 /// The two are one answer because a caller cannot act on the difference.
 ///
 /// The TLD the identifier carries is discarded and the node re-derived under
-/// the TLD the network reports. A product id is minted on one network but
-/// [`DOTNS_TLDS`][tlds] spans them all, so `dim2.dot` reaching a `.paseo`
-/// deployment has to resolve there rather than hash a name no registry holds.
-///
-/// [tlds]: crate::platform::DOTNS_TLDS
+/// the TLD the network reports. A stack serves `dot` names beside its own, so
+/// `dim2.dot` reaching a `.paseo` deployment has to resolve there rather than
+/// hash a name no registry holds.
 #[instrument(skip_all, fields(runtime.method = "product_manifest.fetch"))]
 async fn fetch_root_manifest(
 	chain: &ChainRuntime,

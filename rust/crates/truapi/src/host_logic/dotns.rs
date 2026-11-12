@@ -131,12 +131,11 @@ impl ProductLink {
 			return None;
 		}
 		let hostname = parsed.host_str()?;
-		// Both readings are tried, so a name on a network whose TLD is the share
-		// suffix is not lost to the share reading.
-		let direct = normalize_host(hostname).parse::<ProductId>().ok();
-		let identifier = [ProductId::from_share_host(hostname, network_suffix), direct]
+		// The direct reading is tried too: on a network whose TLD is the share
+		// suffix, the share reading names a product one label shorter.
+		let identifier = ProductId::from_share_host(hostname, network_suffix)
 			.into_iter()
-			.flatten()
+			.chain(normalize_host(hostname).parse::<ProductId>())
 			.find(|identifier| identifier.matches_network(network_suffix))?;
 		let route = if parsed.path().is_empty() { "/" } else { parsed.path() };
 		let path = route.to_string() + &suffix(&parsed);

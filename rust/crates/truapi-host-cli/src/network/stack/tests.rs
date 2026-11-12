@@ -45,12 +45,14 @@ fn test_stack_from_descriptor() {
 #[test]
 fn test_stack_runs_on_its_own_tld() {
 	let staging = edit_stack(|descriptor| descriptor["tld"] = "staging".into());
-	let stack = read_stack(staging).expect("any label is a TLD").core_stack().expect("core stack");
-	let served = |product_id: &str| stack.serves(&truapi::platform::ProductId::for_test(product_id));
-	assert_eq!(
-		["app.staging", "app.dot", "app.paseo"].map(served),
-		[true, true, false]
-	);
+	let stack = read_stack(staging)
+		.expect("any label is a TLD")
+		.core_stack()
+		.expect("core stack");
+	let served = |product_id: &str| {
+		stack.require_served(&truapi::platform::ProductId::for_test(product_id)).is_ok()
+	};
+	assert_eq!(["app.staging", "app.dot", "app.paseo"].map(served), [true, true, false]);
 }
 
 /// The host routes each role by its genesis, so two roles on one genesis

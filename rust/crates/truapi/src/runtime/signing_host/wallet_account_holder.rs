@@ -32,7 +32,6 @@ use crate::{
 		},
 	},
 	platform::ProductId,
-	stack::serves,
 	runtime::{
 		RuntimeServices,
 		authority::{
@@ -47,6 +46,7 @@ use crate::{
 		},
 		vrf::{self, Vrf},
 	},
+	stack,
 };
 
 /// RFC-0022 domain for the responder's persistent SSO X25519 key.
@@ -339,15 +339,10 @@ impl WalletKeys {
 		derive_root_keypair_from_entropy(&self.entropy).map(|root| root.public.to_bytes())
 	}
 
-	/// Refuses a product the stack does not serve, so no key is derived for a
-	/// name that only parses, whichever caller or request named it.
+	/// Refuses a product the stack does not serve. Every product key is
+	/// derived behind it, so a paired host's request is checked as well.
 	fn require_served(&self, product_id: &ProductId) -> Result<(), AuthorityError> {
-		if serves(&self.network_suffix, product_id) {
-			return Ok(());
-		}
-		Err(AuthorityError::NotSupported {
-			reason: format!("product {product_id} is not under a TLD this host serves"),
-		})
+		Ok(stack::require_served(&self.network_suffix, product_id)?)
 	}
 
 	fn product_subtree_keypair(

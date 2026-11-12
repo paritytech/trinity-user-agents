@@ -128,7 +128,7 @@ fn a_stack_serves_its_own_tld_and_the_reserved_one() {
 	let chains =
 		StackChains { relay: None, asset_hub: None, people: [0xa1; 32], bulletin: [0xb2; 32] };
 	let fork = Stack::new("fork".into(), "fork".into(), chains, false).expect("fork starts");
-	let served = |product_id: &str| fork.serves(&ProductId::for_test(product_id));
+	let served = |product_id: &str| fork.require_served(&ProductId::for_test(product_id)).is_ok();
 
 	assert_eq!(
 		["app.fork", "app.dot", "app.paseo", "app.testnet", "localhost:3000"].map(served),
