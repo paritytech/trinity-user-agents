@@ -19,7 +19,7 @@ protocol API into a working host. It owns:
 
 ## Architecture
 
-Each product connection has its own `ProductRuntime`, `ProductRuntimeHost` and `ProductConnection`, which hold that product's adapters, permissions, action streams and its own chain connection, and a `ProductAccounts` that gives it the shared `HostAccounts` bound to that product, without the host-level operations. Everything else is shared per host: `HostAccounts` with its `AccountHolder`, the `HostSession`, and `RuntimeServices`. `host_logic` is a pure library both call, and the host's `Platform` implementation performs all I/O.
+Each product connection has its own `ProductRuntime`, `ProductRuntimeHost` and `ProductConnection`, which hold that product's adapters, permissions, action streams and its own chain connection, and a `ProductAccounts` that gives it the shared `HostAccounts` bound to that product. Everything else is shared per host: `HostAccounts` with its `AccountHolder`, the `HostSession`, and `RuntimeServices`. `host_logic` is a pure library both call, and the host's `Platform` implementation performs all I/O.
 
 ```text
 Per product connection
@@ -246,7 +246,7 @@ is live.
 
 ### The two roles
 
-- **`PairingHost`** (seedless): runs `HostAccounts<RemoteAccountHolder>` and owns logout and the paired session's grants. `SsoRequestService` owns pairing and login state, persisted session reload and remote signing-host liveness, and carries account operations to the phone over the encrypted SSO channel (People-chain statement store; v2 wire protocol with raw X25519 keys, HKDF-SHA256 and ChaCha20-Poly1305). The paired host confirms a signing, transaction, VRF or allocation request before forwarding it, and the phone confirms it again.
+- **`PairingHost`** (seedless): runs `HostAccounts<RemoteAccountHolder>`, which keeps the paired session's grants, and owns logout. `SsoRequestService` owns pairing and login state, persisted session reload and remote signing-host liveness, and carries account operations to the phone over the encrypted SSO channel (People-chain statement store; v2 wire protocol with raw X25519 keys, HKDF-SHA256 and ChaCha20-Poly1305). It reports session changes to `HostAccounts` through `PairedSessionOwner`, holding back its grant writes until each change and the cleanup it leaves are done. The paired host confirms a signing, transaction, VRF or allocation request before forwarding it, and the phone confirms it again.
 - **`SigningHost`** (wallet-local): runs `HostAccounts<WalletAccountHolder>`. `WalletAccountHolder` owns local entropy, derivation, grant issuance and renewal, and asks for account access before a product uses another product's ring-VRF keys; `SigningHost` routes activation, lock and product reset through `HostAccounts`. It signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
   from host-held secret material. Its public identity is the RFC-0028
@@ -264,7 +264,7 @@ is live.
   call.
 - `WalletAccountHolder`: owns the active wallet on a signing host. Only its `with_keys` reads the root entropy, after checking that the call's session is still the installed wallet activation, so a lock or a wallet switch fails signing, issuance and pairing answers that began under the previous wallet.
 - `ProductConsent`: one per runtime. It holds account-access decisions and review rules, and runs account-access prompts one at a time for local product calls and paired requests alike. A paired caller never skips a review. A signature with another product's account is confirmed once per kind and owning product for the rest of the product execution.
-- `HostGrantStore`: holds the keys and public subtrees issued to `HostAccounts`, per wallet on a signing host and per pairing on a paired host. A signing host keeps them in memory for one wallet activation. A product reset revokes that product's grants and fails grant work that began before it, without ending the wallet session or other products' calls.
+- `HostGrantStore`: holds the keys and public subtrees issued to `HostAccounts`, per wallet on a signing host and per pairing on a paired host. A signing host keeps them in memory for one wallet activation. A product reset revokes that product's grants and fails grant work that began before it, without ending the wallet session.
 
 `host_logic` stays pure: the orchestrators above call into it for codecs,
 session/SSO crypto, key derivation, and permission policy, while all I/O
