@@ -521,7 +521,11 @@ impl PairingHostRuntime {
 		product_id: &ProductId,
 		timeout_ms: Option<u32>,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
-		product_subtree_public_key(self.pairing_host.accounts(), product_id, timeout_ms).await
+		self.pairing_host
+			.accounts()
+			.product_subtree_public_key_within(product_id, subtree_timeout(timeout_ms))
+			.await
+			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
 
 	/// Clear the canonical paired session and all capability caches/storage
@@ -622,15 +626,9 @@ impl PairingHostRuntime {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		let account_access =
-			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
 		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
-			.await?;
-		if account_access {
-			self.pairing_host.accounts().consent().forget_allowed_once_for(product_id);
-		}
-		Ok(())
+			.await
 	}
 }
 
@@ -1397,15 +1395,9 @@ impl SigningHostRuntime {
 		request: PermissionAuthorizationRequest,
 		status: PermissionAuthorizationStatus,
 	) -> Result<(), v01::GenericError> {
-		let account_access =
-			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
 		self.product_admin(product_context(product_id))
 			.set_permission_authorization_status(request, status)
-			.await?;
-		if account_access {
-			self.signing_host.accounts().consent().forget_allowed_once_for(product_id);
-		}
-		Ok(())
+			.await
 	}
 
 	/// Registered providers available for an internal well-known-ring feature.
@@ -1952,20 +1944,6 @@ impl CoreAdmin for HostAdmin {
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
 	}
-}
-
-/// Shared body of the two entry points that resolve a product subtree: the
-/// `CoreAdmin` method native hosts call and the pairing-host runtime method the
-/// wasm bridge wraps.
-async fn product_subtree_public_key<H: AccountHolder>(
-	accounts: &HostAccounts<H>,
-	product_id: &ProductId,
-	timeout_ms: Option<u32>,
-) -> Result<Option<[u8; 32]>, v01::GenericError> {
-	accounts
-		.product_subtree_public_key_within(product_id, subtree_timeout(timeout_ms))
-		.await
-		.map_err(|error| v01::GenericError { reason: error.to_string() })
 }
 
 /// How long a subtree lookup waits, `timeout_ms` or the default authority timeout.
