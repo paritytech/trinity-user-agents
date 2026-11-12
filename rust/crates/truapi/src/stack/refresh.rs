@@ -32,6 +32,11 @@ const MAX_DESCRIPTOR_BYTES: u32 = 1024 * 1024;
 /// How long the host has to answer a fetch before it counts as unreachable.
 const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How long a record's store has to finish before it counts as failed. A
+/// store that never finished would hold the loop, and no later fetch could
+/// start.
+const STORE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// What a host does for the stack the core runs: fetch its descriptor, and
 /// show what the core reports about it.
 #[async_trait::async_trait]
@@ -209,9 +214,14 @@ impl Shared {
 			(source.stack_id(), source.fetched(served, self.now()))
 		};
 		let Some(record) = record else { return };
-		match self.records.write_stack_record(&stack_id, record).await {
+		let write = self.records.write_stack_record(&stack_id, record);
+		let stored = match select(write, self.timer.sleep(STORE_TIMEOUT)).await {
+			Either::Left((stored, _)) => stored.map_err(|error| error.reason),
+			Either::Right(_) => Err(format!("not stored within {}s", STORE_TIMEOUT.as_secs())),
+		};
+		match stored {
 			Ok(()) => self.source().record_stored(),
-			Err(error) => tracing::warn!("stack descriptor could not be stored: {error}"),
+			Err(reason) => tracing::warn!("stack descriptor could not be stored: {reason}"),
 		}
 	}
 }
