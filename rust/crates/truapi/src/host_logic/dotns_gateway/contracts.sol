@@ -90,6 +90,8 @@ interface DotnsRegistry {
 	function recordExists(bytes32 node) external view returns (bool);
 	/// Returns the resolver of a node, or zero when the node does not resolve.
 	function resolver(bytes32 node) external view returns (address);
+	/// Returns the owner of a node.
+	function owner(bytes32 node) external view returns (address);
 }
 
 /// Implements `IDotnsContentResolver` interface with content hash, text
@@ -99,4 +101,6 @@ interface DotnsRegistry {
 interface ContentResolver {
 	/// Returns a text record for a node.
 	function text(bytes32 node, string key) external view returns (string);
+	/// Sets a text record for a node.
+	function setText(bytes32 node, string key, string value) external;
 }
