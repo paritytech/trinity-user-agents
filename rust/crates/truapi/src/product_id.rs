@@ -4,22 +4,17 @@ use core::str::FromStr;
 
 use parity_scale_codec::{Decode, Encode};
 
-use crate::{
-	CallError,
-	dotns_name::{DOTNS_TLDS, has_dotns_tld, is_dns_label},
-};
+use crate::{CallError, dotns_name::is_dns_label};
 
 /// Largest accepted product identifier, in bytes. Manifest lookups are cached
 /// per id and never evicted, so this keeps each cache entry small. Matches the
 /// cap on chat identifiers.
 pub const PRODUCT_ID_MAX_BYTES: usize = 256;
 
-/// Trusted product labels across every network in [`DOTNS_TLDS`].
+/// Trusted product labels, under whichever TLD the host's stack serves.
 ///
 /// These products bypass recorded permissions and permission prompts. Device
 /// permissions still need the OS grant.
-///
-/// [`DOTNS_TLDS`]: crate::dotns_name::DOTNS_TLDS
 pub const REMOTE_PERMISSION_TRUSTED_LABELS: &[&str] = &["peopl", GAME_PRODUCT_LABEL, "stash"];
 
 /// The bare label of the game product, Jollity, on every network.
@@ -36,6 +31,9 @@ const LOCALHOST_PORT_PREFIX: &str = "localhost:";
 ///
 /// Only [`FromStr`] builds one, so two values are equal exactly when they name
 /// the same product executable. Encodes as the identifier string.
+///
+/// Parsing checks syntax only: any DNS label is a TLD. Which names a host
+/// runs as products is its stack's decision.
 ///
 /// Accepted forms are defined in host-spec C.7:
 /// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L109-L128>
@@ -103,22 +101,21 @@ impl FromStr for ProductId {
 		}
 		// `localhost` is reserved as a label too, so a published
 		// `localhost.<tld>` cannot pass for a development id.
-		let reserves_localhost = normalized
-			.rsplit_once('.')
-			.is_some_and(|(label, _tld)| label == LOCALHOST_PRODUCT_LABEL);
-		if has_dotns_tld(&normalized) && !reserves_localhost {
-			Ok(Self(normalized))
-		} else {
-			Err(ProductIdError::Invalid { input: product_id.to_string() })
+		match normalized.rsplit_once('.') {
+			Some((name, _tld)) if name != LOCALHOST_PRODUCT_LABEL => Ok(Self(normalized)),
+			_ => Err(ProductIdError::Invalid { input: product_id.to_string() }),
 		}
 	}
 }
 
 impl ProductId {
 	/// Construct a dotNS identity from its full name and explicit network suffix.
+	///
+	/// `network_suffix` is one TLD, so a dotted suffix is refused rather than
+	/// read as more of the name.
 	pub fn from_name(name: &str, network_suffix: &str) -> Result<Self, ProductIdError> {
 		let input = format!("{name}.{network_suffix}");
-		if !DOTNS_TLDS.contains(&network_suffix) {
+		if !is_dns_label(network_suffix) {
 			return Err(ProductIdError::Invalid { input });
 		}
 		input.parse()
@@ -168,10 +165,7 @@ impl ProductId {
 	/// Everything before the TLD: `app.dim2` for `app.dim2.dot`. `None` for a
 	/// localhost identifier.
 	pub fn dotns_name(&self) -> Option<&str> {
-		if !has_dotns_tld(&self.0) {
-			return None;
-		}
-		self.0.rsplit_once('.').map(|(label, _tld)| label)
+		self.0.rsplit_once('.').map(|(name, _tld)| name)
 	}
 
 	/// Whether this dotNS identity belongs to the explicitly configured network.
@@ -189,19 +183,13 @@ impl ProductId {
 	/// Stored decisions don't change this.
 	///
 	/// Matches the whole label: `peopl.dot` and `peopl.paseo` are trusted,
-	/// `app.peopl.dot` and localhost ids are not. The id also needs a dotNS TLD,
-	/// so a bare `peopl` never qualifies.
+	/// `app.peopl.dot` and localhost ids are not. The TLD is not judged here,
+	/// so ask only about a product the host's stack serves.
 	///
 	/// [`RemotePermission`]: truapi::latest::RemotePermission
 	pub fn has_trusted_remote_permissions(&self) -> bool {
 		self.dotns_name()
 			.is_some_and(|label| REMOTE_PERMISSION_TRUSTED_LABELS.contains(&label))
-	}
-
-	/// [`has_trusted_remote_permissions`](Self::has_trusted_remote_permissions)
-	/// for an id in any spelling. An id that does not parse is not trusted.
-	pub fn normalizes_to_trusted_remote_permissions(product_id: &str) -> bool {
-		product_id.parse::<Self>().is_ok_and(|id| id.has_trusted_remote_permissions())
 	}
 
 	/// Whether this is the game product, Jollity, on any network. `app.dim2.dot`
@@ -283,15 +271,18 @@ mod tests;
 #[cfg(feature = "runtime")]
 mod runtime {
 	use super::{ProductId, ProductIdError};
-	use crate::{host_logic::dotns::PRODUCT_SHARE_SUFFIX, platform::ExecutableKind};
+	use crate::{
+		host_logic::dotns::PRODUCT_SHARE_SUFFIX, platform::ExecutableKind, stack::serves_tld,
+	};
 
 	impl ProductId {
-		/// Parse only a supported share host, without a URL or network lookup.
-		pub fn from_share_host(input: &str) -> Option<Self> {
+		/// Parse only a share host of a TLD a stack on `network_suffix` serves,
+		/// without a URL or network lookup.
+		pub fn from_share_host(input: &str, network_suffix: &str) -> Option<Self> {
 			let hostname = crate::dotns_name::normalize_host(input);
 			let identifier = hostname.strip_suffix(PRODUCT_SHARE_SUFFIX)?.parse::<Self>().ok()?;
-			identifier.network_suffix()?;
-			Some(identifier)
+			let tld = identifier.network_suffix()?;
+			serves_tld(network_suffix, tld).then_some(identifier)
 		}
 
 		/// The public share host on this identity's network, excluding local development.
@@ -325,13 +316,21 @@ mod runtime {
 		use super::*;
 
 		#[test]
-		fn share_hosts_require_supported_dotns_identities() {
-			assert_eq!(
-				ProductId::from_share_host("BROWSE.TESTNET.LI"),
-				Some(ProductId::for_test("browse.testnet"))
-			);
-			for input in ["browse.test.li", "browse.dot", "https://browse.dot.li", "localhost.li"] {
-				assert_eq!(ProductId::from_share_host(input), None, "{input}");
+		fn share_hosts_require_a_tld_the_stack_serves() {
+			for (input, expected) in [
+				("BROWSE.TESTNET.LI", Some("browse.testnet")),
+				("browse.dot.li", Some("browse.dot")),
+				("browse.paseo.li", None),
+				("browse.test.li", None),
+				("browse.dot", None),
+				("https://browse.dot.li", None),
+				("localhost.li", None),
+			] {
+				assert_eq!(
+					ProductId::from_share_host(input, "testnet"),
+					expected.map(ProductId::for_test),
+					"{input}"
+				);
 			}
 		}
 

@@ -76,7 +76,7 @@ fn a_product_id_the_core_would_refuse_is_refused_here() {
 	// `localhost.dot` is reserved so a published name can never be read
 	// as the development wildcard.
 	for input in [
-		"localhost:3000?product_id=example.com",
+		"localhost:3000?product_id=example",
 		"localhost:3000?product_id=localhost.dot",
 		"localhost:3000?product_id=",
 	] {

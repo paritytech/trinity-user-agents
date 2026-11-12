@@ -556,3 +556,47 @@ fn a_missing_database_directory_fails_runtime_creation() {
 
 	assert!(matches!(result, Err(NativeRuntimeConfigError::DatabaseUnavailable { .. })));
 }
+
+/// A host opens an execution only for a product its stack serves, so a name
+/// under another network's TLD gets no runtime.
+#[test]
+fn an_execution_opens_only_for_a_product_the_stack_serves() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let mut config = native_host_runtime_config();
+	config.local_session_secret = None;
+	config.local_session_lite_username = None;
+	let host = NativeTrUApiHostRuntime::with_runtime_config(callbacks.clone(), config)
+		.expect("host runtime config should be valid");
+	let open = |product_id: &str| {
+		host.open_product_execution(
+			callbacks.clone(),
+			None,
+			None,
+			native_execution_config(product_id, ExecutableKind::App),
+		)
+		.map(|_| ())
+	};
+
+	assert!(open("myapp.dot").is_ok());
+	assert!(matches!(open("myapp.elsewhere"), Err(NativeRuntimeConfigError::Invalid { .. })));
+}
+
+/// A worker reference for a product the stack does not serve is dropped: the
+/// worker could never open, so the host would be asked to start it for good.
+#[test]
+fn a_worker_reference_for_an_unserved_product_starts_nothing() {
+	let callbacks = Arc::new(EventCallbacks::new());
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		callbacks.clone(),
+		native_host_runtime_config(),
+	)
+	.expect("host runtime config should be valid");
+
+	host.acquire_worker(ProductId::for_test("shared.elsewhere"));
+	host.acquire_worker(ProductId::for_test("shared.dot"));
+
+	assert_eq!(
+		*callbacks.worker_demand.lock().expect("worker demand mutex poisoned"),
+		vec![(ProductId::for_test("shared.dot"), crate::WorkerTransition::Start)]
+	);
+}

@@ -1,5 +1,5 @@
 use super::*;
-use crate::dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN};
+use crate::dotns_name::MAX_DNS_LABEL_LEN;
 
 #[test]
 fn named_products_preserve_their_full_namespace() {
@@ -17,13 +17,21 @@ fn named_products_preserve_their_full_namespace() {
 }
 
 #[test]
-fn named_products_require_a_supported_network_suffix() {
-	for suffix in ["", "com", "test", "dot.li", "other.dot"] {
+fn named_products_take_one_label_as_the_network_suffix() {
+	// A dotted suffix would move labels of the name into the network.
+	for suffix in ["", "dot.li", "other.dot", "DOT", "-dot"] {
 		assert!(ProductId::from_name("browse", suffix).is_err(), "{suffix}");
 	}
+	assert_eq!(ProductId::from_name("browse", "fork"), Ok(ProductId::for_test("browse.fork")));
 	let localhost = ProductId::for_test("localhost:3000");
 	assert_eq!((localhost.dotns_name(), localhost.network_suffix()), (None, None));
 	assert!(!localhost.matches_network("dot"));
+}
+
+/// Whether `raw` parses to an id with a trusted label. The TLD is the
+/// stack's to judge, which the stack tests cover.
+fn has_trusted_label(raw: &str) -> bool {
+	raw.parse::<ProductId>().is_ok_and(|id| id.has_trusted_remote_permissions())
 }
 
 #[test]
@@ -38,7 +46,7 @@ fn trusted_remote_permission_labels_match_the_bare_product_label() {
 		"stash.dot",
 	] {
 		assert!(
-			ProductId::normalizes_to_trusted_remote_permissions(product_id),
+			has_trusted_label(product_id),
 			"{product_id} must hold remote permissions without a prompt"
 		);
 	}
@@ -46,10 +54,8 @@ fn trusted_remote_permission_labels_match_the_bare_product_label() {
 		"app.peopl.dot",
 		"sub.dim2.paseo",
 		"app.dim2.testnet",
-		"dim2.com",
 		"notdim2.dot",
 		"peopl",
-		"peopl.com",
 		"peoplx.dot",
 		"my-peopl.dot",
 		"localhost",
@@ -58,7 +64,7 @@ fn trusted_remote_permission_labels_match_the_bare_product_label() {
 		"dot",
 	] {
 		assert!(
-			!ProductId::normalizes_to_trusted_remote_permissions(product_id),
+			!has_trusted_label(product_id),
 			"{product_id} is a separate product and must prompt"
 		);
 	}
@@ -68,7 +74,7 @@ fn trusted_remote_permission_labels_match_the_bare_product_label() {
 fn a_published_product_cannot_take_the_localhost_label() {
 	// Hosts grant a development wildcard to a localhost product, so the
 	// label must not be reachable from dotNS.
-	for product_id in ["localhost.dot", "localhost.paseo", "LOCALHOST.DOT"] {
+	for product_id in ["localhost.dot", "localhost.paseo", "localhost.fork", "LOCALHOST.DOT"] {
 		assert!(
 			product_id.parse::<ProductId>().is_err(),
 			"{product_id} must not be a valid product identifier"
@@ -105,15 +111,12 @@ fn trusted_remote_permissions_normalize_the_spellings_a_host_holds() {
 		["peopl.dot", "PEOPL.DOT", "  peopl.dot  ", "dim2.paseo", " DIM2.TESTNET ", "stash.dot"]
 	{
 		assert!(
-			ProductId::normalizes_to_trusted_remote_permissions(product_id),
+			has_trusted_label(product_id),
 			"{product_id} is a first-party product in any accepted spelling"
 		);
 	}
 	for product_id in ["app.peopl.dot", "peopl", "notpeopl.dot", "localhost:3000", "", "   "] {
-		assert!(
-			!ProductId::normalizes_to_trusted_remote_permissions(product_id),
-			"{product_id} must not be read as trusted"
-		);
+		assert!(!has_trusted_label(product_id), "{product_id} must not be read as trusted");
 	}
 }
 
@@ -122,16 +125,13 @@ fn every_trusted_remote_permission_label_is_a_product_identifier() {
 	// A label that product-id validation rejects would never reach the
 	// permission engine, so the whitelist entry would be silently inert.
 	for label in REMOTE_PERMISSION_TRUSTED_LABELS {
-		for tld in DOTNS_TLDS {
+		for tld in ["dot", "paseo", "fork"] {
 			let product_id = format!("{label}.{tld}");
 			assert!(
 				product_id.parse::<ProductId>().is_ok(),
 				"{product_id} must be an accepted product identifier"
 			);
-			assert!(
-				ProductId::normalizes_to_trusted_remote_permissions(&product_id),
-				"{product_id} must be recognized as trusted"
-			);
+			assert!(has_trusted_label(&product_id), "{product_id} must be recognized as trusted");
 		}
 	}
 }
@@ -143,6 +143,18 @@ fn trusted_remote_permission_labels_are_bare_lowercase_labels() {
 	for label in REMOTE_PERMISSION_TRUSTED_LABELS {
 		assert!(!label.contains('.'), "{label} must not carry a TLD");
 		assert_eq!(*label, label.to_lowercase(), "{label} must be lowercase");
+	}
+}
+
+/// Parsing has no stack to ask, so it accepts every TLD dotNS could register
+/// and leaves the choice of TLDs to the stack that runs the product.
+#[test]
+fn any_dns_label_is_a_tld_and_a_name_needs_one() {
+	for id in ["browse.fork", "browse.com", "app.browse.x1"] {
+		assert!(id.parse::<ProductId>().is_ok(), "{id:?} is well formed");
+	}
+	for id in ["browse", "browse.", "browse.-x", "browse.my_tld"] {
+		assert!(id.parse::<ProductId>().is_err(), "{id:?} has no well-formed TLD");
 	}
 }
 
@@ -252,6 +264,6 @@ fn one_product_on_one_network_is_its_executables_under_one_tld() {
 fn decoding_normalizes_and_rejects_what_parsing_rejects() {
 	let frame = "DIM2.Dot".to_string().encode();
 	assert_eq!(ProductId::decode(&mut frame.as_slice()), Ok(ProductId::for_test("dim2.dot")));
-	let frame = "evil.com".to_string().encode();
+	let frame = "localhost.dot".to_string().encode();
 	assert!(ProductId::decode(&mut frame.as_slice()).is_err());
 }

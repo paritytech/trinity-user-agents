@@ -188,9 +188,9 @@ fn rejects_bare_and_malformed_commands() {
 		Err(CommandParseError::LogLevel(InvalidLogLevel { value: "noisy".to_string() }))
 	);
 	assert_eq!(
-		parse_command("/product example.com"),
+		parse_command("/product my_app.dot"),
 		Err(CommandParseError::Product(ProductIdError::Invalid {
-			input: "example.com".to_string()
+			input: "my_app.dot".to_string()
 		}))
 	);
 	assert_eq!(

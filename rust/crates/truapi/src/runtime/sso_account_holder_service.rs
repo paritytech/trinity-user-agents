@@ -60,6 +60,10 @@ impl SsoAccountHolderService {
 	}
 
 	/// Run the wallet's `operation` only once the user confirms the paired host's request.
+	///
+	/// A request whose review names a product the stack does not serve is
+	/// refused before the user is asked, since the wallet would derive no key
+	/// for it afterwards.
 	async fn confirmed<'a, T, F>(
 		&self,
 		invocation: AccountInvocation<'a>,
@@ -69,6 +73,9 @@ impl SsoAccountHolderService {
 	where
 		F: Future<Output = Result<T, AuthorityError>>,
 	{
+		for product_id in review.products() {
+			self.wallet.require_served(product_id)?;
+		}
 		self.consent
 			.review(invocation.call, invocation.caller.clone(), self.platform.as_ref(), review)
 			.await?;

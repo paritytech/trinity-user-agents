@@ -46,6 +46,7 @@ use crate::{
 		},
 		vrf::{self, Vrf},
 	},
+	stack,
 };
 
 /// RFC-0022 domain for the responder's persistent SSO X25519 key.
@@ -186,6 +187,12 @@ impl WalletAccountHolder {
 			lifecycle: Mutex::new(WalletState::default()),
 			session_state: SessionState::new(),
 		}
+	}
+
+	/// Refuses a product the stack does not serve, for a caller that has to
+	/// know before it asks the user anything.
+	pub fn require_served(&self, product_id: &ProductId) -> Result<(), AuthorityError> {
+		Ok(self.services.stack().require_served(product_id)?)
 	}
 
 	fn with_keys<T, E: From<AuthorityError>>(
@@ -338,10 +345,17 @@ impl WalletKeys {
 		derive_root_keypair_from_entropy(&self.entropy).map(|root| root.public.to_bytes())
 	}
 
+	/// Refuses a product the stack does not serve. Every derivation keyed by a
+	/// product id calls it first, so a paired host's request is checked as well.
+	fn require_served(&self, product_id: &ProductId) -> Result<(), AuthorityError> {
+		Ok(stack::require_served(&self.network_suffix, product_id)?)
+	}
+
 	fn product_subtree_keypair(
 		&self,
 		product_id: &ProductId,
 	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		self.require_served(product_id)?;
 		let root = derive_root_keypair_from_entropy(&self.entropy)?;
 		Ok(derive_product_subtree_keypair(&root, product_id)?)
 	}
@@ -353,6 +367,7 @@ impl WalletKeys {
 		&self,
 		account: &ProductAccountId,
 	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		self.require_served(&account.dot_ns_identifier)?;
 		let root = derive_root_keypair_from_entropy(&self.entropy)?;
 		Ok(derive_product_keypair(
 			&root,
@@ -384,12 +399,14 @@ impl WalletKeys {
 		&self,
 		handle: &ProductAccountId,
 	) -> Result<Zeroizing<[u8; 32]>, RingVrfError> {
+		self.require_served(&handle.dot_ns_identifier)?;
 		derive_ring_vrf_entropy(&self.entropy, &handle.dot_ns_identifier, &handle.derivation_index)
 			.map(Zeroizing::new)
 			.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })
 	}
 
 	fn ring_vrf_domain_entropy(&self, product_id: &ProductId) -> Result<[u8; 32], AuthorityError> {
+		self.require_served(product_id)?;
 		Ok(derive_ring_vrf_domain_entropy(&self.entropy, product_id)?)
 	}
 
@@ -410,6 +427,7 @@ impl WalletKeys {
 		product_id: &ProductId,
 		context: &[u8],
 	) -> Result<[u8; 32], AuthorityError> {
+		self.require_served(product_id)?;
 		derive_product_entropy(&self.entropy, product_id, context)
 			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
 	}
@@ -428,18 +446,23 @@ impl WalletKeys {
 	fn statement_allowance_key(
 		&self,
 		product_id: &ProductId,
-	) -> Result<schnorrkel::Keypair, ProductAccountError> {
-		derive_sr25519_hard_path(
+	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		self.require_served(product_id)?;
+		Ok(derive_sr25519_hard_path(
 			&self.entropy,
 			&["allowance", "statement-store", product_id.as_str()],
-		)
+		)?)
 	}
 
 	fn bulletin_allowance_key(
 		&self,
 		product_id: &ProductId,
-	) -> Result<schnorrkel::Keypair, ProductAccountError> {
-		derive_sr25519_hard_path(&self.entropy, &["allowance", "bulletin", product_id.as_str()])
+	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		self.require_served(product_id)?;
+		Ok(derive_sr25519_hard_path(
+			&self.entropy,
+			&["allowance", "bulletin", product_id.as_str()],
+		)?)
 	}
 
 	/// The network's RFC-0028 `peopl.<suffix>` statement identity with the SSO

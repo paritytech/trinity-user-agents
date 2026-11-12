@@ -107,22 +107,73 @@ fn a_stack_without_people_or_bulletin_is_refused() {
 	);
 }
 
-/// Products are named under the TLDs the core serves dotNS for. Until that
-/// list comes from the stack, a stack on any other TLD cannot host products.
+/// Product names end in the stack's TLD, so it has to be a label dotNS could
+/// register.
 #[test]
-fn a_tld_the_core_does_not_serve_is_refused() {
+fn a_tld_that_is_not_a_dns_label_is_refused() {
 	let chains =
 		StackChains { relay: None, asset_hub: None, people: [0xa1; 32], bulletin: [0xb2; 32] };
-	let tlds = ["kusama", "", ".paseo", "Paseo"];
+	let tlds = ["", ".paseo", "Paseo", "pa.seo", "-paseo"];
 
 	assert_eq!(
 		tlds.map(|tld| Stack::new("paseo".into(), tld.into(), chains.clone(), true)),
-		tlds.map(|tld| Err(StackError::UnsupportedTld { tld: tld.into() })),
+		tlds.map(|tld| Err(StackError::InvalidTld { tld: tld.into() })),
+	);
+}
+
+/// A fork with its own TLD runs products under it and under Polkadot's, and
+/// under no third TLD.
+#[test]
+fn a_stack_serves_its_own_tld_and_the_reserved_one() {
+	let chains =
+		StackChains { relay: None, asset_hub: None, people: [0xa1; 32], bulletin: [0xb2; 32] };
+	let fork = Stack::new("fork".into(), "fork".into(), chains, false).expect("fork starts");
+	let served = |product_id: &str| fork.require_served(&ProductId::for_test(product_id)).is_ok();
+
+	assert_eq!(
+		["app.fork", "app.dot", "app.paseo", "app.testnet", "localhost:3000"].map(served),
+		[true, true, false, false, true]
 	);
 	assert_eq!(
-		bundled(&test_descriptor("kusama", [0xa1; 32], [0xb2; 32], None), false),
-		Err(StackError::UnsupportedTld { tld: "kusama".to_string() })
+		bundled(&test_descriptor("fork", [0xa1; 32], [0xb2; 32], None), false)
+			.map(|stack| stack.tld().to_owned()),
+		Ok("fork".to_owned())
 	);
+}
+
+/// A trusted label skips every prompt, so it counts only under a TLD the
+/// stack serves: `peopl.com` parses, and must still prompt.
+#[test]
+fn a_trusted_label_is_trusted_only_under_a_served_tld() {
+	let trusted = |stack_tld, product_id| trusts(stack_tld, &ProductId::for_test(product_id));
+
+	assert_eq!(
+		[
+			trusted("paseo", "peopl.paseo"),
+			trusted("paseo", "peopl.dot"),
+			trusted("fork", "dim2.fork"),
+			trusted("paseo", "peopl.testnet"),
+			trusted("paseo", "peopl.com"),
+			trusted("paseo", "app.peopl.paseo"),
+		],
+		[true, true, true, false, false, false]
+	);
+}
+
+#[test]
+fn the_reserved_tld_is_served_once() {
+	assert_eq!(served_tlds("dot").collect::<Vec<_>>(), ["dot"]);
+	assert_eq!(served_tlds("paseo").collect::<Vec<_>>(), ["dot", "paseo"]);
+}
+
+/// A host passes the TLD over FFI as any string. One that is not a label
+/// serves nothing of its own, so an empty one does not yield a `.li` share
+/// host.
+#[test]
+fn a_malformed_stack_tld_serves_only_the_reserved_one() {
+	for malformed in ["", "PASEO", "pa.seo", ".paseo"] {
+		assert_eq!(served_tlds(malformed).collect::<Vec<_>>(), ["dot"], "{malformed:?}");
+	}
 }
 
 /// Polkadot's values, the `dot` TLD or a Polkadot genesis hash under any role,

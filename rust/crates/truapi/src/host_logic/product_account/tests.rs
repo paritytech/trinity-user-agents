@@ -124,18 +124,10 @@ fn wire_index_derivation_matches_the_mobile_vector() {
 }
 
 #[test]
-fn reserved_product_ids_cover_every_supported_network() {
-	let product_ids: Vec<ProductId> = crate::dotns_name::DOTNS_TLDS
-		.iter()
-		.map(|suffix| personhood_product_id(suffix))
-		.collect();
+fn the_personhood_product_id_is_under_the_network_suffix() {
 	assert_eq!(
-		product_ids,
-		[
-			ProductId::for_test("peopl.dot"),
-			ProductId::for_test("peopl.paseo"),
-			ProductId::for_test("peopl.testnet"),
-		]
+		["dot", "paseo", "fork"].map(personhood_product_id),
+		["peopl.dot", "peopl.paseo", "peopl.fork"].map(ProductId::for_test)
 	);
 }
 

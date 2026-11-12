@@ -284,6 +284,12 @@ impl From<RawPayloadError> for AuthorityError {
 	}
 }
 
+impl From<crate::stack::UnservedProduct> for AuthorityError {
+	fn from(error: crate::stack::UnservedProduct) -> Self {
+		Self::NotSupported { reason: error.to_string() }
+	}
+}
+
 impl From<AuthorityError> for RingVrfError {
 	fn from(err: AuthorityError) -> Self {
 		match err {

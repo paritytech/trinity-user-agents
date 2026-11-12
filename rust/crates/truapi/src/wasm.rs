@@ -485,7 +485,7 @@ fn missing_callback(name: &str) -> Function {
 
 fn runtime_config_from_js(value: &JsValue) -> Result<(PairingHostConfig, ProductContext), JsValue> {
 	let host_config = pairing_host_config_from_js(value)?;
-	let product = product_context_from_js(value)?;
+	let product = product_context_from_js(value, &host_config.stack)?;
 	Ok((host_config, product))
 }
 
@@ -642,7 +642,7 @@ fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 	.map_err(|error| JsValue::from_str(&format!("runtimeConfig.testStack: {error}")))
 }
 
-fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
+fn product_context_from_js(value: &JsValue, stack: &Stack) -> Result<ProductContext, JsValue> {
 	if value.is_null() || value.is_undefined() {
 		return Err(JsValue::from_str("product is required"));
 	}
@@ -660,10 +660,11 @@ fn product_context_from_js(value: &JsValue) -> Result<ProductContext, JsValue> {
 				)));
 			},
 		};
-	let product_id = raw_product_id
+	raw_product_id
 		.parse::<ProductId>()
-		.map_err(|error| runtime_config_validation_to_js(error.into()))?;
-	Ok(ProductContext::new_with_execution(product_id, execution_kind))
+		.map_err(RuntimeConfigValidationError::from)
+		.and_then(|product_id| ProductContext::served_by(stack, product_id, execution_kind))
+		.map_err(runtime_config_validation_to_js)
 }
 
 fn runtime_config_field_to_js(field: &str) -> &str {
@@ -705,6 +706,9 @@ fn runtime_config_validation_to_js(err: RuntimeConfigValidationError) -> JsValue
 		}) => JsValue::from_str(&format!(
 			"runtimeConfig.productId must be at most {limit} bytes, got {actual}"
 		)),
+		RuntimeConfigValidationError::UnservedProduct(unserved) => {
+			JsValue::from_str(&format!("runtimeConfig.productId: {unserved}"))
+		},
 	}
 }
 
@@ -1034,7 +1038,7 @@ impl WasmPairingHostRuntime {
 		product: JsValue,
 		core_callbacks: JsValue,
 	) -> Result<WasmProductRuntime, JsValue> {
-		let product = product_context_from_js(&product)?;
+		let product = product_context_from_js(&product, self.runtime.stack())?;
 		let channel = CoreChannel::from_js(&core_callbacks)?;
 		let debug_emit = get_optional_function(&core_callbacks, "debugEmit")?;
 		let channel_id = product.product_id.to_string();
@@ -1204,11 +1208,12 @@ impl WasmPairingHostRuntime {
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports `"Start"` to the host's `requestWorkerTransition`
 	/// callback. Pair every call with one `releaseWorker`. An id that is not a
-	/// product id is logged and dropped.
+	/// product id, or names a product the stack does not serve, is logged and
+	/// dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, raw_product_id: String) {
 		match raw_product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
+			Ok(product_id) => self.runtime.acquire_worker(&product_id),
 			Err(error) => {
 				tracing::warn!(%error, "worker reference for an id that is not a product id")
 			},
@@ -1242,7 +1247,8 @@ impl WasmPairingHostRuntime {
 }
 
 /// Whether `productId` is a first-party product the host grants every
-/// `RemotePermission` without prompting.
+/// `RemotePermission` without prompting: a trusted label under a TLD the stack
+/// on `networkSuffix` serves.
 ///
 /// Trusted products bypass recorded permissions and permission prompts. Device
 /// permissions still need the OS grant. Hosts mediating product network access
@@ -1251,8 +1257,13 @@ impl WasmPairingHostRuntime {
 /// Normalizes before matching, and answers `false` for an id that does not
 /// normalize, so an unknown spelling is never read as trusted.
 #[wasm_bindgen(js_name = hasTrustedRemotePermissions)]
-pub fn has_trusted_remote_permissions_for_wasm(raw_product_id: String) -> bool {
-	crate::platform::ProductId::normalizes_to_trusted_remote_permissions(&raw_product_id)
+pub fn has_trusted_remote_permissions_for_wasm(
+	raw_product_id: String,
+	network_suffix: String,
+) -> bool {
+	raw_product_id
+		.parse::<ProductId>()
+		.is_ok_and(|product_id| crate::stack::trusts(&network_suffix, &product_id))
 }
 
 /// Strictly decode a SCALE-encoded core-storage key for host storage policy.
@@ -1392,7 +1403,7 @@ impl WasmSigningHostRuntime {
 		product: JsValue,
 		core_callbacks: JsValue,
 	) -> Result<WasmProductRuntime, JsValue> {
-		let product = product_context_from_js(&product)?;
+		let product = product_context_from_js(&product, self.runtime.stack())?;
 		let channel = CoreChannel::from_js(&core_callbacks)?;
 		let sink = Arc::new(WasmFrameSink { emit_frame: SendWrapper::new(channel.emit_frame) });
 		let runtime = self.runtime.product_runtime(product, sink);
@@ -1502,11 +1513,12 @@ impl WasmSigningHostRuntime {
 	/// Take one reference on the product's worker for a modality holder. The
 	/// first one reports `"Start"` to the host's `requestWorkerTransition`
 	/// callback. Pair every call with one `releaseWorker`. An id that is not a
-	/// product id is logged and dropped.
+	/// product id, or names a product the stack does not serve, is logged and
+	/// dropped.
 	#[wasm_bindgen(js_name = acquireWorker)]
 	pub fn acquire_worker(&self, raw_product_id: String) {
 		match raw_product_id.parse::<ProductId>() {
-			Ok(product_id) => self.runtime.worker_ledger().acquire(&product_id),
+			Ok(product_id) => self.runtime.acquire_worker(&product_id),
 			Err(error) => {
 				tracing::warn!(%error, "worker reference for an id that is not a product id")
 			},

@@ -429,6 +429,21 @@ impl ProductConnection {
 		&self.product.product_id
 	}
 
+	/// Refuses a product a request names when the stack does not serve its
+	/// TLD. Handlers call it before any key, grant or manifest is looked up.
+	fn require_served<D>(&self, product_id: &ProductId) -> Result<(), CallError<D>> {
+		Ok(self.services.stack().require_served(product_id)?)
+	}
+
+	/// [`Self::require_served`] for a purse owner a request names. An owner
+	/// that is not a product passes.
+	fn require_served_owner<D>(&self, owner: &latest::NftPurseOwner) -> Result<(), CallError<D>> {
+		match owner {
+			latest::NftPurseOwner::Product(product_id) => self.require_served(product_id),
+			latest::NftPurseOwner::Root => Ok(()),
+		}
+	}
+
 	// Foreign reads must keep the authorized owner, not the calling product.
 	fn product_storage_key(&self, owner: &ProductId, key: String) -> String {
 		ProductStorageKey::new(owner.clone(), key).encode()

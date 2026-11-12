@@ -55,11 +55,9 @@ const APP_SUBNAME: &str = "app";
 /// The two are one answer because a caller cannot act on the difference.
 ///
 /// The TLD the identifier carries is discarded and the node re-derived under
-/// the TLD the network reports. A product id is minted on one network but
-/// [`DOTNS_TLDS`][tlds] spans them all, so `dim2.dot` reaching a `.paseo`
-/// deployment has to resolve there rather than hash a name no registry holds.
-///
-/// [tlds]: crate::platform::DOTNS_TLDS
+/// the TLD the network reports. A stack serves `dot` names beside its own, so
+/// `dim2.dot` reaching a `.paseo` deployment has to resolve there rather than
+/// hash a name no registry holds.
 #[instrument(skip_all, fields(runtime.method = "product_manifest.fetch"))]
 async fn fetch_root_manifest(
 	chain: &ChainRuntime,
@@ -289,6 +287,10 @@ pub enum ManifestSource {
 	/// The lookup ran past [`MANIFEST_RESOLUTION_CEILING`].
 	#[display("dotNS lookup timed out")]
 	TimedOut,
+	/// The product is under a TLD the stack does not serve, so nothing was
+	/// read for it.
+	#[display("not a product of this stack")]
+	Unserved,
 }
 
 /// Why a grant lookup refused, with what it judged by.
@@ -677,6 +679,11 @@ async fn root_manifest(
 	platform: &dyn Platform,
 	target: &ProductId,
 ) -> (Option<String>, ManifestSource) {
+	// The read below drops the id's TLD and is cached by bare label, so an
+	// unserved id would be answered with its namesake's manifest.
+	if services.stack().require_served(target).is_err() {
+		return (None, ManifestSource::Unserved);
+	}
 	let read = cached_dotns_json(platform, CoreStorageKey::product_manifest(target), || async {
 		let genesis_hash =
 			services.asset_hub_chain_genesis_hash().ok_or(ManifestSource::NoAssetHub)?;
@@ -716,6 +723,9 @@ pub async fn worker_manifest(
 	platform: &dyn Platform,
 	product_id: &ProductId,
 ) -> Result<Option<WorkerManifest>, String> {
+	if services.stack().require_served(product_id).is_err() {
+		return Ok(None);
+	}
 	let (json, _) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), || async {
 		let genesis_hash = asset_hub(services)?;
 		let (chain, product) = (services.chain.clone(), product_id.clone());
@@ -780,6 +790,9 @@ pub async fn publishes_app(
 	product_id: &ProductId,
 	ceiling: Duration,
 ) -> Option<bool> {
+	if services.stack().require_served(product_id).is_err() {
+		return Some(false);
+	}
 	let read = cached_dotns_json(platform, app_manifest_cache_key(product_id), || async {
 		fetch_app_manifest(&services.chain, asset_hub(services)?, product_id)
 			.await

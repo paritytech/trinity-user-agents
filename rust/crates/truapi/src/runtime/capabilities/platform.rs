@@ -127,7 +127,8 @@ impl System for ProductRuntimeHost {
 	) -> Result<HostNavigateToResponse, CallError<HostNavigateToError>> {
 		version(request)
 			.exec(|latest::HostNavigateToRequest { url }| async move {
-				let resolved = match parse_navigate(&url) {
+				let network_suffix = self.connection.services.stack().tld();
+				let resolved = match parse_navigate(&url, network_suffix) {
 					NavigateDecision::Reject { reason } => {
 						return Err(CallError::Domain(latest::HostNavigateToError::Unknown {
 							reason,
@@ -257,6 +258,9 @@ impl Permissions for ProductRuntimeHost {
 	) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
 		version(request)
 			.exec(|inner| async move {
+				if let latest::RemotePermission::NftPurseRead { owner } = &inner.permission {
+					self.connection.require_served_owner(owner)?;
+				}
 				let service = self.connection.permissions_service();
 				match service.check_or_prompt_remote(inner).await {
 					Ok(decision) => Ok(latest::RemotePermissionResponse {
@@ -289,6 +293,7 @@ impl LocalStorage for ProductRuntimeHost {
 					|| CallError::Domain(latest::HostLocalStorageReadError::AccessNotGranted);
 				let owner = match product {
 					Some(target) => {
+						self.connection.require_served(&target)?;
 						if !self
 							.connection
 							.holds_cross_product_scope(&target, Granted::Storage)
