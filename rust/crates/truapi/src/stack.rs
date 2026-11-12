@@ -1,6 +1,7 @@
 //! The Trinity stack a host runs, read from the signed descriptor its build
 //! bundles.
 //!
+//! The core takes all of its chain configuration from the stack.
 //! [`Stack::bundled`] checks the descriptor against the key in the stack's
 //! link. The [`Stack`] it returns holds the network, the dotNS TLD and each
 //! chain's genesis hash, and answers `get_chain_info`.

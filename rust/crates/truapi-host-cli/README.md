@@ -54,6 +54,7 @@ moves that one link.
 | `TRUAPI_HOST_VERSION` | Install this version instead of the current stable one. |
 | `TRUAPI_HOST_INSTALL_DIR` | Version store, default `$XDG_DATA_HOME/truapi-host`. |
 | `TRUAPI_HOST_BIN_DIR` | Directory the `PATH` symlink goes in, default `~/.local/bin`. |
+| `TRUAPI_HOST_PRESERVE_CARGO_INSTALL` | Leave a `cargo install` copy in place instead of removing it. |
 
 Product scripts (`--script`, `/script`) work from an installed binary: the
 archive ships a self-contained `runner.js` with the `@parity/truapi` client and
@@ -66,6 +67,25 @@ Product frames use a private, per-process WebSocket-over-Unix-domain-socket by
 default, so starting either host does not reserve a TCP port. Pass
 `--frame-listen 127.0.0.1:0` to expose an ordinary loopback WebSocket instead;
 this is required for browser clients, which cannot open filesystem sockets.
+
+### In GitHub Actions
+
+```yaml
+- uses: paritytech/trinity-user-agents/.github/actions/install-truapi-host@truapi-host-cli-v<version>
+- run: truapi-host --version
+```
+
+Every CLI release tags the action as `truapi-host-cli-v<version>`, and the
+action installs the CLI version of the commit it is checked out at, so that tag
+installs that release. On a branch it installs the version that branch's
+`Cargo.toml` names, which only exists once that version is published. Pass
+`version: latest` to install the current stable release instead, or any
+published version such as `version: 0.29.0`. The action works on the same
+platforms as the installer, puts `truapi-host` on `PATH` for the rest of the
+job, sets `TRUAPI_HOST_NO_UPDATE=1` so the binary does not update itself
+mid-job, and outputs the installed `version` and the binary's `path`. A remote
+`uses:` downloads the repository at that ref, about 25 MB, so a job with a
+large matrix pays that per job.
 
 ### Staying current
 
@@ -1126,9 +1146,9 @@ stack that lacks one of those roles, gives two of them one genesis hash, has a
 no `dotns.popController`, is unreachable or is past `expiresAt` is an error for
 every command. The CLI's own username reads go through that `popController` without
 looking it up on chain; the signing host's core still discovers its controller on
-chain. The product namespace (`HostChainSet.network` and the state directory) is the
-descriptor's `id` without a trailing `-fork`, except that the `polkadot-fork`
-namespace is its full `id`. Use a
+chain. `get_chain_info` reports the descriptor's `network`. The product
+namespace (the state directory) is the descriptor's `id` without a trailing
+`-fork`, except that the `polkadot-fork` namespace is its full `id`. Use a
 separate `--base-path` and a disposable identity for a local stack. The routing
 applies to every chain role the host serves, including the Bulletin node the CLI
 asks for preimages (`bitswap_v1_get`), so a local Bulletin node must expose that
