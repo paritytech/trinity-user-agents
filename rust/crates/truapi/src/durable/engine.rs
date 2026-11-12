@@ -22,9 +22,9 @@ use super::{
 	ownership::Ownership,
 };
 use crate::{
+	Spawner,
 	chain::{BlockBackend, ChainHeads, TxSubmitter, TxValidator},
 	store::{Db, DbError},
-	subscription::Spawner,
 	time::Timer,
 	wake::WakeSignal,
 };

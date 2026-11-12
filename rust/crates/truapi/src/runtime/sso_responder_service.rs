@@ -13,13 +13,17 @@
 
 mod replay;
 
+use crate::runtime::{
+	AccountHolder, SsoAccountHolderService, authority::AuthoritySession,
+	product_consent::ProductConsent, signing_host::WalletAccountHolder,
+};
 use std::{
-	collections::{HashSet, VecDeque},
-	sync::Arc,
+	collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
+	sync::{Arc, Mutex},
 	time::Instant,
 };
 
-use core::future::Future;
+use core::{future::Future, ops::ControlFlow, time::Duration};
 
 use futures::{
 	FutureExt, Stream, StreamExt,
@@ -48,19 +52,49 @@ use crate::{
 		x25519_seal::X25519PrivateKey,
 	},
 	runtime::{
-		authority::{AccountHolder, AuthoritySession},
+		authority::AuthorityError,
 		services::RuntimeServices,
-		signing_host::{SigningHost, SigningHostSsoService, WalletAccountHolder},
 		sso_remote::{fresh_statement_expiry, sso_message_id},
-		sso_service::{Dispatch, SsoWithdrawals},
-		statement_store_rpc,
+		sso_service::Dispatch,
+		statement_store_rpc::{self, StatementSubmitError},
 	},
+	time::{Backoff, retry},
 	unix_time::current_unix_secs as statement_current_unix_secs,
 };
-use replay::{ReplayExecution, SsoReplayLocks, SsoReplayScope, execute_once};
+use replay::{ReplayExecution, ReplayRequest, SsoReplayLocks, SsoReplayScope, execute_once};
 
 /// Upper bound on undecodable request ids acknowledged within one serve loop.
 const MAX_DECODE_FAILURE_REQUEST_IDS: usize = 1024;
+
+/// Resends under [`Resend::Briefly`], after 1, 2, 4 and 8 seconds: about 15
+/// seconds in all.
+const MAX_RESENDS: u32 = 4;
+
+/// Pauses between resends, growing to at most 8 seconds.
+#[cfg(not(test))]
+const RESEND_PAUSES: Backoff = Backoff::new(Duration::from_secs(1), Duration::from_secs(8));
+#[cfg(test)]
+const RESEND_PAUSES: Backoff = Backoff::new(Duration::from_millis(1), Duration::from_millis(8));
+
+/// How long to resend a statement while the People chain is unreachable.
+#[derive(Clone, Copy)]
+enum Resend {
+	/// Up to [`MAX_RESENDS`] times, when the caller can recover from losing it.
+	Briefly,
+	/// Until the store answers, for the answer to a request that already ran
+	/// and will not run again.
+	UntilAnswered,
+}
+
+impl Resend {
+	/// Whether the statement may be sent again after `sends` sends.
+	fn allows_another_after(self, sends: u32) -> bool {
+		match self {
+			Self::Briefly => sends <= MAX_RESENDS,
+			Self::UntilAnswered => true,
+		}
+	}
+}
 
 /// Bounded set of undecodable request ids acknowledged within one serve loop.
 struct DecodeFailureRequestIds {
@@ -97,6 +131,27 @@ pub enum ResponderExit {
 	PeerDisconnected,
 	/// The statement subscription ended without a disconnect message; retain the pairing and retry.
 	SubscriptionEnded,
+}
+
+/// Why [`crate::SigningHostRuntime::resume_pairing`] stopped serving.
+///
+/// Either way the peer is still paired.
+#[derive(Debug, derive_more::Display, derive_more::Error)]
+pub enum ResumePairingError {
+	/// The session could not be served at all: this signing host has no active
+	/// local session, or the session keys could not be derived. Serving again
+	/// fails the same way until the local session changes.
+	#[display("{reason}")]
+	CannotServe {
+		/// Human-readable failure reason.
+		reason: String,
+	},
+	/// Serving failed after it started. Serving again may succeed.
+	#[display("{reason}")]
+	Interrupted {
+		/// Human-readable failure reason.
+		reason: String,
+	},
 }
 
 /// Public key material identifying one pairing host's resumable SSO session.
@@ -161,6 +216,7 @@ pub trait DevicePairingObserver: Send + Sync {
 }
 
 struct EstablishedPairing {
+	wallet_session: AuthoritySession,
 	session: SsoSessionInfo,
 	replay_scope: SsoReplayScope,
 }
@@ -169,6 +225,15 @@ impl PairedSsoPeer {
 	/// Extract the public peer material carried by a pairing deeplink.
 	pub fn from_deeplink(deeplink: &str) -> Result<Self, PairingDeeplinkDecodeError> {
 		Ok(PairingProposal::from_deeplink(deeplink)?.peer)
+	}
+
+	/// The replay ledger scope for this peer's requests to `root_public_key`.
+	fn replay_scope(self, root_public_key: [u8; 32]) -> SsoReplayScope {
+		SsoReplayScope {
+			root_public_key,
+			peer_statement_account_id: self.statement_account_id,
+			peer_encryption_public_key: self.encryption_public_key,
+		}
 	}
 }
 
@@ -225,24 +290,76 @@ fn sanitize_pairing_metadata(value: String) -> Option<String> {
 }
 
 /// Incoming SSO for one signing host: pairing answers, served sessions and
-/// duplicate detection.
+/// duplicate detection, each peer answered by its own [`SsoAccountHolderService`].
 pub struct SsoResponderService {
 	services: Arc<RuntimeServices>,
 	wallet: Arc<WalletAccountHolder>,
-	signing_host: Arc<SigningHost>,
+	consent: Arc<ProductConsent>,
 	/// Serializes replay-ledger updates within each wallet and peer scope.
 	replay_locks: SsoReplayLocks,
+	unpublished_answers: UnpublishedAnswers,
+}
+
+/// Refused answers, published when their request is redelivered instead of
+/// running it again.
+///
+/// Holds the newest request per peer, the only one its channel can redeliver.
+/// In memory only.
+#[derive(Default)]
+struct UnpublishedAnswers {
+	by_peer: Mutex<HashMap<SsoReplayScope, (String, Vec<RemoteMessage>)>>,
+}
+
+impl UnpublishedAnswers {
+	/// Keep `answers` to `request_id`, replacing those kept for an older request.
+	fn keep(&self, scope: SsoReplayScope, request_id: &str, answers: Vec<RemoteMessage>) {
+		if answers.is_empty() {
+			return;
+		}
+		self.by_peer
+			.lock()
+			.expect("unpublished SSO answers mutex poisoned")
+			.insert(scope, (request_id.to_string(), answers));
+	}
+
+	/// Take the answers kept for `request_id`.
+	fn take(&self, scope: SsoReplayScope, request_id: &str) -> Vec<RemoteMessage> {
+		match self
+			.by_peer
+			.lock()
+			.expect("unpublished SSO answers mutex poisoned")
+			.entry(scope)
+		{
+			Entry::Occupied(kept) if kept.get().0 == request_id => kept.remove().1,
+			_ => Vec::new(),
+		}
+	}
 }
 
 impl SsoResponderService {
-	/// Answer peers of `signing_host` over the runtime's statement store.
-	pub fn new(services: Arc<RuntimeServices>, signing_host: Arc<SigningHost>) -> Arc<Self> {
+	/// Answer peers of `wallet` over the runtime's statement store, confirming their
+	/// requests through `consent`.
+	pub fn new(
+		services: Arc<RuntimeServices>,
+		wallet: Arc<WalletAccountHolder>,
+		consent: Arc<ProductConsent>,
+	) -> Arc<Self> {
 		Arc::new(Self {
 			services,
-			wallet: signing_host.wallet().clone(),
-			signing_host,
+			wallet,
+			consent,
 			replay_locks: SsoReplayLocks::default(),
+			unpublished_answers: UnpublishedAnswers::default(),
 		})
+	}
+
+	fn account_holder_service(&self, session: AuthoritySession) -> SsoAccountHolderService {
+		SsoAccountHolderService::new(
+			self.wallet.clone(),
+			self.consent.clone(),
+			self.services.platform.clone(),
+			session,
+		)
 	}
 
 	/// The wallet activation a pairing operation answers under.
@@ -256,7 +373,13 @@ impl SsoResponderService {
 	#[instrument(skip_all, fields(runtime.method = "sso_responder.respond_to_pairing"))]
 	pub async fn respond_to_pairing(&self, deeplink: &str) -> Result<ResponderExit, String> {
 		let established = self.establish_pairing_session(deeplink).await?;
-		serve_session(self, established.session, established.replay_scope).await
+		serve_session(
+			self,
+			established.session,
+			established.replay_scope,
+			established.wallet_session,
+		)
+		.await
 	}
 
 	/// Answer a pairing host's handshake without entering its long-lived serve loop.
@@ -278,10 +401,7 @@ impl SsoResponderService {
 			.wallet
 			.pairing_answer(&wallet_session, peer, device_enc_pub_key)
 			.map_err(|error| error.to_string())?;
-		self.services
-			.statement_store
-			.submit(statement, "sso-responder handshake")
-			.await?;
+		submit_handshake_answer(&self.services, &statement, "sso-responder handshake").await?;
 		self.wallet
 			.require_current_session(&wallet_session)
 			.map_err(|error| error.to_string())?;
@@ -292,32 +412,27 @@ impl SsoResponderService {
 		}
 
 		Ok(EstablishedPairing {
+			wallet_session: wallet_session.clone(),
 			session,
-			replay_scope: SsoReplayScope {
-				root_public_key: wallet_session.public_key,
-				peer_statement_account_id: peer.statement_account_id,
-				peer_encryption_public_key: peer.encryption_public_key,
-			},
+			replay_scope: peer.replay_scope(wallet_session.public_key),
 		})
 	}
 
 	/// Resume a previously paired SSO session from its persisted public peer keys.
-	pub async fn resume_pairing(&self, peer: PairedSsoPeer) -> Result<ResponderExit, String> {
-		let wallet_session = self.wallet_session()?;
+	pub async fn resume_pairing(
+		&self,
+		peer: PairedSsoPeer,
+	) -> Result<ResponderExit, ResumePairingError> {
+		let cannot_serve = |reason| ResumePairingError::CannotServe { reason };
+		let wallet_session = self.wallet_session().map_err(cannot_serve)?;
 		let session = self
 			.wallet
 			.sso_session(&wallet_session, peer)
-			.map_err(|error| error.to_string())?;
-		serve_session(
-			self,
-			session,
-			SsoReplayScope {
-				root_public_key: wallet_session.public_key,
-				peer_statement_account_id: peer.statement_account_id,
-				peer_encryption_public_key: peer.encryption_public_key,
-			},
-		)
-		.await
+			.map_err(|error| cannot_serve(error.to_string()))?;
+		let replay_scope = peer.replay_scope(wallet_session.public_key);
+		serve_session(self, session, replay_scope, wallet_session)
+			.await
+			.map_err(|reason| ResumePairingError::Interrupted { reason })
 	}
 
 	/// Notify a paired host that this signing host is ending their SSO session.
@@ -338,10 +453,7 @@ impl SsoResponderService {
 			vec![message],
 			fresh_statement_expiry(),
 		)?;
-		self.services
-			.statement_store
-			.submit_sso(statement, "sso-responder disconnect")
-			.await
+		publish(&self.services, &statement, "sso-responder disconnect", Resend::Briefly).await
 	}
 
 	/// Tell the pairing host that allowance allocation is under way, moving it off
@@ -364,9 +476,7 @@ impl SsoResponderService {
 			.map_err(|error| error.to_string())?;
 		let pending = v2::EncryptedResponse::Pending(v2::Status::AllowanceAllocation);
 		let statement = prepare_handshake_answer(&transport, peer, &pending)?;
-		self.services
-			.statement_store
-			.submit(statement, "sso-responder allowance allocation")
+		submit_handshake_answer(&self.services, &statement, "sso-responder allowance allocation")
 			.await?;
 		debug!("told pairing host that allowance allocation started");
 		Ok(AnnouncedPairing { transport, peer })
@@ -384,12 +494,25 @@ impl SsoResponderService {
 			announced.peer,
 			&v2::EncryptedResponse::Failed(reason),
 		)?;
-		self.services
-			.statement_store
-			.submit(statement, "sso-responder pairing failure")
+		submit_handshake_answer(&self.services, &statement, "sso-responder pairing failure")
 			.await?;
 		debug!("told pairing host that pairing failed");
 		Ok(())
+	}
+
+	/// Bind an external SSO transport to the wallet matching both of its keys.
+	pub fn open_service(
+		&self,
+		own_statement_account_id: [u8; 32],
+		own_encryption_public_key: [u8; 32],
+	) -> Result<SsoAccountHolderService, AuthorityError> {
+		let session = self.wallet.current_session().ok_or(AuthorityError::Disconnected)?;
+		self.wallet.require_sso_identity(
+			&session,
+			own_statement_account_id,
+			own_encryption_public_key,
+		)?;
+		Ok(self.account_holder_service(session))
 	}
 }
 
@@ -413,14 +536,28 @@ pub fn prepare_handshake_answer(
 	build_signed_statement(transport, topic, topic, handshake.encode(), fresh_statement_expiry())
 }
 
+/// Post a signed handshake answer, resending it briefly while the People
+/// chain is unreachable.
+async fn submit_handshake_answer(
+	services: &RuntimeServices,
+	statement: &[u8],
+	label: &'static str,
+) -> Result<(), String> {
+	resend_while_unreachable(label, Resend::Briefly, || {
+		services.statement_store.submit(statement, label)
+	})
+	.await
+}
+
 /// Serve inbound session statements until the session ends.
 #[instrument(skip_all, fields(runtime.method = "sso_responder.serve_session"))]
 async fn serve_session(
 	responder: &SsoResponderService,
 	session: SsoSessionInfo,
 	replay_scope: SsoReplayScope,
+	wallet_session: AuthoritySession,
 ) -> Result<ResponderExit, String> {
-	let service = SigningHostSsoService::new(responder.signing_host.clone());
+	let service = responder.account_holder_service(wallet_session);
 	let services = &responder.services;
 	let rpc_client = services
 		.statement_store
@@ -448,9 +585,13 @@ async fn serve_session(
 	);
 	// Boxed as a trait object so the hosts that await a session need not
 	// lay out this future or prove it `Send`.
-	serve_pages(pages, responder.signing_host.sso_withdrawals(), |incoming| {
-		serve_statement(responder, &service, session, replay_scope, incoming)
-	})
+	serve_pages(
+		pages,
+		|message| {
+			service.handle_control(message);
+		},
+		|incoming| serve_statement(responder, &service, session, replay_scope, incoming),
+	)
 	.boxed()
 	.await
 }
@@ -463,7 +604,7 @@ const MAX_QUEUED_REQUESTS: usize = 64;
 /// so a `Cancel` reaches the request it withdraws.
 async fn serve_pages<Fut>(
 	pages: impl Stream<Item = Result<Vec<IncomingSsoRequest>, String>>,
-	withdrawals: &SsoWithdrawals,
+	handle_control: impl Fn(&RemoteMessage),
 	mut serve: impl FnMut(IncomingSsoRequest) -> Fut,
 ) -> Result<ResponderExit, String>
 where
@@ -503,9 +644,9 @@ where
 					None => break,
 				};
 				for incoming in page {
-					if let Some(targets) = withdrawn_targets(&incoming) {
-						for target in targets {
-							withdrawals.withdraw(target);
+					if incoming.messages.iter().all(|message| message.withdrawn_request_id().is_some()) {
+						for message in &incoming.messages {
+							handle_control(message);
 						}
 						continue;
 					}
@@ -562,16 +703,14 @@ async fn read_statements(
 				if let Some(request_id) = error.request_id &&
 					decode_failure_request_ids.insert(request_id.clone())
 				{
-					let ack = build_signed_session_response_statement(
+					acknowledge_request(
+						services,
 						session,
 						request_id,
-						SsoResponseCode::DecodingFailed as u8,
-						fresh_statement_expiry(),
-					)?;
-					services
-						.statement_store
-						.submit_sso(ack, "sso-responder decode-failed ack")
-						.await?;
+						SsoResponseCode::DecodingFailed,
+						"sso-responder decode-failed ack",
+					)
+					.await?;
 				}
 				continue;
 			},
@@ -602,90 +741,106 @@ fn log_request_received(incoming: &IncomingSsoRequest) {
 	}
 }
 
-/// The requests a statement withdraws, when it carries nothing but `Cancel`s.
-fn withdrawn_targets(incoming: &IncomingSsoRequest) -> Option<Vec<&str>> {
-	incoming
-		.messages
-		.iter()
-		.map(|message| match &message.data {
-			RemoteMessageData::V1(v1::RemoteMessage::Cancel(withdrawal)) => {
-				Some(withdrawal.message_id.as_str())
-			},
-			_ => None,
-		})
-		.collect()
-}
-
 /// Serve one inbound request statement exactly once across redeliveries.
+///
+/// Fails without acking once `service`'s wallet activation is replaced, which
+/// leaves the request to the loop serving the new activation.
 async fn serve_statement(
 	responder: &SsoResponderService,
-	service: &SigningHostSsoService,
+	service: &SsoAccountHolderService,
 	session: &SsoSessionInfo,
 	replay_scope: SsoReplayScope,
 	incoming: IncomingSsoRequest,
 ) -> Result<Option<ResponderExit>, String> {
-	let request_id = incoming.request_id.clone();
-	let expires_at_unix_secs = incoming.expires_at_unix_secs;
-	let duplicate_exit = duplicate_request_exit(&incoming);
+	service.require_current_session().map_err(|error| error.to_string())?;
 	let services = &responder.services;
+	let request_id = incoming.request_id.clone();
+	let request =
+		ReplayRequest { id: &request_id, expires_at_unix_secs: incoming.expires_at_unix_secs };
+	let duplicate_exit = duplicate_request_exit(&incoming);
+	let mut unpublished = Vec::new();
 	let execution = execute_once(
 		services.platform.as_ref(),
 		&responder.replay_locks,
 		replay_scope,
-		&request_id,
-		expires_at_unix_secs,
+		request,
 		statement_current_unix_secs(),
-		|| serve_request(services, service, session, incoming),
+		acknowledge_request(
+			services,
+			session,
+			request_id.clone(),
+			SsoResponseCode::Success,
+			"sso-responder ack",
+		),
+		|| serve_request(services, service, session, incoming, &mut unpublished),
 	)
-	.await?;
-	Ok(match execution {
+	.await;
+	responder.unpublished_answers.keep(replay_scope, &request_id, unpublished);
+	Ok(match execution? {
 		ReplayExecution::Duplicate => {
-			acknowledge_request(services, session, &request_id).await?;
+			publish_kept_answers(responder, session, replay_scope, &request_id).await?;
 			duplicate_exit
 		},
 		ReplayExecution::Executed(exit) => exit,
 	})
 }
 
-/// Ack one inbound request statement and answer its batched messages.
+/// Publish the answers kept for `request_id` when it is delivered again,
+/// keeping those the People chain still refuses.
+async fn publish_kept_answers(
+	responder: &SsoResponderService,
+	session: &SsoSessionInfo,
+	replay_scope: SsoReplayScope,
+	request_id: &str,
+) -> Result<(), String> {
+	let mut refused = Vec::new();
+	let mut refusal = None;
+	for answer in responder.unpublished_answers.take(replay_scope, request_id) {
+		if let Err(reason) = publish_answer(&responder.services, session, &answer).await {
+			refused.push(answer);
+			refusal.get_or_insert(reason);
+		}
+	}
+	responder.unpublished_answers.keep(replay_scope, request_id, refused);
+	refusal.map_or(Ok(()), Err)
+}
+
+/// Answer the batched messages of one acked request statement.
+///
+/// An answer the People chain refuses is added to `unpublished` and the
+/// remaining messages are still answered, since the request will not run
+/// again. The first refusal is returned.
 async fn serve_request(
 	services: &RuntimeServices,
-	service: &SigningHostSsoService,
+	service: &SsoAccountHolderService,
 	session: &SsoSessionInfo,
 	incoming: IncomingSsoRequest,
+	unpublished: &mut Vec<RemoteMessage>,
 ) -> Result<Option<ResponderExit>, String> {
-	acknowledge_request(services, session, &incoming.request_id).await?;
-
+	let mut refusal = None;
 	for message in incoming.messages {
 		let request_name = message.name();
 		let responding_to = message.message_id.clone();
 		let started = Instant::now();
-		let (response, outcome) = match service.answer(message).await {
-			Dispatch::Response(answer) => (answer.message, answer.outcome),
-			Dispatch::Disconnected => {
-				debug!("pairing host disconnected the SSO session");
-				return Ok(Some(ResponderExit::PeerDisconnected));
-			},
-			Dispatch::NotARequest(name) => {
-				warn!(name, "peer sent a response variant as a request");
-				continue;
-			},
-			Dispatch::Withdraw(_) => continue,
-			Dispatch::Withdrawn => {
-				debug!(%responding_to, "pairing host withdrew the SSO request");
-				continue;
-			},
-		};
+		let (response, outcome) =
+			match service.answer(message).await.map_err(|error| error.to_string())? {
+				Dispatch::Response(answer) => (answer.message, answer.outcome),
+				Dispatch::Disconnected => {
+					debug!("pairing host disconnected the SSO session");
+					return Ok(Some(ResponderExit::PeerDisconnected));
+				},
+				Dispatch::NotARequest(name) => {
+					warn!(name, "peer sent a response variant as a request");
+					continue;
+				},
+				Dispatch::Withdraw(_) => continue,
+				Dispatch::Withdrawn => {
+					debug!(%responding_to, "pairing host withdrew the SSO request");
+					continue;
+				},
+			};
 		let response_message_id = response.message_id.clone();
-		let statement_request_id = format!("resp:{response_message_id}");
-		let statement = build_outgoing_request_statement(
-			session,
-			statement_request_id,
-			vec![response],
-			fresh_statement_expiry(),
-		)?;
-		let publish_result =
-			services.statement_store.submit_sso(statement, "sso-responder response").await;
+		let publish_result = publish_answer(services, session, &response).await;
 		let elapsed_ms = started.elapsed().as_millis();
 		match publish_result {
 			Ok(()) => {
@@ -737,25 +892,93 @@ async fn serve_request(
 					reason = %reason,
 					elapsed_ms = u64::try_from(elapsed_ms).unwrap_or(u64::MAX),
 				);
-				return Err(reason);
+				unpublished.push(response);
+				refusal.get_or_insert(reason);
 			},
 		}
 	}
-	Ok(None)
+	refusal.map_or(Ok(None), Err)
+}
+
+/// Publish `answer` on the session's request channel, sending it again until
+/// the People chain takes or refuses it.
+async fn publish_answer(
+	services: &RuntimeServices,
+	session: &SsoSessionInfo,
+	answer: &RemoteMessage,
+) -> Result<(), String> {
+	let statement = build_outgoing_request_statement(
+		session,
+		format!("resp:{}", answer.message_id),
+		vec![answer.clone()],
+		fresh_statement_expiry(),
+	)?;
+	publish(services, &statement, "sso-responder response", Resend::UntilAnswered).await
 }
 
 async fn acknowledge_request(
 	services: &RuntimeServices,
 	session: &SsoSessionInfo,
-	request_id: &str,
+	request_id: String,
+	code: SsoResponseCode,
+	label: &'static str,
 ) -> Result<(), String> {
 	let ack = build_signed_session_response_statement(
 		session,
-		request_id.to_string(),
-		SsoResponseCode::Success as u8,
+		request_id,
+		code as u8,
 		fresh_statement_expiry(),
 	)?;
-	services.statement_store.submit_sso(ack, "sso-responder ack").await
+	publish(services, &ack, label, Resend::Briefly).await
+}
+
+/// Publish a session statement, resending it as `resend` allows.
+async fn publish(
+	services: &RuntimeServices,
+	statement: &[u8],
+	label: &'static str,
+	resend: Resend,
+) -> Result<(), String> {
+	resend_while_unreachable(label, resend, || {
+		services.statement_store.submit_sso(statement, label)
+	})
+	.await
+}
+
+/// Run `submit`, and again after a pause while the People chain is
+/// unreachable, as long as `resend` allows. Any answer from the store is final.
+/// Resending is safe: the store answers `known` for a statement it holds.
+async fn resend_while_unreachable<SubmitFn, SubmitFuture>(
+	label: &'static str,
+	resend: Resend,
+	submit: SubmitFn,
+) -> Result<(), String>
+where
+	SubmitFn: Fn() -> SubmitFuture,
+	SubmitFuture: Future<Output = Result<(), StatementSubmitError>>,
+{
+	let mut pauses = RESEND_PAUSES;
+	let mut sends = 0;
+	retry(
+		|| {
+			sends += 1;
+			let can_resend = resend.allows_another_after(sends);
+			let submitted = submit();
+			async move {
+				match submitted.await {
+					Err(error) if can_resend && error.is_unreachable() => {
+						ControlFlow::Continue(error)
+					},
+					result => ControlFlow::Break(result.map_err(|error| error.to_string())),
+				}
+			}
+		},
+		|error| {
+			warn!(label, %error, "People chain unreachable; sending the statement again");
+			pauses.next_pause()
+		},
+	)
+	.await
 }
 
 fn duplicate_request_exit(incoming: &IncomingSsoRequest) -> Option<ResponderExit> {

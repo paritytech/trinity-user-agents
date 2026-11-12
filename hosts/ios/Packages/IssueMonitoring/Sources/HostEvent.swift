@@ -8,16 +8,35 @@ public enum HostEventValue: Sendable, Equatable {
     case boolean(Bool)
 }
 
-/// A native host lifecycle event: tags are indexed, extras are not.
+/// A native host event: tags are indexed, extras are not, and `fingerprint` is
+/// what the reporting backend groups on, so one name stays one group.
 public struct HostEvent: Sendable, Equatable {
     public let name: String
+    public let level: HostLogLevel
+    public let fingerprint: [String]
     public let tags: [String: String]
     public let extras: [String: HostEventValue]
+    public let counters: [String: Int]
 
-    public init(name: String, tags: [String: String], extras: [String: HostEventValue]) {
+    /// `fingerprint` is the key the backend groups on and defaults to the name
+    /// alone. An event passes its own when its grouping is finer than the name,
+    /// which a name derived from other fields cannot express. `counters` reaches
+    /// the backend as a structured context rather than as extras.
+    public init(
+        name: String,
+        level: HostLogLevel = .info,
+        fingerprint: [String]? = nil,
+        tags: [String: String],
+        extras: [String: HostEventValue],
+        counters: [String: Int] = [:]
+    ) {
+        let grouping = fingerprint ?? []
         self.name = name
+        self.level = level
+        self.fingerprint = grouping.isEmpty ? [name] : grouping
         self.tags = tags
         self.extras = extras
+        self.counters = counters
     }
 
     /// An event carrying the fields every host event shares; `tags` and `extras` add its own.
@@ -25,8 +44,11 @@ public struct HostEvent: Sendable, Equatable {
         name: String,
         origin: HostEventOrigin,
         monotonicMilliseconds: Int,
+        level: HostLogLevel = .info,
+        fingerprint: [String]? = nil,
         tags: [String: String] = [:],
-        extras: [String: HostEventValue] = [:]
+        extras: [String: HostEventValue] = [:],
+        counters: [String: Int] = [:]
     ) -> HostEvent {
         var sharedTags = tags
         sharedTags["host.app_variant"] = origin.appVariant
@@ -37,7 +59,14 @@ public struct HostEvent: Sendable, Equatable {
         sharedExtras["host.app_build"] = origin.appBuild.map(HostEventValue.integer)
         sharedExtras["event.monotonic_ms"] = .integer(monotonicMilliseconds)
 
-        return HostEvent(name: name, tags: sharedTags, extras: sharedExtras)
+        return HostEvent(
+            name: name,
+            level: level,
+            fingerprint: fingerprint,
+            tags: sharedTags,
+            extras: sharedExtras,
+            counters: counters
+        )
     }
 
     /// The event for the app process finishing launch.

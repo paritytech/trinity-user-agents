@@ -22,11 +22,11 @@ One binary, `truapi-host`:
 | `pairing-host` | Seedless host: serves product frames, emits pairing deeplinks, and can run product scripts. |
 | `signing-host` | Wallet-local host: owns signer identity, can run product scripts, decodes copied pairing QR images or accepts deeplinks, registers statement allowance on-chain, signs. |
 | `dev` | Run a local development product with the shared container loaded by a script tag. |
-| `identity-check` | Probe the root and the network's `uid.<tld>` identity account for a registered username (read from the dotNS contracts on Asset Hub). |
+| `identity-check` | Probe the root and the network's `peopl.<tld>` identity account for a registered username (read from the dotNS contracts on Asset Hub). |
 | `register-name` | Register a full-person username via `DotnsGateway.register_name` on Asset Hub, linked to a lite username or standalone with a chat key. |
 | `alloc-check` | Diagnose (or `--submit`) on-chain statement-store allowance: ring membership, chosen slot, and the `set_statement_store_account` extrinsic. On a full period it prints each occupied slot's age and which one would be replaced. |
 | `pgas-check` | Diagnose (or `--submit`) an Asset Hub PGAS allowance claim: ring membership on People, whether Asset Hub has imported that ring revision, the day's first unclaimed slot, and the `Pgas.claim_pgas` extrinsic. |
-| `attest` | Attest a given mnemonic's `uid.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
+| `attest` | Attest a given mnemonic's `peopl.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
 | `network-check` | Resolve the network (`--network` or `--stack`) and print it as JSON, without contacting a chain. |
 | `stack` | Trinity stack descriptors: `keygen`, `publish` a model to `.well-known/trinity-stack.json`, `verify` a link, URL or file, `bundle` the signed copy a host build ships, and print a pointer's `link` and QR code. The rules come from the [`trinity-stack`](../trinity-stack) crate. |
 
@@ -54,6 +54,7 @@ moves that one link.
 | `TRUAPI_HOST_VERSION` | Install this version instead of the current stable one. |
 | `TRUAPI_HOST_INSTALL_DIR` | Version store, default `$XDG_DATA_HOME/truapi-host`. |
 | `TRUAPI_HOST_BIN_DIR` | Directory the `PATH` symlink goes in, default `~/.local/bin`. |
+| `TRUAPI_HOST_PRESERVE_CARGO_INSTALL` | Leave a `cargo install` copy in place instead of removing it. |
 
 Product scripts (`--script`, `/script`) work from an installed binary: the
 archive ships a self-contained `runner.js` with the `@parity/truapi` client and
@@ -66,6 +67,25 @@ Product frames use a private, per-process WebSocket-over-Unix-domain-socket by
 default, so starting either host does not reserve a TCP port. Pass
 `--frame-listen 127.0.0.1:0` to expose an ordinary loopback WebSocket instead;
 this is required for browser clients, which cannot open filesystem sockets.
+
+### In GitHub Actions
+
+```yaml
+- uses: paritytech/trinity-user-agents/.github/actions/install-truapi-host@truapi-host-cli-v<version>
+- run: truapi-host --version
+```
+
+Every CLI release tags the action as `truapi-host-cli-v<version>`, and the
+action installs the CLI version of the commit it is checked out at, so that tag
+installs that release. On a branch it installs the version that branch's
+`Cargo.toml` names, which only exists once that version is published. Pass
+`version: latest` to install the current stable release instead, or any
+published version such as `version: 0.29.0`. The action works on the same
+platforms as the installer, puts `truapi-host` on `PATH` for the rest of the
+job, sets `TRUAPI_HOST_NO_UPDATE=1` so the binary does not update itself
+mid-job, and outputs the installed `version` and the binary's `path`. A remote
+`uses:` downloads the repository at that ref, about 25 MB, so a job with a
+large matrix pays that per job.
 
 ### Staying current
 
@@ -104,9 +124,8 @@ updates it. Nothing contacts GitHub.
 
 ### State directory
 
-Reserved identities derive under `uid.paseo` / `peopl.paseo` on
-`paseo-next-v2`, `uid.testnet` / `peopl.testnet` on `previewnet`, and
-`uid.dot` / `peopl.dot` on `pcf-devnet`.
+Reserved identities derive under `peopl.paseo` on `paseo-next-v2`,
+`peopl.testnet` on `previewnet`, and `peopl.dot` on `pcf-devnet`.
 Managed host state lives under `<base-path>/v2`, including accounts,
 sessions, pairings, core and product storage, and log
 preferences. The CLI appends `v2` to both the default base path and a path set
@@ -412,7 +431,7 @@ device saved for the target session. Reload browser dev pages to connect to the
 new runtime.
 
 `/session --mnemonic "<phrase>"` brings an already-onboarded account into the
-session catalog. The host derives its `uid.<tld>` identity, reads any existing
+session catalog. The host derives its `peopl.<tld>` identity, reads any existing
 full or Lite username from dotNS, falls back to the identity backend's assigned
 username records when no dotNS mirror exists, and confirms its People or
 LitePeople ring membership. This lookup is read-only and never registers a new
@@ -544,8 +563,12 @@ truapi-host signing-host --session alice.01 exec '/devices --remove 0x0123456789
 
 `exec` does not enable raw mode or emit terminal controls. Command results go
 to stdout, diagnostics go to stderr, and the process exits when the command
-finishes. Starting `signing-host` without `--script` or `exec` while either
-stdin or stdout is not a TTY is an invocation error unless `--serve` is used.
+finishes. `/pair` finishes when the paired host disconnects. Until then it
+restarts its responder after a failure instead of exiting, so stop it with
+Ctrl-C or SIGTERM. It exits with an error when the session cannot be served at
+all, for example without an active local session. Starting `signing-host` without `--script` or `exec` while
+either stdin or stdout is not a TTY is an invocation error unless `--serve` is
+used.
 The existing `--script` one-shot mode remains supported. Neither one-shot mode
 restores saved responders. Only a deeplink supplied for that run is answered,
 and a managed session still saves that pairing for a later interactive or
@@ -983,7 +1006,7 @@ The real statement store enforces per-account allowance. Before pairing, the
 signing host grants it on-chain exactly as a real client does: it proves its
 personhood ring membership with a bandersnatch ring-VRF and submits an unsigned
 General (v5) `Resources.set_statement_store_account` extrinsic for each account
-that submits statements — its RFC-0022 `uid.<tld>` identity account and the
+that submits statements — its RFC-0028 `peopl.<tld>` identity account and the
 pairing host's per-pairing device key. The shared native implementation lives in
 `truapi/src/runtime/statement_allowance/` (metadata-driven
 signed-extension encoding, ring fetch, slot scan, ring-VRF proof, extrinsic
@@ -1106,9 +1129,9 @@ stack that lacks one of those roles, gives two of them one genesis hash, has a
 no `dotns.popController`, is unreachable or is past `expiresAt` is an error for
 every command. The CLI's own username reads go through that `popController` without
 looking it up on chain; the signing host's core still discovers its controller on
-chain. The product namespace (`HostChainSet.network` and the state directory) is the
-descriptor's `id` without a trailing `-fork`, except that the `polkadot-fork`
-namespace is its full `id`. Use a
+chain. `get_chain_info` reports the descriptor's `network`. The product
+namespace (the state directory) is the descriptor's `id` without a trailing
+`-fork`, except that the `polkadot-fork` namespace is its full `id`. Use a
 separate `--base-path` and a disposable identity for a local stack. The routing
 applies to every chain role the host serves, including the Bulletin node the CLI
 asks for preimages (`bitswap_v1_get`), so a local Bulletin node must expose that
@@ -1122,7 +1145,7 @@ without contacting a chain, so a harness can check it before starting a session:
 
 `HOST_CLI_IDENTITY_BACKEND_TOKEN` supplies the identity backend's bearer token
 instead of the CLI minting one. For username registration, an injected token's
-subject must match the session's `uid.<tld>` candidate account; the
+subject must match the session's `peopl.<tld>` candidate account; the
 automatically minted token uses that identity. Both hosts also accept
 `--frame-listen <address>` to opt into a TCP product-frame WebSocket; without it,
 the CLI creates and cleans up a unique temporary Unix socket.

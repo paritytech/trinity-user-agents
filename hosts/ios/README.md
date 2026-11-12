@@ -20,7 +20,7 @@ If you experience problems with any product or service that was built on or depl
 
 </div>
 
-The app uses the in-tree TrUAPIHost SDK in this repository. A standalone host checkout requires a published SDK with `ProductId` support. Its version is pinned in `AppDependencies`, `Products`, `KeyDerivation`, and `Coinage`; update all four pins together.
+The app uses the in-tree TrUAPIHost SDK in this repository.
 
 ## Features
 
@@ -123,7 +123,10 @@ platform, OS version and TrUAPI host version used to correlate product diagnosti
 A page opened from a Pocket card tap or a Pocket link also gets `openedAtEpochMs` (the tap's wall-clock milliseconds) and
 `openSource` (`pocket_card` or `deeplink`); `host.webview.created` carries the session as its `host.session_id` attribute.
 Host events (`host.process.started`, `host.pocket.opened`, `host.webview.created`, `host.page.visible`) go to Sentry
-Logs as info-level structured logs with `tag` `host.telemetry`, not as error events, so they don't open issues.
+Logs as info-level structured logs with `tag` `host.telemetry`, not as error events, so they don't open issues. Issue
+reports (warning and error host events) stay Sentry events with their level, fingerprint and counters.
+
+With the Rust runtime enabled, the SSO coordinator binds its transport keys to one wallet activation and retains a separate account-holder service for each peer. Ordinary requests share one FIFO queue; cancellation reaches its peer's service immediately. Replies validate the same wallet activation before posting.
 
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time

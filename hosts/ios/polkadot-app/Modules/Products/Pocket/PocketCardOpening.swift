@@ -54,9 +54,9 @@ struct PocketCardOpening {
             ) else { return }
             recordOpened(tap.showing(sessionID: product.hostSessionID), reused: !builtPage)
 
-            let origin = wallet.viewControllers.first as? PocketCardOrigin
+            let origin = wallet.viewControllers.first as? PocketOrigin
             let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
-            PocketCardNavigation.show(screen, on: wallet, animated: wasOnScreen) {
+            PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {
                 product.surface.claim(screen)
             }
 

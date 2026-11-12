@@ -20,7 +20,7 @@ struct PocketCardMotion: Equatable {
     )
 
     static func of(cardAt index: Int, openAt openIndex: Int?, openOffset: CGSize, cleared: Bool) -> PocketCardMotion {
-        guard let openIndex else { return .resting }
+        guard let openIndex else { return cleared ? .shrunkAway : .resting }
 
         if index == openIndex {
             return PocketCardMotion(offset: openOffset, scale: 1, opacity: 1)

@@ -6,9 +6,7 @@ use std::{
 
 use super::*;
 use crate::{
-	host_internal::bulletin::preimage_key,
-	platform::HostInfo,
-	test_support::{StubPlatform, test_spawner},
+	Spawner, host_internal::bulletin::preimage_key, platform::HostInfo, test_support::StubPlatform,
 	time::ManualTimer,
 };
 
@@ -40,10 +38,8 @@ fn image_loader(platform: Arc<StubPlatform>, timer: Arc<ManualTimer>) -> ImageLo
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		[1; 32],
-		BULLETIN_GENESIS,
-		[3; 32],
-		test_spawner(),
+		crate::test_support::test_stack("paseo", [1; 32], BULLETIN_GENESIS, Some([3; 32])),
+		Spawner::for_test(),
 	);
 	ImageLoader::new(services, timer)
 }
@@ -168,5 +164,41 @@ fn a_cid_a_host_passes_is_checked_as_it_enters_the_core() {
 				reason: "the CID's hash is not blake2b-256".into()
 			})),
 		]
+	);
+}
+
+#[tokio::test]
+async fn cancelling_a_load_drops_its_in_flight_read() {
+	let loader = image_loader(Arc::default(), Arc::default());
+	let cid = image_cid();
+	let (cancelled, mut cancellation) = futures::channel::oneshot::channel::<()>();
+	let cancelled = Mutex::new(Some(cancelled));
+	let read = || async {
+		let _cancelled = cancelled.lock().unwrap().take().unwrap();
+		futures::future::pending::<Result<Option<Vec<u8>>, BitswapError>>().await
+	};
+	let mut load = Box::pin(loader.read_verified(&cid, read));
+
+	assert_eq!(futures::poll!(&mut load), Poll::Pending);
+	drop(load);
+	let cancellation = futures::poll!(&mut cancellation);
+	assert!(matches!(cancellation, Poll::Ready(Err(_))), "{cancellation:?}");
+}
+
+#[tokio::test]
+async fn an_image_cannot_misdeclare_its_format() {
+	let platform = Arc::new(StubPlatform {
+		rpc_method_responses: vec![("bitswap_v1_get", format!("\"0x{}\"", hex::encode(image())))],
+		..Default::default()
+	});
+
+	assert_eq!(
+		image_loader(platform, Arc::default())
+			.load(ImageReference::Bulletin {
+				cid: image_cid(),
+				declared_format: Some(ImageFormat::Jpeg),
+			})
+			.await,
+		Err(ImageError::Rejected { reason: "declared Jpeg, but the bytes are Png".into() })
 	);
 }
