@@ -219,12 +219,15 @@ Both host configs carry a `Stack`, the core's only chain configuration: the
 Relay, Asset Hub, People and Bulletin genesis hashes, the network
 `get_chain_info` reports, and the dotNS TLD.
 
-A native or browser shell passes the stack's pointer, the signed descriptor its
-build bundles, and whether the build allows Polkadot's reserved values. The core
-resolves the `Stack` with `StackRefresh::load`. A Rust host that resolves its
-chains itself, such as the CLI, uses `Stack::new`, and a test-host browser
-bundle passes `runtimeConfig.testStack`. The core does not refresh those two.
-Each constructor documents what it refuses.
+A native or browser shell puts three things in its runtime config: the stack's
+pointer, the signed descriptor its build bundles, and whether the build allows
+Polkadot's reserved values. The core resolves the `Stack` from them with
+`StackRefresh::load`.
+
+A Rust host that resolves its chains itself, such as the CLI, uses
+`Stack::new`, and a test-host browser bundle passes `runtimeConfig.testStack`.
+The core does not refresh a stack built either of those ways. Each constructor
+documents what it refuses.
 
 Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
@@ -237,9 +240,10 @@ does not check genesis hashes against the live chains.
 The core starts from the bundled descriptor or the last one it verified,
 whichever has the higher `sequence`. It never waits on the network to start.
 
-While it runs, the core fetches the published descriptor once its own is an
-hour old, and whenever the host asks. A sleeping device can stretch that hour,
-so a host calls `refresh_stack` when its app returns to the foreground.
+The core fetches the published descriptor once the host installs its
+callbacks, unless the last fetch was under an hour ago. After that it fetches
+once an hour, and whenever the host asks. A sleeping device can stretch that
+hour, so a host calls `refresh_stack` when its app returns to the foreground.
 
 `trinity-stack`'s `StackReader` decides whether to take a fetched descriptor:
 a failed fetch, a refused descriptor or a lower `sequence` keeps the current
@@ -256,14 +260,16 @@ Without the callbacks the core stays on the descriptor it started from.
 
 The host sends a `GET` without following redirects, stops reading at
 `max_bytes` (1 MiB), and fails the fetch for anything but `200` and `304`. The
-core waits 30 seconds for an answer.
+core waits 30 seconds for an answer, then counts the fetch as failed.
 
-`stack_changed` reports a `StackStatus` when a refresh starts and on every
-change, and `stack_status` returns the current one. Its fields say what the
-host shows and does, and are documented on the type. A newer descriptor that
-changes a genesis hash, the network or the TLD, or that restarts the chains,
-applies from the next start, so the host builds the runtime again. Any other
-change applies at once.
+`stack_changed` reports a `StackStatus` when the callbacks are installed and on
+every change, and `stack_status` returns the current one. The type documents
+each field.
+
+A newer descriptor that changes a genesis hash, the network, the TLD or the
+`generation` applies from the next start. The status then has
+`restart_required` set, and the host builds the runtime again. Any other change
+shows in the status at once.
 
 ### Core database
 
