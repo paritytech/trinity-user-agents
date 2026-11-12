@@ -163,6 +163,9 @@ impl AccountHolder for RemoteAccountHolder {
 		product_id: &'a ProductId,
 	) -> Result<SubtreeResolution<'a>, AuthorityError> {
 		let session = require_current_session(&self.service.session_state(), invocation.session)?;
+		if session.sso.is_none() {
+			return Err(AuthorityError::Disconnected);
+		}
 		let request = ProductSubtreeRequest { product_id: product_id.clone() };
 		Ok(SubtreeResolution::Ask(Box::pin(async move {
 			self.service

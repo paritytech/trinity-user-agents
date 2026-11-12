@@ -4536,6 +4536,28 @@ fn get_account_maps_subtree_disconnect_race_to_not_connected() {
 	));
 }
 
+/// A paired session without an SSO channel cannot reach the phone, so the
+/// product hears it is not connected and the user is never asked to share
+/// an account that could not be fetched.
+#[test]
+fn get_account_on_a_session_without_sso_is_not_connected_and_asks_nobody() {
+	let platform = Arc::new(StubPlatform::default());
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session_info());
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: account_id("myapp.dot", 0),
+	});
+
+	let err = futures::executor::block_on(host.get_account(&CallContext::default(), request))
+		.unwrap_err();
+
+	assert_eq!(
+		(err, platform.product_subtree_reviews.lock().unwrap().len()),
+		(CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::NotConnected)), 0)
+	);
+}
+
 /// An account that names no product is rejected when the request is decoded,
 /// so no handler ever sees it.
 #[test]
