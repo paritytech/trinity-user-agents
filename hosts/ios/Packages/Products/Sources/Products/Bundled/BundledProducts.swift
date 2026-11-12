@@ -77,8 +77,12 @@ public final class FileBundleReader: BundleReader {
         (try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []
     }
 
+    /// A regular file only, as the core expects: a directory is served by
+    /// its `index.html`, and an archive root that is a directory is not a
+    /// single-file archive.
     public func exists(path: String) -> Bool {
-        FileManager.default.fileExists(atPath: path)
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && !isDirectory.boolValue
     }
 
     public func readText(path: String) -> String? {
