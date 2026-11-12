@@ -18,6 +18,7 @@ protocol WalletViewModelProtocol: AnyObject, Observation.Observable {
     var openPocketCardOffset: CGSize { get set }
     var isPocketCleared: Bool { get set }
     var collectiblesPeek: CollectiblesPeek { get set }
+    var collectiblesPeekShift: CGFloat { get set }
     var balanceCardFrame: CGRect { get set }
     var collectiblesFrame: CGRect { get set }
 
@@ -42,6 +43,9 @@ class WalletViewModel: WalletViewModelProtocol {
     /// Whether the rest of the Pocket has cleared away for the open card.
     var isPocketCleared = false
     var collectiblesPeek: CollectiblesPeek = .resting
+    /// How far the Collectibles peek is drawn below its rest position, while it follows a bottom safe area
+    /// that UIKit moved in one layout pass.
+    var collectiblesPeekShift: CGFloat = 0
     /// Where the Balance card is in the window, for its screen to fly from. Read on demand, so moving it never
     /// redraws the Pocket.
     @ObservationIgnored var balanceCardFrame: CGRect = .zero

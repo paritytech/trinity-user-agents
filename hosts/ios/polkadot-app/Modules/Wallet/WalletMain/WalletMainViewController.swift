@@ -1,4 +1,5 @@
 import SwiftUI
+import PolkadotUI
 
 final class WalletMainViewController: UIHostingController<WalletView>, RootScreen, NavigationDependable,
     NavigationBarHiding {
@@ -8,6 +9,7 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
     var hidesNavigationBar: Bool { true }
 
     private var assetDetailsScene: AssetDetailsScene
+    private var bottomSafeAreaInset: CGFloat?
 
     init(presenter: WalletMainPresenterProtocol, assetDetailsScene: AssetDetailsScene) {
         self.presenter = presenter
@@ -28,6 +30,18 @@ final class WalletMainViewController: UIHostingController<WalletView>, RootScree
         withTransaction(Transaction(animation: nil)) {
             rootView.viewModel.collectiblesPeek = .resting
         }
+    }
+
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+
+        let previousInset = bottomSafeAreaInset
+        let currentInset = view.safeAreaInsets.bottom
+        bottomSafeAreaInset = currentInset
+
+        guard let previousInset, previousInset != currentInset, view.window != nil else { return }
+
+        settleCollectiblesPeek(movedUpBy: currentInset - previousInset)
     }
 
     override func viewDidLoad() {
@@ -78,6 +92,9 @@ extension WalletMainViewController: WalletMainViewProtocol {
             UIApplication.shared.mainTabBarController?.container.selectedController === navigationController,
             navigationController?.viewControllers.suffix(2).first === self
         else { return nil }
+
+        // A return can ask before the Pocket has laid out on the Clearance it comes back to.
+        view.layoutIfNeeded()
 
         switch item {
         case .balance:
@@ -146,6 +163,22 @@ private extension WalletMainViewController {
         DispatchQueue.main.async { [weak self] in
             withAnimation(.linear(duration: CollectiblesBookTiming.colourDuration)) {
                 self?.rootView.viewModel.collectiblesPeek = .resting
+            }
+        }
+    }
+
+    /// SwiftUI lays the peek out on the new safe area in one frame, so the peek is first drawn where it was
+    /// and then settles on the Docklet's ease. While an item is open the peek stays at rest, because the
+    /// item flies back to the frame the peek reports.
+    func settleCollectiblesPeek(movedUpBy distance: CGFloat) {
+        guard rootView.viewModel.openItem == nil, !UIAccessibility.isReduceMotionEnabled else { return }
+
+        withTransaction(Transaction(animation: nil)) {
+            rootView.viewModel.collectiblesPeekShift += distance
+        }
+        DispatchQueue.main.async { [weak self] in
+            withAnimation(DSTabBarStyle.centerEaseOut) {
+                self?.rootView.viewModel.collectiblesPeekShift = 0
             }
         }
     }

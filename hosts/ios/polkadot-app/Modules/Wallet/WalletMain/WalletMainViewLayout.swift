@@ -134,6 +134,7 @@ private extension WalletView {
         .alignmentGuide(.bottom) { dimensions in
             dimensions[.top] + collectiblesPeekHeight
         }
+        .offset(y: viewModel.collectiblesPeekShift)
         .opacity(viewModel.isPocketCleared || viewModel.collectiblesPeek == .lifted ? 0 : 1)
     }
 }
