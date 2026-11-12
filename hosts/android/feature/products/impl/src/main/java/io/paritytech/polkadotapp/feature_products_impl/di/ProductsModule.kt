@@ -25,7 +25,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Me
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.DeriveEntropyUseCase
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlay
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFaceOnOpen
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
@@ -83,7 +82,10 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.Real
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.RealExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCore
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingService
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.AllowanceKeyStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.RealAllowanceKeyStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.sponsoring.RealStatementStoreSubmissionSponsoring
@@ -143,9 +145,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.Execu
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealExecuteTopUpUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealTopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
-import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIFundingRuntime
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIFundingCore
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostFunding
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSessionPresenter
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
@@ -158,7 +159,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerBootF
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketScanContentParser
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.FundingResumeInitializer
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.AppFundingOverlay
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.ProductWorkerInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.TopUpResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -417,10 +417,10 @@ internal interface ProductsModule {
     fun bindBundledProductFiles(impl: AssetBundledProductFiles): BundledProductFiles
 
     @Binds
-    fun bindFundingOverlay(impl: AppFundingOverlay): FundingOverlay
+    fun bindFundingCore(impl: TrUAPIFundingCore): FundingCore
 
     @Binds
-    fun bindFundingRuntime(impl: TrUAPIFundingRuntime): FundingRuntime
+    fun bindFundingService(impl: RealFundingService): FundingService
 
     @Binds
     @Singleton

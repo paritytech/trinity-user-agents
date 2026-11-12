@@ -46,8 +46,11 @@ interface ProductsRouter : ReturnableRouter, SigningRouter, TabRouter {
 
     suspend fun closeFundingEnded(intent: String)
 
-    /** A funding provider's own screen, full height, for the session [intent]. */
-    suspend fun openFundingProviderFrame(intent: String)
+    /** Whether the funding sheet for [intent] is on top, alone or under its own provider screen. */
+    suspend fun isFundingOverlayShown(intent: String): Boolean
+
+    /** A funding provider's own screen, full height, for the session [intent], showing the frame [requestId]. */
+    suspend fun openFundingProviderFrame(intent: String, requestId: String)
 
     /** Takes down the provider screen for [intent], when it is the screen on top. */
     suspend fun closeFundingProviderFrame(intent: String)

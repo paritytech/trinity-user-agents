@@ -56,9 +56,11 @@ fun FundingProviderFrameScreen(viewModel: FundingProviderFrameViewModel) {
         isExternalPage = viewModel.page != null,
         content = { modifier ->
             val page = viewModel.page
-            if (page != null) {
+            val pageView = viewModel.pageView
+            if (page != null && pageView != null) {
                 FundingExternalPageView(
                     modifier = modifier,
+                    webView = pageView,
                     page = page,
                     state = pageState,
                     onStarted = viewModel::onPageStarted,

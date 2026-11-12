@@ -5,6 +5,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -32,6 +33,7 @@ import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBr
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.Alert
+import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowRight
 import io.paritytech.polkadotapp.design.components.icon.vectors.CheckCircleOutlined
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -40,6 +42,7 @@ import kotlinx.coroutines.delay
 
 private const val SUCCESS_DISPLAY_MS = 2_500L
 private const val ERROR_DISPLAY_MS = 4_000L
+private const val TAPPABLE_DISPLAY_MS = 6_000L
 
 @Composable
 fun AppNotificationHost(notifier: AppNotifier) {
@@ -51,6 +54,7 @@ fun AppNotificationHost(notifier: AppNotifier) {
             val displayMs = when (notification) {
                 is AppNotification.Success -> SUCCESS_DISPLAY_MS
                 is AppNotification.Error -> ERROR_DISPLAY_MS
+                is AppNotification.Tappable -> TAPPABLE_DISPLAY_MS
             }
             delay(displayMs)
             if (visible == notification) {
@@ -72,28 +76,42 @@ fun AppNotificationHost(notifier: AppNotifier) {
             enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
             exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
         ) {
-            visible?.let { AppNotificationItem(notification = it) }
+            visible?.let { notification ->
+                AppNotificationItem(
+                    notification = notification,
+                    onTap = (notification as? AppNotification.Tappable)?.let { tappable ->
+                        {
+                            visible = null
+                            tappable.onTap()
+                        }
+                    },
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun AppNotificationItem(notification: AppNotification) {
+private fun AppNotificationItem(notification: AppNotification, onTap: (() -> Unit)? = null) {
     val backgroundColor = when (notification) {
-        is AppNotification.Success -> PolkadotTheme.colors.bg.action.tertiary
+        is AppNotification.Success, is AppNotification.Tappable -> PolkadotTheme.colors.bg.action.tertiary
         is AppNotification.Error -> PolkadotTheme.colors.fg.error
     }
     val iconTint = when (notification) {
         is AppNotification.Success -> PolkadotTheme.colors.fg.success
+        is AppNotification.Tappable -> PolkadotTheme.colors.fg.primary
         is AppNotification.Error -> Color.White
     }
     val icon = when (notification) {
         is AppNotification.Success -> NovaIcons.CheckCircleOutlined
+        is AppNotification.Tappable -> NovaIcons.ArrowRight
         is AppNotification.Error -> NovaIcons.Alert
     }
 
     PolkadotSurface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onTap != null) Modifier.clickable(onClick = onTap) else Modifier),
         color = backgroundColor,
         shape = RoundedCornerShape(28.dp),
     ) {

@@ -2,9 +2,12 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.fra
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.Context
+import android.content.MutableContextWrapper
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
+import android.view.ViewGroup
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -12,9 +15,11 @@ import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.FrameLayout
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,14 +57,30 @@ class FundingExternalPageState {
 @Composable
 fun rememberFundingExternalPageState(): FundingExternalPageState = remember { FundingExternalPageState() }
 
-/**
- * An onramp's own https page, with what KYC and card checks need: scripts, forms, storage, popups opened in place,
- * the camera and file uploads through [onPickFiles]. Reaching [FundingExternalPage.returnUrl] finishes it with the
- * URL the page landed on.
- */
+/** A WebView for an onramp's own https page at [url], with what KYC and card checks need: scripts, forms and storage. */
 @SuppressLint("SetJavaScriptEnabled")
+fun createFundingPageWebView(context: Context, url: String): WebView = WebView(context).apply {
+    settings.apply {
+        javaScriptEnabled = true
+        domStorageEnabled = true
+        allowFileAccess = false
+        allowContentAccess = false
+        mediaPlaybackRequiresUserGesture = false
+        // A popup the page opens loads in place, so the frame never leaves its own chrome.
+        javaScriptCanOpenWindowsAutomatically = true
+        setSupportMultipleWindows(false)
+    }
+    loadUrl(url)
+}
+
+/**
+ * Shows [webView], an onramp's page that outlives this screen, moved onto this screen's context while it shows it:
+ * popups open in place, the camera and file uploads through [onPickFiles]. Reaching [FundingExternalPage.returnUrl]
+ * finishes it with the URL the page landed on.
+ */
 @Composable
 fun FundingExternalPageView(
+    webView: WebView,
     page: FundingExternalPage,
     state: FundingExternalPageState,
     onStarted: (String) -> Unit,
@@ -85,98 +106,99 @@ fun FundingExternalPageView(
         pendingCapture = null
     }
 
+    DisposableEffect(webView) {
+        webView.webViewClient = object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                val url = request.url.toString()
+                if (request.isForMainFrame && page.returnUrl != null && fundingPageMatchesReturn(url, page.returnUrl)) {
+                    returned(url)
+                    return true
+                }
+                // The core says what may load: any other scheme would hand the user to an app outside the frame.
+                return !fundingPageAllowsNavigation(url, request.isForMainFrame)
+            }
+
+            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                if (page.returnUrl != null && fundingPageMatchesReturn(url, page.returnUrl)) {
+                    view.stopLoading()
+                    returned(url)
+                } else {
+                    started(url)
+                }
+            }
+
+            // A redirect or a history change lands the main frame on a URL its start did not name.
+            override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+                navigated(url)
+            }
+
+            override fun onPageFinished(view: WebView, url: String) {
+                loaded()
+            }
+
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                if (request.isForMainFrame) failed(IllegalStateException(error.description.toString()))
+            }
+        }
+
+        webView.webChromeClient = object : WebChromeClient() {
+            // The camera only, which ID checks need, and only for the on-screen page's own origin, as the core rules.
+            override fun onPermissionRequest(request: PermissionRequest) {
+                val pageUrl = webView.url
+                val allowed = pageUrl != null && fundingPageAllowsMedia(pageUrl, request.origin.toString())
+                if (!allowed || request.resources.any { it != PermissionRequest.RESOURCE_VIDEO_CAPTURE }) {
+                    request.deny()
+                    return
+                }
+                val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                    PackageManager.PERMISSION_GRANTED
+                if (granted) {
+                    request.grant(request.resources)
+                } else {
+                    pendingCapture?.deny()
+                    pendingCapture = request
+                    cameraPermission.launch(Manifest.permission.CAMERA)
+                }
+            }
+
+            override fun onPermissionRequestCanceled(request: PermissionRequest) {
+                if (pendingCapture === request) pendingCapture = null
+            }
+
+            // Without this the page's <input type="file"> does nothing, and an ID upload never starts.
+            override fun onShowFileChooser(
+                webView: WebView,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: FileChooserParams,
+            ): Boolean {
+                // The callback is answered exactly once, even with null, or the input stays locked.
+                scope.launch { filePathCallback.onReceiveValue(pickFiles(fileChooserParams)) }
+                return true
+            }
+        }
+        state.webView = webView
+
+        onDispose {
+            // The page outlives this screen; callbacks into it must not.
+            webView.webViewClient = WebViewClient()
+            webView.webChromeClient = null
+            if (state.webView === webView) state.webView = null
+        }
+    }
+
     AndroidView(
         modifier = modifier,
-        factory = { viewContext ->
-            WebView(viewContext).apply {
-                settings.apply {
-                    javaScriptEnabled = true
-                    domStorageEnabled = true
-                    allowFileAccess = false
-                    allowContentAccess = false
-                    mediaPlaybackRequiresUserGesture = false
-                    // A popup the page opens loads in place, so the frame never leaves its own chrome.
-                    javaScriptCanOpenWindowsAutomatically = true
-                    setSupportMultipleWindows(false)
-                }
-
-                webViewClient = object : WebViewClient() {
-                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                        val url = request.url.toString()
-                        if (request.isForMainFrame && page.returnUrl != null && fundingPageMatchesReturn(url, page.returnUrl)) {
-                            returned(url)
-                            return true
-                        }
-                        // The core says what may load: any other scheme would hand the user to an app outside the frame.
-                        return !fundingPageAllowsNavigation(url, request.isForMainFrame)
-                    }
-
-                    override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-                        if (page.returnUrl != null && fundingPageMatchesReturn(url, page.returnUrl)) {
-                            view.stopLoading()
-                            returned(url)
-                        } else {
-                            started(url)
-                        }
-                    }
-
-                    // A redirect or a history change lands the main frame on a URL its start did not name.
-                    override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-                        navigated(url)
-                    }
-
-                    override fun onPageFinished(view: WebView, url: String) {
-                        loaded()
-                    }
-
-                    override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                        if (request.isForMainFrame) failed(IllegalStateException(error.description.toString()))
-                    }
-                }
-
-                webChromeClient = object : WebChromeClient() {
-                    // The camera only, which ID checks need, and only for the on-screen page's own origin, as the core rules.
-                    override fun onPermissionRequest(request: PermissionRequest) {
-                        val pageUrl = state.webView?.url
-                        val allowed = pageUrl != null && fundingPageAllowsMedia(pageUrl, request.origin.toString())
-                        if (!allowed || request.resources.any { it != PermissionRequest.RESOURCE_VIDEO_CAPTURE }) {
-                            request.deny()
-                            return
-                        }
-                        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-                            PackageManager.PERMISSION_GRANTED
-                        if (granted) {
-                            request.grant(request.resources)
-                        } else {
-                            pendingCapture?.deny()
-                            pendingCapture = request
-                            cameraPermission.launch(Manifest.permission.CAMERA)
-                        }
-                    }
-
-                    override fun onPermissionRequestCanceled(request: PermissionRequest) {
-                        if (pendingCapture === request) pendingCapture = null
-                    }
-
-                    // Without this the page's <input type="file"> does nothing, and an ID upload never starts.
-                    override fun onShowFileChooser(
-                        webView: WebView,
-                        filePathCallback: ValueCallback<Array<Uri>>,
-                        fileChooserParams: FileChooserParams,
-                    ): Boolean {
-                        // The callback is answered exactly once, even with null, or the input stays locked.
-                        scope.launch { filePathCallback.onReceiveValue(pickFiles(fileChooserParams)) }
-                        return true
-                    }
-                }
-
-                state.webView = this
-                loadUrl(page.url)
+        factory = { hostContext -> FrameLayout(hostContext) },
+        update = { host ->
+            if (host.getChildAt(0) !== webView) {
+                (webView.context as? MutableContextWrapper)?.baseContext = host.context
+                (webView.parent as? ViewGroup)?.removeView(webView)
+                host.addView(webView)
             }
         },
-        onRelease = { view ->
-            if (state.webView === view) state.webView = null
-            view.destroy()
+        onRelease = { host ->
+            host.removeView(webView)
+            (webView.context as? MutableContextWrapper)?.let { it.baseContext = it.applicationContext }
         },
     )
 }
