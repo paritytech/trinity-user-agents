@@ -13,12 +13,13 @@ extension ProductBotMessage {
         switch self {
         case let .text(text):
             .text(text)
-        case let .custom(messageType, data):
+        case let .custom(messageType, data, alt):
             .customRendered(
                 Chat.LocalMessage.Content.CustomRenderedData(
                     decoderId: MessageDecoderIdentifier.product.rawValue,
                     data: data,
-                    identifier: messageType
+                    identifier: messageType,
+                    alt: alt
                 )
             )
         }

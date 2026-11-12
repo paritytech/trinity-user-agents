@@ -11,9 +11,12 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Persists incoming [ChatMessage.Content.DeviceAdded] / [ChatMessage.Content.DeviceRemoved]
- * announcements from contacts into the local device roster. Outgoing copies are ignored —
- * fan-out is the registration flow's responsibility.
+ * Persists incoming [ChatMessage.Content.DeviceAdded] / [ChatMessage.Content.DeviceRemoved] /
+ * [ChatMessage.Content.DeviceChatAccepted] announcements from contacts into the local device roster.
+ * Outgoing copies are ignored — fan-out is the registration flow's responsibility.
+ *
+ * Acceptances are stored regardless of whether we still have a pending outgoing request: a contact
+ * that reinstalled re-accepts our old request with a fresh device key.
  */
 @Singleton
 class DeviceLifecycleMessageProcessor @Inject constructor(
@@ -33,6 +36,17 @@ class DeviceLifecycleMessageProcessor @Inject constructor(
                         contactAccountId = contactAccountId,
                         statementAccountId = content.statementAccountId,
                         encryptionPublicKey = content.encryptionPublicKey,
+                    )
+                )
+            }
+
+            is ChatMessage.Content.DeviceChatAccepted -> {
+                Timber.d("DeviceChatAccepted received for contact=$contactAccountId, device=${content.device.statementAccountId}")
+                contactDevicesRepository.addDevice(
+                    ContactDevice(
+                        contactAccountId = contactAccountId,
+                        statementAccountId = content.device.statementAccountId,
+                        encryptionPublicKey = content.device.encryptionPublicKey,
                     )
                 )
             }

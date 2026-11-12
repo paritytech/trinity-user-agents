@@ -1,0 +1,89 @@
+//! Bandersnatch ring-VRF one-shot membership proof (prover side).
+//!
+//! Wraps `verifiable`'s prover-gated `open` + `create` into the single-shot
+//! proof a `RegisterStatementStoreAllowance` needs: prove that our member key is
+//! in the collection's ring, bound to a slot `context` and the extrinsic proof
+//! `message`. Mirrors signing-bot `ring-proof.ts` `oneShotProof`.
+
+use thiserror::Error;
+
+use super::StatementAllowanceError;
+use crate::{host_internal::sso_messages::RingVrfError, runtime::vrf};
+
+/// A single-context ring-VRF signature is exactly 785 bytes.
+pub const RING_VRF_PROOF_LEN: usize = 785;
+
+/// Error while constructing a ring-VRF allowance proof.
+#[derive(Debug, Error)]
+pub enum ProofError {
+	/// On-chain ring exponent does not map to a supported proof domain.
+	#[error("unsupported ring exponent {exponent}")]
+	UnsupportedRingExponent {
+		/// Ring exponent.
+		exponent: u8,
+	},
+	/// The ring-VRF operation failed, including when the member key is not in
+	/// the ring.
+	#[error("ring-VRF failed: {0}")]
+	Vrf(String),
+	/// Proof encoded to an unexpected length.
+	#[error("ring-VRF proof is {actual} bytes, expected {expected}")]
+	InvalidProofLength {
+		/// Actual byte length.
+		actual: usize,
+		/// Expected byte length.
+		expected: usize,
+	},
+}
+
+/// Map an on-chain `RingExponent` (9 / 10 / 14) to the FFT domain size
+/// (power = exponent + 2).
+pub fn domain_for_ring_exponent(exponent: u8) -> Result<u32, StatementAllowanceError> {
+	match exponent {
+		9 => Ok(vrf::DOMAIN_2E11),
+		10 => Ok(vrf::DOMAIN_2E12),
+		14 => Ok(vrf::DOMAIN_2E16),
+		other => Err(ProofError::UnsupportedRingExponent { exponent: other }.into()),
+	}
+}
+
+/// The ring member for fixed test entropy.
+#[cfg(test)]
+pub fn member_key_now(entropy: [u8; 32]) -> [u8; 32] {
+	futures::executor::block_on(vrf::load()).unwrap().member(&entropy).unwrap()
+}
+
+/// Produce the 785-byte ring-VRF membership proof over `members` (already
+/// sliced to the ring's included prefix), bound to `context` and `message`.
+///
+/// `entropy` is the bandersnatch entropy; its member key must be present in
+/// `members` or `open` fails with `NotInRing`.
+pub fn ring_vrf_proof(
+	vrf: &vrf::Vrf,
+	domain: u32,
+	entropy: &[u8; 32],
+	members: &[[u8; 32]],
+	context: &[u8],
+	message: &[u8],
+) -> Result<Vec<u8>, StatementAllowanceError> {
+	let member = vrf.member(entropy).map_err(vrf_error)?;
+	let (bytes, _alias) = vrf
+		.prove(entropy, domain, &member, members, context, message)
+		.map_err(vrf_error)?;
+	if bytes.len() != RING_VRF_PROOF_LEN {
+		return Err(ProofError::InvalidProofLength {
+			actual: bytes.len(),
+			expected: RING_VRF_PROOF_LEN,
+		}
+		.into());
+	}
+	Ok(bytes)
+}
+
+/// A failed ring-VRF operation, or a module that did not load.
+pub fn vrf_error(error: RingVrfError) -> ProofError {
+	ProofError::Vrf(error.to_string())
+}
+
+#[cfg(test)]
+mod tests;

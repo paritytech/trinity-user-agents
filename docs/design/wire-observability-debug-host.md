@@ -26,7 +26,7 @@ every build and is inert until a sink is installed; the decoder is absent from a
 production product bundle.
 
 ```
- product ──frames──▶ host core (truapi-server)
+ product ──frames──▶ host core (truapi)
                       │  tap: opaque {channelId, dir, bytes}
                       ▼
                    DebugSink ──host dials outward──▶ debugger
@@ -36,12 +36,12 @@ production product bundle.
 
 ## 1. Tap placement
 
-The tap **MUST** live in the Rust host core (`truapi-server`) behind a sink trait.
+The tap **MUST** live in the Rust host core (`truapi`) behind a sink trait.
 It **MUST NOT** exist in `@parity/truapi` or the TypeScript transport, and **MUST
 NOT** be reachable from the product side. The product package carries no debug
 seam.
 
-`truapi-server` has two frame choke points; every host — web, iOS, Android, CLI —
+`truapi` has two frame choke points; every host — web, iOS, Android, CLI —
 funnels through them:
 
 | Direction                 | Choke point                                            | Ordering                      |
@@ -78,8 +78,8 @@ pub enum DebugEvent {
 - `emit` **MUST NOT** panic. A sink may be out-of-repo, and a panic there unwinds
   into a live dispatch. Both in-path call sites **SHOULD** contain one
   (`catch_unwind`), which holds only where unwinding is enabled: the workspace
-  release profile sets `panic = "abort"`, so in the release and xcframework
-  artifacts that carry the `debug-sink` feature a panicking sink aborts the process
+  release profile sets `panic = "abort"`, so in the native release and
+  xcframework artifacts a panicking sink aborts the process
   and no call-site guard can contain it. Containment is a dev-and-test
   protection; the contract on the sink is what holds in a shipped host.
 - The core **MUST** pass frame bytes through untouched, and **MUST NOT** decode,
@@ -233,8 +233,7 @@ outright. That is the checkable half.
 
 The **tap** is not absent. `DebugSink`, both call sites, and `set_debug_sink`
 compile into every build of the core, including release and wasm32, and the
-native sink ships under the `debug-sink` feature that the release and xcframework
-artifacts enable. What holds in production is that the tap is **inert**: no host
+native sink ships in every native build. What holds in production is that the tap is **inert**: no host
 installs a sink, so the frame path costs an unset-sink check. An
 implementation **MUST NOT** describe the tap as absent from a shipped host, and
 **MUST NOT** rely on its absence for any safety property - only on no sink being

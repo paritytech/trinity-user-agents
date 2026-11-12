@@ -1,7 +1,7 @@
 /**
  * Ingest: turn the host tap's wire envelopes into {@link ObservedFrame}s.
  *
- * The Rust host tap (`truapi-server`'s `DebugSink`) emits one envelope per
+ * The Rust host tap (`truapi`'s `DebugSink`) emits one envelope per
  * frame - `{ channelId, dir, frame: bytes }`, raw SCALE, opaque to the core.
  * The debugger decodes here: {@link decodeWireMessage} recovers the correlation
  * `requestId` and the wire discriminant, which is everything the trace engine

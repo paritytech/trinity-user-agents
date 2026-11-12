@@ -25,6 +25,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.Ow
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageAssetValueUseCase
 import io.paritytech.polkadotapp.feature_coinage_impl.data.model.OnChainCoinInfo
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.CoinRepository
+import io.paritytech.polkadotapp.feature_coinage_impl.domain.transaction.harness.RecordingConnectionRefCounter
 import io.paritytech.polkadotapp.feature_coinage_impl.testKey
 import io.paritytech.polkadotapp.feature_tokens_api.domain.ChainAssetProvider
 import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.DurableTxStatus
@@ -38,6 +39,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
@@ -74,6 +76,7 @@ class RealClaimReceivedCoinsUseCaseTest {
     private val assetValueUseCase: CoinageAssetValueUseCase = mockk()
     private val submissionUseCase: CoinageTransferSubmissionUseCase = mockk()
     private val timeProvider: TimeProvider = mockk()
+    private val connections = RecordingConnectionRefCounter()
 
     private val useCase = RealClaimReceivedCoinsUseCase(
         chainAssetProvider = chainAssetProvider,
@@ -82,6 +85,7 @@ class RealClaimReceivedCoinsUseCaseTest {
         assetValueUseCase = assetValueUseCase,
         submissionUseCase = submissionUseCase,
         timeProvider = timeProvider,
+        chainConnectionRefCounter = connections,
     )
 
     private val groupId = CoinageOperationGroupId("group")
@@ -321,6 +325,37 @@ class RealClaimReceivedCoinsUseCaseTest {
         assertClaimedOnce(seen.keypair)
     }
 
+    /**
+     * A failed read ends a real storage subscription instead of being one look among others. A claim that
+     * stopped watching there would never see the coin arrive, and with no deadline it would never end either.
+     */
+    @Test
+    fun `a claim watches the chain again after a failed read ends the subscription`() = runTest {
+        val coin = key(1)
+        givenChainFailsOnceThenSees(listOf(coin.accountId))
+        givenGroupReports(noEntries())
+
+        reportsOf(coin)
+
+        assertClaimedOnce(coin.keypair)
+    }
+
+    /**
+     * Nothing else keeps the asset chain connected while the app is in the background, and a claim waiting
+     * on a paused socket hears nothing. The claim holds the connection itself, and only while it runs.
+     */
+    @Test
+    fun `a claim keeps the chain connected while it watches and lets go when it ends`() = runTest {
+        val coin = key(1)
+        givenChainSees(listOf(coin.accountId))
+        givenGroupReports(listOf(entry(FINALIZED_SUCCESS, claiming = coin.accountId)))
+
+        reportsOfCompleted(coin)
+
+        assertEquals(1, connections.peak)
+        assertEquals(0, connections.held)
+    }
+
     // ---- when the retrying stops ----
 
     /**
@@ -371,6 +406,20 @@ class RealClaimReceivedCoinsUseCaseTest {
 
         assertEquals(CoinageTransferDetection.NotClaimed, reported.last())
         coVerify(exactly = 0) { submissionUseCase(any(), any(), any(), any()) }
+    }
+
+    /**
+     * The window closed without the chain ever answering — a socket that stayed paused in the background
+     * looks exactly like this. Silence is not evidence that the coins never arrived, so it settles nothing.
+     */
+    @Test
+    fun `the window closing does not end a claim the chain never answered`() = runTest {
+        val coin = key(1)
+        every { timeProvider.now() } returns WINDOW_CLOSED
+        givenChainSees()
+        givenGroupReports(noEntries())
+
+        assertDoesNotComplete(coin)
     }
 
     /**
@@ -702,6 +751,26 @@ class RealClaimReceivedCoinsUseCaseTest {
                     }))
                 }
                 awaitCancellation()
+            }
+        }
+    }
+
+    /** The first subscription ends on a failed read, as the repository's does; the next one sees [present]. */
+    private fun givenChainFailsOnceThenSees(present: List<AccountId>) {
+        var subscriptions = 0
+
+        coEvery { coinRepository.subscribeCoinsInfoFor(any(), any()) } answers {
+            val requested = secondArg<List<AccountId>>()
+
+            if (subscriptions++ == 0) {
+                flowOf(Result.failure(IllegalStateException("decode failed")))
+            } else {
+                flow {
+                    emit(Result.success(requested.associateWith { accountId ->
+                        OnChainCoinInfo(instanceId = 0, value = 3, age = 0).takeIf { accountId in present }
+                    }))
+                    awaitCancellation()
+                }
             }
         }
     }

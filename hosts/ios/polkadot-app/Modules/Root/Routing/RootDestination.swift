@@ -6,7 +6,6 @@ enum RootDestination: Equatable {
     case restoreFromCloud
     case usernameCheck
     case dashboard
-    case jailbroken
     case broken
 }
 

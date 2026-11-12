@@ -4,7 +4,7 @@
 #
 # Xcode's ProcessXCFramework step flattens every slice's Headers into one
 # DerivedData include directory, so a slice-local module.modulemap collides with
-# any other xcframework that ships one. truapi_serverFFI resolves its module
+# any other xcframework that ships one. truapiFFI resolves its module
 # through the .systemLibrary SPM target instead.
 #
 # Requires `make xcframework` to have run first; this script builds nothing.

@@ -1,16 +1,16 @@
 package io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin
 
 import androidx.compose.runtime.Immutable
-import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.ChainId
 import kotlinx.collections.immutable.ImmutableList
 import kotlin.math.roundToLong
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
-enum class ChainGlyph {
+enum class IndicatorRow {
     People,
     AssetHub,
     Bulletin,
+    StatementStore,
 }
 
 /** The share of its expected blocks a connected chain produced, and the block interval that share implies. */
@@ -20,7 +20,7 @@ data class ChainLiveness(
 )
 
 /**
- * What one chain's indicator draws, in the priority the health rules give them: the connection first, then
+ * What one row's indicator draws, in the priority the health rules give them: the connection first, then
  * block production. [Healthy] is a connected chain producing at least [HEALTHY_SHARE] of its expected blocks.
  */
 sealed interface ChainHealthIndicator {
@@ -75,13 +75,11 @@ enum class ProductionBand(val floor: Float) {
 
 @Immutable
 data class ChainHealthIndicatorsModel(
-    val chains: ImmutableList<ChainHealthItemModel>,
+    val rows: ImmutableList<ChainHealthItemModel>,
 )
 
 @Immutable
 data class ChainHealthItemModel(
-    val chainId: ChainId,
-    val chainName: String,
-    val glyph: ChainGlyph,
+    val row: IndicatorRow,
     val indicator: ChainHealthIndicator,
 )

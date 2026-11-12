@@ -1,0 +1,133 @@
+//! The value formats the RFC fixes: hex and URLs.
+
+use crate::Error;
+use std::net::{Ipv4Addr, Ipv6Addr};
+use url::{Host, Url};
+
+/// Decodes lowercase 0x-prefixed hex of exactly `N` bytes.
+pub fn hex_bytes<const N: usize>(field: &'static str, value: &str) -> Result<[u8; N], Error> {
+	let invalid = || Error::InvalidHex { field, bytes: N };
+	let digits = value.strip_prefix("0x").ok_or_else(invalid)?;
+	if digits.bytes().any(|byte| byte.is_ascii_uppercase()) {
+		return Err(invalid());
+	}
+	let mut bytes = [0; N];
+	hex::decode_to_slice(digits, &mut bytes).map_err(|_| invalid())?;
+	Ok(bytes)
+}
+
+/// Encodes bytes as lowercase 0x-prefixed hex.
+pub fn to_hex(bytes: &[u8]) -> String {
+	format!("0x{}", hex::encode(bytes))
+}
+
+/// Serialises bytes as bytes, not a sequence of numbers: a `Uint8Array` in JS.
+pub fn serialize_bytes<S: serde::Serializer>(
+	bytes: &[u8],
+	serializer: S,
+) -> Result<S::Ok, S::Error> {
+	serializer.serialize_bytes(bytes)
+}
+
+/// [`serialize_bytes`] for bytes that may be absent: `undefined` in JS.
+pub fn serialize_optional_bytes<S: serde::Serializer>(
+	bytes: &Option<Vec<u8>>,
+	serializer: S,
+) -> Result<S::Ok, S::Error> {
+	match bytes {
+		Some(bytes) => serializer.serialize_bytes(bytes),
+		None => serializer.serialize_none(),
+	}
+}
+
+/// Which schemes a URL may use where it appears.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Schemes {
+	/// `https` or `wss`, or `http` or `ws` on a private-range literal address.
+	Web,
+	/// `stun`, for the URLs of a `stun` service.
+	Stun,
+	/// `https` on a hostname, or `http` on `localhost`, for a `web-gateway`, which takes a name's
+	/// label in front of its host and so cannot be a literal address.
+	Gateway,
+}
+
+/// Parses a URL and checks it against the RFC's scheme rule. Descriptors keep the text as written,
+/// so the text itself must be the URL: the parser would forgive whitespace, control characters
+/// and a missing `//`, which other readers refuse, and in `http(s)` and `ws(s)` URLs reads `\` as
+/// `/`, which RFC 3986 readers do not. A URL must also be ASCII, since IDNA readers map some
+/// hosts differently: `faß.example` is `xn--fa-hia.example` to the parser and `fass.example` to
+/// Python's standard library.
+pub fn url(value: &str, schemes: Schemes) -> Result<Url, Error> {
+	let invalid = || Error::InvalidUrl(value.to_owned());
+	if value
+		.chars()
+		.any(|character| !character.is_ascii_graphic() || character == '\\')
+	{
+		return Err(invalid());
+	}
+	let parsed = Url::parse(value).map_err(|_| invalid())?;
+	let hierarchical = value
+		.split_once("://")
+		.is_some_and(|(scheme, _)| scheme.eq_ignore_ascii_case(parsed.scheme()));
+	// A user name or password would let `https://trusted.example@evil.example/` read as trusted.
+	let no_credentials = parsed.username().is_empty() && parsed.password().is_none();
+	let web = hierarchical && no_credentials && canonical_address(&parsed, value);
+	let allowed = match (schemes, parsed.scheme()) {
+		(Schemes::Stun, scheme) => scheme == "stun",
+		(Schemes::Web, "https" | "wss") => web,
+		(Schemes::Web, "http" | "ws") => web && parsed.host().is_some_and(is_private_literal),
+		(Schemes::Web, _) => false,
+		(Schemes::Gateway, "https") => web && matches!(parsed.host(), Some(Host::Domain(_))),
+		// Also as written: this parser reads `\` as `/`, so `http://localhost\@evil.example/` is
+		// localhost here and evil.example to an RFC 3986 parser.
+		(Schemes::Gateway, "http") => {
+			web && parsed.host_str() == Some("localhost") && written_host(value) == "localhost"
+		},
+		(Schemes::Gateway, _) => false,
+	};
+	if allowed { Ok(parsed) } else { Err(invalid()) }
+}
+
+/// An address host must be written in canonical form. The URL parser reads shorthand such as
+/// `10.1` or `0x7f.1` as an IPv4 address, which RFC 3986 parsers read as a hostname, so two
+/// readers would reach different hosts.
+fn canonical_address(parsed: &Url, value: &str) -> bool {
+	match (parsed.host(), parsed.host_str()) {
+		(Some(Host::Domain(_)), _) => true,
+		(Some(_), Some(host)) => host.eq_ignore_ascii_case(written_host(value)),
+		_ => false,
+	}
+}
+
+/// The host exactly as written in a hierarchical URL.
+fn written_host(value: &str) -> &str {
+	let after_scheme = value.split_once("://").map_or("", |(_, rest)| rest);
+	let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or_default();
+	let host_and_port = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+	match host_and_port.find(']') {
+		Some(end) if host_and_port.starts_with('[') => &host_and_port[..=end],
+		_ => host_and_port.split(':').next().unwrap_or_default(),
+	}
+}
+
+/// A literal address in one of the private ranges the RFC lists. A hostname never qualifies.
+fn is_private_literal(host: Host<&str>) -> bool {
+	match host {
+		Host::Ipv4(address) => is_private_v4(address),
+		Host::Ipv6(address) => is_private_v6(address),
+		Host::Domain(_) => false,
+	}
+}
+
+fn is_private_v4(address: Ipv4Addr) -> bool {
+	address.is_loopback() || address.is_private()
+}
+
+fn is_private_v6(address: Ipv6Addr) -> bool {
+	let first = address.segments()[0];
+	address.is_loopback() || first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80
+}
+
+#[cfg(test)]
+mod tests;

@@ -40,6 +40,8 @@ final class ChainSyncService: BaseSyncService {
     }
 
     override func performSyncUp() {
+        logger.debug("[ChainSync] Did start chains sync")
+
         let localChainsOperation = repository.fetchAllOperation(with: .init())
         let remoteChainsWrapper = remoteConfigManager.asyncWaitChainsForRemoteConfigValues()
 
@@ -82,6 +84,8 @@ final class ChainSyncService: BaseSyncService {
             let localModels = try localChainsOperation.extractNoCancellableResultData()
             do {
                 let remoteModels = try remoteChainsWrapper.targetOperation.extractNoCancellableResultData()
+
+                self.logger.debug("[ChainSync] remote chains found \(remoteModels.count)")
 
                 remoteModels.forEach { model in
                     self.logger.debug(

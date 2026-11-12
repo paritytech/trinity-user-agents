@@ -10,17 +10,22 @@ import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.testTagsAsResourceId
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import io.paritytech.polkadotapp.common.R
 import io.paritytech.polkadotapp.common.presentation.notification.AppNotifier
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrandProvider
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import javax.inject.Inject
 
@@ -30,6 +35,9 @@ abstract class BaseComposeBottomSheet<T : BaseViewModel> : BottomSheetDialogFrag
     // Injected into every @AndroidEntryPoint subclass.
     @Inject
     lateinit var appNotifier: AppNotifier
+
+    @Inject
+    lateinit var paymentAssetBrandProvider: PaymentAssetBrandProvider
 
     protected val bottomSheetBehavior: BottomSheetBehavior<*>?
         get() = (dialog as? BottomSheetDialog)?.behavior
@@ -56,13 +64,17 @@ abstract class BaseComposeBottomSheet<T : BaseViewModel> : BottomSheetDialogFrag
         setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
 
         setContent {
-            PolkadotTheme {
-                Box(
-                    modifier = Modifier.semantics { testTagsAsResourceId = true }
-                ) {
-                    ObserveViewModelEvents(viewModel, appNotifier)
+            val paymentAssetBrand by paymentAssetBrandProvider.brand.collectAsStateWithLifecycle()
 
-                    Screen()
+            CompositionLocalProvider(LocalPaymentAssetBrand provides paymentAssetBrand) {
+                PolkadotTheme {
+                    Box(
+                        modifier = Modifier.semantics { testTagsAsResourceId = true }
+                    ) {
+                        ObserveViewModelEvents(viewModel, appNotifier)
+
+                        Screen()
+                    }
                 }
             }
         }

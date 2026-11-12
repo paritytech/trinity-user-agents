@@ -230,6 +230,8 @@ private extension ChainStatusIcon {
             .statusIconBulletin
         case .assetHub:
             .statusIconAssethub
+        case .statementStore:
+            .statusIconStatementStore
         }
     }
 }

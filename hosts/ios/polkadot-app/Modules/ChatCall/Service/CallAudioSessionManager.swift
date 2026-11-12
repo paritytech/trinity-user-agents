@@ -10,6 +10,8 @@ protocol CallAudioSessionManaging: AnyObject {
 
     func setEnabled(_ isEnabled: Bool, for session: AVAudioSession)
 
+    func enableAudioIfPermitted()
+
     func selectRoute(_ route: CallAudioRoute) throws
 
     func observeRouteState() -> AnyAsyncSequence<CallAudioRouteState>
@@ -21,17 +23,22 @@ final class CallAudioSessionManager {
     private let audioSession: RTCAudioSession
     private let systemAudioSession: AVAudioSession
     private let routeStateSubject: AsyncCurrentValueSubject<CallAudioRouteState>
+    private let recordPermissionProvider: RecordPermissionProviding
+    private let pendingSessionLock = NSLock()
 
     private var routeObservationTask: Task<Void, Never>?
+    private var sessionPendingPermission: AVAudioSession?
 
     var routeState: CallAudioRouteState { routeStateSubject.value }
 
     init(
         audioSession: RTCAudioSession = .sharedInstance(),
-        systemAudioSession: AVAudioSession = .sharedInstance()
+        systemAudioSession: AVAudioSession = .sharedInstance(),
+        recordPermissionProvider: RecordPermissionProviding = RecordPermissionService()
     ) {
         self.audioSession = audioSession
         self.systemAudioSession = systemAudioSession
+        self.recordPermissionProvider = recordPermissionProvider
         audioSession.useManualAudio = true
         audioSession.isAudioEnabled = false
 
@@ -107,6 +114,15 @@ private extension CallAudioSessionManager {
         }
 
         updateRouteState()
+    }
+
+    @discardableResult
+    func replaceSessionPendingPermission(with session: AVAudioSession?) -> AVAudioSession? {
+        pendingSessionLock.withLock {
+            let previous = sessionPendingPermission
+            sessionPendingPermission = session
+            return previous
+        }
     }
 
     func stopRouteObservation() {
@@ -220,14 +236,28 @@ extension CallAudioSessionManager: CallAudioSessionManaging {
     func setEnabled(_ isEnabled: Bool, for session: AVAudioSession) {
         if isEnabled {
             // Starting WebRTC audio I/O without record permission can crash the app.
-            guard AVAudioApplication.shared.recordPermission == .granted else {
+            guard recordPermissionProvider.recordPermission == .granted else {
+                replaceSessionPendingPermission(with: session)
                 return
             }
             audioSession.audioSessionDidActivate(session)
         } else {
+            replaceSessionPendingPermission(with: nil)
             audioSession.audioSessionDidDeactivate(session)
         }
         audioSession.isAudioEnabled = isEnabled
+    }
+
+    func enableAudioIfPermitted() {
+        guard
+            recordPermissionProvider.recordPermission == .granted,
+            let session = replaceSessionPendingPermission(with: nil)
+        else {
+            return
+        }
+
+        audioSession.audioSessionDidActivate(session)
+        audioSession.isAudioEnabled = true
     }
 
     func selectRoute(_ route: CallAudioRoute) throws {

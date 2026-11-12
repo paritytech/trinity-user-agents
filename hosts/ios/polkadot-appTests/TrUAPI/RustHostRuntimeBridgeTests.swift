@@ -1,13 +1,14 @@
 import Foundation
 import Testing
 import ChainRegistry
+import Keystore_iOS
 import SubstrateSdk
 import TrUAPIHost
 @testable import polkadot_app
 
 // MARK: - Helpers
 
-private let testProduct = ProductExecutionConfig(productId: "host.product", executionKind: .app)
+private let testProduct = ProductExecutionConfig(productId: try! ProductId("host.product.dot"), executionKind: .app)
 
 private func makeHostDefaults() -> UserDefaults {
     UserDefaults(suiteName: "io.polkadotapp.tests.truapi-host-bridge") ?? .standard
@@ -17,12 +18,10 @@ private func makeHostBridge(
     chainRegistry: ChainRegistryProtocol = MockChainRegistry(),
     confirmationPresenter: MockConfirmationPresenter = MockConfirmationPresenter()
 ) -> RustHostRuntimeBridge {
-    let chainConnections = TrUAPIChainConnectionPool(
-        engineResolver: { genesisHash in
-            chainRegistry.getChainByGenesis(for: genesisHash.toHex()).flatMap { chain in
-                chainRegistry.getConnection(for: chain.chainId)
-            }
-        },
+    let chainConnections = TrUAPIV2SpecConnectionPool(
+        chainRegistry: chainRegistry,
+        applicationHandler: MockApplicationHandler(),
+        dateProvider: MockDateProvider(),
         logger: Logger.shared
     )
     return RustHostRuntimeBridge(
@@ -30,6 +29,8 @@ private func makeHostBridge(
         coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
+        backedUpInstallation: TrUAPIBackedUpInstallation(),
+        encryptedStorage: TrUAPIEncryptedStorage(keychain: InMemoryKeychain()),
         logger: Logger.shared
     )
 }
@@ -65,7 +66,7 @@ struct RustHostRuntimeBridgeTests {
     @Test func navigateToRejects() async {
         let bridge = makeHostBridge()
 
-        await #expect(throws: HostNavigateRejection.self) {
+        await #expect(throws: HostNavigateToError.self) {
             try await bridge.navigateTo(url: "https://example.com")
         }
     }
@@ -78,7 +79,7 @@ struct RustHostRuntimeBridgeTests {
         let bridge = makeHostBridge(confirmationPresenter: presenter)
 
         let review = UserConfirmationReview.accountAccess(
-            AccountAccessReview(requestingProductId: "a.dot", targetProductId: "b.dot")
+            AccountAccessReview(requestingProductId: try! ProductId("a.dot"), targetProductId: try! ProductId("b.dot"))
         )
         let result = try await bridge.confirmUserAction(review: review)
 
@@ -103,7 +104,7 @@ struct RustHostRuntimeBridgeTests {
         presenter.permissionDecisionToReturn = decision
         let bridge = makeHostBridge(confirmationPresenter: presenter)
         let review = UserConfirmationReview.identityDisclosure(
-            IdentityDisclosureReview(productId: "caller.dot")
+            IdentityDisclosureReview(productId: try! ProductId("caller.dot"))
         )
 
         let result = try await bridge.confirmPermission(review: review)
@@ -134,17 +135,39 @@ struct RustHostRuntimeBridgeTests {
 
 // MARK: - Runtime config
 
+private func makeDatabaseDirectory() throws -> String {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory.path
+}
+
 struct TrUAPIHostRuntimeProviderConfigTests {
-    /// Missing chains fail explicitly rather than degrading — the config seam
-    /// throws when the registry cannot resolve the required chains.
-    @Test func makeRuntimeConfigThrowsWhenChainsMissing() {
-        #expect(throws: (any Error).self) {
-            _ = try TrUAPIHostRuntimeProvider.makeRuntimeConfig(
-                chainRegistry: MockChainRegistry(),
-                secret: Data([0x01]),
-                liteUsername: nil,
-                networkSuffix: "paseo"
-            )
-        }
+    /// The core verifies the bundled descriptor under the build's stack link
+    /// before it starts, so a config the core refuses leaves the app with no
+    /// runtime and no product can open.
+    @Test func runtimeStartsFromTheAssembledConfig() throws {
+        let config = try TrUAPIHostRuntimeProvider.makeRuntimeConfig(
+            secret: Data(repeating: 7, count: 32),
+            liteUsername: nil,
+            networkSuffix: "testnet",
+            databaseDirectory: makeDatabaseDirectory()
+        )
+
+        _ = try TrUAPIHostRuntime(bridge: makeHostBridge(), runtimeConfig: config)
+    }
+
+    /// Tests run in one build only, so the stacks the other builds run are
+    /// started here as well: a copy refreshed without its link, or a
+    /// reserved-values flag that refuses its stack, fails before it ships.
+    @Test(arguments: [TrUAPIBundledStack.previewnet, TrUAPIBundledStack.paseoNextV2, TrUAPIBundledStack.polkadot])
+    func everyBundledStackStartsTheCore(stack: TrUAPIBundledStack.Definition) throws {
+        let config = try HostRuntimeConfig(
+            hostName: "Polkadot App",
+            stack: stack.load(),
+            databaseDirectory: makeDatabaseDirectory()
+        )
+
+        _ = try TrUAPIHostRuntime(bridge: makeHostBridge(), runtimeConfig: config)
     }
 }

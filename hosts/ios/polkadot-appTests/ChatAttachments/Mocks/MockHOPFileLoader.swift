@@ -25,6 +25,8 @@ final class MockHOPFileLoaderFactory: HOPFileLoaderMaking, @unchecked Sendable {
 final class MockHOPFileLoader: HandoffFileLoading, @unchecked Sendable {
     var downloadEvents: [FileDownloadingEvent] = []
     var uploadEvents: [FileUploadingEvent] = []
+    var uploadEventsPerAttempt: [[FileUploadingEvent]]?
+    private(set) var uploadAttemptCount = 0
     var shouldSuspend = false
     var suspensionTime: Int = 60 // seconds
 
@@ -33,7 +35,16 @@ final class MockHOPFileLoader: HandoffFileLoading, @unchecked Sendable {
         sender _: SenderProofProviding,
         recipients _: FileRecipients
     ) -> AnyAsyncSequence<FileUploadingEvent> {
-        let events = uploadEvents
+        uploadAttemptCount += 1
+
+        // Attempts past the last script replay it.
+        let events: [FileUploadingEvent] =
+            if let scripts = uploadEventsPerAttempt {
+                scripts[min(uploadAttemptCount - 1, scripts.count - 1)]
+            } else {
+                uploadEvents
+            }
+
         let suspend = shouldSuspend
         let currentSuspensionTime = suspensionTime
 

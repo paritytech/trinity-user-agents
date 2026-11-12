@@ -3,13 +3,16 @@ import SubstrateSdk
 import FoundationExt
 
 struct ChainLiveness {
-    private let windowSeconds: Double
+    let blockPeriod: Duration
     let slotCount: Int
+
+    private let windowSeconds: Double
 
     private var firstRecordedAt: Date?
     private var samples: [(height: BlockNumber, date: Date)] = []
 
     init(blockPeriod: Duration) {
+        self.blockPeriod = blockPeriod
         let blockSeconds = blockPeriod.timeInterval
         let calculatedWindow = max(30.0, blockSeconds * 10)
 

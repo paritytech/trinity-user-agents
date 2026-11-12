@@ -8,7 +8,6 @@ import io.paritytech.polkadotapp.app.root.presentation.debug.reportIssue.ISSUE_S
 import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
 import io.paritytech.polkadotapp.common.utils.toPayloadBundle
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
-import io.paritytech.polkadotapp.feature_videogame_impl.presentation.gameResults.GameResultsPayload
 import javax.inject.Inject
 
 class RootNavigator @Inject constructor(
@@ -18,8 +17,6 @@ class RootNavigator @Inject constructor(
         if (isCurrentDestination(R.id.mainFragment)) return
         performNavigation(R.id.action_global_to_main_graph)
     }
-
-    override fun openAddContact() = performNavigation(R.id.action_global_to_addContactFragment)
 
     override fun openActiveProduct() = performNavigation(R.id.action_global_to_spaBrowserFragment)
 
@@ -36,8 +33,6 @@ class RootNavigator @Inject constructor(
         args = bundleOf(ISSUE_SCREENSHOT_PATH to screenshotPath),
     )
 
-    override fun openVideoGame() = performNavigation(R.id.action_global_to_video_game_play_graph)
-
     override fun openProductBotsManagement() = performNavigation(R.id.action_global_to_product_bots_management)
 
     override fun openPocketFacePreview() = performNavigation(R.id.action_global_to_pocket_face_preview)
@@ -45,10 +40,5 @@ class RootNavigator @Inject constructor(
     override fun openSpaBrowser(payload: SpaBrowserPayload) = performNavigation(
         R.id.action_global_to_spaBrowserFragment,
         args = payload.toPayloadBundle(SpaBrowserPayload::class.java.name),
-    )
-
-    override fun openSimulatedGameResults(payload: GameResultsPayload) = performNavigation(
-        actionId = R.id.action_global_to_gameResultsFragment,
-        args = payload.toPayloadBundle()
     )
 }

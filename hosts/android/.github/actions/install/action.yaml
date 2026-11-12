@@ -3,7 +3,7 @@ description: Contains all dependencies for Android build
 inputs:
   truapi_ref:
     description: >-
-      paritytech/host-rust-core commit to build the TrUAPI core from. Pinned to a
+      paritytech/trinity-user-agents commit to build the TrUAPI core from. Pinned to a
       SHA so an unrelated merge there cannot turn this build red; bump it
       deliberately.
       The app's HostCallbacks implementation must match the native API surface
@@ -112,7 +112,7 @@ runs:
     - name: 🧩 Checkout truapi
       uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       with:
-        repository: paritytech/host-rust-core
+        repository: paritytech/trinity-user-agents
         ref: ${{ inputs.truapi_ref }}
         path: .truapi
 

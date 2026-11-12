@@ -18,6 +18,7 @@ The project uses local SPM packages under `Packages/`, with `AppDependencies` as
 - **CommonService** — Common service protocols
 - **StateMachine** — Generic state machine primitives
 - **JailbreakDetection** — Device integrity checks
+- **IssueMonitoring** — Crash/issue reporting seam
 
 ### Blockchain & Crypto
 - **SubstrateOperation** — Substrate blockchain operations
@@ -41,18 +42,19 @@ The project uses local SPM packages under `Packages/`, with `AppDependencies` as
 - **HandoffService** — Handoff/continuity
 - **Coinage** — Private Payment System implementation: coin models, denominations, transfer planning, and lifecycle
 - **DurableTransactions** — Domain-neutral crash-durable transaction engine (ledger, submission watch, recovery pass, completion ladder, pinned chain view). Domains plug in through `TxCompletionOracle`; Coinage is the first. Ships `DurableTransactionsTestSupport` fakes
-- **Individuality** — Personhood / identity claims
+- **Individuality** — People, LitePeople, Members, Allowance, Pgas, Resources, the identity pallet and the origin restriction pallet
 - **BulletinChain** — Bulletin/news chain integration
 - **AssetExchange** — Asset exchange protocols
 - **AssetHubSdk** — Asset Hub blockchain integration
 - **HydrationSdk** — Hydration DeFi integration
 - **Products** — Product account models and WebView JS bridge; the DotNs resolver reads its contracts through `Revive`
-- **TrUAPIHost** *(path dependency on the enclosing host-rust-core tree)* — TrUAPI Rust core
+- **TrUAPIHost** *(path dependency on the enclosing trinity-user-agents tree)* — TrUAPI Rust core
   (xcframework + uniffi bindings), the `TrUAPIHostCore` wrapper (`TrUAPIHostCoreProtocol`
   seam), and the bundled truapi lockdown container behind `ContainerScriptBundle.load()`.
   The container TypeScript source and its esbuild live in the truapi repo, not here.
-  App-side glue — `RustRuntimeBridge`, `Connection/` (chain connection pool with injected
-  genesis→engine resolver, rpc adapter, frames), `Storage/` (`TrUAPILocalStorage`),
+  App-side glue — `RustRuntimeBridge`, `Connection/` (per-lease raw socket pool
+  `TrUAPIV2SpecConnectionPool` with an injected genesis→`ChainSocket` resolver, plus the
+  `TrUAPIChainConnecting` seam), `Storage/` (`TrUAPILocalStorage`),
   `Preimage/` (`TrUAPIPreimageCache` on `CoalescingTask`) — lives in
   `polkadot-app/Modules/Products/TrUAPI/`, not in a package
 

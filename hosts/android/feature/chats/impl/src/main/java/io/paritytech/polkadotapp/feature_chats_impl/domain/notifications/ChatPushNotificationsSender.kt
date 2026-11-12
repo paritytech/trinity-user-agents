@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_chats_impl.domain.notifications
 
+import io.paritytech.polkadotapp.common.data.os.OperatingSystem
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_impl.data.notifications.ChatMessageNotificationSentRepository
 import io.paritytech.polkadotapp.tools_push_notifications_api.PushNotificationsHelper
@@ -10,6 +11,7 @@ interface ChatPushNotificationsSender {
     suspend fun sendPushNotificationOnce(
         messageId: ChatMessageId,
         platformToken: String,
+        operatingSystem: OperatingSystem,
         pushId: ByteArray,
         encryptedMessage: ByteArray,
         isVoIP: Boolean = false
@@ -23,6 +25,7 @@ class RealChatPushNotificationsSender @Inject constructor(
     override suspend fun sendPushNotificationOnce(
         messageId: ChatMessageId,
         platformToken: String,
+        operatingSystem: OperatingSystem,
         pushId: ByteArray,
         encryptedMessage: ByteArray,
         isVoIP: Boolean
@@ -33,6 +36,7 @@ class RealChatPushNotificationsSender @Inject constructor(
 
         pushNotificationsHelper.sendNotify(
             platformToken = platformToken,
+            operatingSystem = operatingSystem,
             pushId = pushId,
             encryptedMessage = encryptedMessage,
             isVoIP = isVoIP

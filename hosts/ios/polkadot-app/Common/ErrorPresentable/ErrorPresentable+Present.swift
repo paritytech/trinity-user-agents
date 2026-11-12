@@ -2,6 +2,7 @@ import Foundation
 import UIKitExt
 
 extension ErrorPresentable where Self: AlertPresentable {
+    @discardableResult
     func present(error: ErrorContent, from view: ControllerBackedProtocol?) -> Bool {
         present(
             message: error.message,

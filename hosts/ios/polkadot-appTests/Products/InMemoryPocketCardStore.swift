@@ -1,0 +1,121 @@
+import Foundation
+import AsyncExtensions
+import Products
+import TrUAPIHost
+@testable import polkadot_app
+
+/// The collection held in memory, standing in for the one the core keeps.
+///
+/// Snapshots are seeded with what is held and sent on every write, the way the
+/// core's card stream behaves, so a test can assert that a surface followed a
+/// write nobody announced.
+actor InMemoryPocketCardStore: PocketCardStore {
+    struct Unavailable: Error {}
+
+    private var stored: [PocketCardEntry]
+    private var faces: [PocketCardKey: RendererNode] = [:]
+    private let pinned: any PinnedPocketCards
+    private var readsFail = false
+    private var writesFail = false
+    private let snapshots: AsyncCurrentValueSubject<[PocketCardEntry]>
+
+    init(_ stored: [PocketCardEntry] = [], pinned: any PinnedPocketCards = InMemoryPinnedCards([])) {
+        self.stored = stored
+        self.pinned = pinned
+        snapshots = AsyncCurrentValueSubject(stored)
+    }
+
+    /// Storage the app can no longer read, which is a failure rather than an
+    /// empty Pocket.
+    func failReads() {
+        readsFail = true
+    }
+
+    /// Storage the app can no longer write to: a card that was not added, and
+    /// a removal that did not happen rather than one that found nothing.
+    func failWrites() {
+        writesFail = true
+    }
+
+    func cards() async throws -> [PocketCardEntry] {
+        if readsFail { throw Unavailable() }
+
+        return settle(stored)
+    }
+
+    nonisolated func observeCards() -> AnyAsyncSequence<[PocketCardEntry]> {
+        let pinned = pinned
+
+        return snapshots
+            .map { [pinned] added in
+                let placed = Self.placed(by: pinned)
+                let placedKeys = Set(placed.map(\.key))
+
+                return placed + added.filter { !placedKeys.contains($0.key) }
+            }
+            .eraseToAnyAsyncSequence()
+    }
+
+    func removeCard(_ key: PocketCardKey) async throws {
+        guard pinned.pinned(key) == nil else { return }
+        if writesFail { throw Unavailable() }
+
+        stored.removeAll { $0.key == key }
+        faces[key] = nil
+        snapshots.send(stored)
+    }
+
+    func add(_ card: PocketCardEntry, face: RendererNode) async throws {
+        if writesFail { throw Unavailable() }
+
+        stored.removeAll { $0.key == card.key }
+        stored.append(card)
+        faces[card.key] = face
+        snapshots.send(stored)
+    }
+
+    func face(for key: PocketCardKey) async -> RendererNode? {
+        if let kept = faces[key] { return kept }
+        guard pinned.pinned(key) != nil else { return nil }
+
+        return await pinned.face(for: key.cardId)
+    }
+
+    private func settle(_ added: [PocketCardEntry]) -> [PocketCardEntry] {
+        let placed = Self.placed(by: pinned)
+        let placedKeys = Set(placed.map(\.key))
+
+        return placed + added.filter { !placedKeys.contains($0.key) }
+    }
+
+    private static func placed(by pinned: any PinnedPocketCards) -> [PocketCardEntry] {
+        pinned.cards().map {
+            PocketCardEntry(
+                key: PocketCardKey(productId: $0.productId, cardId: PocketCardId(value: $0.cardId)),
+                title: $0.title,
+                privileged: true
+            )
+        }
+    }
+}
+
+/// The cards the host itself places, as a test supplies them.
+struct InMemoryPinnedCards: PinnedPocketCards {
+    private let cardsHeld: [PocketCardEntry]
+    private let bundledFace: RendererNode?
+
+    init(_ cardsHeld: [PocketCardEntry], face: RendererNode? = nil) {
+        self.cardsHeld = cardsHeld
+        bundledFace = face
+    }
+
+    func cards() -> [PinnedPocketCard] {
+        cardsHeld.map { PinnedPocketCard(productId: $0.key.productId, cardId: $0.key.cardId.value, title: $0.title) }
+    }
+
+    func pinned(_ key: PocketCardKey) -> PocketCardEntry? {
+        cardsHeld.first { $0.key == key }
+    }
+
+    func face(for _: PocketCardId) async -> RendererNode? { bundledFace }
+}

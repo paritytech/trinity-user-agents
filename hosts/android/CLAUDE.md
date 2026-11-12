@@ -4,7 +4,7 @@ This file is intentionally **thin**. Detailed architecture and code rules are in
 
 ## Build prerequisites
 
-The build needs the TrUAPI Rust core, because `:feature:products:impl` depends on `:bindings:truapi-host` in every variant. The core is the enclosing `host-rust-core` repository, two levels up, so nothing has to be fetched.
+The build needs the TrUAPI Rust core, because `:feature:products:impl` depends on `:bindings:truapi-host` in every variant. The core is the enclosing `trinity-user-agents` repository, two levels up, so nothing has to be fetched.
 
 `FIRESTORE_DATABASE_ID` must also be in `local.properties`, or configuration fails before anything compiles. It is a CI secret, so ask for the value.
 

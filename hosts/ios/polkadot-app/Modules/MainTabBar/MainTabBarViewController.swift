@@ -4,7 +4,6 @@ import PolkadotUI
 import SnapKit
 import DesignSystem
 import UIKitExt
-import Products
 
 final class MainTabBarViewController: UIViewController {
     let presenter: MainTabBarPresenterProtocol
@@ -12,7 +11,11 @@ final class MainTabBarViewController: UIViewController {
     let browserCoordinator: SPABrowserCoordinating
     let flowStateProvider: any SPAFlowStateProviding
 
-    private let chromeController = TabBarBottomChromeController()
+    let chromeController = TabBarBottomChromeController()
+
+    lazy var widgetController = TabBarWidgetController { [weak self] in
+        self?.updateWidgetLayout()
+    }
 
     private lazy var statusBarHost = UIHostingController(rootView: ChainConnectionStatusBarView(models: []))
 
@@ -22,15 +25,30 @@ final class MainTabBarViewController: UIViewController {
     private let chainStatusAnchorGuide = UILayoutGuide()
 
     private static let chainStatusAnchorInset: CGFloat = 26
+    private static let statusTitleSpacing = DSSpacings.small
 
     private var chainStatusAnchorWidth: Constraint?
+    private var statusTitleLeading: Constraint?
+    private var statusTitleCenterY: Constraint?
 
-    private lazy var container = TabBarContainer(hostController: self)
+    private let statusBarTitleButton = StatusBarTitleButton()
+
+    lazy var container = TabBarContainer(hostController: self)
 
     private var tabs: [TabBarItem] = []
-    private var badges: [TabBarItem: TabBarBadge] = [:]
     private var controllerByItem: [TabBarItem: UIViewController] = [:]
-    private var spaChipViewModels: [SPATabChipViewModel] = []
+    var spaChipViewModels: [SPATabChipViewModel] = []
+    var productGamePill: ProductGamePillViewModel?
+
+    /// The live scan panel. Nil while the centre control has no content.
+    private weak var scanPanel: ScanPanelViewController?
+
+    /// Set while a swipe on the centre button carries the panel toward Search, before it lands.
+    private var isSearchSwipePending = false
+    /// Set while the landing focuses search, so the bar's hide plays no feedback.
+    private var isFocusingFromSwipe = false
+    /// The Tab index the user tapped while an outgoing navigation transition was running.
+    private var pendingSelectionIndex: Int?
 
     init(
         presenter: MainTabBarPresenterProtocol,
@@ -58,26 +76,51 @@ final class MainTabBarViewController: UIViewController {
         installStatusBar()
 
         installChromeController()
+        installWidgets()
 
         chromeController.statusStripAnchorProvider = { [weak self] in self?.chainStatusAnchorGuide }
+        chromeController.makeCenterContent = { [weak self] in self?.makeScanPanel() }
+        chromeController.contentHeightForCenterPanel = { [weak self] in
+            guard let self else {
+                return .fits(ScanPanelViewLayout.declaredHeight)
+            }
+            return isSearchSwipePending
+                ? .fill
+                : scanPanel?.declaredContentHeight() ?? .fits(ScanPanelViewLayout.declaredHeight)
+        }
+        chromeController.onCenterPanelWillClose = { [weak self] in
+            self?.cancelSearchSwipe()
+            self?.scanPanel?.prepareForClose()
+        }
+        chromeController.onCenterPanelSwipeOpenBegan = { [weak self] in self?.beginSearchSwipe() }
+        chromeController.onCenterPanelSwipeOpenLanding = { [weak self] in self?.landSearchSwipe() }
+
+        // Close does not stop capture: the panel's teardown releases the camera, and an explicit stop
+        // here can race the preview layer's session attach.
+        chromeController.onCenterPanelDidChangeOpen = { [weak self] isOpen in
+            if !isOpen {
+                self?.cancelSearchSwipe()
+            }
+            guard isOpen else { return }
+            self?.scanPanel?.setCaptureActive(true)
+        }
 
         chromeController.onSelect = { [weak self] index, isReselection in
             self?.handleSelection(index: index, isReselection: isReselection)
         }
 
-        chromeController.onPanelChanged = { [weak self] kind in
-            guard let action = kind?.contentAction else {
-                return
-            }
-            self?.presenter.didRequestContentPanel(for: action)
+        chromeController.onConnectionStatusTapped = { [weak self] in
+            self?.chromeController.setPanel(nil)
+            self?.presenter.didRequestConnectionStatus()
+        }
+
+        chromeController.onSettingsTapped = { [weak self] in
+            self?.chromeController.setPanel(nil)
+            self?.presenter.didRequestSettings()
         }
 
         chromeController.onChipTapped = { [weak self] id in
-            guard let self, let tab = browserCoordinator.tabs.first(where: { $0.id == id }) else {
-                return
-            }
-            chromeController.setPanel(nil, animated: true)
-            mountSPA(for: tab)
+            _ = self?.mountExistingTab { $0.id == id }
         }
 
         chromeController.onChipCloseRequested = { [weak self] id in
@@ -88,7 +131,14 @@ final class MainTabBarViewController: UIViewController {
             guard let self else {
                 return
             }
-            chromeController.applyLayout(chromeContext(for: container.selectedController))
+            applyWidgetLayout(for: chromeContext(for: container.selectedController))
+        }
+
+        chromeController.onBottomClearanceInvalidated = { [weak self] in
+            guard let self else {
+                return
+            }
+            applyWidgetLayout(for: chromeContext(for: container.selectedController))
         }
 
         presenter.setup()
@@ -97,7 +147,14 @@ final class MainTabBarViewController: UIViewController {
     override func viewSafeAreaInsetsDidChange() {
         super.viewSafeAreaInsetsDidChange()
 
-        chromeController.applyLayout(chromeContext(for: container.selectedController))
+        statusTitleLeading?.update(offset: ChainConnectionStatusBarView.horizontalPadding)
+        statusTitleCenterY?.update(offset: -Self.statusTitleCenterInset)
+        applyWidgetLayout(for: chromeContext(for: container.selectedController))
+    }
+
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        super.pressesBegan(presses, with: event)
+        chromeController.foldController.recordKeyPress()
     }
 
     override var childForStatusBarStyle: UIViewController? {
@@ -134,7 +191,49 @@ private extension MainTabBarViewController {
             chainStatusAnchorWidth = make.width.equalTo(1).constraint
         }
 
+        view.addSubview(statusBarTitleButton)
+        statusBarTitleButton.snp.makeConstraints { make in
+            statusTitleLeading = make.leading.equalTo(statusBarHost.view)
+                .offset(ChainConnectionStatusBarView.horizontalPadding).constraint
+            statusTitleCenterY = make.centerY.equalTo(statusBarHost.view.snp.bottom)
+                .offset(-Self.statusTitleCenterInset).constraint
+            make.trailing.lessThanOrEqualTo(chainStatusAnchorGuide.snp.leading)
+                .offset(-Self.statusTitleSpacing)
+            make.height.equalTo(ChainConnectionStatusBarView.preferredHeight)
+        }
+
         statusBarHost.didMove(toParent: self)
+    }
+
+    static var statusTitleCenterInset: CGFloat {
+        ChainConnectionStatusBarView.bottomPadding + ChainConnectionStatusBarView.preferredHeight / 2
+    }
+
+    func makeStatusBarTitleViewModel() -> StatusBarTitleViewModel {
+        switch container.selection {
+        case let .spa(tabId):
+            let provider = container.selectedController as? StatusBarTitleProviding
+            return StatusBarTitleViewModel(
+                title: provider?.statusBarTitle ?? spaChipViewModels.first { $0.id == tabId }?.name ?? "",
+                showsLogo: true,
+                menu: provider?.makeStatusBarMenu()
+            )
+        case let .tab(index):
+            return StatusBarTitleViewModel(
+                title: tabs.indices.contains(index) ? Self.statusBarTitle(for: tabs[index]) : "",
+                showsLogo: false,
+                menu: nil
+            )
+        }
+    }
+
+    static func statusBarTitle(for item: TabBarItem) -> String {
+        switch item {
+        case .chat: String(localized: .chatMainTitle)
+        case .wallet,
+             .browse,
+             .settings: String(localized: item.title)
+        }
     }
 
     func installChromeController() {
@@ -147,9 +246,8 @@ private extension MainTabBarViewController {
         chromeController.didMove(toParent: self)
     }
 
-    func reconcileChromeWithSelectedTab() {
-        chromeController.apply(chromeContext(for: container.selectedController))
-        applyChips()
+    func installWidgets() {
+        widgetController.install(in: view, below: chromeController.view)
     }
 
     func chromeContext(for controller: UIViewController?) -> TabBarChromeContext {
@@ -170,34 +268,6 @@ private extension MainTabBarViewController {
             )
         }
         return chromeContext(tabController: navigation, stack: navigation.viewControllers, showing: top)
-    }
-
-    func chromeContext(
-        tabController: UIViewController,
-        stack: [UIViewController],
-        showing target: UIViewController
-    ) -> TabBarChromeContext {
-        TabBarChromeContext(
-            tabController: tabController,
-            contentController: target,
-            isTabRoot: TabBarHiddenPolicy.isTabRoot(in: stack, showing: target),
-            foldDerived: TabBarHiddenPolicy.deriveFoldState(in: stack, showing: target),
-            screen: target
-        )
-    }
-
-    func stayingChromeContext(
-        in navigationController: UINavigationController,
-        context: UIViewControllerTransitionCoordinatorContext
-    ) -> TabBarChromeContext? {
-        guard let staying = context.viewController(forKey: .from) else {
-            return nil
-        }
-        let restored = TabBarHiddenPolicy.stackAfterCancelledPop(
-            stack: navigationController.viewControllers,
-            staying: staying
-        )
-        return chromeContext(tabController: navigationController, stack: restored, showing: staying)
     }
 
     func handleReselection() {
@@ -221,54 +291,13 @@ private extension MainTabBarViewController {
 
         TabBarScrollToTopLocator.scrollToTop(scrollView)
     }
-
-    func track(
-        of navigationController: AppNavigationController,
-        showing target: UIViewController,
-        animated: Bool
-    ) {
-        let incoming = chromeContext(
-            tabController: navigationController,
-            stack: navigationController.viewControllers,
-            showing: target
-        )
-
-        guard
-            animated,
-            let coordinator = navigationController.transitionCoordinator,
-            coordinator.isInteractive
-        else {
-            chromeController.apply(
-                incoming,
-                animatingAlongside: animated ? navigationController.transitionCoordinator : nil
-            )
-            return
-        }
-
-        chromeController.applyLayout(incoming, animatingAlongside: coordinator)
-
-        let targetState = chromeController.resolvedState(for: incoming)
-        coordinator.animate(alongsideTransition: { [weak self] _ in
-            self?.chromeController.setInteractiveTarget(targetState)
-        })
-
-        coordinator.notifyWhenInteractionChanges { [weak self] context in
-            guard let self else {
-                return
-            }
-            let staying = context.isCancelled
-                ? stayingChromeContext(in: navigationController, context: context)
-                : nil
-            chromeController.apply(staying ?? incoming)
-        }
-    }
 }
 
 // MARK: - Selection
 
 extension MainTabBarViewController {
     func handleSelection(index: Int, isReselection: Bool) {
-        chromeController.setPanel(nil, animated: true)
+        chromeController.setPanel(nil)
 
         guard tabs.indices.contains(index) else { return }
 
@@ -277,8 +306,30 @@ extension MainTabBarViewController {
             return
         }
 
-        container.select(index: index)
-        reconcileChromeWithSelectedTab()
+        selectWhenOutgoingTransitionEnds(index: index)
+    }
+}
+
+private extension MainTabBarViewController {
+    /// Applies a Tab switch once the outgoing tab's navigation transition has finished.
+    /// A transition must not finish off screen: UIKit then skips `didMove(toParent:)` on the
+    /// popped screen, so that screen never clears its state.
+    func selectWhenOutgoingTransitionEnds(index: Int) {
+        guard let coordinator = (container.selectedController as? UINavigationController)?.transitionCoordinator else {
+            container.select(index: index)
+            refreshChrome()
+            return
+        }
+
+        let wasPending = pendingSelectionIndex != nil
+        pendingSelectionIndex = index
+        guard !wasPending else { return }
+
+        coordinator.animate(alongsideTransition: nil) { [weak self] _ in
+            guard let self, let pendingIndex = pendingSelectionIndex else { return }
+            pendingSelectionIndex = nil
+            selectWhenOutgoingTransitionEnds(index: pendingIndex)
+        }
     }
 }
 
@@ -300,27 +351,18 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
 
         chromeController.setItems(slots)
         chromeController.setSelectedIndex(index)
-        badges.forEach { setBadge($0.value, for: $0.key) }
         container.setControllers(content.map(\.controller), selecting: index)
-        reconcileChromeWithSelectedTab()
+        refreshChrome()
     }
 
     func select(tab: TabBarItem) {
-        chromeController.setPanel(nil, animated: true)
+        chromeController.setPanel(nil)
 
         guard let index = tabs.firstIndex(of: tab) else { return }
 
         chromeController.setSelectedIndex(index)
         container.select(index: index)
-        reconcileChromeWithSelectedTab()
-    }
-
-    func setBadge(_ badge: TabBarBadge?, for tab: TabBarItem) {
-        badges[tab] = badge
-        guard let index = tabs.firstIndex(of: tab) else {
-            return
-        }
-        chromeController.setBadge(badge.map { _ in .attention }, at: index)
+        refreshChrome()
     }
 
     func setLabels(visible: Bool) {
@@ -334,72 +376,79 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
     func showSPATabs(_ viewModels: [SPATabChipViewModel]) {
         spaChipViewModels = viewModels
         applyChips()
-    }
-
-    func showTabBarPanelContent(_ configuration: (any HashableContentConfiguration)?, for action: TabBarAction) {
-        chromeController.setContentPanel(configuration, for: action)
-    }
-
-    func showScanPanel() {
-        let controller = viewFactory.makeScanController()
-        chromeController.setContentController(controller, for: .scan)
-
-        #if FEATURE_INPUT
-            // Opening the chat selects its tab, and tab selection closes the panel. A second close
-            // here would cancel that animation in place and leave the backdrop and panel frozen
-            // mid-way.
-            controller?.onChatFound = { [weak self] model in
-                self?.presenter.didFindChat(model)
-            }
-
-            controller?.onContentHeightChanged = { [weak self] in
-                self?.chromeController.resizeContentPanel()
-            }
-        #else
-            controller?.onSearchTap = { [weak self] in
-                self?.chromeController.setPanel(nil, animated: true)
-                self?.presenter.didRequestContactSearch()
-            }
-        #endif
+        refreshStatusBarTitle()
     }
 
     func showChainStatus(_ models: [ChainConnectionStatusViewModel]) {
         statusBarHost.rootView = ChainConnectionStatusBarView(models: models)
         let width = max(1, ChainConnectionStatusBarView.ringsWidth(count: models.count))
         chainStatusAnchorWidth?.update(offset: width)
+        #if !FEATURE_PRODUCTS
+            chromeController.setChainStatus(models)
+        #endif
+    }
+
+    func showProductGamePill(_ viewModel: ProductGamePillViewModel?) {
+        productGamePill = viewModel
+        applyProductGamePill()
     }
 }
 
 // MARK: - Scan panel
 
 extension MainTabBarViewController {
-    /// Opens the scan panel from outside the bar, as a tap on the `.scan` action would.
     func openScanPanel() {
-        chromeController.setPanel(.content(.scan), animated: true)
+        chromeController.openPanelShowingDocklet(.content(.scan))
+    }
+
+    func closeScanPanel() {
+        chromeController.closeCenterPanel(duration: nil)
+    }
+
+    func makeScanPanel() -> UIViewController? {
+        let controller = viewFactory.makeScanController()
+        scanPanel = controller
+        controller?.setCaptureActive(false)
+
+        // Opening the chat selects its tab, and tab selection already closes the panel, so this
+        // path does not close it again.
+        controller?.onChatFound = { [weak self] model in
+            self?.presenter.didFindChat(model)
+        }
+        controller?.onContentHeightChanged = { [weak self] in
+            self?.chromeController.refreshCenterContentHeight()
+        }
+        controller?.onSearchFocusChanged = { [weak self] focused in
+            guard let self else {
+                return
+            }
+            chromeController.setBarHidden(focused, playsFeedback: !isFocusingFromSwipe)
+        }
+        if isSearchSwipePending {
+            controller?.setSearchPending(true)
+        }
+        return controller
     }
 }
 
-// MARK: - AppNavigationControllerTransitionObserving
-
-extension MainTabBarViewController: AppNavigationControllerTransitionObserving {
-    func appNavigationController(
-        _ navigationController: AppNavigationController,
-        willShow viewController: UIViewController,
-        animated: Bool
-    ) {
-        track(of: navigationController, showing: viewController, animated: animated)
+private extension MainTabBarViewController {
+    func beginSearchSwipe() {
+        isSearchSwipePending = true
+        scanPanel?.setSearchPending(true)
+        chromeController.refreshCenterContentHeight()
     }
 
-    func appNavigationController(
-        _ navigationController: AppNavigationController,
-        didShow viewController: UIViewController,
-        animated _: Bool
-    ) {
-        chromeController.apply(chromeContext(
-            tabController: navigationController,
-            stack: navigationController.viewControllers,
-            showing: viewController
-        ))
+    func landSearchSwipe() {
+        isSearchSwipePending = false
+        isFocusingFromSwipe = true
+        scanPanel?.focusSearch()
+        isFocusingFromSwipe = false
+    }
+
+    /// Drops a swipe that did not land, and returns the scan panel to the Scan state's layout.
+    func cancelSearchSwipe() {
+        isSearchSwipePending = false
+        scanPanel?.setSearchPending(false)
     }
 }
 
@@ -410,89 +459,29 @@ extension MainTabBarViewController: TopmostChildProviding {
 }
 
 extension MainTabBarViewController {
-    func attachWidget(_ configuration: any HashableContentConfiguration, for id: AppWidgetID) {
-        chromeController.attachWidget(configuration, for: id)
-    }
-
-    func detachWidget(for id: AppWidgetID) {
-        chromeController.detachWidget(for: id)
-    }
-}
-
-// MARK: - SPAHosting
-
-extension MainTabBarViewController: SPAHosting {
-    func openProduct(page: ProductPage) {
-        #if FEATURE_PRODUCTS
-            let tab = browserCoordinator.findOrCreateTab(for: page)
-            mountSPA(for: tab)
-        #else
-            presentProduct(page: page)
-        #endif
-    }
-
-    func minimizeSPA() {
-        container.unmountSPA()
-        reconcileChromeWithSelectedTab()
-    }
-
-    func closeSPA(tabId: UUID) {
-        let wasMounted = container.selection == .spa(tabId)
-        browserCoordinator.close(tabId: tabId)
-
-        guard wasMounted else {
-            return
-        }
-        minimizeSPA()
-    }
-}
-
-private extension MainTabBarViewController {
-    #if !FEATURE_PRODUCTS
-        /// Without the browse tab a product is a one-shot rather than a peer of the tabs: it is
-        /// presented over the container, so it never enters the tab store and closing it leaves
-        /// no chip behind.
-        func presentProduct(page: ProductPage) {
-            guard let view = SPAViewFactory.createView(
-                page: page,
-                flowState: flowStateProvider.flowState(),
-                isBrowserTab: true
-            ) else {
-                return
-            }
-
-            view.controller.modalPresentationStyle = .pageSheet
-            view.controller.sheetPresentationController?.detents = [
-                .custom { $0.maximumDetentValue * 0.92 }
-            ]
-            view.controller.sheetPresentationController?.prefersGrabberVisible = true
-
-            let host = UIWindow.keyWindow?.topmostViewController ?? self
-            host.present(view.controller, animated: true)
-        }
-    #endif
-
-    func mountSPA(for tab: SPATab) {
-        guard let controller = browserCoordinator.controller(for: tab) else {
-            closeSPA(tabId: tab.id)
-            return
-        }
-        container.mountSPA(controller, for: tab.id)
-        chromeController.apply(.spa(controller))
+    func refreshChrome() {
+        applyChrome(chromeContext(for: container.selectedController))
         applyChips()
     }
 
-    func applyChips() {
-        let chips = spaChipViewModels.map {
-            DSTabBarChip(id: $0.id, name: $0.name, icon: $0.icon)
-        }
-        chromeController.setSPATabs(chips, selected: mountedSPATabId)
+    func applyChrome(
+        _ context: TabBarChromeContext,
+        animatingAlongside transitionCoordinator: UIViewControllerTransitionCoordinator? = nil
+    ) {
+        chromeController.apply(context)
+        applyWidgetLayout(for: context, animatingAlongside: transitionCoordinator)
+        refreshStatusBarTitle()
     }
 
-    var mountedSPATabId: UUID? {
-        guard case let .spa(id) = container.selection else {
-            return nil
-        }
-        return id
+    func refreshStatusBarTitle() {
+        statusBarTitleButton.bind(viewModel: makeStatusBarTitleViewModel())
+    }
+
+    func attachWidget(_ configuration: any HashableContentConfiguration, for id: AppWidgetID) {
+        widgetController.attach(configuration, for: id)
+    }
+
+    func detachWidget(for id: AppWidgetID) {
+        widgetController.detach(for: id)
     }
 }

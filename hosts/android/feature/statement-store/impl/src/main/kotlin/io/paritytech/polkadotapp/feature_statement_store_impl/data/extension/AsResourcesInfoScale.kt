@@ -24,6 +24,15 @@ sealed class AsResourcesInfoScale : ToDynamicScaleInstance {
         val revision: RingRevision,
         val collection: MembershipCollectionScale,
     ) : AsResourcesInfoScale()
+
+    @Serializable
+    @AsTuple
+    class RegisterNotificationForCollection(
+        val proof: BandersnatchProof,
+        val ringIndex: RingIndex,
+        val revision: RingRevision,
+        val collection: MembershipCollectionScale,
+    ) : AsResourcesInfoScale()
 }
 
 @Serializable

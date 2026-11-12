@@ -3,7 +3,7 @@
 ## TL;DR
 
 Preimage submission to the Bulletin chain now happens **entirely inside the Rust
-core** (`truapi-server`). The core builds, signs, and submits the
+core** (`truapi`). The core builds, signs, and submits the
 `TransactionStorage.store` extrinsic itself, routing the chain traffic through
 the host's existing `chain.connect` byte-pipe — the same transport products
 already use for any chain access.
@@ -106,7 +106,7 @@ chain rejects, never a signature over attacker-chosen content.
 | Actor                            | Runs where                                      | Owns                                                                     |
 | -------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------ |
 | **Product**                      | sandboxed iframe / app                          | speaks TrUAPI; never sees chains or keys                                 |
-| **Rust core** (`truapi-server`)  | WASM in a Web Worker (web); native lib (mobile) | wire protocol, tx build + sign, submit + watch, allowance key            |
+| **Rust core** (`truapi`)  | WASM in a Web Worker (web); native lib (mobile) | wire protocol, tx build + sign, submit + watch, allowance key            |
 | **Host** (dotli / mobile shell)  | main thread / OS shell                          | user modals, `chain.connect` transport, `lookupPreimage` content backend |
 | **Wallet** (paired signing host) | phone                                           | allocates the Bulletin allowance key over SSO                            |
 | **Network**                      | —                                               | Bulletin chain (writes) + People chain (allowance allocation / SSO)      |
@@ -295,17 +295,17 @@ the inclusion watch so the provider cannot spin the worker.
 
 ## What changed (high-level map)
 
-- `truapi-server/src/host_logic/extrinsic.rs` — offline subxt assembler:
+- `truapi/src/host_logic/extrinsic.rs` — offline subxt assembler:
   config-pinned `SubstrateConfig`, sr25519 signer, metadata / validity / events
   / header decoders.
-- `truapi-server/src/host_logic/bulletin.rs` — `store{data}` build + sign, call
+- `truapi/src/host_logic/bulletin.rs` — `store{data}` build + sign, call
   pinning, byte-level call-data encoder.
-- `truapi-server/src/runtime/bulletin_rpc.rs` — the submit flow (follow ->
+- `truapi/src/runtime/bulletin_rpc.rs` — the submit flow (follow ->
   metadata -> nonce -> dry-run -> broadcast -> watch -> events) and its typed
   errors.
-- `truapi-server/src/runtime/capabilities/preimage.rs` — `Preimage::submit` ordering + refresh/retry;
+- `truapi/src/runtime/capabilities/preimage.rs` — `Preimage::submit` ordering + refresh/retry;
   `lookup_subscribe` cache + integrity check.
-- `truapi-platform` — `PreimageHost` keeps only `lookupPreimage`;
+- `truapi::platform` — `PreimageHost` keeps only `lookupPreimage`;
   `BulletinAllowanceKey` is zeroized on drop; configs gain an optional Bulletin
   genesis hash.
 - Host TS (`@parity/truapi-host`) + dotli — the signer bridge is removed; dotli

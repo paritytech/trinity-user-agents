@@ -6,12 +6,15 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPre
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessage
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 
 data class ChatSummary(
     val chatId: ChatId,
     val preview: ChatPreview,
+    val order: Order,
     val badge: ChatSummaryBadge,
     val timestamp: Timestamp,
+    val lastMessageSortOrder: Long?,
     val roomMetadata: RoomMetadata,
     val hasUnseenReaction: Boolean,
     // TODO this is a workaround to efficiently get access to the custom renderer
@@ -25,8 +28,13 @@ data class ChatSummary(
 data class LastMessageSummary(
     val chatId: ChatId,
     val lastMessage: ChatMessage?,
+    val lastMessageSortOrder: Long?,
     val unseenCount: Int,
     val hasUnseenReaction: Boolean,
     val chatCreatedAt: Long,
     val roomMetadata: RoomMetadata,
 )
+
+internal val chatSummaryOrder: Comparator<ChatSummary> = compareBy<ChatSummary> { it.order }
+    .thenByDescending { it.lastMessageSortOrder }
+    .thenByDescending { it.timestamp }

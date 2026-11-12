@@ -9,10 +9,10 @@ import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.lifecycle.awaitInstance
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.awaitCancellation
+import java.util.concurrent.Executors
 import javax.inject.Inject
 
 interface CameraQrReader {
@@ -37,23 +37,21 @@ class RealCameraQrReader @Inject constructor(
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .setResolutionSelector(resolutionSelector)
             .build()
-            .apply {
-                setAnalyzer(
-                    ContextCompat.getMainExecutor(appContext),
-                    qrCodeAnalyzer
-                )
-            }
         val camera = processCameraProvider.bindToLifecycle(
             lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, imageAnalysis, preview
         )
         qrCodeAnalyzer.attachCamera(camera)
+
+        val analysisExecutor = Executors.newSingleThreadExecutor()
+        imageAnalysis.setAnalyzer(analysisExecutor, qrCodeAnalyzer)
 
         try {
             awaitCancellation()
         } finally {
             imageAnalysis.clearAnalyzer()
             processCameraProvider.unbind(imageAnalysis, preview)
-            qrCodeAnalyzer.close()
+            analysisExecutor.execute(qrCodeAnalyzer::close)
+            analysisExecutor.shutdown()
         }
     }
 }

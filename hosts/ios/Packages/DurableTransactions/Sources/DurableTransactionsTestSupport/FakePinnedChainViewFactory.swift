@@ -1,6 +1,7 @@
 import AsyncExtensions
 import DurableTransactions
 import Foundation
+import os
 import SubstrateSdk
 
 /// Which engine-shaped reads fail, so a scenario can hold a transaction undecided without changing what
@@ -38,13 +39,26 @@ public struct ChainReadFailure: Error {
 public final class FakePinnedChainViewFactory<State: FakeChainState>: PinnedChainViewFactoryProtocol,
     @unchecked Sendable {
     public let chain: FakeChain<State>
-    public var faults: FakeChainFaults = .none
+
+    // Trackers pin from concurrent tasks while scenarios switch faults, so all mutable state is locked.
+    private struct MutableState {
+        var faults: FakeChainFaults = .none
+        var pins = 0
+        var pinnedChainIds: [ChainId] = []
+    }
+
+    private let state = OSAllocatedUnfairLock(initialState: MutableState())
+
+    public var faults: FakeChainFaults {
+        get { state.withLock { $0.faults } }
+        set { state.withLock { $0.faults = newValue } }
+    }
 
     /// How many times a view was pinned, so a scenario can assert a pass did not read the chain.
-    public private(set) var pins = 0
+    public var pins: Int { state.withLock { $0.pins } }
 
     /// The chain ids pins were asked for, in order.
-    public private(set) var pinnedChainIds: [ChainId] = []
+    public var pinnedChainIds: [ChainId] { state.withLock { $0.pinnedChainIds } }
 
     // Never finishes on its own, like the production stream.
     private let finalizedHeadTicks = AsyncPassthroughSubject<BlockNumber>()
@@ -58,10 +72,13 @@ public final class FakePinnedChainViewFactory<State: FakeChainState>: PinnedChai
     }
 
     public func pin(chainId: ChainId) async throws -> any PinnedChainViewProtocol {
-        pins += 1
-        pinnedChainIds.append(chainId)
+        let currentFaults = state.withLock { current in
+            current.pins += 1
+            current.pinnedChainIds.append(chainId)
+            return current.faults
+        }
 
-        if faults.pinFails {
+        if currentFaults.pinFails {
             throw ChainReadFailure(message: "pin failed")
         }
 

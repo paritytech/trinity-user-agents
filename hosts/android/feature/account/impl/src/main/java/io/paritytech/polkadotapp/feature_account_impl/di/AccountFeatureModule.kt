@@ -17,7 +17,6 @@ import io.paritytech.polkadotapp.feature_account_api.data.storage.newaccount.New
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.AccountDerivationProvider
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.RingVrfDerivationProvider
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.RingVrfEntropyDeriver
-import io.paritytech.polkadotapp.feature_account_api.domain.model.AliasAccountDerivationOverride
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
 import io.paritytech.polkadotapp.feature_account_api.domain.usecase.AccountDerivationUseCase
 import io.paritytech.polkadotapp.feature_account_api.domain.usecase.CreateNewAccountUseCase
@@ -88,9 +87,6 @@ interface AccountFeatureApiModule {
 
     @Binds
     fun bindCreateNewAccountUseCase(impl: RealCreateNewAccountUseCase): CreateNewAccountUseCase
-
-    @Multibinds
-    fun aliasDerivationOverrides(): Set<AliasAccountDerivationOverride>
 
     @Multibinds
     fun accountDerivationProviders(): Map<MetaAccount.Purpose, AccountDerivationProvider>

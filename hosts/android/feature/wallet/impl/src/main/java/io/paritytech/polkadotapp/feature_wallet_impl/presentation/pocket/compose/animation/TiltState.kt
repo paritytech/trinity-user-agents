@@ -18,16 +18,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 
-// Normalized device tilt for the holographic card:
+// Normalized device tilt for the card shine:
 // both axes are -1..1 relative to a neutral hold captured after a short warmup, so "centre" matches
-// however the user naturally holds the phone. (delayedX, delayedY) is a lagged copy of the same tilt,
-// used by trailing layers (the wordmark foil) so they follow the background by a beat.
+// however the user naturally holds the phone.
 @Immutable
 data class TiltState(
     val x: Float,
-    val y: Float,
-    val delayedX: Float,
-    val delayedY: Float
+    val y: Float
 )
 
 // Sensor frames skipped before the neutral reference is captured, so it locks onto the user's hold.
@@ -39,13 +36,10 @@ private const val SENSITIVITY = 0.30f
 // Per-event lerp toward the latest reading; larger = snappier.
 private const val SMOOTHING = 0.55f
 
-// Lag of the delayed tilt; smaller = the wordmark trails further behind.
-private const val DELAY_SMOOTHING = 0.10f
-
 // Static neutral tilt, used when no provider is present (e.g. @Preview) so cards still render.
-private val ZeroTilt: State<TiltState> = mutableStateOf(TiltState(0f, 0f, 0f, 0f))
+private val ZeroTilt: State<TiltState> = mutableStateOf(TiltState(0f, 0f))
 
-// Screen-scoped device tilt, shared by the list + details member cards through composition. PocketScreen
+// Screen-scoped device tilt, shared by the list + details cards through composition. PocketScreen
 // provides the single live source so both cards read the same tilt and stay continuous across the
 // shared-element transition. Read it inside draw lambdas to keep updates off the recomposition path.
 val LocalCardTilt = compositionLocalOf { ZeroTilt }
@@ -85,13 +79,11 @@ fun rememberCardTilt(): State<TiltState> {
 // One owner per composition (no ref-count): the sensor is registered while the screen is started and
 // unregistered when it stops or the holder leaves composition.
 private class TiltSource {
-    val tilt = mutableStateOf(TiltState(0f, 0f, 0f, 0f))
+    val tilt = mutableStateOf(TiltState(0f, 0f))
 
     // Smoothed on the sensor thread; tilt state is a snapshot write so reads stay consistent.
     private var tiltX = 0f
     private var tiltY = 0f
-    private var delayedX = 0f
-    private var delayedY = 0f
 
     private var referenceX = 0f
     private var referenceY = 0f
@@ -114,9 +106,7 @@ private class TiltSource {
         warmupFrames = 0
         tiltX = 0f
         tiltY = 0f
-        delayedX = 0f
-        delayedY = 0f
-        tilt.value = TiltState(0f, 0f, 0f, 0f)
+        tilt.value = TiltState(0f, 0f)
 
         listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) = onSensorEvent(event)
@@ -153,14 +143,6 @@ private class TiltSource {
         tiltX += (targetX - tiltX) * SMOOTHING
         tiltY += (targetY - tiltY) * SMOOTHING
 
-        delayedX += (tiltX - delayedX) * DELAY_SMOOTHING
-        delayedY += (tiltY - delayedY) * DELAY_SMOOTHING
-
-        tilt.value = TiltState(
-            x = tiltX,
-            y = tiltY,
-            delayedX = delayedX,
-            delayedY = delayedY
-        )
+        tilt.value = TiltState(x = tiltX, y = tiltY)
     }
 }

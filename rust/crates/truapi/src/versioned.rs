@@ -11,36 +11,56 @@
 //! encoded inside any of these payloads.
 
 /// A versioned message envelope.
+///
+/// The first encoded byte is `version() - 1`, and every version from 1 to
+/// [`LATEST`](Self::LATEST) exists. The dispatcher relies on this to refuse a
+/// request in a newer version.
 pub trait Versioned: Sized {
-    /// The newest version's payload. Handlers operate exclusively on this.
-    type Latest;
+	/// The newest version's payload. Handlers operate exclusively on this.
+	type Latest;
 
-    /// Version number of the newest variant.
-    const LATEST: u8;
+	/// Version number of the newest variant.
+	const LATEST: u8;
 
-    /// Version number of the variant currently held.
-    fn version(&self) -> u8;
+	/// Version number of the variant currently held.
+	fn version(&self) -> u8;
 }
 
 /// Upgrade a received envelope to its latest payload. Total by construction.
 pub trait IntoLatest: Versioned {
-    /// Convert whatever version is held into the latest payload.
-    fn into_latest(self) -> Self::Latest;
+	/// Convert whatever version is held into the latest payload.
+	fn into_latest(self) -> Self::Latest;
 }
 
 /// Downgrade a latest payload into the variant a peer at `target` understands.
 pub trait FromLatest: Versioned {
-    /// Build the envelope for protocol version `target` (highest variant ≤ target).
-    fn from_latest(latest: Self::Latest, target: u8) -> Self;
+	/// Build the envelope for protocol version `target` (highest variant ≤ target).
+	///
+	/// A payload no variant up to `target` can carry goes out in the oldest
+	/// variant that can, so the result is newer than `target` only then.
+	fn from_latest(latest: Self::Latest, target: u8) -> Self;
+
+	/// Build the envelope for `target`, or `None` when no variant up to `target` carries the
+	/// payload.
+	fn try_from_latest(latest: Self::Latest, target: u8) -> Option<Self> {
+		let envelope = Self::from_latest(latest, target);
+		(envelope.version() <= target).then_some(envelope)
+	}
 }
 
 pub mod account;
 pub mod chain;
 pub mod chat;
 pub mod coin_payment;
+pub mod contacts;
 pub mod entropy;
+pub mod expanded_card;
+pub mod funding;
+pub mod funding_provider;
+pub mod game;
 pub mod local_storage;
 pub mod locale;
+pub mod nft_purse;
 pub mod notifications;
 pub mod payment;
 pub mod permissions;
@@ -48,6 +68,7 @@ pub mod pocket;
 pub mod preimage;
 pub mod renderer;
 pub mod resource_allocation;
+pub mod scanner;
 pub mod signing;
 pub mod statement_store;
 pub mod system;
@@ -55,71 +76,4 @@ pub mod theme;
 pub mod worker;
 
 #[cfg(test)]
-mod tests {
-    use parity_scale_codec::{Decode, Encode};
-
-    #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-    struct ProbeV1 {
-        a: u32,
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-    struct ProbeV2 {
-        b: Vec<u8>,
-    }
-
-    truapi_macros::versioned_type! {
-        enum MultiVersionProbe {
-            V1 => ProbeV1,
-            V2 => ProbeV2,
-        }
-    }
-
-    // Multi-version envelopes assign positional SCALE codec indices (V1 -> 0,
-    // V2 -> 1) and 1-based version numbers.
-    #[test]
-    fn multi_version_codec_indices_are_positional() {
-        use super::Versioned;
-
-        let v1 = MultiVersionProbe::V1(ProbeV1 { a: 7 });
-        let v2 = MultiVersionProbe::V2(ProbeV2 {
-            b: b"hello".to_vec(),
-        });
-
-        assert_eq!(v1.encode()[0], 0, "V1 encodes codec index 0");
-        assert_eq!(v2.encode()[0], 1, "V2 encodes codec index 1");
-        assert_eq!(v1.version(), 1);
-        assert_eq!(v2.version(), 2);
-        assert_eq!(MultiVersionProbe::LATEST, 2);
-    }
-
-    #[test]
-    fn v1_discriminant_is_zero() {
-        let v1 = super::permissions::HostDevicePermissionRequest::V1(
-            crate::v01::HostDevicePermissionRequest::Camera,
-        );
-        assert_eq!(v1.encode()[0], 0, "V1 must encode discriminant 0");
-    }
-
-    #[test]
-    fn unit_response_roundtrip() {
-        let original = super::system::HostNavigateToResponse::V1;
-        let decoded = super::system::HostNavigateToResponse::decode(&mut &original.encode()[..])
-            .expect("decode");
-        assert_eq!(original, decoded);
-    }
-
-    #[test]
-    fn struct_variant_roundtrip() {
-        let original = super::local_storage::HostLocalStorageWriteRequest::V1(
-            crate::v01::HostLocalStorageWriteRequest {
-                key: "greeting".into(),
-                value: b"hello".to_vec(),
-            },
-        );
-        let decoded =
-            super::local_storage::HostLocalStorageWriteRequest::decode(&mut &original.encode()[..])
-                .expect("decode");
-        assert_eq!(original, decoded);
-    }
-}
+mod tests;

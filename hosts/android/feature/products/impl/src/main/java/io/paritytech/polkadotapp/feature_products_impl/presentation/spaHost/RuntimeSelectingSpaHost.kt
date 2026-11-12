@@ -17,9 +17,9 @@ class RuntimeSelectingSpaHost @Inject constructor(
     private val runtimeSettings: ProductRuntimeSettings,
 ) : SpaHost {
     context(scope: ComputationalScope, messageDisplay: MessageDisplay)
-    override fun createSession(initialUrl: String): SpaHostSession =
+    override fun createSession(initialUrl: String, underCard: Boolean): SpaHostSession =
         if (runtimeSettings.isTrUAPIRuntimeEnabled()) {
-            truapi.createSession(initialUrl)
+            truapi.createSession(initialUrl, underCard)
         } else {
             native.createSession(initialUrl)
         }

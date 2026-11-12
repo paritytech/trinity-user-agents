@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_coinage_api.domain.transaction
 
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetState
+import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetStates
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageHandoffCommit
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageInput
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
@@ -70,6 +71,12 @@ interface CoinageTransactionService {
      */
     suspend fun preCommitHandoff(assets: List<OwnAsset>): Result<CoinageHandoffCommit>
 
+    /**
+     * Like [preCommitHandoff], but writes nothing until the commit, which marks [assets] final in one step.
+     * An asset claimed or handed off in between fails that commit.
+     */
+    suspend fun prepareHandoff(assets: List<OwnAsset>): Result<CoinageHandoffCommit>
+
     /** Clears the reservations of payments that never became durable. Runs once, on launch. */
     suspend fun releaseUncommittedHandoffs(): Result<Unit>
 
@@ -93,13 +100,7 @@ interface CoinageTransactionService {
 
     suspend fun getAssetState(asset: OwnAsset): Result<CoinageAssetState>
 
-    /** The state of each of [assets]; ones the ledger has never heard of come back untracked. */
-    suspend fun getAssetStates(assets: List<OwnAsset>): Result<Map<OwnAsset, CoinageAssetState>>
+    suspend fun getAssetStates(assets: List<OwnAsset>): Result<CoinageAssetStates>
 
-    /** An asset absent from the map carries [CoinageAssetState.UNTRACKED]. */
-    fun subscribeAssetStates(): Flow<Map<OwnAsset, CoinageAssetState>>
-}
-
-fun Map<OwnAsset, CoinageAssetState>.getStateOrUntracked(asset: OwnAsset): CoinageAssetState {
-    return get(asset) ?: CoinageAssetState.UNTRACKED
+    fun subscribeAssetStates(): Flow<CoinageAssetStates>
 }

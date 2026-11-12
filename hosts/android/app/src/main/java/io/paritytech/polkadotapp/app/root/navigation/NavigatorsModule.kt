@@ -6,35 +6,28 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import io.paritytech.polkadotapp.app.root.navigation.backup.BackupNavigator
-import io.paritytech.polkadotapp.app.root.navigation.becomeCitizen.BecomeCitizenNavigator
 import io.paritytech.polkadotapp.app.root.navigation.chats.ChatsNavigator
-import io.paritytech.polkadotapp.app.root.navigation.fund.FundNavigator
-import io.paritytech.polkadotapp.app.root.navigation.mobrules.MobRulesNavigator
 import io.paritytech.polkadotapp.app.root.navigation.products.ProductsNavigator
 import io.paritytech.polkadotapp.app.root.navigation.root.RootNavigator
 import io.paritytech.polkadotapp.app.root.navigation.scan.ScanNavigator
 import io.paritytech.polkadotapp.app.root.navigation.settings.SettingsNavigator
 import io.paritytech.polkadotapp.app.root.navigation.splash.SplashNavigator
 import io.paritytech.polkadotapp.app.root.navigation.sso.SsoNavigator
-import io.paritytech.polkadotapp.app.root.navigation.upgradeUsername.UpgradeUsernameNavigator
 import io.paritytech.polkadotapp.app.root.navigation.username.UsernameNavigator
 import io.paritytech.polkadotapp.app.root.navigation.videogame.VideoGameNavigator
 import io.paritytech.polkadotapp.app.root.navigation.w3spay.W3sPayNavigator
 import io.paritytech.polkadotapp.app.root.navigation.wallet.PocketNavigator
 import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
 import io.paritytech.polkadotapp.common.presentation.resources.ContextManager
+import io.paritytech.polkadotapp.common.presentation.tabs.BottomTabSelection
 import io.paritytech.polkadotapp.feature_backup_impl.BackupRouter
-import io.paritytech.polkadotapp.feature_become_citizen_impl.presentation.BecomeCitizenRouter
 import io.paritytech.polkadotapp.feature_chats_impl.ChatsRouter
-import io.paritytech.polkadotapp.feature_fund_impl.FundRouter
-import io.paritytech.polkadotapp.feature_mobrules_impl.presentation.MobRulesRouter
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRouter
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import io.paritytech.polkadotapp.feature_scan_impl.ScanRouter
 import io.paritytech.polkadotapp.feature_settings_impl.SettingsRouter
 import io.paritytech.polkadotapp.feature_splash_impl.presentation.SplashRouter
 import io.paritytech.polkadotapp.feature_sso_impl.SsoRouter
-import io.paritytech.polkadotapp.feature_upgrade_username_impl.presentation.UpgradeUsernameRouter
 import io.paritytech.polkadotapp.feature_usernames_impl.presentation.UsernamesRouter
 import io.paritytech.polkadotapp.feature_videogame_impl.VideoGameRouter
 import io.paritytech.polkadotapp.feature_w3spay_impl.W3sPayRouter
@@ -47,8 +40,8 @@ interface NavigatorsModule {
     companion object {
         @Provides
         @Singleton
-        fun provideNavigatorHolder(contextManager: ContextManager): NavigationHolder =
-            NavigationHolder(contextManager)
+        fun provideNavigatorHolder(contextManager: ContextManager, tabSelection: BottomTabSelection): NavigationHolder =
+            NavigationHolder(contextManager, tabSelection)
     }
 
     @Binds
@@ -65,19 +58,11 @@ interface NavigatorsModule {
 
     @Binds
     @Singleton
-    fun bindUpgradeUsernameRouter(impl: UpgradeUsernameNavigator): UpgradeUsernameRouter
-
-    @Binds
-    @Singleton
     fun provideChatsRouter(impl: ChatsNavigator): ChatsRouter
 
     @Binds
     @Singleton
     fun providePocketRouter(impl: PocketNavigator): PocketRouter
-
-    @Binds
-    @Singleton
-    fun provideFundRouter(impl: FundNavigator): FundRouter
 
     @Binds
     @Singleton
@@ -97,15 +82,7 @@ interface NavigatorsModule {
 
     @Binds
     @Singleton
-    fun bindBecomeCitizenRouter(impl: BecomeCitizenNavigator): BecomeCitizenRouter
-
-    @Binds
-    @Singleton
     fun bindSplashRouter(impl: SplashNavigator): SplashRouter
-
-    @Binds
-    @Singleton
-    fun bindMobRulesRouter(impl: MobRulesNavigator): MobRulesRouter
 
     @Binds
     @Singleton

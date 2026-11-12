@@ -595,6 +595,7 @@ extension Chat.LocalMessage {
             case new
             case sent
             case delivered
+            case failed
         }
 
         enum IncomingStatus: String, Equatable {
@@ -643,6 +644,7 @@ extension Chat.LocalMessage.Status: RawRepresentable {
         case 2: self = .outgoing(.sent)
         case 3: self = .outgoing(.delivered)
         case 4: self = .incoming(.seen)
+        case 5: self = .outgoing(.failed)
         default: return nil
         }
     }
@@ -654,6 +656,7 @@ extension Chat.LocalMessage.Status: RawRepresentable {
         case .outgoing(.sent): 2
         case .outgoing(.delivered): 3
         case .incoming(.seen): 4
+        case .outgoing(.failed): 5
         }
     }
 }
@@ -681,6 +684,7 @@ extension Chat.LocalMessage.Status.OutgoingStatus: Comparable {
         case .new: 0
         case .sent: 1
         case .delivered: 2
+        case .failed: 3
         }
     }
 }
@@ -712,27 +716,33 @@ extension Chat.LocalMessage.Content {
         let decoderId: UInt8
         let data: Data
         let identifier: String
+        /// The sender's one-line description, previewed in place of the drawn card.
+        let alt: String?
 
         init(
             decoderId: UInt8,
             data: Data,
-            identifier: String
+            identifier: String,
+            alt: String? = nil
         ) {
             self.decoderId = decoderId
             self.data = data
             self.identifier = identifier
+            self.alt = alt
         }
 
         init(scaleDecoder: any ScaleDecoding) throws {
             identifier = try String(scaleDecoder: scaleDecoder)
             decoderId = try UInt8(scaleDecoder: scaleDecoder)
             data = try Data(scaleDecoder: scaleDecoder)
+            alt = scaleDecoder.remained > 0 ? try ScaleOption<String>(scaleDecoder: scaleDecoder).value : nil
         }
 
         func encode(scaleEncoder: any ScaleEncoding) throws {
             try identifier.encode(scaleEncoder: scaleEncoder)
             try decoderId.encode(scaleEncoder: scaleEncoder)
             try data.encode(scaleEncoder: scaleEncoder)
+            try ScaleOption(value: alt).encode(scaleEncoder: scaleEncoder)
         }
     }
 

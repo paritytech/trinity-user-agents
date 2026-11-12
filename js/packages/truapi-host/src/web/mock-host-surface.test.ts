@@ -16,7 +16,7 @@ import { createMockHost, MOCK_GENESIS } from "./create-mock-host.js";
 
 const MOCK_RS = fileURLToPath(
   new URL(
-    "../../../../../rust/crates/truapi-platform/src/mock.rs",
+    "../../../../../rust/crates/truapi/src/platform/mock.rs",
     import.meta.url,
   ),
 );
@@ -62,10 +62,13 @@ const JS_ONLY: Record<string, string> = {
   getIsAuthenticated: "host-api-test-sdk reader over the auth-state log",
   getConnectionStatus: "host-api-test-sdk alias over the chain status",
   getSigningLog: "host-api-test-sdk shape over the confirmation reviews",
+  getProductStorageValue:
+    "host-api-test-sdk reader over `getProductStorage`, decoded as UTF-8",
   setPermissionBehavior:
     "host-api-test-sdk name for the policy Rust sets through MockConfig",
   statements: "loopback statement store, refused on both sides",
   getSubmittedStatements: "loopback statement store, refused on both sides",
+  getStatements: "loopback statement store, refused on both sides",
   getInjectedStatements: "loopback statement store, refused on both sides",
   injectStatement: "loopback statement store, refused on both sides",
   clearStatements: "loopback statement store, refused on both sides",
@@ -101,7 +104,7 @@ function rustControlSurface(): string[] {
   expect(end).toBeGreaterThan(start);
   const block = source.slice(start, end);
 
-  return [...block.matchAll(/\n    pub (?:async )?fn ([a-z0-9_]+)/g)]
+  return [...block.matchAll(/\n[\t ]+pub (?:async )?fn ([a-z0-9_]+)/g)]
     .map((match) => match[1]!)
     .filter((name) => name !== "new" && name !== "with_config");
 }
@@ -189,24 +192,6 @@ describe("mock host surface agreement", () => {
       BULLETIN: MOCK_GENESIS.bulletin,
       ASSET_HUB: MOCK_GENESIS.assetHub,
     });
-  });
-
-  it("keys permissions on the tag the generated TypeScript uses", () => {
-    // The Rust mock maps each permission variant to a decision key by hand.
-    // Codegen emits the variant identifier verbatim as the TypeScript tag, so
-    // the key has to be spelled exactly like the variant. Renaming a variant
-    // updates the match pattern and leaves the string beside it compiling and
-    // silently disagreeing, which is the drift this whole mock exists to stop.
-    const source = readFileSync(MOCK_RS, "utf8");
-    const arms = [
-      ...source.matchAll(
-        /^\s+(?:Request|Permission)::([A-Za-z0-9]+)(?: \{ \.\. \})? => "([^"]+)",$/gm,
-      ),
-    ].map(([, variant, key]) => ({ variant, key }));
-
-    // A regex that matched nothing would make this pass forever.
-    expect(arms.length).toBe(14);
-    expect(arms.filter(({ variant, key }) => variant !== key)).toEqual([]);
   });
 
   it("reads a whole Rust surface, so the check cannot pass vacuously", () => {

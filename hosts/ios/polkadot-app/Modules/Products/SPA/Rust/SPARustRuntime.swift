@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import TrUAPIHost
 import UIKitExt
@@ -7,8 +8,8 @@ import UIKitExt
 /// handler, injects the bootstrap + container scripts into the engine, and
 /// returns the page URL. The TrUAPI core serves product requests over its
 /// localhost ws-bridge; no ContainerBridge is installed in rust mode. Camera/mic
-/// media capture (getUserMedia) is answered by a `JSDeviceCapabilityHandler`
-/// registered on the engine.
+/// media capture (getUserMedia) and WebKit's motion request are answered by a
+/// `JSDeviceCapabilityHandler` registered on the engine.
 ///
 /// An actor so `start`/`dispose` never race on runtime state. Actors are
 /// reentrant, so `dispose()` can interleave while `start` is suspended:
@@ -17,30 +18,32 @@ import UIKitExt
 actor SPARustRuntime {
     private let executionModel: RustRuntimeEnvironment.ExecutionModel
     private let configuration: SPAConfiguration
-    private let dotNsResolver: DotNsResolverProtocol
-    private let productResolver: ProductResolving
+    private let contentLoader: ProductContentLoading
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
+    private let hostEventRecorder: HostEventRecording
+    private let hostSessionId = UUID()
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
     private var started = false
     private var disposed = false
+    private var servedContent: DotNsResolvedContent?
 
     init(
         executionModel: RustRuntimeEnvironment.ExecutionModel,
         configuration: SPAConfiguration,
-        dotNsResolver: DotNsResolverProtocol,
-        productResolver: ProductResolving,
+        contentLoader: ProductContentLoading,
         schemeHandlerProxy: SchemeHandlerProxy,
-        logger: LoggerProtocol
+        logger: LoggerProtocol,
+        hostEventRecorder: HostEventRecording
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
-        self.dotNsResolver = dotNsResolver
-        self.productResolver = productResolver
+        self.contentLoader = contentLoader
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
+        self.hostEventRecorder = hostEventRecorder
     }
 
     deinit {
@@ -66,17 +69,38 @@ extension SPARustRuntime: SPARuntimeProtocol {
                 try await prepareDotNsContent()
             case let .directURL(url):
                 url
+            case let .bundled(directory):
+                try await configuration.page.applied(to: serveFiles(at: directory))
+            #if DEBUG
+                case let .devServer(url, _):
+                    url
+            #endif
             }
 
         try checkNotDisposed()
         let bootstrapScript = try executionModel.startBridge()
-        let scriptsFactory = RustRuntimeScriptsFactory(bootstrapScript: bootstrapScript)
+        let scriptsFactory = RustRuntimeScriptsFactory(
+            bootstrapScript: bootstrapScript,
+            hostTelemetry: IssueMonitoringFactory.createNativeHostTelemetry(
+                hostSessionID: hostSessionId,
+                truapiHostVersion: truapiHostVersion()
+            )
+        )
 
         await engine.registerJSDeviceCapabilityHandler(
-            executionModel.osPermissionAsker.makeDeviceCapabilityHandler()
+            executionModel.osPermissionAsker.makeDeviceCapabilityHandler(
+                execution: executionModel.execution
+            )
         )
 
         try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
+
+        hostEventRecorder.record(.webViewCreated(
+            hostSessionID: hostSessionId,
+            origin: .current,
+            truapiHostVersion: truapiHostVersion(),
+            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
+        ))
 
         // Disposed while initializing: dispose captured nil for the engine,
         // so this start is the only owner left — destroy before bailing.
@@ -114,17 +138,50 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         logger.debug("SPA(rust): runtime disposed for \(configuration.page.host.name)")
     }
+
+    func useLatestBuild() async throws {
+        try checkNotDisposed()
+
+        guard case .dotNs = configuration.contentSource, let servedContent else { return }
+
+        let served = try await contentLoader.open(configuration.productDomain, kind: .app, policy: .untilCancelled)
+            .archive
+        try checkNotDisposed()
+
+        guard served != servedContent else { return }
+
+        _ = try await serve(served)
+    }
+
+    func servedBuild() -> DotNsResolvedContent? {
+        servedContent
+    }
 }
 
 private extension SPARustRuntime {
     func prepareDotNsContent() async throws -> URL {
-        let domain = configuration.page.host.toDotDomain()
+        let domain = configuration.productDomain
 
-        // Bytes come from the app executable's subname; the origin stays the base domain, which
+        // Bytes come from the executable's own subname; the origin stays the base domain, which
         // is what permission grants and web storage are keyed by.
-        let contentId = try await productResolver.resolve(domain).appContentId
-        let contentURL = try await dotNsResolver.resolveToLocalURL(dotNsName: contentId)
+        let served = try await contentLoader.open(domain, kind: .app, policy: .untilCancelled).archive
 
+        logger.debug("SPA(rust): '\(domain)' content resolved to \(served.localURL.path)")
+
+        let productURL = try await serve(served)
+        return configuration.page.applied(to: productURL)
+    }
+
+    func serve(_ content: DotNsResolvedContent) async throws -> URL {
+        let productURL = try await serveFiles(at: content.localURL)
+        servedContent = content
+        return productURL
+    }
+
+    /// Serves the App's files at `contentURL` under the page's base domain,
+    /// which is what permission grants and web storage are keyed by.
+    func serveFiles(at contentURL: URL) async throws -> URL {
+        let domain = configuration.productDomain
         let schemeHandler = ProductScriptSchemeHandler(
             productId: domain,
             entryRelativePath: ProductBundle.indexHTML,
@@ -135,13 +192,11 @@ private extension SPARustRuntime {
             throw ScriptExecutorError.scriptNotFound(productId: domain)
         }
 
-        logger.debug("SPA(rust): '\(domain)' content resolved to \(contentURL.path)")
-
         // Don't publish a handler to the shared proxy after dispose ran.
         try checkNotDisposed()
         await schemeHandlerProxy.setHandler(schemeHandler)
 
-        return configuration.page.applied(to: productURL)
+        return productURL
     }
 
     func checkNotDisposed() throws {

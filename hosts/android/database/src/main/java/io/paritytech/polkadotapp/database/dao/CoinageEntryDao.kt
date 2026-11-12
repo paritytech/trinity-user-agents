@@ -74,6 +74,10 @@ abstract class CoinageEntryDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     abstract suspend fun insertOutputs(outputs: List<CoinageEntryOutputLocal>)
 
+    /**
+     * A conflict here can only be the same key twice in one batch, because a key already marked is rejected
+     * before the insert; that is the same mark, and the row it collapses to is the one the mark means.
+     */
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     abstract suspend fun insertHandoffs(handoffs: List<CoinageHandoffLocal>)
 

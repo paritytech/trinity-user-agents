@@ -1,0 +1,45 @@
+name: Require an iOS signing actor
+description: >
+  Fail unless the actor who started this run is one of the people allowed to
+  use the iOS signing identity.
+
+# Registering a device, distributing to TestFlight and preparing a release all
+# act on the production App Store Connect record with credentials that reach
+# past this repository, so they are narrower than write access, which here is
+# held by around a hundred people through organisation teams.
+#
+# The allowed logins live in one repository variable, IOS_SIGNING_ACTORS, a
+# JSON array, so every workflow that needs the check reads the same list and
+# adding someone is a settings change rather than an edit to each workflow.
+# It fails closed: a missing or malformed variable refuses everyone.
+
+inputs:
+  allowed:
+    description: The IOS_SIGNING_ACTORS variable, a JSON array of logins.
+    required: true
+  actor:
+    description: The login to check. Pass github.triggering_actor.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Check the actor is allowed to sign
+      shell: bash
+      env:
+        ALLOWED: ${{ inputs.allowed }}
+        ACTOR: ${{ inputs.actor }}
+      run: |
+        set -euo pipefail
+        if ! jq -e 'type == "array" and length > 0 and all(type == "string")' <<<"${ALLOWED:-null}" >/dev/null 2>&1; then
+          echo "::error::IOS_SIGNING_ACTORS is not set to a JSON array of logins, so no one may run this. Set it under the repository's Actions variables."
+          exit 1
+        fi
+        # Exact membership. A substring test would let any login contained in
+        # another one through.
+        if jq -e --arg actor "$ACTOR" 'any(.[]; . == $actor)' <<<"$ALLOWED" >/dev/null; then
+          echo "${ACTOR} may use the iOS signing identity."
+        else
+          echo "::error::${ACTOR} may not use the iOS signing identity. Ask someone already allowed to add you to IOS_SIGNING_ACTORS."
+          exit 1
+        fi

@@ -1,0 +1,50 @@
+name: Rust cache
+description: >-
+  Swatinem/rust-cache with the repository's one saving rule: a cache is saved
+  only by a run on main, and every other run restores. Every Rust job uses
+  this rather than rust-cache directly, except the composites
+  bootstrap-ios-core and setup-android-build, which apply the same rule
+  themselves because a post step two composites deep loses its inputs.
+
+# GitHub scopes a saved cache to the ref that saved it, and a run can restore
+# only from its own ref, its base branch or the default branch. A cache saved
+# on main is therefore the only one every pull request and branch can read,
+# and one saved anywhere else is a copy only its own ref restores, taking room
+# in the repository's 10 GB from the main caches everyone else needs.
+#
+# The key is rust-cache's: the job, or `shared-key`, plus hashes of the
+# toolchain and of Cargo.lock and the manifests. A job whose build differs from
+# every other job's keeps its own job-based key. Jobs that build exactly the
+# same thing share one `shared-key`, and all but the one that owns it pass
+# `save: "false"`, because rust-cache saves once per key and the first saver's
+# target directory is what every other job would restore.
+#
+# Only one job on main saves under each `shared-key` or job id. The job-based
+# key ignores the workflow name, so two workflows' jobs of the same id share
+# it, and prune-caches.yml keeps only the newest entry of each key, so two
+# savers with different environments would delete each other's entry on every
+# run.
+
+inputs:
+  shared-key:
+    description: >-
+      Key shared by jobs that build the same thing, in place of the job-based
+      key. Empty for a job-based key.
+    required: false
+    default: ""
+  save:
+    description: >-
+      "false" for a job restoring a `shared-key` another job owns and saves,
+      or for a release or publish job, which runs too rarely for its cache to be read
+      again before eviction and would only push out the caches every pull
+      request restores.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2.8.1
+      with:
+        shared-key: ${{ inputs.shared-key }}
+        save-if: ${{ inputs.save == 'true' && github.ref == 'refs/heads/main' }}

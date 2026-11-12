@@ -11,13 +11,11 @@ protocol AssetDetailsViewProtocol: ControllerBackedProtocol {
     func didReceiveData(viewModel: WalletCardDataViewModel, index: Int)
     func didReceive(readyAmount: BalanceViewModelProtocol?)
     func didReceive(paymentAsset: PaymentAssetViewModelProtocol)
-    func didReceive(fundingStates: [AssetFundingStatusView.FundingState])
     func didReceive(isRecoveryInProgress: Bool)
-    func didReceive(isAccountBackupPending: Bool)
     func didShowBackupNotification()
     func didHideBackupNotification()
 
-    func didReceive(rampLoading action: RampAction, isLoading: Bool)
+    func didReceive(topUpLoading: Bool)
 
     func didReceive(coinageBreakdown: CoinageBalanceBreakdownViewModel)
     #if TESTNET_FEATURE
@@ -30,13 +28,10 @@ protocol AssetDetailsPresenterProtocol: AnyObject {
     func setup()
     func onSendMoney()
     func onAddMoney()
-    func onFundingCompletedAction()
-    func onFundingFailedAction()
     func onBackupSync()
     func onBackupCancel()
     func onBackupWhyUpdate()
     func onTopUp()
-    func onWithdraw()
 
     #if TESTNET_FEATURE
         func onTestnetTopUp()
@@ -45,12 +40,10 @@ protocol AssetDetailsPresenterProtocol: AnyObject {
 
 protocol AssetDetailsInteractorInputProtocol: AnyObject {
     func setup()
-    func removeCompletedFiatOnrampTransactions()
-    func removeFailedFiatOnrampTransactions()
     func triggerSync()
     func cancelBackupNotification()
 
-    func openRampProduct(_ action: RampAction)
+    func openTopUpProduct()
 
     #if TESTNET_FEATURE
         func topUp()
@@ -62,18 +55,19 @@ protocol AssetDetailsInteractorOutputProtocol: AnyObject {
     func didReceive(balance: Decimal)
 
     func didReceive(price: PriceData?)
-    func didReceive(fiatOnrampStatuses: Set<FiatOnrampTransactionStatusPayload>)
     func didReceive(isRecoveryInProgress: Bool)
-    func didReceive(isAccountBackupPending: Bool)
     func didReceive(showsRecoveredBalance: Bool)
 
-    func didResolveRampProduct(_ action: RampAction, result: Result<ProductPage, Error>)
+    func didResolveTopUpProduct(_ result: Result<ProductPage, Error>)
 
     /// One call, because the presenter rebuilds the whole breakdown on receipt: delivering the
     /// figures and the holdings separately would render the new totals beside the previous
     /// holdings, which is the mismatch `CoinageSummary` exists to prevent.
-    func didReceive(coinageAmounts: CoinageAmounts, holdings: CoinageHoldings)
-    func didReceive(denominationContext: DenominationBreakdownContext)
+    func didReceive(
+        coinageAmounts: CoinageAmounts,
+        holdings: CoinageHoldings,
+        denominations: DenominationBreakdownContext
+    )
     #if TESTNET_FEATURE
         func didCompleteTopUp(_ result: Result<Void, Error>)
     #endif

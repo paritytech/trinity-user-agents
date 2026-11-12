@@ -65,11 +65,17 @@ dependencies {
     implementation(libs.hilt.lifecycle.viewmodel.compose)
     implementation(libs.androidx.fragment.ktx)
     implementation(libs.androidx.webkit)
+    implementation(libs.androidx.work.runtime)
+    implementation(libs.hilt.androidx.work)
+    ksp(libs.hilt.androidx.compiler)
 
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.nova.substrate.serialization)
 
     implementation(project(":bindings:truapi-host"))
+    // The app supplies ML Kit per flavor, as for :common.
+    compileOnly(libs.google.play.services.mlkit)
+    testImplementation(libs.google.play.services.mlkit)
     implementation(project(":bindings:sr25519-vrf"))
 
     implementation(project(":common"))
@@ -97,25 +103,28 @@ dependencies {
     testImplementation(project(":test-shared"))
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.mockk)
-    // :bindings:truapi-host ships JNA as an @aar, which carries only the Android
-    // dispatch libraries. JVM unit tests that cross the FFI boundary need the
-    // desktop jar's libjnidispatch too.
-    testImplementation("net.java.dev.jna:jna:5.14.0")
+
 
     androidTestImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.google.gson)
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.compose.ui.test.manifest)
+    androidTestImplementation(libs.mockk.android) {
+        exclude(group = "org.junit.jupiter")
+        exclude(group = "org.junit.platform")
+    }
 }
 
-// CoreNavigateClassifier calls the core's `parse_navigate` over JNA, so JVM unit
-// tests need the host-native cdylib on the library path. It is the same artifact
-// uniffi-bindgen reads, produced by :bindings:truapi-host:buildHostCdylib.
-val truapiCodegenDir: String = rootProject.file("../../target/codegen").path
+// The stack assets the app ships, which :bindings:truapi-host syncs from the core checkout.
+val stackAssetsDir = project(":bindings:truapi-host").layout.buildDirectory.dir("truapi-stacks")
 
 tasks.withType<Test>().configureEach {
-    dependsOn(":bindings:truapi-host:buildHostCdylib")
-    systemProperty("jna.library.path", truapiCodegenDir)
+    // The unit tests start the runtime from those assets, so a refreshed stack reruns them.
+    dependsOn(":bindings:truapi-host:syncStacks")
+    inputs.dir(stackAssetsDir).withPropertyName("stackAssets").withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("truapi.stackAssets", stackAssetsDir.get().asFile.relativeTo(projectDir).path)
 
     // Instrument only when the coverage report is actually being built, so an ordinary test run is unaffected.
     extensions.configure<JacocoTaskExtension> {
@@ -140,3 +149,5 @@ tasks.register<JacocoReport>("topUpCoverage") {
         html.required.set(true)
     }
 }
+
+apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))

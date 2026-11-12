@@ -4,44 +4,27 @@ import UIKit
 internal import SnapKit
 internal import UIKit_iOS
 
-/// Search row for the scan panel: an edge-to-edge capsule with a close button shown only while editing.
+/// Search row for the scan panel: an edge-to-edge capsule with search field and image.
 public final class DSSearchRowView: UIView {
-    private let searchCapsuleContainer = {
-        let view = DSChatInputGlassBackground(
-            cornerRadius: 24,
-            fallbackColor: .bgSurfaceContainer,
-            interactive: false
-        )
-        view.snp.makeConstraints {
-            $0.height.equalTo(48)
-        }
+    private let fieldMaterial = DSTabBarFieldMaterialView(cornerRadius: 24)
 
-        return view
-    }()
+    private let searchRowGroup: UIStackView = create {
+        $0.axis = .horizontal
+        $0.spacing = 8
+        $0.alignment = .center
+    }
 
     let searchImageView: UIImageView = create {
         $0.image = UIImage(resource: .search18).withRenderingMode(.alwaysTemplate)
-        $0.tintColor = UIColor.fgSecondary
-        $0.snp.makeConstraints {
-            $0.width.height.equalTo(18)
-        }
+        $0.tintColor = .fgPrimary
+        $0.contentMode = .scaleAspectFit
     }
 
     public let searchField: UITextField = create {
-        var defaultTextAttributes = LabelStyle.body14Regular().attributes()
-        defaultTextAttributes[.foregroundColor] = UIColor.fgPrimary
-
-        var placeholderAttributes = defaultTextAttributes
-        placeholderAttributes[.foregroundColor] = UIColor.fgDisabled
-
-        $0.defaultTextAttributes = defaultTextAttributes
-        $0.attributedPlaceholder = NSAttributedString(
-            string: String(localized: .searchContactFieldPlaceholder),
-            attributes: placeholderAttributes
-        )
-
         $0.setContentHuggingPriority(.fittingSizeLevel, for: .horizontal)
         $0.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        $0.clearButtonMode = .never
 
         $0.autocapitalizationType = .none
         $0.autocorrectionType = .no
@@ -50,28 +33,48 @@ public final class DSSearchRowView: UIView {
         $0.smartDashesType = .no
         $0.spellCheckingType = .no
 
-        $0.tintColor = UIColor.fgPrimary
+        $0.tintColor = .bgAccent
     }
 
+    private let clearButton: UIButton = {
+        let button = UIButton()
+        let circle = UIView()
+        let glyph = UIImageView(
+            image: UIImage(
+                systemName: "xmark",
+                withConfiguration: UIImage.SymbolConfiguration(pointSize: 9, weight: .bold)
+            )
+        )
+        circle.backgroundColor = .bgActionSecondary
+        circle.layer.cornerRadius = 11
+        circle.isUserInteractionEnabled = false
+        glyph.tintColor = .fgPrimary
+        button.isHidden = true
+        button.addSubview(circle)
+        circle.addSubview(glyph)
+        circle.snp.makeConstraints {
+            $0.center.equalToSuperview()
+            $0.size.equalTo(22)
+        }
+        glyph.snp.makeConstraints { $0.center.equalToSuperview() }
+        button.accessibilityLabel = String(localized: .searchContactFieldClear)
+        return button
+    }()
+
+    private var unfocusedConstraints: [Constraint] = []
+    private var focusedConstraints: [Constraint] = []
+
     public var searchHandler: ((String?) -> Void)?
-    public var cancelHandler: (() -> Void)?
-
-    private var cancelLeadingConstraint: Constraint?
-    private var capsuleTrailingConstraint: Constraint?
-
-    private let cancelButton = DSIconButton(
-        style: .secondary,
-        shape: .pill,
-        size: .mediumIncreased,
-        icon: UIImage(resource: .buttonClose),
-        glass: true
-    )
 
     override public init(frame: CGRect) {
         super.init(frame: frame)
+        applyTextAttributes()
         setupViews()
         setupHandlers()
         applyAccessibilityBindings()
+        registerForTraitChanges([DSThemeTrait.self, DSTypographyTrait.self]) { (view: DSSearchRowView, _) in
+            view.applyTextAttributes()
+        }
     }
 
     @available(*, unavailable)
@@ -79,70 +82,123 @@ public final class DSSearchRowView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// Controls whether the Cancel control is visible (shown only while the field is edited).
-    /// When visible, the search capsule stops before the button; when hidden, it stretches
-    /// to fill the row's width.
-    public func setCancelVisible(_ visible: Bool) {
-        cancelButton.isHidden = !visible
-
-        if visible {
-            capsuleTrailingConstraint?.deactivate()
-            cancelLeadingConstraint?.activate()
-        } else {
-            cancelLeadingConstraint?.deactivate()
-            capsuleTrailingConstraint?.activate()
-        }
+    /// Swaps the layout without animating. The caller animates the layout pass.
+    public func setSearchFocused(_ focused: Bool) {
+        setConstraints(unfocusedConstraints, active: !focused)
+        setConstraints(focusedConstraints, active: focused)
     }
 
     private func setupViews() {
-        addSubview(searchCapsuleContainer)
-        addSubview(cancelButton)
+        addSubview(fieldMaterial)
+        addSubview(searchRowGroup)
+        addSubview(clearButton)
 
-        searchCapsuleContainer.snp.makeConstraints {
+        fieldMaterial.snp.makeConstraints {
             $0.leading.equalToSuperview()
             $0.top.equalToSuperview().offset(8)
             $0.bottom.equalToSuperview().inset(8)
-        }
-
-        cancelButton.snp.makeConstraints {
-            cancelLeadingConstraint = $0.leading.equalTo(searchCapsuleContainer.snp.trailing)
-                .offset(DSSpacings.small).constraint
-            // Square to the capsule's height so the pill stays circular; the leading and trailing
-            // pins alone would leave the width to hugging priorities.
-            $0.centerY.equalTo(searchCapsuleContainer)
-            $0.width.height.equalTo(searchCapsuleContainer.snp.height)
             $0.trailing.equalToSuperview()
+            $0.height.equalTo(48)
         }
 
-        searchCapsuleContainer.snp.makeConstraints {
-            capsuleTrailingConstraint = $0.trailing.equalToSuperview().constraint
-        }
-        capsuleTrailingConstraint?.deactivate()
-
-        searchCapsuleContainer.addSubview(searchImageView)
-        searchCapsuleContainer.addSubview(searchField)
-
-        searchImageView.snp.makeConstraints {
-            $0.leading.equalToSuperview().offset(12)
-            $0.centerY.equalToSuperview()
+        searchRowGroup.addArrangedSubview(searchImageView)
+        searchRowGroup.addArrangedSubview(searchField)
+        searchRowGroup.snp.makeConstraints {
+            $0.centerY.equalTo(fieldMaterial)
         }
 
-        searchField.snp.makeConstraints {
-            $0.leading.equalTo(searchImageView.snp.trailing).offset(8)
-            $0.centerY.equalToSuperview()
-            $0.trailing.equalToSuperview().inset(16)
+        clearButton.snp.makeConstraints {
+            $0.size.equalTo(32)
+            $0.centerY.equalTo(fieldMaterial)
+            $0.trailing.equalTo(fieldMaterial).inset(8)
         }
+
+        let placeholderWidth = ceil(searchField.attributedPlaceholder?.size().width ?? 0)
+        unfocusedConstraints = searchImageView.snp.prepareConstraints { $0.width.height.equalTo(20) }
+            + searchField.snp.prepareConstraints { $0.width.equalTo(placeholderWidth) }
+            + searchRowGroup.snp.prepareConstraints {
+                $0.centerX.equalTo(fieldMaterial)
+                $0.leading.greaterThanOrEqualTo(fieldMaterial).offset(12)
+            }
+        focusedConstraints = searchImageView.snp.prepareConstraints { $0.width.height.equalTo(22) }
+            + searchRowGroup.snp.prepareConstraints {
+                $0.leading.equalTo(fieldMaterial).offset(12)
+                $0.trailing.equalTo(clearButton.snp.leading)
+            }
+
+        setSearchFocused(false)
     }
 
     private func setupHandlers() {
         searchField.addTarget(self, action: #selector(searchChanged), for: .editingChanged)
-        cancelButton.onTap = { [weak self] in
-            self?.cancelHandler?()
-        }
+        searchField.addTarget(
+            self,
+            action: #selector(updateClearVisibility),
+            for: [.editingDidBegin, .editingDidEnd]
+        )
+        clearButton.addTarget(self, action: #selector(clearTapped), for: .touchUpInside)
+
+        let focusGesture = UITapGestureRecognizer(target: self, action: #selector(focusSearchField))
+        focusGesture.delegate = self
+        addGestureRecognizer(focusGesture)
     }
 
     @objc private func searchChanged() {
+        updateClearVisibility()
         searchHandler?(searchField.text)
+    }
+}
+
+// MARK: - UIGestureRecognizerDelegate
+
+extension DSSearchRowView: UIGestureRecognizerDelegate {
+    public func gestureRecognizer(_: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        let touchedView = touch.view
+        let touchedField = touchedView?.isDescendant(of: searchField) ?? false
+        let touchedClear = touchedView?.isDescendant(of: clearButton) ?? false
+        return !touchedField && !touchedClear
+    }
+}
+
+// MARK: - Private functions
+
+private extension DSSearchRowView {
+    /// The field is only as wide as its placeholder in the Scan state, so a tap anywhere on the capsule focuses it.
+    @objc func focusSearchField() {
+        searchField.becomeFirstResponder()
+    }
+
+    @objc func clearTapped() {
+        searchField.text = ""
+        searchHandler?("")
+        updateClearVisibility()
+    }
+
+    @objc func updateClearVisibility() {
+        let hasText = !(searchField.text ?? "").isEmpty
+        clearButton.isHidden = !(searchField.isEditing && hasText)
+    }
+
+    /// Text attributes hold a resolved colour and font, so they are rebuilt when the theme or the typography changes.
+    func applyTextAttributes() {
+        searchField.defaultTextAttributes = Self.labelStyle(.bodyLarge).attributes(
+            textColor: UIColor.fgPrimary.resolvedColor(with: traitCollection)
+        )
+        searchField.attributedPlaceholder = NSAttributedString(
+            string: String(localized: .searchContactFieldPlaceholder),
+            attributes: Self.labelStyle(.bodyMedium).attributes(
+                textColor: UIColor.fgSecondary.resolvedColor(with: traitCollection)
+            )
+        )
+    }
+
+    static func labelStyle(_ typography: TypographyStyle) -> LabelStyle {
+        let spec = typography.resolvedSpec
+        return LabelStyle(font: .app(typography), lineHeight: spec.lineHeight, tracking: spec.tracking)
+    }
+
+    func setConstraints(_ constraints: [Constraint], active: Bool) {
+        constraints.forEach { active ? $0.activate() : $0.deactivate() }
     }
 }
 
@@ -151,8 +207,7 @@ public final class DSSearchRowView: UIView {
 extension DSSearchRowView: AccessibilityBound {
     public var accessibilityBindings: [AccessibilityBinding] {
         [
-            .init(searchField, AccessibilityID.Chats.newChatUsernameInput),
-            .init(cancelButton, AccessibilityID.Chats.newChatCancelButton)
+            .init(searchField, AccessibilityID.Chats.newChatUsernameInput)
         ]
     }
 }

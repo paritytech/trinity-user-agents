@@ -49,18 +49,18 @@ fun DebugMenuScreen(contract: DebugMenuContract) {
         onClearBackupClick = contract::onClearBackupClick,
         onShareLogsClick = contract::onShareLogsClick,
         onCopyWalletAccountClick = contract::onCopyWalletAccountClick,
-        onCopyCandidateAccountClick = contract::onCopyCandidateAccountClick,
         onCopyWalletMnemonicClick = contract::onCopyWalletMnemonicClick,
-        onOpenVideoGameClick = contract::onOpenVideoGameClick,
         onProductBotsClick = contract::onProductBotsClick,
         onPocketFacePreviewClick = contract::onPocketFacePreviewClick,
         onRandomizeAccountClick = contract::onRandomizeAccountClick,
         onOpenSpaBrowserClick = contract::onOpenSpaBrowserClick,
         onSpaBrowserUrlEntered = contract::onSpaBrowserUrlEntered,
         onSpaBrowserDialogDismissed = contract::onSpaBrowserDialogDismissed,
+        onOpenDevServerClick = contract::onOpenDevServerClick,
+        onDevServerAddressEntered = contract::onDevServerAddressEntered,
+        onDevServerDialogDismissed = contract::onDevServerDialogDismissed,
         onClearDotNsCacheClick = contract::onClearDotNsCacheClick,
         onClearJWTTokenClick = contract::onClearJWTTokenClick,
-        onSimulateGameResultsClick = contract::onSimulateGameResultsClick,
         onCoinageDebugWidgetsToggled = contract::onCoinageDebugWidgetsToggled,
         onTruapiRuntimeToggled = contract::onTruapiRuntimeToggled,
         onRuntimeRestartConfirmed = contract::onRuntimeRestartConfirmed,
@@ -75,19 +75,19 @@ private fun DebugMenuScreenInternal(
     onBackClick: () -> Unit,
     onClearBackupClick: () -> Unit,
     onCopyWalletAccountClick: () -> Unit,
-    onCopyCandidateAccountClick: () -> Unit,
     onCopyWalletMnemonicClick: () -> Unit,
     onShareLogsClick: () -> Unit,
-    onOpenVideoGameClick: () -> Unit,
     onProductBotsClick: () -> Unit,
     onPocketFacePreviewClick: () -> Unit,
     onRandomizeAccountClick: () -> Unit,
     onOpenSpaBrowserClick: () -> Unit,
     onSpaBrowserUrlEntered: (String) -> Unit,
     onSpaBrowserDialogDismissed: () -> Unit,
+    onOpenDevServerClick: () -> Unit,
+    onDevServerAddressEntered: (String) -> Unit,
+    onDevServerDialogDismissed: () -> Unit,
     onClearDotNsCacheClick: () -> Unit,
     onClearJWTTokenClick: () -> Unit,
-    onSimulateGameResultsClick: () -> Unit,
     onCoinageDebugWidgetsToggled: (Boolean) -> Unit,
     onTruapiRuntimeToggled: (Boolean) -> Unit,
     onRuntimeRestartConfirmed: () -> Unit,
@@ -120,7 +120,7 @@ private fun DebugMenuScreenInternal(
             VerticalSpacer { large }
 
             DebugMenuToggleItem(
-                title = stringResource(RCommon.string.debug_menu_truapi_runtime),
+                title = stringResource(RCommon.string.debug_menu_truapi_runtime, state.truapiHostVersion),
                 checked = state.truapiRuntimeEnabled,
                 onCheckedChange = onTruapiRuntimeToggled
             )
@@ -144,14 +144,6 @@ private fun DebugMenuScreenInternal(
             VerticalSpacer { mediumIncreased }
 
             DebugMenuItem(
-                title = stringResource(RCommon.string.debug_menu_copy_candidate_account),
-                enabled = true,
-                onClick = onCopyCandidateAccountClick
-            )
-
-            VerticalSpacer { mediumIncreased }
-
-            DebugMenuItem(
                 title = stringResource(RCommon.string.debug_menu_copy_deposit_mnemonic),
                 enabled = true,
                 onClick = onCopyWalletMnemonicClick
@@ -163,14 +155,6 @@ private fun DebugMenuScreenInternal(
                 title = stringResource(RCommon.string.debug_menu_share_logs),
                 enabled = !state.isSharingLogs,
                 onClick = onShareLogsClick
-            )
-
-            VerticalSpacer { mediumIncreased }
-
-            DebugMenuItem(
-                title = stringResource(RCommon.string.debug_menu_open_video_game),
-                enabled = !state.isSharingLogs,
-                onClick = onOpenVideoGameClick
             )
 
             VerticalSpacer { mediumIncreased }
@@ -199,6 +183,16 @@ private fun DebugMenuScreenInternal(
 
             VerticalSpacer { mediumIncreased }
 
+            if (state.devServerAvailable) {
+                DebugMenuItem(
+                    title = stringResource(RCommon.string.debug_menu_open_dev_server),
+                    enabled = true,
+                    onClick = onOpenDevServerClick
+                )
+
+                VerticalSpacer { mediumIncreased }
+            }
+
             VerticalSpacer { mediumIncreased }
 
             DebugMenuItem(
@@ -226,22 +220,25 @@ private fun DebugMenuScreenInternal(
                 onClick = onClearJWTTokenClick
             )
 
-            VerticalSpacer { large }
-
-            DebugMenuItem(
-                title = stringResource(RCommon.string.debug_menu_simulate_game_results),
-                enabled = true,
-                onClick = onSimulateGameResultsClick
-            )
-
             VerticalSpacer { extraLargeIncreased }
         }
     }
 
     if (state.showSpaBrowserDialog) {
-        SpaBrowserUrlDialog(
+        UrlDialog(
+            title = stringResource(RCommon.string.debug_spa_browser_title),
+            hint = stringResource(RCommon.string.debug_spa_browser_url_hint),
             onDismiss = onSpaBrowserDialogDismissed,
             onConfirm = onSpaBrowserUrlEntered,
+        )
+    }
+
+    if (state.showDevServerDialog) {
+        UrlDialog(
+            title = stringResource(RCommon.string.debug_dev_server_title),
+            hint = stringResource(RCommon.string.debug_dev_server_address_hint),
+            onDismiss = onDevServerDialogDismissed,
+            onConfirm = onDevServerAddressEntered,
         )
     }
 
@@ -302,7 +299,9 @@ private fun RuntimeRestartDialog(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SpaBrowserUrlDialog(
+private fun UrlDialog(
+    title: String,
+    hint: String,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit,
 ) {
@@ -318,7 +317,7 @@ private fun SpaBrowserUrlDialog(
                 modifier = Modifier.padding(PolkadotTheme.spacings.large),
             ) {
                 NovaText(
-                    text = stringResource(RCommon.string.debug_spa_browser_title),
+                    text = title,
                     style = PolkadotTheme.typography.headline.small,
                     color = PolkadotTheme.colors.fg.primary
                 )
@@ -331,7 +330,7 @@ private fun SpaBrowserUrlDialog(
                     onValueChange = { url = it },
                     placeholder = {
                         NovaText(
-                            text = stringResource(RCommon.string.debug_spa_browser_url_hint),
+                            text = hint,
                             style = PolkadotTheme.typography.body.large,
                             color = PolkadotTheme.colors.fg.tertiary
                         )
@@ -399,23 +398,23 @@ private fun DebugMenuToggleItem(
 private fun DebugMenuScreenPreview() {
     PolkadotTheme {
         DebugMenuScreenInternal(
-            state = DebugMenuState(),
+            state = DebugMenuState(truapiHostVersion = "0.24.0"),
             onBackClick = {},
             onClearBackupClick = {},
             onCopyWalletAccountClick = {},
             onCopyWalletMnemonicClick = {},
             onShareLogsClick = {},
-            onOpenVideoGameClick = {},
             onPocketFacePreviewClick = {},
             onProductBotsClick = {},
-            onCopyCandidateAccountClick = {},
             onRandomizeAccountClick = {},
             onOpenSpaBrowserClick = {},
             onSpaBrowserUrlEntered = {},
             onSpaBrowserDialogDismissed = {},
+            onOpenDevServerClick = {},
+            onDevServerAddressEntered = {},
+            onDevServerDialogDismissed = {},
             onClearDotNsCacheClick = {},
             onClearJWTTokenClick = {},
-            onSimulateGameResultsClick = {},
             onCoinageDebugWidgetsToggled = {},
             onTruapiRuntimeToggled = {},
             onRuntimeRestartConfirmed = {},

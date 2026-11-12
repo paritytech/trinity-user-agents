@@ -1,6 +1,6 @@
 # truapi-host-cli
 
-Headless TrUAPI hosts for local end-to-end testing, built on `truapi-server`.
+Headless TrUAPI hosts for local end-to-end testing, built on `truapi`.
 They replace the external signing-bot service: two CLI processes take the two
 host-spec §B roles and pair over the **real People-chain statement store** (the
 same node an iOS/web client uses), so tests run against a real signer with no
@@ -22,10 +22,13 @@ One binary, `truapi-host`:
 | `pairing-host` | Seedless host: serves product frames, emits pairing deeplinks, and can run product scripts. |
 | `signing-host` | Wallet-local host: owns signer identity, can run product scripts, decodes copied pairing QR images or accepts deeplinks, registers statement allowance on-chain, signs. |
 | `dev` | Run a local development product with the shared container loaded by a script tag. |
-| `identity-check` | Probe the root and the network's `uid.<tld>` identity account for a registered username (read from the dotNS contracts on Asset Hub). |
+| `identity-check` | Probe the root and the network's `peopl.<tld>` identity account for a registered username (read from the dotNS contracts on Asset Hub). |
 | `register-name` | Register a full-person username via `DotnsGateway.register_name` on Asset Hub, linked to a lite username or standalone with a chat key. |
 | `alloc-check` | Diagnose (or `--submit`) on-chain statement-store allowance: ring membership, chosen slot, and the `set_statement_store_account` extrinsic. On a full period it prints each occupied slot's age and which one would be replaced. |
 | `pgas-check` | Diagnose (or `--submit`) an Asset Hub PGAS allowance claim: ring membership on People, whether Asset Hub has imported that ring revision, the day's first unclaimed slot, and the `Pgas.claim_pgas` extrinsic. |
+| `attest` | Attest a given mnemonic's `peopl.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
+| `network-check` | Resolve the network (`--network` or `--stack`) and print it as JSON, without contacting a chain. |
+| `stack` | Trinity stack descriptors: `keygen`, `publish` a model to `.well-known/trinity-stack.json`, `verify` a link, URL or file, `bundle` the signed copy a host build ships, and print a pointer's `link` and QR code. The rules come from the [`trinity-stack`](../trinity-stack) crate. |
 
 The repository's `make e2e-dotli` target builds this binary and runs the
 dotli/playground Diagnosis suite with a non-interactive signing-host responder.
@@ -35,7 +38,7 @@ same-account reconnect without the external signer-bot service.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 truapi-host signing-host
 ```
 
@@ -51,6 +54,7 @@ moves that one link.
 | `TRUAPI_HOST_VERSION` | Install this version instead of the current stable one. |
 | `TRUAPI_HOST_INSTALL_DIR` | Version store, default `$XDG_DATA_HOME/truapi-host`. |
 | `TRUAPI_HOST_BIN_DIR` | Directory the `PATH` symlink goes in, default `~/.local/bin`. |
+| `TRUAPI_HOST_PRESERVE_CARGO_INSTALL` | Leave a `cargo install` copy in place instead of removing it. |
 
 Product scripts (`--script`, `/script`) work from an installed binary: the
 archive ships a self-contained `runner.js` with the `@parity/truapi` client and
@@ -64,6 +68,25 @@ default, so starting either host does not reserve a TCP port. Pass
 `--frame-listen 127.0.0.1:0` to expose an ordinary loopback WebSocket instead;
 this is required for browser clients, which cannot open filesystem sockets.
 
+### In GitHub Actions
+
+```yaml
+- uses: paritytech/trinity-user-agents/.github/actions/install-truapi-host@truapi-host-cli-v<version>
+- run: truapi-host --version
+```
+
+Every CLI release tags the action as `truapi-host-cli-v<version>`, and the
+action installs the CLI version of the commit it is checked out at, so that tag
+installs that release. On a branch it installs the version that branch's
+`Cargo.toml` names, which only exists once that version is published. Pass
+`version: latest` to install the current stable release instead, or any
+published version such as `version: 0.29.0`. The action works on the same
+platforms as the installer, puts `truapi-host` on `PATH` for the rest of the
+job, sets `TRUAPI_HOST_NO_UPDATE=1` so the binary does not update itself
+mid-job, and outputs the installed `version` and the binary's `path`. A remote
+`uses:` downloads the repository at that ref, about 25 MB, so a job with a
+large matrix pays that per job.
+
 ### Staying current
 
 A managed install checks for a new release at most once every four hours,
@@ -72,6 +95,7 @@ the version store. A command that finishes first waits for the download, so even
 a one-shot run lands the update; it prints a line while downloading. The running
 process is never replaced underneath itself: the new version takes effect the
 next time you start `truapi-host`, and the CLI says so when one is waiting.
+`stack` skips the check, since it runs inside builds and publish jobs.
 Every archive is checked against its published SHA-256 before it is unpacked.
 
 ```bash
@@ -91,7 +115,7 @@ clears the other: installing removes a `cargo install` copy, and
 install without replacing it:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash -s -- --uninstall
 ```
 
 `make e2e-cli-update` exercises the whole chain locally: it packages the binary,
@@ -100,8 +124,8 @@ updates it. Nothing contacts GitHub.
 
 ### State directory
 
-Reserved identities derive under `uid.paseo` / `peopl.paseo` on
-`paseo-next-v2`, and `uid.testnet` / `peopl.testnet` on `previewnet`.
+Reserved identities derive under `peopl.paseo` on `paseo-next-v2`,
+`peopl.testnet` on `previewnet`, and `peopl.dot` on `pcf-devnet`.
 Managed host state lives under `<base-path>/v2`, including accounts,
 sessions, pairings, core and product storage, and log
 preferences. The CLI appends `v2` to both the default base path and a path set
@@ -114,6 +138,11 @@ The CLI leaves previous host state outside `v2` untouched and unused, and starts
 normal onboarding automatically. There is no state migration. Pair devices
 again; sign out first on any paired host that still uses an old identity.
 Existing `.dot` personhood membership does not transfer to the new keys.
+
+Each signing-host session keeps a core database, `core.sqlite3`. When a newer
+truapi-host wrote that file, or it is damaged, the signing host stops and prints
+the `rm -f` command that deletes it. Running that command starts the session
+with an empty core database and keeps its accounts and pairings.
 
 ### Building from source
 
@@ -129,13 +158,6 @@ truapi-host signing-host
 
 Requires stable Rust, nightly Rust with rustfmt, Node.js 22 or newer, and Bun. The target installs missing workspace
 build tools and regenerates Rust and TypeScript sources on every run, including after updating an existing checkout.
-
-### Raw proof contexts (development only)
-
-A product can bind a ring-VRF proof to 32 bytes of its choosing instead of a
-product-namespaced context by calling `development_createAccountProof` from
-`@parity/truapi`; the signing host honours it as is. Yet to be removed before a
-production release.
 
 ### Browser products
 
@@ -209,7 +231,7 @@ for any other product id, and a mismatch only surfaces later, as a
 `PermissionDenied` on the first signature.
 
 Two players on one machine means two hosts, each with its own session and port
-(`--session bob --frame-listen 127.0.0.1:9956`), and a second product instance
+(`--session bobsmith --frame-listen 127.0.0.1:9956`), and a second product instance
 pointed at the second port. Sessions isolate the signer, the storage and the
 permissions.
 
@@ -259,7 +281,7 @@ Commands always start with `/`:
 | `/product` | Show the currently selected product. |
 | `/product <id>` | Switch the product used by future scripts and frame connections. |
 | `/session` | Show the current session name, path, and user id (signing host). |
-| `/session <name>` | Switch to or create an isolated signing-host session. |
+| `/session <name>` | Restore or create an isolated signing-host session, retrying unfinished setup even for the current name. |
 | `/session --mnemonic "<phrase>"` | Import an existing signer as a durable session. |
 | `/session --list` | List user sessions for the current network. |
 | `/session --clear <name>` | Permanently clear one signing-host session. |
@@ -296,7 +318,9 @@ pairing responder.
 
 Typing `/` opens autocomplete. Up/Down selects a completion; with the menu
 closed it navigates process-local command history. Tab inserts a completion,
-and `/script` completes filesystem paths. Mnemonic characters are masked while
+and `/script` completes filesystem paths. Enter submits `/session <name>` as
+typed; use Tab first to insert a suggested exact session name.
+Mnemonic characters are masked while
 typing and mnemonic commands are never retained in command history or the
 transcript. Ctrl-U/Ctrl-D scroll by half a
 viewport, End restores auto-follow, Esc closes autocomplete, and Ctrl-C clears
@@ -321,8 +345,10 @@ bar. It uses a quiet, command-centered transcript: submitted
 commands title full-width dividers, script stdout keeps the terminal's normal
 foreground, stderr has a small error gutter, and lifecycle work updates
 sentence-case status rows in place. A compact
-`TrUAPI <role> host · 👤 <name> · 🌐 <network> · 📦 <product>` status sits
-below the writing bar. Long product names are ellipsized, while session and log
+`TrUAPI <role> host · 👤 <name> · 🌐 <network> (<chain-backend>) · 📦 <product>`
+status sits below the writing bar, naming the `--chain-backend` in use; a narrow
+terminal shortens the network name rather than the backend. Long product names
+are ellipsized, while session and log
 level stay out of that bar. A borderless, subtly backgrounded composer anchors
 autocomplete and the `›` prompt while keeping the native cursor after the
 input. When the input is empty, command guidance appears there as a placeholder
@@ -385,13 +411,16 @@ Managed sessions isolate signer accounts, product/core storage, and permissions.
 Once a signer identity is known, its public session name is the Lite username
 and its files live under
 `<base-path>/v2/<network>/<username>_signing_host`. Provisional named sessions
-are promoted to that user-owned root, so an old name such as `pgtest` does not
-remain the durable namespace. That name keeps selecting the session it created:
-the promoted session records the name it was created under, so `--session
-pgtest` and `/session --clear pgtest` both act on it instead of provisioning a
-second identity beside it. Once that session is cleared the name is free again. The selected username is
-remembered per network but is not repeated in the status bar as a separate
-session field.
+are promoted to that user-owned root. `--session workbench` and `/session
+workbench` select the most recently created local session whose username base
+is `workbench`. Creation order comes from the stored account timestamp, not the
+numerical alias: `workbench.07` can be newer than `workbench.42`. Use the full
+username, such as `--session workbench.42`, to select that exact session.
+If that numbered username is not saved locally, selection fails without creating
+another account.
+Promoted sessions also retain their original names as aliases. The selected
+username is remembered per network but is not repeated in the status bar as a
+separate session field.
 `default` remains only as a compatibility/bootstrap location until a username
 is resolved. It is hidden from session completion and listing and cannot be
 selected with `/session default`. User session names contain lowercase ASCII
@@ -402,7 +431,7 @@ device saved for the target session. Reload browser dev pages to connect to the
 new runtime.
 
 `/session --mnemonic "<phrase>"` brings an already-onboarded account into the
-session catalog. The host derives its `uid.<tld>` identity, reads any existing
+session catalog. The host derives its `peopl.<tld>` identity, reads any existing
 full or Lite username from dotNS, falls back to the identity backend's assigned
 username records when no dotNS mirror exists, and confirms its People or
 LitePeople ring membership. This lookup is read-only and never registers a new
@@ -410,31 +439,39 @@ username. On success, the resolved identity username becomes the session name;
 only an account absent from both sources uses a deterministic
 `imported-<key fingerprint>` name and connects the account without username
 metadata. The mnemonic is written to that session's `0600` account store and
-the exact account record is remembered for restart. An invalid phrase or an
-account without ring membership on the selected network leaves the current
-runtime active. A username-less session can sign and connect, but
+the exact account record is restored on restart and when switching sessions.
+An invalid phrase or an account without ring membership on the selected network
+leaves the current runtime active. A username-less session can sign and connect, but
 `account.getUserId()` cannot return a primary username until one source has a
 record. Use the interactive command when practical: putting the same command in
 `exec` also puts the phrase in your shell's arguments/history.
 
 New auto-managed accounts use the session name as their Lite username prefix;
-characters other than lowercase letters are omitted. For example, session
-`pgtest` creates usernames beginning with `pgtest`. An explicit
-`--lite-username-prefix` takes precedence, and `default` retains the historical
-`headless` prefix. Prefixes are used unchanged because dotNS assigns the
-numerical alias; session names with fewer than six letters use `session`.
+digits and separators are omitted. The derived base must contain at least six
+lowercase ASCII letters. A new `/session foo` fails immediately with a too-short
+username-base error, before network onboarding. For example, session `pgtest`
+requests the base `pgtest` when no matching local session exists. `--session`
+selects this base; there is no separate username-prefix option. `default` retains
+the `headless` base. Existing saved accounts and aliases can still be selected
+by their original names.
+The backend assigns a numerical alias to the unchanged base. An exhausted base
+reports an error; the CLI does not generate alternative bases or random suffixes.
+The base is saved with the pending account, so retrying unfinished setup keeps
+the same identity.
 `--reserved-username <label>` additionally reserves a
 full-person base name on dotNS for a newly created account, to be claimed later
 with `register-name`; the CLI refuses labels the registrar has already minted.
 The selected username and last script reference are cached in `session.json`
 inside the displayed session path. Legacy session-local scripts use a portable
-filename; managed projects and explicit scripts use an absolute path. On restart, an
-already-provisioned local signer is activated from disk without an
+filename; managed projects and explicit scripts use an absolute path. On restart
+or session switching, an already-provisioned local signer is activated from disk without an
 identity-backend or ring-membership round trip, and bare `/script` restores that
 session's editor context. A session with no signer yet reports
 `<not provisioned>` and the transcript prompts the user to run
-`/session <name>`. Inspecting with bare `/session` never starts network
-onboarding; naming a different session creates and connects its user.
+`/session <name>`. Naming a session creates and connects its user if needed,
+including when that name is already selected but setup is unfinished. Selecting
+an already-connected session keeps its signer and product connections.
+Inspecting with bare `/session` never starts network onboarding.
 
 Each managed session stores all of its paired hosts in `paired-hosts.json`.
 Mutations are serialized through `paired-hosts.json.lock`. `/pair` inserts or
@@ -487,11 +524,22 @@ another identity. A session directory without an account store is not an
 identity and is never reselected. This makes one `--base-path` per caller the
 supported way to hold a reusable signer.
 
-Select or create a session at startup with:
+Restore or create a signer at interactive startup with:
 
 ```bash
-truapi-host signing-host --session alice
+truapi-host signing-host --session aliceuser
 ```
+
+Provisioning runs in the terminal UI, where progress and errors are visible.
+If it fails or is cancelled, retry with `/session aliceuser`. Starting without
+`--session` restores a cached signer but waits for an operation that needs one
+before creating an account. `--serve` and script execution also ensure a signer
+is ready.
+
+In `exec` mode, `--session` selects the session for the slash command. Inspection,
+listing, help, and clearing do not provision accounts. Use
+`signing-host --session aliceuser exec '/session aliceuser'` to explicitly restore or
+create the signer without opening the UI.
 
 `--session` cannot be combined with `--account` or `--mnemonic`. A host
 started with an explicit mnemonic reports an `ephemeral` session and does not
@@ -515,8 +563,12 @@ truapi-host signing-host --session alice.01 exec '/devices --remove 0x0123456789
 
 `exec` does not enable raw mode or emit terminal controls. Command results go
 to stdout, diagnostics go to stderr, and the process exits when the command
-finishes. Starting `signing-host` without `--script` or `exec` while either
-stdin or stdout is not a TTY is an invocation error unless `--serve` is used.
+finishes. `/pair` finishes when the paired host disconnects. Until then it
+restarts its responder after a failure instead of exiting, so stop it with
+Ctrl-C or SIGTERM. It exits with an error when the session cannot be served at
+all, for example without an active local session. Starting `signing-host` without `--script` or `exec` while
+either stdin or stdout is not a TTY is an invocation error unless `--serve` is
+used.
 The existing `--script` one-shot mode remains supported. Neither one-shot mode
 restores saved responders. Only a deeplink supplied for that run is answered,
 and a managed session still saves that pairing for a later interactive or
@@ -730,6 +782,8 @@ Scripts under `js/scripts/` include:
   make e2e-chat-cli                     # chat phase only
   scripts/battery.sh --pocket-host      # Pocket phase only
   make e2e-pocket-cli                   # Pocket phase only
+  scripts/battery.sh --funding-host     # funding phase only, on a test-host build
+  make e2e-funding-cli                  # funding phase only
   scripts/battery.sh --release          # release binary
   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
   ```
@@ -744,6 +798,32 @@ Scripts under `js/scripts/` include:
   removable and one privileged, and records every removal the host is asked for
   in `TRUAPI_POCKET_LOG`. The cases read that transcript, so a pass means the
   host and the product agree rather than resting on the product's word.
+
+  The funding phase builds the host with `--features test-host` and installs
+  a scripted funding overlay: each request the product makes is answered with
+  the next outcome from `TRUAPI_FUNDING_OUTCOMES`
+  (`deliver:900,release:500,fail,dismiss`), and a started session is settled
+  through the core's test hook with no chain behind it. Every overlay request
+  and session change is recorded in `TRUAPI_FUNDING_LOG`, which the cases read.
+  The live on-ramp on Paseo Next is `truapi-host funding-check`.
+
+  The CLI accepts and logs Game reminders on every execution kind, without
+  holding or firing them. The core serves Game to the game product (`dim2`)
+  alone, so the battery skips it. To try a game product locally, run
+  `truapi-host dev --product-id dim2.dot -- <dev command>`; without the flag
+  the product runs as `localhost:<port>` and Game answers `Unsupported`.
+
+  Contacts are served on every phase, from `TRUAPI_CONTACTS`
+  (`alice=0x<32-byte account>;bob=0x…`) or, unset, from a two-name development
+  list so `contacts.pick` has someone to return. An empty spec is an empty list,
+  which is what answers `NoContacts`. `TRUAPI_CONTACT_PICK` names which contact
+  the picker offers; the approval surface asks about it like any other action,
+  so a headless run approves it and an interactive one does not.
+
+  The CLI has no camera, so `scanner.scan` answers with `TRUAPI_SCAN_TEXT` as a
+  QR code, or as a dismissal when it is unset. The core still checks the code
+  against the product's request, so a text that misses the prefix answers
+  `Unknown`.
 
   The paired phase gives its pairing host a throwaway `--base-path` under
   `target/battery/pairing-host-state`, so it performs a real handshake on every
@@ -882,15 +962,53 @@ Frames are forwarded whole and the debugger decodes all of them, so a tapped
 signing host puts its payloads on that socket. Point it at a debugger you are
 running yourself.
 
+## Trinity stacks
+
+`truapi-host stack` publishes and checks the descriptor that tells hosts and
+tools which chains and services make up a stack. An operator publishing
+previewnet:
+
+```sh
+truapi-host stack keygen --out ~/.previewnet/stack.key   # prints the public key
+truapi-host stack publish previewnet.json --generation 2026-10-19 --out site \
+  --signing-key-file ~/.previewnet/stack.key --state ~/.previewnet/stack-state.json \
+  --url https://previewnet.example/.well-known/trinity-stack.json
+# deploy site/, then share the printed link or:
+truapi-host stack link https://previewnet.example/.well-known/trinity-stack.json --key 0x…
+```
+
+`previewnet.json` is a descriptor without `$v`, `sequence` and `generation`: the
+[JSON Schema](../trinity-stack/schema/trinity-stack.v1.schema.json) and the
+[RFC](../../../docs/rfcs/trinity-stack-descriptor.md) list its fields. Change
+`--generation` whenever the chains restart. Keep the key and the state
+file outside anything a wipe deletes.
+
+To check a published stack, or ship one in a host build:
+
+```sh
+truapi-host stack verify 'polkadotapp://stack?key=0x…&url=…'   # exits non-zero on a broken rule or expiry
+truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.json
+```
+
+`bundle` refuses a lower `sequence` than the copy already at `--out`, an expired
+stack, one whose `tld` or `id` differs from the copy at `--out`, also when that
+copy was signed with another key (every derived account, or the namespace every
+session is stored under, would change; remove the copy to bundle it on purpose),
+and a built-in network's copy the CLI cannot run on.
+With `--skip-same-projection`, which `scripts/update-stacks.sh` passes, a fetched
+copy that differs from the one at `--out` only in fields truapi-host does not read
+leaves it in place and reports it as current. [SPEC.md](SPEC.md#67-top-level-stack)
+has every option.
+
 ## Statement-store allowance
 
 The real statement store enforces per-account allowance. Before pairing, the
 signing host grants it on-chain exactly as a real client does: it proves its
 personhood ring membership with a bandersnatch ring-VRF and submits an unsigned
 General (v5) `Resources.set_statement_store_account` extrinsic for each account
-that submits statements — its RFC-0022 `uid.<tld>` identity account and the
+that submits statements — its RFC-0028 `peopl.<tld>` identity account and the
 pairing host's per-pairing device key. The shared native implementation lives in
-`truapi-server/src/runtime/statement_allowance/` (metadata-driven
+`truapi/src/runtime/statement_allowance/` (metadata-driven
 signed-extension encoding, ring fetch, slot scan, ring-VRF proof, extrinsic
 assembly, submit). The signing account must be an attested member of at least
 one personhood collection, and may sit in an old ring, so the signing host scans
@@ -944,23 +1062,100 @@ HOST_CLI_SIGNER_MNEMONIC="spin battle …" truapi-host signing-host --deeplink '
 truapi-host alloc-check --mnemonic "spin battle …" --lookback 100
 ```
 
-Both hosts take `--network`, either `paseo-next-v2` (default) or `previewnet`.
-The network preset owns the identity backend URL, the People, Bulletin and Asset
+Every command takes the global `--network`: `paseo-next-v2` (default), `previewnet`, or
+`pcf-devnet` (PCF's devnet on Paseo, on the `dot` TLD). All three are test networks
+(SPEC.md §14.1).
+The network owns the identity backend URL, the People, Bulletin and Asset
 Hub RPCs, and their genesis hashes; there is
 no public `--statement-store` flag. Pick `previewnet` when a product's runtime
 descriptors target previewnet, so its statements, its host chain routes and its
 own chain reads all land on one network. The CLI mints the identity backend's
-bearer token itself (SPEC.md §12.3). Sessions are per preset, so each network
+bearer token itself (SPEC.md §12.3). Sessions are per network, so each network
 gets its own signer identity on the same machine.
-`HOST_CLI_IDENTITY_BACKEND_BASE` swaps only
-the identity backend (for a local one); `HOST_CLI_IDENTITY_BACKEND_TOKEN`
-supplies its bearer token instead of the CLI minting one. For username
-registration, an injected token's subject must match the session's `uid.<tld>`
-candidate account. The automatically minted token uses that identity; and
-`HOST_CLI_DOTNS_POP_CONTROLLER` overrides on-chain `DotnsPopController`
-discovery (see SPEC.md §21). Both also accept `--frame-listen <address>`
-to opt into a TCP product-frame WebSocket; without it, the CLI creates and
-cleans up a unique temporary Unix socket.
+
+A command reaches its chains in one of two ways:
+
+- **A built-in network** (`--network`, `paseo-next-v2` by default).
+  All three are built-in Trinity stacks. Each command that
+  resolves one fetches the descriptor its operator publishes, verifies it against
+  the stack's key, and uses it when it is newer than the signed copy this release
+  ships in `stacks/`; an unreachable descriptor falls back to the shipped copy
+  silently, and a non-2xx answer is logged as a warning. When the published
+  descriptor changes a field the CLI reads, the CLI prints one line saying that it is
+  in use and that a later release ships it; when the stack restarted from genesis the
+  line reports that too. A newer copy that changes nothing the CLI reads is used
+  without a line. A published descriptor that changes the stack's `tld` or `id`, or
+  that the CLI cannot run on, is not used: the bundled copy stays in use with a
+  warning, since every account derives under the TLD and is stored under the id. A
+  stack past its `expiresAt` is an error.
+- **Any other Trinity stack** (`--stack <descriptor URL | stack link | file>` or
+  `HOST_CLI_STACK`), such as a fork, a staging instance or a local network. It
+  replaces `--network`, and the two cannot be combined; details below.
+
+Before anything runs, every endpoint of a stack reached over RPC is asked for its
+genesis, and People, once its genesis matches, for its `NetworkSuffix`. An endpoint
+that reports a genesis other than the one it is routed as is an error; for a built-in
+it reports that the stack restarted from genesis and which descriptor is in use, after
+fetching the published descriptor once more when it could not be fetched before. A
+`NetworkSuffix` other than the `tld` is an error. An endpoint that does not answer
+within 3 seconds is logged and left to fail on first use.
+A fork of Polkadot may keep Polkadot's genesis hashes and use the `dot` TLD. Any endpoint
+with one of Polkadot's genesis hashes, from a built-in or a stack, is compared with real
+Polkadot, whose signed descriptor the binary ships as a reference, with every node the
+reference lists for that chain contacted at once. At the lower of the endpoint's and
+Polkadot's finalized block, an equal block hash stops the command: the endpoint is
+Polkadot itself, or a fork that has not finalized past its fork point. It also stops when
+the endpoint, or every Polkadot node, does not answer within 3 seconds at a step, and the
+error names that side. A stack with the id `polkadot` cannot run, since that namespace
+may contain sessions of real Polkadot identities.
+
+```sh
+truapi-host --stack 'polkadotapp://stack?key=0x…&url=https%3A%2F%2Fstack.example%2F.well-known%2Ftrinity-stack.json' \
+  signing-host --auto-accept
+truapi-host --stack https://stack.example/.well-known/trinity-stack.json network-check
+truapi-host --stack ./local-stack.json dev \
+  --base-path /tmp/local-stack-host -- npm run dev
+```
+
+For `--stack`, a link on any scheme or domain is read for its `url` and `key`, and
+a signed stack must verify against the key. A URL alone is read unsigned, and so is
+a local descriptor file, signed or not, which suits a local network: its `rpc` and
+`dub` URLs may be `ws://` and `http://` on loopback and private addresses. The stack's
+People, Asset Hub and Bulletin chains (first `rpc` and `genesisHash` of each
+role), its `dub` service as the identity backend (the `dub` URL with `/api/v1`
+appended), its `tld` and its `dotns.popController` replace the network's. A
+stack that lacks one of those roles, gives two of them one genesis hash, has a
+`tld` the core does not serve (`dot`, `paseo`, `testnet`), has no `dub` service or
+no `dotns.popController`, is unreachable or is past `expiresAt` is an error for
+every command. The CLI's own username reads go through that `popController` without
+looking it up on chain; the signing host's core still discovers its controller on
+chain. `get_chain_info` reports the descriptor's `network`. The product
+namespace (the state directory) is the descriptor's `id` without a trailing
+`-fork`, except that the `polkadot-fork` namespace is its full `id`. Use a
+separate `--base-path` and a disposable identity for a local stack. The routing
+applies to every chain role the host serves, including the Bulletin node the CLI
+asks for preimages (`bitswap_v1_get`), so a local Bulletin node must expose that
+RPC.
+
+`truapi-host network-check` prints the resolved routing of either as JSON
+without contacting a chain, so a harness can check it before starting a session:
+`schema_version`; `network`, the product namespace; `namespace`, the network's
+`tld`; `identity_backend_base`; and `ws` and `genesis` for `people`,
+`asset_hub` and `bulletin`.
+
+`HOST_CLI_IDENTITY_BACKEND_TOKEN` supplies the identity backend's bearer token
+instead of the CLI minting one. For username registration, an injected token's
+subject must match the session's `peopl.<tld>` candidate account; the
+automatically minted token uses that identity. Both hosts also accept
+`--frame-listen <address>` to opt into a TCP product-frame WebSocket; without it,
+the CLI creates and cleans up a unique temporary Unix socket.
+
+`--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) syncs the
+chains with the embedded light client instead of dialing the network's RPC nodes,
+for when public nodes refuse the host, such as a rate-limited CI runner. Every
+command uses the selected backend. The light client is slower than RPC,
+supports only `paseo-next-v2` and `previewnet`, never a `--stack`, and drops PGAS
+claims, so `pgas-check --submit` refuses to run on it (SPEC.md §14.3).
 
 ## Serving a dev server (one process, no terminal)
 
@@ -1014,10 +1209,9 @@ one-shot modes.
 
 ## Scope / gaps
 
-- **Chain methods** route to real `wss://` nodes from the selected `--network`.
-  Every role the preset serves is routed unconditionally; `E2E_LIVE_CHAIN=1` only
-  widens routing to endpoints it carries without serving. A rustls crypto provider is
-  installed at startup for the TLS connections.
+- **Chain methods** route to real `wss://` nodes from the selected `--network`,
+  or to the light client (`--chain-backend`). Every role the network serves is
+  routed unconditionally.
 - **Ring-VRF product-account aliases and proofs** are implemented by the
   signing host via the `verifiable` crate (`get_account_alias` and
   `create_account_proof`).

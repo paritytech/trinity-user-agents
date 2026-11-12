@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -37,6 +39,12 @@ const compare = step(
   "Compare every published manifest against npm",
 );
 const report = step("registry-drift", "Report the drift");
+const iosFallback = step(
+  "registry-drift",
+  "Compare the iOS published fallback against its newest release",
+);
+const checkCrate = step("release", "Check the crate version against crates.io");
+const confirmCrate = step("release", "Confirm the crate reached crates.io");
 const title =
   "Release drift: published versions do not match the default branch";
 const manifest = "js/packages/truapi/package.json";
@@ -130,6 +138,7 @@ for (const path of [
   "rust/crates/truapi-codegen/src/emitter.rs",
   "rust/crates/truapi-host-cli/src/main.rs",
   "scripts/codegen.sh",
+  "nightly-toolchain",
   "scripts/bundle-truapi-dts.mjs",
   "scripts/regen-explorer-versions.mjs",
   "Cargo.toml",
@@ -198,7 +207,7 @@ test("a rerun reads changed PR metadata and does not use a stale opt-out", (t) =
   );
   for (const [pr, status] of [
     [{ title: "fix: behavior", labels: [] }, 1],
-    [{ title: "fix: behavior", labels: [{ name: "no-changeset" }] }, 0],
+    [{ title: "fix: behavior", labels: [{ name: "ci:no-changeset" }] }, 0],
     [{ title: "release: @parity/truapi 1.0.0", labels: [] }, 0],
     [{ title: "fix: behavior", labels: [] }, 1],
   ]) {
@@ -471,4 +480,171 @@ test("issue listing errors do not create a duplicate", (t) => {
   );
   assert.equal(f.execute(report).status, 1);
   assert.equal(readFileSync(calls, "utf8"), "api\n");
+});
+
+
+const packageSwift = (version) =>
+  `let publishedBinaryURL = "https://github.com/paritytech/trinity-user-agents/releases/download/%40parity%2Fios-host%40${version}/truapi_server.xcframework.zip"\n`;
+
+// gh is invoked with --jq, so it emits one tag per line rather than JSON.
+const releases = (...tags) =>
+  `console.log(${JSON.stringify(tags.join("\n"))});`;
+
+test("the iOS fallback naming the newest release is not drift", (t) => {
+  const f = fixture(t);
+  f.write("Package.swift", packageSwift("0.16.0"));
+  f.stub("gh", releases("@parity/ios-host@0.16.0", "@parity/truapi@0.16.0"));
+  passed(f.execute(iosFallback));
+  assert.equal(existsSync(join(f.root, "ios-drift.txt")), false);
+});
+
+test("an older iOS fallback is recorded for the drift report", (t) => {
+  const f = fixture(t);
+  f.write("Package.swift", packageSwift("0.7.0"));
+  f.stub("gh", releases("@parity/ios-host@0.7.0", "@parity/ios-host@0.16.0"));
+  passed(f.execute(iosFallback));
+  assert.match(
+    readFileSync(join(f.root, "ios-drift.txt"), "utf8"),
+    /@parity\/ios-host@0\.16\.0 \(Package\.swift falls back to 0\.7\.0\)/,
+  );
+});
+
+test("a pre-release is never treated as the newest iOS release", (t) => {
+  const f = fixture(t);
+  f.write("Package.swift", packageSwift("0.16.0"));
+  f.stub("gh", releases("@parity/ios-host@0.16.0", "@parity/ios-host@0.17.0-beta.1"));
+  passed(f.execute(iosFallback));
+  assert.equal(existsSync(join(f.root, "ios-drift.txt")), false);
+});
+
+test("no published iOS release at all is not drift, and does not kill the step", (t) => {
+  const f = fixture(t);
+  f.write("Package.swift", packageSwift("0.16.0"));
+  f.stub("gh", releases("@parity/truapi@1.0.0"));
+  passed(f.execute(iosFallback));
+  assert.equal(existsSync(join(f.root, "ios-drift.txt")), false);
+});
+
+test("a manifest naming no iOS release fails rather than reporting no drift", (t) => {
+  const f = fixture(t);
+  f.write("Package.swift", "let publishedBinaryURL = \"https://example.com/nothing.zip\"\n");
+  f.stub("gh", releases("@parity/ios-host@0.16.0"));
+  assert.equal(f.execute(iosFallback).status, 1);
+});
+
+test("recorded iOS drift reaches the report through the npm comparison", (t) => {
+  const f = fixture(t);
+  writeFileSync(
+    join(f.root, "ios-drift.txt"),
+    "@parity/ios-host@0.16.0 (Package.swift falls back to 0.7.0)\n",
+  );
+  f.stub("npm", 'console.log(JSON.stringify("1.0.0"));');
+  const result = f.execute(compare);
+  assert.equal(result.status, 0);
+  assert.match(result.output, /drift=true/);
+  assert.match(result.output, /falls back to 0\.7\.0/);
+});
+
+// crates.io sparse index answers, served in order and the last one repeated.
+const indexListing = (...versions) => ({ status: 200, versions });
+const indexMissing = { status: 404, versions: [] };
+const indexFailure = { status: 503, versions: [] };
+const crateIndex = (...answers) => `
+const fs = require("node:fs");
+const answers = ${JSON.stringify(answers)};
+const args = process.argv.slice(2);
+fs.appendFileSync(__filename + ".urls", args.at(-1) + "\\n");
+const call = fs.readFileSync(__filename + ".urls", "utf8").trim().split("\\n").length - 1;
+const answer = answers[Math.min(call, answers.length - 1)];
+fs.writeFileSync(
+  args[args.indexOf("-o") + 1],
+  answer.versions.map((vers) => JSON.stringify({ name: "trinity-stack", vers })).join("\\n"),
+);
+process.stdout.write(String(answer.status));
+`;
+
+function crateFixture(context, { manifest = "0.3.0", answers }) {
+  const repository = fixture(context);
+  repository.write(
+    "rust/crates/trinity-stack/Cargo.toml",
+    `[package]\nname = "trinity-stack"\nversion = "${manifest}"\n`,
+  );
+  const indexScript = join(repository.cwd, "scripts/crates-io-index.sh");
+  repository.write(
+    "scripts/crates-io-index.sh",
+    readFileSync(new URL("../crates-io-index.sh", import.meta.url)),
+  );
+  chmodSync(indexScript, 0o755);
+  repository.stub("curl", crateIndex(...answers));
+  const run = (script, env = {}) =>
+    repository.execute(script, {
+      VERSION: "0.3.0",
+      CRATES_INDEX_INTERVAL_SECONDS: "1",
+      ...env,
+    });
+  const urlLog = join(repository.root, "bin/curl.urls");
+  const lookups = () =>
+    existsSync(urlLog) ? readFileSync(urlLog, "utf8").trim().split("\n") : [];
+  return { run, lookups };
+}
+
+test("a crate manifest that differs from the released version fails the crate publish", (context) => {
+  const crate = crateFixture(context, {
+    manifest: "0.2.0",
+    answers: [indexMissing],
+  });
+  const result = crate.run(checkCrate);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stdout,
+    /Cargo\.toml is 0\.2\.0, but the release declares 0\.3\.0/,
+  );
+  assert.equal(result.output, "");
+});
+
+test("a trinity-stack version already on crates.io is not published again", (context) => {
+  const crate = crateFixture(context, {
+    answers: [indexListing("0.2.0", "0.3.0")],
+  });
+  const result = crate.run(checkCrate);
+  passed(result);
+  assert.match(result.output, /^listed=true$/m);
+  assert.deepEqual(crate.lookups(), [
+    "https://index.crates.io/tr/in/trinity-stack",
+  ]);
+});
+
+for (const [label, answer] of [
+  ["the first trinity-stack version", indexMissing],
+  ["a new trinity-stack version", indexListing("0.2.0", "0.3.0-rc.1")],
+]) {
+  test(`${label} is sent to crates.io`, (context) => {
+    const crate = crateFixture(context, { answers: [answer] });
+    const result = crate.run(checkCrate);
+    passed(result);
+    assert.match(result.output, /^listed=false$/m);
+  });
+}
+
+test("a crates.io index error fails the crate publish", (context) => {
+  const crate = crateFixture(context, { answers: [indexFailure] });
+  const result = crate.run(checkCrate);
+  assert.equal(result.status, 1);
+  assert.equal(result.output, "");
+});
+
+test("the crate publish is confirmed once the index lists the version", (context) => {
+  const crate = crateFixture(context, {
+    answers: [indexMissing, indexFailure, indexListing("0.3.0")],
+  });
+  const result = crate.run(confirmCrate, { CRATES_INDEX_WAIT_SECONDS: "30" });
+  passed(result);
+  assert.equal(crate.lookups().length, 3);
+});
+
+test("the crate publish fails when the version is not on crates.io by the deadline", (context) => {
+  const crate = crateFixture(context, { answers: [indexMissing] });
+  const result = crate.run(confirmCrate, { CRATES_INDEX_WAIT_SECONDS: "1" });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /trinity-stack 0\.3\.0 is not on crates\.io/);
 });

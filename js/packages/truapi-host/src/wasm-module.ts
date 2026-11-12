@@ -1,8 +1,9 @@
-// Shape of the web-targeted truapi-server WASM bundle. `make wasm` writes the
+// Shape of the web-targeted truapi WASM bundle. `make wasm` writes the
 // wasm-pack glue and its `.wasm` payload to `dist/wasm/web/`; the ambient
 // declaration in `src/wasm/web/truapi_server.d.ts` types that module against
 // these interfaces so the worker can name it in a statically analysable import.
 
+import type { ProductId } from "@parity/truapi";
 import type { PermissionAuthorizationRuntime } from "./worker-permission-authorization.js";
 
 /** Cancellable handle on one live render stream inside the core. */
@@ -14,6 +15,8 @@ export interface WorkerRendererSubscription {
 /** One product-scoped core inside the worker. */
 export interface WorkerProductRuntime {
   receiveFrame(frame: Uint8Array): Promise<void>;
+  /** Drop cached contact handles after a contact is removed or blocked. */
+  notifyContactsChanged(): void;
   dispose(): void;
   free(): void;
   /** Throws when the connection may not reach Chat. */
@@ -43,35 +46,42 @@ export interface WorkerProductRuntime {
 /** What the host does with a product's worker after demand on it changed. */
 export type WorkerTransition = "Start" | "Stop";
 
-/** The long-lived pairing-host runtime product cores are created from. */
-export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime {
+/** The long-lived runtime product cores are created from, in either role. */
+export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   productRuntime(
     product: unknown,
     coreCallbacks: unknown,
   ): WorkerProductRuntime;
   disconnectSession(): Promise<void>;
+  notifyContactsChanged(): void;
+  /** Only on a core built with `test-host`. */
+  setSubmitPreimagesLocally?(local: boolean): void;
+  /**
+   * Take one reference on the product's worker. The first one reports
+   * `"Start"` through the runtime's `requestWorkerTransition` callback.
+   */
+  acquireWorker(productId: ProductId): void;
+  /**
+   * Release one reference. The last one reports `"Stop"` the same way.
+   */
+  releaseWorker(productId: ProductId): void;
+  free(): void;
+}
+
+/** The pairing-host runtime: the user's keys live in a paired wallet. */
+export interface WorkerPairingHostRuntime extends WorkerHostRuntime {
   cancelPairing(): void;
   notifySessionStoreChanged(): void;
   sessionChatIdentityKey(): Uint8Array | undefined;
   deviceStatementKey(): Uint8Array | undefined;
   deviceEncryptionKey(): Promise<Uint8Array>;
   productSubtreePublicKey(
-    productId: string,
+    productId: ProductId,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
   activateStoredSession(): Promise<void>;
   activateExternalSession(blob: Uint8Array): Promise<void>;
   resetSessionState(): Promise<void>;
-  /**
-   * Take one reference on the product's worker. The first one reports
-   * `"Start"` through the runtime's `workerDemandChanged` callback.
-   */
-  acquireWorker(productId: string): void;
-  /**
-   * Release one reference. The last one reports `"Stop"` the same way.
-   */
-  releaseWorker(productId: string): void;
-  free(): void;
 }
 
 /**
@@ -81,15 +91,19 @@ export interface WorkerPairingHostRuntime extends PermissionAuthorizationRuntime
  * entropy rather than by pairing with a wallet. The production `web` bundle is
  * built without it on purpose, so this is optional on the module surface.
  */
-export interface WorkerSigningHostRuntime extends WorkerPairingHostRuntime {
+export interface WorkerSigningHostRuntime extends WorkerHostRuntime {
+  /** Derived from the active session root, so it never waits. */
+  productSubtreePublicKey(productId: ProductId): Uint8Array | undefined;
   activateLocalSession(secret: Uint8Array): Promise<void>;
+  /** Only on a core built with `wasm-signing-host`. */
+  setGrantAllowancesUnchecked?(granted: boolean): void;
+  /** Only on a core built with `wasm-signing-host`. */
+  setWithheldResources?(tags: string[]): void;
   /**
    * Activate and give the session a display name, which is what
    * `account.get_user_id` answers with. Optional: a core built before this
    * entry point existed exposes only {@link activateLocalSession}.
    */
-  /** Only on a core built with `wasm-signing-host`. */
-  setGrantAllowancesUnchecked?(granted: boolean): void;
   activateLocalSessionWithIdentity?(
     secret: Uint8Array,
     liteUsername?: string | null,
@@ -99,6 +113,8 @@ export interface WorkerSigningHostRuntime extends WorkerPairingHostRuntime {
 /** Module surface the wasm-pack glue exports. */
 export interface WasmModuleShape {
   default: (input?: unknown) => Promise<unknown>;
+  /** Validate and normalize an identifier using the core's canonical parser. */
+  parseProductId: (value: string) => ProductId;
   WasmPairingHostRuntime: new (
     callbacks: unknown,
     hostConfig: unknown,
@@ -125,7 +141,7 @@ export interface WasmModuleShape {
   /** SS58 address for a product account public key, at the core's prefix. */
   productAccountAddress: (publicKey: Uint8Array) => string;
   /**
-   * The core's own `TRUAPI_WIRE_SCHEMA_HASH`, exported by `truapi-server`'s wasm
+   * The core's own `TRUAPI_WIRE_SCHEMA_HASH`, exported by `truapi`'s wasm
    * bridge. Optional because `dist/wasm/web/` is gitignored and built by hand, so
    * a stale bundle predating the export is a normal state to find at runtime; a
    * core that cannot vouch for its table streams frames without a `schema` stamp

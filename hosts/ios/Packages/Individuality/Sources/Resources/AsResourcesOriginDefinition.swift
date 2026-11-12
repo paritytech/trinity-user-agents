@@ -12,6 +12,7 @@ enum AsResourcesOriginError: Error {
 public struct AsResourcesOriginInput {
     public enum Kind {
         case registerStatementStoreAllowance
+        case registerNotificationForCollection
         case claimLongTermStorage
     }
 
@@ -64,18 +65,20 @@ public final class AsResourcesOriginDefinition: ExtrinsicOriginDefining {
                 case .full: .people
                 }
 
+            let allowanceParams = ResourcesPallet.AsRegisterStatementStoreAllowanceParams(
+                vrfManager: input.personDeps.keyManager,
+                ringIndex: input.personDeps.origin.ringIndex,
+                proofParams: proofParams,
+                collection: collection,
+                proofContext: input.proofContext
+            )
+
             let info: ResourcesPallet.AsResourcesInfo =
                 switch input.kind {
                 case .registerStatementStoreAllowance:
-                    .registerStatementStoreAllowance(
-                        ResourcesPallet.AsRegisterStatementStoreAllowanceParams(
-                            vrfManager: input.personDeps.keyManager,
-                            ringIndex: input.personDeps.origin.ringIndex,
-                            proofParams: proofParams,
-                            collection: collection,
-                            proofContext: input.proofContext
-                        )
-                    )
+                    .registerStatementStoreAllowance(allowanceParams)
+                case .registerNotificationForCollection:
+                    .registerNotificationForCollection(allowanceParams)
                 case .claimLongTermStorage:
                     .claimLongTermStorage(
                         ResourcesPallet.AsClaimLongTermStorageParams(

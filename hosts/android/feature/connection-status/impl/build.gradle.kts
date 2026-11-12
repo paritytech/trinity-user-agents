@@ -9,6 +9,7 @@ android {
 
 dependencies {
     api(project(":feature:connection-status:api"))
+    implementation(project(":feature:statement-store:api"))
 
     testImplementation(project(":test-shared"))
 }

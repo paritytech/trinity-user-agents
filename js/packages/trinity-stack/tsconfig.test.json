@@ -1,0 +1,11 @@
+{
+  // Typechecks the test files, which `tsconfig.json` excludes because they are never emitted.
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*.ts"],
+  "exclude": [],
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "incremental": false
+  }
+}

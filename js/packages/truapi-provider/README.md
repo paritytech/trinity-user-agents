@@ -12,7 +12,10 @@ connections, and its synced state is kept between launches, so a launch resumes
 from finalized state instead of syncing from scratch. It holds at most 32 of them
 at once and rejects a `connect` past that, so a client that leaks connections
 fails instead of growing; closing one hands its slot back. Connections to a
-remote node you registered with `addRpcChain` are not counted against it.
+remote node you registered with `addRpcChain` are not counted against it. A
+provider with an `addRpcChain` registration connects only to chains registered
+on it. The catalog does not resolve any other genesis hash for it, so a host on
+remote nodes never starts the light client by accident.
 
 ## Usage
 
@@ -62,6 +65,33 @@ syncs from the checkpoint in the chain spec on every run.
 `setDatabaseContent(genesisHash, blob)` seeds one chain for this run and beats
 anything the client would load for it. `saveDatabase(genesisHash)` forces a write
 at a moment the host chooses.
+
+The light client dials peers over `wss://`, and over plain `ws://` to localhost
+and to other hosts. A page whose browser blocks some of those can turn them off:
+
+```js
+builder.setConnectionTypes({ unsecure: false }); // mixed content on an https page
+```
+
+A light-client connection holds its requests until the chain first syncs, then
+sends them in order. Chain-spec queries, statement-store and Bitswap calls are
+answered at once. To show sync
+progress, watch the chain once something is connected to it:
+
+```js
+const watch = provider.lifecycle(chains.relay);
+for (let state; (state = await watch.next()); ) {
+  // state.phase: { kind: "connecting" } | { kind: "syncing", at, target } | { kind: "ready" }
+  // state.peers: connected peer count
+  // state.health: { kind: "ok" } | { kind: "stalled", reason: "noPeers" | "noProgress" }
+}
+```
+
+The first `next()` resolves with the current state, and each later one with the
+next change. It resolves `undefined` after `watch.close()` or once nothing holds
+the chain. A parachain goes from `connecting` straight to `ready`, so watch its
+relay for warp sync progress. `lifecycle` throws for a chain nothing is
+connected to.
 
 ## Native hosts
 

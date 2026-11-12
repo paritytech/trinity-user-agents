@@ -188,7 +188,7 @@ extension TransferAmountViewController: TransferAmountViewProtocol {
     }
 
     func didReceive(availableBalance: String) {
-        rootView.balanceView.bind(amount: availableBalance)
+        rootView.bind(availableBalance: availableBalance)
     }
 
     func didReceive(amountViewModel: AmountInputViewModelProtocol) {

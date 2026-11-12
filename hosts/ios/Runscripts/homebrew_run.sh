@@ -6,7 +6,9 @@ setup_environment() {
         echo "Skip for indexbuild"
         exit 0
     fi
-    export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+    # Appended, so a tool the caller already put on PATH, such as CI's pinned
+    # SwiftLint, wins over whatever version Homebrew has installed.
+    export PATH="$PATH:/opt/homebrew/bin:/usr/local/bin"
 }
 
 # Check if Homebrew is available

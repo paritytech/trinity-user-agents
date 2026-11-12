@@ -86,7 +86,6 @@ private extension CoreDataMapperTests.ContactDeviceSettingsMapperTests {
             chatRequest: nil,
             ownKeyId: .init(signKeyId: "sign-key", encryptionKeyId: "encryption-key"),
             imageData: nil,
-            source: .chat,
             isBlocked: false,
             devices: devices,
             pendingDevicesFanOut: false

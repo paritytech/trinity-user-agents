@@ -41,6 +41,12 @@ object Urls {
         return Patterns.WEB_URL.matcher(url).matches()
     }
 
+    /** Unlike [isValidWebUrl], accepts only absolute http(s) URLs with a host, and runs without Android. */
+    fun isAbsoluteWebUrl(url: String): Boolean {
+        val uri = runCatching { URI(url) }.getOrNull() ?: return false
+        return uri.scheme?.lowercase() in WEB_SCHEMES && uri.host != null
+    }
+
     fun ensureHasProtocolOrHttps(uri: Uri): Uri {
         return ensureHasProtocolOrHttps(uri.toString()).toUri()
     }
@@ -64,4 +70,6 @@ object Urls {
     fun ensureHttpsProtocol(url: Uri): Uri {
         return ensureHttpsProtocol(url.toString()).toUri()
     }
+
+    private val WEB_SCHEMES = setOf("http", "https")
 }

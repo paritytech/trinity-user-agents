@@ -13,19 +13,6 @@
   },
   "testTargets" : [
     {
-      "skippedTests" : {
-        "suites" : [
-          {
-            "name" : "ChainSyncServiceTests"
-          },
-          {
-            "name" : "FiatOnrampTransactionTrackingTests"
-          },
-          {
-            "name" : "IdentityProfileServiceTests"
-          }
-        ]
-      },
       "target" : {
         "containerPath" : "container:polkadot-app.xcodeproj",
         "identifier" : "A5EDAAE22E93ECB0005DDA62",
@@ -142,6 +129,13 @@
     },
     {
       "target" : {
+        "containerPath" : "container:Packages\/StatementDelivery",
+        "identifier" : "StatementDeliveryTests",
+        "name" : "StatementDeliveryTests"
+      }
+    },
+    {
+      "target" : {
         "containerPath" : "container:Packages\/ChainRegistry",
         "identifier" : "ChainRegistryTests",
         "name" : "ChainRegistryTests"
@@ -173,6 +167,13 @@
         "containerPath" : "container:Packages\/ExtrinsicServiceExt",
         "identifier" : "ExtrinsicServiceExtTests",
         "name" : "ExtrinsicServiceExtTests"
+      }
+    },
+    {
+      "target" : {
+        "containerPath" : "container:Packages\/IssueMonitoring",
+        "identifier" : "IssueMonitoringTests",
+        "name" : "IssueMonitoringTests"
       }
     }
   ],

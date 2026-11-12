@@ -2,7 +2,7 @@
 
 ## Overview
 
-Coinage is the payment primitive for the Polkadot app — managing digital coins with derivation indices, values, and lifecycle states. Used for in-app payments, game rewards, and peer transfers.
+Coinage is the payment primitive for the Polkadot app — managing digital coins with derivation indices, values, and lifecycle states. Used for in-app payments and peer transfers.
 
 ## Key Components
 
@@ -155,6 +155,10 @@ written and tested once.
   (`coins − settled.receivedPublicKeys()`), not when every claim finalized. Rebuilding a failed claim
   is the policy's job, into the coin that claim recorded — a claim retried into a fresh coin would
   strand a payment already registered against the first one.
+- **A window closes only after a look.** `ClaimCoinsService` and `ClaimAssetService` end on
+  `retryUntil` only once the run has received a look from the chain. A pass past the window with no
+  look (offline, dropped subscription) keeps waiting, and the coin subscription is reopened after
+  `resubscribeDelay`, so every claim gets at least one attempt with a live connection.
 
 Recycling, voucher loading, offramp unloads and installation registration register with no policy and
 keep failing terminally.

@@ -31,7 +31,9 @@ let package = Package(
         .package(path: "../ChainStore"),
         .package(path: "../SubstrateOperation"),
         .package(path: "../BulletinChain"),
-        .package(path: "../BackgroundExecution")
+        .package(path: "../BackgroundExecution"),
+        .package(path: "../DurableTransactions"),
+        .package(path: "../IssueMonitoring")
     ],
     targets: [
         .target(
@@ -47,7 +49,9 @@ let package = Package(
                 "ChainStore",
                 "SubstrateOperation",
                 "BulletinChain",
-                "BackgroundExecution"
+                "BackgroundExecution",
+                "DurableTransactions",
+                "IssueMonitoring"
             ],
             path: "Sources"
         ),
@@ -56,6 +60,8 @@ let package = Package(
             dependencies: [
                 "Individuality",
                 "BackgroundExecution",
+                .product(name: "DurableTransactionsTestSupport", package: "DurableTransactions"),
+                .product(name: "StructuredConcurrencyTestSupport", package: "StructuredConcurrency"),
                 .product(name: "Clocks", package: "swift-clocks")
             ],
             path: "Tests"

@@ -15,7 +15,12 @@
 // rather than a direct function call. What it does NOT exercise is the iframe
 // boundary and the browser's origin checks; the fixture covers those.
 
-import { createClient, createMessagePortProvider, createTransport } from "@parity/truapi";
+import type { ProductId } from "@parity/truapi";
+import {
+  createClient,
+  createMessagePortProvider,
+  createTransport,
+} from "@parity/truapi";
 import type { TrUApiClient } from "@parity/truapi";
 
 import {
@@ -23,16 +28,20 @@ import {
   mockRuntimeConfig,
   type MockHost,
   type MockHostConfig,
+  type MockRuntimeConfig,
 } from "../web/create-mock-host.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
-import { resolveAccount, type DevAccount, type DevAccountName } from "./dev-accounts.js";
+import {
+  resolveAccount,
+  type DevAccount,
+  type DevAccountName,
+} from "./dev-accounts.js";
 
 /** Options for {@link createMockClient}. */
 export interface MockClientOptions {
   /** Behaviour knobs forwarded to {@link createMockHost}. */
   mock?: MockHostConfig;
   /** Overrides merged into {@link mockRuntimeConfig}. */
-  runtimeConfig?: Partial<ProductRuntimeConfig>;
+  runtimeConfig?: Partial<MockRuntimeConfig>;
   /** Account the host signs as. Defaults to `"alice"`. */
   account?: DevAccountName | DevAccount;
   /**
@@ -80,9 +89,8 @@ export async function createMockClient(
   };
   await glue.default();
 
-  const { createWasmRawCallbacks } = await import(
-    "../generated/host-callbacks-adapter.js"
-  );
+  const { createWasmRawCallbacks } =
+    await import("../generated/host-callbacks-adapter.js");
 
   const host = createMockHost(options.mock);
   const { productId, ...hostConfig } = mockRuntimeConfig(
@@ -92,7 +100,7 @@ export async function createMockClient(
     {
       // Supplied outside the generated adapter, as the worker runtime does.
       ...createWasmRawCallbacks(host.callbacks),
-      workerDemandChanged: () => {},
+      requestWorkerTransition: () => {},
     },
     hostConfig,
   );
@@ -137,7 +145,7 @@ export async function createMockClient(
 interface SigningRuntime {
   activateLocalSession(secret: Uint8Array): Promise<void>;
   productRuntime(
-    product: { productId: string },
+    product: { productId: ProductId },
     sink: { emitFrame(frame: Uint8Array): void },
   ): ProductCore;
 }

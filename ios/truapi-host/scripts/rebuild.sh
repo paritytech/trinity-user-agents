@@ -1,8 +1,8 @@
 #!/bin/sh
 # Regenerate the TrUAPIHost package build outputs in place:
 #   * truapi_server.xcframework (Binaries/)
-#   * uniffi-generated Swift bindings, one namespace per uniffi crate
-#     (Sources/TrUAPIHost + Sources/<namespace>FFI)
+#   * the uniffi-generated Swift bindings of the `truapi` namespace
+#     (Sources/TrUAPIHost + Sources/truapiFFI)
 #   * the bundled TS container (Sources/TrUAPIHost/Resources/truapi-container.js,
 #     built from js/container/)
 #

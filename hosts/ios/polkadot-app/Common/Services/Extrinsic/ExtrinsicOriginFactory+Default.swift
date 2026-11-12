@@ -20,14 +20,6 @@ extension ExtrinsicOriginFactory {
         )
     }
 
-    static func personCandidate() -> CandidateOriginFactoryProtocol {
-        CandidateOriginFactory(
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            operationQueue: OperationManagerFacade.sharedDefaultQueue,
-            logger: Logger.shared
-        )
-    }
-
     static func `default`() -> ExtrinsicOriginFactoryProtocol {
         ExtrinsicOriginFactory(
             chainRegistry: ChainRegistryFacade.sharedRegistry,

@@ -64,6 +64,17 @@ suite("testing wasm bundle", () => {
     );
   });
 
+  it("is the only bundle that can keep a preimage submission local", () => {
+    // `setSubmitPreimagesLocally` answers a submission without the Bulletin
+    // chain. Like the allocation shortcut above it is gated on `test-host`.
+    expect(readFileSync(testingGlue, "utf8")).toContain(
+      "setSubmitPreimagesLocally",
+    );
+    expect(readFileSync(webGlue, "utf8")).not.toContain(
+      "setSubmitPreimagesLocally",
+    );
+  });
+
   // Only a release build writes the sidecars, so on a dev-profile `dist` there
   // is nothing for the exclusion to exclude and a green result would prove
   // nothing. Skipping says that; passing would not.

@@ -2,7 +2,7 @@
 #
 # Install the truapi-host CLI:
 #
-#   curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 #
 # Everything lives in functions that `main` at the very bottom invokes, so a
 # download truncated mid-transfer cannot execute a partial install.
@@ -12,6 +12,7 @@
 #   TRUAPI_HOST_INSTALL_DIR       version store (default $XDG_DATA_HOME/truapi-host)
 #   TRUAPI_HOST_BIN_DIR           directory the PATH symlink goes in (default ~/.local/bin)
 #   TRUAPI_HOST_RELEASE_BASE_URL  release host, for mirrors and tests
+#   TRUAPI_HOST_PRESERVE_CARGO_INSTALL  leave a cargo-installed copy in place
 #
 # Pass --uninstall to remove an install this script created.
 
@@ -20,7 +21,7 @@ set -euo pipefail
 BINARY="truapi-host"
 CRATE="truapi-host-cli"
 STABLE_TAG="truapi-host-cli-stable"
-DEFAULT_BASE_URL="https://github.com/paritytech/host-rust-core"
+DEFAULT_BASE_URL="https://github.com/paritytech/trinity-user-agents"
 
 # Global so the EXIT trap can still see it once main's locals are gone.
 WORK_DIR=""
@@ -62,7 +63,7 @@ detect_target() {
         "Linux x86_64") echo "x86_64-unknown-linux-musl" ;;
         "Linux aarch64" | "Linux arm64") echo "aarch64-unknown-linux-musl" ;;
         *)
-            die "unsupported platform: $os $arch. Build from source instead: https://github.com/paritytech/host-rust-core/blob/main/rust/crates/truapi-host-cli/README.md"
+            die "unsupported platform: $os $arch. Build from source instead: https://github.com/paritytech/trinity-user-agents/blob/main/rust/crates/truapi-host-cli/README.md"
             ;;
     esac
 }
@@ -159,9 +160,12 @@ remove_prebuilt_install() {
     return 0
 }
 
-# A cargo-installed copy and this one shadow each other depending on PATH
-# order, so only one of the two should ever exist.
+# A caller that puts this install on PATH for itself only sets
+# TRUAPI_HOST_PRESERVE_CARGO_INSTALL, so a copy outside its directory survives.
 remove_cargo_install() {
+    if [ -n "${TRUAPI_HOST_PRESERVE_CARGO_INSTALL:-}" ]; then
+        return 0
+    fi
     local cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin/$BINARY"
     [ -e "$cargo_bin" ] || return 0
     if command -v cargo >/dev/null 2>&1 && cargo uninstall "$CRATE" >/dev/null 2>&1; then

@@ -1,7 +1,7 @@
 include!("../support/wire.rs");
 include!("../support/runtime.rs");
 
-use host_logic::sso::messages::*;
+use host_internal::sso_messages::*;
 use runtime::sso_service::SsoRequestContext;
 
 type MissingResponse = FooResponse;

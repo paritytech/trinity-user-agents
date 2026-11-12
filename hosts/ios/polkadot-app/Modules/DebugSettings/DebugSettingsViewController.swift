@@ -110,9 +110,27 @@ final class DebugSettingsViewController: UIViewController, ViewHolder {
         )
 
         #if DEBUG
+            rootView.openDevServerButton.addTarget(
+                self,
+                action: #selector(actionOpenDevServer),
+                for: .touchUpInside
+            )
+
             rootView.openTrUAPIPlaygroundButton.addTarget(
                 self,
                 action: #selector(actionOpenTrUAPIPlayground),
+                for: .touchUpInside
+            )
+
+            rootView.pocketFacePreviewButton.addTarget(
+                self,
+                action: #selector(actionShowPocketFacePreview),
+                for: .touchUpInside
+            )
+
+            rootView.pocketCardsButton.addTarget(
+                self,
+                action: #selector(actionShowPocketCards),
                 for: .touchUpInside
             )
         #endif
@@ -171,8 +189,22 @@ final class DebugSettingsViewController: UIViewController, ViewHolder {
         presenter.toggleHostPlacement()
     }
 
+    #if DEBUG
+        @objc func actionOpenDevServer() {
+            presenter.openDevServer()
+        }
+    #endif
+
     @objc func actionOpenTrUAPIPlayground() {
         presenter.openTrUAPIPlayground()
+    }
+
+    @objc func actionShowPocketFacePreview() {
+        presenter.showPocketFacePreview()
+    }
+
+    @objc func actionShowPocketCards() {
+        presenter.showPocketCards()
     }
 }
 

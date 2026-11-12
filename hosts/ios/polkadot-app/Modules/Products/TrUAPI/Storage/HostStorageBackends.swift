@@ -4,7 +4,7 @@ import SubstrateSdk
 
 /// Adapts a product-scoped ``TrUAPILocalStoring`` (String keys) to the
 /// TrUAPIHost `HostStorageBackend`. Plain Swift errors surface as the
-/// FFI `HostStorageError` the rust core expects.
+/// FFI `HostLocalStorageReadError` the rust core expects.
 final class ProductStorageBackend: HostStorageBackend, @unchecked Sendable {
     private let storage: TrUAPILocalStoring
 
@@ -73,9 +73,9 @@ private func withHostRejection<T>(_ body: () throws -> T) throws -> T {
 private func withStorageError<T>(_ body: () throws -> T) throws -> T {
     do {
         return try body()
-    } catch let error as HostStorageError {
+    } catch let error as HostLocalStorageReadError {
         throw error
     } catch {
-        throw HostStorageError.Storage(.unknown(reason: "\(error)"))
+        throw HostLocalStorageReadError.Unknown(reason: "\(error)")
     }
 }

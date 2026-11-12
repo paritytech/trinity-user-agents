@@ -18,10 +18,10 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsWebViewClient
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.FixedProductId
 import io.paritytech.polkadotapp.feature_products_impl.domain.scriptExecutor.WorkerScript
 import kotlinx.coroutines.CoroutineScope
+import uniffi.truapi.ProductId
 
 class ChatWebViewProvider @AssistedInject constructor(
     @param:ApplicationContext private val context: Context,
@@ -78,9 +78,8 @@ class ChatWebViewProvider @AssistedInject constructor(
                     notifyOnPageStarted(url)
                 }
 
-                override fun onRenderProcessGone(view: WebView?, detail: RenderProcessGoneDetail?): Boolean {
-                    notifyRenderProcessGone()
-                    resetWebView()
+                override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail?): Boolean {
+                    discardDeadWebView(view)
                     return true
                 }
 

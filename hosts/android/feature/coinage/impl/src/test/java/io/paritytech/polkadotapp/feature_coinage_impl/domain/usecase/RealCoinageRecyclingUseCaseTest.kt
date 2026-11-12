@@ -20,12 +20,14 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclingStatu
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.ValueExponent
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageTransactionService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetState
+import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetStates
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageInput
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionRequest
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionState
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.OwnAsset
+import io.paritytech.polkadotapp.feature_coinage_impl.TEST_INSTALLATION
 import io.paritytech.polkadotapp.feature_coinage_impl.data.derivation.VoucherRingDerivation
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.CoinRepository
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.VoucherRepository
@@ -73,10 +75,7 @@ class RealCoinageRecyclingUseCaseTest {
         coEvery { chainConnectionRefCounter.requestConnectionEnabled(any(), any()) } returns mockk(relaxed = true)
         coEvery { chainRegistry.getChain(any()) } returns mockk(relaxed = true)
         coEvery { transactionService.getOperationGroupStatuses(any()) } returns Result.success(emptyList())
-        // The read answers for every asset it is asked about, untracked included — as the real one does.
-        coEvery { transactionService.getAssetStates(any()) } answers {
-            Result.success(firstArg<List<OwnAsset>>().associateWith { CoinageAssetState.UNTRACKED })
-        }
+        coEvery { transactionService.getAssetStates(any()) } returns Result.success(CoinageAssetStates(emptyMap(), TEST_INSTALLATION))
     }
 
     /**
@@ -201,9 +200,12 @@ class RealCoinageRecyclingUseCaseTest {
         val handedOff = createCoin(exponent = 1)
 
         coEvery { transactionService.getAssetStates(any()) } returns Result.success(
-            mapOf(
-                OwnAsset.Coin(handedOff.derivationIndex) to
-                    CoinageAssetState(handedOff = true, minterStatus = FINALIZED_SUCCESS, consumerStatus = null)
+            CoinageAssetStates(
+                mapOf(
+                    OwnAsset.Coin(handedOff.derivationIndex) to
+                        CoinageAssetState(handedOff = true, minterStatus = FINALIZED_SUCCESS, consumerStatus = null)
+                ),
+                TEST_INSTALLATION,
             )
         )
 
@@ -215,16 +217,12 @@ class RealCoinageRecyclingUseCaseTest {
 
     /** The ledger says nothing about a coin no transaction of ours has touched, and that means it is free. */
     private fun withLedgerHolding(vararg coins: Coin) {
-        coEvery { transactionService.getAssetStates(any()) } answers {
-            val requested = firstArg<List<OwnAsset>>()
-            val held = coins.associate {
-                OwnAsset.Coin(it.derivationIndex) to
-                    CoinageAssetState(handedOff = false, minterStatus = FINALIZED_SUCCESS, consumerStatus = PENDING)
-            }
-
-            // Untracked for anything the ledger has not heard of, as the real read does.
-            Result.success(requested.associateWith { held[it] ?: CoinageAssetState.UNTRACKED })
+        val held: Map<OwnAsset, CoinageAssetState> = coins.associate {
+            OwnAsset.Coin(it.derivationIndex) to
+                CoinageAssetState(handedOff = false, minterStatus = FINALIZED_SUCCESS, consumerStatus = PENDING)
         }
+
+        coEvery { transactionService.getAssetStates(any()) } returns Result.success(CoinageAssetStates(held, TEST_INSTALLATION))
     }
 
     /**

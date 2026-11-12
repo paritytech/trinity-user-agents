@@ -3,34 +3,36 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
-import uniffi.truapi.HostLocalStorageReadError
-import uniffi.truapi_server.HostRejection
-import uniffi.truapi_server.HostStorageException
+import uniffi.truapi.HostLocalStorageReadException
+import uniffi.truapi.HostRejection
+import uniffi.truapi.ProductId
 
 /**
  * Product-scoped storage for the Rust core, encrypted at rest.
  *
- * [namespace] carries the product id, matching how the native host namespaces
- * `localStorageRead`/`Write`/`Clear`: one product must not be able to read
- * another's keys.
+ * Reads go to the product the core named as the key's owner, which is another
+ * product on a granted foreign read. Writes and clears stay in [productId]'s
+ * namespace.
  */
 class EncryptedHostStorage(
     private val preferences: EncryptedPreferences,
-    private val namespace: String,
+    private val productId: ProductId,
 ) : HostStorage {
-    override fun read(key: String): ByteArray? = readValue(preferences, qualify(key))
+    override suspend fun read(key: String): ByteArray? = readValue(preferences, "${productStorageNamespace(ownerOf(key))}/$key")
 
-    override fun write(key: String, value: ByteArray) {
+    override suspend fun write(key: String, value: ByteArray) {
         writeValue(preferences, qualify(key), value)
             ?.let { throw storageFailure("product storage: $it") }
     }
 
-    override fun clear(key: String) {
+    override suspend fun clear(key: String) {
         runCatching { preferences.removeKey(qualify(key)) }
             .getOrElse { throw storageFailure("failed to clear product storage key: ${it.message}") }
     }
 
-    private fun qualify(key: String) = "$namespace/$key"
+    private fun qualify(key: String) = "${productStorageNamespace(productId)}/$key"
+
+    private fun ownerOf(key: String): ProductId = productStorageKeyOwner(key) ?: productId
 }
 
 /**
@@ -45,14 +47,14 @@ class EncryptedHostStorage(
 class EncryptedHostCoreStorage(
     private val preferences: EncryptedPreferences,
 ) : HostCoreStorage {
-    override fun read(key: ByteArray): ByteArray? = readValue(preferences, qualify(key))
+    override suspend fun read(key: ByteArray): ByteArray? = readValue(preferences, qualify(key))
 
-    override fun write(key: ByteArray, value: ByteArray) {
+    override suspend fun write(key: ByteArray, value: ByteArray) {
         writeValue(preferences, qualify(key), value)
             ?.let { throw HostRejection.Rejected("core storage: $it") }
     }
 
-    override fun clear(key: ByteArray) {
+    override suspend fun clear(key: ByteArray) {
         runCatching { preferences.removeKey(qualify(key)) }
             .getOrElse { throw HostRejection.Rejected("failed to clear core storage key: ${it.message}") }
     }
@@ -64,8 +66,64 @@ class EncryptedHostCoreStorage(
     }
 }
 
+/**
+ * Secrets the core keeps encrypted at rest, apart from its core storage slots.
+ * Shared preferences are excluded from backups, and the AndroidKeyStore key
+ * wrapping them never leaves the device.
+ *
+ * Unlike core storage, a stored value that no longer decrypts is an error, not
+ * a miss: the core must not mistake an unreadable secret for an unknown key.
+ */
+class EncryptedHostValues(
+    private val preferences: EncryptedPreferences,
+) {
+    suspend fun read(key: ByteArray): ByteArray? {
+        val field = qualify(key)
+        if (!preferences.hasKey(field)) return null
+        return readValue(preferences, field)
+            ?: throw HostRejection.Rejected("encrypted storage: $field is stored but does not decrypt")
+    }
+
+    // The core records what a secret belongs to right after this returns, so
+    // the secret must already be on disk.
+    suspend fun write(key: ByteArray, value: ByteArray) {
+        writeValue(preferences, qualify(key), value, persist = ::persistNow)
+            ?.let { throw HostRejection.Rejected("encrypted storage: $it") }
+    }
+
+    private fun persistNow(field: String, tagged: String) {
+        check(preferences.putEncryptedStringNow(field, tagged)) { "not written to disk" }
+    }
+
+    fun delete(key: ByteArray) {
+        runCatching { preferences.removeKey(qualify(key)) }
+            .getOrElse { throw HostRejection.Rejected("encrypted storage: failed to delete: ${it.message}") }
+    }
+
+    private fun qualify(key: ByteArray) = "$ENCRYPTED_NAMESPACE/${key.toHex()}"
+
+    private companion object {
+        const val ENCRYPTED_NAMESPACE = "truapi/encrypted"
+    }
+}
+
 /** Namespace for one product's core-facing local storage. */
-fun productStorageNamespace(productId: String): String = "truapi/product/$productId"
+fun productStorageNamespace(productId: ProductId): String = "truapi/product/$productId"
+
+private const val PRODUCT_STORAGE_KEY_PREFIX = "truapi:product-storage:v1:"
+
+/** Mirrors `ProductStorageKey::decode` in truapi: `truapi:product-storage:v1:<byte length>:<product id>:<key>`. */
+internal fun productStorageKeyOwner(key: String): ProductId? {
+    if (!key.startsWith(PRODUCT_STORAGE_KEY_PREFIX)) return null
+    val rest = key.removePrefix(PRODUCT_STORAGE_KEY_PREFIX).encodeToByteArray()
+    val colon = rest.indexOf(':'.code.toByte()).takeIf { it > 0 } ?: return null
+    val length = rest.decodeToString(0, colon).toIntOrNull()?.takeIf { it > 0 } ?: return null
+    val start = colon + 1
+    if (length > rest.size - start - 1 || rest[start + length] != ':'.code.toByte()) return null
+    val productIdValue = runCatching { rest.decodeToString(start, start + length, throwOnInvalidSequence = true) }.getOrNull()
+        ?: return null
+    return ProductId.parse(productIdValue).getOrNull()
+}
 
 /**
  * `EncryptionUtil` reports both a failed encrypt and a failed decrypt by
@@ -84,9 +142,14 @@ private fun readValue(preferences: EncryptedPreferences, key: String): ByteArray
 }
 
 /** Returns null on success, or a reason to report to the core. */
-private fun writeValue(preferences: EncryptedPreferences, key: String, value: ByteArray): String? {
+private fun writeValue(
+    preferences: EncryptedPreferences,
+    key: String,
+    value: ByteArray,
+    persist: (String, String) -> Unit = preferences::putEncryptedString,
+): String? {
     val tagged = VALUE_TAG + value.toHex()
-    val failure = runCatching { preferences.putEncryptedString(key, tagged) }.exceptionOrNull()
+    val failure = runCatching { persist(key, tagged) }.exceptionOrNull()
     if (failure != null) return "failed to persist $key: ${failure.message}"
 
     // The encrypt path swallows its own exceptions, so the only reliable
@@ -94,8 +157,8 @@ private fun writeValue(preferences: EncryptedPreferences, key: String, value: By
     return if (preferences.getDecryptedString(key) == tagged) null else "failed to persist $key"
 }
 
-private fun storageFailure(reason: String): HostStorageException =
-    HostStorageException.Storage(HostLocalStorageReadError.Unknown(reason))
+private fun storageFailure(reason: String): HostLocalStorageReadException =
+    HostLocalStorageReadException.Unknown(reason)
 
 @OptIn(ExperimentalStdlibApi::class)
 private fun ByteArray.toHex(): String = toHexString()

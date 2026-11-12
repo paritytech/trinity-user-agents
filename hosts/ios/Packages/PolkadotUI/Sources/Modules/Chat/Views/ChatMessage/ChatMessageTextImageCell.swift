@@ -87,10 +87,10 @@ public extension ChatMessageTextImageCell {
     #Preview(traits: .sizeThatFitsLayout) {
         let imageText1_5 = ChatMessageTextImageCell.ViewModel(
             text: """
-            Option 2. **Get a Unique Free Tattoo.**
-            **One and Done Option..**
+            Option 2. **Send a payment in chat.**
+            **One and done.**
 
-            ✍️ Get Inked with Any Artist You Like and Provide a 3 Minute Video Documenting the Tattoo Process
+            ✍️ Pick a username, enter an amount and confirm. The payment settles on chain.
             """,
             image: UIImage(systemName: "1.circle.fill")!,
             aspectRatio: 1.5

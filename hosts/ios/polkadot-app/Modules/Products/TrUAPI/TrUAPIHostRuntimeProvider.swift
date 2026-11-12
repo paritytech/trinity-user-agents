@@ -3,15 +3,12 @@ import UIKit
 import UIKitExt
 import TrUAPIHost
 import ChainRegistry
+import Foundation_iOS
+import FoundationExt
 import Products
 import SubstrateSdk
 import KeyDerivation
 import Keystore_iOS
-
-/// Runtime configuration error raised while assembling the shared host config.
-enum TrUAPIRuntimeConfigError: Error {
-    case missingGenesisHash(chain: String)
-}
 
 /// Vends the process-wide ``TrUAPIHostRuntime``. Product executions open off
 /// the single shared runtime, so its authentication and core services are
@@ -24,23 +21,40 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     /// Anchor the host's core confirmations (signing, permission prompts) to
     /// the given view. Until it is attached, host-level prompts deny.
     @MainActor func setPresentationView(_ view: ControllerBackedProtocol)
+
+    /// The view the host's own prompts present from, once attached.
+    @MainActor var presentationView: ControllerBackedProtocol? { get }
+
+    /// Attach what runs product workers when the core's reference ledger asks
+    /// for them. Called once at startup, before the runtime is first built.
+    func attach(workerManager: any TrUAPIWorkerManaging)
 }
 
-/// Lazily builds one ``TrUAPIHostRuntime`` from host identity + people/bulletin
-/// genesis hashes + the local session secret, activates the local session
-/// once, and caches it. Lazy so startup is not blocked and the runtime is only
-/// assembled once chains are synced and a session secret exists.
+/// Lazily builds one ``TrUAPIHostRuntime`` from host identity + the stack the
+/// build bundles + the local session secret, activates the local session once,
+/// and caches it. Lazy so startup is not blocked and the runtime is only
+/// assembled once a session secret exists.
 final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Sendable {
     private let chainRegistry: ChainRegistryProtocol
     private let entropyManager: RootEntropyManaging
     private let settingsManager: SettingsManagerProtocol
     private let coreStorage: TrUAPILocalStoring
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
+    private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
     private let logger: LoggerProtocol
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
+    private var contactsChangeNotifier: ContactsChangeNotifier?
+
+    /// Set once at startup, before any product opens. The runtime is built on
+    /// first use, which is long after, so the manager is in place by then.
+    private var workerManager: (any TrUAPIWorkerManaging)?
+
+    /// Set once at startup, after the payment engines are assembled. Installed on the runtime when
+    /// it is built, or right away if it already is.
+    private var paymentsBridge: RustPaymentsBridge?
 
     init(
         chainRegistry: ChainRegistryProtocol,
@@ -65,6 +79,46 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         confirmationRouterFacade.setPresentationView(view)
     }
 
+    @MainActor
+    var presentationView: ControllerBackedProtocol? {
+        confirmationRouterFacade.productsRouter.presentationView
+    }
+
+    func attach(workerManager: any TrUAPIWorkerManaging) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        self.workerManager = workerManager
+    }
+
+    /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
+    /// privacy warnings are presented like the core's own host-level prompts.
+    func attach(paymentsSupport: PaymentsSupport, hostProvider: ProductHostProviding) {
+        backedUpInstallation.attach(paymentsSupport.coinageService.backedUpInstallationProvider)
+        let productsRouter = confirmationRouterFacade.productsRouter
+        let bridge = RustPaymentsBridge(
+            payments: ProductPayments(
+                support: paymentsSupport,
+                approvalRequester: PaymentApprovalRequesterFactory.create(
+                    router: productsRouter,
+                    fundingProvider: FundingDomainProvider(hostProvider: hostProvider)
+                ),
+                privacyConfirmer: PaymentPrivacyConfirmer(router: productsRouter),
+                recyclingStrategy: CoinageRecyclingStrategyStore.shared
+            ),
+            logger: logger
+        )
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard paymentsBridge == nil else { return }
+        paymentsBridge = bridge
+        if let cachedRuntime {
+            bridge.install(on: cachedRuntime)
+        }
+    }
+
     func sharedRuntime() throws -> TrUAPIHostRuntime {
         lock.lock()
         defer { lock.unlock() }
@@ -76,18 +130,16 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         let secret = try entropyManager.fetchRootEntropy()
         let networkSuffix = try tldProvider.currentTldOrError()
         let runtimeConfig = try Self.makeRuntimeConfig(
-            chainRegistry: chainRegistry,
             secret: secret,
             liteUsername: settingsManager.string(for: .username),
-            networkSuffix: networkSuffix
+            networkSuffix: networkSuffix,
+            databaseDirectory: Self.coreDatabaseDirectory()
         )
 
-        let chainConnections = TrUAPIChainConnectionPool(
-            engineResolver: { [chainRegistry] genesisHash in
-                chainRegistry.getChainByGenesis(for: genesisHash.toHex()).flatMap { chain in
-                    chainRegistry.getConnection(for: chain.chainId)
-                }
-            },
+        let chainConnections = TrUAPIV2SpecConnectionPool(
+            chainRegistry: chainRegistry,
+            applicationHandler: ApplicationHandler(),
+            dateProvider: NowDateProvider(),
             logger: logger
         )
 
@@ -96,11 +148,37 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             coreStorage: coreStorage,
             chainConnections: chainConnections,
             confirmationPresenter: TrUAPIConfirmationPresenter(routerFacade: confirmationRouterFacade),
+            workerManager: workerManager,
+            backedUpInstallation: backedUpInstallation,
+            encryptedStorage: TrUAPIEncryptedStorage(keychain: Keychain()),
             logger: logger
         )
 
         let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
         bridge.attach(runtime)
+        // Before any product execution opens, so a product never sees the
+        // window where the host lists no contacts.
+        let contactsBridge = AppContactsHostBridge(
+            repositoryFactory: ChatContactRepositoryFactory(),
+            operationQueue: OperationManagerFacade.sharedDefaultQueue,
+            routerFacade: confirmationRouterFacade
+        )
+        runtime.setContacts(contactsBridge)
+        runtime.setScanner(AppScannerHostBridge(
+            routerFacade: confirmationRouterFacade,
+            visibility: ProductVisibility(application: UIApplication.shared)
+        ))
+        paymentsBridge?.install(on: runtime)
+        contactsChangeNotifier = ContactsChangeNotifier(
+            dataProviderFactory: ChatContactDataProviderFactory(),
+            logger: logger,
+            onSnapshot: { [weak contactsBridge] contacts in
+                contactsBridge?.update(contacts: contacts)
+            },
+            onRemoval: { [weak runtime] in
+                runtime?.notifyContactsChanged()
+            }
+        )
         try runtime.activateLocalSession(secret: secret, liteUsername: settingsManager.string(for: .username))
 
         cachedRuntime = runtime
@@ -109,49 +187,45 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 }
 
 extension TrUAPIHostRuntimeProvider {
-    /// Assemble the immutable host-wide config. Genesis hashes are fetched from
-    /// the registry and must resolve; a missing hash fails explicitly rather
-    /// than degrading. `networkSuffix` is the dotNS TLD the core derives the
-    /// wallet's reserved identities under, so it has to be the one the app's own
-    /// built-in accounts derive from. Exposed for testing the genesis-validation
-    /// seam.
+    /// Assemble the immutable host-wide config. Every chain fact the core uses
+    /// comes from the stack this build bundles, ``TrUAPIBundledStack/current``.
+    /// `networkSuffix` is the dotNS TLD the app's own built-in accounts derive
+    /// from, which names the products backing the pinned Pocket cards.
     static func makeRuntimeConfig(
-        chainRegistry: ChainRegistryProtocol,
         secret: Data,
         liteUsername: String?,
-        networkSuffix: String
+        networkSuffix: String,
+        databaseDirectory: String
     ) throws -> HostRuntimeConfig {
-        let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.usernameChain)
-        let bulletinChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.bulletInChain)
-        let assetHubChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.assethubChain)
-
-        guard let peopleGenesisHex = peopleChain.explicitGenesisHash else {
-            throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "people")
+        let bundle = Bundle.main
+        let version = bundle.appVersion.map { version in
+            bundle.appBuild.map { "\(version) (\($0))" } ?? version
         }
-        guard let bulletinGenesisHex = bulletinChain.explicitGenesisHash else {
-            throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "bulletin")
-        }
-        // Product manifests are read from the dotNS contracts on Asset Hub, so
-        // a missing hash here refuses every cross-product `trustedProducts`
-        // grant indistinguishably from the other product granting nothing.
-        // Fail explicitly, like its siblings, rather than passing all-zero.
-        guard let assetHubGenesisHex = assetHubChain.explicitGenesisHash else {
-            throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "assetHub")
-        }
-
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
 
         return try HostRuntimeConfig(
             hostName: "Polkadot App",
             hostVersion: version,
             platformType: "ios",
             platformVersion: UIDevice.current.systemVersion,
-            peopleChainGenesisHash: Data(hexString: peopleGenesisHex),
-            bulletinChainGenesisHash: Data(hexString: bulletinGenesisHex),
-            assetHubChainGenesisHash: Data(hexString: assetHubGenesisHex),
-            networkSuffix: networkSuffix,
+            stack: TrUAPIBundledStack.current.load(),
+            databaseDirectory: databaseDirectory,
+            pinnedPocketCards: AssetPinnedPocketCards(tld: networkSuffix).cards(),
             localSessionSecret: secret,
             localSessionLiteUsername: liteUsername
         )
+    }
+
+    /// The core database directory under Application Support, created if
+    /// needed and excluded from backup: a durable-transaction ledger restored
+    /// onto another device would act on transactions that already settled.
+    static func coreDatabaseDirectory(fileManager: FileManager = .default) throws -> String {
+        var directory = try fileManager
+            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+            .appendingPathComponent("truapi", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try directory.setResourceValues(values)
+        return directory.path
     }
 }

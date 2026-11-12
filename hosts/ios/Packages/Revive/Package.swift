@@ -27,7 +27,7 @@ let package = Package(
         ),
         .package(
             url: "https://github.com/novasamatech/web3swift.git",
-            from: "3.3.0"
+            from: "3.3.2"
         ),
         .package(path: "../ChainStore"),
         .package(path: "../SubstrateOperation"),

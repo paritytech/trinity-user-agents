@@ -4,7 +4,7 @@ import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.flatMap
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.TopUpRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.TopUpSourceStorage
 import kotlinx.coroutines.CoroutineScope
@@ -21,6 +21,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.time.ExperimentalTime
@@ -91,7 +92,21 @@ class RealTopUpService @Inject constructor(
         id: PaymentTopUpId,
         amount: Balance,
         source: PaymentTopUpSource,
-    ): Result<Unit> = runningGuard.withLock {
+    ): Result<Unit> {
+        // Resolved outside the guard: it touches no shared state, and status reads wait on the guard.
+        val resolved = sourceResolver.resolve(productId, source)
+            .getOrElse { return Result.failure(TopUpError.InvalidSource(it)) }
+
+        return runningGuard.withLock { register(productId, id, amount, source, resolved) }
+    }
+
+    private suspend fun register(
+        productId: ProductId,
+        id: PaymentTopUpId,
+        amount: Balance,
+        source: PaymentTopUpSource,
+        resolved: TopUpSource,
+    ): Result<Unit> {
         if (repository.get(productId, id) != null) {
             Timber.tag(COINAGE_LOG_TAG).w("Top-up id already taken product=${productId.value} id=${id.asHex()}")
 
@@ -112,13 +127,11 @@ class RealTopUpService @Inject constructor(
             outcome = null,
         )
 
-        return sourceResolver.resolve(productId, source)
-            .recoverCatching { throw TopUpError.InvalidSource(it) }
-            // Both recorded before a single transaction is built. A product told its top-up was accepted must
-            // be able to ask after it again whatever becomes of this process, and to have it picked back up.
-            .flatMap { resolved -> sourceStorage.put(operation.groupId, source).map { resolved } }
-            .flatMap { resolved -> repository.insert(operation).map { resolved } }
-            .onSuccess { resolved -> run(operation, resolved) }
+        // Both recorded before a single transaction is built. A product told its top-up was accepted must
+        // be able to ask after it again whatever becomes of this process, and to have it picked back up.
+        return sourceStorage.put(operation.groupId, source)
+            .flatMap { repository.insert(operation) }
+            .onSuccess { run(operation, resolved) }
             .map { }
     }
 
@@ -138,8 +151,16 @@ class RealTopUpService @Inject constructor(
         Timber.tag(COINAGE_LOG_TAG).i("Top-ups to resume on launch: ${unfinished.size}")
 
         unfinished.forEach { operation ->
-            runningGuard.withLock {
-                if (!running.containsKey(operation.groupId.value)) attach(operation)
+            // Per operation, because one that can no longer be resumed stays unfinished for good: letting it
+            // out of the sweep would cost every top-up recorded after it a resume, on this launch and each
+            // one after.
+            runCancellableCatching {
+                runningGuard.withLock {
+                    if (!running.containsKey(operation.groupId.value)) attach(operation)
+                }
+            }.onFailure { error ->
+                Timber.tag(COINAGE_LOG_TAG)
+                    .e(error, "Top-up failed to resume product=${operation.productId.value} id=${operation.id.asHex()}")
             }
         }
     }

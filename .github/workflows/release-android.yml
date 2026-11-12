@@ -1,0 +1,103 @@
+# Builds and publishes the Android host AAR (io.parity:truapi-host-android) to
+# GitHub Packages. The AAR bundles the per-ABI Rust core, the
+# UniFFI Kotlin bindings, shared browser container and Kotlin shell.
+name: release-android
+
+on:
+  # release.yml calls this for a `release: @parity/android-host <version>`
+  # commit subject, so the release flow and a manual publish build the AAR
+  # exactly the same way.
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to publish"
+        required: true
+        type: string
+      ref:
+        description: "Commit to build, since a called workflow does not inherit the caller's checkout"
+        required: true
+        type: string
+  # Manual escape hatch. There is deliberately no tag trigger: a tag push
+  # cannot use release.yml's workflow_run gate on green CI, so it would be an
+  # unverified path to the registry.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.1.0 or 0.1.0-rc.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+
+      # codegen.sh formats its generated Rust with the pinned nightly rustfmt.
+      - uses: ./.github/actions/rust-nightly
+        with:
+          components: rustfmt
+      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - uses: ./.github/actions/rust-cache
+        with:
+          save: "false"
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        with:
+          gradle-version: "8.9"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      # The runtime feature enables generated modules that are gitignored, so
+      # codegen must run before the crate builds.
+      - name: Generate the Rust codegen output
+        run: |
+          npm ci --ignore-scripts
+          TRUAPI_SKIP_PACKAGE_BUILD=1 ./scripts/codegen.sh
+      - name: Generate UniFFI Kotlin bindings
+        run: make uniffi-kotlin
+
+      - name: Cross-compile libtruapi.so for every ABI
+        run: make android-jni
+
+      - name: Build shared browser container
+        run: gradle :truapi-host:copyTrUAPIContainer
+
+      - name: Verify AAR inputs
+        run: |
+          set -e
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            test -f "android/truapi-host/src/main/jniLibs/$abi/libtruapi.so" \
+              || { echo "missing .so for $abi"; exit 1; }
+          done
+          test -f android/truapi-host/src/main/kotlin/generated/uniffi/truapi/truapi.kt
+          test -s android/truapi-host/build/generated/truapi-assets/truapi-container.js
+
+      - name: Publish to GitHub Packages
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gradle :truapi-host:publishReleasePublicationToGitHubPackagesRepository \
+            -PtruapiHostVersion="${VERSION}"

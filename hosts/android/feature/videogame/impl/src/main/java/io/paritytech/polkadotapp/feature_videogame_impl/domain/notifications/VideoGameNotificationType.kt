@@ -1,13 +1,13 @@
 package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
 import android.os.Parcelable
-import io.paritytech.polkadotapp.common.domain.model.Timestamp
+import io.paritytech.polkadotapp.feature_products_api.presentation.ProductIdParceler
 import kotlinx.parcelize.Parcelize
+import kotlinx.parcelize.TypeParceler
+import uniffi.truapi.ProductId
 
 @Parcelize
 sealed interface VideoGameNotificationType : Parcelable {
-    data class RegistrationOpened(val timestamp: Timestamp) : VideoGameNotificationType
-    data object WaitingRoomAvailable : VideoGameNotificationType
-    data object GameAboutToStart : VideoGameNotificationType
-    data object GameStartsSoon : VideoGameNotificationType
+    @TypeParceler<ProductId, ProductIdParceler>
+    data class ProductGameStartsSoon(val productId: ProductId) : VideoGameNotificationType
 }

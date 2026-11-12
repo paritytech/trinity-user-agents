@@ -3,9 +3,11 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product-storage e2e-cross-product-ringvrf e2e-cross-product-signing e2e-cli-update headless install cli-runner cli-dist matrix explorer xcframework
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-sim-build ios-sim-run android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-cli-backends e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-trusted-device-permission e2e-chain-head-failure-cause e2e-follow-after-transport-cut e2e-tx-during-outage e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run e2e-funding-cli
 
 CARGO ?= cargo
+# The dated nightly CI runs; see nightly-toolchain.
+NIGHTLY_TOOLCHAIN ?= $(or $(TRUAPI_NIGHTLY_TOOLCHAIN),$(shell head -n1 nightly-toolchain))
 TRUAPI_PKG := js/packages/truapi
 PLAYGROUND := playground
 JS_PACKAGES := js/packages
@@ -36,13 +38,13 @@ export VITE_NETWORKS
 # preview behavior.
 DOTLI_PREVIEW ?= preview:debug
 
-# truapi-server declares these modules unconditionally, so the crate does not
-# parse without them. They are gitignored and produced by scripts/codegen.sh.
+# The default runtime feature enables these generated modules. They are
+# gitignored and produced by scripts/codegen.sh.
 GENERATED_RUST := \
-	rust/crates/truapi-server/src/generated/mod.rs \
-	rust/crates/truapi-server/src/generated/dispatcher.rs \
-	rust/crates/truapi-server/src/generated/wire_table.rs \
-	rust/crates/truapi-server/src/wasm/generated_bridge.rs
+	rust/crates/truapi/src/generated/mod.rs \
+	rust/crates/truapi/src/generated/dispatcher.rs \
+	rust/crates/truapi/src/generated/wire_table.rs \
+	rust/crates/truapi/src/wasm/generated_bridge.rs
 
 check-generated:
 	@for file in $(GENERATED_RUST); do \
@@ -89,7 +91,7 @@ install: headless ## Install the truapi-host CLI into Cargo's bin dir; use as `m
 # Release packaging for the truapi-host binary. CLI_TARGET picks the triple;
 # CLI_VERSION defaults to the crate version, which tracks the protocol version.
 # The layout here is what scripts/truapi-host-installer.sh expects to download.
-CLI_INSTALLER_URL := https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh
+CLI_INSTALLER_URL := https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh
 CLI_DIST_DIR := target/dist
 # Default to the triple that is actually published, not the rustc host: the
 # Linux releases are musl so one artifact per architecture runs anywhere.
@@ -135,12 +137,12 @@ codegen: ## Regenerate generated TS/Rust artifacts from the Rust crates.
 	./scripts/codegen.sh
 	cd $(PLAYGROUND) && rm -rf node_modules/@parity && yarn install
 
-wasm: check-generated ## Rebuild the truapi-server and truapi-provider WASM bundles under js/packages/*/dist/.
+wasm: check-generated ## Rebuild the truapi runtime and truapi-provider WASM bundles under js/packages/*/dist/.
 	cd $(HOST_WASM_PKG) && npm run build:wasm
 	cd $(PROVIDER_WASM_PKG) && npm run build
 
 wasm-crypto-test: ## Run crypto/vector tests on wasm32 via wasm-pack/node.
-	wasm-pack test --node rust/crates/truapi-server --test wasm_crypto_vectors --no-default-features
+	wasm-pack test --node rust/crates/truapi --test wasm_crypto_vectors --no-default-features --features mock
 
 dotli-link: ## Link dotli to this checkout's local @parity/truapi packages.
 	cd $(DOTLI) && TRUAPI_REPO="$(CURDIR)" bun run link:truapi
@@ -150,18 +152,18 @@ dotli-link: ## Link dotli to this checkout's local @parity/truapi packages.
 UNIFFI_CDYLIB_DIR := target/codegen
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-UNIFFI_CDYLIB := $(UNIFFI_CDYLIB_DIR)/libtruapi_server.dylib
+UNIFFI_CDYLIB := $(UNIFFI_CDYLIB_DIR)/libtruapi.dylib
 PROVIDER_CDYLIB := $(UNIFFI_CDYLIB_DIR)/libtruapi_provider.dylib
 else
-UNIFFI_CDYLIB := $(UNIFFI_CDYLIB_DIR)/libtruapi_server.so
+UNIFFI_CDYLIB := $(UNIFFI_CDYLIB_DIR)/libtruapi.so
 PROVIDER_CDYLIB := $(UNIFFI_CDYLIB_DIR)/libtruapi_provider.so
 endif
 
 UNIFFI_SWIFT_TMP := target/uniffi-swift-out
 PROVIDER_SWIFT_TMP := target/uniffi-provider-swift-out
 
-uniffi: check-generated ## Generate Swift bindings from the truapi-server cdylib into target/uniffi-swift-out (consumed by ios/truapi-host/scripts/rebuild.sh).
-	$(CARGO) build -p truapi-server --profile codegen --features ws-bridge
+uniffi: check-generated ## Generate Swift bindings from the truapi cdylib into target/uniffi-swift-out (consumed by ios/truapi-host/scripts/rebuild.sh).
+	$(CARGO) build -p truapi --profile codegen
 	rm -rf $(UNIFFI_SWIFT_TMP)
 	mkdir -p $(UNIFFI_SWIFT_TMP)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \
@@ -172,12 +174,62 @@ uniffi: check-generated ## Generate Swift bindings from the truapi-server cdylib
 ios-bootstrap: ## Generate everything hosts/ios needs before Xcode can load its package graph (SIM_ONLY=1 for simulator slices only).
 	./scripts/codegen.sh
 	./ios/truapi-host/scripts/rebuild.sh
+	$(MAKE) provider-swift
+	sh ios/truapi-provider/scripts/sync-bindings.sh
 	@echo "hosts/ios can now be opened in Xcode."
+
+# The vendored app as a developer runs it: Debug, the .develop bundle id, ad
+# hoc signed so the App Group and keychain entitlements are embedded without a
+# provisioning profile, which are the flags CI's simulator build uses. The dev
+# Firebase plist comes from the host SDK team; the template setup-secrets.sh
+# copies in crashes the app at launch, so it is refused here. It is put in
+# place before the build, as CI does, because the app's own copy phase runs
+# after the first build of a checkout has collected its resources. The core is
+# bootstrapped once; rerun `SIM_ONLY=1 make ios-bootstrap` after changing the
+# crates its bindings come from.
+IOS_SIM_DIR := hosts/ios
+IOS_SIM_DERIVED_DATA := build_simulator_dd
+IOS_SIM_APP := $(IOS_SIM_DIR)/$(IOS_SIM_DERIVED_DATA)/Build/Products/Debug-iphonesimulator/polkadot-app.app
+IOS_SIM_DEV_PLIST := $(IOS_SIM_DIR)/polkadot-app/GoogleService/GoogleService-Info-Dev.plist
+IOS_SIM_DEVICE ?= booted
+
+ios-sim-build: ## Build the vendored iOS app for the simulator with the dev configuration (needs the dev Firebase plist).
+	$(IOS_SIM_DIR)/Runscripts/setup-secrets.sh
+	@if grep -q YOUR_GCM_SENDER_ID "$(IOS_SIM_DEV_PLIST)"; then \
+		echo "$(IOS_SIM_DEV_PLIST) is the template, which crashes at launch."; \
+		echo "Replace it with the dev plist from the host SDK team."; \
+		exit 1; \
+	fi
+	cp "$(IOS_SIM_DEV_PLIST)" $(IOS_SIM_DIR)/polkadot-app/GoogleService-Info.plist
+	@test -d ios/truapi-host/Binaries/truapi_server.xcframework || { \
+		test -d node_modules || npm ci --ignore-scripts; \
+		$(MAKE) ios-bootstrap SIM_ONLY=1; \
+	}
+	cd $(IOS_SIM_DIR) && TRUAPI_USE_LOCAL_BINARY=1 xcodebuild build \
+		-project polkadot-app.xcodeproj -scheme polkadot-app -configuration Debug \
+		-sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+		-derivedDataPath $(IOS_SIM_DERIVED_DATA) -clonedSourcePackagesDirPath source_packages \
+		-skipPackagePluginValidation -skipMacroValidation ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+		CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES
+
+ios-sim-run: ios-sim-build ## Build the vendored iOS app, then install and launch it on a simulator (IOS_SIM_DEVICE=<udid>, default the booted one).
+	xcrun simctl install $(IOS_SIM_DEVICE) "$(IOS_SIM_APP)"
+	xcrun simctl launch $(IOS_SIM_DEVICE) io.parity.polkadotapp.develop
+
+TRUAPI_ANDROID_E2E_APK ?= hosts/android/app/build/outputs/apk/vanilla/debug/app-vanilla-debug.apk
+
+android-chat-playground-run: ## Run the TrUAPI Playground Chat diagnosis in a headless Android emulator (build the debug APK with Gradle first).
+	@test -f "$(TRUAPI_ANDROID_E2E_APK)" || { \
+		echo "Missing debug APK at $(TRUAPI_ANDROID_E2E_APK)"; \
+		echo "Build it first: cd hosts/android && ./gradlew :app:assembleVanillaDebug"; \
+		exit 1; \
+	}
+	TRUAPI_ANDROID_E2E_APK="$(TRUAPI_ANDROID_E2E_APK)" node scripts/launch-android-chat-playground.mjs
 
 UNIFFI_KOTLIN_OUT := android/truapi-host/src/main/kotlin/generated
 
-uniffi-kotlin: check-generated ## Regenerate Kotlin UniFFI bindings from the truapi-server cdylib.
-	$(CARGO) build -p truapi-server --profile codegen --features ws-bridge
+uniffi-kotlin: check-generated ## Regenerate Kotlin UniFFI bindings from the truapi cdylib.
+	$(CARGO) build -p truapi --profile codegen
 	rm -rf $(UNIFFI_KOTLIN_OUT)
 	mkdir -p $(UNIFFI_KOTLIN_OUT)
 	$(CARGO) run -p uniffi-bindgen-cli -- generate \
@@ -190,14 +242,14 @@ uniffi-kotlin: check-generated ## Regenerate Kotlin UniFFI bindings from the tru
 ANDROID_ABIS ?= arm64-v8a armeabi-v7a x86_64
 ANDROID_JNILIBS := android/truapi-host/src/main/jniLibs
 
-android-jni: check-generated ## Cross-compile libtruapi_server.so for Android ABIs into jniLibs (needs cargo-ndk + NDK).
+android-jni: check-generated ## Cross-compile libtruapi.so for Android ABIs into jniLibs (needs cargo-ndk + NDK).
 	@command -v cargo-ndk >/dev/null || { echo "cargo-ndk not found: cargo install cargo-ndk"; exit 1; }
 	$(CARGO) ndk $(foreach abi,$(ANDROID_ABIS),-t $(abi)) \
 		-o $(ANDROID_JNILIBS) \
-		build --release -p truapi-server --features ws-bridge
+		build --release -p truapi
 	# cargo-ndk also copies dependency cdylib intermediates (hash-suffixed,
-	# statically linked into libtruapi_server.so already); keep only ours.
-	find $(ANDROID_JNILIBS) -name '*.so' ! -name 'libtruapi_server.so' -delete
+	# statically linked into libtruapi.so already); keep only ours.
+	find $(ANDROID_JNILIBS) -name '*.so' ! -name 'libtruapi.so' -delete
 
 android-check: uniffi-kotlin ## Compile the Kotlin host adapter against freshly generated bindings (needs Gradle + Android SDK).
 	gradle :truapi-host:compileReleaseKotlin
@@ -252,14 +304,20 @@ test: check-generated ## Run Rust + TypeScript client tests.
 	cd $(TRUAPI_PKG) && npm test
 	cd $(HOST_WASM_PKG) && npm run build && npm test
 
+fmt: ## Format Rust sources.
+	cargo +$(NIGHTLY_TOOLCHAIN) fmt --all $(RUSTFMT_FLAGS)
+
+fmt-check: RUSTFMT_FLAGS := --check
+fmt-check: fmt ## Check Rust formatting.
+
 check: check-generated ## Full verification suite (build, fmt, clippy, test, TS tests, playground build + lint).
 	cargo build --workspace
-	cargo check --target wasm32-unknown-unknown -p truapi-server
-	cargo +nightly fmt --check
+	cargo check --target wasm32-unknown-unknown -p truapi
+	$(MAKE) fmt-check
 	cargo clippy --workspace --all-targets --all-features -- -D warnings
 	cargo test --workspace --all-features --all-targets
 	cd $(TRUAPI_PKG) && npm run build && npm test
-	cd $(HOST_WASM_PKG) && npm install --no-fund --no-audit && npm run build && npm test
+	cd $(HOST_WASM_PKG) && npm install --no-fund --no-audit && npm run format:check && npm run build && npm test
 	cd $(PLAYGROUND) && yarn build && yarn lint && yarn test:unit
 
 clean: ## Remove local build/test artifacts without deleting dependencies.
@@ -368,6 +426,9 @@ e2e-cli-diagnosis: cli-runner ## Full playground diagnosis in a plain browser ta
 	cargo build --release -p truapi-host-cli
 	cd $(PLAYGROUND) && TRUAPI_HOST_BIN="$(abspath target/release/truapi-host)" bun tests/e2e/cli-diagnosis.ts
 
+e2e-cli-backends: cli-runner ## Run the CLI on both chain backends, rpc and light-client, and compare them. SESSION=<name> picks the signing session.
+	bun scripts/cli-backends-e2e.ts $(if $(SESSION),--session $(SESSION))
+
 e2e-signing-cli: ## Run the generated battery against the direct signing-host CLI.
 	scripts/battery.sh --signing-host
 
@@ -380,17 +441,47 @@ e2e-chat-cli: ## Run the Chat content-screening battery against a chat signing-h
 e2e-pocket-cli: ## Run the Pocket protocol battery against a Pocket signing-host CLI.
 	scripts/battery.sh --pocket-host
 
-e2e-cross-product-storage: ## One product reads another's storage on the signing-host CLI, granted by a local product config.
-	scripts/cross-product-storage-e2e.sh
+e2e-funding-cli: ## Run the funding battery against a scripted funding signing-host CLI.
+	scripts/battery.sh --funding-host
 
-e2e-cross-product-ringvrf: ## One product signs with another's ring-VRF key on the signing-host CLI, granted by a local product config.
-	scripts/cross-product-ringvrf-e2e.sh
+CROSS_PRODUCT_SCENARIOS := $(patsubst scripts/cross-product-%-e2e.sh,%,$(wildcard scripts/cross-product-*-e2e.sh))
 
-e2e-cross-product-signing: ## One product signs with another's account on the signing-host CLI, granted by a local product config.
-	scripts/cross-product-signing-e2e.sh
+e2e-cross-product: ## One product uses another's storage, keys or accounts on the signing-host CLI. Pick a scenario with SCENARIO=<name>.
+	@test -x scripts/cross-product-$(SCENARIO)-e2e.sh || { echo "SCENARIO must be one of: $(CROSS_PRODUCT_SCENARIOS)" >&2; exit 1; }
+	scripts/cross-product-$(SCENARIO)-e2e.sh
+
+e2e-preimage-submit-prompt: ## Upload preimages under a PreimageSubmit grant on the signing-host CLI with no per-upload confirmation.
+	scripts/preimage-submit-prompt-e2e.sh
+
+e2e-trusted-device-permission: ## Send a notification as a trusted product on the signing-host CLI with no device permission prompt.
+	scripts/trusted-device-permission-e2e.sh
+
+e2e-chain-head-failure-cause: ## Cut the chain connection under a chain-head call on the signing-host CLI; both failures must name their cause.
+	scripts/chain-head-failure-cause-e2e.sh
+
+e2e-follow-after-transport-cut: ## Cut the chain connection under a chain-head read on the signing-host CLI; the follow must end and a fresh one must work.
+	scripts/follow-after-transport-cut-e2e.sh
+
+e2e-tx-during-outage: ## Drop the chain connection while the signing-host CLI builds transactions; each must be built once it returns. OUTAGE_MODE=close|header|metadata.
+	scripts/tx-during-outage-e2e.sh
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.
 	node scripts/e2e-cli-update.mjs
+
+E2E_HOST_PLAYGROUND := e2e/host-playground
+E2E_HOST_PLAYGROUND_APK := hosts/android/app/build/outputs/apk/gp/nightly/app-gp-nightly.apk
+E2E_HOST_PLAYGROUND_OUT ?= target/e2e-host-playground/android
+E2E_HOST_PLAYGROUND_IOS_APP ?= hosts/ios/build_simulator/polkadot-app.app
+E2E_HOST_PLAYGROUND_IOS_OUT ?= target/e2e-host-playground/ios
+
+e2e-host-playground-android: ## Run host-playground in the nightly Android host on a booted emulator or device. Needs MNEMONIC_FILE and the app config hosts/android reads; ANDROID_SERIAL picks a device.
+	@test -n "$(MNEMONIC_FILE)" || { echo "Set MNEMONIC_FILE to a file holding the test account's mnemonic."; exit 1; }
+	cd hosts/android && ./gradlew --init-script $(abspath $(E2E_HOST_PLAYGROUND)/android/e2e.init.gradle.kts) :app:assembleGpNightly
+	node $(E2E_HOST_PLAYGROUND)/android/run.mjs --apk $(E2E_HOST_PLAYGROUND_APK) --mnemonic-file "$(MNEMONIC_FILE)" --out $(E2E_HOST_PLAYGROUND_OUT) $(if $(ANDROID_SERIAL),--serial $(ANDROID_SERIAL))
+
+e2e-host-playground-ios: ## Run host-playground in the iOS simulator app built by e2e/host-playground/ios/build.sh. Needs MNEMONIC_FILE; IOS_SIMULATOR_DEVICE picks a simulator.
+	@test -n "$(MNEMONIC_FILE)" || { echo "Set MNEMONIC_FILE to a file holding the test account's mnemonic."; exit 1; }
+	node $(E2E_HOST_PLAYGROUND)/ios/run.mjs --app $(E2E_HOST_PLAYGROUND_IOS_APP) --mnemonic-file "$(MNEMONIC_FILE)" --out $(E2E_HOST_PLAYGROUND_IOS_OUT) $(if $(IOS_SIMULATOR_DEVICE),--device $(IOS_SIMULATOR_DEVICE))
 
 matrix: ## Regenerate the host compatibility matrix from explorer/diagnosis-reports.
 	cd $(EXPLORER) && npm run generate-matrix
@@ -410,7 +501,8 @@ XCFRAMEWORK_HEADERS := target/xcframework-headers
 # what a release needs; a compile-only consumer overrides both for speed. The
 # profile name doubles as cargo's output directory.
 # SIM_ONLY=1 drops the device slice while iterating, which halves the target
-# builds. XCFRAMEWORK_TARGETS still overrides both.
+# builds. publish.sh refuses a framework missing either slice, so this cannot
+# reach a release asset. XCFRAMEWORK_TARGETS still overrides both.
 #
 # 0, false, no and off mean off. Make treats any non-empty value as true, so
 # without this SIM_ONLY=0 would drop the device slice.
@@ -424,17 +516,16 @@ XCFRAMEWORK_CARGO_FLAGS := $(if $(filter release,$(XCFRAMEWORK_PROFILE)),--relea
 # serial tail per slice, which the other slice fills.
 xcframework: uniffi ## Build truapi_server.xcframework for iOS device + simulator (SIM_ONLY=1 for simulator only).
 	rustup target add $(XCFRAMEWORK_TARGETS)
-	IPHONEOS_DEPLOYMENT_TARGET=$(IOS_DEPLOYMENT_TARGET) $(CARGO) build -p truapi-server \
-		$(XCFRAMEWORK_CARGO_FLAGS) --features ws-bridge \
+	IPHONEOS_DEPLOYMENT_TARGET=$(IOS_DEPLOYMENT_TARGET) $(CARGO) build -p truapi \
+		$(XCFRAMEWORK_CARGO_FLAGS) \
 		$(XCFRAMEWORK_TARGETS:%=--target %)
 	rm -rf $(XCFRAMEWORK_OUT) $(XCFRAMEWORK_HEADERS)
 	mkdir -p $(XCFRAMEWORK_HEADERS)
-	cp $(UNIFFI_SWIFT_TMP)/truapiFFI.h $(UNIFFI_SWIFT_TMP)/truapi_platformFFI.h \
-		$(UNIFFI_SWIFT_TMP)/truapi_serverFFI.h $(XCFRAMEWORK_HEADERS)/
-	cp $(UNIFFI_SWIFT_TMP)/truapi_serverFFI.modulemap $(XCFRAMEWORK_HEADERS)/module.modulemap
+	cp $(UNIFFI_SWIFT_TMP)/truapiFFI.h $(XCFRAMEWORK_HEADERS)/
+	cp $(UNIFFI_SWIFT_TMP)/truapiFFI.modulemap $(XCFRAMEWORK_HEADERS)/module.modulemap
 	slices=""; \
 	for target in $(XCFRAMEWORK_TARGETS); do \
-		slices="$$slices -library target/$$target/$(XCFRAMEWORK_PROFILE)/libtruapi_server.a \
+		slices="$$slices -library target/$$target/$(XCFRAMEWORK_PROFILE)/libtruapi.a \
 			-headers $(XCFRAMEWORK_HEADERS)"; \
 	done; \
 	xcodebuild -create-xcframework $$slices -output $(XCFRAMEWORK_OUT)

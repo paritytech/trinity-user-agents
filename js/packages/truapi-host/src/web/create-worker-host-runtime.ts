@@ -1,10 +1,11 @@
+import type { ProductId } from "@parity/truapi";
 import type {
   ChainConnection,
   ProductRuntimeConfig,
   LogLevel,
   PermissionAuthorizationRequest,
   PermissionAuthorizationStatus,
-  ProductExecutionKind,
+  ExecutableKind,
   RequiredHostCallbacks,
   TrUApiProductProvider,
   WorkerDemandChange,
@@ -58,12 +59,17 @@ export interface WorkerPairingHostRuntime {
    */
   readonly coreWireSchemaHash: string | undefined;
   createProvider(product: {
-    productId: string;
-    executionKind?: ProductExecutionKind;
+    productId: ProductId;
+    executionKind?: ExecutableKind;
   }): Promise<TrUApiProductProvider>;
   disconnectSession(): Promise<void>;
   cancelPairing(): void;
   notifySessionStoreChanged(): void;
+  /**
+   * Tell the core the host's contacts changed. Call it whenever a contact is
+   * removed or blocked, so a contact handle the core cached stops resolving.
+   */
+  notifyContactsChanged(): void;
   /**
    * Restore the session persisted in the core's `AuthSession` slot. Resolves
    * once product frames may use it, so a host can await this at boot before
@@ -83,8 +89,35 @@ export interface WorkerPairingHostRuntime {
    * Signing hosts only. A pairing host has no local secret and rejects this:
    * it waits for a wallet to answer over the statement-store channel instead.
    */
-  activateLocalSession(secret: Uint8Array, liteUsername?: string): Promise<void>;
+  activateLocalSession(
+    secret: Uint8Array,
+    liteUsername?: string,
+  ): Promise<void>;
+  /**
+   * Answer resource allocation as granted without performing it.
+   *
+   * Test hosts only, on a core built with `test-host`. No allowance is
+   * allocated, so preimage submissions also stay in the core: the Bulletin
+   * allowance was never authorized on chain to submit with.
+   */
   setGrantAllowancesUnchecked(granted: boolean): Promise<void>;
+  /**
+   * Keep preimage submissions in the core instead of the Bulletin chain.
+   *
+   * Test hosts only, on a core built with `test-host`. For a host whose wallet
+   * answers allowances itself: that Bulletin allowance was never authorized on
+   * chain, so a real `store` is refused at dry-run. The product gets the content
+   * key back and reads the value from the core's lookup cache. A refused
+   * Bulletin allowance still refuses the submission.
+   */
+  setSubmitPreimagesLocally(local: boolean): Promise<void>;
+  /**
+   * Answer these resource tags as refused, replacing any earlier set.
+   *
+   * Withholding one resource while the rest stay granted is what lets a suite
+   * prove its product survives a refusal it cannot otherwise arrange.
+   */
+  setWithheldResources(tags: string[]): Promise<void>;
   /**
    * Drop the active paired session without notifying the peer. Rejects on a
    * disposed runtime, as
@@ -92,23 +125,25 @@ export interface WorkerPairingHostRuntime {
    */
   resetSessionState(): Promise<void>;
   getPermissionAuthorizationStatus(
-    productId: string,
+    productId: ProductId,
     request: PermissionAuthorizationRequest,
   ): Promise<PermissionAuthorizationStatus>;
   getPermissionAuthorizationStatuses(
-    productId: string,
+    productId: ProductId,
     requests: PermissionAuthorizationRequest[],
   ): Promise<PermissionAuthorizationStatus[]>;
   setPermissionAuthorizationStatus(
-    productId: string,
+    productId: ProductId,
     request: PermissionAuthorizationRequest,
     status: PermissionAuthorizationStatus,
   ): Promise<void>;
   getSessionChatIdentityKey(): Promise<Uint8Array | undefined>;
   getDeviceStatementKey(): Promise<Uint8Array | undefined>;
   getDeviceEncryptionKey(): Promise<Uint8Array>;
+  /** Validate and normalize a product identifier through the Rust core. */
+  parseProductId(value: string): Promise<ProductId>;
   getProductSubtreePublicKey(
-    productId: string,
+    productId: ProductId,
     timeoutMs?: number,
   ): Promise<Uint8Array | undefined>;
   /**
@@ -119,9 +154,9 @@ export interface WorkerPairingHostRuntime {
    * {@link WorkerPairingHostRuntime.subscribeWorkerDemand} listeners, and the
    * host runs and stops the worker executable itself.
    */
-  acquireWorker(productId: string): void;
+  acquireWorker(productId: ProductId): void;
   /** Release one reference. Releasing with none held is a no-op. */
-  releaseWorker(productId: string): void;
+  releaseWorker(productId: ProductId): void;
   /**
    * Observe which product workers the host should run. The listener first
    * receives `wanted: true` for every product wanted right now, then each
@@ -137,7 +172,7 @@ export interface WorkerPairingHostRuntime {
 
 interface CoreState {
   coreId: number;
-  productId: string;
+  productId: ProductId;
   listeners: Set<(message: Uint8Array) => void>;
   closeListeners: Set<(error: Error) => void>;
   closedError: Error | null;
@@ -162,7 +197,7 @@ interface RuntimeState {
   pendingCores: Map<
     number,
     {
-      productId: string;
+      productId: ProductId;
       resolve: (provider: TrUApiProductProvider) => void;
       reject: (error: Error) => void;
     }
@@ -238,6 +273,7 @@ interface RuntimeState {
       reject: (error: Error) => void;
     }
   >;
+  pendingProductIds: Map<number, PendingEntry<ProductId>>;
   /** Host-authored Chat and Renderer actions awaiting the worker's response. */
   pendingActions: Map<
     number,
@@ -246,7 +282,7 @@ interface RuntimeState {
   /** Sinks for live renders, keyed by render id. */
   renders: Map<number, RenderEntry>;
   /** Products whose worker the core currently wants, for late subscribers. */
-  wantedWorkers: Set<string>;
+  wantedWorkers: Set<ProductId>;
   workerDemandListeners: Set<(change: WorkerDemandChange) => void>;
   closedError: Error | null;
   logLevel: LogLevel;
@@ -265,6 +301,7 @@ let nextSessionChatIdentityKeyRequestId = 0;
 let nextDeviceStatementKeyRequestId = 0;
 let nextDeviceEncryptionKeyRequestId = 0;
 let nextProductSubtreePublicKeyRequestId = 0;
+let nextProductIdRequestId = 0;
 let nextSessionActivationRequestId = 0;
 let nextActionRequestId = 0;
 let nextRenderId = 0;
@@ -277,8 +314,22 @@ function encodePermissionAuthorizationRequest(
 
 const DEV_LOG_LEVEL_KEY = "truapi:logLevel";
 
+/**
+ * The global `localStorage`, when it is usable. Node 25 defines the global
+ * without a working `getItem` unless `--localstorage-file` is set, and a
+ * browser that blocks storage throws on access.
+ */
+function devStorage(): Storage | undefined {
+  try {
+    const storage = globalThis.localStorage;
+    return typeof storage?.getItem === "function" ? storage : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function readPersistedLogLevel(): LogLevel | null {
-  return globalThis.localStorage?.getItem(DEV_LOG_LEVEL_KEY) ?? null;
+  return devStorage()?.getItem(DEV_LOG_LEVEL_KEY) ?? null;
 }
 
 /**
@@ -465,7 +516,7 @@ function reportDebuggerEnablement(e: DebuggerEnablement): void {
 }
 
 function persistLogLevel(level: LogLevel): void {
-  globalThis.localStorage?.setItem(DEV_LOG_LEVEL_KEY, level);
+  devStorage()?.setItem(DEV_LOG_LEVEL_KEY, level);
 }
 
 let devLogLevelOverride: LogLevel | null = readPersistedLogLevel();
@@ -859,6 +910,7 @@ function rejectPendingRuntimeRequests(state: RuntimeState, error: Error): void {
   rejectAll(state.pendingDeviceStatementKeys, error);
   rejectAll(state.pendingDeviceEncryptionKeys, error);
   rejectAll(state.pendingProductSubtreePublicKeys, error);
+  rejectAll(state.pendingProductIds, error);
   rejectAll(state.pendingActions, error);
   for (const renderId of [...state.renders.keys()]) {
     const sink = takeRender(state, renderId);
@@ -1035,6 +1087,7 @@ export function createWebWorkerPairingHostRuntime(
       pendingSetPermissionAuthorizationStatuses: new Map(),
       pendingSessionChatIdentityKeys: new Map(),
       pendingProductSubtreePublicKeys: new Map(),
+      pendingProductIds: new Map(),
       pendingDeviceStatementKeys: new Map(),
       pendingDeviceEncryptionKeys: new Map(),
       pendingActions: new Map(),
@@ -1111,6 +1164,9 @@ export function createWebWorkerPairingHostRuntime(
           break;
         case "productSubtreePublicKeyResponse":
           handleProductSubtreePublicKeyResponse(state, msg);
+          break;
+        case "parseProductIdResponse":
+          settlePending(state.pendingProductIds, msg.requestId, msg);
           break;
         case "workerDemandChanged":
           // Teardown has already reported every worker unwanted, so a level
@@ -1240,6 +1296,9 @@ export function createWebWorkerPairingHostRuntime(
             chat: host.chat !== undefined,
             permissionStatus: host.permissionStatus !== undefined,
             pocket: host.pocket !== undefined,
+            game: host.game !== undefined,
+            contacts: host.contacts !== undefined,
+            scanner: host.scanner !== undefined,
           },
           debuggerUrl: debuggerDial,
           role: options.role,
@@ -1368,6 +1427,26 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
         (requestId) => ({ kind: "disconnectSession", requestId }),
       );
     },
+    parseProductId(value: string): Promise<ProductId> {
+      if (state.disposed)
+        return Promise.reject(
+          state.closedError ?? new Error("runtime disposed"),
+        );
+      return new Promise((resolve, reject) => {
+        const requestId = ++nextProductIdRequestId;
+        state.pendingProductIds.set(requestId, { resolve, reject });
+        try {
+          state.worker.postMessage({
+            kind: "parseProductId",
+            requestId,
+            value,
+          } satisfies MainToWorker);
+        } catch (error) {
+          state.pendingProductIds.delete(requestId);
+          reject(error);
+        }
+      });
+    },
     cancelPairing(): void {
       if (state.disposed) return;
       state.worker.postMessage({
@@ -1408,7 +1487,7 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
       );
     },
     getProductSubtreePublicKey(
-      productId: string,
+      productId: ProductId,
       timeoutMs?: number,
     ): Promise<Uint8Array | undefined> {
       return sendWorkerRequest<Uint8Array | undefined>(
@@ -1430,10 +1509,13 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
         kind: "notifySessionStoreChanged",
       } satisfies MainToWorker);
     },
-    acquireWorker(productId: string): void {
+    notifyContactsChanged(): void {
+      postUnlessDisposed(state, { kind: "notifyContactsChanged" });
+    },
+    acquireWorker(productId: ProductId): void {
       postUnlessDisposed(state, { kind: "acquireWorker", productId });
     },
-    releaseWorker(productId: string): void {
+    releaseWorker(productId: ProductId): void {
       postUnlessDisposed(state, { kind: "releaseWorker", productId });
     },
     subscribeWorkerDemand(listener) {
@@ -1477,6 +1559,20 @@ function buildRuntime(state: RuntimeState): WorkerPairingHostRuntime {
         kind: "setGrantAllowancesUnchecked",
         requestId,
         granted,
+      }));
+    },
+    setSubmitPreimagesLocally(local: boolean): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "setSubmitPreimagesLocally",
+        requestId,
+        local,
+      }));
+    },
+    setWithheldResources(tags: string[]): Promise<void> {
+      return sendSessionActivationRequest(state, (requestId) => ({
+        kind: "setWithheldResources",
+        requestId,
+        tags,
       }));
     },
     resetSessionState(): Promise<void> {
@@ -1577,7 +1673,7 @@ function deliverWorkerDemand(
 /** Record one product's wanted level and fan it out to every listener. */
 function handleWorkerDemandChanged(
   state: RuntimeState,
-  productId: string,
+  productId: ProductId,
   wanted: boolean,
 ): void {
   if (wanted) state.wantedWorkers.add(productId);
@@ -1714,7 +1810,7 @@ function buildProvider(
       return bytesToHex(await runtime.getDeviceEncryptionKey());
     },
     async getProductSubtreePublicKey(
-      productId: string,
+      productId: ProductId,
       timeoutMs?: number,
     ): Promise<Bytes32 | undefined> {
       if (core.disposed) return undefined;
@@ -1777,7 +1873,7 @@ function buildProvider(
       }
       const renderId = nextRenderId++;
       // No worker reference is taken here: the core holds the one an open
-      // render is worth and reports it through `workerDemandChanged`.
+      // render is worth and requests it through `requestWorkerTransition`.
       state.renders.set(renderId, {
         coreId: core.coreId,
         onUpdate: (node) => sink.onUpdate(node),

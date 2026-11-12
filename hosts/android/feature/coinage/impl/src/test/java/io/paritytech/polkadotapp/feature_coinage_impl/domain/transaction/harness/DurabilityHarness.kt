@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.chains.multiNetwork.connection.EnabledChainConn
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionId
 import io.paritytech.polkadotapp.feature_coinage_impl.data.signer.context.RealCoinageSigningContextProvider
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.transaction.COINAGE_DOMAIN_ID
+import io.paritytech.polkadotapp.feature_coinage_impl.domain.transaction.CoinageHandoffGuard
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.transaction.RealCoinageTransactionService
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.transaction.recovery.CoinageEvidenceCollector
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.transaction.recovery.CoinageResourceOracle
@@ -212,6 +213,7 @@ class DurabilityHarness(
             assetLedger = ledger.coinage,
             coinKeypairDerivation = coinDerivation,
             voucherRingDerivation = voucherDerivation,
+            handoffGuard = CoinageHandoffGuard(),
         )
 
         return Subsystem(service, engine, executor, ownedEntries, pass, scheduler, scope)

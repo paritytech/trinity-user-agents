@@ -3,6 +3,9 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.feature_products_api.model.Product
+import io.paritytech.polkadotapp.feature_products_impl.data.storage.ProductRoomFooterStorage
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductImageResolver
+import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -15,12 +18,19 @@ import javax.inject.Singleton
 class ProductBotFactory @Inject constructor(
     @param:ApplicationContext private val appContext: Context,
     private val workerRefCounter: ProductWorkerRefCounter,
+    private val imageResolver: ProductImageResolver,
+    private val resolveProduct: ResolveProductUseCase,
+    private val roomFooterStorage: ProductRoomFooterStorage,
 ) {
-    fun create(product: Product): ProductChatExtension {
+    fun create(product: Product, origin: ProductChatExtensionOrigin): ProductChatExtension {
         return ProductChatExtension(
             appContext = appContext,
             product = product,
             workerRefCounter = workerRefCounter,
+            imageResolver = imageResolver,
+            resolveProduct = resolveProduct,
+            roomFooterStorage = roomFooterStorage,
+            origin = origin,
         )
     }
 }

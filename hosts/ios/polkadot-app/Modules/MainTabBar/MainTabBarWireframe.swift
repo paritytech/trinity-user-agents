@@ -1,20 +1,30 @@
+import struct TrUAPIHost.ProductId
 import UIKit
 import PolkadotUI
+import Products
+import UIKitExt
 
 @MainActor
 final class MainTabBarWireframe: MainTabBarWireframeProtocol {
     private let serviceCoordinator: ServiceCoordinatorProtocol
-    private let scanResultHandler: WalletQRScanDelegate
+    private let tabFactory: TabFactoryProtocol
     private let moduleNavigator: ModuleNavigating
+    private weak var presentedSettings: UINavigationController?
+    /// Injected rather than read from the tab bar's view, which leaves the window under a full-screen modal.
+    private weak var windowScene: UIWindowScene?
+    private var paymentsSetupNotice: TopNoticeWindow?
+    private var isPaymentsSetupNoticeDismissed = false
 
     init(
         serviceCoordinator: ServiceCoordinatorProtocol,
-        scanResultHandler: WalletQRScanDelegate,
-        moduleNavigator: ModuleNavigating
+        tabFactory: TabFactoryProtocol,
+        moduleNavigator: ModuleNavigating,
+        windowScene: UIWindowScene?
     ) {
         self.serviceCoordinator = serviceCoordinator
-        self.scanResultHandler = scanResultHandler
+        self.tabFactory = tabFactory
         self.moduleNavigator = moduleNavigator
+        self.windowScene = windowScene
     }
 
     func showPolkadotSignIn(with url: URL, view: MainTabBarViewProtocol?) {
@@ -27,28 +37,47 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
         ) else {
             return
         }
-        view?.controller.present(signInView.controller, animated: true)
+        view?.controller.topmostPresented.present(signInView.controller, animated: true)
     }
 
-    #if FEATURE_INPUT
-        func openChat(_ model: ChatOpenModel) {
-            moduleNavigator.openChat(model)
+    func showPaymentsSetupNotice(isVisible: Bool) {
+        guard isVisible else {
+            paymentsSetupNotice?.hide()
+            isPaymentsSetupNoticeDismissed = false
+            return
         }
-    #else
-        func showSearchContact(from view: MainTabBarViewProtocol?) {
-            guard let search = SearchContactViewFactory.createView(
-                onChatFound: { [moduleNavigator] model in
-                    moduleNavigator.openChat(model)
-                }
-            ) else {
-                return
-            }
+        guard !isPaymentsSetupNoticeDismissed, let windowScene else {
+            return
+        }
 
-            search.controller.modalPresentationStyle = .fullScreen
-            search.controller.modalTransitionStyle = .crossDissolve
-            view?.controller.present(search.controller, animated: true)
+        let notice = paymentsSetupNotice ?? TopNoticeWindow(windowScene: windowScene)
+        paymentsSetupNotice = notice
+        notice.show(PaymentsSetupNoticeView { [weak self] in
+            self?.isPaymentsSetupNoticeDismissed = true
+            self?.paymentsSetupNotice?.hide()
+        })
+    }
+
+    func openProduct(productId: ProductId) {
+        ProductOpener(navigator: moduleNavigator).open(productId: productId)
+    }
+
+    func openChat(_ model: ChatOpenModel) {
+        moduleNavigator.openChat(model)
+    }
+
+    func showConnectionStatus(_ viewModel: ConnectionStatusSheetViewModel, from view: MainTabBarViewProtocol?) {
+        let sheet = ConnectionStatusSheetViewFactory.createView(viewModel: viewModel)
+        view?.controller.topmostPresented.present(sheet, animated: true)
+    }
+
+    func showSettings(from view: MainTabBarViewProtocol?) {
+        guard let settings = tabFactory.makeSettingsNavigation() else {
+            return
         }
-    #endif
+        presentedSettings = settings
+        view?.controller.topmostPresented.present(settings, animated: true)
+    }
 }
 
 private extension MainTabBarWireframe {
@@ -62,7 +91,7 @@ private extension MainTabBarWireframe {
             showDeviceDetails(device, view: view)
         case let .noFreeSlots(message):
             let controller = NoSlotsAvailableViewFactory.createView(message: message)
-            view?.controller.present(controller, animated: true)
+            view?.controller.topmostPresented.present(controller, animated: true)
         case .failed:
             view?.controller.showToast(
                 message: String(localized: .linkedDevicesSignInError),
@@ -72,11 +101,8 @@ private extension MainTabBarWireframe {
     }
 
     func showDeviceDetails(_ device: Chat.LocalDevice, view: MainTabBarViewProtocol?) {
-        view?.select(tab: .settings)
-
         guard
-            let settingsNav = (view as? MainTabBarViewController)?.view(for: .settings) as? UINavigationController,
-            let settingsRoot = settingsNav.viewControllers.first,
+            let presenter = view?.controller.topmostPresented,
             let linkedDevicesView = LinkedDevicesViewFactory.createView(serviceCoordinator: serviceCoordinator),
             let detailsView = DeviceDetailsViewFactory.createView(
                 device: device,
@@ -86,9 +112,18 @@ private extension MainTabBarWireframe {
             return
         }
 
-        settingsNav.setViewControllers(
-            [settingsRoot, linkedDevicesView.controller, detailsView.controller],
-            animated: true
-        )
+        if let settings = presentedSettings, settings === presenter {
+            settings.pushViewController(linkedDevicesView.controller, animated: false)
+            settings.pushViewController(detailsView.controller, animated: true)
+            return
+        }
+
+        guard let settings = tabFactory.makeSettingsNavigation() else {
+            return
+        }
+        presentedSettings = settings
+        settings.pushViewController(linkedDevicesView.controller, animated: false)
+        settings.pushViewController(detailsView.controller, animated: false)
+        presenter.present(settings, animated: true)
     }
 }

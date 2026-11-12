@@ -19,13 +19,14 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.BrowserSessionInfo
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.TabInfo
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_api.model.toUrl
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.BrowserTabRepository
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.PersistedTab
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.ProductRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.gatewayUrlOf
+import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import io.paritytech.polkadotapp.tools_ipfs_api.IpfsContentLookup
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -45,6 +46,7 @@ import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import uniffi.truapi.ProductId
 import java.net.URI
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -77,6 +79,7 @@ class RealProductSessionController @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val dispatchers: CoroutineDispatchers,
     private val dotNsTldProvider: DotNsTldProvider,
+    private val devServers: DevServers,
 ) : ProductSessionController {
     private val appScope = CoroutineScope(SupervisorJob() + dispatchers.main)
 
@@ -87,11 +90,11 @@ class RealProductSessionController @Inject constructor(
     // instead of duplicating it, so back never ping-pongs between two tabs.
     private val visitStack = ArrayDeque<Long>()
 
-    // productId.value -> gateway url; tab badges read them as resolution fills each product's icon.
-    private val productIcons: StateFlow<Map<String, String>> = productRepository.observeProducts()
+    // Tab badges read these as resolution fills each product's icon.
+    private val productIcons: StateFlow<Map<ProductId, String>> = productRepository.observeProducts()
         .map { products ->
             products.mapNotNull { product ->
-                product.icon?.let { ipfsContentLookup.gatewayUrlOf(it) }?.let { product.id.value to it }
+                product.icon?.let { ipfsContentLookup.gatewayUrlOf(it) }?.let { product.id to it }
             }.toMap()
         }
         .stateIn(appScope, SharingStarted.Eagerly, emptyMap())
@@ -143,6 +146,12 @@ class RealProductSessionController @Inject constructor(
         activeTabId.value?.let(::closeTab)
     }
 
+    override fun reload() {
+        val webView = activeTabOrNull()?.webView?.value ?: return
+        webView.clearCache(true)
+        webView.reload()
+    }
+
     override fun ensureActiveLive() {
         val tab = activeTabOrNull() ?: return
         tab.lastActive = now()
@@ -151,10 +160,12 @@ class RealProductSessionController @Inject constructor(
         persist(tab)
     }
 
-    // Focus the same-product tab (one per product), else open a new one from [url] (keeping its path).
+    // Focus the same-product tab (one per product), loading [url] into it when it names a page, else open a new
+    // one from [url] (keeping its path).
     private fun openTab(url: String) {
         val tld = dotNsTldProvider.currentTldOrNull()
         val existing = tabs.value.firstOrNull { productKey(it.url.value, tld) == productKey(url, tld) }
+        if (existing != null && loadsIntoOpenTab(existing.url.value, url)) existing.load(url)
         val tab = existing ?: Tab(nextId++, url).also { new -> tabs.update { it + new } }
         activate(tab)
     }
@@ -201,6 +212,7 @@ class RealProductSessionController @Inject constructor(
         var lastActive = 0L
 
         private var scope: CoroutineScope? = null
+        private var webViewProvider: BrowserWebViewProvider? = null
         val isLive: Boolean get() = scope != null
 
         // What the active-tab UI shows: reacts to this tab's own url/title/progress.
@@ -216,17 +228,25 @@ class RealProductSessionController @Inject constructor(
         fun sleep() {
             scope?.cancel()
             scope = null
+            webViewProvider = null
             webView.value = null
             loadProgress.value = DotNsLoadProgress.Idle
         }
 
-        fun info(activeId: Long?, icons: Map<String, String>): Flow<TabInfo> =
+        // A sleeping tab wakes up at [target]; a live one loads it into its WebView.
+        fun load(target: String) {
+            url.value = target
+            val provider = webViewProvider ?: return
+            scope?.launch { provider.getWebView().loadUrl(target) }
+        }
+
+        fun info(activeId: Long?, icons: Map<ProductId, String>): Flow<TabInfo> =
             combine(url, title) { url, title ->
                 TabInfo(
                     id = id,
                     title = displayTitle(url, title),
                     host = host(url),
-                    iconUrl = productKey(url, dotNsTldProvider.currentTldOrNull()).let(icons::get),
+                    iconUrl = productId(url, dotNsTldProvider.currentTldOrNull())?.let(icons::get),
                     isActive = id == activeId,
                 )
             }
@@ -237,19 +257,23 @@ class RealProductSessionController @Inject constructor(
                 scope = scope,
                 onDeeplink = { launchDeeplink(it, scope) },
             )
+            webViewProvider = provider
 
-            provider.addOnPageStartedListener { url.value = it }
+            // A dev server tab keeps the address it was opened with, since the page's own navigation can drop
+            // the `product_id` it runs as, and a woken or restored tab is rebuilt from this address.
+            val keepsOpeningAddress = devServers.productAt(url.value) != null
+            provider.addOnPageStartedListener { if (!keepsOpeningAddress) url.value = it }
             provider.addOnPageFinishedListener {
                 title.value = webView.value?.title.orEmpty()
                 persist(this)
             }
 
-            scope.launch { webView.value = provider.getWebView() }
+            provider.webViews().onEach { webView.value = it }.launchIn(scope)
             provider.loadProgress.onEach { loadProgress.value = it }.launchIn(scope)
 
             url.mapNotNull { rawUrl ->
                 dotNsTldProvider.getTld().getOrNull()
-                    ?.let { tld -> ProductId.fromUrl(rawUrl.toUri(), tld).getOrNull() }
+                    ?.let { tld -> productIdFromUrl(rawUrl.toUri(), tld).getOrNull() }
             }
                 .onEach { productRegistrar.ensureRegistered(it) }
                 .launchIn(scope)
@@ -294,6 +318,7 @@ class RealProductSessionController @Inject constructor(
         url = url,
         isLoading = progress.isLoading(),
         loadFraction = (progress as? DotNsLoadProgress.Downloading)?.fraction,
+        isDevServer = devServers.productAt(url) != null,
     )
 
     private fun displayTitle(url: String, title: String): String =
@@ -302,8 +327,16 @@ class RealProductSessionController @Inject constructor(
     private fun host(url: String): String? = runCatching { URI(url).host }.getOrNull()
 
     // Groups tabs by product (one tab per product); falls back to the raw url for non-product tabs.
-    private fun productKey(url: String, tld: DotNsTld?): String =
-        tld?.let { ProductId.fromUrl(url.toUri(), it).getOrNull()?.value } ?: url
+    private fun productKey(url: String, tld: DotNsTld?): TabKey =
+        productId(url, tld)?.let(TabKey::Product) ?: TabKey.Url(url)
+
+    private fun productId(url: String, tld: DotNsTld?): ProductId? =
+        tld?.let { productIdFromUrl(url.toUri(), it).getOrNull() }
+
+    private sealed interface TabKey {
+        data class Product(val id: ProductId) : TabKey
+        data class Url(val value: String) : TabKey
+    }
 
     private fun now(): Long = System.currentTimeMillis()
 
@@ -329,7 +362,7 @@ class RealProductSessionController @Inject constructor(
         }
     }
 
-    private data class TabsSnapshot(val tabs: List<Tab>, val activeId: Long?, val icons: Map<String, String>)
+    private data class TabsSnapshot(val tabs: List<Tab>, val activeId: Long?, val icons: Map<ProductId, String>)
 
     // Each tab exposes its own TabInfo flow; combine them into one list that re-emits when any tab's title
     // (or the active id / icons captured in the snapshot) changes.

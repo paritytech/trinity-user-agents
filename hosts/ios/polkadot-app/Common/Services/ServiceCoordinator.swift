@@ -1,4 +1,5 @@
 import Foundation
+import BackgroundExecution
 import Keystore_iOS
 import Operation_iOS
 import AssetExchange
@@ -16,12 +17,11 @@ import FoundationExt
 import Individuality
 import UniqueDevice
 import ChainRegistry
+import StructuredConcurrency
+import DesignSystem
 
-protocol ServiceCoordinatorProtocol: ApplicationServiceProtocol {
+protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
     var depositService: DepositServiceProtocol { get }
-    var fiatOnrampService: FiatOnrampServicing { get }
-    var fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol { get }
-    var fiatOnrampStorage: FiatOnrampStoring { get }
     var polkadotHandshakeService: PolkadotHandshakeServicing { get }
     var chatExtensionsRegistry: ChatExtensionsRegistering { get }
     var signInHostCoordinator: MessageExchangeSignInHostCoordinating { get }
@@ -30,8 +30,6 @@ protocol ServiceCoordinatorProtocol: ApplicationServiceProtocol {
     var attachmentUploadService: AttachmentUploadingServicing { get }
     var attachmentDownloadService: AttachmentDownloadingServicing { get }
     var audioSessionManager: AudioSessionManaging { get }
-    var determineStateSyncService: DetermineStateSyncServicing { get }
-    var personDataStore: DetermineStatePersonDataStore { get }
     var coinageService: CoinageServicing { get }
     var coinageBackupSyncService: CoinageBackupSyncServicing { get }
     var accountManager: ProductsAccountManaging { get }
@@ -40,14 +38,12 @@ protocol ServiceCoordinatorProtocol: ApplicationServiceProtocol {
     var networkStatusService: NetworkStatusProviding { get }
     var chainStatusProvider: ChainStatusProviding { get }
     var truapiRuntimeProvider: TrUAPIHostRuntimeProviding { get }
+    var durabilityRenewal: StatementDurabilityRenewing { get }
 }
 
 final class ServiceCoordinator {
     let chatCoordinator: MessageExchangeChatCoordinating
     let depositService: DepositServiceProtocol
-    let fiatOnrampService: FiatOnrampServicing
-    let fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol
-    let fiatOnrampStorage: FiatOnrampStoring
     let polkadotHandshakeService: PolkadotHandshakeServicing
     let signInHostCoordinator: MessageExchangeSignInHostCoordinating
     let chatExtensionsRegistry: ChatExtensionsRegistering
@@ -62,25 +58,30 @@ final class ServiceCoordinator {
     let durableTransactionEngine: DurableTxServices
     let w3sPaymentTracking: W3sPaymentTracking
     let audioSessionManager: AudioSessionManaging
-    let determineStateSyncService: DetermineStateSyncServicing
-    let personhoodBackgroundService: PersonhoodBackgroundService
-    let personDataStore: DetermineStatePersonDataStore
     let coinageBackupSyncService: CoinageBackupSyncServicing
     let messageExpansionService: CompactedMessageExpansionServicing
     let notificationBadgeSyncService: NotificationBadgeSyncService
     let accountManager: ProductsAccountManaging
     let allowanceManagerFacade: AllowanceManagerFacade
-    let allowanceRenewalService: AllowanceRenewalService
+    let statementRenewalLoop: StatementRenewalLoop
+    let durabilityRenewal: StatementDurabilityRenewing
     let turnService: TURNCredentialsProviding
     let deviceSyncService: DeviceSyncServicing
     let networkStatusService: NetworkStatusProviding
     let chainStatusProvider: ChainStatusProviding
     let truapiRuntimeProvider: TrUAPIHostRuntimeProviding
     let tldProvider: DotNsTldProviding
+    /// Held rather than looked up, so the session that started the Pocket is
+    /// the one that stops it. Nil in a build without the products feature.
+    let pocket: ProductPocketService?
     let logger: LoggerProtocol
 
     // Retained so the weakly-held dependency-locator entry stays alive for the product host.
     let paymentsSupport: PaymentsSupport
+
+    // Lifecycle state, touched only from the main actor by DashboardServicesManager.
+    var durabilityStart: Task<Bool, Never>?
+    var interactiveStart: Task<Void, Never>?
 
     var coinageService: CoinageServicing {
         paymentsSupport.coinageService
@@ -89,9 +90,6 @@ final class ServiceCoordinator {
     init(
         chatCoordinator: MessageExchangeChatCoordinating,
         depositService: DepositServiceProtocol,
-        fiatOnrampService: FiatOnrampServicing,
-        fiatOnrampTrackingService: FiatOnrampTrackingServiceProtocol,
-        fiatOnrampStorage: FiatOnrampStoring,
         polkadotHandshakeService: PolkadotHandshakeServicing,
         signInHostCoordinator: MessageExchangeSignInHostCoordinating,
         chatExtensionsRegistry: ChatExtensionsRegistering,
@@ -104,15 +102,13 @@ final class ServiceCoordinator {
         durableTransactionEngine: DurableTxServices,
         w3sPaymentTracking: W3sPaymentTracking,
         audioSessionManager: AudioSessionManaging,
-        determineStateSyncService: DetermineStateSyncServicing,
-        personhoodBackgroundService: PersonhoodBackgroundService,
-        personDataStore: DetermineStatePersonDataStore,
         coinageBackupSyncService: CoinageBackupSyncServicing,
         messageExpansionService: CompactedMessageExpansionServicing,
         notificationBadgeSyncService: NotificationBadgeSyncService,
         accountManager: ProductsAccountManaging,
         allowanceManagerFacade: AllowanceManagerFacade,
-        allowanceRenewalService: AllowanceRenewalService,
+        statementRenewalLoop: StatementRenewalLoop,
+        durabilityRenewal: StatementDurabilityRenewing,
         paymentsSupport: PaymentsSupport,
         turnService: TURNCredentialsProviding,
         deviceSyncService: DeviceSyncServicing,
@@ -120,13 +116,11 @@ final class ServiceCoordinator {
         chainStatusProvider: ChainStatusProviding,
         truapiRuntimeProvider: TrUAPIHostRuntimeProviding,
         tldProvider: DotNsTldProviding,
+        pocket: ProductPocketService?,
         logger: LoggerProtocol
     ) {
         self.chatCoordinator = chatCoordinator
         self.depositService = depositService
-        self.fiatOnrampService = fiatOnrampService
-        self.fiatOnrampTrackingService = fiatOnrampTrackingService
-        self.fiatOnrampStorage = fiatOnrampStorage
         self.polkadotHandshakeService = polkadotHandshakeService
         self.signInHostCoordinator = signInHostCoordinator
         self.chatExtensionsRegistry = chatExtensionsRegistry
@@ -139,108 +133,31 @@ final class ServiceCoordinator {
         self.durableTransactionEngine = durableTransactionEngine
         self.w3sPaymentTracking = w3sPaymentTracking
         self.audioSessionManager = audioSessionManager
-        self.determineStateSyncService = determineStateSyncService
-        self.personhoodBackgroundService = personhoodBackgroundService
-        self.personDataStore = personDataStore
         self.coinageBackupSyncService = coinageBackupSyncService
         self.messageExpansionService = messageExpansionService
         self.notificationBadgeSyncService = notificationBadgeSyncService
         self.accountManager = accountManager
         self.allowanceManagerFacade = allowanceManagerFacade
-        self.allowanceRenewalService = allowanceRenewalService
+        self.statementRenewalLoop = statementRenewalLoop
+        self.durabilityRenewal = durabilityRenewal
         self.deviceSyncService = deviceSyncService
         self.networkStatusService = networkStatusService
         self.chainStatusProvider = chainStatusProvider
         self.truapiRuntimeProvider = truapiRuntimeProvider
         self.tldProvider = tldProvider
+        self.pocket = pocket
         self.logger = logger
         self.paymentsSupport = paymentsSupport
         self.turnService = turnService
     }
 }
 
-extension ServiceCoordinator: ServiceCoordinatorProtocol {
-    func setup() {
-        // Keep the cached TLD warm on each launch without blocking.
-        tldProvider.refresh()
-
-        #if FEATURE_DIMS
-            determineStateSyncService.setup()
-            personhoodBackgroundService.setup()
-        #endif
-
-        chatCoordinator.setup()
-        productWorkerFacade.setup()
-        chatExtensionsRegistry.discover()
-        chatRequestCoordinator.setup()
-        fiatOnrampTrackingService.setup()
-        attachmentUploadService.setup()
-        attachmentDownloadService.setup()
-        notificationBadgeSyncService.setup()
-        messageExpansionService.start()
-        allowanceRenewalService.setup()
-
-        Task {
-            await chainStatusProvider.start()
-            await signInHostCoordinator.setup()
-            await setupDeviceSyncService()
-
-            // Setup coinage service with main asset from chain
-            let chainRegistry = ChainRegistryFacade.sharedRegistry
-            let mainAssetId = AppConfig.Assets.mainAsset
-
-            guard
-                let chain = chainRegistry.getChain(for: mainAssetId.chainId),
-                let asset = chain.asset(for: mainAssetId.assetId)
-            else {
-                assertionFailure()
-                return
-            }
-            do {
-                try await coinageService.setup(with: asset)
-            } catch {
-                logger.error("Coinage service setup failed: \(error)")
-                return
-            }
-            // After coinage setup, which releases uncommitted handoffs the first pass must not see.
-            durableTransactionEngine.txService.start()
-            // Recovering backup 1st
-            await coinageTransferMonitor.setup()
-            await w3sPaymentTracking.setup()
-            await depositService.setup()
-        }
-    }
-
-    func throttle() {
-        #if FEATURE_DIMS
-            determineStateSyncService.throttle()
-            personhoodBackgroundService.throttle()
-        #endif
-
-        chatCoordinator.throttle()
-        chatRequestCoordinator.throttle()
-        fiatOnrampTrackingService.throttle()
-        attachmentUploadService.throttle()
-        attachmentDownloadService.throttle()
-        notificationBadgeSyncService.throttle()
-        allowanceRenewalService.throttle()
-
-        messageExpansionService.stop()
-        durableTransactionEngine.txService.stop()
-
-        Task {
-            await deviceSyncService.throttle()
-            await coinageTransferMonitor.throttle()
-            await w3sPaymentTracking.throttle()
-            await signInHostCoordinator.throttle()
-            await depositService.throttle()
-        }
-    }
-}
+extension ServiceCoordinator: ServiceCoordinatorProtocol {}
 
 extension ServiceCoordinator {
+    @MainActor
     // swiftlint:disable:next function_body_length
-    static func createDefault(spaFlowState: SPAFlowState) -> ServiceCoordinatorProtocol? {
+    static func createDefault(spaFlowState: SPAFlowState) -> ServiceCoordinator? {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
 
         // The dashboard is only reachable after onboarding cached the TLD, so built-in accounts
@@ -258,8 +175,13 @@ extension ServiceCoordinator {
             return nil
         }
 
+        let statementStoreMonitor = StatementStoreActivityMonitor()
+        let identitySigningFallback = NonPrivateSigningFallback.makeDefault()
         let chatCoordinatorFactory = MessageExchangeCoordinatorFactory(
-            bulletInManager: allowanceManagerFacade.bulletInManager
+            bulletInManager: allowanceManagerFacade.bulletInManager,
+            statementAccountFunding: allowanceManagerFacade.sssManager,
+            identitySigningFallback: identitySigningFallback,
+            statementStoreMonitor: statementStoreMonitor
         )
 
         let allowanceSupport = AllowanceSupport(
@@ -285,7 +207,7 @@ extension ServiceCoordinator {
         )
 
         let sponsorVrfRepo: BandersnatchManagerRepositoryProtocol = .shared
-        guard let sponsorKeyResolver = try? sponsorVrfRepo.keyResolver() else {
+        guard let personKeyResolver = try? sponsorVrfRepo.keyResolver() else {
             return nil
         }
 
@@ -293,7 +215,7 @@ extension ServiceCoordinator {
             accountManager: accountManager,
             resourceKeyManager: resourceKeyManager,
             chainRegistry: ChainRegistryFacade.sharedRegistry,
-            keyResolver: sponsorKeyResolver,
+            keyResolver: personKeyResolver,
             logger: logger
         )
 
@@ -312,6 +234,38 @@ extension ServiceCoordinator {
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
+        CoreDurableRecoveryTask.shared.attach(
+            truapiRuntimeProvider,
+            executor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
+        )
+
+        let gameReminders = ProductGameReminderCenter.makeDefault()
+        RootDependencyLocator.setDependency(gameReminders as ProductGameReminderScheduling)
+        RootDependencyLocator.setDependency(gameReminders as ProductGamePillProviding)
+
+        let productFileProvider = CompositeProductFileProvider(
+            dotNsContentStorage: DotNsContentStorage(),
+            chatScriptStorage: FileChatScriptStorage(),
+            contentHashCache: ContentHashCache.shared
+        )
+
+        // Built here rather than alongside chat: every modality is served from
+        // one worker per product, and hanging the Pocket off chat's assembly
+        // would let any chat service failing take every live card face with it,
+        // silently.
+        var pocket: ProductPocketService?
+        if let service = ProductPocketService.make(runtimeProvider: truapiRuntimeProvider) {
+            RootDependencyLocator.setDependency(service)
+            service.start(
+                runtimeProvider: truapiRuntimeProvider,
+                flowState: spaFlowState,
+                productFileProvider: productFileProvider,
+                chainRegistry: ChainRegistryFacade.sharedRegistry,
+                gameReminders: gameReminders,
+                themeManager: MainActor.assumeIsolated { ThemeManager.shared }
+            )
+            pocket = service
+        }
 
         guard
             let signInHostCoordinator = createSignInHostCoordinator(
@@ -340,22 +294,31 @@ extension ServiceCoordinator {
                 bulletInManager: allowanceManagerFacade.bulletInManager
             ),
             let attachmentDownloadService = createAttachmentDownloadService(),
-            let syncServiceResult = createDetermineStateSyncService(),
-            let deviceSyncService = try? createDeviceSyncService(turnService: turnService, logger: logger)
+            let deviceSyncService = try? createDeviceSyncService(turnService: turnService, logger: logger),
+            let notificationAllocator = try? createNotificationAllocator(
+                durable: coinageServices.durableTransactionEngine,
+                keyResolver: personKeyResolver
+            )
         else {
             return nil
         }
 
-        guard let personhoodServices = createPersonhoodServices(
-            syncStateStore: syncServiceResult.syncStore
-        ) else {
-            return nil
-        }
-
-        let chatRequestCoordinator = createChatRequestCoordinator()
+        let chatRequestServiceFactory = createChatRequestServiceFactory(
+            notificationAllocator: notificationAllocator,
+            signingFallback: identitySigningFallback
+        )
+        let durabilityRenewal = StatementDurabilityRenewalService(
+            allowances: allowanceManagerFacade,
+            renewers: chatRequestServiceFactory,
+            issues: StatementRenewalIssueDiagnostics.make(reporter: IssueReportingFacade.shared),
+            sharedRun: SharedRun(cancelledValue: .cancelled),
+            logger: logger
+        )
+        let chatRequestCoordinator = createChatRequestCoordinator(serviceFactory: chatRequestServiceFactory)
         let audioSessionManager = AudioSessionManager()
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
+        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport, hostProvider: spaFlowState.hostProvider)
 
         let truApiDependencies = TruApiDependenciesLocator()
         truApiDependencies.setDependency(allowanceSupport)
@@ -365,25 +328,18 @@ extension ServiceCoordinator {
         let (chatExtensionsRegistry, productWorkerFacade) = createChatExtensionsRegistry(
             accountManager: accountManager,
             truapiRuntimeProvider: truapiRuntimeProvider,
-            syncStore: syncServiceResult.syncStore,
-            personDataStore: syncServiceResult.personDataStore,
-            syncService: syncServiceResult.service,
-            personhoodRegistrationService: personhoodServices.registrationService,
-            audioSessionManager: audioSessionManager,
-            spaFlowState: spaFlowState
+            spaFlowState: spaFlowState,
+            productFileProvider: productFileProvider,
+            pocket: pocket
         )
         // Registered so the SPA screen, opened outside this assembly, resolves the
         // same facade.
         RootDependencyLocator.setDependency(productWorkerFacade)
-
-        let fiatOnrampConfiguration = MeldFiatOnrampConfiguration.prod
-        let fiatOnrampStorage = FiatOnrampStorage()
-        let fiatOnrampService = MeldFiatOnrampService(configuration: fiatOnrampConfiguration)
-        let fiatOnrampTrackingService = FiatOnrampTrackingServicing(
-            depositService: depositService,
-            fiatOnrampService: fiatOnrampService,
-            fiatOnrampStorage: fiatOnrampStorage,
-            clock: ContinuousClock()
+        registerProductUpdates(
+            contentLoader: spaFlowState.contentLoader,
+            workerReloader: ProductWorkerReloader(truapiWorkers: { [pocket] in pocket?.workers }),
+            iconFactory: spaFlowState.iconViewModelFactory,
+            logger: logger
         )
 
         let callCoordinator = RealCallCoordinator(
@@ -399,10 +355,9 @@ extension ServiceCoordinator {
         let notificationBadgeSyncService = NotificationBadgeSyncService(logger: logger)
 
         let messageExpansionService = createCompactedMessageExpansionService(logger: logger)
-        let allowanceRenewalService = AllowanceRenewalService(
-            managerFacade: allowanceManagerFacade,
-            appStateStreamFactory: ApplicationStateStreamFactory(),
-            logger: logger
+        let statementRenewalLoop = StatementRenewalLoop(
+            durabilityRenewal: durabilityRenewal,
+            backgroundExecutor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
         )
 
         let networkStatusService = NetworkStatusService(
@@ -421,20 +376,26 @@ extension ServiceCoordinator {
             chainTimeProviders: createChainTimeProviders()
         )
 
+        let statementStoreStatusService = StatementStoreStatusService(
+            networkStatusService: networkStatusService,
+            activityMonitor: statementStoreMonitor,
+            logger: logger
+        )
+
         let chainStatusProvider = ChainStatusProvider(
             networkStatusService: networkStatusService,
             blockProvider: chainBlockProvider,
             anchorProvider: chainLivenessAnchorProvider,
             appStateStreamFactory: ApplicationStateStreamFactory(),
+            statementStoreStatusProvider: statementStoreStatusService,
+            chainRegistry: ChainRegistryFacade.sharedRegistry,
             logger: logger
         )
+        RootDependencyLocator.setDependency(chainStatusProvider as ChainStatusProviding)
 
         return ServiceCoordinator(
             chatCoordinator: chatCoordinator,
             depositService: depositService,
-            fiatOnrampService: fiatOnrampService,
-            fiatOnrampTrackingService: fiatOnrampTrackingService,
-            fiatOnrampStorage: fiatOnrampStorage,
             polkadotHandshakeService: PolkadotHandshakeService(
                 rootWallet: DynamicDerivedWallet(derivationPath: nil),
                 identityWallet: mainWallet,
@@ -453,15 +414,13 @@ extension ServiceCoordinator {
             durableTransactionEngine: coinageServices.durableTransactionEngine,
             w3sPaymentTracking: coinageServices.w3sPaymentTracking,
             audioSessionManager: audioSessionManager,
-            determineStateSyncService: syncServiceResult.service,
-            personhoodBackgroundService: personhoodServices.backgroundService,
-            personDataStore: syncServiceResult.personDataStore,
             coinageBackupSyncService: coinageServices.backupSyncService,
             messageExpansionService: messageExpansionService,
             notificationBadgeSyncService: notificationBadgeSyncService,
             accountManager: accountManager,
             allowanceManagerFacade: allowanceManagerFacade,
-            allowanceRenewalService: allowanceRenewalService,
+            statementRenewalLoop: statementRenewalLoop,
+            durabilityRenewal: durabilityRenewal,
             paymentsSupport: paymentsSupport,
             turnService: turnService,
             deviceSyncService: deviceSyncService,
@@ -469,6 +428,7 @@ extension ServiceCoordinator {
             chainStatusProvider: chainStatusProvider,
             truapiRuntimeProvider: truapiRuntimeProvider,
             tldProvider: DotNsTldProviderFacade.shared,
+            pocket: pocket,
             logger: logger
         )
     }
@@ -513,7 +473,27 @@ private extension ServiceCoordinator {
 }
 
 private extension ServiceCoordinator {
-    static func createChatRequestCoordinator() -> ChatRequestCoordinatorServicing {
+    static func createChatRequestServiceFactory(
+        notificationAllocator: NotificationStatementAccountAllocating,
+        signingFallback: NonPrivateSigningFallbacking
+    ) -> ChatRequestServiceFactory {
+        ChatRequestServiceFactory(
+            remoteContactResolver: CompoundRemoteContactResolver(
+                resolvers: [
+                    remoteAccountOperation(chatChainId: AppConfig.Chains.assethubChain)
+                ],
+                logger: Logger.shared
+            ),
+            notificationAllocator: notificationAllocator,
+            signingFallback: signingFallback,
+            backgroundExecutor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry),
+            issueReporter: IssueReportingFacade.shared
+        )
+    }
+
+    static func createChatRequestCoordinator(
+        serviceFactory: ChatRequestServiceFactory
+    ) -> ChatRequestCoordinatorServicing {
         let storageFacade = UserDataStorageFacade.shared
         let operationQueue = OperationManagerFacade.sharedDefaultQueue
         let logger = Logger.shared
@@ -529,30 +509,8 @@ private extension ServiceCoordinator {
                 operationQueue: operationQueue,
                 logger: logger
             ),
-            serviceFactory: ChatRequestServiceFactory(
-                remoteContactResolver: CompoundRemoteContactResolver(
-                    resolvers: [
-                        playerContactOperation(chatChainId: AppConfig.Chains.usernameChain),
-                        remoteAccountOperation(chatChainId: AppConfig.Chains.usernameChain)
-                    ],
-                    logger: Logger.shared
-                )
-            ),
-            logger: Logger.shared
-        )
-    }
-
-    static func playerContactOperation(chatChainId: ChainModel.Id) -> RemoteContactResolving {
-        let identifierService = ChatIdentifierService(
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            chain: chatChainId,
-            operationQueue: OperationManagerFacade.sharedDefaultQueue,
-            logger: Logger.shared
-        )
-
-        return PlayerContactOperationFactory(
-            gameVotesRepositoryFactory: GameVoteRepositoryFactory(),
-            identifierService: identifierService
+            serviceFactory: serviceFactory,
+            logger: logger
         )
     }
 
@@ -645,64 +603,5 @@ private extension ServiceCoordinator {
         }
 
         return providers
-    }
-}
-
-// MARK: - DetermineStateSyncService Creation
-
-private extension ServiceCoordinator {
-    static func createDetermineStateSyncService() -> (
-        service: DetermineStateSyncService,
-        syncStore: DetermineStateSyncStore,
-        personDataStore: DetermineStatePersonDataStore
-    )? {
-        let logger = Logger.shared
-        let walletRepo: WalletManagerRepositoryProtocol = .shared
-        let vrfRepo: BandersnatchManagerRepositoryProtocol = .shared
-
-        guard
-            let mainAccountId = try? walletRepo.main().getRawPublicKey(),
-            let candidateAccountId = try? walletRepo.candidate().getRawPublicKey(),
-            let mobRuleAccountId = try? walletRepo.mobRuleAlias().getRawPublicKey(),
-            let scoreAccountId = try? walletRepo.scoreAlias().getRawPublicKey(),
-            let resourcesAccountId = try? walletRepo.resourcesAlias().getRawPublicKey()
-        else {
-            logger.error("Failed to get wallet account IDs for DetermineStateSyncService")
-            return nil
-        }
-
-        guard
-            let vrfManager = try? vrfRepo.fullPerson(),
-            let memberKey = try? vrfManager.getMemberKey()
-        else {
-            logger.error("Failed to get member key for DetermineStateSyncService")
-            return nil
-        }
-
-        let syncQueue = DispatchQueue(label: "io.polkadot.app.dims.service.queue")
-
-        let personDataStore = DetermineStatePersonDataStore(
-            candidateAccountId: candidateAccountId,
-            logger: logger
-        )
-
-        let syncStore = DetermineStateSyncStore(logger: logger)
-
-        let syncService = DetermineStateSyncService(
-            walletAccountId: mainAccountId,
-            candidateAccountId: candidateAccountId,
-            mobRuleAccountId: mobRuleAccountId,
-            scoreAccountId: scoreAccountId,
-            resourcesAccountId: resourcesAccountId,
-            memberKey: memberKey,
-            chainId: AppConfig.Chains.usernameChain,
-            chainRegistry: ChainRegistryFacade.sharedRegistry,
-            observers: [syncStore, personDataStore],
-            operationQueue: OperationManagerFacade.sharedDefaultQueue,
-            proccessingQueue: syncQueue,
-            logger: logger
-        )
-
-        return (service: syncService, syncStore: syncStore, personDataStore: personDataStore)
     }
 }

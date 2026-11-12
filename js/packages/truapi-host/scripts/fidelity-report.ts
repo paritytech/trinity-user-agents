@@ -44,5 +44,8 @@ const rows = await runDiagnosis(client, {
 dispose();
 
 mkdirSync(dirname(REPORT_PATH), { recursive: true });
-writeFileSync(REPORT_PATH, renderDiagnosisReport("TrUAPI Mock Host Diagnosis", rows));
+writeFileSync(
+  REPORT_PATH,
+  renderDiagnosisReport("TrUAPI Mock Host Diagnosis", rows),
+);
 console.error(`wrote ${REPORT_PATH}`);

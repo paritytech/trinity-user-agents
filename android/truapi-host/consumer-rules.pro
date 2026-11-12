@@ -3,7 +3,7 @@
 # JNA reflects into our generated UniFFI types at runtime, so the bindings
 # package and the public Kotlin surface must survive shrinking.
 
--keep class uniffi.truapi_server.** { *; }
+-keep class uniffi.truapi.** { *; }
 -keep class io.parity.truapi.** { *; }
 
 # JNA itself.

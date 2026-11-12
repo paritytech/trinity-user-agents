@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import KeyDerivation
 import SubstrateSdk
@@ -9,15 +10,22 @@ public protocol ProductsNativeApiProtocol: AnyObject {
     func accountGet(_ accountId: ProductAccountId) async throws -> ProductAccountResult
 
     func accountGetAlias(
+        keyHandle: RingVrfKeyHandle,
         context: ProductProofContext,
         ring: RingLocation
     ) async throws -> AccountGetAliasResult
 
     func accountCreateProof(
+        keyHandle: RingVrfKeyHandle,
         context: ProductProofContext,
         ring: RingLocation,
         message: Data
     ) async throws -> RingVrfProofResult
+
+    func listRingVrfKeys(
+        owner: ProductId,
+        disclosure: RingVrfKeyDisclosure
+    ) async throws -> [RegisteredRingVrfKey]
 
     func signVrf(_ payload: SignVrfPayload) async throws -> VrfSignature
     func chainNodes(genesisHash: String) async throws -> [String]
@@ -176,7 +184,8 @@ public struct RingVrfProofResult: Codable {
 
 public enum ProductBotMessage {
     case text(String)
-    case custom(messageType: String, data: Data)
+    /// `alt` is the product's one-line description, shown where the card is listed rather than drawn.
+    case custom(messageType: String, data: Data, alt: String?)
 }
 
 // MARK: - Signing

@@ -25,7 +25,7 @@ enum class RawConnectivity {
 }
 
 data class ConnectionSmoothingConfig(
-    val stabilityWindow: Duration,
+    val lossHold: Duration,
     val flapWindow: Duration,
     val flapDropThreshold: Int,
     val flapHold: Duration,
@@ -33,7 +33,7 @@ data class ConnectionSmoothingConfig(
 ) {
     companion object {
         val Default = ConnectionSmoothingConfig(
-            stabilityWindow = 3.seconds,
+            lossHold = 3.seconds,
             flapWindow = 30.seconds,
             flapDropThreshold = 2,
             flapHold = 5.seconds,
@@ -43,10 +43,10 @@ data class ConnectionSmoothingConfig(
 }
 
 /**
- * Hysteresis over the raw connectivity so reconnect storms read as a steady "connecting" rather than
- * flickering. A first connect reports [ChainConnectionPresentation.Connected] at once; every later one
- * waits out a stability window, extended while flapping. A settled disconnect waits out a cooldown
- * before reporting [ChainConnectionPresentation.Disconnected].
+ * Hysteresis over the raw connectivity, biased towards the good news. A connect reports
+ * [ChainConnectionPresentation.Connected] at once; a drop after it is held back for a loss hold,
+ * extended while flapping, so a reconnect that lands inside the hold never shows. A settled disconnect
+ * waits out a cooldown before reporting [ChainConnectionPresentation.Disconnected].
  */
 @OptIn(ExperimentalCoroutinesApi::class, ExperimentalTime::class)
 class ConnectionSmoother internal constructor(
@@ -58,7 +58,6 @@ class ConnectionSmoother internal constructor(
 
     fun smooth(source: Flow<RawConnectivity>): Flow<ChainConnectionPresentation> = flow {
         val drops = ArrayDeque<Long>()
-        var everConnected = false
 
         val transitions = source
             .runningFold(Transition(null, null)) { acc, state -> Transition(acc.current, state) }
@@ -66,20 +65,11 @@ class ConnectionSmoother internal constructor(
 
         emitAll(
             transitions.transformLatest { (previous, current) ->
-                val nowConnected = current == RawConnectivity.Connected
                 val wasConnected = previous == RawConnectivity.Connected
-                if (wasConnected && !nowConnected) recordDrop(drops)
+                if (wasConnected && current != RawConnectivity.Connected) recordDrop(drops)
 
                 when {
-                    nowConnected -> {
-                        val settleFor = settleDelay(everConnected, drops)
-                        if (!wasConnected && settleFor > Duration.ZERO) {
-                            emit(ChainConnectionPresentation.Connecting)
-                            delay(settleFor)
-                        }
-                        everConnected = true
-                        emit(ChainConnectionPresentation.Connected)
-                    }
+                    current == RawConnectivity.Connected -> emit(ChainConnectionPresentation.Connected)
 
                     // No cooldown: a device with no network has a known cause, unlike a socket that merely went quiet.
                     current == RawConnectivity.Offline -> emit(ChainConnectionPresentation.Offline)
@@ -90,20 +80,19 @@ class ConnectionSmoother internal constructor(
                         emit(ChainConnectionPresentation.Disconnected)
                     }
 
-                    else -> emit(ChainConnectionPresentation.Connecting)
+                    else -> {
+                        if (wasConnected) delay(lossHold(drops))
+                        emit(ChainConnectionPresentation.Connecting)
+                    }
                 }
             }.distinctUntilChanged(),
         )
     }
 
-    private fun settleDelay(everConnected: Boolean, drops: ArrayDeque<Long>): Duration {
+    private fun lossHold(drops: ArrayDeque<Long>): Duration {
         purgeOld(drops, now())
 
-        return when {
-            !everConnected -> Duration.ZERO
-            drops.size >= config.flapDropThreshold -> config.flapHold
-            else -> config.stabilityWindow
-        }
+        return if (drops.size >= config.flapDropThreshold) config.flapHold else config.lossHold
     }
 
     private fun now(): Long = timeProvider.now().toEpochMilliseconds()

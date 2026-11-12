@@ -40,7 +40,6 @@ final class ChatViewModelFactory {
     let productRepository: AnyDataProviderRepository<Product>
     let productNameCache: ProductNameCaching
     let flowState: SPAFlowState
-    let paymentAssetBranding: PaymentAssetBrandingProviding
     let logger: LoggerProtocol
 
     init(
@@ -53,7 +52,6 @@ final class ChatViewModelFactory {
         productRepository: AnyDataProviderRepository<Product>,
         productNameCache: ProductNameCaching,
         flowState: SPAFlowState,
-        paymentAssetBranding: PaymentAssetBrandingProviding = PaymentAssetBranding.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.timeFormatter = timeFormatter
@@ -64,7 +62,6 @@ final class ChatViewModelFactory {
         self.productRepository = productRepository
         self.productNameCache = productNameCache
         self.flowState = flowState
-        self.paymentAssetBranding = paymentAssetBranding
         self.logger = logger
         customDecodersById = customDecoders.reduce(into: [:]) {
             $0[$1.identifier.rawValue] = $1
@@ -79,7 +76,9 @@ extension ChatViewModelFactory: ChatViewModelMaking {
         actions: ChatViewModelActions,
         footerConfiguration: (any HashableContentConfiguration)?
     ) -> ChatViewLayout.ViewModel {
-        let headerConfiguration = metadata.chatMetadata.chatContactInfo
+        let headerConfiguration = metadata.chatMetadata.chatContactInfo(
+            iconViewModelFactory: flowState.iconViewModelFactory
+        )
 
         let inputConfiguration = makeInputConfiguration(for: metadata.chatMetadata, actions: actions)
 
@@ -280,9 +279,7 @@ private extension ChatViewModelFactory {
             ? Date.fromChatTimestamp(message.timestamp)
             : nil
 
-        let inboxBubbleStyle = PolkadotPrizesBubbleStyleResolver.style(
-            for: metadata.chatMetadata.chatId
-        )
+        let inboxBubbleStyle: InboxBubbleStyle? = nil
 
         switch message.content {
         case let .text(text),
@@ -756,9 +753,9 @@ private extension ChatViewModelFactory {
             statusConfiguration = .inbox(date: deliveryDate, formatter: timeFormatter)
 
             configuration = ChatTransferMessageConfiguration.inbox(
+                currencySymbol: AppConfig.Brand.fiatSymbol,
                 amount: amountString,
                 tokenSymbol: tokenSymbol,
-                assetIcon: paymentAssetBranding.current.squareIcon,
                 originalAmount: originalAmountString,
                 from: peerMetadata.name,
                 state: content.incomingViewState,
@@ -775,9 +772,9 @@ private extension ChatViewModelFactory {
             )
 
             configuration = ChatTransferMessageConfiguration.outbox(
+                currencySymbol: AppConfig.Brand.fiatSymbol,
                 amount: amountString,
                 tokenSymbol: tokenSymbol,
-                assetIcon: paymentAssetBranding.current.squareIcon,
                 originalAmount: originalAmountString,
                 state: content.outgoingViewState,
                 statusConfiguration: statusConfiguration,
@@ -906,7 +903,7 @@ private extension ChatViewModelFactory {
         actions: ChatViewModelActions,
         inboxBubbleStyle: InboxBubbleStyle? = nil
     ) -> IdentifiableAnyContentConfiguration<ChatViewLayout.ItemIdentifierType> {
-        let accessibilityId = AccessibilityID.Game.welcomeCard(text: text)
+        let accessibilityId: (any AccessibilityIdentifying)? = nil
         var cellConfig: ChatMessageContainerConfiguration =
             if let style = inboxBubbleStyle {
                 .botTextImage(
@@ -994,6 +991,7 @@ extension Chat.LocalMessage.Status.OutgoingStatus {
         case .new: .pending
         case .sent: .sent
         case .delivered: .delivered
+        case .failed: .failed
         }
     }
 }

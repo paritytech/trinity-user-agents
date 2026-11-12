@@ -9,4 +9,10 @@ interface StatementStoreOrigins {
         seq: UInt,
         collection: PeopleCollection,
     ): Result<TransactionOrigin>
+
+    suspend fun asResourcesNotificationSlot(
+        period: UInt,
+        seq: UByte,
+        collection: PeopleCollection,
+    ): Result<TransactionOrigin>
 }

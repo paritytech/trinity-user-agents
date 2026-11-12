@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Testing
 @testable import polkadot_app
@@ -19,7 +20,7 @@ final class TrUAPIStorageTests {
 
     @Test func productStorageRoundTrip() throws {
         let storage = TrUAPILocalStorage.createProductLocalStorage(
-            productId: "test.product",
+            productId: try! ProductId("test.product.dot"),
             defaults: defaults
         )
         let value = Data([0x01, 0x02])
@@ -32,12 +33,77 @@ final class TrUAPIStorageTests {
     }
 
     @Test func productStorageIsolatesProducts() throws {
-        let first = TrUAPILocalStorage.createProductLocalStorage(productId: "a", defaults: defaults)
-        let second = TrUAPILocalStorage.createProductLocalStorage(productId: "b", defaults: defaults)
+        let first = TrUAPILocalStorage.createProductLocalStorage(productId: try! ProductId("a.dot"), defaults: defaults)
+        let second = TrUAPILocalStorage.createProductLocalStorage(
+            productId: try! ProductId("b.dot"),
+            defaults: defaults
+        )
 
         try first.write(key: "k", value: Data([0x01]))
 
         #expect(try second.read(key: "k") == nil)
+    }
+
+    /// The core addresses a granted foreign read with the owner's key; it must
+    /// land in the owner's store, not the reader's.
+    @Test func foreignReadReachesTheOwnersStorage() throws {
+        let owner = TrUAPILocalStorage.createProductLocalStorage(
+            productId: try! ProductId("counter.paseo"),
+            defaults: defaults
+        )
+        let reader = TrUAPILocalStorage.createProductLocalStorage(
+            productId: try! ProductId("oracle.paseo"),
+            defaults: defaults
+        )
+        let key = "truapi:product-storage:v1:13:counter.paseo:count"
+
+        try owner.write(key: key, value: Data([0x07]))
+
+        #expect(try reader.read(key: key) == Data([0x07]))
+    }
+
+    /// Only reads follow the owner in the key, so a write or clear addressed at
+    /// another product can never land in that product's store.
+    @Test func writesAndClearsStayInTheCallersStore() throws {
+        let owner = TrUAPILocalStorage.createProductLocalStorage(
+            productId: try! ProductId("counter.paseo"),
+            defaults: defaults
+        )
+        let other = TrUAPILocalStorage.createProductLocalStorage(
+            productId: try! ProductId("oracle.paseo"),
+            defaults: defaults
+        )
+        let key = "truapi:product-storage:v1:13:counter.paseo:count"
+        try owner.write(key: key, value: Data([0x01]))
+
+        try other.write(key: key, value: Data([0x02]))
+        try other.clear(key: key)
+
+        #expect(try owner.read(key: key) == Data([0x01]))
+    }
+
+    @Test func ownKeysKeepTheirPhysicalKey() throws {
+        let storage = TrUAPILocalStorage.createProductLocalStorage(
+            productId: try! ProductId("counter.paseo"),
+            defaults: defaults
+        )
+        let key = "truapi:product-storage:v1:13:counter.paseo:count"
+
+        try storage.write(key: key, value: Data([0x01]))
+
+        #expect(defaults.data(forKey: "io.polkadotapp.truapi.product.store.counter.paseo.\(key)") == Data([0x01]))
+    }
+
+    @Test func ownerIsReadFromTheCoreKeyFormat() {
+        #expect(ProductStorageKey
+            .owner(of: "truapi:product-storage:v1:13:counter.paseo:a:b") == (try! ProductId("counter.paseo")))
+        #expect(ProductStorageKey.owner(of: "truapi:product-storage:v1:7:caf\u{e9}.p:k") == nil)
+        #expect(ProductStorageKey.owner(of: "truapi:product-storage:v1:13:counter.paseo") == nil)
+        #expect(ProductStorageKey.owner(of: "truapi:product-storage:v1:12:counter.paseo:k") == nil)
+        #expect(ProductStorageKey.owner(of: "truapi:product-storage:v1:99:counter.paseo:k") == nil)
+        #expect(ProductStorageKey.owner(of: "truapi:product-storage:v1:x:counter.paseo:k") == nil)
+        #expect(ProductStorageKey.owner(of: "truapi:product-storage:v1:4:caf\u{e9}.p:k") == nil)
+        #expect(ProductStorageKey.owner(of: "k") == nil)
     }
 
     @Test func coreStorageRoundTrip() throws {
@@ -55,7 +121,7 @@ final class TrUAPIStorageTests {
     @Test func coreStorageIsolatedFromProductStorage() throws {
         let core = TrUAPILocalStorage.createCoreLocalStorage(defaults: defaults)
         let product = TrUAPILocalStorage.createProductLocalStorage(
-            productId: "test.product",
+            productId: try! ProductId("test.product.dot"),
             defaults: defaults
         )
 

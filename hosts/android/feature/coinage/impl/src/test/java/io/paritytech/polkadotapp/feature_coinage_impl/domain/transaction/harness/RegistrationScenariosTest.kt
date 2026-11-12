@@ -238,6 +238,87 @@ class RegistrationScenariosTest {
         assertFalse(ownedEntries.isOwnedBySubmission(id))
     }
 
+    /**
+     * **Single handoff**: an asset leaves the device once, or the second memo carries the same private key
+     * and two peers hold the same coin.
+     *
+     * The mark is asserted to survive a relaunch: a second mark would be uncommitted, so a rejection that
+     * nonetheless wrote one would lose the committed mark the first handoff left.
+     */
+    @Test
+    fun `a second handoff of an asset already handed off is rejected`() = scenario {
+        mintCoinsOnChain(COIN_A, finality = FINALIZED)
+        service.preCommitHandoff(listOf(OwnAsset.Coin(testKey(COIN_A)))).getOrThrow().commit().getOrThrow()
+
+        val second = service.preCommitHandoff(listOf(OwnAsset.Coin(testKey(COIN_A))))
+
+        assertEquals(
+            CoinageRegistrationError.HandoffOfHandedOffAsset(OwnAsset.Coin(testKey(COIN_A))),
+            second.exceptionOrNull(),
+        )
+        assertTrue(assetStateOf(COIN_A).handedOff)
+        relaunch()
+        assertTrue("the first mark is the one that stays in place", assetStateOf(COIN_A).handedOff)
+    }
+
+    @Test
+    fun `a handoff whose mark was released can be marked again`() = scenario {
+        mintCoinsOnChain(COIN_A, finality = FINALIZED)
+        val handoff = service.preCommitHandoff(listOf(OwnAsset.Coin(testKey(COIN_A)))).getOrThrow()
+
+        handoff.release().getOrThrow()
+
+        assertFalse("the payment never went through, so nothing left the device", assetStateOf(COIN_A).handedOff)
+        assertTrue(service.preCommitHandoff(listOf(OwnAsset.Coin(testKey(COIN_A)))).isSuccess)
+        assertTrue(assetStateOf(COIN_A).handedOff)
+    }
+
+    @Test
+    fun `marks nothing when a prepared handoff is not committed`() = scenario {
+        mintCoinsOnChain(COIN_A, finality = FINALIZED)
+
+        service.prepareHandoff(listOf(OwnAsset.Coin(testKey(COIN_A)))).getOrThrow()
+
+        assertFalse(assetStateOf(COIN_A).handedOff)
+    }
+
+    @Test
+    fun `keeps the mark across a relaunch when a prepared handoff is committed`() = scenario {
+        mintCoinsOnChain(COIN_A, finality = FINALIZED)
+
+        service.prepareHandoff(listOf(OwnAsset.Coin(testKey(COIN_A)))).getOrThrow().commit().getOrThrow()
+
+        relaunch()
+        assertTrue(assetStateOf(COIN_A).handedOff)
+    }
+
+    @Test
+    fun `fails the commit and keeps the first mark when the prepared asset was handed off meanwhile`() = scenario {
+        mintCoinsOnChain(COIN_A, finality = FINALIZED)
+        val prepared = service.prepareHandoff(listOf(OwnAsset.Coin(testKey(COIN_A)))).getOrThrow()
+        service.preCommitHandoff(listOf(OwnAsset.Coin(testKey(COIN_A)))).getOrThrow().commit().getOrThrow()
+
+        assertEquals(
+            CoinageRegistrationError.HandoffOfHandedOffAsset(OwnAsset.Coin(testKey(COIN_A))),
+            prepared.commit().exceptionOrNull(),
+        )
+        relaunch()
+        assertTrue(assetStateOf(COIN_A).handedOff)
+    }
+
+    @Test
+    fun `fails the commit and marks nothing when the prepared asset was claimed meanwhile`() = scenario {
+        mintCoinsOnChain(COIN_A, finality = FINALIZED)
+        val prepared = service.prepareHandoff(listOf(OwnAsset.Coin(testKey(COIN_A)))).getOrThrow()
+        givenUnwatchedEntry(inputCoin = COIN_A, outputCoin = COIN_B)
+
+        assertEquals(
+            CoinageRegistrationError.HandoffOfClaimedAsset(OwnAsset.Coin(testKey(COIN_A))),
+            prepared.commit().exceptionOrNull(),
+        )
+        assertFalse(assetStateOf(COIN_A).handedOff)
+    }
+
     @Test
     fun `a batch registers every transaction under its group and takes ownership of each`() = scenario {
         mintCoinsOnChain(COIN_A, COIN_D, finality = FINALIZED)

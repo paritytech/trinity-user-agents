@@ -1,5 +1,60 @@
 # @parity/truapi-provider
 
+## 0.4.0
+
+### Minor Changes
+
+- 88cf440: `connect` on a provider with an `addRpcChain` registration fails for any chain not registered on it, instead
+  of starting the light client for it from the bundled catalog. A provider without one still reaches every bundled
+  network by genesis hash. To mix the two, call `addNetwork` before `addRpcChain`: `addNetwork` registers all four
+  chains of the network, and a later registration replaces an earlier one.
+
+### Patch Changes
+
+- 220baea: Refactor the Rust host runtime and browser provider to the workspace Rust guidance: unit tests live in their
+  own files, lint suppressions are removed by fixing their causes, unused functions and derives are dropped, and
+  truncating casts are checked. The JavaScript API and wire protocol are unchanged.
+
+## 0.3.2
+
+### Patch Changes
+
+- b4a1e6e: The bundled Paseo and previewnet relay chain specs carry fresh warp-sync checkpoints, so a cold-start light
+  client syncs from a recent finalized block.
+
+## 0.3.1
+
+### Patch Changes
+
+- b92e186: `ChainProviderBuilder.setConnectionTypes({ secure, localhost, unsecure })` limits the kinds of connection the
+  light client opens to peers: `wss://`, plain `ws://` to localhost, and plain `ws://` to any other peer. Each defaults
+  to `true`; a page served over `https` can pass `{ unsecure: false }`, since the browser blocks those dials there as
+  mixed content.
+- b92e186: The bundled Paseo and previewnet relay chain specs carry warp-sync checkpoints at blocks 1264462 and 158908,
+  so a cold-start light client warp-syncs from a recent finalized block.
+
+## 0.3.0
+
+### Minor Changes
+
+- 715742a: A light-client connection holds the requests it is sent until smoldot first reports the chain as synced, then
+  forwards them in the order they arrived, so every request is answered by a chain that has caught up. `chainSpec_v1_*`
+  queries, `statement_*` and `bitswap_*` calls, and the `lifecycle_unstable_*` subscription, which reports the sync
+  itself, are forwarded straight away. Held requests count against the 1024-frame budget of a connection, so a chain
+  that never syncs refuses further requests with "light client response queue full".
+
+  `provider.lifecycle(genesisHash)` watches the sync progress of a chain something is connected to. Each `next()` on the
+  returned watch resolves with a `ChainLifecycle`: the phase (`connecting`, `syncing` with `at` and `target`, or
+  `ready`), the connected peer count, and the health (`ok`, or `stalled` for `noPeers` or `noProgress`). The first call
+  resolves with the current state, later ones with each change, and `undefined` after `close()` or once nothing holds
+  the chain.
+
+### Patch Changes
+
+- de343d4: The `truapi-host` CLI previewnet preset and truapi-provider's previewnet catalog carry the relay, Asset Hub,
+  Bulletin and People genesis hashes previewnet reports after its latest reset, and the bundled previewnet chain specs
+  match them.
+
 ## 0.2.2
 
 ### Patch Changes

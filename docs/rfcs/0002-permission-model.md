@@ -9,13 +9,16 @@ owner: "@johnthecat"
 > This RFC below specifies batched remote-permission requests (`remote_permission` taking a `Vec<RemotePermission>`). That part has been rolled back: `remote_permission` again accepts a single `RemotePermission`. After the initial implementation it became clear that the batched API is hard to justify to the end user — a single prompt covering several distinct grants produces bad UX (the user cannot reason about or selectively approve what they are consenting to). The rest of this RFC (device permissions, lifecycle, persistence, implicit triggering) still stands; only the batching of remote permissions is reverted.
 
 > **NOTE (2026-08-18): first-party products hold remote permissions without a prompt.**
-> The lifecycle below specifies that every permission is prompted on first request. That holds for device permissions, identity disclosure and cross-product account access, but not for remote permissions requested by a product on the trusted list in `truapi_platform::REMOTE_PERMISSION_TRUSTED_LABELS`. Those products hold every `RemotePermission` variant — domain access, WebRTC, chain submit, preimage submit, statement submit — without a prompt, because they ship alongside the host and their remote access belongs to the host's own trust boundary. The grant is not persisted, so a `Denied` written through the permission administration surface still outranks it and revokes the access; clearing that denial restores the auto-grant. An empty `Remote` domain bundle remains denied, since it grants nothing. The list holds bare product labels with no TLD, so one entry covers the product on every network. This is an interim mechanism: the allowlist is intended to move into the product manifest, per RFC 0024.
+> The lifecycle below specifies that every permission is prompted on first request. That holds for device permissions, identity disclosure and cross-product account access, but not for remote permissions requested by a product on the trusted list in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS`. Those products hold every `RemotePermission` variant — domain access, WebRTC, chain submit, preimage submit, statement submit — without a prompt, because they ship alongside the host and their remote access belongs to the host's own trust boundary. The grant is not persisted, so a `Denied` written through the permission administration surface still outranks it and revokes the access; clearing that denial restores the auto-grant. An empty `Remote` domain bundle remains denied, since it grants nothing. The list holds bare product labels with no TLD, so one entry covers the product on every network. This is an interim mechanism: the allowlist is intended to move into the product manifest, per RFC 0024.
 
 > **NOTE (2026-09-18): external navigation uses `OpenUrl`, matching legacy Swift.**
-> This revises [#434](https://github.com/paritytech/host-rust-core/pull/434), which gated external HTTP(S) navigation by destination domain and exempted application schemes. External `host_navigate_to` calls now require `DevicePermission::OpenUrl`, including allowed application schemes. `AllowAlways` covers future handoffs to any external destination; `AllowOnce` covers one handoff. Domain permissions continue to govern outbound network requests. Internal dotNS, localhost and host-handled Pocket navigation remain exempt.
+> This revises [#434](https://github.com/paritytech/trinity-user-agents/pull/434), which gated external HTTP(S) navigation by destination domain and exempted application schemes. External `host_navigate_to` calls now require `DevicePermission::OpenUrl`, including allowed application schemes. `AllowAlways` covers future handoffs to any external destination; `AllowOnce` covers one handoff. Domain permissions continue to govern outbound network requests. Internal dotNS, localhost and host-handled Pocket navigation remain exempt.
 
 > **NOTE (2026-09-18): retain the legacy Google Fonts exception.**
 > For compatibility, `BLESSED_REMOTE_DOMAINS` lets every product access `fonts.googleapis.com` and `fonts.gstatic.com` without a prompt. This covers all paths and query strings on those hosts, not only font requests, and requests disclose the user's IP address to Google. An explicit matching denial overrides the exception. These implicit grants are not stored.
+
+> **NOTE (2026-10-20): first-party products get device permissions without a prompt.**
+> Products in `truapi::platform::REMOTE_PERMISSION_TRUSTED_LABELS` get device permissions without a prompt. They still need the OS grant. Stored device decisions are not read or written for them.
 
 ## Summary
 
@@ -67,7 +70,7 @@ That means that fetch requests, WebSockets, WebRTC, and device permissions shoul
 `#[wire(internal)]` hides the consuming authorization methods from the product
 SDK; it does not authenticate callers. Rust still accepts those calls and
 checks permissions for the calling product execution. A direct product call
-can consume that execution's one-use grant. `ProductExecutionKind` describes
+can consume that execution's one-use grant. `ExecutableKind` describes
 App, Widget or Worker entrypoints, not whether the caller is the container.
 
 The shared container authorizes operations through generated internal SDK
@@ -239,9 +242,9 @@ The following business methods gate on a specific permission and MUST internally
 | `send_push_notification`             | `DevicePermission::Notifications`         |
 
 `host_navigate_to` consumes `OpenUrl` for external HTTP(S) destinations and
-allowed application schemes (`mailto:`, `tel:`, `sms:`, `maps:`, `polkadot:`,
-`dot:`). Internal dotNS, localhost and host-handled Pocket navigation consume
-no grant. Denial is reported as `HostNavigateToError::PermissionDenied`.
+allowed application schemes (`mailto:`, `tel:`, `sms:`, `maps:`, `polkadotapp:`).
+Internal dotNS, localhost and host-handled Pocket
+navigation consume no grant. Denial is reported as `HostNavigateToError::PermissionDenied`.
 
 The following business methods relate to signing and require the user's active consent via their own approval flow (e.g. a signing confirmation dialog). They return `PermissionDenied` when the user cancels or denies that confirmation — this is distinct from the remote permission system but is documented here for completeness:
 

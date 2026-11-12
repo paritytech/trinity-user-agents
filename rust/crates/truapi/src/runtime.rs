@@ -1,0 +1,1969 @@
+//! `ProductRuntimeHost` adapts one product connection into the
+//! typed `truapi::api::*` host traits the generated dispatcher routes to.
+//!
+//! Most methods are straight delegations to the platform; the rest carry
+//! host-agnostic logic owned by the core (the chainHead-v1 runtime behind
+//! the Chain surface, `dotns` URL parsing for `navigate_to`, and the
+//! permission cache layer). Methods with no platform backing return
+//! `CallError::unavailable()`.
+
+/// Connection-scoped, host-fed action streams.
+pub mod actions;
+mod allowances;
+/// Core-owned auth/session UI state machine.
+pub mod auth_state;
+mod authority;
+/// In-core Bulletin preimage submission over the shared Subxt client.
+pub mod bulletin_rpc;
+mod capabilities;
+mod chat;
+pub mod contacts;
+mod dotns_lookup;
+pub use dotns_lookup::{DotnsLookup, DotnsLookupKind};
+mod funding;
+mod funding_providers;
+mod funding_quotes;
+mod host_grants;
+mod host_session;
+mod identity;
+pub mod login_failure;
+mod pairing_host;
+mod payment_id;
+mod product_accounts;
+mod product_consent;
+pub mod product_manifest;
+mod product_subtree;
+mod remote_account_holder;
+mod renderer;
+mod ring_vrf_registry;
+/// Role-neutral runtime services shared by product-facing runtimes.
+pub mod services;
+mod signing_host;
+mod single_flight;
+mod sso_account_holder_service;
+/// SSO remote request/response messaging over the statement store.
+pub mod sso_remote;
+mod sso_request_service;
+mod sso_responder_service;
+pub mod sso_service;
+/// Statement Store and Bulletin allowance allocation.
+pub mod statement_allowance;
+/// `StatementStore` surface: proofs plus submit and subscribe flows.
+pub mod statement_store;
+mod statement_store_rpc;
+#[cfg(test)]
+pub use statement_store_rpc::{LIVE_WAIT, LivePeopleStatements};
+#[cfg(feature = "test-host")]
+mod test_resource_controls;
+mod versioning;
+mod vrf;
+
+use core::{future::Future, time::Duration};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+use std::{
+	collections::{BTreeMap, HashSet},
+	sync::{Arc, Mutex},
+};
+
+pub use actions::ActionChannel;
+use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
+pub use authority::{AccountHolder, AuthorityError, BulletinAllowanceKey, ProductAuthority};
+pub use chat::chat_platform_for;
+pub use contacts::ContactResolutionError;
+pub use funding::{FundingFeed, FundingProviderLink};
+pub use host_session::HostSession;
+pub use remote_account_holder::RemoteAccountHolder;
+
+/// The host's contact picker plus the key its handles are minted under:
+/// everything one `contacts.pick` call needs from the connection.
+type ContactsPicker =
+	(Arc<dyn crate::platform::ContactsPlatform>, crate::runtime::contacts::ContactHandles);
+use futures::{FutureExt, StreamExt, pin_mut};
+#[cfg(test)]
+use pairing_host::PairingHost;
+pub use pairing_host::PairingHost as PairingHostRole;
+use product_accounts::ProductAccounts;
+pub use renderer::renderer_access_for;
+pub use services::RuntimeServices;
+pub use signing_host::{LocalActivation, SigningHost as SigningHostRole};
+pub use sso_account_holder_service::SsoAccountHolderService;
+pub use sso_responder_service::{
+	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
+	PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
+	SsoResponderService,
+};
+use versioning::version;
+#[cfg(all(target_arch = "wasm32", feature = "test-host"))]
+pub use vrf::ring_vrf_member;
+// `TrackedStatementRenewalTarget` is only read back by the native renewal
+// reporting, so re-exporting it on wasm leaves an unused import.
+use crate::platform::{
+	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview, LegacySigningAccount,
+	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
+	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
+	normalize_chat_identifier, validate_chat_custom_message, validate_chat_icon,
+	validate_chat_message_content, validate_chat_name,
+};
+pub use signing_host::StatementRenewalTarget;
+#[cfg(not(target_arch = "wasm32"))]
+pub use signing_host::TrackedStatementRenewalTarget;
+use tracing::{instrument, warn};
+use truapi::{
+	CallContext, CallError, CancellationReason, Subscription,
+	api::{Chat, Contacts, Funding, FundingProvider, Pocket, Renderer},
+	latest, v01,
+	versioned::{
+		IntoLatest,
+		chat::{
+			HostChatActionSubscribeError, HostChatActionSubscribeItem,
+			HostChatActionSubscribeRequest, HostChatCreateRoomError, HostChatCreateRoomRequest,
+			HostChatCreateRoomResponse, HostChatListSubscribeError, HostChatListSubscribeItem,
+			HostChatListSubscribeRequest, HostChatPostMessageError, HostChatPostMessageRequest,
+			HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
+			HostChatRegisterBotResponse, HostChatSetRoomFooterError, HostChatSetRoomFooterRequest,
+			HostChatSetRoomFooterResponse,
+		},
+		contacts::{HostContactsPickError, HostContactsPickRequest, HostContactsPickResponse},
+		funding::{
+			HostFundingError, HostFundingRequest, HostFundingResponse,
+			HostFundingStatusSubscribeError, HostFundingStatusSubscribeItem,
+			HostFundingStatusSubscribeRequest,
+		},
+		funding_provider::{
+			HostFundingCloseFrameError, HostFundingCloseFrameRequest,
+			HostFundingCloseFrameResponse, HostFundingPresentFrameError,
+			HostFundingPresentFrameRequest, HostFundingPresentFrameResponse,
+			HostFundingReportError, HostFundingReportRequest, HostFundingReportResponse,
+		},
+		pocket::{
+			HostPocketListSubscribeError, HostPocketListSubscribeItem,
+			HostPocketListSubscribeRequest, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
+			HostPocketRemoveCardResponse,
+		},
+		renderer::{
+			HostRendererActionSubscribeError, HostRendererActionSubscribeItem,
+			HostRendererActionSubscribeRequest,
+		},
+	},
+};
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
+
+#[cfg(test)]
+use crate::Spawner;
+use crate::{
+	chain_runtime::{RuntimeFailure, RuntimeFailureKind},
+	host_internal::{
+		bulletin::preimage_key,
+		permissions::{PermissionsService, TemporaryPermissions},
+		product_manifest::Granted,
+		sso_messages::RingVrfError,
+	},
+	host_logic::{
+		product_account::{
+			derivation_index_bytes, derive_product_public_key, public_key_from_address,
+		},
+		session::{SessionInfo, SessionState},
+		x25519_seal::X25519PrivateKey,
+	},
+};
+
+/// Error reason surfaced to products when a permission is not granted.
+pub const PERMISSION_DENIED_REASON: &str = "Permission denied";
+/// Host-spec B.6.2 recommends timing out unanswered SSO application requests
+/// after 180 seconds:
+/// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/B-inter-host.md?plain=1#L303-L307>
+pub const DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
+/// After a cancel or deadline, how long a remote authority call is given to
+/// observe the cancellation and unwind (unsubscribing its statement streams)
+/// before it is dropped. A call parked in the statement-store setup, which does
+/// not watch the cancel token, would otherwise outlive its deadline, so this
+/// caps the wait. A normal unwind completes in well under this.
+const AUTHORITY_CANCEL_UNWIND_GRACE: Duration = Duration::from_secs(2);
+/// Resource allocation may include a People -> Bulletin cross-chain
+/// propagation before the signing host can truthfully report `Allocated`.
+/// Keep this above the signing host's 240-second propagation ceiling while
+/// still bounding an unanswered request.
+const RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(300);
+/// End-to-end timeout for an in-core Bulletin preimage submit, starting after
+/// the permission check. It covers allowance allocation, chain submission, and
+/// one optional allowance refresh and retry. A first live allocation may need
+/// to fund and register the identity before the submit can start.
+const PREIMAGE_SUBMIT_TIMEOUT: Duration = Duration::from_secs(360);
+/// Per-request cap for obtaining or refreshing the Bulletin allowance. The
+/// end-to-end submit deadline may reduce it further.
+const PREIMAGE_REMOTE_AUTHORITY_RESPONSE_TIMEOUT: Duration =
+	RESOURCE_ALLOCATION_REMOTE_AUTHORITY_RESPONSE_TIMEOUT;
+/// Cap on waiting for an extended Bulletin authorization to reach this host's
+/// Bulletin node. The claim is on chain once the extension returns, so only
+/// propagation is left, and the submit keeps the rest of its deadline.
+const PREIMAGE_BULLETIN_AUTHORIZATION_WAIT: Duration = Duration::from_secs(18);
+
+const LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON: &str =
+	"Account can't be derived from product account id";
+const LEGACY_ACCOUNT_UNAVAILABLE_REASON: &str = "Account is not available in the active session";
+
+#[derive(Clone)]
+enum LegacySigner {
+	Product(latest::ProductAccountId),
+	Identity([u8; 32]),
+}
+
+impl LegacySigner {
+	fn review_account(&self) -> LegacySigningAccount {
+		match self {
+			Self::Product(account) => LegacySigningAccount::Product(account.clone()),
+			Self::Identity(_) => LegacySigningAccount::Identity,
+		}
+	}
+}
+
+#[derive(derive_more::From)]
+enum LegacySignerError {
+	Unavailable,
+	ProductDerivation(AuthorityError),
+}
+
+impl LegacySignerError {
+	fn into_reason(self, unavailable_reason: &'static str) -> String {
+		match self {
+			Self::Unavailable => unavailable_reason.to_string(),
+			Self::ProductDerivation(error) => error.to_string(),
+		}
+	}
+
+	fn into_host_error(self, unavailable_reason: &'static str) -> latest::HostSignPayloadError {
+		latest::HostSignPayloadError::Unknown { reason: self.into_reason(unavailable_reason) }
+	}
+}
+
+fn remote_authority_context(cx: &CallContext) -> CallContext {
+	remote_authority_context_with_default(cx, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT)
+}
+
+fn remote_authority_context_with_default(
+	cx: &CallContext,
+	default_timeout: Duration,
+) -> CallContext {
+	let mut cx = cx.clone();
+	if cx.timeout().is_none() {
+		cx.set_timeout(default_timeout);
+	}
+	cx
+}
+
+fn remote_authority_context_until(
+	cx: &CallContext,
+	default_timeout: Duration,
+	deadline: Instant,
+) -> CallContext {
+	let mut cx = cx.clone();
+	let timeout = cx
+		.timeout()
+		.unwrap_or(default_timeout)
+		.min(deadline.saturating_duration_since(Instant::now()));
+	cx.set_timeout(timeout);
+	cx
+}
+
+async fn remote_authority_call<T, E, F>(cx: &CallContext, call: F) -> Result<T, E>
+where
+	F: Future<Output = Result<T, E>>,
+	E: From<AuthorityError>,
+{
+	// A call already withdrawn never sends its request, not even within the
+	// unwind grace below.
+	if let Some(reason) = cx.cancel().reason() {
+		return Err(authority_cancellation_error(cx, reason).into());
+	}
+	let call = call.fuse();
+	let cancelled = cx.cancel().cancelled().fuse();
+	pin_mut!(call, cancelled);
+
+	// First, run the call against cancellation and the optional deadline. A
+	// completed call returns directly; a cancel or timeout yields its reason and
+	// falls through to a bounded unwind.
+	let reason = if let Some(timeout_duration) = cx.timeout() {
+		let timeout = futures_timer::Delay::new(timeout_duration).fuse();
+		pin_mut!(timeout);
+		futures::select! {
+			result = call => return result,
+			reason = cancelled => reason,
+			() = timeout => {
+				let reason = CancellationReason::TimedOut {
+					timeout: timeout_duration,
+				};
+				cx.cancel().cancel_with_reason(reason.clone());
+				reason
+			}
+		}
+	} else {
+		futures::select! {
+			result = call => return result,
+			reason = cancelled => reason,
+		}
+	};
+
+	// Give the call a bounded chance to observe the cancellation and tear down
+	// its statement-store subscriptions, then drop it. The grace caps a call
+	// parked in the setup region that never observes the token.
+	let error = authority_cancellation_error(cx, reason);
+	let unwind = futures_timer::Delay::new(AUTHORITY_CANCEL_UNWIND_GRACE).fuse();
+	pin_mut!(unwind);
+	futures::select! {
+		_ = call => {},
+		() = unwind => {},
+	}
+	Err(error.into())
+}
+
+/// Await `wait` unless the call is cancelled first.
+///
+/// For waits a person controls, such as a local confirmation prompt: a
+/// withdrawn call stops waiting, so an answer given after the withdrawal
+/// authorizes nothing. The error is the one `remote_authority_call` answers,
+/// so each caller maps it into its method's own domain error.
+async fn until_cancelled<T>(
+	cx: &CallContext,
+	wait: impl Future<Output = T>,
+) -> Result<T, AuthorityError> {
+	let wait = wait.fuse();
+	let cancelled = cx.cancel().cancelled().fuse();
+	pin_mut!(wait, cancelled);
+	futures::select_biased! {
+		reason = cancelled => Err(authority_cancellation_error(cx, reason)),
+		output = wait => Ok(output),
+	}
+}
+
+fn authority_cancellation_error(cx: &CallContext, reason: CancellationReason) -> AuthorityError {
+	AuthorityError::Cancelled(AuthorityCancelError::new(cx.request_id(), reason))
+}
+
+/// Product adapter for the generated TrUAPI dispatcher.
+pub struct ProductRuntimeHost {
+	connection: Arc<ProductConnection>,
+	accounts: ProductAccounts,
+	host_session: Arc<dyn HostSession>,
+}
+
+/// Per-connection adapters, permissions, channels and open operation demand.
+pub struct ProductConnection {
+	services: Arc<RuntimeServices>,
+	platform: Arc<dyn Platform>,
+	chat_platform: Option<Arc<dyn crate::platform::ChatPlatform>>,
+	/// Live OS permission state for this connection, when the host serves it.
+	permission_status: Option<Arc<dyn crate::platform::PermissionStatusHost>>,
+	/// Permission requests and consuming operations can arrive on different connections.
+	temporary_permissions: Arc<TemporaryPermissions>,
+	session_state: Arc<SessionState>,
+	product: ProductContext,
+	core_instance: u64,
+	/// This product runtime's own view of the chain. A node budgets follows and
+	/// concurrent operations per connection, so a connection shared with another
+	/// product makes those budgets collide.
+	chain: crate::chain_runtime::ChainRuntime,
+	chat: Arc<ActionChannel<HostChatActionSubscribeItem>>,
+	renderer: Arc<ActionChannel<HostRendererActionSubscribeItem>>,
+	pocket_platform: Option<Arc<dyn crate::platform::PocketPlatform>>,
+	game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
+	/// Control of the card face above this connection's Widget, when the host draws one.
+	expanded_card: Option<Arc<dyn crate::platform::ExpandedCardHost>>,
+	open_operations: Mutex<HashSet<u32>>,
+}
+
+/// How long after a tap a Worker may still open the scanner, as browsers bound
+/// transient user activation.
+pub const USER_TAP_WINDOW_SECS: u64 = 5;
+
+impl Drop for ProductConnection {
+	fn drop(&mut self) {
+		// This runtime owns its chain connections outright, so they go with it.
+		self.chain.release_scope();
+		self.release_open_operations();
+	}
+}
+
+impl ProductConnection {
+	/// Whether the host published a renderer action, which only the user
+	/// causes, within the last [`USER_TAP_WINDOW_SECS`]. A Worker may scan only
+	/// shortly after one, because it has no screen the user could be looking at.
+	pub fn recently_tapped(&self) -> bool {
+		self.renderer.published_within(USER_TAP_WINDOW_SECS)
+	}
+
+	/// Role-neutral services shared with the owning host runtime.
+	pub(crate) fn services(&self) -> &Arc<RuntimeServices> {
+		&self.services
+	}
+
+	fn permissions_service(&self) -> PermissionsService<'_, dyn Platform, dyn Platform> {
+		PermissionsService::new(self.platform.as_ref(), self.platform.as_ref(), &self.product)
+			.with_status_host(self.permission_status.as_deref())
+			.with_temporary_permissions(self.temporary_permissions.clone())
+	}
+
+	/// Trusted executable kind attached to this product connection.
+	pub fn execution_kind(&self) -> crate::platform::ExecutableKind {
+		self.product.execution_kind
+	}
+
+	/// Whether this product holds `scope` over `target`: always over itself,
+	/// and over another product only as that product's manifest grants it.
+	async fn holds_cross_product_scope(&self, target: &ProductId, scope: Granted) -> bool {
+		if target == self.product_id() {
+			return true;
+		}
+		product_manifest::grants_scope(
+			&self.services,
+			&*self.platform,
+			self.product_id(),
+			target,
+			scope,
+		)
+		.await
+	}
+
+	fn product_id(&self) -> &ProductId {
+		&self.product.product_id
+	}
+
+	// Foreign reads must keep the authorized owner, not the calling product.
+	fn product_storage_key(&self, owner: &ProductId, key: String) -> String {
+		ProductStorageKey::new(owner.clone(), key).encode()
+	}
+
+	fn follow_id(&self, id: &str) -> String {
+		format!("c{}:{id}", self.core_instance)
+	}
+
+	/// Read stored authorization, including the current OS gate for device access.
+	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_status"))]
+	pub async fn permission_authorization_status(
+		&self,
+		request: PermissionAuthorizationRequest,
+	) -> Result<PermissionAuthorizationStatus, latest::GenericError> {
+		let service = self.permissions_service();
+		service.authorization_status(&request).await
+	}
+
+	/// Read stored authorizations, including current OS gates for device access.
+	#[instrument(skip_all, fields(runtime.method = "permissions.authorization_statuses"))]
+	pub async fn permission_authorization_statuses(
+		&self,
+		requests: Vec<PermissionAuthorizationRequest>,
+	) -> Result<Vec<PermissionAuthorizationStatus>, latest::GenericError> {
+		let service = self.permissions_service();
+		service.authorization_statuses(&requests).await
+	}
+
+	/// Store authorization; `NotDetermined` clears the saved decision.
+	#[instrument(skip_all, fields(runtime.method = "permissions.set_authorization_status"))]
+	pub async fn set_permission_authorization_status(
+		&self,
+		request: PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), latest::GenericError> {
+		let service = self.permissions_service();
+		service.set_authorization_status(&request, status).await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "permissions.remote_authorization"))]
+	async fn remote_permission_authorization(
+		&self,
+		permission: latest::RemotePermission,
+	) -> Result<PermissionAuthorizationStatus, String> {
+		let service = self.permissions_service();
+		service
+			.authorize_remote(latest::RemotePermissionRequest { permission })
+			.await
+			.map_err(|err| format!("permission storage failed: {err:?}"))
+	}
+
+	/// Require remote authorization, prompting only when no decision is stored.
+	async fn require_remote_permission<E>(
+		&self,
+		permission: latest::RemotePermission,
+		denied_error: E,
+	) -> Result<(), CallError<E>> {
+		match self.remote_permission_authorization(permission).await {
+			Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
+			Ok(
+				PermissionAuthorizationStatus::Denied |
+				PermissionAuthorizationStatus::NotDetermined,
+			) => Err(CallError::Domain(denied_error)),
+			Err(reason) => Err(CallError::HostFailure { reason }),
+		}
+	}
+
+	/// Require the user's consent to disclose their identity to this product,
+	/// prompting only when no decision is stored.
+	async fn require_identity_disclosure<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
+		match self.identity_disclosure_authorization().await {
+			Ok(PermissionAuthorizationStatus::Authorized) => Ok(()),
+			Ok(
+				PermissionAuthorizationStatus::Denied |
+				PermissionAuthorizationStatus::NotDetermined,
+			) => Err(CallError::Domain(denied_error)),
+			Err(reason) => Err(CallError::HostFailure { reason }),
+		}
+	}
+
+	async fn require_chain_submit<E>(&self, denied_error: E) -> Result<(), CallError<E>> {
+		self.require_remote_permission(latest::RemotePermission::ChainSubmit, denied_error)
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "permissions.identity_disclosure_authorization"))]
+	async fn identity_disclosure_authorization(
+		&self,
+	) -> Result<PermissionAuthorizationStatus, String> {
+		let request = PermissionAuthorizationRequest::IdentityDisclosure;
+		let service = self.permissions_service();
+		let cached = service
+			.authorization_status(&request)
+			.await
+			.map_err(|err| format!("permission storage failed: {err:?}"))?;
+		if cached != PermissionAuthorizationStatus::NotDetermined {
+			return Ok(cached);
+		}
+
+		// A dismissed confirmation must not persist a refusal.
+		let decision = match self
+			.platform
+			.confirm_permission(UserConfirmationReview::IdentityDisclosure(
+				IdentityDisclosureReview { product_id: self.product_id().clone() },
+			))
+			.await
+		{
+			Ok(decision) => decision,
+			Err(_) => return Ok(PermissionAuthorizationStatus::NotDetermined),
+		};
+		let status = match decision {
+			PermissionDecision::AllowOnce => return Ok(PermissionAuthorizationStatus::Authorized),
+			PermissionDecision::AllowAlways => PermissionAuthorizationStatus::Authorized,
+			PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
+		};
+		service
+			.set_authorization_status(&request, status)
+			.await
+			.map_err(|err| format!("permission storage failed: {err:?}"))?;
+		Ok(status)
+	}
+
+	/// Chat access policy for this connection; see [`chat_platform_for`].
+	fn native_chat_platform(
+		&self,
+	) -> Result<Arc<dyn crate::platform::ChatPlatform>, crate::host_core::ProductRuntimeError> {
+		chat_platform_for(
+			self.product.execution_kind,
+			self.session_state.current().is_some(),
+			self.chat_platform.as_ref(),
+		)
+	}
+
+	fn chat_platform<E>(&self) -> Result<Arc<dyn crate::platform::ChatPlatform>, CallError<E>> {
+		self.native_chat_platform().map_err(|error| match error {
+			crate::host_core::ProductRuntimeError::Denied => CallError::Denied,
+			_ => CallError::Unsupported,
+		})
+	}
+
+	/// End this connection's Chat action stream.
+	pub fn detach_chat(&self) {
+		self.chat.detach();
+	}
+
+	/// Buffer one host-authored Chat action for this connection's product,
+	/// behind the same access policy as every other Chat entry point.
+	pub fn publish_chat_action(
+		&self,
+		action: truapi::versioned::chat::HostChatActionSubscribeItem,
+	) -> Result<(), crate::host_core::ProductRuntimeError> {
+		self.native_chat_platform()?;
+		self.chat.publish(action)
+	}
+
+	/// Renderer access policy for this connection; see [`renderer_access_for`].
+	pub fn renderer_access(&self) -> Result<(), crate::host_core::ProductRuntimeError> {
+		renderer_access_for(self.product.execution_kind)
+	}
+
+	/// Hold worker demand until the matching [`Self::release_worker_reference`].
+	pub fn acquire_worker_reference(&self) {
+		self.services.worker_ledger.acquire(&self.product.product_id);
+	}
+
+	/// Release one core-held reference on this connection's product worker.
+	pub fn release_worker_reference(&self) {
+		self.services.worker_ledger.release(&self.product.product_id);
+	}
+
+	/// Hold this connection's product worker until the hold is dropped.
+	pub(crate) fn hold_worker(&self) -> funding_quotes::WorkerHold {
+		funding_quotes::WorkerHold::acquire(&self.services, &self.product.product_id)
+	}
+
+	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
+	async fn begin_operation_with_host(
+		&self,
+		label: String,
+	) -> Result<latest::HostWorkerBeginOperationResponse, latest::HostWorkerOperationError> {
+		let (tx, rx) = futures::channel::oneshot::channel();
+		let platform = self.platform.clone();
+		let product = self.product.clone();
+		self.services.spawner.spawn(async move {
+			let begun = platform.begin_operation(&product, label).await;
+			if let Err(Ok(response)) = tx.send(begun) {
+				let _ = platform.end_operation(&product, response.id).await;
+			}
+		});
+		rx.await.unwrap_or_else(|_| {
+			Err(latest::HostWorkerOperationError::Unknown {
+				reason: "the host did not answer".to_string(),
+			})
+		})
+	}
+
+	/// Hold worker demand until this operation ends or the connection closes.
+	fn hold_worker_for_operation(&self, id: u32) {
+		if self.open_operations.lock().expect("open operations mutex poisoned").insert(id) {
+			self.acquire_worker_reference();
+		}
+	}
+
+	/// Release all operation demand immediately and schedule host cleanup.
+	/// Repeated calls leave already released operations alone.
+	pub fn release_open_operations(&self) {
+		let open = core::mem::take(
+			&mut *self.open_operations.lock().expect("open operations mutex poisoned"),
+		);
+		if open.is_empty() {
+			return;
+		}
+		for _ in &open {
+			self.release_worker_reference();
+		}
+		let platform = self.platform.clone();
+		let product = self.product.clone();
+		self.services.spawner.spawn(async move {
+			for id in open {
+				let _ = platform.end_operation(&product, id).await;
+			}
+		});
+	}
+
+	/// Release one open operation's demand; unknown ids leave demand unchanged.
+	fn release_worker_for_operation(&self, id: u32) {
+		if self.open_operations.lock().expect("open operations mutex poisoned").remove(&id) {
+			self.release_worker_reference();
+		}
+	}
+
+	/// End the renderer action stream this connection's product is reading.
+	pub fn detach_renderer(&self) {
+		self.renderer.detach();
+	}
+
+	/// Buffer one renderer action for this connection's product.
+	pub fn publish_renderer_action(
+		&self,
+		item: HostRendererActionSubscribeItem,
+	) -> Result<(), crate::host_core::ProductRuntimeError> {
+		self.renderer_access()?;
+		self.renderer.publish(item)
+	}
+
+	fn pocket_platform<E>(&self) -> Result<Arc<dyn crate::platform::PocketPlatform>, CallError<E>> {
+		if self.product.execution_kind != crate::platform::ExecutableKind::Worker ||
+			self.session_state.current().is_none()
+		{
+			return Err(CallError::Denied);
+		}
+		self.pocket_platform.clone().ok_or(CallError::Unsupported)
+	}
+
+	/// Funding provider access policy for this connection: a provider serves
+	/// sessions only from a Worker execution with an active session, and only
+	/// where the host has a funding surface.
+	fn funding_provider_access<E>(
+		&self,
+	) -> Result<Arc<dyn crate::platform::FundingPlatform>, CallError<E>> {
+		if self.product.execution_kind != crate::platform::ExecutableKind::Worker ||
+			self.session_state.current().is_none()
+		{
+			return Err(CallError::Denied);
+		}
+		self.services.funding().platform().ok_or(CallError::Unsupported)
+	}
+}
+
+impl ProductRuntimeHost {
+	/// Build a product-scoped dispatcher target from a long-lived host runtime
+	/// and the adapters scoped to this product connection.
+	pub fn from_services(
+		services: Arc<RuntimeServices>,
+		adapters: crate::host_core::ConnectionAdapters,
+		authority: Arc<dyn ProductAuthority>,
+		host_session: Arc<dyn HostSession>,
+		product: ProductContext,
+	) -> Self {
+		let core_instance = services.next_core_instance();
+		let chain = services.chain.for_product(core_instance);
+		let accounts = ProductAccounts::new(authority, product.clone());
+		let connection = Arc::new(ProductConnection {
+			services,
+			platform: adapters.platform,
+			chat_platform: adapters.chat_platform,
+			permission_status: adapters.permission_status,
+			temporary_permissions: adapters.permission_grants,
+			session_state: host_session.session_state(),
+			product,
+			core_instance,
+			chain,
+			chat: adapters.chat,
+			renderer: adapters.renderer,
+			pocket_platform: adapters.pocket_platform,
+			game_platform: adapters.game_platform,
+			expanded_card: adapters.expanded_card,
+			open_operations: Mutex::new(HashSet::new()),
+		});
+		Self { connection, accounts, host_session }
+	}
+
+	/// Shared connection state used by product control handles.
+	pub fn connection(&self) -> &Arc<ProductConnection> {
+		&self.connection
+	}
+
+	/// Store `status` for one of this product's permissions. A changed answer about
+	/// another product's accounts also ends this product's Allow once answers.
+	pub async fn set_permission_authorization_status(
+		&self,
+		request: PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), latest::GenericError> {
+		let account_access =
+			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
+		self.connection.set_permission_authorization_status(request, status).await?;
+		if account_access {
+			self.accounts.consent().forget_allowed_once_for(self.connection.product_id());
+		}
+		Ok(())
+	}
+
+	/// Test constructor building a standalone pairing-host runtime.
+	#[cfg(test)]
+	pub fn new<P>(
+		platform: Arc<P>,
+		config: (crate::platform::PairingHostConfig, ProductContext),
+		spawner: Spawner,
+	) -> Self
+	where
+		P: Platform + 'static,
+	{
+		let (host_config, product) = config;
+		let platform: Arc<dyn Platform> = platform;
+		Self::new_pairing_for_tests(platform, host_config, product, spawner).0
+	}
+
+	/// Compatibility constructor used only by tests that do not exercise
+	/// product-scoped behavior.
+	#[cfg(test)]
+	fn new_compat(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
+		Self::new_compat_with_pairing(platform, spawner).0
+	}
+
+	#[cfg(test)]
+	fn compat_host_config() -> crate::platform::PairingHostConfig {
+		crate::platform::PairingHostConfig::new(
+			crate::platform::HostInfo {
+				name: "Polkadot Web".to_string(),
+				icon: Some("https://example.invalid/dotli.png".to_string()),
+				version: None,
+				platform: truapi::latest::HostPlatform::Web,
+			},
+			crate::platform::PlatformInfo::default(),
+			crate::test_support::paseo_test_stack(),
+			"polkadotapp".to_string(),
+		)
+		.expect("compat runtime config is valid")
+	}
+
+	/// Compat host used by preimage tests.
+	#[cfg(test)]
+	fn new_compat_with_bulletin(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
+		Self::new_pairing_for_tests(
+			platform,
+			Self::compat_host_config(),
+			ProductContext::new(ProductId::for_test("unknown.dot")),
+			spawner,
+		)
+		.0
+	}
+
+	#[cfg(test)]
+	fn new_compat_with_pairing(
+		platform: Arc<dyn Platform>,
+		spawner: Spawner,
+	) -> (Self, Arc<PairingHost>) {
+		let host_config = Self::compat_host_config();
+		Self::new_pairing_for_tests(
+			platform,
+			host_config,
+			ProductContext::new(ProductId::for_test("unknown.dot")),
+			spawner,
+		)
+	}
+
+	#[cfg(test)]
+	fn new_pairing_for_tests(
+		platform: Arc<dyn Platform>,
+		host_config: crate::platform::PairingHostConfig,
+		product: ProductContext,
+		spawner: Spawner,
+	) -> (Self, Arc<PairingHost>) {
+		let services = RuntimeServices::new(
+			platform.clone(),
+			host_config.host.host_info.clone(),
+			host_config.stack.clone(),
+			spawner.clone(),
+		);
+		let pairing_host = PairingHost::new(services.clone(), host_config);
+		let core_instance = services.next_core_instance();
+		let chain = services.chain.for_product(core_instance);
+		let chat = Arc::new(ActionChannel::chat());
+		let renderer = Arc::new(ActionChannel::renderer());
+		let connection = Arc::new(ProductConnection {
+			services,
+			platform,
+			chat_platform: None,
+			permission_status: None,
+			temporary_permissions: Arc::default(),
+			session_state: pairing_host.session().session_state(),
+			product,
+			core_instance,
+			chain,
+			chat,
+			renderer,
+			pocket_platform: None,
+			game_platform: None,
+			expanded_card: None,
+			open_operations: Mutex::new(HashSet::new()),
+		});
+		let host = Self {
+			accounts: ProductAccounts::new(pairing_host.clone(), connection.product.clone()),
+			connection,
+			host_session: pairing_host.session().clone(),
+		};
+		(host, pairing_host)
+	}
+
+	/// Test-only access to the shared session-state holder.
+	#[cfg(test)]
+	pub fn test_session_state(&self) -> Arc<SessionState> {
+		self.host_session.session_state()
+	}
+
+	/// Seed the paired Account Holder's hard product subtree for unit tests.
+	#[cfg(test)]
+	pub fn test_cache_product_subtree(
+		&self,
+		session: &SessionInfo,
+		product_id: &ProductId,
+		public_key: [u8; 32],
+	) {
+		self.accounts.cache_product_subtree_for_test(session, product_id, public_key);
+	}
+
+	/// Disconnect this runtime from its paired signing host.
+	#[cfg(test)]
+	#[instrument(skip_all, fields(runtime.method = "account.disconnect"))]
+	pub async fn disconnect(&self) {
+		self.host_session.disconnect().await;
+	}
+
+	/// Confirm with the user unless this host's product may skip the review.
+	async fn confirm(
+		&self,
+		cx: &CallContext,
+		review: UserConfirmationReview,
+	) -> Result<(), AuthorityError> {
+		let caller = AccountCaller::Local { product: &self.connection.product };
+		self.accounts
+			.consent()
+			.review(cx, caller, self.connection.platform.as_ref(), review)
+			.await
+	}
+
+	/// Confirm a signature with one of `owner`'s accounts, once per kind for this
+	/// execution when another product owns it.
+	async fn confirm_signature(
+		&self,
+		cx: &CallContext,
+		kind: CrossProductSignatureKind,
+		owner: &ProductId,
+		review: UserConfirmationReview,
+	) -> Result<(), AuthorityError> {
+		self.accounts
+			.consent()
+			.review_signature(cx, &self.connection, kind, owner, review)
+			.await
+	}
+
+	/// Whether this product may use `owner`'s accounts.
+	pub async fn may_use_product_account(&self, owner: &ProductId, cx: &CallContext) -> bool {
+		if self.connection.product_id().is_localhost() {
+			return true;
+		}
+		let cx = remote_authority_context(cx);
+		self.holds_cross_product_scope_within(owner, Granted::Context, &cx).await
+	}
+
+	/// [`Self::holds_cross_product_scope`], answering `false` if the caller's
+	/// deadline passes or the call is cancelled first.
+	pub async fn holds_cross_product_scope_within(
+		&self,
+		target: &ProductId,
+		scope: Granted,
+		cx: &CallContext,
+	) -> bool {
+		let lookup = self.connection.holds_cross_product_scope(target, scope).fuse();
+		let cancelled = cx.cancel().cancelled().fuse();
+		pin_mut!(lookup, cancelled);
+		let Some(budget) = cx.timeout() else {
+			return futures::select! {
+				resolved = lookup => resolved,
+				_ = cancelled => false,
+			};
+		};
+		let deadline = futures_timer::Delay::new(budget).fuse();
+		pin_mut!(deadline);
+		futures::select! {
+			resolved = lookup => resolved,
+			_ = cancelled => false,
+			() = deadline => false,
+		}
+	}
+
+	async fn product_account_public_key(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		owner: &ProductId,
+		derivation_index: &latest::DerivationIndex,
+	) -> Result<[u8; 32], AuthorityError> {
+		let cx = remote_authority_context(cx);
+		let subtree = remote_authority_call(
+			&cx,
+			self.accounts.product_subtree_public_key(session, &cx, owner),
+		)
+		.await?;
+		derive_product_public_key(subtree, derivation_index_bytes(derivation_index))
+			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
+	}
+
+	async fn legacy_slot_zero_public_key(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+	) -> Result<[u8; 32], AuthorityError> {
+		self.product_account_public_key(
+			cx,
+			session,
+			self.connection.product_id(),
+			&v01::DerivationIndex::Index(0),
+		)
+		.await
+	}
+
+	async fn classify_legacy_address_signer(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		signer: &str,
+	) -> Result<LegacySigner, LegacySignerError> {
+		let requested_key = parse_legacy_signer_hex(signer)
+			.or_else(|| public_key_from_address(signer))
+			.ok_or(LegacySignerError::Unavailable)?;
+		self.classify_legacy_signer(cx, session, requested_key).await
+	}
+
+	async fn classify_legacy_signer(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		requested_key: [u8; 32],
+	) -> Result<LegacySigner, LegacySignerError> {
+		if session.identity_account_id == Some(requested_key) {
+			return Ok(LegacySigner::Identity(requested_key));
+		}
+		let product_public_key = self.legacy_slot_zero_public_key(cx, session).await?;
+		if requested_key == product_public_key {
+			return Ok(LegacySigner::Product(latest::ProductAccountId {
+				dot_ns_identifier: self.connection.product_id().clone(),
+				derivation_index: latest::DerivationIndex::Index(0),
+			}));
+		}
+		Err(LegacySignerError::Unavailable)
+	}
+
+	/// Replace declared contact handles with their accounts before review or signing.
+	pub async fn substitute_declared_contacts(
+		&self,
+		call_data: Vec<u8>,
+		declared: &[v01::ContactHandle],
+	) -> Result<Vec<u8>, ContactResolutionError> {
+		let cache = &self.connection.services.contact_handles;
+		let declared_bytes: Vec<[u8; 32]> = declared.iter().map(|handle| handle.bytes).collect();
+		if cache.has_undeclared_handle(&call_data, &declared_bytes) {
+			return Err(ContactResolutionError::UnknownContact);
+		}
+		if declared.is_empty() {
+			return Ok(call_data);
+		}
+		let (platform, handles) = self.contacts_picker().map_err(|error| match error {
+			CallError::Unsupported => ContactResolutionError::Unsupported,
+			CallError::Domain(v01::HostContactsPickError::NotConnected) => {
+				ContactResolutionError::NotConnected
+			},
+			CallError::Domain(v01::HostContactsPickError::Unknown { reason }) => {
+				ContactResolutionError::Host(reason)
+			},
+			other => ContactResolutionError::Host(format!("{other:?}")),
+		})?;
+		let mut resolved: Vec<([u8; 32], Option<[u8; 32]>)> = declared_bytes
+			.iter()
+			.map(|handle| (*handle, cache.get(handle, &handles)))
+			.collect();
+		// The host is asked only about handles the cache cannot answer, all
+		// of them in one lookup.
+		let misses: Vec<[u8; 32]> = resolved
+			.iter()
+			.filter(|(_, account)| account.is_none())
+			.map(|(handle, _)| *handle)
+			.collect();
+		if !misses.is_empty() {
+			let generation = cache.generation();
+			let lookup = crate::platform::HostContactLookup {
+				handle_key: handles.handle_key(),
+				handles: misses,
+			};
+			let matches = platform
+				.contacts(&lookup)
+				.await
+				.map_err(|error| ContactResolutionError::Host(error.reason))?;
+			// One answer per handle, or the answers cannot be paired up.
+			if matches.accounts.len() != lookup.handles.len() {
+				return Err(ContactResolutionError::Host(format!(
+					"contacts lookup answered {} of {} handles",
+					matches.accounts.len(),
+					lookup.handles.len()
+				)));
+			}
+			let mut answers = matches.accounts.into_iter();
+			for (handle, account) in resolved.iter_mut().filter(|(_, account)| account.is_none()) {
+				let answer = answers.next().expect("one answer per miss; qed");
+				// A host answer is checked, not trusted: an account that does
+				// not hash to its handle is treated as no contact at all.
+				*account = answer.filter(|account| handles.names(handle, account));
+				if let Some(account) = account {
+					cache.insert(*handle, *account, generation);
+				}
+			}
+		}
+		crate::host_logic::contact_substitution::substitute(&call_data, &resolved)
+			.map_err(|_| ContactResolutionError::UnknownContact)
+	}
+
+	/// The contact picker for this connection, plus the key its handles are
+	/// minted under.
+	///
+	/// Ordered so a host that serves no picker answers `Unsupported` without an
+	/// overlay ever being raised. There is no permission step: the user
+	/// selecting a contact is the consent.
+	fn contacts_picker(&self) -> Result<ContactsPicker, CallError<latest::HostContactsPickError>> {
+		// A capability the host does not serve is a framework answer; a
+		// missing session is one the product handles.
+		let platform =
+			self.connection.services.contacts_platform().ok_or(CallError::Unsupported)?;
+		let session = self
+			.accounts
+			.current_session()
+			.ok_or(CallError::Domain(latest::HostContactsPickError::NotConnected))?;
+		let handle_key =
+			self.accounts.contacts_handle_key(&session).map_err(|error| match error {
+				AuthorityError::Disconnected => {
+					CallError::Domain(latest::HostContactsPickError::NotConnected)
+				},
+				other => CallError::Domain(latest::HostContactsPickError::Unknown {
+					reason: other.to_string(),
+				}),
+			})?;
+		Ok((platform, crate::runtime::contacts::ContactHandles::from_handle_key(handle_key)))
+	}
+}
+
+fn parse_legacy_signer_hex(signer: &str) -> Option<[u8; 32]> {
+	let raw = signer
+		.strip_prefix("0x")
+		.or_else(|| signer.strip_prefix("0X"))
+		.unwrap_or(signer);
+	if raw.len() != 64 {
+		return None;
+	}
+	hex::decode(raw).ok()?.try_into().ok()
+}
+
+fn runtime_failure_to_call_error<E>(failure: RuntimeFailure) -> CallError<E> {
+	report_chain_call_failure(&failure);
+	CallError::HostFailure { reason: failure.reason() }
+}
+
+/// How long a chain call has to go without failing before the next failure
+/// counts as a new episode rather than more of the last one.
+const CHAIN_FAILURE_QUIET: Duration = Duration::from_secs(30);
+
+/// Most conditions tracked at once. A reason is part of what tells two
+/// failures apart, and a reason carries text, so the map is bounded rather
+/// than left to grow with however many distinct failures a run produces.
+const CHAIN_FAILURE_CONDITIONS_MAX: usize = 64;
+
+/// What tells one chain call failure from another: its classification, the
+/// method it came from, and why it failed.
+///
+/// The reason is part of it because a connection that drops and a payload that
+/// will not decode are different conditions, and one must not stand in for the
+/// other.
+type ChainFailureKey = (RuntimeFailureKind, &'static str, String, Option<Vec<u8>>);
+
+/// When each condition was last seen, and how many times it has happened in
+/// the episode it belongs to.
+type ChainFailureReports = BTreeMap<ChainFailureKey, (Instant, u64)>;
+
+/// What each chain call failure has done recently.
+static CHAIN_FAILURES: Mutex<ChainFailureReports> = Mutex::new(BTreeMap::new());
+
+/// Report a failed chain call on a widening schedule: the first, the second,
+/// then every doubling.
+///
+/// A connection that drops fails every call made over it afterwards, and each
+/// line reaches a host's log and from there wherever the host ships logs. A
+/// line per call buries the first one, which is the only one that says when the
+/// trouble started. Reporting on a schedule keeps that line, bounds a long
+/// outage to a handful more, and carries the running count on each, so how bad
+/// it is reads off the lines themselves rather than waiting for a tally that
+/// may never come.
+fn report_chain_call_failure(failure: &RuntimeFailure) {
+	// The lock is released before the line is raised: a host's sink runs host
+	// code, which must not be able to re-enter this.
+	let seen = {
+		let mut reported = CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+		count_failure(
+			&mut reported,
+			(
+				failure.kind(),
+				failure.method(),
+				failure.reason(),
+				failure.chain().map(<[u8]>::to_vec),
+			),
+			Instant::now(),
+			CHAIN_FAILURE_QUIET,
+		)
+	};
+	if !reports_at(seen) {
+		return;
+	}
+	// The chain is named because a failing call says little without it. The
+	// report that sent us looking at this code turned on which chain a
+	// transaction was being built against, and the line never said.
+	match failure.chain() {
+		Some(chain) => tracing::warn!(
+			kind = ?failure.kind(),
+			chain = %hex::encode(chain),
+			reason = %failure,
+			seen,
+			"chain call failed"
+		),
+		None => tracing::warn!(
+			kind = ?failure.kind(),
+			reason = %failure,
+			seen,
+			"chain call failed"
+		),
+	}
+}
+
+/// Whether the `seen`th failure of one condition is one of the reported ones.
+///
+/// The first two, then every doubling, so a thousand failures speak eleven
+/// times rather than a thousand.
+fn reports_at(seen: u64) -> bool {
+	seen <= 2 || seen.is_power_of_two()
+}
+
+/// Count one failure of `key` and answer how many times it has happened in
+/// this episode.
+///
+/// A gap of `quiet` since the last one starts the count again, so a connection
+/// that drops twice in a day reads as two episodes rather than one long one.
+fn count_failure(
+	reported: &mut ChainFailureReports,
+	key: ChainFailureKey,
+	now: Instant,
+	quiet: Duration,
+) -> u64 {
+	// Forgetting everything is the cheap bound: the conditions worth counting
+	// are the ones happening now, and a run that has produced this many
+	// distinct ones has already said so.
+	if reported.len() >= CHAIN_FAILURE_CONDITIONS_MAX && !reported.contains_key(&key) {
+		reported.clear();
+	}
+	let seen = reported.entry(key).or_insert((now, 0));
+	if now.duration_since(seen.0) >= quiet {
+		*seen = (now, 1);
+	} else {
+		seen.0 = now;
+		seen.1 += 1;
+	}
+	seen.1
+}
+
+/// Forget which chain calls have reported, so a test asserting on the line is
+/// not answered by a quiet period another test opened.
+#[cfg(test)]
+pub(crate) fn forget_chain_failures() {
+	CHAIN_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
+}
+
+/// Host-UI projection of an active session for `AuthState::Connected`.
+fn connected_session_ui_info(session: &SessionInfo) -> SessionUiInfo {
+	SessionUiInfo {
+		public_key: session.public_key,
+		identity_account_id: session.identity_account_id,
+		chat_public_key: session
+			.identity_chat_private_key
+			.map(|secret| X25519PrivateKey::from(secret).public_key().0),
+		device_enc_public_key: session.device_enc_public_key,
+		peer_statement_account_id: session.sso.as_ref().map(|sso| sso.identity_account_id),
+		device_statement_account_id: session.sso.as_ref().map(|sso| sso.ss_public_key),
+		lite_username: session.lite_username.clone(),
+		full_username: session.full_username.clone(),
+	}
+}
+
+const MAX_VRF_TRANSCRIPT_ITEMS: usize = 32;
+const MAX_VRF_TRANSCRIPT_BYTES: usize = 8 * 1024;
+
+fn validate_vrf_transcript(request: &latest::HostAccountSignVrfRequest) -> Result<(), String> {
+	if request.items.len() > MAX_VRF_TRANSCRIPT_ITEMS {
+		return Err(format!(
+			"VRF transcript has {} items, at most {MAX_VRF_TRANSCRIPT_ITEMS} are allowed",
+			request.items.len()
+		));
+	}
+	let total_bytes =
+		request.items.iter().try_fold(request.transcript_label.len(), |total, item| {
+			total
+				.checked_add(item.label.len())
+				.and_then(|total| total.checked_add(item.value.len()))
+		});
+	if total_bytes.is_none_or(|total| total > MAX_VRF_TRANSCRIPT_BYTES) {
+		return Err(format!("VRF transcript exceeds the {MAX_VRF_TRANSCRIPT_BYTES}-byte limit"));
+	}
+	Ok(())
+}
+
+fn vrf_call_error(err: AuthorityError) -> CallError<latest::HostAccountSignVrfError> {
+	CallError::Domain(err.into())
+}
+fn account_get_authority_error(err: AuthorityError) -> CallError<latest::HostAccountGetError> {
+	let error = match err {
+		AuthorityError::Disconnected => latest::HostAccountGetError::NotConnected,
+		AuthorityError::Rejected => latest::HostAccountGetError::Rejected,
+		AuthorityError::ConfirmationFailed(error) => {
+			return CallError::HostFailure { reason: error.reason };
+		},
+		AuthorityError::Cancelled(err) => {
+			latest::HostAccountGetError::Unknown { reason: err.to_string() }
+		},
+		AuthorityError::Unavailable { reason } |
+		AuthorityError::ChainUnavailable { reason } |
+		AuthorityError::NotSupported { reason } |
+		AuthorityError::Unknown { reason } => latest::HostAccountGetError::Unknown { reason },
+	};
+	CallError::Domain(error)
+}
+
+fn ring_vrf_alias_error(err: RingVrfError) -> latest::HostAccountGetAliasError {
+	match err {
+		RingVrfError::RingNotFound => latest::HostAccountGetAliasError::RingNotFound,
+		RingVrfError::NotMember => latest::HostAccountGetAliasError::NotMember,
+		RingVrfError::KeyNotRegistered => latest::HostAccountGetAliasError::KeyNotRegistered,
+		RingVrfError::KeyNotInRing => latest::HostAccountGetAliasError::KeyNotInRing,
+		RingVrfError::NotAllowlisted => latest::HostAccountGetAliasError::Rejected,
+		RingVrfError::Rejected => latest::HostAccountGetAliasError::Rejected,
+		RingVrfError::Unknown { reason } => latest::HostAccountGetAliasError::Unknown { reason },
+	}
+}
+
+fn ring_vrf_proof_error(err: RingVrfError) -> latest::HostAccountCreateProofError {
+	match err {
+		RingVrfError::RingNotFound => latest::HostAccountCreateProofError::RingNotFound,
+		RingVrfError::NotMember => latest::HostAccountCreateProofError::NotMember,
+		RingVrfError::KeyNotRegistered => latest::HostAccountCreateProofError::KeyNotRegistered,
+		RingVrfError::KeyNotInRing => latest::HostAccountCreateProofError::KeyNotInRing,
+		RingVrfError::NotAllowlisted => latest::HostAccountCreateProofError::NotAllowlisted,
+		RingVrfError::Rejected => latest::HostAccountCreateProofError::Rejected,
+		RingVrfError::Unknown { reason } => latest::HostAccountCreateProofError::Unknown { reason },
+	}
+}
+
+fn ring_vrf_register_error(err: RingVrfError) -> latest::HostAccountRegisterRingVrfKeyError {
+	match err {
+		RingVrfError::RingNotFound => latest::HostAccountRegisterRingVrfKeyError::RingNotFound,
+		RingVrfError::Rejected => latest::HostAccountRegisterRingVrfKeyError::Rejected,
+		RingVrfError::NotMember |
+		RingVrfError::KeyNotRegistered |
+		RingVrfError::KeyNotInRing |
+		RingVrfError::NotAllowlisted => {
+			latest::HostAccountRegisterRingVrfKeyError::Unknown { reason: format!("{err:?}") }
+		},
+		RingVrfError::Unknown { reason } => {
+			latest::HostAccountRegisterRingVrfKeyError::Unknown { reason }
+		},
+	}
+}
+
+fn ring_vrf_list_error(err: RingVrfError) -> latest::HostAccountListRingVrfKeysError {
+	match err {
+		RingVrfError::Rejected => latest::HostAccountListRingVrfKeysError::Rejected,
+		RingVrfError::RingNotFound |
+		RingVrfError::NotMember |
+		RingVrfError::KeyNotRegistered |
+		RingVrfError::KeyNotInRing |
+		RingVrfError::NotAllowlisted => {
+			latest::HostAccountListRingVrfKeysError::Unknown { reason: format!("{err:?}") }
+		},
+		RingVrfError::Unknown { reason } => {
+			latest::HostAccountListRingVrfKeysError::Unknown { reason }
+		},
+	}
+}
+
+fn ring_vrf_sign_error(err: RingVrfError) -> latest::HostAccountRingVrfSignError {
+	match err {
+		RingVrfError::KeyNotRegistered => latest::HostAccountRingVrfSignError::KeyNotRegistered,
+		RingVrfError::NotAllowlisted => latest::HostAccountRingVrfSignError::NotAllowlisted,
+		RingVrfError::Rejected => latest::HostAccountRingVrfSignError::Rejected,
+		RingVrfError::RingNotFound | RingVrfError::NotMember | RingVrfError::KeyNotInRing => {
+			latest::HostAccountRingVrfSignError::Unknown { reason: format!("{err:?}") }
+		},
+		RingVrfError::Unknown { reason } => latest::HostAccountRingVrfSignError::Unknown { reason },
+	}
+}
+
+fn signing_call_error(err: AuthorityError) -> CallError<latest::HostSignPayloadError> {
+	CallError::Domain(match err {
+		AuthorityError::Rejected | AuthorityError::Disconnected => {
+			latest::HostSignPayloadError::Rejected
+		},
+		AuthorityError::ConfirmationFailed(error) => {
+			return CallError::HostFailure {
+				reason: format!("sign payload confirmation failed: {error:?}"),
+			};
+		},
+		AuthorityError::Cancelled(err) => {
+			latest::HostSignPayloadError::Unknown { reason: err.to_string() }
+		},
+		AuthorityError::Unavailable { reason } |
+		AuthorityError::ChainUnavailable { reason } |
+		AuthorityError::NotSupported { reason } |
+		AuthorityError::Unknown { reason } => latest::HostSignPayloadError::Unknown { reason },
+	})
+}
+
+fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTransactionError> {
+	CallError::Domain(match err {
+		AuthorityError::Rejected | AuthorityError::Disconnected => {
+			latest::HostCreateTransactionError::Rejected
+		},
+		AuthorityError::ConfirmationFailed(error) => {
+			return CallError::HostFailure {
+				reason: format!("create transaction confirmation failed: {error:?}"),
+			};
+		},
+		AuthorityError::Cancelled(err) => {
+			latest::HostCreateTransactionError::Unknown { reason: err.to_string() }
+		},
+		AuthorityError::NotSupported { reason } => {
+			latest::HostCreateTransactionError::NotSupported { reason }
+		},
+		AuthorityError::ChainUnavailable { reason } => {
+			latest::HostCreateTransactionError::ChainUnavailable { reason }
+		},
+		AuthorityError::Unavailable { reason } | AuthorityError::Unknown { reason } => {
+			latest::HostCreateTransactionError::Unknown { reason }
+		},
+	})
+}
+
+/// [`transaction_call_error`] for the legacy-account method, which stays on
+/// v0.1 and so reports `ChainUnavailable` as `Unknown`.
+fn legacy_transaction_call_error(
+	err: AuthorityError,
+) -> CallError<latest::HostCreateTransactionWithLegacyAccountError> {
+	transaction_call_error(err).map_domain(latest::HostCreateTransactionError::into_v01)
+}
+
+#[async_trait::async_trait]
+impl Contacts for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "contacts.pick"))]
+	async fn pick(
+		&self,
+		cx: &CallContext,
+		request: HostContactsPickRequest,
+	) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
+		version(request)
+			.exec(|_request| async move {
+				let (platform, handles) = self.contacts_picker()?;
+
+				let unknown = |error: latest::GenericError| {
+					CallError::Domain(latest::HostContactsPickError::Unknown {
+						reason: error.reason,
+					})
+				};
+
+				// Read before the picker opens: a removal signalled while the user is
+				// choosing must not be undone by caching their choice.
+				let generation = self.connection.services.contact_handles.generation();
+				let outcome =
+					match until_cancelled(cx, platform.pick_contact(&self.connection.product))
+						.await
+						.map_err(|cancelled| {
+							CallError::Domain(latest::HostContactsPickError::Unknown {
+								reason: cancelled.to_string(),
+							})
+						})?
+						.map_err(unknown)?
+					{
+						crate::platform::HostContactPick::Picked { account } => {
+							let handle = handles.mint(&account);
+							self.connection
+								.services
+								.contact_handles
+								.insert(handle, account, generation);
+							latest::ContactPickOutcome::Picked {
+								handle: latest::ContactHandle { bytes: handle },
+							}
+						},
+						crate::platform::HostContactPick::Dismissed => {
+							latest::ContactPickOutcome::Dismissed
+						},
+						crate::platform::HostContactPick::NoContacts => {
+							latest::ContactPickOutcome::NoContacts
+						},
+						// A host that resolves contacts but cannot present them is a
+						// framework-level gap, not an outcome the user produced.
+						crate::platform::HostContactPick::Unsupported => {
+							return Err(CallError::Unsupported);
+						},
+					};
+				Ok(latest::HostContactsPickResponse { outcome })
+			})
+			.await
+	}
+}
+
+#[async_trait::async_trait]
+impl Chat for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "chat.create_room"))]
+	async fn create_room(
+		&self,
+		_cx: &CallContext,
+		request: HostChatCreateRoomRequest,
+	) -> Result<HostChatCreateRoomResponse, CallError<HostChatCreateRoomError>> {
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+					.map_err(chat_create_room_field_error)?;
+				request.name = validate_chat_name("name", &request.name)
+					.map_err(chat_create_room_field_error)?;
+				request.icon = validate_chat_icon("icon", &request.icon)
+					.map_err(chat_create_room_field_error)?;
+				platform
+					.create_chat_room(&self.connection.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "chat.register_bot"))]
+	async fn register_bot(
+		&self,
+		_cx: &CallContext,
+		request: HostChatRegisterBotRequest,
+	) -> Result<HostChatRegisterBotResponse, CallError<HostChatRegisterBotError>> {
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				request.bot_id = normalize_chat_identifier("botId", &request.bot_id)
+					.map_err(chat_register_bot_field_error)?;
+				request.name = validate_chat_name("name", &request.name)
+					.map_err(chat_register_bot_field_error)?;
+				request.icon = validate_chat_icon("icon", &request.icon)
+					.map_err(chat_register_bot_field_error)?;
+				platform
+					.register_chat_bot(&self.connection.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "chat.list_subscribe"))]
+	async fn list_subscribe(
+		&self,
+		_cx: &CallContext,
+		request: HostChatListSubscribeRequest,
+	) -> Subscription<HostChatListSubscribeItem, CallError<HostChatListSubscribeError>> {
+		version(request)
+			.exec(|()| async move {
+				let platform = match self.connection.chat_platform::<latest::GenericError>() {
+					Ok(platform) => platform,
+					Err(error) => return Subscription::interrupted(error),
+				};
+				Subscription::new(platform.subscribe_chat_rooms(&self.connection.product).map(
+					|item| {
+						item.map_err(|error| {
+							warn!(
+								reason = %error.reason,
+								"chat room list platform stream failed"
+							);
+							CallError::HostFailure { reason: error.reason }
+						})
+					},
+				))
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "chat.post_message"))]
+	async fn post_message(
+		&self,
+		_cx: &CallContext,
+		request: HostChatPostMessageRequest,
+	) -> Result<HostChatPostMessageResponse, CallError<HostChatPostMessageError>> {
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				// The same normalization create_room applied, so a product's own
+				// spelling of a room id still resolves to the stored room.
+				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+					.map_err(chat_post_field_error)?;
+				// Content is product-authored and host-rendered, so it gets the same
+				// treatment the room fields get rather than reaching a host raw.
+				request.payload = validate_chat_message_content(request.payload)
+					.map_err(chat_post_field_error)?;
+				request.alt = request
+					.alt
+					.map(|alt| validate_chat_name("alt", &alt))
+					.transpose()
+					.map_err(chat_post_field_error)?
+					.filter(|alt| !alt.is_empty())
+					.filter(|_| {
+						matches!(request.payload, truapi::latest::ChatMessageContent::Custom(_))
+					});
+				platform
+					.post_chat_message(&self.connection.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "chat.set_room_footer"))]
+	async fn set_room_footer(
+		&self,
+		_cx: &CallContext,
+		request: HostChatSetRoomFooterRequest,
+	) -> Result<HostChatSetRoomFooterResponse, CallError<HostChatSetRoomFooterError>> {
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.chat_platform()?;
+				let failure = |reason: String| {
+					CallError::Domain(latest::HostChatSetRoomFooterError::Unknown { reason })
+				};
+				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
+					.map_err(|error| failure(error.to_string()))?;
+				if let latest::ChatRoomFooter::Card(card) = request.footer {
+					request.footer = latest::ChatRoomFooter::Card(
+						validate_chat_custom_message(card)
+							.map_err(|error| failure(error.to_string()))?,
+					);
+				}
+
+				// Checked here rather than by each host, so every host answers a room
+				// the product never created the same way.
+				let rooms =
+					match platform.subscribe_chat_rooms(&self.connection.product).next().await {
+						Some(Ok(item)) => item.rooms,
+						Some(Err(error)) => return Err(failure(error.reason)),
+						None => return Err(failure("the host published no room list".to_string())),
+					};
+				let created = rooms.iter().any(|room| {
+					room.room_id == request.room_id &&
+						room.participating_as == latest::ChatRoomParticipation::RoomHost
+				});
+				if !created {
+					return Err(CallError::Domain(latest::HostChatSetRoomFooterError::UnknownRoom));
+				}
+
+				platform
+					.set_chat_room_footer(&self.connection.product, request)
+					.await
+					.map_err(|error| failure(error.reason))
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "chat.action_subscribe"))]
+	async fn action_subscribe(
+		&self,
+		_cx: &CallContext,
+		request: HostChatActionSubscribeRequest,
+	) -> Subscription<HostChatActionSubscribeItem, CallError<HostChatActionSubscribeError>> {
+		version(request)
+			.exec(|()| async move {
+				if let Err(error) = self.connection.chat_platform::<latest::GenericError>() {
+					return Subscription::interrupted(error);
+				}
+				Subscription::new(
+					self.connection.chat.subscribe().map(|item| item.map(IntoLatest::into_latest)),
+				)
+			})
+			.await
+	}
+}
+
+#[async_trait::async_trait]
+impl Renderer for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "renderer.action_subscribe"))]
+	async fn action_subscribe(
+		&self,
+		_cx: &CallContext,
+		request: HostRendererActionSubscribeRequest,
+	) -> Subscription<HostRendererActionSubscribeItem, CallError<HostRendererActionSubscribeError>>
+	{
+		version(request)
+			.exec(|()| async move {
+				if self.connection.renderer_access().is_err() {
+					return Subscription::interrupted(CallError::Denied);
+				}
+				Subscription::new(
+					self.connection
+						.renderer
+						.subscribe()
+						.map(|item| item.map(IntoLatest::into_latest)),
+				)
+			})
+			.await
+	}
+}
+
+#[async_trait::async_trait]
+impl FundingProvider for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.report"))]
+	async fn report(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingReportRequest,
+	) -> Result<HostFundingReportResponse, CallError<HostFundingReportError>> {
+		version(request)
+			.exec(|latest::HostFundingReportRequest { intent, update }| async move {
+				self.connection.funding_provider_access()?;
+				let reported = self
+					.connection
+					.services
+					.funding()
+					.report(crate::current_unix_millis(), &self.connection.product, &intent, update)
+					.await?;
+				reported.map_err(CallError::Domain)
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.present_frame"))]
+	async fn present_frame(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingPresentFrameRequest,
+	) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
+		version(request)
+			.exec(|latest::HostFundingPresentFrameRequest { intent, target }| async move {
+				let domain = CallError::Domain;
+				let platform = self.connection.funding_provider_access()?;
+				if !self.serves(&intent) {
+					return Err(domain(latest::HostFundingPresentFrameError::NotFound));
+				}
+				let target = crate::host_logic::funding::checked_frame_target(target)
+					.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
+				let services = &self.connection.services;
+				let provider = &self.connection.product;
+				if matches!(target, latest::FundingFrameTarget::App { .. }) {
+					use crate::host_logic::funding_providers::FundingProviderApp;
+					let has_app = match services.funding_providers().app(&provider.product_id) {
+						FundingProviderApp::Shipped => true,
+						FundingProviderApp::Absent => false,
+						FundingProviderApp::Unknown => {
+							crate::runtime::product_manifest::publishes_app(
+								services,
+								services.platform.as_ref(),
+								&provider.product_id,
+								APP_LOOKUP_CEILING,
+							)
+							.await
+							.unwrap_or(false)
+						},
+					};
+					if !has_app {
+						return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+					}
+				}
+				let _frame = services.funding().track_frame(&intent, provider.clone());
+				let outcome = platform
+					.present_provider_frame(provider, intent, target)
+					.await
+					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
+				Ok(latest::HostFundingPresentFrameResponse { outcome })
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.close_frame"))]
+	async fn close_frame(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingCloseFrameRequest,
+	) -> Result<HostFundingCloseFrameResponse, CallError<HostFundingCloseFrameError>> {
+		version(request)
+			.exec(|latest::HostFundingCloseFrameRequest { intent }| async move {
+				let platform = self.connection.funding_provider_access()?;
+				if !self.serves(&intent) {
+					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
+				}
+				platform.close_provider_frame(&self.connection.product, intent);
+				Ok(())
+			})
+			.await
+	}
+}
+
+#[async_trait::async_trait]
+impl Funding for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "funding.request"))]
+	async fn request(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingRequest,
+	) -> Result<HostFundingResponse, CallError<HostFundingError>> {
+		version(request)
+			.exec(|latest::HostFundingRequest { direction, amount }| async move {
+				// A capability the host does not serve is a framework answer; a
+				// missing session is one the product handles.
+				if self.connection.services.funding().platform().is_none() {
+					return Err(CallError::Unsupported);
+				}
+				if self.accounts.current_session().is_none() {
+					return Err(CallError::Domain(latest::HostFundingError::NotConnected));
+				}
+				let intent = funding::new_funding_intent();
+				// The overlay finishes on its own; the product watches the
+				// outcome by the intent, so nothing waits for it here.
+				let _overlay = self
+					.connection
+					.services
+					.show_funding(Some(&self.connection.product), intent.clone(), direction, amount)
+					.await
+					.map_err(|error| match error {
+						funding::OpenFundingError::Unsupported => CallError::Unsupported,
+						funding::OpenFundingError::InvalidAmount => {
+							CallError::Domain(latest::HostFundingError::InvalidAmount)
+						},
+						error => CallError::HostFailure { reason: error.to_string() },
+					})?;
+				Ok(latest::HostFundingResponse { intent })
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding.status_subscribe"))]
+	async fn status_subscribe(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingStatusSubscribeRequest,
+	) -> Subscription<HostFundingStatusSubscribeItem, CallError<HostFundingStatusSubscribeError>> {
+		version(request)
+			.exec(|latest::HostFundingStatusSubscribeRequest { intent }| async move {
+				let registry = self.connection.services.funding();
+				if registry.platform().is_none() {
+					return Subscription::interrupted(CallError::Unsupported);
+				}
+				if let Err(error) = self.require_session() {
+					return Subscription::interrupted(error);
+				}
+				if let Err(error) = registry.load().await {
+					return Subscription::interrupted(CallError::HostFailure {
+						reason: error.to_string(),
+					});
+				}
+				// Another product's session reads as absent, so ids reveal nothing.
+				let owned = registry.owner(&intent).is_some_and(|owner| {
+					owner.as_ref() == Some(&self.connection.product.product_id)
+				});
+				match owned.then(|| registry.subscribe(&intent)).flatten() {
+					Some(stream) => Subscription::new(stream.map(Ok)),
+					None => Subscription::interrupted(CallError::Domain(
+						latest::HostFundingStatusSubscribeError::NotFound,
+					)),
+				}
+			})
+			.await
+	}
+}
+
+#[async_trait::async_trait]
+impl Pocket for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "pocket.list_subscribe"))]
+	async fn list_subscribe(
+		&self,
+		_cx: &CallContext,
+		request: HostPocketListSubscribeRequest,
+	) -> Subscription<HostPocketListSubscribeItem, CallError<HostPocketListSubscribeError>> {
+		version(request)
+			.exec(|()| async move {
+				let platform = match self.connection.pocket_platform::<latest::GenericError>() {
+					Ok(platform) => platform,
+					Err(error) => return Subscription::interrupted(error),
+				};
+				Subscription::new(platform.subscribe_pocket_cards(&self.connection.product).map(
+					|item| {
+						item.map_err(|error| {
+							warn!(
+								reason = %error.reason,
+								"pocket card list platform stream failed"
+							);
+							CallError::HostFailure { reason: error.reason }
+						})
+					},
+				))
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "pocket.remove_card"))]
+	async fn remove_card(
+		&self,
+		_cx: &CallContext,
+		request: HostPocketRemoveCardRequest,
+	) -> Result<HostPocketRemoveCardResponse, CallError<HostPocketRemoveCardError>> {
+		version(request)
+			.exec(|mut request| async move {
+				let platform = self.connection.pocket_platform()?;
+				// A card id is a product-chosen label the host renders in its own
+				// chrome, so it is screened before the host ever sees it: trimmed,
+				// NFC-normalized, and rejected if it carries characters that let two
+				// distinct ids render identically.
+				request.card_id = normalize_chat_identifier("cardId", &request.card_id)
+					.map_err(pocket_field_error)?;
+				platform
+					.remove_pocket_card(&self.connection.product, request)
+					.await
+					.map_err(CallError::Domain)
+			})
+			.await
+	}
+}
+
+/// Report a rejected card id as a removal domain error.
+fn pocket_field_error(error: ChatFieldError) -> CallError<latest::HostPocketRemoveCardError> {
+	CallError::Domain(latest::HostPocketRemoveCardError::Unknown { reason: error.to_string() })
+}
+
+/// Report a rejected chat bot field as a bot-registration domain error.
+fn chat_register_bot_field_error(
+	error: crate::platform::ChatFieldError,
+) -> CallError<latest::HostChatRegisterBotError> {
+	CallError::Domain(latest::HostChatRegisterBotError::Unknown { reason: error.to_string() })
+}
+
+/// Fields whose rejection a product resolves by sending less content, and the
+/// only ones the fieldless `MessageTooLarge` can describe.
+const CHAT_SIZED_CONTENT_FIELDS: [&str; 2] = ["text", "payload"];
+
+/// Maps a rejected `post_message` field onto the wire error, reporting a size
+/// rejection as the size variant the protocol declares for it.
+fn chat_post_field_error(error: ChatFieldError) -> CallError<latest::HostChatPostMessageError> {
+	let payload = match error {
+		// `MessageTooLarge` names no field, so it is reserved for the content
+		// a product shrinks by sending less. Every other rejection reports
+		// through `Unknown`, whose reason names the field and its limit.
+		ChatFieldError::TooLong { field, .. } if CHAT_SIZED_CONTENT_FIELDS.contains(&field) => {
+			latest::HostChatPostMessageError::MessageTooLarge
+		},
+		error => latest::HostChatPostMessageError::Unknown { reason: error.to_string() },
+	};
+	CallError::Domain(payload)
+}
+
+/// Report a rejected chat room field as a room-creation domain error.
+fn chat_create_room_field_error(
+	error: crate::platform::ChatFieldError,
+) -> CallError<latest::HostChatCreateRoomError> {
+	CallError::Domain(latest::HostChatCreateRoomError::Unknown { reason: error.to_string() })
+}
+
+impl ProductRuntimeHost {
+	/// Cache a just-submitted preimage under its key for immediate lookups.
+	fn prime_preimage_cache(&self, key: &[u8], value: Vec<u8>) {
+		if let Ok(key_bytes) = <[u8; 32]>::try_from(key) {
+			debug_assert_eq!(key_bytes, preimage_key(&value));
+			self.connection.services.cache_preimage(key_bytes, value);
+		}
+	}
+
+	/// Whether this connection's product serves funding session `intent`.
+	fn serves(&self, intent: &str) -> bool {
+		self.connection
+			.services
+			.funding()
+			.is_serving(&self.connection.product.product_id, intent)
+	}
+}
+
+/// Build the product-facing `Unknown` wire error carrying `reason`.
+fn preimage_submit_error(reason: String) -> CallError<latest::PreimageSubmitError> {
+	CallError::Domain(latest::PreimageSubmitError::Unknown { reason })
+}
+
+fn bulletin_allowance_error_reason(err: AuthorityError) -> String {
+	match err {
+		AuthorityError::Rejected => {
+			"Bulletin allowance allocation was rejected by the signing host".to_string()
+		},
+		AuthorityError::Disconnected => {
+			"Signing host disconnected while allocating Bulletin allowance".to_string()
+		},
+		other => other.to_string(),
+	}
+}
+
+/// How long the core waits for dotNS to say whether a provider ships an App
+/// before showing it as having none.
+const APP_LOOKUP_CEILING: core::time::Duration = core::time::Duration::from_secs(10);
+
+#[cfg(test)]
+mod tests;

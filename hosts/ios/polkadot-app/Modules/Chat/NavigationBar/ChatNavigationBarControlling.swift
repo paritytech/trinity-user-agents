@@ -8,7 +8,6 @@ protocol ChatNavigationBarControlling: AnyObject {
     func apply(callActions: [ChatCallType])
     func apply(contactMenu: UIMenu?)
     func update(headerConfiguration: ChatHeaderConfiguration)
-    func setPinnedTitle(_ title: String?)
 }
 
 enum ChatNavigationBarControllerFactory {

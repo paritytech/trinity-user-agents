@@ -10,7 +10,7 @@ It does not add custom logic. It forwards directly into UniFFI's standard CLI en
 
 ```bash
 cargo run -p uniffi-bindgen-cli -- generate \
-  --library target/debug/libtruapi_server.so \
+  --library target/debug/libtruapi.so \
   --language kotlin \
   --out-dir android/truapi-host/src/main/kotlin/generated
 ```

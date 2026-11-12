@@ -1,6 +1,6 @@
 # @parity/truapi-host
 
-WASM-backed TrUAPI host runtime. It embeds the `truapi-server` Rust core (compiled to WASM)
+WASM-backed TrUAPI host runtime. It embeds the `truapi` Rust core (compiled to WASM)
 behind a Web Worker provider, plus per-environment integration entry points. It is the
 counterpart to the native Android/iOS host shells.
 
@@ -11,7 +11,9 @@ The package exposes tree-shakeable subpath exports — import only what your env
 | Import                               | Provides                                                                                                            |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------- |
 | `@parity/truapi-host`                | Shared runtime types plus generated typed host callback contracts.                                                  |
+| `@parity/truapi-host/markers`        | `CORE_MARKERS`, the core's table of which log markers may leave the device and how loud each one is.                |
 | `@parity/truapi-host/web`            | Browser pairing host: `createIframeHost` (iframe MessageChannel handshake) and `createWebWorkerPairingHostRuntime`. |
+| `@parity/truapi-host/node`           | Node pairing host: `createNodePairingHostRuntime` (core in a worker thread) and `createHeadlessHostCallbacks`.      |
 | `@parity/truapi-host/worker-runtime` | Web Worker entrypoint (import with your bundler's `?worker` suffix) so the WASM core runs off the page main thread. |
 | `@parity/truapi-host/wasm/web`       | The raw browser `wasm-bindgen` glue, if you need to instantiate the core yourself.                                  |
 | `@parity/truapi-host/testing`        | `createMockHost`: the in-memory host seam a product is tested against.                                              |
@@ -22,25 +24,32 @@ The package exposes tree-shakeable subpath exports — import only what your env
 | `@parity/truapi-host/testing/host-page` | The browser half the fixture drives, for a suite that boots its own page.                                        |
 | `@parity/truapi-host/wasm/testing`   | The raw glue for the signing-enabled bundle the test host runs on.                                                  |
 
+A suite moving from `@parity/host-api-test-sdk` follows the [migration guide](../../../docs/migration/test-host.md).
+
 `scripts/build-wasm.mjs` builds two WASM bundles, both `--no-default-features`.
 `wasm/web` is the production browser host and excludes
 `WasmSigningHostRuntime`; `wasm/testing` adds the Rust `wasm-signing-host` and
 `test-host` features, which is what lets the test host hold keys and answer
 resource allocation as granted without allocating anything.
-`ProductRuntimeConfig` configures the pairing host and requires no network
-suffix. The signing constructor's configuration requires
-`runtimeConfig.networkSuffix` in addition: the bare TLD (`dot`, `paseo`, or
-`testnet`) matching the People chain and the wallet's onboarding
-configuration.
 
-`runtimeConfig.assetHub` is required by both configurations, pairing and
-signing. It is the Asset Hub genesis hash, in the same shape as
-`runtimeConfig.people` and `runtimeConfig.bulletin`. Product manifests are read
-from the dotNS contracts deployed there, so it is what makes a
-`trustedProducts` grant resolvable: without a usable value no manifest resolves,
-so every cross-product grant not already cached is refused, and the refusal is
-indistinguishable from the other product having granted nothing. A config
-omitting it is rejected.
+`ProductRuntimeConfig` configures both host roles. `stack` is the Trinity stack
+the host build runs:
+
+- `pointer`: the stack's link, `polkadotapp://stack?key=0x…&url=…`.
+- `descriptor`: the bytes of the signed copy the build bundles. The core checks
+  it against the pointer's key.
+- `allowsReservedValues`: set only by a Polkadot or Polkadot-fork build. Without
+  it the core refuses Polkadot's genesis hashes and the `dot` TLD.
+
+The core takes every chain it uses, the network `getChainInfo` reports and the
+signing host's TLD from the descriptor. It refuses a pointer without a key and a
+descriptor without a People or Bulletin chain. Without an Asset Hub no product
+manifest resolves, so a cross-product grant that is not cached is refused.
+
+The test host has no descriptor, so it passes `testStack` instead: the network,
+the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it.
+`mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
+fixture builds it from `networks`.
 
 ## Bundler requirements
 
@@ -121,6 +130,9 @@ const callbacks: HostCallbacks = {
   chat, // optional: leave it out and chat products get `Unsupported`
   permissionStatus, // optional: reports live OS permission state
   pocket, // optional: serves the host's Pocket card collection
+  game, // optional: holds the host's game reminders
+  contacts, // optional: leave it out and contacts calls get `Unsupported`
+  scanner, // optional: draws the host's QR and barcode viewfinder
 };
 ```
 
@@ -134,6 +146,17 @@ calling product's cards and every later replacement, and `removePocketCard`
 takes one out. The host owns the collection: removing an absent card succeeds,
 and a card the host pins is refused with `Privileged`.
 
+`game` holds the host's game reminder. `scheduleGameReminder` replaces the
+product's held reminder, and `cancelGameReminder` drops it. The core asks for
+no per-product consent, so the host asks the platform for what the reminder
+needs, and a rejected schedule reaches the product as a host failure. A host
+keeps one reminder per product. The core serves
+`game` to the game product, `dim2`, alone. The mock test host
+(`@parity/truapi-host/testing`) accepts every reminder and cancel without
+holding them once it runs as that product; its default `mock.dot` gets
+`Unsupported`, so a suite that exercises `game` passes
+`productId: "dim2.dot"`.
+
 Under `createWebWorkerPairingHostRuntime` the presence of each optional group is
 reported to the worker in its `init` message, so the core sees the same
 capability set on both sides of the boundary.
@@ -141,9 +164,9 @@ capability set on both sides of the boundary.
 ### Product-rendered bodies
 
 A host can ask a product to draw one body — a chat message, an input-widget
-candidate, a Pocket card — and send back what the user does with it. Both entry
-points live on the product provider and are present only on runtimes holding a
-live channel to the core:
+candidate, a Pocket card or its back — and send back what the user does with it.
+Both entry points live on the product provider and are present only on runtimes
+holding a live channel to the core:
 
 ```ts
 import type { RenderContext } from "@parity/truapi";
@@ -190,9 +213,10 @@ the product's worker stays up for as long as something is being drawn.
 policy: the renderer refuses a connection that is not a `Worker` execution, and
 chat additionally requires a live session.
 
-Two rules the core cannot check are the host's to keep: send a render context
-only for a surface the product's manifest `includes`, and publish a renderer
-action only from the current tree of an open render stream.
+Three rules the core cannot check are the host's to keep: send a render context
+only for a surface the product's manifest `includes`, send `PocketCardBack` only
+for a card whose definition declares `back`, and publish a renderer action only
+from the current tree of an open render stream.
 
 ## Product account addresses
 
@@ -224,6 +248,54 @@ already carries, so the 32-byte chain code behind it stays core-owned and a host
 never reconstructs it. `productAccountAddress` applies the prefix host-spec C.6
 fixes, rather than leaving each host to choose one.
 
+### The same name in a test suite
+
+`@parity/truapi-host/testing/playwright` exports a second `productAccountAddress`.
+It is asynchronous, it takes the account and product to derive rather than a
+public key, and it loads the testing WASM bundle itself:
+
+```ts
+import { asProductId } from "@parity/truapi";
+import { productAccountAddress } from "@parity/truapi-host/testing/playwright";
+
+const address = await productAccountAddress({
+  account: "bob", // a dev account name, or a `DevAccount`
+  productId: asProductId("tx-demo.dot"),
+  index: 0, // optional, defaults to 0
+});
+```
+
+Which one to reach for:
+
+- `productAccountAddress(publicKey)` from `@parity/truapi-host/wasm/web` is
+  synchronous and formats a subtree-derived public key the host already holds.
+  This is the one a host ships.
+- `productAccountAddress(query)` from `@parity/truapi-host/testing/playwright`
+  is asynchronous and runs the whole derivation from a dev account's session
+  root. It needs the built testing bundle, so it is for suites only. Because
+  the address depends on nothing but the root, the product id and the index, a
+  suite can work it out in a `globalSetup` and fund it once rather than per
+  test.
+
+A running fixture answers the same address through
+`testHost.getProductAccountAddress(productId?, index?)`, which reads the session
+the host actually holds and so returns `undefined` while it is signed out.
+
+`contacts` needs both callbacks, or the group counts as absent. `pickContact`
+draws the picker and returns the chosen account, or `NoContacts` when there is
+nobody to show. `contacts({ handleKey, handles })` resolves the handles a
+transaction names: one entry per handle, in order, the account or `undefined`.
+A contact's handle is BLAKE2b-256 keyed with `handleKey` over its 32-byte
+account (`blake2b(account, { key: handleKey, dkLen: 32 })` in `@noble/hashes`).
+The core re-checks every account returned. It caches what it resolves, so call
+`notifyContactsChanged()` whenever a contact is removed or blocked. Omit blocked
+contacts from both. See the contacts RFC (`docs/rfcs/contacts-api.md`).
+
+`scanner.scanCode(product, request)` opens the host's viewfinder. The rules it
+follows are on `ScannerPlatform` in the generated callbacks. The mock test host
+serves a scanner only when created with `createMockHost({ scanner: answer })`,
+and `setScanAnswer(answer)` changes the next answer.
+
 ## Generated WASM artefacts
 
 The ignored bundle under `dist/wasm/web/` is built with host-owned chain access.
@@ -233,7 +305,7 @@ the workspace size-optimized Rust profile plus `wasm-opt -Oz`, validate that
 debug/name/producers custom sections were stripped, and emit `.wasm.gz` and
 `.wasm.br` sidecars for hosts that serve precompressed assets.
 
-Build them after editing `rust/crates/truapi-server` and before packaging, publishing, or running
+Build them after editing `rust/crates/truapi` and before packaging, publishing, or running
 tests that load the raw WASM bundle (requires `wasm-pack` on PATH):
 
 ```bash
@@ -254,15 +326,62 @@ const runtime = await createWebWorkerPairingHostRuntime(
   },
 );
 
-const firstProvider = await runtime.createProvider({ productId: "first.dot" });
+const firstProvider = await runtime.createProvider({ productId: await runtime.parseProductId("first.dot") });
 const secondProvider = await runtime.createProvider({
-  productId: "second.dot",
+  productId: await runtime.parseProductId("second.dot"),
 });
 ```
 
 `@parity/truapi-host/web` also exports `createIframeHost` for the
-protocol-iframe MessageChannel handshake. Host code creates one worker runtime
-and then opens one provider per product id.
+protocol-iframe MessageChannel handshake. A product that navigates its whole document
+connects again: `onPort` is called with a fresh port once the new document
+sends a frame, and the function `onPort` returned for the previous port runs
+then. Each port is a new product session, so give it a core connection of its
+own. With an opaque sandbox only the first document is connected. Host code creates one worker runtime
+and then opens one provider per product ID. `runtime.parseProductId(input)` validates and normalizes through the already loaded Rust worker. It returns the same `ProductId` branded string exported by `@parity/truapi`, so IDs remain ordinary strings in memory and across worker messages.
+
+## Example — Node (worker thread)
+
+For a host with no browser, such as a CLI that pairs with the user's wallet.
+`createNodePairingHostRuntime` takes the same callbacks and options as
+`createWebWorkerPairingHostRuntime` and returns the same runtime; the core runs
+in a `node:worker_threads` thread and its WASM is read from disk.
+
+```ts
+import { createClient, createTransport } from "@parity/truapi";
+import { createNodePairingHostRuntime, createHeadlessHostCallbacks } from "@parity/truapi-host/node";
+
+const runtime = await createNodePairingHostRuntime(
+  createHeadlessHostCallbacks({
+    coreStorage, // persists the paired session; files on disk for a CLI
+    chain, // opens a JSON-RPC WebSocket per genesis hash
+    auth: { authStateChanged: (state) => state.tag === "Pairing" && showQr(state.value.deeplink) },
+    productStorage,
+    servedChains, // genesis hashes `chain` can reach
+    userConfirmation, // the user's answer to reviews, e.g. a CLI prompt
+    permissions,
+  }),
+  { hostConfig },
+);
+const client = createClient(createTransport(await runtime.createProvider({ productId: "my-cli.dot" })));
+await client.account.requestLogin({});
+```
+
+`createHeadlessHostCallbacks` fills in what a host without a screen cannot do:
+navigation and push notifications reject, and theme, locale and preimage lookup
+answer with fixed values. Every chain builds V4 transactions unless the host
+passes `extrinsicVersion` with the chains it builds as V5. The host still passes `userConfirmation` and
+`permissions`, because they are the user's answers: `getAccount` asks to
+disclose the product subtree, and `signRaw` asks for the `ChainSubmit`
+permission and a signing review. A CLI asks at its prompt. A host with a UI
+passes the full callback set instead, exactly as on the web.
+
+`./node` loads the production bundle, which has no signing host, so it runs
+pairing hosts only: `role: "signing"` is refused.
+
+Call `runtime.dispose()` when done: the core's thread keeps the process alive
+until then. Install the package rather than bundling `./node` into a single
+file, since the worker thread and the WASM are loaded from files beside it.
 
 ## Session lifecycle
 
@@ -277,6 +396,7 @@ transition below reports the resulting `AuthState` the same way.
 | `activateStoredSession()`       | Await the restore of the `AuthSession` slot before opening providers.        |
 | `activateExternalSession(blob)` | Install a session the host holds itself, without writing it to core storage. |
 | `notifySessionStoreChanged()`   | Tell the core the persisted blob may have changed; it re-reads it.           |
+| `notifyContactsChanged()`       | Tell the core a contact was removed or blocked; it drops cached handles.     |
 | `disconnectSession()`           | Log out: clears the session and notifies the peer.                           |
 | `resetSessionState()`           | Drop the local session without notifying the peer.                           |
 
@@ -293,7 +413,7 @@ const runtime = await createWebWorkerPairingHostRuntime(
 // there was nothing to restore.
 await runtime.activateStoredSession().catch(() => {});
 
-const provider = await runtime.createProvider({ productId: "first.dot" });
+const provider = await runtime.createProvider({ productId: await runtime.parseProductId("first.dot") });
 ```
 
 ### Statement-store traffic of the host's own
@@ -392,7 +512,7 @@ a LAN or public address, a non-loopback hostname — yields an inert link and a
 `wire debugger URL rejected` console warning; there is no certificate or `wss`
 path. Prefer the literal `127.0.0.1` over `localhost`: `localhost` passes the
 gate, but it resolves `::1` first on macOS while the debugger binds `127.0.0.1`
-alone, so the same URL handed to a native host (`truapi-server`'s `WsDebugSink`
+alone, so the same URL handed to a native host (`truapi`'s `WsDebugSink`
 dials the first resolved address) silently never connects.
 
 The debugger owns all decoding and decodes every frame it can, including signing

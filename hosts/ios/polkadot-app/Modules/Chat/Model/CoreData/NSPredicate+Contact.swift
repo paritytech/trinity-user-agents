@@ -29,10 +29,6 @@ extension NSPredicate {
     }
 
     static func isContact() -> NSPredicate {
-        NSPredicate(
-            format: "%K == nil AND %K == nil",
-            #keyPath(CDChatContact.chatRequest),
-            #keyPath(CDChatContact.game)
-        )
+        NSPredicate(format: "%K == nil", #keyPath(CDChatContact.chatRequest))
     }
 }

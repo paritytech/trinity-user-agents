@@ -72,9 +72,7 @@ private extension ProductContentPrewarmer {
         let domain = host.toDotDomain()
 
         do {
-            // Warms the app executable's archive, which is what the SPA loads.
-            let contentId = try await flowState.productResolver.resolve(domain).appContentId
-            _ = try await flowState.dotNsResolver.resolveToLocalURL(dotNsName: contentId)
+            _ = try await flowState.contentLoader.open(domain, kind: .app, policy: .attempts(3))
             logger.debug("Product prewarm: warmed \(domain)")
         } catch {
             logger.error("Product prewarm: failed to warm \(domain): \(error)")

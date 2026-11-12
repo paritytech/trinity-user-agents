@@ -3,13 +3,11 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.c
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -18,34 +16,35 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
-import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDownward
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowUpward
+import io.paritytech.polkadotapp.design.components.icon.vectors.Check
 import io.paritytech.polkadotapp.design.components.icon.vectors.CheckDouble
-import io.paritytech.polkadotapp.design.components.icon.vectors.Close
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
+import io.paritytech.polkadotapp.feature_chats_api.presentation.common.getMaxMessageWidth
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageGrouping
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageSurfaceStyle
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.ChatMessageUiModel
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessageAction
 import io.paritytech.polkadotapp.feature_chats_api.presentation.model.MessageLayoutInfo
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.components.FlatMessageTimestamp
+import io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.components.messages.components.PaymentAmounts
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.ChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.formatter.LocalChatMessageTimeFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.LocalTokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
-import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
+import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.formatFiatSigned
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
 import kotlinx.collections.immutable.persistentListOf
 import io.paritytech.polkadotapp.common.R as RCommon
@@ -88,7 +87,8 @@ fun PaymentMessage(
         PaymentMessageContent(
             message = message,
             isIncoming = isIncoming,
-            headerText = headerText
+            headerText = headerText,
+            username = username
         )
     }
 }
@@ -97,7 +97,8 @@ fun PaymentMessage(
 private fun PaymentMessageContent(
     message: ChatMessageUiModel.CoinagePayment,
     isIncoming: Boolean,
-    headerText: String
+    headerText: String,
+    username: String
 ) {
     val headerColor: Color
     val amountBoxColor: Color
@@ -118,11 +119,14 @@ private fun PaymentMessageContent(
 
     val differingAmount = message.differingAmount
 
-    Column(
-        modifier = Modifier
-            .width(IntrinsicSize.Max)
-            .widthIn(max = 200.dp)
-    ) {
+    val bubbleWidth = minOf(PaymentMessageWidth, getMaxMessageWidth())
+    val boxHorizontalInset = PolkadotTheme.spacings.extraMedium
+    val amountPadding = PolkadotTheme.spacings.mediumIncreased
+    val amountMaxWidthPx = with(LocalDensity.current) {
+        bubbleWidth.roundToPx() - 2 * boxHorizontalInset.roundToPx() - 2 * amountPadding.roundToPx()
+    }
+
+    Column(modifier = Modifier.width(bubbleWidth)) {
         VerticalSpacer { extraMedium }
 
         NovaText(
@@ -138,56 +142,33 @@ private fun PaymentMessageContent(
                 .fillMaxWidth()
                 .padding(
                     vertical = PolkadotTheme.spacings.small,
-                    horizontal = PolkadotTheme.spacings.extraMedium
+                    horizontal = boxHorizontalInset
                 ),
             shape = PolkadotTheme.shapes.medium,
             color = amountBoxColor
         ) {
-            val formatter = LocalTokenAmountFormatter.current
-
             Column(
-                modifier = Modifier
-                    .widthIn(min = 154.dp)
-                    .padding(PolkadotTheme.spacings.mediumIncreased),
-                horizontalAlignment = Alignment.CenterHorizontally
+                modifier = Modifier.padding(amountPadding),
+                horizontalAlignment = Alignment.Start
             ) {
-                if (differingAmount != null) {
-                    NovaText(
-                        text = formatter.formatTokenAmount(message.amount, RoundPrecision.DEFAULT, withSymbol = false),
-                        style = PolkadotTheme.typography.body.medium.copy(textDecoration = TextDecoration.LineThrough),
-                        color = secondaryTextColor,
-                        textAlign = TextAlign.Center
-                    )
-                    NovaText(
-                        text = formatter.formatTokenAmount(differingAmount, RoundPrecision.DEFAULT, withSymbol = false),
-                        style = PolkadotTheme.typography.headline.large,
-                        color = primaryTextColor,
-                        textAlign = TextAlign.Center
-                    )
-                } else {
-                    NovaText(
-                        text = formatter.formatTokenAmount(message.amount, RoundPrecision.DEFAULT, withSymbol = false),
-                        style = PolkadotTheme.typography.headline.large,
-                        color = primaryTextColor,
-                        textAlign = TextAlign.Center
-                    )
-                }
-
-                NovaText(
-                    text = formatter.formatToSymbol(message.amount).withCurrencyTickerStyle(PolkadotTheme.typography.title.large),
-                    style = PolkadotTheme.typography.title.large,
-                    color = secondaryTextColor,
-                    textAlign = TextAlign.Center
+                PaymentAmounts(
+                    amount = message.amount,
+                    differingAmount = differingAmount,
+                    maxWidthPx = amountMaxWidthPx,
+                    primaryTextColor = primaryTextColor,
+                    secondaryTextColor = secondaryTextColor
                 )
             }
         }
 
         PaymentStatusIndicator(
-            modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.extraMedium),
+            modifier = Modifier.padding(horizontal = PolkadotTheme.spacings.extraMedium + PolkadotTheme.spacings.tiny),
             status = message.paymentStatus,
             baseStatusColor = secondaryTextColor,
             isIncoming = isIncoming,
-            amountsDiffer = differingAmount != null
+            username = username,
+            amount = message.amount,
+            differingAmount = differingAmount
         )
 
         VerticalSpacer { tiny }
@@ -217,95 +198,105 @@ private fun PaymentStatusIndicator(
     status: ChatMessageUiModel.CoinagePayment.Status,
     baseStatusColor: Color,
     isIncoming: Boolean,
-    amountsDiffer: Boolean
+    username: String,
+    amount: TokenAmountModel,
+    differingAmount: TokenAmountModel?
 ) {
-    val arrowIcon = if (isIncoming) {
-        NovaIcons.ArrowDownward
-    } else {
-        NovaIcons.ArrowUpward
-    }
-
     val formatter = LocalTokenAmountFormatter.current
 
     val icon: ImageVector?
     val text: String
     val color: Color
 
-    when {
-        amountsDiffer -> {
-            icon = null
-            text = stringResource(RCommon.string.chat_payment_amount_differs)
-            color = PolkadotTheme.colors.fg.warning
+    if (differingAmount != null) {
+        icon = null
+        text = if (isIncoming) {
+            stringResource(
+                RCommon.string.chat_payment_amount_differs_recipient,
+                formatter.formatFiatSigned(differingAmount),
+                formatter.formatFiatSigned(amount)
+            )
+        } else {
+            stringResource(
+                RCommon.string.chat_payment_amount_differs_sender,
+                username,
+                formatter.formatFiatSigned(differingAmount),
+                formatter.formatFiatSigned(amount)
+            )
         }
+        color = PolkadotTheme.colors.fg.warning
+    } else {
+        when (status) {
+            is ChatMessageUiModel.CoinagePayment.Status.Detecting -> {
+                icon = NovaIcons.ArrowUpward
+                text = stringResource(
+                    if (isIncoming) {
+                        RCommon.string.chat_payment_status_detecting_recipient
+                    } else {
+                        RCommon.string.chat_payment_status_detecting_sender
+                    }
+                )
+                color = baseStatusColor
+            }
 
-        status is ChatMessageUiModel.CoinagePayment.Status.Detecting -> {
-            icon = arrowIcon
-            text = stringResource(
+            is ChatMessageUiModel.CoinagePayment.Status.Detected,
+            is ChatMessageUiModel.CoinagePayment.Status.PartiallyClaimed -> {
                 if (isIncoming) {
-                    RCommon.string.chat_payment_status_detecting_recipient
+                    icon = NovaIcons.ArrowUpward
+                    text = stringResource(RCommon.string.chat_payment_status_claiming_recipient)
                 } else {
-                    RCommon.string.chat_payment_status_detecting_sender
+                    icon = NovaIcons.Check
+                    text = stringResource(RCommon.string.chat_payment_status_sent_sender)
                 }
-            )
-            color = baseStatusColor
-        }
+                color = baseStatusColor
+            }
 
-        status is ChatMessageUiModel.CoinagePayment.Status.Detected -> {
-            icon = arrowIcon
-            text = stringResource(
-                if (isIncoming) {
-                    RCommon.string.chat_payment_status_detected_on_chain_recipient
+            is ChatMessageUiModel.CoinagePayment.Status.Transferred -> {
+                icon = NovaIcons.CheckDouble
+                text = if (isIncoming) {
+                    stringResource(RCommon.string.chat_payment_status_claimed_recipient)
                 } else {
-                    RCommon.string.chat_payment_status_detected_on_chain_sender
+                    stringResource(RCommon.string.chat_payment_status_claimed_sender, username)
                 }
-            )
-            color = baseStatusColor
-        }
+                color = baseStatusColor
+            }
 
-        status is ChatMessageUiModel.CoinagePayment.Status.PartiallyClaimed -> {
-            icon = arrowIcon
-            text = stringResource(
-                RCommon.string.chat_payment_status_partially_claimed,
-                formatter.formatTokenAmount(status.claimed, RoundPrecision.DEFAULT)
-            )
-            color = baseStatusColor
-        }
-
-        status is ChatMessageUiModel.CoinagePayment.Status.Transferred -> {
-            icon = NovaIcons.CheckDouble
-            text = stringResource(RCommon.string.chat_payment_status_claimed)
-            color = baseStatusColor
-        }
-
-        status is ChatMessageUiModel.CoinagePayment.Status.FailedDetection -> {
-            icon = NovaIcons.Close
-            text = stringResource(RCommon.string.chat_payment_status_not_detected)
-            color = PolkadotTheme.colors.fg.error
-        }
-
-        else -> {
-            icon = NovaIcons.Close
-            text = stringResource(RCommon.string.chat_payment_status_failed)
-            color = PolkadotTheme.colors.fg.error
+            ChatMessageUiModel.CoinagePayment.Status.FailedDetection,
+            ChatMessageUiModel.CoinagePayment.Status.FailedTransfer -> {
+                icon = null
+                text = stringResource(
+                    if (isIncoming) {
+                        RCommon.string.chat_payment_status_failed_recipient
+                    } else {
+                        RCommon.string.chat_payment_status_failed_sender
+                    }
+                )
+                color = PolkadotTheme.colors.fg.warning
+            }
         }
     }
 
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.tiny)
+        horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.extraTiny)
     ) {
         if (icon != null) {
             NovaIcon(
-                modifier = Modifier.size(14.dp),
+                modifier = Modifier.size(16.dp),
                 imageVector = icon,
                 tint = color
             )
         }
 
         NovaText(
-            text = text.withCurrencyTickerStyle(PolkadotTheme.typography.body.small),
-            style = PolkadotTheme.typography.body.small,
+            modifier = if (icon == null) {
+                Modifier.padding(horizontal = PolkadotTheme.spacings.small)
+            } else {
+                Modifier
+            },
+            text = text,
+            style = PolkadotTheme.typography.body.medium,
             color = color
         )
     }
@@ -328,7 +319,8 @@ private fun MessagesPreview(direction: ChatMessageUiModel.Direction) {
     PolkadotTheme {
         CompositionLocalProvider(
             LocalChatMessageTimeFormatter provides ChatMessageTimeFormatter.mocked(),
-            LocalTokenAmountFormatter provides TokenAmountFormatter.mocked
+            LocalTokenAmountFormatter provides TokenAmountFormatter.mocked,
+            LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
         ) {
             Column(
                 modifier = Modifier
@@ -336,6 +328,13 @@ private fun MessagesPreview(direction: ChatMessageUiModel.Direction) {
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                listOf(20, 20_000, 999_999, 2_000_000).forEach { value ->
+                    PaymentMessagePreview(
+                        direction = direction,
+                        amount = TokenAmountModel.mock(value = value),
+                        paymentStatus = ChatMessageUiModel.CoinagePayment.Status.Detected(TokenAmountModel.mock(value = value)),
+                    )
+                }
                 PaymentMessagePreview(
                     direction = direction,
                     paymentStatus = ChatMessageUiModel.CoinagePayment.Status.Detecting,
@@ -382,6 +381,7 @@ private fun MessagesPreview(direction: ChatMessageUiModel.Direction) {
 private fun PaymentMessagePreview(
     direction: ChatMessageUiModel.Direction,
     paymentStatus: ChatMessageUiModel.CoinagePayment.Status,
+    amount: TokenAmountModel = TokenAmountModel.mock,
     deliveryStatus: ChatMessageUiModel.Status = ChatMessageUiModel.Status.SENT
 ) {
     PaymentMessage(
@@ -391,7 +391,7 @@ private fun PaymentMessagePreview(
             direction = direction,
             status = deliveryStatus,
             timestamp = System.currentTimeMillis(),
-            amount = TokenAmountModel.mock,
+            amount = amount,
             paymentStatus = paymentStatus,
             origin = ChatMessageOrigin.User,
             reactions = persistentListOf()
@@ -405,5 +405,7 @@ private fun PaymentMessagePreview(
     )
 }
 
+private val PaymentMessageWidth = 250.dp
+
 /** Tall enough for the whole status gallery; the scroll is for the interactive preview. */
-private const val PREVIEW_HEIGHT = 1400
+private const val PREVIEW_HEIGHT = 2100

@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "462dacb6e0d1f504";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "cebcc89a5e45bbd3";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -254,6 +254,12 @@ pub const CHAT_ACTION_SUBSCRIBE: MethodIds = MethodIds {
     method_id: 4,
 };
 
+/// Wire discriminants for `chat_set_room_footer`.
+pub const CHAT_SET_ROOM_FOOTER: MethodIds = MethodIds {
+    trait_id: 4,
+    method_id: 6,
+};
+
 /// Wire discriminants for `coin_payment_create_purse`.
 pub const COIN_PAYMENT_CREATE_PURSE: MethodIds = MethodIds {
     trait_id: 5,
@@ -372,6 +378,12 @@ pub const PAYMENT_REQUEST: MethodIds = MethodIds {
 pub const PAYMENT_STATUS_SUBSCRIBE: MethodIds = MethodIds {
     trait_id: 9,
     method_id: 3,
+};
+
+/// Wire discriminants for `payment_top_up_status_subscribe`.
+pub const PAYMENT_TOP_UP_STATUS_SUBSCRIBE: MethodIds = MethodIds {
+    trait_id: 9,
+    method_id: 4,
 };
 
 /// Wire discriminants for `permissions_request_device_permission`.
@@ -536,6 +548,186 @@ pub const WORKER_END_OPERATION: MethodIds = MethodIds {
     method_id: 1,
 };
 
+/// Wire discriminants for `contacts_pick`.
+pub const CONTACTS_PICK: MethodIds = MethodIds {
+    trait_id: 20,
+    method_id: 0,
+};
+
+/// Wire discriminants for `game_remind_next_game`.
+pub const GAME_REMIND_NEXT_GAME: MethodIds = MethodIds {
+    trait_id: 21,
+    method_id: 0,
+};
+
+/// Wire discriminants for `game_cancel_next_game`.
+pub const GAME_CANCEL_NEXT_GAME: MethodIds = MethodIds {
+    trait_id: 21,
+    method_id: 1,
+};
+
+/// Wire discriminants for `funding_request`.
+pub const FUNDING_REQUEST: MethodIds = MethodIds {
+    trait_id: 22,
+    method_id: 0,
+};
+
+/// Wire discriminants for `funding_status_subscribe`.
+pub const FUNDING_STATUS_SUBSCRIBE: MethodIds = MethodIds {
+    trait_id: 22,
+    method_id: 1,
+};
+
+/// Wire discriminants for `expanded_card_set_face_shown`.
+pub const EXPANDED_CARD_SET_FACE_SHOWN: MethodIds = MethodIds {
+    trait_id: 23,
+    method_id: 0,
+};
+
+/// Wire discriminants for `expanded_card_set_back_shown`.
+pub const EXPANDED_CARD_SET_BACK_SHOWN: MethodIds = MethodIds {
+    trait_id: 23,
+    method_id: 1,
+};
+
+/// Wire discriminants for `funding_provider_quote`.
+pub const FUNDING_PROVIDER_QUOTE: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 0,
+};
+
+/// Wire discriminants for `funding_provider_assign`.
+pub const FUNDING_PROVIDER_ASSIGN: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 1,
+};
+
+/// Wire discriminants for `funding_provider_cancel`.
+pub const FUNDING_PROVIDER_CANCEL: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 2,
+};
+
+/// Wire discriminants for `funding_provider_settle_cancel`.
+pub const FUNDING_PROVIDER_SETTLE_CANCEL: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 3,
+};
+
+/// Wire discriminants for `funding_provider_report`.
+pub const FUNDING_PROVIDER_REPORT: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 4,
+};
+
+/// Wire discriminants for `funding_provider_present_frame`.
+pub const FUNDING_PROVIDER_PRESENT_FRAME: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 5,
+};
+
+/// Wire discriminants for `funding_provider_close_frame`.
+pub const FUNDING_PROVIDER_CLOSE_FRAME: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 6,
+};
+
+/// Wire discriminants for `scanner_scan`.
+pub const SCANNER_SCAN: MethodIds = MethodIds {
+    trait_id: 25,
+    method_id: 0,
+};
+
+/// Wire discriminants for `nft_purse_create_purse`.
+pub const NFT_PURSE_CREATE_PURSE: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 0,
+};
+
+/// Wire discriminants for `nft_purse_create_items`.
+pub const NFT_PURSE_CREATE_ITEMS: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 1,
+};
+
+/// Wire discriminants for `nft_purse_query_purse`.
+pub const NFT_PURSE_QUERY_PURSE: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 2,
+};
+
+/// Wire discriminants for `nft_purse_list_purses`.
+pub const NFT_PURSE_LIST_PURSES: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 3,
+};
+
+/// Wire discriminants for `nft_purse_rebalance_purse`.
+pub const NFT_PURSE_REBALANCE_PURSE: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 4,
+};
+
+/// Wire discriminants for `nft_purse_create_receive_key`.
+pub const NFT_PURSE_CREATE_RECEIVE_KEY: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 5,
+};
+
+/// Wire discriminants for `nft_purse_listen_one_time_payment`.
+pub const NFT_PURSE_LISTEN_ONE_TIME_PAYMENT: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 6,
+};
+
+/// Wire discriminants for `nft_purse_create_cheque`.
+pub const NFT_PURSE_CREATE_CHEQUE: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 7,
+};
+
+/// Wire discriminants for `nft_purse_revoke_cheque`.
+pub const NFT_PURSE_REVOKE_CHEQUE: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 8,
+};
+
+/// Wire discriminants for `nft_purse_deposit`.
+pub const NFT_PURSE_DEPOSIT: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 9,
+};
+
+/// Wire discriminants for `nft_purse_refund`.
+pub const NFT_PURSE_REFUND: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 10,
+};
+
+/// Wire discriminants for `nft_purse_transfer_item`.
+pub const NFT_PURSE_TRANSFER_ITEM: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 11,
+};
+
+/// Wire discriminants for `nft_purse_observe_operation_status`.
+pub const NFT_PURSE_OBSERVE_OPERATION_STATUS: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 12,
+};
+
+/// Wire discriminants for `nft_purse_static_receive_key`.
+pub const NFT_PURSE_STATIC_RECEIVE_KEY: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 13,
+};
+
+/// Wire discriminants for `nft_purse_listen_payment_inbox`.
+pub const NFT_PURSE_LISTEN_PAYMENT_INBOX: MethodIds = MethodIds {
+    trait_id: 26,
+    method_id: 14,
+};
+
 /// The full wire table. Trait ids and per-trait method ordering are
 /// part of the wire protocol; only ever append within a trait.
 /// Removed methods leave their slot empty.
@@ -681,6 +873,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Subscription(CHAT_ACTION_SUBSCRIBE),
     },
     WireEntry {
+        method: "chat_set_room_footer",
+        kind: WireKind::Request(CHAT_SET_ROOM_FOOTER),
+    },
+    WireEntry {
         method: "coin_payment_create_purse",
         kind: WireKind::Request(COIN_PAYMENT_CREATE_PURSE),
     },
@@ -759,6 +955,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "payment_status_subscribe",
         kind: WireKind::Subscription(PAYMENT_STATUS_SUBSCRIBE),
+    },
+    WireEntry {
+        method: "payment_top_up_status_subscribe",
+        kind: WireKind::Subscription(PAYMENT_TOP_UP_STATUS_SUBSCRIBE),
     },
     WireEntry {
         method: "permissions_request_device_permission",
@@ -867,5 +1067,125 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "worker_end_operation",
         kind: WireKind::Request(WORKER_END_OPERATION),
+    },
+    WireEntry {
+        method: "contacts_pick",
+        kind: WireKind::Request(CONTACTS_PICK),
+    },
+    WireEntry {
+        method: "game_remind_next_game",
+        kind: WireKind::Request(GAME_REMIND_NEXT_GAME),
+    },
+    WireEntry {
+        method: "game_cancel_next_game",
+        kind: WireKind::Request(GAME_CANCEL_NEXT_GAME),
+    },
+    WireEntry {
+        method: "funding_request",
+        kind: WireKind::Request(FUNDING_REQUEST),
+    },
+    WireEntry {
+        method: "funding_status_subscribe",
+        kind: WireKind::Subscription(FUNDING_STATUS_SUBSCRIBE),
+    },
+    WireEntry {
+        method: "expanded_card_set_face_shown",
+        kind: WireKind::Request(EXPANDED_CARD_SET_FACE_SHOWN),
+    },
+    WireEntry {
+        method: "expanded_card_set_back_shown",
+        kind: WireKind::Request(EXPANDED_CARD_SET_BACK_SHOWN),
+    },
+    WireEntry {
+        method: "funding_provider_quote",
+        kind: WireKind::Subscription(FUNDING_PROVIDER_QUOTE),
+    },
+    WireEntry {
+        method: "funding_provider_assign",
+        kind: WireKind::Subscription(FUNDING_PROVIDER_ASSIGN),
+    },
+    WireEntry {
+        method: "funding_provider_cancel",
+        kind: WireKind::Subscription(FUNDING_PROVIDER_CANCEL),
+    },
+    WireEntry {
+        method: "funding_provider_settle_cancel",
+        kind: WireKind::Subscription(FUNDING_PROVIDER_SETTLE_CANCEL),
+    },
+    WireEntry {
+        method: "funding_provider_report",
+        kind: WireKind::Request(FUNDING_PROVIDER_REPORT),
+    },
+    WireEntry {
+        method: "funding_provider_present_frame",
+        kind: WireKind::Request(FUNDING_PROVIDER_PRESENT_FRAME),
+    },
+    WireEntry {
+        method: "funding_provider_close_frame",
+        kind: WireKind::Request(FUNDING_PROVIDER_CLOSE_FRAME),
+    },
+    WireEntry {
+        method: "scanner_scan",
+        kind: WireKind::Request(SCANNER_SCAN),
+    },
+    WireEntry {
+        method: "nft_purse_create_purse",
+        kind: WireKind::Request(NFT_PURSE_CREATE_PURSE),
+    },
+    WireEntry {
+        method: "nft_purse_create_items",
+        kind: WireKind::Request(NFT_PURSE_CREATE_ITEMS),
+    },
+    WireEntry {
+        method: "nft_purse_query_purse",
+        kind: WireKind::Request(NFT_PURSE_QUERY_PURSE),
+    },
+    WireEntry {
+        method: "nft_purse_list_purses",
+        kind: WireKind::Request(NFT_PURSE_LIST_PURSES),
+    },
+    WireEntry {
+        method: "nft_purse_rebalance_purse",
+        kind: WireKind::Request(NFT_PURSE_REBALANCE_PURSE),
+    },
+    WireEntry {
+        method: "nft_purse_create_receive_key",
+        kind: WireKind::Request(NFT_PURSE_CREATE_RECEIVE_KEY),
+    },
+    WireEntry {
+        method: "nft_purse_listen_one_time_payment",
+        kind: WireKind::Subscription(NFT_PURSE_LISTEN_ONE_TIME_PAYMENT),
+    },
+    WireEntry {
+        method: "nft_purse_create_cheque",
+        kind: WireKind::Request(NFT_PURSE_CREATE_CHEQUE),
+    },
+    WireEntry {
+        method: "nft_purse_revoke_cheque",
+        kind: WireKind::Request(NFT_PURSE_REVOKE_CHEQUE),
+    },
+    WireEntry {
+        method: "nft_purse_deposit",
+        kind: WireKind::Request(NFT_PURSE_DEPOSIT),
+    },
+    WireEntry {
+        method: "nft_purse_refund",
+        kind: WireKind::Request(NFT_PURSE_REFUND),
+    },
+    WireEntry {
+        method: "nft_purse_transfer_item",
+        kind: WireKind::Request(NFT_PURSE_TRANSFER_ITEM),
+    },
+    WireEntry {
+        method: "nft_purse_observe_operation_status",
+        kind: WireKind::Subscription(NFT_PURSE_OBSERVE_OPERATION_STATUS),
+    },
+    WireEntry {
+        method: "nft_purse_static_receive_key",
+        kind: WireKind::Request(NFT_PURSE_STATIC_RECEIVE_KEY),
+    },
+    WireEntry {
+        method: "nft_purse_listen_payment_inbox",
+        kind: WireKind::Subscription(NFT_PURSE_LISTEN_PAYMENT_INBOX),
     },
 ];

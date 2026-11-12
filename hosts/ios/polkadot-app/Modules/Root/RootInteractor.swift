@@ -44,7 +44,7 @@ final class RootInteractor {
     }
 
     private static let requiredChainIds: Set<ChainModel.Id> = [
-        AppConfig.Chains.usernameChain,
+        AppConfig.Chains.peopleChain,
         AppConfig.Chains.bulletInChain,
         AppConfig.Chains.assethubChain
     ]
@@ -53,14 +53,13 @@ final class RootInteractor {
 
     let chainRegistryClosure: ChainRegistryLazyClosure
 
-    let migrator: Migrating
+    let initializer: AppSharedInitializing
     let logger: LoggerProtocol
     let resolver: any DecisionResolver<RootDestination>
     let tokenManager: JWTTokenManaging
     let tldProvider: DotNsTldProviding
 
     let remoteConfigManager: RemoteConfigManaging
-    let chainRegistryConfigurator: ChainRegistryConfiguring
     let productPrewarmer: ProductContentPrewarming
     let observer: RootSetupObserver
     let appliedConfigReader: () -> RemoteAppConfig?
@@ -79,12 +78,11 @@ final class RootInteractor {
 
     init(
         chainRegistryClosure: @escaping ChainRegistryLazyClosure,
-        migrator: Migrating,
+        initializer: AppSharedInitializing,
         logger: LoggerProtocol,
         resolver: any DecisionResolver<RootDestination>,
         tokenManager: JWTTokenManaging,
         remoteConfigManager: RemoteConfigManaging,
-        chainRegistryConfigurator: ChainRegistryConfiguring,
         productPrewarmer: ProductContentPrewarming,
         observer: RootSetupObserver,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
@@ -94,12 +92,11 @@ final class RootInteractor {
     ) {
         self.chainRegistryClosure = chainRegistryClosure
 
-        self.migrator = migrator
+        self.initializer = initializer
         self.logger = logger
         self.resolver = resolver
         self.tokenManager = tokenManager
         self.remoteConfigManager = remoteConfigManager
-        self.chainRegistryConfigurator = chainRegistryConfigurator
         self.productPrewarmer = productPrewarmer
         self.observer = observer
         self.tldProvider = tldProvider
@@ -114,34 +111,12 @@ final class RootInteractor {
     }
 
     @MainActor
-    private func performCommonSetup(with chainRegistry: ChainRegistryProtocol) {
+    private func beginSetupAttempt(with chainRegistry: ChainRegistryProtocol) {
         completionTask?.cancel()
         didReportOutcome.withLock { $0 = false }
 
-        setupChainUpdate(for: chainRegistry)
-        fetchRemoteConfig()
         startObservationIfNeeded()
-
         startSetupCompletionTask(for: chainRegistry)
-    }
-
-    private func setupChainUpdate(for registry: ChainRegistryProtocol) {
-        chainRegistryConfigurator.set(chainRegistry: registry)
-    }
-
-    private func runMigrators() {
-        do {
-            try migrator.migrate()
-        } catch {
-            logger.error("Migration failed: \(error.localizedDescription)")
-        }
-    }
-
-    private func fetchRemoteConfig() {
-        remoteConfigManager.fetchRemoteConfigValues()
-
-        // Follows every applied config, so the logos are fetched the moment one names them.
-        paymentAssetBranding.start()
     }
 
     private func setupJWTManager() {
@@ -209,31 +184,12 @@ final class RootInteractor {
         }
     }
 
-    /// Waits for the paired chain registry and remote config, bounded by the full deadline,
-    /// cut to the offline deadline when the path is unsatisfied once that shorter deadline
-    /// is reached; a chain or remote config failure is not fatal on its own.
+    /// Waits for remote config first, bounded only by the offline deadline, so a fetch still retrying never
+    /// times out and an invalid config fails at once; then waits for the required chains under the full deadline.
     private func waitForSetupInputs(for chainRegistry: ChainRegistryProtocol) async -> SetupWaitOutcome {
         do {
-            try await withThrowingTaskGroup(of: Void.self) { group in
-                group.addTask { [remoteConfigManager] in
-                    async let chainsReady: Void = chainRegistry
-                        .asyncWaitChainsSetup(for: Self.requiredChainIds)
-                    do {
-                        _ = try await (chainsReady, remoteConfigManager.asyncWaitRemoteConfig())
-                    } catch RemoteConfigError.invalidConfig {
-                        throw RemoteConfigError.invalidConfig
-                    } catch {
-                        // Chain and other config failures stay non-fatal on their own.
-                    }
-                }
-
-                group.addTask {
-                    try await self.enforceSetupDeadline()
-                }
-
-                _ = try await group.next()
-                group.cancelAll()
-            }
+            try await waitForRemoteConfig()
+            try await waitForChains(chainRegistry)
 
             // The wait tolerates non-invalidity errors, so reaching this point does not by itself
             // prove a config was applied. If no valid config landed, the force-unwrapping accessors
@@ -305,9 +261,12 @@ extension RootInteractor: RootInteractorInputProtocol {
     }
 
     func setup() {
-        runMigrators()
+        initializer.start()
+
+        paymentAssetBranding.start()
+
         let chainRegistry = chainRegistryClosure()
-        performCommonSetup(with: chainRegistry)
+        beginSetupAttempt(with: chainRegistry)
 
         #if TESTNET_FEATURE
             appFactoryResetChecker = appFactoryResetCheckerFactory?
@@ -316,8 +275,8 @@ extension RootInteractor: RootInteractorInputProtocol {
     }
 
     func retrySetup() {
-        let chainRegistry = chainRegistryClosure()
-        performCommonSetup(with: chainRegistry)
+        initializer.refetchConfig()
+        beginSetupAttempt(with: chainRegistryClosure())
     }
 
     func completeWalletsCreation() {
@@ -365,15 +324,9 @@ private extension RootInteractor {
     func logWallets() {
         let walletRepo: WalletManagerRepositoryProtocol = .shared
         let main = try? walletRepo.main().getRawPublicKey().toAddress(using: .genericFormat)
-        let candidate = try? walletRepo.candidate().getRawPublicKey().toAddress(using: .genericFormat)
-        let score = try? walletRepo.scoreAlias().getRawPublicKey().toAddress(using: .genericFormat)
-        let mobRule = try? walletRepo.mobRuleAlias().getRawPublicKey().toAddress(using: .genericFormat)
         let resources = try? walletRepo.resourcesAlias().getRawPublicKey().toAddress(using: .genericFormat)
 
         logger.debug("Main address: \(main ?? "")")
-        logger.debug("Candidate address: \(candidate ?? "")")
-        logger.debug("Score address: \(score ?? "")")
-        logger.debug("Mob rule address: \(mobRule ?? "")")
         logger.debug("Resources address: \(resources ?? "")")
     }
 }
@@ -422,5 +375,57 @@ private extension RootInteractor {
         }
 
         throw SetupDeadlineExpired()
+    }
+
+    func waitForRemoteConfig() async throws {
+        try await withThrowingTaskGroup(of: Bool.self) { group in
+            group.addTask { [remoteConfigManager] in
+                do {
+                    _ = try await remoteConfigManager.asyncWaitRemoteConfig()
+                } catch RemoteConfigError.invalidConfig {
+                    throw RemoteConfigError.invalidConfig
+                } catch {
+                    // Other config errors stay non-fatal on their own
+                }
+                return true
+            }
+
+            group.addTask { [weak self] in
+                guard let self else { return false }
+                try await enforceOfflineDeadline()
+                return false
+            }
+
+            while let isConfigSettled = try await group.next() {
+                if isConfigSettled {
+                    break
+                }
+            }
+            group.cancelAll()
+        }
+    }
+
+    func waitForChains(_ chainRegistry: ChainRegistryProtocol) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                await chainRegistry.asyncWaitChainsSetup(for: Self.requiredChainIds)
+            }
+
+            group.addTask {
+                try await self.enforceSetupDeadline()
+            }
+
+            _ = try await group.next()
+            group.cancelAll()
+        }
+    }
+
+    /// Ends the config wait only when the path is unsatisfied at the offline deadline; online, the config's own retry
+    /// budget bounds it.
+    func enforceOfflineDeadline() async throws {
+        try await clock.sleep(for: .seconds(Constants.offlineSetupDeadlineSeconds))
+        guard observer.isPathSatisfied else {
+            throw SetupDeadlineExpired()
+        }
     }
 }

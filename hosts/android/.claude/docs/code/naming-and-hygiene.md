@@ -79,7 +79,7 @@ fun getName(): String
 | Pattern | When |
 |---|---|
 | `Real<InterfaceName>` | Hilt-bound impl of a public interface (e.g. `RealAmountInputMixin`). |
-| `<Feature>...` prefix | Cross-feature shared things in `common`/`database`/`design` need the feature name to disambiguate (e.g. database entities — `VideoGameEntity`, not bare `GameEntity`). |
+| `<Feature>...` prefix | Cross-feature shared things in `common`/`database`/`design` need the feature name to disambiguate (e.g. database entities — `CoinageNoteEntity`, not bare `NoteEntity`). |
 | `<Action>UseCase` | Reusable cross-feature business logic. |
 | `<Screen>Interactor` | Per-screen orchestration. |
 | `<Screen>ViewModel` / `<Screen>Contract` | Presentation. |
@@ -234,6 +234,10 @@ Timber.d("Encoded payload bytes: %s", bytes.toHex())
 | `debug` | Developer diagnostics. Stripped from release builds. |
 
 ✗ Logging an **expected** branch at `error` level.
+
+### What reaches Sentry
+
+Only Timber lines whose tag starts with `truapi.` leave the device, at `info` and above, as Sentry logs through `SentryLogTree`. The iOS host sends the same lines with the same tags. On `truapi.core`, `logCoreLine` looks the marker up in the core's own table, read once through `coreMarkers()`, and logs it at the severity the table carries. A marker the table keeps on the device, which is every `truapi.native.` one, stays at `debug`, because those carry notification bodies, URLs and permission requests. A marker the table does not list at all stays at `debug` too, so adding one to the core without registering it costs the line rather than exporting it. The host keeps no list of its own, and the iOS host reads the same table. A product console warning or error is logged on `truapi.product` by `ProductWebChromeClient` as the console message alone, capped at 512 characters, so it leaves the device without the page or script URL. The other console levels stay untagged at `debug`. `Timber.e` does not raise a Sentry event, because the Timber integration the plugin installs is excluded in `app/build.gradle.kts`.
 
 ### Don't log noise
 

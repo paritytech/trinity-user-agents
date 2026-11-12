@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_coinage_impl.data.transaction
 
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
+import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.database.dao.CoinageAssetStateProjection
 import io.paritytech.polkadotapp.database.dao.CoinageEntryDao
 import io.paritytech.polkadotapp.database.dao.CoinageEntryWithAssets
@@ -11,12 +12,14 @@ import io.paritytech.polkadotapp.database.model.CoinageHandoffLocal
 import io.paritytech.polkadotapp.database.model.DurableTxLocal
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageKeyIndex
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetState
+import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetStates
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageInput
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageOperationGroupId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageRegistrationError
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageTransactionState
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.OwnAsset
+import io.paritytech.polkadotapp.feature_coinage_impl.data.installation.CoinageInstallationRepository
 import io.paritytech.polkadotapp.feature_coinage_impl.data.installation.queryPerInstallation
 import io.paritytech.polkadotapp.feature_coinage_impl.data.installation.toCoinageKeyIndex
 import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.DurableTxStatus
@@ -27,6 +30,7 @@ import javax.inject.Inject
 
 class RealCoinageAssetLedger @Inject constructor(
     private val dao: CoinageEntryDao,
+    private val installationRepository: CoinageInstallationRepository,
 ) : CoinageAssetLedger {
     context(_: RegistrationScope)
     override suspend fun registerAssets(registrations: List<Pair<CoinageTransactionId, AssetRegistration>>) {
@@ -77,20 +81,33 @@ class RealCoinageAssetLedger @Inject constructor(
         return null
     }
 
-    override suspend fun markHandedOff(assets: List<LedgerAsset>): Result<Unit> = runCatching {
+    override suspend fun markHandedOff(assets: List<LedgerAsset>): Result<Unit> = mark(assets, committed = false)
+
+    override suspend fun markHandedOffCommitted(assets: List<LedgerAsset>): Result<Unit> =
+        mark(assets, committed = true)
+
+    private suspend fun mark(assets: List<LedgerAsset>, committed: Boolean): Result<Unit> = runCancellableCatching {
         val keys = assets.map { it.publicKey }
 
-        // One transaction, so nothing can claim these between the check and the mark. Unlike registration,
-        // no engine transaction is open around this call: a handoff writes coinage rows only.
+        // One transaction for check and mark; it joins the caller's, so a committed mark lands with its message.
         dao.withTransaction {
+            val scope = DaoValidationScope(dao)
+
             // The mirror of Blocked handoff: an asset a transaction of ours still has a claim on cannot
             // also leave the device, or the peer and that transaction would both be spending it.
-            val claimed = DaoValidationScope(dao).filterClaimed(keys)
+            val claimed = scope.filterClaimed(keys)
             assets.firstOrNull { it.publicKey in claimed }?.asset?.let {
                 throw CoinageRegistrationError.HandoffOfClaimedAsset(it)
             }
 
-            dao.insertHandoffs(assets.mapNotNull { it.toHandoffLocal() })
+            // Single handoff: a key that already left the device cannot leave it again, or two peers would
+            // hold the same private key. The insert alone would not say so — it ignores the conflict.
+            val handedOff = scope.filterHandedOff(keys)
+            assets.firstOrNull { it.publicKey in handedOff }?.asset?.let {
+                throw CoinageRegistrationError.HandoffOfHandedOffAsset(it)
+            }
+
+            dao.insertHandoffs(assets.mapNotNull { it.toHandoffLocal(committed) })
         }
     }
 
@@ -138,29 +155,28 @@ class RealCoinageAssetLedger @Inject constructor(
     ): Flow<List<CoinageTransactionState>> =
         dao.subscribeGroupEntries(groupId.value).map { it.toTransactionStates() }
 
-    override fun subscribeAssetStates(): Flow<Map<OwnAsset, CoinageAssetState>> =
-        dao.subscribeAssetStates().map { projections -> projections.associate { it.toDomain() } }
+    override fun subscribeAssetStates(): Flow<CoinageAssetStates> =
+        dao.subscribeAssetStates().map { it.toAssetStates() }
 
     override suspend fun getAssetState(asset: OwnAsset): Result<CoinageAssetState> = runCatching {
         val index = asset.index()
+        val projection = dao.getAssetState(asset.kind().toLocal(), index.installation.value.value, index.item)
 
-        dao.getAssetState(asset.kind().toLocal(), index.installation.value.value, index.item)?.toDomain()?.second
-            ?: CoinageAssetState.UNTRACKED
+        listOfNotNull(projection).toAssetStates().getAssetStateOf(asset)
     }
 
-    override suspend fun getAssetStates(
-        assets: List<OwnAsset>,
-    ): Result<Map<OwnAsset, CoinageAssetState>> = runCatching {
-        val tracked = assets.groupBy { it.kind() }
+    override suspend fun getAssetStates(assets: List<OwnAsset>): Result<CoinageAssetStates> = runCatching {
+        assets.groupBy { it.kind() }
             .flatMap { (kind, ofKind) ->
                 ofKind.map { it.index() }.queryPerInstallation { installationId, items ->
                     dao.getAssetStates(kind.toLocal(), installationId, items)
                 }
             }
-            .associate { it.toDomain() }
-
-        assets.associateWith { tracked[it] ?: CoinageAssetState.UNTRACKED }
+            .toAssetStates()
     }
+
+    private suspend fun List<CoinageAssetStateProjection>.toAssetStates() =
+        CoinageAssetStates(associate { it.toDomain() }, installationRepository.getOrCreateCurrent())
 }
 
 private class DaoValidationScope(private val dao: CoinageEntryDao) : RegistrationValidationScope {
@@ -198,7 +214,7 @@ private fun RegistrationOutput.toLocal(entryId: Long, position: Int) = CoinageEn
     onChainKey = publicKey.value,
 )
 
-private fun LedgerAsset.toHandoffLocal(): CoinageHandoffLocal? {
+private fun LedgerAsset.toHandoffLocal(committed: Boolean): CoinageHandoffLocal? {
     val owned = asset ?: return null
 
     return CoinageHandoffLocal(
@@ -206,7 +222,7 @@ private fun LedgerAsset.toHandoffLocal(): CoinageHandoffLocal? {
         assetKind = owned.kind().toLocal(),
         installationId = owned.index().installation.value.value,
         derivationIndex = owned.index().item,
-        committed = false,
+        committed = committed,
     )
 }
 

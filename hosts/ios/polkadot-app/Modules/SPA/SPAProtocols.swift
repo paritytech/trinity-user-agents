@@ -1,8 +1,19 @@
 import Foundation
+import PolkadotUI
 import Products
+import UIKit
 import UIKitExt
+import WebKit
 
+@MainActor
 protocol SPAViewProtocol: ControllerBackedProtocol {
+    /// The page's own scroll view, which a screen around it can hang a header
+    /// in so the header rides the page rather than pinning above it.
+    var pageScrollView: UIScrollView { get }
+
+    /// The web view the page loads in, which a screen watches to know the load has finished.
+    var pageWebView: WKWebView { get }
+
     func navigate(to url: URL)
     func navigate(to page: ProductPage)
     func updateTitle(_ title: String)
@@ -10,17 +21,23 @@ protocol SPAViewProtocol: ControllerBackedProtocol {
     func showLoading()
     func hideLoading()
     func showLoadFailure(_ content: ErrorContent)
-    func updateLoadProgress(_ progress: DotNsLoadProgress)
+    func updateLoadPhase(_ phase: ProductLoadPhase)
+    func showChainStatus(_ rows: [ChainConnectionStatusViewModel])
+}
+
+extension SPAViewProtocol {
+    func showChainStatus(_: [ChainConnectionStatusViewModel]) {}
 }
 
 @MainActor
 protocol SPAPresenterProtocol: AnyObject {
     func setup(engine: JSEngineProtocol)
     func didTapMoreButton()
-    func didTapMinimize()
     func didTapClose()
-    func didTapRetry()
+    func didTapRefresh()
+    func didBecomeVisible()
     func didInterceptNavigation(to url: URL)
+    func didRequestDeeplink(_ url: URL)
     func didUpdateWebViewTitle(_ title: String)
     func hasChatEntry() -> Bool
     func didTapOpenChat()
@@ -31,6 +48,8 @@ protocol SPAPresenterProtocol: AnyObject {
 protocol SPAInteractorInputProtocol: AnyObject {
     func setup(engine: JSEngineProtocol)
     func retry()
+    func reloadLatestBuild()
+    func checkForNewBuild()
     func hasChatEntry() -> Bool
     func openChat()
 }
@@ -39,13 +58,17 @@ protocol SPAInteractorInputProtocol: AnyObject {
 protocol SPAInteractorOutputProtocol: AnyObject {
     func didFail(error: Error)
     func didRequestNavigation(to url: URL)
+    func didRequestReload()
+    func didRestartLoading()
     func didPrepareChat(chatId: Chat.Id)
-    func didUpdateLoadProgress(_ progress: DotNsLoadProgress)
+    func didUpdateLoadPhase(_ phase: ProductLoadPhase)
+    func didReceiveChainStatus(_ rows: [ChainConnectionStatusViewModel])
 }
 
 @MainActor
 protocol SPAWireframeProtocol: AlertPresentable, ErrorPresentable {
     func showProductSPA(from view: ControllerBackedProtocol?, productHost: ProductHost)
+    func openDeeplink(_ url: URL)
     func showMoreActions(
         from view: ControllerBackedProtocol?,
         actions: [SPAMoreAction],
@@ -58,6 +81,6 @@ protocol SPAWireframeProtocol: AlertPresentable, ErrorPresentable {
         chatId: Chat.Id
     )
 
-    func minimize()
     func close(tabId: UUID)
+    func dismiss(view: ControllerBackedProtocol?)
 }

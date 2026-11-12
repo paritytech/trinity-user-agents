@@ -1,41 +1,56 @@
+import StructuredConcurrencyTestSupport
 import Testing
-import Foundation
 @testable import StructuredConcurrency
+
+private struct Signal: Sendable {
+    private let stream: AsyncStream<Void>
+    private let continuation: AsyncStream<Void>.Continuation
+
+    init() { (stream, continuation) = AsyncStream.makeStream() }
+
+    func fire() { continuation.yield() }
+
+    /// Returns once `fire()` has been called, failing rather than hanging if it never is.
+    func wait() async throws {
+        try await withTimeout(.hangGuard) { [stream] in
+            for await _ in stream {
+                return
+            }
+            throw CancellationError()
+        }
+    }
+}
 
 struct CoalescingTaskTests {
     @Test func twoJoinersReceiveSameValueOperationRunsOnce() async throws {
         var executionCount = 0
         let coalescer = CoalescingTask<Int>()
-
-        var signalContinuation: AsyncStream<Void>.Continuation?
-        let signal = AsyncStream<Void> { continuation in
-            signalContinuation = continuation
-        }
+        let started = Signal()
+        let entering = Signal()
+        let release = Signal()
 
         let task1 = Task {
             try await coalescer.run {
                 executionCount += 1
-                var iterator = signal.makeAsyncIterator()
-                _ = try await iterator.next()
+                started.fire()
+                try await release.wait()
                 return executionCount
             }
         }
 
-        // Give first task time to start
-        try await Task.sleep(nanoseconds: 50_000_000) // 0.05s
+        try await started.wait()
 
         let task2 = Task {
-            try await coalescer.run {
+            entering.fire()
+            return try await coalescer.run {
                 executionCount += 1
                 return executionCount
             }
         }
 
-        // Give tasks time to both register
-        try await Task.sleep(nanoseconds: 50_000_000) // 0.05s
+        try await entering.wait()
 
-        // Resume the operation
-        signalContinuation?.yield()
+        release.fire()
 
         let result1 = try await task1.value
         let result2 = try await task2.value
@@ -48,18 +63,16 @@ struct CoalescingTaskTests {
     @Test func cancelledJoinerThrowsWhileOtherReceivesValue() async throws {
         var operationRunCount = 0
         let coalescer = CoalescingTask<Int>()
-
-        var signalContinuation: AsyncStream<Void>.Continuation?
-        let signal = AsyncStream<Void> { continuation in
-            signalContinuation = continuation
-        }
+        let started = Signal()
+        let entering = Signal()
+        let release = Signal()
 
         let joiner1Task = Task {
             do {
                 let val = try await coalescer.run {
                     operationRunCount += 1
-                    var iterator = signal.makeAsyncIterator()
-                    _ = try await iterator.next()
+                    started.fire()
+                    try await release.wait()
                     return 42
                 }
                 return Result<Int, Error>.success(val)
@@ -68,15 +81,13 @@ struct CoalescingTaskTests {
             }
         }
 
-        // Give joiner 1 time to register
-        try await Task.sleep(nanoseconds: 100_000_000) // 0.1s
+        try await started.wait()
 
         let joiner2Task = Task {
+            entering.fire()
             do {
                 let val = try await coalescer.run {
                     operationRunCount += 1
-                    var iterator = signal.makeAsyncIterator()
-                    _ = try await iterator.next()
                     return 42
                 }
                 return Result<Int, Error>.success(val)
@@ -85,17 +96,13 @@ struct CoalescingTaskTests {
             }
         }
 
-        // Give joiner 2 time to register
-        try await Task.sleep(nanoseconds: 50_000_000) // 0.05s
+        try await entering.wait()
 
         // Cancel joiner 1's task
         joiner1Task.cancel()
 
-        // Let cancellation propagate
-        try await Task.sleep(nanoseconds: 50_000_000) // 0.05s
-
         // Resume the shared operation
-        signalContinuation?.yield()
+        release.fire()
 
         let result1 = try await joiner1Task.value
         let result2 = try await joiner2Task.value
@@ -130,9 +137,6 @@ struct CoalescingTaskTests {
         #expect(result1 == 100)
         #expect(executionCount == 1)
 
-        // Give first task time to clean up
-        try await Task.sleep(nanoseconds: 100_000_000) // 0.1s
-
         // Second run - should be fresh
         let result2 = try await coalescer.run {
             executionCount += 1
@@ -144,11 +148,12 @@ struct CoalescingTaskTests {
 
     @Test func joinerCancelledBeforeRegistrationStillThrows() async throws {
         let coalescer = CoalescingTask<Int>()
+        let release = Signal()
 
         let joinerTask = Task {
             do {
                 let val = try await coalescer.run {
-                    try await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+                    try await release.wait()
                     return 42
                 }
                 return Result<Int, Error>.success(val)
@@ -158,10 +163,10 @@ struct CoalescingTaskTests {
         }
 
         // Cancel immediately before the task has a chance to register its continuation
-        try await Task.sleep(nanoseconds: 1_000_000) // 1ms - very short
         joinerTask.cancel()
 
         let result = try await joinerTask.value
+        release.fire()
 
         // Should still throw CancellationError even though cancelled before registration
         if case let .failure(error) = result {

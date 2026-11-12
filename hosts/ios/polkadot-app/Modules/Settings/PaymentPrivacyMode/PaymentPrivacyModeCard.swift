@@ -54,6 +54,10 @@ struct PaymentPrivacyModeCard: View {
 // MARK: - Header
 
 private extension PaymentPrivacyModeCard {
+    var title: String {
+        String(localized: .settingsPrivacymodeTitle(PaymentAssetBranding.shared.current.symbol))
+    }
+
     var header: some View {
         HStack(spacing: DSSpacings.smallIncreased) {
             Image(systemName: "shield")
@@ -61,9 +65,10 @@ private extension PaymentPrivacyModeCard {
                 .foregroundStyle(.fgSecondary)
                 .frame(width: 32, height: 32)
 
-            Text(String(localized: .settingsPrivacymodeTitle(PaymentAssetBranding.shared.current.symbol)))
+            Text(CashLogo.styled(title, symbol: PaymentAssetBranding.shared.current.symbol, typography: .bodyLarge))
                 .typography(.bodyLarge)
                 .foregroundStyle(.fgPrimary)
+                .accessibilityLabel(title)
         }
         .padding(.vertical, DSSpacings.small)
         .frame(minHeight: PrivacyModeMetrics.headerMinHeight)

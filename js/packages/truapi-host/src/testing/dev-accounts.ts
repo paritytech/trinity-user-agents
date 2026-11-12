@@ -13,6 +13,8 @@
 // pin addresses by reading them back from the host, never by hard-coding a
 // well-known one.
 
+import { mockTestStack, type TestStack } from "../web/create-mock-host.js";
+
 /** Name of a built-in dev account. */
 export type DevAccountName = "alice" | "bob" | "charlie" | "dave";
 
@@ -134,14 +136,18 @@ export const PASEO_ASSET_HUB = {
   tokenDecimals: 10,
 } as const;
 
-/** The chain a suite gets when it names none. */
+/**
+ * Paseo Asset Hub, for a suite that wants one chain without declaring its own.
+ * Nothing applies it: a suite that names no chain is served none, so pass it
+ * in `networks`.
+ */
 export const DEFAULT_CHAIN = PASEO_ASSET_HUB;
 
 /**
  * Fixture settings for proxying one real chain.
  *
- * A live chain has to agree in three places -- what the host proxies to, what
- * it reports serving, and what its runtime config declares -- and the product
+ * A live chain has to agree in three places: what the host proxies to, what
+ * it reports serving, and the Asset Hub of the test stack it runs. The product
  * checks the last two against its own descriptor bundle. Getting one of them
  * wrong fails as a genesis mismatch that names neither the setting nor the
  * file, so this builds all three from one value.
@@ -157,24 +163,40 @@ export const DEFAULT_CHAIN = PASEO_ASSET_HUB;
 export function liveChain(chain: { rpcUrl: string; genesisHash: string }): {
   mock: {
     chainProxies: { rpcUrl: string }[];
-    supportedChains: {
-      network: string;
-      chains: { identifier: "AssetHub"; genesisHash: `0x${string}` }[];
-    };
+    servedChains: string[];
   };
-  runtimeConfig: Record<string, unknown>;
+  runtimeConfig: { testStack: TestStack };
 } {
-  const genesisHash = chain.genesisHash as `0x${string}`;
   return {
     mock: {
       // No hash on the proxy: it takes every request, so routing survives a
       // reset even while the declared hash below has to be re-pinned.
       chainProxies: [{ rpcUrl: chain.rpcUrl }],
-      supportedChains: {
+      servedChains: [chain.genesisHash],
+    },
+    runtimeConfig: {
+      testStack: {
+        ...mockTestStack(),
         network: "paseo",
-        chains: [{ identifier: "AssetHub", genesisHash }],
+        assetHub: { genesisHash: chain.genesisHash },
       },
     },
-    runtimeConfig: { assetHub: { genesisHash } },
   };
+}
+
+/**
+ * Check a product account's derivation index, refusing one `u32` would reshape.
+ *
+ * The index is SCALE-encoded as a `u32`, which wraps: `-1` encodes as
+ * `4294967295` and `1.5` as `1`. Either names a different account than the
+ * caller asked for, and a suite meets that as an address it funded which turns
+ * out not to be the one its product signs with.
+ */
+export function checkDerivationIndex(index: number): number {
+  if (!Number.isInteger(index) || index < 0 || index > 0xff_ff_ff_ff) {
+    throw new RangeError(
+      `product account index ${index} is not a u32: a derivation index is a whole number from 0 to 4294967295.`,
+    );
+  }
+  return index;
 }

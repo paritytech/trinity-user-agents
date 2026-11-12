@@ -1,5 +1,174 @@
 # @parity/truapi-debugger
 
+## 0.1.17
+
+### Patch Changes
+
+- Updated dependencies [951466e]
+- Updated dependencies [c38ac5b]
+- Updated dependencies [c38ac5b]
+- Updated dependencies [88cf440]
+- Updated dependencies [c38ac5b]
+- Updated dependencies [f2175c9]
+- Updated dependencies [baf831f]
+- Updated dependencies [baf831f]
+- Updated dependencies [a066379]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [e92024d]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [e92024d]
+- Updated dependencies [e92024d]
+- Updated dependencies [e92024d]
+- Updated dependencies [e92024d]
+- Updated dependencies [73fef81]
+- Updated dependencies [5c8dbf4]
+- Updated dependencies [6cd2e50]
+- Updated dependencies [b19850d]
+- Updated dependencies [c38ac5b]
+- Updated dependencies [67eb927]
+- Updated dependencies [81c6cd7]
+- Updated dependencies [f23a4e0]
+- Updated dependencies [e92024d]
+  - @parity/truapi@0.30.0
+
+## 0.1.16
+
+### Patch Changes
+
+- Updated dependencies [85ee8d8]
+- Updated dependencies [ab108f7]
+- Updated dependencies [aef8ba1]
+- Updated dependencies [e8e2c17]
+- Updated dependencies [e8e2c17]
+- Updated dependencies [e8e2c17]
+- Updated dependencies [d730414]
+- Updated dependencies [b7b5ffe]
+  - @parity/truapi@0.29.0
+
+## 0.1.15
+
+### Patch Changes
+
+- Updated dependencies [bbc7d8d]
+- Updated dependencies [f449b93]
+- Updated dependencies [f63cda7]
+- Updated dependencies [1136d53]
+- Updated dependencies [860a5f4]
+- Updated dependencies [54f55e6]
+- Updated dependencies [24f3157]
+- Updated dependencies [4a92efa]
+- Updated dependencies [b1e64dc]
+- Updated dependencies [2c8a677]
+- Updated dependencies [c1a894d]
+- Updated dependencies [2dfc294]
+  - @parity/truapi@0.28.0
+
+## 0.1.14
+
+### Patch Changes
+
+- Updated dependencies [f67e9cb]
+- Updated dependencies [b5e1aa4]
+- Updated dependencies [0eb93a9]
+- Updated dependencies [ff34f26]
+- Updated dependencies [d61da55]
+- Updated dependencies [f67e9cb]
+- Updated dependencies [f231850]
+- Updated dependencies [dce190f]
+- Updated dependencies [8c23b5e]
+- Updated dependencies [e9b6d73]
+- Updated dependencies [0c77379]
+- Updated dependencies [747865c]
+- Updated dependencies [f67e9cb]
+- Updated dependencies [c18c267]
+- Updated dependencies [f67e9cb]
+  - @parity/truapi@0.27.0
+
+## 0.1.13
+
+### Patch Changes
+
+- Updated dependencies [10a36af]
+- Updated dependencies [19f5b48]
+- Updated dependencies [9a172e1]
+- Updated dependencies [9064140]
+- Updated dependencies [eb57f87]
+- Updated dependencies [a8623e2]
+- Updated dependencies [5ee4351]
+- Updated dependencies [5ee4351]
+- Updated dependencies [ddb729f]
+- Updated dependencies [82db857]
+- Updated dependencies [073b4f2]
+- Updated dependencies [8b58680]
+- Updated dependencies [28fa81c]
+- Updated dependencies [7bf5a3e]
+- Updated dependencies [eb035fe]
+- Updated dependencies [eb035fe]
+- Updated dependencies [eb035fe]
+- Updated dependencies [eb035fe]
+- Updated dependencies [eb035fe]
+- Updated dependencies [28fa81c]
+- Updated dependencies [743f0ba]
+- Updated dependencies [98e4550]
+- Updated dependencies [98e4550]
+- Updated dependencies [98e4550]
+- Updated dependencies [98e4550]
+- Updated dependencies [def1bb9]
+- Updated dependencies [6864e42]
+- Updated dependencies [8c6f4c9]
+- Updated dependencies [93fee0a]
+- Updated dependencies [93fee0a]
+- Updated dependencies [7472b77]
+- Updated dependencies [822e310]
+- Updated dependencies [6ce480f]
+  - @parity/truapi@0.26.0
+
+## 0.1.12
+
+### Patch Changes
+
+- Updated dependencies [c75de1b]
+- Updated dependencies [fd7926a]
+- Updated dependencies [9fece5c]
+- Updated dependencies [1c4a63e]
+- Updated dependencies [84282d0]
+  - @parity/truapi@0.25.0
+
+## 0.1.11
+
+### Patch Changes
+
+- Updated dependencies [1481c42]
+- Updated dependencies [aa6ae62]
+- Updated dependencies [711d030]
+- Updated dependencies [96c002c]
+- Updated dependencies [2c7efee]
+- Updated dependencies [d8c83f5]
+- Updated dependencies [3281e17]
+- Updated dependencies [3281e17]
+  - @parity/truapi@0.24.0
+
+## 0.1.10
+
+### Patch Changes
+
+- Updated dependencies [7663ece]
+  - @parity/truapi@0.23.0
+
+## 0.1.9
+
+### Patch Changes
+
+- Updated dependencies [a285523]
+- Updated dependencies [60940ff]
+- Updated dependencies [de343d4]
+- Updated dependencies [3ef2191]
+  - @parity/truapi@0.22.0
+
 ## 0.1.8
 
 ### Patch Changes

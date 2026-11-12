@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+
 import type { RequiredHostCallbacks } from "./generated/host-callbacks.js";
+import type { BundledStack } from "./runtime.js";
 
 /** `HostCallbacks` with every optional member required, for exhaustive test fixtures. */
 export type CompleteHostCallbacks = RequiredHostCallbacks;
@@ -27,7 +30,9 @@ export function makeHostCallbacks(
     },
     features: {
       featureSupported: async () => ({ supported: false }),
-      supportedChains: async () => ({ network: "paseo", chains: [] }),
+    },
+    extrinsicVersion: {
+      transactionExtensionVersions: async () => ({ chains: [] }),
     },
     productStorage: {
       read: async () => undefined,
@@ -74,6 +79,10 @@ export function makeHostCallbacks(
       ...overrides.permissions,
     },
     features: { ...defaults.features, ...overrides.features },
+    extrinsicVersion: {
+      ...defaults.extrinsicVersion,
+      ...overrides.extrinsicVersion,
+    },
     productStorage: {
       ...defaults.productStorage,
       ...overrides.productStorage,
@@ -103,6 +112,7 @@ export function makeHostCallbacks(
             createChatRoom: async () => ({ status: "New" as const }),
             registerChatBot: async () => ({ status: "New" as const }),
             postChatMessage: async () => ({ messageId: "message" }),
+            setChatRoomFooter: async () => {},
             async *subscribeChatRooms() {},
             ...overrides.chat,
           },
@@ -129,10 +139,45 @@ export function makeHostCallbacks(
           },
         }
       : {}),
+    // And for Game: the default fixture is a host that holds no reminders,
+    // so Game calls are answered `Unsupported`.
+    ...(overrides.game
+      ? {
+          game: {
+            scheduleGameReminder: async () => {},
+            cancelGameReminder: async () => {},
+            ...overrides.game,
+          },
+        }
+      : {}),
+    // And for the scanner: the default fixture is a host with no viewfinder,
+    // so scans are answered `Unsupported`, as on a web host.
+    ...(overrides.scanner
+      ? {
+          scanner: {
+            scanCode: async () => ({ tag: "Dismissed" as const }),
+            ...overrides.scanner,
+          },
+        }
+      : {}),
   };
 }
 
 /** Resolve after the current microtask/immediate queue, letting pending async work run. */
 export function settle(): Promise<void> {
   return new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+/**
+ * The previewnet stack as a host build bundles it: the link and signed copy
+ * in the repository's `stacks/`.
+ */
+export function bundledTestStack(): BundledStack {
+  const stacks = new URL("../../../../stacks/", import.meta.url);
+  return {
+    pointer: readFileSync(new URL("previewnet.link", stacks), "utf8").trim(),
+    descriptor: new Uint8Array(
+      readFileSync(new URL("previewnet.json", stacks)),
+    ),
+  };
 }

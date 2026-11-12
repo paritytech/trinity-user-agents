@@ -193,14 +193,19 @@ cmd_refresh() {
   # merge against, so it hard-rejects the moment upstream touches a path this
   # repository deleted. Kept in this patch, that one rejection would discard
   # every other adaptation with it.
-  git diff --binary --diff-filter=d "$base_tree" HEAD -- "hosts/${host}" > "$patch"
-  git diff -z --name-only --diff-filter=D "$base_tree" HEAD -- "hosts/${host}" > "$deleted_list"
+  #
+  # --no-renames throughout. A moved file is otherwise reported as a rename,
+  # which the deletion filter does not see and --name-only lists by its new
+  # path alone, so the old path is neither removed nor accounted for and reads
+  # as upstream work that was dropped.
+  git diff --no-renames --binary --diff-filter=d "$base_tree" HEAD -- "hosts/${host}" > "$patch"
+  git diff --no-renames -z --name-only --diff-filter=D "$base_tree" HEAD -- "hosts/${host}" > "$deleted_list"
   local adapted_list
   adapted_list="$(scratch)"
   # NUL-delimited to match the listings it is compared against. --name-only
   # quotes and escapes any path outside ASCII, and one asset in the iOS tree
   # would then never match its own entry and read as dropped work.
-  git diff -z --name-only "$base_tree" HEAD -- "hosts/${host}" > "$adapted_list"
+  git diff --no-renames -z --name-only "$base_tree" HEAD -- "hosts/${host}" > "$adapted_list"
   note "adaptations to re-apply: $(tr -cd '\0' < "$adapted_list" | wc -c | tr -d ' ') files"
 
   # Tracked paths only. rm -rf would also take ignored working files such as

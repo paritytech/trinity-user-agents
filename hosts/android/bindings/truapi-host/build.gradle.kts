@@ -2,8 +2,8 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 // TrUAPI Android host adapter binding.
 //
-// Compiles the TrUAPI Rust core (`truapi-server`, from the enclosing
-// host-rust-core tree) to `libtruapi_server.so` per Android ABI via the shared
+// Compiles the TrUAPI Rust core (`truapi`, from the enclosing
+// trinity-user-agents tree) to `libtruapi.so` per Android ABI via the shared
 // `polkadotapp.android.rust` convention (mozilla rust-android-gradle), then
 // carries the UniFFI-generated Kotlin bindings + the `io.parity.truapi` host
 // adapter shell.
@@ -24,9 +24,11 @@ plugins {
 // produces missing sources rather than an error.
 val truapiDir: String = rootProject.file("../..").path
 
-// Generated source root that `syncHostShell` populates with truapi's canonical
-// `io.parity.truapi` shell.
+// Handwritten Kotlin adapters and value types synced from the core checkout.
 val hostShellDir: Provider<Directory> = layout.buildDirectory.dir("truapi-shell")
+
+// The signed stacks the app can run, synced from the core checkout as `stacks/` assets.
+val stackAssetsDir: Provider<Directory> = layout.buildDirectory.dir("truapi-stacks")
 
 android {
     namespace = "io.parity.truapi"
@@ -38,7 +40,9 @@ android {
                 "src/main/kotlin/generated",
                 hostShellDir.get().asFile.path,
             )
+            assets.srcDir(stackAssetsDir.get().asFile.path)
         }
+        getByName("test") { java.srcDirs("src/test/kotlin") }
         getByName("androidTest") { java.srcDirs("src/androidTest/kotlin") }
     }
 
@@ -54,13 +58,23 @@ android {
 // truapi owns the `io.parity.truapi` host shell. Sync it from the core at
 // build time so this tree holds no copy of it and the two cannot drift.
 //
-// Only the package directory is taken. truapi's `src/main/kotlin` root also holds
-// its own generated UniFFI bindings, which would collide with the ones generated
-// here (`Redeclaration` / `Conflicting overloads`).
+// Generated bindings are excluded because this module generates its own copy.
 val syncHostShell by tasks.registering(Sync::class) {
-    from("$truapiDir/android/truapi-host/src/main/kotlin/io/parity/truapi")
-    into(hostShellDir.map { it.dir("io/parity/truapi") })
+    from("$truapiDir/android/truapi-host/src/main/kotlin") { exclude("generated/**") }
+    into(hostShellDir)
 }
+
+// truapi owns the signed stack descriptors too. The app ships the three it can
+// run as `stacks/<name>.link` and `stacks/<name>.json` assets, synced from the
+// core so this tree holds no copy of them either.
+val syncStacks by tasks.registering(Sync::class) {
+    from("$truapiDir/stacks") { include("previewnet.*", "paseo-next-v2.*", "polkadot.*") }
+    into(stackAssetsDir.map { it.dir("stacks") })
+}
+
+// Asset merging and lint both read the synced stacks.
+tasks.matching { (it.name.startsWith("merge") && it.name.endsWith("Assets")) || "lint" in it.name.lowercase() }
+    .configureEach { dependsOn(syncStacks) }
 
 // Every Kotlin compilation here consumes the synced shell and the generated
 // bindings, across all four build types and both test source sets.
@@ -69,21 +83,18 @@ tasks.withType<KotlinCompile>().configureEach {
 }
 
 // Override the convention default (`module = "rust/"`) to point at the core's
-// truapi-server crate, and build it with the localhost WS bridge.
+// truapi crate.
 cargo {
-    module = "$truapiDir/rust/crates/truapi-server"
-    libname = "truapi_server"
+    module = "$truapiDir/rust/crates/truapi"
+    libname = "truapi"
     // Narrows the convention's four ABIs to the three truapi itself builds.
     // The core is ~9MB per ABI, by far the largest binding here, and 32-bit x86
     // only ever serves a long-obsolete emulator image.
     targets = listOf("arm", "arm64", "x86_64")
-    // truapi-server is a workspace member, so cargo emits artifacts to the
+    // truapi is a workspace member, so cargo emits artifacts to the
     // workspace target dir, not a crate-local one. Point the plugin there so it
     // can find and copy the per-ABI .so into rustJniLibs.
     targetDirectory = "$truapiDir/target"
-    features {
-        defaultAnd(arrayOf("ws-bridge"))
-    }
 }
 
 // The nightly rustdoc the core's codegen runs on, pinned by date in
@@ -104,12 +115,12 @@ val hostCdylib: String = run {
         os.contains("win") -> "dll"
         else -> "so"
     }
-    "$truapiDir/target/codegen/libtruapi_server.$ext"
+    "$truapiDir/target/codegen/libtruapi.$ext"
 }
 
 // codegen.sh formats what it emits with the core's own prettier, resolved with
 // `npm exec --no`, so the core's workspace dependencies have to be installed
-// before it runs. host-rust-core's own CI does the same thing ahead of the
+// before it runs. trinity-user-agents's own CI does the same thing ahead of the
 // script; without it the task dies on a missing prettier rather than anything
 // to do with the generated code.
 val installCoreNodeDeps by tasks.registering(Exec::class) {
@@ -120,10 +131,10 @@ val installCoreNodeDeps by tasks.registering(Exec::class) {
     outputs.dir("$truapiDir/node_modules").withPropertyName("coreNodeModules")
 }
 
-// Generate the core's wire dispatcher. `truapi-server/src/generated` is
-// gitignored, so the core does not compile until this runs. Calling the core's
-// own script rather than repeating its codegen invocation keeps this from
-// drifting when that pipeline changes.
+// Generate the core's wire dispatcher. `truapi/src/generated` is gitignored,
+// so the core does not compile until this runs. Calling the core's own script
+// rather than repeating its codegen invocation keeps this from drifting when
+// that pipeline changes.
 val generateCoreDispatcher by tasks.registering(Exec::class) {
     dependsOn(installCoreNodeDeps)
     workingDir = file(truapiDir)
@@ -131,12 +142,12 @@ val generateCoreDispatcher by tasks.registering(Exec::class) {
     commandLine("./scripts/codegen.sh")
     inputs.files(
         fileTree("$truapiDir/rust/crates/truapi") { include("**/*.rs", "**/Cargo.toml") },
-        fileTree("$truapiDir/rust/crates/truapi-platform") { include("**/*.rs", "**/Cargo.toml") },
+        fileTree("$truapiDir/rust/crates/truapi-provider") { include("**/*.rs", "**/Cargo.toml") },
         fileTree("$truapiDir/rust/crates/truapi-codegen") { include("**/*.rs", "**/Cargo.toml") },
     ).withPropertyName("codegenSources")
     outputs.dirs(
-        "$truapiDir/rust/crates/truapi-server/src/generated",
-        "$truapiDir/rust/crates/truapi-server/src/wasm",
+        "$truapiDir/rust/crates/truapi/src/generated",
+        "$truapiDir/rust/crates/truapi/src/wasm",
     ).withPropertyName("generatedDispatcher")
 }
 
@@ -147,7 +158,7 @@ val generateCoreDispatcher by tasks.registering(Exec::class) {
 val buildHostCdylib by tasks.registering(Exec::class) {
     dependsOn(generateCoreDispatcher)
     workingDir = file(truapiDir)
-    commandLine("cargo", "build", "-p", "truapi-server", "--profile", "codegen", "--features", "ws-bridge")
+    commandLine("cargo", "build", "-p", "truapi", "--profile", "codegen")
     inputs.files(
         fileTree("$truapiDir/rust/crates") { include("**/*.rs", "**/*.js", "**/Cargo.toml") },
         "$truapiDir/Cargo.toml",
@@ -173,10 +184,11 @@ val generateUniffiKotlin by tasks.registering(Exec::class) {
         "--out-dir", outDir.asFile.absolutePath,
     )
     inputs.file(hostCdylib).withPropertyName("hostCdylib")
+    inputs.file("$truapiDir/rust/crates/truapi/uniffi.toml").withPropertyName("uniffiConfig")
     outputs.dir(outDir).withPropertyName("generatedBindings")
 }
 
-// The per-ABI cross-compiles build truapi-server too, so they need the
+// The per-ABI cross-compiles build truapi too, so they need the
 // dispatcher just as much as the host-native build does.
 tasks.matching { it.name.startsWith("cargoBuild") }
     .configureEach { dependsOn(generateCoreDispatcher) }
@@ -193,6 +205,9 @@ dependencies {
 
     // OkHttp WebSocket backs the chain JSON-RPC transport (WebSocketChainProvider).
     implementation(libs.squareup.okhttp3.core)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.squareup.okhttp3.mockwebserver)
 
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)

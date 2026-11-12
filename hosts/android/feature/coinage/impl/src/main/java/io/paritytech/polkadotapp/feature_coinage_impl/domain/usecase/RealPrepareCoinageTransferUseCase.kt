@@ -21,6 +21,7 @@ import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.TransferPla
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.TransferPlannerFactory
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.exceptions.InsufficientBalanceException
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.exceptions.TransferSubmissionFailedException
+import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies.CoinReservationMode
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies.ExactMatchStrategyFactory
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies.ScheduledTransfer
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.planner.strategies.SplitCoinStrategyFactory
@@ -91,7 +92,11 @@ class RealPrepareCoinageTransferUseCase @Inject constructor(
     @OptIn(ExperimentalTime::class)
     context(diagnostics: StalenessReportCollector)
     override suspend fun prepareMemo(plan: TransferPlan, retryUntil: Instant): Result<PreparedTransferMemo> {
-        return createStrategy(plan).schedule(TransferSubmissionParams(buildUntil = retryUntil, retryFailures = true))
+        return createStrategy(plan)
+            .schedule(
+                TransferSubmissionParams(buildUntil = retryUntil, retryFailures = true),
+                CoinReservationMode.PRECOMMIT,
+            )
             .flatMap { scheduled ->
                 // The memo never leaves when its transactions do not, so its coins need not wait for a relaunch.
                 submitNow(scheduled)
@@ -108,7 +113,11 @@ class RealPrepareCoinageTransferUseCase @Inject constructor(
     @OptIn(ExperimentalTime::class)
     context(diagnostics: StalenessReportCollector)
     override suspend fun prepareScheduledMemo(plan: TransferPlan, retryUntil: Instant): Result<PreparedTransferMemo> {
-        return createStrategy(plan).schedule(TransferSubmissionParams(buildUntil = retryUntil, retryFailures = true))
+        return createStrategy(plan)
+            .schedule(
+                TransferSubmissionParams(buildUntil = retryUntil, retryFailures = true),
+                CoinReservationMode.PREPARE,
+            )
             .flatMap { scheduled ->
                 memoBuilder.buildMemo(scheduled.entries).map { memo ->
                     PreparedTransferMemo(memo, SchedulingHandoffCommit(scheduled, transactionService))

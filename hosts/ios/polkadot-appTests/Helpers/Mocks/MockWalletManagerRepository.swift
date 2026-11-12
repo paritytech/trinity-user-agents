@@ -25,11 +25,8 @@ final class MockWalletManagerRepository: WalletManagerRepositoryProtocol {
         self.init(tld: tld, entropyManager: manager)
     }
 
-    func main() throws -> WalletManaging { wallet(WalletDerivationPath.main(for: tld)) }
-    func candidate() throws -> WalletManaging { wallet(WalletDerivationPath.candidate(for: tld)) }
-    func scoreAlias() throws -> WalletManaging { wallet(WalletDerivationPath.score(for: tld)) }
-    func depositWallet() throws -> WalletManaging { wallet(WalletDerivationPath.deposit(for: tld)) }
-    func mobRuleAlias() -> WalletManaging { wallet("//\(PalletContext.mobRule)") }
+    func main() throws -> WalletManaging { try wallet(WalletDerivationPath.main(for: tld)) }
+    func depositWallet() throws -> WalletManaging { try wallet(WalletDerivationPath.deposit(for: tld)) }
     func resourcesAlias() -> WalletManaging { wallet("//\(PalletContext.resources)") }
     func internalPayout() -> WalletManaging { wallet("//\(PalletContext.privacyVoucher)") }
     func bulletInForChat() -> WalletManaging { wallet(WalletDerivationPath.bulletInForChat) }

@@ -11,12 +11,12 @@ import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.utils.coerceToUnit
 import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
+import io.paritytech.polkadotapp.feature_dotns_gateway_api.data.api.accountAlias
+import io.paritytech.polkadotapp.feature_dotns_gateway_api.data.api.dotNsGateway
 import io.paritytech.polkadotapp.feature_dotns_gateway_api.data.repository.DotNsGatewayRepository
 import io.paritytech.polkadotapp.feature_dotns_gateway_api.domain.model.DotNsBaseNameAvailability
 import io.paritytech.polkadotapp.feature_dotns_gateway_api.domain.model.DotNsLink
 import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.DotNsReservationMessage
-import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.api.accountAlias
-import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.api.dotNsGateway
 import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.api.dotNsGatewayCalls
 import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.api.registerName
 import io.paritytech.polkadotapp.feature_dotns_gateway_impl.data.config.DotNsGatewayConfig

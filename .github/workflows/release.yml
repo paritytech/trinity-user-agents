@@ -32,7 +32,10 @@ jobs:
       id-token: write
       attestations: write
     outputs:
+      ios_version: ${{ steps.version.outputs.ios_version }}
+      android_version: ${{ steps.version.outputs.android_version }}
       cli_version: ${{ steps.version.outputs.cli_version }}
+      crate_version: ${{ steps.version.outputs.crate_version }}
       published: ${{ steps.confirm.outputs.published }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -41,7 +44,7 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
@@ -57,7 +60,10 @@ jobs:
           subject="${subject% (#*)}"
           release="${subject#release: }"
           packages=""
+          ios_version=""
+          android_version=""
           cli_version=""
+          crate_version=""
           seen_names="|"
 
           IFS=',' read -ra targets <<< "${release}"
@@ -69,7 +75,7 @@ jobs:
             # Trim whitespace around comma-separated targets.
             target="${target#"${target%%[![:space:]]*}"}"
             target="${target%"${target##*[![:space:]]}"}"
-            if [[ ! "${target}" =~ ^(@parity/truapi|@parity/truapi-host|@parity/truapi-provider|@parity/truapi-debugger)[[:space:]]+([^[:space:]]+)$ ]]; then
+            if [[ ! "${target}" =~ ^(@parity/truapi|@parity/truapi-host|@parity/truapi-provider|@parity/truapi-debugger|@parity/trinity-stack|@parity/ios-host|@parity/android-host)[[:space:]]+([^[:space:]]+)$ ]]; then
               echo "::error::Unsupported release target '${target}' in subject: ${subject}"
               exit 1
             fi
@@ -92,6 +98,26 @@ jobs:
               @parity/truapi-host) path="js/packages/truapi-host" ;;
               @parity/truapi-provider) path="js/packages/truapi-provider" ;;
               @parity/truapi-debugger) path="js/packages/truapi-debugger" ;;
+              @parity/trinity-stack)
+                path="js/packages/trinity-stack"
+                crate_version="${declared_version}"
+                ;;
+              @parity/ios-host)
+                if [[ ! "${declared_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+                  echo "::error::Invalid iOS host version '${declared_version}'."
+                  exit 1
+                fi
+                ios_version="${declared_version}"
+                continue
+                ;;
+              @parity/android-host)
+                if [[ ! "${declared_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+                  echo "::error::Invalid Android host version '${declared_version}'."
+                  exit 1
+                fi
+                android_version="${declared_version}"
+                continue
+                ;;
             esac
 
             version="$(jq -r '.version' "${path}/package.json")"
@@ -175,7 +201,10 @@ jobs:
             done < <(printf '%s\n' "${dep_lines}")
           done <<< "${packages}"
 
+          echo "ios_version=${ios_version}" >> "$GITHUB_OUTPUT"
+          echo "android_version=${android_version}" >> "$GITHUB_OUTPUT"
           echo "cli_version=${cli_version}" >> "$GITHUB_OUTPUT"
+          echo "crate_version=${crate_version}" >> "$GITHUB_OUTPUT"
 
           if [ -z "${packages}" ]; then
             echo "No requested npm packages need publishing."
@@ -202,9 +231,8 @@ jobs:
           fi
 
       - if: steps.version.outputs.proceed == 'true'
-        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+        uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt
 
       - if: steps.version.outputs.proceed == 'true'
@@ -213,14 +241,16 @@ jobs:
           toolchain: stable
 
       - if: steps.version.outputs.proceed == 'true'
-        uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        uses: ./.github/actions/rust-cache
+        with:
+          save: "false"
 
       - name: Install dependencies
         if: steps.version.outputs.proceed == 'true'
         run: npm ci
 
       - name: Install wasm-pack
-        if: steps.version.outputs.proceed == 'true' && (contains(steps.version.outputs.packages, '@parity/truapi-host|') || contains(steps.version.outputs.packages, '@parity/truapi-provider|'))
+        if: steps.version.outputs.proceed == 'true' && (contains(steps.version.outputs.packages, '@parity/truapi-host|') || contains(steps.version.outputs.packages, '@parity/truapi-provider|') || contains(steps.version.outputs.packages, '@parity/trinity-stack|'))
         run: cargo install wasm-pack --version 0.14.0 --locked
 
       - name: Build packages
@@ -243,6 +273,10 @@ jobs:
           if grep -q '^@parity/truapi-provider|' <<< "${STEPS_VERSION_OUTPUTS_PACKAGES}"; then
             npm run build --prefix js/packages/truapi-provider
           fi
+          # Ships dist/ and wasm/, both gitignored build outputs.
+          if grep -q '^@parity/trinity-stack|' <<< "${STEPS_VERSION_OUTPUTS_PACKAGES}"; then
+            npm run build --prefix js/packages/trinity-stack
+          fi
         env:
           STEPS_VERSION_OUTPUTS_PACKAGES: ${{ steps.version.outputs.packages }}
 
@@ -259,7 +293,7 @@ jobs:
 
       - name: Upload package artifacts
         if: steps.version.outputs.proceed == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: package
           path: artifacts/*.tgz
@@ -295,6 +329,8 @@ jobs:
         run: printf '%s' "${STEPS_VERSION_OUTPUTS_PACKAGES}" | node scripts/wait-for-npm-publish.mjs
 
       # Skip rather than loop over an empty list, which yields an empty tag.
+      # A trinity-stack release also tags the install-trinity-stack action,
+      # which installs the package version of the commit it is checked out at.
       - name: Create release tags
         if: steps.version.outputs.proceed == 'true' && steps.confirm.outputs.published != ''
         env:
@@ -303,14 +339,20 @@ jobs:
           STEPS_CONFIRM_OUTPUTS_PUBLISHED: ${{ steps.confirm.outputs.published }}
         run: |
           set -euo pipefail
-          while IFS='|' read -r _name _path _version tag; do
-            if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
-              echo "Tag ${tag} already exists; skipping create."
-              continue
+          while IFS='|' read -r name _path version tag; do
+            tags=("${tag}")
+            if [ "${name}" = "@parity/trinity-stack" ]; then
+              tags+=("trinity-stack-v${version}")
             fi
-            gh api --method POST "repos/${{ github.repository }}/git/refs" \
-              -f ref="refs/tags/${tag}" \
-              -f sha="${RELEASE_SHA}"
+            for tag in "${tags[@]}"; do
+              if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+                echo "Tag ${tag} already exists; skipping create."
+                continue
+              fi
+              gh api --method POST "repos/${{ github.repository }}/git/refs" \
+                -f ref="refs/tags/${tag}" \
+                -f sha="${RELEASE_SHA}"
+            done
           done <<< "${STEPS_CONFIRM_OUTPUTS_PUBLISHED}"
 
       - name: Create GitHub Release
@@ -354,6 +396,18 @@ jobs:
       CONSUMER_APP_ID: ${{ secrets.CONSUMER_APP_ID }}
       CONSUMER_APP_KEY: ${{ secrets.CONSUMER_APP_KEY }}
 
+  publish-android:
+    name: Publish Android host
+    needs: release
+    if: needs.release.outputs.android_version != ''
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/release-android.yml
+    with:
+      version: ${{ needs.release.outputs.android_version }}
+      ref: ${{ github.event.workflow_run.head_sha }}
+
   publish-cli:
     name: Publish truapi-host binaries
     needs: release
@@ -366,3 +420,117 @@ jobs:
     with:
       version: ${{ needs.release.outputs.cli_version }}
       ref: ${{ github.event.workflow_run.head_sha }}
+
+  # Runs after the release job confirmed the npm package. crate_version is set
+  # even when npm already had that version, so a re-run publishes a crate that
+  # a failed run did not.
+  publish-crate:
+    name: Publish trinity-stack crate
+    needs: release
+    if: needs.release.outputs.crate_version != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Check the crate version against crates.io
+        id: crate
+        env:
+          VERSION: ${{ needs.release.outputs.crate_version }}
+        run: |
+          set -euo pipefail
+          crate="$(awk -F'"' '/^version = /{print $2; exit}' rust/crates/trinity-stack/Cargo.toml)"
+          if [ "${crate}" != "${VERSION}" ]; then
+            echo "::error::rust/crates/trinity-stack/Cargo.toml is ${crate}, but the release declares ${VERSION}. Run npm run version-packages."
+            exit 1
+          fi
+          lookup=0
+          scripts/crates-io-index.sh trinity-stack "${VERSION}" || lookup=$?
+          case "${lookup}" in
+            0)
+              echo "trinity-stack ${VERSION} is already on crates.io; skipping."
+              echo "listed=true" >> "$GITHUB_OUTPUT"
+              ;;
+            1) echo "listed=false" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error::could not read the crates.io index for trinity-stack."
+              exit 1
+              ;;
+          esac
+
+      - if: steps.crate.outputs.listed == 'false'
+        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
+        with:
+          toolchain: stable
+
+      # Builds the packaged sources, so the automation, which publishes with
+      # --no-verify, never receives a crate that does not compile.
+      - name: Package the crate
+        if: steps.crate.outputs.listed == 'false'
+        run: cargo package -p trinity-stack
+
+      - name: Upload the crate
+        if: steps.crate.outputs.listed == 'false'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: crates
+          path: target/package/*.crate
+          if-no-files-found: error
+          # A re-run reuses the run id, so it replaces the earlier attempt's artifact.
+          overwrite: true
+
+      - name: Generate the dispatch token
+        id: dispatch-token
+        if: steps.crate.outputs.listed == 'false'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.CRATES_NPM_PUBLISHING_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CRATES_NPM_PUBLISHING_APP_PRIVATE_KEY }}
+          owner: paritytech
+
+      # The run also contains the npm `package` artifact, and the automation reads
+      # the first artifact unless artifact_name selects one.
+      - name: Publish via crates_publish_automation
+        if: steps.crate.outputs.listed == 'false'
+        uses: octokit/request-action@b91aabaa861c777dcdb14e2387e30eddf04619ae # v3.0.0
+        with:
+          route: POST /repos/paritytech/crates_publish_automation/actions/workflows/publish.yml/dispatches
+          ref: main
+          inputs: '${{ format(''{{ "repo": "{0}", "run_id": "{1}", "artifact_name": "crates" }}'', github.repository, github.run_id) }}'
+        env:
+          GITHUB_TOKEN: ${{ steps.dispatch-token.outputs.token }}
+
+      # The dispatch only reports acceptance, so the index is the only proof the
+      # crate was published.
+      - name: Confirm the crate reached crates.io
+        if: steps.crate.outputs.listed == 'false'
+        timeout-minutes: 15
+        env:
+          VERSION: ${{ needs.release.outputs.crate_version }}
+          CRATES_INDEX_WAIT_SECONDS: "600"
+        run: |
+          set -euo pipefail
+          if ! scripts/crates-io-index.sh trinity-stack "${VERSION}"; then
+            echo "::error::trinity-stack ${VERSION} is not on crates.io; the crates_publish_automation run reports why, and opens an issue here when it fails."
+            exit 1
+          fi
+          echo "Confirmed trinity-stack ${VERSION} on crates.io."
+
+  publish-ios:
+    name: Publish iOS host
+    needs: release
+    if: needs.release.outputs.ios_version != ''
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    uses: ./.github/workflows/release-ios.yml
+    with:
+      version: ${{ needs.release.outputs.ios_version }}
+      ref: ${{ github.event.workflow_run.head_sha }}
+      manifest_branch: ${{ github.event.workflow_run.head_branch }}

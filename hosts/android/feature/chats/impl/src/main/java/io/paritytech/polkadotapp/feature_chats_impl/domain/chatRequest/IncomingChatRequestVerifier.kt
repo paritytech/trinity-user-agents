@@ -29,7 +29,7 @@ class RealIncomingChatRequestVerifier @Inject constructor(
         val statementAccountId = request.proof.signerAccountId()
 
         val peerChatPubKey = resourcesRepository
-            .requireConsumerInfo(chainRegistry.getChain(knownChains.people), proof.identityAccountId)
+            .requireConsumerInfo(chainRegistry.getChain(knownChains.assetHub), proof.identityAccountId)
             .getOrThrow()
             .identifierKey
             .let { it.x25519OrNull() ?: error("Peer account uses an unsupported chat encryption key type") }

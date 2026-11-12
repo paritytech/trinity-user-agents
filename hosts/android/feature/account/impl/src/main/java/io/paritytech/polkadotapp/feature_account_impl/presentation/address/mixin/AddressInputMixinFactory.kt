@@ -10,11 +10,13 @@ class AddressInputMixinFactory @Inject constructor(
 ) : AddressInputMixin.Factory {
     override fun create(
         coroutineScope: CoroutineScope,
-        converters: List<AddressInputMixin.AddressConverter>,
+        localConverters: List<AddressInputMixin.AddressConverter>,
+        remoteConverters: List<AddressInputMixin.AddressConverter>,
     ): AddressInputMixin {
         return RealAddressInputMixin(
             pasteMixinFactory = pasteMixinFactory,
-            addressConverters = converters,
+            localConverters = localConverters,
+            remoteConverters = remoteConverters,
             coroutineScope = coroutineScope
         )
     }

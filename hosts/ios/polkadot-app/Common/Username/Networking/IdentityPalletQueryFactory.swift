@@ -85,14 +85,15 @@ extension IdentityPalletQueryFactory: IdentityPalletQueryFactoryProtocol {
     ) -> CompoundOperationWrapper<[Username?]> {
         let codingFactoryOperation = runtimeProvider.fetchCoderFactoryOperation()
 
-        let path = ResourcesPallet.Storage.consumers(AccountId.empty)
-        let wrapper: CompoundOperationWrapper<[StorageResponse<ResourcesPallet.ConsumerInfo>]> = storageRequestFactory
-            .queryItems(
-                engine: connection,
-                keyParams: { accountIds.map { BytesCodable(wrappedValue: $0) } },
-                factory: { try codingFactoryOperation.extractNoCancellableResultData() },
-                storagePath: path()
-            )
+        let path = DotnsGatewayPallet.Storage.accountNames(Data())
+        let wrapper: CompoundOperationWrapper<[StorageResponse<DotnsGatewayPallet.AccountNameRecord>]> =
+            storageRequestFactory
+                .queryItems(
+                    engine: connection,
+                    keyParams: { accountIds.map { BytesCodable(wrappedValue: $0) } },
+                    factory: { try codingFactoryOperation.extractNoCancellableResultData() },
+                    storagePath: path()
+                )
         let toUsername: ClosureOperation<[Username?]> = ClosureOperation {
             let responses = try wrapper.targetOperation.extractNoCancellableResultData()
             return responses.map {

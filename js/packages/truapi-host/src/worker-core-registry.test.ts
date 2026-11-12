@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 
-import { dispatchFrame, disposeAwaitingFrames } from "./worker-core-registry.ts";
+import {
+  dispatchFrame,
+  disposeAwaitingFrames,
+} from "./worker-core-registry.ts";
 
 // A fake core modelling the wasm-bindgen borrow: free() throws while a
 // receiveFrame promise is still unsettled, exactly as the real core does.

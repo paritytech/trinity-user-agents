@@ -37,7 +37,6 @@ extension ChatSampleExtension: ChatExtensionBotProtocol {
     var peerMetadata: Chat.PeerMetadata {
         Chat.PeerMetadata(
             name: "Sample Echo Bot",
-            contactSource: .chat,
             icon: .image(nil),
             input: .inputField(.init(canPay: false, canAttachFile: true)),
             moreActions: []

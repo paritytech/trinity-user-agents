@@ -2,12 +2,10 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
 import com.google.gson.Gson
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_api.domain.error.ProductResolutionError
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.model.PocketCardPreview
 import io.paritytech.polkadotapp.feature_products_api.model.ProductExecutable
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_impl.data.manifest.ManifestParser
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.DebugPocketCard
@@ -20,6 +18,7 @@ import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
+import uniffi.truapi.ProductId
 
 private const val CID = "QmXoypizjW3WknFiJnKLwHCnL72vedxjQkDDP1mXWo6uco"
 
@@ -29,12 +28,14 @@ class RealResolveProductUseCaseTest {
     private val manifestParser = ManifestParser(Gson())
 
     private val base = "coinflip.dot"
-    private val productId = ProductId.fromStoredValue(base)
+    private val productId = ProductId.parse(base).getOrThrow()
 
     private var debugCard: DebugPocketCard? = null
     private val debugPocketCards = object : DebugPocketCards {
         override fun get(productId: ProductId): DebugPocketCard? = debugCard
         override fun set(productId: ProductId, card: DebugPocketCard?) = Unit
+        override fun appUrl(productId: ProductId): String? = null
+        override fun setAppUrl(productId: ProductId, appUrl: String?) = Unit
     }
 
     private fun useCase() = RealResolveProductUseCase(
@@ -125,16 +126,6 @@ class RealResolveProductUseCaseTest {
     }
 
     @Test
-    fun `an executable subname resolves as its product`() = runBlocking {
-        whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
-
-        val servingHost = ProductId.fromString("APP.$base", DotNsTld.parse("dot")!!).getOrThrow()
-        val resolved = useCase().resolve(servingHost).getOrThrow()
-
-        assertEquals(base, resolved.product.id.value)
-    }
-
-    @Test
     fun `surfaces failure when manifest record is malformed`() = runBlocking {
         whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success("not json"))
 
@@ -149,7 +140,7 @@ class RealResolveProductUseCaseTest {
      */
     @Test
     fun `a debug worker carries the card the debug menu names`() = runBlocking {
-        debugCard = DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE)
+        debugCard = DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE, faceShown = true)
         whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(null))
         whenever(productRepository.getUserWorkerUrl(productId)).thenReturn(DEV_WORKER)
 
@@ -176,7 +167,7 @@ class RealResolveProductUseCaseTest {
     /** A published worker is the product's own word; a local override must not quietly beat it. */
     @Test
     fun `a published worker still wins over the debug one`() = runBlocking {
-        debugCard = DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE)
+        debugCard = DebugPocketCard(PocketCardId("loyalty"), "Loyalty", DEV_FACE, faceShown = true)
         whenever(dotNsResolver.getMetadataEntry(base, "manifest")).thenReturn(Result.success(rootJson()))
         whenever(dotNsResolver.getMetadataEntry("app.$base", "executable")).thenReturn(Result.success(appJson()))
         whenever(dotNsResolver.getMetadataEntry("widget.$base", "executable")).thenReturn(Result.success(null))

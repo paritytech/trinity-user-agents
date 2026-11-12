@@ -21,6 +21,8 @@
 
     @MainActor
     protocol AppFactoryResetWireframeProtocol: AnyObject {
+        /// Releases the current screen hierarchy, so the dashboard's deinit stops its services before the wipe.
+        func detachCurrentSession(from view: AppFactoryResetViewProtocol?)
         func navigateToFreshStart()
         func dismiss(from view: AppFactoryResetViewProtocol?)
     }

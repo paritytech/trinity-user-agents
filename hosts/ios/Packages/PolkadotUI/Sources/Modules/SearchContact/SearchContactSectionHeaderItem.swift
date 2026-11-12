@@ -18,8 +18,8 @@ public struct SearchContactSectionHeaderConfiguration: HashableContentConfigurat
 
 final class SearchContactSectionHeaderView: UIView, UIContentView {
     private let titleLabel: Label = create {
-        $0.typography = .titleMedium
-        $0.textColor = UIColor.fgSecondary
+        $0.typography = .captionMedium
+        $0.textColor = .fgSecondary
         $0.numberOfLines = 1
     }
 
@@ -54,6 +54,6 @@ final class SearchContactSectionHeaderView: UIView, UIContentView {
     private func apply(_ any: UIContentConfiguration) {
         guard let configuration = any as? SearchContactSectionHeaderConfiguration else { return }
         appliedConfiguration = configuration
-        titleLabel.text = configuration.title
+        titleLabel.text = configuration.title.uppercased(with: .current)
     }
 }

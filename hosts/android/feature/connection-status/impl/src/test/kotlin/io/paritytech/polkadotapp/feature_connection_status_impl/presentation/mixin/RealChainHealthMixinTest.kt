@@ -8,8 +8,11 @@ import io.paritytech.polkadotapp.feature_connection_status_api.domain.ChainHealt
 import io.paritytech.polkadotapp.feature_connection_status_api.domain.model.ChainConnectionPresentation
 import io.paritytech.polkadotapp.feature_connection_status_api.domain.model.ChainHealth
 import io.paritytech.polkadotapp.feature_connection_status_api.domain.model.ChainMetricReading
-import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainGlyph
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicator
+import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
+import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthItemModel
+import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.IndicatorRow
+import io.paritytech.polkadotapp.feature_statement_store_api.domain.StatementStorePeer
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,6 +30,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
 import java.util.concurrent.atomic.AtomicInteger
@@ -34,23 +38,31 @@ import kotlin.time.Duration.Companion.seconds
 
 class RealChainHealthMixinTest {
     private val monitor: ChainHealthMonitor = mock(ChainHealthMonitor::class.java)
+    private val peer: StatementStorePeer = mock(StatementStorePeer::class.java)
+    private val answered = MutableStateFlow(true)
     private val lifecycle = FakeAppLifecycleObserver()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val subscriptions = AtomicInteger()
     private val cancellations = AtomicInteger()
 
+    @Before
+    fun setUp() {
+        whenever(peer.chainId).thenReturn(PEOPLE)
+        whenever(peer.observeAnswered()).thenReturn(answered)
+    }
+
     @After
     fun tearDown() = scope.cancel()
 
     @Test
-    fun `items carry the glyph and indicator of their chain`() = runBlocking<Unit> {
+    fun `items carry the row and indicator of their chain`() = runBlocking<Unit> {
         withMonitorEmitting(health(HUB))
         val mixin = createMixin()
 
-        val item = mixin.awaitModel().chains.single()
+        val item = mixin.awaitModel().chainRows().single()
 
-        assertEquals(ChainGlyph.AssetHub, item.glyph)
+        assertEquals(IndicatorRow.AssetHub, item.row)
         assertEquals(ChainHealthIndicator.Healthy(liveness = null), item.indicator)
     }
 
@@ -59,7 +71,7 @@ class RealChainHealthMixinTest {
         withMonitorEmitting(health(HUB, blockProduction(produced = 8)))
         val mixin = createMixin()
 
-        val item = mixin.awaitModel().chains.single()
+        val item = mixin.awaitModel().chainRows().single()
 
         assertEquals(ChainHealthIndicator.of(share = 0.8f, expectedBlockTime = 6.seconds), item.indicator)
     }
@@ -69,7 +81,7 @@ class RealChainHealthMixinTest {
         withMonitorEmitting(health(HUB, blockProduction(produced = null)))
         val mixin = createMixin()
 
-        assertEquals(ChainHealthIndicator.Healthy(liveness = null), mixin.awaitModel().chains.single().indicator)
+        assertEquals(ChainHealthIndicator.Healthy(liveness = null), mixin.awaitModel().chainRows().single().indicator)
     }
 
     @Test
@@ -82,10 +94,10 @@ class RealChainHealthMixinTest {
         healths.emit(listOf(health(HUB, anchorPending())))
         healths.emit(listOf(health(HUB, anchorPending()), health(PEOPLE, anchorPending())))
 
-        val model = withTimeout(TIMEOUT) { mixin.model.first { it.chains.size == 2 } }
+        val model = withTimeout(TIMEOUT) { mixin.model.first { it.chainRows().size == 2 } }
 
-        assertEquals(ChainHealthIndicator.of(share = 0.8f, expectedBlockTime = 6.seconds), model.chains.first().indicator)
-        assertEquals(ChainHealthIndicator.Healthy(liveness = null), model.chains.last().indicator)
+        assertEquals(ChainHealthIndicator.of(share = 0.8f, expectedBlockTime = 6.seconds), model.chainRows().first().indicator)
+        assertEquals(ChainHealthIndicator.Healthy(liveness = null), model.chainRows().last().indicator)
     }
 
     @Test
@@ -97,9 +109,9 @@ class RealChainHealthMixinTest {
         mixin.awaitModel()
         healths.emit(listOf(health(HUB, anchorPending())))
 
-        val model = withTimeout(TIMEOUT) { mixin.model.first { it.chains.single().indicator != ChainHealthIndicator.Connecting } }
+        val model = withTimeout(TIMEOUT) { mixin.model.first { it.chainRows().single().indicator != ChainHealthIndicator.Connecting } }
 
-        assertEquals(ChainHealthIndicator.Healthy(liveness = null), model.chains.single().indicator)
+        assertEquals(ChainHealthIndicator.Healthy(liveness = null), model.chainRows().single().indicator)
     }
 
     @Test
@@ -111,9 +123,56 @@ class RealChainHealthMixinTest {
         mixin.awaitModel()
         healths.emit(listOf(health(HUB, anchorPending(), connection = ChainConnectionPresentation.Offline)))
 
-        val model = withTimeout(TIMEOUT) { mixin.model.first { it.chains.single().indicator == ChainHealthIndicator.Offline } }
+        val model = withTimeout(TIMEOUT) { mixin.model.first { it.chainRows().single().indicator == ChainHealthIndicator.Offline } }
 
-        assertEquals(ChainHealthIndicator.Offline, model.chains.single().indicator)
+        assertEquals(ChainHealthIndicator.Offline, model.chainRows().single().indicator)
+    }
+
+    @Test
+    fun `the statement store is drawn last, after every chain`() = runBlocking<Unit> {
+        withMonitorEmitting(health(PEOPLE), health(HUB), health(BULLETIN))
+        val mixin = createMixin()
+
+        val model = mixin.awaitModel()
+
+        assertEquals(4, model.rows.size)
+        assertEquals(IndicatorRow.StatementStore, model.rows.last().row)
+    }
+
+    @Test
+    fun `the statement store follows the chain whose socket it shares, not the others`() = runBlocking<Unit> {
+        withMonitorEmitting(
+            health(HUB, blockProduction(produced = 10)),
+            health(PEOPLE, connection = ChainConnectionPresentation.Disconnected),
+        )
+        val mixin = createMixin()
+
+        val model = mixin.awaitModel()
+
+        assertEquals(ChainHealthIndicator.Disconnected, model.statementStoreRow().indicator)
+    }
+
+    @Test
+    fun `a connected chain the peer has not answered leaves the statement store connecting`() = runBlocking<Unit> {
+        answered.value = false
+        withMonitorEmitting(health(PEOPLE, blockProduction(produced = 10)))
+        val mixin = createMixin()
+
+        val model = mixin.awaitModel()
+
+        assertEquals(ChainHealthIndicator.of(share = 1f, expectedBlockTime = 6.seconds), model.chainRows().single().indicator)
+        assertEquals(ChainHealthIndicator.Connecting, model.statementStoreRow().indicator)
+    }
+
+    @Test
+    fun `the statement store never carries the chain's block production`() = runBlocking<Unit> {
+        withMonitorEmitting(health(PEOPLE, blockProduction(produced = 4)))
+        val mixin = createMixin()
+
+        val model = mixin.awaitModel()
+
+        assertEquals(ChainHealthIndicator.of(share = 0.4f, expectedBlockTime = 6.seconds), model.chainRows().single().indicator)
+        assertEquals(ChainHealthIndicator.Healthy(liveness = null), model.statementStoreRow().indicator)
     }
 
     @Test
@@ -134,9 +193,16 @@ class RealChainHealthMixinTest {
     private fun createMixin() = RealChainHealthMixin(
         scope = ComputationalScope(scope),
         monitor = monitor,
+        peer = peer,
         knownChains = KnownChains(people = PEOPLE, assetHub = HUB, bulletIn = BULLETIN, hydration = null),
         appLifecycleObserver = lifecycle,
     )
+
+    private fun ChainHealthIndicatorsModel.chainRows(): List<ChainHealthItemModel> =
+        rows.filterNot { it.row == IndicatorRow.StatementStore }
+
+    private fun ChainHealthIndicatorsModel.statementStoreRow(): ChainHealthItemModel =
+        rows.single { it.row == IndicatorRow.StatementStore }
 
     private fun withMonitorSequence(): MutableSharedFlow<List<ChainHealth>> {
         val healths = MutableSharedFlow<List<ChainHealth>>(replay = 1)
@@ -154,7 +220,7 @@ class RealChainHealthMixinTest {
     }
 
     private suspend fun RealChainHealthMixin.awaitModel() =
-        withTimeout(TIMEOUT) { model.first { it.chains.isNotEmpty() } }
+        withTimeout(TIMEOUT) { model.first { it.chainRows().isNotEmpty() } }
 
     private suspend fun awaitUntil(condition: () -> Boolean) = withTimeout(TIMEOUT) {
         while (!condition()) delay(POLL_INTERVAL_MS)

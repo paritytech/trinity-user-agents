@@ -268,6 +268,10 @@ struct ValidatingExtrinsicSubmitterTests {
     func resubmissionDoesNotReemitCreated() async throws {
         let context = try makeContext(validity: .valid)
         let created = context.statusEvent(isCreated)
+        let inBlock = context.statusEvent { result in
+            guard case let .success(model) = result else { return false }
+            return model.statusUpdate.getInBlockOrFinalizedHash() != nil
+        }
 
         context.submit()
         try await created.wait()
@@ -276,7 +280,10 @@ struct ValidatingExtrinsicSubmitterTests {
         context.base.emit(.success(makeStatus(.onChain(.invalid))))
 
         try await context.base.subscribed.wait(occurrences: 2)
-        await settle()
+        // Emitting on the serial callback queue delivers any re-emitted created, queued earlier, first.
+        let inBlockStatus = makeStatus(.onChain(.inBlock("0xabc")))
+        context.queue.async { context.base.emit(.success(inBlockStatus), toAttempt: 1) }
+        try await inBlock.wait()
 
         #expect(created.occurrences == 1, "the caller must see created once, not once per attempt")
     }
@@ -306,6 +313,7 @@ private extension ValidatingExtrinsicSubmitterTests {
         let api: TaggedTransactionQueueApiMock
         let blockInfo: BlockInfoProvidingMock
         let builtExtrinsic: ExtrinsicBuiltModel
+        let queue = DispatchQueue(label: "ValidatingExtrinsicSubmitterTests.callbacks")
 
         typealias StatusResult = Result<ExtrinsicSubscribedStatusModel, Error>
 
@@ -353,7 +361,7 @@ private extension ValidatingExtrinsicSubmitterTests {
         func submit() {
             submitter.submitAndSubscribe(
                 builtExtrinsic: builtExtrinsic,
-                runningIn: .global(),
+                runningIn: queue,
                 subscriptionIdClosure: { [weak self] id in
                     self?.mutex.withLock { self?.storedReportedIds.append(id) }
                     return true

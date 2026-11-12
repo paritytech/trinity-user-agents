@@ -3,7 +3,10 @@ import DurableTransactionsTestSupport
 @preconcurrency import ExtrinsicService
 import Foundation
 import os
+import StructuredConcurrency
 import SubstrateSdk
+import Testing
+import StructuredConcurrencyTestSupport
 @testable import Coinage
 
 /// Blocks a coinage extrinsic stays valid for by default in the harness.
@@ -136,6 +139,7 @@ final class DurabilityHarness: @unchecked Sendable {
         }
         guard !ids.isEmpty else { return }
 
+        let recordedBefore = subsystem.recorder.count
         let owned = subsystem.owned
         var spins = 0
         while ids.contains(where: { owned.isOwned($0) }) {
@@ -151,9 +155,24 @@ final class DurabilityHarness: @unchecked Sendable {
                 spins = 0
             }
         }
-        // Let the release-time `onRecovery` record run before returning, so a scenario can assert on it.
-        await Task.yield()
-        await Task.yield()
+        // Let the release-time `onRecovery` record land before returning, so a scenario can assert on it.
+        await awaitRecoveryRecords(for: ids, after: recordedBefore)
+    }
+
+    private func awaitRecoveryRecords(for ids: [CoinageTxId], after recordedBefore: Int) async {
+        var expected = 0
+        for id in ids {
+            // Mirrors DurableTxTracker.needsRecovery: unreadable or awaiting-verdict status means a record is coming.
+            if await (try? store.durable.getStatus(id))?.awaitsVerdict ?? true { expected += 1 }
+        }
+        guard expected > 0 else { return }
+
+        let recorder = subsystem.recorder
+        do {
+            try await withTimeout(.hangGuard) { await recorder.waitForCount(recordedBefore + expected) }
+        } catch {
+            Issue.record("\(expected) recovery request(s) expected after release never arrived")
+        }
     }
 
     // MARK: - Extrinsic hashes
@@ -334,8 +353,30 @@ private extension DurabilityHarness {
     /// tasks cannot pollute the live counter.
     final class RecoveryRecorder: @unchecked Sendable {
         private let lock = OSAllocatedUnfairLock(initialState: 0)
-        func record() { lock.withLock { $0 += 1 } }
+        private let counts: AsyncStream<Int>
+        private let countContinuation: AsyncStream<Int>.Continuation
+
+        init() {
+            (counts, countContinuation) = AsyncStream<Int>.makeStream(bufferingPolicy: .unbounded)
+        }
+
+        func record() {
+            lock.withLock { count in
+                count += 1
+                countContinuation.yield(count)
+            }
+        }
+
         var count: Int { lock.withLock { $0 } }
+
+        /// Returns once at least `count` records have been made. The stream buffers every count, so a
+        /// record made between the check and the wait is not missed.
+        func waitForCount(_ count: Int) async {
+            if self.count >= count { return }
+            for await value in counts where value >= count {
+                return
+            }
+        }
     }
 
     struct Subsystem {

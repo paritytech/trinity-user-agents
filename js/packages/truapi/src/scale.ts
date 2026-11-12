@@ -44,6 +44,7 @@ export {
   Vector,
   _void,
   compact,
+  enhanceCodec,
   i8,
   i16,
   i32,
@@ -141,6 +142,27 @@ export function TaggedUnion<O extends TaggedUnionCodecs>(
   return Enum(inner) as unknown as Codec<TaggedUnionValue<O>>;
 }
 
+/**
+ * Lets a tagged union also encode plain strings naming its unit variants.
+ *
+ * A plain string encodes as the tagged value of the same name. Decoding always
+ * yields the tagged value. A string outside `plainVariants` throws.
+ */
+export function withPlainVariants<
+  T extends { tag: string },
+  const P extends string,
+>(codec: Codec<T>, plainVariants: readonly P[]): Codec<T | P> {
+  return createCodec<T | P>((value) => {
+    if (typeof value !== "string") {
+      return codec.enc(value);
+    }
+    if (!plainVariants.includes(value)) {
+      throw new Error(`Unknown enum variant: ${value}`);
+    }
+    return codec.enc({ tag: value } as unknown as T);
+  }, codec.dec);
+}
+
 /** Public TS value for Rust's derived `CallError<D>` enum. */
 export type CallErrorValue<D> =
   | { tag: "Domain"; value: D }
@@ -231,6 +253,14 @@ type IndexedVariantValue<
       : { tag: K; value: T }
     : never;
 
+/** Thrown when a tagged union's encoded index names none of its variants. */
+export class UnknownDiscriminantError extends Error {
+  constructor(index: number) {
+    super(`Unknown enum discriminant: ${index}`);
+    this.name = "UnknownDiscriminantError";
+  }
+}
+
 /**
  * Builds a tagged union codec with explicit SCALE discriminants.
  *
@@ -279,7 +309,7 @@ export function indexedTaggedUnion<
       const index = u8.dec(input);
       const variant = byIndex.get(index);
       if (!variant) {
-        throw new Error(`Unknown enum discriminant: ${index}`);
+        throw new UnknownDiscriminantError(index);
       }
       const [tag, codec] = variant;
       return { tag, value: codec.dec(input) } as Output;

@@ -11,6 +11,8 @@ interface SendPaymentContract {
     fun onInputChange(value: String)
     fun onRecipientSelect(recipient: PaymentSearchResultUiModel)
 
+    fun onSendToYourselfClick()
+
     fun onPasteClick()
 
     fun onScannerClick()

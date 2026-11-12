@@ -1,7 +1,7 @@
 include!("../support/wire.rs");
 include!("../support/runtime.rs");
 
-use host_logic::sso::messages::{BarResponse, FooResponse, Request};
+use host_internal::sso_messages::{BarResponse, FooResponse, Request};
 use runtime::sso_service::SsoRequestContext;
 
 struct Service;

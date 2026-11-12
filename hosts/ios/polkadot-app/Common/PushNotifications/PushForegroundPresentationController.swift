@@ -41,6 +41,10 @@ extension PushForegroundPresentationController: PushForegroundVisibilityReportin
 
 extension PushForegroundPresentationController: PushForegroundPresentationDeciding {
     func presentationOptions(for notification: UNNotification) -> UNNotificationPresentationOptions {
+        guard !notification.request.content.isFromBlockedContact else {
+            return []
+        }
+
         let shouldDisplay =
             if notification.request.content.isFromChat {
                 shouldDisplayChatNotification(
@@ -82,6 +86,10 @@ private extension PushForegroundPresentationController {
 }
 
 extension UNNotificationContent {
+    var isFromBlockedContact: Bool {
+        userInfo[PushNotificationKeys.blockedContact] as? Bool == true
+    }
+
     var isFromChat: Bool {
         let source = (userInfo[PushNotificationKeys.pushSource] as? Int)
             .flatMap { PushNotificationSource(rawValue: $0) }

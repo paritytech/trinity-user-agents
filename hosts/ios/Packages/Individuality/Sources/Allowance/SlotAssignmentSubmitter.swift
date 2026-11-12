@@ -2,9 +2,19 @@ import Foundation
 import ExtrinsicService
 import SubstrateSdk
 import KeyDerivation
+import IssueMonitoring
 
 public enum SlotSubmissionError: Error {
     case extrinsicFailed(Error)
+}
+
+extension SlotSubmissionError: ReportableError {
+    public var reportCode: String {
+        switch self {
+        case let .extrinsicFailed(underlying):
+            "extrinsicFailed.\(String(reflecting: type(of: underlying)))"
+        }
+    }
 }
 
 public protocol SlotAssignmentSubmitting {

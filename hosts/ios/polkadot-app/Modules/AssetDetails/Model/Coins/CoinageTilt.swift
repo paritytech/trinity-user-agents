@@ -1,0 +1,264 @@
+import CoreMotion
+import Foundation
+import PolkadotUI
+import simd
+
+/// Turns the studio with the phone, so the light behaves as though it were fixed in the room.
+///
+/// The environment the coins are lit against is defined around the coin's own space, so with the
+/// studio held still the highlight sits in the same place however the phone is held. Feeding the
+/// device's own tilt back in turns the studio the other way, and a coin catches the light as you
+/// tilt it, the way a real one does.
+///
+/// The turn is the one rotation that carries the neutral reading onto the current one, scaled into
+/// the travel and reversed. Gravity cannot see a turn about the vertical, so this is the part of
+/// the phone's movement it can see, and it is the same movement mirrored for a tilt either way.
+///
+/// It replaces a pair of angles, sideways and lean, each measured against the whole of gravity.
+/// With the phone leaned back, dipping either edge also shrank the lean, so a sideways tilt came
+/// with a pitch forward that was the same whichever way the edge dipped. On the dim side of the
+/// room that pitch was all that showed, and tilting right read as tilting down.
+///
+/// Device motion needs no permission prompt: `CMMotionManager` reads the accelerometer and gyro
+/// directly. Only `CMMotionActivityManager`, which classifies walking and driving, requires
+/// `NSMotionUsageDescription` and asks the user. This reads attitude only.
+///
+/// Readings come from the app's shared source rather than a manager of this view's own. The card
+/// effects read the same one, and this screen shows both at once, so a manager each meant two
+/// copies of the same sensor pipeline. Watching it is a subscription: dropping it releases the
+/// sensor if nothing else is watching, and cannot switch off somebody else's.
+final class CoinageTilt {
+    /// Where the studio is turned to: an axis scaled by the angle turned about it, in radians.
+    ///
+    /// One vector rather than a pair of angles, because a rotation about a slanted axis is not the
+    /// sum of two rotations about the axes either side of it, and the phone rotates about whatever
+    /// axis the wrist chose.
+    typealias Turn = SIMD3<Double>
+
+    /// How far the studio turns at the ends of the travel: as far as the phone itself, so the
+    /// room stays exactly where it is as the phone moves under it.
+    ///
+    /// It was half that for a while, to tame how far the brightness swung with a tilt. The swing
+    /// is the room's own contrast, and it is now tamed in the room rather than in the hand: a
+    /// coin that is really turned edge-on in the strip should be lit as a coin turned edge-on.
+    static let travel: Double = range
+
+    /// The tilt that reaches the ends of the travel. Deliberately short of a right angle: nobody
+    /// turns a phone ninety degrees to look at it, and the whole range should be within a normal
+    /// movement of the wrist.
+    static let range: Double = .pi / 4
+
+    /// How quickly a phone that is being held still becomes the new neutral.
+    ///
+    /// Zero offset is where the studio sits as it was calibrated: square to the screen, which is
+    /// where the coins have most contrast. Any fixed idea of how a phone is held is wrong for
+    /// somebody, so neutral has to follow.
+    ///
+    /// It follows only while the phone is still. An average over the last few seconds cannot tell
+    /// a deliberate tilt from a new resting position, so it took both: a two second tilt dragged
+    /// neutral thirteen degrees, and putting the phone back where it started left a dozen degrees
+    /// of light that should not have been there. Worse, that bias ate one side of the travel, so
+    /// tilting one way did nothing while the other still worked.
+    static let settle: TimeInterval = 1.0
+
+    /// Above this the phone is being moved rather than held, and neutral waits.
+    ///
+    /// Well clear of sensor noise and well under a deliberate tilt, which covers tens of degrees in
+    /// well under a second.
+    static let stillSpeed: Double = 0.25
+
+    /// How long the phone has to be still before it counts as put down somewhere new.
+    ///
+    /// A hand pauses at the end of a gesture before bringing the phone back, and without this that
+    /// pause starts moving neutral: the tilt is then partly taken as the new resting place, and
+    /// coming back leaves the light off square at a position that has not changed.
+    static let dwell: TimeInterval = 0.4
+
+    /// Under this the studio is as good as still: the reference wallet idles at 0.002 tilt units
+    /// for the same reason, since a field redrawn for hand tremor is a field that never sleeps.
+    private static let epsilon: Double = 0.002
+
+    private let motion: DeviceMotionObservable
+    private var subscription: DeviceMotionToken?
+    private var neutral: Pose?
+    private var previous: Pose?
+    private var stillFor: TimeInterval = 0
+    private var target = Turn()
+
+    private(set) var turn = Turn()
+
+    init(motion: DeviceMotionObservable = DeviceMotionSource.shared) {
+        self.motion = motion
+    }
+
+    /// Called when the phone has moved enough that the studio needs to catch up. The view pauses
+    /// itself whenever nothing is moving, so without a push from outside it would never look at the
+    /// attitude again and the light would stay where the field last settled.
+    var onMove: (() -> Void)?
+
+    func start() {
+        guard subscription == nil else { return }
+
+        let interval = motion.updateInterval
+        subscription = motion.observe { [weak self] gravity in
+            self?.absorb(Pose(gravity: gravity), after: interval)
+        }
+    }
+
+    func stop() {
+        guard subscription != nil else { return }
+
+        subscription = nil
+        neutral = nil
+        previous = nil
+        stillFor = 0
+        onMove = nil
+    }
+
+    /// Takes the latest turn outright. Returns whether it moved, so a field at rest under a still
+    /// hand goes back to sleep.
+    ///
+    /// It used to chase the reading with a time constant of forty milliseconds, to hide sensor
+    /// noise. Measured on the phone, the whole path from sensor to pixel is under thirty, and
+    /// gravity from the fused attitude is steady enough that nothing shimmers without the chase.
+    @discardableResult
+    func advance(by _: CGFloat) -> Bool {
+        guard !isSettled else { return false }
+
+        turn = target
+
+        return true
+    }
+
+    /// Folds one reading into the neutral and works out where the studio should sit against it.
+    func absorb(_ pose: Pose, after seconds: TimeInterval) {
+        var settled = neutral ?? pose
+
+        if let previous, neutral != nil {
+            stillFor = previous.angle(to: pose) / max(seconds, 0.0001) < Self.stillSpeed
+                ? stillFor + seconds
+                : 0
+
+            // Put down somewhere new, so wherever it is becomes square. Still being moved, or only
+            // paused mid-gesture, so neutral waits and the movement reads in full.
+            if stillFor >= Self.dwell {
+                settled = settled.blended(toward: pose, by: min(seconds / Self.settle, 1))
+            }
+        } else {
+            // The first reading is neutral outright, so the light starts square rather than
+            // drifting in from wherever the phone happened to be picked up.
+            settled = pose
+        }
+
+        neutral = settled
+        previous = pose
+        target = settled.turn(to: pose)
+
+        if !isSettled { onMove?() }
+    }
+
+    /// Scales a turn of `angle` into the travel, so the ends of the wrist's range reach the ends of
+    /// the studio's and no tilt can push it further.
+    static func scaled(_ angle: Double) -> Double {
+        min(max(angle, -range), range) / range * travel
+    }
+
+    /// Where the studio sits for a phone leaned back by `lean` and with its right edge dipped by
+    /// `sideways`, both already scaled into the travel.
+    ///
+    /// The studio stays where it is in the room while the phone turns under it, exactly as the
+    /// coins do when they lean, so this is the inverse of the coins' own turn for the same pose:
+    /// the coins are geometry turned into the phone's frame, and the studio is sampled by
+    /// directions turned back out of it. Tilt the screen to face upward and a coin mirrors the
+    /// ceiling; dip the right edge and it mirrors the right wall.
+    ///
+    /// The merged code rolled the room about the view axis for a sideways tilt instead, to hide
+    /// a dead side that came from the key light sitting off axis against a near-black wall. The
+    /// room is lifted now and the wall is no longer black, so the physical turn is back.
+    static func studioTurn(lean: Double, sideways: Double) -> Turn {
+        -leaned(pitch: lean, yaw: -sideways)
+    }
+
+    /// The two turns as one, in the order they are felt: the room rolls about the view axis, and
+    /// the whole of it is then pitched by however far the phone is leaned back.
+    ///
+    /// Composed as rotations rather than added as a vector. Turns about different axes do not add,
+    /// and these two are large enough at the ends of the travel for the difference to show.
+    static func composed(pitch: Double, roll: Double) -> Turn {
+        let turn = simd_quatd(angle: pitch, axis: SIMD3(1, 0, 0))
+            * simd_quatd(angle: roll, axis: SIMD3(0, 0, 1))
+
+        return axisAngle(turn)
+    }
+
+    /// A pitch and a yaw as one turn: the two turns that show a disc's wall. A roll about the
+    /// view axis would only spin the figure on its face.
+    static func leaned(pitch: Double, yaw: Double) -> Turn {
+        let turn = simd_quatd(angle: pitch, axis: SIMD3(1, 0, 0))
+            * simd_quatd(angle: yaw, axis: SIMD3(0, 1, 0))
+
+        return axisAngle(turn)
+    }
+
+    private static func axisAngle(_ turn: simd_quatd) -> Turn {
+        abs(turn.angle) < 1e-9 ? Turn() : turn.axis * turn.angle
+    }
+}
+
+// MARK: - Settling
+
+private extension CoinageTilt {
+    var isSettled: Bool {
+        abs(target - turn).max() <= Self.epsilon
+    }
+}
+
+// MARK: - Readings
+
+extension CoinageTilt {
+    /// One reading: which way is down, in the phone's own frame.
+    ///
+    /// Gravity is all the studio needs and all it can have. It fixes the phone's orientation up to a
+    /// turn about the vertical, which is exactly the turn a room's lighting does not care about,
+    /// and unlike integrated attitude it never drifts.
+    struct Pose: Equatable {
+        let down: SIMD3<Double>
+
+        init(gravity: CMAcceleration) {
+            self.init(down: SIMD3(gravity.x, gravity.y, gravity.z))
+        }
+
+        init(down: SIMD3<Double>) {
+            self.down = down / max(length(down), 1e-9)
+        }
+
+        /// How far the phone turned between two readings, whatever axis it turned about. Used to
+        /// tell a phone being moved from one being held still, where the axis does not matter.
+        ///
+        /// Against the dot product rather than from it alone: `acos` loses most of its precision
+        /// for the small angles between consecutive readings, which is where this is asked most.
+        func angle(to other: Pose) -> Double {
+            atan2(length(cross(down, other.down)), dot(down, other.down))
+        }
+
+        /// Where the studio sits with the phone here, against this reading as square: the room
+        /// turned back by however far down has moved, about the axis it moved about.
+        func turn(to other: Pose) -> Turn {
+            let axis = cross(down, other.down)
+            let sine = length(axis)
+
+            guard sine > 1e-9 else { return Turn() }
+
+            let angle = atan2(sine, dot(down, other.down))
+
+            return -(axis / sine) * CoinageTilt.scaled(angle)
+        }
+
+        /// Eases toward another reading, staying a direction rather than shrinking toward the
+        /// middle: neutral is which way is down, and a blend of two directions has no length of
+        /// its own to keep.
+        func blended(toward other: Pose, by blend: Double) -> Pose {
+            Pose(down: down + (other.down - down) * blend)
+        }
+    }
+}

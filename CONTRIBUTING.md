@@ -3,7 +3,7 @@
 ## Reporting Issues
 
 If you have found what you think is a bug,
-please [file an issue](https://github.com/paritytech/host-rust-core/issues/new/choose).
+please [file an issue](https://github.com/paritytech/trinity-user-agents/issues/new/choose).
 
 ## Suggesting New Features
 
@@ -13,7 +13,7 @@ Feature proposals live as markdown files in `docs/features/`. To propose a new f
 2. Include YAML frontmatter (`title`, `type: feature`, `status: draft`, `author`, `pr`)
 3. Describe the feature: summary, use cases, and proposed solution
 4. Update `docs/features/_index.md` with a link to your file
-5. Open a PR using the **feature** template (`?template=feature.md`) and add the `feature-request` and `proposal` labels
+5. Open a PR using the **feature** template (`?template=feature.md`)
 
 ## RFCs
 
@@ -21,7 +21,7 @@ For larger changes that need cross-team discussion, use the RFC process:
 
 1. Create a branch and add a new file to `docs/rfcs/<slug>.md` (e.g., `docs/rfcs/my-proposal.md`) — do **not** assign a number
 2. Use `docs/rfcs/0001-template.md` as a reference for the expected structure and frontmatter
-3. Open a PR using the **rfc** template (`?template=rfc.md`) and add the `rfc` label
+3. Open a PR using the **rfc** template (`?template=rfc.md`)
 4. The PR will be auto-added to the project board for tracking and review
 5. When the PR is approved and merged, CI automatically assigns the next sequential number, renames the file, and appends it to `docs/rfcs/_index.md`
 
@@ -42,7 +42,11 @@ Canonical design documentation lives in `docs/design/`. To propose updates or ad
 
 1. Edit or add a file in `docs/design/`
 2. Include YAML frontmatter (`title`, `type: design`, `status`, `author`, `created`, `pr`)
-3. Open a PR using the **design** template (`?template=design.md`) and add the `design-doc` label
+3. Open a PR using the **design** template (`?template=design.md`)
+
+## Labels
+
+Pull requests get a size and a first status for you. The author or reviewer changes the `status:` when it stops waiting on review, add a `needs:` label when something blocks it, and a `ci:` label to ask for an app build. Issues take an `area:` and a `spa:`, and the area is filled in from the pull request that closes them. [docs/labels.md](docs/labels.md) has the whole system.
 
 ## Development
 
@@ -77,7 +81,7 @@ make build    # Rust workspace + TypeScript client
 ```
 
 The generated Rust, TypeScript and Swift outputs are git-ignored, so a fresh
-checkout has none of them and `truapi-server` does not compile until they
+checkout has none of them and the `truapi` runtime does not compile until they
 exist. `make setup` produces them; `make codegen` regenerates them on their
 own.
 
@@ -97,7 +101,7 @@ make playground   # rebuild the playground against the refreshed snapshot
 make test     # Rust + TypeScript client tests
 make check    # full suite: build, fmt, clippy, test, TS tests, playground build + lint
 ```
-Every target that compiles `truapi-server` depends on `check-generated`, so a
+Every target that compiles the `truapi` runtime depends on `check-generated`, so a
 missing generated file names itself and points at `make codegen` instead of
 failing inside rustc.
 
@@ -106,7 +110,7 @@ failing inside rustc.
 Maintainers merge pull requests by squashing all commits and editing the commit message if necessary using the GitHub
 user interface.
 
-Use an appropriate commit type. Be especially careful with breaking changes.
+Title the pull request as a conventional commit, since the title becomes the squashed commit: `<type>(<scope>): <subject>`, with `!` before the colon for a breaking change. [`.claude/skills/semver-pr-title/SKILL.md`](.claude/skills/semver-pr-title/SKILL.md) lists the types and says what counts as breaking for products, for testers of the host apps, and for the CLI. The `pr-title` check blocks a title that does not parse, and a `major` changeset whose title lacks `!`. It re-runs when the title is edited, so fixing one needs no new commit. RFC pull requests are `docs(rfc): <title>`. The nightly announcements list `!` titles first, marked `Breaking:`.
 
 ## Releasing
 

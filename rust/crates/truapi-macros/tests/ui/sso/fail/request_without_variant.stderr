@@ -1,10 +1,10 @@
-error[E0599]: no variant, associated function, or constant named `MissingRequest` found for enum `messages::v1::RemoteMessage` in the current scope
+error[E0599]: no variant, associated function, or constant named `MissingRequest` found for enum `sso_messages::v1::RemoteMessage` in the current scope
   --> tests/ui/sso/fail/request_without_variant.rs:24:14
    |
 24 |     async fn missing(&self, _: &SsoRequestContext, _request: MissingRequest) -> FooResponse {
-   |              ^^^^^^^ variant, associated function, or constant not found in `messages::v1::RemoteMessage`
+   |              ^^^^^^^ variant, associated function, or constant not found in `sso_messages::v1::RemoteMessage`
    |
   ::: tests/ui/sso/fail/../support/wire.rs
    |
-   |                 pub enum RemoteMessage {
-   |                 ---------------------- variant, associated function, or constant `MissingRequest` not found for this enum
+   |             pub enum RemoteMessage {
+   |             ---------------------- variant, associated function, or constant `MissingRequest` not found for this enum

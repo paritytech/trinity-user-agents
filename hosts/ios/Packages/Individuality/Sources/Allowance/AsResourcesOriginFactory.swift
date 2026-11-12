@@ -19,24 +19,31 @@ public protocol AsResourcesOriginCreating {
         counter: UInt8,
         chain: ChainId
     ) async throws -> ExtrinsicOriginDefining
+
+    func createNotificationOrigin(
+        personOrigin: PersonOrigin,
+        period: UInt32,
+        seq: UInt8,
+        chain: ChainId
+    ) async throws -> ExtrinsicOriginDefining
 }
 
 public final class AsResourcesOriginFactory: AsResourcesOriginCreating {
     private let wallet: WalletManaging
     private let keyResolver: BandersnatchKeyResolving
     private let chainRegistry: ChainResourceProtocol
-    private let storageRequestFactory: StorageRequestFactoryProtocol
+    private let networkSuffixProvider: NetworkSuffixProviding
 
     public init(
         wallet: WalletManaging,
         keyResolver: BandersnatchKeyResolving,
         chainRegistry: ChainResourceProtocol,
-        storageRequestFactory: StorageRequestFactoryProtocol
+        networkSuffixProvider: NetworkSuffixProviding
     ) {
         self.wallet = wallet
         self.keyResolver = keyResolver
         self.chainRegistry = chainRegistry
-        self.storageRequestFactory = storageRequestFactory
+        self.networkSuffixProvider = networkSuffixProvider
     }
 
     public func createSSSOrigin(
@@ -45,31 +52,12 @@ public final class AsResourcesOriginFactory: AsResourcesOriginCreating {
         seq: UInt32,
         chain: ChainId
     ) async throws -> ExtrinsicOriginDefining {
-        let personDeps = try await makePersonDeps(
+        try await createOrigin(
             personOrigin: personOrigin,
+            suffix: .statementStoreSlot(period: period, seq: seq),
+            kind: .registerStatementStoreAllowance,
             chain: chain
         )
-        let runtimeProvider = try chainRegistry.getRuntimeCodingServiceOrError(for: chain)
-        let connection = try chainRegistry.getRpcConnectionOrError(for: chain)
-        let codingFactory = try await runtimeProvider.fetchCoderFactoryOperation().asyncExecute()
-        let networkSuffix = try await storageRequestFactory.readNetworkSuffix(
-            connection: connection,
-            codingFactory: codingFactory
-        )
-        let proofContext = try ProductContextSuffix
-            .statementStoreSlot(period: period, seq: seq)
-            .context(networkSuffix: networkSuffix)
-        let asResourcesOrigin = AsResourcesOriginDefinition(
-            input: AsResourcesOriginInput(
-                personDeps: personDeps,
-                proofContext: proofContext,
-                kind: .registerStatementStoreAllowance
-            )
-        )
-
-        let origin = RestrictsOriginDefinition(enabled: false)
-
-        return ExtrinsicCompoundOrigin(children: [origin, asResourcesOrigin])
     }
 
     public func createLTSOrigin(
@@ -78,36 +66,46 @@ public final class AsResourcesOriginFactory: AsResourcesOriginCreating {
         counter: UInt8,
         chain: ChainId
     ) async throws -> ExtrinsicOriginDefining {
-        let personDeps = try await makePersonDeps(
+        try await createOrigin(
             personOrigin: personOrigin,
+            suffix: .longTermStorage(period: period, counter: counter),
+            kind: .claimLongTermStorage,
             chain: chain
         )
-        let runtimeProvider = try chainRegistry.getRuntimeCodingServiceOrError(for: chain)
-        let connection = try chainRegistry.getRpcConnectionOrError(for: chain)
-        let codingFactory = try await runtimeProvider.fetchCoderFactoryOperation().asyncExecute()
-        let networkSuffix = try await storageRequestFactory.readNetworkSuffix(
-            connection: connection,
-            codingFactory: codingFactory
+    }
+
+    public func createNotificationOrigin(
+        personOrigin: PersonOrigin,
+        period: UInt32,
+        seq: UInt8,
+        chain: ChainId
+    ) async throws -> ExtrinsicOriginDefining {
+        try await createOrigin(
+            personOrigin: personOrigin,
+            suffix: .notificationSlot(period: period, seq: seq),
+            kind: .registerNotificationForCollection,
+            chain: chain
         )
-        let proofContext = try ProductContextSuffix
-            .longTermStorage(period: period, counter: counter)
-            .context(networkSuffix: networkSuffix)
-
-        let asResourcesOrigin = AsResourcesOriginDefinition(
-            input: AsResourcesOriginInput(
-                personDeps: personDeps,
-                proofContext: proofContext,
-                kind: .claimLongTermStorage
-            )
-        )
-
-        let origin = RestrictsOriginDefinition(enabled: false)
-
-        return ExtrinsicCompoundOrigin(children: [origin, asResourcesOrigin])
     }
 }
 
 private extension AsResourcesOriginFactory {
+    func createOrigin(
+        personOrigin: PersonOrigin,
+        suffix: ProductContextSuffix,
+        kind: AsResourcesOriginInput.Kind,
+        chain: ChainId
+    ) async throws -> ExtrinsicOriginDefining {
+        let personDeps = try await makePersonDeps(personOrigin: personOrigin, chain: chain)
+        let proofContext = try await suffix.context(networkSuffix: networkSuffixProvider.networkSuffix())
+
+        let asResourcesOrigin = AsResourcesOriginDefinition(
+            input: AsResourcesOriginInput(personDeps: personDeps, proofContext: proofContext, kind: kind)
+        )
+
+        return ExtrinsicCompoundOrigin(children: [RestrictsOriginDefinition(enabled: false), asResourcesOrigin])
+    }
+
     func makePersonDeps(
         personOrigin: PersonOrigin,
         chain: ChainId

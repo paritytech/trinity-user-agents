@@ -23,7 +23,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Ri
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.RingVrfSignError
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.SlotAccountKey
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromHost
 import io.paritytech.polkadotapp.feature_products_api.model.scale.toDomain
 import io.paritytech.polkadotapp.feature_products_api.model.scale.toScale
 import io.paritytech.polkadotapp.feature_products_api.model.signing.RawPayloadContent
@@ -109,14 +109,14 @@ private fun SsoMessageContent.toRequestContent(tld: DotNsTld): SsoSessionRequest
         is SsoMessageContent.SigningRequest -> SsoSessionRequest.Content.SigningRequest(request.toDomain())
         is SsoMessageContent.SigningResponse -> error("SigningResponse is a response-only message type")
         is SsoMessageContent.RingVrfAliasRequest -> SsoSessionRequest.Content.AliasRequest(
-            callingProduct = ProductId.fromStoredValue(callingProductId),
+            callingProduct = callingProductId,
             keyHandle = keyHandle.toDomain().getOrThrow(),
             context = context.toDomain().getOrThrow(),
             ring = ring.toDomain(),
         )
         is SsoMessageContent.RingVrfAliasResponse -> error("RingVrfAliasResponse is a response-only message type")
         is SsoMessageContent.RingVrfProofRequest -> SsoSessionRequest.Content.CreateProofRequest(
-            callingProduct = ProductId.fromStoredValue(callingProductId),
+            callingProduct = callingProductId,
             keyHandle = keyHandle.toDomain().getOrThrow(),
             context = context.toDomain().getOrThrow(),
             ring = ring.toDomain(),
@@ -124,14 +124,14 @@ private fun SsoMessageContent.toRequestContent(tld: DotNsTld): SsoSessionRequest
         )
         is SsoMessageContent.RingVrfProofResponse -> error("RingVrfProofResponse is a response-only message type")
         is SsoMessageContent.SignVrfRequest -> SsoSessionRequest.Content.SignVrfRequest(
-            callingProduct = ProductId.fromStoredValue(callingProductId),
+            callingProduct = callingProductId,
             account = account.toDomain().getOrThrow(),
             transcriptLabel = transcriptLabel.value,
             items = items.map { it.toDomain() },
         )
         is SsoMessageContent.SignVrfResponse -> error("SignVrfResponse is a response-only message type")
         is SsoMessageContent.ResourceAllocationRequest -> SsoSessionRequest.Content.ResourceAllocationRequest(
-            callingProduct = ProductId.fromStoredValue(request.callingProductId),
+            callingProduct = request.callingProductId,
             resources = request.resources.map { it.toDomain() },
             onExisting = request.onExisting.toDomain(),
         )
@@ -148,23 +148,23 @@ private fun SsoMessageContent.toRequestContent(tld: DotNsTld): SsoSessionRequest
         )
         is SsoMessageContent.SignRawLegacyResponse -> error("SignRawLegacyResponse is a response-only message type")
         is SsoMessageContent.ProductSubtreeRequest -> SsoSessionRequest.Content.ProductSubtreeRequest(
-            productId = ProductId.fromString(productId, tld).getOrThrow(),
+            productId = productIdFromHost(productId.value, tld).getOrThrow(),
         )
         is SsoMessageContent.ProductSubtreeResponse -> error("ProductSubtreeResponse is a response-only message type")
         is SsoMessageContent.RegisterRingVrfKeyRequest -> SsoSessionRequest.Content.RegisterRingVrfKeyRequest(
-            callingProduct = ProductId.fromStoredValue(callingProductId),
+            callingProduct = callingProductId,
             index = index.toDomain().getOrThrow(),
             ring = ring.toDomain(),
         )
         is SsoMessageContent.RegisterRingVrfKeyResponse -> error("RegisterRingVrfKeyResponse is a response-only message type")
         is SsoMessageContent.ListRingVrfKeysRequest -> SsoSessionRequest.Content.ListRingVrfKeysRequest(
-            callingProduct = ProductId.fromStoredValue(callingProductId),
-            owner = ProductId.fromStoredValue(owner),
+            callingProduct = callingProductId,
+            owner = owner,
             disclosure = disclosure.toDomain(),
         )
         is SsoMessageContent.ListRingVrfKeysResponse -> error("ListRingVrfKeysResponse is a response-only message type")
         is SsoMessageContent.RingVrfSignRequest -> SsoSessionRequest.Content.RingVrfSignRequest(
-            callingProduct = ProductId.fromStoredValue(callingProductId),
+            callingProduct = callingProductId,
             keyHandle = keyHandle.toDomain().getOrThrow(),
             message = message.value,
         )
@@ -184,44 +184,44 @@ private fun SsoSessionRequest.Content.toMessageContent(): SsoMessageContent {
         is SsoSessionRequest.Content.SignRawLegacyRequest ->
             SsoMessageContent.SignRawLegacyRequest(request.payload.toScale())
         is SsoSessionRequest.Content.AliasRequest -> SsoMessageContent.RingVrfAliasRequest(
-            callingProductId = callingProduct.value,
+            callingProductId = callingProduct,
             keyHandle = keyHandle.toScale(),
             context = context.toScale(),
             ring = ring.toScale(),
         )
         is SsoSessionRequest.Content.CreateProofRequest -> SsoMessageContent.RingVrfProofRequest(
-            callingProductId = callingProduct.value,
+            callingProductId = callingProduct,
             keyHandle = keyHandle.toScale(),
             context = context.toScale(),
             ring = ring.toScale(),
             message = message.toDataByteArray(),
         )
         is SsoSessionRequest.Content.SignVrfRequest -> SsoMessageContent.SignVrfRequest(
-            callingProductId = callingProduct.value,
+            callingProductId = callingProduct,
             account = account.toScale(),
             transcriptLabel = transcriptLabel.toDataByteArray(),
             items = items.map { it.toScale() },
         )
         is SsoSessionRequest.Content.ResourceAllocationRequest -> SsoMessageContent.ResourceAllocationRequest(
             request = SsoResourceAllocationRequestScale(
-                callingProductId = callingProduct.value,
+                callingProductId = callingProduct,
                 resources = resources.map { it.toScale() },
                 onExisting = onExisting.toScale(),
             )
         )
-        is SsoSessionRequest.Content.ProductSubtreeRequest -> SsoMessageContent.ProductSubtreeRequest(productId.value)
+        is SsoSessionRequest.Content.ProductSubtreeRequest -> SsoMessageContent.ProductSubtreeRequest(productId)
         is SsoSessionRequest.Content.RegisterRingVrfKeyRequest -> SsoMessageContent.RegisterRingVrfKeyRequest(
-            callingProductId = callingProduct.value,
+            callingProductId = callingProduct,
             index = index.toScale(),
             ring = ring.toScale(),
         )
         is SsoSessionRequest.Content.ListRingVrfKeysRequest -> SsoMessageContent.ListRingVrfKeysRequest(
-            callingProductId = callingProduct.value,
-            owner = owner.value,
+            callingProductId = callingProduct,
+            owner = owner,
             disclosure = disclosure.toScale(),
         )
         is SsoSessionRequest.Content.RingVrfSignRequest -> SsoMessageContent.RingVrfSignRequest(
-            callingProductId = callingProduct.value,
+            callingProductId = callingProduct,
             keyHandle = keyHandle.toScale(),
             message = message.toDataByteArray(),
         )

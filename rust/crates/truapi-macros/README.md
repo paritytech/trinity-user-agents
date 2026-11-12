@@ -23,7 +23,7 @@ the response's `Result` payload:
 pub type GetAccountAliasResponse = Result<HostAccountGetAliasResponse, RingVrfError>;
 
 #[truapi_macros::sso_service]
-impl SigningHostSsoService {
+impl SsoAccountHolderService {
     async fn get_account_alias(
         &self,
         cx: &SsoRequestContext,
@@ -74,8 +74,7 @@ the enum's `name()`, `responding_to()`, and `with_responding_to()` helpers.
 
 This macro targets contracts in `crate::host_logic::sso::{messages, wire}` and
 `crate::runtime::{authority, sso_service}`. It is intended for invocation inside
-`truapi-server`; the canonical `truapi` crate uses the other macros and has no
-server runtime dependency. Wire encoding remains owned by the enum and payload
+the `truapi` runtime. Wire encoding remains owned by the enum and payload
 codec derives. Transport, consent, session revalidation, and business logic belong
 to the server implementation.
 

@@ -7,18 +7,12 @@ enum RemoveDeviceViewFactory {
         serviceCoordinator: ServiceCoordinatorProtocol,
         onResult: @escaping (Bool) -> Void
     ) -> RemoveDeviceViewProtocol? {
-        guard let tld = try? DotNsTldProviderFacade.shared.currentTldOrError() else {
-            return nil
-        }
-
         let wireframe = RemoveDeviceWireframe()
 
         let interactor = RemoveDeviceInteractor(
             localDeviceRepository: LocalDeviceRepositoryFactory().createRepository(forFilter: nil),
             serviceCoordinator: serviceCoordinator,
-            deviceMessageBroadcaster: MultideviceComponentFactory.makeDeviceMessageBroadcaster(
-                messageExchangeModeProvider: ChatMessageExchangeModeProvider(tld: tld)
-            )
+            deviceMessageBroadcaster: MultideviceComponentFactory.makeDeviceMessageBroadcaster()
         )
 
         let presenter = RemoveDevicePresenter(

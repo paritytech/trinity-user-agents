@@ -9,6 +9,9 @@ import type { WasmModuleShape } from "../../wasm-module.js";
 
 declare const init: WasmModuleShape["default"];
 export default init;
+export const initSync: (input: {
+  module: BufferSource | WebAssembly.Module;
+}) => unknown;
 
 export const WasmPairingHostRuntime: WasmModuleShape["WasmPairingHostRuntime"];
 export const WasmProductRuntime: WasmModuleShape["WasmProductRuntime"];
@@ -16,3 +19,4 @@ export const setLogLevel: (level: string) => void;
 export const deriveProductAccountPublicKey: WasmModuleShape["deriveProductAccountPublicKey"];
 export const productAccountAddress: WasmModuleShape["productAccountAddress"];
 export const wireSchemaHash: () => string;
+export const parseProductId: WasmModuleShape["parseProductId"];

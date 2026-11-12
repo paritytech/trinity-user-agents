@@ -18,9 +18,6 @@ enum ChatEncryptionDomain: String {
     case mainChat = "chat"
     /// E2E encryption in the SSO transport.
     case sso
-    // TODO: Products — remove once the Game migrates to the dim2.dot product and derives
-    // its key material via host_derive_entropy (RFC-0007) instead.
-    case game
 }
 
 /// Derives the X25519 key for a domain from the keyed-hash chain

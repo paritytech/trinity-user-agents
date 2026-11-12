@@ -137,20 +137,3 @@ extension ClaimUsernameViewController: ClaimUsernameViewProtocol {
 
 final class ClaimLiteUsernameViewController: ClaimUsernameViewController {}
 extension ClaimLiteUsernameViewController: HiddableBarWhenPushed {}
-
-final class ClaimFullUsernameViewController: ClaimUsernameViewController {
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        traitOverrides.appTheme = ThemesRegistry.default
-    }
-
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        navigationController?.traitOverrides.appTheme = ThemesRegistry.default
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        navigationController?.traitOverrides.remove(DSThemeTrait.self)
-    }
-}

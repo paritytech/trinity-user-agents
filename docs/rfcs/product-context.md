@@ -20,7 +20,7 @@ context.value.productId;
 
 Account and signing APIs require a full `dotNsIdentifier`, but products cannot query the exact identifier the host uses for authorization and account derivation. They must hardcode a suffix, inspect their URL, or guess the active network.
 
-Tracking issue: [#503](https://github.com/paritytech/host-rust-core/issues/503).
+Tracking issue: [#503](https://github.com/paritytech/trinity-user-agents/issues/503).
 
 ## Detailed Design
 

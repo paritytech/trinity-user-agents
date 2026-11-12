@@ -38,6 +38,8 @@ class QrScanningMixin @Inject constructor(
 
     private var pauseDecoding = false
 
+    private var recognitionArmed = true
+
     context(scope: ComputationalScope)
     suspend fun bindToCamera(lifecycleOwner: LifecycleOwner) {
         resetScanning()
@@ -57,15 +59,19 @@ class QrScanningMixin @Inject constructor(
             }
         }
 
-        cameraQrReader.bind(
-            preview = Preview.Builder().build().apply {
-                setSurfaceProvider { newSurfaceRequest ->
-                    surfaceRequest.value = newSurfaceRequest
-                }
-            },
-            lifecycleOwner = lifecycleOwner,
-            qrCodeAnalyzer = QrCodeAnalyzer { handleQrCodeData(it) }
-        )
+        try {
+            cameraQrReader.bind(
+                preview = Preview.Builder().build().apply {
+                    setSurfaceProvider { newSurfaceRequest ->
+                        surfaceRequest.value = newSurfaceRequest
+                    }
+                },
+                lifecycleOwner = lifecycleOwner,
+                qrCodeAnalyzer = QrCodeAnalyzer { handleQrCodeData(it) }
+            )
+        } finally {
+            surfaceRequest.value = null
+        }
     }
 
     fun invalidationDialogClosed() {
@@ -74,6 +80,10 @@ class QrScanningMixin @Inject constructor(
 
     fun permissionAlertClosed() {
         cameraPermissionDenied.disable()
+    }
+
+    fun setRecognitionArmed(armed: Boolean) {
+        recognitionArmed = armed
     }
 
     // The panel host keeps this alive across panel open/close, so a stale decode gate would leave the scanner
@@ -87,7 +97,7 @@ class QrScanningMixin @Inject constructor(
 
     context(scope: ComputationalScope)
     private fun handleQrCodeData(data: String) {
-        if (pauseDecoding) return
+        if (pauseDecoding || !recognitionArmed) return
 
         pauseDecoding = true
 

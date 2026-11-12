@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.tools_push_notifications_impl
 
 import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.novasama.substrate_sdk_android.extensions.toHexString
+import io.paritytech.polkadotapp.common.data.os.OperatingSystem
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.tools_push_notifications_api.NotifyType
 import io.paritytech.polkadotapp.tools_push_notifications_api.PushNotificationsHelper
@@ -35,6 +36,7 @@ class RealGPPushNotificationHelper @Inject constructor(
 
     override suspend fun sendNotify(
         platformToken: String,
+        operatingSystem: OperatingSystem,
         pushId: ByteArray,
         encryptedMessage: ByteArray,
         isVoIP: Boolean
@@ -42,11 +44,11 @@ class RealGPPushNotificationHelper @Inject constructor(
         val request = NotifyRequest(
             deviceToken = platformToken,
             pushId = pushId.toHexString(withPrefix = false),
+            bundlerId = BuildConfig.IOS_BUNDLE_ID,
+            platform = operatingSystem.toPlatformDto(),
             message = encryptedMessage.toHexString(withPrefix = false),
             voip = isVoIP
         )
-
-        Timber.d("sendNotify: isVoIP=$isVoIP, tokenLength=${platformToken.length}")
 
         val response = notifyApi.notify(request)
 
@@ -89,6 +91,12 @@ class RealGPPushNotificationHelper @Inject constructor(
         topic = topic.value.toHexString(withPrefix = false),
         notifyType = notifyType.toDto()
     )
+
+    private fun OperatingSystem.toPlatformDto(): String = when (this) {
+        OperatingSystem.ANDROID -> "android"
+        OperatingSystem.IOS -> "ios"
+        OperatingSystem.UNKNOWN -> error("Operating system should be known to send a push notification")
+    }
 
     private fun NotifyType.toDto(): NotifyTypeDto = when (this) {
         NotifyType.ALERT -> NotifyTypeDto.ALERT

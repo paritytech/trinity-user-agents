@@ -1,0 +1,58 @@
+import Foundation
+import PolkadotUI
+import Testing
+import TrUAPIHost
+@testable import polkadot_app
+
+/// The faces a real product ships, decoded and drawn through the same path a
+/// live face takes.
+///
+/// Both come from humanity-spa's `pocket:faces` and are checked against the
+/// protocol on the product side, so a failure here is unambiguous: the defect
+/// is this host's, not the file's.
+///
+/// Two of the nine it writes: `devicehood` is the shape most of the others
+/// share node for node, and `candidate` is the large one. Keeping the identical
+/// ones would add pages of fixture and no coverage.
+@MainActor
+struct PocketFaceConformanceTests {
+    @Test(arguments: ["devicehood", "candidate"])
+    func readsAndDrawsAPublishedFace(_ name: String) throws {
+        let face = try parseRendererNodeJson(json: faceText(name))
+        let drawn = try #require(face.toWidgetNode(resolver: WidgetDesignTokenResolver()))
+
+        // Drawn to pixels, not just mapped: a tree can map in full and still
+        // reach the screen unpainted or as one flat fill. The surface is bars
+        // that touch, so it covers most of the card.
+        let colours = try WidgetNodeRaster.colours(of: drawn, in: PocketCardSize.testFrame)
+        let largest = try #require(colours.max { $0.value < $1.value })
+        let share = Double(largest.value) / Double(colours.values.reduce(0, +))
+
+        #expect(largest.key != WidgetNodeRaster.backdrop)
+        #expect(share < 0.97)
+    }
+
+    /// The bound the approval sheet applies, checked against the largest face a
+    /// real product ships, so the limit is known to be above what products
+    /// actually send rather than guessed.
+    @Test
+    func theLargestPublishedFaceFitsWellInsideTheSizeBound() throws {
+        let bytes = try faceData("candidate").count
+
+        #expect(bytes < PocketPreviewLoader.maxBytes / 2)
+    }
+
+    private func faceData(_ name: String) throws -> Data {
+        let url = try #require(
+            Bundle(for: FaceFixtures.self).url(forResource: name, withExtension: "json"),
+            "missing fixture \(name).json"
+        )
+        return try Data(contentsOf: url)
+    }
+
+    private func faceText(_ name: String) throws -> String {
+        try String(decoding: faceData(name), as: UTF8.self)
+    }
+}
+
+private final class FaceFixtures {}

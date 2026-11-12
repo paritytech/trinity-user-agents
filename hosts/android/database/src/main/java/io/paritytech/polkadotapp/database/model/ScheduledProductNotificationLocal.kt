@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.database.model
 
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import uniffi.truapi.ProductId
 
 @Entity(
     tableName = "scheduled_product_notifications",
@@ -16,7 +17,7 @@ import androidx.room.ForeignKey
     ]
 )
 class ScheduledProductNotificationLocal(
-    val productId: String,
+    val productId: ProductId,
     val notificationId: Int,
     val text: String,
     val deeplink: String?,

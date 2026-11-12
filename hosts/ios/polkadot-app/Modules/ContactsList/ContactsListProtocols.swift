@@ -5,7 +5,9 @@ import ChainRegistry
 
 protocol ContactsListViewProtocol: ControllerBackedProtocol {
     func didReceive(viewModel: ContactsListViewLayout.ViewModel)
-    func didReceive(titleViewModel: NetworkStatusTitleView.ViewModel)
+    /// A tapped chat is waiting for its bot; the view shows that until `didStopOpeningChat`.
+    func didStartOpeningChat()
+    func didStopOpeningChat()
 }
 
 @MainActor
@@ -22,13 +24,12 @@ protocol ContactsListInteractorInputProtocol: AnyObject {
     func setup()
     func notifyViewAppeared()
     func notifyViewDisappeared()
-    func entryRoute(for model: ChatOpenModel) async -> ChatExtensionEntryRoute
+    func entryRoute(for model: ChatOpenModel) async throws -> ChatExtensionEntryRoute
 }
 
 @MainActor
 protocol ContactsListInteractorOutputProtocol: AnyObject {
     func didReceive(model: ChatListModel)
-    func didReceive(networkStatus: NetworkStatus)
     func didReceive(error: Error)
 }
 

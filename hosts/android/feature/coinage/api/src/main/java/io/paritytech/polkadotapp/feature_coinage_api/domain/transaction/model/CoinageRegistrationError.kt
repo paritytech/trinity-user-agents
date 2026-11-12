@@ -39,4 +39,9 @@ sealed class CoinageRegistrationError(message: String) : Throwable(message) {
     data class HandoffOfClaimedAsset(val asset: OwnAsset) : CoinageRegistrationError(
         "$asset is claimed by a transaction that has not failed, so it cannot be handed off"
     )
+
+    /** An asset leaves the device once: a second handoff would give two peers the same private key. */
+    data class HandoffOfHandedOffAsset(val asset: OwnAsset) : CoinageRegistrationError(
+        "$asset already carries a handoff mark, so it cannot be handed off again"
+    )
 }

@@ -7,6 +7,8 @@ public protocol ResourcesParametersProviding: Sendable {
     func stmtStoreSlotsPerPeriod(chainId: ChainId, origin: PersonOrigin) async throws -> UInt32
     func stmtStoreReplacementCooldown(chainId: ChainId) async throws -> UInt32
     func longTermStorageClaimsPerPeriod(chainId: ChainId) async throws -> UInt8
+    /// Highest claimable notification seq for `origin`'s collection; seqs `0...value` are valid.
+    func notificationHighestSeq(chainId: ChainId, origin: PersonOrigin) async throws -> UInt8
 }
 
 public enum ResourcesParametersError: Error {
@@ -63,6 +65,21 @@ extension CachedResourcesParametersProvider: ResourcesParametersProviding {
         }
 
         return claims
+    }
+
+    public func notificationHighestSeq(chainId: ChainId, origin: PersonOrigin) async throws -> UInt8 {
+        let viewFunction: ResourcesPallet.ViewFunction =
+            switch origin {
+            case .lite: .liteNotificationSlotsPerPeriod
+            case .full: .notificationSlotsPerPeriod
+            }
+        let value = try await value(of: viewFunction, chainId: chainId)
+
+        guard let highestSeq = UInt8(exactly: value) else {
+            throw ResourcesParametersError.valueOutOfRange(functionName: viewFunction.name, value: value)
+        }
+
+        return highestSeq
     }
 }
 

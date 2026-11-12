@@ -44,7 +44,6 @@ import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.Deriv
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.PreimageSubmitSponsoring
 import io.paritytech.polkadotapp.feature_products_api.domain.sponsoring.StatementStoreSubmissionSponsoring
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SignedTransaction
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
@@ -55,7 +54,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.Noti
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.ProductNotificationScheduler
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.ProductPaymentRequestId
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.RequestPaymentUseCase
-import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.spendableByProducts
+import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.subscribeSpendableByProducts
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionGuard
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.RealProductPermissionRequester
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.DeviceCapabilityPermissionHandler
@@ -84,6 +83,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import timber.log.Timber
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -315,6 +315,17 @@ class HostApiInteractor @Inject constructor(
         permissionRequester.promptBatched(callingProductId, request.toDomainPermissions())
     }
 
+    suspend fun requestBalanceAccessDecision(callingProductId: ProductId): Result<PermissionDecision> = runCatching {
+        permissionRequester.prompt(callingProductId, ProductPermission.BalanceAccess)
+    }
+
+    suspend fun requestNftPurseReadDecision(
+        callingProductId: ProductId,
+        ownerProductId: ProductId?,
+    ): Result<PermissionDecision> = runCatching {
+        permissionRequester.prompt(callingProductId, ProductPermission.NftPurseRead(ownerProductId))
+    }
+
     suspend fun allowWebRtcAccess(callingProductId: ProductId): Result<Boolean> {
         val permission = ProductPermission.RemotePermission.WebRtcAccess
         return Result.success(permissionGuard.consumePermission(callingProductId, permission))
@@ -353,7 +364,7 @@ class HostApiInteractor @Inject constructor(
     ): Result<NotificationId> {
         return if (scheduledAt == null) {
             val id = NotificationId.generate(callingProductId)
-            productNotificationPublisher.publishNotification(id.value, text, deeplink)
+            productNotificationPublisher.publishNotification(id.value, callingProductId, text, deeplink)
             Result.success(id)
         } else {
             productNotificationScheduler.schedule(callingProductId, text, deeplink, scheduledAt)
@@ -391,10 +402,8 @@ class HostApiInteractor @Inject constructor(
             throw ProductPermissionDeniedException(permission)
         }
 
-        totalBalanceUseCase.subscribeTotalBalance()
-            .mapNotNull { it.getOrNull() }
-            // What a payment request may spend, so a product never sees an amount it cannot ask for.
-            .map { PaymentBalance(available = it.spendableByProducts()) }
+        totalBalanceUseCase.subscribeSpendableByProducts()
+            .map { PaymentBalance(available = it) }
     }
 
     suspend fun registerRingVrfKey(

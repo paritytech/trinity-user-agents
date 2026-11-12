@@ -7,10 +7,7 @@ import Products
 /// TLD-independent accessors derive from fixed pallet-context paths and never fail.
 protocol WalletManagerRepositoryProtocol {
     func main() throws -> WalletManaging
-    func candidate() throws -> WalletManaging
-    func scoreAlias() throws -> WalletManaging
     func depositWallet() throws -> WalletManaging
-    func mobRuleAlias() -> WalletManaging
     func resourcesAlias() -> WalletManaging
     func internalPayout() -> WalletManaging
     func bulletInForChat() -> WalletManaging
@@ -27,20 +24,8 @@ struct WalletManagerRepository: WalletManagerRepositoryProtocol {
         try SelectedWallet.main(for: tldProvider.currentTldOrError())
     }
 
-    func candidate() throws -> WalletManaging {
-        try SelectedWallet.candidate(for: tldProvider.currentTldOrError())
-    }
-
-    func scoreAlias() throws -> WalletManaging {
-        try SelectedWallet.scoreAlias(for: tldProvider.currentTldOrError())
-    }
-
     func depositWallet() throws -> WalletManaging {
         try SelectedWallet.depositWallet(for: tldProvider.currentTldOrError())
-    }
-
-    func mobRuleAlias() -> WalletManaging {
-        SelectedWallet.mobRuleAlias()
     }
 
     func resourcesAlias() -> WalletManaging {

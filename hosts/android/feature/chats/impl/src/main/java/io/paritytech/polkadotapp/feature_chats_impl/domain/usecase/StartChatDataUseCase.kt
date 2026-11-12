@@ -26,7 +26,7 @@ class StartChatDataUseCase @Inject constructor(
     private val accountRepository: AccountRepository,
     private val contactsRepository: ContactsRepository
 ) {
-    private val chainId = knownChains.people
+    private val chainId = knownChains.assetHub
 
     suspend operator fun invoke(contactAccountId: AccountId): Result<StartChatData> {
         val existingContact = contactsRepository.getContact(contactAccountId)
@@ -34,9 +34,9 @@ class StartChatDataUseCase @Inject constructor(
             return Result.success(StartChatData.ExistingChat(contactAccountId))
         }
 
-        val peopleChain = chainRegistry.getChain(chainId)
+        val chain = chainRegistry.getChain(chainId)
 
-        return resourcesRepository.consumerInfo(peopleChain.id, contactAccountId)
+        return resourcesRepository.consumerInfo(chain.id, contactAccountId)
             .mapError(Throwable::asStartChatError)
             .flatMap { consumerInfo ->
                 if (consumerInfo == null) {

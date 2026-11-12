@@ -8,6 +8,7 @@ import androidx.compose.ui.unit.IntSize
 import io.paritytech.polkadotapp.common.domain.model.Timestamp
 import io.paritytech.polkadotapp.common.utils.InformationSize
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageId
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigin
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
@@ -189,7 +190,8 @@ sealed interface ChatMessageUiModel {
         override val status: Status,
         override val origin: ChatMessageOrigin,
         val renderer: CustomChatMessageRenderer<T>,
-        val content: Result<T>
+        val content: Result<T>,
+        val chatId: ChatId,
     ) : ChatMessageUiModel
 
     enum class Status { PENDING, SENT, READ, FAILED }

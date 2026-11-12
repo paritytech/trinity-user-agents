@@ -1,0 +1,206 @@
+mod spawner;
+pub use spawner::test_spawner;
+
+use futures::stream::{self, BoxStream};
+use truapi::{
+	ProductId,
+	platform::{
+		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, Features, HostInfo,
+		JsonRpcConnection, LocaleHost, Navigation, Notifications, PairingHostConfig, Permissions,
+		PlatformInfo, PreimageHost, ProductContext, ProductOperations, ProductStorage,
+		ProviderError, ThemeHost, UserConfirmation, UserConfirmationReview,
+	},
+	v01,
+};
+
+/// Runtime configuration shared by integration tests.
+pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
+	(
+		PairingHostConfig::new(
+			HostInfo {
+				name: "Polkadot Web".to_string(),
+				icon: Some("https://dot.li/dotli.png".to_string()),
+				version: None,
+				platform: truapi::latest::HostPlatform::Web,
+			},
+			PlatformInfo::default(),
+			truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], Some([0xcc; 32])),
+			"polkadotapp".to_string(),
+		)
+		.expect("test host runtime config is valid"),
+		ProductContext::new(ProductId::for_test("dotli.dot")),
+	)
+}
+
+/// Platform stub whose callbacks return fixed no-op values, enough for
+/// wire-shape tests that only inspect emitted frames.
+pub struct WireShapePlatform;
+
+#[async_trait::async_trait]
+impl ProductStorage for WireShapePlatform {
+	async fn read(&self, _key: String) -> Result<Option<Vec<u8>>, v01::HostLocalStorageReadError> {
+		Err(v01::HostLocalStorageReadError::Full)
+	}
+	async fn write(
+		&self,
+		_key: String,
+		_value: Vec<u8>,
+	) -> Result<(), v01::HostLocalStorageReadError> {
+		Ok(())
+	}
+	async fn clear(&self, _key: String) -> Result<(), v01::HostLocalStorageReadError> {
+		Ok(())
+	}
+	fn subscribe_storage(
+		&self,
+		_key: String,
+	) -> BoxStream<'static, Result<v01::HostLocalStorageChangeItem, v01::GenericError>> {
+		Box::pin(stream::empty())
+	}
+}
+
+#[async_trait::async_trait]
+impl ProductOperations for WireShapePlatform {
+	async fn begin_operation(
+		&self,
+		_product: &ProductContext,
+		_label: String,
+	) -> Result<v01::HostWorkerBeginOperationResponse, v01::HostWorkerOperationError> {
+		Ok(v01::HostWorkerBeginOperationResponse { id: 1 })
+	}
+	async fn end_operation(
+		&self,
+		_product: &ProductContext,
+		_id: u32,
+	) -> Result<(), v01::HostWorkerOperationError> {
+		Ok(())
+	}
+}
+
+#[async_trait::async_trait]
+impl Navigation for WireShapePlatform {
+	async fn navigate_to(&self, _url: String) -> Result<(), v01::HostNavigateToError> {
+		Ok(())
+	}
+}
+
+#[async_trait::async_trait]
+impl Notifications for WireShapePlatform {
+	async fn push_notification(
+		&self,
+		_notification: v01::HostPushNotificationRequest,
+	) -> Result<v01::HostPushNotificationResponse, v01::GenericError> {
+		Ok(v01::HostPushNotificationResponse { id: 0 })
+	}
+
+	async fn cancel_notification(&self, _id: u32) -> Result<(), v01::GenericError> {
+		Ok(())
+	}
+}
+
+#[async_trait::async_trait]
+impl Permissions for WireShapePlatform {
+	async fn device_permission(
+		&self,
+		_product: &ProductContext,
+		_request: v01::HostDevicePermissionRequest,
+	) -> Result<truapi::platform::PermissionDecision, v01::GenericError> {
+		Ok(truapi::platform::PermissionDecision::AllowAlways)
+	}
+	async fn remote_permission(
+		&self,
+		_product: &ProductContext,
+		_request: v01::RemotePermissionRequest,
+	) -> Result<truapi::platform::PermissionDecision, v01::GenericError> {
+		Ok(truapi::platform::PermissionDecision::AllowAlways)
+	}
+}
+
+impl truapi::platform::ExtrinsicVersionHost for WireShapePlatform {}
+
+#[async_trait::async_trait]
+impl Features for WireShapePlatform {
+	async fn feature_supported(
+		&self,
+		_request: v01::HostFeatureSupportedRequest,
+	) -> Result<v01::HostFeatureSupportedResponse, v01::GenericError> {
+		Ok(v01::HostFeatureSupportedResponse { supported: true })
+	}
+}
+
+struct DeadConnection;
+
+impl JsonRpcConnection for DeadConnection {
+	fn send(&self, _request: String) {}
+	fn responses(&self) -> BoxStream<'static, String> {
+		Box::pin(stream::empty())
+	}
+	fn close(&self) {}
+}
+
+#[async_trait::async_trait]
+impl ChainProvider for WireShapePlatform {
+	async fn connect(
+		&self,
+		_genesis_hash: [u8; 32],
+	) -> Result<Box<dyn JsonRpcConnection>, ProviderError> {
+		Ok(Box::new(DeadConnection))
+	}
+}
+
+impl AuthPresenter for WireShapePlatform {}
+
+#[async_trait::async_trait]
+impl CoreStorage for WireShapePlatform {
+	async fn read_core_storage(
+		&self,
+		_key: CoreStorageKey,
+	) -> Result<Option<Vec<u8>>, v01::GenericError> {
+		Ok(None)
+	}
+	async fn write_core_storage(
+		&self,
+		_key: CoreStorageKey,
+		_value: Vec<u8>,
+	) -> Result<(), v01::GenericError> {
+		Ok(())
+	}
+	async fn clear_core_storage(&self, _key: CoreStorageKey) -> Result<(), v01::GenericError> {
+		Ok(())
+	}
+}
+
+#[async_trait::async_trait]
+impl UserConfirmation for WireShapePlatform {
+	async fn confirm_user_action(
+		&self,
+		_review: UserConfirmationReview,
+	) -> Result<bool, v01::GenericError> {
+		Ok(false)
+	}
+}
+
+impl ThemeHost for WireShapePlatform {
+	fn subscribe_theme(
+		&self,
+	) -> BoxStream<'static, Result<v01::HostThemeSubscribeItem, v01::GenericError>> {
+		Box::pin(stream::empty())
+	}
+}
+
+impl LocaleHost for WireShapePlatform {
+	fn subscribe_locale(
+		&self,
+	) -> BoxStream<'static, Result<v01::HostLocaleSubscribeItem, v01::GenericError>> {
+		Box::pin(stream::empty())
+	}
+}
+
+impl PreimageHost for WireShapePlatform {
+	fn lookup_preimage(
+		&self,
+		_key: [u8; 32],
+	) -> BoxStream<'static, Result<Option<Vec<u8>>, v01::GenericError>> {
+		Box::pin(stream::empty())
+	}
+}

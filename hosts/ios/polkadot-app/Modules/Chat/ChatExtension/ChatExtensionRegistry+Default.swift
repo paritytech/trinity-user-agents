@@ -4,12 +4,7 @@ import Operation_iOS
 
 extension ChatExtensionsRegistry {
     @MainActor static func createDefault(
-        syncStateStore: DetermineStateSyncStore,
-        personDataStore: DetermineStatePersonDataStore,
-        syncService: DetermineStateSyncServicing,
-        personhoodRegistrationService: PersonhoodRegistrationServicing,
-        productBotProvider: ProductBotProviding,
-        audioSessionManager: AudioSessionManaging
+        productBotProvider: ProductBotProviding
     ) -> ChatExtensionsRegistering {
         let storageFacade = UserDataStorageFacade.shared
 
@@ -27,16 +22,8 @@ extension ChatExtensionsRegistry {
             ChatReactionExtension(reactionRepository: reactionRepository)
         ]
 
-        let dimsExtension = ChatExtensionsRegistry.createDimExtensions(
-            syncStateStore: syncStateStore,
-            personDataStore: personDataStore,
-            syncService: syncService,
-            personhoodRegistrationService: personhoodRegistrationService,
-            audioSessionManager: audioSessionManager
-        )
-
         let extensionStore = ChatExtensionStore(
-            staticExtensions: commonExtensions + dimsExtension,
+            staticExtensions: commonExtensions,
             productBotProvider: productBotProvider
         )
 

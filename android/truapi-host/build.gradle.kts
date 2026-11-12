@@ -1,9 +1,9 @@
 // TrUAPI Android host adapter.
 //
-// Publishes `io.parity:truapi-host-android` to Maven Local. Products running in a
+// Publishes `io.parity:truapi-host-android` to Maven. Products running in a
 // `WebView` connect to the Rust core via its localhost WebSocket bridge
 // (`TrUAPIProductExecution.startWsBridge`); the Rust core (compiled to
-// `libtruapi_server.so`) handles wire decoding, routing, subscription
+// `libtruapi.so`) handles wire decoding, routing, subscription
 // lifecycle, and host capability dispatch.
 
 plugins {
@@ -65,8 +65,9 @@ dependencies {
 extra["truapiSourceDir"] = rootProject.projectDir
 apply(from = rootProject.file("android/truapi-container.gradle"))
 
-// Coordinates for the Maven Local publication; -PtruapiHostVersion overrides
-// the default 0.0.0-local.
+// Coordinates for the Maven publication. Releases are published to GitHub
+// Packages by .github/workflows/release-android.yml, which passes the real
+// version via -PtruapiHostVersion; local publishes default to 0.0.0-local.
 val publicationGroup = "io.parity"
 val publicationArtifact = "truapi-host-android"
 val publicationVersion = (findProperty("truapiHostVersion") as String?) ?: "0.0.0-local"
@@ -90,20 +91,20 @@ publishing {
                 description.set(
                     "Kotlin wrapper around the TrUAPI Rust core (UniFFI). " +
                         "Hosts integrating a `WebView`-based product link the " +
-                        "`libtruapi_server` cdylib and route product traffic " +
+                        "`libtruapi` cdylib and route product traffic " +
                         "through the localhost WebSocket bridge."
                 )
-                url.set("https://github.com/paritytech/host-rust-core")
+                url.set("https://github.com/paritytech/trinity-user-agents")
                 licenses {
                     license {
                         name.set("MIT")
-                        url.set("https://github.com/paritytech/host-rust-core/blob/main/LICENSE")
+                        url.set("https://github.com/paritytech/trinity-user-agents/blob/main/LICENSE")
                     }
                 }
                 scm {
-                    connection.set("scm:git:https://github.com/paritytech/host-rust-core.git")
-                    developerConnection.set("scm:git:ssh://git@github.com/paritytech/host-rust-core.git")
-                    url.set("https://github.com/paritytech/host-rust-core")
+                    connection.set("scm:git:https://github.com/paritytech/trinity-user-agents.git")
+                    developerConnection.set("scm:git:ssh://git@github.com/paritytech/trinity-user-agents.git")
+                    url.set("https://github.com/paritytech/trinity-user-agents")
                 }
                 developers {
                     developer {
@@ -118,6 +119,17 @@ publishing {
     }
 
     repositories {
+        // Maven Local for `gradle publishToMavenLocal` during development.
         mavenLocal()
+        // Release target: the release-android workflow publishes here with
+        // the workflow's GITHUB_TOKEN.
+        maven {
+            name = "GitHubPackages"
+            url = uri("https://maven.pkg.github.com/paritytech/trinity-user-agents")
+            credentials {
+                username = System.getenv("GITHUB_ACTOR")
+                password = System.getenv("GITHUB_TOKEN")
+            }
+        }
     }
 }

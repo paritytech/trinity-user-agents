@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_chats_impl.presentation.feed.compose.c
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,6 +35,7 @@ import io.paritytech.polkadotapp.feature_chats_impl.presentation.ChatTestTags
 internal fun ChatInputField(
     modifier: Modifier,
     text: String,
+    characterLimit: Int?,
     onTextChanged: (String) -> Unit,
     onSendAction: () -> Unit,
 ) {
@@ -41,29 +43,19 @@ internal fun ChatInputField(
         modifier = modifier,
         verticalAlignment = Alignment.Bottom,
     ) {
-        PolkadotInputField(
-            modifier = Modifier
-                .testTag(ChatTestTags.CHAT_MESSAGE_INPUT)
-                .weight(1f)
-                .padding(
-                    start = PolkadotTheme.spacings.mediumIncreased,
-                    top = PolkadotTheme.spacings.extraMedium,
-                    bottom = PolkadotTheme.spacings.extraMedium,
-                ),
-            value = text,
-            onValueChange = onTextChanged,
-            singleLine = false,
-            maxLines = 6,
-            textStyle = PolkadotTheme.typography.paragraph.large,
-            keyboardOptions = KeyboardOptions(
-                capitalization = KeyboardCapitalization.Sentences,
-                autoCorrectEnabled = true
-            ),
-            placeholder = {
-                NovaText(stringResource(R.string.chat_details_input_field_placeholder))
-            },
-            contentPadding = PaddingValues(PolkadotTheme.spacings.zero),
-        )
+        Column(modifier = Modifier.weight(1f)) {
+            MessageTextField(text = text, onTextChanged = onTextChanged)
+
+            if (characterLimit != null) {
+                CharacterCounter(
+                    modifier = Modifier
+                        .align(Alignment.End)
+                        .padding(end = PolkadotTheme.spacings.small, bottom = PolkadotTheme.spacings.small),
+                    count = text.length,
+                    limit = characterLimit,
+                )
+            }
+        }
 
         AnimatedVisibility(
             modifier = Modifier.align(Alignment.Bottom),
@@ -85,6 +77,50 @@ internal fun ChatInputField(
     }
 }
 
+@Composable
+private fun MessageTextField(
+    text: String,
+    onTextChanged: (String) -> Unit,
+) {
+    PolkadotInputField(
+        modifier = Modifier
+            .testTag(ChatTestTags.CHAT_MESSAGE_INPUT)
+            .fillMaxWidth()
+            .padding(
+                start = PolkadotTheme.spacings.mediumIncreased,
+                top = PolkadotTheme.spacings.extraMedium,
+                bottom = PolkadotTheme.spacings.extraMedium,
+            ),
+        value = text,
+        onValueChange = onTextChanged,
+        singleLine = false,
+        maxLines = 6,
+        textStyle = PolkadotTheme.typography.paragraph.large,
+        keyboardOptions = KeyboardOptions(
+            capitalization = KeyboardCapitalization.Sentences,
+            autoCorrectEnabled = true
+        ),
+        placeholder = {
+            NovaText(stringResource(R.string.chat_details_input_field_placeholder))
+        },
+        contentPadding = PaddingValues(PolkadotTheme.spacings.zero),
+    )
+}
+
+@Composable
+private fun CharacterCounter(
+    modifier: Modifier,
+    count: Int,
+    limit: Int,
+) {
+    NovaText(
+        modifier = modifier,
+        text = stringResource(R.string.chat_input_character_counter, count, limit),
+        style = PolkadotTheme.typography.caption.medium,
+        color = PolkadotTheme.colors.fg.tertiary,
+    )
+}
+
 @Preview
 @Composable
 private fun InputFieldPreview() {
@@ -93,6 +129,22 @@ private fun InputFieldPreview() {
         ChatInputField(
             modifier = Modifier.fillMaxWidth(),
             text = t,
+            characterLimit = null,
+            onTextChanged = { t = it },
+            onSendAction = {}
+        )
+    }
+}
+
+@Preview
+@Composable
+private fun InputFieldWithCharacterCounterPreview() {
+    PolkadotTheme {
+        var t by remember { mutableStateOf("Hi! I'd like to add you as a contact") }
+        ChatInputField(
+            modifier = Modifier.fillMaxWidth(),
+            text = t,
+            characterLimit = 1000,
             onTextChanged = { t = it },
             onSendAction = {}
         )

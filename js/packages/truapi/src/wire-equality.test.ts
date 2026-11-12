@@ -2,7 +2,7 @@
 //
 // `encodeWireMessage` must produce the same bytes as the Rust `ProtocolMessage`
 // encoder for the canonical reference vectors. The Rust side pins these in
-// `crates/truapi-server/src/frame.rs` (`mod tests`); we compute them here
+// `crates/truapi/src/frame.rs` (`mod tests`); we compute them here
 // independently and compare.
 
 import { readFileSync } from "node:fs";
@@ -62,7 +62,7 @@ describe("encodeWireMessage / decodeWireMessage wire equality", () => {
         ] as const) {
             const request: HostSignPayloadRequest = {
                 account: {
-                    dotNsIdentifier: "myapp.dot",
+                    dotNsIdentifier: T.asProductId("myapp.dot"),
                     derivationIndex: { tag: "Index", value: 7 },
                 },
                 payload: {
@@ -152,7 +152,7 @@ describe("encodeWireMessage / decodeWireMessage wire equality", () => {
 
     it("encodes account_get_request (pair (2, 1)) to match the golden fixture", () => {
         // Same vector as the Rust golden fixture
-        // (`truapi-server/tests/snapshots/golden-account-get.bin`). Encoded
+        // (`truapi/tests/snapshots/golden-account-get.bin`). Encoded
         // through the generated codec rather than assembled byte by byte: a
         // hand-rolled payload keeps encoding the layout it was written against
         // long after the type has moved on, which is exactly how the Rust
@@ -161,7 +161,7 @@ describe("encodeWireMessage / decodeWireMessage wire equality", () => {
             tag: "V1",
             value: {
                 productAccountId: {
-                    dotNsIdentifier: "foo",
+                    dotNsIdentifier: T.asProductId("foo"),
                     derivationIndex: { tag: "Index", value: 0 },
                 },
             },

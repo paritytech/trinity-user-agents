@@ -1,16 +1,22 @@
 package io.paritytech.polkadotapp.common.presentation.formatters
 
 import io.paritytech.polkadotapp.common.presentation.formatters.number.RealNumberFormatterFactory
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrandProvider
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenSymbolAppearance
 import io.paritytech.polkadotapp.feature_tokens_impl.presentation.formatter.RealTokenAmountFormatter
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
+private const val PUBLISHED_SYMBOL = "CASH"
+
 internal class RealAmountFormatterTest {
     private val numberFormatterFactory = RealNumberFormatterFactory()
-    private val tokenAmountFormatter = RealTokenAmountFormatter(numberFormatterFactory)
+    private val paymentAssetBrandProvider = FakePaymentAssetBrandProvider(PUBLISHED_SYMBOL)
+    private val tokenAmountFormatter = RealTokenAmountFormatter(numberFormatterFactory, paymentAssetBrandProvider)
 
     @Test
     fun test() = with(TokenSymbolAppearance.Symbol("DOT")) {
@@ -30,18 +36,27 @@ internal class RealAmountFormatterTest {
 
     @Test
     fun digitalDollarTest() = with(TokenSymbolAppearance.DigitalDollar) {
-        runFormattingTest("0.50 $symbol", "0.5")
-        runFormattingTest("0.50 $symbol", "0.50")
-        runFormattingTest("0.80 $symbol", "0.8")
-        runFormattingTest("2.50 $symbol", "2.5")
-        runFormattingTest("2 $symbol", "2")
-        runFormattingTest("1,234.50 $symbol", "1234.5")
-        runFormattingTest("1,500 $symbol", "1500")
-        runFormattingTest("1.5M $symbol", "1500000")
-        runFormattingTest("2M $symbol", "2000000")
-        runFormattingTest("3.4B $symbol", "3400000000")
-        runFormattingTest("1.50M $symbol", "1500000.5")
-        runFormattingTest("2.23M $symbol", "2234567.89")
+        runFormattingTest("0.50 CASH", "0.5")
+        runFormattingTest("0.50 CASH", "0.50")
+        runFormattingTest("0.80 CASH", "0.8")
+        runFormattingTest("2.50 CASH", "2.5")
+        runFormattingTest("2 CASH", "2")
+        runFormattingTest("1,234.50 CASH", "1234.5")
+        runFormattingTest("1,500 CASH", "1500")
+        runFormattingTest("1.5M CASH", "1500000")
+        runFormattingTest("2M CASH", "2000000")
+        runFormattingTest("3.4B CASH", "3400000000")
+        runFormattingTest("1.50M CASH", "1500000.5")
+        runFormattingTest("2.23M CASH", "2234567.89")
+    }
+
+    @Test
+    fun `should follow the published symbol for the digital dollar`() {
+        paymentAssetBrandProvider.brand.value = PaymentAssetBrand.bundled("USD")
+
+        with(TokenSymbolAppearance.DigitalDollar) {
+            runFormattingTest("2 USD", "2")
+        }
     }
 
     private fun TokenSymbolAppearance.runFormattingTest(
@@ -55,5 +70,9 @@ internal class RealAmountFormatterTest {
         }
         val result = tokenAmountFormatter.formatTokenAmount(tokenAmountModel, precision)
         assertEquals(expectedResult, result)
+    }
+
+    private class FakePaymentAssetBrandProvider(symbol: String) : PaymentAssetBrandProvider {
+        override val brand = MutableStateFlow(PaymentAssetBrand.bundled(symbol))
     }
 }

@@ -9,6 +9,7 @@ android {
 
 dependencies {
     api(project(":common"))
+    api(project(":chains"))
     api(project(":feature:account:api"))
     api(project(":feature:people:api"))
 

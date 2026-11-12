@@ -226,7 +226,7 @@ private extension Bundle {
         var results: [URL] = []
         for case let fileURL as URL in enumerator {
             let ext = fileURL.pathExtension.lowercased()
-            guard ext == "ttf" else {
+            guard ext == "ttf" || ext == "otf" else {
                 continue
             }
             results.append(fileURL)

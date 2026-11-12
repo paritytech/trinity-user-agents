@@ -9,7 +9,9 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.model.RecyclerVouche
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.ValueExponent
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageTransactionService
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetState
+import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetStates
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.OwnAsset
+import io.paritytech.polkadotapp.feature_coinage_impl.TEST_INSTALLATION
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.CoinRepository
 import io.paritytech.polkadotapp.feature_coinage_impl.data.repository.VoucherRepository
 import io.paritytech.polkadotapp.feature_coinage_impl.testKey
@@ -91,7 +93,7 @@ class RealCoinageAssetsUseCaseTest {
 
         givenCoins(coinOf(derivationIndex = 7, age = 1))
         whenever(transactionService.subscribeAssetStates())
-            .thenReturn(flowOf(emptyMap(), mapOf(OwnAsset.Coin(testKey(7)) to claimed)))
+            .thenReturn(flowOf(statesOf(), statesOf(OwnAsset.Coin(testKey(7)) to claimed)))
 
         val reported = useCase.subscribeCoins().toList().map { tracked -> tracked.map { it.state } }
 
@@ -130,7 +132,7 @@ class RealCoinageAssetsUseCaseTest {
         // The same rows read three times over, as an unrelated write to either table would produce.
         whenever(coinRepository.subscribeCoinsBy(any())).thenReturn(flowOf(listOf(coin), listOf(coin), listOf(coin)))
         whenever(transactionService.subscribeAssetStates())
-            .thenReturn(flowOf(mapOf(OwnAsset.Coin(testKey(7)) to state)))
+            .thenReturn(flowOf(statesOf(OwnAsset.Coin(testKey(7)) to state)))
 
         val emissions = useCase.subscribeCoinsBy(listOf(coin.accountId)).toList()
 
@@ -147,8 +149,10 @@ class RealCoinageAssetsUseCaseTest {
     }
 
     private fun givenStates(vararg states: Pair<OwnAsset, CoinageAssetState>) {
-        whenever(transactionService.subscribeAssetStates()).thenReturn(flowOf(states.toMap()))
+        whenever(transactionService.subscribeAssetStates()).thenReturn(flowOf(statesOf(*states)))
     }
+
+    private fun statesOf(vararg states: Pair<OwnAsset, CoinageAssetState>) = CoinageAssetStates(states.toMap(), TEST_INSTALLATION)
 
     private fun coinOf(derivationIndex: Int, age: Int?) = Coin(
         derivationIndex = testKey(derivationIndex),

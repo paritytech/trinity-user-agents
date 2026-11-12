@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_coinage_impl
 
+import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.feature_coinage_api.domain.common.CoinAmountBreakdown
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.ValueExponent
 import io.paritytech.polkadotapp.feature_coinage_impl.common.centsToDollar
@@ -8,7 +9,11 @@ import io.paritytech.polkadotapp.feature_coinage_impl.common.testConversionConte
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.common.RealCoinAmountBreakdownContext
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.math.BigDecimal
+import java.math.BigInteger
 
 class DenominationTest {
     private val allowedExponents = (-2..7).map { ValueExponent(it) }.toSet()
@@ -59,10 +64,41 @@ class DenominationTest {
         testBreakdown(16.3, listOf(4, -2))
     }
 
+    @Test
+    fun `remainder after breakdown should be zero exactly when breakdown succeeds`() {
+        val step = BigDecimal("0.0005")
+
+        val mismatch = (0..20_000).firstOrNull { k ->
+            val amount = step * BigDecimal(k)
+            val breaksDown = runCatching { coinAmountBreakdown.breakdown(amount) }.isSuccess
+
+            coinAmountBreakdown.remainderAfterBreakdown(amount).isZero() != breaksDown
+        }
+
+        assertNull("Remainder disagrees with breakdown for k=$mismatch", mismatch)
+    }
+
+    @Test
+    fun `remainder after breakdown should be the uncovered planks when the amount is not a multiple of the smallest coin`() {
+        assertEquals(Balance(BigInteger("500000000000000")), coinAmountBreakdown.remainderAfterBreakdown(BigDecimal("0.163")))
+        assertEquals(Balance(BigInteger("1000000000000000")), coinAmountBreakdown.remainderAfterBreakdown(BigDecimal("0.001")))
+    }
+
+    @Test(timeout = REMAINDER_TIMEOUT_MS)
+    fun `remainder after breakdown should be zero when a 30-digit amount is representable`() {
+        val remainder = coinAmountBreakdown.remainderAfterBreakdown(BigDecimal("123456789012345678901234567890"))
+
+        assertTrue(remainder.isZero())
+    }
+
     private fun testBreakdown(input: Double, expected: List<Int>) = runBlocking {
         val denominations = coinAmountBreakdown.breakdown(input.centsToDollar())
             .map { it.value }
 
         assertEquals(expected, denominations)
+    }
+
+    private companion object {
+        const val REMAINDER_TIMEOUT_MS = 1_000L
     }
 }

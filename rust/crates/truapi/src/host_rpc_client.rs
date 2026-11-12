@@ -1,0 +1,724 @@
+//! `subxt-rpcs` client adapter for host-provided JSON-RPC pipes.
+//!
+//! The platform owns the physical chain connection. This module owns only the
+//! generic JSON-RPC mechanics needed to expose that pipe as a
+//! [`subxt_rpcs::RpcClientT`]: request correlation, subscription routing, and
+//! best-effort unsubscribe on subscription drop.
+
+use core::{
+	mem,
+	pin::Pin,
+	task::{Context, Poll},
+	time::Duration,
+};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+use std::{
+	collections::HashMap,
+	sync::{
+		Arc, Mutex,
+		atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+	},
+};
+
+use crate::platform::JsonRpcConnection;
+use futures::{
+	FutureExt, Stream, StreamExt,
+	channel::{mpsc, oneshot},
+	pin_mut,
+};
+use serde::{Serialize, Serializer};
+use serde_json::value::RawValue;
+use subxt_rpcs::{
+	Error as RpcError, UserError,
+	client::{RawRpcFuture, RawRpcSubscription, RpcClientT},
+};
+use tracing::{instrument, warn};
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
+
+use crate::Spawner;
+
+const MAX_BUFFERED_SUBSCRIPTIONS: usize = 64;
+const MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION: usize = 256;
+
+/// How long a request may wait on a connection that delivers nothing at all.
+///
+/// The host notices a dead socket only when a ping goes unanswered, which can
+/// take most of a minute, and every request sent on it meanwhile hangs. One
+/// frame holds back every answer behind it, so the bound outlasts the largest
+/// frame on a slow link: the 1.3 MB runtime metadata of Asset Hub takes about
+/// 14 s at 780 kbps, and two such frames sharing that link take 27 s. On a
+/// connection that reports a frame still arriving
+/// ([`JsonRpcConnection::mid_message_silence`]), its bytes count too, so there a
+/// larger one, such as a Bulletin block body, gets as long as its bytes keep
+/// coming.
+const REQUEST_SILENCE_DEADLINE: Duration = Duration::from_secs(30);
+const SILENCE_CHECKS_PER_DEADLINE: u32 = 6;
+
+/// JSON-RPC client backed by a host-owned [`JsonRpcConnection`].
+pub struct HostRpcClient {
+	inner: Arc<HostRpcClientInner>,
+}
+
+struct HostRpcClientInner {
+	connection: Arc<dyn JsonRpcConnection>,
+	request_ids: AtomicU64,
+	user_handles: AtomicUsize,
+	closed: AtomicBool,
+	stop_response_loop: Mutex<Option<oneshot::Sender<()>>>,
+	pending: Mutex<HashMap<String, PendingRequest>>,
+	subscriptions: Mutex<SubscriptionState>,
+	last_frame_at: Mutex<Instant>,
+	silence_deadline: Duration,
+}
+
+/// Where a subscription's notifications are delivered.
+type SubscriptionSink = mpsc::UnboundedSender<Result<Box<RawValue>, RpcError>>;
+
+/// One subscription id, in the only two states it can be in.
+///
+/// A notification can arrive before the task that issued the subscribe call has
+/// published its sink, so an id is born `Pending` and holds its own notifications
+/// until activation drains them.
+enum SubscriptionEntry {
+	/// Notifications received before a sink existed, oldest first.
+	Pending(Vec<Box<RawValue>>),
+	/// The sink the subscriber reads.
+	Active(SubscriptionSink),
+}
+
+/// Every subscription this client routes, under one lock.
+///
+/// Both states live in one map so that activation, delivery, unsubscribe and
+/// connection close are each a single critical section. Ordering then follows
+/// from the lock alone: there is no second lock to acquire in the right order,
+/// and no window between publishing a sink and replaying what preceded it.
+#[derive(Default)]
+struct SubscriptionState {
+	entries: HashMap<String, SubscriptionEntry>,
+}
+
+/// Take the subscription lock, tolerating a poisoned mutex.
+///
+/// `close_with_error` and `unsubscribe` both run from `Drop`. A panic elsewhere
+/// that poisoned this lock would make an `unwrap` here panic a second time
+/// during unwinding, which aborts the process instead of reporting the original
+/// failure. The state behind the lock is a plain map, so recovering it is safe.
+fn lock_subscriptions(
+	lock: &Mutex<SubscriptionState>,
+) -> std::sync::MutexGuard<'_, SubscriptionState> {
+	lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+impl SubscriptionState {
+	/// Publish `tx` for `subscription_id` and replay whatever arrived before it,
+	/// oldest first.
+	///
+	/// The replay happens here, under the caller's guard, rather than being
+	/// handed back to be replayed afterwards. That is the whole ordering
+	/// guarantee: a buffer that never escapes the lock cannot be replayed after
+	/// it is released, so no later notification can overtake it. Returning the
+	/// items instead would leave the invariant to a comment, which is what the
+	/// two-lock version did.
+	///
+	/// Sending under the lock here is safe, where it is not in
+	/// [`Self::deliver_or_buffer`], and the difference is the receiver rather
+	/// than the send. `subscribe` creates the channel and calls this before it
+	/// builds the `SubscriptionStream` that owns the receiving half, so nothing
+	/// is polling it yet and there is no waker to run. A send on the delivery
+	/// path reaches a receiver the subscriber is already polling, which is what
+	/// makes the waker reachable there.
+	fn activate(&mut self, subscription_id: String, tx: SubscriptionSink) {
+		let previous = self.entries.insert(subscription_id, SubscriptionEntry::Active(tx.clone()));
+		// Re-activating an id that is already active replaces the sink and has
+		// nothing buffered, which is also the never-seen case.
+		if let Some(SubscriptionEntry::Pending(items)) = previous {
+			for item in items {
+				let _ = tx.unbounded_send(Ok(item));
+			}
+		}
+	}
+
+	/// Route one notification: hand it back for delivery when the subscription
+	/// is active, buffer it when it is not.
+	///
+	/// An active subscription's sink is returned rather than sent to here, so
+	/// the caller sends with the lock released. `unbounded_send` wakes the
+	/// receiving task, and a waker is embedder code: an executor that polls
+	/// inline would re-enter this module, and `unsubscribe` on the resulting
+	/// stream drop takes this same non-reentrant lock. [`Self::activate`] sends
+	/// under the lock because its receiver has no waker yet; see there.
+	///
+	/// Ordering survives the release because the only thing this races is
+	/// `activate`, which replays under the same lock, so seeing `Active` at all
+	/// means the replay is already done. It does not order against
+	/// `close_with_error`, which can drain and report on another thread between
+	/// the sink being taken and the send: a subscriber can see one item behind
+	/// the close error. That window is the same one the two-lock version had.
+	///
+	/// Two deliveries for one subscription stay in order because there is a
+	/// single response loop calling this, not because of the lock. That is a
+	/// property of the call graph: `handle_notification` has one caller,
+	/// `handle_frame`, which runs only on the response-loop task.
+	fn deliver_or_buffer(
+		&mut self,
+		subscription_id: String,
+		item: Box<RawValue>,
+	) -> Option<(SubscriptionSink, Box<RawValue>)> {
+		match self.entries.get_mut(&subscription_id) {
+			Some(SubscriptionEntry::Active(tx)) => {
+				return Some((tx.clone(), item));
+			},
+			Some(SubscriptionEntry::Pending(items)) => {
+				if items.len() < MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION {
+					items.push(item);
+				}
+			},
+			// The cap counts subscriptions holding a buffer, not active ones:
+			// an active subscription costs nothing to remember here.
+			None => {
+				if self.pending_count() < MAX_BUFFERED_SUBSCRIPTIONS {
+					self.entries.insert(subscription_id, SubscriptionEntry::Pending(vec![item]));
+				}
+			},
+		}
+		None
+	}
+
+	/// Forget a subscription, whichever state it is in.
+	fn remove(&mut self, subscription_id: &str) {
+		self.entries.remove(subscription_id);
+	}
+
+	/// Take every entry, leaving the state empty.
+	fn drain(&mut self) -> HashMap<String, SubscriptionEntry> {
+		mem::take(&mut self.entries)
+	}
+
+	fn pending_count(&self) -> usize {
+		self.entries
+			.values()
+			.filter(|entry| matches!(entry, SubscriptionEntry::Pending(_)))
+			.count()
+	}
+}
+
+struct HostRpcClientLease {
+	inner: Arc<HostRpcClientInner>,
+}
+
+struct PendingRequest {
+	method: String,
+	tx: oneshot::Sender<Result<Box<RawValue>, RpcError>>,
+	sent_at: Instant,
+}
+
+#[derive(Debug, derive_more::Display, derive_more::Error)]
+#[display("{}", _0)]
+struct HostRpcClientError(#[error(not(source))] String);
+
+#[derive(Serialize)]
+struct JsonRpcRequest<'a> {
+	jsonrpc: &'static str,
+	id: &'a str,
+	method: &'a str,
+	#[serde(serialize_with = "serialize_json_rpc_params")]
+	params: Option<&'a RawValue>,
+}
+
+fn serialize_json_rpc_params<S>(
+	params: &Option<&RawValue>,
+	serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+	S: Serializer,
+{
+	match params {
+		Some(params) => params.serialize(serializer),
+		None => <[(); 0]>::default().serialize(serializer),
+	}
+}
+
+impl HostRpcClient {
+	/// Wrap `connection` and start the response pump on `spawner`.
+	///
+	/// The pump also closes the connection once a request has waited out a
+	/// silence deadline with nothing arriving, so the requests on a dead socket
+	/// fail and the next caller can open a new one.
+	pub fn new(connection: Arc<dyn JsonRpcConnection>, spawner: Spawner) -> Self {
+		Self::with_silence_deadline(connection, spawner, REQUEST_SILENCE_DEADLINE)
+	}
+
+	fn with_silence_deadline(
+		connection: Arc<dyn JsonRpcConnection>,
+		spawner: Spawner,
+		silence_deadline: Duration,
+	) -> Self {
+		let (stop_response_tx, stop_response_rx) = oneshot::channel();
+		let client = Self {
+			inner: Arc::new(HostRpcClientInner {
+				connection,
+				request_ids: AtomicU64::new(1),
+				user_handles: AtomicUsize::new(1),
+				closed: AtomicBool::new(false),
+				stop_response_loop: Mutex::new(Some(stop_response_tx)),
+				pending: Mutex::new(HashMap::new()),
+				subscriptions: Mutex::new(SubscriptionState::default()),
+				last_frame_at: Mutex::new(Instant::now()),
+				silence_deadline,
+			}),
+		};
+		client.spawn_response_loop(spawner, stop_response_rx);
+		client
+	}
+
+	/// Whether the underlying response stream has ended or failed.
+	pub fn is_closed(&self) -> bool {
+		self.inner.closed.load(Ordering::Relaxed)
+	}
+
+	/// Send a JSON-RPC request without waiting for its response.
+	///
+	/// Used by best-effort notifications where the caller must not block on
+	/// the remote endpoint acknowledging the request.
+	pub fn send_fire_and_forget(
+		&self,
+		method: &str,
+		params: Option<Box<RawValue>>,
+	) -> Result<(), RpcError> {
+		if self.inner.closed.load(Ordering::Relaxed) {
+			return Err(client_error("json-rpc connection is closed"));
+		}
+		let id = self.inner.next_request_id();
+		self.inner.send_request(&id, method, params.as_deref())
+	}
+
+	fn spawn_response_loop(&self, spawner: Spawner, stop_rx: oneshot::Receiver<()>) {
+		let inner = self.inner.clone();
+		let fut = async move {
+			let mut responses = inner.connection.responses();
+			let stop = stop_rx.fuse();
+			let check_every = inner.silence_deadline / SILENCE_CHECKS_PER_DEADLINE;
+			let silence_check = futures_timer::Delay::new(check_every).fuse();
+			pin_mut!(stop, silence_check);
+			loop {
+				// Frames first, so an answer that has already arrived counts before the check.
+				futures::select_biased! {
+					_ = stop => return,
+					frame = responses.next().fuse() => match frame {
+						Some(frame) => {
+							*inner.last_frame_at.lock().unwrap() = Instant::now();
+							if let Err(error) = inner.handle_frame(&frame) {
+								inner.close_with_error(error);
+								return;
+							}
+						}
+						None => {
+							inner.close_with_error(client_error("json-rpc response stream ended"));
+							return;
+						}
+					},
+					() = silence_check => {
+						if inner.silent_past_deadline(Instant::now()) {
+							let deadline = inner.silence_deadline;
+							let reason = format!("no frame for {deadline:?} while a request waited");
+							warn!("closing the json-rpc connection: {reason}");
+							inner.close_with_error(client_error(reason));
+							return;
+						}
+						silence_check.set(futures_timer::Delay::new(check_every).fuse());
+					},
+				}
+			}
+		};
+		spawner.spawn(fut);
+	}
+}
+
+impl Clone for HostRpcClient {
+	fn clone(&self) -> Self {
+		self.inner.retain_user_handle();
+		Self { inner: self.inner.clone() }
+	}
+}
+
+impl Drop for HostRpcClient {
+	fn drop(&mut self) {
+		self.inner.release_user_handle();
+	}
+}
+
+impl HostRpcClientInner {
+	fn retain_user_handle(&self) {
+		self.user_handles.fetch_add(1, Ordering::Relaxed);
+	}
+
+	fn acquire_lease(self: &Arc<Self>) -> HostRpcClientLease {
+		self.retain_user_handle();
+		HostRpcClientLease { inner: self.clone() }
+	}
+
+	fn release_user_handle(&self) {
+		let previous = self.user_handles.fetch_sub(1, Ordering::AcqRel);
+		debug_assert!(previous > 0, "host rpc client handle count underflow");
+		if previous == 1 {
+			self.close_with_error(client_error("json-rpc client dropped"));
+		}
+	}
+
+	fn next_request_id(&self) -> String {
+		format!("truapi:{}", self.request_ids.fetch_add(1, Ordering::Relaxed))
+	}
+
+	fn send_request(
+		&self,
+		id: &str,
+		method: &str,
+		params: Option<&RawValue>,
+	) -> Result<(), RpcError> {
+		let normalized_params = normalize_outbound_params(method, params)?;
+		let request = JsonRpcRequest {
+			jsonrpc: "2.0",
+			id,
+			method,
+			params: normalized_params.as_deref().or(params),
+		};
+		let encoded = serde_json::to_string(&request).map_err(RpcError::Serialization)?;
+		self.connection.send(encoded);
+		Ok(())
+	}
+
+	async fn request(
+		&self,
+		method: &str,
+		params: Option<Box<RawValue>>,
+	) -> Result<Box<RawValue>, RpcError> {
+		let id = self.next_request_id();
+		let (tx, rx) = oneshot::channel();
+		{
+			let mut pending = self.pending.lock().unwrap();
+			if self.closed.load(Ordering::Relaxed) {
+				return Err(client_error("json-rpc connection is closed"));
+			}
+			pending.insert(
+				id.clone(),
+				PendingRequest { method: method.to_string(), tx, sent_at: Instant::now() },
+			);
+		}
+
+		if let Err(error) = self.send_request(&id, method, params.as_deref()) {
+			self.pending.lock().unwrap().remove(&id);
+			return Err(error);
+		}
+
+		rx.await.map_err(|_| client_error("json-rpc request was cancelled"))?
+	}
+
+	async fn subscribe(
+		self: Arc<Self>,
+		method: &str,
+		params: Option<Box<RawValue>>,
+		unsubscribe_method: &str,
+		lease: HostRpcClientLease,
+	) -> Result<RawRpcSubscription, RpcError> {
+		let raw_id = self.request(method, params).await?;
+		let subscription_id = subscription_id_from_raw(raw_id.as_ref())?;
+		let (tx, rx) = mpsc::unbounded();
+		{
+			// Activation and replay are one critical section, so a notification
+			// arriving now waits for the lock and lands behind what it follows.
+			let mut state = self.subscriptions.lock().unwrap();
+			if self.closed.load(Ordering::Relaxed) {
+				return Err(client_error("json-rpc connection is closed"));
+			}
+			state.activate(subscription_id.clone(), tx.clone());
+		}
+
+		let stream = SubscriptionStream {
+			inner: rx,
+			client: self,
+			_lease: lease,
+			subscription_id: subscription_id.clone(),
+			unsubscribe_method: unsubscribe_method.to_string(),
+			closed: false,
+		};
+		Ok(RawRpcSubscription { stream: Box::pin(stream), id: Some(subscription_id) })
+	}
+
+	fn unsubscribe(&self, subscription_id: &str, unsubscribe_method: &str) {
+		lock_subscriptions(&self.subscriptions).remove(subscription_id);
+		if self.closed.load(Ordering::Relaxed) {
+			return;
+		}
+		let id = self.next_request_id();
+		let params = RawValue::from_string(format!(
+			"[{}]",
+			serde_json::to_string(subscription_id).unwrap_or_else(|_| "\"\"".to_string())
+		));
+		if let Ok(params) = params {
+			let _ = self.send_request(&id, unsubscribe_method, Some(params.as_ref()));
+		}
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "host_rpc_client.handle_frame"))]
+	fn handle_frame(&self, frame: &str) -> Result<(), RpcError> {
+		let value: serde_json::Value =
+			serde_json::from_str(frame).map_err(RpcError::Deserialization)?;
+
+		if value.get("method").is_some() && value.get("params").is_some() {
+			self.handle_notification(&value)?;
+			return Ok(());
+		}
+
+		let Some(request_id) = value.get("id").and_then(json_id) else {
+			return Ok(());
+		};
+		let Some(pending) = self.pending.lock().unwrap().remove(&request_id) else {
+			return Ok(());
+		};
+		if let Some(warning) =
+			slow_reply_warning(&pending.method, &request_id, pending.sent_at.elapsed())
+		{
+			warn!("{warning}");
+		}
+
+		if let Some(result) = value.get("result") {
+			let raw = raw_value_from_json(result)?;
+			let _ = pending.tx.send(Ok(raw));
+			return Ok(());
+		}
+
+		if let Some(error) = value.get("error") {
+			let _ = pending.tx.send(Err(user_error_from_json(error)));
+			return Ok(());
+		}
+
+		let _ = pending.tx.send(Err(client_error("json-rpc response missing result and error")));
+		Ok(())
+	}
+
+	fn handle_notification(&self, value: &serde_json::Value) -> Result<(), RpcError> {
+		let Some(params) = value.get("params") else {
+			return Ok(());
+		};
+		let Some(subscription_id) = params.get("subscription").and_then(json_id) else {
+			return Ok(());
+		};
+		let Some(result) = params.get("result") else {
+			return Ok(());
+		};
+		let raw = raw_value_from_json(result)?;
+		self.deliver_or_buffer_subscription_item(subscription_id, raw);
+		Ok(())
+	}
+
+	fn deliver_or_buffer_subscription_item(&self, subscription_id: String, item: Box<RawValue>) {
+		let delivery =
+			lock_subscriptions(&self.subscriptions).deliver_or_buffer(subscription_id, item);
+		// Outside the critical section: see `SubscriptionState::deliver_or_buffer`.
+		if let Some((tx, item)) = delivery {
+			let _ = tx.unbounded_send(Ok(item));
+		}
+	}
+
+	/// Whether a request has waited out the silence deadline with nothing
+	/// arriving since it was sent: no frame, and no byte of a frame still
+	/// arriving where the connection reports one.
+	fn silent_past_deadline(&self, now: Instant) -> bool {
+		let oldest_sent_at =
+			self.pending.lock().unwrap().values().map(|request| request.sent_at).min();
+		let Some(oldest_sent_at) = oldest_sent_at else {
+			return false;
+		};
+		let silent_since = oldest_sent_at.max(*self.last_frame_at.lock().unwrap());
+		let no_frame_for = now.saturating_duration_since(silent_since);
+		let no_byte_for = self.connection.mid_message_silence().unwrap_or(no_frame_for);
+		no_frame_for.min(no_byte_for) >= self.silence_deadline
+	}
+
+	fn close_with_error(&self, error: RpcError) {
+		if self.closed.swap(true, Ordering::AcqRel) {
+			return;
+		}
+		if let Some(stop) = self.stop_response_loop.lock().unwrap().take() {
+			let _ = stop.send(());
+		}
+		self.connection.close();
+
+		let pending = {
+			let mut pending = self.pending.lock().unwrap();
+			mem::take(&mut *pending)
+		};
+		let waiting = pending
+			.values()
+			.map(|request| (request.method.as_str(), request.sent_at.elapsed()))
+			.collect();
+		if let Some(warning) = waiting_requests_warning(waiting, &error) {
+			warn!("{warning}");
+		}
+		for (_, pending) in pending {
+			let _ = pending
+				.tx
+				.send(Err(client_error(format!("json-rpc connection closed: {error}"))));
+		}
+
+		// Taken in one step, so a close error cannot land between an activation
+		// and the replay it owes. A buffer with no reader is dropped with it.
+		let subscriptions = lock_subscriptions(&self.subscriptions).drain();
+		for (_, entry) in subscriptions {
+			if let SubscriptionEntry::Active(tx) = entry {
+				let _ = tx.unbounded_send(Err(client_error(format!(
+					"json-rpc connection closed: {error}"
+				))));
+			}
+		}
+	}
+}
+
+impl Drop for HostRpcClientLease {
+	fn drop(&mut self) {
+		self.inner.release_user_handle();
+	}
+}
+
+impl RpcClientT for HostRpcClient {
+	fn request_raw<'a>(
+		&'a self,
+		method: &'a str,
+		params: Option<Box<RawValue>>,
+	) -> RawRpcFuture<'a, Box<RawValue>> {
+		Box::pin(async move { self.inner.request(method, params).await })
+	}
+
+	fn subscribe_raw<'a>(
+		&'a self,
+		sub: &'a str,
+		params: Option<Box<RawValue>>,
+		unsub: &'a str,
+	) -> RawRpcFuture<'a, RawRpcSubscription> {
+		let lease = self.inner.acquire_lease();
+		Box::pin(async move { self.inner.clone().subscribe(sub, params, unsub, lease).await })
+	}
+}
+
+struct SubscriptionStream {
+	inner: mpsc::UnboundedReceiver<Result<Box<RawValue>, RpcError>>,
+	client: Arc<HostRpcClientInner>,
+	_lease: HostRpcClientLease,
+	subscription_id: String,
+	unsubscribe_method: String,
+	closed: bool,
+}
+
+impl Drop for SubscriptionStream {
+	fn drop(&mut self) {
+		if !self.closed {
+			self.closed = true;
+			self.client.unsubscribe(&self.subscription_id, &self.unsubscribe_method);
+		}
+	}
+}
+
+impl Stream for SubscriptionStream {
+	type Item = Result<Box<RawValue>, RpcError>;
+
+	fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+		let this = self.get_mut();
+		match Pin::new(&mut this.inner).poll_next(cx) {
+			Poll::Ready(None) => {
+				this.closed = true;
+				Poll::Ready(None)
+			},
+			other => other,
+		}
+	}
+}
+
+fn raw_value_from_json(value: &serde_json::Value) -> Result<Box<RawValue>, RpcError> {
+	RawValue::from_string(value.to_string()).map_err(RpcError::Deserialization)
+}
+
+/// PAPI's modern middleware requires the array variant even though Subxt emits
+/// the protocol's valid single-hash unpin form.
+fn normalize_outbound_params(
+	method: &str,
+	params: Option<&RawValue>,
+) -> Result<Option<Box<RawValue>>, RpcError> {
+	if method != "chainHead_v1_unpin" {
+		return Ok(None);
+	}
+	let Some(params) = params else {
+		return Ok(None);
+	};
+	let mut params: Vec<serde_json::Value> =
+		serde_json::from_str(params.get()).map_err(RpcError::Serialization)?;
+	let Some(hash_slot @ serde_json::Value::String(_)) = params.get_mut(1) else {
+		return Ok(None);
+	};
+	let hash = mem::take(hash_slot);
+	*hash_slot = serde_json::Value::Array(vec![hash]);
+	let encoded = serde_json::to_string(&params).map_err(RpcError::Serialization)?;
+	RawValue::from_string(encoded).map(Some).map_err(RpcError::Serialization)
+}
+
+fn subscription_id_from_raw(raw: &RawValue) -> Result<String, RpcError> {
+	let value: serde_json::Value =
+		serde_json::from_str(raw.get()).map_err(RpcError::Deserialization)?;
+	json_id(&value).ok_or_else(|| client_error("json-rpc subscription id is not a string"))
+}
+
+fn json_id(value: &serde_json::Value) -> Option<String> {
+	match value {
+		serde_json::Value::String(value) => Some(value.clone()),
+		serde_json::Value::Number(value) => Some(value.to_string()),
+		_ => None,
+	}
+}
+
+fn user_error_from_json(value: &serde_json::Value) -> RpcError {
+	match serde_json::from_value::<UserError>(value.clone()) {
+		Ok(error) => RpcError::User(error),
+		Err(error) => RpcError::Deserialization(error),
+	}
+}
+
+/// A reply slower than this is named in the host log.
+const SLOW_REPLY: Duration = Duration::from_secs(5);
+
+/// The warning for a reply that took longer than [`SLOW_REPLY`], if it did.
+fn slow_reply_warning(method: &str, id: &str, waited: Duration) -> Option<String> {
+	let seconds = waited.as_secs_f64();
+	(waited > SLOW_REPLY)
+		.then(|| format!("slow json-rpc reply: {method} {id} after {seconds:.1} s"))
+}
+
+/// The warning for a connection closed while requests wait, naming each with
+/// its age, the oldest first. Nothing when no request waits.
+fn waiting_requests_warning(
+	mut waiting: Vec<(&str, Duration)>,
+	reason: &impl core::fmt::Display,
+) -> Option<String> {
+	if waiting.is_empty() {
+		return None;
+	}
+	waiting.sort_by(|(_, older), (_, newer)| newer.cmp(older));
+	let count = waiting.len();
+	let noun = if count == 1 { "request" } else { "requests" };
+	let ages = waiting
+		.iter()
+		.map(|(method, waited)| {
+			let seconds = waited.as_secs_f64();
+			format!("{method} {seconds:.1} s")
+		})
+		.collect::<Vec<_>>()
+		.join(", ");
+	Some(format!("json-rpc connection closed with {count} {noun} waiting: {ages}: {reason}"))
+}
+
+fn client_error(reason: impl Into<String>) -> RpcError {
+	RpcError::Client(Box::new(HostRpcClientError(reason.into())))
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests;

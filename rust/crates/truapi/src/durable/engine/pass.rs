@@ -1,0 +1,228 @@
+//! The recovery pass: one evaluation of every live transaction no submission
+//! watch owns.
+
+use std::{
+	collections::{BTreeSet, HashMap},
+	sync::Arc,
+};
+
+use itertools::Itertools;
+use subxt::utils::H256;
+use tracing::warn;
+
+use super::{DurableTxEngine, verdict::write_verdict};
+use crate::{
+	chain_runtime::RuntimeFailure,
+	durable::{
+		dao,
+		ladder::{PinnedView, RecordedCanonicity, RuleOutcome, evaluate_ladder},
+		model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, Verdict},
+		oracle::{CompletionOracle, LedgerView},
+		search::PinnedChain,
+	},
+	store::DbError,
+};
+
+/// Why one round of a domain decided nothing.
+#[derive(Debug, thiserror::Error)]
+enum RoundError {
+	#[error(transparent)]
+	Ledger(#[from] DbError),
+	#[error(transparent)]
+	Oracle(#[from] RuntimeFailure),
+}
+
+/// A live domain and the oracle that decides it.
+struct LiveDomain<'a> {
+	domain: DomainId,
+	oracle: &'a Arc<dyn CompletionOracle>,
+}
+
+impl DurableTxEngine {
+	/// Decides what it can of every live transaction. At most one pass runs
+	/// at a time; a call made while one runs returns at once. The ladder runs
+	/// outside any write, and each verdict is a compare-and-set against the
+	/// status it was derived from.
+	pub async fn run_pass(&self) {
+		let Some(_running) = self.pass_lock.try_lock() else {
+			return;
+		};
+		let domains = match self.db.read(dao::live_domains).await {
+			Ok(domains) => domains,
+			Err(error) => return warn!(%error, "durable recovery pass could not read the ledger"),
+		};
+		let by_chain = self.group_domains_by_chain(domains);
+		let chains = by_chain
+			.into_iter()
+			.map(|(genesis, domains)| self.decide_chain(genesis, domains));
+		futures::future::join_all(chains).await;
+	}
+
+	/// Groups `domains` by the chain their oracle names, so each chain's
+	/// heads are read once.
+	fn group_domains_by_chain(&self, domains: Vec<DomainId>) -> HashMap<H256, Vec<LiveDomain<'_>>> {
+		domains
+			.into_iter()
+			.filter_map(|domain| self.live_domain(domain))
+			.into_group_map_by(|live| live.oracle.chain())
+	}
+
+	/// `domain` with its oracle. A domain with no oracle has no chain and is
+	/// skipped.
+	fn live_domain(&self, domain: DomainId) -> Option<LiveDomain<'_>> {
+		let Some(oracle) = self.registry.oracle(&domain) else {
+			warn!(domain = domain.as_str(), "durable recovery pass skips a domain with no oracle");
+			return None;
+		};
+		Some(LiveDomain { domain, oracle })
+	}
+
+	/// Pins the chain with `genesis` and decides each of its domains.
+	async fn decide_chain(&self, genesis: H256, domains: Vec<LiveDomain<'_>>) {
+		let view = match PinnedChain::pin(&*self.heads, &*self.blocks, genesis).await {
+			Ok(view) => view,
+			Err(error) => {
+				return warn!(?genesis, %error, "durable recovery pass could not read heads");
+			},
+		};
+		for LiveDomain { domain, oracle } in domains {
+			self.decide_domain(&domain, oracle.as_ref(), genesis, &view).await;
+		}
+	}
+
+	/// Two rounds: a verdict written in the first is exactly the evidence a
+	/// predecessor's oracle may need in the second.
+	async fn decide_domain(
+		&self,
+		domain: &DomainId,
+		oracle: &dyn CompletionOracle,
+		genesis: H256,
+		view: &PinnedChain<'_>,
+	) {
+		for _ in 0..2 {
+			match self.decide_round(domain, oracle, genesis, view).await {
+				Ok(0) => return,
+				Ok(_) => continue,
+				Err(error) => {
+					return warn!(domain = domain.as_str(), %error, "durable recovery round failed");
+				},
+			}
+		}
+	}
+
+	/// Decides every decidable transaction of `domain` once. Returns how
+	/// many verdicts it wrote.
+	async fn decide_round(
+		&self,
+		domain: &DomainId,
+		oracle: &dyn CompletionOracle,
+		genesis: H256,
+		view: &PinnedChain<'_>,
+	) -> Result<usize, RoundError> {
+		let (ledger, decidable) = self.decidable(domain).await?;
+		if decidable.is_empty() {
+			return Ok(0);
+		}
+		let (scope, canonical) = futures::future::join(
+			oracle.open_pass(&decidable, &ledger, &view.heads()),
+			self.recorded_canonicity(genesis, &decidable),
+		)
+		.await;
+		let scope = scope?;
+
+		let mut written = 0;
+		for tx in &decidable {
+			let recorded = canonical.get(&tx.id).copied().unwrap_or(RecordedCanonicity::Unknown);
+			let outcome = evaluate_ladder(tx, scope.as_ref(), view, recorded).await;
+			if let RuleOutcome::Decided(verdict) = outcome &&
+				self.write_if_changed(tx, verdict).await
+			{
+				written += 1;
+			}
+		}
+		Ok(written)
+	}
+
+	/// The domain's ledger, and the transactions in it that await a verdict
+	/// and no watch owns.
+	async fn decidable(
+		&self,
+		domain: &DomainId,
+	) -> Result<(LedgerView, Vec<DurableTxEntry>), DbError> {
+		let domain = domain.clone();
+		let entries = self.db.read(move |conn| dao::domain_entries(conn, &domain)).await?;
+		let decidable = entries
+			.iter()
+			.filter(|entry| entry.status.awaits_verdict() && !self.ownership.is_owned(entry.id))
+			.cloned()
+			.collect();
+		Ok((LedgerView::new(entries), decidable))
+	}
+
+	/// Writes `verdict` unless it restates `tx`. Returns whether it wrote a
+	/// new status or success block; a cursor that only moved is not new
+	/// evidence for another round.
+	async fn write_if_changed(&self, tx: &DurableTxEntry, verdict: Verdict) -> bool {
+		let scan_moved = verdict.scanned_to.is_some_and(|scanned| Some(scanned) != tx.scanned_to);
+		let restated = DurableTxStatus::from(verdict.status) == tx.status;
+		if restated && !scan_moved {
+			return false;
+		}
+		let wrote = write_verdict(self, tx, verdict).await.unwrap_or_else(|error| {
+			warn!(id = tx.id.0, %error, "durable verdict write failed");
+			false
+		});
+		wrote && !restated
+	}
+
+	/// Whether each recorded success block is still canonical. A failed read
+	/// leaves its transactions out, so they count as
+	/// [`RecordedCanonicity::Unknown`] and Rule 0 stays undecided instead of
+	/// discarding a record on a transport error.
+	async fn recorded_canonicity(
+		&self,
+		genesis: H256,
+		transactions: &[DurableTxEntry],
+	) -> HashMap<DurableTxId, RecordedCanonicity> {
+		let heights = transactions
+			.iter()
+			.filter_map(|tx| tx.status.success_block().map(|block| block.number));
+		let hashes = self.canonical_hashes(genesis, heights).await;
+		transactions
+			.iter()
+			.filter_map(|tx| {
+				let recorded = tx.status.success_block()?;
+				// A chain shorter than the record no longer has its block.
+				let hash = hashes.get(&recorded.number)?;
+				let canonicity = if *hash == Some(recorded.hash) {
+					RecordedCanonicity::Canonical
+				} else {
+					RecordedCanonicity::Reorged
+				};
+				Some((tx.id, canonicity))
+			})
+			.collect()
+	}
+
+	/// The canonical hash at each height, read once per distinct height.
+	/// Heights whose read failed are missing.
+	async fn canonical_hashes(
+		&self,
+		genesis: H256,
+		heights: impl Iterator<Item = u64>,
+	) -> HashMap<u64, Option<H256>> {
+		let heights: BTreeSet<u64> = heights.collect();
+		futures::future::join_all(
+			heights.into_iter().map(|number| async move {
+				(number, self.blocks.block_hash(genesis, number).await)
+			}),
+		)
+		.await
+		.into_iter()
+		.filter_map(|(number, read)| read.ok().map(|hash| (number, hash)))
+		.collect()
+	}
+}
+
+#[cfg(test)]
+mod tests;

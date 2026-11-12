@@ -11,19 +11,18 @@ public struct ConnectionStatusPanelView: View, Hashable {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: DSSpacings.extraMedium) {
+        VStack(alignment: .leading, spacing: DSSpacings.large) {
             Text(.Common.connectionStatusPanelTitle)
                 .typography(.titleLarge)
                 .foregroundStyle(Color.fgPrimary)
                 .lineLimit(1)
-                .padding(.bottom, DSSpacings.extraMedium)
 
             ForEach(rows) { row in
                 rowView(row)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding([.top, .horizontal], DSSpacings.large)
+        .padding(DSSpacings.mediumIncreased)
     }
 }
 
@@ -38,24 +37,26 @@ private extension ConnectionStatusPanelView {
     static let intervalFormatter = DateComponentsFormatter.secondsMinutesAbbreviated
 
     func rowView(_ row: ChainConnectionStatusViewModel) -> some View {
-        HStack(spacing: DSSpacings.extraMedium) {
-            ChainStatusRingView(viewModel: row, diameter: 40)
+        HStack(spacing: DSSpacings.small) {
+            ChainStatusRingView(viewModel: row, diameter: 35)
                 .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: DSSpacings.extraTiny) {
+            VStack(alignment: .leading, spacing: DSSpacings.zero) {
                 Text(verbatim: row.title)
-                    .typography(.bodySmall)
+                    .typography(.titleMedium)
                     .foregroundStyle(Color.fgPrimary)
                     .lineLimit(1)
 
                 HStack(spacing: 0) {
                     Text(verbatim: row.stateTitle)
 
-                    Text(verbatim: "\(Self.separator)\(livenessText(row))")
-                        .contentTransition(.numericText())
+                    if row.showsChainMetrics, row.state != .offline {
+                        Text(verbatim: "\(Self.separator)\(livenessText(row))")
+                            .contentTransition(.numericText())
 
-                    Text(verbatim: "\(Self.separator)\(blockIntervalText(row))")
-                        .contentTransition(.numericText())
+                        Text(verbatim: "\(Self.separator)\(blockIntervalText(row))")
+                            .contentTransition(.numericText())
+                    }
                 }
                 .typography(.bodySmall)
                 .monospacedDigit()

@@ -58,8 +58,6 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       HOST: ${{ matrix.host }}
-      # The labels are named for the trees, so this needs no mapping.
-      HOST_LABEL: host-${{ matrix.host }}
     steps:
       # Depth 1. The range below is walked over commits fetched from the source
       # repository, which this repository's own history plays no part in, and
@@ -72,8 +70,9 @@ jobs:
         id: open_pr
         run: |
           set -euo pipefail
-          existing="$(gh pr list --state open --label backport-host --label "$HOST_LABEL" \
-            --json number --jq '.[0].number // ""')"
+          # The branch names its tree, so it tells this tree's orders apart.
+          existing="$(gh pr list --state open --label backport-host --json number,headRefName \
+            --jq "[.[] | select(.headRefName | startswith(\"hosts/backport-${HOST}-\"))][0].number // \"\"")"
           if [ -n "$existing" ]; then
             echo "already=true" >> "$GITHUB_OUTPUT"
             {
@@ -215,13 +214,15 @@ jobs:
             echo
             echo "3. Build what the change touches. An upstream change that adds a requirement to a protocol will not show up as a conflict, because the comparison reads content and not types; it shows up as a conformer in this repository that no longer compiles."
             echo
-            echo "4. Delete this file. It is the work order, not part of the tree:"
+            echo "4. Decide whether this backport is a breaking change. Read the pull requests listed above against \`.claude/skills/semver-pr-title/SKILL.md\`. If any of them makes a tester lose data or a session, reinstall, or find a feature gone, or makes a product change its code, retitle this pull request with \`!\`, for example \`chore(hosts)!: backport ${COUNT} commits into hosts/${HOST}\`, and name what breaks in its description. The nightly announcement lists \`!\` titles first."
+            echo
+            echo "5. Delete this file. It is the work order, not part of the tree:"
             echo
             echo '   ```bash'
             echo "   git rm ${file}"
             echo '   ```'
             echo
-            echo "5. Commit the refreshed tree, \`hosts/imports.json\` with its new ref, and the deletion together, then push. That push is what starts CI on this pull request."
+            echo "6. Commit the refreshed tree, \`hosts/imports.json\` with its new ref, and the deletion together, then push. That push is what starts CI on this pull request."
           } > "$file"
 
           {
@@ -270,7 +271,6 @@ jobs:
             --head "$BRANCH" \
             --title "chore(hosts): backport ${COUNT} commits into hosts/${HOST}" \
             --label backport-host \
-            --label "$HOST_LABEL" \
             --body-file "${RUNNER_TEMP}/pr-body.md")"
           echo "::notice::${url}"
           {

@@ -33,6 +33,7 @@ HTML reports are generated at: `<module>/build/reports/detekt/detekt.html`
 
 - **Config file**: `config/detekt/config.yml`
 - **Formatting rules**: Enabled with auto-correct
+- **Project rules**: `config/detekt/rules`, rule set `polkadotapp`. `HardcodedComposeText` fails the build when a composable passes a string literal as a named `text`, `title`, `subtitle`, `label`, `placeholder` or `headerText` argument; move the text to `strings.xml`. It only sees a string literal passed directly as a named argument, so `Text("Hello")`, strings chosen in `if`/`when` expressions, concatenated strings and strings held in variables are not detected. A `label` passed to one of the Compose animation APIs listed in `ANIMATION_CALLS` is a tooling name and is not reported; when a Compose update adds another animation API with a `label`, add its name to that list. Its tests run with `./gradlew :config:detekt:rules:test`.
 
 ## Suppressing Violations
 

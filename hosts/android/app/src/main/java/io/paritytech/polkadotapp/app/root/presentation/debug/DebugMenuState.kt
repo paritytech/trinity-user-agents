@@ -4,9 +4,12 @@ import androidx.compose.runtime.Immutable
 
 @Immutable
 data class DebugMenuState(
+    val truapiHostVersion: String,
     val isClearingBackup: Boolean = false,
     val isSharingLogs: Boolean = false,
     val showSpaBrowserDialog: Boolean = false,
+    val devServerAvailable: Boolean = false,
+    val showDevServerDialog: Boolean = false,
     val hasJWTToken: Boolean = false,
     val coinageDebugWidgetsEnabled: Boolean = true,
     val truapiRuntimeEnabled: Boolean = true,

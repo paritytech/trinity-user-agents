@@ -13,8 +13,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.paritytech.polkadotapp.common.presentation.compose.TickerWordmark
 import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
 import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.bottomsheet.NovaBottomSheetSurface
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotTextButton
@@ -29,6 +32,7 @@ import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.Local
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.formatter.TokenAmountFormatter
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.RoundPrecision
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -78,7 +82,7 @@ private fun TopUpRequestScreenInternal(
 @Composable
 private fun FailureContent(state: TopUpRequestUiState.Failure) {
     NovaText(
-        text = stringResource(RCommon.string.product_top_up_failed_title, state.productId).withBold(state.productId),
+        text = stringResource(RCommon.string.product_top_up_failed_title, state.productId).withBold(state.productId.value),
         style = PolkadotTheme.typography.title.large,
         color = PolkadotTheme.colors.fg.primary,
         textAlign = TextAlign.Center,
@@ -99,7 +103,7 @@ private fun PartialPaymentContent(state: TopUpRequestUiState.PartialPayment) {
     val formatter = LocalTokenAmountFormatter.current
 
     NovaText(
-        text = stringResource(RCommon.string.product_top_up_accepted_title, state.productId).withBold(state.productId),
+        text = stringResource(RCommon.string.product_top_up_accepted_title, state.productId).withBold(state.productId.value),
         style = PolkadotTheme.typography.title.large,
         color = PolkadotTheme.colors.fg.primary,
         textAlign = TextAlign.Center,
@@ -131,7 +135,8 @@ private fun PartialPaymentContent(state: TopUpRequestUiState.PartialPayment) {
                 textAlign = TextAlign.Center,
             )
             NovaText(
-                text = formatter.formatToSymbol(state.creditedAmount).withCurrencyTickerStyle(PolkadotTheme.typography.title.large),
+                text = formatter.formatToSymbol(state.creditedAmount)
+                    .withCurrencyTickerStyle(PolkadotTheme.typography.title.large, TickerWordmark.SmallCaps),
                 style = PolkadotTheme.typography.title.large,
                 color = PolkadotTheme.colors.fg.secondary,
                 textAlign = TextAlign.Center,
@@ -154,7 +159,7 @@ private fun PartialPaymentContent(state: TopUpRequestUiState.PartialPayment) {
 private fun TopUpRequestFailurePreview() {
     PolkadotTheme {
         TopUpRequestScreenInternal(
-            state = TopUpRequestUiState.Failure(productId = "alice.dot"),
+            state = TopUpRequestUiState.Failure(productId = ProductId.parse("alice.dot").getOrThrow()),
             onDismiss = {},
         )
     }
@@ -164,12 +169,13 @@ private fun TopUpRequestFailurePreview() {
 @Composable
 private fun TopUpRequestPartialPaymentPreview() {
     CompositionLocalProvider(
-        LocalTokenAmountFormatter provides TokenAmountFormatter.mocked
+        LocalTokenAmountFormatter provides TokenAmountFormatter.mocked,
+        LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
     ) {
         PolkadotTheme {
             TopUpRequestScreenInternal(
                 state = TopUpRequestUiState.PartialPayment(
-                    productId = "alice.dot",
+                    productId = ProductId.parse("alice.dot").getOrThrow(),
                     requestedAmount = TokenAmountModel.mock,
                     creditedAmount = TokenAmountModel.mock,
                 ),

@@ -31,6 +31,14 @@ struct ProductContextSuffixTests {
         #expect(context == expected)
     }
 
+    @Test func notificationSlotContextMatchesPalletVector() throws {
+        let context = try ProductContextSuffix
+            .notificationSlot(period: 100, seq: 3)
+            .context(networkSuffix: networkSuffix)
+        let expected = try Data(hexString: "be3852b67f633d0da121aa3163dfe004f5056e71bc6a1d005793edb55287be24")
+        #expect(context == expected)
+    }
+
     @Test func zeroValuesProduceDistinctContext() throws {
         let context = try ProductContextSuffix
             .statementStoreSlot(period: 0, seq: 0)
@@ -40,6 +48,12 @@ struct ProductContextSuffixTests {
     }
 
     @Test func suffixLayoutIsPinned() throws {
+        // Notification family 1, period 100, seq 3
+        let notificationSuffix = ProductContextSuffix.notificationSlot(period: 100, seq: 3).bytes
+        let notificationExpected =
+            try Data(hexString: "7379732f01000000640000000300000000000000000000000000000000000000")
+        #expect(notificationSuffix == notificationExpected)
+
         // SSS family 2, period 100, seq 3
         let sssSuffix = ProductContextSuffix.statementStoreSlot(period: 100, seq: 3).bytes
         let sssExpected =

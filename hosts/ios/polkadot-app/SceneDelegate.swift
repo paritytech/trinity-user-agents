@@ -44,6 +44,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_: UIScene, continue userActivity: NSUserActivity) {
         handleUserActivities([userActivity])
     }
+
+    func sceneDidEnterBackground(_: UIScene) {
+        guard let renewalTask = StatementRenewalBackgroundTask.shared else { return }
+
+        Task { await renewalTask.schedule() }
+    }
 }
 
 extension SceneDelegate {
@@ -122,6 +128,12 @@ private extension SceneDelegate {
         func restartScene() {
             guard let window else { return }
             attachRootPresenter(to: window)
+        }
+
+        func showResetPlaceholder() {
+            let placeholder = UIViewController()
+            placeholder.view.backgroundColor = .bgSurfaceMain
+            window?.rootViewController = placeholder
         }
     }
 #endif

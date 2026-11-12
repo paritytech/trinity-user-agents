@@ -21,11 +21,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
-import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainGlyph
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicator
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthIndicatorsModel
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthItemModel
-import kotlinx.collections.immutable.persistentListOf
+import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.IndicatorRow
+import kotlinx.collections.immutable.toImmutableList
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -68,31 +68,29 @@ class ChainHealthPanelScreenshotTest {
     @Test
     fun mixed() = render(
         "mixed",
-        people = item("People Chain", ChainGlyph.People, share = 0.8f, blockTime = 2.seconds),
-        hub = item("Hub Chain", ChainGlyph.AssetHub, share = 0.2f, blockTime = 2.seconds),
-        bulletin = item("Bulletin Chain", ChainGlyph.Bulletin, ChainHealthIndicator.Offline),
+        item(IndicatorRow.People, share = 0.8f, blockTime = 2.seconds),
+        item(IndicatorRow.AssetHub, share = 0.2f, blockTime = 2.seconds),
+        item(IndicatorRow.Bulletin, ChainHealthIndicator.Offline),
+        item(IndicatorRow.StatementStore, ChainHealthIndicator.Connecting),
     )
 
     private fun render(name: String, share: Float) = render(
         name,
-        people = item("People Chain", ChainGlyph.People, share, blockTime = 2.seconds),
-        hub = item("Hub Chain", ChainGlyph.AssetHub, share, blockTime = 2.seconds),
-        bulletin = item("Bulletin Chain", ChainGlyph.Bulletin, share, blockTime = 6.seconds),
+        item(IndicatorRow.People, share, blockTime = 2.seconds),
+        item(IndicatorRow.AssetHub, share, blockTime = 2.seconds),
+        item(IndicatorRow.Bulletin, share, blockTime = 6.seconds),
+        item(IndicatorRow.StatementStore, CONNECTED),
     )
 
     private fun render(name: String, all: ChainHealthIndicator) = render(
         name,
-        people = item("People Chain", ChainGlyph.People, all),
-        hub = item("Hub Chain", ChainGlyph.AssetHub, all),
-        bulletin = item("Bulletin Chain", ChainGlyph.Bulletin, all),
+        item(IndicatorRow.People, all),
+        item(IndicatorRow.AssetHub, all),
+        item(IndicatorRow.Bulletin, all),
+        item(IndicatorRow.StatementStore, all),
     )
 
-    private fun render(
-        name: String,
-        people: ChainHealthItemModel,
-        hub: ChainHealthItemModel,
-        bulletin: ChainHealthItemModel,
-    ) {
+    private fun render(name: String, vararg rows: ChainHealthItemModel) {
         compose.setContent {
             CompositionLocalProvider(LocalInspectionMode provides true) {
                 PolkadotTheme {
@@ -108,7 +106,7 @@ class ChainHealthPanelScreenshotTest {
                             color = PolkadotTheme.colors.bg.surface.container,
                             border = BorderStroke(PolkadotTheme.borders.default, PolkadotTheme.colors.stroke.primary),
                         ) {
-                            ChainHealthPanel(model = ChainHealthIndicatorsModel(persistentListOf(people, hub, bulletin)))
+                            ChainHealthPanel(model = ChainHealthIndicatorsModel(rows.toList().toImmutableList()))
                         }
                     }
                 }
@@ -120,13 +118,11 @@ class ChainHealthPanelScreenshotTest {
         assertTrue("$name: no screenshot written", file.length() > 0)
     }
 
-    private fun item(name: String, glyph: ChainGlyph, share: Float, blockTime: Duration) =
-        item(name, glyph, ChainHealthIndicator.of(share, blockTime))
+    private fun item(row: IndicatorRow, share: Float, blockTime: Duration) =
+        item(row, ChainHealthIndicator.of(share, blockTime))
 
-    private fun item(name: String, glyph: ChainGlyph, indicator: ChainHealthIndicator) = ChainHealthItemModel(
-        chainId = name,
-        chainName = name,
-        glyph = glyph,
+    private fun item(row: IndicatorRow, indicator: ChainHealthIndicator) = ChainHealthItemModel(
+        row = row,
         indicator = indicator,
     )
 
@@ -146,5 +142,6 @@ class ChainHealthPanelScreenshotTest {
         const val OUTPUT_DIR_ARGUMENT = "additionalTestOutputDir"
         val PANEL_WIDTH = 370.dp
         val CONTAINER_RADIUS = 32.dp
+        val CONNECTED = ChainHealthIndicator.Healthy(liveness = null)
     }
 }

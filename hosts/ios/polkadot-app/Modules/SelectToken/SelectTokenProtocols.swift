@@ -19,5 +19,4 @@ protocol SelectTokenInteractorOutputProtocol: TokensOutputProtocol {}
 @MainActor
 protocol SelectTokenWireframeProtocol: AnyObject {
     func proceed(from view: SelectTokenViewProtocol?, chainAsset: ChainAsset)
-    func proceedToFiatOnRamp(from view: SelectTokenViewProtocol?)
 }

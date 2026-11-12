@@ -2,7 +2,7 @@
 
 The debugger-side consumer for TrUAPI wire frames. **Private, in-repo, not published.**
 
-The host taps every product↔host wire frame in its Rust core (`truapi-server`'s
+The host taps every product↔host wire frame in its Rust core (`truapi`'s
 `DebugSink`) and streams each one outward as a `{ channelId, dir, frame: bytes }`
 envelope. This package is the other end: it owns **all** decoding — the wire
 envelope (`requestId` and frame id, via `decodeWireMessage`), the grouping into

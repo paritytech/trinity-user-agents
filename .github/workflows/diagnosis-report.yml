@@ -64,7 +64,7 @@ jobs:
             exit 0
           fi
           git add "$file"
-          git commit -m "diagnosis: update $host report (from #$ISSUE)"
+          git commit -m "docs(diagnosis): update $host report (from #$ISSUE)"
           git push -f "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" "$branch"
 
           # One open PR per host branch: reuse it while it is open, open a new
@@ -73,7 +73,7 @@ jobs:
           url=$(gh pr list --head "$branch" --state open --json url --jq '.[0].url // empty')
           if [ -z "$url" ]; then
             url=$(gh pr create --base main --head "$branch" \
-              --title "diagnosis: $mode host report" \
+              --title "docs(diagnosis): $mode host report" \
               --body "Updates \`$file\` from the diagnosis in #$ISSUE. The compatibility matrix is regenerated from the reports at build time.")
           fi
 

@@ -26,7 +26,7 @@ Every chain-scoped TrUAPI call is keyed by `genesisHash`, and today products obt
 
 **Environment moves.** Pointing a product at a different environment (a new testnet iteration, a devnet) means editing constants and shipping a new build, even though the host-side change is a config edit.
 
-The fix is to make the host's chain set discoverable over the wire. Hosts already hold this data in enumerable form: dotli's network config has named slots (`relay`, `assethub`, `bulletin`, `people`) per environment, each with a genesis hash and RPC endpoints. This RFC exposes that mapping to products. Tracking issue: [paritytech/host-rust-core#352](https://github.com/paritytech/host-rust-core/issues/352).
+The fix is to make the host's chain set discoverable over the wire. Hosts already hold this data in enumerable form: dotli's network config has named slots (`relay`, `assethub`, `bulletin`, `people`) per environment, each with a genesis hash and RPC endpoints. This RFC exposes that mapping to products. Tracking issue: [paritytech/trinity-user-agents#352](https://github.com/paritytech/trinity-user-agents/issues/352).
 
 ## Detailed Design
 
@@ -123,10 +123,10 @@ The product never embeds a hash. After a testnet wipe the host updates its confi
 
 ### Implementation shape
 
-The core does not own the chain set. `system.featureSupported(Chain { genesis_hash })` is already a thin shim in `rust/crates/truapi-server/src/host_logic/features.rs` delegating to `truapi_platform::Features`, and `ChainProvider::connect(genesis_hash)` opens JSON-RPC pipes on demand. This RFC follows the same delegation pattern:
+The core does not own the chain set. `system.featureSupported(Chain { genesis_hash })` is already a thin shim in `rust/crates/truapi/src/host_logic/features.rs` delegating to `truapi::platform::Features`, and `ChainProvider::connect(genesis_hash)` opens JSON-RPC pipes on demand. This RFC follows the same delegation pattern:
 
-- `truapi-platform` gains one syscall on `Features` returning the host's network string and its full identifier-to-chain mapping.
-- `truapi-server` answers `get_chain_info` in-core from that syscall, resolving the requested identifier and mapping a miss to `NotSupported`.
+- `truapi::platform` gains one syscall on `Features` returning the host's network string and its full identifier-to-chain mapping.
+- `truapi` answers `get_chain_info` in-core from that syscall, resolving the requested identifier and mapping a miss to `NotSupported`.
 
 Hosts therefore implement exactly one callback, backed by configuration they already maintain. dotli's per-environment named slots (`relay`, `assethub`, `bulletin`, `people`, each with a genesis hash) map one-to-one onto `ChainIdentifier` variants; the iOS `TrUAPIHost` and the host CLI expose their equivalent config the same way.
 

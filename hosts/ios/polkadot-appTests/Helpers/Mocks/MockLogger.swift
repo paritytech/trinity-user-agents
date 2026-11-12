@@ -1,6 +1,7 @@
 import Foundation
 import SDKLogger
 import StructuredConcurrency
+import StructuredConcurrencyTestSupport
 
 // MARK: - Mock Logger
 
@@ -28,7 +29,7 @@ final class MockLogger: SDKLoggerProtocol, @unchecked Sendable {
 
     /// Returns once an error containing `fragment` has been logged, including one logged before the
     /// call; fails after `timeout` so a code path that never logs cannot hang the test.
-    func waitForError(containing fragment: String, timeout: Duration = .seconds(5)) async throws {
+    func waitForError(containing fragment: String, timeout: Duration = .hangGuard) async throws {
         do {
             try await withTimeout(timeout) { [errorStream] in
                 for await message in errorStream where message.contains(fragment) {

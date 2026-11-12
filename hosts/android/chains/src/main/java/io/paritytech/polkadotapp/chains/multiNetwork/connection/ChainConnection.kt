@@ -42,6 +42,7 @@ class ChainConnectionFactory @Inject constructor(
     private val nodeAutobalancer: NodeAutobalancer,
     private val socketServiceProvider: Provider<SocketService>,
     private val networkStateService: NetworkStateService,
+    private val shortLivedConnectionDetector: ShortLivedConnectionDetector,
 ) {
     suspend fun create(chain: Chain): ChainConnection {
         val connection = ChainConnection(
@@ -49,7 +50,8 @@ class ChainConnectionFactory @Inject constructor(
             refCounter = refCounter,
             nodeAutobalancer = nodeAutobalancer,
             chain = chain,
-            networkStateService = networkStateService
+            networkStateService = networkStateService,
+            shortLivedConnectionDetector = shortLivedConnectionDetector,
         )
 
         connection.setup()
@@ -84,6 +86,7 @@ class ChainConnection internal constructor(
     nodeAutobalancer: NodeAutobalancer,
     private val chain: Chain,
     private val networkStateService: NetworkStateService,
+    shortLivedConnectionDetector: ShortLivedConnectionDetector,
 ) : CoroutineScope by CoroutineScope(Dispatchers.Default),
     WebSocketResponseInterceptor {
     val state = socketService.networkStateFlow()
@@ -93,6 +96,7 @@ class ChainConnection internal constructor(
 
     private val nodeChangeSignal = merge(
         state.nodeChangeEvents(),
+        shortLivedConnectionDetector.nodeChangeEvents(state),
         responseRequiresNodeChangeFlow
     ).shareIn(scope = this, started = SharingStarted.Eagerly)
 

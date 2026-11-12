@@ -21,6 +21,7 @@ import io.paritytech.polkadotapp.design.components.icon.vectors.Share
 import io.paritytech.polkadotapp.design.components.icon.vectors.WiFi
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.DeviceCapabilityType
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
+import uniffi.truapi.ProductId
 import io.paritytech.polkadotapp.common.R as RCommon
 
 internal val ProductPermission.icon: ImageVector
@@ -29,6 +30,7 @@ internal val ProductPermission.icon: ImageVector
         is ProductPermission.AccountAccess -> NovaIcons.PeopleOutline
         is ProductPermission.BalanceAccess -> NovaIcons.Dollar
         is ProductPermission.UserIdentityAccess -> NovaIcons.PeopleOutline
+        is ProductPermission.NftPurseRead -> NovaIcons.Dollar
         is ProductPermission.RemotePermission.NetworkAccess -> NovaIcons.WiFi
         ProductPermission.RemotePermission.WebRtcAccess -> NovaIcons.CallFilled
         ProductPermission.RemotePermission.ChainSubmitAccess -> NovaIcons.Send
@@ -47,14 +49,16 @@ private val DeviceCapabilityType.icon: ImageVector
         DeviceCapabilityType.Clipboard -> NovaIcons.ContentCopy
         DeviceCapabilityType.Biometrics -> NovaIcons.Fingerprint
         DeviceCapabilityType.OpenUrl -> NovaIcons.Share
+        DeviceCapabilityType.Motion -> NovaIcons.Share
     }
 
 @Composable
-internal fun ProductPermission.title(productId: String): String {
+internal fun ProductPermission.title(productId: ProductId): String {
     return when (this) {
         is ProductPermission.AccountAccess -> stringResource(RCommon.string.product_permission_account_title, productId, targetProductId)
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_balance_title, productId)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_user_identity_title, productId)
+        is ProductPermission.NftPurseRead -> stringResource(RCommon.string.product_permission_nft_purse_read_title, productId, ownerName())
         is ProductPermission.DeviceCapability -> capability.title(productId)
         is ProductPermission.RemotePermission.NetworkAccess -> stringResource(RCommon.string.product_permission_network_title, productId, domain)
         ProductPermission.RemotePermission.WebRtcAccess -> stringResource(RCommon.string.product_permission_webrtc_title, productId)
@@ -65,7 +69,7 @@ internal fun ProductPermission.title(productId: String): String {
 }
 
 @Composable
-private fun DeviceCapabilityType.title(productId: String): String {
+private fun DeviceCapabilityType.title(productId: ProductId): String {
     val resId = when (this) {
         DeviceCapabilityType.Camera -> RCommon.string.product_permission_device_camera_title
         DeviceCapabilityType.Bluetooth -> RCommon.string.product_permission_device_bluetooth_title
@@ -76,6 +80,7 @@ private fun DeviceCapabilityType.title(productId: String): String {
         DeviceCapabilityType.Clipboard -> RCommon.string.product_permission_device_clipboard_title
         DeviceCapabilityType.Biometrics -> RCommon.string.product_permission_device_biometrics_title
         DeviceCapabilityType.OpenUrl -> RCommon.string.product_permission_device_open_url_title
+        DeviceCapabilityType.Motion -> RCommon.string.product_permission_device_motion_title
     }
     return stringResource(resId, productId)
 }
@@ -87,6 +92,7 @@ internal fun ProductPermission.subtitle(): String {
         is ProductPermission.AccountAccess -> stringResource(RCommon.string.product_permission_account_subtitle, manageLater)
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_balance_subtitle, manageLater)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_user_identity_subtitle, manageLater)
+        is ProductPermission.NftPurseRead -> stringResource(RCommon.string.product_permission_nft_purse_read_subtitle, manageLater)
         is ProductPermission.DeviceCapability -> capability.subtitle(manageLater)
         is ProductPermission.RemotePermission.NetworkAccess -> stringResource(RCommon.string.product_permission_network_subtitle, manageLater)
         ProductPermission.RemotePermission.WebRtcAccess -> stringResource(RCommon.string.product_permission_webrtc_subtitle, manageLater)
@@ -108,6 +114,7 @@ private fun DeviceCapabilityType.subtitle(manageLater: String): String {
         DeviceCapabilityType.Clipboard -> RCommon.string.product_permission_device_clipboard_subtitle
         DeviceCapabilityType.Biometrics -> RCommon.string.product_permission_device_biometrics_subtitle
         DeviceCapabilityType.OpenUrl -> RCommon.string.product_permission_device_open_url_subtitle
+        DeviceCapabilityType.Motion -> RCommon.string.product_permission_device_motion_subtitle
     }
     return stringResource(resId, manageLater)
 }
@@ -122,3 +129,8 @@ internal fun ProductPermission.RemotePermission.shortLabel(): String {
         ProductPermission.RemotePermission.PreimageSubmitAccess -> stringResource(RCommon.string.product_permission_preimage_submit_label)
     }
 }
+
+/** Whose purses an NFT purse read covers, as the user reads it. */
+@Composable
+internal fun ProductPermission.NftPurseRead.ownerName(): String =
+    ownerProductId?.value ?: stringResource(RCommon.string.product_permission_nft_purse_read_owner_account)

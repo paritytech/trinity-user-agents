@@ -2,7 +2,6 @@ package io.paritytech.polkadotapp.feature_coinage_impl.domain.usecase
 
 import io.paritytech.polkadotapp.common.domain.model.AccountId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageTransactionService
-import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.CoinageAssetState
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model.OwnAsset
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.CoinageAssetsUseCase
 import io.paritytech.polkadotapp.feature_coinage_api.domain.usecase.TrackedCoin
@@ -30,14 +29,14 @@ class RealCoinageAssetsUseCase @Inject constructor(
         coinRepository.subscribeAllCoins(),
         transactionService.subscribeAssetStates(),
     ) { coins, states ->
-        coins.map { TrackedCoin(it, states.stateOf(OwnAsset.Coin(it.derivationIndex))) }
+        coins.map { TrackedCoin(it, states.getAssetStateOf(OwnAsset.Coin(it.derivationIndex))) }
     }.distinctUntilChanged()
 
     override fun subscribeCoinsBy(accountIds: List<AccountId>): Flow<List<TrackedCoin>> = combine(
         coinRepository.subscribeCoinsBy(accountIds),
         transactionService.subscribeAssetStates(),
     ) { coins, states ->
-        coins.map { TrackedCoin(it, states.stateOf(OwnAsset.Coin(it.derivationIndex))) }
+        coins.map { TrackedCoin(it, states.getAssetStateOf(OwnAsset.Coin(it.derivationIndex))) }
     }.distinctUntilChanged()
 
     override suspend fun getCoins(): List<TrackedCoin> = subscribeCoins().first()
@@ -46,12 +45,8 @@ class RealCoinageAssetsUseCase @Inject constructor(
         voucherRepository.subscribeAllVouchers(),
         transactionService.subscribeAssetStates(),
     ) { vouchers, states ->
-        vouchers.map { TrackedVoucher(it, states.stateOf(OwnAsset.Voucher(it.ringVrfKeyIndex))) }
+        vouchers.map { TrackedVoucher(it, states.getAssetStateOf(OwnAsset.Voucher(it.ringVrfKeyIndex))) }
     }.distinctUntilChanged()
 
     override suspend fun getVouchers(): List<TrackedVoucher> = subscribeVouchers().first()
 }
-
-/** An asset the ledger has never heard of carries no claim, which is the same as a free one. */
-private fun Map<OwnAsset, CoinageAssetState>.stateOf(asset: OwnAsset) =
-    this[asset] ?: CoinageAssetState.UNTRACKED

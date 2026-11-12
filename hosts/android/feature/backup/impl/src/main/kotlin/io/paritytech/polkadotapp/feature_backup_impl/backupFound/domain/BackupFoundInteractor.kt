@@ -29,7 +29,7 @@ class RealBackupFoundInteractor @Inject constructor(
     }
 
     override suspend fun getUsername(accountId: AccountId): Result<String?> {
-        return resourcesRepository.consumerInfo(knownChains.people, accountId)
+        return resourcesRepository.consumerInfo(knownChains.assetHub, accountId)
             .map { consumerInfo -> consumerInfo?.username }
     }
 }

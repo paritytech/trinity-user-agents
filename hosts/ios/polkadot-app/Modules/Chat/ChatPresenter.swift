@@ -407,6 +407,11 @@ private extension ChatPresenter {
     func handleStartCall(callType: ChatCallType) {
         guard let metadata else { return }
         MainActor.assumeIsolated {
+            if interactor.isMicrophoneDenied() {
+                wireframe.presentMicrophoneAccessDenied(from: view)
+                return
+            }
+
             wireframe.showCall(
                 from: view,
                 chatMetadata: metadata.chatMetadata,

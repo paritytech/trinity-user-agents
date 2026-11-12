@@ -13,6 +13,7 @@ import {
   HostChatPostMessageResponse,
   HostChatRegisterBotRequest,
   HostChatRegisterBotResponse,
+  HostChatSetRoomFooterRequest,
   HostDevicePermissionRequest,
   HostFeatureSupportedRequest,
   HostFeatureSupportedResponse,
@@ -22,16 +23,21 @@ import {
   HostPocketRemoveCardRequest,
   HostPushNotificationRequest,
   HostPushNotificationResponse,
+  HostScannerScanRequest,
   HostThemeSubscribeItem,
   HostWorkerBeginOperationResponse,
   RemotePermissionRequest,
 } from "@parity/truapi";
-import type { GenericError, NotificationId } from "@parity/truapi";
+import type { GenericError } from "@parity/truapi";
 import {
   AuthState,
   CoreStorageKey,
   DevicePermissionStatus,
-  HostChainSet,
+  ExtensionVersionMap,
+  HostContactLookup,
+  HostContactMatches,
+  HostContactPick,
+  HostScan,
   PermissionDecision,
   ProductContext,
   UserConfirmationReview,
@@ -61,23 +67,28 @@ export interface RawCallbacks {
     product: Uint8Array,
     request: Uint8Array,
   ): Promise<Uint8Array>;
+  setChatRoomFooter?(product: Uint8Array, request: Uint8Array): Promise<void>;
   subscribeChatRooms?(
     product: Uint8Array,
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
+  contacts?(lookup: Uint8Array): Promise<Uint8Array>;
+  pickContact?(product: Uint8Array): Promise<Uint8Array>;
   readCoreStorage(key: Uint8Array): Promise<Uint8Array | null | undefined>;
   writeCoreStorage(key: Uint8Array, value: Uint8Array): Promise<void>;
   clearCoreStorage(key: Uint8Array): Promise<void>;
+  transactionExtensionVersions(): Promise<Uint8Array>;
   featureSupported(request: Uint8Array): Promise<Uint8Array>;
-  supportedChains(): Promise<Uint8Array>;
+  scheduleGameReminder?(product: Uint8Array, startsAt: bigint): Promise<void>;
+  cancelGameReminder?(product: Uint8Array): Promise<void>;
   subscribeLocale(
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
   navigateTo(url: string): Promise<void>;
   pushNotification(notification: Uint8Array): Promise<Uint8Array>;
-  cancelNotification(id: NotificationId): Promise<void>;
+  cancelNotification(id: number): Promise<void>;
   devicePermissionStatus?(request: Uint8Array): Promise<Uint8Array>;
   devicePermission(
     product: Uint8Array,
@@ -108,6 +119,7 @@ export interface RawCallbacks {
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
   ): (() => void) | void;
+  scanCode?(product: Uint8Array, request: Uint8Array): Promise<Uint8Array>;
   subscribeTheme(
     sendItem: (item?: Uint8Array) => void,
     sendError: (error: GenericError) => void,
@@ -121,8 +133,11 @@ export function createWasmRawCallbacks(
   callbacks: RequiredHostCallbacks,
 ): RawCallbacks {
   const chat = callbacks.chat;
+  const contacts = callbacks.contacts;
+  const game = callbacks.game;
   const permissionStatus = callbacks.permissionStatus;
   const pocket = callbacks.pocket;
+  const scanner = callbacks.scanner;
   return {
     authStateChanged: async (state) =>
       await callbacks.auth.authStateChanged(AuthState.dec(state)),
@@ -150,11 +165,28 @@ export function createWasmRawCallbacks(
                 HostChatPostMessageRequest.dec(request),
               ),
             ),
+          setChatRoomFooter: async (product, request) =>
+            await chat.setChatRoomFooter(
+              ProductContext.dec(product),
+              HostChatSetRoomFooterRequest.dec(request),
+            ),
           subscribeChatRooms: (product, sendItem, sendError) =>
             driveResultStream(
               chat.subscribeChatRooms(ProductContext.dec(product)),
               (item) => sendItem(HostChatListSubscribeItem.enc(item)),
               sendError,
+            ),
+        }
+      : {}),
+    ...(contacts
+      ? {
+          contacts: async (lookup) =>
+            HostContactMatches.enc(
+              await contacts.contacts(HostContactLookup.dec(lookup)),
+            ),
+          pickContact: async (product) =>
+            HostContactPick.enc(
+              await contacts.pickContact(ProductContext.dec(product)),
             ),
         }
       : {}),
@@ -167,14 +199,27 @@ export function createWasmRawCallbacks(
       ),
     clearCoreStorage: async (key) =>
       await callbacks.coreStorage.clearCoreStorage(CoreStorageKey.dec(key)),
+    transactionExtensionVersions: async () =>
+      ExtensionVersionMap.enc(
+        await callbacks.extrinsicVersion.transactionExtensionVersions(),
+      ),
     featureSupported: async (request) =>
       HostFeatureSupportedResponse.enc(
         await callbacks.features.featureSupported(
           HostFeatureSupportedRequest.dec(request),
         ),
       ),
-    supportedChains: async () =>
-      HostChainSet.enc(await callbacks.features.supportedChains()),
+    ...(game
+      ? {
+          scheduleGameReminder: async (product, startsAt) =>
+            await game.scheduleGameReminder(
+              ProductContext.dec(product),
+              startsAt,
+            ),
+          cancelGameReminder: async (product) =>
+            await game.cancelGameReminder(ProductContext.dec(product)),
+        }
+      : {}),
     subscribeLocale: (sendItem, sendError) =>
       driveResultStream(
         callbacks.locale.subscribeLocale(),
@@ -257,6 +302,17 @@ export function createWasmRawCallbacks(
         (item) => sendItem(HostLocalStorageChangeItem.enc(item)),
         sendError,
       ),
+    ...(scanner
+      ? {
+          scanCode: async (product, request) =>
+            HostScan.enc(
+              await scanner.scanCode(
+                ProductContext.dec(product),
+                HostScannerScanRequest.dec(request),
+              ),
+            ),
+        }
+      : {}),
     subscribeTheme: (sendItem, sendError) =>
       driveResultStream(
         callbacks.theme.subscribeTheme(),

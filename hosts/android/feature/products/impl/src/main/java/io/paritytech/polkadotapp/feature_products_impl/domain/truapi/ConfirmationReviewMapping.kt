@@ -8,22 +8,27 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Vr
 import io.paritytech.polkadotapp.feature_products_api.model.ProductAccountId
 import io.paritytech.polkadotapp.feature_products_api.model.signing.RawPayloadContent
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SignerPayloadJson
+import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningAccount
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRawLegacyPayload
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRawPayload
 import io.paritytech.polkadotapp.feature_products_api.model.signing.SigningRequestBody
 import io.paritytech.polkadotapp.feature_products_api.model.signing.createTransaction.TxPayload
 import io.paritytech.polkadotapp.feature_transactions.api.data.extensions.EncodedTransactionExtensionValue
 import uniffi.truapi.AllocatableResource
+import uniffi.truapi.CreateTransactionReview
 import uniffi.truapi.DerivationIndex
 import uniffi.truapi.HostSignPayloadData
+import uniffi.truapi.LegacySigningAccount
+import uniffi.truapi.NftPurseDrainDestination
+import uniffi.truapi.NftPurseOwner
+import uniffi.truapi.ProductId
 import uniffi.truapi.RawPayload
 import uniffi.truapi.RingLocation
+import uniffi.truapi.SignPayloadReview
+import uniffi.truapi.SignRawReview
+import uniffi.truapi.SignVrfReview
 import uniffi.truapi.TxPayloadExtension
-import uniffi.truapi_platform.CreateTransactionReview
-import uniffi.truapi_platform.SignPayloadReview
-import uniffi.truapi_platform.SignRawReview
-import uniffi.truapi_platform.SignVrfReview
-import uniffi.truapi_platform.UserConfirmationReview
+import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.ProductAccountId as NativeProductAccountId
 
 /**
@@ -33,15 +38,19 @@ import uniffi.truapi.ProductAccountId as NativeProductAccountId
  * this compile rather than silently become a denial, which is how seven of the
  * eleven variants were being refused.
  */
-fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfirmation = when (this) {
+fun UserConfirmationReview.toConfirmation(callingProductId: ProductId?): TrUAPIConfirmation = when (this) {
     is UserConfirmationReview.SignPayload ->
-        TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody())
+        TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody(), v1.signingAccount())
     is UserConfirmationReview.SignRaw ->
-        TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody())
+        TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody(), v1.signingAccount())
     is UserConfirmationReview.CreateTransaction ->
-        TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody())
+        TrUAPIConfirmation.Signing(callingProductId, v1.toSigningRequestBody(), v1.signingAccount())
     is UserConfirmationReview.SignVrf ->
-        TrUAPIConfirmation.Signing(v1.callingProductId, v1.toSigningRequestBody())
+        TrUAPIConfirmation.Signing(
+            v1.callingProductId,
+            v1.toSigningRequestBody(),
+            SigningAccount.Product(v1.request.account.toDomain()),
+        )
 
     is UserConfirmationReview.StatementStoreProductSign ->
         TrUAPIConfirmation.StatementSign(
@@ -73,12 +82,6 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
             resources = v1.resources.map { it.describe() },
         )
 
-    is UserConfirmationReview.PreimageSubmit ->
-        TrUAPIConfirmation.PreimageSubmit(
-            requesterProductId = callingProductId,
-            sizeBytes = v1.size.toLong(),
-        )
-
     is UserConfirmationReview.AccountAccess ->
         TrUAPIConfirmation.AccountAccess(
             requesterProductId = v1.requestingProductId,
@@ -87,6 +90,23 @@ fun UserConfirmationReview.toConfirmation(callingProductId: String): TrUAPIConfi
 
     is UserConfirmationReview.ProductSubtree ->
         TrUAPIConfirmation.ProductSubtree(requesterProductId = v1.productId)
+
+    is UserConfirmationReview.NftPurseDrain ->
+        TrUAPIConfirmation.NftPurseDrain(
+            requesterProductId = v1.callingProductId,
+            fromPurse = v1.fromPurse,
+            ownerProductId = (v1.owner as? NftPurseOwner.Product)?.v1,
+            itemCount = v1.itemCount,
+            destination = v1.destination.toDomain(),
+        )
+}
+
+@OptIn(ExperimentalStdlibApi::class)
+private fun NftPurseDrainDestination.toDomain(): TrUAPIConfirmation.NftPurseDrain.Destination = when (this) {
+    is NftPurseDrainDestination.Purse -> TrUAPIConfirmation.NftPurseDrain.Destination.Purse(purse)
+    is NftPurseDrainDestination.ExternalKey -> TrUAPIConfirmation.NftPurseDrain.Destination.ExternalKey(key.toHexString())
+    NftPurseDrainDestination.Cheque -> TrUAPIConfirmation.NftPurseDrain.Destination.Cheque
+    NftPurseDrainDestination.Refund -> TrUAPIConfirmation.NftPurseDrain.Destination.Refund
 }
 
 @OptIn(ExperimentalStdlibApi::class)
@@ -101,12 +121,15 @@ private fun AllocatableResource.describe(): String = when (this) {
 
 private fun NativeProductAccountId.toDomain(): ProductAccountId = ProductAccountId(
     productId = dotNsIdentifier,
-    index = when (val index = derivationIndex) {
-        is DerivationIndex.Index -> DerivationIndex32.fromUInt(index.v1)
-        is DerivationIndex.Raw -> DerivationIndex32.fromBytes(index.v1.toDataByteArray())
-            .getOrElse { throw UnsupportedReviewException("raw derivation index must be 32 bytes") }
-    },
+    index = derivationIndex.toDomain()
+        .getOrElse { throw UnsupportedReviewException("raw derivation index must be 32 bytes") },
 )
+
+/** The core's derivation index as the app's; only a raw one of the wrong length fails. */
+internal fun DerivationIndex.toDomain(): Result<DerivationIndex32> = when (this) {
+    is DerivationIndex.Index -> Result.success(DerivationIndex32.fromUInt(v1))
+    is DerivationIndex.Raw -> DerivationIndex32.fromBytes(v1.toDataByteArray())
+}
 
 private fun <Signer> HostSignPayloadData.toSignerPayloadJson(account: Signer) = SignerPayloadJson(
     account = account,
@@ -132,8 +155,28 @@ private fun SignPayloadReview.toSigningRequestBody(): SigningRequestBody = when 
         SigningRequestBody.Transaction(request.payload.toSignerPayloadJson(request.account.toDomain()))
     is SignPayloadReview.LegacyAccount ->
         SigningRequestBody.TransactionLegacy(
-            v1.payload.toSignerPayloadJson(v1.signer.parseLegacySigner().toDataByteArray()),
+            request.payload.toSignerPayloadJson(request.signer.parseLegacySigner().toDataByteArray()),
         )
+}
+
+private fun SignPayloadReview.signingAccount(): SigningAccount = when (this) {
+    is SignPayloadReview.Product -> SigningAccount.Product(request.account.toDomain())
+    is SignPayloadReview.LegacyAccount -> SigningAccount.Product(account.toDomain())
+}
+
+private fun SignRawReview.signingAccount(): SigningAccount = when (this) {
+    is SignRawReview.Product -> SigningAccount.Product(request.account.toDomain())
+    is SignRawReview.LegacyAccount -> account.toDomain()
+}
+
+private fun CreateTransactionReview.signingAccount(): SigningAccount = when (this) {
+    is CreateTransactionReview.Product -> SigningAccount.Product(payload.signer.toDomain())
+    is CreateTransactionReview.LegacyAccount -> account.toDomain()
+}
+
+private fun LegacySigningAccount.toDomain(): SigningAccount = when (this) {
+    LegacySigningAccount.Identity -> SigningAccount.IdentityAccount
+    is LegacySigningAccount.Product -> SigningAccount.Product(v1.toDomain())
 }
 
 private fun RawPayload.toContent(): RawPayloadContent = when (this) {
@@ -185,11 +228,11 @@ private fun CreateTransactionReview.toSigningRequestBody(): SigningRequestBody =
     )
     is CreateTransactionReview.LegacyAccount -> SigningRequestBody.CreateTransactionLegacy(
         TxPayload(
-            signer = v1.signer.toDataByteArray(),
-            genesisHash = v1.genesisHash.toDataByteArray(),
-            callData = v1.callData.toDataByteArray(),
-            extensions = v1.extensions.map { it.toDomain() },
-            txExtVersion = v1.txExtVersion,
+            signer = payload.signer.toDataByteArray(),
+            genesisHash = payload.genesisHash.toDataByteArray(),
+            callData = payload.callData.toDataByteArray(),
+            extensions = payload.extensions.map { it.toDomain() },
+            txExtVersion = payload.txExtVersion,
         ),
     )
 }

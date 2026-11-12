@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageServi
 import io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.CoinageTransactionService
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.installation.CoinageInstallationRegistrar
 import io.paritytech.polkadotapp.feature_coinage_impl.domain.recycling.CoinRecyclingEvaluator
+import io.paritytech.polkadotapp.feature_coinage_impl.domain.transaction.CoinageHandoffGuard
 import io.paritytech.polkadotapp.feature_usernames_api.domain.usecase.ObserveAccountOnboardingStatusUseCase
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -21,6 +22,7 @@ class RealCoinageServiceStarter @Inject constructor(
     private val observeAccountOnboardingStatusUseCase: ObserveAccountOnboardingStatusUseCase,
     private val coinageTransactionService: CoinageTransactionService,
     private val installationRegistrar: CoinageInstallationRegistrar,
+    private val handoffGuard: CoinageHandoffGuard,
 ) : CoinageServiceStarter {
     context(scope: ComputationalScope)
     override fun start() {
@@ -35,8 +37,12 @@ class RealCoinageServiceStarter @Inject constructor(
         scope.launch {
             // A reservation that never became a payment: its keys never left, so the assets come back.
             // Before recovery, so nothing decides an entry against a mark that is about to disappear.
-            coinageTransactionService.releaseUncommittedHandoffs()
-                .logFailure("Failed to release uncommitted coinage handoffs")
+            // The guard keeps it to a real process start: this runs again on every Activity recreation, and
+            // clearing then would drop the mark of a send that is already handing its keys to a peer.
+            if (handoffGuard.claimStartupRelease()) {
+                coinageTransactionService.releaseUncommittedHandoffs()
+                    .logFailure("Failed to release uncommitted coinage handoffs")
+            }
 
             // Entries left live by a previous process are decided from the chain, not resumed.
             coinageTransactionService.startRecovery()

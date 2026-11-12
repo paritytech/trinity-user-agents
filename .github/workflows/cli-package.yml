@@ -37,7 +37,7 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
 
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
 
@@ -45,26 +45,20 @@ jobs:
         with:
           bun-version: "1.4.2"
 
-      # codegen.sh formats its generated Rust with `cargo +nightly fmt`, so the
+      # codegen.sh formats its generated Rust with the pinned nightly rustfmt, so the
       # nightly toolchain needs rustfmt, exactly as the release job installs it.
-      - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
+      - uses: ./.github/actions/rust-nightly
         with:
-          toolchain: nightly
           components: rustfmt
 
       - uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # stable
         with:
           toolchain: stable
 
-      # A cache written on a pull request is visible only to that pull request,
-      # so every branch would store its own copy of the same key and the copies
-      # would evict each other from the repository's cache budget. This workflow
-      # is called from CI as well as from a release, so the test is the event
-      # rather than `== 'push'`: a release runs under `workflow_run` or
-      # `workflow_dispatch` and has to keep seeding the key it restores from.
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      # A release run restores without saving, like every release job.
+      - uses: ./.github/actions/rust-cache
         with:
-          save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
+          save: ${{ inputs.version == '' && 'true' || 'false' }}
 
       # The runner imports @parity/truapi from source, so the generated client
       # has to exist before it can be bundled.
@@ -80,7 +74,7 @@ jobs:
           npm run typecheck:cli
           bun test js/container/src scripts/cli-runner-package.test.ts
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: runner-bundle
           path: |
@@ -90,12 +84,12 @@ jobs:
           if-no-files-found: error
 
       # Carry generated sources so target builds need neither Node nor codegen.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: generated-rust
           path: |
-            rust/crates/truapi-server/src/generated
-            rust/crates/truapi-server/src/wasm
+            rust/crates/truapi/src/generated
+            rust/crates/truapi/src/wasm
             rust/crates/truapi-host-cli/js/script-types.d.ts
           if-no-files-found: error
 
@@ -123,10 +117,10 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+      - uses: ./.github/actions/rust-cache
         with:
           shared-key: cli-release-${{ matrix.target }}
-          save-if: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
+          save: ${{ inputs.version == '' && 'true' || 'false' }}
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -139,14 +133,14 @@ jobs:
         run: sudo apt-get update && sudo apt-get install --no-install-recommends -y musl-tools
 
       # Download the runner, declarations, and container for each target archive.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: runner-bundle
           path: target/dist
 
       # `make cli-dist` runs `check-generated` first, which refuses to proceed
       # without these. Untracked since #551, so a fresh checkout has none.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: generated-rust
           path: rust/crates
@@ -202,7 +196,7 @@ jobs:
           cat "${RUNNER_TEMP}/sandbox-smoke.log"
           grep -q sandbox-ok "${RUNNER_TEMP}/sandbox-smoke.log"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: cli-${{ matrix.target }}
           path: |

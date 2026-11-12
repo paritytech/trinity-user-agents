@@ -10,6 +10,7 @@ export const WORKER_DIAGNOSIS_METHODS = [
   "Chat/register_bot",
   "Chat/list_subscribe",
   "Chat/post_message",
+  "Chat/set_room_footer",
   "Chat/action_subscribe",
   "Renderer/render",
   "Renderer/action_subscribe",

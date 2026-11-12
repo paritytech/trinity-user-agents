@@ -19,6 +19,8 @@ public extension ResourcesPallet {
 
     enum AsResourcesInfo {
         case registerStatementStoreAllowance(AsRegisterStatementStoreAllowanceParams)
+        /// Same proof inputs as the statement store allowance, under the notification slot context.
+        case registerNotificationForCollection(AsRegisterStatementStoreAllowanceParams)
         case claimLongTermStorage(AsClaimLongTermStorageParams)
     }
 
@@ -80,6 +82,7 @@ public extension ResourcesPallet {
 public extension ResourcesPallet.AsResourcesTxExtension {
     enum Mode: Codable {
         case registerStatementStoreAllowance(RegisterStatementStoreAllowanceMode)
+        case registerNotificationForCollection(RegisterStatementStoreAllowanceMode)
         case claimLongTermStorage(ClaimLongTermStorageMode)
 
         public init(from decoder: any Decoder) throws {
@@ -88,6 +91,10 @@ public extension ResourcesPallet.AsResourcesTxExtension {
             switch type {
             case "RegisterStatementStoreAllowance":
                 self = try .registerStatementStoreAllowance(container.decode(RegisterStatementStoreAllowanceMode.self))
+            case "RegisterNotificationForCollection":
+                self = try .registerNotificationForCollection(
+                    container.decode(RegisterStatementStoreAllowanceMode.self)
+                )
             case "ClaimLongTermStorage":
                 self = try .claimLongTermStorage(container.decode(ClaimLongTermStorageMode.self))
             default:
@@ -100,6 +107,9 @@ public extension ResourcesPallet.AsResourcesTxExtension {
             switch self {
             case let .registerStatementStoreAllowance(model):
                 try container.encode("RegisterStatementStoreAllowance")
+                try container.encode(model)
+            case let .registerNotificationForCollection(model):
+                try container.encode("RegisterNotificationForCollection")
                 try container.encode(model)
             case let .claimLongTermStorage(model):
                 try container.encode("ClaimLongTermStorage")
@@ -175,6 +185,7 @@ extension ResourcesPallet.AsResourcesTxExtension: TransactionExtending {
     public func implicit(
         using _: DynamicScaleEncodingFactoryProtocol,
         metadata _: RuntimeMetadataProtocol,
+        extensionVersion _: UInt8,
         context _: RuntimeJsonContext?
     ) throws -> Data? {
         nil
@@ -187,28 +198,30 @@ extension ResourcesPallet.AsResourcesTxExtension: TransactionExtending {
         context: RuntimeJsonContext?
     ) throws -> TransactionExtension.Explicit? {
         guard let info else {
-            return try TransactionExtension.Explicit(
+            return TransactionExtension.Explicit(
                 from: .null,
                 txExtensionId: txExtensionId,
                 metadata: metadata
             )
         }
 
-        let payloadFactory = ImplicationSignaturePayloadFactory(extrinsicVersion: extrinsicVersion)
+        let payloadFactory = ImplicationSignaturePayloadFactory(formatVersion: extrinsicVersion.formatVersion)
         let payload = try payloadFactory.createPayload(from: implication, using: encodingFactory)
         let message = try payload.blake2b32()
 
         let mode: Mode =
             switch info {
             case let .registerStatementStoreAllowance(params):
-                try makeRegisterStatementStoreAllowance(params: params, message: message)
+                try .registerStatementStoreAllowance(makeAllowanceMode(params: params, message: message))
+            case let .registerNotificationForCollection(params):
+                try .registerNotificationForCollection(makeAllowanceMode(params: params, message: message))
             case let .claimLongTermStorage(params):
                 try makeClaimLongTermStorage(params: params, message: message)
             }
 
         let json = try mode.toScaleCompatibleJSON(with: context?.toRawContext())
 
-        return try TransactionExtension.Explicit(
+        return TransactionExtension.Explicit(
             from: json,
             txExtensionId: txExtensionId,
             metadata: metadata
@@ -219,23 +232,21 @@ extension ResourcesPallet.AsResourcesTxExtension: TransactionExtending {
 // MARK: - Private
 
 private extension ResourcesPallet.AsResourcesTxExtension {
-    func makeRegisterStatementStoreAllowance(
+    func makeAllowanceMode(
         params: ResourcesPallet.AsRegisterStatementStoreAllowanceParams,
         message: Data
-    ) throws -> Mode {
+    ) throws -> RegisterStatementStoreAllowanceMode {
         let proof = try params.vrfManager.createProof(
             message,
             members: params.proofParams.ringMembers,
             context: params.proofContext,
             domainSize: params.proofParams.ringSize
         )
-        return .registerStatementStoreAllowance(
-            RegisterStatementStoreAllowanceMode(
-                proof: proof,
-                ringIndex: params.ringIndex,
-                revision: params.proofParams.revision,
-                collection: params.collection.asMode
-            )
+        return RegisterStatementStoreAllowanceMode(
+            proof: proof,
+            ringIndex: params.ringIndex,
+            revision: params.proofParams.revision,
+            collection: params.collection.asMode
         )
     }
 

@@ -29,6 +29,7 @@ extension Chat.DeviceSyncLocalStatus {
         case .outgoing(.new): self = .outgoing(.new)
         case .outgoing(.sent): self = .outgoing(.sent)
         case .outgoing(.delivered): self = .outgoing(.delivered)
+        case .outgoing(.failed): self = .outgoing(.new)
         case .incoming(.new): self = .incoming(.new)
         case .incoming(.seen): self = .incoming(.seen)
         }

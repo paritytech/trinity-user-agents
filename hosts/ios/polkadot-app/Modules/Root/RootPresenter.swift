@@ -77,8 +77,6 @@ private extension RootPresenter {
             wireframe.showUsernameCheck(with: self)
         case .dashboard:
             wireframe.showDashboard()
-        case .jailbroken:
-            wireframe.showJailbroken()
         case .broken:
             wireframe.showBroken()
         }

@@ -6,6 +6,8 @@ import androidx.annotation.Keep
 class NotifyRequest(
     val deviceToken: String,
     val pushId: String,
+    val bundlerId: String,
+    val platform: String,
     val message: String,
     val voip: Boolean
 )

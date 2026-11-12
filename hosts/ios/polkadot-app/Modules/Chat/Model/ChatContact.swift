@@ -33,7 +33,6 @@ extension Chat {
         var chatRequest: Chat.Request?
         var ownKeyId: Contact.Own
         var imageData: Data?
-        var source: Source
         var isBlocked: Bool
         var devices: [PeerDevice]
         var pendingDevicesFanOut: Bool
@@ -52,13 +51,6 @@ extension Chat {
     }
 }
 
-extension Chat.Contact {
-    enum Source: Hashable {
-        case chat
-        case game(UInt32, Date?)
-    }
-}
-
 extension Chat.Contact: Operation_iOS.Identifiable {
     var identifier: String {
         accountId.toHex()
@@ -73,7 +65,6 @@ extension Chat.Contact {
             publicKey: remoteContact.chatPublicKey.rawData,
             ownKeyId: ownKeyId,
             imageData: remoteContact.imageData,
-            source: remoteContact.source,
             isBlocked: false,
             devices: [],
             pendingDevicesFanOut: false,
@@ -84,8 +75,7 @@ extension Chat.Contact {
 
     func adding(
         chatRequest: Chat.Request,
-        ownKeyId: Own,
-        source: Chat.Contact.Source
+        ownKeyId: Own
     ) -> Chat.Contact {
         Chat.Contact(
             accountId: accountId,
@@ -101,7 +91,6 @@ extension Chat.Contact {
             chatRequest: chatRequest,
             ownKeyId: ownKeyId,
             imageData: imageData,
-            source: source,
             isBlocked: isBlocked,
             devices: devices,
             pendingDevicesFanOut: pendingDevicesFanOut,
@@ -124,7 +113,6 @@ extension Chat.Contact {
             voipLastOwnToken: voipLastOwnToken,
             ownKeyId: ownKeyId,
             imageData: imageData,
-            source: source,
             isBlocked: isBlocked,
             devices: devices,
             pendingDevicesFanOut: pendingDevicesFanOut,
@@ -147,7 +135,6 @@ extension Chat.Contact {
             voipLastOwnToken: voipLastOwnToken,
             ownKeyId: ownKeyId,
             imageData: imageData,
-            source: source,
             isBlocked: isBlocked,
             devices: devices,
             pendingDevicesFanOut: pendingDevicesFanOut,
@@ -171,7 +158,6 @@ extension Chat.Contact {
             chatRequest: chatRequest,
             ownKeyId: ownKeyId,
             imageData: imageData,
-            source: source,
             isBlocked: isBlocked,
             devices: devices,
             pendingDevicesFanOut: pendingDevicesFanOut,
@@ -194,7 +180,6 @@ extension Chat.Contact {
             voipLastOwnToken: voipLastOwnToken,
             ownKeyId: ownKeyId,
             imageData: imageData,
-            source: source,
             isBlocked: isBlocked,
             devices: devices,
             pendingDevicesFanOut: pendingDevicesFanOut,
@@ -237,7 +222,6 @@ extension Chat.Contact {
 
         return Chat.PeerMetadata(
             name: username,
-            contactSource: source,
             icon: .image(imageData),
             input: deriveMetadataInput(),
             moreActions: moreActions
@@ -252,7 +236,7 @@ private extension Chat.Contact {
         }
 
         guard let chatRequest else {
-            return .inputField(.init(canPay: source == .chat, canAttachFile: true))
+            return .inputField(.init(canPay: true, canAttachFile: true))
         }
 
         switch chatRequest.status {

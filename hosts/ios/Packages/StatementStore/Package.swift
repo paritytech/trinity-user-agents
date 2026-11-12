@@ -14,8 +14,8 @@ let package = Package(
     ],
     dependencies: [
         .package(
-            url: "https://github.com/sideeffect-io/AsyncExtensions",
-            exact: "0.5.4"
+            url: "https://github.com/paritytech/AsyncExtensions",
+            exact: "0.5.6"
         ),
         .package(
             url: "https://github.com/novasamatech/substrate-sdk-ios",

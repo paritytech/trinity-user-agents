@@ -1,6 +1,6 @@
 // Browser half of the test host: the page a Playwright fixture drives.
 //
-// It embeds the product in an iframe, runs a real truapi-server core against
+// It embeds the product in an iframe, runs a real truapi core against
 // `createMockHost`'s callbacks, and publishes the mock's control surface on
 // `window.__TRUAPI_TEST_HOST__` so the fixture can reach it through
 // `page.evaluate`.
@@ -12,7 +12,7 @@
 //   +------------------+                 +----------------------------------+
 //                                             ^ callbacks
 //                                        +----------------------------------+
-//                                        | truapi-server WASM core          |
+//                                        | truapi WASM core                 |
 //                                        +----------------------------------+
 //                                             ^ SCALE frames over MessagePort
 //                                        +----------------------------------+
@@ -23,6 +23,13 @@
 // has no UI to keep responsive, and one less moving part is one less thing to
 // debug when a suite fails.
 
+import type { ProductId } from "@parity/truapi";
+import { DerivationIndex } from "@parity/truapi";
+import {
+  createLoginRequests,
+  type LoginRequestBehavior,
+} from "./login-requests.js";
+
 import { createIframeHost } from "../web/create-iframe-host.js";
 import { createWebWorkerPairingHostRuntime } from "../web/create-worker-host-runtime.js";
 import {
@@ -30,9 +37,10 @@ import {
   mockRuntimeConfig,
   type MockHost,
   type MockHostConfig,
+  type MockRuntimeConfig,
 } from "../web/create-mock-host.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
 import {
+  checkDerivationIndex,
   resolveAccount,
   type DevAccount,
   type DevAccountName,
@@ -55,7 +63,7 @@ export interface TestHostPageOptions {
   /** Behaviour knobs forwarded to {@link createMockHost}. */
   mock?: MockHostConfig;
   /** Overrides merged into {@link mockRuntimeConfig}. */
-  runtimeConfig?: Partial<ProductRuntimeConfig>;
+  runtimeConfig?: Partial<MockRuntimeConfig>;
   /**
    * Resolved WASM entry. Defaults to the signing-enabled `testing` bundle,
    * which is what lets the host own dev accounts instead of waiting on a
@@ -96,6 +104,12 @@ export interface TestHostPageOptions {
    */
   allowances?: "granted" | "chain";
   /**
+   * Resource tags answered as refused, whatever `allowances` would otherwise
+   * say. Applied before the product loads, because a product asks for its
+   * resources on connect and a later call would land after that.
+   */
+  withheldResources?: string[];
+  /**
    * Core log level (`off`/`error`/`warn`/`info`/`debug`/`trace`).
    *
    * The core logs why a call failed before mapping it to a protocol answer,
@@ -105,6 +119,12 @@ export interface TestHostPageOptions {
    * `topology: "main-thread"` to read them from a test.
    */
   logLevel?: string;
+  /**
+   * Product storage held before the product loads, by the product's own keys,
+   * stored as UTF-8: what a product reads once at startup has to be there
+   * before it starts.
+   */
+  productStorage?: Record<string, string>;
 }
 
 /** How the test host answers login at boot. */
@@ -136,10 +156,57 @@ export interface AccountControl {
   setAccounts(names: (DevAccountName | DevAccount)[]): Promise<void>;
   /** Drop the session, leaving the host signed out. */
   signOut(): Promise<void>;
+  /**
+   * Answer a product's login request while the host is signed out, as a user
+   * would on a real host. `"success"` signs in `account`, or the first account
+   * when none is named, and answers `Success`. `"reject"` answers `Rejected`.
+   * Unset, the request reaches the core, which answers `Rejected` while signed
+   * out. A request made while signed in always reaches the core, which
+   * answers `AlreadyConnected`, and so does a second request made while the
+   * first is signing in. A withdrawn request is answered `Cancelled`.
+   * `reset` unsets it.
+   */
+  setLoginBehavior(behavior: LoginRequestBehavior, account?: string): void;
+  /**
+   * The SS58 address of a product account, at the prefix the core mandates.
+   *
+   * Derived from the active session's root, so it answers `undefined` while
+   * the host is signed out and a different address after `switchAccount`. This
+   * is what a suite funds, or asserts on, without reading it out of the
+   * product's own UI.
+   *
+   * Encoded at the prefix the core mandates, which is not necessarily the one
+   * the product displays: a product rendering at another prefix shows a
+   * different string for the same account. Compare against a product's own
+   * rendering by decoding both, and pass this to a faucet or a transfer as it
+   * stands.
+   */
+  getProductAccountAddress(
+    productId?: ProductId,
+    index?: number,
+  ): Promise<string | undefined>;
+}
+
+/**
+ * Product storage control. The core namespaces a product's storage keys, so
+ * seeding goes through the core's own encoding rather than the mock's raw
+ * store, which keeps a suite from depending on that format.
+ */
+export interface StorageControl {
+  /**
+   * Store `value` under the product's own `key`, where the core will read it,
+   * as an entry persisted from an earlier session would be. A string is stored
+   * as UTF-8. `productId` defaults to the product this host runs.
+   */
+  seedProductStorage(
+    key: string,
+    value: Uint8Array | string,
+    productId?: ProductId,
+  ): Promise<void>;
 }
 
 /** What the fixture reaches on `window.__TRUAPI_TEST_HOST__`. */
-export type TestHostControl = MockHost & AccountControl;
+export type TestHostControl = MockHost & AccountControl & StorageControl;
 
 /** The running test host. */
 export interface TestHostPage {
@@ -183,14 +250,15 @@ export function publishTestHostGlobals(control: TestHostControl): () => void {
 /**
  * Boot the test host into `container` and publish its control surface.
  *
- * Resolves once the core is running and the product iframe has its port, so a
- * fixture that awaits this can assume the wire is live.
+ * Resolves once the core is running and the product iframe is created. The
+ * product may still be loading, so a caller waits for the product itself
+ * before relying on the wire.
  */
 export async function startTestHost(
   options: TestHostPageOptions,
 ): Promise<TestHostPage> {
   const host = createMockHost(options.mock);
-  const { productId, ...hostConfig } = mockRuntimeConfig(
+  const { productId: hostProduct, ...hostConfig } = mockRuntimeConfig(
     options.runtimeConfig ?? {},
   );
 
@@ -209,6 +277,22 @@ export async function startTestHost(
     ): Promise<void>;
     disconnectSession(): Promise<void>;
   };
+  // The derivation and storage-key helpers are pure: they need `default()` and
+  // no session. So the worker topology, which keeps the core off this thread,
+  // loads the glue here just to call them.
+  const wasmUrl = options.wasmUrl ?? "./wasm/testing/truapi_server.js";
+  let derivation: Promise<ProductAccountDerivation> | undefined;
+  const deriveHelpers = (): Promise<ProductAccountDerivation> => {
+    derivation ??= (async () => {
+      const glue = (await import(/* @vite-ignore */ wasmUrl)) as {
+        default: () => Promise<unknown>;
+      } & ProductAccountDerivation;
+      await glue.default();
+      return glue;
+    })();
+    return derivation;
+  };
+
   if ((options.topology ?? "worker") === "worker") {
     // Production topology: the core runs in a Web Worker, reached over the
     // same protocol a real web host uses.
@@ -224,9 +308,11 @@ export async function startTestHost(
     if ((options.allowances ?? "granted") === "granted") {
       await workerRuntime.setGrantAllowancesUnchecked?.(true);
     }
+    if (options.withheldResources?.length) {
+      await workerRuntime.setWithheldResources?.(options.withheldResources);
+    }
     runtime = workerRuntime;
   } else {
-    const wasmUrl = options.wasmUrl ?? "./wasm/testing/truapi_server.js";
     const glue = (await import(/* @vite-ignore */ wasmUrl)) as {
       default: () => Promise<unknown>;
       setLogLevel?: (level: string) => void;
@@ -237,16 +323,15 @@ export async function startTestHost(
     };
     await glue.default();
     if (options.logLevel) glue.setLogLevel?.(options.logLevel);
-    const { createWasmRawCallbacks } = await import(
-      "../generated/host-callbacks-adapter.js"
-    );
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
     directRuntime = new glue.WasmSigningHostRuntime(
       {
         // A raw bridge callback rather than a generated host callback, so it
         // is supplied here the way the worker runtime does. The test host runs
         // one product and starts no workers.
         ...createWasmRawCallbacks(host.callbacks),
-        workerDemandChanged: () => {},
+        requestWorkerTransition: () => {},
       },
       hostConfig,
     );
@@ -255,6 +340,9 @@ export async function startTestHost(
     // branching there, so both topologies activate identically.
     if ((options.allowances ?? "granted") === "granted") {
       directRuntime.setGrantAllowancesUnchecked?.(true);
+    }
+    if (options.withheldResources?.length) {
+      directRuntime.setWithheldResources?.(options.withheldResources);
     }
     const direct = directRuntime;
     runtime = {
@@ -271,7 +359,9 @@ export async function startTestHost(
     };
   }
 
-  let roster: DevAccount[] = (options.accounts ?? ["alice"]).map(resolveAccount);
+  let roster: DevAccount[] = (options.accounts ?? ["alice"]).map(
+    resolveAccount,
+  );
   let active: DevAccount | undefined;
 
   const activate = async (account: DevAccount) => {
@@ -290,40 +380,85 @@ export async function startTestHost(
     await activate(first);
   }
 
+  const loginRequests = createLoginRequests({
+    signedIn: () => active !== undefined,
+    accounts: () => roster.map((account) => account.name),
+    async signIn(name) {
+      const account = roster.find((entry) => entry.name === name);
+      if (!account) throw new Error(`no account "${name}" on this host`);
+      await activate(account);
+    },
+  });
+
   // The core and the product each hold one end of a MessageChannel. Frames are
   // raw SCALE bytes in both directions; nothing interprets them here.
   //
   // The two topologies expose the core differently -- a worker hands back a
   // wire provider, the main thread hands back a product core -- so each is
   // normalised to the same "pipe this port" step.
-  let detach: (() => void) | undefined;
   // Set when the product connects, by whichever topology is running.
   let publishChatAction: ((action: unknown) => Promise<void>) | undefined;
+  // Before the iframe exists, so a product that reads its storage once at
+  // startup finds these entries rather than racing a seed.
+  const seeded = Object.entries(options.productStorage ?? {});
+  const bootStorage: [string, Uint8Array][] = [];
+  if (seeded.length) {
+    const helpers = await deriveHelpers();
+    for (const [key, value] of seeded) {
+      bootStorage.push([
+        helpers.productStorageKey(hostProduct, key),
+        new TextEncoder().encode(value),
+      ]);
+    }
+  }
+  const writeBootStorage = () => {
+    for (const [storedKey, value] of bootStorage) {
+      host.writeProductStorage(storedKey, value);
+    }
+  };
+  writeBootStorage();
   const iframeHost = createIframeHost({
     iframeUrl: options.productUrl,
     container: options.container,
+    // Called again when the product navigates its whole document. The new
+    // document gets a core of its own, and the old one's is torn down.
     onPort(port) {
+      let retired = false;
+      let detach: (() => void) | undefined;
       void (async () => {
         if (workerRuntime) {
-          const provider = await workerRuntime.createProvider({ productId });
+          const provider = await workerRuntime.createProvider({
+            productId: hostProduct,
+          });
+          if (retired) {
+            provider.dispose();
+            return;
+          }
           const unsubscribe = provider.subscribe((frame) => {
             port.postMessage(frame);
           });
           port.onmessage = (event: MessageEvent) => {
             const frame = event.data;
-            if (frame instanceof Uint8Array) provider.postMessage(frame);
+            if (!(frame instanceof Uint8Array)) return;
+            if (
+              loginRequests.handle(frame, (answer) => port.postMessage(answer))
+            ) {
+              return;
+            }
+            provider.postMessage(frame);
           };
-          publishChatAction = provider.publishChatAction
-            ? (action) => provider.publishChatAction!(action)
+          const publish = provider.publishChatAction
+            ? (action: unknown) => provider.publishChatAction!(action)
             : undefined;
+          publishChatAction = publish;
           detach = () => {
             unsubscribe();
-            publishChatAction = undefined;
+            if (publishChatAction === publish) publishChatAction = undefined;
             provider.dispose();
           };
         } else {
           const core = directRuntime!.productRuntime(
-            { productId },
+            { productId: hostProduct },
             {
               emitFrame(frame: Uint8Array) {
                 port.postMessage(frame);
@@ -332,33 +467,80 @@ export async function startTestHost(
           );
           port.onmessage = (event: MessageEvent) => {
             const frame = event.data;
-            if (frame instanceof Uint8Array) void core.receiveFrame(frame);
+            if (!(frame instanceof Uint8Array)) return;
+            if (
+              loginRequests.handle(frame, (answer) => port.postMessage(answer))
+            ) {
+              return;
+            }
+            void core.receiveFrame(frame);
           };
           // The direct core takes bytes, so the value is encoded here rather
           // than inside the provider.
-          publishChatAction = core.publishChatAction
-            ? async (action) => {
-                const { HostChatActionSubscribeItem } = await import(
-                  "@parity/truapi"
-                );
+          const publish = core.publishChatAction
+            ? async (action: unknown) => {
+                const { HostChatActionSubscribeItem } =
+                  await import("@parity/truapi");
                 core.publishChatAction!(
                   HostChatActionSubscribeItem.enc(action as never),
                 );
               }
             : undefined;
+          publishChatAction = publish;
           detach = () => {
-            publishChatAction = undefined;
+            if (publishChatAction === publish) publishChatAction = undefined;
             core.dispose();
           };
         }
         port.start();
       })();
+      return () => {
+        retired = true;
+        detach?.();
+      };
     },
   });
 
+  const resetMock = host.reset.bind(host);
   const control: TestHostControl = Object.assign(host, {
+    // The boot-time product storage is part of the state this host was
+    // constructed with, so a reset writes it back after clearing the store.
+    reset() {
+      resetMock();
+      writeBootStorage();
+      loginRequests.clear();
+    },
     getAccounts: () => roster.map((account) => account.name),
     getActiveAccount: () => active?.name,
+    async seedProductStorage(
+      key: string,
+      value: Uint8Array | string,
+      productId?: ProductId,
+    ) {
+      const helpers = await deriveHelpers();
+      host.writeProductStorage(
+        helpers.productStorageKey(productId ?? hostProduct, key),
+        typeof value === "string" ? new TextEncoder().encode(value) : value,
+      );
+    },
+    async getProductAccountAddress(productId?: ProductId, index = 0) {
+      const target = productId ?? hostProduct;
+      const subtree = await (directRuntime
+        ? directRuntime.productSubtreePublicKey(target)
+        : workerRuntime?.getProductSubtreePublicKey(target));
+      // No session: there is no root to derive from, and answering an address
+      // would name an account the host cannot sign for.
+      if (!subtree) return undefined;
+      const helpers = await deriveHelpers();
+      // The index crosses SCALE-encoded, so the chain code stays core-owned.
+      const encoded = DerivationIndex.enc({
+        tag: "Index",
+        value: checkDerivationIndex(index),
+      });
+      return helpers.productAccountAddress(
+        helpers.deriveProductAccountPublicKey(subtree, encoded),
+      );
+    },
     injectChatAction: async (action: unknown) => {
       if (!publishChatAction) {
         throw new Error(
@@ -369,6 +551,7 @@ export async function startTestHost(
       await publishChatAction(action);
     },
     async switchAccount(name: string) {
+      await loginRequests.settled();
       const account = roster.find((entry) => entry.name === name);
       if (!account) {
         throw new Error(
@@ -380,15 +563,20 @@ export async function startTestHost(
       await activate(account);
     },
     async setAccounts(names: (DevAccountName | DevAccount)[]) {
+      await loginRequests.settled();
       roster = names.map(resolveAccount);
       const first = roster[0];
       if (!first) throw new Error("test host needs at least one account");
       await activate(first);
     },
     async signOut() {
+      await loginRequests.settled();
       if (!active) return;
       await runtime.disconnectSession();
       active = undefined;
+    },
+    setLoginBehavior(behavior: LoginRequestBehavior, account?: string) {
+      loginRequests.set(behavior, account);
     },
   });
 
@@ -403,7 +591,6 @@ export async function startTestHost(
     iframe: iframeHost.iframe,
     dispose() {
       unpublish();
-      detach?.();
       iframeHost.dispose();
       worker?.terminate();
       host.dispose();
@@ -411,9 +598,24 @@ export async function startTestHost(
   };
 }
 
+/** The core's pure product-account derivation helpers. */
+interface ProductAccountDerivation {
+  deriveProductAccountPublicKey(
+    productSubtreePublicKey: Uint8Array,
+    derivationIndex: Uint8Array,
+  ): Uint8Array;
+  productAccountAddress(publicKey: Uint8Array): string;
+  productStorageKey(productId: string, key: string): string;
+}
+
 /** The main-thread signing runtime: hands back a product core directly. */
 interface DirectSigningRuntime {
   setGrantAllowancesUnchecked?(granted: boolean): void;
+  productSubtreePublicKey(
+    productId: ProductId,
+    timeoutMs?: number,
+  ): Promise<Uint8Array | undefined>;
+  setWithheldResources?(tags: string[]): void;
   activateLocalSession(secret: Uint8Array): Promise<void>;
   activateLocalSessionWithIdentity?(
     secret: Uint8Array,
@@ -421,18 +623,26 @@ interface DirectSigningRuntime {
   ): Promise<void>;
   disconnectSession(): Promise<void>;
   productRuntime(
-    product: { productId: string },
+    product: { productId: ProductId },
     sink: { emitFrame(frame: Uint8Array): void },
   ): ProductCore;
 }
 
 /** The worker-backed signing runtime: hands back a wire provider. */
 interface WorkerSigningRuntime {
-  activateLocalSession(secret: Uint8Array, liteUsername?: string): Promise<void>;
+  activateLocalSession(
+    secret: Uint8Array,
+    liteUsername?: string,
+  ): Promise<void>;
   disconnectSession(): Promise<void>;
   setLogLevel?(level: string): void;
   setGrantAllowancesUnchecked?(granted: boolean): Promise<void>;
-  createProvider(product: { productId: string }): Promise<{
+  getProductSubtreePublicKey(
+    productId: ProductId,
+    timeoutMs?: number,
+  ): Promise<Uint8Array | undefined>;
+  setWithheldResources?(tags: string[]): Promise<void>;
+  createProvider(product: { productId: ProductId }): Promise<{
     postMessage(frame: Uint8Array): void;
     subscribe(listener: (frame: Uint8Array) => void): () => void;
     dispose(): void;

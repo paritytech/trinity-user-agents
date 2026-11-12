@@ -3,7 +3,7 @@
 - Status: as-built behavior reference
 - Binary: `truapi-host`
 - Implementation: `rust/crates/truapi-host-cli/`
-- Protocol implementation: `truapi` and `truapi-server`
+- Protocol implementation: `truapi`
 
 This document specifies the first complete version of the native headless
 TrUAPI host CLI. It was derived from the Rust and TypeScript implementation,
@@ -26,7 +26,7 @@ phone automation service, or external signing bot. It is intended for:
 - paired end-to-end tests; and
 - generation of CLI host compatibility reports.
 
-It embeds the real `truapi-server` dispatcher and host logic. Product scripts
+It embeds the real `truapi` dispatcher and host logic. Product scripts
 use the public `@parity/truapi` client and exchange the same SCALE protocol
 messages as a product connected to another host.
 
@@ -97,7 +97,7 @@ as the paired path.
 
 ### 2.3 Ownership boundaries
 
-`truapi-server` owns:
+`truapi` owns:
 
 - protocol dispatch and SCALE encoding;
 - product and role semantics;
@@ -114,7 +114,7 @@ as the paired path.
 `truapi-host-cli` owns:
 
 - argument and slash-command parsing;
-- the supported network presets (`paseo-next-v2`, `previewnet`);
+- the built-in networks (`paseo-next-v2`, `previewnet`, `pcf-devnet`) and `--stack`;
 - local signer selection and onboarding;
 - local persistence and account-store locking;
 - approvals and `--auto-accept`;
@@ -158,7 +158,7 @@ cargo build -p truapi-host-cli
 The published route is the installer script, which needs no Rust toolchain:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/paritytech/host-rust-core/main/scripts/truapi-host-installer.sh | bash
+curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 ```
 
 It resolves the current stable version from the `truapi-host-cli-stable`
@@ -229,7 +229,8 @@ The binary has `--help` and `--version`.
 ### 3.4 Self-update
 
 An install laid out by §3.2 keeps itself current. Every command except
-`update` spawns a background check that:
+`update` and `stack`, which runs inside builds and publish jobs, spawns a
+background check that:
 
 1. does nothing unless the running executable resolves inside
    `<root>/versions/`, so a `cargo install` copy or a source build is never
@@ -273,7 +274,7 @@ when it points inside the version store.
 ## 4. Top-level command line
 
 ```text
-truapi-host [--log-level <level>] [--debugger <url>] <command>
+truapi-host [--log-level <level>] [--debugger <url>] [--chain-backend <backend>] <command>
 ```
 
 Commands:
@@ -287,6 +288,9 @@ Commands:
 | `register-name` | Register a full-person username via `DotnsGateway.register_name`. |
 | `alloc-check` | Inspect or submit Statement Store allowance registration. |
 | `pgas-check` | Inspect or submit an Asset Hub PGAS allowance claim. |
+| `attest` | Attest a given mnemonic's identity, wait for its ring membership, and print it as JSON. |
+| `network-check` | Resolve the network and print its routing as JSON, without contacting a chain. |
+| `stack` | Create, publish, check and bundle Trinity stack descriptors (section 6.7). |
 
 ### 4.1 Global logging option
 
@@ -328,6 +332,31 @@ and the switch clap read it from, or `Wire debugger off`.
 Each accepted connection gets its own channel id, `<product-id>#<n>`, so
 concurrent peers under one host do not share a trace key.
 
+### 4.3 Global chain-backend option
+
+`--chain-backend <rpc|light-client>` selects how chains are reached, `rpc` by
+default (§14.3). `TRUAPI_CHAIN_BACKEND` supplies the same value; clap resolves an
+explicit flag over it. The option is global. With a stack it fails at
+startup, for every command; another combination the light client cannot serve
+fails when the command resolves its network, before it starts.
+
+### 4.4 Global stack option
+
+`--stack <descriptor URL | stack link | file>` runs a command against a Trinity
+stack instead of a built-in network (§14.1). `HOST_CLI_STACK` supplies the same
+value when the flag is absent, and a blank value is unset. The option is global.
+`stack` and `update` do not run against it, but still refuse it next to
+`--network` or `--chain-backend light-client`.
+
+### 4.5 Global network option
+
+`--network <paseo-next-v2|previewnet|pcf-devnet>` selects the built-in network
+every command that resolves one runs against, `paseo-next-v2` when neither it
+nor a stack is given (§14.1). Combined with `--stack` or a non-blank
+`HOST_CLI_STACK` it fails at startup, for every command, on whichever side of
+the subcommand each is given. The option is global, so it is accepted before or
+after the subcommand.
+
 ## 5. `pairing-host`
 
 ```text
@@ -340,7 +369,6 @@ truapi-host pairing-host [options]
 | `--product-id <id>` | `headless-playground.dot` | Initial product scope. |
 | `--frame-listen <socket>` | none | Opt into a TCP product WebSocket listener. When omitted, use a private per-process Unix socket. Port `0` selects an available TCP port. |
 | `--base-path <path>` | section 12.1 | Base directory; managed state lives under its `v2/` subdirectory. |
-| `--network <preset>` | `paseo-next-v2` | Select the complete endpoint/genesis preset (`paseo-next-v2`, `previewnet`). |
 | `--auto-accept` | off | Approve platform confirmations automatically. |
 
 Without `--script`, both stdin and stdout must be terminals. The command enters
@@ -375,11 +403,9 @@ truapi-host signing-host [options] [exec '<slash-command>']
 | `--deeplink <url>` | none | Answer a pairing deeplink after initialization. |
 | `--mnemonic <phrase>` | none | Use raw BIP-39 entropy as an ephemeral local signer. |
 | `--account <name>` | none | Use one named account from the default account store. |
-| `--session <name>` | remembered session | Restore or create a managed session. |
-| `--lite-username-prefix <prefix>` | session-derived | Prefix for newly generated Lite username bases. |
+| `--session <name>` | remembered session | Select an exact username or the newest local session for a username base; restore or provision at interactive startup. In `exec`, select the command's session. |
 | `--reserved-username <label>` | none | Full-person base name a newly created auto account reserves on dotNS alongside its lite username (§12.3). |
 | `--base-path <path>` | section 12.1 | Base directory; managed state lives under its `v2/` subdirectory. |
-| `--network <preset>` | `paseo-next-v2` | Select the complete endpoint/genesis preset (`paseo-next-v2`, `previewnet`). |
 | `--frame-listen <socket>` | none | Opt into a TCP product WebSocket listener. When omitted, use a private per-process Unix socket. Port `0` is allowed. |
 | `--auto-accept` | off | Approve platform confirmations automatically. |
 | `--serve` | off | Run without a terminal UI, restore every paired host saved for the selected managed session, and stay up until stopped. |
@@ -395,9 +421,9 @@ startup:
 - `--serve` with `--script` or `exec`;
 - `--mnemonic` with `--account`;
 - `--mnemonic` with `--session`;
-- `--mnemonic` with `--lite-username-prefix` or `--reserved-username`;
+- `--mnemonic` with `--reserved-username`;
 - `--account` with `--session`;
-- `--account` with `--lite-username-prefix` or `--reserved-username`; and
+- `--account` with `--reserved-username`; and
 - a `--reserved-username` that is not a full-person base label (lowercase ASCII
   letters only, 6 to 32 bytes).
 
@@ -417,12 +443,17 @@ terminals. The signing host:
 3. activates a cached signer without a network onboarding round trip;
 4. binds and reports the product-frame listener;
 5. restores a responder for every paired host saved in the selected managed
-   session;
-6. starts `--deeplink`, when supplied, as an additional `/pair` operation; and
+   session when its signer is ready;
+6. runs `--deeplink` as a `/pair` operation when supplied, otherwise restores or
+   provisions an explicitly named `--session`; and
 7. enters the command loop.
 
-Signer provisioning is otherwise lazy. Merely starting the UI, using `/help`,
-using `/product`, or inspecting sessions does not create a new account.
+The startup operation runs through the interactive operation loop, with progress,
+cancellation, and error reporting. Pairing prepares the selected signer itself;
+cancelling startup does not queue another attempt.
+
+Signer provisioning is otherwise lazy. Starting the UI without `--session`,
+using `/help`, using `/product`, or inspecting sessions does not create a new account.
 
 ### 6.3 One-shot `--script`
 
@@ -449,6 +480,11 @@ truapi-host signing-host [parent options] exec '<slash-command>'
 - exits after the command.
 
 Parent options must appear before `exec`.
+
+`--session` selects the command's context without provisioning by itself.
+Inspection, listing, help, and clearing stay local. `exec '/session <name>'`
+explicitly restores or provisions that signer, including an unfinished current
+session. An explicit `--deeplink` still performs its requested pairing operation.
 
 For example:
 
@@ -494,7 +530,6 @@ When no command follows `--`, it serves the host until stopped.
 | `--app-port <port>` | `3000` | Port of the development server. The default product id becomes `localhost:<port>`. |
 | `--port <port>` | `9955` | Loopback port for product frames and `/bootstrap.js`. A product tag using another port must change with it. |
 | `--product-id <id>` | `localhost:<app-port>` | Override the product scope. |
-| `--network <preset>` | `paseo-next-v2` | Select the complete network preset. |
 | `--session <name>` | remembered session | Restore or create a persistent signing-host session. |
 | `--mnemonic <phrase>` | none | Use a disposable testnet signer instead of the managed session. `HOST_CLI_SIGNER_MNEMONIC` supplies the same value. |
 | `--base-path <path>` | section 12.1 | Base directory; managed state lives under its `v2/` subdirectory. |
@@ -509,8 +544,9 @@ The script installs the shared browser container and publishes
 `window.__HOST_API_CLIENT__`. SDK calls and authorization requests use this
 stable client, sharing one WebSocket and one Rust execution. The container
 consumes `window.__truapi_localhost` during startup. HTTP and WebSocket share the
-same TCP port. After a disconnect, the SDK replaces the socket. Interrupted calls
-fail, subscriptions end, and neither is replayed. Older SDKs use the compatibility
+same TCP port. After a disconnect, the SDK replaces the socket. Calls and
+subscriptions already sent fail and are not replayed. Calls not yet sent go out
+on the replacement once its handshake completes. Older SDKs use the compatibility
 `window.__HOST_API_PORT__` MessagePort, which requires a page reload after a
 disconnect.
 Production builds must omit the tag.
@@ -529,6 +565,33 @@ authorization requests share one WebSocket and Rust execution. `/script` imports
 the same web API permission wrappers
 into Bun. Dev preserves the app server URL, native assets and hot reload; no
 app proxy is involved.
+
+### 6.7 Top-level `stack`
+
+```sh
+truapi-host stack <keygen|publish|verify|bundle|link> [options]
+```
+
+`stack` works with Trinity stack descriptors as the
+[descriptor RFC](../../../docs/rfcs/trinity-stack-descriptor.md) defines them.
+Every rule comes from the `trinity-stack` crate, so the CLI accepts and refuses
+the same descriptors as `@parity/trinity-stack` and the host core. Refusals
+print the rule's code, such as `refused (bad-signature): ...`.
+
+| Subcommand | Behavior |
+| --- | --- |
+| `keygen --out <file>` | Creates `<file>` readable by its owner only, refusing an existing file, writes a new 0x-prefixed secret key and prints its public key. |
+| `publish <model> --generation <g> --out <dir>` | Renders the model as a `$v: 1` descriptor, checks it, signs it with `--signing-key-file` when given, and writes `<dir>/.well-known/trinity-stack.json`. With `--url` it checks the URL first and prints the stack's link. |
+| `verify <stack> [--key <k>]` | Reads a link, URL or local file and prints a JSON report: `signed`, `envelope`, `stale`, `expired` and the `descriptor`. Exits non-zero when a rule is broken or the stack is past `expiresAt`; a stale copy only reports. |
+| `bundle <stack> --key <k> --out <file> [--skip-same-projection]` | Fetches and verifies a signed stack and writes the copy a host build ships. The existing `<file>` counts as the stored copy, so a lower `sequence` is refused as a rollback, and an expired copy is refused. A fetched copy whose `tld` differs from `<file>`'s is refused, since every derived account changes, and so is one whose `id` differs, since every session and account moves to another namespace, also when `<file>` was signed with another key; a `<file>` whose `tld` cannot be read is refused too. Remove `<file>` to bundle such a copy on purpose. With `--skip-same-projection`, a fetched copy that a `<file>` that verifies matches in every field the CLI reads (§14.1), `expiresAt` and `validUntil` leaves `<file>` untouched and reports it as current; a copy the CLI cannot run on is always written. `scripts/update-stacks.sh` passes it. |
+| `link <url> [--key <k>]` | Prints the `polkadotapp://stack` link that carries the pointer, and its QR code. |
+
+`publish` keeps `sequence` in the `--state` file: unchanged content keeps it,
+and new content raises it to the larger of the previous one plus one and the
+current time in seconds. The state file is written before the descriptor, and
+both writes are atomic. Keep it outside anything a wipe deletes.
+
+Fetches refuse redirects, time out after ten seconds and read at most 1 MiB.
 
 ## 7. Product identifiers and switching
 
@@ -689,12 +752,16 @@ scrollable transcript
 
 command completion list, when open
 › command input or idle placeholder
-TrUAPI <role> host · 👤 <state-or-name> · 🌐 <network> · 📦 <product> · log <value>
+TrUAPI <role> host · 👤 <state-or-name> · 🌐 <network> (<chain-backend>) · 📦 <product> · log <value>
 ```
 
+`<chain-backend>` is the `--chain-backend` value in use, `rpc` or `light-client`.
+
 The role label is omitted at narrow widths so user, network, and product remain
-visible. Values are ellipsized to fit, with the product consuming the remaining
-space after the user, network, and fixed log value. The session name is not shown
+visible. The user, network, and product are ellipsized to fit, with the product
+consuming the remaining space after the user, the network, and the chain backend
+and log value, which are not shortened. Below the width those need, only the log
+value is shown. The session name is not shown
 separately from the resolved user. Idle command guidance appears as a dim
 placeholder inside the empty prompt instead of consuming status-bar space.
 Operational hints temporarily use the right side of the status line while a
@@ -1074,7 +1141,7 @@ Before a signing host answers a link, it:
 
 1. ensures a signer;
 2. decodes the V2 handshake;
-3. derives its RFC-0022 `uid.<tld>` identity account;
+3. derives its RFC-0028 `peopl.<tld>` identity account;
 4. reads the pairing device Statement Store account from the proposal;
 5. finds the signer's rings through the pairing-attestation bootstrap `peopl.<tld>`
    keys, index 0 for `People` and index 1 for `LitePeople`, scanning back from
@@ -1096,21 +1163,38 @@ other statement accounts keep running.
 
 Interactive mode and `--serve` restore every saved peer for the selected
 session. Background responders treat transient failures and ended subscriptions
-as retryable, with exponential backoff capped at 30 seconds. A remote
+as retryable, with exponential backoff capped at 30 seconds. After a session
+that ran for more than 30 seconds, the backoff starts again at one second. When
+the People chain cannot be reached, a responder sends an acknowledgement, a
+pairing answer or a disconnect notice again for about 15 seconds before it
+fails. It sends a response again until the People chain takes it, because the
+request behind it has already run and is not run again. A responder whose
+session cannot be served at all, such as one without an active local session,
+reports why and stops instead of restarting. A remote
 `Disconnected` protocol message stops retrying and removes only that peer from
 `paired-hosts.json` and allowance renewal. Other peers remain saved and active.
 
 Each responder uses a durable, versioned replay ledger scoped by the root
 public key, peer statement account ID, and peer encryption public key. A
-request is recorded as started before its messages execute and as completed
-afterward. Either state suppresses execution of an unexpired duplicate while
-still publishing the statement-level success acknowledgement. A duplicate
+request is acknowledged, then recorded as started before its messages execute
+and as completed afterward. A request whose acknowledgement fails is not
+recorded, so it runs when it is delivered again. Either state suppresses
+execution of an unexpired duplicate while still publishing the statement-level
+success acknowledgement. When the People chain refuses an answer to a request
+that ran, the responder keeps the answer in memory and publishes it again, with
+a fresh expiry, when the request is delivered again. A peer's request channel
+holds only its newest statement, so only the newest such request per peer is
+kept, and kept answers do not survive a process restart. A duplicate
 `Disconnected` request still terminates and removes that peer. Expired entries
 are pruned. Missing or overly distant peer expiry is retained for at most the
 seven-day SSO statement lifetime. At 1,024 live entries the ledger rejects a new
-request before executing it instead of evicting an unexpired replay marker.
+request before acknowledging or executing it instead of evicting an unexpired
+replay marker.
 
-In `exec`, `/pair` waits for the responder to finish. With `--deeplink` plus
+In `exec`, `/pair` waits for the responder to finish. It restarts the responder
+after a failure, like a background responder, and finishes when the paired host
+disconnects. A session that cannot be served at all fails `/pair` with that
+reason. With `--deeplink` plus
 another `exec` command or a script, the responder runs only for that command's
 lifetime and is then stopped. One-shot `exec` and `--script` do not restore
 other saved responders.
@@ -1192,9 +1276,9 @@ auto-managed for slot rotation.
 
 A new auto account:
 
-1. acquires `accounts.json.lock`;
+1. acquires `accounts.json.lock` and validates its username base before onboarding;
 2. generates a 12-word mnemonic;
-3. derives the RFC-0022 `uid.<tld>` index-0 sr25519 identity account;
+3. derives the RFC-0028 `peopl.<tld>` index-0 sr25519 identity account;
 4. chooses `auto-<n>` as its local name;
 5. checks that the requested Lite username base has an available numerical
    alias;
@@ -1205,7 +1289,13 @@ A new auto account:
    unminted on the dotNS registrar (`DotnsRegistrar.ownerOf` reverts for its
    node under the network TLD): a reservation for a registered name could never
    be claimed and would hold that stem's reservation queue for the whole
-   reservation window;
+   reservation window. Each account signature follows the runtime of the
+   chain that checks it, read from that chain's metadata at this step: a
+   runtime that publishes a `SigningContext` constant on the verifying pallet
+   (`PeopleLite` on People for the candidate and consumer registration
+   signatures, `DotnsGateway` on Asset Hub for the reservation signature)
+   checks the signature over that context followed by the message. A runtime
+   without the constant checks the message alone;
 8. polls the dotNS contracts on Asset Hub for the final `name.discriminator`;
 9. waits for inclusion in a personhood ring; and
 10. marks and saves the account as attested.
@@ -1215,7 +1305,7 @@ attempts. Identity-backend HTTP clients use a 30-second timeout.
 
 The backend's username routes are bearer-gated. Unless
 `HOST_CLI_IDENTITY_BACKEND_TOKEN` supplies one, the CLI mints an access token
-for the mnemonic's RFC-0022 `uid.<tld>` account. It takes a challenge from
+for the mnemonic's RFC-0028 `peopl.<tld>` account. It takes a challenge from
 `auth/challenges`. It answers `auth/token` with an sr25519 proof over
 `SHA256(challenge || clientId || SHA256(body))`, signed by that identity key.
 The backend requires the JWT subject to equal `candidateAccountId` on
@@ -1227,10 +1317,17 @@ retried once. The CLI accepts both the legacy flat availability map and the
 dotSpark v1 envelope whose per-name value carries a `status` field.
 
 The default Lite username prefix is `headless`. For a non-default session, the
-prefix is its lowercase letters with digits and separators removed; a name
-with fewer than six letters becomes `session`. `--lite-username-prefix`
-overrides this and must contain at least six lowercase ASCII letters. The
-requested base is used unchanged because dotNS assigns its numerical alias.
+prefix is its lowercase ASCII letters with digits and separators removed. A new
+account requires at least six letters in that base. `/session foo` fails
+immediately with a too-short username-base error, before network onboarding.
+`--session` selects the base; there is no separate username-prefix option.
+This validation applies to account creation; existing saved accounts and
+aliases still restore by their original names.
+
+The backend assigns the numerical alias. An available base is used unchanged;
+the CLI does not append random suffixes or try alternative bases. It saves the
+base in the pending account before registration, so retries reuse it. Exhausted
+bases report an error. Invalid or unexpected availability responses are errors.
 
 ### 12.4 Cached startup
 
@@ -1275,11 +1372,20 @@ Managed session names must:
 At startup the initial session is:
 
 1. `ephemeral` for explicit mnemonic mode;
-2. explicit `--session`, resolved through the name each promoted session
-   records itself as created under, so a name promoted away still selects the
-   session it created;
+2. explicit `--session`, resolved by full username, username base, or a promoted
+   session's original name;
 3. `default` for explicit `--account`; or
 4. the network's remembered `current-session`.
+
+`--session workbench` and `/session workbench` select the most recently created
+local session whose username base is `workbench`. Creation order uses the stored
+account creation timestamp, not the numerical alias. `workbench.07` can be newer
+than `workbench.42`; `--session workbench.42` selects that exact session. A missing
+numbered username is an error and does not create another account. Base matches
+compare the complete username base, so `workbench` does not select
+`workbenchtest.42`. If the newest matches have equal creation timestamps, the
+caller must select an exact username. With no saved base or alias match, a base
+name supplies the base for a new account.
 
 A missing or stale `current-session` resolves against the provisioned sessions
 rather than falling back to `default`: exactly one session holding an account
@@ -1306,10 +1412,14 @@ an actionable transcript notice directing the user to `/session <name>`.
 `/session --list` includes the network directories ending in `_signing_host`.
 The active session is marked with `*`.
 
-`/session <name>` provisions the target before replacing the current runtime:
+`/session <name>` restores or provisions the target before replacing the current
+runtime. Selecting the current name only returns immediately when its signer is
+ready; an unfinished session retries setup. A saved account binding selects that
+exact account, including imported accounts without usernames. Ready local
+accounts are activated from disk without repeating network onboarding.
 
 1. validate and create its provisional profile;
-2. resolve or create its signer;
+2. restore its bound or cached signer, or provision it if needed;
 3. promote it to the resolved username directory;
 4. load its remembered script and storage;
 5. build and activate the replacement runtime;
@@ -1327,7 +1437,7 @@ may remain.
 `/session --mnemonic "<phrase>"` is an import-only flow:
 
 1. parse and normalize the BIP-39 phrase;
-2. derive the RFC-0022 `uid.<tld>` identity;
+2. derive the RFC-0028 `peopl.<tld>` identity;
 3. read its optional full or Lite dotNS username from Asset Hub;
 4. when no dotNS mirror exists, search the identity backend's assigned username
    records for the derived candidate account;
@@ -1543,7 +1653,7 @@ state, and other role-owned runtime data.
 - network id;
 - plaintext BIP-39 mnemonic;
 - final Lite username;
-- RFC-0022 `uid.<tld>` index-0 public key and address;
+- RFC-0028 `peopl.<tld>` index-0 public key and address;
 - creation timestamp;
 - attested state; and
 - exhausted Statement Store periods.
@@ -1577,48 +1687,152 @@ core, product, and current selection files.
 
 ## 14. Network and transport
 
-### 14.1 Network presets
+### 14.1 Networks and stacks
 
-`--network` selects one of two presets. `paseo-next-v2` is the default. Every
-preset is a test network; the account store keeps BIP-39 entropy for
-disposable test identities only.
+`--network` selects one of three test networks, each a built-in stack (below).
+`paseo-next-v2` is the default. Their identities are disposable, so the account
+store may keep their BIP-39 entropy. `pcf-devnet` is PCF's devnet on Paseo and
+uses Polkadot's `dot` TLD.
 
 Auto-account onboarding (§12.3) needs an identity backend that records the
-lite username on the dotNS gateway. Each preset points at its matching dotSpark
-identity backend, and the CLI reports the complete backend response when
-registration fails.
+lite username on the dotNS gateway. A stack names it as its `dub` service, and
+the CLI reports the complete backend response when registration fails.
 
-#### `paseo-next-v2`
+#### Stacks
 
-| Purpose | Value |
+Every network comes from a Trinity stack descriptor
+(`docs/rfcs/trinity-stack-descriptor.md`), which supplies:
+
+| Network field | Descriptor source |
 | --- | --- |
-| Identity backend | `https://identity.dotspark.app/api/v1` |
-| People RPC | `wss://paseo-people-next-system-rpc.polkadot.io` |
-| People genesis | `0x4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48` |
-| Bulletin RPC | `wss://paseo-bulletin-next-rpc.polkadot.io` |
-| Bulletin genesis | `0x8cfe6717dc4becfda2e13c488a1e2061ff2dfee96e7d031157f72d36716c0a22` |
-| Asset Hub RPC | `wss://paseo-asset-hub-next-rpc.polkadot.io` |
-| Asset Hub genesis | `0x4349b00e54897e21196fd331015fc5be0f14e118beb0375ed2bb1793737bb57a` |
+| People, Asset Hub, Bulletin RPC | `rpc[0]` of the chain with role `People`, `AssetHub`, `Bulletin` |
+| People, Asset Hub, Bulletin genesis | `genesisHash` of the same chain |
+| Identity backend | the `dub` service's first URL with `/api/v1` appended |
+| Reserved-identity suffix | `tld` |
+| `DotnsPopController` | `dotns.popController` |
 
-#### `previewnet`
+The fields the CLI reads are these, `id` (the product namespace), `generation`,
+and the full `rpc` list of People, Asset Hub and Bulletin; the full list is
+compared because the Polkadot comparison below contacts the reference's nodes.
+A published copy that changes none of them makes no notice print (below).
 
-The network that front-runs `paseo-next-v2`: it carries the runtime that reaches
-nextv2 later, and it is where products with previewnet descriptors do their
-on-chain testing.
+A descriptor that lacks one of the three roles, gives two of them the same
+genesis hash (the host routes each role by its genesis), has a `tld` the core
+does not serve (`dot`, `paseo`, `testnet`), has the id `polkadot`, or has no
+`dub` service or no `dotns.popController` is an error for every command. The
+CLI's own username reads (`register-name`, `identity-check`, `attest`) go
+through that controller without looking it up on chain; the signing host's
+core still discovers its controller on chain.
 
-| Purpose | Value |
+The binary also ships real Polkadot's signed descriptor, from PCF's pointer, as
+`stacks/polkadot.json` with its link in `stacks/polkadot.link`. It is not a
+network `--network` selects: it lists Polkadot's chains, among them these, and
+the RPC nodes that tell a fork of Polkadot from Polkadot itself:
+
+| Polkadot chain | Genesis |
 | --- | --- |
-| Identity backend | `https://identity-previewnet.dotspark.app/api/v1` |
-| People RPC | `wss://previewnet.substrate.dev/people` |
-| People genesis | `0xf720c28fe3315e67fa799a616fc59abad47dd257b1a336af6538435844d35218` |
-| Bulletin RPC | `wss://previewnet.substrate.dev/bulletin` |
-| Bulletin genesis | `0xea9158d768971553e315b76323cbffda238b6b865f3d3d5e138350b12312173d` |
-| Asset Hub RPC | `wss://previewnet.substrate.dev/asset-hub` |
-| Asset Hub genesis | `0xc27c8bf3f13f96dc2130cd2b0a3debe57618fd02521ecc1902bd7dd4ed83d2fe` |
+| People genesis | `0x67fa177a097bfa18f77ea95ab56e9bcdfeb0e5b8a40e46298bb93e16b6fc5008` |
+| Asset Hub genesis | `0x68d56f15f85d3136970ec16946040bc1752654e906147f7e43e9d539d7c3de2f` |
+| Bulletin genesis | `0x2761c95259d59e55ae3daf756c1413b46e45a5a2987299f8ef8e5d8e4776cbc4` |
 
-Sessions are per network (`SessionCatalog::new` keys on the preset id), so a
-signer provisioned on one preset is not visible from the other. Two presets means
-two identities on one machine, which is deliberate: the lite username and the
+Only the shipped copy is read, without a fetch; `scripts/update-stacks.sh`
+refreshes it with the built-ins. A fork of Polkadot keeps Polkadot's genesis
+hashes and may use the `dot` TLD, and runs like any other network. Before a
+command runs, every endpoint the network routes whose genesis is one of the
+shipped copy's, from a built-in or a `--stack`, is compared with real Polkadot,
+in parallel with the other
+checks. Every RPC node the Polkadot descriptor lists for the same chain is
+contacted at once, and the first to answer is used. The endpoint and that node
+each report their finalized block number; at the lower of the two, both report
+their block hash. Equal hashes are an error that names the endpoint: it is
+Polkadot itself, or a fork that has not finalized past its fork point. The
+endpoint, or every Polkadot node, not answering within 3 seconds at a step is an
+error that names that side and node, since the endpoint is then not shown to be
+a fork. A fork made less than Polkadot's finality lag ago therefore cannot run
+until Polkadot finalizes past the fork. An endpoint with no Polkadot genesis is
+not compared. `network-check`, which contacts no chain, does not compare.
+
+A stack with the id `polkadot` cannot run, since that namespace may contain
+sessions of real Polkadot identities.
+
+`paseo-next-v2`, `previewnet` and `pcf-devnet` are built-in stacks. The binary
+ships a signed copy of each from the repository's `stacks/<name>.json`, with the link that carries
+its pointer in `stacks/<name>.link`. A command that resolves a built-in fetches
+the published descriptor (3-second timeout) and runs the RFC's `accept` with the
+shipped copy as the stored one, then uses what it returns. A published descriptor
+that answers with a non-2xx HTTP status is logged as a warning with the status
+and URL; a timeout or a failed connection is not. A published descriptor that
+changes a field the CLI reads is used and reported in one line on
+stderr with both sequences, saying it is in use and that a later release ships
+it; the line says the stack restarted from genesis when its `generation`
+changed. A newer copy that changes none of them is used without a line. A
+published copy that changes the `tld` or the `id`, or that the CLI cannot run on
+(for instance one without a `dub` service), is not used: the shipped copy stays
+in use with a warning that names the published URL, since every account derives
+under the TLD and is stored under the namespace. A refused, rolled-back or
+conflicting published copy leaves the shipped copy in use with a warning; an
+unreachable one does so without a message. A result past `expiresAt` is an
+error, and one past `validUntil` is used with a warning. `--chain-backend
+light-client` on a built-in whose descriptor in use has genesis hashes other than
+this build's light-client chain specs fails at start, since the stack restarted
+after the specs were bundled; on `pcf-devnet`, for which `truapi-provider` bundles
+no chain specs, it fails at start too. `scripts/update-stacks.sh` refreshes the
+shipped copies, and the weekly chain-spec workflow carries the refresh in one PR
+with its changeset. `truapi-host stack bundle` refuses a copy that changes the
+`tld` of the copy at `--out`, and a built-in network's copy the CLI cannot run
+on.
+
+Before a command runs, every endpoint of a stack-derived network (a built-in or a
+`--stack`) reached over RPC is asked for its genesis in parallel, and People, on
+the same connection once its genesis matches, for its `NetworkSuffix`. An
+endpoint that reports another genesis is an error; for a built-in it reports that
+the stack restarted from genesis and which descriptor is in use: the published
+one and its URL, or the bundled one because the published copy at its URL could
+not be fetched or was rejected (refused, a rollback, a conflict, a TLD or id
+change, or a copy the CLI cannot run on).
+When the bundled copy is in use because the published one could not be fetched,
+a failed check first fetches the published descriptor again (10-second timeout);
+the checks repeat only when that fetch puts the published copy in use, and
+otherwise the first error stands. A `NetworkSuffix` other than the `tld` is an error
+that prints both. An endpoint that does not answer within 3 seconds, or a People
+chain without the storage item, is logged and left to fail on first use.
+`--chain-backend light-client` is not checked.
+
+`--stack` (§4.4) replaces the network with another stack. A link on any scheme or
+domain is read for its `url` and `key`; a URL is read as a pointer without a
+key; any other value is read as a local descriptor file, signed or not, with no
+key checked. A fetched stack is read with no stored copy. An unreachable stack, a
+descriptor that breaks a rule and one past `expiresAt` are errors that name the
+stack; one past `validUntil` is used with a warning. Its endpoints and People's
+`NetworkSuffix` are checked as above. `--chain-backend light-client` is
+refused with `--stack`, since the light client syncs only the networks
+`truapi-provider` bundles. `get_chain_info` reports the descriptor's
+`network`. The product namespace (the state directory) is the descriptor's `id`
+without a trailing `-fork`, which must be a lowercase label; the `polkadot-fork`
+namespace is its full `id`, so it does not share the `polkadot` namespace.
+
+#### `network-check`
+
+A stack is the only source of a network's routing: a fork or a local network
+runs as a `--stack`, for instance a local descriptor file whose `rpc` and `dub`
+URLs are `ws://` and `http://` on loopback. An error about a stack names where
+it came from, `--stack` or `HOST_CLI_STACK`.
+
+`network-check` resolves the network as any command does, fetching only the
+descriptor, and prints as JSON `schema_version`, `network` (the product
+namespace), `namespace` (the network's TLD), `identity_backend_base`, and `ws`
+and `genesis` for `people`, `asset_hub` and `bulletin`.
+
+#### `pcf-devnet`
+
+PCF's devnet: Paseo's relay and Asset Hub with PCF's own People and Bulletin
+chains, from the descriptor PCF signs (`stacks/pcf-devnet.link`). Reserved
+identities derive under `.dot`. The identity backend is the descriptor's `dub`
+service.
+
+Sessions are per network (`SessionCatalog::new` keys on the network id), so a
+signer provisioned on one network is not visible from another. Each network means
+its own identity on one machine, which is deliberate: the lite username and the
 statement-store allowance are per chain.
 
 The backend's username routes are bearer-gated; the CLI mints the access token
@@ -1626,22 +1840,18 @@ itself through the backend's `auth/challenges` → `auth/token` handshake
 (§12.3), or takes one from `HOST_CLI_IDENTITY_BACKEND_TOKEN`, so auto-managed
 account creation works here.
 
-There are no public endpoint override flags. `HOST_CLI_IDENTITY_BACKEND_BASE`
-replaces only the identity backend base URL (§21).
+There are no endpoint override flags or variables besides `--stack` and
+`HOST_CLI_STACK` (§21).
 
-Every role the preset serves — People, Bulletin and Asset Hub — is always routed,
+Every role the network serves (People, Bulletin and Asset Hub) is always routed,
 because host internals require all three: statement-store traffic addressed to the
 People genesis, preimage submission, and PGAS claims plus dotNS username reads
 respectively. The SSO sentinel is
-a separate case — it is an unmapped genesis and reaches People through the fallback
-below, not through People's own route. `E2E_LIVE_CHAIN=1` only widens routing to endpoints the
-preset carries without serving them as a role, of which neither preset has any.
+a separate case (an unmapped genesis) and reaches People through the fallback
+below, not through People's own route.
 
 The all-zero SSO sentinel and every genesis hash not present in the active
-route map fall back to the People RPC.
-
-A rustls ring crypto provider is installed at process startup for `wss://`
-connections.
+route map fall back to People, on either chain backend (§14.3).
 
 ### 14.2 Product-frame WebSocket
 
@@ -1688,14 +1898,56 @@ the shared service-trait contract requires dispatch futures to be `Send`.
 
 ### 14.3 Chain JSON-RPC
 
-Every chain connection opens a fresh WebSocket. Outgoing requests use an
-unbounded channel. Incoming text frames and UTF-8 binary frames enter a
-1,024-message broadcast buffer.
+Every chain connection the CLI makes goes through `CliChainProvider`
+(`src/chain.rs`) over `truapi-provider`, on the backend `--chain-backend` selects
+(§4.3). Routing (§14.1) is the same on both. Neither backend resolves a genesis
+from the bundled catalog, so the light client runs only the chains of the
+selected network. The genesis check of a stack's endpoint (§14.1) uses a
+provider for that endpoint alone, over RPC. A request from one of the CLI's own
+commands, or the setup of a subscription, fails once its connection has
+delivered nothing for 30 seconds while it waits.
 
-The first response receiver is created before the reader task, preventing a
-fast initial RPC response from being lost. A lagged subscriber drops missed
-responses and emits a warning. `close()` prevents further sends; background
-socket tasks end when their channels or sockets close.
+With `rpc`, each routed chain is registered as its endpoint's RPC node, and every
+connect opens a fresh WebSocket. [`ws.rs`](../truapi-provider/src/ws.rs) sets
+the limits and timeouts. The connection sends a ping after the keepalive
+interval without an outgoing request, and is treated as dead if no byte arrives
+within the read timeout. The 30-second limit above also counts a byte of a
+message that is still arriving, so a large message, such as a Bulletin block
+body on a slow link, keeps both the connection and the request waiting on it
+alive. Keepalive pings and pongs do not count toward that limit. The response
+stream ends when the socket closes or
+dies, a send fails, the queue fills, a message exceeds the size limit, or
+`close()` is called. The core's chain runtime then opens a new connection on its
+next call for that chain.
+
+With `light-client`, the embedded smoldot light client syncs the chains from the
+specs `truapi-provider` bundles, which cover `paseo-next-v2` and `previewnet`. It
+cannot be combined with `--stack`, nor with a built-in stack that restarted after
+those specs were bundled (§14.1). One light client per network serves the process
+and keeps each chain running after its last connection closes, so a chain syncs
+once per process.
+
+CLI commands wait for the chain to sync before their first request, since
+smoldot sends nothing until then and the 30-second limit above would fail it.
+The wait fails if the chain or its relay stalls.
+
+The light client drops PGAS claims on Asset Hub. Before broadcasting, smoldot
+validates the claim, which checks that the PGAS asset exists. Asset Hub's nodes
+prove that with the asset's trie entry, which holds only the hash of its value,
+but smoldot reads the whole value for the check and refuses the proof.
+`pgas-check --submit` refuses to run on the light client.
+
+A statement submitted through the light client is accepted once a gossip peer
+receives it. smoldot checks only that it decodes, has not expired, fits the size
+limit and carries a proof. The allowance, the account's statement quota and the
+proof itself need the statement store and chain state, which a light client does
+not have, and the gossip protocol carries no answer from the peer. So a
+statement a full node would refuse, such as one rejected as `accountFull`, can
+still report success.
+
+`wss://` certificates are verified with the root certificates built into the
+binary, on both backends, not with certificate authorities added to the
+operating system.
 
 ## 15. TrUAPI capability surface
 
@@ -1784,11 +2036,10 @@ Deliberately unavailable methods:
 - all nine Coin Payment methods, which answer `CallError::Unsupported`; and
 - all four Payment methods, which answer typed `Unknown` domain errors.
 
-A successful `System/feature_supported` call resolves the queried chain against
-the host's chain set, the same set `Chain/get_chain_info` answers from, so it
-returns `true` for the preset's People, Bulletin and Asset Hub genesis hashes and
-`false` for anything else. Success means the method is wired, not that every feature
-is present.
+A successful `System/feature_supported` call returns `true` for the People,
+Bulletin and Asset Hub genesis hashes of the host's stack, the chains
+`Chain/get_chain_info` answers for, and `false` for anything else. Success means
+the method is wired, not that every feature is present.
 
 ### 15.2 Platform-specific semantics
 
@@ -1800,9 +2051,12 @@ treated as Unix milliseconds and delivered by a Tokio timer. At most 64
 notifications may be pending. Cancelling an unknown/already-delivered id is a
 successful no-op.
 
-The platform-level preimage lookup map is in memory. The core also owns the
-real Bulletin client and a separate 16 MiB insertion-ordered preimage bridge
-for read-after-write behavior.
+A preimage lookup the core cannot answer from its own cache goes to the
+network's Bulletin node, by CID over `bitswap_v1_get`. A miss is asked again
+every 6 s until the blob lands; a request the node can never answer ends the
+lookup with an error. The core also owns the real Bulletin client and a
+separate 16 MiB insertion-ordered preimage bridge for read-after-write
+behavior.
 
 Statement Store keeps up to 64 accepted statements in an insertion-ordered
 read-after-write bridge until the remote subscription reports them.
@@ -1892,7 +2146,8 @@ Transcript copies and submitted-command dividers redact it.
 
 Mnemonics are never intentionally printed, but auto-managed mnemonics are
 stored in plaintext `accounts.json`. That file is local test secret material,
-not production custody.
+not production custody: every built-in network is a test network (§14.1), and
+a `--stack` is assumed to be one.
 
 `debug` and especially `trace` can include decoded product payloads and
 transport metadata. Do not publish trace logs from sensitive test accounts
@@ -1973,14 +2228,12 @@ Without `RUST_LOG`, the selected CLI level applies to:
 
 - `truapi`
 - `truapi_host`
-- `truapi_platform`
-- `truapi_server`
 
 Other targets remain at `warn`.
 
 The following noisy targets are always hidden from the ordinary CLI log layer:
 
-- `truapi_server::sso_transcript` (handled by its dedicated layer);
+- `truapi::sso_transcript` (handled by its dedicated layer);
 - `rustls` and its children; and
 - `tungstenite::protocol` and its children.
 
@@ -1999,8 +2252,9 @@ truapi-host identity-check \
 The command derives and queries two accounts:
 
 - root; and
-- RFC-0022 `//product//uid.<tld>/index_bytes(0)`, `<tld>` being the selected
-  network's dotNS TLD (`paseo` for `paseo-next-v2`, `testnet` for `previewnet`).
+- RFC-0028 `//product//peopl.<tld>/index_bytes(0)`, `<tld>` being the selected
+  network's dotNS TLD (`paseo` for `paseo-next-v2`, `testnet` for `previewnet`,
+  `dot` for `pcf-devnet`).
 
 For each it prints one of:
 
@@ -2024,7 +2278,7 @@ truapi-host register-name \
 ```
 
 Registers `label` as the full-person username of the mnemonic's RFC-0022
-`uid.<tld>` identity account, through `DotnsGateway.register_name` on Asset Hub.
+`peopl.<tld>` identity account, through `DotnsGateway.register_name` on Asset Hub.
 The account must be a recognized full person: its ring-VRF key must be built
 into a People-collection ring root on People, and Asset Hub's
 `members-subscriber` must already hold that root revision (the command waits for
@@ -2050,11 +2304,35 @@ REGISTER_CONFIRMED label=<label> full_username=<name>
 
 `REGISTER_ALIAS` is printed once `DotnsGateway.AccountAlias` records the
 account, `REGISTER_CONFIRMED` once the dotNS contracts return the name (or
-`<pending>`). Before signing: the label must be unminted on `DotnsRegistrar` (a
-pending reservation is not a mint and stays claimable); the account must not
-already hold a `DotnsGateway.AccountAlias`; a linked lite username must be
-owned by the account per `DotnsGateway.LiteLabelOwner`; and runtimes whose
+`<pending>`). Before signing: the label must be unminted on `DotnsRegistrar`;
+another account must not hold the first active reservation in the label's
+reservation queue on `DotnsPopController`; the account must not already hold a
+`DotnsGateway.AccountAlias`; a linked lite username must be owned by the
+account per `DotnsGateway.LiteLabelOwner`; and runtimes whose
 `RegisterFullName` shape differs are rejected.
+
+A gateway claim clears at most `MAX_QUEUE_STEPS_PER_CALL` expired or emptied
+reservations from the front of the queue, and a reverted claim keeps none of
+that clearing. The command reads the queue again after the ring revision wait,
+right before the claim. When more of them stand in front of the claim then
+(dotNS 1.1.0 and later), it first clears the queue with
+`DotnsPopController.expireReservation(label)`, sent as a `Revive.call` signed by
+the account, with the weight and storage deposit limits of a dry-run from it.
+The fee and the storage deposit are paid in PGAS. When the account holds less
+than one claim's worth of PGAS (`Pgas.PgasClaimAmount`), or the dry-run fails
+because the account cannot fund the deposit, the command claims PGAS into the
+account with the same People ring membership (`Pgas.claim_pgas`, one daily
+slot) and dry-runs again. Any other dry-run failure stops the command. After
+the call is finalized, it reads the queue again and stops if the claim would
+still revert. Clearing prints, before `REGISTER_SUBMITTED`:
+
+```text
+REGISTER_QUEUE_BLOCKED label=<label> dead=<count>
+REGISTER_PGAS_CLAIMED block=<hash>
+REGISTER_QUEUE_CLEARED label=<label>
+```
+
+`REGISTER_PGAS_CLAIMED` appears only when a claim was needed.
 
 ### 19.3 `alloc-check`
 
@@ -2128,6 +2406,7 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | --- | --- |
 | `TRUAPI_HOST_LOG` | Per-process `--log-level` override. |
 | `TRUAPI_DEBUGGER_URL` | Default `--debugger` dial. |
+| `TRUAPI_CHAIN_BACKEND` | Default `--chain-backend`: `rpc` or `light-client` (§14.3). |
 | `RUST_LOG` | Full startup tracing filter. |
 | `TRUAPI_HOST_BASE_PATH` | Default `--base-path`. |
 | `TRUAPI_HOST_NO_UPDATE` | Any value disables the self-update check. |
@@ -2135,28 +2414,27 @@ ended. This preserves the child status but bypasses later Rust destructors.
 | `TRUAPI_HOST_BIN_DIR` | Directory the installer puts the `PATH` symlink in. |
 | `TRUAPI_HOST_VERSION` | Version the installer installs, instead of the current stable one. |
 | `TRUAPI_HOST_RELEASE_BASE_URL` | Release host for the installer and the updater, for mirrors and tests. |
-| `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check` and `pgas-check` when `--mnemonic` is omitted. |
-| `HOST_CLI_IDENTITY_BACKEND_BASE` | Identity backend base URL override, including `/api/v1`, for instance a local backend. Chain endpoints stay on the preset. |
-| `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `uid.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
-| `HOST_CLI_DOTNS_POP_CONTROLLER` | `DotnsPopController` H160 override, skipping on-chain discovery (`DotnsGateway.DispatcherAddress`, used directly when `protocolRegistry()` answers on it, otherwise resolved through `TARGET()`). Only needed where discovery fails. The controller is `0xCC932348606cc1f3318cADeC5A5Cd2CA447f8a4b` on paseo-next-v2 and previewnet; `DEPLOYMENTS.md` in paritytech/dotns is the authority per network. |
+| `HOST_CLI_SIGNER_MNEMONIC` | Mnemonic for `dev`, `signing-host`, `identity-check`, `register-name`, `alloc-check`, `pgas-check` and `attest` when `--mnemonic` is omitted. |
+| `HOST_CLI_STACK` | Default `--stack`: a descriptor URL, a stack link or a local descriptor file (§14.1). Blank is unset; combined with `--network`, it is an error. |
+| `HOST_CLI_IDENTITY_BACKEND_TOKEN` | Bearer token for the identity backend's username routes. For registration its subject must be the candidate `peopl.<tld>` account. Unset, the CLI mints one itself through the backend's `auth/challenges` → `auth/token` sr25519 handshake with that identity key. |
 | `XDG_STATE_HOME` | Preferred default state parent. |
 | `HOME` | Fallback default state parent. |
 | `VISUAL` | Preferred script editor. |
 | `EDITOR` | Fallback script editor. |
 | `TRUAPI_HOST_RUNNER` | Override `js/runner.ts`. |
-| `E2E_LIVE_CHAIN` | Value `1` widens routing to endpoints the preset does not serve as a role; no effect on either preset. |
 | `NO_COLOR` | Disable CLI semantic colors and battery reporter color. |
 | `COLORFGBG` | Infer TUI background color. |
 | `COLORTERM` | Select true-color TUI rendering. |
 | `FORCE_COLOR` | Force battery reporter color in non-TTY output. |
 | `TRUAPI_BATTERY_REPORT_PATH` | Override battery report destination. |
 | `TRUAPI_APPROVALS_LOG` | Append one line per decided confirmation to this file. |
+| `TRUAPI_NAVIGATIONS_LOG` | Append one JSON line `{"url","at"}` (`at` in Unix milliseconds) per `navigate_to` destination the host accepted. Unset, nothing is written; set, a transcript that cannot be written fails that `navigate_to` call. The terminal UI shows each accepted destination either way. |
 
 ## 22. Current v0.1 operational constraints
 
 These are part of the as-built specification:
 
-- only the `paseo-next-v2` and `previewnet` test presets are selectable; there is no mainnet preset;
+- `--network` selects only `paseo-next-v2`, `previewnet` and `pcf-devnet`; any other network runs through `--stack`;
 - product scripts require Bun; installed releases include a self-contained runner;
 - there is no structured/JSON output mode;
 - there is no `--version`;
@@ -2167,7 +2445,7 @@ These are part of the as-built specification:
 - corrupt core storage is treated as empty after a warning;
 - non-loopback product listeners can bind but reject every TCP frame peer;
 - product text WebSocket frames are accepted as protocol bytes;
-- product-frame and chain outbound queues are unbounded;
+- product-frame outbound queues are unbounded;
 - unknown chain genesis hashes fall back to People;
 - interactive child ANSI styling is stripped rather than parsed; and
 - pairing and signing state are local plaintext test state.
@@ -2180,7 +2458,7 @@ The implementation is covered by:
   products, sessions, approvals, and platform behavior;
 - process-boundary tests for help, non-TTY rejection, product reporting,
   session restore, cached signer activation, and bare-script safety;
-- `truapi-server` runtime, protocol, cryptographic vector, and integration
+- `truapi` runtime, protocol, cryptographic vector, and integration
   tests;
 - shared container, script-runner/Bun diagnosis and packaged-runtime tests;
 - paired and direct `battery.ts` runs, both driven by `scripts/battery.sh`; and
@@ -2205,7 +2483,7 @@ refreshes on the next `make e2e-pairing-cli` run from such a signer.
 Recommended local verification after CLI changes:
 
 ```sh
-cargo +nightly fmt --check
+cargo +$(cat nightly-toolchain) fmt --check
 cargo clippy -p truapi-host-cli --all-targets -- -D warnings
 cargo test -p truapi-host-cli
 cargo test -p truapi-host-cli --bin truapi-host caller_configuration_cannot_execute_before_the_sandbox -- --include-ignored

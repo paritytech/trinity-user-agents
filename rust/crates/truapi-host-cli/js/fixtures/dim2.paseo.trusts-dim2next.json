@@ -1,0 +1,9 @@
+{
+  "productName": "dim2.paseo",
+  "displayName": "Jollity",
+  "description": "Stands in for the game product in the cross-product statement proof e2e, granting its next build its account.",
+  "icon": "./icon.png",
+  "trustedProducts": {
+    "dim2next": ["context"]
+  }
+}

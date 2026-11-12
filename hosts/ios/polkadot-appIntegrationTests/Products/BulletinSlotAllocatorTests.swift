@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 @testable import polkadot_app
 import XCTest
 import Keystore_iOS
@@ -32,8 +33,14 @@ final class BulletinSlotAllocatorTests: XCTestCase {
             operationManager: OperationManager(operationQueue: operationQueue)
         )
 
-        let liteVrfManager = BandersnatchKeyManager.litePerson(for: "dot", entropyManager: setupResult.entropyManager)
-        let fullVrfManager = BandersnatchKeyManager.fullPerson(for: "dot", entropyManager: setupResult.entropyManager)
+        let liteVrfManager = try BandersnatchKeyManager.litePerson(
+            for: "dot",
+            entropyManager: setupResult.entropyManager
+        )
+        let fullVrfManager = try BandersnatchKeyManager.fullPerson(
+            for: "dot",
+            entropyManager: setupResult.entropyManager
+        )
 
         let keyResolver = BandersnatchKeyResolver(
             liteKeyManager: liteVrfManager,
@@ -44,7 +51,11 @@ final class BulletinSlotAllocatorTests: XCTestCase {
             wallet: setupResult.wallet,
             keyResolver: keyResolver,
             chainRegistry: chainRegistry,
-            storageRequestFactory: storageRequestFactory
+            networkSuffixProvider: ChainNetworkSuffixProvider(
+                chainId: AppConfig.Chains.peopleChain,
+                chainRegistry: chainRegistry,
+                storageRequestFactory: storageRequestFactory
+            )
         )
 
         let facade = ExtrinsicSubmissionMonitorFacade(
@@ -64,10 +75,10 @@ final class BulletinSlotAllocatorTests: XCTestCase {
         )
 
         let allocator: AllowanceSlotAllocating = BulletinSlotAllocator(
-            submissionChainId: AppConfig.Chains.usernameChain,
+            submissionChainId: AppConfig.Chains.peopleChain,
             slotInfoProvider: BulletInSlotInfoProvider(
                 bulletInChainId: AppConfig.Chains.bulletInChain,
-                peopleChainId: AppConfig.Chains.usernameChain,
+                peopleChainId: AppConfig.Chains.peopleChain,
                 chainRegistry: chainRegistry,
                 keyResolver: keyResolver,
                 operationQueue: operationQueue,
@@ -78,6 +89,11 @@ final class BulletinSlotAllocatorTests: XCTestCase {
                         operationQueue: operationQueue
                     ),
                     ttl: 0
+                ),
+                networkSuffixProvider: ChainNetworkSuffixProvider(
+                    chainId: AppConfig.Chains.peopleChain,
+                    chainRegistry: chainRegistry,
+                    storageRequestFactory: storageRequestFactory
                 )
             ),
             originFactory: originFactory,
@@ -85,7 +101,10 @@ final class BulletinSlotAllocatorTests: XCTestCase {
         )
 
         let holder = ProductAccountHolder(entropyManager: setupResult.entropyManager)
-        let accountId = try holder.deriveAccount(ProductAccountId(productId: "browse.dot", derivationIndex: .index(0)))
+        let accountId = try holder.deriveAccount(ProductAccountId(
+            productId: try! ProductId("browse.dot"),
+            derivationIndex: .index(0)
+        ))
 
         try await allocator.assignSlot(accountId: accountId, priority: .normal)
     }

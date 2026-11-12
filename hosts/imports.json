@@ -1,12 +1,12 @@
 {
   "android": {
-    "branch": "truapi-dev",
-    "ref": "4f92ff6c1a8a7364a6bdf4923e77b2460fae6136",
+    "branch": "main",
+    "ref": "56b16cc0e60bd4d4f4814ec9aee17d455e7c0963",
     "source": "https://github.com/paritytech/polkadot-android-community.git"
   },
   "ios": {
     "branch": "develop",
-    "ref": "01fb8c7fe4b637d11322c33eda9f5acf2f5d4f22",
+    "ref": "6497046c7b7c7d2ff27774b417d99a83926110a5",
     "source": "https://github.com/paritytech/polkadot-ios-community.git"
   }
 }

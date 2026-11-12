@@ -4,6 +4,33 @@ import Testing
 import UIKit
 
 struct TrUAPIWsBridgeTests {
+    /// The core raises a start marker as a runtime comes up, so a host log opens
+    /// with proof that the channel carrying every later marker reaches Swift at
+    /// all. It is raised below the core's console floor on purpose, so this also
+    /// covers a host log that does not depend on the trace level.
+    ///
+    /// The core's sink is process-wide and tests here run in parallel, so a
+    /// sibling building its own runtime can take it in the window before the
+    /// marker is raised. A miss is retried; a sink that does not route misses
+    /// every attempt.
+    @Test(.timeLimit(.minutes(1)))
+    func testStartingARuntimeReportsTheCoreLogChannel() throws {
+        var lastSeen: [String] = []
+        for _ in 0 ..< 8 {
+            let bridge = StubHostBridge()
+            let runtime = try TrUAPIHostRuntime(
+                bridge: bridge,
+                runtimeConfig: Self.makeHostRuntimeConfig()
+            )
+            let seen = withExtendedLifetime(runtime) { bridge.coreLogs }
+            if seen.contains(where: { $0.hasPrefix("truapi.core.started") }) {
+                return
+            }
+            lastSeen = seen
+        }
+        Issue.record("the core's start marker did not reach the host: \(lastSeen)")
+    }
+
     @Test(.timeLimit(.minutes(1)))
     func testFeatureSupportedRoundTripOverWsBridge() async throws {
         let bridge = StubHostBridge()
@@ -14,7 +41,7 @@ struct TrUAPIWsBridgeTests {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
-                productId: "test.dot",
+                productId: ProductId("test.dot"),
                 executionKind: .app
             )
         )
@@ -51,7 +78,7 @@ struct TrUAPIWsBridgeTests {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
-                productId: "test.dot",
+                productId: ProductId("test.dot"),
                 executionKind: .app
             )
         )
@@ -71,7 +98,7 @@ struct TrUAPIWsBridgeTests {
             Issue.record("expected binary frame, got \(message)")
             return
         }
-        #expect(response.suffix(Self.hostInfoResponseTail.count) == Self.hostInfoResponseTail)
+        #expect(response.prefix(Self.hostInfoResponsePrefix.count) == Self.hostInfoResponsePrefix)
     }
 
     /// iOS reclaims a suspended app's listening socket while products keep
@@ -89,7 +116,7 @@ struct TrUAPIWsBridgeTests {
         let execution = try runtime.openProductExecution(
             bridge: bridge,
             configuration: ProductExecutionConfig(
-                productId: "test.dot",
+                productId: ProductId("test.dot"),
                 executionKind: .app
             )
         )
@@ -123,15 +150,11 @@ struct TrUAPIWsBridgeTests {
 }
 
 private extension TrUAPIWsBridgeTests {
-    static func makeHostRuntimeConfig() -> HostRuntimeConfig {
-        HostRuntimeConfig(
+    static func makeHostRuntimeConfig() throws -> HostRuntimeConfig {
+        try HostRuntimeConfig(
             hostName: "truapi-host-tests",
-            peopleChainGenesisHash: Data(repeating: 0, count: 32),
-            bulletinChainGenesisHash: Data(repeating: 0, count: 32),
-            // Non-zero: all-zero is the "no Asset Hub" sentinel, and this
-            // fixture is not exercising that case.
-            assetHubChainGenesisHash: Data(repeating: 1, count: 32),
-            networkSuffix: "paseo"
+            stack: previewnetStack(),
+            databaseDirectory: temporaryDatabaseDirectory()
         )
     }
 
@@ -153,14 +176,15 @@ private extension TrUAPIWsBridgeTests {
         return frame
     }
 
-    // Response tail: message_type=Response(0x01), then the payload,
-    // Result::Ok(0x00), V1(0x00), then HostInfo as platform(Ios = 0x02),
-    // name, version (empty, hostVersion is unset).
-    static var hostInfoResponseTail: Data {
-        var tail = Data([0x01, 0x00, 0x00, 0x02, 0x44]) // 0x44 is compact length 17
-        tail.append("truapi-host-tests".data(using: .utf8)!)
-        tail.append(contentsOf: [0x00])
-        return tail
+    // The platform and host identity precede the core's variable protocol version.
+    static var hostInfoResponsePrefix: Data {
+        var prefix = Data([0x0C])
+        prefix.append("p:1".data(using: .utf8)!)
+        prefix.append(hostInfoDiscriminant)
+        prefix.append(contentsOf: [0x01, 0x00, 0x00, 0x02, 0x44])
+        prefix.append("truapi-host-tests".data(using: .utf8)!)
+        prefix.append(contentsOf: [0x00])
+        return prefix
     }
 
     static func featureSupportedRequestFrame() -> Data {
@@ -201,10 +225,36 @@ final class StubCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
     }
 }
 
+/// The previewnet stack host builds bundle, read from the repository's
+/// `stacks/`, so the core verifies a real descriptor against its link.
+///
+/// The tests run on a simulator, which reads the host file system, so the
+/// path comes from this file's location rather than a test bundle resource.
+func previewnetStack() throws -> BundledStack {
+    let stacks = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .appendingPathComponent("../../../stacks")
+        .standardizedFileURL
+    let link = try String(contentsOf: stacks.appendingPathComponent("previewnet.link"), encoding: .utf8)
+    return try BundledStack(
+        pointer: link.trimmingCharacters(in: .whitespacesAndNewlines),
+        descriptor: Data(contentsOf: stacks.appendingPathComponent("previewnet.json")),
+        allowsReservedValues: false
+    )
+}
+
 // Conforms to HostBridge rather than the generated HostCallbacks, so the
 // protocol extension supplies every optional callback and a new one cannot
 // leave this file behind. Only the six requirements without a default are
 // written out, plus the core log recorder.
+/// A fresh directory for one runtime's core database.
+func temporaryDatabaseDirectory() throws -> String {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory.path
+}
+
 final class StubHostBridge: HostBridge, @unchecked Sendable {
     let storage: HostStorageBackend = StubStorage()
     let coreStorage: HostCoreStorageBackend = StubCoreStorage()
@@ -257,7 +307,6 @@ final class StubHostBridge: HostBridge, @unchecked Sendable {
         request _: RemotePermission
     ) async throws -> PermissionDecision { nextRemoteDecision() }
     func featureSupported(request _: HostFeatureSupportedRequest) async throws -> Bool { true }
-    func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
     func localStorageRead(key: String) throws -> Data? { try storage.read(key: key) }
     
     func localStorageWrite(key: String, value: Data) throws {
@@ -274,25 +323,19 @@ final class StubChatHostBridge: ChatHostBridge {
         roomId _: String,
         name _: String,
         icon _: String
-    ) async throws -> NativeChatRoomRegistrationStatus { .new }
+    ) async throws -> ChatRoomRegistrationStatus { .new }
 
     func registerBot(
         botId _: String,
         name _: String,
         icon _: String
-    ) async throws -> NativeChatBotRegistrationStatus { .new }
+    ) async throws -> ChatBotRegistrationStatus { .new }
 
-    func postMessage(roomId _: String, content _: ChatMessageContent) async throws -> String {
+    func postMessage(roomId _: String, content _: ChatMessageContent, alt _: String?) async throws -> String {
         "message-id"
     }
 
+    func setRoomFooter(roomId _: String, footer _: ChatRoomFooter) async throws {}
+
     func listRooms() async throws -> [ChatRoom] { [] }
-}
-
-// Conforms to `PocketHostBridge` so a new requirement there fails this job.
-// Every member is written out: the protocol supplies no defaults.
-final class StubPocketHostBridge: PocketHostBridge {
-    func listCards() throws -> [PocketCard] { [] }
-
-    func removeCard(cardId _: String) throws -> NativePocketRemoval { .absent }
 }

@@ -1,7 +1,20 @@
 // swift-tools-version: 5.10
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
+import Foundation
 import PackageDescription
+
+let coreIsInTree: Bool = {
+    var root = URL(fileURLWithPath: #filePath)
+    for _ in 0 ..< 5 {
+        root.deleteLastPathComponent()
+    }
+    return FileManager.default.fileExists(atPath: root.appendingPathComponent("rust/crates/truapi").path)
+}()
+
+let coreDependency: Package.Dependency = coreIsInTree
+    ? .package(name: "trinity-user-agents", path: "../../../..")
+    : .package(url: "https://github.com/paritytech/trinity-user-agents", exact: "0.16.0")
 
 let package = Package(
     name: "Coinage",
@@ -14,6 +27,7 @@ let package = Package(
         )
     ],
     dependencies: [
+        coreDependency,
         .package(
             url: "https://github.com/novasamatech/Keystore-iOS",
             from: "1.0.1"
@@ -47,8 +61,8 @@ let package = Package(
             from: "1.0.4"
         ),
         .package(
-            url: "https://github.com/sideeffect-io/AsyncExtensions",
-            exact: "0.5.4"
+            url: "https://github.com/paritytech/AsyncExtensions",
+            exact: "0.5.6"
         ),
         .package(
             url: "https://github.com/pointfreeco/swift-clocks",
@@ -74,6 +88,7 @@ let package = Package(
         .target(
             name: "Coinage",
             dependencies: [
+                .product(name: "TrUAPIHost", package: "trinity-user-agents"),
                 .product(name: "Keystore-iOS", package: "keystore-ios"),
                 .product(name: "SubstrateSdk", package: "substrate-sdk-ios"),
                 .product(name: "SubstrateStorageSubscription", package: "substrate-sdk-ios"),
@@ -112,6 +127,9 @@ let package = Package(
                 "DurableTransactions",
                 "Revive",
                 .product(name: "DurableTransactionsTestSupport", package: "DurableTransactions"),
+                .product(name: "StructuredConcurrency", package: "StructuredConcurrency"),
+                .product(name: "StructuredConcurrencyTestSupport", package: "StructuredConcurrency"),
+                .product(name: "FoundationExtTestSupport", package: "FoundationExt"),
                 .product(name: "Clocks", package: "swift-clocks")
             ],
             path: "Tests"

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import os
 import Coinage
@@ -33,6 +34,7 @@ final class ProductsNativeApi: ProductsNativeApiProtocol, @unchecked Sendable {
     let createProofHandler: APCreateProofHandling
     let aliasHandler: APAliasHandling
     let signVrfHandler: APSignVrfHandling
+    let listRingVrfKeysHandler: APListRingVrfKeysHandling
     let resourceKeyManager: ProductResourceKeyManaging
     let sponsorFactory: TransactionSponsorMaking
     let themeManager: ThemeManagerProtocol
@@ -51,6 +53,9 @@ final class ProductsNativeApi: ProductsNativeApiProtocol, @unchecked Sendable {
     )
 
     lazy var accountResolver: IdentityAccountResolving = IdentityAccountResolver()
+    lazy var navigationTargetResolver: ProductNavigationTargetResolving = ProductNavigationTargetResolver(
+        hostProvider: hostProvider
+    )
 
     let operationQueue: OperationQueue
     let logger: LoggerProtocol
@@ -77,6 +82,7 @@ final class ProductsNativeApi: ProductsNativeApiProtocol, @unchecked Sendable {
         createProofHandler: APCreateProofHandling,
         aliasHandler: APAliasHandling,
         signVrfHandler: APSignVrfHandling,
+        listRingVrfKeysHandler: APListRingVrfKeysHandling,
         resourceKeyManager: ProductResourceKeyManaging,
         sponsorFactory: TransactionSponsorMaking,
         themeManager: ThemeManagerProtocol,
@@ -107,6 +113,7 @@ final class ProductsNativeApi: ProductsNativeApiProtocol, @unchecked Sendable {
         self.createProofHandler = createProofHandler
         self.aliasHandler = aliasHandler
         self.signVrfHandler = signVrfHandler
+        self.listRingVrfKeysHandler = listRingVrfKeysHandler
         self.resourceKeyManager = resourceKeyManager
         self.sponsorFactory = sponsorFactory
         self.themeManager = themeManager

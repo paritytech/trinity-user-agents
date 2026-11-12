@@ -1,0 +1,334 @@
+//! Product-facing account operations and login lifecycle.
+
+use crate::platform::{
+	PermissionAuthorizationStatus, ProductSubtreeReview, UserConfirmationReview,
+};
+use futures::StreamExt;
+use tracing::instrument;
+use truapi::{
+	CallContext, CallError, Subscription,
+	api::Account,
+	latest,
+	versioned::account::{
+		HostAccountConnectionStatusSubscribeError, HostAccountConnectionStatusSubscribeItem,
+		HostAccountConnectionStatusSubscribeRequest, HostAccountCreateProofError,
+		HostAccountCreateProofRequest, HostAccountCreateProofResponse, HostAccountGetAliasError,
+		HostAccountGetAliasRequest, HostAccountGetAliasResponse, HostAccountGetError,
+		HostAccountGetRequest, HostAccountGetResponse, HostAccountListRingVrfKeysError,
+		HostAccountListRingVrfKeysRequest, HostAccountListRingVrfKeysResponse,
+		HostAccountRegisterRingVrfKeyError, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRegisterRingVrfKeyResponse, HostAccountRingVrfSignError,
+		HostAccountRingVrfSignRequest, HostAccountRingVrfSignResponse, HostAccountSignVrfError,
+		HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsError,
+		HostGetLegacyAccountsRequest, HostGetLegacyAccountsResponse, HostGetUserIdError,
+		HostGetUserIdRequest, HostGetUserIdResponse, HostRequestLoginError,
+		HostRequestLoginRequest, HostRequestLoginResponse,
+	},
+};
+
+use truapi::versioned::IntoLatest;
+
+use crate::runtime::{
+	ProductRuntimeHost, account_get_authority_error, product_manifest, remote_authority_call,
+	remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error,
+	ring_vrf_register_error, ring_vrf_sign_error, until_cancelled, validate_vrf_transcript,
+	versioning::version, vrf_call_error,
+};
+
+#[async_trait::async_trait]
+impl Account for ProductRuntimeHost {
+	#[instrument(skip_all, fields(runtime.method = "account.get_account"))]
+	async fn get_account(
+		&self,
+		cx: &CallContext,
+		request: HostAccountGetRequest,
+	) -> Result<HostAccountGetResponse, CallError<HostAccountGetError>> {
+		version(request)
+			.exec(|latest::HostAccountGetRequest { product_account_id }| async move {
+				let owner = product_account_id.dot_ns_identifier.clone();
+				let session = self
+					.accounts
+					.current_session()
+					.ok_or(CallError::Domain(latest::HostAccountGetError::NotConnected))?;
+
+				if &owner != self.connection.product_id() {
+					let access = self.accounts.consent().account_access(
+						self.connection.product_id(),
+						&owner,
+						self.connection.platform.as_ref(),
+					);
+					match until_cancelled(cx, access)
+						.await
+						.map_err(account_get_authority_error)?
+						.map_err(|err| CallError::HostFailure { reason: err.to_string() })?
+					{
+						PermissionAuthorizationStatus::Authorized => {},
+						PermissionAuthorizationStatus::Denied |
+						PermissionAuthorizationStatus::NotDetermined => {
+							return Err(CallError::Domain(latest::HostAccountGetError::Rejected));
+						},
+					}
+				} else if self
+					.accounts
+					.subtree_resolution_reaches_account_holder(&session, &owner)
+					.await
+				{
+					let review = UserConfirmationReview::ProductSubtree(ProductSubtreeReview {
+						product_id: owner.clone(),
+					});
+					self.confirm(cx, review).await.map_err(account_get_authority_error)?;
+				}
+
+				let public_key = self
+					.product_account_public_key(
+						cx,
+						&session,
+						&owner,
+						&product_account_id.derivation_index,
+					)
+					.await
+					.map_err(account_get_authority_error)?;
+
+				Ok(latest::HostAccountGetResponse {
+					account: latest::ProductAccount { public_key: public_key.to_vec() },
+				})
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "account.get_account_alias"))]
+	async fn get_account_alias(
+		&self,
+		cx: &CallContext,
+		request: HostAccountGetAliasRequest,
+	) -> Result<HostAccountGetAliasResponse, CallError<HostAccountGetAliasError>> {
+		version(request)
+			.exec(|request| async move {
+				let session = self
+					.accounts
+					.current_session()
+					.ok_or(CallError::Domain(latest::HostAccountGetAliasError::Rejected))?;
+
+				let cx = remote_authority_context(cx);
+				remote_authority_call(&cx, self.accounts.account_alias(&session, &cx, request))
+					.await
+					.map_err(|err| CallError::Domain(ring_vrf_alias_error(err)))
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "account.create_account_proof"))]
+	async fn create_account_proof(
+		&self,
+		cx: &CallContext,
+		request: HostAccountCreateProofRequest,
+	) -> Result<HostAccountCreateProofResponse, CallError<HostAccountCreateProofError>> {
+		version(request)
+			.exec(|request| async move {
+				let session = self
+					.accounts
+					.current_session()
+					.ok_or(CallError::Domain(latest::HostAccountCreateProofError::Rejected))?;
+
+				let cx = remote_authority_context(cx);
+				let Ok(Ok(_)) = until_cancelled(
+					&cx,
+					product_manifest::ring_vrf_key_access_granted_within(
+						&self.connection.services,
+						self.connection.platform.as_ref(),
+						self.connection.product_id().clone(),
+						&request.key_handle,
+						cx.timeout(),
+					),
+				)
+				.await
+				else {
+					return Err(CallError::Domain(
+						latest::HostAccountCreateProofError::NotAllowlisted,
+					));
+				};
+				remote_authority_call(&cx, self.accounts.create_proof(&session, &cx, request))
+					.await
+					.map_err(|err| CallError::Domain(ring_vrf_proof_error(err)))
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "account.register_ring_vrf_key"))]
+	async fn register_ring_vrf_key(
+		&self,
+		cx: &CallContext,
+		request: HostAccountRegisterRingVrfKeyRequest,
+	) -> Result<HostAccountRegisterRingVrfKeyResponse, CallError<HostAccountRegisterRingVrfKeyError>>
+	{
+		version(request)
+			.exec(|request| async move {
+				let session = self.accounts.current_session().ok_or(CallError::Domain(
+					latest::HostAccountRegisterRingVrfKeyError::NotConnected,
+				))?;
+				let cx = remote_authority_context(cx);
+				remote_authority_call(
+					&cx,
+					self.accounts.register_ring_vrf_key(&session, &cx, request),
+				)
+				.await
+				.map_err(|err| CallError::Domain(ring_vrf_register_error(err)))
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "account.list_ring_vrf_keys"))]
+	async fn list_ring_vrf_keys(
+		&self,
+		cx: &CallContext,
+		request: HostAccountListRingVrfKeysRequest,
+	) -> Result<HostAccountListRingVrfKeysResponse, CallError<HostAccountListRingVrfKeysError>> {
+		version(request)
+			.exec(|request| async move {
+				let session = self.accounts.current_session().ok_or(CallError::Domain(
+					latest::HostAccountListRingVrfKeysError::NotConnected,
+				))?;
+				let cx = remote_authority_context(cx);
+				remote_authority_call(&cx, self.accounts.list_ring_vrf_keys(&session, &cx, request))
+					.await
+					.map_err(|err| CallError::Domain(ring_vrf_list_error(err)))
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "account.ring_vrf_sign"))]
+	async fn ring_vrf_sign(
+		&self,
+		cx: &CallContext,
+		request: HostAccountRingVrfSignRequest,
+	) -> Result<HostAccountRingVrfSignResponse, CallError<HostAccountRingVrfSignError>> {
+		version(request)
+			.exec(|request| async move {
+				let session = self
+					.accounts
+					.current_session()
+					.ok_or(CallError::Domain(latest::HostAccountRingVrfSignError::NotConnected))?;
+				let cx = remote_authority_context(cx);
+				let Ok(Ok(_)) = until_cancelled(
+					&cx,
+					product_manifest::ring_vrf_key_access_granted_within(
+						&self.connection.services,
+						self.connection.platform.as_ref(),
+						self.connection.product_id().clone(),
+						&request.key_handle,
+						cx.timeout(),
+					),
+				)
+				.await
+				else {
+					return Err(CallError::Domain(
+						latest::HostAccountRingVrfSignError::NotAllowlisted,
+					));
+				};
+				remote_authority_call(&cx, self.accounts.ring_vrf_sign(&session, &cx, request))
+					.await
+					.map_err(|err| CallError::Domain(ring_vrf_sign_error(err)))
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "account.sign_vrf"))]
+	async fn sign_vrf(
+		&self,
+		cx: &CallContext,
+		request: HostAccountSignVrfRequest,
+	) -> Result<HostAccountSignVrfResponse, CallError<HostAccountSignVrfError>> {
+		version(request)
+			.exec(|request| async move {
+				validate_vrf_transcript(&request).map_err(|reason| {
+					CallError::Domain(latest::HostAccountSignVrfError::Unknown { reason })
+				})?;
+				let session = self
+					.accounts
+					.current_session()
+					.ok_or(CallError::Domain(latest::HostAccountSignVrfError::NotConnected))?;
+				let cx = remote_authority_context(cx);
+				remote_authority_call(&cx, self.accounts.sign_vrf(&session, &cx, request))
+					.await
+					.map_err(vrf_call_error)
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "account.get_legacy_accounts"))]
+	async fn get_legacy_accounts(
+		&self,
+		_cx: &CallContext,
+		request: HostGetLegacyAccountsRequest,
+	) -> Result<HostGetLegacyAccountsResponse, CallError<HostGetLegacyAccountsError>> {
+		version(request)
+			.exec(|()| async move {
+				// Match the mobile hosts: compatibility signing accounts may be
+				// addressed explicitly, but are not enumerated.
+				Ok(latest::HostGetLegacyAccountsResponse { accounts: vec![] })
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "account.get_user_id"))]
+	async fn get_user_id(
+		&self,
+		_cx: &CallContext,
+		request: HostGetUserIdRequest,
+	) -> Result<HostGetUserIdResponse, CallError<HostGetUserIdError>> {
+		version(request)
+			.exec(|()| async move {
+				let session = self
+					.accounts
+					.current_session()
+					.ok_or(CallError::Domain(latest::HostGetUserIdError::NotConnected))?;
+
+				let denied = latest::HostGetUserIdError::PermissionDenied;
+				self.connection.require_identity_disclosure(denied).await?;
+
+				let primary_username = match session.primary_username() {
+					Some(name) => Some(name.to_string()),
+					None => self.host_session.primary_username().await,
+				}
+				.ok_or_else(|| {
+					CallError::Domain(latest::HostGetUserIdError::Unknown {
+						reason: "No primary username for this session".to_string(),
+					})
+				})?;
+
+				Ok(latest::HostGetUserIdResponse { primary_username })
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "account.connection_status_subscribe"))]
+	async fn connection_status_subscribe(
+		&self,
+		_cx: &CallContext,
+		request: HostAccountConnectionStatusSubscribeRequest,
+	) -> Subscription<
+		HostAccountConnectionStatusSubscribeItem,
+		CallError<HostAccountConnectionStatusSubscribeError>,
+	> {
+		version(request)
+			.exec(|()| async move {
+				Subscription::new(
+					self.connection.session_state.subscribe().map(|item| Ok(item.into_latest())),
+				)
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "account.request_login", product = %self.connection.product.product_id))]
+	async fn request_login(
+		&self,
+		_cx: &CallContext,
+		request: HostRequestLoginRequest,
+	) -> Result<HostRequestLoginResponse, CallError<HostRequestLoginError>> {
+		version(request)
+			.exec(|_request| async move {
+				self.host_session.request_login(&self.connection.product).await
+			})
+			.await
+	}
+}

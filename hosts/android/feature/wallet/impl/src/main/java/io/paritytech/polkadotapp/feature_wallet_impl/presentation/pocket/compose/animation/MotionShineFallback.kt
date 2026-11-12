@@ -8,10 +8,13 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import kotlin.math.abs
 import kotlin.math.exp
 
 private const val PROFILE_STOPS = 25
@@ -26,9 +29,9 @@ internal fun Modifier.motionShineFallback(
 
     return drawBehind {
         val tilt = tiltState.value
-        val shift = tilt.x * HOLO_RAMP_TILT_X - tilt.y * HOLO_RAMP_TILT_Y
-        drawRect(brush = axisGradient(dimStops, HoloMainAxis, size, shift))
-        drawRect(brush = axisGradient(shineStops, HoloMainAxis, size, shift))
+        val shift = tilt.x * SHINE_MAIN_TILT_X - tilt.y * SHINE_MAIN_TILT_Y
+        drawRect(brush = axisGradient(dimStops, size, shift))
+        drawRect(brush = axisGradient(shineStops, size, shift))
     }
 }
 
@@ -43,7 +46,7 @@ internal fun Modifier.maskedMotionShineFallback(
 
     return drawWithContent {
         val tilt = tiltState.value
-        val shift = tilt.x * HOLO_RAMP_TILT_X - tilt.y * HOLO_RAMP_TILT_Y
+        val shift = tilt.x * SHINE_MAIN_TILT_X - tilt.y * SHINE_MAIN_TILT_Y
         val layerRect = Rect(Offset.Zero, size)
 
         drawIntoCanvas { canvas ->
@@ -54,8 +57,8 @@ internal fun Modifier.maskedMotionShineFallback(
             canvas.saveLayer(layerRect, Paint())
             drawContent()
             canvas.saveLayer(layerRect, Paint().apply { blendMode = BlendMode.SrcIn })
-            drawRect(brush = axisGradient(dimStops, HoloMainAxis, size, shift))
-            drawRect(brush = axisGradient(shineStops, HoloMainAxis, size, shift))
+            drawRect(brush = axisGradient(dimStops, size, shift))
+            drawRect(brush = axisGradient(shineStops, size, shift))
             canvas.restore()
             canvas.restore()
         }
@@ -79,3 +82,22 @@ private fun profileStops(colorAt: (Float) -> Color): Array<Pair<Float, Color>> =
         val t = index / (PROFILE_STOPS - 1f)
         t to colorAt(t)
     }
+
+// Builds a CSS-style linear gradient along the main shine axis spanning the box, translated so that
+// a `shift` in the shader's normalised t-coordinate moves the colour band identically: t' = t + shift
+// means the gradient slides by -shift of its full length along the axis.
+private fun axisGradient(
+    colorStops: Array<Pair<Float, Color>>,
+    size: Size,
+    shift: Float
+): Brush {
+    val axis = ShineMainAxis
+    val centre = Offset(size.width * 0.5f, size.height * 0.5f)
+    val halfSpan = 0.5f * (abs(axis.x) * size.width + abs(axis.y) * size.height)
+    val translation = axis * (-shift * 2f * halfSpan)
+    return Brush.linearGradient(
+        colorStops = colorStops,
+        start = centre - axis * halfSpan + translation,
+        end = centre + axis * halfSpan + translation
+    )
+}

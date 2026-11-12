@@ -2,6 +2,7 @@ import DesignSystem
 import FoundationExt
 import PolkadotUI
 import Products
+import func TrUAPIHost.productContentScheme
 import UIKit
 import UIKitExt
 import WebKit
@@ -16,12 +17,18 @@ final class SPAViewController: UIViewController, ViewHolder {
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
 
+    private(set) var statusBarTitle: String?
+    var onStatusBarTitleChanged: (() -> Void)?
+
     private var titleObservation: NSKeyValueObservation?
     private var didSetupWebViewLayout = false
     private var loadFailure: ErrorContent?
     private var loadingStartedAt: Date?
     private var pendingFailureTask: Task<Void, Never>?
-    private var chromeCollapser: BrowserChromeCollapser?
+    private lazy var loadIndicator = SPALoadIndicator(
+        progressView: rootView.loadProgressView,
+        statusLabel: rootView.loadStatusLabel
+    )
 
     init(
         presenter: SPAPresenterProtocol,
@@ -46,12 +53,13 @@ final class SPAViewController: UIViewController, ViewHolder {
     override func loadView() {
         let webViewConfiguration = WKWebViewConfiguration()
 
+        webViewConfiguration.applicationNameForUserAgent = ProductUserAgent.applicationName
         webViewConfiguration.allowsInlineMediaPlayback = true
         webViewConfiguration.mediaTypesRequiringUserActionForPlayback = []
 
         webViewConfiguration.setURLSchemeHandler(
             schemeHandlerProxy,
-            forURLScheme: ProductScriptSchemeHandler.scheme
+            forURLScheme: productContentScheme()
         )
         view = SPAViewLayout(webViewConfiguration: webViewConfiguration)
     }
@@ -62,17 +70,20 @@ final class SPAViewController: UIViewController, ViewHolder {
         setupNavigationBar()
         setupTitleObservation()
         setupJSEngine()
-
-        if configuration.isBrowserTab {
-            setupBrowserTabActions()
-            setupChromeCollapse()
-        }
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
 
         setupWebViewLayout()
+    }
+
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+
+        guard isEnteringScreen else { return }
+
+        presenter.didBecomeVisible()
     }
 
     override func updateContentUnavailableConfiguration(
@@ -85,11 +96,8 @@ final class SPAViewController: UIViewController, ViewHolder {
 
         contentUnavailableConfiguration = UIContentUnavailableConfiguration.titleSubtitle(
             with: loadFailure.title,
-            subtitle: loadFailure.message,
-            actionTitle: String(localized: .Common.retry)
-        ) { [weak self] in
-            self?.presenter.didTapRetry()
-        }
+            subtitle: loadFailure.message
+        )
     }
 
     deinit {
@@ -107,6 +115,7 @@ private extension SPAViewController {
 
     func display(loadFailure content: ErrorContent) {
         rootView.activityIndicatorView.stopAnimating()
+        loadIndicator.stop()
 
         loadFailure = content
         setNeedsUpdateContentUnavailableConfiguration()
@@ -115,13 +124,18 @@ private extension SPAViewController {
     func setupJSEngine() {
         let navigationHandler: SPANavigationDecisionHandling =
             switch configuration.contentSource {
-            case .dotNs:
+            case .dotNs,
+                 .bundled:
                 DotNsNavigationDecisionHandler(
                     baseHost: configuration.page.host,
                     hostProvider: hostProvider
                 )
             case let .directURL(url):
                 DirectURLNavigationDecisionHandler(baseURL: url)
+            #if DEBUG
+                case let .devServer(url, _):
+                    DirectURLNavigationDecisionHandler(baseURL: url)
+            #endif
             }
 
         let engine = SPAJSEngine(
@@ -134,6 +148,10 @@ private extension SPAViewController {
             self?.presenter.didInterceptNavigation(to: url)
         }
 
+        engine.onDeeplinkRequested = { [weak self] url in
+            self?.presenter.didRequestDeeplink(url)
+        }
+
         presenter.setup(engine: engine)
     }
 
@@ -142,7 +160,7 @@ private extension SPAViewController {
             setTitle(String(localized: .tabBrowse))
         }
 
-        if configuration.showMoreButton, !configuration.isBrowserTab {
+        if configuration.showMoreButton, configuration.presentation != .browserTab {
             setupMoreButton()
         }
     }
@@ -174,86 +192,11 @@ private extension SPAViewController {
         guard !didSetupWebViewLayout else { return }
         didSetupWebViewLayout = true
 
-        if configuration.isBrowserTab {
-            rootView.setupBrowserTabLayout()
-        } else if configuration.isRootScreen {
+        if configuration.isRootScreen {
             rootView.setupRootLayout()
         } else {
             rootView.setupDefaultLayout()
         }
-    }
-
-    func setupBrowserTabActions() {
-        rootView.minimizeButton.addTarget(self, action: #selector(onMinimizeTapped), for: .touchUpInside)
-        rootView.moreButton.showsMenuAsPrimaryAction = true
-        rootView.moreButton.menu = UIMenu(children: [
-            UIDeferredMenuElement.uncached { [weak self] completion in
-                completion(self?.makeMoreMenuElements() ?? [])
-            }
-        ])
-    }
-
-    func makeMoreMenuElements() -> [UIMenuElement] {
-        var elements: [UIMenuElement] = []
-
-        if presenter.hasChatEntry() {
-            elements.append(UIAction(
-                title: String(localized: .spaActionOpenChat),
-                image: UIImage(systemName: "bubble.left")
-            ) { [weak self] _ in
-                self?.presenter.didTapOpenChat()
-            })
-        }
-
-        elements.append(UIAction(
-            title: String(localized: .spaActionRefresh),
-            image: UIImage(systemName: "arrow.clockwise")
-        ) { [weak self] _ in
-            self?.reload()
-        })
-
-        elements.append(UIAction(
-            title: String(localized: .spaActionShare),
-            image: UIImage(systemName: "square.and.arrow.up")
-        ) { [weak self] _ in
-            self?.presenter.didTapShare()
-        })
-
-        elements.append(UIAction(
-            title: String(localized: .Common.close),
-            image: UIImage(systemName: "xmark"),
-            attributes: .destructive
-        ) { [weak self] _ in
-            self?.presenter.didTapClose()
-        })
-
-        return elements
-    }
-
-    func setupChromeCollapse() {
-        let collapser = BrowserChromeCollapser(topPanelHeight: rootView.topChromeHeight)
-        chromeCollapser = collapser
-        rootView.webView.scrollView.delegate = self
-    }
-
-    func feedChromeCollapse(_ scrollView: UIScrollView) {
-        guard let collapser = chromeCollapser else { return }
-
-        let sample = BrowserChromeScrollSample(
-            offsetToTopEdge: max(0, scrollView.bounds.minY),
-            isInteracting: scrollView.isDragging || scrollView.isDecelerating
-        )
-
-        if let update = collapser.update(with: sample) {
-            rootView.applyChromeCollapse(update.fraction, animated: update.animated)
-        }
-    }
-
-    func resetChromeCollapse() {
-        guard let chromeCollapser else { return }
-
-        chromeCollapser.reset()
-        rootView.applyChromeCollapse(0, animated: false)
     }
 
     // MARK: - Actions
@@ -261,36 +204,15 @@ private extension SPAViewController {
     @objc func onMoreTapped() {
         presenter.didTapMoreButton()
     }
-
-    func showProgressBar() {
-        rootView.loadProgressView.isHidden = false
-    }
-
-    func hideProgressBar(delay: TimeInterval = 0) {
-        let closure = { [rootView] in
-            rootView.loadProgressView.isHidden = true
-            rootView.loadProgressView.setProgress(0, animated: false)
-        }
-        guard delay > 0 else {
-            closure()
-            return
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            closure()
-        }
-    }
-
-    @objc func onMinimizeTapped() {
-        presenter.didTapMinimize()
-    }
 }
 
 // MARK: - SPAViewProtocol
 
 extension SPAViewController: SPAViewProtocol {
+    var pageScrollView: UIScrollView { rootView.webView.scrollView }
+    var pageWebView: WKWebView { rootView.webView }
+
     func navigate(to url: URL) {
-        resetChromeCollapse()
         rootView.webView.load(URLRequest(url: url))
     }
 
@@ -304,15 +226,17 @@ extension SPAViewController: SPAViewProtocol {
 
     func updateTitle(_ title: String) {
         navigationItem.title = title
+        statusBarTitle = title
+        onStatusBarTitleChanged?()
     }
 
     func reload() {
-        resetChromeCollapse()
         rootView.webView.reload()
     }
 
     func showLoading() {
         rootView.activityIndicatorView.startAnimating()
+        loadIndicator.start()
 
         pendingFailureTask?.cancel()
         pendingFailureTask = nil
@@ -326,6 +250,7 @@ extension SPAViewController: SPAViewProtocol {
 
     func hideLoading() {
         rootView.activityIndicatorView.stopAnimating()
+        loadIndicator.finish()
     }
 
     /// A failure arriving right after a retry would swap the error state out and back in the same
@@ -342,27 +267,8 @@ extension SPAViewController: SPAViewProtocol {
         }
     }
 
-    // Resolving: 0-10%
-    // Downloading: 10-90%
-    // Unpacking: 90-100%
-    func updateLoadProgress(_ progress: DotNsLoadProgress) {
-        switch progress {
-        case .resolved:
-            showProgressBar()
-            rootView.loadProgressView.setProgress(0.1, animated: true)
-        case let .downloading(fraction):
-            showProgressBar()
-            rootView.loadProgressView.setProgress(0.1 + 0.8 * Float(fraction), animated: true)
-        case .unpacking:
-            showProgressBar()
-            rootView.loadProgressView.setProgress(0.9, animated: true)
-        case .completed:
-            rootView.loadProgressView.setProgress(1.0, animated: true)
-            hideProgressBar(delay: 0.3)
-        case .idle,
-             .failed:
-            hideProgressBar()
-        }
+    func updateLoadPhase(_ phase: ProductLoadPhase) {
+        loadIndicator.update(phase)
     }
 }
 
@@ -370,20 +276,14 @@ extension SPAViewController: SPAViewProtocol {
 
 extension SPAViewController: RootScreen {}
 
-// MARK: - UIScrollViewDelegate
+// MARK: - StatusBarTitleProviding
 
-extension SPAViewController: UIScrollViewDelegate {
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        feedChromeCollapse(scrollView)
-    }
-
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        if !decelerate {
-            feedChromeCollapse(scrollView)
-        }
-    }
-
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        feedChromeCollapse(scrollView)
+extension SPAViewController: StatusBarTitleProviding {
+    func makeStatusBarMenu() -> UIMenu {
+        UIMenu(children: [
+            UIDeferredMenuElement.uncached { [weak self] completion in
+                completion(self?.presenter.makeMenuElements() ?? [])
+            }
+        ])
     }
 }

@@ -73,8 +73,7 @@ public struct TopUpMismatchViewLayout: View {
                             .foregroundColor(.fgPrimary)
                             .multilineTextAlignment(.center)
 
-                        Text(viewModel.tokenSymbol)
-                            .typography(.bodyMedium)
+                        DSTicker(viewModel.tokenSymbol, typography: .bodyMedium)
                             .foregroundColor(.fgSecondary)
                             .multilineTextAlignment(.center)
                     }

@@ -66,13 +66,12 @@ class RealUsernamesOfAccountUseCase @Inject constructor(
         return localUsernameStorage.getValue()?.toStoredLightUsername()
     }
 
-    // TODO: People Chain is used until dotNS resolve-by-address lands (paritytech/dotns#216, #217)
     private fun onChain(): Flow<StoredUsername?> = accountRepository.walletAccountFlow()
         .flatMapLatest { account ->
-            val accountId = account.accountIdIn(chainRegistry.getChain(knownChains.people))
+            val accountId = account.accountIdIn(chainRegistry.getChain(knownChains.assetHub))
 
             combine(
-                resourcesRepository.consumerInfoLocalFlow(knownChains.people, accountId),
+                resourcesRepository.consumerInfoLocalFlow(knownChains.assetHub, accountId),
                 dotNsGatewayRepository.observeHasFullUsername(accountId).onStart<Boolean?> { emit(null) },
                 localFullUsernameStorage.valueFlow()
             ) { consumerInfo, hasFullAlias, localFullUsername ->

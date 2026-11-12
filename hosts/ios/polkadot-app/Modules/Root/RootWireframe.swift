@@ -27,7 +27,8 @@ final class RootWireframe: RootWireframeProtocol {
             userNotificationService: userNotificationService,
             foregroundVisibilityReporter: foregroundVisibilityReporter,
             deepLinkHandling: deepLinkHandler,
-            flowStateProvider: flowStateProvider
+            flowStateProvider: flowStateProvider,
+            windowScene: window.windowScene
         ) else {
             return
         }
@@ -84,25 +85,6 @@ final class RootWireframe: RootWireframeProtocol {
         }
 
         animation.animateTransition(to: destination.controller, in: window)
-    }
-
-    func showJailbroken() {
-        guard let rootViewController = window.topmostViewController ?? window.rootViewController else {
-            return
-        }
-
-        let alert = UIAlertController(
-            title: String(localized: .Security.jailbreakDetectedTitle),
-            message: String(localized: .Security.jailbreakDetectedDescription),
-            preferredStyle: .alert
-        )
-
-        let exitAction = UIAlertAction(title: "Exit", style: .destructive) { _ in
-            exit(0)
-        }
-
-        alert.addAction(exitAction)
-        rootViewController.present(alert, animated: true)
     }
 }
 

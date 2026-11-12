@@ -1,0 +1,12384 @@
+//! Shared runtime fixtures and cross-capability integration tests.
+
+use std::sync::{
+	Mutex,
+	atomic::{AtomicBool, Ordering},
+};
+
+use crate::{
+	host_logic::funding::{CancelConfirmation, CancelOutcome, FundingCancel},
+	platform::{
+		AccountAccessReview, AuthState, CoreStorage as PlatformCoreStorage, CoreStorageKey,
+		CreateTransactionReview, ExecutableKind, HostScan, LegacySigningAccount,
+		PermissionAuthorizationRequest, SignPayloadReview, SignRawReview,
+	},
+};
+use parity_scale_codec::{Decode, Encode};
+use truapi::{
+	api::{
+		Account, Chain, Entropy, ExpandedCard, Game, LocalStorage, Notifications, Permissions,
+		Preimage, ResourceAllocation, Scanner, Signing, StatementStore, System, Theme, Worker,
+	},
+	v02,
+	versioned::{
+		account::{
+			HostAccountConnectionStatusSubscribeItem, HostAccountCreateProofError,
+			HostAccountCreateProofRequest, HostAccountCreateProofResponse,
+			HostAccountGetAliasError, HostAccountGetAliasResponse, HostAccountGetError,
+			HostAccountGetRequest, HostAccountGetResponse, HostAccountListRingVrfKeysRequest,
+			HostAccountRingVrfSignError, HostAccountRingVrfSignRequest, HostAccountSignVrfError,
+			HostAccountSignVrfRequest, HostAccountSignVrfResponse, HostGetLegacyAccountsRequest,
+			HostGetLegacyAccountsResponse, HostGetUserIdError, HostGetUserIdRequest,
+			HostGetUserIdResponse,
+		},
+		chain::{
+			RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
+			RemoteChainTransactionBroadcastError, RemoteChainTransactionBroadcastRequest,
+			RemoteChainTransactionBroadcastResponse,
+		},
+		entropy::{HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse},
+		expanded_card::{
+			HostExpandedCardSetBackShownError, HostExpandedCardSetBackShownRequest,
+			HostExpandedCardSetBackShownResponse, HostExpandedCardSetFaceShownRequest,
+		},
+		game::{
+			HostCancelNextGameError, HostCancelNextGameRequest, HostCancelNextGameResponse,
+			HostRemindNextGameError, HostRemindNextGameRequest, HostRemindNextGameResponse,
+		},
+		local_storage::{
+			HostLocalStorageChangeItem, HostLocalStorageClearRequest, HostLocalStorageReadError,
+			HostLocalStorageReadRequest, HostLocalStorageReadResponse,
+			HostLocalStorageSubscribeError, HostLocalStorageSubscribeRequest,
+			HostLocalStorageWriteRequest,
+		},
+		notifications::{
+			HostPushNotificationCancelRequest, HostPushNotificationCancelResponse,
+			HostPushNotificationError, HostPushNotificationRequest, HostPushNotificationResponse,
+		},
+		permissions::{HostDevicePermissionRequest, HostDevicePermissionResponse},
+		preimage::{
+			RemotePreimageLookupSubscribeItem, RemotePreimageLookupSubscribeRequest,
+			RemotePreimageSubmitError, RemotePreimageSubmitRequest,
+		},
+		resource_allocation::{
+			HostRequestResourceAllocationError, HostRequestResourceAllocationRequest,
+			HostRequestResourceAllocationResponse,
+		},
+		scanner::{HostScannerScanError, HostScannerScanRequest, HostScannerScanResponse},
+		signing::{
+			HostCreateTransactionError, HostCreateTransactionRequest,
+			HostCreateTransactionResponse, HostCreateTransactionWithLegacyAccountError,
+			HostCreateTransactionWithLegacyAccountRequest,
+			HostCreateTransactionWithLegacyAccountResponse, HostSignPayloadError,
+			HostSignPayloadRequest, HostSignPayloadResponse, HostSignPayloadWithLegacyAccountError,
+			HostSignPayloadWithLegacyAccountRequest, HostSignRawError, HostSignRawRequest,
+			HostSignRawResponse, HostSignRawWithLegacyAccountError,
+			HostSignRawWithLegacyAccountRequest, HostSignRawWithLegacyAccountResponse,
+		},
+		statement_store::{
+			RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
+		},
+		system::{
+			HostFeatureSupportedRequest, HostFeatureSupportedResponse,
+			HostGetProductContextRequest, HostGetProductContextResponse, HostInfoRequest,
+			HostInfoResponse, HostNavigateToError, HostNavigateToRequest, HostNavigateToResponse,
+		},
+		theme::HostThemeSubscribeItem,
+		worker::{
+			HostWorkerBeginOperationRequest, HostWorkerBeginOperationResponse,
+			HostWorkerEndOperationRequest,
+		},
+	},
+};
+
+use super::{
+	product_manifest::{CachedManifest, MANIFEST_TTL_SECS},
+	*,
+};
+use crate::{
+	host_internal::{
+		product_manifest::test_manifest_json,
+		sso_messages::{RemoteMessage, RemoteMessageData, Response, v1},
+	},
+	host_logic::{product_account::index_bytes, statement_store::SUBMIT_STATEMENT_METHOD},
+	test_support::*,
+	unix_time::current_unix_secs,
+};
+
+fn test_product_subtree(product_id: &str) -> [u8; 32] {
+	let root = crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16])
+		.expect("test entropy derives a root");
+	crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test(product_id),
+	)
+	.expect("test product id derives a subtree")
+	.public
+	.to_bytes()
+}
+
+fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
+	derive_product_public_key(test_product_subtree(product_id), index_bytes(index))
+		.expect("test subtree derives an account")
+}
+
+pub fn install_pairing_session(host: &ProductRuntimeHost, session: SessionInfo) {
+	let product_id = host.connection.product_id();
+	if session.sso.is_some() {
+		host.test_cache_product_subtree(
+			&session,
+			product_id,
+			test_product_subtree(product_id.as_str()),
+		);
+	}
+	host.test_session_state().set_session(session);
+}
+
+pub fn cache_test_product_subtree(
+	host: &ProductRuntimeHost,
+	session: &SessionInfo,
+	product_id: &str,
+) {
+	host.test_cache_product_subtree(
+		session,
+		&ProductId::for_test(product_id),
+		test_product_subtree(product_id),
+	);
+}
+
+#[test]
+fn preimage_reports_bulletin_allocation_rejection_with_context() {
+	assert_eq!(
+		bulletin_allowance_error_reason(AuthorityError::Rejected),
+		"Bulletin allowance allocation was rejected by the signing host"
+	);
+}
+
+#[test]
+fn feature_supported_round_trips_through_runtime() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let cx = CallContext::default();
+	let request = HostFeatureSupportedRequest::V1(v01::HostFeatureSupportedRequest::Chain {
+		genesis_hash: vec![0u8; 32],
+	});
+	let response = futures::executor::block_on(host.feature_supported(&cx, request)).unwrap();
+	let HostFeatureSupportedResponse::V1(inner) = response;
+	assert!(inner.supported);
+}
+
+#[test]
+fn host_info_reports_the_truapi_release_the_runtime_was_built_from() {
+	// Telemetry groups products' errors by this value, so it has to be the
+	// runtime's own release rather than anything the embedding app configures.
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let response =
+		futures::executor::block_on(host.host_info(&CallContext::default(), HostInfoRequest::V1))
+			.unwrap();
+	assert_eq!(
+		response,
+		HostInfoResponse::V1(v01::HostInfo {
+			platform: truapi::latest::HostPlatform::Web,
+			name: "Polkadot Web".to_string(),
+			version: String::new(),
+			truapi_version: env!("CARGO_PKG_VERSION").to_string(),
+		})
+	);
+}
+
+#[test]
+fn get_product_context_returns_the_runtime_canonical_product_id() {
+	for (configured, expected) in [
+		(" TrUAPI-Playground.DOT ", "truapi-playground.dot"),
+		("truapi-playground.paseo", "truapi-playground.paseo"),
+		("truapi-playground.testnet", "truapi-playground.testnet"),
+		("localhost", "localhost"),
+		("LOCALHOST:3000", "localhost:3000"),
+	] {
+		let host = ProductRuntimeHost::new(
+			stub_platform(),
+			runtime_config(configured),
+			Spawner::for_test(),
+		);
+		let response = futures::executor::block_on(
+			host.get_product_context(&CallContext::default(), HostGetProductContextRequest::V1),
+		)
+		.unwrap();
+		let HostGetProductContextResponse::V1(context) = response;
+
+		assert_eq!(
+			context,
+			v01::HostGetProductContextResponse { product_id: ProductId::for_test(expected) },
+			"configured product id {configured:?}",
+		);
+	}
+}
+
+/// `get_chain_info` answers from the host's stack, not from a host callback.
+#[test]
+fn get_chain_info_round_trips_through_runtime() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let cx = CallContext::default();
+	let request = RemoteChainInfoRequest::V1(v01::RemoteChainInfoRequest {
+		chain: v01::ChainIdentifier::AssetHub,
+	});
+	let response = futures::executor::block_on(host.get_chain_info(&cx, request)).unwrap();
+	assert_eq!(
+		response,
+		RemoteChainInfoResponse::V1(v01::RemoteChainInfoResponse {
+			network: "paseo".to_string(),
+			chain: v01::ChainIdentifier::AssetHub,
+			genesis_hash: [0xcc; 32],
+		})
+	);
+}
+
+#[test]
+fn local_storage_read_success_preserves_the_request_version() {
+	let platform = stub_platform();
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	platform.local_storage.lock().expect("mutex").insert(
+		host.connection
+			.product_storage_key(host.connection.product_id(), "k".to_string()),
+		b"value".to_vec(),
+	);
+	let response = v01::HostLocalStorageReadResponse { value: Some(b"value".to_vec()) };
+	for (request, expected) in [
+		(
+			HostLocalStorageReadRequest::V1(v01::HostLocalStorageReadRequest {
+				key: "k".to_string(),
+			}),
+			HostLocalStorageReadResponse::V1(response.clone()),
+		),
+		(
+			HostLocalStorageReadRequest::V2(v02::HostLocalStorageReadRequest {
+				product: None,
+				key: "k".to_string(),
+			}),
+			HostLocalStorageReadResponse::V2(response),
+		),
+	] {
+		assert_eq!(
+			futures::executor::block_on(LocalStorage::read(
+				&host,
+				&CallContext::default(),
+				request
+			)),
+			Ok(expected),
+		);
+	}
+}
+
+#[test]
+fn local_storage_read_platform_error_preserves_the_request_version() {
+	let platform = Arc::new(StubPlatform {
+		local_storage_error: Some("store unavailable"),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	for (request, expected) in [
+		(
+			HostLocalStorageReadRequest::V1(v01::HostLocalStorageReadRequest {
+				key: "k".to_string(),
+			}),
+			HostLocalStorageReadError::V1(v01::HostLocalStorageReadError::Unknown {
+				reason: "store unavailable".to_string(),
+			}),
+		),
+		(
+			HostLocalStorageReadRequest::V2(v02::HostLocalStorageReadRequest {
+				product: None,
+				key: "k".to_string(),
+			}),
+			HostLocalStorageReadError::V2(v02::HostLocalStorageReadError::Unknown {
+				reason: "store unavailable".to_string(),
+			}),
+		),
+	] {
+		assert_eq!(
+			futures::executor::block_on(LocalStorage::read(
+				&host,
+				&CallContext::default(),
+				request
+			)),
+			Err(CallError::Domain(expected)),
+		);
+	}
+}
+
+fn read_storage(
+	host: &ProductRuntimeHost,
+	product: Option<&str>,
+	key: &str,
+) -> Result<HostLocalStorageReadResponse, CallError<HostLocalStorageReadError>> {
+	futures::executor::block_on(LocalStorage::read(
+		host,
+		&CallContext::default(),
+		HostLocalStorageReadRequest::V2(v02::HostLocalStorageReadRequest {
+			product: product.map(ProductId::for_test),
+			key: key.to_string(),
+		}),
+	))
+}
+
+#[test]
+fn a_storage_key_is_namespaced_under_its_owner() {
+	// The owner is an argument, not `self`: keying off the caller would hand a
+	// granted foreign read the caller's own values under the target's name.
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let key = host
+		.connection
+		.product_storage_key(&ProductId::for_test("wallet.dot"), "k".to_string());
+	let decoded = ProductStorageKey::decode(&key).expect("the key round-trips");
+	assert_eq!(decoded.product_id().as_str(), "wallet.dot");
+	assert_ne!(decoded.product_id(), host.connection.product_id());
+}
+
+#[test]
+fn a_read_naming_the_caller_however_it_is_spelled_reaches_its_own_storage() {
+	// `product: None` is what every v0.1 read meant, naming your own id is the
+	// same call, and casing is normalized before the comparison. None of the
+	// three is a cross-product access, so none consults a grant.
+	let platform = stub_platform();
+	let storage = platform.clone();
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	let own = host.connection.product_id().to_string();
+	storage.local_storage.lock().expect("mutex").insert(
+		ProductStorageKey::new(host.connection.product_id().clone(), "k").encode(),
+		b"my own value".to_vec(),
+	);
+
+	for spelling in [None, Some(own.clone()), Some(own.to_uppercase())] {
+		let answered = read_storage(&host, spelling.as_deref(), "k")
+			.unwrap_or_else(|err| panic!("{spelling:?} must reach own storage: {err:?}"));
+		let HostLocalStorageReadResponse::V2(v01::HostLocalStorageReadResponse { value }) =
+			answered
+		else {
+			panic!("a v2 request answers with a v2 response");
+		};
+		assert_eq!(value.as_deref(), Some(&b"my own value"[..]), "spelling {spelling:?}");
+	}
+}
+
+#[test]
+fn an_unresolvable_product_is_refused_identically_to_an_ungranted_one() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	for target in ["missing.dot", "wallet.dot"] {
+		assert_eq!(
+			read_storage(&host, Some(target), "k").unwrap_err(),
+			access_not_granted(),
+			"target {target:?}"
+		);
+	}
+}
+
+/// The one refusal every unmet grant answers with.
+fn access_not_granted() -> CallError<HostLocalStorageReadError> {
+	CallError::Domain(HostLocalStorageReadError::V2(
+		v02::HostLocalStorageReadError::AccessNotGranted,
+	))
+}
+
+/// Reads `owner`'s stored value at `k`, requiring the grant to admit it.
+fn granted_value(host: &ProductRuntimeHost, owner: &str) -> Option<Vec<u8>> {
+	let HostLocalStorageReadResponse::V2(v01::HostLocalStorageReadResponse { value }) =
+		read_storage(host, Some(owner), "k").expect("the grant admits the read")
+	else {
+		panic!("a v2 request answers with a v2 response");
+	};
+	value
+}
+
+/// Seeds `owner`'s storage with a value only a granted read can reach.
+fn seed_owner_value(platform: &StubPlatform, owner: &str) {
+	platform.local_storage.lock().expect("mutex").insert(
+		ProductStorageKey::new(ProductId::for_test(owner), "k").encode(),
+		b"wallet's own value".to_vec(),
+	);
+}
+
+/// Seeds `owner`'s cached manifest, so a grant resolves without a chain.
+fn cache_manifest(platform: &StubPlatform, owner: &str, trusted: &str, age_secs: u64) {
+	cache_manifest_entry(platform, owner, Some(test_manifest_json(trusted)), age_secs);
+}
+
+/// Seed `owner`'s cached lookup with an explicit `fetched_at`, for tests about
+/// the freshness bound itself rather than about grants.
+fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetched_at_secs: u64) {
+	let json = format!(
+		r#"{{"$v":1,"displayName":"D","description":"d",
+                "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted}}}"#
+	);
+	let entry = CachedManifest { fetched_at_secs, json: Some(json) };
+	futures::executor::block_on(platform.write_core_storage(
+		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+		entry.encode(),
+	))
+	.expect("stub core storage accepts the entry");
+}
+
+/// Seeds `owner`'s cached lookup, `None` standing for "publishes no manifest".
+fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<String>, age_secs: u64) {
+	let entry =
+		CachedManifest { fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
+	futures::executor::block_on(platform.write_core_storage(
+		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+		entry.encode(),
+	))
+	.expect("stub core storage accepts the entry");
+}
+
+#[test]
+fn a_cached_grant_reads_the_granting_products_storage() {
+	// The caller is `unknown.dot`, so the manifest names the bare label.
+	//
+	// Seeding only the target's namespace is what makes this a regression pin:
+	// keying the read off the caller instead would miss the value entirely.
+	let platform = stub_platform();
+	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["storage"]}"#, 0);
+	seed_owner_value(&platform, "wallet.dot");
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert_eq!(granted_value(&host, "wallet.dot").as_deref(), Some(&b"wallet's own value"[..]));
+}
+
+#[test]
+fn all_satisfies_a_storage_read() {
+	let platform = stub_platform();
+	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["all"]}"#, 0);
+	seed_owner_value(&platform, "wallet.dot");
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert_eq!(granted_value(&host, "wallet.dot").as_deref(), Some(&b"wallet's own value"[..]));
+}
+
+#[test]
+fn a_grant_to_another_product_does_not_admit_this_caller() {
+	let platform = stub_platform();
+	cache_manifest(&platform, "wallet.dot", r#"{"stash":["storage"]}"#, 0);
+	seed_owner_value(&platform, "wallet.dot");
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert_eq!(read_storage(&host, Some("wallet.dot"), "k").unwrap_err(), access_not_granted());
+}
+
+/// The account gate, which decides whether a signature may be made with
+/// another product's account. The caller is `unknown.dot` throughout, so a
+/// manifest names the bare label `unknown`.
+fn may_use_account_of(host: &ProductRuntimeHost, owner: &str) -> bool {
+	futures::executor::block_on(
+		host.may_use_product_account(&ProductId::for_test(owner), &CallContext::default()),
+	)
+}
+
+#[test]
+fn the_callers_own_account_needs_no_grant_and_no_manifest() {
+	// No manifest is cached for anyone: reaching for one here would be a
+	// chain read in front of every signature a product makes for itself.
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	assert!(may_use_account_of(&host, "unknown.dot"));
+}
+
+#[test]
+fn a_context_grant_admits_the_granting_products_account() {
+	let platform = stub_platform();
+	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["context"]}"#, 0);
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert!(may_use_account_of(&host, "wallet.dot"));
+}
+
+#[test]
+fn all_admits_the_granting_products_account() {
+	let platform = stub_platform();
+	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["all"]}"#, 0);
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert!(may_use_account_of(&host, "wallet.dot"));
+}
+
+#[test]
+fn a_storage_grant_alone_does_not_admit_the_account() {
+	// The scopes are separable on purpose: "read what I stored" is not "act
+	// as me", and a publisher that wrote the narrower one meant it.
+	let platform = stub_platform();
+	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["storage"]}"#, 0);
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert!(!may_use_account_of(&host, "wallet.dot"));
+}
+
+#[test]
+fn a_context_grant_to_another_product_does_not_admit_this_caller() {
+	let platform = stub_platform();
+	cache_manifest(&platform, "wallet.dot", r#"{"stash":["context"]}"#, 0);
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert!(!may_use_account_of(&host, "wallet.dot"));
+}
+
+#[test]
+fn a_product_publishing_no_manifest_admits_nobody() {
+	let platform = stub_platform();
+	cache_manifest_entry(&platform, "wallet.dot", None, 0);
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert!(!may_use_account_of(&host, "wallet.dot"));
+}
+
+/// A subname of the granting product is that product, as it is for every
+/// other grant: the grant is filed under the bare label.
+#[test]
+fn a_subname_of_the_granting_product_is_admitted_under_its_base_grant() {
+	let platform = stub_platform();
+	cache_manifest(&platform, "app.wallet.dot", r#"{"unknown":["context"]}"#, 0);
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert!(may_use_account_of(&host, "app.wallet.dot"));
+}
+
+/// What `sign_payload` answers for an account owned by `wallet.dot`.
+fn sign_with_wallets_account(host: &ProductRuntimeHost) -> CallError<HostSignPayloadError> {
+	futures::executor::block_on(host.sign_payload(
+		&CallContext::default(),
+		HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
+			account: account_id("wallet.dot", 0),
+			payload: crate::test_support::sign_payload_data(),
+		}),
+	))
+	.expect_err("no session is connected, so nothing signs here")
+}
+
+/// The grant is consulted after the session, so a caller with no session is
+/// told the same thing whether or not the account it named would have admitted
+/// it. Consulting the grant first made the pair of refusals a probe for which
+/// products grant which, and reached the chain to answer it.
+#[test]
+fn a_caller_without_a_session_cannot_tell_a_granted_account_from_an_ungranted_one() {
+	let granting = stub_platform();
+	cache_manifest(&granting, "wallet.dot", r#"{"unknown":["context"]}"#, 0);
+	let granted = ProductRuntimeHost::new_compat(granting, Spawner::for_test());
+
+	let withholding = stub_platform();
+	cache_manifest(&withholding, "wallet.dot", r#"{"stash":["context"]}"#, 0);
+	let ungranted = ProductRuntimeHost::new_compat(withholding, Spawner::for_test());
+
+	for host in [&granted, &ungranted] {
+		assert!(
+			matches!(
+				sign_with_wallets_account(host),
+				CallError::Domain(HostSignPayloadError::V1(v01::HostSignPayloadError::Rejected))
+			),
+			"a session-less caller learns only that there is no session",
+		);
+	}
+}
+
+#[test]
+fn a_cached_miss_refuses_without_returning_to_the_chain() {
+	// "This product publishes no manifest" is an answer worth keeping. Without
+	// it every refusal re-reads the contracts, and the round trip separates a
+	// target that has a manifest from one that does not.
+	let platform = stub_platform();
+	cache_manifest_entry(&platform, "wallet.dot", None, 0);
+	seed_owner_value(&platform, "wallet.dot");
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert_eq!(read_storage(&host, Some("wallet.dot"), "k").unwrap_err(), access_not_granted());
+}
+
+#[test]
+fn a_grant_of_some_other_scope_does_not_open_storage() {
+	// Only `storage` and `all` open a read. A value naming anything else, now
+	// or once a later scope is defined, must leave storage refusing.
+	let platform = stub_platform();
+	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["storage-write"]}"#, 0);
+	seed_owner_value(&platform, "wallet.dot");
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert_eq!(read_storage(&host, Some("wallet.dot"), "k").unwrap_err(), access_not_granted());
+}
+
+#[test]
+fn a_context_grant_does_not_open_storage() {
+	// Scopes are independent, and `context` is the case worth pinning rather
+	// than an unrecognised value: it is a scope this core does honour, just
+	// not for storage.
+	let platform = stub_platform();
+	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["context"]}"#, 0);
+	seed_owner_value(&platform, "wallet.dot");
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert_eq!(read_storage(&host, Some("wallet.dot"), "k").unwrap_err(), access_not_granted());
+}
+
+/// A cache entry stamped in the future is stale, not immortal.
+///
+/// The TTL is the revocation bound: a grant a publisher withdraws stays in force
+/// until the document is read again. An entry written while the device clock ran
+/// ahead used to satisfy the bound forever, because `saturating_sub` floors at
+/// zero, so that one entry could never be revoked.
+#[test]
+fn a_cache_entry_stamped_in_the_future_is_not_honoured() {
+	let platform = stub_platform();
+	// A year ahead: `saturating_sub` gives 0, which is below any TTL.
+	cache_manifest_at(
+		&platform,
+		"wallet.dot",
+		r#"{"unknown":["storage"]}"#,
+		crate::unix_time::current_unix_secs() + 365 * 24 * 60 * 60,
+	);
+	seed_owner_value(&platform, "wallet.dot");
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert_eq!(
+		read_storage(&host, Some("wallet.dot"), "k").unwrap_err(),
+		access_not_granted(),
+		"a future-stamped entry must be re-read, not trusted forever"
+	);
+}
+
+#[test]
+fn a_cached_grant_stops_being_honoured_once_it_expires() {
+	// The lifetime is the revocation bound. Past it the entry is ignored,
+	// and with no Asset Hub to re-read from the grant is gone.
+	let platform = stub_platform();
+	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["storage"]}"#, MANIFEST_TTL_SECS + 1);
+	seed_owner_value(&platform, "wallet.dot");
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	assert_eq!(read_storage(&host, Some("wallet.dot"), "k").unwrap_err(), access_not_granted());
+}
+
+/// With no session, every proof refusal is the same refusal.
+///
+/// This is the ordering hazard closed. `create_account_proof` consults the
+/// session before the grant, so a granting target, a non-granting target and
+/// the caller's own key all answer `Rejected`, and the pair of refusals stops
+/// being a probe for who granted whom. The grant path itself is covered
+/// end-to-end, with a live session, in
+/// `runtime::signing_host::tests::a_context_grant_lets_a_foreign_product_prove_with_the_owners_key`.
+#[test]
+fn with_no_session_a_proof_refusal_never_discloses_whether_a_grant_exists() {
+	let platform = stub_platform();
+	cache_manifest(&platform, "granting.dot", r#"{"unknown":["context"]}"#, 0);
+	cache_manifest(&platform, "silent.dot", r#"{"someone-else":["context"]}"#, 0);
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	let sessionless = Some(CallError::Domain(HostAccountCreateProofError::V1(
+		v01::HostAccountCreateProofError::Rejected,
+	)));
+
+	assert_eq!(proof_refusal(&host, "granting.dot"), sessionless);
+	assert_eq!(proof_refusal(&host, "silent.dot"), sessionless);
+	assert_eq!(proof_refusal(&host, host.connection.product_id().as_str()), sessionless);
+}
+
+fn proof_refusal(
+	host: &ProductRuntimeHost,
+	product: &str,
+) -> Option<CallError<HostAccountCreateProofError>> {
+	futures::executor::block_on(
+		host.create_account_proof(&CallContext::default(), create_proof_request(product)),
+	)
+	.err()
+}
+
+#[test]
+fn a_proof_naming_the_caller_in_another_spelling_is_still_its_own() {
+	// Normalized before comparison, so casing cannot turn a product's own
+	// key into a cross-product refusal.
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let shouted = host.connection.product_id().as_str().to_uppercase();
+	assert_eq!(
+		proof_refusal(&host, &shouted),
+		Some(CallError::Domain(HostAccountCreateProofError::V1(
+			v01::HostAccountCreateProofError::Rejected
+		)))
+	);
+}
+
+/// The compat stack has no relay, so a product asking for one is told the
+/// host does not serve it.
+#[test]
+fn get_chain_info_unserved_identifier_is_not_supported() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let cx = CallContext::default();
+	let request = RemoteChainInfoRequest::V1(v01::RemoteChainInfoRequest {
+		chain: v01::ChainIdentifier::Relay,
+	});
+	let error = futures::executor::block_on(host.get_chain_info(&cx, request)).unwrap_err();
+	assert_eq!(
+		error,
+		CallError::Domain(RemoteChainInfoError::V1(v01::RemoteChainInfoError::NotSupported))
+	);
+}
+
+/// A picker whose contact list and answer are fixed at construction.
+struct StubContactsPlatform {
+	/// The host's list; a test removes a contact by editing it.
+	listed: Mutex<Vec<[u8; 32]>>,
+	/// How many lookups the core made.
+	lookups: std::sync::atomic::AtomicUsize,
+	pick: crate::platform::HostContactPick,
+	failure: Option<&'static str>,
+	/// Products the picker was opened on behalf of, in order.
+	asked_for: Mutex<Vec<String>>,
+}
+
+impl StubContactsPlatform {
+	fn new(listed: Vec<[u8; 32]>, pick: crate::platform::HostContactPick) -> Arc<Self> {
+		Arc::new(Self {
+			listed: Mutex::new(listed),
+			lookups: Default::default(),
+			pick,
+			failure: None,
+			asked_for: Mutex::new(Vec::new()),
+		})
+	}
+
+	fn picking(account: [u8; 32]) -> Arc<Self> {
+		Self::new(vec![account], crate::platform::HostContactPick::Picked { account })
+	}
+
+	fn dismissing() -> Arc<Self> {
+		Self::new(vec![[10u8; 32]], crate::platform::HostContactPick::Dismissed)
+	}
+
+	fn empty() -> Arc<Self> {
+		Self::new(vec![], crate::platform::HostContactPick::NoContacts)
+	}
+
+	fn without_a_picker() -> Arc<Self> {
+		Self::new(vec![[10u8; 32]], crate::platform::HostContactPick::Unsupported)
+	}
+
+	fn failing(reason: &'static str) -> Arc<Self> {
+		Arc::new(Self {
+			listed: Mutex::new(vec![[10u8; 32]]),
+			lookups: Default::default(),
+			pick: crate::platform::HostContactPick::Dismissed,
+			failure: Some(reason),
+			asked_for: Mutex::new(Vec::new()),
+		})
+	}
+}
+
+#[async_trait::async_trait]
+impl crate::platform::ContactsPlatform for StubContactsPlatform {
+	async fn contacts(
+		&self,
+		lookup: &crate::platform::HostContactLookup,
+	) -> Result<crate::platform::HostContactMatches, truapi::latest::GenericError> {
+		if let Some(reason) = self.failure {
+			return Err(truapi::latest::GenericError { reason: reason.to_string() });
+		}
+		self.lookups.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+		let listed = self.listed.lock().expect("listed mutex poisoned");
+		Ok(crate::platform::HostContactMatches {
+			accounts: lookup
+				.handles
+				.iter()
+				.map(|handle| {
+					listed.iter().copied().find(|account| {
+						&crate::runtime::contacts::contact_handle(&lookup.handle_key, account) ==
+							handle
+					})
+				})
+				.collect(),
+		})
+	}
+
+	async fn pick_contact(
+		&self,
+		product: &ProductContext,
+	) -> Result<crate::platform::HostContactPick, truapi::latest::GenericError> {
+		self.asked_for
+			.lock()
+			.expect("asked_for mutex poisoned")
+			.push(product.product_id.to_string());
+		match self.failure {
+			Some(reason) => Err(truapi::latest::GenericError { reason: reason.to_string() }),
+			None => Ok(self.pick),
+		}
+	}
+}
+
+/// A picker-capable runtime for `product_id`, with a session unless
+/// `connected` is false.
+fn contacts_host(
+	product_id: &str,
+	platform: Arc<StubPlatform>,
+	contacts: Option<Arc<StubContactsPlatform>>,
+	connected: bool,
+) -> ProductRuntimeHost {
+	let (host_config, product) = runtime_config(product_id);
+	let services = RuntimeServices::with_chat_platform(
+		platform as Arc<dyn Platform>,
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		Spawner::for_test(),
+		None,
+	);
+	if let Some(contacts) = contacts {
+		services.install_contacts_platform(contacts);
+	}
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	if connected {
+		install_pairing_session(&host, session_info());
+	}
+	host
+}
+
+fn pick(
+	host: &ProductRuntimeHost,
+) -> Result<HostContactsPickResponse, CallError<HostContactsPickError>> {
+	futures::executor::block_on(Contacts::pick(
+		host,
+		&CallContext::default(),
+		HostContactsPickRequest::V1(v01::HostContactsPickRequest {}),
+	))
+}
+
+/// A host that implements only the required `contacts` method.
+struct LookupOnlyContactsPlatform;
+
+#[async_trait::async_trait]
+impl crate::platform::ContactsPlatform for LookupOnlyContactsPlatform {
+	async fn contacts(
+		&self,
+		lookup: &crate::platform::HostContactLookup,
+	) -> Result<crate::platform::HostContactMatches, truapi::latest::GenericError> {
+		Ok(crate::platform::HostContactMatches { accounts: vec![None; lookup.handles.len()] })
+	}
+}
+
+/// A host whose lookup answers every handle with one fixed account, the way a
+/// buggy or hostile host would.
+struct MisanswerContactsPlatform;
+
+#[async_trait::async_trait]
+impl crate::platform::ContactsPlatform for MisanswerContactsPlatform {
+	async fn contacts(
+		&self,
+		lookup: &crate::platform::HostContactLookup,
+	) -> Result<crate::platform::HostContactMatches, truapi::latest::GenericError> {
+		Ok(crate::platform::HostContactMatches {
+			accounts: vec![Some([0xEE; 32]); lookup.handles.len()],
+		})
+	}
+}
+
+#[test]
+fn a_host_that_only_resolves_contacts_reports_unsupported() {
+	// `pick_contact` is defaulted so a host needs to write one method. The
+	// default is truthful: a product learns the picker will never work here,
+	// rather than a dismissal it would keep retrying.
+	let (host_config, product) = runtime_config("voting.dot");
+	let services = RuntimeServices::with_chat_platform(
+		stub_platform() as Arc<dyn Platform>,
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		Spawner::for_test(),
+		None,
+	);
+	services.install_contacts_platform(Arc::new(LookupOnlyContactsPlatform));
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+
+	assert_eq!(pick(&host).unwrap_err(), CallError::Unsupported);
+}
+
+#[test]
+fn contacts_pick_without_a_platform_is_unsupported() {
+	// No picker means no overlay, and nothing to ask the user.
+	let host = contacts_host("voting.dot", stub_platform(), None, true);
+	assert_eq!(pick(&host).unwrap_err(), CallError::Unsupported);
+}
+
+#[test]
+fn contacts_pick_without_a_session_reports_not_connected() {
+	let host = contacts_host(
+		"voting.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::picking([10u8; 32])),
+		false,
+	);
+
+	assert_eq!(
+		pick(&host).unwrap_err(),
+		CallError::Domain(HostContactsPickError::V1(v01::HostContactsPickError::NotConnected))
+	);
+}
+
+#[test]
+fn contacts_pick_never_prompts_for_a_permission() {
+	// The user's selection is the consent, so there is no grant to request
+	// and nothing persisted per product.
+	let platform = stub_platform();
+	let host = contacts_host(
+		"voting.dot",
+		platform.clone(),
+		Some(StubContactsPlatform::picking([10u8; 32])),
+		true,
+	);
+
+	pick(&host).expect("the picker opens");
+
+	assert!(
+		platform
+			.device_permission_requests
+			.lock()
+			.expect("device permission list mutex poisoned")
+			.is_empty(),
+		"a user-mediated picker must not also request a permission"
+	);
+}
+
+#[test]
+fn contacts_pick_tells_the_host_which_product_is_asking() {
+	// The host draws the overlay, so it has to be able to name the caller.
+	let contacts = StubContactsPlatform::picking([10u8; 32]);
+	let host = contacts_host("voting.dot", stub_platform(), Some(contacts.clone()), true);
+
+	pick(&host).expect("the picker opens");
+
+	assert_eq!(
+		*contacts.asked_for.lock().expect("asked_for mutex poisoned"),
+		vec!["voting.dot".to_string()]
+	);
+}
+
+#[test]
+fn the_handle_is_derived_from_the_sessions_secret_entropy_source() {
+	// The security property of the whole design, pinned end to end: the
+	// handle a product receives must be the one derived from this session's
+	// root entropy source. Keying on anything public (session.public_key is
+	// published on chain) or on a constant would satisfy every other test
+	// here, so this is the only thing standing between the design and a
+	// handle an adversary can recompute.
+	let account = [10u8; 32];
+	let host = contacts_host(
+		"voting.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::picking(account)),
+		true,
+	);
+
+	let HostContactsPickResponse::V1(response) = pick(&host).expect("the picker opens");
+	let v01::ContactPickOutcome::Picked { handle } = response.outcome else {
+		panic!("the user picked someone");
+	};
+	let handle = handle.bytes;
+
+	let source = session_info()
+		.root_entropy_source
+		.expect("the test session carries an entropy source");
+	let expected = crate::runtime::contacts::contact_handle(
+		&crate::runtime::contacts::handle_key_from_root_source(&source),
+		&account,
+	);
+	assert_eq!(handle, expected, "the handle must key on the session's root entropy source");
+	// And is not what the public alternatives would have produced.
+	for public in [session_info().public_key, [0u8; 32]] {
+		assert_ne!(
+			handle,
+			crate::runtime::contacts::contact_handle(
+				&crate::runtime::contacts::handle_key_from_root_source(&public),
+				&account,
+			),
+			"the handle must not be derivable from public material"
+		);
+	}
+}
+
+#[test]
+fn contacts_pick_returns_a_handle_and_never_the_account() {
+	let account = [10u8; 32];
+	let host = contacts_host(
+		"voting.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::picking(account)),
+		true,
+	);
+
+	let HostContactsPickResponse::V1(response) = pick(&host).expect("the picker opens");
+	let v01::ContactPickOutcome::Picked { handle } = response.outcome else {
+		panic!("the user picked someone");
+	};
+	assert_ne!(handle.bytes, account, "the account must not be passed through as the handle");
+}
+
+#[test]
+fn a_dismissal_an_empty_list_and_no_picker_are_three_answers() {
+	// The distinction a product acts on: retry a dismissal, do not retry an
+	// empty list, and never retry a host that has no picker.
+	let dismissed = contacts_host(
+		"voting.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::dismissing()),
+		true,
+	);
+	let HostContactsPickResponse::V1(response) =
+		pick(&dismissed).expect("a dismissal is not an error");
+	assert_eq!(response.outcome, v01::ContactPickOutcome::Dismissed);
+
+	let empty =
+		contacts_host("voting.dot", stub_platform(), Some(StubContactsPlatform::empty()), true);
+	let HostContactsPickResponse::V1(response) =
+		pick(&empty).expect("an empty list is not an error");
+	assert_eq!(response.outcome, v01::ContactPickOutcome::NoContacts);
+
+	let no_picker = contacts_host(
+		"voting.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::without_a_picker()),
+		true,
+	);
+	assert_eq!(pick(&no_picker).unwrap_err(), CallError::Unsupported);
+}
+
+#[test]
+fn the_host_answers_an_empty_list_itself() {
+	// The core never sees the list, so emptiness is the host's to report: the
+	// picker is asked, and its `NoContacts` reaches the product as is.
+	let contacts = StubContactsPlatform::empty();
+	let host = contacts_host("voting.dot", stub_platform(), Some(contacts.clone()), true);
+
+	let HostContactsPickResponse::V1(response) = pick(&host).expect("the call succeeds");
+	assert_eq!(response.outcome, v01::ContactPickOutcome::NoContacts);
+	assert_eq!(
+		*contacts.asked_for.lock().expect("asked_for mutex poisoned"),
+		vec!["voting.dot".to_string()]
+	);
+}
+
+#[test]
+fn contacts_pick_maps_a_platform_failure_to_unknown() {
+	let host = contacts_host(
+		"voting.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::failing("overlay unavailable")),
+		true,
+	);
+
+	assert_eq!(
+		pick(&host).unwrap_err(),
+		CallError::Domain(HostContactsPickError::V1(v01::HostContactsPickError::Unknown {
+			reason: "overlay unavailable".to_string(),
+		}))
+	);
+}
+
+#[test]
+fn contacts_pick_is_available_to_an_app_execution() {
+	// Unlike Chat, the picker is not gated on an execution kind.
+	let (_, product) = runtime_config("voting.dot");
+	assert_eq!(product.execution_kind, crate::platform::ExecutableKind::App);
+
+	let host = contacts_host(
+		"voting.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::picking([10u8; 32])),
+		true,
+	);
+	let HostContactsPickResponse::V1(response) =
+		pick(&host).expect("an app product may open the picker");
+	assert!(matches!(response.outcome, v01::ContactPickOutcome::Picked { .. }));
+}
+
+/// A call naming a handle is the call naming the account by the time anyone
+/// signs it or is asked about it.
+#[test]
+fn a_declared_handle_becomes_the_account_it_names() {
+	let account = [10u8; 32];
+	let host = contacts_host(
+		"voting.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::picking(account)),
+		true,
+	);
+	let HostContactsPickResponse::V1(response) = pick(&host).expect("the picker opens");
+	let v01::ContactPickOutcome::Picked { handle } = response.outcome else {
+		panic!("the user picked someone");
+	};
+
+	// A transfer-shaped call: index, recipient, amount.
+	let mut call = vec![0x04, 0x00];
+	call.extend_from_slice(&handle.bytes);
+	call.extend_from_slice(&[0x07; 8]);
+
+	let substituted =
+		futures::executor::block_on(host.substitute_declared_contacts(call.clone(), &[handle]))
+			.expect("the handle resolves to the contact it was minted for");
+
+	assert_eq!(&substituted[2..34], &account, "the recipient is the account");
+	assert_eq!(&substituted[..2], &call[..2]);
+	assert_eq!(&substituted[34..], &call[34..]);
+}
+
+/// A handle the user just picked resolves from the core's cache, so signing a
+/// payment to them does not read the host's list again.
+#[test]
+fn a_picked_handle_signs_without_reading_the_list() {
+	let contacts = StubContactsPlatform::picking([10u8; 32]);
+	let host = contacts_host("voting.dot", stub_platform(), Some(contacts.clone()), true);
+	let HostContactsPickResponse::V1(response) = pick(&host).expect("the picker opens");
+	let v01::ContactPickOutcome::Picked { handle } = response.outcome else {
+		panic!("the user picked someone");
+	};
+	let reads_after_pick = contacts.lookups.load(std::sync::atomic::Ordering::SeqCst);
+
+	futures::executor::block_on(
+		host.substitute_declared_contacts(handle.bytes.to_vec(), &[handle]),
+	)
+	.expect("the cached handle resolves");
+
+	assert_eq!(
+		contacts.lookups.load(std::sync::atomic::Ordering::SeqCst),
+		reads_after_pick,
+		"a cache hit must not read the list"
+	);
+}
+
+/// Once the host says its contacts changed, a contact it removed stops
+/// resolving even though the core had cached their handle.
+#[test]
+fn a_removed_contact_stops_resolving_once_the_host_signals() {
+	let contacts = StubContactsPlatform::picking([10u8; 32]);
+	let host = contacts_host("voting.dot", stub_platform(), Some(contacts.clone()), true);
+	let HostContactsPickResponse::V1(response) = pick(&host).expect("the picker opens");
+	let v01::ContactPickOutcome::Picked { handle } = response.outcome else {
+		panic!("the user picked someone");
+	};
+
+	contacts.listed.lock().expect("listed mutex poisoned").clear();
+	host.connection.services.contact_handles.clear();
+
+	assert_eq!(
+		futures::executor::block_on(
+			host.substitute_declared_contacts(handle.bytes.to_vec(), &[handle])
+		),
+		Err(crate::runtime::ContactResolutionError::UnknownContact),
+		"a removed contact must not resolve from a cleared cache"
+	);
+}
+
+/// A handle the host has no contact for is the only revocation this API has,
+/// and it refuses rather than signing a call that names nobody.
+#[test]
+fn a_handle_no_contact_matches_refuses_the_call() {
+	let host = contacts_host(
+		"voting.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::picking([10u8; 32])),
+		true,
+	);
+	let stale = v01::ContactHandle { bytes: [0xEE; 32] };
+	let mut call = vec![0x04, 0x00];
+	call.extend_from_slice(&stale.bytes);
+
+	assert_eq!(
+		futures::executor::block_on(host.substitute_declared_contacts(call, &[stale])),
+		Err(crate::runtime::ContactResolutionError::UnknownContact)
+	);
+}
+
+/// A connected runtime whose contacts adapter is `contacts`.
+fn host_with_contacts(contacts: Arc<dyn crate::platform::ContactsPlatform>) -> ProductRuntimeHost {
+	let (host_config, product) = runtime_config("voting.dot");
+	let services = RuntimeServices::with_chat_platform(
+		stub_platform() as Arc<dyn Platform>,
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		Spawner::for_test(),
+		None,
+	);
+	services.install_contacts_platform(contacts);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+	host
+}
+
+/// The host resolves, but the core checks: an account that does not hash to
+/// the handle it was returned for is no contact, so a host cannot make a
+/// made-up handle pay somebody.
+#[test]
+fn an_account_the_host_returns_for_the_wrong_handle_refuses_the_call() {
+	let host = host_with_contacts(Arc::new(MisanswerContactsPlatform));
+	let forged = v01::ContactHandle { bytes: [0x42; 32] };
+
+	assert_eq!(
+		futures::executor::block_on(
+			host.substitute_declared_contacts(forged.bytes.to_vec(), &[forged])
+		),
+		Err(crate::runtime::ContactResolutionError::UnknownContact)
+	);
+}
+
+/// A handle in the call that the product forgot to declare would be signed as
+/// an address nobody holds, so the call is refused instead.
+#[test]
+fn a_known_handle_left_undeclared_refuses_the_call() {
+	let host = contacts_host(
+		"voting.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::picking([10u8; 32])),
+		true,
+	);
+	let HostContactsPickResponse::V1(response) = pick(&host).expect("the picker opens");
+	let v01::ContactPickOutcome::Picked { handle } = response.outcome else {
+		panic!("the user picked someone");
+	};
+	let mut call = vec![0x04, 0x00];
+	call.extend_from_slice(&handle.bytes);
+
+	assert_eq!(
+		futures::executor::block_on(host.substitute_declared_contacts(call, &[])),
+		Err(crate::runtime::ContactResolutionError::UnknownContact)
+	);
+}
+
+/// A lookup that fails says nothing about the contact, so it must not read as
+/// a revoked one: the product can retry rather than drop the handle.
+#[test]
+fn a_failed_host_lookup_is_not_an_unknown_contact() {
+	let host = contacts_host(
+		"voting.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::failing("store offline")),
+		true,
+	);
+	let handle = v01::ContactHandle { bytes: [0x42; 32] };
+
+	assert_eq!(
+		futures::executor::block_on(
+			host.substitute_declared_contacts(handle.bytes.to_vec(), &[handle])
+		),
+		Err(crate::runtime::ContactResolutionError::Host("store offline".to_string()))
+	);
+}
+
+/// Every handle the cache cannot answer goes to the host in one lookup.
+#[test]
+fn uncached_handles_are_resolved_in_one_lookup() {
+	let (alice, bob) = ([10u8; 32], [11u8; 32]);
+	let contacts =
+		StubContactsPlatform::new(vec![alice, bob], crate::platform::HostContactPick::Dismissed);
+	let host = contacts_host("voting.dot", stub_platform(), Some(contacts.clone()), true);
+	let source = session_info()
+		.root_entropy_source
+		.expect("the test session carries an entropy source");
+	let key = crate::runtime::contacts::handle_key_from_root_source(&source);
+	let handles = [alice, bob].map(|account| v01::ContactHandle {
+		bytes: crate::runtime::contacts::contact_handle(&key, &account),
+	});
+	let call: Vec<u8> = handles.iter().flat_map(|handle| handle.bytes).collect();
+
+	let substituted =
+		futures::executor::block_on(host.substitute_declared_contacts(call, &handles))
+			.expect("both handles resolve");
+
+	assert_eq!(&substituted[..32], &alice);
+	assert_eq!(&substituted[32..], &bob);
+	assert_eq!(
+		contacts.lookups.load(std::sync::atomic::Ordering::SeqCst),
+		1,
+		"both misses go to the host together"
+	);
+}
+
+/// A call that declares nobody reaches for no contact list, so a host that
+/// serves no picker still builds ordinary transactions.
+#[test]
+fn a_call_declaring_no_contacts_needs_no_picker() {
+	let host = contacts_host("voting.dot", stub_platform(), None, true);
+	let call = vec![0x04, 0x00, 0x09];
+
+	assert_eq!(
+		futures::executor::block_on(host.substitute_declared_contacts(call.clone(), &[])),
+		Ok(call)
+	);
+}
+
+#[test]
+fn two_products_receive_the_same_handle_for_one_contact() {
+	// The deliberate property: the handle is a durable shared id, so a
+	// product can be handed a recipient another product already knows.
+	let platform = stub_platform();
+	let account = [10u8; 32];
+
+	let handle_for = |product_id: &str| {
+		let host = contacts_host(
+			product_id,
+			platform.clone(),
+			Some(StubContactsPlatform::picking(account)),
+			true,
+		);
+		let HostContactsPickResponse::V1(response) = pick(&host).expect("the picker opens");
+		let v01::ContactPickOutcome::Picked { handle } = response.outcome else {
+			panic!("the user picked someone");
+		};
+		handle
+	};
+
+	assert_eq!(handle_for("voting.dot"), handle_for("games.dot"));
+}
+
+/// Records which `ChatPlatform` methods the runtime actually reached.
+#[derive(Default)]
+struct RecordingChatPlatform {
+	registered_bots: Mutex<Vec<String>>,
+	created_rooms: Mutex<Vec<String>>,
+	posted_rooms: Mutex<Vec<String>>,
+	posted_payloads: Mutex<Vec<v01::ChatMessageContent>>,
+	posted_alts: Mutex<Vec<Option<String>>>,
+	room_footers: Mutex<Vec<(String, truapi::latest::ChatRoomFooter)>>,
+	bot_rooms: Vec<String>,
+}
+
+#[async_trait::async_trait]
+impl crate::platform::ChatPlatform for RecordingChatPlatform {
+	async fn create_chat_room(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatCreateRoomRequest,
+	) -> Result<truapi::latest::HostChatCreateRoomResponse, truapi::latest::HostChatCreateRoomError>
+	{
+		self.created_rooms
+			.lock()
+			.expect("created rooms mutex poisoned")
+			.push(request.room_id);
+		Ok(truapi::latest::HostChatCreateRoomResponse {
+			status: v01::ChatRoomRegistrationStatus::New,
+		})
+	}
+
+	async fn register_chat_bot(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatRegisterBotRequest,
+	) -> Result<truapi::latest::HostChatRegisterBotResponse, truapi::latest::HostChatRegisterBotError>
+	{
+		self.registered_bots
+			.lock()
+			.expect("registered bots mutex poisoned")
+			.push(request.bot_id);
+		Ok(truapi::latest::HostChatRegisterBotResponse {
+			status: v01::ChatBotRegistrationStatus::New,
+		})
+	}
+
+	async fn post_chat_message(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatPostMessageRequest,
+	) -> Result<truapi::latest::HostChatPostMessageResponse, truapi::latest::HostChatPostMessageError>
+	{
+		self.posted_rooms
+			.lock()
+			.expect("posted rooms mutex poisoned")
+			.push(request.room_id);
+		self.posted_payloads
+			.lock()
+			.expect("posted payloads mutex poisoned")
+			.push(request.payload);
+		self.posted_alts.lock().expect("posted alts mutex poisoned").push(request.alt);
+		Ok(truapi::latest::HostChatPostMessageResponse { message_id: "message-id".to_string() })
+	}
+
+	async fn set_chat_room_footer(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostChatSetRoomFooterRequest,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.room_footers
+			.lock()
+			.expect("room footers mutex poisoned")
+			.push((request.room_id, request.footer));
+		Ok(())
+	}
+
+	fn subscribe_chat_rooms(
+		&self,
+		_product: &ProductContext,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<truapi::latest::HostChatListSubscribeItem, truapi::latest::GenericError>,
+	> {
+		let bot_rooms = self.bot_rooms.iter().map(|room_id| v01::ChatRoom {
+			room_id: room_id.clone(),
+			participating_as: v01::ChatRoomParticipation::Bot,
+		});
+		let rooms = self
+			.created_rooms
+			.lock()
+			.expect("created rooms mutex poisoned")
+			.iter()
+			.map(|room_id| v01::ChatRoom {
+				room_id: room_id.clone(),
+				participating_as: v01::ChatRoomParticipation::RoomHost,
+			})
+			.chain(bot_rooms)
+			.collect();
+		Box::pin(futures::stream::iter([Ok(truapi::latest::HostChatListSubscribeItem { rooms })]))
+	}
+}
+
+/// A request whose statement never went out is not on the channel, so a
+/// `Cancel` for it would replace whatever older request is there instead.
+#[test]
+fn a_request_withdrawn_before_it_is_submitted_sends_no_cancel() {
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		sign_raw_confirmed: true,
+		rpc_responses: vec![
+			subscribe_ack_frame("truapi:1", "own-sub-unsent"),
+			subscribe_ack_frame("truapi:2", "peer-sub-unsent"),
+		],
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session);
+	let cancel = truapi::CancellationToken::default();
+	cancel.cancel();
+	let cx = CallContext::with_parts("sign-raw-unsent".to_string(), cancel);
+	let request = HostSignRawRequest::V1(v01::HostSignRawRequest {
+		account: account_id("myapp.dot", 0),
+		payload: raw_payload(),
+	});
+
+	futures::executor::block_on(host.sign_raw(&cx, request)).unwrap_err();
+	// Long enough for a spawned `Cancel` to have been submitted.
+	std::thread::sleep(std::time::Duration::from_millis(200));
+
+	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, SUBMIT_STATEMENT_METHOD), 0);
+}
+
+/// `message_id`s every `Cancel` this host has published names, oldest first.
+pub fn withdrawn_requests(platform: &Arc<StubPlatform>, session: &SessionInfo) -> Vec<String> {
+	submitted_remote_messages(platform, session)
+		.into_iter()
+		.filter_map(|message| match message.data {
+			RemoteMessageData::V1(v1::RemoteMessage::Cancel(withdrawal)) => {
+				Some(withdrawal.message_id)
+			},
+			_ => None,
+		})
+		.collect()
+}
+
+#[test]
+fn chat_post_message_screens_content_before_it_reaches_a_host() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let spawner = Spawner::for_test();
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner.clone(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform::default());
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+
+	let post = |payload: v01::ChatMessageContent| {
+		futures::executor::block_on(Chat::post_message(
+			&host,
+			&CallContext::default(),
+			HostChatPostMessageRequest::V1(v01::HostChatPostMessageRequest {
+				room_id: "support".to_string(),
+				payload,
+			}),
+		))
+	};
+
+	// The screen runs at this entrypoint, not only in the helper: a host
+	// must never be handed a scheme it would fetch or open.
+	let rejected = post(v01::ChatMessageContent::File(v01::ChatFile {
+		url: "javascript:alert(document.cookie)".to_string(),
+		file_name: "f".to_string(),
+		mime_type: "text/plain".to_string(),
+		size_bytes: 1,
+		text: None,
+	}))
+	.expect_err("a javascript: file url must not reach the host");
+	assert!(matches!(
+		rejected,
+		CallError::Domain(HostChatPostMessageError::V1(
+			v01::HostChatPostMessageError::Unknown { .. }
+		))
+	));
+
+	// A body over budget reports the size variant the protocol declares.
+	let too_large = post(v01::ChatMessageContent::Text {
+		text: "x".repeat(crate::platform::CHAT_BODY_MAX_BYTES + 1),
+	})
+	.expect_err("an over-budget body must not reach the host");
+	assert!(matches!(
+		too_large,
+		CallError::Domain(HostChatPostMessageError::V1(
+			v01::HostChatPostMessageError::MessageTooLarge
+		))
+	));
+
+	// The payload arm of the size variant, which the body arm does not cover.
+	let big_payload = post(v01::ChatMessageContent::Custom(v01::ChatCustomMessage {
+		message_type: "vote".to_string(),
+		payload: vec![0; crate::platform::CHAT_CUSTOM_PAYLOAD_MAX_BYTES + 1],
+	}))
+	.expect_err("an over-budget custom payload must not reach the host");
+	assert!(matches!(
+		big_payload,
+		CallError::Domain(HostChatPostMessageError::V1(
+			v01::HostChatPostMessageError::MessageTooLarge
+		))
+	));
+
+	// An over-long room id is not an over-large message.
+	let long_room = futures::executor::block_on(Chat::post_message(
+		&host,
+		&CallContext::default(),
+		HostChatPostMessageRequest::V1(v01::HostChatPostMessageRequest {
+			room_id: "r".repeat(crate::platform::CHAT_FIELD_MAX_BYTES + 1),
+			payload: v01::ChatMessageContent::Text { text: "hi".to_string() },
+		}),
+	))
+	.expect_err("an over-long room id must be rejected");
+	assert!(matches!(
+		long_room,
+		CallError::Domain(HostChatPostMessageError::V1(
+			v01::HostChatPostMessageError::Unknown { .. }
+		))
+	));
+
+	assert!(
+		chat_platform
+			.posted_rooms
+			.lock()
+			.expect("posted rooms mutex poisoned")
+			.is_empty(),
+		"nothing rejected may reach the host"
+	);
+
+	// The validated value is what the host receives, not the arriving one:
+	// running the screen and discarding its result would pass every
+	// rejection assertion above.
+	post(v01::ChatMessageContent::Reaction(v01::ChatReaction {
+		message_id: "  cafe\u{301}  ".to_string(),
+		emoji: "\u{1f3b2}".to_string(),
+	}))
+	.expect("a normalizable reaction is accepted");
+	post(v01::ChatMessageContent::File(v01::ChatFile {
+		url: "https://example.invalid".to_string(),
+		file_name: "f".to_string(),
+		mime_type: "text/plain".to_string(),
+		size_bytes: 1,
+		text: None,
+	}))
+	.expect("a resolvable file url is accepted");
+	assert_eq!(
+		chat_platform
+			.posted_payloads
+			.lock()
+			.expect("posted payloads mutex poisoned")
+			.as_slice(),
+		&[
+			v01::ChatMessageContent::Reaction(v01::ChatReaction {
+				message_id: "caf\u{e9}".to_string(),
+				emoji: "\u{1f3b2}".to_string(),
+			}),
+			v01::ChatMessageContent::File(v01::ChatFile {
+				url: "https://example.invalid/".to_string(),
+				file_name: "f".to_string(),
+				mime_type: "text/plain".to_string(),
+				size_bytes: 1,
+				text: None,
+			}),
+		]
+	);
+}
+
+#[test]
+fn a_room_footer_reaches_the_host_for_the_room_the_product_created() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let spawner = Spawner::for_test();
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner.clone(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform {
+		bot_rooms: vec!["guest".to_string()],
+		..Default::default()
+	});
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+
+	futures::executor::block_on(Chat::create_room(
+		&host,
+		&CallContext::default(),
+		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+			room_id: "caf\u{e9}".to_string(),
+			name: "Cafe".to_string(),
+			icon: String::new(),
+		}),
+	))
+	.expect("create_room accepts the room");
+
+	// Decomposed here, precomposed when the room was created: the host must
+	// see the id it stored, or the footer lands on a room that does not exist.
+	futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+			room_id: "cafe\u{301}".to_string(),
+			footer: v01::ChatRoomFooter::Empty,
+		}),
+	))
+	.expect("set_room_footer accepts a normalizable id");
+
+	let rejected = futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+			room_id: "room\u{202e}".to_string(),
+			footer: v01::ChatRoomFooter::Empty,
+		}),
+	));
+
+	assert!(
+		matches!(rejected, Err(CallError::Domain(_))),
+		"a bidi room id must be a domain error, got {rejected:?}"
+	);
+
+	// A product that never created the room gets a reason it can act on, and
+	// the host is never asked to style a room it does not have.
+	let unknown = futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+			room_id: "elsewhere".to_string(),
+			footer: v01::ChatRoomFooter::Empty,
+		}),
+	));
+	assert_eq!(
+		unknown,
+		Err(CallError::Domain(HostChatSetRoomFooterError::V1(
+			v01::HostChatSetRoomFooterError::UnknownRoom
+		)))
+	);
+
+	// The product only takes part in this room as a bot, so the footer is not
+	// for it to set.
+	let joined = futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+			room_id: "guest".to_string(),
+			footer: v01::ChatRoomFooter::Empty,
+		}),
+	));
+	assert_eq!(
+		joined,
+		Err(CallError::Domain(HostChatSetRoomFooterError::V1(
+			v01::HostChatSetRoomFooterError::UnknownRoom
+		)))
+	);
+	assert_eq!(
+		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
+		[("caf\u{e9}".to_string(), truapi::latest::ChatRoomFooter::Empty)]
+	);
+}
+
+#[test]
+fn a_card_docks_in_the_footer_of_the_room_the_product_created() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let spawner = Spawner::for_test();
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner.clone(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform::default());
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+	let card = v02::ChatRoomFooter::Card(v01::ChatCustomMessage {
+		message_type: "register".to_string(),
+		payload: vec![1],
+	});
+
+	futures::executor::block_on(Chat::create_room(
+		&host,
+		&CallContext::default(),
+		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+			room_id: "room".to_string(),
+			name: "Room".to_string(),
+			icon: String::new(),
+		}),
+	))
+	.expect("create_room accepts the room");
+
+	futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V2(v02::HostChatSetRoomFooterRequest {
+			room_id: "room".to_string(),
+			footer: card.clone(),
+		}),
+	))
+	.expect("set_room_footer docks the card");
+
+	let unknown = futures::executor::block_on(Chat::set_room_footer(
+		&host,
+		&CallContext::default(),
+		HostChatSetRoomFooterRequest::V2(v02::HostChatSetRoomFooterRequest {
+			room_id: "elsewhere".to_string(),
+			footer: card.clone(),
+		}),
+	));
+	assert_eq!(
+		unknown,
+		Err(CallError::Domain(HostChatSetRoomFooterError::V2(
+			v01::HostChatSetRoomFooterError::UnknownRoom
+		)))
+	);
+	assert_eq!(
+		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
+		[("room".to_string(), card)]
+	);
+}
+
+#[test]
+fn chat_post_message_screens_the_alt_before_it_reaches_a_host() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let spawner = Spawner::for_test();
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner.clone(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform::default());
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+
+	let card = || {
+		v01::ChatMessageContent::Custom(v01::ChatCustomMessage {
+			message_type: "results".to_string(),
+			payload: vec![1],
+		})
+	};
+	let post = |payload: v01::ChatMessageContent, alt: Option<String>| {
+		futures::executor::block_on(Chat::post_message(
+			&host,
+			&CallContext::default(),
+			HostChatPostMessageRequest::V2(truapi::latest::HostChatPostMessageRequest {
+				room_id: "support".to_string(),
+				payload,
+				alt,
+			}),
+		))
+	};
+
+	// A host lists the alt as it arrives, so it gets the trimmed value, and a
+	// blank one is no description at all rather than an empty preview.
+	post(card(), Some("  Week 12 results  ".to_string())).expect("a short alt is accepted");
+	post(card(), Some("   ".to_string())).expect("a blank alt is accepted");
+	post(card(), None).expect("a message without an alt is accepted");
+	// Only a custom message needs a description, so a host never sees an alt
+	// for any other kind.
+	post(v01::ChatMessageContent::Text { text: "hello".to_string() }, Some("Greeting".to_string()))
+		.expect("a text message with an alt is accepted");
+	post(
+		v01::ChatMessageContent::Actions(v01::ChatActions {
+			text: None,
+			actions: Vec::new(),
+			layout: v01::ChatActionLayout::Column,
+		}),
+		Some("Pick one".to_string()),
+	)
+	.expect("an action set with an alt is accepted");
+
+	let too_long = post(card(), Some("x".repeat(crate::platform::CHAT_FIELD_MAX_BYTES + 1)))
+		.expect_err("an over-long alt must be rejected");
+	assert!(matches!(
+		too_long,
+		CallError::Domain(HostChatPostMessageError::V2(
+			v01::HostChatPostMessageError::Unknown { .. }
+		))
+	));
+
+	assert_eq!(
+		chat_platform.posted_alts.lock().expect("posted alts mutex poisoned").as_slice(),
+		&[Some("Week 12 results".to_string()), None, None, None, None]
+	);
+}
+
+#[test]
+fn chat_room_ids_agree_across_create_and_post() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let spawner = Spawner::for_test();
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner.clone(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform::default());
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+
+	// Precomposed on create, decomposed on post: the host must see one id,
+	// or the message lands in a room that does not exist.
+	futures::executor::block_on(Chat::create_room(
+		&host,
+		&CallContext::default(),
+		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+			room_id: "caf\u{e9}".to_string(),
+			name: "Cafe".to_string(),
+			icon: String::new(),
+		}),
+	))
+	.expect("create_room accepts a normalizable id");
+
+	futures::executor::block_on(Chat::post_message(
+		&host,
+		&CallContext::default(),
+		HostChatPostMessageRequest::V1(v01::HostChatPostMessageRequest {
+			room_id: "cafe\u{301}".to_string(),
+			payload: v01::ChatMessageContent::Text { text: "hello".to_string() },
+		}),
+	))
+	.expect("post_message accepts the other spelling of the same id");
+
+	let created = chat_platform
+		.created_rooms
+		.lock()
+		.expect("created rooms mutex poisoned")
+		.clone();
+	let posted = chat_platform.posted_rooms.lock().expect("posted rooms mutex poisoned").clone();
+	assert_eq!(created, posted);
+
+	// create_room screens the same fields register_bot does.
+	for (room_id, icon) in [("", ""), ("room\u{202e}", ""), ("room", "javascript:x")] {
+		let rejected = futures::executor::block_on(Chat::create_room(
+			&host,
+			&CallContext::default(),
+			HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+				room_id: room_id.to_string(),
+				name: "Room".to_string(),
+				icon: icon.to_string(),
+			}),
+		));
+		assert!(
+			matches!(
+				rejected,
+				Err(CallError::Domain(HostChatCreateRoomError::V1(
+					v01::HostChatCreateRoomError::Unknown { .. }
+				)))
+			),
+			"{room_id:?}/{icon:?} must be a domain error, got {rejected:?}"
+		);
+	}
+}
+
+#[test]
+fn chat_register_bot_rejects_unsafe_product_fields() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let spawner = Spawner::for_test();
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner.clone(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform::default());
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product.clone(),
+	);
+	install_pairing_session(&host, session_info());
+
+	let register = |bot_id: &str, name: &str, icon: &str| {
+		futures::executor::block_on(Chat::register_bot(
+			&host,
+			&CallContext::default(),
+			HostChatRegisterBotRequest::V1(v01::HostChatRegisterBotRequest {
+				bot_id: bot_id.to_string(),
+				name: name.to_string(),
+				icon: icon.to_string(),
+			}),
+		))
+	};
+
+	// A rejected field is a domain error naming the field, not the
+	// transport-level `Unsupported` that means "this host has no Chat".
+	for (bot_id, name, icon, expected_field) in [
+		("", "Flipper", "", "botId"),
+		("   ", "Flipper", "", "botId"),
+		("flip\u{202e}per", "Flipper", "", "botId"),
+		("flipper", "Flip\u{202e}per", "", "name"),
+		("flipper", "Flipper", "javascript:alert(1)", "icon"),
+		("flipper", "Flipper", "data: text/html,<script>", "icon"),
+		("flipper", "Flipper", "data:image/svg+xml,<svg>", "icon"),
+		("flipper", "Flipper", "file:///etc/passwd", "icon"),
+		("flipper", "Flipper", "//evil.example/x.png", "icon"),
+	] {
+		match register(bot_id, name, icon) {
+			Err(CallError::Domain(HostChatRegisterBotError::V1(
+				v01::HostChatRegisterBotError::Unknown { reason },
+			))) => {
+				assert!(
+					reason.contains(expected_field),
+					"{bot_id:?}/{name:?}/{icon:?} must name {expected_field}, got {reason:?}"
+				)
+			},
+			other => panic!("{bot_id:?}/{name:?}/{icon:?} must be a domain error: {other:?}"),
+		}
+	}
+	assert!(
+		chat_platform
+			.registered_bots
+			.lock()
+			.expect("registered bots mutex poisoned")
+			.is_empty(),
+		"no rejected field may reach the host"
+	);
+
+	// NFD and NFC spellings normalize to one id, so they cannot become two
+	// bots that render identically.
+	register("cafe\u{301}", "Cafe", "").expect("normalized id is accepted");
+	register("caf\u{e9}", "Cafe", "").expect("normalized id is accepted");
+	let bots = chat_platform.registered_bots.lock().expect("registered bots mutex poisoned");
+	assert_eq!(bots.len(), 2);
+	assert_eq!(bots[0], bots[1]);
+}
+
+/// Guards the failure mode that hid `register_bot`: a `Chat` trait method
+/// with no `impl` silently falls back to the trait default and answers
+/// `unavailable`, while codegen, the wire table and the TS types all still
+/// advertise it.
+#[test]
+fn chat_register_bot_reaches_the_installed_adapter() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let spawner = Spawner::for_test();
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner.clone(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform::default());
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services.clone(),
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product.clone(),
+	);
+	install_pairing_session(&host, session_info());
+
+	let response = futures::executor::block_on(Chat::register_bot(
+		&host,
+		&CallContext::default(),
+		HostChatRegisterBotRequest::V1(v01::HostChatRegisterBotRequest {
+			bot_id: "flipper".to_string(),
+			name: "Flipper".to_string(),
+			icon: String::new(),
+		}),
+	));
+
+	let HostChatRegisterBotResponse::V1(response) =
+		response.expect("register_bot must reach the adapter, not fall back to unavailable");
+	assert_eq!(response.status, v01::ChatBotRegistrationStatus::New);
+	assert_eq!(
+		chat_platform
+			.registered_bots
+			.lock()
+			.expect("registered bots mutex poisoned")
+			.as_slice(),
+		&["flipper"]
+	);
+}
+
+/// Records what reaches the host's Pocket adapter and answers from a fixed
+/// card set.
+struct RecordingPocketPlatform {
+	cards: Vec<v01::PocketCard>,
+	removed: Mutex<Vec<String>>,
+}
+
+impl RecordingPocketPlatform {
+	fn with_cards(cards: Vec<(&str, bool)>) -> Self {
+		Self {
+			cards: cards
+				.into_iter()
+				.map(|(card_id, privileged)| v01::PocketCard {
+					card_id: card_id.to_string(),
+					privileged,
+				})
+				.collect(),
+			removed: Mutex::new(Vec::new()),
+		}
+	}
+}
+
+#[async_trait::async_trait]
+impl crate::platform::PocketPlatform for RecordingPocketPlatform {
+	fn subscribe_pocket_cards(
+		&self,
+		_product: &ProductContext,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<truapi::latest::HostPocketListSubscribeItem, truapi::latest::GenericError>,
+	> {
+		let cards = self.cards.clone();
+		Box::pin(futures::stream::iter([
+			Ok(truapi::latest::HostPocketListSubscribeItem { cards }),
+			Err(truapi::latest::GenericError { reason: "host list failed".to_string() }),
+		]))
+	}
+
+	async fn remove_pocket_card(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostPocketRemoveCardRequest,
+	) -> Result<(), truapi::latest::HostPocketRemoveCardError> {
+		if self.cards.iter().any(|card| card.card_id == request.card_id && card.privileged) {
+			return Err(truapi::latest::HostPocketRemoveCardError::Privileged);
+		}
+		self.removed.lock().expect("removed mutex poisoned").push(request.card_id);
+		Ok(())
+	}
+}
+
+fn pocket_dot_host(
+	kind: crate::platform::ExecutableKind,
+	configure: impl FnOnce(&mut crate::host_core::ConnectionAdapters),
+) -> ProductRuntimeHost {
+	let (host_config, _) = runtime_config("pocket.dot");
+	let product = ProductContext::new_with_execution(ProductId::for_test("pocket.dot"), kind);
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform,
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		Spawner::for_test(),
+	);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	configure(&mut adapters);
+	ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	)
+}
+
+fn pocket_host(
+	kind: crate::platform::ExecutableKind,
+	pocket: Option<Arc<RecordingPocketPlatform>>,
+	with_session: bool,
+) -> ProductRuntimeHost {
+	let host = pocket_dot_host(kind, |adapters| {
+		adapters.pocket_platform =
+			pocket.map(|pocket| pocket as Arc<dyn crate::platform::PocketPlatform>);
+	});
+	if with_session {
+		install_pairing_session(&host, session_info());
+	}
+	host
+}
+
+fn remove_card(
+	host: &ProductRuntimeHost,
+	card_id: &str,
+) -> Result<HostPocketRemoveCardResponse, CallError<HostPocketRemoveCardError>> {
+	futures::executor::block_on(Pocket::remove_card(
+		host,
+		&CallContext::default(),
+		HostPocketRemoveCardRequest::V1(v01::HostPocketRemoveCardRequest {
+			card_id: card_id.to_string(),
+		}),
+	))
+}
+
+/// First thing a Pocket subscription yields: an item, or the interrupt that
+/// ended it before any item arrived.
+fn first_pocket_item(
+	host: &ProductRuntimeHost,
+) -> Option<
+	Result<
+		HostPocketListSubscribeItem,
+		CallError<truapi::versioned::pocket::HostPocketListSubscribeError>,
+	>,
+> {
+	futures::executor::block_on(
+		futures::executor::block_on(Pocket::list_subscribe(
+			host,
+			&CallContext::default(),
+			truapi::versioned::pocket::HostPocketListSubscribeRequest::V1,
+		))
+		.next(),
+	)
+}
+
+#[test]
+fn pocket_list_subscribe_forwards_the_host_list_and_interrupts_on_stream_errors() {
+	let pocket =
+		Arc::new(RecordingPocketPlatform::with_cards(vec![("loyalty", false), ("humanity", true)]));
+	let host = pocket_host(crate::platform::ExecutableKind::Worker, Some(pocket), true);
+
+	let mut items = futures::executor::block_on(Pocket::list_subscribe(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::pocket::HostPocketListSubscribeRequest::V1,
+	));
+	let HostPocketListSubscribeItem::V1(first) = futures::executor::block_on(items.next())
+		.expect("the host list is forwarded")
+		.expect("the host list arrives as an item, not an interrupt");
+	assert_eq!(first.cards.len(), 2);
+	assert!(first.cards.iter().any(|card| card.card_id == "humanity" && card.privileged));
+	// A failing platform stream ends the subscription with an interrupt the
+	// product can act on. Dropping it would freeze the product's card list on
+	// its last value with nothing to say the host stopped reporting.
+	assert!(matches!(
+		futures::executor::block_on(items.next()),
+		Some(Err(CallError::HostFailure { .. }))
+	));
+	assert!(futures::executor::block_on(items.next()).is_none());
+}
+
+/// Records the visibility the host is asked for and answers a configured result.
+struct RecordingExpandedCardHost {
+	answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+	requested: Mutex<Vec<bool>>,
+}
+
+impl RecordingExpandedCardHost {
+	fn answering(
+		answer: Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError>,
+	) -> Arc<Self> {
+		Arc::new(Self { answer, requested: Mutex::new(Vec::new()) })
+	}
+
+	fn requested(&self) -> Vec<bool> {
+		self.requested.lock().expect("requested mutex poisoned").clone()
+	}
+}
+
+#[async_trait::async_trait]
+impl crate::platform::ExpandedCardHost for RecordingExpandedCardHost {
+	async fn set_expanded_card_face_shown(
+		&self,
+		shown: bool,
+	) -> Result<crate::platform::ExpandedCardFaceOutcome, truapi::latest::GenericError> {
+		self.requested.lock().expect("requested mutex poisoned").push(shown);
+		self.answer.clone()
+	}
+}
+
+fn expanded_card_host(
+	kind: crate::platform::ExecutableKind,
+	expanded_card: Option<Arc<RecordingExpandedCardHost>>,
+) -> ProductRuntimeHost {
+	pocket_dot_host(kind, |adapters| {
+		adapters.expanded_card =
+			expanded_card.map(|card| card as Arc<dyn crate::platform::ExpandedCardHost>);
+	})
+}
+
+fn set_face_shown(
+	host: &ProductRuntimeHost,
+	shown: bool,
+) -> Result<
+	truapi::versioned::expanded_card::HostExpandedCardSetFaceShownResponse,
+	CallError<truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError>,
+> {
+	futures::executor::block_on(ExpandedCard::set_face_shown(
+		host,
+		&CallContext::default(),
+		HostExpandedCardSetFaceShownRequest::V1(v01::HostExpandedCardSetFaceShownRequest { shown }),
+	))
+}
+
+fn set_back_shown(
+	host: &ProductRuntimeHost,
+	shown: bool,
+) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>> {
+	futures::executor::block_on(ExpandedCard::set_back_shown(
+		host,
+		&CallContext::default(),
+		HostExpandedCardSetBackShownRequest::V1(v01::HostExpandedCardSetBackShownRequest { shown }),
+	))
+}
+
+/// The host must see exactly what the Widget asked for, in order, so a hide
+/// followed by a show never collapses into one state change.
+#[test]
+fn expanded_card_widget_requests_reach_the_host_in_order() {
+	let card =
+		RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
+	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
+
+	for shown in [false, true, false] {
+		assert!(matches!(
+			set_face_shown(&host, shown),
+			Ok(truapi::versioned::expanded_card::HostExpandedCardSetFaceShownResponse::V1)
+		));
+	}
+
+	assert_eq!(card.requested(), [false, true, false]);
+}
+
+/// Admin connections call the trait without the dispatcher's execution-kind
+/// filter, so only a Widget may move a face or turn a card, and nothing else
+/// reaches the host.
+#[test]
+fn expanded_card_is_denied_to_non_widgets_without_reaching_the_host() {
+	for kind in [crate::platform::ExecutableKind::App, crate::platform::ExecutableKind::Worker] {
+		let card = RecordingExpandedCardHost::answering(Ok(
+			crate::platform::ExpandedCardFaceOutcome::Applied,
+		));
+		let host = expanded_card_host(kind, Some(card.clone()));
+
+		assert!(matches!(set_face_shown(&host, false), Err(CallError::Denied)));
+		assert!(matches!(set_back_shown(&host, true), Err(CallError::Denied)));
+		assert!(card.requested().is_empty());
+	}
+}
+
+/// A host with no adapter, like the browser, must read as "not supported", the
+/// answer a product uses to detect that no expanded cards exist; a
+/// `HostFailure` would read as a real failure.
+#[test]
+fn expanded_card_without_an_adapter_is_unsupported() {
+	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, None);
+
+	assert!(matches!(set_face_shown(&host, false), Err(CallError::Unsupported)));
+}
+
+/// This runtime cannot turn a card, so a Widget must read "not supported"
+/// rather than a failure, even under a card whose host moves its face.
+#[test]
+fn expanded_card_back_is_unsupported() {
+	let card =
+		RecordingExpandedCardHost::answering(Ok(crate::platform::ExpandedCardFaceOutcome::Applied));
+	let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card.clone()));
+
+	assert!(matches!(set_back_shown(&host, true), Err(CallError::Unsupported)));
+	assert!(card.requested().is_empty());
+}
+
+/// Each host outcome must reach the product as the answer it branches on;
+/// `Unsupported` in particular has to stay distinguishable from a failure.
+#[test]
+fn expanded_card_host_outcomes_map_to_wire_answers() {
+	use crate::platform::ExpandedCardFaceOutcome;
+	use truapi::versioned::expanded_card::HostExpandedCardSetFaceShownError as WireError;
+
+	let answer = |outcome| {
+		let card = RecordingExpandedCardHost::answering(outcome);
+		let host = expanded_card_host(crate::platform::ExecutableKind::Widget, Some(card));
+		set_face_shown(&host, false)
+	};
+
+	assert!(matches!(
+		answer(Ok(ExpandedCardFaceOutcome::Unsupported)),
+		Err(CallError::Unsupported)
+	));
+	assert!(matches!(
+		answer(Ok(ExpandedCardFaceOutcome::NotPresented)),
+		Err(CallError::Domain(WireError::V1(v01::HostExpandedCardSetFaceShownError::NotPresented)))
+	));
+	assert!(matches!(
+		answer(Ok(ExpandedCardFaceOutcome::UserMoving)),
+		Err(CallError::Domain(WireError::V1(v01::HostExpandedCardSetFaceShownError::UserMoving)))
+	));
+	let Err(CallError::Domain(WireError::V1(v01::HostExpandedCardSetFaceShownError::Unknown {
+		reason,
+	}))) = answer(Err(truapi::latest::GenericError { reason: "drawer crashed".to_string() }))
+	else {
+		panic!("a host failure is reported as an unknown domain error");
+	};
+	assert_eq!(reason, "drawer crashed");
+}
+
+#[test]
+fn pocket_remove_card_normalizes_the_id_and_maps_domain_errors() {
+	let pocket =
+		Arc::new(RecordingPocketPlatform::with_cards(vec![("loyalty", false), ("humanity", true)]));
+	let host = pocket_host(crate::platform::ExecutableKind::Worker, Some(pocket.clone()), true);
+
+	// Trimmed and NFC-normalized before the host sees it, so the host stores
+	// one spelling of a card id however the product spells it.
+	assert_eq!(
+		remove_card(&host, "  loyalty  ").expect("removal succeeds"),
+		HostPocketRemoveCardResponse::V1
+	);
+	assert_eq!(pocket.removed.lock().expect("removed mutex poisoned").as_slice(), ["loyalty"]);
+
+	assert!(matches!(
+		remove_card(&host, "humanity"),
+		Err(CallError::Domain(HostPocketRemoveCardError::V1(
+			v01::HostPocketRemoveCardError::Privileged
+		)))
+	));
+	assert!(matches!(
+		remove_card(&host, ""),
+		Err(CallError::Domain(HostPocketRemoveCardError::V1(
+			v01::HostPocketRemoveCardError::Unknown { .. }
+		)))
+	));
+	assert_eq!(
+		pocket.removed.lock().expect("removed mutex poisoned").len(),
+		1,
+		"a rejected card id never reaches the host"
+	);
+}
+
+#[test]
+fn pocket_is_denied_to_apps_and_sessionless_workers_and_unsupported_without_an_adapter() {
+	let pocket = Arc::new(RecordingPocketPlatform::with_cards(vec![]));
+	let app = pocket_host(crate::platform::ExecutableKind::App, Some(pocket.clone()), true);
+	assert!(matches!(remove_card(&app, "loyalty"), Err(CallError::Denied)));
+	assert!(matches!(first_pocket_item(&app), Some(Err(CallError::Denied))));
+
+	let no_session = pocket_host(crate::platform::ExecutableKind::Worker, Some(pocket), false);
+	assert!(matches!(remove_card(&no_session, "loyalty"), Err(CallError::Denied)));
+
+	let no_adapter = pocket_host(crate::platform::ExecutableKind::Worker, None, true);
+	assert!(matches!(remove_card(&no_adapter, "loyalty"), Err(CallError::Unsupported)));
+	assert!(matches!(first_pocket_item(&no_adapter), Some(Err(CallError::Unsupported))));
+}
+
+/// A game start far enough ahead that no test run reaches it.
+const FUTURE_START: u64 = u64::MAX / 2;
+
+/// The product the Game API serves.
+const GAME_PRODUCT: &str = "dim2.dot";
+
+/// Records every reminder call, and fails every schedule and cancel with
+/// `failure` when it is set.
+#[derive(Default)]
+struct RecordingGamePlatform {
+	scheduled: Mutex<Vec<(String, u64)>>,
+	cancelled: Mutex<Vec<String>>,
+	failure: Option<&'static str>,
+}
+
+impl RecordingGamePlatform {
+	fn check_failure(&self) -> Result<(), truapi::latest::GenericError> {
+		match self.failure {
+			Some(reason) => Err(truapi::latest::GenericError { reason: reason.to_string() }),
+			None => Ok(()),
+		}
+	}
+}
+
+#[async_trait::async_trait]
+impl crate::platform::GamePlatform for RecordingGamePlatform {
+	async fn schedule_game_reminder(
+		&self,
+		product: &ProductContext,
+		starts_at: u64,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.check_failure()?;
+		self.scheduled
+			.lock()
+			.expect("scheduled mutex poisoned")
+			.push((product.product_id.to_string(), starts_at));
+		Ok(())
+	}
+
+	async fn cancel_game_reminder(
+		&self,
+		product: &ProductContext,
+	) -> Result<(), truapi::latest::GenericError> {
+		self.check_failure()?;
+		self.cancelled
+			.lock()
+			.expect("cancelled mutex poisoned")
+			.push(product.product_id.to_string());
+		Ok(())
+	}
+}
+
+/// The game product's runtime over `platform`, with `game` installed when
+/// given and no session.
+fn game_host(
+	kind: crate::platform::ExecutableKind,
+	platform: Arc<StubPlatform>,
+	game: Option<Arc<RecordingGamePlatform>>,
+) -> ProductRuntimeHost {
+	game_host_for(GAME_PRODUCT, kind, platform, game)
+}
+
+/// [`game_host`] for an arbitrary `product_id`.
+fn game_host_for(
+	product_id: &str,
+	kind: crate::platform::ExecutableKind,
+	platform: Arc<StubPlatform>,
+	game: Option<Arc<RecordingGamePlatform>>,
+) -> ProductRuntimeHost {
+	let (host_config, _) = runtime_config(product_id);
+	let product = ProductContext::new_with_execution(ProductId::for_test(product_id), kind);
+	let platform: Arc<dyn Platform> = platform;
+	let services = RuntimeServices::new(
+		platform,
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		Spawner::for_test(),
+	);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.game_platform = game.map(|game| game as Arc<dyn crate::platform::GamePlatform>);
+	ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	)
+}
+
+fn remind(
+	host: &ProductRuntimeHost,
+	starts_at: u64,
+) -> Result<HostRemindNextGameResponse, CallError<HostRemindNextGameError>> {
+	remind_with(host, &CallContext::default(), starts_at)
+}
+
+fn remind_with(
+	host: &ProductRuntimeHost,
+	cx: &CallContext,
+	starts_at: u64,
+) -> Result<HostRemindNextGameResponse, CallError<HostRemindNextGameError>> {
+	futures::executor::block_on(Game::remind_next_game(
+		host,
+		cx,
+		HostRemindNextGameRequest::V1(v01::HostRemindNextGameRequest { starts_at }),
+	))
+}
+
+fn cancel(
+	host: &ProductRuntimeHost,
+) -> Result<HostCancelNextGameResponse, CallError<HostCancelNextGameError>> {
+	futures::executor::block_on(Game::cancel_next_game(
+		host,
+		&CallContext::default(),
+		HostCancelNextGameRequest::V1(v01::HostCancelNextGameRequest {}),
+	))
+}
+
+fn scheduled(game: &RecordingGamePlatform) -> Vec<(String, u64)> {
+	game.scheduled.lock().expect("scheduled mutex poisoned").clone()
+}
+
+fn prompts(platform: &StubPlatform) -> Vec<v01::HostDevicePermissionRequest> {
+	platform
+		.device_permission_requests
+		.lock()
+		.expect("device permission list mutex poisoned")
+		.clone()
+}
+
+#[test]
+fn game_is_unsupported_without_an_adapter_and_open_to_apps_and_workers_without_a_session() {
+	let no_adapter = game_host(crate::platform::ExecutableKind::App, stub_platform(), None);
+	assert!(matches!(remind(&no_adapter, FUTURE_START), Err(CallError::Unsupported)));
+	assert!(matches!(cancel(&no_adapter), Err(CallError::Unsupported)));
+
+	for kind in [crate::platform::ExecutableKind::App, crate::platform::ExecutableKind::Worker] {
+		let game = Arc::new(RecordingGamePlatform::default());
+		let host = game_host(kind, stub_platform(), Some(game.clone()));
+		assert_eq!(remind(&host, FUTURE_START), Ok(HostRemindNextGameResponse::V1), "{kind:?}");
+		assert_eq!(cancel(&host), Ok(HostCancelNextGameResponse::V1), "{kind:?}");
+		assert_eq!(scheduled(&game), vec![(GAME_PRODUCT.to_string(), FUTURE_START)], "{kind:?}");
+	}
+}
+
+/// The game product needs no per-product consent: a remembered denial of any
+/// device capability still lets the reminder reach the host, unprompted.
+#[test]
+fn remind_next_game_asks_for_no_permission() {
+	let platform = Arc::new(StubPlatform {
+		device_permission_decisions: Mutex::new(
+			[crate::platform::PermissionDecision::Deny, crate::platform::PermissionDecision::Deny]
+				.into(),
+		),
+		..Default::default()
+	});
+	let game = Arc::new(RecordingGamePlatform::default());
+	let host =
+		game_host(crate::platform::ExecutableKind::Worker, platform.clone(), Some(game.clone()));
+
+	assert_eq!(
+		(remind(&host, FUTURE_START), scheduled(&game), prompts(&platform)),
+		(
+			Ok(HostRemindNextGameResponse::V1),
+			vec![(GAME_PRODUCT.to_string(), FUTURE_START)],
+			vec![],
+		)
+	);
+}
+
+#[test]
+fn remind_next_game_rejects_a_past_start_without_calling_the_host() {
+	let game = Arc::new(RecordingGamePlatform::default());
+	let host =
+		game_host(crate::platform::ExecutableKind::Worker, stub_platform(), Some(game.clone()));
+
+	assert_eq!(
+		(remind(&host, 0), scheduled(&game)),
+		(
+			Err(CallError::Domain(HostRemindNextGameError::V1(
+				v01::HostRemindNextGameError::StartsInPast
+			))),
+			vec![],
+		)
+	);
+}
+
+#[test]
+fn remind_next_game_schedules_nothing_for_a_withdrawn_call() {
+	let game = Arc::new(RecordingGamePlatform::default());
+	let host =
+		game_host(crate::platform::ExecutableKind::Worker, stub_platform(), Some(game.clone()));
+	let cx = CallContext::default();
+	cx.cancel().cancel();
+
+	assert_eq!(
+		(remind_with(&host, &cx, FUTURE_START), scheduled(&game)),
+		(Err(CallError::Cancelled), vec![])
+	);
+}
+
+#[test]
+fn cancel_next_game_delegates() {
+	let game = Arc::new(RecordingGamePlatform::default());
+	let host =
+		game_host(crate::platform::ExecutableKind::Worker, stub_platform(), Some(game.clone()));
+
+	assert_eq!(
+		(cancel(&host), game.cancelled.lock().expect("cancelled mutex poisoned").clone(),),
+		(Ok(HostCancelNextGameResponse::V1), vec![GAME_PRODUCT.to_string()],)
+	);
+}
+
+#[test]
+fn game_host_failures_reach_the_product_with_their_reason() {
+	let game = Arc::new(RecordingGamePlatform {
+		failure: Some("alarm store unavailable"),
+		..Default::default()
+	});
+	let host =
+		game_host(crate::platform::ExecutableKind::Worker, stub_platform(), Some(game.clone()));
+
+	assert_eq!(
+		(remind(&host, FUTURE_START), cancel(&host), scheduled(&game)),
+		(
+			Err(CallError::HostFailure { reason: "alarm store unavailable".to_string() }),
+			Err(CallError::Domain(HostCancelNextGameError::V1(truapi::latest::GenericError {
+				reason: "alarm store unavailable".to_string(),
+			}))),
+			vec![],
+		)
+	);
+}
+
+/// The Game API serves Jollity alone: a subname of the game product is a
+/// different publisher, and so is every other product.
+#[test]
+fn game_is_unsupported_for_every_product_but_the_game() {
+	for product_id in ["game.dot", "app.dim2.dot", "dim2x.paseo"] {
+		let game = Arc::new(RecordingGamePlatform::default());
+		let host = game_host_for(
+			product_id,
+			crate::platform::ExecutableKind::App,
+			stub_platform(),
+			Some(game.clone()),
+		);
+
+		assert!(matches!(remind(&host, FUTURE_START), Err(CallError::Unsupported)), "{product_id}");
+		assert!(matches!(cancel(&host), Err(CallError::Unsupported)), "{product_id}");
+		assert_eq!(scheduled(&game), vec![], "{product_id}");
+	}
+
+	for product_id in ["dim2.dot", "dim2.paseo", "dim2.testnet"] {
+		let game = Arc::new(RecordingGamePlatform::default());
+		let host = game_host_for(
+			product_id,
+			crate::platform::ExecutableKind::App,
+			stub_platform(),
+			Some(game),
+		);
+		assert_eq!(remind(&host, FUTURE_START), Ok(HostRemindNextGameResponse::V1), "{product_id}");
+	}
+}
+
+struct RecordingFundingPlatform {
+	outcome: crate::platform::FundingPresentOutcome,
+	presented: Mutex<Vec<(Option<ProductId>, crate::platform::FundingPresentation)>>,
+	announced: Mutex<Vec<String>>,
+	framed: Mutex<Vec<truapi::latest::FundingFrameTarget>>,
+	closed: Mutex<Vec<String>>,
+	country: Option<String>,
+	in_progress: Mutex<Vec<bool>>,
+	quote_lists: Mutex<Vec<(String, crate::platform::FundingQuoteList)>>,
+	withdrawn: Mutex<Vec<String>>,
+}
+
+impl RecordingFundingPlatform {
+	fn answering(outcome: crate::platform::FundingPresentOutcome) -> Arc<Self> {
+		Arc::new(Self {
+			outcome,
+			presented: Mutex::new(Vec::new()),
+			announced: Mutex::new(Vec::new()),
+			framed: Mutex::new(Vec::new()),
+			closed: Mutex::new(Vec::new()),
+			country: None,
+			in_progress: Mutex::new(Vec::new()),
+			quote_lists: Mutex::new(Vec::new()),
+			withdrawn: Mutex::new(Vec::new()),
+		})
+	}
+
+	/// The quote lists session `intent`'s host was shown, in order.
+	fn quote_lists(&self, intent: &str) -> Vec<crate::platform::FundingQuoteList> {
+		self.quote_lists
+			.lock()
+			.expect("quote lists mutex poisoned")
+			.iter()
+			.filter(|(shown_for, _)| shown_for == intent)
+			.map(|(_, list)| list.clone())
+			.collect()
+	}
+
+	fn in_country(country: &str) -> Arc<Self> {
+		Arc::new(Self {
+			country: Some(country.to_string()),
+			..Arc::into_inner(Self::answering(crate::platform::FundingPresentOutcome::Started))
+				.expect("only reference")
+		})
+	}
+}
+
+#[async_trait::async_trait]
+impl crate::platform::FundingPlatform for RecordingFundingPlatform {
+	async fn present_funding(
+		&self,
+		product: Option<&ProductContext>,
+		session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		self.presented
+			.lock()
+			.expect("presented mutex poisoned")
+			.push((product.map(|product| product.product_id.clone()), session));
+		Ok(self.outcome)
+	}
+
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+		self.framed.lock().expect("framed mutex poisoned").push(target);
+		Ok(truapi::latest::FundingFrameOutcome::Closed)
+	}
+
+	fn close_provider_frame(&self, _provider: &ProductContext, intent: String) {
+		self.closed.lock().expect("closed mutex poisoned").push(intent);
+	}
+
+	async fn detected_country(&self) -> Option<String> {
+		self.country.clone()
+	}
+
+	fn funding_session_changed(
+		&self,
+		intent: String,
+		_status: truapi::latest::HostFundingStatusSubscribeItem,
+	) {
+		self.announced.lock().expect("announced mutex poisoned").push(intent);
+	}
+
+	fn funding_quotes_changed(
+		&self,
+		intent: String,
+		quotes: Option<crate::platform::FundingQuoteList>,
+	) {
+		match quotes {
+			Some(quotes) => self
+				.quote_lists
+				.lock()
+				.expect("quote lists mutex poisoned")
+				.push((intent, quotes)),
+			None => self.withdrawn.lock().expect("withdrawn mutex poisoned").push(intent),
+		}
+	}
+}
+
+impl crate::runtime::FundingFeed for RecordingFundingPlatform {
+	fn funding_session_changed(&self, _intent: String) {}
+
+	fn funding_in_progress_changed(&self, in_progress: bool) {
+		self.in_progress.lock().expect("in-progress mutex poisoned").push(in_progress);
+	}
+
+	fn funding_options_changed(&self, _intent: String) {}
+}
+
+fn funding_services() -> Arc<RuntimeServices> {
+	funding_services_on(&crate::store::open_memory_core_db(), Spawner::for_test())
+}
+
+/// Services over `db`, which keeps their funding sessions across a restart.
+fn funding_services_on(db: &crate::store::Db, spawner: Spawner) -> Arc<RuntimeServices> {
+	funding_services_with(stub_platform(), db, spawner)
+}
+
+/// Services over `platform`, which keeps what they cache across a restart,
+/// with a core database of their own.
+fn funding_services_over(platform: Arc<dyn Platform>) -> Arc<RuntimeServices> {
+	funding_services_with(platform, &crate::store::open_memory_core_db(), Spawner::for_test())
+}
+
+fn funding_services_with(
+	platform: Arc<dyn Platform>,
+	db: &crate::store::Db,
+	spawner: Spawner,
+) -> Arc<RuntimeServices> {
+	let (host_config, _) = runtime_config("funding.dot");
+	let services = RuntimeServices::new(
+		platform,
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner,
+	);
+	assert!(services.install_core_db(db.clone()));
+	services
+}
+
+/// Spawner that holds every task until the test runs it, so the test knows
+/// when spawned work has finished.
+#[derive(Clone, Default)]
+struct HeldTasks(Arc<Mutex<Vec<futures::future::BoxFuture<'static, ()>>>>);
+
+impl HeldTasks {
+	fn spawner(&self) -> Spawner {
+		let tasks = self.0.clone();
+		Spawner::with_test_scheduler(move |task| {
+			tasks.lock().expect("tasks mutex poisoned").push(task)
+		})
+	}
+
+	fn take(&self) -> Vec<futures::future::BoxFuture<'static, ()>> {
+		core::mem::take(&mut *self.0.lock().expect("tasks mutex poisoned"))
+	}
+
+	/// Run the tasks held so far, each until it finishes or sits idle for a
+	/// moment, as the reconciler does while it waits on a session's deadline.
+	async fn run(&self) {
+		for task in self.take() {
+			let idle = futures_timer::Delay::new(Duration::from_millis(200));
+			futures::future::select(task, idle).await;
+		}
+	}
+}
+
+// A host remembers whether a provider still works on a session so its next
+// launch starts funding at once. It reads that when a session is announced,
+// so a session in flight is announced on resume, once it is loaded.
+#[test]
+fn funding_resumes_by_announcing_sessions_a_provider_still_works_on() {
+	let db = crate::store::open_memory_core_db();
+	let start = |db: &crate::store::Db| {
+		let services = funding_services_on(db, Spawner::for_test());
+		let platform =
+			RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+		assert!(services.funding().install_platform(platform.clone()));
+		services.resume_funding();
+		(services, platform)
+	};
+	let (before, _) = start(&db);
+	offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(before.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(before.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&offer_test_quote(&before, &intent, "ramp.dot")
+		))
+		.expect("selected")
+	);
+
+	let (after, platform) = start(&db);
+	let announced = || platform.announced.lock().expect("announced mutex poisoned").clone();
+	for _ in 0..200 {
+		if !announced().is_empty() {
+			break;
+		}
+		std::thread::sleep(core::time::Duration::from_millis(5));
+	}
+
+	assert_eq!((announced(), after.funding().is_in_progress()), (vec![intent], true));
+}
+
+// A host's history writes one row per outcome, so an ended session it has
+// not recorded is announced again each time funding resumes, until the host
+// acknowledges it.
+#[test]
+fn funding_resumes_by_announcing_what_the_host_has_not_recorded() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let intent = ended_session(&services, &tasks);
+	let announced_on_resume = || {
+		platform.announced.lock().expect("announced mutex poisoned").clear();
+		services.resume_funding();
+		futures::executor::block_on(tasks.run());
+		platform.announced.lock().expect("announced mutex poisoned").clone()
+	};
+
+	let before = announced_on_resume();
+	let acknowledged = futures::executor::block_on(services.acknowledge_funding_session(&intent))
+		.expect("acknowledged");
+	let after = announced_on_resume();
+
+	assert_eq!((before, acknowledged, after), (vec![intent], true, Vec::new()));
+}
+
+/// Opens a funding session and ends it as declined, returning its intent.
+/// The session is left ended but not acknowledged by the host, which is what
+/// a resume announces.
+///
+/// Opening also schedules an expiry task that sleeps until the session's
+/// deadline. It is discarded, so a test running the held tasks never waits on it.
+fn ended_session(services: &Arc<RuntimeServices>, tasks: &HeldTasks) -> String {
+	let intent = opened_session(services, tasks);
+	let declined = crate::host_logic::funding::FundingStage::Failed {
+		reason: v01::FundingFailure::Declined,
+		settled_at_ms: crate::current_unix_millis(),
+	};
+	assert!(
+		futures::executor::block_on(services.settle_funding_for_test(&intent, declined))
+			.expect("ended")
+	);
+	intent
+}
+
+/// Opens a funding session the host owns, returning its intent.
+fn opened_session(services: &Arc<RuntimeServices>, tasks: &HeldTasks) -> String {
+	let opening =
+		services.open_funding(None, "fs_resume".to_string(), v01::FundingDirection::Out, None);
+	// The overlay runs on a task of its own, which these held tasks run.
+	std::thread::scope(|scope| {
+		let opened = scope.spawn(|| futures::executor::block_on(opening));
+		while !opened.is_finished() {
+			futures::executor::block_on(tasks.run());
+			std::thread::sleep(Duration::from_millis(5));
+		}
+		opened.join().expect("opening thread")
+	})
+	.expect("opened")
+	.intent
+}
+
+// A cancel that moved nothing has nothing to tell the user, so the core
+// acknowledges it as it ends and history leaves it out.
+#[test]
+fn a_cancel_that_moved_nothing_is_acknowledged_and_left_out_of_history() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let intent = opened_session(&services, &tasks);
+	assert_eq!(
+		futures::executor::block_on(services.cancel_funding(&intent)).expect("cancelled"),
+		CancelOutcome::Ended
+	);
+
+	let owed = futures::executor::block_on(services.acknowledge_funding_session(&intent))
+		.expect("acknowledged");
+	assert_eq!((owed, services.funding().history()), (false, Vec::new()));
+}
+
+// The host's session views read what the core has loaded, so a resume that
+// cannot store the sessions keeps trying, and the host hears of them once
+// storage recovers.
+#[test]
+fn funding_resume_is_retried_until_storage_recovers() {
+	let tasks = HeldTasks::default();
+	let db = crate::store::open_memory_core_db();
+	let services = funding_services_on(&db, tasks.spawner());
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let intent = ended_session(&services, &tasks);
+	let announced = || platform.announced.lock().expect("announced mutex poisoned").clone();
+	let reopened = funding_services_on(&db, tasks.spawner());
+	assert!(reopened.funding().install_platform(platform.clone()));
+	platform.announced.lock().expect("announced mutex poisoned").clear();
+	futures::executor::block_on(super::funding::fail_writes(&db, true));
+	reopened.resume_funding();
+	let mut resume = tasks.take().pop().expect("resume task");
+
+	let (waiting, while_failing, after_recovery) = futures::executor::block_on(async {
+		let waiting = futures::poll!(&mut resume).is_pending();
+		let while_failing = announced();
+		super::funding::fail_writes(&db, false).await;
+		resume.await;
+		(waiting, while_failing, announced())
+	});
+
+	assert_eq!((waiting, while_failing, after_recovery), (true, Vec::new(), vec![intent]));
+}
+
+// Retrying cannot read sessions a newer app stored, so resume gives up at once.
+#[test]
+fn funding_resume_stops_at_sessions_of_a_newer_format() {
+	let tasks = HeldTasks::default();
+	let db = crate::store::open_memory_core_db();
+	futures::executor::block_on(super::funding::put_session_row(
+		&db,
+		"fs_new",
+		(u16::MAX, "anything").encode(),
+	));
+	let services = funding_services_on(&db, tasks.spawner());
+	services.resume_funding();
+	let resume = tasks.take().pop().expect("resume task");
+	let (done, finished) = std::sync::mpsc::channel();
+	std::thread::spawn(move || {
+		futures::executor::block_on(resume);
+		let _ = done.send(());
+	});
+
+	assert_eq!(
+		(finished.recv_timeout(Duration::from_secs(5)).is_ok(), tasks.take().len()),
+		(true, 0)
+	);
+}
+
+/// A funding overlay that, while it is up, records how many sessions the
+/// core has stored.
+struct ObservingFundingPlatform {
+	db: crate::store::Db,
+	stored_while_shown: Mutex<Option<usize>>,
+}
+
+#[async_trait::async_trait]
+impl crate::platform::FundingPlatform for ObservingFundingPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		_session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		let stored = super::funding::stored_sessions(&self.db).await.len();
+		*self.stored_while_shown.lock().expect("stored mutex poisoned") = Some(stored);
+		Ok(crate::platform::FundingPresentOutcome::Started)
+	}
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Closed)
+	}
+
+	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+}
+
+// An app killed while the overlay is up must not come back to a session the
+// user never started, so nothing is stored until the user starts it.
+#[test]
+fn a_session_is_stored_only_once_the_user_starts_it() {
+	let db = crate::store::open_memory_core_db();
+	let services = funding_services_on(&db, Spawner::for_test());
+	let platform =
+		Arc::new(ObservingFundingPlatform { db: db.clone(), stored_while_shown: Mutex::new(None) });
+	assert!(services.funding().install_platform(platform.clone()));
+
+	futures::executor::block_on(services.open_funding(
+		None,
+		"fs_observed".to_string(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened");
+	let stored_after = futures::executor::block_on(super::funding::stored_sessions(&db)).len();
+
+	assert_eq!(
+		(*platform.stored_while_shown.lock().expect("stored mutex poisoned"), stored_after),
+		(Some(0), 1)
+	);
+}
+
+/// A funding overlay whose storage starts failing writes while it is up.
+struct StorageFailingFundingPlatform {
+	db: crate::store::Db,
+	outcome: crate::platform::FundingPresentOutcome,
+}
+
+#[async_trait::async_trait]
+impl crate::platform::FundingPlatform for StorageFailingFundingPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		_session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		super::funding::fail_writes(&self.db, true).await;
+		Ok(self.outcome)
+	}
+
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Closed)
+	}
+
+	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+}
+
+// A session the user left the overlay without, or that could not be stored
+// once started, must not linger in memory where the host's views and the
+// next save would pick it up.
+#[test]
+fn a_session_that_does_not_start_is_gone_even_when_storage_fails() {
+	for outcome in [
+		crate::platform::FundingPresentOutcome::Started,
+		crate::platform::FundingPresentOutcome::Dismissed,
+	] {
+		let db = crate::store::open_memory_core_db();
+		let services = funding_services_on(&db, Spawner::for_test());
+		assert!(
+			services.funding().install_platform(Arc::new(StorageFailingFundingPlatform {
+				db: db.clone(),
+				outcome,
+			}))
+		);
+
+		let opened = futures::executor::block_on(services.open_funding(
+			None,
+			"fs_failing".to_string(),
+			v01::FundingDirection::In,
+			None,
+		));
+
+		assert!(opened.is_err(), "{outcome:?} opened a session");
+		assert_eq!(services.funding().get("fs_failing"), None, "{outcome:?} left a session");
+	}
+}
+
+// The host writes one history row per announcement, so a session an edit
+// names and the same commit expires is announced once.
+#[test]
+fn a_session_is_announced_once_per_commit() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let now = crate::unix_time::current_unix_millis();
+	let overdue = crate::host_logic::funding::FundingSession {
+		deadline_ms: now - 1,
+		..crate::host_logic::funding::FundingSession::new(
+			"fs_overdue".to_string(),
+			None,
+			v01::FundingDirection::In,
+			None,
+			now - 2,
+		)
+	};
+
+	futures::executor::block_on(services.funding().commit(now, move |draft| {
+		draft.sessions.insert(overdue.intent.clone(), overdue);
+		((), vec!["fs_overdue".to_string()])
+	}))
+	.expect("committed");
+
+	assert_eq!(
+		platform.announced.lock().expect("announced mutex poisoned").clone(),
+		vec!["fs_overdue".to_string()]
+	);
+}
+
+fn funding_host(
+	services: &Arc<RuntimeServices>,
+	product_id: &str,
+	with_session: bool,
+) -> ProductRuntimeHost {
+	let (host_config, product) = runtime_config(product_id);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let host = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(services),
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	if with_session {
+		install_pairing_session(&host, session_info());
+	}
+	host
+}
+
+/// A fresh intent for a session the test opens itself.
+fn new_intent() -> String {
+	format!("fs_{}", nanoid::nanoid!(10))
+}
+
+fn funding_request() -> truapi::versioned::funding::HostFundingRequest {
+	truapi::versioned::funding::HostFundingRequest::V1(v01::HostFundingRequest {
+		direction: v01::FundingDirection::In,
+		amount: Some(1_000),
+	})
+}
+
+/// Request funding and take the intent it answers.
+fn request_funding(
+	host: &ProductRuntimeHost,
+) -> Result<String, CallError<truapi::versioned::funding::HostFundingError>> {
+	futures::executor::block_on(truapi::api::Funding::request(
+		host,
+		&CallContext::default(),
+		funding_request(),
+	))
+	.map(|truapi::versioned::funding::HostFundingResponse::V1(response)| response.intent)
+}
+
+fn watch_funding(
+	host: &ProductRuntimeHost,
+	intent: &str,
+) -> Subscription<
+	truapi::versioned::funding::HostFundingStatusSubscribeItem,
+	CallError<truapi::versioned::funding::HostFundingStatusSubscribeError>,
+> {
+	futures::executor::block_on(truapi::api::Funding::status_subscribe(
+		host,
+		&CallContext::default(),
+		truapi::versioned::funding::HostFundingStatusSubscribeRequest::V1(
+			v01::HostFundingStatusSubscribeRequest { intent: intent.to_string() },
+		),
+	))
+}
+
+fn first_funding_status(
+	host: &ProductRuntimeHost,
+	intent: &str,
+) -> Option<
+	Result<
+		truapi::versioned::funding::HostFundingStatusSubscribeItem,
+		CallError<truapi::versioned::funding::HostFundingStatusSubscribeError>,
+	>,
+> {
+	futures::executor::block_on(watch_funding(host, intent).next())
+}
+
+fn funding_not_found() -> CallError<truapi::versioned::funding::HostFundingStatusSubscribeError> {
+	CallError::Domain(truapi::versioned::funding::HostFundingStatusSubscribeError::V1(
+		v01::HostFundingStatusSubscribeError::NotFound,
+	))
+}
+
+fn in_progress(
+	status: &Option<
+		Result<
+			truapi::versioned::funding::HostFundingStatusSubscribeItem,
+			CallError<truapi::versioned::funding::HostFundingStatusSubscribeError>,
+		>,
+	>,
+) -> bool {
+	matches!(
+		status,
+		Some(Ok(truapi::versioned::funding::HostFundingStatusSubscribeItem::V1(
+			v01::HostFundingStatusSubscribeItem::InProgress { .. }
+		)))
+	)
+}
+
+#[test]
+fn a_funding_request_opens_the_overlay_and_only_its_product_can_watch_it() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	let owner = funding_host(&services, "wallet.dot", true);
+
+	let intent = request_funding(&owner).expect("request accepted");
+
+	wait_until(
+		|| !platform.presented.lock().expect("presented mutex poisoned").is_empty(),
+		"overlay shown",
+	);
+	let presented = platform.presented.lock().expect("presented mutex poisoned").clone();
+	assert_eq!(
+		presented,
+		[(
+			Some(ProductId::for_test("wallet.dot")),
+			crate::platform::FundingPresentation {
+				intent: intent.clone(),
+				direction: v01::FundingDirection::In,
+				amount: Some(1_000),
+			},
+		)]
+	);
+	let status = first_funding_status(&owner, &intent);
+	assert!(in_progress(&status), "{status:?}");
+	// Another product's session reads exactly like one that does not exist.
+	assert_eq!(
+		first_funding_status(&funding_host(&services, "other.dot", true), &intent),
+		Some(Err(funding_not_found()))
+	);
+}
+
+#[test]
+fn each_funding_request_opens_its_own_session() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let host = funding_host(&services, "wallet.dot", true);
+
+	let first = request_funding(&host).expect("request accepted");
+	let second = request_funding(&host).expect("request accepted");
+
+	assert_ne!(first, second);
+}
+
+// Watching a session, like paying, needs a connected account.
+#[test]
+fn watching_a_funding_session_needs_a_session() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+
+	assert_eq!(
+		first_funding_status(&funding_host(&services, "wallet.dot", false), "fs_unknown"),
+		Some(Err(CallError::Denied))
+	);
+}
+
+/// A funding overlay that stays up until the test answers for the user.
+struct GatedFundingPlatform {
+	answer:
+		Mutex<Option<futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>>>,
+	/// Whether the host was told of a session, which it is once started.
+	told: AtomicBool,
+	/// The options read back on each notice, as a host reads them.
+	options: Mutex<Vec<(String, crate::host_logic::funding_providers::FundingOptions)>>,
+	services: std::sync::Weak<RuntimeServices>,
+}
+
+impl GatedFundingPlatform {
+	/// An overlay over `services` that shows until `answer` says how it ended.
+	fn new(
+		services: &Arc<RuntimeServices>,
+		answer: Option<futures::channel::oneshot::Receiver<crate::platform::FundingPresentOutcome>>,
+	) -> Arc<Self> {
+		Arc::new(Self {
+			answer: Mutex::new(answer),
+			told: AtomicBool::new(false),
+			options: Mutex::new(Vec::new()),
+			services: Arc::downgrade(services),
+		})
+	}
+}
+
+#[async_trait::async_trait]
+impl crate::platform::FundingPlatform for GatedFundingPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		_session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		let answer = self.answer.lock().expect("answer mutex poisoned").take();
+		Ok(answer.expect("overlay shown once").await.expect("answered"))
+	}
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Closed)
+	}
+
+	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+
+	fn funding_session_changed(
+		&self,
+		_intent: String,
+		_status: truapi::latest::HostFundingStatusSubscribeItem,
+	) {
+		self.told.store(true, Ordering::Release);
+	}
+}
+
+impl crate::runtime::FundingFeed for GatedFundingPlatform {
+	fn funding_session_changed(&self, _intent: String) {}
+
+	fn funding_in_progress_changed(&self, _in_progress: bool) {}
+
+	fn funding_options_changed(&self, intent: String) {
+		let Some(options) =
+			self.services.upgrade().and_then(|services| services.funding_options(&intent))
+		else {
+			return;
+		};
+		self.options.lock().expect("options mutex poisoned").push((intent, options));
+	}
+}
+
+// Every provider's worker starts as the overlay opens, before any quote is
+// asked of it, and is let go once the user leaves without picking one.
+#[test]
+fn provider_workers_run_while_the_overlay_is_up() {
+	use crate::host_logic::worker::WorkerTransition::{Start, Stop};
+	let services = funding_services();
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let workers = Arc::new(DemandRecorder::default());
+	assert!(services.worker_ledger.install_worker_controller(workers.clone()));
+	let (answer, answered) = futures::channel::oneshot::channel();
+	let platform = GatedFundingPlatform::new(&services, Some(answered));
+	assert!(services.funding().install_feed(platform.clone()));
+	assert!(services.funding().install_platform(platform.clone()));
+	let opening = std::thread::spawn({
+		let services = services.clone();
+		move || {
+			futures::executor::block_on(services.open_funding(
+				None,
+				new_intent(),
+				v01::FundingDirection::In,
+				None,
+			))
+		}
+	});
+	wait_until(
+		|| !platform.options.lock().expect("options mutex poisoned").is_empty(),
+		"overlay shown",
+	);
+	let while_up = workers.seen();
+	answer
+		.send(crate::platform::FundingPresentOutcome::Dismissed)
+		.expect("overlay waiting");
+	assert!(opening.join().expect("opening thread").is_err(), "dismissed");
+
+	assert_eq!(
+		(while_up, workers.seen()),
+		(
+			vec![("ramp.dot".to_string(), Start)],
+			vec![("ramp.dot".to_string(), Start), ("ramp.dot".to_string(), Stop)]
+		)
+	);
+}
+
+// The overlay is handed its options before it shows, and again for each
+// selection the user makes while it is up; a selection after it closed
+// changes nothing.
+#[test]
+fn the_overlay_gets_its_options_for_each_selection_while_it_is_up() {
+	let services = funding_services();
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let (answer, answered) = futures::channel::oneshot::channel();
+	let platform = GatedFundingPlatform::new(&services, Some(answered));
+	assert!(services.funding().install_feed(platform.clone()));
+	assert!(services.funding().install_platform(platform.clone()));
+	let opening = std::thread::spawn({
+		let services = services.clone();
+		move || {
+			futures::executor::block_on(services.open_funding(
+				None,
+				new_intent(),
+				v01::FundingDirection::In,
+				Some(20_000_000),
+			))
+		}
+	});
+	let pushes = || platform.options.lock().expect("options mutex poisoned").clone();
+	wait_until(|| !pushes().is_empty(), "options before the overlay");
+	let intent = pushes()[0].0.clone();
+	let card = |asset: &str| crate::host_logic::funding_providers::FundingSelection {
+		rail: v01::FundingRail::Card,
+		asset: Some(asset.to_string()),
+		network: None,
+		country: None,
+		currency: None,
+	};
+	services.select_funding_options(&intent, card("EUR"));
+	answer
+		.send(crate::platform::FundingPresentOutcome::Dismissed)
+		.expect("overlay waiting");
+	assert!(opening.join().expect("opening thread").is_err(), "dismissed");
+	services.select_funding_options(&intent, card("USD"));
+
+	let floor = crate::host_logic::funding_providers::FundingAmountLimits {
+		min: Some(crate::host_logic::funding_providers::FUNDING_MIN_AMOUNT),
+		max: None,
+	};
+	assert_eq!(
+		pushes()
+			.into_iter()
+			.map(|(pushed, options)| {
+				let providers: Vec<_> =
+					options.candidates.into_iter().map(|candidate| candidate.provider_id).collect();
+				(pushed, providers, options.limits)
+			})
+			.collect::<Vec<_>>(),
+		vec![
+			(intent.clone(), vec![ProductId::for_test("ramp.dot")], floor.clone()),
+			(intent, vec![ProductId::for_test("ramp.dot")], floor),
+		]
+	);
+}
+
+// A card selection without an asset gets the countries of the fiat asset the
+// core resolves for it, so the host need not send that asset back first.
+#[test]
+fn a_selection_without_an_asset_goes_by_the_resolved_one() {
+	let services = funding_services();
+	let germany_only =
+		RAMP_MANIFEST.replace(r#""assets":["EUR"]}"#, r#""assets":["EUR"],"countries":["DE"]}"#);
+	offer_provider(&services, "ramp.dot", &germany_only);
+	let (answer, answered) = futures::channel::oneshot::channel();
+	let platform = GatedFundingPlatform::new(&services, Some(answered));
+	assert!(services.funding().install_feed(platform.clone()));
+	assert!(services.funding().install_platform(platform.clone()));
+	let opening = std::thread::spawn({
+		let services = services.clone();
+		move || {
+			futures::executor::block_on(services.open_funding(
+				None,
+				new_intent(),
+				v01::FundingDirection::In,
+				Some(20_000_000),
+			))
+		}
+	});
+	let pushes = || platform.options.lock().expect("options mutex poisoned").clone();
+	wait_until(|| !pushes().is_empty(), "options before the overlay");
+	let intent = pushes()[0].0.clone();
+	let options_for = |asset: Option<&str>| {
+		services.select_funding_options(
+			&intent,
+			crate::host_logic::funding_providers::FundingSelection {
+				rail: v01::FundingRail::Card,
+				asset: asset.map(str::to_string),
+				network: None,
+				country: None,
+				currency: None,
+			},
+		);
+		pushes()
+			.pop()
+			.map(|(_, options)| (options.asset, options.countries, options.limits))
+	};
+
+	let resolved = options_for(None);
+	let picked = options_for(Some("EUR"));
+	answer
+		.send(crate::platform::FundingPresentOutcome::Dismissed)
+		.expect("overlay waiting");
+	assert!(opening.join().expect("opening thread").is_err(), "dismissed");
+
+	assert_eq!(resolved, picked);
+	assert_eq!(
+		resolved.map(|(asset, countries, _)| (
+			asset,
+			countries.into_iter().map(|country| country.country).collect::<Vec<_>>()
+		)),
+		Some((Some("EUR".to_string()), vec!["DE".to_string()]))
+	);
+}
+
+// The request answers while the overlay is still up, and the product hears
+// how the user left it on the session's stream: a dismissed session ends as
+// cancelled and is not left presenting.
+#[test]
+fn a_funding_request_answers_before_the_overlay_closes() {
+	for (outcome, ends) in [
+		(crate::platform::FundingPresentOutcome::Dismissed, true),
+		(crate::platform::FundingPresentOutcome::Started, false),
+	] {
+		let services = funding_services();
+		let (answer, answered) = futures::channel::oneshot::channel();
+		let platform = GatedFundingPlatform::new(&services, Some(answered));
+		assert!(services.funding().install_platform(platform.clone()));
+		let host = funding_host(&services, "wallet.dot", true);
+
+		let intent = request_funding(&host).expect("request accepted");
+		let mut watch = watch_funding(&host, &intent);
+		let first = futures::executor::block_on(watch.next());
+		answer.send(outcome).expect("overlay waiting");
+		let last = if ends {
+			futures::executor::block_on(watch.next())
+		} else {
+			wait_until(|| platform.told.load(Ordering::Acquire), "session started");
+			None
+		};
+
+		assert!(in_progress(&first), "{outcome:?}: {first:?}");
+		if ends {
+			assert_eq!(
+				(last, services.funding().get(&intent)),
+				(
+					Some(Ok(truapi::versioned::funding::HostFundingStatusSubscribeItem::V1(
+						v01::HostFundingStatusSubscribeItem::Failed {
+							reason: v01::FundingFailure::Cancelled,
+						}
+					))),
+					None,
+				)
+			);
+		}
+	}
+}
+
+#[test]
+fn a_dismissed_funding_overlay_leaves_no_session() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Dismissed,
+	)));
+	let host = funding_host(&services, "wallet.dot", true);
+
+	let intent = request_funding(&host).expect("request accepted");
+
+	wait_until(|| services.funding().get(&intent).is_none(), "session discarded");
+	assert_eq!(first_funding_status(&host, &intent), Some(Err(funding_not_found())));
+}
+
+// The host's in-flight pill reads these announcements, so a session the user
+// never started must not appear there.
+#[test]
+fn the_host_hears_of_started_sessions_only() {
+	for (outcome, expected) in [
+		(crate::platform::FundingPresentOutcome::Started, 1),
+		(crate::platform::FundingPresentOutcome::Dismissed, 0),
+	] {
+		let services = funding_services();
+		let platform = RecordingFundingPlatform::answering(outcome);
+		assert!(services.funding().install_platform(platform.clone()));
+
+		let intent = request_funding(&funding_host(&services, "wallet.dot", true))
+			.expect("request accepted");
+		let announced = || platform.announced.lock().expect("announced mutex poisoned").len();
+		// The overlay closed once the session started or was discarded.
+		wait_until(
+			|| announced() > 0 || services.funding().get(&intent).is_none(),
+			"overlay closed",
+		);
+
+		assert_eq!(announced(), expected);
+	}
+}
+
+#[test]
+fn a_host_opened_funding_session_belongs_to_no_product() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let session =
+		futures::executor::block_on(services.open_host_funding(v01::FundingDirection::Out, None))
+			.expect("opened")
+			.expect("started");
+
+	assert!(services.funding().get(&session).is_some());
+	assert_eq!(
+		first_funding_status(&funding_host(&services, "wallet.dot", true), &session),
+		Some(Err(funding_not_found()))
+	);
+}
+
+#[test]
+fn a_funding_request_needs_a_host_overlay_then_a_session() {
+	let services = funding_services();
+	assert_eq!(
+		request_funding(&funding_host(&services, "wallet.dot", false)),
+		Err(CallError::Unsupported)
+	);
+
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert_eq!(
+		request_funding(&funding_host(&services, "wallet.dot", false)),
+		Err(CallError::Domain(truapi::versioned::funding::HostFundingError::V1(
+			v01::HostFundingError::NotConnected
+		)))
+	);
+}
+
+// A test host settles a session as though its funds had moved, and the
+// product sees that ending; a session already over, or unknown, is left as
+// it is.
+#[cfg(feature = "test-host")]
+#[test]
+fn a_test_host_settles_a_funding_session_once() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		"fs_settled".to_string(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	let delivered = |credited| crate::host_logic::funding::FundingStage::Delivered {
+		credited,
+		settled_at_ms: 1,
+	};
+	let settle = |intent: &str, credited| {
+		futures::executor::block_on(services.settle_funding_for_test(intent, delivered(credited)))
+			.expect("saved")
+	};
+
+	assert_eq!(
+		(
+			settle(&intent, 900),
+			settle(&intent, 1),
+			settle("fs_unknown", 900),
+			services.funding().ended(&intent),
+		),
+		(
+			true,
+			false,
+			false,
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 900 }),
+		)
+	);
+}
+
+#[test]
+fn chain_follow_ids_are_scoped_per_product_core() {
+	let (host_config, product) = runtime_config("same.dot");
+	let spawner = Spawner::for_test();
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner.clone(),
+	);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let first = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(&services),
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product.clone(),
+	);
+	let second = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(&services),
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+
+	assert_eq!(first.connection.follow_id("request-1"), "c1:request-1");
+	assert_eq!(second.connection.follow_id("request-1"), "c2:request-1");
+}
+
+#[test]
+fn bare_localhost_product_allows_dev_product_accounts() {
+	let host =
+		ProductRuntimeHost::new(stub_platform(), runtime_config("localhost"), Spawner::for_test());
+
+	assert!(futures::executor::block_on(
+		host.may_use_product_account(&ProductId::for_test("myapp.dot"), &CallContext::default())
+	));
+}
+
+/// A product destination reaches the platform as a `polkadot://` URL, whatever
+/// the product spelled it as. Asserting only that the call succeeded would not
+/// notice it arriving as `https://`.
+#[test]
+fn navigate_to_hands_a_product_destination_over_as_a_polkadot_url() {
+	for spelling in ["mytestapp.dot", "polkadot://mytestapp.dot", "https://mytestapp.dot"] {
+		let platform = Arc::new(StubPlatform::default());
+		let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+		let cx = CallContext::default();
+		let request =
+			HostNavigateToRequest::V1(v01::HostNavigateToRequest { url: spelling.to_string() });
+
+		let response = futures::executor::block_on(host.navigate_to(&cx, request)).unwrap();
+
+		assert_eq!(response, HostNavigateToResponse::V1);
+		assert_eq!(
+			platform.navigations.lock().unwrap().as_slice(),
+			["polkadot://mytestapp.dot".to_string()],
+			"for {spelling}"
+		);
+	}
+}
+
+/// A navigation the product withdrew must not move the person anywhere.
+#[test]
+fn navigate_to_withdrawn_before_the_handoff_goes_nowhere() {
+	let platform = Arc::new(StubPlatform::default());
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let cancel = truapi::CancellationToken::default();
+	cancel.cancel();
+	let cx = CallContext::with_parts("navigate-withdrawn".to_string(), cancel);
+	let request =
+		HostNavigateToRequest::V1(v01::HostNavigateToRequest { url: "mytestapp.dot".to_string() });
+
+	let result = futures::executor::block_on(host.navigate_to(&cx, request));
+
+	assert_eq!(
+		result,
+		Err(CallError::Domain(HostNavigateToError::V1(v01::HostNavigateToError::Unknown {
+			reason: "navigation cancelled".to_string(),
+		})))
+	);
+	assert!(platform.navigations.lock().unwrap().is_empty());
+}
+
+/// A web address still arrives as `https://`, so the two stay distinguishable.
+#[test]
+fn navigate_to_hands_a_web_address_over_unchanged() {
+	let platform = Arc::new(StubPlatform::default());
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let cx = CallContext::default();
+	let request = HostNavigateToRequest::V1(v01::HostNavigateToRequest {
+		url: "https://example.com/path".to_string(),
+	});
+
+	futures::executor::block_on(host.navigate_to(&cx, request)).unwrap();
+
+	assert_eq!(
+		platform.navigations.lock().unwrap().as_slice(),
+		["https://example.com/path".to_string()]
+	);
+}
+
+#[test]
+fn permission_prompts_name_the_requesting_product_and_execution_kind() {
+	let (host_config, _) = runtime_config("camera.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("camera.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let spawner = Spawner::for_test();
+	let platform = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		spawner,
+	);
+	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product.clone(),
+	);
+	let cx = CallContext::default();
+
+	futures::executor::block_on(host.request_device_permission(
+		&cx,
+		HostDevicePermissionRequest::V1(v01::HostDevicePermissionRequest::Camera),
+	))
+	.expect("device prompt answers");
+	futures::executor::block_on(host.request_remote_permission(
+		&cx,
+		truapi::versioned::permissions::RemotePermissionRequest::V1(v01::RemotePermissionRequest {
+			permission: v01::RemotePermission::ChainSubmit,
+		}),
+	))
+	.expect("remote prompt answers");
+
+	assert_eq!(*platform.permission_prompt_products.lock().unwrap(), [product.clone(), product],);
+}
+
+#[test]
+fn navigate_to_rejects_invalid_input_without_prompting_or_calling_platform() {
+	let platform = stub_platform();
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let cx = CallContext::default();
+	for url in [
+		"",
+		"javascript:alert(1)",
+		"data:text/plain,test",
+		"file:///etc/passwd",
+		"vbscript:msgbox(1)",
+	] {
+		let request =
+			HostNavigateToRequest::V1(v01::HostNavigateToRequest { url: url.to_string() });
+		assert!(matches!(
+			futures::executor::block_on(host.navigate_to(&cx, request)),
+			Err(CallError::Domain(HostNavigateToError::V1(
+				v01::HostNavigateToError::Unknown { .. }
+			)))
+		));
+	}
+	assert_eq!(
+		(
+			platform.navigations.lock().unwrap().clone(),
+			platform.device_permission_requests.lock().unwrap().clone(),
+			platform.remote_permission_requests.lock().unwrap().clone(),
+		),
+		(vec![], vec![], vec![]),
+	);
+}
+
+#[test]
+fn navigate_to_external_denies_without_open_url_permission() {
+	let platform = Arc::new(StubPlatform {
+		device_permission_decisions: Mutex::new([crate::platform::PermissionDecision::Deny].into()),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let cx = CallContext::default();
+	let urls = [
+		"https://example.com/page",
+		"http://other.example.com/page",
+		"mailto:someone@example.com",
+		"tel:+15551234567",
+		"sms:+15551234567",
+		"maps:?q=Berlin",
+		"polkadotapp://pay?address=1xXvM8o8N7hGp4cCdHAFSC3g9N2rfQdbH8H6d9SjsUd2rck&amount=1000000&lockAmount=true",
+	];
+	let mut responses = Vec::new();
+	for url in urls {
+		responses.push(futures::executor::block_on(host.navigate_to(
+			&cx,
+			HostNavigateToRequest::V1(v01::HostNavigateToRequest { url: url.to_string() }),
+		)));
+	}
+	assert_eq!(
+		(
+			responses,
+			platform.navigations.lock().unwrap().clone(),
+			platform.device_permission_requests.lock().unwrap().clone(),
+			platform.remote_permission_requests.lock().unwrap().clone(),
+		),
+		(
+			vec![
+				Err(CallError::Domain(HostNavigateToError::V1(
+					v01::HostNavigateToError::PermissionDenied
+				)));
+				urls.len()
+			],
+			vec![],
+			vec![v01::HostDevicePermissionRequest::OpenUrl],
+			vec![],
+		),
+	);
+}
+
+#[test]
+fn navigate_to_external_reuses_open_url_grant_across_destinations() {
+	let platform = Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let cx = CallContext::default();
+
+	let urls = [
+		"https://example.com/first",
+		"https://other.example.com/second",
+		"http://third.example.com/page",
+	];
+	for url in urls {
+		let request =
+			HostNavigateToRequest::V1(v01::HostNavigateToRequest { url: url.to_string() });
+		assert_eq!(
+			futures::executor::block_on(host.navigate_to(&cx, request)).unwrap(),
+			HostNavigateToResponse::V1
+		);
+	}
+
+	assert_eq!(
+		(
+			platform.navigations.lock().unwrap().clone(),
+			platform.device_permission_requests.lock().unwrap().clone(),
+			platform.remote_permission_requests.lock().unwrap().clone(),
+		),
+		(
+			urls.map(str::to_string).to_vec(),
+			vec![v01::HostDevicePermissionRequest::OpenUrl],
+			vec![],
+		),
+	);
+}
+
+#[test]
+fn navigate_to_internal_targets_do_not_consume_open_url_permission() {
+	let platform = Arc::new(StubPlatform {
+		remote_permission_denied: true,
+		device_permission_decisions: Mutex::new([crate::platform::PermissionDecision::Deny].into()),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let cx = CallContext::default();
+
+	for url in [
+		"mytestapp.dot",
+		"localhost:3000",
+		"polkadotapp://pocket/open?product=mytestapp.dot&card=loyalty",
+		"polkadotapp://pocket",
+	] {
+		let request =
+			HostNavigateToRequest::V1(v01::HostNavigateToRequest { url: url.to_string() });
+		assert_eq!(
+			futures::executor::block_on(host.navigate_to(&cx, request)).unwrap(),
+			HostNavigateToResponse::V1,
+			"{url} stays within the host's product surface"
+		);
+	}
+	assert_eq!(
+		(
+			platform.device_permission_requests.lock().unwrap().clone(),
+			platform.remote_permission_requests.lock().unwrap().clone(),
+		),
+		(vec![], vec![]),
+	);
+}
+
+#[test]
+fn navigate_to_consumes_open_url_allow_once_at_handoff() {
+	futures::executor::block_on(async {
+		for url in [
+			"https://example.com/page",
+			"http://other.example.com/page",
+			"mailto:someone@example.com",
+			"tel:+15551234567",
+			"sms:+15551234567",
+			"maps:?q=Berlin",
+			"polkadotapp://pay?address=1xXvM8o8N7hGp4cCdHAFSC3g9N2rfQdbH8H6d9SjsUd2rck&amount=1000000&lockAmount=true",
+		] {
+			for request_upfront in [false, true] {
+				let platform = Arc::new(StubPlatform {
+					device_permission_decisions: Mutex::new(
+						[
+							crate::platform::PermissionDecision::AllowOnce,
+							crate::platform::PermissionDecision::Deny,
+						]
+						.into(),
+					),
+					remote_permission_denied: true,
+					..Default::default()
+				});
+				let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+				let cx = CallContext::default();
+				if request_upfront {
+					for _ in 0..2 {
+						assert_eq!(
+							host.request_device_permission(
+								&cx,
+								HostDevicePermissionRequest::V1(
+									v01::HostDevicePermissionRequest::OpenUrl
+								)
+							)
+							.await
+							.unwrap(),
+							HostDevicePermissionResponse::V1(v01::HostDevicePermissionResponse {
+								granted: true
+							}),
+						);
+					}
+				}
+				let request =
+					HostNavigateToRequest::V1(v01::HostNavigateToRequest { url: url.to_string() });
+				let first = host.navigate_to(&cx, request.clone()).await;
+				let status = host
+					.connection
+					.permission_authorization_status(PermissionAuthorizationRequest::Device(
+						v01::HostDevicePermissionRequest::OpenUrl,
+					))
+					.await
+					.unwrap();
+				let second = host.navigate_to(&cx, request).await;
+				assert_eq!(
+					(
+						first,
+						second,
+						status,
+						platform.navigations.lock().unwrap().clone(),
+						platform.device_permission_requests.lock().unwrap().clone(),
+						platform.remote_permission_requests.lock().unwrap().clone(),
+					),
+					(
+						Ok(HostNavigateToResponse::V1),
+						Err(CallError::Domain(HostNavigateToError::V1(
+							v01::HostNavigateToError::PermissionDenied
+						))),
+						PermissionAuthorizationStatus::NotDetermined,
+						vec![url.to_string()],
+						vec![v01::HostDevicePermissionRequest::OpenUrl; 2],
+						vec![],
+					),
+					"url={url}, request_upfront={request_upfront}",
+				);
+			}
+		}
+	});
+}
+
+#[test]
+fn device_authorization_consumes_allow_once_for_each_capability() {
+	futures::executor::block_on(async {
+		for capability in
+			[v01::HostDevicePermissionRequest::Camera, v01::HostDevicePermissionRequest::Microphone]
+		{
+			for request_upfront in [false, true] {
+				let platform = Arc::new(StubPlatform {
+					device_permission_decisions: Mutex::new(
+						[PermissionDecision::AllowOnce, PermissionDecision::Deny].into(),
+					),
+					..Default::default()
+				});
+				let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+				let cx = CallContext::default();
+				let request = HostDevicePermissionRequest::V1(capability);
+				if request_upfront {
+					for _ in 0..2 {
+						assert_eq!(
+							host.request_device_permission(&cx, request.clone()).await.unwrap(),
+							HostDevicePermissionResponse::V1(v01::HostDevicePermissionResponse {
+								granted: true
+							}),
+						);
+					}
+				}
+				let first = host.authorize_device_permission(&cx, request.clone()).await;
+				let status = host
+					.connection
+					.permission_authorization_status(PermissionAuthorizationRequest::Device(
+						capability,
+					))
+					.await
+					.unwrap();
+				let second = host.authorize_device_permission(&cx, request).await;
+				assert_eq!(
+					(
+						first,
+						second,
+						status,
+						platform.device_permission_requests.lock().unwrap().clone()
+					),
+					(
+						Ok(HostDevicePermissionResponse::V1(v01::HostDevicePermissionResponse {
+							granted: true
+						})),
+						Ok(HostDevicePermissionResponse::V1(v01::HostDevicePermissionResponse {
+							granted: false
+						})),
+						PermissionAuthorizationStatus::NotDetermined,
+						vec![capability; 2],
+					),
+					"capability={capability}, request_upfront={request_upfront}",
+				);
+			}
+		}
+	});
+}
+
+#[test]
+fn device_authorization_concurrent_calls_cannot_share_one_use_grants() {
+	futures::executor::block_on(async {
+		for capability in
+			[v01::HostDevicePermissionRequest::Camera, v01::HostDevicePermissionRequest::Microphone]
+		{
+			let platform = Arc::new(StubPlatform {
+				device_permission_decisions: Mutex::new(
+					[PermissionDecision::AllowOnce, PermissionDecision::Deny].into(),
+				),
+				..Default::default()
+			});
+			let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+			let cx = CallContext::default();
+			let request = HostDevicePermissionRequest::V1(capability);
+			host.request_device_permission(&cx, request.clone()).await.unwrap();
+			let (first, second) = futures::join!(
+				host.authorize_device_permission(&cx, request.clone()),
+				host.authorize_device_permission(&cx, request),
+			);
+			assert_eq!(
+				(first, second, platform.device_permission_requests.lock().unwrap().clone()),
+				(
+					Ok(HostDevicePermissionResponse::V1(v01::HostDevicePermissionResponse {
+						granted: true
+					})),
+					Ok(HostDevicePermissionResponse::V1(v01::HostDevicePermissionResponse {
+						granted: false
+					})),
+					vec![capability; 2],
+				),
+				"capability={capability}",
+			);
+		}
+	});
+}
+
+#[test]
+fn device_authorization_reuses_permanent_grants() {
+	futures::executor::block_on(async {
+		let platform = Arc::new(StubPlatform {
+			device_permission_decisions: Mutex::new(
+				[
+					PermissionDecision::AllowAlways,
+					PermissionDecision::AllowAlways,
+					PermissionDecision::Deny,
+				]
+				.into(),
+			),
+			..Default::default()
+		});
+		let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+		let capabilities = [
+			v01::HostDevicePermissionRequest::Camera,
+			v01::HostDevicePermissionRequest::Microphone,
+		];
+		let mut responses = Vec::new();
+		for _ in 0..2 {
+			for capability in capabilities {
+				responses.push(
+					host.authorize_device_permission(
+						&CallContext::default(),
+						HostDevicePermissionRequest::V1(capability),
+					)
+					.await,
+				);
+			}
+		}
+		assert_eq!(
+			(responses, platform.device_permission_requests.lock().unwrap().clone()),
+			(
+				vec![
+					Ok(HostDevicePermissionResponse::V1(v01::HostDevicePermissionResponse {
+						granted: true
+					}));
+					4
+				],
+				capabilities.to_vec(),
+			),
+		);
+	});
+}
+
+#[test]
+fn device_authorization_storage_failure_does_not_prompt_or_authorize() {
+	let platform = Arc::new(StubPlatform {
+		permission_storage_error: Some("device permission storage unavailable"),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let response = futures::executor::block_on(host.authorize_device_permission(
+		&CallContext::default(),
+		HostDevicePermissionRequest::V1(v01::HostDevicePermissionRequest::Camera),
+	));
+	assert_eq!(
+        (response, platform.device_permission_requests.lock().unwrap().clone()),
+        (
+            Err(CallError::HostFailure {
+                reason: "permission storage failed: GenericError { reason: \"device permission storage unavailable\" }".to_string(),
+            }),
+            vec![],
+        ),
+    );
+}
+
+#[test]
+fn push_notification_delegates_payload_and_returns_host_id() {
+	let pushed_notifications = Arc::new(Mutex::new(Vec::new()));
+	let platform = Arc::new(StubPlatform {
+		notification_id: 42,
+		pushed_notifications: pushed_notifications.clone(),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	let cx = CallContext::default();
+	let request = HostPushNotificationRequest::V1(v01::HostPushNotificationRequest {
+		text: "Hello".to_string(),
+		deeplink: Some("https://example.invalid/launch".to_string()),
+		scheduled_at: Some(1_776_144_000_000),
+	});
+
+	let response = futures::executor::block_on(host.send_push_notification(&cx, request)).unwrap();
+
+	assert_eq!(
+		response,
+		HostPushNotificationResponse::V1(v01::HostPushNotificationResponse { id: 42 })
+	);
+	assert_eq!(
+		pushed_notifications
+			.lock()
+			.expect("notification list mutex poisoned")
+			.as_slice(),
+		&[v01::HostPushNotificationRequest {
+			text: "Hello".to_string(),
+			deeplink: Some("https://example.invalid/launch".to_string()),
+			scheduled_at: Some(1_776_144_000_000),
+		}]
+	);
+}
+
+/// A notification the product withdrew must not reach the person.
+#[test]
+fn push_notification_withdrawn_before_it_is_scheduled_is_never_shown() {
+	let pushed_notifications = Arc::new(Mutex::new(Vec::new()));
+	let platform = Arc::new(StubPlatform {
+		pushed_notifications: pushed_notifications.clone(),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+	let cancel = truapi::CancellationToken::default();
+	cancel.cancel();
+	let cx = CallContext::with_parts("notification-withdrawn".to_string(), cancel);
+	let request = HostPushNotificationRequest::V1(v01::HostPushNotificationRequest {
+		text: "Hello".to_string(),
+		deeplink: None,
+		scheduled_at: None,
+	});
+
+	let result = futures::executor::block_on(host.send_push_notification(&cx, request));
+
+	assert_eq!(
+		result,
+		Err(CallError::Domain(HostPushNotificationError::V1(
+			v01::HostPushNotificationError::Unknown {
+				reason: "notification cancelled".to_string(),
+			}
+		)))
+	);
+	assert!(pushed_notifications.lock().unwrap().is_empty());
+}
+
+#[test]
+fn push_notification_consumes_allow_once_before_scheduling() {
+	for request_upfront in [false, true] {
+		let platform = Arc::new(StubPlatform {
+			device_permission_decisions: Mutex::new(
+				[
+					crate::platform::PermissionDecision::AllowOnce,
+					crate::platform::PermissionDecision::Deny,
+				]
+				.into(),
+			),
+			notification_id: 42,
+			..Default::default()
+		});
+		let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+		let cx = CallContext::default();
+		let notification = v01::HostPushNotificationRequest {
+			text: "Hello".to_string(),
+			deeplink: None,
+			scheduled_at: None,
+		};
+
+		if request_upfront {
+			assert_eq!(
+				futures::executor::block_on(host.request_device_permission(
+					&cx,
+					HostDevicePermissionRequest::V1(
+						v01::HostDevicePermissionRequest::Notifications
+					),
+				))
+				.unwrap(),
+				HostDevicePermissionResponse::V1(v01::HostDevicePermissionResponse {
+					granted: true
+				})
+			);
+		}
+		let first = futures::executor::block_on(
+			host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+		);
+		let second = futures::executor::block_on(
+			host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+		);
+
+		assert_eq!(
+			(
+				first,
+				second,
+				platform.pushed_notifications.lock().unwrap().clone(),
+				platform.device_permission_requests.lock().unwrap().clone(),
+			),
+			(
+				Ok(HostPushNotificationResponse::V1(v01::HostPushNotificationResponse { id: 42 })),
+				Err(CallError::Domain(HostPushNotificationError::V1(
+					v01::HostPushNotificationError::Unknown {
+						reason: PERMISSION_DENIED_REASON.to_string(),
+					},
+				))),
+				vec![notification],
+				vec![v01::HostDevicePermissionRequest::Notifications; 2],
+			),
+			"request_upfront={request_upfront}"
+		);
+	}
+}
+
+#[test]
+fn push_notification_denial_never_reaches_scheduler() {
+	let platform = Arc::new(StubPlatform {
+		device_permission_decisions: Mutex::new([crate::platform::PermissionDecision::Deny].into()),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let cx = CallContext::default();
+	let request = HostPushNotificationRequest::V1(v01::HostPushNotificationRequest {
+		text: "Hello".to_string(),
+		deeplink: None,
+		scheduled_at: None,
+	});
+
+	let response = futures::executor::block_on(host.send_push_notification(&cx, request));
+
+	assert_eq!(
+		(
+			response,
+			platform.pushed_notifications.lock().unwrap().clone(),
+			platform.device_permission_requests.lock().unwrap().clone(),
+		),
+		(
+			Err(CallError::Domain(HostPushNotificationError::V1(
+				v01::HostPushNotificationError::Unknown {
+					reason: PERMISSION_DENIED_REASON.to_string(),
+				},
+			))),
+			vec![],
+			vec![v01::HostDevicePermissionRequest::Notifications],
+		)
+	);
+}
+
+#[test]
+fn push_notification_reuses_allow_always() {
+	let platform = Arc::new(StubPlatform {
+		device_permission_decisions: Mutex::new(
+			[
+				crate::platform::PermissionDecision::AllowAlways,
+				crate::platform::PermissionDecision::Deny,
+			]
+			.into(),
+		),
+		notification_id: 42,
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let cx = CallContext::default();
+	let notification = v01::HostPushNotificationRequest {
+		text: "Hello".to_string(),
+		deeplink: None,
+		scheduled_at: None,
+	};
+	let first = futures::executor::block_on(
+		host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+	);
+	let second = futures::executor::block_on(
+		host.send_push_notification(&cx, HostPushNotificationRequest::V1(notification.clone())),
+	);
+
+	assert_eq!(
+		(
+			first,
+			second,
+			platform.pushed_notifications.lock().unwrap().clone(),
+			platform.device_permission_requests.lock().unwrap().clone(),
+		),
+		(
+			Ok(HostPushNotificationResponse::V1(v01::HostPushNotificationResponse { id: 42 })),
+			Ok(HostPushNotificationResponse::V1(v01::HostPushNotificationResponse { id: 42 })),
+			vec![notification; 2],
+			vec![v01::HostDevicePermissionRequest::Notifications],
+		)
+	);
+}
+
+#[test]
+fn cancel_notification_delegates_host_id() {
+	let cancelled_notifications = Arc::new(Mutex::new(Vec::new()));
+	let platform = Arc::new(StubPlatform {
+		cancelled_notifications: cancelled_notifications.clone(),
+		device_permission_decisions: Mutex::new([crate::platform::PermissionDecision::Deny].into()),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let cx = CallContext::default();
+	let request =
+		HostPushNotificationCancelRequest::V1(v01::HostPushNotificationCancelRequest { id: 42 });
+
+	let response =
+		futures::executor::block_on(host.cancel_push_notification(&cx, request)).unwrap();
+
+	assert_eq!(
+		(
+			response,
+			cancelled_notifications.lock().unwrap().clone(),
+			platform.device_permission_requests.lock().unwrap().clone(),
+		),
+		(HostPushNotificationCancelResponse::V1, vec![42], vec![])
+	);
+}
+
+#[test]
+fn get_account_requires_session() {
+	let host =
+		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), Spawner::for_test());
+	let cx = CallContext::default();
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: v01::ProductAccountId {
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+	});
+	let err = futures::executor::block_on(host.get_account(&cx, request)).unwrap_err();
+	assert!(matches!(
+		err,
+		CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::NotConnected))
+	));
+}
+
+#[test]
+fn get_account_maps_subtree_disconnect_race_to_not_connected() {
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		sso_response_script: Some(sso_peer_disconnect_response_script(&session)),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new(platform, runtime_config("myapp.dot"), Spawner::for_test());
+	host.test_session_state().set_session(session);
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: account_id("myapp.dot", 0),
+	});
+
+	let err = futures::executor::block_on(host.get_account(&CallContext::default(), request))
+		.unwrap_err();
+
+	assert!(matches!(
+		err,
+		CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::NotConnected))
+	));
+}
+
+/// An account that names no product is rejected when the request is decoded,
+/// so no handler ever sees it.
+#[test]
+fn a_request_for_an_account_of_no_product_does_not_decode() {
+	let request_naming =
+		|product: &str| (0u8, product.to_string(), v01::DerivationIndex::Index(0)).encode();
+
+	assert!(HostAccountGetRequest::decode(&mut &request_naming("myapp.dot")[..]).is_ok());
+	assert!(HostAccountGetRequest::decode(&mut &request_naming("example.com")[..]).is_err());
+}
+
+#[test]
+fn list_ring_vrf_keys_rejects_invalid_owners_before_dispatch() {
+	let frame = (0u8, "example.com", v01::RingVrfKeyDisclosure::Anonymized).encode();
+	assert!(HostAccountListRingVrfKeysRequest::decode(&mut frame.as_slice()).is_err());
+}
+
+#[test]
+fn cross_product_storage_rejects_invalid_targets_before_dispatch() {
+	for target in ["not a product", "", "example.com"] {
+		let frame = (1u8, Some(target), "k").encode();
+		assert!(HostLocalStorageReadRequest::decode(&mut frame.as_slice()).is_err());
+	}
+	let frame = (1u8, Some("wallet.dot"), "k").encode();
+	assert!(HostLocalStorageReadRequest::decode(&mut frame.as_slice()).is_ok());
+}
+
+#[test]
+fn get_account_other_product_rejects_when_user_declines() {
+	let platform = stub_platform();
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: v01::ProductAccountId {
+			dot_ns_identifier: ProductId::for_test("other.dot"),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+	});
+	let err = futures::executor::block_on(host.get_account(&cx, request)).unwrap_err();
+	assert!(matches!(
+		err,
+		CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::Rejected))
+	));
+	assert_eq!(
+		platform
+			.account_access_reviews
+			.lock()
+			.expect("account access review list mutex poisoned")
+			.as_slice(),
+		&[AccountAccessReview {
+			requesting_product_id: ProductId::for_test("myapp.dot"),
+			target_product_id: ProductId::for_test("other.dot"),
+		}]
+	);
+}
+
+#[test]
+fn get_account_other_product_maps_confirmation_failure_to_host_failure() {
+	let host = ProductRuntimeHost::new(
+		Arc::new(StubPlatform { account_access_error: Some("modal failed"), ..Default::default() }),
+		runtime_config("myapp.dot"),
+		Spawner::for_test(),
+	);
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: v01::ProductAccountId {
+			dot_ns_identifier: ProductId::for_test("other.dot"),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+	});
+	let err = futures::executor::block_on(host.get_account(&cx, request)).unwrap_err();
+	assert!(matches!(err, CallError::HostFailure { reason } if reason.contains("modal failed")));
+}
+
+#[test]
+fn get_account_other_product_accepts_confirmation_then_derives_key() {
+	let host = ProductRuntimeHost::new(
+		Arc::new(StubPlatform { account_access_confirmed: true, ..Default::default() }),
+		runtime_config("myapp.dot"),
+		Spawner::for_test(),
+	);
+	let session = sso_session_info();
+	install_pairing_session(&host, session.clone());
+	cache_test_product_subtree(&host, &session, "other.dot");
+	let cx = CallContext::default();
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: v01::ProductAccountId {
+			dot_ns_identifier: ProductId::for_test("other.dot"),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+	});
+	let response = futures::executor::block_on(host.get_account(&cx, request)).unwrap();
+	let HostAccountGetResponse::V1(inner) = response;
+	assert_eq!(inner.account.public_key, test_product_account_public("other.dot", 0).to_vec());
+}
+
+#[test]
+fn get_account_other_product_skips_confirmation_for_a_blessed_product() {
+	let platform = stub_platform();
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("dim2.dot"), Spawner::for_test());
+	let session = sso_session_info();
+	install_pairing_session(&host, session.clone());
+	cache_test_product_subtree(&host, &session, "other.dot");
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: account_id("other.dot", 0),
+	});
+	let HostAccountGetResponse::V1(inner) =
+		futures::executor::block_on(host.get_account(&CallContext::default(), request)).unwrap();
+	assert_eq!(
+		(inner.account.public_key, platform.account_access_reviews.lock().unwrap().len()),
+		(test_product_account_public("other.dot", 0).to_vec(), 0)
+	);
+}
+
+/// Allow once covers the product's later disclosures without writing a decision.
+#[test]
+fn get_account_allow_once_answers_later_disclosures_without_saving() {
+	futures::executor::block_on(async {
+		let platform = Arc::new(StubPlatform {
+			permission_confirmation_decisions: Mutex::new(
+				[
+					crate::platform::PermissionDecision::AllowOnce,
+					crate::platform::PermissionDecision::Deny,
+				]
+				.into(),
+			),
+			..Default::default()
+		});
+		let host = ProductRuntimeHost::new(
+			platform.clone(),
+			runtime_config("myapp.dot"),
+			Spawner::for_test(),
+		);
+		let session = sso_session_info();
+		install_pairing_session(&host, session.clone());
+		cache_test_product_subtree(&host, &session, "other.dot");
+		let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+			product_account_id: account_id("other.dot", 0),
+		});
+		let mut disclosed = Vec::new();
+		for _ in 0..3 {
+			let HostAccountGetResponse::V1(response) =
+				host.get_account(&CallContext::default(), request.clone()).await.unwrap();
+			disclosed.push(response.account.public_key);
+		}
+		let saved = platform
+			.read_core_storage(CoreStorageKey::product_account_access_authorization(
+				&ProductId::for_test("myapp.dot"),
+				&ProductId::for_test("other.dot"),
+			))
+			.await
+			.unwrap();
+		assert_eq!(
+			(disclosed, saved, platform.account_access_reviews.lock().unwrap().len(),),
+			(vec![test_product_account_public("other.dot", 0).to_vec(); 3], None, 1,),
+		);
+	});
+}
+
+#[test]
+fn get_account_derives_rfc0022_product_key() {
+	let host =
+		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, sso_session_info());
+	let cx = CallContext::default();
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: v01::ProductAccountId {
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+	});
+	let response = futures::executor::block_on(host.get_account(&cx, request)).unwrap();
+	let HostAccountGetResponse::V1(inner) = response;
+	assert_eq!(
+		hex::encode(inner.account.public_key),
+		"1c1ae478b564572f806ffa6352b4273d612beb01610b19f4e5bf444521cd5b5c"
+	);
+}
+
+#[test]
+fn get_account_own_product_prompts_and_rejects_on_a_cold_subtree() {
+	let host = ProductRuntimeHost::new(
+		Arc::new(StubPlatform { product_subtree_denied: true, ..Default::default() }),
+		runtime_config("myapp.dot"),
+		Spawner::for_test(),
+	);
+	host.test_session_state().set_session(sso_session_info());
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: account_id("myapp.dot", 0),
+	});
+
+	let err = futures::executor::block_on(host.get_account(&CallContext::default(), request))
+		.unwrap_err();
+
+	assert!(matches!(
+		err,
+		CallError::Domain(HostAccountGetError::V1(v01::HostAccountGetError::Rejected))
+	));
+}
+
+#[test]
+fn get_account_own_product_skips_the_prompt_when_the_subtree_is_cached() {
+	// denied would reject if the prompt fired; a warm cache must not prompt.
+	let host = ProductRuntimeHost::new(
+		Arc::new(StubPlatform { product_subtree_denied: true, ..Default::default() }),
+		runtime_config("myapp.dot"),
+		Spawner::for_test(),
+	);
+	install_pairing_session(&host, sso_session_info());
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: account_id("myapp.dot", 0),
+	});
+
+	let response = futures::executor::block_on(host.get_account(&CallContext::default(), request))
+		.expect("a cached subtree resolves without prompting");
+	let HostAccountGetResponse::V1(inner) = response;
+	assert_eq!(inner.account.public_key, test_product_account_public("myapp.dot", 0).to_vec());
+}
+
+#[test]
+fn remote_authority_call_bounds_a_call_that_never_unwinds() {
+	let mut cx = CallContext::default();
+	cx.set_timeout(Duration::from_millis(1));
+	// A call that never completes and never observes the token, standing in
+	// for one parked in the un-cancellable statement-store setup. The old
+	// code awaited it after cancelling and hung; it must now be dropped at
+	// the grace and return a bounded timeout.
+	let call = futures::future::pending::<Result<(), AuthorityError>>();
+
+	let err = futures::executor::block_on(remote_authority_call(&cx, call))
+		.expect_err("a never-unwinding call is bounded by the deadline plus grace");
+
+	assert!(matches!(err, AuthorityError::Cancelled(_)));
+}
+
+#[test]
+fn get_account_normalizes_product_identifier_before_deriving() {
+	let host =
+		ProductRuntimeHost::new(stub_platform(), runtime_config("MyApp.DOT"), Spawner::for_test());
+	install_pairing_session(&host, sso_session_info());
+	let cx = CallContext::default();
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: v01::ProductAccountId {
+			dot_ns_identifier: ProductId::for_test("MyApp.DOT"),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+	});
+	let response = futures::executor::block_on(host.get_account(&cx, request)).unwrap();
+	let HostAccountGetResponse::V1(inner) = response;
+	assert_eq!(
+		hex::encode(inner.account.public_key),
+		"1c1ae478b564572f806ffa6352b4273d612beb01610b19f4e5bf444521cd5b5c"
+	);
+}
+
+#[test]
+fn get_account_localhost_product_prompts_for_other_product_identifier() {
+	let host = ProductRuntimeHost::new(
+		Arc::new(StubPlatform { account_access_confirmed: true, ..Default::default() }),
+		runtime_config("localhost:3000"),
+		Spawner::for_test(),
+	);
+	let session = sso_session_info();
+	install_pairing_session(&host, session.clone());
+	cache_test_product_subtree(&host, &session, "myapp.dot");
+	let cx = CallContext::default();
+	let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+		product_account_id: v01::ProductAccountId {
+			dot_ns_identifier: ProductId::for_test("myapp.dot"),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+	});
+	let response = futures::executor::block_on(host.get_account(&cx, request)).unwrap();
+	let HostAccountGetResponse::V1(inner) = response;
+	assert_eq!(
+		hex::encode(inner.account.public_key),
+		"1c1ae478b564572f806ffa6352b4273d612beb01610b19f4e5bf444521cd5b5c"
+	);
+}
+
+#[test]
+fn get_account_alias_requires_session() {
+	let host =
+		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), Spawner::for_test());
+	let cx = CallContext::default();
+	let err = futures::executor::block_on(
+		host.get_account_alias(&cx, account_alias_request("myapp.dot")),
+	)
+	.unwrap_err();
+	assert!(matches!(
+		err,
+		CallError::Domain(HostAccountGetAliasError::V1(v01::HostAccountGetAliasError::Rejected))
+	));
+}
+
+#[test]
+fn get_account_alias_forwards_without_pairing_host_confirmation() {
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		sso_response_script: Some(sso_success_response_script(
+			&session,
+			RemoteMessage {
+				message_id: "wallet-alias-1".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::GetAccountAliasResponse(Response {
+					responding_to: "alias-1".to_string(),
+					payload: Ok(v01::ContextualAlias { context: [9; 32], alias: vec![1, 2, 3] }),
+				})),
+			},
+		)),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session.clone());
+	let cx = CallContext::with_request_id("alias-1".to_string());
+	let response = futures::executor::block_on(
+		host.get_account_alias(&cx, account_alias_request("myapp.dot")),
+	)
+	.unwrap();
+	let HostAccountGetAliasResponse::V1(inner) = response;
+	assert_eq!(inner.context, [9; 32]);
+	assert_eq!(inner.alias, vec![1, 2, 3]);
+	let message = submitted_remote_message(&platform, &session);
+	let RemoteMessageData::V1(v1::RemoteMessage::GetAccountAliasRequest(request)) = message.data
+	else {
+		panic!("expected ring VRF alias request");
+	};
+	assert_eq!(request.calling_product_id, "myapp.dot");
+	assert_eq!(request.payload.context.product_id, "myapp.dot");
+	assert_eq!(request.payload.ring_location.chain_id, [1; 32]);
+}
+
+#[test]
+fn create_account_proof_requires_session() {
+	let host =
+		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), Spawner::for_test());
+	let cx = CallContext::default();
+	let err = futures::executor::block_on(
+		host.create_account_proof(&cx, create_proof_request("myapp.dot")),
+	)
+	.unwrap_err();
+	assert!(matches!(
+		err,
+		CallError::Domain(HostAccountCreateProofError::V1(
+			v01::HostAccountCreateProofError::Rejected
+		))
+	));
+}
+
+#[test]
+fn create_account_proof_returns_sso_proof() {
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		sso_response_script: Some(sso_success_response_script(
+			&session,
+			RemoteMessage {
+				message_id: "wallet-proof-1".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::CreateAccountProofResponse(
+					Response {
+						responding_to: "proof-1".to_string(),
+						payload: Ok(v01::HostAccountCreateProofResponse {
+							proof: vec![0xaa, 0xbb],
+							contextual_alias: v01::ContextualAlias {
+								context: [9; 32],
+								alias: vec![1, 2, 3],
+							},
+							ring_index: 5,
+							ring_revision: 7,
+						}),
+					},
+				)),
+			},
+		)),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session.clone());
+	let cx = CallContext::with_request_id("proof-1".to_string());
+	let response = futures::executor::block_on(
+		host.create_account_proof(&cx, create_proof_request("myapp.dot")),
+	)
+	.unwrap();
+	let HostAccountCreateProofResponse::V1(inner) = response;
+	assert_eq!(inner.proof, vec![0xaa, 0xbb]);
+	assert_eq!(inner.ring_index, 5);
+	assert_eq!(inner.ring_revision, 7);
+	let message = submitted_remote_message(&platform, &session);
+	let RemoteMessageData::V1(v1::RemoteMessage::CreateAccountProofRequest(request)) = message.data
+	else {
+		panic!("expected ring VRF proof request");
+	};
+	assert_eq!(request.calling_product_id, "myapp.dot");
+	assert_eq!(request.payload.context.product_id, "myapp.dot");
+	assert_eq!(request.payload.message, vec![4, 5, 6]);
+}
+
+#[test]
+fn create_account_proof_maps_not_member_error() {
+	let session = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		sso_response_script: Some(sso_success_response_script(
+			&session,
+			RemoteMessage {
+				message_id: "wallet-proof-1".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::CreateAccountProofResponse(
+					Response {
+						responding_to: "proof-1".to_string(),
+						payload: Err(RingVrfError::NotMember),
+					},
+				)),
+			},
+		)),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session);
+	let cx = CallContext::with_request_id("proof-1".to_string());
+	let err = futures::executor::block_on(
+		host.create_account_proof(&cx, create_proof_request("myapp.dot")),
+	)
+	.unwrap_err();
+	assert!(matches!(
+		err,
+		CallError::Domain(HostAccountCreateProofError::V1(
+			v01::HostAccountCreateProofError::NotMember
+		))
+	));
+}
+
+#[test]
+fn get_legacy_accounts_returns_empty_when_connected() {
+	let host = ProductRuntimeHost::new(
+		stub_platform(),
+		runtime_config("localhost:3000"),
+		Spawner::for_test(),
+	);
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+	let response = futures::executor::block_on(
+		host.get_legacy_accounts(&cx, HostGetLegacyAccountsRequest::V1),
+	)
+	.unwrap();
+	let HostGetLegacyAccountsResponse::V1(inner) = response;
+	assert!(inner.accounts.is_empty());
+}
+
+#[test]
+fn get_legacy_accounts_returns_empty_when_disconnected() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let cx = CallContext::default();
+	let response = futures::executor::block_on(
+		host.get_legacy_accounts(&cx, HostGetLegacyAccountsRequest::V1),
+	)
+	.unwrap();
+	let HostGetLegacyAccountsResponse::V1(inner) = response;
+	assert!(inner.accounts.is_empty());
+}
+
+#[test]
+fn get_user_id_returns_primary_username() {
+	let platform =
+		Arc::new(StubPlatform { identity_disclosure_confirmed: true, ..Default::default() });
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+	let response =
+		futures::executor::block_on(host.get_user_id(&cx, HostGetUserIdRequest::V1)).unwrap();
+	let HostGetUserIdResponse::V1(inner) = response;
+	assert_eq!(inner.primary_username, "Alice Smith");
+	assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn get_user_id_caches_identity_disclosure_grant() {
+	let platform =
+		Arc::new(StubPlatform { identity_disclosure_confirmed: true, ..Default::default() });
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+
+	futures::executor::block_on(host.get_user_id(&cx, HostGetUserIdRequest::V1)).unwrap();
+	futures::executor::block_on(host.get_user_id(&cx, HostGetUserIdRequest::V1)).unwrap();
+
+	assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 1);
+	let status = futures::executor::block_on(
+		host.connection
+			.permission_authorization_status(PermissionAuthorizationRequest::IdentityDisclosure),
+	)
+	.unwrap();
+	assert_eq!(status, PermissionAuthorizationStatus::Authorized);
+}
+
+#[test]
+fn get_user_id_allow_once_does_not_authorize_the_next_disclosure() {
+	futures::executor::block_on(async {
+		let platform = Arc::new(StubPlatform {
+			permission_confirmation_decisions: Mutex::new(
+				[
+					crate::platform::PermissionDecision::AllowOnce,
+					crate::platform::PermissionDecision::Deny,
+				]
+				.into(),
+			),
+			..Default::default()
+		});
+		let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+		install_pairing_session(&host, session_info());
+		let response = host
+			.get_user_id(&CallContext::default(), HostGetUserIdRequest::V1)
+			.await
+			.unwrap();
+		let HostGetUserIdResponse::V1(response) = response;
+		let status = host
+			.connection
+			.permission_authorization_status(PermissionAuthorizationRequest::IdentityDisclosure)
+			.await
+			.unwrap();
+		let mut rejected = Vec::new();
+		for _ in 0..2 {
+			rejected.push(matches!(
+				host.get_user_id(&CallContext::default(), HostGetUserIdRequest::V1).await,
+				Err(CallError::Domain(HostGetUserIdError::V1(
+					v01::HostGetUserIdError::PermissionDenied
+				)))
+			));
+		}
+		assert_eq!(
+			(
+				response.primary_username,
+				status,
+				rejected,
+				platform.identity_disclosure_calls.load(Ordering::SeqCst),
+			),
+			(
+				"Alice Smith".to_string(),
+				PermissionAuthorizationStatus::NotDetermined,
+				vec![true, true],
+				2,
+			),
+		);
+	});
+}
+
+#[test]
+fn get_user_id_caches_identity_disclosure_denial() {
+	let platform = Arc::new(StubPlatform::default());
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+
+	let first =
+		futures::executor::block_on(host.get_user_id(&cx, HostGetUserIdRequest::V1)).unwrap_err();
+	let second =
+		futures::executor::block_on(host.get_user_id(&cx, HostGetUserIdRequest::V1)).unwrap_err();
+
+	assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 1);
+	assert!(matches!(
+		first,
+		CallError::Domain(HostGetUserIdError::V1(v01::HostGetUserIdError::PermissionDenied))
+	));
+	assert!(matches!(
+		second,
+		CallError::Domain(HostGetUserIdError::V1(v01::HostGetUserIdError::PermissionDenied))
+	));
+	let status = futures::executor::block_on(
+		host.connection
+			.permission_authorization_status(PermissionAuthorizationRequest::IdentityDisclosure),
+	)
+	.unwrap();
+	assert_eq!(status, PermissionAuthorizationStatus::Denied);
+}
+
+#[test]
+fn get_user_id_dismissed_identity_disclosure_stays_not_determined() {
+	let platform = Arc::new(StubPlatform {
+		identity_disclosure_error: Some("dismissed"),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+
+	let first =
+		futures::executor::block_on(host.get_user_id(&cx, HostGetUserIdRequest::V1)).unwrap_err();
+	let second =
+		futures::executor::block_on(host.get_user_id(&cx, HostGetUserIdRequest::V1)).unwrap_err();
+
+	assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 2);
+	assert!(matches!(
+		first,
+		CallError::Domain(HostGetUserIdError::V1(v01::HostGetUserIdError::PermissionDenied))
+	));
+	assert!(matches!(
+		second,
+		CallError::Domain(HostGetUserIdError::V1(v01::HostGetUserIdError::PermissionDenied))
+	));
+	let status = futures::executor::block_on(
+		host.connection
+			.permission_authorization_status(PermissionAuthorizationRequest::IdentityDisclosure),
+	)
+	.unwrap();
+	assert_eq!(status, PermissionAuthorizationStatus::NotDetermined);
+}
+
+#[test]
+fn get_user_id_checks_identity_disclosure_before_username() {
+	let platform = Arc::new(StubPlatform::default());
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let mut session = session_info();
+	session.full_username = None;
+	session.lite_username = None;
+	install_pairing_session(&host, session);
+	let cx = CallContext::default();
+
+	let err =
+		futures::executor::block_on(host.get_user_id(&cx, HostGetUserIdRequest::V1)).unwrap_err();
+
+	assert!(matches!(
+		err,
+		CallError::Domain(HostGetUserIdError::V1(v01::HostGetUserIdError::PermissionDenied))
+	));
+	assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn get_user_id_reports_missing_username_after_identity_disclosure() {
+	let platform =
+		Arc::new(StubPlatform { identity_disclosure_confirmed: true, ..Default::default() });
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let mut session = session_info();
+	session.full_username = None;
+	session.lite_username = None;
+	install_pairing_session(&host, session);
+	let cx = CallContext::default();
+
+	let err =
+		futures::executor::block_on(host.get_user_id(&cx, HostGetUserIdRequest::V1)).unwrap_err();
+
+	assert!(matches!(
+		err,
+		CallError::Domain(HostGetUserIdError::V1(
+			v01::HostGetUserIdError::Unknown { ref reason }
+		)) if reason == "No primary username for this session"
+	));
+	assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn get_user_id_respects_pre_authorized_identity_disclosure() {
+	let platform = Arc::new(StubPlatform::default());
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+	futures::executor::block_on(host.connection.set_permission_authorization_status(
+		PermissionAuthorizationRequest::IdentityDisclosure,
+		PermissionAuthorizationStatus::Authorized,
+	))
+	.unwrap();
+
+	let response =
+		futures::executor::block_on(host.get_user_id(&cx, HostGetUserIdRequest::V1)).unwrap();
+	let HostGetUserIdResponse::V1(inner) = response;
+	assert_eq!(inner.primary_username, "Alice Smith");
+	assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn derive_entropy_matches_dotli_vector() {
+	let host =
+		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), Spawner::for_test());
+	let mut session = sso_session_info();
+	session.root_entropy_source = session_info().root_entropy_source;
+	install_pairing_session(&host, session);
+	let cx = CallContext::default();
+	let request = HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest {
+		context: b"product-key".to_vec(),
+	});
+	let response = futures::executor::block_on(host.derive(&cx, request)).unwrap();
+	let HostDeriveEntropyResponse::V1(inner) = response;
+	assert_eq!(
+		hex::encode(inner.entropy),
+		"ab1887248c9de3cf4b8c5a255782796d3d35a98c8eb2d7df61a410db8b14da36"
+	);
+}
+
+#[test]
+fn derive_entropy_requires_session() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let cx = CallContext::default();
+	let request = HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest {
+		context: b"product-key".to_vec(),
+	});
+	let err = futures::executor::block_on(host.derive(&cx, request)).unwrap_err();
+	match err {
+		CallError::Domain(HostDeriveEntropyError::V1(v01::HostDeriveEntropyError::Unknown {
+			reason,
+		})) => assert_eq!(reason, "Not connected"),
+		other => panic!("expected Unknown entropy error, got {other:?}"),
+	}
+}
+
+#[test]
+fn derive_entropy_requires_secret() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let mut session = sso_session_info();
+	session.root_entropy_source = None;
+	install_pairing_session(&host, session);
+	let cx = CallContext::default();
+	let request = HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest {
+		context: b"product-key".to_vec(),
+	});
+	let err = futures::executor::block_on(host.derive(&cx, request)).unwrap_err();
+	match err {
+		CallError::Domain(HostDeriveEntropyError::V1(v01::HostDeriveEntropyError::Unknown {
+			reason,
+		})) => assert_eq!(reason, "Session secret missing"),
+		other => panic!("expected Unknown entropy error, got {other:?}"),
+	}
+}
+
+#[test]
+fn derive_entropy_rejects_empty_context_like_dotli_key() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let mut session = sso_session_info();
+	session.root_entropy_source = session_info().root_entropy_source;
+	install_pairing_session(&host, session);
+	let cx = CallContext::default();
+	let request = HostDeriveEntropyRequest::V1(v01::HostDeriveEntropyRequest { context: vec![] });
+	let err = futures::executor::block_on(host.derive(&cx, request)).unwrap_err();
+	match err {
+		CallError::Domain(HostDeriveEntropyError::V1(v01::HostDeriveEntropyError::Unknown {
+			reason,
+		})) => assert_eq!(reason, "\"key\" must be between 1 and 32 bytes, got 0"),
+		other => panic!("expected Unknown entropy error, got {other:?}"),
+	}
+}
+
+#[test]
+fn preimage_submit_requires_session_first() {
+	let host = ProductRuntimeHost::new_compat_with_bulletin(stub_platform(), Spawner::for_test());
+	let cx = CallContext::default();
+	let request = RemotePreimageSubmitRequest::V1(vec![1, 2, 3]);
+
+	let err = futures::executor::block_on(Preimage::submit(&host, &cx, request)).unwrap_err();
+
+	match err {
+		CallError::Domain(RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
+			reason,
+		})) => assert_eq!(reason, "No active session"),
+		other => panic!("expected preimage session error, got {other:?}"),
+	}
+}
+
+#[test]
+fn preimage_submit_requires_remote_permission_before_backend_call() {
+	let platform = Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
+	let host = ProductRuntimeHost::new_compat_with_bulletin(platform.clone(), Spawner::for_test());
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+	let request = RemotePreimageSubmitRequest::V1(vec![1, 2, 3]);
+	let err = futures::executor::block_on(Preimage::submit(&host, &cx, request)).unwrap_err();
+	match err {
+		CallError::Domain(RemotePreimageSubmitError::V1(v01::PreimageSubmitError::Unknown {
+			reason,
+		})) => assert_eq!(reason, PERMISSION_DENIED_REASON),
+		other => panic!("expected preimage permission denial, got {other:?}"),
+	}
+	assert!(platform.sent_rpc.lock().expect("rpc list mutex poisoned").is_empty());
+}
+
+/// A product that backs up in the background must not ask again once the user
+/// allows `PreimageSubmit` always, or the user either approves a task they did
+/// not start or dismisses it and the backups stop. `AllowOnce` covers a single
+/// upload.
+#[test]
+fn a_preimage_grant_covers_uploads_without_a_per_upload_prompt() {
+	use crate::platform::PermissionDecision::{AllowAlways, AllowOnce};
+
+	#[derive(Debug, PartialEq)]
+	struct Outcome {
+		permission_prompts: usize,
+		uploads_authorized: usize,
+	}
+
+	// The stub has no signing host, so an authorized upload fails at the
+	// allowance step. Getting that error means nothing between the permission
+	// check and the allowance refused the upload.
+	let allowance_error = bulletin_allowance_error_reason(AuthorityError::Disconnected);
+
+	let outcomes = [(vec![AllowAlways], 3), (vec![AllowOnce, AllowOnce], 2)].map(
+		|(remote_permission_decisions, uploads)| {
+			let platform = Arc::new(StubPlatform {
+				remote_permission_decisions: Mutex::new(remote_permission_decisions.into()),
+				..Default::default()
+			});
+			let host = ProductRuntimeHost::new(
+				platform.clone(),
+				runtime_config("t3ams.dot"),
+				Spawner::for_test(),
+			);
+			install_pairing_session(&host, session_info());
+			let mut uploads_authorized = 0;
+			for _ in 0..uploads {
+				let result = futures::executor::block_on(Preimage::submit(
+					&host,
+					&CallContext::default(),
+					RemotePreimageSubmitRequest::V1(vec![1, 2, 3]),
+				));
+				if matches!(
+					result,
+					Err(CallError::Domain(RemotePreimageSubmitError::V1(
+						v01::PreimageSubmitError::Unknown { reason },
+					))) if reason == allowance_error
+				) {
+					uploads_authorized += 1;
+				}
+			}
+			Outcome {
+				permission_prompts: platform.remote_permission_requests.lock().unwrap().len(),
+				uploads_authorized,
+			}
+		},
+	);
+
+	assert_eq!(
+		outcomes,
+		[
+			Outcome { permission_prompts: 1, uploads_authorized: 3 },
+			Outcome { permission_prompts: 2, uploads_authorized: 2 },
+		]
+	);
+}
+
+fn broadcast_request() -> RemoteChainTransactionBroadcastRequest {
+	RemoteChainTransactionBroadcastRequest::V1(v01::RemoteChainTransactionBroadcastRequest {
+		genesis_hash: vec![0; 32],
+		transaction: vec![1, 2, 3],
+	})
+}
+
+/// Only a `Cancel` frame turns the answer into `Cancelled`. A token the host
+/// fires itself still answers with the operation id, so the product is the one
+/// holding it and the broadcast must keep running.
+#[test]
+fn a_broadcast_the_host_cancels_itself_keeps_running() {
+	let (release, gate) = futures::channel::oneshot::channel();
+	let platform = Arc::new(StubPlatform {
+		rpc_method_responses: vec![
+			("transaction_v1_broadcast", r#""REMOTE-OP""#.to_string()),
+			("transaction_v1_stop", "null".to_string()),
+		],
+		rpc_method_responses_gate: Arc::new(Mutex::new(Some(gate))),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("broadcast-timed-out".to_string(), cancel.clone());
+	let request = broadcast_request();
+	let call = std::thread::spawn(move || {
+		futures::executor::block_on(Chain::broadcast_transaction(&host, &cx, request))
+	});
+	wait_until(
+		|| recorded_rpc_method_count(&platform.sent_rpc, "transaction_v1_broadcast") == 1,
+		"the broadcast was not sent",
+	);
+
+	cancel.cancel_with_reason(truapi::CancellationReason::TimedOut {
+		timeout: std::time::Duration::from_secs(1),
+	});
+	release.send(()).unwrap();
+	let RemoteChainTransactionBroadcastResponse::V1(response) =
+		call.join().expect("broadcast thread panicked").unwrap();
+
+	assert_eq!(
+		(
+			response.operation_id.is_some(),
+			recorded_rpc_method_count(&platform.sent_rpc, "transaction_v1_stop")
+		),
+		(true, 0)
+	);
+}
+
+/// The product withdrew a broadcast that had already gone out, and the
+/// `Cancelled` it is answered with carries no operation id, so the host is the
+/// only one left that can stop it.
+#[test]
+fn a_broadcast_withdrawn_in_flight_is_stopped_by_the_host() {
+	let (release, gate) = futures::channel::oneshot::channel();
+	let platform = Arc::new(StubPlatform {
+		rpc_method_responses: vec![
+			("transaction_v1_broadcast", r#""REMOTE-OP""#.to_string()),
+			("transaction_v1_stop", "null".to_string()),
+		],
+		rpc_method_responses_gate: Arc::new(Mutex::new(Some(gate))),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("broadcast-withdrawn".to_string(), cancel.clone());
+	let request = broadcast_request();
+	let call = std::thread::spawn(move || {
+		futures::executor::block_on(Chain::broadcast_transaction(&host, &cx, request))
+	});
+	wait_until(
+		|| recorded_rpc_method_count(&platform.sent_rpc, "transaction_v1_broadcast") == 1,
+		"the broadcast was not sent",
+	);
+
+	cancel.cancel();
+	release.send(()).unwrap();
+	call.join().expect("broadcast thread panicked").unwrap();
+
+	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "transaction_v1_stop"), 1);
+}
+
+/// A call withdrawn before its broadcast went out must not send it.
+#[test]
+fn a_broadcast_withdrawn_before_it_is_sent_never_reaches_the_node() {
+	let platform = stub_platform();
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let cancel = truapi::CancellationToken::default();
+	cancel.cancel();
+	let cx = CallContext::with_parts("broadcast-withdrawn-early".to_string(), cancel);
+	let request = broadcast_request();
+
+	let result = Chain::broadcast_transaction(&host, &cx, request)
+		.now_or_never()
+		.expect("a withdrawn broadcast settles without waiting");
+
+	assert_eq!(
+		result,
+		Err(CallError::Domain(RemoteChainTransactionBroadcastError::V1(v01::GenericError {
+			reason: "broadcast cancelled".to_string(),
+		})))
+	);
+	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "transaction_v1_broadcast"), 0);
+}
+
+#[test]
+fn chain_broadcast_requires_remote_permission_before_backend_call() {
+	let platform = Arc::new(StubPlatform { remote_permission_denied: true, ..Default::default() });
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let cx = CallContext::default();
+	let request =
+		RemoteChainTransactionBroadcastRequest::V1(v01::RemoteChainTransactionBroadcastRequest {
+			genesis_hash: vec![0; 32],
+			transaction: vec![1, 2, 3],
+		});
+	let err =
+		futures::executor::block_on(Chain::broadcast_transaction(&host, &cx, request)).unwrap_err();
+	match err {
+		CallError::Domain(RemoteChainTransactionBroadcastError::V1(v01::GenericError {
+			reason,
+		})) => assert_eq!(reason, PERMISSION_DENIED_REASON),
+		other => panic!("expected chain broadcast permission denial, got {other:?}"),
+	}
+	assert!(platform.sent_rpc.lock().unwrap().is_empty());
+}
+
+#[test]
+fn preimage_lookup_cache_hit_emits_once_and_stays_open() {
+	use futures::FutureExt;
+
+	use crate::host_internal::bulletin::preimage_key;
+
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let value = vec![4, 5, 6, 7];
+	let key = preimage_key(&value);
+	host.connection.services.cache_preimage(key, value.clone());
+
+	let cx = CallContext::default();
+	let request =
+		RemotePreimageLookupSubscribeRequest::V1(v01::RemotePreimageLookupSubscribeRequest {
+			key: key.to_vec(),
+		});
+	let mut subscription = futures::executor::block_on(host.lookup_subscribe(&cx, request));
+	let item = futures::executor::block_on(subscription.next()).expect("preimage item");
+	assert_eq!(
+		item,
+		Ok(RemotePreimageLookupSubscribeItem::V1(v01::RemotePreimageLookupSubscribeItem {
+			value: Some(value)
+		}))
+	);
+	// The subscription stays open (no completion/interrupt frame) after the
+	// single cache-hit emission.
+	assert!(subscription.next().now_or_never().is_none());
+}
+
+#[test]
+fn preimage_lookup_forged_host_bytes_downgraded_to_miss() {
+	use crate::host_internal::bulletin::preimage_key;
+
+	let value = vec![1, 1, 2, 3, 5, 8];
+	let key = preimage_key(&value);
+
+	// Host returns bytes that do not hash to the requested key.
+	let forged =
+		Arc::new(StubPlatform { preimage_lookup_value: Some(vec![9, 9, 9]), ..Default::default() });
+	let host = ProductRuntimeHost::new_compat(forged, Spawner::for_test());
+	let cx = CallContext::default();
+	let request =
+		RemotePreimageLookupSubscribeRequest::V1(v01::RemotePreimageLookupSubscribeRequest {
+			key: key.to_vec(),
+		});
+	let mut subscription = futures::executor::block_on(host.lookup_subscribe(&cx, request));
+	let item = futures::executor::block_on(subscription.next()).expect("preimage item");
+	assert_eq!(
+		item,
+		Ok(RemotePreimageLookupSubscribeItem::V1(v01::RemotePreimageLookupSubscribeItem {
+			value: None
+		}))
+	);
+
+	// Correct bytes pass the integrity check through.
+	let genuine =
+		Arc::new(StubPlatform { preimage_lookup_value: Some(value.clone()), ..Default::default() });
+	let host = ProductRuntimeHost::new_compat(genuine, Spawner::for_test());
+	let request =
+		RemotePreimageLookupSubscribeRequest::V1(v01::RemotePreimageLookupSubscribeRequest {
+			key: key.to_vec(),
+		});
+	let mut subscription = futures::executor::block_on(host.lookup_subscribe(&cx, request));
+	let item = futures::executor::block_on(subscription.next()).expect("preimage item");
+	assert_eq!(
+		item,
+		Ok(RemotePreimageLookupSubscribeItem::V1(v01::RemotePreimageLookupSubscribeItem {
+			value: Some(value)
+		}))
+	);
+}
+
+fn storage_item(
+	value: Option<&[u8]>,
+) -> Result<HostLocalStorageChangeItem, CallError<HostLocalStorageSubscribeError>> {
+	Ok(HostLocalStorageChangeItem::V1(v01::HostLocalStorageChangeItem {
+		value: value.map(<[u8]>::to_vec),
+	}))
+}
+
+fn subscribe_storage_key(
+	host: &ProductRuntimeHost,
+	key: &str,
+) -> Subscription<HostLocalStorageChangeItem, CallError<HostLocalStorageSubscribeError>> {
+	futures::executor::block_on(LocalStorage::subscribe(
+		host,
+		&CallContext::default(),
+		HostLocalStorageSubscribeRequest::V1(v01::HostLocalStorageSubscribeRequest {
+			key: key.to_string(),
+		}),
+	))
+}
+
+fn write_storage_key(host: &ProductRuntimeHost, key: &str, value: &[u8]) {
+	futures::executor::block_on(host.write(
+		&CallContext::default(),
+		HostLocalStorageWriteRequest::V1(v01::HostLocalStorageWriteRequest {
+			key: key.to_string(),
+			value: value.to_vec(),
+		}),
+	))
+	.expect("storage write");
+}
+
+#[test]
+fn local_storage_subscribe_sees_writes_and_clears_but_not_identical_rewrites() {
+	let platform = stub_platform();
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let mut subscription = subscribe_storage_key(&host, "progress");
+	let next = |subscription: &mut Subscription<
+		HostLocalStorageChangeItem,
+		CallError<HostLocalStorageSubscribeError>,
+	>| { futures::executor::block_on(subscription.next()).expect("storage item") };
+
+	assert_eq!(next(&mut subscription), storage_item(None), "the first item is the current value");
+
+	write_storage_key(&host, "progress", b"1");
+	assert_eq!(next(&mut subscription), storage_item(Some(b"1")));
+
+	write_storage_key(&host, "progress", b"1");
+	assert!(
+		futures::FutureExt::now_or_never(subscription.next()).is_none(),
+		"a byte-identical rewrite emits nothing"
+	);
+	assert_eq!(
+		platform
+			.local_storage_writes
+			.lock()
+			.expect("local storage writes mutex poisoned")
+			.len(),
+		2,
+		"every write reaches the platform, so a host hanging quota or sync off \
+         one still sees it; the subscription is what drops the repeat"
+	);
+
+	futures::executor::block_on(host.clear(
+		&CallContext::default(),
+		HostLocalStorageClearRequest::V1(v01::HostLocalStorageClearRequest {
+			key: "progress".to_string(),
+		}),
+	))
+	.expect("storage clear");
+	assert_eq!(next(&mut subscription), storage_item(None));
+}
+
+#[test]
+fn local_storage_subscribe_is_scoped_to_the_calling_product() {
+	let platform = stub_platform();
+	let mine =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let other = ProductRuntimeHost::new(platform, runtime_config("other.dot"), Spawner::for_test());
+	write_storage_key(&mine, "shared", b"mine");
+
+	let mut mine_items = subscribe_storage_key(&mine, "shared");
+	let mut other_items = subscribe_storage_key(&other, "shared");
+	assert_eq!(futures::executor::block_on(mine_items.next()), Some(storage_item(Some(b"mine"))));
+	assert_eq!(
+		futures::executor::block_on(other_items.next()),
+		Some(storage_item(None)),
+		"the same key name in another product is a different key"
+	);
+
+	write_storage_key(&mine, "shared", b"again");
+	assert_eq!(futures::executor::block_on(mine_items.next()), Some(storage_item(Some(b"again"))));
+	assert!(
+		futures::FutureExt::now_or_never(other_items.next()).is_none(),
+		"another product's write never reaches this subscriber"
+	);
+}
+
+#[test]
+fn local_storage_subscribe_interrupts_on_a_platform_stream_failure() {
+	let platform = stub_platform();
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let mut subscription = subscribe_storage_key(&host, "progress");
+	assert_eq!(futures::executor::block_on(subscription.next()), Some(storage_item(None)));
+
+	platform.fail_storage_subscriptions(
+		&host
+			.connection
+			.product_storage_key(&ProductId::for_test("myapp.dot"), "progress".to_string()),
+		"store unavailable",
+	);
+
+	assert_eq!(
+		futures::executor::block_on(subscription.next()),
+		Some(Err(CallError::HostFailure { reason: "store unavailable".to_string() })),
+		"a platform failure reaches the product instead of freezing it on the last value"
+	);
+}
+
+#[test]
+fn worker_operations_reach_the_platform_scoped_to_the_calling_product() {
+	let platform = stub_platform();
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let cx = CallContext::default();
+	let begin = |label: Option<&str>| {
+		let HostWorkerBeginOperationResponse::V1(response) =
+			futures::executor::block_on(host.begin_operation(
+				&cx,
+				HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
+					label: label.map(str::to_string),
+				}),
+			))
+			.expect("begin operation");
+		response.id
+	};
+	let end = |id: u32| {
+		futures::executor::block_on(host.end_operation(
+			&cx,
+			HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id }),
+		))
+		.expect("end operation")
+	};
+
+	assert_eq!(begin(Some("funding")), 1);
+	assert_eq!(begin(None), 2);
+	assert_eq!(
+		*platform.begun_operations.lock().expect("begun operations mutex poisoned"),
+		vec![
+			(ProductId::for_test("myapp.dot"), "funding".to_string()),
+			(ProductId::for_test("myapp.dot"), String::new()),
+		],
+		"begin reaches the platform under the calling product; a missing label is empty"
+	);
+
+	end(1);
+	end(99);
+	assert_eq!(
+		*platform.ended_operations.lock().expect("ended operations mutex poisoned"),
+		vec![(ProductId::for_test("myapp.dot"), 1), (ProductId::for_test("myapp.dot"), 99)],
+		"end reaches the platform under the calling product, unknown ids included"
+	);
+}
+
+#[test]
+fn an_open_operation_holds_worker_demand_until_it_ends() {
+	let platform = stub_platform();
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let cx = CallContext::default();
+	let ledger = &host.connection.services().worker_ledger;
+
+	let HostWorkerBeginOperationResponse::V1(response) =
+		futures::executor::block_on(host.begin_operation(
+			&cx,
+			HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
+				label: Some("funding".to_string()),
+			}),
+		))
+		.expect("begin operation");
+
+	assert_eq!(
+		ledger.count(&ProductId::for_test("myapp.dot")),
+		1,
+		"an open operation is demand on the worker, so the host is told to run it"
+	);
+
+	futures::executor::block_on(host.end_operation(
+		&cx,
+		HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id: response.id }),
+	))
+	.expect("end operation");
+
+	assert_eq!(
+		ledger.count(&ProductId::for_test("myapp.dot")),
+		0,
+		"ending the last operation drops the demand it held"
+	);
+}
+
+#[test]
+fn ending_an_operation_twice_releases_only_the_demand_it_held() {
+	let platform = stub_platform();
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let cx = CallContext::default();
+	let ledger = &host.connection.services().worker_ledger;
+	let begin = || {
+		let HostWorkerBeginOperationResponse::V1(response) =
+			futures::executor::block_on(host.begin_operation(
+				&cx,
+				HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
+					label: None,
+				}),
+			))
+			.expect("begin operation");
+		response.id
+	};
+	let end = |id: u32| {
+		futures::executor::block_on(host.end_operation(
+			&cx,
+			HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id }),
+		))
+		.expect("end operation");
+	};
+
+	let first = begin();
+	begin();
+	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 2);
+
+	end(first);
+	end(first);
+
+	assert_eq!(
+		ledger.count(&ProductId::for_test("myapp.dot")),
+		1,
+		"a repeated end is idempotent, so it cannot drop the demand the other operation holds"
+	);
+}
+
+/// Records every worker-demand transition the ledger reports.
+#[derive(Default)]
+struct DemandRecorder {
+	transitions: Mutex<Vec<(String, crate::host_logic::worker::WorkerTransition)>>,
+}
+
+impl DemandRecorder {
+	fn seen(&self) -> Vec<(String, crate::host_logic::worker::WorkerTransition)> {
+		self.transitions.lock().expect("demand recorder mutex poisoned").clone()
+	}
+}
+
+impl crate::host_logic::worker::WorkerController for DemandRecorder {
+	fn request_worker_transition(
+		&self,
+		product_id: &ProductId,
+		transition: crate::host_logic::worker::WorkerTransition,
+	) {
+		self.transitions
+			.lock()
+			.expect("demand recorder mutex poisoned")
+			.push((product_id.to_string(), transition));
+	}
+}
+
+#[test]
+fn tearing_down_a_connection_reports_the_stop_before_its_last_reference_goes() {
+	use crate::host_logic::worker::WorkerTransition;
+
+	let platform = stub_platform();
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let recorder = Arc::new(DemandRecorder::default());
+	assert!(
+		host.connection
+			.services()
+			.worker_ledger
+			.install_worker_controller(recorder.clone())
+	);
+	let cx = CallContext::default();
+
+	futures::executor::block_on(host.begin_operation(
+		&cx,
+		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
+	))
+	.expect("begin operation");
+
+	host.connection.release_open_operations();
+
+	// A native reconnect drops the replaced connection's last reference only
+	// after the new one exists, so a stop deferred to that point would reach
+	// the host as a stop for the worker it had just restarted.
+	assert_eq!(
+		recorder.seen(),
+		vec![
+			("myapp.dot".to_string(), WorkerTransition::Start),
+			("myapp.dot".to_string(), WorkerTransition::Stop),
+		],
+		"teardown reports the stop, rather than leaving it to the last Arc"
+	);
+
+	drop(host);
+
+	assert_eq!(recorder.seen().len(), 2, "the eventual drop has nothing left to report");
+}
+
+#[test]
+fn a_cancelled_begin_ends_the_operation_the_host_started() {
+	let (release, gate) = futures::channel::oneshot::channel();
+	let platform = Arc::new(StubPlatform {
+		begin_operation_gate: Mutex::new(Some(gate)),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let cx = CallContext::default();
+
+	// Poll once so the call reaches the host, then drop it the way an aborted
+	// dispatch does while the host is still deciding.
+	let mut begun = Box::pin(host.begin_operation(
+		&cx,
+		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
+	));
+	assert!(
+		futures::executor::block_on(futures::future::poll_fn(|cx| {
+			std::task::Poll::Ready(futures::FutureExt::poll_unpin(&mut begun, cx).is_pending())
+		})),
+		"the host has not answered yet"
+	);
+	drop(begun);
+
+	// Without the fix the host's call went with the cancelled dispatch, so the
+	// gate may already be gone.
+	let _ = release.send(());
+
+	// Nobody is left to receive the id, so the operation the host started is
+	// ended rather than stranded in its store.
+	let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+	loop {
+		let ended = platform
+			.ended_operations
+			.lock()
+			.expect("ended operations mutex poisoned")
+			.clone();
+		if ended == vec![(ProductId::for_test("myapp.dot"), 1)] {
+			break;
+		}
+		assert!(
+			std::time::Instant::now() < deadline,
+			"a cancelled begin leaves the host holding nothing; saw {ended:?}"
+		);
+		std::thread::yield_now();
+	}
+	assert_eq!(
+		host.connection
+			.services()
+			.worker_ledger
+			.count(&ProductId::for_test("myapp.dot")),
+		0
+	);
+}
+
+#[test]
+fn a_failed_end_still_drops_the_demand_the_operation_held() {
+	let platform = Arc::new(StubPlatform {
+		end_operation_error: Some("store unavailable"),
+		..Default::default()
+	});
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let cx = CallContext::default();
+	let ledger = &host.connection.services().worker_ledger;
+
+	let HostWorkerBeginOperationResponse::V1(response) =
+		futures::executor::block_on(host.begin_operation(
+			&cx,
+			HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest {
+				label: None,
+			}),
+		))
+		.expect("begin operation");
+	assert_eq!(ledger.count(&ProductId::for_test("myapp.dot")), 1);
+
+	let ended = futures::executor::block_on(host.end_operation(
+		&cx,
+		HostWorkerEndOperationRequest::V1(v01::HostWorkerEndOperationRequest { id: response.id }),
+	));
+	assert!(ended.is_err(), "the host's failure still reaches the product");
+
+	assert_eq!(
+		ledger.count(&ProductId::for_test("myapp.dot")),
+		0,
+		"the product declared the operation over, so the core stops counting it \
+         whatever the host made of the call"
+	);
+}
+
+#[test]
+fn dropping_a_connection_releases_the_demand_its_open_operations_held() {
+	let platform = stub_platform();
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	let services = host.connection.services().clone();
+	let cx = CallContext::default();
+
+	futures::executor::block_on(host.begin_operation(
+		&cx,
+		HostWorkerBeginOperationRequest::V1(v01::HostWorkerBeginOperationRequest { label: None }),
+	))
+	.expect("begin operation");
+	assert_eq!(services.worker_ledger.count(&ProductId::for_test("myapp.dot")), 1);
+
+	drop(host);
+
+	assert_eq!(
+		services.worker_ledger.count(&ProductId::for_test("myapp.dot")),
+		0,
+		"a product that goes away without ending its operations leaves no demand behind"
+	);
+}
+
+#[test]
+fn theme_subscribe_maps_platform_values() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let cx = CallContext::default();
+	let mut subscription = futures::executor::block_on(Theme::subscribe(
+		&host,
+		&cx,
+		truapi::versioned::theme::HostThemeSubscribeRequest::V1,
+	));
+	let item = futures::executor::block_on(subscription.next()).expect("theme item");
+	assert_eq!(
+		item,
+		Ok(HostThemeSubscribeItem::V1(v01::HostThemeSubscribeItem {
+			name: v01::ThemeName::Custom("midnight".to_string()),
+			variant: v01::ThemeVariant::Dark,
+		}))
+	);
+}
+
+#[test]
+fn legacy_create_transaction_rejects_raw_key_mismatch() {
+	let host =
+		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, sso_session_info());
+	let cx = CallContext::default();
+	let request = HostCreateTransactionWithLegacyAccountRequest::V1(v01::LegacyAccountTxPayload {
+		signer: [0; 32],
+		genesis_hash: [1; 32],
+		call_data: vec![0],
+		extensions: vec![],
+		tx_ext_version: 0,
+	});
+	let err =
+		futures::executor::block_on(host.create_transaction_with_legacy_account(&cx, request))
+			.unwrap_err();
+	match err {
+		CallError::Domain(HostCreateTransactionWithLegacyAccountError::V1(
+			v01::HostCreateTransactionError::Unknown { reason },
+		)) => assert_eq!(reason, "Account can't be derived from product account id"),
+		other => panic!("expected legacy signer mismatch, got {other:?}"),
+	}
+}
+
+#[test]
+fn legacy_create_transaction_accepts_identity_account_then_routes_legacy_request() {
+	let session = sso_session_info();
+	let identity = session.identity_account_id.unwrap();
+	let platform = Arc::new(StubPlatform {
+        create_transaction_confirmed: true,
+        sso_response_script: Some(sso_success_response_script(
+            &session,
+            crate::host_internal::sso_messages::RemoteMessage {
+                message_id: "wallet-identity-create-tx-1".to_string(),
+                data: crate::host_internal::sso_messages::RemoteMessageData::V1(
+                    crate::host_internal::sso_messages::v1::RemoteMessage::CreateTransactionResponse(
+                        crate::host_internal::sso_messages::Response {
+                            responding_to: "identity-create-tx-1".to_string(),
+                            payload: Ok(vec![0xca, 0xfe]),
+                        },
+                    ),
+                ),
+            },
+        )),
+        ..Default::default()
+    });
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session.clone());
+	let cx = CallContext::with_request_id("identity-create-tx-1".to_string());
+	let tx_payload = v01::LegacyAccountTxPayload {
+		signer: identity,
+		genesis_hash: [1; 32],
+		call_data: vec![0],
+		extensions: vec![],
+		tx_ext_version: 0,
+	};
+	let request = HostCreateTransactionWithLegacyAccountRequest::V1(tx_payload.clone());
+
+	let response =
+		futures::executor::block_on(host.create_transaction_with_legacy_account(&cx, request))
+			.unwrap();
+
+	let HostCreateTransactionWithLegacyAccountResponse::V1(inner) = response;
+	assert_eq!(inner.transaction, vec![0xca, 0xfe]);
+	let message = submitted_remote_message(&platform, &session);
+	let crate::host_internal::sso_messages::RemoteMessageData::V1(
+        crate::host_internal::sso_messages::v1::RemoteMessage::CreateTransactionWithLegacyAccountRequest(
+            request,
+        ),
+    ) = message.data
+    else {
+        panic!("expected identity transaction request");
+    };
+	let crate::host_internal::sso_messages::CreateTransactionLegacyPayload::V1(payload) =
+		request.payload;
+	assert_eq!(payload.signer, identity);
+	assert_eq!(
+		*platform.create_transaction_reviews.lock().unwrap(),
+		vec![CreateTransactionReview::LegacyAccount {
+			account: LegacySigningAccount::Identity,
+			payload: tx_payload,
+		}]
+	);
+}
+
+#[test]
+fn legacy_create_transaction_accepts_derived_key_then_returns_sso_response() {
+	let session = sso_session_info();
+	let signer = test_product_account_public("myapp.dot", 0);
+	let platform = Arc::new(StubPlatform {
+        create_transaction_confirmed: true,
+        sso_response_script: Some(sso_success_response_script(
+            &session,
+            crate::host_internal::sso_messages::RemoteMessage {
+                message_id: "wallet-legacy-create-tx-1".to_string(),
+                data: crate::host_internal::sso_messages::RemoteMessageData::V1(
+                    crate::host_internal::sso_messages::v1::RemoteMessage::CreateTransactionResponse(
+                        crate::host_internal::sso_messages::Response {
+                            responding_to: "legacy-create-tx-1".to_string(),
+                            payload: Ok(vec![0xca, 0xfe]),
+                        },
+                    ),
+                ),
+            },
+        )),
+        ..Default::default()
+    });
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session.clone());
+	let cx = CallContext::with_request_id("legacy-create-tx-1".to_string());
+	let tx_payload = v01::LegacyAccountTxPayload {
+		signer,
+		genesis_hash: [1; 32],
+		call_data: vec![0],
+		extensions: vec![],
+		tx_ext_version: 0,
+	};
+	let request = HostCreateTransactionWithLegacyAccountRequest::V1(tx_payload.clone());
+
+	let response =
+		futures::executor::block_on(host.create_transaction_with_legacy_account(&cx, request))
+			.unwrap();
+
+	let HostCreateTransactionWithLegacyAccountResponse::V1(inner) = response;
+	assert_eq!(inner.transaction, vec![0xca, 0xfe]);
+	let message = submitted_remote_message(&platform, &session);
+	let crate::host_internal::sso_messages::RemoteMessageData::V1(
+		crate::host_internal::sso_messages::v1::RemoteMessage::CreateTransactionRequest(request),
+	) = message.data
+	else {
+		panic!("expected product transaction request");
+	};
+	let crate::host_internal::sso_messages::CreateTransactionPayload::V1(payload) = request.payload;
+	let product_account = v01::ProductAccountId {
+		dot_ns_identifier: ProductId::for_test("myapp.dot"),
+		derivation_index: v01::DerivationIndex::Index(0),
+	};
+	assert_eq!(payload.signer, product_account);
+	assert_eq!(
+		*platform.create_transaction_reviews.lock().unwrap(),
+		vec![CreateTransactionReview::LegacyAccount {
+			account: LegacySigningAccount::Product(product_account),
+			payload: tx_payload,
+		}]
+	);
+}
+
+#[test]
+fn resource_allocation_rejects_without_session() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let cx = CallContext::default();
+	let err = futures::executor::block_on(ResourceAllocation::request(
+		&host,
+		&cx,
+		resource_allocation_request(),
+	))
+	.unwrap_err();
+	match err {
+		CallError::Domain(HostRequestResourceAllocationError::V1(
+			v01::ResourceAllocationError::Unknown { reason },
+		)) => assert_eq!(reason, "No active session"),
+		other => panic!("expected no-session resource allocation error, got {other:?}"),
+	}
+}
+
+#[test]
+fn resource_allocation_rejects_when_user_declines() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+	let response = futures::executor::block_on(ResourceAllocation::request(
+		&host,
+		&cx,
+		resource_allocation_request(),
+	))
+	.unwrap();
+	assert_eq!(
+		response,
+		HostRequestResourceAllocationResponse::V1(v01::HostRequestResourceAllocationResponse {
+			outcomes: vec![v01::AllocationOutcome::Rejected; 2],
+		})
+	);
+}
+
+#[test]
+fn resource_allocation_maps_confirmation_failure_to_host_failure() {
+	let host = ProductRuntimeHost::new_compat(
+		Arc::new(StubPlatform {
+			resource_allocation_error: Some("modal failed"),
+			..Default::default()
+		}),
+		Spawner::for_test(),
+	);
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+	let err = futures::executor::block_on(ResourceAllocation::request(
+		&host,
+		&cx,
+		resource_allocation_request(),
+	))
+	.unwrap_err();
+	assert!(matches!(err, CallError::HostFailure { reason } if reason.contains("modal failed")));
+}
+
+#[test]
+fn resource_allocation_respects_a_shorter_call_context_timeout() {
+	let session = sso_session_info();
+	let message_id = "allocation-timeout";
+	let mut rpc_responses = sso_success_responses(
+		&session,
+		message_id,
+		crate::host_internal::sso_messages::RemoteMessage {
+			message_id: "wallet-allocation-timeout".to_string(),
+			data: crate::host_internal::sso_messages::RemoteMessageData::V1(
+				crate::host_internal::sso_messages::v1::RemoteMessage::ResourceAllocationResponse(
+					crate::host_internal::sso_messages::Response {
+						responding_to: message_id.to_string(),
+						payload: Ok(vec![]),
+					},
+				),
+			),
+		},
+	);
+	rpc_responses.truncate(3);
+	let platform = Arc::new(StubPlatform {
+		resource_allocation_confirmed: true,
+		rpc_responses,
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	install_pairing_session(&host, session);
+	let mut cx = CallContext::with_request_id(message_id.to_string());
+	cx.set_timeout(std::time::Duration::from_millis(1));
+
+	let err = futures::executor::block_on(ResourceAllocation::request(
+		&host,
+		&cx,
+		resource_allocation_request(),
+	))
+	.unwrap_err();
+
+	match err {
+		CallError::Domain(HostRequestResourceAllocationError::V1(
+			v01::ResourceAllocationError::Unknown { reason },
+		)) => {
+			assert_eq!(
+				reason,
+				"Account authority request timed out after 1ms for allocation-timeout"
+			)
+		},
+		other => panic!("expected resource-allocation timeout, got {other:?}"),
+	}
+
+	wait_until(
+		|| recorded_rpc_method_count(&platform.sent_rpc, "statement_unsubscribeStatement") == 2,
+		"timed-out resource allocation did not unsubscribe statement streams",
+	);
+}
+
+#[test]
+fn resource_allocation_withdrawn_at_the_prompt_is_never_requested() {
+	let (_release, gate) = futures::channel::oneshot::channel();
+	let platform = Arc::new(StubPlatform {
+		resource_allocation_confirmed: true,
+		resource_allocation_confirmation_gate: Mutex::new(Some(gate)),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	install_pairing_session(&host, sso_session_info());
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("alloc-withdrawn".to_string(), cancel.clone());
+	let mut call = Box::pin(ResourceAllocation::request(&host, &cx, resource_allocation_request()));
+	assert!(call.as_mut().now_or_never().is_none());
+	assert_eq!(platform.resource_allocation_reviews.lock().unwrap().len(), 1);
+
+	cancel.cancel();
+
+	let err = call
+		.as_mut()
+		.now_or_never()
+		.expect("a withdrawn call stops waiting on the prompt")
+		.unwrap_err();
+	assert_eq!(
+		err,
+		CallError::Domain(HostRequestResourceAllocationError::V1(
+			v01::ResourceAllocationError::Unknown {
+				reason: "Account authority request cancelled for alloc-withdrawn".to_string(),
+			}
+		))
+	);
+	assert_eq!(recorded_rpc_method_count(&platform.sent_rpc, "statement_subscribeStatement"), 0);
+}
+
+/// The unwind grace exists for a call that already started. One whose token
+/// fired before it got here must not be started just to be unwound.
+#[test]
+fn an_authority_call_withdrawn_before_it_starts_is_never_polled() {
+	let cancel = truapi::CancellationToken::default();
+	cancel.cancel();
+	let cx = CallContext::with_parts("withdrawn-before-start".to_string(), cancel);
+	let started = AtomicBool::new(false);
+	let call = async {
+		started.store(true, Ordering::SeqCst);
+		Ok::<(), AuthorityError>(())
+	};
+
+	let result = remote_authority_call(&cx, call)
+		.now_or_never()
+		.expect("a withdrawn call settles without waiting");
+
+	assert_eq!(
+		(result, started.load(Ordering::SeqCst)),
+		(
+			Err(AuthorityError::Cancelled(AuthorityCancelError::new(
+				"withdrawn-before-start",
+				CancellationReason::Cancelled,
+			))),
+			false,
+		)
+	);
+}
+
+#[test]
+fn resource_allocation_accepts_confirmation_then_returns_sso_response() {
+	let session = sso_session_info();
+	let slot_account_key = {
+		let mini_secret = schnorrkel::MiniSecretKey::from_bytes(&[12; 32]).unwrap();
+		let keypair = mini_secret.expand_to_keypair(schnorrkel::ExpansionMode::Ed25519);
+		keypair.secret.to_bytes().to_vec()
+	};
+	let platform = Arc::new(StubPlatform {
+        resource_allocation_confirmed: true,
+        sso_response_script: Some(sso_success_response_script(
+            &session,
+            crate::host_internal::sso_messages::RemoteMessage {
+                message_id: "wallet-alloc-1".to_string(),
+                data: crate::host_internal::sso_messages::RemoteMessageData::V1(
+                    crate::host_internal::sso_messages::v1::RemoteMessage::ResourceAllocationResponse(
+                        crate::host_internal::sso_messages::Response {
+                            responding_to: "alloc-1".to_string(),
+                            payload: Ok(vec![
+                                crate::host_internal::sso_messages::SsoAllocationOutcome::Allocated(
+                                    crate::host_internal::sso_messages::SsoAllocatedResource::StatementStoreAllowance {
+                                        slot_account_key,
+                                    },
+                                ),
+                                crate::host_internal::sso_messages::SsoAllocationOutcome::Rejected,
+                                crate::host_internal::sso_messages::SsoAllocationOutcome::NotAvailable,
+                            ]),
+                        },
+                    ),
+                ),
+            },
+        )),
+        ..Default::default()
+    });
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	install_pairing_session(&host, session.clone());
+	let cx = CallContext::with_request_id("alloc-1".to_string());
+	let response = futures::executor::block_on(ResourceAllocation::request(
+		&host,
+		&cx,
+		resource_allocation_request(),
+	))
+	.unwrap();
+	let HostRequestResourceAllocationResponse::V1(inner) = response;
+	assert_eq!(
+		inner.outcomes,
+		vec![
+			v01::AllocationOutcome::Allocated,
+			v01::AllocationOutcome::Rejected,
+			v01::AllocationOutcome::NotAvailable,
+		]
+	);
+	let message = submitted_remote_message(&platform, &session);
+	assert!(matches!(
+		message.data,
+		crate::host_internal::sso_messages::RemoteMessageData::V1(
+			crate::host_internal::sso_messages::v1::RemoteMessage::ResourceAllocationRequest(_)
+		)
+	));
+}
+
+pub fn auto_signing_test_platform(session: &SessionInfo, request_id: &str) -> Arc<StubPlatform> {
+	let root =
+		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+	)
+	.unwrap();
+	Arc::new(StubPlatform {
+        resource_allocation_confirmed: true,
+        // A grant skips confirmation, except for a call naming contacts.
+        create_transaction_confirmed: true,
+        sso_response_script: Some(sso_success_response_script(
+            session,
+            RemoteMessage {
+                message_id: format!("wallet-{request_id}"),
+                data: RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(
+                    crate::host_internal::sso_messages::Response {
+                        responding_to: request_id.to_string(),
+                        payload: Ok(vec![
+                            crate::host_internal::sso_messages::SsoAllocationOutcome::Allocated(
+                                crate::host_internal::sso_messages::SsoAllocatedResource::AutoSigning {
+                                    product_root_private_key: subtree.secret.to_bytes(),
+                                    ring_vrf_domain_entropy:
+                                        crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
+                                            &[0xAB; 16],
+                                            &ProductId::for_test("myapp.dot"),
+                                        )
+                                        .unwrap(),
+                                },
+                            ),
+                        ]),
+                    },
+                )),
+            },
+        )),
+        // Transactions target this chain, which has no metadata to serve.
+        unreachable_genesis: Some([1; 32]),
+        ..Default::default()
+    })
+}
+
+pub fn request_auto_signing(host: &ProductRuntimeHost, request_id: &str) {
+	futures::executor::block_on(ResourceAllocation::request(
+		host,
+		&CallContext::with_request_id(request_id.to_string()),
+		HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
+			resources: vec![v01::AllocatableResource::AutoSigning],
+		}),
+	))
+	.expect("AutoSigning allocation succeeds");
+}
+
+fn auto_signing_vrf_request() -> HostAccountSignVrfRequest {
+	HostAccountSignVrfRequest::V1(v01::HostAccountSignVrfRequest {
+		account: account_id("myapp.dot", 0),
+		transcript_label: b"ctx".to_vec(),
+		items: vec![v01::VrfTranscriptItem { label: b"round".to_vec(), value: vec![7] }],
+	})
+}
+
+/// A pairing host holding an AutoSigning capability, with its SSO script
+/// already spent on the allocation: anything that relays from here fails, so a
+/// call that succeeds was served locally.
+fn granted_pairing_host() -> (Arc<StubPlatform>, ProductRuntimeHost) {
+	let session = sso_session_info();
+	let platform = auto_signing_test_platform(&session, "auto-1");
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session);
+	request_auto_signing(&host, "auto-1");
+	(platform, host)
+}
+
+/// The product account the capability in [`granted_pairing_host`] derives.
+fn granted_keypair() -> schnorrkel::Keypair {
+	let root =
+		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
+	crate::host_logic::product_account::derive_product_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+		index_bytes(0),
+	)
+	.unwrap()
+}
+
+#[test]
+fn auto_signing_serves_sign_raw_locally_without_prompt_or_sso() {
+	let (platform, host) = granted_pairing_host();
+
+	let HostSignRawResponse::V1(response) = futures::executor::block_on(host.sign_raw(
+		&CallContext::default(),
+		HostSignRawRequest::V1(v01::HostSignRawRequest {
+			account: account_id("myapp.dot", 0),
+			payload: v01::RawPayload::Bytes { bytes: b"hello world".to_vec() },
+		}),
+	))
+	.expect("the capability signs locally, with no signing host to relay to");
+
+	assert!(
+		platform
+			.sign_raw_reviews
+			.lock()
+			.expect("raw signing review list mutex poisoned")
+			.is_empty(),
+		"the grant waives the prompt",
+	);
+	let signature =
+		schnorrkel::Signature::from_bytes(&response.signature).expect("64-byte signature");
+	let keypair = granted_keypair();
+	assert!(
+		keypair
+			.public
+			.verify_simple(b"substrate", b"<Bytes>hello world</Bytes>", &signature)
+			.is_ok(),
+		"the local signature is over the watermarked bytes, by the product account",
+	);
+}
+
+/// The account a picked contact resolves to, and the handle a product holds
+/// for them. Minted through the real picker so the handle is keyed the way a
+/// product's would be.
+fn picked_contact(host: &ProductRuntimeHost) -> v01::ContactHandle {
+	let HostContactsPickResponse::V1(picked) = pick(host).expect("the picker opens");
+	let v01::ContactPickOutcome::Picked { handle } = picked.outcome else {
+		panic!("the user picked someone");
+	};
+	handle
+}
+
+/// A transfer-shaped call: call index, recipient, amount.
+fn transfer_naming(recipient: &[u8; 32]) -> Vec<u8> {
+	let mut call = vec![0x04, 0x00];
+	call.extend_from_slice(recipient);
+	call.extend_from_slice(&[0x07; 8]);
+	call
+}
+
+fn transaction_naming(
+	handle: v01::ContactHandle,
+	declared: Vec<v01::ContactHandle>,
+) -> HostCreateTransactionRequest {
+	HostCreateTransactionRequest::V1(v01::ProductAccountTxPayload {
+		signer: account_id("myapp.dot", 0),
+		genesis_hash: [1; 32],
+		call_data: transfer_naming(&handle.bytes),
+		extensions: vec![],
+		// V4 needs no chain metadata, so the whole assembly is local.
+		tx_ext_version: 0,
+		contacts: declared,
+	})
+}
+
+/// A granted host that also serves a picker, so what a transaction naming a
+/// contact ends up signing is visible with no prompt in the way.
+fn granted_pairing_host_with_contact(account: [u8; 32]) -> (Arc<StubPlatform>, ProductRuntimeHost) {
+	let (platform, host) = granted_pairing_host();
+	assert!(
+		host.connection
+			.services
+			.install_contacts_platform(StubContactsPlatform::picking(account)),
+		"the picker installs before anything reads it",
+	);
+	(platform, host)
+}
+
+/// What a granted host goes on to sign names the account. A product declares a
+/// handle, and by the time the call reaches assembly the recipient is an
+/// account the chain can pay, so a handle can never reach a block.
+#[test]
+fn a_signed_transaction_pays_the_account_the_handle_named() {
+	const ALICE: [u8; 32] = [0xA1; 32];
+	let (platform, host) = granted_pairing_host_with_contact(ALICE);
+	let handle = picked_contact(&host);
+	assert_ne!(handle.bytes, ALICE, "the handle is not the account");
+
+	// The fixture serves no metadata for this chain, so assembly fails after the prompt.
+	let _ = futures::executor::block_on(
+		host.create_transaction(&CallContext::default(), transaction_naming(handle, vec![handle])),
+	);
+
+	let reviews = platform
+		.create_transaction_reviews
+		.lock()
+		.expect("create transaction review list mutex poisoned");
+	let [crate::platform::CreateTransactionReview::Product { payload: reviewed, .. }] =
+		reviews.as_slice()
+	else {
+		panic!("one product transaction was reviewed, got {reviews:?}");
+	};
+	assert_eq!(
+		reviewed.call_data,
+		transfer_naming(&ALICE),
+		"the call handed on to signing pays the account, and nothing else moved",
+	);
+}
+
+/// The signed call goes back to the product with the contact's account in it,
+/// so an auto-signing grant does not skip the user when a call names contacts:
+/// otherwise a product could read any handle's account unseen.
+#[test]
+fn a_grant_still_asks_the_user_when_a_call_names_a_contact() {
+	const ALICE: [u8; 32] = [0xA1; 32];
+	let (platform, host) = granted_pairing_host_with_contact(ALICE);
+	let handle = picked_contact(&host);
+
+	// The fixture serves no metadata for this chain, so assembly fails after the prompt.
+	let _ = futures::executor::block_on(
+		host.create_transaction(&CallContext::default(), transaction_naming(handle, vec![handle])),
+	);
+
+	assert_eq!(
+		platform
+			.create_transaction_reviews
+			.lock()
+			.expect("reviews mutex poisoned")
+			.len(),
+		1,
+		"naming a contact asks the user despite the grant"
+	);
+}
+
+#[test]
+fn the_confirmation_shows_the_account_not_the_handle() {
+	const ALICE: [u8; 32] = [0xA1; 32];
+	let platform =
+		Arc::new(StubPlatform { create_transaction_confirmed: true, ..StubPlatform::default() });
+	let host = contacts_host(
+		"myapp.dot",
+		platform.clone(),
+		Some(StubContactsPlatform::picking(ALICE)),
+		true,
+	);
+	let handle = picked_contact(&host);
+
+	let _ = futures::executor::block_on(
+		host.create_transaction(&CallContext::default(), transaction_naming(handle, vec![handle])),
+	);
+
+	let reviews = platform
+		.create_transaction_reviews
+		.lock()
+		.expect("create transaction review list mutex poisoned");
+	let [crate::platform::CreateTransactionReview::Product { payload: reviewed, .. }] =
+		reviews.as_slice()
+	else {
+		panic!("one product transaction was reviewed, got {reviews:?}");
+	};
+	assert_eq!(reviewed.call_data, transfer_naming(&ALICE), "the review names the account",);
+}
+
+/// A handle the host can no longer resolve refuses the whole transaction. A
+/// removed contact and a forged handle look the same here, which is the only
+/// revocation this API has.
+#[test]
+fn a_transaction_naming_an_unresolvable_handle_is_refused() {
+	let (platform, host) = granted_pairing_host_with_contact([0xA1; 32]);
+	let stale = v01::ContactHandle { bytes: [0xEE; 32] };
+
+	let error = futures::executor::block_on(
+		host.create_transaction(&CallContext::default(), transaction_naming(stale, vec![stale])),
+	)
+	.expect_err("a handle naming nobody refuses the call");
+
+	assert!(
+		matches!(
+			error,
+			CallError::Domain(HostCreateTransactionError::V1(
+				v01::HostCreateTransactionError::UnknownContact
+			))
+		),
+		"refused as UnknownContact, got {error:?}",
+	);
+	assert!(
+		platform
+			.create_transaction_reviews
+			.lock()
+			.expect("create transaction review list mutex poisoned")
+			.is_empty(),
+		"nothing was shown for a call that could not be resolved",
+	);
+}
+
+/// A chain the host cannot connect to may never become reachable, so even a
+/// v0.2 product gets `Unknown`, not `ChainUnavailable`.
+#[test]
+fn a_transaction_for_a_chain_the_host_cannot_connect_to_is_unknown() {
+	let (_platform, host) = granted_pairing_host();
+	let payload = v01::ProductAccountTxPayload {
+		signer: account_id("myapp.dot", 0),
+		// The chain the fixture serves no provider for.
+		genesis_hash: [1; 32],
+		call_data: vec![0x00, 0x00],
+		extensions: vec![],
+		tx_ext_version: 0,
+		contacts: vec![],
+	};
+	let create = |request| {
+		futures::executor::block_on(host.create_transaction(&CallContext::default(), request))
+			.expect_err("the chain cannot be connected")
+	};
+
+	let v2 = create(HostCreateTransactionRequest::V2(payload.clone()));
+	let v1 = create(HostCreateTransactionRequest::V1(payload));
+
+	let CallError::Domain(HostCreateTransactionError::V2(
+		v02::HostCreateTransactionError::Unknown { reason },
+	)) = v2
+	else {
+		panic!("a chain the host cannot connect to is not retryable, got {v2:?}");
+	};
+	assert_eq!(
+		v1,
+		CallError::Domain(HostCreateTransactionError::V1(
+			v01::HostCreateTransactionError::Unknown { reason }
+		))
+	);
+}
+
+/// `ChainUnavailable` must reach a v0.2 product as itself. The legacy-account
+/// method stays on v0.1, so it reports the same failure as `Unknown`.
+#[test]
+fn a_node_that_cannot_be_asked_reaches_create_transaction_as_chain_unavailable() {
+	use super::{legacy_transaction_call_error, transaction_call_error};
+	use crate::runtime::authority::AuthorityError;
+
+	let reason = "cannot select a metadata block".to_string();
+	let chain_unavailable = || AuthorityError::ChainUnavailable { reason: reason.clone() };
+
+	assert_eq!(
+		(
+			transaction_call_error(chain_unavailable()),
+			legacy_transaction_call_error(chain_unavailable()),
+		),
+		(
+			CallError::Domain(v02::HostCreateTransactionError::ChainUnavailable {
+				reason: reason.clone()
+			}),
+			CallError::Domain(v01::HostCreateTransactionError::Unknown { reason: reason.clone() }),
+		)
+	);
+}
+
+#[test]
+fn auto_signing_serves_sign_payload_locally_without_prompt() {
+	let (platform, host) = granted_pairing_host();
+	let payload = crate::test_support::sign_payload_data();
+	let preimage = crate::host_internal::transaction::extrinsic_payload_preimage(&payload)
+		.expect("preimage builds");
+
+	let HostSignPayloadResponse::V1(response) = futures::executor::block_on(host.sign_payload(
+		&CallContext::default(),
+		HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
+			account: account_id("myapp.dot", 0),
+			payload,
+		}),
+	))
+	.expect("the capability signs the payload locally");
+
+	assert!(
+		platform
+			.sign_payload_reviews
+			.lock()
+			.expect("sign payload review list mutex poisoned")
+			.is_empty(),
+		"the grant waives the prompt",
+	);
+	// A `MultiSignature`: the sr25519 discriminant, then the raw signature.
+	assert_eq!(response.signature.len(), 65);
+	assert_eq!(response.signature[0], 1);
+	let signature =
+		schnorrkel::Signature::from_bytes(&response.signature[1..]).expect("64-byte signature");
+	assert!(
+		granted_keypair()
+			.public
+			.verify_simple(b"substrate", &preimage, &signature)
+			.is_ok(),
+		"the local signature is over the payload preimage, by the product account",
+	);
+}
+
+#[test]
+fn auto_signing_serves_a_product_statement_proof_on_a_pairing_host() {
+	// The SSO raw-signing protocol cannot carry an exact, unwatermarked
+	// payload, so without a capability this role answers `UnableToSign`. The
+	// capability's own key is what makes the operation available at all;
+	// neither role prompts for statement proofs either way.
+	let (_platform, host) = granted_pairing_host();
+
+	let response = futures::executor::block_on(StatementStore::create_proof(
+		&host,
+		&CallContext::default(),
+		RemoteStatementStoreCreateProofRequest::V1(
+			truapi::latest::RemoteStatementStoreCreateProofRequest {
+				product_account_id: account_id("myapp.dot", 0),
+				statement: statement(),
+			},
+		),
+	))
+	.expect("the capability signs the statement locally");
+
+	let RemoteStatementStoreCreateProofResponse::V1(inner) = response;
+	let truapi::latest::StatementProof::Sr25519 { signer, signature } = inner.proof else {
+		panic!("expected an sr25519 statement proof");
+	};
+	let keypair = granted_keypair();
+	assert_eq!(signer, keypair.public.to_bytes(), "the product account signed it",);
+	let payload = crate::host_logic::statement_store::unsigned_statement_signing_payload(
+		crate::host_logic::statement_store::statement_fields_from_v01(statement()).unwrap(),
+	)
+	.unwrap();
+	let signature = schnorrkel::Signature::from_bytes(&signature).expect("64-byte signature");
+	assert!(
+		keypair.public.verify_simple(b"substrate", &payload, &signature).is_ok(),
+		"the signature is over the statement's signing payload",
+	);
+}
+
+#[test]
+fn a_broken_auto_signing_slot_fails_sign_raw_rather_than_prompting() {
+	// The lookup erases a capability it cannot trust as it rejects it, so
+	// falling through to a prompt here would ask the user to approve a
+	// signature the host has already refused to make. This is what the grant
+	// query's `Result` return is for: a `bool` predicate would answer "no
+	// grant" and raise the modal.
+	let session = sso_session_info();
+	let platform = auto_signing_test_platform(&session, "auto-broken");
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session.clone());
+	request_auto_signing(&host, "auto-broken");
+
+	let expected_subtree = test_product_subtree("myapp.dot");
+	let storage_key = core_storage_test_key(CoreStorageKey::AutoSigningKeys);
+	{
+		let mut storage = platform.local_storage.lock().expect("local storage mutex poisoned");
+		let blob = storage.get_mut(&storage_key).expect("scoped AutoSigning capability persisted");
+		let expected_offset = blob
+			.windows(expected_subtree.len())
+			.position(|window| window == expected_subtree)
+			.expect("persisted expected subtree is present");
+		blob[expected_offset] ^= 0x01;
+	}
+
+	let restored =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&restored, session);
+	let error = futures::executor::block_on(restored.sign_raw(
+		&CallContext::default(),
+		HostSignRawRequest::V1(v01::HostSignRawRequest {
+			account: account_id("myapp.dot", 0),
+			payload: v01::RawPayload::Bytes { bytes: b"hello world".to_vec() },
+		}),
+	))
+	.unwrap_err();
+
+	assert!(
+		matches!(
+			&error,
+			CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Unknown {
+				reason
+			})) if reason == "AutoSigning capability is not for the current product subtree"
+		),
+		"the broken capability is reported, not silently downgraded: {error:?}",
+	);
+	assert!(
+		platform
+			.sign_raw_reviews
+			.lock()
+			.expect("raw signing review list mutex poisoned")
+			.is_empty(),
+		"no prompt is raised for a capability the host just erased",
+	);
+}
+
+#[test]
+fn an_unwatermarked_sign_raw_still_prompts_under_a_grant() {
+	let (platform, host) = granted_pairing_host();
+
+	#[allow(deprecated)]
+	let error = futures::executor::block_on(host.sign_raw_unwatermarked_deprecated(
+		&CallContext::default(),
+		HostSignRawRequest::V1(v01::HostSignRawRequest {
+			account: account_id("myapp.dot", 0),
+			payload: v01::RawPayload::Bytes { bytes: b"hello world".to_vec() },
+		}),
+	))
+	.expect_err("the stub declines the confirmation");
+
+	assert!(matches!(
+		error,
+		CallError::Domain(HostSignRawError::V1(v01::HostSignPayloadError::Rejected))
+	));
+	assert_eq!(
+		platform
+			.sign_raw_reviews
+			.lock()
+			.expect("raw signing review list mutex poisoned")
+			.len(),
+		1,
+		"the deprecated API prompts whatever the capability says",
+	);
+}
+
+#[test]
+fn auto_signing_allocation_persists_and_serves_vrf_without_sso() {
+	let session = sso_session_info();
+	let root =
+		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+	)
+	.unwrap();
+	let product_root_private_key = subtree.secret.to_bytes();
+	let platform = Arc::new(StubPlatform {
+        resource_allocation_confirmed: true,
+        sso_response_script: Some(sso_success_response_script(
+            &session,
+            RemoteMessage {
+                message_id: "wallet-auto-1".to_string(),
+                data: RemoteMessageData::V1(v1::RemoteMessage::ResourceAllocationResponse(
+                    crate::host_internal::sso_messages::Response {
+                        responding_to: "auto-1".to_string(),
+                        payload: Ok(vec![
+                            crate::host_internal::sso_messages::SsoAllocationOutcome::Allocated(
+                                crate::host_internal::sso_messages::SsoAllocatedResource::AutoSigning {
+                                    product_root_private_key,
+                                    ring_vrf_domain_entropy:
+                                        crate::host_logic::product_account::derive_ring_vrf_domain_entropy(
+                                            &[0xAB; 16],
+                                            &ProductId::for_test("myapp.dot"),
+                                        )
+                                        .unwrap(),
+                                },
+                            ),
+                        ]),
+                    },
+                )),
+            },
+        )),
+        ..Default::default()
+    });
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session.clone());
+	let allocation =
+		HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
+			resources: vec![v01::AllocatableResource::AutoSigning],
+		});
+	futures::executor::block_on(ResourceAllocation::request(
+		&host,
+		&CallContext::with_request_id("auto-1".to_string()),
+		allocation,
+	))
+	.expect("AutoSigning allocation succeeds");
+
+	let restored =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	restored.test_session_state().set_session(session);
+	let request = v01::HostAccountSignVrfRequest {
+		account: account_id("myapp.dot", 0),
+		transcript_label: b"ctx".to_vec(),
+		items: vec![v01::VrfTranscriptItem { label: b"round".to_vec(), value: vec![7] }],
+	};
+	let response = futures::executor::block_on(
+		restored.sign_vrf(&CallContext::default(), HostAccountSignVrfRequest::V1(request)),
+	)
+	.expect("persisted AutoSigning key signs locally");
+	let HostAccountSignVrfResponse::V1(signature) = response;
+	assert!(
+		platform
+			.sign_vrf_reviews
+			.lock()
+			.expect("VRF signing review list mutex poisoned")
+			.is_empty()
+	);
+
+	let keypair = crate::host_logic::product_account::derive_product_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+		index_bytes(0),
+	)
+	.unwrap();
+	let mut transcript = merlin::Transcript::new(b"ctx");
+	transcript.append_message(b"round", &[7]);
+	let pre_output = schnorrkel::vrf::VRFPreOut::from_bytes(&signature.pre_output).unwrap();
+	let proof = schnorrkel::vrf::VRFProof::from_bytes(&signature.proof).unwrap();
+	keypair
+		.public
+		.vrf_verify(transcript, &pre_output, &proof)
+		.expect("local AutoSigning VRF verifies");
+}
+
+#[test]
+fn ring_vrf_sign_reports_not_connected_before_foreign_key_policy() {
+	let host = ProductRuntimeHost::new(
+		Arc::new(StubPlatform::default()),
+		runtime_config("myapp.dot"),
+		Spawner::for_test(),
+	);
+	let request = HostAccountRingVrfSignRequest::V1(v01::HostAccountRingVrfSignRequest {
+		key_handle: account_id("other.dot", 0),
+		message: b"not connected".to_vec(),
+	});
+
+	let error = futures::executor::block_on(host.ring_vrf_sign(&CallContext::default(), request))
+		.unwrap_err();
+
+	assert!(matches!(
+		error,
+		CallError::Domain(HostAccountRingVrfSignError::V1(
+			v01::HostAccountRingVrfSignError::NotConnected
+		))
+	));
+}
+
+#[test]
+fn auto_signing_rejects_persisted_key_for_unexpected_product_subtree() {
+	let session = sso_session_info();
+	let platform = auto_signing_test_platform(&session, "auto-tamper");
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session.clone());
+	request_auto_signing(&host, "auto-tamper");
+
+	let expected_subtree = test_product_subtree("myapp.dot");
+	let storage_key = core_storage_test_key(CoreStorageKey::AutoSigningKeys);
+	{
+		let mut storage = platform.local_storage.lock().expect("local storage mutex poisoned");
+		let blob = storage.get_mut(&storage_key).expect("scoped AutoSigning capability persisted");
+		let expected_offset = blob
+			.windows(expected_subtree.len())
+			.position(|window| window == expected_subtree)
+			.expect("persisted expected subtree is present");
+		blob[expected_offset] ^= 0x01;
+	}
+
+	let restored =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&restored, session);
+	let err = futures::executor::block_on(
+		restored.sign_vrf(&CallContext::default(), auto_signing_vrf_request()),
+	)
+	.unwrap_err();
+
+	assert!(matches!(
+		err,
+		CallError::Domain(HostAccountSignVrfError::V1(
+			v01::HostAccountSignVrfError::Unknown { reason }
+		)) if reason == "AutoSigning capability is not for the current product subtree"
+	));
+	assert!(
+		!platform
+			.local_storage
+			.lock()
+			.expect("local storage mutex poisoned")
+			.contains_key(&storage_key)
+	);
+}
+
+#[test]
+fn auto_signing_rejects_and_erases_legacy_unscoped_secret() {
+	let session = sso_session_info();
+	let root =
+		crate::host_logic::product_account::derive_root_keypair_from_entropy(&[0xAB; 16]).unwrap();
+	let subtree = crate::host_logic::product_account::derive_product_subtree_keypair(
+		&root,
+		&ProductId::for_test("myapp.dot"),
+	)
+	.unwrap();
+	let platform = Arc::new(StubPlatform::default());
+	let legacy_key =
+		CoreStorageKey::AutoSigningKey { product_id: ProductId::for_test("myapp.dot") };
+	platform
+		.local_storage
+		.lock()
+		.expect("local storage mutex poisoned")
+		.insert(core_storage_test_key(legacy_key.clone()), subtree.secret.to_bytes().to_vec());
+	let host =
+		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session);
+
+	let err = futures::executor::block_on(
+		host.sign_vrf(&CallContext::default(), auto_signing_vrf_request()),
+	)
+	.unwrap_err();
+
+	assert!(matches!(
+		err,
+		CallError::Domain(HostAccountSignVrfError::V1(
+			v01::HostAccountSignVrfError::Unknown { reason }
+		)) if reason == "legacy unscoped AutoSigning capability was rejected"
+	));
+	assert!(
+		!platform
+			.local_storage
+			.lock()
+			.expect("local storage mutex poisoned")
+			.contains_key(&core_storage_test_key(legacy_key))
+	);
+}
+
+#[test]
+fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
+	let platform = Arc::new(StubPlatform::default());
+	let (host, pairing_host) =
+		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
+	let session = sso_session_info();
+	let blob = crate::host_logic::session::encode_persisted_session(&session);
+
+	futures::executor::block_on(pairing_host.session().activate_external_session(&blob))
+		.expect("valid external session activates");
+
+	assert_eq!(host.test_session_state().current(), Some(session.clone()));
+	assert!(
+		platform
+			.session_writes
+			.lock()
+			.expect("session write list mutex poisoned")
+			.is_empty(),
+		"external activation must not copy the blob into core storage"
+	);
+
+	let invalid =
+		futures::executor::block_on(pairing_host.session().activate_external_session(&[0xff]))
+			.expect_err("invalid bytes are rejected");
+	assert!(invalid.starts_with("invalid session blob:"));
+
+	let mut trailing = blob;
+	trailing.push(0);
+	let error =
+		futures::executor::block_on(pairing_host.session().activate_external_session(&trailing))
+			.expect_err("trailing bytes are rejected");
+	assert_eq!(error, "invalid session blob: trailing bytes");
+	assert_eq!(
+		host.test_session_state().current(),
+		Some(session),
+		"invalid replacement preserves the active external session"
+	);
+}
+
+#[test]
+fn external_session_activation_reports_its_outcome_when_the_blob_is_corrupt() {
+	let platform = Arc::new(StubPlatform::default());
+	let (_host, pairing_host) =
+		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
+
+	futures::executor::block_on(pairing_host.session().activate_external_session(&[0xff]))
+		.expect_err("invalid bytes are rejected");
+
+	// The decode fails before any transition can run, so without an
+	// explicit announcement a host that holds its own session and boots on
+	// a corrupt blob would hear nothing at all.
+	assert_eq!(
+		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
+		vec![AuthState::Disconnected],
+		"an activation that failed must still tell the host where it stands"
+	);
+}
+
+#[test]
+fn resetting_session_state_reports_its_outcome_when_nothing_was_active() {
+	let platform = Arc::new(StubPlatform::default());
+	let (_host, pairing_host) =
+		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
+
+	futures::executor::block_on(pairing_host.session().reset_session_state());
+
+	// Clearing an already-signed-out state changes nothing, so without an
+	// explicit announcement this is the silent case a host cannot tell
+	// apart from having had no answer yet.
+	assert_eq!(
+		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
+		vec![AuthState::Disconnected],
+		"a reset must still tell the host where it stands"
+	);
+}
+
+/// Ending the paired session reaches the host that keeps its grants, which
+/// forgets what was allowed once, as a wallet change does on a signing host.
+#[test]
+fn a_paired_disconnect_forgets_allow_once() {
+	let platform = Arc::new(StubPlatform {
+		permission_confirmation_decisions: Mutex::new(
+			[
+				crate::platform::PermissionDecision::AllowOnce,
+				crate::platform::PermissionDecision::Deny,
+			]
+			.into(),
+		),
+		..Default::default()
+	});
+	let (host, pairing) =
+		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
+	let sso = pairing.session().clone();
+	let get_other_account = || {
+		let session = sso_session_info();
+		install_pairing_session(&host, session.clone());
+		cache_test_product_subtree(&host, &session, "other.dot");
+		let request = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+			product_account_id: account_id("other.dot", 0),
+		});
+		futures::executor::block_on(host.get_account(&CallContext::default(), request)).is_ok()
+	};
+	let first = get_other_account();
+
+	futures::executor::block_on(HostSession::disconnect(sso.as_ref()));
+	let after_disconnect = get_other_account();
+
+	assert_eq!(
+		(first, after_disconnect, platform.account_access_reviews.lock().unwrap().len()),
+		(true, false, 2),
+	);
+}
+
+#[test]
+fn external_session_activation_replaces_and_fences_the_previous_session() {
+	let (host, pairing_host) = ProductRuntimeHost::new_compat_with_pairing(
+		Arc::new(StubPlatform::default()),
+		Spawner::for_test(),
+	);
+	let first = sso_session_info();
+	let mut replacement = first.clone();
+	replacement.public_key = [0x44; 32];
+	replacement.identity_account_id = Some([0x55; 32]);
+	replacement.sso.as_mut().expect("fixture has SSO").identity_account_id = [0x55; 32];
+
+	futures::executor::block_on(
+		pairing_host.session().activate_external_session(
+			&crate::host_logic::session::encode_persisted_session(&first),
+		),
+	)
+	.expect("first external session activates");
+	futures::executor::block_on(pairing_host.session().activate_external_session(
+		&crate::host_logic::session::encode_persisted_session(&replacement),
+	))
+	.expect("replacement external session activates");
+
+	assert_eq!(host.test_session_state().current(), Some(replacement));
+}
+
+#[test]
+fn stored_session_activation_resolves_after_connected_installation() {
+	let stored = sso_session_info();
+	let platform = Arc::new(StubPlatform {
+		session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
+		..Default::default()
+	});
+	let (host, pairing_host) =
+		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
+
+	futures::executor::block_on(pairing_host.session().activate_stored_session())
+		.expect("valid stored session activates");
+
+	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
+	assert_eq!(
+		*platform.auth_states.lock().expect("auth state list mutex poisoned"),
+		vec![AuthState::Connected(Box::new(connected_session_ui_info(&stored)))]
+	);
+}
+
+#[test]
+fn stored_session_activation_rejects_invalid_blob_and_disconnects() {
+	let session_clears = Arc::new(Mutex::new(0));
+	let platform = Arc::new(StubPlatform {
+		session_blob: Some(vec![0xff]),
+		session_clears: session_clears.clone(),
+		..Default::default()
+	});
+	let (host, pairing_host) =
+		ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
+	install_pairing_session(&host, sso_session_info());
+
+	let error = futures::executor::block_on(pairing_host.session().activate_stored_session())
+		.expect_err("invalid stored session is rejected");
+
+	assert!(error.starts_with("invalid stored auth session:"));
+	assert!(host.test_session_state().current().is_none());
+	assert_eq!(*session_clears.lock().expect("session clear counter mutex poisoned"), 1);
+}
+
+/// An untagged blob restores and the slot is rewritten in the written form, so
+/// a host upgrades its stored session by activating once rather than by pairing
+/// again. `SessionInfo::encode` is the untagged eight-field layout; the canary in
+/// `host_logic::session` is what keeps that true.
+#[test]
+fn activating_an_untagged_stored_session_restores_it_and_rewrites_the_slot() {
+	let stored = sso_session_info();
+	let untagged = stored.encode();
+	let platform =
+		Arc::new(StubPlatform { session_blob: Some(untagged.clone()), ..Default::default() });
+	let (host, pairing_host) =
+		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
+
+	futures::executor::block_on(pairing_host.session().activate_stored_session())
+		.expect("an untagged stored session activates");
+
+	assert_eq!(host.test_session_state().current(), Some(stored.clone()));
+	let written = crate::host_logic::session::encode_persisted_session(&stored);
+	assert_ne!(
+		untagged, written,
+		"the fixture must not already be in the written form, or this proves nothing"
+	);
+	assert_eq!(
+		platform
+			.session_writes
+			.lock()
+			.expect("session write list mutex poisoned")
+			.last(),
+		Some(&written),
+		"the slot still holds the untagged blob, so it would be re-read on every start"
+	);
+}
+
+#[test]
+fn disconnect_submits_disconnected_message_best_effort() {
+	let platform = Arc::new(StubPlatform::default());
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let session = sso_session_info();
+	install_pairing_session(&host, session.clone());
+
+	futures::executor::block_on(host.disconnect());
+
+	assert!(host.test_session_state().current().is_none());
+	assert_eq!(*platform.session_clears.lock().expect("session clear counter mutex poisoned"), 1);
+	let message = submitted_remote_message(&platform, &session);
+	assert_eq!(message.message_id.len(), 8, "opaque nanoid message id");
+	assert!(matches!(message.data, RemoteMessageData::V1(v1::RemoteMessage::Disconnected)));
+}
+
+#[test]
+fn pairing_logout_clears_session_and_bootstrap_identity() {
+	let platform = Arc::new(StubPlatform::default());
+	let (host, pairing_host) =
+		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
+	install_pairing_session(&host, sso_session_info());
+	{
+		let mut storage = platform.local_storage.lock().expect("local storage mutex poisoned");
+		storage.insert(core_storage_test_key(CoreStorageKey::PairingDeviceIdentity), vec![1, 2, 3]);
+		storage.insert(
+			core_storage_test_key(CoreStorageKey::LastProcessedPairingStatement),
+			vec![4, 5, 6],
+		);
+	}
+
+	futures::executor::block_on(pairing_host.logout_and_reset_pairing()).unwrap();
+
+	assert!(host.test_session_state().current().is_none());
+	let storage = platform.local_storage.lock().expect("local storage mutex poisoned");
+	assert!(!storage.contains_key(&core_storage_test_key(CoreStorageKey::PairingDeviceIdentity)));
+	assert!(
+		!storage
+			.contains_key(&core_storage_test_key(CoreStorageKey::LastProcessedPairingStatement))
+	);
+}
+
+#[test]
+fn disconnect_clears_session_store_and_broadcasts_disconnected() {
+	let platform = Arc::new(StubPlatform::default());
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	install_pairing_session(&host, sso_session_info());
+	platform
+		.local_storage
+		.lock()
+		.expect("local storage mutex poisoned")
+		.insert(core_storage_test_key(CoreStorageKey::PairingDeviceIdentity), vec![1, 2, 3]);
+	let mut statuses = host.test_session_state().subscribe();
+	assert_eq!(
+		futures::executor::block_on(statuses.next()).unwrap(),
+		HostAccountConnectionStatusSubscribeItem::V1(
+			v01::HostAccountConnectionStatusSubscribeItem::Connected
+		)
+	);
+
+	futures::executor::block_on(host.disconnect());
+
+	assert!(host.test_session_state().current().is_none());
+	assert_eq!(*platform.session_clears.lock().expect("session clear counter mutex poisoned"), 1);
+	assert!(
+		platform
+			.local_storage
+			.lock()
+			.expect("local storage mutex poisoned")
+			.contains_key(&core_storage_test_key(CoreStorageKey::PairingDeviceIdentity)),
+		"logout may leave the old pairing identity in storage; the next login rotates it before presenting QR"
+	);
+	assert_eq!(
+		futures::executor::block_on(statuses.next()).unwrap(),
+		HostAccountConnectionStatusSubscribeItem::V1(
+			v01::HostAccountConnectionStatusSubscribeItem::Disconnected
+		)
+	);
+	// `set_session` bypasses the auth state cell, so the cell never left
+	// `Disconnected` and the logout emits nothing new. Only a session
+	// activation announces an unchanged state.
+	assert!(platform.auth_states.lock().expect("auth state list mutex poisoned").is_empty());
+}
+
+#[test]
+fn disconnect_tolerates_repeated_logout_when_already_disconnected() {
+	let platform = Arc::new(StubPlatform::default());
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+
+	futures::executor::block_on(host.disconnect());
+	futures::executor::block_on(host.disconnect());
+
+	assert!(host.test_session_state().current().is_none());
+	assert_eq!(*platform.session_clears.lock().expect("session clear counter mutex poisoned"), 2);
+	assert!(platform.sent_rpc.lock().unwrap().is_empty());
+}
+
+#[test]
+fn permissions_grants_and_caches() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let cx = CallContext::default();
+	let request = HostDevicePermissionRequest::V1(v01::HostDevicePermissionRequest::Camera);
+	let response =
+		futures::executor::block_on(host.request_device_permission(&cx, request)).unwrap();
+	let HostDevicePermissionResponse::V1(inner) = response;
+	assert!(inner.granted);
+}
+
+#[test]
+fn feature_supported_encodes_response_to_known_bytes() {
+	let host = ProductRuntimeHost::new_compat(stub_platform(), Spawner::for_test());
+	let cx = CallContext::default();
+	let request = HostFeatureSupportedRequest::V1(v01::HostFeatureSupportedRequest::Chain {
+		genesis_hash: vec![0u8; 32],
+	});
+	let response = futures::executor::block_on(host.feature_supported(&cx, request)).unwrap();
+	// [V1 variant=0][supported=1]
+	assert_eq!(response.encode(), vec![0x00, 0x01]);
+}
+
+mod nft_purse;
+mod signing;
+
+#[test]
+fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
+	let (host_config, product) = runtime_config("dim2.dot");
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		Spawner::for_test(),
+	);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+	let session = pairing_host.current_session().expect("the pairing host has an active session");
+
+	let proof = futures::executor::block_on(ProductAuthority::create_proof(
+		&*pairing_host,
+		&CallContext::default(),
+		&session,
+		crate::host_internal::sso_messages::ProductRequest {
+			calling_product_id: ProductId::for_test("dim2.dot"),
+			payload: v01::HostAccountCreateProofRequest {
+				key_handle: v01::ProductAccountId {
+					dot_ns_identifier: ProductId::for_test("peopl.dot"),
+					derivation_index: v01::DerivationIndex::Index(0),
+				},
+				context: v01::ProductProofContext {
+					product_id: ProductId::for_test("dim2.dot"),
+					suffix: v01::DerivationIndex::Index(0),
+				},
+				ring_location: ring_location_fixture(),
+				message: b"prove me".to_vec(),
+			},
+		},
+	));
+	assert_eq!(
+		proof.err(),
+		Some(RingVrfError::NotAllowlisted),
+		"the pairing authority must refuse a foreign key that no manifest granted"
+	);
+
+	let signed = futures::executor::block_on(ProductAuthority::ring_vrf_sign(
+		&*pairing_host,
+		&CallContext::default(),
+		&session,
+		crate::host_internal::sso_messages::ProductRequest {
+			calling_product_id: ProductId::for_test("dim2.dot"),
+			payload: v01::HostAccountRingVrfSignRequest {
+				key_handle: v01::ProductAccountId {
+					dot_ns_identifier: ProductId::for_test("peopl.dot"),
+					derivation_index: v01::DerivationIndex::Index(0),
+				},
+				message: b"sign me".to_vec(),
+			},
+		},
+	));
+	assert_eq!(
+		signed.err(),
+		Some(RingVrfError::NotAllowlisted),
+		"and the same on the signing method, which arrives through the same door"
+	);
+}
+
+/// The pairing authority holds a grantee's proof context to the same rule as
+/// the signing authority: a third product's context needs that product's own
+/// `context` grant.
+///
+/// Driven at the authority, as `sso_responder` would. The admitted case is
+/// asserted as "not refused by the gate", since the stub has no AutoSigning key
+/// or ring to finish the proof with; what it pins is that the context guard
+/// let it through.
+#[test]
+fn the_pairing_authority_admits_a_context_only_its_product_granted() {
+	let prove_in = |context_grants: &str| {
+		let (host_config, product) = runtime_config("dim2next.dot");
+		let platform = stub_platform();
+		cache_manifest(&platform, "peopl.dot", r#"{"dim2next":["context"]}"#, 0);
+		cache_manifest(&platform, "dim2.dot", context_grants, 0);
+		let platform: Arc<dyn Platform> = platform;
+		let services = RuntimeServices::new(
+			platform.clone(),
+			host_config.host.host_info.clone(),
+			host_config.stack.clone(),
+			Spawner::for_test(),
+		);
+		let pairing_host = PairingHost::new(services.clone(), host_config);
+		let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+		let host = ProductRuntimeHost::from_services(
+			services,
+			adapters,
+			pairing_host.clone(),
+			pairing_host.session().clone(),
+			product,
+		);
+		install_pairing_session(&host, session_info());
+		let session =
+			pairing_host.current_session().expect("the pairing host has an active session");
+		let mut cx = CallContext::default();
+		cx.set_timeout(Duration::from_millis(200));
+		futures::executor::block_on(ProductAuthority::create_proof(
+			&*pairing_host,
+			&cx,
+			&session,
+			crate::host_internal::sso_messages::ProductRequest {
+				calling_product_id: ProductId::for_test("dim2next.dot"),
+				payload: v01::HostAccountCreateProofRequest {
+					key_handle: v01::ProductAccountId {
+						dot_ns_identifier: ProductId::for_test("peopl.dot"),
+						derivation_index: v01::DerivationIndex::Index(0),
+					},
+					context: v01::ProductProofContext {
+						product_id: ProductId::for_test("dim2.dot"),
+						suffix: v01::DerivationIndex::Index(0),
+					},
+					ring_location: ring_location_fixture(),
+					message: b"prove me".to_vec(),
+				},
+			},
+		))
+	};
+
+	assert_ne!(
+		prove_in(r#"{"dim2next":["context"]}"#).err(),
+		Some(RingVrfError::NotAllowlisted),
+		"the context product's grant admits its context"
+	);
+	assert_eq!(
+		prove_in(r#"{"other":["context"]}"#).err(),
+		Some(RingVrfError::NotAllowlisted),
+		"a grant to another product admits nothing"
+	);
+}
+
+/// The grant lookup obeys the caller's deadline.
+///
+/// It can reach dotNS on the Asset Hub, which is several sequential chain
+/// operations each bounded only by `OPERATION_TIMEOUT` (10s). Run before
+/// `remote_authority_call` that cost sat outside the caller's deadline and
+/// ignored a cancel, so a product asking for a short timeout could wait far
+/// longer with no way to stop it. This pins that it now returns on the deadline:
+/// the stub answers no RPC, so an unscoped lookup would stall for the full
+/// operation timeout instead.
+#[test]
+fn a_grant_lookup_obeys_the_callers_deadline() {
+	let (host_config, product) = runtime_config("dim2.dot");
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		Spawner::for_test(),
+	);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+
+	let mut cx = CallContext::default();
+	cx.set_timeout(Duration::from_millis(1));
+	let started = std::time::Instant::now();
+	let result = futures::executor::block_on(
+		host.create_account_proof(&cx, create_proof_request("peopl.dot")),
+	);
+	let elapsed = started.elapsed();
+
+	// The uniform refusal, not a transport error carrying a reason. Left to
+	// `remote_authority_call`, a deadline that expires during the lookup answers
+	// `Unknown { reason }` while an already-cached target that grants nothing
+	// answers `NotAllowlisted` at once, so the error tag alone would tell a
+	// caller which targets this device has resolved before, which is the
+	// enumeration the denial read was moved after the manifest to prevent.
+	assert!(
+		matches!(
+			result.as_ref().err(),
+			Some(CallError::Domain(HostAccountCreateProofError::V1(
+				v01::HostAccountCreateProofError::NotAllowlisted
+			)))
+		),
+		"a lookup that runs out of time must answer the uniform refusal, got {:?}",
+		result.as_ref().err()
+	);
+	assert!(
+		elapsed < Duration::from_secs(5),
+		"the grant lookup must be bounded by the caller's deadline, not by the \
+         dotNS operation timeout; took {elapsed:?}"
+	);
+}
+
+/// A proof or signature the runtime frontend refuses reaches the host log.
+///
+/// A local product call meets the manifest check here first, and a call it
+/// refuses never reaches the authority, so the authority cannot be the one to
+/// say why.
+#[test]
+fn a_frontend_refusal_tells_the_host_what_it_judged_by() {
+	let host = dim2_with_a_pairing_session(stub_platform(), None);
+	let cx = CallContext::default();
+	let mut refusals = None;
+	let lines = crate::logging::testing::host_sink_lines(|| {
+		refusals = Some((
+			futures::executor::block_on(
+				host.create_account_proof(&cx, create_proof_request("peopl.dot")),
+			)
+			.err(),
+			futures::executor::block_on(
+				host.ring_vrf_sign(&cx, ring_vrf_sign_request("peopl.dot")),
+			)
+			.err(),
+		));
+	});
+	let line = frontend_refusal_line("manifest unavailable", "no Asset Hub");
+	assert_eq!(
+		(refusals, lines),
+		(
+			Some((
+				Some(CallError::Domain(HostAccountCreateProofError::V1(
+					v01::HostAccountCreateProofError::NotAllowlisted
+				))),
+				Some(CallError::Domain(HostAccountRingVrfSignError::V1(
+					v01::HostAccountRingVrfSignError::NotAllowlisted
+				))),
+			)),
+			vec![line.clone(), line],
+		)
+	);
+}
+
+/// A frontend lookup cut short by the deadline of the call is a refusal the
+/// host hears about. One the product withdrew is not, since nobody waits for
+/// its answer.
+#[test]
+fn a_frontend_lookup_past_its_deadline_tells_the_host_it_timed_out() {
+	let proof_and_signature_lines = |cx: CallContext| {
+		let platform =
+			Arc::new(StubPlatform { chain_connect_pending: true, ..StubPlatform::default() });
+		let host = dim2_with_a_pairing_session(platform, Some([0xcc; 32]));
+		crate::logging::testing::host_sink_lines(|| {
+			let _ = futures::executor::block_on(
+				host.create_account_proof(&cx, create_proof_request("peopl.dot")),
+			);
+			let _ = futures::executor::block_on(
+				host.ring_vrf_sign(&cx, ring_vrf_sign_request("peopl.dot")),
+			);
+		})
+	};
+	let mut timed_out = CallContext::default();
+	timed_out.set_timeout(Duration::from_millis(10));
+	let withdrawn = CallContext::default();
+	withdrawn.cancel().cancel();
+	let gave_up = "truapi.tracing.warn truapi::runtime::product_manifest: manifest resolution \
+	               gave up {ceiling_secs=0}"
+		.to_string();
+	let refusal = frontend_refusal_line("manifest unavailable", "dotNS lookup timed out");
+	assert_eq!(
+		(proof_and_signature_lines(timed_out), proof_and_signature_lines(withdrawn)),
+		(vec![gave_up.clone(), refusal.clone(), gave_up, refusal], Vec::new())
+	);
+}
+
+/// A call the frontend admits and the authority refuses is warned once, by
+/// the authority.
+#[test]
+fn a_refusal_past_the_frontend_is_warned_once() {
+	let platform = stub_platform();
+	cache_manifest(&platform, "peopl.dot", r#"{"dim2":["context"]}"#, 0);
+	let host = dim2_with_a_pairing_session(platform, None);
+	let HostAccountCreateProofRequest::V1(mut request) = create_proof_request("peopl.dot");
+	request.context.product_id = ProductId::for_test("dim2.paseo");
+	let lines = crate::logging::testing::host_sink_lines(|| {
+		let _ = futures::executor::block_on(host.create_account_proof(
+			&CallContext::default(),
+			HostAccountCreateProofRequest::V1(request),
+		));
+	});
+	assert_eq!(
+		lines,
+		vec![
+			"truapi.tracing.warn truapi::runtime::product_manifest: ring-VRF access refused \
+			 {because=context on another network, entry=dim2, caller=dim2.dot, \
+			 owner=peopl.dot, context=dim2.paseo, scopes=None}"
+		]
+	);
+}
+
+/// `dim2.dot` with a live pairing session, resolving manifests against
+/// `asset_hub`.
+fn dim2_with_a_pairing_session(
+	platform: Arc<StubPlatform>,
+	asset_hub: Option<[u8; 32]>,
+) -> ProductRuntimeHost {
+	let (host_config, product) = runtime_config("dim2.dot");
+	let services = RuntimeServices::new(
+		platform,
+		host_config.host.host_info.clone(),
+		crate::test_support::test_stack(
+			"paseo",
+			host_config.stack.chains().people,
+			host_config.stack.chains().bulletin,
+			asset_hub,
+		),
+		Spawner::for_test(),
+	);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+	host
+}
+
+/// Ring-VRF signature request with the key of `product_id`.
+fn ring_vrf_sign_request(product_id: &str) -> HostAccountRingVrfSignRequest {
+	HostAccountRingVrfSignRequest::V1(v01::HostAccountRingVrfSignRequest {
+		key_handle: v01::ProductAccountId {
+			dot_ns_identifier: ProductId::for_test(product_id),
+			derivation_index: v01::DerivationIndex::Index(0),
+		},
+		message: b"sign me".to_vec(),
+	})
+}
+
+/// The host log line of the frontend of `dim2.dot` refusing the key of
+/// `peopl.dot` with no manifest read.
+fn frontend_refusal_line(because: &str, source: &str) -> String {
+	format!(
+		"truapi.tracing.warn truapi::runtime::product_manifest: ring-VRF access refused \
+		 {{because={because}, entry=dim2, caller=dim2.dot, owner=peopl.dot, source={source}, \
+		 scopes=None}}"
+	)
+}
+
+/// Subnames of one product share one cached manifest, because they are one
+/// dotNS node holding one document.
+///
+/// The cache used to be keyed by the full product id while the document is
+/// resolved by the bare label, so `app.peopl.dot` and `worker.peopl.dot` each
+/// drove a fresh chain resolution and a fresh durable write for a document the
+/// host already held, with nothing bounding how many spellings a caller could
+/// name. On the pairing wire that id comes from the peer.
+#[test]
+fn subnames_of_one_product_share_one_cached_manifest() {
+	let platform = stub_platform();
+	cache_manifest(&platform, "peopl.dot", r#"{"unknown":["storage"]}"#, 0);
+	seed_owner_value(&platform, "peopl.dot");
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+
+	// Seeded once under `peopl.dot`; every executable beneath it reads it.
+	for spelling in ["peopl.dot", "app.peopl.dot", "worker.peopl.dot"] {
+		assert!(
+			read_storage(&host, Some(spelling), "k").is_ok(),
+			"{spelling} must resolve the one manifest cached for its product"
+		);
+	}
+}
+
+/// A cancellation the host raised itself must never reach the wire as
+/// `CallError::Cancelled`.
+///
+/// That variant is appended last in `CallError`, so a product built before it
+/// existed cannot decode it. It is reserved for a call the peer withdrew with
+/// a `Cancel` frame, because a peer that never sends one never has to decode
+/// the answer. An internal timeout is not that: it has always reported through
+/// the method's own error type and has to keep doing so.
+///
+/// Every mapper that turns an [`AuthorityError`] into a `CallError` is checked
+/// here, because the tempting simplification is to map `Cancelled` to the new
+/// variant in one of them and leave the rest alone.
+#[test]
+fn an_internal_cancellation_never_becomes_the_cancelled_variant() {
+	use super::{
+		account_get_authority_error, legacy_transaction_call_error, signing_call_error,
+		transaction_call_error, vrf_call_error,
+	};
+	use crate::runtime::authority::{AuthorityCancelError, AuthorityError};
+	use truapi::CancellationReason;
+
+	fn assert_domain<E: core::fmt::Debug>(mapper: &str, reason: &str, err: CallError<E>) {
+		assert!(
+			matches!(err, CallError::Domain(_)),
+			"{mapper} must report an internal cancellation ({reason}) through its own \
+             domain error, got {err:?}"
+		);
+	}
+
+	let reasons = [
+		("explicit", CancellationReason::Cancelled),
+		("timeout", CancellationReason::TimedOut { timeout: core::time::Duration::from_secs(30) }),
+	];
+
+	for (reason_name, reason) in reasons {
+		let cancelled =
+			|| AuthorityError::Cancelled(AuthorityCancelError::new("p:1", reason.clone()));
+
+		assert_domain("vrf_call_error", reason_name, vrf_call_error(cancelled()));
+		assert_domain(
+			"account_get_authority_error",
+			reason_name,
+			account_get_authority_error(cancelled()),
+		);
+		assert_domain("signing_call_error", reason_name, signing_call_error(cancelled()));
+		assert_domain("transaction_call_error", reason_name, transaction_call_error(cancelled()));
+		assert_domain(
+			"legacy_transaction_call_error",
+			reason_name,
+			legacy_transaction_call_error(cancelled()),
+		);
+	}
+}
+
+/// A scanner whose answer is fixed, recording each product and request it is
+/// asked for. A parked one never answers, standing in for a user who has not
+/// scanned yet, and records when the core stops waiting on it.
+struct StubScannerPlatform {
+	answer: HostScan,
+	park: bool,
+	asked: Mutex<Vec<(String, truapi::latest::HostScannerScanRequest)>>,
+	abandoned: Arc<AtomicBool>,
+}
+
+impl StubScannerPlatform {
+	fn answering(answer: HostScan) -> Arc<Self> {
+		Arc::new(Self {
+			answer,
+			park: false,
+			asked: Mutex::new(Vec::new()),
+			abandoned: Arc::default(),
+		})
+	}
+
+	fn parked() -> Arc<Self> {
+		let mut stub = Arc::into_inner(Self::answering(HostScan::Dismissed)).unwrap();
+		stub.park = true;
+		Arc::new(stub)
+	}
+
+	fn asked(&self) -> Vec<(String, truapi::latest::HostScannerScanRequest)> {
+		self.asked.lock().unwrap().clone()
+	}
+}
+
+/// Sets its flag when dropped, which is how a parked scan sees the core stop
+/// waiting.
+struct SetOnDrop(Arc<AtomicBool>);
+
+impl Drop for SetOnDrop {
+	fn drop(&mut self) {
+		self.0.store(true, Ordering::SeqCst);
+	}
+}
+
+#[async_trait::async_trait]
+impl crate::platform::ScannerPlatform for StubScannerPlatform {
+	async fn scan_code(
+		&self,
+		product: &crate::platform::ProductContext,
+		request: &truapi::latest::HostScannerScanRequest,
+	) -> Result<HostScan, truapi::latest::GenericError> {
+		self.asked
+			.lock()
+			.unwrap()
+			.push((product.product_id.to_string(), request.clone()));
+		if self.park {
+			let _abandoned = SetOnDrop(self.abandoned.clone());
+			futures::future::pending::<()>().await;
+		}
+		Ok(self.answer.clone())
+	}
+}
+
+/// A runtime for `greenmarket.dot` with no session, and `scanner` installed
+/// when given.
+fn scanner_host(scanner: Option<Arc<StubScannerPlatform>>) -> ProductRuntimeHost {
+	scanner_host_for(ExecutableKind::App, scanner)
+}
+
+/// [`scanner_host`] for an execution of `kind`.
+fn scanner_host_for(
+	kind: ExecutableKind,
+	scanner: Option<Arc<StubScannerPlatform>>,
+) -> ProductRuntimeHost {
+	let (host_config, mut product) = runtime_config("greenmarket.dot");
+	product.execution_kind = kind;
+	let services = RuntimeServices::with_chat_platform(
+		stub_platform() as Arc<dyn Platform>,
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		Spawner::for_test(),
+		None,
+	);
+	if let Some(scanner) = scanner {
+		services.install_scanner_platform(scanner);
+	}
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	)
+}
+
+fn receipt_request() -> truapi::latest::HostScannerScanRequest {
+	truapi::latest::HostScannerScanRequest {
+		formats: vec![v01::CodeFormat::Qr],
+		prefix: Some("https://greenmarket.example/r/".into()),
+		hint: Some("Point at the receipt's QR code".into()),
+	}
+}
+
+fn unwrap_scan(
+	result: Result<HostScannerScanResponse, CallError<HostScannerScanError>>,
+) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
+	match result {
+		Ok(HostScannerScanResponse::V1(response)) => Ok(response.outcome),
+		Err(CallError::Domain(HostScannerScanError::V1(error))) => Err(CallError::Domain(error)),
+		Err(CallError::Unsupported) => Err(CallError::Unsupported),
+		Err(other) => panic!("unexpected scanner error: {other:?}"),
+	}
+}
+
+fn scan(
+	host: &ProductRuntimeHost,
+) -> Result<v01::ScanOutcome, CallError<v01::HostScannerScanError>> {
+	unwrap_scan(futures::executor::block_on(Scanner::scan(
+		host,
+		&CallContext::default(),
+		HostScannerScanRequest::V1(receipt_request()),
+	)))
+}
+
+/// The user tapping a button on the product's card face.
+fn card_tap() -> truapi::versioned::renderer::HostRendererActionSubscribeItem {
+	truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(
+		v01::HostRendererActionSubscribeItem {
+			context: v01::RenderContext::PocketCard { card_id: "receipts".into() },
+			action_id: "scan".into(),
+			payload: vec![],
+		},
+	)
+}
+
+fn scanned(text: &str, format: v01::CodeFormat) -> HostScan {
+	HostScan::Scanned { text: text.into(), format }
+}
+
+#[test]
+fn a_worker_scans_only_shortly_after_the_user_taps_its_card() {
+	// A Worker has no screen of its own. Without a recent tap, the viewfinder
+	// would open over whatever the user is doing.
+	let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
+	let host = scanner_host_for(ExecutableKind::Worker, Some(scanner.clone()));
+	let not_visible = Err(CallError::Domain(v01::HostScannerScanError::NotVisible));
+	assert_eq!(scan(&host), not_visible);
+
+	host.connection
+		.renderer
+		.note_published_at(crate::unix_time::current_unix_secs() - super::USER_TAP_WINDOW_SECS - 1);
+	assert_eq!(scan(&host), not_visible);
+	assert!(scanner.asked().is_empty());
+
+	host.connection.publish_renderer_action(card_tap()).unwrap();
+	assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
+}
+
+#[test]
+fn each_host_answer_reaches_the_product_as_its_own_result() {
+	// `Unsupported` tells a product to use its own camera code, a dismissal is
+	// worth offering again, and a code the request does not accept never
+	// reaches the product, even from a buggy host.
+	use v01::HostScannerScanError::{CameraUnavailable, NotVisible};
+	let receipt = "https://greenmarket.example/r/BAG6";
+	assert_eq!(scan(&scanner_host(None)), Err(CallError::Unsupported));
+	for (answer, expected) in [
+		(
+			scanned(receipt, v01::CodeFormat::Qr),
+			Ok(v01::ScanOutcome::Scanned { text: receipt.into(), format: v01::CodeFormat::Qr }),
+		),
+		(HostScan::Dismissed, Ok(v01::ScanOutcome::Dismissed)),
+		(HostScan::CameraUnavailable, Err(CallError::Domain(CameraUnavailable))),
+		(HostScan::NotVisible, Err(CallError::Domain(NotVisible))),
+	] {
+		assert_eq!(scan(&scanner_host(Some(StubScannerPlatform::answering(answer)))), expected);
+	}
+	for refused in [
+		scanned("polkadotapp://pair?handshake=00", v01::CodeFormat::Qr),
+		scanned(receipt, v01::CodeFormat::Code128),
+	] {
+		let host = scanner_host(Some(StubScannerPlatform::answering(refused)));
+		assert!(matches!(
+			scan(&host),
+			Err(CallError::Domain(v01::HostScannerScanError::Unknown { .. }))
+		));
+	}
+}
+
+#[test]
+fn the_host_is_told_the_product_and_never_sees_an_invalid_request() {
+	// The host titles the viewfinder with the product id, and no session is
+	// needed. A request the product could not make never opens a viewfinder.
+	let scanner = StubScannerPlatform::answering(HostScan::Dismissed);
+	let host = scanner_host(Some(scanner.clone()));
+	let mut invalid = receipt_request();
+	invalid.hint = Some("Scan the code on your computer\nto sign in".into());
+	let result = unwrap_scan(futures::executor::block_on(Scanner::scan(
+		&host,
+		&CallContext::default(),
+		HostScannerScanRequest::V1(invalid),
+	)));
+	assert!(matches!(
+		result,
+		Err(CallError::Domain(v01::HostScannerScanError::InvalidRequest { .. }))
+	));
+	assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
+	assert_eq!(scanner.asked(), vec![("greenmarket.dot".to_owned(), receipt_request())]);
+}
+
+#[test]
+fn a_second_scan_waits_its_turn_and_a_cancel_frees_the_viewfinder() {
+	// The device has one viewfinder. Cancelling the open scan must close it,
+	// which the host sees as its wait being dropped, and let the next one in.
+	let scanner = StubScannerPlatform::parked();
+	let host = scanner_host(Some(scanner.clone()));
+	let cancel = truapi::CancellationToken::default();
+	let first_cx = CallContext::with_parts("scan-first".into(), cancel.clone());
+	let mut first =
+		Box::pin(Scanner::scan(&host, &first_cx, HostScannerScanRequest::V1(receipt_request())));
+	assert!(futures::FutureExt::now_or_never(&mut first).is_none());
+
+	assert_eq!(scan(&host), Err(CallError::Domain(v01::HostScannerScanError::Busy)));
+
+	cancel.cancel();
+	// The handler reports its own error; the dispatcher answers `Cancelled`
+	// only when the product sent a Cancel frame.
+	assert!(matches!(
+		unwrap_scan(futures::executor::block_on(first)),
+		Err(CallError::Domain(v01::HostScannerScanError::Unknown { .. }))
+	));
+	assert!(scanner.abandoned.load(Ordering::SeqCst));
+
+	let next_cx = CallContext::default();
+	let mut next =
+		Box::pin(Scanner::scan(&host, &next_cx, HostScannerScanRequest::V1(receipt_request())));
+	assert!(futures::FutureExt::now_or_never(&mut next).is_none());
+	assert_eq!(scanner.asked().len(), 2);
+}
+
+/// A contact picker the user never answers, which records when the core stops
+/// waiting on it.
+struct ParkedContactsPlatform {
+	abandoned: Arc<AtomicBool>,
+}
+
+#[async_trait::async_trait]
+impl crate::platform::ContactsPlatform for ParkedContactsPlatform {
+	async fn contacts(
+		&self,
+		lookup: &crate::platform::HostContactLookup,
+	) -> Result<crate::platform::HostContactMatches, truapi::latest::GenericError> {
+		Ok(crate::platform::HostContactMatches { accounts: vec![None; lookup.handles.len()] })
+	}
+
+	async fn pick_contact(
+		&self,
+		_product: &ProductContext,
+	) -> Result<crate::platform::HostContactPick, truapi::latest::GenericError> {
+		let _abandoned = SetOnDrop(self.abandoned.clone());
+		futures::future::pending().await
+	}
+}
+
+#[test]
+fn cancelling_a_contact_pick_stops_waiting_on_the_picker() {
+	// The host closes its picker when the core drops the wait. Without that, a
+	// withdrawn pick leaves the picker on screen until the user acts.
+	let abandoned = Arc::new(AtomicBool::new(false));
+	let host =
+		host_with_contacts(Arc::new(ParkedContactsPlatform { abandoned: abandoned.clone() }));
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("pick-withdrawn".into(), cancel.clone());
+	let mut pick = Box::pin(Contacts::pick(
+		&host,
+		&cx,
+		HostContactsPickRequest::V1(v01::HostContactsPickRequest {}),
+	));
+	assert!(futures::FutureExt::now_or_never(&mut pick).is_none());
+
+	cancel.cancel();
+
+	// The handler reports its own error; the dispatcher answers `Cancelled`
+	// only when the product sent a Cancel frame.
+	assert!(matches!(
+		futures::executor::block_on(pick),
+		Err(CallError::Domain(HostContactsPickError::V1(
+			v01::HostContactsPickError::Unknown { .. }
+		)))
+	));
+	assert!(abandoned.load(Ordering::SeqCst));
+}
+
+fn payment_services() -> Arc<RuntimeServices> {
+	payment_services_over(stub_platform())
+}
+
+fn payment_services_over(platform: Arc<dyn Platform>) -> Arc<RuntimeServices> {
+	let (host_config, _) = runtime_config("payments.dot");
+	RuntimeServices::new(
+		platform,
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		Spawner::for_test(),
+	)
+}
+
+fn payment_host(
+	services: &Arc<RuntimeServices>,
+	product_id: &str,
+	with_session: bool,
+) -> ProductRuntimeHost {
+	let (host_config, product) = runtime_config(product_id);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let host = ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(services),
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	if with_session {
+		install_pairing_session(&host, session_info());
+	}
+	host
+}
+
+/// A Worker manifest serving card payments in and crypto in and out.
+const RAMP_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[{"mode":"CARD","directions":["In"],"assets":["EUR"]},{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}]}}}"#;
+
+/// Offer `provider_id` as a funding provider publishing `manifest`.
+fn offer_provider(services: &Arc<RuntimeServices>, provider_id: &str, manifest: &str) {
+	services
+		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
+			product_id: ProductId::for_test(provider_id),
+			worker_manifest: Some(manifest.to_string()),
+			root_manifest: None,
+			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+		}])
+		.expect("provider offered");
+}
+
+/// A provider's worker connection, signed in.
+fn provider_worker(services: &Arc<RuntimeServices>, provider_id: &str) -> ProductRuntimeHost {
+	let host = signed_out_provider_worker(services, provider_id);
+	install_pairing_session(&host, session_info());
+	host
+}
+
+/// As [`provider_worker`], before the user signs in.
+fn signed_out_provider_worker(
+	services: &Arc<RuntimeServices>,
+	provider_id: &str,
+) -> ProductRuntimeHost {
+	let (host_config, _) = runtime_config(provider_id);
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test(provider_id),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(services),
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	)
+}
+
+/// A call a provider's worker received from the core.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProviderCallSeen {
+	Assign(Box<v01::FundingAssignment>),
+	Cancel(String),
+	Settle(String, v01::FundingCancelDecision),
+}
+
+/// A provider's worker as the core calls it: it records every call, takes
+/// every session and decision, and answers cancels with the answers queued
+/// for them, in order.
+#[derive(Default)]
+struct ScriptedProviderLink {
+	calls: Mutex<Vec<ProviderCallSeen>>,
+	/// What every quote ask is answered with, how many were asked, and the
+	/// asks.
+	quote_answer: Mutex<Option<v01::FundingQuoteAnswer>>,
+	quotes: Arc<Mutex<usize>>,
+	asks: Mutex<Vec<v01::FundingQuoteAsk>>,
+	cancel_answers: Mutex<std::collections::VecDeque<v01::FundingCancelAnswer>>,
+}
+
+impl ScriptedProviderLink {
+	fn answer_cancels(&self, answers: impl IntoIterator<Item = v01::FundingCancelAnswer>) {
+		self.cancel_answers.lock().expect("answers mutex poisoned").extend(answers);
+	}
+
+	fn seen(&self, call: ProviderCallSeen) {
+		self.calls.lock().expect("calls mutex poisoned").push(call);
+	}
+
+	/// The calls received, once there are at least `count`.
+	fn calls(&self, count: usize) -> Vec<ProviderCallSeen> {
+		for _ in 0..200 {
+			let calls = self.calls.lock().expect("calls mutex poisoned").clone();
+			if calls.len() >= count {
+				return calls;
+			}
+			std::thread::sleep(Duration::from_millis(10));
+		}
+		self.calls.lock().expect("calls mutex poisoned").clone()
+	}
+}
+
+impl crate::runtime::FundingProviderLink for ScriptedProviderLink {
+	fn quote(
+		&self,
+		ask: v01::FundingQuoteAsk,
+	) -> futures::future::BoxFuture<'static, Option<v01::FundingQuoteAnswer>> {
+		*self.quotes.lock().expect("quotes mutex poisoned") += 1;
+		self.asks.lock().expect("asks mutex poisoned").push(ask);
+		let answer = self.quote_answer.lock().expect("answer mutex poisoned").clone();
+		Box::pin(async move { answer })
+	}
+
+	fn assign(&self, session: v01::FundingAssignment) -> futures::future::BoxFuture<'static, bool> {
+		self.seen(ProviderCallSeen::Assign(Box::new(session)));
+		Box::pin(async { true })
+	}
+
+	fn cancel(
+		&self,
+		intent: String,
+	) -> futures::future::BoxFuture<'static, Option<v01::FundingCancelAnswer>> {
+		self.seen(ProviderCallSeen::Cancel(intent));
+		let answer = self.cancel_answers.lock().expect("answers mutex poisoned").pop_front();
+		Box::pin(async move { answer })
+	}
+
+	fn settle_cancel(
+		&self,
+		intent: String,
+		decision: v01::FundingCancelDecision,
+	) -> futures::future::BoxFuture<'static, bool> {
+		self.seen(ProviderCallSeen::Settle(intent, decision));
+		Box::pin(async { true })
+	}
+}
+
+/// Connect a scripted worker for `provider_id`, as its handshake does.
+fn connect_provider(
+	services: &Arc<RuntimeServices>,
+	provider_id: &str,
+) -> Arc<ScriptedProviderLink> {
+	let link = Arc::new(ScriptedProviderLink::default());
+	services.funding().link(&ProductId::for_test(provider_id), link.clone());
+	services.funding().connected(&ProductId::for_test(provider_id));
+	link
+}
+
+/// Wait until session `intent` satisfies `done`, then return it.
+fn wait_for_session(
+	services: &RuntimeServices,
+	intent: &str,
+	done: impl Fn(&crate::host_logic::funding::FundingSession) -> bool,
+) -> Option<crate::host_logic::funding::FundingSession> {
+	for _ in 0..200 {
+		let session = services.funding().get(intent)?;
+		if done(&session) {
+			return Some(session);
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
+	services.funding().get(intent)
+}
+
+fn report_funding(
+	host: &ProductRuntimeHost,
+	intent: &str,
+	update: v01::FundingUpdate,
+) -> Result<(), CallError<truapi::versioned::funding_provider::HostFundingReportError>> {
+	futures::executor::block_on(truapi::api::FundingProvider::report(
+		host,
+		&CallContext::default(),
+		truapi::versioned::funding_provider::HostFundingReportRequest::V1(
+			v01::HostFundingReportRequest { intent: intent.to_string(), update },
+		),
+	))
+	.map(|_| ())
+}
+
+fn wait_for_stage(
+	services: &RuntimeServices,
+	intent: &str,
+) -> Option<v01::HostFundingStatusSubscribeItem> {
+	for _ in 0..200 {
+		if let Some(ended) = services.funding().ended(intent) {
+			return Some(ended);
+		}
+		services.funding().get(intent)?;
+		std::thread::sleep(Duration::from_millis(10));
+	}
+	None
+}
+
+// When funding resumes, the host hears of each session a provider still
+// works on and that one still does, so it keeps what it draws and its
+// launch marker without asking.
+#[test]
+fn funding_resumes_by_telling_the_host_what_a_provider_still_works_on() {
+	let db = crate::store::open_memory_core_db();
+	let before = funding_services_on(&db, Spawner::for_test());
+	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(before.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(before.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&offer_test_quote(&before, &intent, "ramp.dot")
+		))
+		.expect("selected")
+	);
+
+	let relaunched = funding_services_on(&db, Spawner::for_test());
+	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(relaunched.funding().install_feed(host.clone()));
+	assert!(relaunched.install_funding_platform(host.clone()));
+	wait_until(
+		|| !host.in_progress.lock().expect("in-progress mutex poisoned").is_empty(),
+		"funding resumed",
+	);
+
+	assert_eq!(
+		(
+			host.announced.lock().expect("announced mutex poisoned").clone(),
+			host.in_progress.lock().expect("in-progress mutex poisoned").clone(),
+		),
+		(vec![intent], vec![true])
+	);
+}
+
+// The provider's worker takes a session from assignment to delivered, and a
+// restart in between loses nothing: the restarted worker is assigned the
+// session again with its last step when it connects, and the host still
+// decides delivery from the claim of the top-up the provider named.
+#[test]
+fn a_provider_worker_delivers_a_session_across_a_restart() {
+	let db = crate::store::open_memory_core_db();
+	// The host's engine outlives the app, so it still knows the top-up after
+	// the restart.
+	let engine = Arc::new(RecordingTopUpPlatform::default());
+	let start = |db: &crate::store::Db| {
+		let services = funding_services_on(db, Spawner::for_test());
+		assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+			crate::platform::FundingPresentOutcome::Started,
+		)));
+		assert!(services.install_top_up_platform(engine.clone()));
+		services.resume_funding();
+		services
+	};
+	let before = start(&db);
+	offer_provider(&before, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(before.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	let unassigned_in_progress = before.funding().is_in_progress();
+	assert!(
+		futures::executor::block_on(before.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&offer_test_quote(&before, &intent, "ramp.dot")
+		))
+		.expect("selected")
+	);
+	let assigned_in_progress = before.funding().is_in_progress();
+	let worker = provider_worker(&before, "ramp.dot");
+	let assigned = connect_provider(&before, "ramp.dot").calls(1).into_iter().next();
+	let assigned_at = before.funding().get(&intent).expect("kept").assigned_at_ms;
+	let crediting = v01::FundingUpdate::In(v01::FundingInboundUpdate::Crediting {
+		top_up_id: [7; 32],
+		amount: 1_000,
+	});
+	report_funding(&worker, &intent, v01::FundingUpdate::In(v01::FundingInboundUpdate::Converting))
+		.expect("converting");
+	fund_top_up(&worker, &intent, 1_000).expect("top-up accepted");
+	report_funding(&worker, &intent, crediting.clone()).expect("crediting");
+	let details =
+		v01::FundingUpdate::Details { transaction_id: Some("tx-1".into()), reference: None };
+	report_funding(&worker, &intent, details).expect("details while crediting");
+
+	let after = start(&db);
+	let restarted = provider_worker(&after, "ramp.dot");
+	let replayed = connect_provider(&after, "ramp.dot").calls(1).into_iter().next();
+	let restarted_in_progress = after.funding().is_in_progress();
+	report_funding(
+		&restarted,
+		&intent,
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered),
+	)
+	.expect("delivered");
+
+	let assignment = |expires_at, last_update| {
+		Some(ProviderCallSeen::Assign(Box::new(v01::FundingAssignment {
+			intent: intent.clone(),
+			direction: v01::FundingDirection::In,
+			amount: Some(1_000),
+			expires_at,
+			last_update,
+			quote: Some(v01::FundingQuote {
+				quote_id: "q-test".to_string(),
+				send_amount: 1_002,
+				receive_amount: 1_000,
+				provider_fee: 2,
+				network_fee: 0,
+				eta_secs: None,
+				expires_at: None,
+				asset_decimals: 2,
+			}),
+		})))
+	};
+	let delivered = wait_for_stage(&after, &intent);
+	assert_eq!(
+		(
+			unassigned_in_progress,
+			assigned_in_progress,
+			restarted_in_progress,
+			after.funding().is_in_progress()
+		),
+		(false, true, true, false)
+	);
+	const WEEK_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+	assert_eq!(
+		(assigned, replayed, delivered),
+		(
+			assignment(assigned_at.map(|at| at + WEEK_MS), None),
+			assignment(None, Some(crediting)),
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1_000 }),
+		)
+	);
+}
+
+// A provider closes the screen it showed for a session it serves, so the
+// host shows the session in its place; a session it does not serve is
+// `NotFound` and the host hears nothing.
+#[test]
+fn a_provider_closes_its_screen_for_a_session_it_serves() {
+	let services = funding_services();
+	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(host.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&offer_test_quote(&services, &intent, "ramp.dot")
+		))
+		.expect("selected")
+	);
+	let worker = provider_worker(&services, "ramp.dot");
+	let close = |intent: &str| {
+		futures::executor::block_on(truapi::api::FundingProvider::close_frame(
+			&worker,
+			&CallContext::default(),
+			truapi::versioned::funding_provider::HostFundingCloseFrameRequest::V1(
+				v01::HostFundingCloseFrameRequest { intent: intent.to_string() },
+			),
+		))
+		.map(|_| ())
+	};
+
+	let served = close(&intent);
+	let unserved = close("fs_someone_else");
+
+	assert_eq!(
+		(served, unserved, host.closed.lock().expect("closed mutex poisoned").clone()),
+		(
+			Ok(()),
+			Err(CallError::Domain(
+				truapi::versioned::funding_provider::HostFundingCloseFrameError::V1(
+					v01::HostFundingCloseFrameError::NotFound
+				)
+			)),
+			vec![intent]
+		)
+	);
+}
+
+// A provider's worker that crashes mid-session is started again while the
+// session still holds it, and the restarted worker is handed the session
+// once it connects.
+#[test]
+fn a_provider_worker_that_crashes_mid_session_is_started_and_assigned_again() {
+	use crate::host_logic::worker::WorkerTransition::Start;
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let workers = Arc::new(DemandRecorder::default());
+	assert!(services.worker_ledger.install_worker_controller(workers.clone()));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&offer_test_quote(&services, &intent, "ramp.dot")
+		))
+		.expect("selected")
+	);
+	let crashed = connect_provider(&services, "ramp.dot");
+	let assigned = crashed.calls(1);
+	let crashed: Arc<dyn crate::runtime::FundingProviderLink> = crashed;
+	services.funding().unlink(&ProductId::for_test("ramp.dot"), &crashed);
+	let before_crash = workers.seen().len();
+
+	services.worker_exited(&ProductId::for_test("ramp.dot"));
+	let restarted = connect_provider(&services, "ramp.dot").calls(1);
+
+	assert_eq!(
+		(workers.seen().split_off(before_crash), restarted),
+		(vec![("ramp.dot".to_string(), Start)], assigned)
+	);
+}
+
+// The core follows a provider's top-up under the id the host received it
+// with, so delivery is decided from the top-up the provider actually started.
+#[test]
+fn a_session_settles_from_the_top_up_the_provider_started() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let engine = Arc::new(RecordingTopUpPlatform::default());
+	assert!(services.install_top_up_platform(engine.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&offer_test_quote(&services, &intent, "ramp.dot")
+		))
+		.expect("selected")
+	);
+	let worker = provider_worker(&services, "ramp.dot");
+	fund_top_up(&worker, &intent, 1_000).expect("top-up accepted");
+	report_funding(
+		&worker,
+		&intent,
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::Crediting {
+			top_up_id: [7; 32],
+			amount: 1_000,
+		}),
+	)
+	.expect("crediting");
+	report_funding(&worker, &intent, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
+
+	let stage = wait_for_stage(&services, &intent);
+	let started_id = engine.started.lock().expect("started mutex poisoned")[0].1.id;
+	assert_eq!(
+		(stage, engine.followed.lock().expect("followed mutex poisoned").clone()),
+		(
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1_000 }),
+			vec![("ramp.dot".to_string(), started_id)],
+		)
+	);
+}
+
+// The host opens a provider's page in its own frame, so the core refuses one
+// that is not plain https before the host sees it.
+#[test]
+fn a_provider_frame_opens_only_https_pages() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&offer_test_quote(&services, &intent, "ramp.dot")
+		))
+		.expect("selected")
+	);
+	let worker = provider_worker(&services, "ramp.dot");
+	let present = |url: &str| {
+		futures::executor::block_on(truapi::api::FundingProvider::present_frame(
+			&worker,
+			&CallContext::default(),
+			truapi::versioned::funding_provider::HostFundingPresentFrameRequest::V1(
+				v01::HostFundingPresentFrameRequest {
+					intent: intent.clone(),
+					target: v01::FundingFrameTarget::Page {
+						url: url.to_string(),
+						return_url: None,
+					},
+				},
+			),
+		))
+	};
+
+	let refused = present("http://widget.example.com/");
+	let shown = present("https://widget.example.com/buy");
+
+	assert_eq!(
+		(
+			refused.map(|_| ()),
+			shown.map(|_| ()),
+			platform.framed.lock().expect("framed mutex poisoned").clone(),
+		),
+		(
+			Err(CallError::Domain(
+				truapi::versioned::funding_provider::HostFundingPresentFrameError::V1(
+					v01::HostFundingPresentFrameError::InvalidUrl
+				)
+			)),
+			Ok(()),
+			vec![v01::FundingFrameTarget::Page {
+				url: "https://widget.example.com/buy".to_string(),
+				return_url: None,
+			}],
+		)
+	);
+}
+
+// A provider's frame closes
+// once the session's payment moved, and stays open for a session the core
+// does not hold.
+#[test]
+fn a_provider_frame_closes_once_the_payment_moved() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&offer_test_quote(&services, &intent, "ramp.dot")
+		))
+		.expect("selected")
+	);
+	let worker = provider_worker(&services, "ramp.dot");
+	let provider = ProductContext::new(ProductId::for_test("ramp.dot"));
+	let _frame = services.funding().track_frame(&intent, provider.clone());
+	let _unknown = services.funding().track_frame("fs_unknown", provider);
+	let closed = || platform.closed.lock().expect("closed mutex poisoned").clone();
+	report_funding(
+		&worker,
+		&intent,
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::AwaitingPayment),
+	)
+	.expect("awaiting");
+	let before = closed();
+	report_funding(
+		&worker,
+		&intent,
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::PaymentReceived {
+			finalized: false,
+			mismatch: None,
+		}),
+	)
+	.expect("received");
+
+	assert_eq!(
+		(
+			before,
+			eventually(5, || closed() == vec![intent.clone()]),
+			services.funding().frame_done("fs_unknown")
+		),
+		(Vec::<String>::new(), true, false)
+	);
+}
+
+// A provider dotNS lists no App for shows external pages only, so the core
+// refuses an App route of its before the host sees it.
+#[test]
+fn a_provider_without_an_app_opens_only_pages() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&offer_test_quote(&services, &intent, "ramp.dot")
+		))
+		.expect("selected")
+	);
+	let worker = provider_worker(&services, "ramp.dot");
+	let present = |target: v01::FundingFrameTarget| {
+		futures::executor::block_on(truapi::api::FundingProvider::present_frame(
+			&worker,
+			&CallContext::default(),
+			truapi::versioned::funding_provider::HostFundingPresentFrameRequest::V1(
+				v01::HostFundingPresentFrameRequest { intent: intent.clone(), target },
+			),
+		))
+	};
+	let page = v01::FundingFrameTarget::Page {
+		url: "https://widget.example.com/buy".to_string(),
+		return_url: None,
+	};
+
+	let route = present(v01::FundingFrameTarget::App { route: "/card".to_string() });
+	let shown = present(page.clone());
+
+	assert_eq!(
+		(
+			route.map(|_| ()),
+			shown.map(|_| ()),
+			platform.framed.lock().expect("framed mutex poisoned").clone(),
+		),
+		(
+			Err(CallError::Domain(
+				truapi::versioned::funding_provider::HostFundingPresentFrameError::V1(
+					v01::HostFundingPresentFrameError::NoApp
+				)
+			)),
+			Ok(()),
+			vec![page],
+		)
+	);
+}
+
+// Only the assigned provider's worker may serve or report on a session.
+#[test]
+fn only_the_assigned_provider_worker_reports() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&offer_test_quote(&services, &intent, "ramp.dot")
+		))
+		.expect("selected")
+	);
+	let app = funding_host(&services, "ramp.dot", true);
+	let other = provider_worker(&services, "other.dot");
+
+	assert!(matches!(
+		(
+			report_funding(
+				&app,
+				&intent,
+				v01::FundingUpdate::In(v01::FundingInboundUpdate::AwaitingPayment)
+			),
+			report_funding(
+				&other,
+				&intent,
+				v01::FundingUpdate::In(v01::FundingInboundUpdate::AwaitingPayment)
+			),
+		),
+		(
+			Err(CallError::Denied),
+			Err(CallError::Domain(
+				truapi::versioned::funding_provider::HostFundingReportError::V1(
+					v01::HostFundingReportError::NotFound
+				)
+			)),
+		)
+	));
+}
+
+// A session goes only to a funding provider the core knows of, on a quote it
+// offered. Its routes do not narrow the choice: one whose manifest declares
+// only inbound card can be handed a withdrawal it quoted, since the quote was
+// asked in that direction.
+#[test]
+fn a_session_is_handed_only_to_a_known_funding_provider() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let card_in_only = RAMP_MANIFEST
+		.replace(r#",{"mode":"CRYPTO","directions":["In","Out"],"assets":["USDT"]}"#, "");
+	offer_provider(&services, "ramp.dot", &card_in_only);
+	let open = |direction| {
+		futures::executor::block_on(services.open_funding(None, new_intent(), direction, None))
+			.expect("opened")
+			.intent
+	};
+	let (inbound, outbound) = (open(v01::FundingDirection::In), open(v01::FundingDirection::Out));
+	let select = |intent: &str, provider: &str| {
+		futures::executor::block_on(services.select_funding_provider(
+			intent,
+			&ProductId::for_test(provider),
+			&offer_test_quote(&services, intent, provider),
+		))
+		.is_ok()
+	};
+
+	assert_eq!(
+		(
+			select(&inbound, "unknown.dot"),
+			select(&outbound, "ramp.dot"),
+			select(&inbound, "ramp.dot"),
+		),
+		(false, true, true)
+	);
+}
+
+/// Answer every quote ask `provider_id`'s workers receive with `quote`,
+/// on a thread of its own, as the provider's worker would.
+fn answer_quotes(
+	services: &Arc<RuntimeServices>,
+	provider_id: &str,
+	quote: v01::FundingQuote,
+) -> Arc<Mutex<usize>> {
+	answer_asks(services, provider_id, v01::FundingQuoteAnswer::Quoted { quote })
+}
+
+/// Ask for quotes for `ask` in session `intent`, each provider given
+/// `deadline` and no new round during a test, and wait until every provider
+/// answered: the rows the host was then shown.
+fn answered_quotes(
+	services: &Arc<RuntimeServices>,
+	intent: &str,
+	ask: v01::FundingQuoteAsk,
+	deadline: Duration,
+) -> Vec<crate::platform::FundingQuoteRow> {
+	services.request_funding_quotes_within(intent, ask, deadline, Duration::from_secs(600));
+	shown_when(services, intent, |rows| {
+		!rows.is_empty() &&
+			rows.iter().all(|row| row.state != crate::platform::FundingQuoteState::Pending)
+	})
+}
+
+/// The rows session `intent`'s host is shown, once `ready` holds of them.
+fn shown_when(
+	services: &Arc<RuntimeServices>,
+	intent: &str,
+	ready: impl Fn(&[crate::platform::FundingQuoteRow]) -> bool,
+) -> Vec<crate::platform::FundingQuoteRow> {
+	let shown = || services.funding_quotes().shown(intent).filter(|rows| ready(rows));
+	assert!(eventually(10, || shown().is_some()), "quotes never shown as expected");
+	shown().expect("shown")
+}
+
+/// Connect a worker for `provider_id` that answers every quote ask with
+/// `answer`, and count the asks.
+fn answer_asks(
+	services: &Arc<RuntimeServices>,
+	provider_id: &str,
+	answer: v01::FundingQuoteAnswer,
+) -> Arc<Mutex<usize>> {
+	let link = Arc::new(ScriptedProviderLink::default());
+	*link.quote_answer.lock().expect("answer mutex poisoned") = Some(answer);
+	services.funding().link(&ProductId::for_test(provider_id), link.clone());
+	services.funding().connected(&ProductId::for_test(provider_id));
+	link.quotes.clone()
+}
+
+fn card_quote(quote_id: &str) -> v01::FundingQuote {
+	v01::FundingQuote {
+		quote_id: quote_id.to_string(),
+		send_amount: 1_020,
+		receive_amount: 1_000,
+		provider_fee: 15,
+		network_fee: 5,
+		eta_secs: Some(60),
+		expires_at: None,
+		asset_decimals: 2,
+	}
+}
+
+fn card_ask(country: Option<&str>) -> v01::FundingQuoteAsk {
+	v01::FundingQuoteAsk {
+		direction: v01::FundingDirection::In,
+		rail: v01::FundingRail::Card,
+		asset: "EUR".to_string(),
+		network: None,
+		amount: 1_000,
+		country: country.map(str::to_string),
+	}
+}
+
+// Each provider's row resolves on its own: a provider that answers is
+// quoted, one that stays silent becomes unavailable at the deadline instead
+// of holding the list, and the user can only pick a quote the core offered.
+#[test]
+fn quotes_resolve_row_by_row_and_a_silent_provider_times_out() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	services
+		.set_funding_providers(
+			["ramp.dot", "slow.dot"]
+				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+					product_id: ProductId::for_test(product_id),
+					worker_manifest: Some(RAMP_MANIFEST.to_string()),
+					root_manifest: None,
+					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+				})
+				.to_vec(),
+		)
+		.expect("providers offered");
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+
+	let rows = answered_quotes(&services, &intent, card_ask(None), Duration::from_millis(300));
+	let select = |quote_id| {
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			quote_id,
+		))
+	};
+	let unknown = select("q-never");
+	let chosen = select("q1");
+	let offered_after_assign = services.funding_quotes().offered(
+		&intent,
+		&ProductId::for_test("ramp.dot"),
+		"q1",
+		crate::current_unix_millis(),
+	);
+
+	use crate::platform::{FundingQuoteState, FundingQuoteUnavailable};
+	let state = |provider: &str| {
+		rows.iter().find(|row| row.provider_id == provider).map(|row| row.state.clone())
+	};
+	assert_eq!(
+		(
+			platform
+				.quote_lists(&intent)
+				.first()
+				.map(|list| { list.rows.iter().map(|row| row.state.clone()).collect::<Vec<_>>() }),
+			state("ramp.dot"),
+			state("slow.dot"),
+			unknown.is_err(),
+			chosen,
+			services.funding().get(&intent).and_then(|session| session.choice),
+			offered_after_assign,
+		),
+		(
+			Some(vec![FundingQuoteState::Pending, FundingQuoteState::Pending]),
+			Some(FundingQuoteState::Quoted { quote: card_quote("q1") }),
+			Some(FundingQuoteState::Unavailable { reason: FundingQuoteUnavailable::Timeout }),
+			true,
+			Ok(true),
+			Some(crate::host_logic::funding::FundingChoice {
+				quote: card_quote("q1"),
+				rail: v01::FundingRail::Card,
+				asset: "EUR".into(),
+				network: None,
+			}),
+			None,
+		)
+	);
+}
+
+// Quotes go by the country the host detected until the user picks one, so
+// the first list already fits where the user is.
+#[test]
+fn an_ask_without_a_country_takes_the_detected_one() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::in_country("pt")));
+	services
+		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
+			product_id: ProductId::for_test("ramp.dot"),
+			worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			root_manifest: None,
+			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+		}])
+		.expect("providers offered");
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	let link = Arc::new(ScriptedProviderLink::default());
+	*link.quote_answer.lock().expect("answer mutex poisoned") =
+		Some(v01::FundingQuoteAnswer::Quoted { quote: card_quote("q-1") });
+	services.funding().link(&ProductId::for_test("ramp.dot"), link.clone());
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
+	let quote = |country: Option<&str>| {
+		answered_quotes(&services, &intent, card_ask(country), Duration::from_secs(5))
+	};
+	quote(None);
+	quote(Some("DE"));
+
+	assert_eq!(
+		(
+			link.asks
+				.lock()
+				.expect("asks mutex poisoned")
+				.iter()
+				.map(|ask| ask.country.clone())
+				.collect::<Vec<_>>(),
+			futures::executor::block_on(services.detected_funding_country()),
+		),
+		(vec![Some("PT".to_string()), Some("DE".to_string())], Some("PT".to_string()))
+	);
+}
+
+// The host's list marks the best quote and is asked for again each round
+// while the user has not chosen, each row keeping its answer meanwhile;
+// once they have, it stops.
+#[test]
+fn the_quote_list_marks_the_best_and_refreshes_until_a_provider_is_chosen() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	services
+		.set_funding_providers(
+			["ramp.dot", "cheap.dot"]
+				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+					product_id: ProductId::for_test(product_id),
+					worker_manifest: Some(RAMP_MANIFEST.to_string()),
+					root_manifest: None,
+					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+				})
+				.to_vec(),
+		)
+		.expect("providers offered");
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	answer_quotes(
+		&services,
+		"cheap.dot",
+		v01::FundingQuote { send_amount: 1_010, ..card_quote("q2") },
+	);
+	use crate::platform::FundingQuoteState;
+	services.request_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(5),
+		Duration::from_millis(300),
+	);
+	let rounds = || {
+		let mut lists = platform.quote_lists(&intent);
+		lists.dedup_by_key(|list| list.refresh_at_ms);
+		lists
+	};
+	assert!(eventually(5, || rounds().len() >= 3), "three rounds");
+	let lists = platform.quote_lists(&intent);
+	let resolved = |list: &&crate::platform::FundingQuoteList| {
+		list.rows.iter().all(|row| row.state != FundingQuoteState::Pending)
+	};
+	let first = lists.iter().find(resolved).expect("first round answered").clone();
+	let second = rounds()[1].clone();
+	futures::executor::block_on(services.select_funding_provider(
+		&intent,
+		&ProductId::for_test("cheap.dot"),
+		"q2",
+	))
+	.expect("chosen");
+	// A list already on its way when the user chose may still land.
+	std::thread::sleep(Duration::from_millis(100));
+	let chosen = platform.quote_lists(&intent).len();
+	std::thread::sleep(Duration::from_secs(1));
+
+	assert_eq!(
+		(
+			lists[0].rows.iter().map(|row| row.provider_id.as_str()).collect::<Vec<_>>(),
+			first.best.as_ref().map(ProductId::as_str),
+			resolved(&&second),
+			second.best.as_ref().map(ProductId::as_str),
+			second.refresh_at_ms > first.refresh_at_ms,
+			platform.quote_lists(&intent).len() - chosen,
+		),
+		(vec!["ramp.dot", "cheap.dot"], Some("cheap.dot"), true, Some("cheap.dot"), true, 0)
+	);
+}
+
+// A manifest read whose task is dropped before it ends, as when the runtime
+// shuts its tasks down, must not leave the provider marked as being read, or
+// no later refresh would read it again.
+#[test]
+fn a_dropped_manifest_read_lets_the_next_refresh_read_again() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_with(
+		stub_platform(),
+		&crate::store::open_memory_core_db(),
+		tasks.spawner(),
+	);
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let reading = tasks.take();
+	services.refresh_funding_providers();
+	let while_reading = tasks.take().len();
+	drop(reading);
+	services.refresh_funding_providers();
+	let after_drop = tasks.take().len();
+
+	// Each refresh also loads what earlier quotes showed: one task more.
+	assert_eq!((while_reading, after_drop), (1, 2));
+}
+
+// A provider the host lists after the overlay asked, or one dotNS answers
+// for meanwhile, is asked at once rather than at the next round, so it shows
+// while the user is still choosing.
+#[test]
+fn a_provider_listed_while_quotes_are_watched_is_asked_at_once() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	services.request_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(5),
+		Duration::from_secs(600),
+	);
+	assert!(
+		eventually(5, || services
+			.funding_quotes()
+			.shown(&intent)
+			.is_some_and(|rows| rows.is_empty())),
+		"no provider listed yet"
+	);
+	services
+		.set_funding_providers(vec![crate::host_logic::funding_providers::FundingProviderEntry {
+			product_id: ProductId::for_test("ramp.dot"),
+			worker_manifest: Some(RAMP_MANIFEST.to_string()),
+			root_manifest: None,
+			origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+		}])
+		.expect("providers offered");
+
+	let rows = shown_when(&services, &intent, |rows| {
+		rows.iter()
+			.any(|row| matches!(row.state, crate::platform::FundingQuoteState::Quoted { .. }))
+	});
+
+	assert_eq!(
+		rows.iter().map(|row| row.provider_id.as_str()).collect::<Vec<_>>(),
+		vec!["ramp.dot"]
+	);
+}
+
+// Each request's lists carry its id, and a request the host replaced stops
+// at once, mid round too: a late answer for an amount the user already
+// changed never reaches the host.
+#[test]
+fn a_replaced_quote_request_stops_mid_round() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.expect("opened")
+	.intent;
+	let request = || {
+		services.request_funding_quotes_within(
+			&intent,
+			card_ask(None),
+			Duration::from_secs(5),
+			Duration::from_secs(60),
+		)
+	};
+	let first_id = request();
+	assert!(eventually(5, || !platform.quote_lists(&intent).is_empty()), "first list");
+
+	let second_id = request();
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	shown_when(&services, &intent, |rows| {
+		rows.iter()
+			.any(|row| matches!(row.state, crate::platform::FundingQuoteState::Quoted { .. }))
+	});
+	let ids: Vec<u64> = platform.quote_lists(&intent).iter().map(|list| list.request_id).collect();
+
+	assert_eq!(
+		(second_id > first_id, ids.iter().filter(|id| **id == first_id).count(), ids.last()),
+		(true, 1, Some(&second_id))
+	);
+}
+
+/// A session open on `ramp.dot`, which quotes `q1`, and `slow.dot`, which
+/// never answers, with `platform` as its overlay and feed.
+fn auto_start_session() -> (Arc<RuntimeServices>, Arc<RecordingFundingPlatform>, String) {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_feed(platform.clone()));
+	assert!(services.funding().install_platform(platform.clone()));
+	services
+		.set_funding_providers(
+			["ramp.dot", "slow.dot"]
+				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+					product_id: ProductId::for_test(product_id),
+					worker_manifest: Some(RAMP_MANIFEST.to_string()),
+					root_manifest: None,
+					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+				})
+				.to_vec(),
+		)
+		.expect("providers offered");
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	(services, platform, intent)
+}
+
+/// Ask `services` for card quotes in session `intent`, a silent provider
+/// timing out after `deadline`. Returns the request id.
+fn request_card_quotes(services: &Arc<RuntimeServices>, intent: &str, deadline: Duration) -> u64 {
+	services.request_funding_quotes_within(
+		intent,
+		card_ask(None),
+		deadline,
+		Duration::from_secs(600),
+	)
+}
+
+/// Wait until every provider answered session `intent`'s request.
+fn all_answered(services: &Arc<RuntimeServices>, intent: &str) {
+	shown_when(services, intent, |rows| {
+		!rows.is_empty() &&
+			rows.iter().all(|row| row.state != crate::platform::FundingQuoteState::Pending)
+	});
+}
+
+/// The provider session `intent` was handed to.
+fn started_with(services: &Arc<RuntimeServices>, intent: &str) -> Option<ProductId> {
+	services.funding().get(intent).and_then(|session| session.provider_id)
+}
+
+// A user who continues before every quote is in starts on the best one once
+// the last provider answered, not before; an armed request that already
+// answered starts at once.
+#[test]
+fn a_session_starts_on_the_best_quote_once_every_row_answered() {
+	let (services, _, intent) = auto_start_session();
+	let request = request_card_quotes(&services, &intent, Duration::from_secs(1));
+	services.start_funding_when_quoted(&intent, request + 1);
+	services.start_funding_when_quoted(&intent, request);
+	shown_when(&services, &intent, |rows| {
+		rows.iter()
+			.any(|row| matches!(row.state, crate::platform::FundingQuoteState::Quoted { .. }))
+	});
+	let while_one_pending = started_with(&services, &intent);
+	let started = eventually(5, || started_with(&services, &intent).is_some());
+
+	let (quoted, _, quoted_intent) = auto_start_session();
+	let request = request_card_quotes(&quoted, &quoted_intent, Duration::from_millis(100));
+	all_answered(&quoted, &quoted_intent);
+	quoted.start_funding_when_quoted(&quoted_intent, request);
+
+	assert_eq!(
+		(
+			while_one_pending,
+			started,
+			services
+				.funding()
+				.get(&intent)
+				.and_then(|session| session.choice)
+				.map(|choice| choice.quote.quote_id),
+			eventually(5, || started_with(&quoted, &quoted_intent).is_some()),
+		),
+		(None, true, Some("q1".to_string()), true)
+	);
+}
+
+// A new ask, a selection, or the user going back disarms the start, so a
+// top-up never starts on its own once the user left the quotes.
+#[test]
+fn a_new_ask_a_selection_or_going_back_disarms_the_start() {
+	let started_after = |disarm: &dyn Fn(&Arc<RuntimeServices>, &str)| {
+		let (services, _, intent) = auto_start_session();
+		let request = request_card_quotes(&services, &intent, Duration::from_millis(300));
+		services.start_funding_when_quoted(&intent, request);
+		disarm(&services, &intent);
+		all_answered(&services, &intent);
+		std::thread::sleep(Duration::from_millis(200));
+		started_with(&services, &intent)
+	};
+	let same_card = crate::host_logic::funding_providers::FundingSelection {
+		rail: v01::FundingRail::Card,
+		asset: Some("EUR".to_string()),
+		network: None,
+		country: None,
+		currency: None,
+	};
+
+	assert_eq!(
+		(
+			started_after(&|services, intent| {
+				request_card_quotes(services, intent, Duration::from_millis(300));
+			}),
+			started_after(&|services, intent| {
+				services.select_funding_options(intent, same_card.clone())
+			}),
+			started_after(&|services, intent| services.cancel_funding_auto_start(intent)),
+		),
+		(None, None, None)
+	);
+}
+
+// A selection naming another route withdraws the quotes of the old one, so
+// its rows stop coming back; one the ask already matches keeps them.
+#[test]
+fn a_selection_on_another_route_withdraws_the_quotes() {
+	let (services, platform, intent) = auto_start_session();
+	request_card_quotes(&services, &intent, Duration::from_millis(100));
+	all_answered(&services, &intent);
+	let select = |rail, asset: &str| {
+		services.select_funding_options(
+			&intent,
+			crate::host_logic::funding_providers::FundingSelection {
+				rail,
+				asset: Some(asset.to_string()),
+				network: None,
+				country: None,
+				currency: None,
+			},
+		);
+		(
+			services.funding_quotes().shown(&intent).is_some(),
+			services.funding_quotes().list(&intent).is_some(),
+			platform.withdrawn.lock().expect("withdrawn mutex poisoned").clone(),
+		)
+	};
+
+	assert_eq!(
+		(select(v01::FundingRail::Card, "EUR"), select(v01::FundingRail::Crypto, "USDC")),
+		((true, true, vec![]), (false, false, vec![intent.clone()]))
+	);
+}
+
+// The host asks why an amount cannot go ahead by session alone: the core
+// reads the direction, the limits and the quote list it holds itself.
+#[test]
+fn an_amount_issue_is_read_by_session() {
+	let (services, _, intent) = auto_start_session();
+	let floor = crate::host_logic::funding_providers::FUNDING_MIN_AMOUNT;
+	assert_eq!(
+		(
+			services.funding_amount_issue(&intent, floor - 1, None),
+			services.funding_amount_issue(&intent, floor, None),
+			services.funding_amount_issue("fs_unknown", 1, None),
+		),
+		(Some(crate::platform::FundingAmountIssue::BelowMinimum { min: floor }), None, None)
+	);
+}
+
+// A selection is compared with the ask it would make, so reporting the
+// same card selection again with a network keeps the running request, and a
+// currency that changes the resolved fiat asset withdraws it.
+#[test]
+fn a_reselection_is_compared_as_the_ask_it_makes() {
+	let (services, platform, intent) = auto_start_session();
+	request_card_quotes(&services, &intent, Duration::from_millis(100));
+	let card = |asset: Option<&str>, network: Option<&str>| {
+		crate::host_logic::funding_providers::FundingSelection {
+			rail: v01::FundingRail::Card,
+			asset: asset.map(str::to_string),
+			network: network.map(str::to_string),
+			country: None,
+			currency: None,
+		}
+	};
+	let running =
+		|services: &Arc<RuntimeServices>| services.funding_quotes().asked(&intent).is_some();
+	services.select_funding_options(&intent, card(Some("EUR"), Some("polkadot")));
+	let with_network = running(&services);
+	services.select_funding_options(&intent, card(Some("USD"), None));
+	let other_asset = running(&services);
+
+	assert_eq!(
+		(
+			with_network,
+			other_asset,
+			platform.withdrawn.lock().expect("withdrawn mutex poisoned").len()
+		),
+		(true, false, 1)
+	);
+}
+
+// The host asks for an amount only: the core builds the ask from the user's
+// selection, an unchanged ask keeps its running request, and a new one
+// replaces the list the old one left, so the list read back is always the
+// current request's.
+#[test]
+fn quotes_are_asked_from_the_selection_and_only_the_current_list_is_read() {
+	let services = funding_services();
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	let (answer, answered) = futures::channel::oneshot::channel();
+	let platform = GatedFundingPlatform::new(&services, Some(answered));
+	assert!(services.funding().install_feed(platform.clone()));
+	assert!(services.funding().install_platform(platform.clone()));
+	let opening = std::thread::spawn({
+		let services = services.clone();
+		move || {
+			futures::executor::block_on(services.open_funding(
+				None,
+				new_intent(),
+				v01::FundingDirection::In,
+				Some(1_000),
+			))
+		}
+	});
+	let pushes = || platform.options.lock().expect("options mutex poisoned").clone();
+	wait_until(|| !pushes().is_empty(), "options before the overlay");
+	let intent = pushes()[0].0.clone();
+	let unselected = services.request_selected_quotes(&intent, 1_000);
+	services.select_funding_options(
+		&intent,
+		crate::host_logic::funding_providers::FundingSelection {
+			rail: v01::FundingRail::Card,
+			asset: Some("EUR".to_string()),
+			network: Some("polkadot".to_string()),
+			country: Some("DE".to_string()),
+			currency: None,
+		},
+	);
+	let zero = services.request_selected_quotes(&intent, 0);
+	let first = services.request_selected_quotes(&intent, 1_000).expect("asked");
+	let asked = services.funding_quotes().asked(&intent);
+	let unchanged = services.request_selected_quotes(&intent, 1_000);
+	shown_when(&services, &intent, |rows| {
+		rows.iter()
+			.any(|row| matches!(row.state, crate::platform::FundingQuoteState::Quoted { .. }))
+	});
+	let listed = services.funding_quotes().list(&intent).map(|list| list.request_id);
+	let second = services.request_selected_quotes(&intent, 2_000).expect("asked");
+	let after = services.funding_quotes().list(&intent).map(|list| list.request_id);
+	answer
+		.send(crate::platform::FundingPresentOutcome::Dismissed)
+		.expect("overlay waiting");
+	let _ = opening.join().expect("opening thread");
+
+	assert_eq!(
+		(unselected, zero, asked, unchanged, listed, second != first, after != Some(first)),
+		(
+			None,
+			None,
+			Some(v01::FundingQuoteAsk { country: Some("DE".to_string()), ..card_ask(None) }),
+			Some(first),
+			Some(first),
+			true,
+			true,
+		)
+	);
+}
+
+// A list says whether every provider answered.
+#[test]
+fn a_quote_list_is_complete_once_every_row_answered() {
+	let (services, _, intent) = auto_start_session();
+	request_card_quotes(&services, &intent, Duration::from_millis(200));
+	shown_when(&services, &intent, |rows| {
+		rows.iter()
+			.any(|row| matches!(row.state, crate::platform::FundingQuoteState::Quoted { .. }))
+	});
+	let partial = services.funding_quotes().list(&intent).map(|list| list.complete);
+	all_answered(&services, &intent);
+	let full =
+		eventually(5, || services.funding_quotes().list(&intent).is_some_and(|list| list.complete));
+	assert_eq!((partial, full), (Some(false), true));
+}
+
+// The provider is handed the session's amount and the quote together, so a
+// quote priced for another amount would leave it two answers to what the
+// user pays. A session opened without an amount takes the one the user chose.
+#[test]
+fn a_quote_must_price_the_sessions_amount() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	let quoted_session = |amount| {
+		let intent = futures::executor::block_on(services.open_funding(
+			None,
+			new_intent(),
+			v01::FundingDirection::In,
+			amount,
+		))
+		.expect("opened")
+		.intent;
+		answered_quotes(&services, &intent, card_ask(None), Duration::from_secs(5));
+		let selected = futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			"q1",
+		));
+		(selected, services.funding().get(&intent).and_then(|session| session.amount))
+	};
+
+	assert_eq!(
+		(quoted_session(Some(900)), quoted_session(None)),
+		(
+			(
+				Err(crate::host_logic::funding::FundingSessionError::QuoteAmountMismatch {
+					quote_id: "q1".to_string(),
+					priced: 1_000,
+					amount: 900,
+				}),
+				Some(900),
+			),
+			(Ok(true), Some(1_000)),
+		)
+	);
+}
+
+// A host that closes the quote list while a provider is still pricing ends
+// its quotes mid ask. The worker must not stay held for it.
+#[test]
+fn ending_quotes_mid_ask_releases_the_worker() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	let ramp = ProductId::for_test("ramp.dot");
+	services.request_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(60),
+		Duration::from_secs(600),
+	);
+	let mid_ask = eventually(5, || services.worker_ledger.count(&ramp) == 1);
+	let pending = services
+		.funding_quotes()
+		.shown(&intent)
+		.map(|rows| rows.into_iter().map(|row| row.state).collect::<Vec<_>>());
+
+	services.funding_quotes().end(&intent);
+
+	assert_eq!(
+		(pending, mid_ask, eventually(5, || services.worker_ledger.count(&ramp) == 0)),
+		(Some(vec![crate::platform::FundingQuoteState::Pending]), true, true)
+	);
+}
+
+// Once a provider takes the session the others' answers can no longer be
+// used, so the quotes still asked of them end and their workers are let go.
+#[test]
+fn quotes_in_flight_end_once_a_provider_takes_the_session() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let entry = |provider_id: &str| crate::host_logic::funding_providers::FundingProviderEntry {
+		product_id: ProductId::for_test(provider_id),
+		worker_manifest: Some(RAMP_MANIFEST.to_string()),
+		root_manifest: None,
+		origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+		app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+	};
+	services
+		.set_funding_providers(vec![entry("ramp.dot"), entry("other.dot")])
+		.expect("providers offered");
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	let other = ProductId::for_test("other.dot");
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	services.request_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(60),
+		Duration::from_secs(600),
+	);
+	shown_when(&services, &intent, |rows| {
+		rows.iter()
+			.any(|row| matches!(row.state, crate::platform::FundingQuoteState::Quoted { .. }))
+	});
+	let before_taken = services.worker_ledger.count(&other);
+
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			"q1",
+		))
+		.expect("selected")
+	);
+
+	assert_eq!(
+		(before_taken, eventually(5, || services.worker_ledger.count(&other) == 0)),
+		(1, true)
+	);
+}
+
+// Only providers whose routes carry the ask's rail are asked, and what their
+// answers show is kept: one that refuses the user's country is marked
+// unsupported there, and that survives a restart. A provider routing only
+// crypto is not asked for a card quote.
+#[test]
+fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
+	let storage = stub_platform();
+	let start = || {
+		let services = funding_services_over(storage.clone());
+		assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+			crate::platform::FundingPresentOutcome::Started,
+		)));
+		let feed = GatedFundingPlatform::new(&services, None);
+		assert!(services.funding().install_feed(feed.clone()));
+		let germany_only = RAMP_MANIFEST
+			.replace(r#""assets":["EUR"]}"#, r#""assets":["EUR"],"countries":["DE"]}"#);
+		let crypto_only =
+			RAMP_MANIFEST.replace(r#"{"mode":"CARD","directions":["In"],"assets":["EUR"]},"#, "");
+		services
+			.set_funding_providers(vec![
+				crate::host_logic::funding_providers::FundingProviderEntry {
+					product_id: ProductId::for_test("ramp.dot"),
+					worker_manifest: Some(germany_only),
+					root_manifest: None,
+					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+				},
+				crate::host_logic::funding_providers::FundingProviderEntry {
+					product_id: ProductId::for_test("chain.dot"),
+					worker_manifest: Some(crypto_only),
+					root_manifest: None,
+					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+				},
+			])
+			.expect("providers offered");
+		let intent = futures::executor::block_on(services.open_funding(
+			None,
+			new_intent(),
+			v01::FundingDirection::In,
+			Some(1_000),
+		))
+		.expect("opened")
+		.intent;
+		(services, feed, intent)
+	};
+	let first = start();
+	let (services, intent) = (&first.0, &first.2);
+	let refused = answer_asks(
+		services,
+		"ramp.dot",
+		v01::FundingQuoteAnswer::Refused { reason: v01::FundingQuoteRefusal::CountryUnsupported },
+	);
+	let quoted = answer_quotes(services, "chain.dot", card_quote("q1"));
+	answered_quotes(services, intent, card_ask(Some("US")), Duration::from_secs(5));
+	// The candidates the overlay is handed in the session's options.
+	type Started = (Arc<RuntimeServices>, Arc<GatedFundingPlatform>, String);
+	let candidate = |(services, feed, intent): &Started, provider: &str| {
+		services.send_funding_options(intent);
+		let pushed = feed.options.lock().expect("options mutex poisoned").last().cloned();
+		pushed.and_then(|(_, options)| {
+			options
+				.candidates
+				.into_iter()
+				.find(|candidate| candidate.provider_id == provider)
+		})
+	};
+	let serves_card_eur = |started: &Started| {
+		candidate(started, "chain.dot").is_some_and(|candidate| {
+			candidate.routes.iter().any(|route| {
+				route.rail == v01::FundingRail::Card && route.assets.contains(&"EUR".to_string())
+			})
+		})
+	};
+	let us_unsupported = |started: &Started| {
+		candidate(started, "ramp.dot").is_some_and(|candidate| {
+			candidate.unsupported ==
+				vec![crate::host_logic::funding_providers::FundingUnsupported {
+					rail: v01::FundingRail::Card,
+					asset: "EUR".to_string(),
+					country: Some("US".to_string()),
+				}]
+		})
+	};
+	let before_restart = (serves_card_eur(&first), us_unsupported(&first));
+	// What the answers showed is saved in the background, and a restart reads
+	// the saved records only once, so both have to be stored before it.
+	for _ in 0..200 {
+		let stored = futures::executor::block_on(
+			storage.read_core_storage(CoreStorageKey::FundingSupport),
+		)
+		.ok()
+		.flatten()
+		.and_then(|bytes| {
+			<Vec<crate::host_logic::funding_providers::LearnedSupport> as parity_scale_codec::Decode>::decode(
+				&mut bytes.as_slice(),
+			)
+			.ok()
+		});
+		if stored.is_some_and(|records| records.len() == 1) {
+			break;
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
+	let restarted = start();
+	let mut after_restart = (false, false);
+	for _ in 0..200 {
+		after_restart = (serves_card_eur(&restarted), us_unsupported(&restarted));
+		if after_restart.1 {
+			break;
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
+
+	assert_eq!(
+		(
+			*refused.lock().expect("asks mutex poisoned"),
+			*quoted.lock().expect("asks mutex poisoned"),
+			before_restart,
+			after_restart,
+		),
+		(1, 0, (false, true), (false, true))
+	);
+}
+
+// What a provider's answer shows is written alongside what earlier runs
+// stored, never over records the core has not read yet.
+#[test]
+fn learning_before_the_stored_records_load_keeps_them() {
+	use crate::host_logic::funding_providers::LearnedSupport;
+	let storage = stub_platform();
+	let support = |provider_id: &str| LearnedSupport {
+		provider_id: ProductId::for_test(provider_id),
+		direction: v01::FundingDirection::In,
+		rail: v01::FundingRail::Card,
+		asset: "EUR".to_string(),
+		network: None,
+		country: None,
+		asked: 1_000,
+		supported: true,
+		min: None,
+		max: None,
+		learned_at_ms: crate::unix_time::current_unix_millis(),
+	};
+	futures::executor::block_on(storage.write_core_storage(
+		CoreStorageKey::FundingSupport,
+		parity_scale_codec::Encode::encode(&vec![support("earlier.dot")]),
+	))
+	.expect("stored");
+	let services = funding_services_over(storage.clone());
+
+	services.learn_funding_support(support("now.dot"));
+
+	let mut stored = Vec::new();
+	for _ in 0..200 {
+		stored =
+			futures::executor::block_on(storage.read_core_storage(CoreStorageKey::FundingSupport))
+				.ok()
+				.flatten()
+				.and_then(|bytes| {
+					<Vec<LearnedSupport> as parity_scale_codec::Decode>::decode(
+						&mut bytes.as_slice(),
+					)
+					.ok()
+				})
+				.unwrap_or_default()
+				.into_iter()
+				.map(|record| record.provider_id)
+				.collect::<Vec<_>>();
+		if stored.len() == 2 {
+			break;
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
+	stored.sort();
+	assert_eq!(stored, ["earlier.dot", "now.dot"].map(ProductId::for_test));
+}
+
+/// Open an inbound session for `amount` and hand it to `ramp.dot`.
+fn served_session(services: &Arc<RuntimeServices>, amount: u128) -> String {
+	offer_provider(services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(amount),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&offer_test_quote(services, &intent, "ramp.dot")
+		))
+		.expect("selected")
+	);
+	intent
+}
+
+fn crediting(
+	worker: &ProductRuntimeHost,
+	intent: &str,
+	top_up_id: [u8; 32],
+	amount: u128,
+) -> Result<(), CallError<truapi::versioned::funding_provider::HostFundingReportError>> {
+	report_funding(
+		worker,
+		intent,
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::Crediting { top_up_id, amount }),
+	)
+}
+
+fn not_started() -> CallError<truapi::versioned::funding_provider::HostFundingReportError> {
+	CallError::Domain(truapi::versioned::funding_provider::HostFundingReportError::V1(
+		v01::HostFundingReportError::NotStarted,
+	))
+}
+
+// The core settles from the top-ups it saw the provider's worker start, so a
+// worker cannot credit more than it started, or replay a top-up that settled
+// an earlier session.
+#[test]
+fn a_provider_credits_only_what_it_started_for_the_session() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+	let earlier = served_session(&services, 600);
+	let worker = provider_worker(&services, "ramp.dot");
+	fund_top_up(&worker, &earlier, 600).expect("top-up accepted");
+	let inflated = crediting(&worker, &earlier, [7; 32], 1_000);
+	crediting(&worker, &earlier, [7; 32], 600).expect("crediting");
+	report_funding(&worker, &earlier, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
+	let earlier_stage = wait_for_stage(&services, &earlier);
+	let later = served_session(&services, 600);
+
+	assert_eq!(
+		(inflated, earlier_stage, crediting(&worker, &later, [7; 32], 600)),
+		(
+			Err(not_started()),
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 600 }),
+			Err(not_started()),
+		)
+	);
+}
+
+// A user who cancels a bank top-up after sending the transfer still gets the
+// money: the provider's top-up lands on the cancelled session, which opens
+// again and is delivered from the claim like any other.
+#[test]
+fn a_transfer_that_arrives_after_a_cancel_is_still_delivered() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+	let intent = served_session(&services, 500);
+	let worker = provider_worker(&services, "ramp.dot");
+	for _ in 0..2 {
+		futures::executor::block_on(services.cancel_funding(&intent)).expect("cancel");
+	}
+	let cancelled = services.funding().get(&intent).map(|session| session.wire_item());
+
+	fund_top_up(&worker, &intent, 500).expect("top-up accepted");
+	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
+	report_funding(&worker, &intent, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
+
+	assert_eq!(
+		(cancelled, wait_for_stage(&services, &intent)),
+		(
+			Some(v01::HostFundingStatusSubscribeItem::Failed {
+				reason: v01::FundingFailure::Cancelled
+			}),
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 500 }),
+		)
+	);
+}
+
+// A provider cannot settle a session with a top-up that already settled
+// another: starting it again under the same id is refused by the host, and
+// the core keeps no record of it for the later session, whatever amount it
+// asks, so naming it there is refused and nothing settles.
+#[test]
+fn a_settled_top_up_started_again_settles_nothing() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+	let earlier = served_session(&services, 1);
+	let worker = provider_worker(&services, "ramp.dot");
+	fund_top_up(&worker, &earlier, 1).expect("top-up accepted");
+	crediting(&worker, &earlier, [7; 32], 1).expect("crediting");
+	report_funding(&worker, &earlier, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
+	let earlier_stage = wait_for_stage(&services, &earlier);
+	let later = served_session(&services, 1_000);
+
+	let restarted = fund_top_up(&worker, &later, 1_000);
+	let named = crediting(&worker, &later, [7; 32], 1_000);
+
+	assert_eq!(
+		(
+			earlier_stage,
+			restarted,
+			named,
+			services.funding().get(&later).map(|session| session.started),
+			services.funding().get(&later).map(|session| session.is_terminal()),
+		),
+		(
+			Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 1 }),
+			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V2(
+				truapi::latest::HostPaymentTopUpError::AlreadyExists
+			))),
+			Err(not_started()),
+			Some(Vec::new()),
+			Some(false),
+		)
+	);
+}
+
+/// A top-up engine that does not know a top-up on the first read, as one
+/// still catching up would, and reports it claimed after.
+#[derive(Default)]
+struct LateTopUpPlatform {
+	reads: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl crate::platform::TopUpPlatform for LateTopUpPlatform {
+	async fn top_up(
+		&self,
+		_product: &ProductContext,
+		_request: truapi::latest::HostPaymentTopUpRequest,
+	) -> Result<(), truapi::latest::HostPaymentTopUpError> {
+		Ok(())
+	}
+
+	fn subscribe_top_up_status(
+		&self,
+		_product: &ProductContext,
+		_id: crate::Bytes32,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<
+			truapi::latest::HostPaymentTopUpStatusSubscribeItem,
+			truapi::latest::HostPaymentTopUpStatusSubscribeError,
+		>,
+	> {
+		// The first read is the core checking the id is free before the
+		// top-up starts; the second is the first read after it was named.
+		let status = match self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) {
+			0 | 1 => Err(v01::HostPaymentTopUpStatusSubscribeError::TopUpNotFound),
+			_ => Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }),
+		};
+		Box::pin(futures::stream::iter([status]))
+	}
+}
+
+// A top-up the host does not know right after the provider named it may
+// only be slow to appear, so the core reads it again rather than failing a
+// session whose funds are on their way.
+#[test]
+fn a_top_up_unknown_at_first_still_settles_once_claimed() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(Arc::new(LateTopUpPlatform::default())));
+	let intent = served_session(&services, 500);
+	let worker = provider_worker(&services, "ramp.dot");
+	fund_top_up(&worker, &intent, 500).expect("top-up accepted");
+	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
+	report_funding(&worker, &intent, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
+
+	let mut stage = None;
+	for _ in 0..300 {
+		stage = services.funding().ended(&intent);
+		if stage.is_some() {
+			break;
+		}
+		std::thread::sleep(Duration::from_millis(10));
+	}
+
+	assert_eq!(stage, Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 500 }));
+}
+
+// A provider that never answers a cancel would hold the session and keep its
+// worker running; the user asking again ends the session and lets the
+// worker go.
+#[test]
+fn a_second_cancel_ends_the_session_and_releases_the_worker() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = served_session(&services, 500);
+	let cancel = || futures::executor::block_on(services.cancel_funding(&intent)).expect("cancel");
+	let held_count = |count| {
+		eventually(5, || services.worker_ledger.count(&ProductId::for_test("ramp.dot")) == count)
+	};
+	let held = held_count(1);
+
+	let first = cancel();
+	let held_after_first = held_count(1);
+	let second = cancel();
+
+	assert_eq!(
+		(
+			held,
+			first,
+			held_after_first,
+			second,
+			held_count(0),
+			services.funding().get(&intent).map(|session| session.wire_item()),
+		),
+		(
+			true,
+			CancelOutcome::Requested,
+			true,
+			CancelOutcome::Ended,
+			true,
+			Some(v01::HostFundingStatusSubscribeItem::Failed {
+				reason: v01::FundingFailure::Cancelled
+			}),
+		)
+	);
+}
+
+// Once money moved, the user's cancel travels to the provider and back: the
+// provider answers with terms, the user accepts them in the host, the
+// provider hears so, settles and ends the session, and its worker is let go.
+// A second offer that lapses at once is declined on the core's clock, and the
+// provider hears that too.
+#[test]
+fn a_cancel_after_money_moved_is_negotiated_with_the_provider() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let accepted = served_session(&services, 500);
+	let lapsing = served_session(&services, 300);
+	let worker = provider_worker(&services, "ramp.dot");
+	let link = connect_provider(&services, "ramp.dot");
+	link.answer_cancels([
+		v01::FundingCancelAnswer::Offer { fee: 10, refund: 490, expires_at: None },
+		v01::FundingCancelAnswer::Offer { fee: 0, refund: 300, expires_at: Some(1) },
+	]);
+	let assigned = link.calls(2).len();
+	let cancel = |intent: &str| {
+		futures::executor::block_on(services.cancel_funding(intent)).expect("cancel")
+	};
+	let received = v01::FundingUpdate::In(v01::FundingInboundUpdate::PaymentReceived {
+		finalized: true,
+		mismatch: None,
+	});
+	report_funding(&worker, &accepted, received.clone()).expect("received");
+	report_funding(&worker, &lapsing, received).expect("received");
+
+	let asked = cancel(&accepted);
+	let offered = wait_for_session(&services, &accepted, |session| {
+		matches!(session.cancel, Some(FundingCancel::Offered { .. }))
+	})
+	.and_then(|session| session.cancel);
+	let answer = futures::executor::block_on(services.confirm_funding_cancel(
+		&accepted,
+		Some(crate::host_logic::funding::CancelTerms { fee: 10, refund: 490 }),
+	))
+	.expect("confirm");
+	link.calls(4);
+	report_funding(
+		&worker,
+		&accepted,
+		v01::FundingUpdate::Failed { reason: v01::FundingFailure::Cancelled },
+	)
+	.expect("settled");
+
+	cancel(&lapsing);
+	let calls = link.calls(6);
+	let lapsed = wait_for_session(&services, &lapsing, |session| session.cancel.is_none())
+		.map(|session| session.cancel);
+
+	assert_eq!(
+		(
+			assigned,
+			asked,
+			offered,
+			answer,
+			calls[2..].to_vec(),
+			services.funding().get(&accepted).map(|session| session.wire_item()),
+			lapsed,
+			futures::executor::block_on(services.confirm_funding_cancel(&lapsing, None))
+				.expect("confirm"),
+			services.worker_ledger.count(&ProductId::for_test("ramp.dot")),
+		),
+		(
+			2,
+			CancelOutcome::Requested,
+			Some(FundingCancel::Offered { fee: 10, refund: 490, expires_at: None }),
+			CancelConfirmation::Accepted,
+			vec![
+				ProviderCallSeen::Cancel(accepted.clone()),
+				ProviderCallSeen::Settle(
+					accepted.clone(),
+					v01::FundingCancelDecision::Accepted { fee: 10, refund: 490 },
+				),
+				ProviderCallSeen::Cancel(lapsing.clone()),
+				ProviderCallSeen::Settle(lapsing.clone(), v01::FundingCancelDecision::Declined),
+			],
+			Some(v01::HostFundingStatusSubscribeItem::Failed {
+				reason: v01::FundingFailure::Cancelled
+			}),
+			Some(None),
+			CancelConfirmation::NoOffer,
+			1,
+		)
+	);
+}
+
+// Before money moved the provider stops, and the core ends the session. A
+// cancel asked while no worker was connected reaches the worker when it
+// connects, after the session it is about.
+#[test]
+fn a_cancel_waits_for_the_provider_to_connect() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = served_session(&services, 500);
+	let asked = futures::executor::block_on(services.cancel_funding(&intent)).expect("cancel");
+	let link = Arc::new(ScriptedProviderLink::default());
+	link.answer_cancels([v01::FundingCancelAnswer::Stopped]);
+	services.funding().link(&ProductId::for_test("ramp.dot"), link.clone());
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
+
+	let calls = link.calls(2);
+	let ended = wait_for_session(&services, &intent, |session| session.is_terminal())
+		.map(|session| session.wire_item());
+
+	assert_eq!(
+		(
+			asked,
+			calls
+				.into_iter()
+				.map(|call| matches!(call, ProviderCallSeen::Assign(_)))
+				.collect::<Vec<_>>(),
+			ended
+		),
+		(
+			CancelOutcome::Requested,
+			vec![true, false],
+			Some(v01::HostFundingStatusSubscribeItem::Failed {
+				reason: v01::FundingFailure::Cancelled
+			}),
+		)
+	);
+}
+
+/// An overlay in which the user picks `ramp.dot` and then closes without
+/// starting.
+struct SelectThenCloseFundingPlatform {
+	services: std::sync::OnceLock<std::sync::Weak<RuntimeServices>>,
+	db: crate::store::Db,
+	/// Whether the session was stored while the overlay was still up.
+	stored_while_up: Mutex<Option<bool>>,
+}
+
+#[async_trait::async_trait]
+impl crate::platform::FundingPlatform for SelectThenCloseFundingPlatform {
+	async fn present_funding(
+		&self,
+		_product: Option<&ProductContext>,
+		session: crate::platform::FundingPresentation,
+	) -> Result<crate::platform::FundingPresentOutcome, truapi::latest::GenericError> {
+		let services = self.services.get().and_then(std::sync::Weak::upgrade).expect("services");
+		assert!(
+			services
+				.select_funding_provider(
+					&session.intent,
+					&ProductId::for_test("ramp.dot"),
+					&offer_test_quote(&services, &session.intent, "ramp.dot"),
+				)
+				.await
+				.expect("selected")
+		);
+		let stored = super::funding::stored_sessions(&self.db)
+			.await
+			.iter()
+			.any(|stored| stored.intent == session.intent);
+		*self.stored_while_up.lock().expect("stored mutex poisoned") = Some(stored);
+		Ok(crate::platform::FundingPresentOutcome::Dismissed)
+	}
+
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, truapi::latest::GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Closed)
+	}
+
+	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+}
+
+// A provider chosen in the overlay may start work before the overlay closes,
+// so closing it does not drop the session from under the provider: the
+// session is stored from the choice on, runs as started, and the provider is
+// asked to stop.
+#[test]
+fn closing_the_overlay_after_choosing_a_provider_keeps_the_session_and_asks_it_to_stop() {
+	let db = crate::store::open_memory_core_db();
+	let services = funding_services_on(&db, Spawner::for_test());
+	let platform = Arc::new(SelectThenCloseFundingPlatform {
+		services: std::sync::OnceLock::new(),
+		db,
+		stored_while_up: Mutex::new(None),
+	});
+	assert!(platform.services.set(Arc::downgrade(&services)).is_ok());
+	assert!(services.funding().install_platform(platform.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+
+	let opened = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		None,
+	))
+	.map(|session| session.intent);
+	let kept = opened.as_ref().ok().and_then(|intent| services.funding().get(intent));
+
+	assert_eq!(
+		(
+			*platform.stored_while_up.lock().expect("stored mutex poisoned"),
+			kept.as_ref().map(|session| (session.is_terminal(), session.cancel.clone())),
+		),
+		(Some(true), Some((false, Some(FundingCancel::Requested))))
+	);
+}
+
+#[derive(Default)]
+struct RecordingTopUpPlatform {
+	started: Mutex<Vec<(String, truapi::latest::HostPaymentTopUpRequest)>>,
+	followed: Mutex<Vec<(String, [u8; 32])>>,
+}
+
+#[async_trait::async_trait]
+impl crate::platform::TopUpPlatform for RecordingTopUpPlatform {
+	async fn top_up(
+		&self,
+		product: &ProductContext,
+		request: truapi::latest::HostPaymentTopUpRequest,
+	) -> Result<(), truapi::latest::HostPaymentTopUpError> {
+		let mut started = self.started.lock().expect("started mutex poisoned");
+		if started.iter().any(|(_, held)| held.id == request.id) {
+			return Err(truapi::latest::HostPaymentTopUpError::AlreadyExists);
+		}
+		started.push((product.product_id.to_string(), request));
+		Ok(())
+	}
+
+	fn subscribe_top_up_status(
+		&self,
+		product: &ProductContext,
+		id: crate::Bytes32,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<
+			truapi::latest::HostPaymentTopUpStatusSubscribeItem,
+			truapi::latest::HostPaymentTopUpStatusSubscribeError,
+		>,
+	> {
+		let started = self
+			.started
+			.lock()
+			.expect("started mutex poisoned")
+			.iter()
+			.any(|(_, held)| held.id == id);
+		if !started {
+			return Box::pin(futures::stream::iter([Err(
+				v01::HostPaymentTopUpStatusSubscribeError::TopUpNotFound,
+			)]));
+		}
+		self.followed
+			.lock()
+			.expect("followed mutex poisoned")
+			.push((product.product_id.to_string(), id));
+		Box::pin(futures::stream::iter([
+			Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claiming),
+			Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }),
+		]))
+	}
+}
+
+fn top_up(
+	host: &ProductRuntimeHost,
+	amount: u128,
+	source: v01::PaymentTopUpSource,
+) -> Result<
+	truapi::versioned::payment::HostPaymentTopUpResponse,
+	CallError<truapi::versioned::payment::HostPaymentTopUpError>,
+> {
+	futures::executor::block_on(truapi::api::Payment::top_up(
+		host,
+		&CallContext::default(),
+		truapi::versioned::payment::HostPaymentTopUpRequest::V2(
+			truapi::latest::HostPaymentTopUpRequest {
+				into: None,
+				amount,
+				source,
+				id: [7; 32],
+				funding: None,
+			},
+		),
+	))
+}
+
+/// A provider's worker starting a top-up under id `[7; 32]` for funding
+/// session `intent`.
+fn fund_top_up(
+	worker: &ProductRuntimeHost,
+	intent: &str,
+	amount: u128,
+) -> Result<
+	truapi::versioned::payment::HostPaymentTopUpResponse,
+	CallError<truapi::versioned::payment::HostPaymentTopUpError>,
+> {
+	futures::executor::block_on(truapi::api::Payment::top_up(
+		worker,
+		&CallContext::default(),
+		truapi::versioned::payment::HostPaymentTopUpRequest::V2(
+			truapi::latest::HostPaymentTopUpRequest {
+				into: None,
+				amount,
+				source: product_account_source(),
+				id: [7; 32],
+				funding: Some(intent.to_string()),
+			},
+		),
+	))
+}
+
+fn product_account_source() -> v01::PaymentTopUpSource {
+	v01::PaymentTopUpSource::ProductAccount { derivation_index: v01::DerivationIndex::Index(0) }
+}
+
+#[test]
+fn a_top_up_reaches_the_host_engine_scoped_to_its_product() {
+	let services = payment_services();
+	let engine = Arc::new(RecordingTopUpPlatform::default());
+	assert!(services.install_top_up_platform(engine.clone()));
+
+	top_up(&payment_host(&services, "wallet.dot", true), 1_000, product_account_source())
+		.expect("top-up accepted");
+
+	let started = engine.started.lock().expect("started mutex poisoned").clone();
+	let host_id = started[0].1.id;
+	assert_ne!(host_id, [7; 32]);
+	assert_eq!(
+		started.as_slice(),
+		[(
+			"wallet.dot".to_string(),
+			truapi::latest::HostPaymentTopUpRequest {
+				into: None,
+				amount: 1_000,
+				source: product_account_source(),
+				id: host_id,
+				funding: None,
+			},
+		)]
+	);
+}
+
+// A source the host cannot spend is refused in the core rather than handed to
+// the host: a coin source with no coins can never claim anything, and a key
+// that is not a usable sr25519 secret cannot be spent.
+#[test]
+fn a_top_up_from_an_unusable_source_is_refused_before_the_host_sees_it() {
+	let services = payment_services();
+	let engine = Arc::new(RecordingTopUpPlatform::default());
+	assert!(services.install_top_up_platform(engine.clone()));
+	let host = payment_host(&services, "wallet.dot", true);
+	let sources = [
+		v01::PaymentTopUpSource::Coins { sr25519_secret_keys: Vec::new() },
+		v01::PaymentTopUpSource::PrivateKey { sr25519_secret_key: [0xff; 64] },
+		v01::PaymentTopUpSource::Coins { sr25519_secret_keys: vec![[0xff; 64]] },
+	];
+
+	let refused = sources.map(|source| top_up(&host, 1_000, source));
+
+	let invalid = || {
+		Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V2(
+			truapi::latest::HostPaymentTopUpError::InvalidSource,
+		)))
+	};
+	assert_eq!(
+		(refused, engine.started.lock().expect("started mutex poisoned").len()),
+		([invalid(), invalid(), invalid()], 0)
+	);
+}
+
+#[test]
+fn top_up_status_is_forwarded_from_the_host_engine() {
+	let services = payment_services();
+	let engine = Arc::new(RecordingTopUpPlatform::default());
+	assert!(services.install_top_up_platform(engine.clone()));
+	let host = payment_host(&services, "wallet.dot", true);
+	top_up(&host, 1_000, product_account_source()).expect("top-up accepted");
+	let host_id = engine.started.lock().expect("started mutex poisoned")[0].1.id;
+
+	let statuses = futures::executor::block_on(
+		futures::executor::block_on(truapi::api::Payment::top_up_status_subscribe(
+			&host,
+			&CallContext::default(),
+			truapi::versioned::payment::HostPaymentTopUpStatusSubscribeRequest::V1(
+				v01::HostPaymentTopUpStatusSubscribeRequest { id: [7; 32] },
+			),
+		))
+		.collect::<Vec<_>>(),
+	);
+
+	assert_eq!(
+		(statuses, engine.followed.lock().expect("followed mutex poisoned").clone()),
+		(
+			vec![
+				Ok(truapi::versioned::payment::HostPaymentTopUpStatusSubscribeItem::V1(
+					v01::HostPaymentTopUpStatusSubscribeItem::Claiming
+				)),
+				Ok(truapi::versioned::payment::HostPaymentTopUpStatusSubscribeItem::V1(
+					v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true }
+				)),
+			],
+			vec![("wallet.dot".to_string(), host_id)]
+		)
+	);
+}
+
+#[test]
+fn a_top_up_needs_a_session() {
+	let services = payment_services();
+	assert!(services.install_top_up_platform(Arc::new(RecordingTopUpPlatform::default())));
+
+	assert_eq!(
+		top_up(&payment_host(&services, "wallet.dot", false), 1_000, product_account_source()),
+		Err(CallError::Denied)
+	);
+}
+
+#[derive(Default)]
+struct RecordingPaymentPlatform {
+	requested: Mutex<Vec<(String, truapi::latest::HostPaymentRequest)>>,
+	followed: Mutex<Vec<(String, [u8; 32])>>,
+}
+
+#[async_trait::async_trait]
+impl crate::platform::PaymentPlatform for RecordingPaymentPlatform {
+	async fn request_payment(
+		&self,
+		product: &ProductContext,
+		request: truapi::latest::HostPaymentRequest,
+	) -> Result<(), truapi::latest::HostPaymentError> {
+		self.requested
+			.lock()
+			.expect("requested mutex poisoned")
+			.push((product.product_id.to_string(), request));
+		Ok(())
+	}
+
+	fn subscribe_payment_status(
+		&self,
+		product: &ProductContext,
+		id: crate::Bytes32,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<
+			truapi::latest::HostPaymentStatusSubscribeItem,
+			truapi::latest::HostPaymentStatusSubscribeError,
+		>,
+	> {
+		self.followed
+			.lock()
+			.expect("followed mutex poisoned")
+			.push((product.product_id.to_string(), id));
+		Box::pin(futures::stream::iter([
+			Ok(v01::HostPaymentStatusSubscribeItem::Processing),
+			Ok(v01::HostPaymentStatusSubscribeItem::ClaimedPartially { actual_claimed: 600 }),
+		]))
+	}
+}
+
+fn payment_request() -> truapi::latest::HostPaymentRequest {
+	truapi::latest::HostPaymentRequest {
+		from: None,
+		amount: 1_000,
+		destination: [3; 32],
+		id: [9; 32],
+		funding: None,
+	}
+}
+
+fn request_payment(
+	host: &ProductRuntimeHost,
+) -> Result<
+	truapi::versioned::payment::HostPaymentResponse,
+	CallError<truapi::versioned::payment::HostPaymentError>,
+> {
+	futures::executor::block_on(truapi::api::Payment::request(
+		host,
+		&CallContext::default(),
+		truapi::versioned::payment::HostPaymentRequest::V2(payment_request()),
+	))
+}
+
+fn follow_payment(
+	host: &ProductRuntimeHost,
+) -> Vec<
+	Result<
+		truapi::versioned::payment::HostPaymentStatusSubscribeItem,
+		CallError<truapi::versioned::payment::HostPaymentStatusSubscribeError>,
+	>,
+> {
+	futures::executor::block_on(
+		futures::executor::block_on(truapi::api::Payment::status_subscribe(
+			host,
+			&CallContext::default(),
+			truapi::versioned::payment::HostPaymentStatusSubscribeRequest::V1(
+				v01::HostPaymentStatusSubscribeRequest { id: [9; 32] },
+			),
+		))
+		.collect::<Vec<_>>(),
+	)
+}
+
+// The host owns the approval sheet and the transfer; core hands it the
+// request under the id the host sees for it, follows the payment under that
+// same id, and relays the status the host reports, a partial payment included.
+#[test]
+fn a_payment_reaches_the_host_engine_and_its_status_is_relayed() {
+	let services = payment_services();
+	let engine = Arc::new(RecordingPaymentPlatform::default());
+	assert!(services.install_payment_platform(engine.clone()));
+	let host = payment_host(&services, "wallet.dot", true);
+
+	let requested = request_payment(&host);
+	let statuses = follow_payment(&host);
+	let followed = engine.followed.lock().expect("followed mutex poisoned").clone();
+	let host_id = followed[0].1;
+	assert_ne!(host_id, payment_request().id);
+	assert_eq!(
+		(
+			requested,
+			statuses,
+			engine.requested.lock().expect("requested mutex poisoned").clone(),
+			followed,
+		),
+		(
+			Ok(truapi::versioned::payment::HostPaymentResponse::V2),
+			vec![
+				Ok(truapi::versioned::payment::HostPaymentStatusSubscribeItem::V1(
+					v01::HostPaymentStatusSubscribeItem::Processing
+				)),
+				Ok(truapi::versioned::payment::HostPaymentStatusSubscribeItem::V1(
+					v01::HostPaymentStatusSubscribeItem::ClaimedPartially { actual_claimed: 600 }
+				)),
+			],
+			vec![(
+				"wallet.dot".to_string(),
+				truapi::latest::HostPaymentRequest { id: host_id, ..payment_request() }
+			)],
+			vec![("wallet.dot".to_string(), host_id)],
+		)
+	);
+}
+
+// A host cannot mix up two products' payments, even when both chose the
+// same id: each reaches the host under its own.
+#[test]
+fn two_products_naming_one_id_reach_the_host_under_different_ids() {
+	let services = payment_services();
+	let engine = Arc::new(RecordingPaymentPlatform::default());
+	assert!(services.install_payment_platform(engine.clone()));
+	follow_payment(&payment_host(&services, "wallet.dot", true));
+	follow_payment(&payment_host(&services, "shop.dot", true));
+
+	let followed = engine.followed.lock().expect("followed mutex poisoned").clone();
+	assert_ne!(followed[0].1, followed[1].1);
+}
+
+// Payments move the user's balance, so a product without a session cannot
+// reach the host's payments.
+#[test]
+fn no_product_pays_or_follows_payments_without_a_session() {
+	let services = payment_services();
+	let engine = Arc::new(RecordingPaymentPlatform::default());
+	assert!(services.install_payment_platform(engine.clone()));
+	let signed_out = payment_host(&services, "wallet.dot", false);
+
+	assert_eq!(
+		(
+			request_payment(&signed_out),
+			follow_payment(&signed_out),
+			engine.requested.lock().expect("requested mutex poisoned").len(),
+			engine.followed.lock().expect("followed mutex poisoned").len(),
+		),
+		(Err(CallError::Denied), vec![Err(CallError::Denied)], 0, 0)
+	);
+}
+
+/// A balance view sharing one balance with every product but `private.dot`,
+/// and the products it was asked for.
+#[derive(Default)]
+struct RecordingBalancePlatform {
+	asked: Mutex<Vec<(String, Option<u32>)>>,
+}
+
+impl crate::platform::BalancePlatform for RecordingBalancePlatform {
+	fn subscribe_balance(
+		&self,
+		product: &crate::platform::ProductContext,
+		purse: Option<u32>,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<v01::HostPaymentBalanceSubscribeItem, v01::HostPaymentBalanceSubscribeError>,
+	> {
+		self.asked
+			.lock()
+			.expect("asked mutex poisoned")
+			.push((product.product_id.to_string(), purse));
+		let shared = if product.product_id.as_str() == "private.dot" {
+			Err(v01::HostPaymentBalanceSubscribeError::PermissionDenied)
+		} else {
+			Ok(v01::HostPaymentBalanceSubscribeItem { available: 4_000_000 })
+		};
+		futures::stream::iter([shared]).boxed()
+	}
+}
+
+fn first_balance(
+	host: &ProductRuntimeHost,
+) -> Option<
+	Result<
+		v01::HostPaymentBalanceSubscribeItem,
+		CallError<truapi::versioned::payment::HostPaymentBalanceSubscribeError>,
+	>,
+> {
+	futures::executor::block_on(
+		futures::executor::block_on(truapi::api::Payment::balance_subscribe(
+			host,
+			&CallContext::default(),
+			truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(
+				v01::HostPaymentBalanceSubscribeRequest { purse: None },
+			),
+		))
+		.next(),
+	)
+	.map(|item| {
+		item.map(|truapi::versioned::payment::HostPaymentBalanceSubscribeItem::V1(item)| item)
+	})
+}
+
+// A product sees the balance the host shares with it, the host can refuse
+// one product, a product without a session is refused before the host is
+// asked, and a host with no balance view answers Unsupported.
+#[test]
+fn the_balance_comes_from_the_host_for_each_product() {
+	let services = payment_services();
+	let unsupported = first_balance(&payment_host(&services, "wallet.dot", true));
+	let platform = Arc::new(RecordingBalancePlatform::default());
+	assert!(services.install_balance_platform(platform.clone()));
+	let shared = first_balance(&payment_host(&services, "wallet.dot", true));
+	let refused = first_balance(&payment_host(&services, "private.dot", true));
+	let no_session = first_balance(&payment_host(&services, "wallet.dot", false));
+
+	let denied = |error| {
+		CallError::Domain(truapi::versioned::payment::HostPaymentBalanceSubscribeError::V1(error))
+	};
+	assert_eq!(
+		(
+			unsupported,
+			shared,
+			refused,
+			no_session,
+			platform.asked.lock().expect("asked mutex poisoned").clone()
+		),
+		(
+			Some(Err(CallError::Unsupported)),
+			Some(Ok(v01::HostPaymentBalanceSubscribeItem { available: 4_000_000 })),
+			Some(Err(denied(v01::HostPaymentBalanceSubscribeError::PermissionDenied))),
+			Some(Err(CallError::Denied)),
+			vec![("wallet.dot".to_string(), None), ("private.dot".to_string(), None)],
+		)
+	);
+}
+
+// A product sees the balance only once the user lets it: a refusal answers
+// PermissionDenied, and the host's balance view is never asked.
+#[test]
+fn the_balance_needs_the_users_permission_before_the_host_is_asked() {
+	let platform = Arc::new(crate::test_support::StubPlatform {
+		remote_permission_denied: true,
+		..Default::default()
+	});
+	let services = payment_services_over(platform.clone());
+	let balance = Arc::new(RecordingBalancePlatform::default());
+	assert!(services.install_balance_platform(balance.clone()));
+
+	let refused = first_balance(&payment_host(&services, "wallet.dot", true));
+
+	assert_eq!(
+		(
+			refused,
+			balance.asked.lock().expect("asked mutex poisoned").len(),
+			platform
+				.remote_permission_requests
+				.lock()
+				.expect("requests mutex poisoned")
+				.clone(),
+		),
+		(
+			Some(Err(CallError::Domain(
+				truapi::versioned::payment::HostPaymentBalanceSubscribeError::V1(
+					v01::HostPaymentBalanceSubscribeError::PermissionDenied,
+				),
+			))),
+			0,
+			vec![v01::RemotePermissionRequest { permission: v01::RemotePermission::BalanceAccess }],
+		)
+	);
+}
+
+/// A balance view whose pushes the test drives.
+struct PushedBalancePlatform(
+	Mutex<
+		Option<
+			futures::channel::mpsc::UnboundedReceiver<
+				Result<v01::HostPaymentBalanceSubscribeItem, v01::HostPaymentBalanceSubscribeError>,
+			>,
+		>,
+	>,
+);
+
+impl crate::platform::BalancePlatform for PushedBalancePlatform {
+	fn subscribe_balance(
+		&self,
+		_product: &crate::platform::ProductContext,
+		_purse: Option<u32>,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<v01::HostPaymentBalanceSubscribeItem, v01::HostPaymentBalanceSubscribeError>,
+	> {
+		self.0
+			.lock()
+			.expect("pushes mutex poisoned")
+			.take()
+			.expect("one subscription")
+			.boxed()
+	}
+}
+
+// A host pushes a purse's balance to every product following it, so the core
+// checks the product's balance access again before each push: once the user
+// revokes it, the stream ends with PermissionDenied and later balances never
+// reach the product.
+#[test]
+fn a_revoked_balance_access_ends_the_balance_stream() {
+	let services = payment_services();
+	let (push, pushes) = futures::channel::mpsc::unbounded();
+	assert!(
+		services
+			.install_balance_platform(Arc::new(PushedBalancePlatform(Mutex::new(Some(pushes)))))
+	);
+	let host = payment_host(&services, "wallet.dot", true);
+	let balance_access = || {
+		PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
+			permission: v01::RemotePermission::BalanceAccess,
+		})
+	};
+	futures::executor::block_on(host.connection.set_permission_authorization_status(
+		balance_access(),
+		PermissionAuthorizationStatus::Authorized,
+	))
+	.expect("grant stored");
+	let mut balances = futures::executor::block_on(truapi::api::Payment::balance_subscribe(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(
+			v01::HostPaymentBalanceSubscribeRequest { purse: None },
+		),
+	));
+	let mut next = || {
+		futures::executor::block_on(balances.next()).map(|item| {
+			item.map(|truapi::versioned::payment::HostPaymentBalanceSubscribeItem::V1(item)| {
+				item.available
+			})
+		})
+	};
+
+	push.unbounded_send(Ok(v01::HostPaymentBalanceSubscribeItem { available: 7 }))
+		.expect("pushed");
+	let while_granted = next();
+	futures::executor::block_on(host.connection.set_permission_authorization_status(
+		balance_access(),
+		PermissionAuthorizationStatus::Denied,
+	))
+	.expect("revocation stored");
+	push.unbounded_send(Ok(v01::HostPaymentBalanceSubscribeItem { available: 8 }))
+		.expect("pushed");
+	push.unbounded_send(Ok(v01::HostPaymentBalanceSubscribeItem { available: 9 }))
+		.expect("pushed");
+	let after_revoking = next();
+	let after_the_end = next();
+
+	assert_eq!(
+		(while_granted, after_revoking, after_the_end),
+		(
+			Some(Ok(7)),
+			Some(Err(CallError::Domain(
+				truapi::versioned::payment::HostPaymentBalanceSubscribeError::V1(
+					v01::HostPaymentBalanceSubscribeError::PermissionDenied,
+				),
+			))),
+			None,
+		)
+	);
+}
+
+/// A payment engine whose user never has enough.
+struct ShortPaymentPlatform;
+
+#[async_trait::async_trait]
+impl crate::platform::PaymentPlatform for ShortPaymentPlatform {
+	async fn request_payment(
+		&self,
+		_product: &ProductContext,
+		_request: truapi::latest::HostPaymentRequest,
+	) -> Result<(), truapi::latest::HostPaymentError> {
+		Err(truapi::latest::HostPaymentError::InsufficientBalance)
+	}
+
+	fn subscribe_payment_status(
+		&self,
+		_product: &ProductContext,
+		_id: crate::Bytes32,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<
+			truapi::latest::HostPaymentStatusSubscribeItem,
+			truapi::latest::HostPaymentStatusSubscribeError,
+		>,
+	> {
+		Box::pin(futures::stream::empty())
+	}
+}
+
+// A short balance is the balance's business: a product that may not see the
+// balance learns only that the payment was refused, and asking does not
+// prompt the user.
+#[test]
+fn a_short_balance_reads_as_a_refusal_unless_the_product_may_see_it() {
+	let platform = Arc::new(crate::test_support::StubPlatform::default());
+	let services = payment_services_over(platform.clone());
+	assert!(services.install_payment_platform(Arc::new(ShortPaymentPlatform)));
+	let host = payment_host(&services, "wallet.dot", true);
+
+	let without_access = request_payment(&host);
+	futures::executor::block_on(host.connection.set_permission_authorization_status(
+		PermissionAuthorizationRequest::Remote(v01::RemotePermissionRequest {
+			permission: v01::RemotePermission::BalanceAccess,
+		}),
+		PermissionAuthorizationStatus::Authorized,
+	))
+	.expect("grant stored");
+	let with_access = request_payment(&host);
+
+	let refused =
+		|error| CallError::Domain(truapi::versioned::payment::HostPaymentError::V2(error));
+	assert_eq!(
+		(
+			without_access,
+			with_access,
+			platform
+				.remote_permission_requests
+				.lock()
+				.expect("requests mutex poisoned")
+				.len(),
+		),
+		(
+			Err(refused(truapi::latest::HostPaymentError::Rejected)),
+			Err(refused(truapi::latest::HostPaymentError::InsufficientBalance)),
+			0,
+		)
+	);
+}
+
+// Nothing to claim is not a top-up: the host never sees it.
+#[test]
+fn a_top_up_of_nothing_is_refused_before_the_host_sees_it() {
+	let services = payment_services();
+	let engine = Arc::new(RecordingTopUpPlatform::default());
+	assert!(services.install_top_up_platform(engine.clone()));
+
+	let refused = top_up(&payment_host(&services, "wallet.dot", true), 0, product_account_source());
+
+	assert_eq!(
+		(refused, engine.started.lock().expect("started mutex poisoned").len()),
+		(
+			Err(CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V2(
+				truapi::latest::HostPaymentTopUpError::InvalidAmount,
+			))),
+			0,
+		)
+	);
+}
+
+// Paying nothing is not a payment: the user is never asked to approve it.
+#[test]
+fn a_payment_of_nothing_is_refused_before_the_host_sees_it() {
+	let services = payment_services();
+	let engine = Arc::new(RecordingPaymentPlatform::default());
+	assert!(services.install_payment_platform(engine.clone()));
+	let host = payment_host(&services, "wallet.dot", true);
+
+	let refused = futures::executor::block_on(truapi::api::Payment::request(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::payment::HostPaymentRequest::V2(truapi::latest::HostPaymentRequest {
+			amount: 0,
+			..payment_request()
+		}),
+	));
+
+	assert_eq!(
+		(refused, engine.requested.lock().expect("requested mutex poisoned").len()),
+		(
+			Err(CallError::Domain(truapi::versioned::payment::HostPaymentError::V2(
+				truapi::latest::HostPaymentError::InvalidAmount,
+			))),
+			0,
+		)
+	);
+}
+
+#[test]
+fn a_docked_card_is_screened_like_a_posted_custom_message() {
+	let (host_config, _) = runtime_config("chat.dot");
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("chat.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let platform: Arc<dyn Platform> = stub_platform();
+	let services = RuntimeServices::new(
+		platform.clone(),
+		host_config.host.host_info.clone(),
+		host_config.stack.clone(),
+		Spawner::for_test(),
+	);
+	let chat_platform = Arc::new(RecordingChatPlatform::default());
+	let pairing_host = PairingHost::new(services.clone(), host_config);
+	let mut adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+	adapters.chat_platform = Some(chat_platform.clone());
+	let host = ProductRuntimeHost::from_services(
+		services,
+		adapters,
+		pairing_host.clone(),
+		pairing_host.session().clone(),
+		product,
+	);
+	install_pairing_session(&host, session_info());
+	futures::executor::block_on(Chat::create_room(
+		&host,
+		&CallContext::default(),
+		HostChatCreateRoomRequest::V1(v01::HostChatCreateRoomRequest {
+			room_id: "room".to_string(),
+			name: "Room".to_string(),
+			icon: String::new(),
+		}),
+	))
+	.expect("create_room accepts the room");
+	let dock = |message_type: &str, payload: Vec<u8>| {
+		futures::executor::block_on(Chat::set_room_footer(
+			&host,
+			&CallContext::default(),
+			HostChatSetRoomFooterRequest::V2(v02::HostChatSetRoomFooterRequest {
+				room_id: "room".to_string(),
+				footer: v02::ChatRoomFooter::Card(v01::ChatCustomMessage {
+					message_type: message_type.to_string(),
+					payload,
+				}),
+			}),
+		))
+	};
+
+	// When
+	let oversized = dock("register", vec![0; crate::platform::CHAT_CUSTOM_PAYLOAD_MAX_BYTES + 1]);
+	dock(" register ", vec![1]).expect("set_room_footer docks the card");
+
+	// Then
+	assert!(matches!(
+		oversized,
+		Err(CallError::Domain(HostChatSetRoomFooterError::V2(
+			v01::HostChatSetRoomFooterError::Unknown { .. }
+		)))
+	));
+	assert_eq!(
+		*chat_platform.room_footers.lock().expect("room footers mutex poisoned"),
+		[(
+			"room".to_string(),
+			v02::ChatRoomFooter::Card(v01::ChatCustomMessage {
+				message_type: "register".to_string(),
+				payload: vec![1],
+			})
+		)]
+	);
+}
+
+#[test]
+fn a_footer_action_never_reaches_a_product_that_subscribed_with_v1() {
+	// A v0.1 product cannot decode a footer context, and only a product that
+	// docked a card through v0.2 can be sent one.
+	let host = scanner_host_for(ExecutableKind::Worker, None);
+	let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
+	));
+
+	// When
+	host.connection.publish_renderer_action(footer_tap()).unwrap();
+	host.connection.publish_renderer_action(card_tap()).unwrap();
+
+	// Then
+	let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+	assert_eq!(actions.poll_next_unpin(&mut cx), core::task::Poll::Ready(Some(Ok(card_tap()))));
+}
+
+#[test]
+fn a_footer_action_reaches_the_product_that_subscribed_with_v2() {
+	// Every button on a docked card is dead unless its press reaches a product
+	// that subscribed through v0.2.
+	let host = scanner_host_for(ExecutableKind::Worker, None);
+	let mut actions = futures::executor::block_on(truapi::api::Renderer::action_subscribe(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::renderer::HostRendererActionSubscribeRequest::V2,
+	));
+
+	// When
+	host.connection.publish_renderer_action(footer_tap()).unwrap();
+
+	// Then
+	let mut cx = core::task::Context::from_waker(futures::task::noop_waker_ref());
+	assert_eq!(actions.poll_next_unpin(&mut cx), core::task::Poll::Ready(Some(Ok(footer_tap()))));
+}
+
+fn footer_tap() -> truapi::versioned::renderer::HostRendererActionSubscribeItem {
+	truapi::versioned::renderer::HostRendererActionSubscribeItem::V2(
+		v02::HostRendererActionSubscribeItem {
+			context: v02::RenderContext::ChatRoomFooter {
+				room_id: "room".into(),
+				message_type: "register".into(),
+			},
+			action_id: "join".into(),
+			payload: vec![],
+		},
+	)
+}
+
+/// A host engine that refuses every top-up, as one does when the user
+/// declines it or its source is busy.
+/// A top-up engine that answers every top-up with its error.
+struct RefusingTopUpPlatform(truapi::latest::HostPaymentTopUpError);
+
+#[async_trait::async_trait]
+impl crate::platform::TopUpPlatform for RefusingTopUpPlatform {
+	async fn top_up(
+		&self,
+		_product: &ProductContext,
+		_request: truapi::latest::HostPaymentTopUpRequest,
+	) -> Result<(), truapi::latest::HostPaymentTopUpError> {
+		Err(self.0.clone())
+	}
+
+	fn subscribe_top_up_status(
+		&self,
+		_product: &ProductContext,
+		_id: crate::Bytes32,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<
+			truapi::latest::HostPaymentTopUpStatusSubscribeItem,
+			truapi::latest::HostPaymentTopUpStatusSubscribeError,
+		>,
+	> {
+		Box::pin(futures::stream::empty())
+	}
+}
+
+// A worker that died with a top-up pending repeats it under the same id once
+// it runs again. When the host refuses the repeat, no money moved under that
+// id, so the record an earlier call left behind goes too, and the session is
+// not locked by funds that never started.
+#[test]
+fn a_refused_repeat_of_a_recorded_top_up_leaves_no_record_behind() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(Arc::new(RefusingTopUpPlatform(
+		truapi::latest::HostPaymentTopUpError::SourceBusy
+	))));
+	let intent = served_session(&services, 500);
+	let worker = provider_worker(&services, "ramp.dot");
+	let provider = ProductContext::new_with_execution(
+		ProductId::for_test("ramp.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let host_id = crate::runtime::payment_id::host_payment_id(&provider, [7; 32]);
+	let terms = sp_crypto_hashing::blake2_256(
+		&(b"truapi/funding-terms", None::<u32>, &product_account_source()).encode(),
+	);
+	futures::executor::block_on(services.funding().record_start(
+		crate::unix_time::current_unix_millis(),
+		&ProductId::for_test("ramp.dot"),
+		&intent,
+		crate::runtime::funding::FundsAsked {
+			direction: v01::FundingDirection::In,
+			host_id,
+			amount: 500,
+			terms,
+		},
+	))
+	.expect("recorded");
+
+	let repeated = fund_top_up(&worker, &intent, 500);
+
+	let session = services.funding().get(&intent).expect("kept");
+	assert_eq!((repeated.is_err(), session.started.len(), session.money_moved()), (true, 0, false));
+}
+
+// A host engine that fails without saying whether it took the top-up may
+// hold it, so the record stays for the reconciler to place from the engine
+// rather than being forgotten.
+#[test]
+fn a_top_up_the_engine_is_unsure_of_keeps_its_record() {
+	let (services, intent, worker) = served_with_engine(
+		Arc::new(RefusingTopUpPlatform(truapi::latest::HostPaymentTopUpError::Unknown {
+			reason: "engine timed out".to_string(),
+		})),
+		500,
+	);
+
+	let answered = fund_top_up(&worker, &intent, 500);
+
+	let session = services.funding().get(&intent).expect("kept");
+	assert_eq!((answered.is_err(), session.started.len()), (true, 1));
+}
+
+/// The terms digest the core keeps for a top-up from the product account.
+fn product_account_terms() -> [u8; 32] {
+	sp_crypto_hashing::blake2_256(
+		&(b"truapi/funding-terms", None::<u32>, &product_account_source()).encode(),
+	)
+}
+
+/// The id the host sees for `ramp.dot`'s top-up `[7; 32]`.
+fn ramp_top_up_id() -> [u8; 32] {
+	crate::runtime::payment_id::host_payment_id(
+		&ProductContext::new_with_execution(
+			ProductId::for_test("ramp.dot"),
+			crate::platform::ExecutableKind::Worker,
+		),
+		[7; 32],
+	)
+}
+
+/// A session open for `ramp.dot` on a host with a funding surface and
+/// `engine` as its top-up engine.
+fn served_with_engine(
+	engine: Arc<dyn crate::platform::TopUpPlatform>,
+	amount: u128,
+) -> (Arc<RuntimeServices>, String, ProductRuntimeHost) {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(engine));
+	let intent = served_session(&services, amount);
+	let worker = provider_worker(&services, "ramp.dot");
+	(services, intent, worker)
+}
+
+fn top_up_already_exists() -> CallError<truapi::versioned::payment::HostPaymentTopUpError> {
+	CallError::Domain(truapi::versioned::payment::HostPaymentTopUpError::V2(
+		truapi::latest::HostPaymentTopUpError::AlreadyExists,
+	))
+}
+
+/// Wait up to `seconds` for `done`.
+fn eventually(seconds: u64, done: impl Fn() -> bool) -> bool {
+	for _ in 0..seconds * 50 {
+		if done() {
+			return true;
+		}
+		std::thread::sleep(Duration::from_millis(20));
+	}
+	done()
+}
+
+// A worker that stopped after the core recorded a top-up of 1000, before the
+// host took it, cannot come back and start a top-up of 1 under the same id:
+// the record keeps the amount it was started with, the host is not asked,
+// and no report can name funds the host never took.
+#[test]
+fn a_repeat_under_a_recorded_id_must_ask_the_same() {
+	let engine = Arc::new(RecordingTopUpPlatform::default());
+	let (services, intent, worker) = served_with_engine(engine.clone(), 1_000);
+	futures::executor::block_on(services.funding().record_start(
+		crate::unix_time::current_unix_millis(),
+		&ProductId::for_test("ramp.dot"),
+		&intent,
+		crate::runtime::funding::FundsAsked {
+			direction: v01::FundingDirection::In,
+			host_id: ramp_top_up_id(),
+			amount: 1_000,
+			terms: product_account_terms(),
+		},
+	))
+	.expect("recorded");
+
+	let smaller = fund_top_up(&worker, &intent, 1);
+	let named = crediting(&worker, &intent, [7; 32], 1_000);
+
+	let session = services.funding().get(&intent).expect("kept");
+	assert_eq!(
+		(
+			smaller,
+			named,
+			engine.started.lock().expect("started mutex poisoned").len(),
+			session
+				.started
+				.iter()
+				.map(|funds| (funds.amount, funds.accepted))
+				.collect::<Vec<_>>(),
+		),
+		(Err(top_up_already_exists()), Err(not_started()), 0, vec![(1_000, false)])
+	);
+}
+
+// The host already holds a top-up of 1 under the id from a call outside any
+// session. Starting a top-up of 1000 under that id for a session is refused
+// before anything is recorded, so the old top-up cannot settle the session
+// as 1000.
+#[test]
+fn funds_the_host_already_holds_are_never_recorded_for_a_session() {
+	let engine = Arc::new(RecordingTopUpPlatform::default());
+	let (services, intent, worker) = served_with_engine(engine.clone(), 1_000);
+	top_up(&worker, 1, product_account_source()).expect("plain top-up");
+
+	let recorded = fund_top_up(&worker, &intent, 1_000);
+	let named = crediting(&worker, &intent, [7; 32], 1_000);
+
+	assert_eq!(
+		(recorded, named, services.funding().get(&intent).expect("kept").started),
+		(Err(top_up_already_exists()), Err(not_started()), Vec::new())
+	);
+}
+
+/// A top-up engine that takes every top-up and reports none of them until
+/// `open`, then each as claimed for good. Before that it does not know them,
+/// as when the core checks an id is free.
+#[derive(Default)]
+struct GatedTopUpPlatform {
+	open: Arc<AtomicBool>,
+	started: Mutex<Vec<[u8; 32]>>,
+}
+
+#[async_trait::async_trait]
+impl crate::platform::TopUpPlatform for GatedTopUpPlatform {
+	async fn top_up(
+		&self,
+		_product: &ProductContext,
+		request: truapi::latest::HostPaymentTopUpRequest,
+	) -> Result<(), truapi::latest::HostPaymentTopUpError> {
+		self.started.lock().expect("started mutex poisoned").push(request.id);
+		Ok(())
+	}
+
+	fn subscribe_top_up_status(
+		&self,
+		_product: &ProductContext,
+		id: crate::Bytes32,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<
+			truapi::latest::HostPaymentTopUpStatusSubscribeItem,
+			truapi::latest::HostPaymentTopUpStatusSubscribeError,
+		>,
+	> {
+		if !self.started.lock().expect("started mutex poisoned").contains(&id) {
+			return Box::pin(futures::stream::iter([Err(
+				v01::HostPaymentTopUpStatusSubscribeError::TopUpNotFound,
+			)]));
+		}
+		let open = self.open.clone();
+		Box::pin(futures::stream::once(async move {
+			while !open.load(Ordering::SeqCst) {
+				futures_timer::Delay::new(Duration::from_millis(10)).await;
+			}
+			Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true })
+		}))
+	}
+}
+
+// The engine's final word arrives while storage is failing. The outcome is
+// written again once storage works, instead of the session staying in
+// progress with nothing left to end it.
+#[test]
+fn a_settlement_whose_write_failed_is_written_again() {
+	let engine = Arc::new(GatedTopUpPlatform::default());
+	let db = crate::store::open_memory_core_db();
+	let services = funding_services_on(&db, Spawner::for_test());
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(services.install_top_up_platform(engine.clone()));
+	let intent = served_session(&services, 500);
+	let worker = provider_worker(&services, "ramp.dot");
+	fund_top_up(&worker, &intent, 500).expect("top-up accepted");
+	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
+	report_funding(&worker, &intent, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
+
+	futures::executor::block_on(super::funding::fail_writes(&db, true));
+	engine.open.store(true, Ordering::SeqCst);
+	std::thread::sleep(Duration::from_millis(300));
+	let while_failing = services.funding().get(&intent).expect("kept").is_terminal();
+	futures::executor::block_on(super::funding::fail_writes(&db, false));
+
+	assert_eq!(
+		(
+			while_failing,
+			eventually(10, || services.funding().ended(&intent).is_some()),
+			services.funding().ended(&intent),
+		),
+		(false, true, Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 500 }),)
+	);
+}
+
+/// A top-up engine that reports every top-up claimed for good.
+struct ClaimedTopUpPlatform;
+
+#[async_trait::async_trait]
+impl crate::platform::TopUpPlatform for ClaimedTopUpPlatform {
+	async fn top_up(
+		&self,
+		_product: &ProductContext,
+		_request: truapi::latest::HostPaymentTopUpRequest,
+	) -> Result<(), truapi::latest::HostPaymentTopUpError> {
+		Ok(())
+	}
+
+	fn subscribe_top_up_status(
+		&self,
+		_product: &ProductContext,
+		_id: crate::Bytes32,
+	) -> futures::stream::BoxStream<
+		'static,
+		Result<
+			truapi::latest::HostPaymentTopUpStatusSubscribeItem,
+			truapi::latest::HostPaymentTopUpStatusSubscribeError,
+		>,
+	> {
+		Box::pin(futures::stream::iter([Ok(v01::HostPaymentTopUpStatusSubscribeItem::Claimed {
+			finalized: true,
+		})]))
+	}
+}
+
+// A host that installs the funding surface before its top-up engine resumes
+// sessions before it can follow their top-ups. A session whose outcome is
+// due still settles once the engine is installed.
+#[test]
+fn a_session_resumed_before_its_engine_settles_once_the_engine_is_installed() {
+	let db = crate::store::open_memory_core_db();
+	let before = funding_services_on(&db, Spawner::for_test());
+	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	assert!(before.install_top_up_platform(Arc::new(GatedTopUpPlatform::default())));
+	let intent = served_session(&before, 500);
+	let worker = provider_worker(&before, "ramp.dot");
+	fund_top_up(&worker, &intent, 500).expect("top-up accepted");
+	crediting(&worker, &intent, [7; 32], 500).expect("crediting");
+	report_funding(&worker, &intent, v01::FundingUpdate::In(v01::FundingInboundUpdate::Delivered))
+		.expect("delivered");
+
+	let after = funding_services_on(&db, Spawner::for_test());
+	assert!(after.install_funding_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let resumed = eventually(5, || after.funding().get(&intent).is_some());
+	std::thread::sleep(Duration::from_millis(200));
+	let without_engine = after.funding().get(&intent).map(|session| session.is_terminal());
+	assert!(after.install_top_up_platform(Arc::new(ClaimedTopUpPlatform)));
+
+	assert_eq!(
+		(resumed, without_engine, wait_for_stage(&after, &intent)),
+		(true, Some(false), Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: 500 }))
+	);
+}
+
+/// A provider's worker that does not take the first `refusals` sessions it
+/// is handed, then takes every one, and can hold its answers until
+/// `released`. It records how many calls it had outstanding at most.
+struct UnsteadyProviderLink {
+	refusals: Mutex<usize>,
+	released: Arc<AtomicBool>,
+	assigned: Mutex<Vec<String>>,
+	outstanding: Arc<std::sync::atomic::AtomicUsize>,
+	most_outstanding: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl UnsteadyProviderLink {
+	fn new(refusals: usize, released: bool) -> Arc<Self> {
+		Arc::new(Self {
+			refusals: Mutex::new(refusals),
+			released: Arc::new(AtomicBool::new(released)),
+			assigned: Mutex::default(),
+			outstanding: Arc::default(),
+			most_outstanding: Arc::default(),
+		})
+	}
+
+	fn assigned(&self) -> Vec<String> {
+		self.assigned.lock().expect("assigned mutex poisoned").clone()
+	}
+}
+
+impl crate::runtime::FundingProviderLink for UnsteadyProviderLink {
+	fn quote(
+		&self,
+		_ask: v01::FundingQuoteAsk,
+	) -> futures::future::BoxFuture<'static, Option<v01::FundingQuoteAnswer>> {
+		Box::pin(async { None })
+	}
+
+	fn assign(&self, session: v01::FundingAssignment) -> futures::future::BoxFuture<'static, bool> {
+		let refused = {
+			let mut left = self.refusals.lock().expect("refusals mutex poisoned");
+			let refused = *left > 0;
+			*left = left.saturating_sub(1);
+			refused
+		};
+		if !refused {
+			self.assigned.lock().expect("assigned mutex poisoned").push(session.intent);
+		}
+		let now = self.outstanding.fetch_add(1, Ordering::SeqCst) + 1;
+		self.most_outstanding.fetch_max(now, Ordering::SeqCst);
+		let (released, outstanding) = (self.released.clone(), self.outstanding.clone());
+		Box::pin(async move {
+			while !released.load(Ordering::SeqCst) {
+				futures_timer::Delay::new(Duration::from_millis(10)).await;
+			}
+			futures_timer::Delay::new(Duration::from_millis(1)).await;
+			outstanding.fetch_sub(1, Ordering::SeqCst);
+			!refused
+		})
+	}
+
+	fn cancel(
+		&self,
+		_intent: String,
+	) -> futures::future::BoxFuture<'static, Option<v01::FundingCancelAnswer>> {
+		Box::pin(async { None })
+	}
+
+	fn settle_cancel(
+		&self,
+		_intent: String,
+		_decision: v01::FundingCancelDecision,
+	) -> futures::future::BoxFuture<'static, bool> {
+		Box::pin(async { true })
+	}
+}
+
+// A worker that did not take its session when it connected is handed it
+// again, rather than being marked caught up; once it took it, checking its
+// connection again hands it nothing more.
+#[test]
+fn a_session_a_worker_did_not_take_is_handed_over_again() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = served_session(&services, 500);
+	let link = UnsteadyProviderLink::new(1, true);
+	services.funding().link(&ProductId::for_test("ramp.dot"), link.clone());
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
+
+	let taken = eventually(10, || link.assigned() == [intent.clone()]);
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
+	std::thread::sleep(Duration::from_millis(200));
+
+	assert_eq!((taken, link.assigned()), (true, vec![intent]));
+}
+
+// A call a connected worker leaves unanswered is not lost until the worker
+// reconnects: the link is due to be handed its sessions again, which repeats
+// it.
+#[test]
+fn an_unanswered_call_is_repeated_without_a_reconnect() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let link = UnsteadyProviderLink::new(1, true);
+	services.funding().link(&ProductId::for_test("ramp.dot"), link.clone());
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
+	std::thread::sleep(Duration::from_millis(200));
+
+	let intent = served_session(&services, 500);
+
+	assert!(eventually(10, || link.assigned() == [intent.clone()]));
+}
+
+// A link replaced while it was being handed its sessions cannot mark its
+// replacement as caught up: the new worker is handed them once it connects.
+#[test]
+fn a_replaced_link_does_not_catch_up_its_replacement() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = served_session(&services, 500);
+	let old = UnsteadyProviderLink::new(0, false);
+	services.funding().link(&ProductId::for_test("ramp.dot"), old.clone());
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
+	let old_handed = eventually(5, || old.assigned() == [intent.clone()]);
+	let new = UnsteadyProviderLink::new(0, true);
+	services.funding().link(&ProductId::for_test("ramp.dot"), new.clone());
+	old.released.store(true, Ordering::SeqCst);
+	std::thread::sleep(Duration::from_millis(200));
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
+
+	assert_eq!((old_handed, eventually(5, || new.assigned() == [intent.clone()])), (true, true));
+}
+
+// A worker with many sessions to catch up on is handed them one call at a
+// time, so they never pile up past what a worker buffers before its
+// handlers are registered.
+#[test]
+fn a_worker_is_handed_its_sessions_one_call_at_a_time() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intents: Vec<String> = (0..70).map(|_| served_session(&services, 10)).collect();
+	let link = UnsteadyProviderLink::new(0, true);
+	services.funding().link(&ProductId::for_test("ramp.dot"), link.clone());
+	services.funding().connected(&ProductId::for_test("ramp.dot"));
+
+	let all = eventually(30, || link.assigned().len() == intents.len());
+
+	assert_eq!((all, link.most_outstanding.load(Ordering::SeqCst)), (true, 1));
+}
+
+// Once money moved a session no longer expires, so the only deadline left
+// is the provider's cancel offer. It still lapses on time.
+#[test]
+fn a_cancel_offer_lapses_on_time_once_money_moved() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = served_session(&services, 500);
+	let worker = provider_worker(&services, "ramp.dot");
+	let link = connect_provider(&services, "ramp.dot");
+	report_funding(
+		&worker,
+		&intent,
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::PaymentReceived {
+			finalized: true,
+			mismatch: None,
+		}),
+	)
+	.expect("payment received");
+	let expires_at = crate::unix_time::current_unix_millis() + 200;
+	link.answer_cancels([v01::FundingCancelAnswer::Offer {
+		fee: 5,
+		refund: 495,
+		expires_at: Some(expires_at),
+	}]);
+	futures::executor::block_on(services.cancel_funding(&intent)).expect("cancel");
+	let offered = eventually(5, || {
+		matches!(
+			services.funding().get(&intent).and_then(|session| session.cancel),
+			Some(FundingCancel::Offered { .. })
+		)
+	});
+
+	let lapsed = eventually(5, || {
+		link.calls(0).contains(&ProviderCallSeen::Settle(
+			intent.clone(),
+			v01::FundingCancelDecision::Declined,
+		))
+	});
+
+	assert_eq!((offered, lapsed), (true, true));
+}
+
+/// A worker controller that, as `ramp.dot`'s worker starts, ends session
+/// `ends`, the way a worker that calls back while starting can.
+struct EndingWorkerController {
+	services: std::sync::Weak<RuntimeServices>,
+	ends: Mutex<Option<String>>,
+}
+
+impl crate::host_logic::worker::WorkerController for EndingWorkerController {
+	fn request_worker_transition(
+		&self,
+		product_id: &ProductId,
+		transition: crate::host_logic::worker::WorkerTransition,
+	) {
+		if product_id.as_str() != "ramp.dot" ||
+			transition != crate::host_logic::worker::WorkerTransition::Start
+		{
+			return;
+		}
+		let (Some(services), Some(intent)) =
+			(self.services.upgrade(), self.ends.lock().expect("ends mutex poisoned").take())
+		else {
+			return;
+		};
+		// Ended before the callback returns, on a thread of its own as the
+		// callback runs on the core's executor.
+		std::thread::spawn(move || {
+			futures::executor::block_on(services.settle_funding_for_test(
+				&intent,
+				crate::host_logic::funding::FundingStage::Failed {
+					reason: v01::FundingFailure::Cancelled,
+					settled_at_ms: crate::unix_time::current_unix_millis(),
+				},
+			))
+			.expect("ended")
+		})
+		.join()
+		.expect("ending thread");
+	}
+}
+
+// A worker that starts and ends another provider's session from that
+// callback cannot leave the ended session holding its worker: holds are
+// taken and let go in the order the reconciler derives them.
+#[test]
+fn a_session_ended_while_workers_start_lets_its_worker_go() {
+	let db = crate::store::open_memory_core_db();
+	let before = funding_services_on(&db, Spawner::for_test());
+	assert!(before.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let first = served_session(&before, 10);
+	before
+		.set_funding_providers(
+			["ramp.dot", "other.dot"]
+				.map(|provider| crate::host_logic::funding_providers::FundingProviderEntry {
+					product_id: ProductId::for_test(provider),
+					worker_manifest: Some(RAMP_MANIFEST.to_string()),
+					root_manifest: None,
+					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+				})
+				.to_vec(),
+		)
+		.expect("providers offered");
+	let second = futures::executor::block_on(before.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(20),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(before.select_funding_provider(
+			&second,
+			&ProductId::for_test("other.dot"),
+			&offer_test_quote(&before, &second, "other.dot")
+		))
+		.expect("selected")
+	);
+
+	let after = funding_services_on(&db, Spawner::for_test());
+	let controller = Arc::new(EndingWorkerController {
+		services: Arc::downgrade(&after),
+		ends: Mutex::new(Some(second.clone())),
+	});
+	assert!(after.worker_ledger.install_worker_controller(controller));
+	assert!(after.install_funding_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let ended =
+		eventually(5, || after.funding().get(&second).is_some_and(|session| session.is_terminal()));
+	let released =
+		eventually(5, || after.worker_ledger.count(&ProductId::for_test("other.dot")) == 0);
+
+	assert_eq!(
+		(
+			after.funding().get(&first).map(|session| session.is_terminal()),
+			ended,
+			released,
+			after.worker_ledger.count(&ProductId::for_test("ramp.dot")),
+		),
+		(Some(false), true, true, 1)
+	);
+}
+
+// Nothing in a session changes when its provider runs past the quoted time,
+// yet the host draws it as taking longer from then, so the core tells it.
+#[test]
+fn the_host_hears_when_a_session_starts_taking_longer() {
+	let services = funding_services();
+	let platform =
+		RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(platform.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	answer_quotes(
+		&services,
+		"ramp.dot",
+		v01::FundingQuote { eta_secs: Some(1), ..card_quote("q1") },
+	);
+	answered_quotes(&services, &intent, card_ask(None), Duration::from_millis(300));
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			"q1"
+		))
+		.expect("selected")
+	);
+	let worker = provider_worker(&services, "ramp.dot");
+	report_funding(
+		&worker,
+		&intent,
+		v01::FundingUpdate::In(v01::FundingInboundUpdate::PaymentReceived {
+			finalized: false,
+			mismatch: None,
+		}),
+	)
+	.expect("reported");
+	let announced = || {
+		platform
+			.announced
+			.lock()
+			.expect("announced mutex poisoned")
+			.iter()
+			.filter(|seen| **seen == intent)
+			.count()
+	};
+	let before = announced();
+
+	let told = eventually(5, || announced() > before);
+
+	assert_eq!(
+		(
+			told,
+			services
+				.funding()
+				.get(&intent)
+				.map(|session| session.status(crate::current_unix_millis()))
+		),
+		(true, Some(crate::host_logic::funding::FundingStatus::TakingLonger))
+	);
+}
+
+/// Products see only the reason, so a failed chain call must reach the host log
+/// with its kind, and only once.
+#[test]
+fn a_failed_chain_call_warns_the_host_once() {
+	// Repeats of one failing call are counted rather than reported, so this
+	// starts from a connection that has not failed yet.
+	super::forget_chain_failures();
+	let lines = crate::logging::testing::host_sink_lines(|| {
+		let _: CallError<()> = super::runtime_failure_to_call_error(
+			crate::chain_runtime::RuntimeFailure::unavailable_with_reason(
+				"get_head_header",
+				"json-rpc connection closed",
+			),
+		);
+	});
+	assert_eq!(
+		lines,
+		vec![
+			"truapi.tracing.warn truapi::runtime: chain call failed \
+			 {kind=Unavailable, reason=get_head_header: json-rpc connection closed, seen=1}"
+		]
+	);
+}
+
+/// A connection that drops fails every call made over it afterwards. The first
+/// two speak, then every doubling, so a long outage is a handful of lines
+/// rather than one per call, and each says how many it stands for.
+#[test]
+fn a_sustained_chain_failure_reports_on_a_widening_schedule() {
+	let reported: Vec<u64> = (1..=64).filter(|seen| crate::runtime::reports_at(*seen)).collect();
+
+	assert_eq!(reported, vec![1, 2, 4, 8, 16, 32, 64]);
+}
+
+/// The count rides on every line it reports, so how bad an outage is reads off
+/// the lines as they arrive rather than waiting for a tally at the end, which
+/// an outage that stops inside the quiet period would never send.
+#[test]
+fn a_chain_failure_carries_how_many_it_stands_for() {
+	use crate::chain_runtime::RuntimeFailureKind;
+	use core::time::Duration;
+	use std::{collections::BTreeMap, time::Instant};
+
+	let quiet = Duration::from_secs(30);
+	let mut reported = BTreeMap::new();
+	let key = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string(), None);
+	let now = Instant::now();
+
+	let counts: Vec<u64> = (0..5)
+		.map(|_| crate::runtime::count_failure(&mut reported, key.clone(), now, quiet))
+		.collect();
+
+	assert_eq!(counts, vec![1, 2, 3, 4, 5]);
+}
+
+/// A gap longer than the quiet period is a new episode, so a connection that
+/// drops twice in a day reads as two outages rather than one that never ended.
+#[test]
+fn a_chain_failure_after_a_quiet_spell_starts_counting_again() {
+	use crate::chain_runtime::RuntimeFailureKind;
+	use core::time::Duration;
+	use std::{collections::BTreeMap, time::Instant};
+
+	let quiet = Duration::from_secs(30);
+	let mut reported = BTreeMap::new();
+	let key = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string(), None);
+	let started = Instant::now();
+
+	assert_eq!(crate::runtime::count_failure(&mut reported, key.clone(), started, quiet), 1);
+	assert_eq!(crate::runtime::count_failure(&mut reported, key.clone(), started, quiet), 2);
+	assert_eq!(
+		crate::runtime::count_failure(&mut reported, key, started + quiet, quiet),
+		1,
+		"a failure after the quiet period carried on the last outage's count",
+	);
+}
+
+/// Two conditions are counted apart, so a connection that drops does not stand
+/// in for a payload that will not decode, and neither silences the other.
+#[test]
+fn chain_failures_are_counted_per_condition() {
+	use crate::chain_runtime::RuntimeFailureKind;
+	use core::time::Duration;
+	use std::{collections::BTreeMap, time::Instant};
+
+	let quiet = Duration::from_secs(30);
+	let mut reported = BTreeMap::new();
+	let now = Instant::now();
+	let closed = (RuntimeFailureKind::Unavailable, "chain_probe", "closed".to_string(), None);
+	let malformed = (RuntimeFailureKind::HostFailure, "chain_probe", "malformed".to_string(), None);
+
+	assert_eq!(crate::runtime::count_failure(&mut reported, closed.clone(), now, quiet), 1);
+	assert_eq!(crate::runtime::count_failure(&mut reported, closed, now, quiet), 2);
+	assert_eq!(
+		crate::runtime::count_failure(&mut reported, malformed, now, quiet),
+		1,
+		"a different condition was answered by another's count",
+	);
+}
+
+/// A failing chain call names the chain it was made against. The report that
+/// sent us looking at this code turned on which chain a transaction was being
+/// built against, and a line that does not say is most of a diagnosis short.
+#[test]
+fn a_failed_chain_call_names_its_chain() {
+	super::forget_chain_failures();
+	let lines = crate::logging::testing::host_sink_lines(|| {
+		let _: CallError<()> = super::runtime_failure_to_call_error(
+			crate::chain_runtime::RuntimeFailure::unavailable_with_reason(
+				"get_head_header",
+				"json-rpc connection closed",
+			)
+			.on_chain(&[0xcc; 32]),
+		);
+	});
+
+	let line = lines.first().expect("a failing chain call said nothing");
+	assert!(
+		line.contains(&format!("chain={}", hex::encode([0xcc; 32]))),
+		"the line did not name its chain: {line}",
+	);
+}
+
+/// Two chains failing the same way are counted apart, so one going quiet does
+/// not stand in for another and neither hides behind the other's count.
+#[test]
+fn two_chains_failing_alike_are_counted_apart() {
+	use crate::chain_runtime::RuntimeFailureKind;
+	use core::time::Duration;
+	use std::{collections::BTreeMap, time::Instant};
+
+	let quiet = Duration::from_secs(30);
+	let mut reported = BTreeMap::new();
+	let now = Instant::now();
+	let reason = "json-rpc connection closed".to_string();
+	let people =
+		(RuntimeFailureKind::Unavailable, "remote_chain_connect", reason.clone(), Some(vec![0xaa]));
+	let asset_hub =
+		(RuntimeFailureKind::Unavailable, "remote_chain_connect", reason, Some(vec![0xcc]));
+
+	assert_eq!(crate::runtime::count_failure(&mut reported, people.clone(), now, quiet), 1);
+	assert_eq!(crate::runtime::count_failure(&mut reported, people, now, quiet), 2);
+	assert_eq!(
+		crate::runtime::count_failure(&mut reported, asset_hub, now, quiet),
+		1,
+		"one chain's failures were answered by another chain's count",
+	);
+}
+
+// A provider's own calls are refused while no user session is current, so
+// a worker that handshakes before sign-in is handed its sessions only once
+// one is.
+#[test]
+fn a_worker_handshake_waits_for_a_session_before_its_sessions_are_handed_over() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let provider_id = "ramp.dot";
+	offer_provider(&services, provider_id, RAMP_MANIFEST);
+	let host = signed_out_provider_worker(&services, provider_id);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test(provider_id),
+			&offer_test_quote(&services, &intent, provider_id)
+		))
+		.expect("selected")
+	);
+	let link = Arc::new(ScriptedProviderLink::default());
+	services.funding().link(&ProductId::for_test(provider_id), link.clone());
+
+	futures::executor::block_on(System::handshake(
+		&host,
+		&CallContext::default(),
+		truapi::versioned::system::HostHandshakeRequest::V1(v01::HostHandshakeRequest {
+			codec_version: truapi::WIRE_CODEC_VERSION,
+		}),
+	))
+	.expect("handshake");
+	assert_eq!(link.calls(1), Vec::new(), "handed its sessions without a session");
+
+	install_pairing_session(&host, session_info());
+	assert!(
+		matches!(link.calls(1).first(), Some(ProviderCallSeen::Assign(assignment)) if assignment.intent == intent),
+		"not handed its session once signed in"
+	);
+}
+
+/// Open an inbound funding session for 1000, offered by `provider_id`.
+fn quoted_funding_session(services: &Arc<RuntimeServices>, provider_id: &str) -> String {
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	offer_provider(services, provider_id, RAMP_MANIFEST);
+	futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent
+}
+
+// A quote is offered only to the session that asked, so one the provider gave
+// one session is never chosen by another.
+#[test]
+fn a_quote_is_offered_to_the_session_that_asked_only() {
+	let services = funding_services();
+	let first = quoted_funding_session(&services, "ramp.dot");
+	let second = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	answer_quotes(&services, "ramp.dot", card_quote("q1"));
+	answered_quotes(&services, &first, card_ask(None), Duration::from_secs(5));
+
+	let chosen_elsewhere = futures::executor::block_on(services.select_funding_provider(
+		&second,
+		&ProductId::for_test("ramp.dot"),
+		"q1",
+	));
+
+	assert_eq!(
+		chosen_elsewhere,
+		Err(crate::host_logic::funding::FundingSessionError::UnknownQuote {
+			quote_id: "q1".to_string()
+		})
+	);
+}
+
+// A quote that does not price the ask, charges more in fees than the user
+// sends, moves nothing or has already expired is not shown or offered: the
+// provider counts as unable to serve the ask.
+#[test]
+fn a_quote_that_does_not_add_up_is_unavailable() {
+	use crate::platform::{FundingQuoteState, FundingQuoteUnavailable};
+	let unable = FundingQuoteState::Unavailable {
+		reason: FundingQuoteUnavailable::Refused { reason: v01::FundingQuoteRefusal::Unavailable },
+	};
+	let shown = |quote: v01::FundingQuote| {
+		let services = funding_services();
+		let intent = quoted_funding_session(&services, "ramp.dot");
+		answer_quotes(&services, "ramp.dot", quote);
+		let rows = answered_quotes(&services, &intent, card_ask(None), Duration::from_secs(5));
+		let chosen = futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			"q1",
+		));
+		(rows.first().map(|row| row.state.clone()), chosen.is_ok())
+	};
+
+	assert_eq!(
+		[
+			shown(v01::FundingQuote { receive_amount: 900, ..card_quote("q1") }),
+			shown(v01::FundingQuote { provider_fee: 1_021, ..card_quote("q1") }),
+			shown(v01::FundingQuote {
+				send_amount: 0,
+				provider_fee: 0,
+				network_fee: 0,
+				..card_quote("q1")
+			}),
+			shown(v01::FundingQuote { expires_at: Some(1), ..card_quote("q1") }),
+			shown(v01::FundingQuote { quote_id: "q\n1".into(), ..card_quote("q1") }),
+		],
+		[
+			(Some(unable.clone()), false),
+			(Some(unable.clone()), false),
+			(Some(unable.clone()), false),
+			(Some(unable.clone()), false),
+			(Some(unable), false)
+		]
+	);
+}
+
+// Every provider gets a row at once, but only a few workers are started for
+// an ask at a time, so a long list of published providers does not start
+// every worker together.
+#[test]
+fn an_ask_holds_a_bounded_number_of_workers_at_once() {
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let providers: Vec<String> = (0..12).map(|index| format!("ramp{index}.dot")).collect();
+	services
+		.set_funding_providers(
+			providers
+				.iter()
+				.map(|product_id| crate::host_logic::funding_providers::FundingProviderEntry {
+					product_id: ProductId::for_test(product_id),
+					worker_manifest: Some(RAMP_MANIFEST.to_string()),
+					root_manifest: None,
+					origin: crate::host_logic::funding_providers::FundingProviderOrigin::Published,
+					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+				})
+				.collect(),
+		)
+		.expect("providers offered");
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	services.request_funding_quotes_within(
+		&intent,
+		card_ask(None),
+		Duration::from_secs(60),
+		Duration::from_secs(600),
+	);
+	let held = || {
+		providers
+			.iter()
+			.filter(|provider| services.worker_ledger.count(&ProductId::for_test(provider)) > 0)
+			.count()
+	};
+	assert!(eventually(5, || held() == 8), "eight asked");
+	std::thread::sleep(Duration::from_millis(100));
+	let pending = shown_when(&services, &intent, |rows| rows.len() == providers.len());
+	let held = held();
+	services.funding_quotes().end(&intent);
+
+	assert_eq!((pending.len(), held), (providers.len(), 8));
+}
+
+/// Offer a quote from `provider_id` pricing open session `intent`'s amount,
+/// as a quote round would, and return its id for the session to be chosen by.
+fn offer_test_quote(services: &Arc<RuntimeServices>, intent: &str, provider_id: &str) -> String {
+	let session = services.funding().get(intent).expect("session open");
+	let amount = session.amount.unwrap_or(100);
+	let (send_amount, receive_amount) = match session.direction {
+		v01::FundingDirection::In => (amount + 2, amount),
+		v01::FundingDirection::Out => (amount, amount - 2),
+	};
+	let quote = v01::FundingQuote {
+		quote_id: "q-test".to_string(),
+		send_amount,
+		receive_amount,
+		provider_fee: 2,
+		network_fee: 0,
+		eta_secs: None,
+		expires_at: None,
+		asset_decimals: 2,
+	};
+	let ask = v01::FundingQuoteAsk { direction: session.direction, amount, ..card_ask(None) };
+	services.funding_quotes().show(
+		intent,
+		ask,
+		vec![crate::platform::FundingQuoteRow {
+			provider_id: ProductId::for_test(provider_id),
+			state: crate::platform::FundingQuoteState::Quoted { quote },
+		}],
+	);
+	"q-test".to_string()
+}

@@ -43,7 +43,7 @@ extension ShareInteractor: ShareInteractorInputProtocol {
                             case let .person(contact) = chat.peer,
                             contact.isReadyForMessaging
                         else { return nil }
-                        return ChatWithPeerMetadata(chat: chat, peerMetadata: contact.toPeerMetadata())
+                        return ChatWithPeerMetadata(chat: chat, peerMetadata: contact.toPeerMetadata().list)
                     }
                     await self?.presenter?.didReceive(chats: personChats)
                 }

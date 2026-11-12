@@ -1,24 +1,68 @@
 {
   "sourceLanguage": "en",
   "strings": {
-    "action.preimage.body": {
+    "action.nftPurseDrain.owner.you": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%1$(productId)@ wants to submit %2$(size)@ bytes of data to the Bulletin chain."
+            "value": "your account"
           }
         }
       }
     },
-    "action.preimage.title": {
+    "action.nftPurseDrain.title": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Submit Data"
+            "value": "Move NFT Items"
+          }
+        }
+      }
+    },
+    "action.nftPurseDrain.toCheque.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to hand %2$(itemCount)@ item(s) of purse %3$(fromPurse)@, owned by %4$(owner)@, to another user in a cheque."
+          }
+        }
+      }
+    },
+    "action.nftPurseDrain.toKey.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to move %2$(itemCount)@ item(s) out of purse %3$(fromPurse)@, owned by %4$(owner)@, to the key %5$(key)@."
+          }
+        }
+      }
+    },
+    "action.nftPurseDrain.toPurse.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to move %2$(itemCount)@ item(s) out of purse %3$(fromPurse)@, owned by %4$(owner)@, into purse %5$(toPurse)@."
+          }
+        }
+      }
+    },
+    "action.nftPurseDrain.toRefund.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to return %2$(itemCount)@ item(s) of purse %3$(fromPurse)@, owned by %4$(owner)@, to the sender of a cheque it deposited."
           }
         }
       }
@@ -188,6 +232,17 @@
         }
       }
     },
+    "app.permission.capability.motion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motion"
+          }
+        }
+      }
+    },
     "app.permission.capability.nfc": {
       "extractionState": "manual",
       "localizations": {
@@ -243,6 +298,17 @@
         }
       }
     },
+    "app.permission.nftPurses.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "NFT purses"
+          }
+        }
+      }
+    },
     "app.permission.preimageSubmit.title": {
       "extractionState": "manual",
       "localizations": {
@@ -283,6 +349,18 @@
           "stringUnit": {
             "state": "translated",
             "value": "WebRTC"
+          }
+        }
+      }
+    },
+    "collectibles": {
+      "comment": "Title of the screen that shows the Collectibles product.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collectibles"
           }
         }
       }
@@ -338,6 +416,131 @@
           "stringUnit": {
             "state": "translated",
             "value": "A connected app requests a personhood proof"
+          }
+        }
+      }
+    },
+    "funding.errorConfigNotLoaded": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "App settings haven't loaded yet. Check your connection and try again."
+          }
+        }
+      }
+    },
+    "funding.errorNetworkUnavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Couldn't fetch network suffix. Check your connection and try again."
+          }
+        }
+      }
+    },
+    "funding.errorNotConfigured": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This option isn't available yet. Try again later."
+          }
+        }
+      }
+    },
+    "funding.errorUnknown": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Something went wrong. Try again later."
+          }
+        }
+      }
+    },
+    "funding.errorWrongNetwork": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This option isn't available on the current network."
+          }
+        }
+      }
+    },
+    "funding.topUpUnavailableTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Top Up Unavailable"
+          }
+        }
+      }
+    },
+    "funding.withdrawUnavailableTitle": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Withdrawal Unavailable"
+          }
+        }
+      }
+    },
+    "load.status.downloading": {
+      "comment": "Status under the loader while a product's content downloads; the argument is the downloaded size",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading %1$(size)@"
+          }
+        }
+      }
+    },
+    "load.status.downloadingOf": {
+      "comment": "Status under the loader while a product's content downloads and its size is known; the arguments are the downloaded amount without a unit and the total size with its unit, e.g. 1.2 of 5.0 MB",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Downloading %1$(downloaded)@ of %2$(total)@"
+          }
+        }
+      }
+    },
+    "load.status.retrying": {
+      "comment": "Status under the loader after a product's load failed and is being retried",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connection is slow. Still trying…"
+          }
+        }
+      }
+    },
+    "load.status.waitingForNetwork": {
+      "comment": "Status under the loader while a product waits for the network to come back",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Waiting for network"
           }
         }
       }
@@ -437,6 +640,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Network access is required to connect to %1$(domain)@."
+          }
+        }
+      }
+    },
+    "permission.body.nftPurseReadProduct": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "See the NFT purses of %1$(ownerProductId)@."
+          }
+        }
+      }
+    },
+    "permission.body.nftPurseReadRoot": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "See the NFT purses of your account."
           }
         }
       }
@@ -595,6 +820,17 @@
         }
       }
     },
+    "permission.capability.description.motion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motion access lets the app respond to how you tilt and move your device."
+          }
+        }
+      }
+    },
     "permission.capability.description.nfc": {
       "extractionState": "manual",
       "localizations": {
@@ -646,6 +882,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "the microphone"
+          }
+        }
+      }
+    },
+    "permission.capability.motion": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motion"
           }
         }
       }
@@ -727,24 +974,110 @@
         }
       }
     },
-    "product.browser.accessibility.minimize": {
+    "pocket.add.card.confirm": {
+      "comment": "Button that adds the offered card to the Pocket.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Minimize"
+            "value": "Add"
           }
         }
       }
     },
-    "product.browser.accessibility.more": {
+    "pocket.add.card.failed": {
+      "comment": "Shown when adding an approved card did not succeed.",
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "More"
+            "value": "Could not add the card"
+          }
+        }
+      }
+    },
+    "pocket.add.card.title": {
+      "comment": "Title of the sheet asking the user to approve a product's card.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add to Pocket"
+          }
+        }
+      }
+    },
+    "pocket.card.remove": {
+      "comment": "Button that removes a product card the user added.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove from Pocket"
+          }
+        }
+      }
+    },
+    "pocket.card.remove.confirm.message": {
+      "comment": "Body of the prompt asking to confirm removing a card.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The product that placed it can offer it again later."
+          }
+        }
+      }
+    },
+    "pocket.card.remove.confirm.title": {
+      "comment": "Title of the prompt asking to confirm removing a card.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove this card?"
+          }
+        }
+      }
+    },
+    "pocket.deeplink.malformed": {
+      "comment": "Shown for a link under the reserved host target that is not a Pocket link.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This Pocket link is not valid"
+          }
+        }
+      }
+    },
+    "pocket.deeplink.no.pocket": {
+      "comment": "Shown when a Pocket link names a product that publishes none.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This product has no Pocket cards"
+          }
+        }
+      }
+    },
+    "pocket.deeplink.unknown.card": {
+      "comment": "Shown when a Pocket link names a card the product does not publish.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This product has no such card"
           }
         }
       }
@@ -815,13 +1148,69 @@
         }
       }
     },
-    "product.tabs.accessibility.openApps": {
+    "product.replace.message": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Open apps, %lld"
+            "value": "%1$(name)@ will close."
+          }
+        }
+      }
+    },
+    "product.replace.open": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open"
+          }
+        }
+      }
+    },
+    "product.replace.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open %1$(name)@?"
+          }
+        }
+      }
+    },
+    "product.tabs.accessibility.closeSearch": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close search"
+          }
+        }
+      }
+    },
+    "product.tabs.accessibility.openApps": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Open app, %lld"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Open apps, %lld"
+                }
+              }
+            }
           }
         }
       }
@@ -837,6 +1226,17 @@
         }
       }
     },
+    "product.tabs.empty": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No open apps"
+          }
+        }
+      }
+    },
     "product.tabs.notAvailable": {
       "extractionState": "manual",
       "localizations": {
@@ -844,6 +1244,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Not available"
+          }
+        }
+      }
+    },
+    "scan.notForThisProduct": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This code isn't for %1$(productId)@"
+          }
+        }
+      }
+    },
+    "scan.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan for %1$(productId)@"
           }
         }
       }
@@ -954,6 +1376,30 @@
           "stringUnit": {
             "state": "translated",
             "value": "Accepted funds from %1$(product)@"
+          }
+        }
+      }
+    },
+    "update.notice.action": {
+      "comment": "Button on the product update notice that reloads the product into its new build",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Update"
+          }
+        }
+      }
+    },
+    "update.notice.message": {
+      "comment": "Notice at the top of the app when a newer build of an open product has been downloaded",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(product)@ has an update"
           }
         }
       }

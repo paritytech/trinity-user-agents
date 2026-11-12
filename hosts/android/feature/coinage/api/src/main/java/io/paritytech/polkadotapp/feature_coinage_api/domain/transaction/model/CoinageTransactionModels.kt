@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.feature_coinage_api.domain.transaction.model
 
 import io.paritytech.polkadotapp.common.domain.model.DataByteArray
+import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageInstallationId
 import io.paritytech.polkadotapp.feature_coinage_api.domain.model.CoinageKeyIndex
 import io.paritytech.polkadotapp.feature_transactions.api.data.EnrichedSendableExtrinsic
 import io.paritytech.polkadotapp.feature_transactions.api.domain.durable.DurableTxId
@@ -90,5 +91,35 @@ data class CoinageAssetState(
 
     companion object {
         val UNTRACKED = CoinageAssetState(handedOff = false, minterStatus = null, consumerStatus = null)
+    }
+}
+
+/**
+ * The ledger's view of every asset, including ones it holds no row for.
+ *
+ * An asset recovered from a previous installation's backup has no entry of ours to have minted it — the
+ * transaction was another installation's — yet the recovery scan only saves what the finalized chain already
+ * held, so the mint is as settled as a recorded one. Left null it would read as a mint still in flight, and a
+ * payment made of such a coin could never reach a terminal status. A recovered asset nothing of ours touched
+ * yet has no row at all, so the substitution cannot happen at mapping time and is made here instead.
+ */
+class CoinageAssetStates(
+    private val tracked: Map<OwnAsset, CoinageAssetState>,
+    private val currentInstallation: CoinageInstallationId,
+) {
+    fun getAssetStateOf(asset: OwnAsset): CoinageAssetState {
+        val state = tracked[asset] ?: CoinageAssetState.UNTRACKED
+        val recovered = asset.keyIndex().installation != currentInstallation
+
+        return if (state.minterStatus == null && recovered) {
+            state.copy(minterStatus = DurableTxStatus.FINALIZED_SUCCESS)
+        } else {
+            state
+        }
+    }
+
+    private fun OwnAsset.keyIndex() = when (this) {
+        is OwnAsset.Coin -> derivationIndex
+        is OwnAsset.Voucher -> ringVrfIndex
     }
 }

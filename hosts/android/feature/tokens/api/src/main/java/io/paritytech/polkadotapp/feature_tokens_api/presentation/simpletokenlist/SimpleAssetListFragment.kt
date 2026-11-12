@@ -13,6 +13,7 @@ abstract class SimpleAssetListFragment<VM : SimpleAssetListViewModel> : BaseComp
     @Inject
     lateinit var knownTokenFormatter: KnownTokenFormatter
 
+    @Composable
     abstract fun config(): SimpleTokenListUiConfig
 
     @Composable

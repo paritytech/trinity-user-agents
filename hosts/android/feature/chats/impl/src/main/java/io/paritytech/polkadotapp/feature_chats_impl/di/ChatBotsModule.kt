@@ -5,8 +5,10 @@ import dagger.Module
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import dagger.multibindings.IntoSet
+import dagger.multibindings.Multibinds
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotStateController
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatOverlay
 import io.paritytech.polkadotapp.feature_chats_impl.domain.extension.CoinagePaymentProcessingExtension
 import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.bot.RealChatBotStateController
 import io.paritytech.polkadotapp.feature_chats_impl.domain.middleware.bot.sample.SampleBot
@@ -28,4 +30,7 @@ internal interface ChatBotsModule {
     @Binds
     @Singleton
     fun bindChatBotStateController(impl: RealChatBotStateController): ChatBotStateController
+
+    @Multibinds
+    fun chatOverlays(): Set<ChatOverlay>
 }

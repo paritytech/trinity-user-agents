@@ -1,8 +1,10 @@
+import { asProductId } from "@parity/truapi";
+import type { ProductId } from "@parity/truapi";
 // A deterministic, in-memory mock host. `createMockHost` returns a complete
-// `RequiredHostCallbacks` set (the JS sibling of `truapi-platform`'s
+// `RequiredHostCallbacks` set (the JS sibling of `truapi::platform`'s
 // `MockPlatform`) plus recordings for assertions. Hand `host.callbacks` to
 // `createWebWorkerPairingHostRuntime` (or `createWasmRawCallbacks` directly) to
-// run the real truapi-server WASM core against a mocked OS seam: storage is
+// run the real truapi WASM core against a mocked OS seam: storage is
 // in-memory, permissions answer from a fixed policy, navigation/notifications
 // are recorded, and the chain connection is silent (or replays canned frames).
 //
@@ -41,7 +43,7 @@ import type {
 import type {
   AuthState,
   CoreStorageKey,
-  HostChainSet,
+  HostScan,
   JsonRpcConnection,
   PermissionDecision,
   RequiredHostCallbacks,
@@ -53,14 +55,73 @@ import type { ProductRuntimeConfig } from "../runtime.js";
 export type PermissionPolicy = "allow-all" | "deny-all";
 
 /**
+ * The denying policy under the name `@parity/host-api-test-sdk` gives it.
+ *
+ * Recognised rather than merely unequal to `"allow-all"`: a policy name the
+ * mock does not know is refused, so a typo says so instead of denying every
+ * permission with nothing to explain the refusals.
+ */
+export type PermissionPolicyAlias = "reject-all";
+
+/** Resolve a policy name, rejecting one that means nothing here. */
+function normalizePermissionPolicy(
+  behavior: PermissionPolicy | PermissionPolicyAlias,
+): PermissionPolicy {
+  if (behavior === "allow-all" || behavior === "deny-all") return behavior;
+  if (behavior === "reject-all") return "deny-all";
+  throw new Error(
+    `testHost \`setPermissionBehavior\` does not know the policy ` +
+      `"${String(behavior)}". Use "allow-all", or "deny-all" (which ` +
+      `\`@parity/host-api-test-sdk\` spells "reject-all").`,
+  );
+}
+
+/** The core's product-storage key prefix, up to and including its version. */
+const CORE_PRODUCT_STORAGE_PREFIX = /^truapi:product-storage:v\d+:/;
+
+/**
+ * The product's own key inside a core-namespaced one, or `undefined`.
+ *
+ * Reading the tail rather than any `:key` suffix is what keeps a prefixed store
+ * distinct from an unprefixed one: a product writing `demo:mykey` and `mykey`
+ * produces two keys that both end in `:mykey`, so a suffix search for `mykey`
+ * answers with whichever comes first and a test asserting they do not collide
+ * can never fail.
+ *
+ * The product id is length-prefixed by the core precisely because it may hold
+ * colons -- `localhost:3000` is an ordinary one -- so the length is what says
+ * where the id ends, not the next separator.
+ */
+export function coreProductStorageKey(stored: string): string | undefined {
+  const prefix = CORE_PRODUCT_STORAGE_PREFIX.exec(stored);
+  if (!prefix) return undefined;
+  const rest = stored.slice(prefix[0].length);
+  const separator = rest.indexOf(":");
+  if (separator < 0) return undefined;
+  const length = Number(rest.slice(0, separator));
+  if (!Number.isInteger(length) || length < 0) return undefined;
+  const afterId = rest.slice(separator + 1 + length);
+  return afterId.startsWith(":") ? afterId.slice(1) : undefined;
+}
+
+/**
  * A chain the host will proxy to, rather than answer from memory.
  *
  * Matched on `genesisHash`: the core asks for a chain by hash, so the hash here
  * must be the *real* one of the endpoint, not a {@link MOCK_GENESIS}
  * placeholder, and the runtime config must carry the same value.
  */
-import { createLoopbackStatements } from "./loopback-statements.js";
-import type { LoopbackStatements } from "./loopback-statements.js";
+import {
+  createLoopbackStatements,
+  decodeStatement,
+  encodeStatement,
+  TOPIC_FIELD_TAGS,
+} from "./loopback-statements.js";
+import type {
+  LoopbackStatements,
+  RetainedStatement,
+  StatementInput,
+} from "./loopback-statements.js";
 
 export interface ChainProxy {
   /**
@@ -102,7 +163,7 @@ export interface MockFaults {
   confirmationError?: string;
   /** Device and remote permission prompts fail with this reason. */
   permissionError?: string;
-  /** `featureSupported` and `supportedChains` fail with this reason. */
+  /** `featureSupported` fails with this reason. */
   featureError?: string;
   /** Chat room, bot, and message calls fail with this reason. */
   chatError?: string;
@@ -213,7 +274,7 @@ function liveSubscription<T>(
 /** One operation a product began and has not ended. */
 export interface OpenOperation {
   /** Product that began it. */
-  productId: string;
+  productId: ProductId;
   /** Id the mock handed back, unique among this product's open operations. */
   id: number;
   /** Label the product gave, empty when it gave none. */
@@ -226,6 +287,34 @@ export interface OpenOperation {
  * Field names are `@parity/host-api-test-sdk`'s `PermissionLogEntry`, so an
  * assertion written against that shape reads this one.
  */
+/**
+ * One statement the store holds, in the shape a suite reads it.
+ *
+ * Field names are `@parity/host-api-test-sdk`'s `StatementEntry`, so an
+ * assertion written against that shape reads this one.
+ */
+export interface StatementEntry {
+  /** Topics the statement carries, `0x`-hex, in the order encoded. */
+  topics: string[];
+  /** The statement's payload, or `undefined` when it carries none. */
+  data: string | undefined;
+  /** The signature proof, when the statement carries a signing one. */
+  proof: { signature: string; signer: string } | undefined;
+  /** The 32-byte channel, `0x`-hex, or `undefined` when it carries none. */
+  channel: string | undefined;
+  /**
+   * The expiry as encoded: the expiration timestamp in seconds in the high 32
+   * bits and a sequence number in the low 32. `undefined` when it carries none.
+   */
+  expiry: bigint | undefined;
+  /** The 32-byte decryption key, `0x`-hex, or `undefined` when it carries none. */
+  decryptionKey: string | undefined;
+  /** True when the product submitted it, false when a test injected it. */
+  fromProduct: boolean;
+  /** When the store took it, as epoch milliseconds. */
+  timestamp: number;
+}
+
 export interface PermissionLogEntry {
   /** The request's tag, the same key `grantPermission` takes. */
   tag: string;
@@ -235,6 +324,17 @@ export interface PermissionLogEntry {
   approved: boolean;
   /** Which prompt surface asked. */
   kind: PermissionKind;
+  /**
+   * The answer's lifetime, as the core records it.
+   *
+   * A mock policy is two-valued, so this is `AllowAlways` or `Deny`; a host
+   * that offered `AllowOnce` would record that instead. Carried because an
+   * assertion on a refusal reads the lifetime, not just the boolean: a suite
+   * checking that a denial was durable has nothing else to look at.
+   */
+  decision: PermissionDecision;
+  /** When the mock answered, as epoch milliseconds. */
+  timestamp: number;
 }
 
 /**
@@ -273,8 +373,8 @@ export type ChainStatus = "Idle" | "Connected" | "Disconnected";
  */
 const NOT_MODELLED_REASONS: Record<string, string> = {
   payment:
-    "the protocol declares payments but no host implements them; " +
-    "see docs/rfcs/0006-payments.md",
+    "payments are served only by native and Rust hosts, since the browser " +
+    "host-callback bridge cannot carry the payment platforms yet",
   coinPayment:
     "the protocol declares coin payments but no host implements them; " +
     "see docs/rfcs/0006-payments.md",
@@ -304,12 +404,24 @@ export interface MockHostConfig {
   remotePermissions?: PermissionPolicy;
   /** Whether `featureSupported` reports support. Default `true`. */
   featureSupported?: boolean;
+  /**
+   * When set, `featureSupported` answers from `servedChains`, as a real host
+   * does, so a chain outside that set is unsupported. Default `false`. It
+   * becomes the default in a later breaking release. The Rust
+   * `MockConfig::only_served_chains` is the same option.
+   */
+  onlyServedChains?: boolean;
   /** Theme emitted by `subscribeTheme`. Default `"Dark"`. */
   theme?: ThemeVariant;
   /** BCP 47 tag emitted by `subscribeLocale`. Default `"en"`. */
   languageTag?: string;
-  /** Whether `confirmUserAction` confirms reviewed actions. Default `true`. */
+  /**
+   * Whether `confirmUserAction` confirms reviewed actions. Default `true`.
+   * {@link MockHost.setConfirmUserActions} changes it for one test.
+   */
   confirmUserActions?: boolean;
+  /** The scanner's answer. Unset serves no scanner, so scans are `Unsupported`. */
+  scanner?: HostScan;
   /**
    * JSON-RPC response frames the chain connection replays, in order. Empty
    * (the default) means a silent connection: it records outbound requests and
@@ -341,14 +453,12 @@ export interface MockHostConfig {
    */
   chainProxies?: ChainProxy[];
   /**
-   * Chains the host reports serving (RFC 0026). Defaults to the three
-   * {@link MOCK_GENESIS} chains, which are what {@link mockRuntimeConfig}
-   * declares.
-   *
-   * An empty set type-checks and then fails every chain-routed call, so
-   * override this only to assert that failure.
+   * Genesis hashes of the chains the host serves, which `featureSupported`
+   * answers from when `onlyServedChains` is set. Defaults to the three
+   * {@link MOCK_GENESIS} chains, the ones {@link mockRuntimeConfig}'s stack
+   * names. `getChainInfo` answers from that stack, not from this list.
    */
-  supportedChains?: HostChainSet;
+  servedChains?: string[];
 }
 
 /** A mock host: the callbacks to wire into a provider, plus assertion oracles. */
@@ -363,27 +473,35 @@ export interface MockHost {
   /** Notifications the core asked the host to show, in order. */
   getNotificationLog(): NotificationLogEntry[];
   /**
-   * Deliver a SCALE-encoded signed statement to the product as a chain
-   * notification, returning how many live subscriptions it reached. Zero means
-   * the product is not subscribed yet: subscribe first, then inject.
+   * Deliver a statement to the product as a chain notification, answering the
+   * entry the store retained.
    *
-   * The bytes are the wire form, not a structured statement. The core decodes
-   * what the chain would have sent it, so anything else is dropped during
-   * decode with no error a suite can see.
+   * Takes the topics and payload as a structure, or the SCALE wire bytes the
+   * chain would have sent. Retained either way, so a suite that injects before
+   * its product subscribes has the statement replayed to it on subscribe
+   * rather than losing it.
    */
-  injectStatement(statement: Uint8Array | string): number;
+  injectStatement(
+    statement: StatementInput | Uint8Array | string,
+  ): StatementEntry;
   /** Statements injected so far, in order, as `0x` hex. */
   getInjectedStatements(): string[];
   /**
-   * Statements the product submitted, as `0x` hex, read off the chain
-   * transport.
+   * Every statement the store holds, submitted or injected, in order.
+   *
+   * Decoded, because the wire form is the core's business: a suite asserting on
+   * a topic or a payload should not have to know the codec to read one back.
+   */
+  getStatements(): StatementEntry[];
+  /**
+   * Statements the product submitted, decoded, read off the chain transport.
    *
    * The core sends `statement_submit` without consulting an allowance, so a
    * product that signs its own statements is observable here. One that asks the
    * host to sign first (`createProofAuthorized`) needs a statement allowance to
    * get that far, and this stays empty until it has one.
    */
-  getSubmittedStatements(): string[];
+  getSubmittedStatements(): StatementEntry[];
   /** Forget the injected statements. Delivered ones cannot be recalled. */
   clearStatements(): void;
   /** Raw JSON-RPC the core sent over the chain connection, in order. */
@@ -425,7 +543,9 @@ export interface MockHost {
    */
   getConnectionStatus(): ChainStatus;
   /** Switch the answer both permission prompts fall back to. */
-  setPermissionBehavior(behavior: PermissionPolicy): void;
+  setPermissionBehavior(
+    behavior: PermissionPolicy | PermissionPolicyAlias,
+  ): void;
   /**
    * Release the mock's state and drop every live subscription.
    *
@@ -455,6 +575,14 @@ export interface MockHost {
   getTheme(): ThemeVariant;
   /** Replace the reported theme. */
   setTheme(variant: ThemeVariant): void;
+  /** Set the next scan's answer. Throws unless created with a `scanner` answer. */
+  setScanAnswer(answer: HostScan): void;
+  /**
+   * Answer reviews from now on with `confirm`, as `confirmUserActions` does at
+   * boot. A review already answered keeps its answer, and so does a
+   * permission the core has cached. `reset` restores the configured value.
+   */
+  setConfirmUserActions(confirm: boolean): void;
   /** State of the mock's chain connection. */
   getChainStatus(): ChainStatus;
   /** Mark the chain disconnected, as a dropped transport would. */
@@ -477,6 +605,19 @@ export interface MockHost {
    * impossible to replace.
    */
   getProductStorage(): Record<string, Uint8Array>;
+  /**
+   * The value the product stored under `key`, decoded as UTF-8.
+   *
+   * Synchronous, because `@parity/host-api-test-sdk` publishes it that way and
+   * a suite compares the result inside a `page.waitForFunction` predicate.
+   * The core namespaces the key before the host sees it, so this reads the
+   * product's own key out of that shape rather than matching the whole string.
+   *
+   * `undefined` for a value that is not UTF-8, the same answer a key nothing
+   * wrote gets: read those through {@link MockHost.getProductStorage}, which
+   * hands back bytes.
+   */
+  getProductStorageValue(key: string): string | undefined;
   /** Seeded preimage values. */
   getPreimages(): Uint8Array[];
   /** Drop the recorded navigations. */
@@ -513,8 +654,9 @@ export interface MockHost {
    */
   statements: never;
   /**
-   * Payments, which TrUAPI declares but no host implements. Every access
-   * throws; see {@link notModeled}.
+   * Payments, which only native and Rust hosts serve: the browser bridge
+   * cannot carry the payment platforms yet. Every access throws; see
+   * {@link notModeled}.
    */
   payment: never;
   /** Coin payments, unimplemented in the same way as {@link MockHost.payment}. */
@@ -525,9 +667,16 @@ export interface MockHost {
    * Seed a preimage so a later `preimage.lookupPreimage` resolves it, and
    * return the deterministic lookup key. The core (not the host) owns Bulletin
    * submission on current core; this is the host-side content store the mock's
-   * `lookupPreimage` reads from.
+   * `lookupPreimage` reads from. Lookups already open for the key receive it.
    */
   seedPreimage(value: Uint8Array): Uint8Array;
+  /**
+   * Store `value` under `storedKey`, the key the core reads product storage
+   * by, as an entry persisted from an earlier session would be. Subscribers to
+   * that key are notified, and it does not count as a host call. The host page
+   * builds `storedKey` from the product's own key with `seedProductStorage`.
+   */
+  writeProductStorage(storedKey: string, value: Uint8Array): void;
 }
 
 /** Lowercase hex without `0x`, so a hash compares equal however it was written. */
@@ -545,18 +694,37 @@ function normalizeHash(hash: string | Uint8Array): string {
  * asked for even when a real node answers it.
  *
  * One socket per lease, never shared. Production opens a fresh connection for
- * every chain connect -- `truapi-provider`'s `connect` and the CLI's
- * `WsJsonRpcConnection::connect` both do -- and JSON-RPC ids are numbered per
- * connection from 1. Two leases on one socket therefore put two id spaces on
- * the same wire, and every inbound frame reaches every reader, so a lease sees
- * traffic it never asked for. That is transport behaviour no real host has and
- * the core can observe it, which makes sharing a fidelity bug rather than an
- * optimisation. Do not reintroduce it to save connections.
+ * every chain connect -- `truapi-provider`'s `connect` does, and the CLI dials
+ * through it -- and JSON-RPC ids are numbered per connection from 1. Two leases
+ * on one socket therefore put two id spaces on the same wire, and every inbound
+ * frame reaches every reader, so a lease sees traffic it never asked for. That
+ * is transport behaviour no real host has and the core can observe it, which
+ * makes sharing a fidelity bug rather than an optimisation. Do not reintroduce
+ * it to save connections.
  *
  * This is not a multi-chain concern. Two leases on one chain are enough: they
  * would cross-talk, and releasing one would leave its listeners on a socket the
  * other still holds. A single-chain suite is not safe from it.
  */
+/** Record a `statement_submit` the core sent to a real chain. */
+function recordChainSubmission(
+  request: string,
+  into: RetainedStatement[],
+): void {
+  try {
+    const frame = JSON.parse(request) as {
+      method?: string;
+      params?: unknown[];
+    };
+    if (frame.method !== "statement_submit") return;
+    const [statement] = frame.params ?? [];
+    if (typeof statement !== "string") return;
+    into.push({ encoded: statement, fromProduct: true, timestamp: Date.now() });
+  } catch {
+    // A frame that is not JSON is not a submission.
+  }
+}
+
 function connectToChain(
   proxy: ChainProxy,
   sentRpc: string[],
@@ -566,6 +734,7 @@ function connectToChain(
   // type is generated from the protocol and must not grow test-only members.
   injectors?: Set<(frame: string) => void>,
   disconnectors?: Set<() => void>,
+  submissions?: RetainedStatement[],
 ): JsonRpcConnection {
   const socket = new WebSocket(proxy.rpcUrl);
   const queued: string[] = [];
@@ -580,7 +749,8 @@ function connectToChain(
     socket.addEventListener("open", () => resolve(), { once: true });
     socket.addEventListener(
       "error",
-      () => reject(new Error(`chain proxy failed to connect to ${proxy.rpcUrl}`)),
+      () =>
+        reject(new Error(`chain proxy failed to connect to ${proxy.rpcUrl}`)),
       { once: true },
     );
   });
@@ -635,7 +805,8 @@ function connectToChain(
     ownStatementSubscriptions.clear();
     loopback?.release(deliver);
     // Release every reader, so a stream ends instead of hanging on a drop.
-    while (waiting.length > 0) waiting.shift()?.({ value: undefined, done: true });
+    while (waiting.length > 0)
+      waiting.shift()?.({ value: undefined, done: true });
   };
   disconnectors?.add(finish);
   socket.addEventListener("close", finish, { once: true });
@@ -643,6 +814,7 @@ function connectToChain(
   return {
     send(request) {
       sentRpc.push(request);
+      if (submissions) recordChainSubmission(request, submissions);
       // Served here rather than forwarded, so the statement flows work with no
       // chain behind them. Everything else still goes out.
       if (loopback?.handle(request, deliver)) return;
@@ -673,7 +845,8 @@ function connectToChain(
               if (buffered !== undefined) {
                 return Promise.resolve({ value: buffered, done: false });
               }
-              if (closed) return Promise.resolve({ value: undefined, done: true });
+              if (closed)
+                return Promise.resolve({ value: undefined, done: true });
               return new Promise((resolve) => waiting.push(resolve));
             },
           };
@@ -715,6 +888,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     devicePermissions: devicePermissionsInitial = "allow-all",
     remotePermissions: remotePermissionsInitial = "allow-all",
     featureSupported = true,
+    onlyServedChains = false,
     theme = "Dark",
     confirmUserActions = true,
     chainResponses = [],
@@ -722,16 +896,11 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     chainProxies = [],
     languageTag = "en",
     faults = {},
-    supportedChains = {
-      network: "mock",
-      chains: [
-        { identifier: "People", genesisHash: MOCK_GENESIS.people },
-        { identifier: "Bulletin", genesisHash: MOCK_GENESIS.bulletin },
-        { identifier: "AssetHub", genesisHash: MOCK_GENESIS.assetHub },
-      ],
-    },
+    scanner,
+    servedChains = Object.values(MOCK_GENESIS),
   } = config;
 
+  const scan = scanner === undefined ? undefined : { answer: scanner };
   const storage = new Map<string, Uint8Array>();
   const preimages = new Map<string, Uint8Array>();
   const navigations: string[] = [];
@@ -742,6 +911,9 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   const chainInjectors = new Set<(frame: string) => void>();
   const chainDisconnectors = new Set<() => void>();
   const injectedStatements: string[] = [];
+  // Submissions and injections seen on a real chain transport, so the readers
+  // answer the same shape whether or not the store is served in-page.
+  const chainStatements: RetainedStatement[] = [];
   const loopbackStatements = createLoopbackStatements();
   const usingLoopback = (chainProxies ?? []).some(
     (proxy) => proxy.loopbackStatements,
@@ -766,6 +938,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
   let remotePermissions = remotePermissionsInitial;
   let enforcePermissions = false;
   let currentTheme = theme;
+  let confirming = confirmUserActions;
   // Live theme subscriptions, so `setTheme` reaches a subscribed product the way
   // the Rust mock's `theme_subscribers` does. A generator that ended after the
   // first value would make every `setTheme` in a migrating suite a no-op.
@@ -817,17 +990,17 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         : enforcePermissions
           ? false
           : granted(policy);
-    permissionLog.push({ tag, value, approved, kind });
+    permissionLog.push({
+      tag,
+      value,
+      approved,
+      kind,
+      decision: decision(approved),
+      timestamp: Date.now(),
+    });
     return approved;
   };
 
-  // Product keys are namespaced from core slots so neither can shadow the other.
-  // This in-JS key scheme is internal and independent from the Rust MockPlatform's
-  // (state never crosses the boundary), so the two need not match byte-for-byte.
-  // What they do have to share is which slots are distinct: keying on the tag
-  // alone would put every product's manifest in one slot, so a test writing one
-  // product's and reading another's reads back the wrong one here and a miss on
-  // Rust.
   const productKey = (key: string): string => `product:${key}`;
   const coreKey = (key: CoreStorageKey): string =>
     key.value === undefined
@@ -843,6 +1016,45 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
               )
             : inner,
         )}`;
+  /** Replacing a mock decision must invalidate the core's settled answer. */
+  const forgetStoredAuthorization = (permission: string): void => {
+    const prefix = "core:PermissionAuthorization:";
+    const needle = JSON.stringify(permission);
+    for (const key of storage.keys()) {
+      if (key.startsWith(prefix) && key.includes(needle)) storage.delete(key);
+    }
+  };
+
+  /** Decode a retained statement into the shape a suite reads. */
+  const asEntry = (statement: RetainedStatement): StatementEntry => {
+    // An undecodable statement is still reported, with nothing claimed about
+    // its contents: a suite chasing one it injected by hand has something to
+    // see, where dropping it looks like the injection never happened.
+    const fields = decodeStatement(statement.encoded) ?? [];
+    const field = (tag: string) =>
+      fields.find((candidate) => candidate.tag === tag)?.value;
+    const proof = field("Proof") as
+      | { tag: string; value: { signature: string; signer: string } }
+      | undefined;
+    return {
+      topics: fields
+        .filter((field) => TOPIC_FIELD_TAGS.includes(field.tag))
+        .map((field) => String(field.value).toLowerCase()),
+      data: fields.find((field) => field.tag === "Data")?.value as
+        | string
+        | undefined,
+      proof:
+        proof && proof.tag !== "OnChain"
+          ? { signature: proof.value.signature, signer: proof.value.signer }
+          : undefined,
+      channel: field("Channel") as string | undefined,
+      expiry: field("Expiry") as bigint | undefined,
+      decryptionKey: field("DecryptionKey") as string | undefined,
+      fromProduct: statement.fromProduct,
+      timestamp: statement.timestamp,
+    };
+  };
+
   const granted = (policy: PermissionPolicy): boolean => policy === "allow-all";
   // A mock policy is two-valued, so a grant is durable and a refusal is
   // durable. `AllowOnce` is a host answer the mock has no knob to ask for.
@@ -858,6 +1070,11 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     const item = { value: value && scale.bytesToHex(value) };
     for (const push of storageSubscribers.get(key) ?? []) push(item);
   };
+  // Per key as well, so a seed reaches only the lookups waiting on it.
+  const preimageSubscribers = new Map<
+    string,
+    Set<(value: Uint8Array | undefined) => void>
+  >();
 
   let hostCallCount = 0;
 
@@ -979,6 +1196,21 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       },
     },
 
+    game: {
+      async scheduleGameReminder() {},
+      async cancelGameReminder() {},
+    },
+
+    ...(scan === undefined
+      ? {}
+      : {
+          scanner: {
+            async scanCode() {
+              return scan.answer;
+            },
+          },
+        }),
+
     permissions: {
       async devicePermission(_product, request) {
         if (faults.permissionError) throw new Error(faults.permissionError);
@@ -999,14 +1231,23 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       },
     },
 
-    features: {
-      async featureSupported() {
-        if (faults.featureError) throw new Error(faults.featureError);
-        return { supported: featureSupported };
+    // The mock builds every chain as V4, as the CLI host does.
+    extrinsicVersion: {
+      async transactionExtensionVersions() {
+        return { chains: [] };
       },
-      async supportedChains() {
+    },
+    features: {
+      async featureSupported(request) {
         if (faults.featureError) throw new Error(faults.featureError);
-        return supportedChains;
+        const served =
+          !onlyServedChains ||
+          servedChains.some(
+            (genesisHash) =>
+              normalizeHash(genesisHash) ===
+              normalizeHash(request.value.genesisHash),
+          );
+        return { supported: featureSupported && served };
       },
     },
 
@@ -1023,8 +1264,10 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
           chainProxies.find(
             (candidate) =>
               candidate.genesisHash !== undefined &&
-              normalizeHash(candidate.genesisHash) === normalizeHash(genesisHash),
-          ) ?? chainProxies.find((candidate) => candidate.genesisHash === undefined);
+              normalizeHash(candidate.genesisHash) ===
+                normalizeHash(genesisHash),
+          ) ??
+          chainProxies.find((candidate) => candidate.genesisHash === undefined);
         if (proxy) {
           // After the dial, not before: a proxy that fails to open must leave
           // the status alone rather than report a connection that is not there.
@@ -1035,6 +1278,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
             proxy.loopbackStatements ? loopbackStatements : undefined,
             chainInjectors,
             chainDisconnectors,
+            chainStatements,
           );
           chainStatus = "Connected";
           return connection;
@@ -1053,6 +1297,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         return {
           send(request) {
             sentRpc.push(request);
+            recordChainSubmission(request, chainStatements);
           },
           async *responses(): AsyncGenerator<string> {
             try {
@@ -1088,14 +1333,14 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async confirmUserAction(review) {
         reviews.push(review);
         if (faults.confirmationError) throw new Error(faults.confirmationError);
-        return confirmUserActions;
+        return confirming;
       },
       // The Rust trait answers this from `confirm_user_action` by default, so
       // a review is recorded here too and one knob still answers both.
       async confirmPermission(review) {
         reviews.push(review);
         if (faults.confirmationError) throw new Error(faults.confirmationError);
-        return decision(confirmUserActions);
+        return decision(confirming);
       },
     },
 
@@ -1149,12 +1394,17 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         });
         return { messageId };
       },
+      async setChatRoomFooter() {
+        if (faults.chatError) throw new Error(faults.chatError);
+      },
       subscribeChatRooms() {
         // The other chat calls fail with this reason, so the subscription
         // reports it too rather than handing back a stream that looks healthy
         // and never carries the rooms a failing host would refuse to list.
         if (faults.chatError) {
-          return failedSubscription<HostChatListSubscribeItem>(faults.chatError);
+          return failedSubscription<HostChatListSubscribeItem>(
+            faults.chatError,
+          );
         }
         return liveSubscription<HostChatListSubscribeItem>(
           { rooms: byKey(chatRooms) },
@@ -1178,12 +1428,23 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     },
 
     preimage: {
-      async *lookupPreimage(
-        key,
-      ): AsyncGenerator<Result<Uint8Array | undefined, GenericError>> {
-        yield ok(preimages.get(hex(key)));
-        // Stay open for future updates (none, in the mock).
-        await new Promise<never>(() => {});
+      lookupPreimage(key) {
+        const id = hex(key);
+        return liveSubscription<Uint8Array | undefined>(
+          preimages.get(id),
+          subscriptionClosers,
+          (push) => {
+            const subscribers =
+              preimageSubscribers.get(id) ??
+              new Set<(value: Uint8Array | undefined) => void>();
+            preimageSubscribers.set(id, subscribers);
+            subscribers.add(push);
+            return () => {
+              subscribers.delete(push);
+              if (subscribers.size === 0) preimageSubscribers.delete(id);
+            };
+          },
+        );
       },
     },
   };
@@ -1199,24 +1460,19 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     getNavigationLog: () => [...navigations],
     getNotificationLog: () => pushedNotifications.map((n) => ({ ...n })),
     injectStatement: (statement) => {
-      if (usingLoopback) {
-        const encoded =
-          typeof statement === "string"
-            ? statement.startsWith("0x")
-              ? statement
-              : `0x${statement}`
-            : `0x${hex(statement)}`;
-        injectedStatements.push(encoded);
-        return loopbackStatements.inject(encoded);
-      }
       const encoded =
         typeof statement === "string"
           ? statement.startsWith("0x")
             ? statement
             : `0x${statement}`
-          : `0x${hex(statement)}`;
+          : statement instanceof Uint8Array
+            ? `0x${hex(statement)}`
+            : encodeStatement(statement);
       injectedStatements.push(encoded);
-      let delivered = 0;
+      if (usingLoopback) return asEntry(loopbackStatements.inject(encoded));
+
+      const entry = { encoded, fromProduct: false, timestamp: Date.now() };
+      chainStatements.push(entry);
       for (const subscription of statementSubscriptions) {
         // The envelope the chain sends, not the bare statement: the core reads
         // `result.data.statements`, so a bare value decodes to nothing.
@@ -1232,31 +1488,25 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
           },
         });
         for (const injector of chainInjectors) injector(frame);
-        delivered += 1;
       }
-      return delivered;
+      return asEntry(entry);
     },
     getInjectedStatements: () => [...injectedStatements],
+    getStatements: () =>
+      (usingLoopback ? loopbackStatements.statements() : chainStatements).map(
+        asEntry,
+      ),
     getSubmittedStatements: () =>
-      usingLoopback
-        ? loopbackStatements.submitted()
-        : sentRpc.flatMap((request) => {
-        try {
-          const frame = JSON.parse(request) as {
-            method?: string;
-            params?: unknown[];
-          };
-          if (frame.method !== "statement_submit") return [];
-          const [statement] = frame.params ?? [];
-          return typeof statement === "string" ? [statement] : [];
-        } catch {
-          // A frame that is not JSON is not a submission.
-            return [];
-          }
-        }),
+      (usingLoopback ? loopbackStatements.submitted() : chainStatements)
+        .filter((entry) => entry.fromProduct)
+        .map(asEntry),
     clearStatements: () => {
       injectedStatements.length = 0;
       loopbackStatements.clear();
+      // The chain path retains its own list, which `getStatements` and
+      // `getSubmittedStatements` read when the loopback store is off. Leaving it
+      // would carry one case's statements into the next.
+      chainStatements.length = 0;
     },
     sentRpc: () => [...sentRpc],
     authStates: () => [...authStates],
@@ -1277,12 +1527,12 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
           : [{ type, payload: (review as { value: unknown }).value }];
       }),
     getHostCallCount: () => hostCallCount,
-    getIsAuthenticated: () =>
-      authStates.at(-1)?.tag === "Connected",
+    getIsAuthenticated: () => authStates.at(-1)?.tag === "Connected",
     getConnectionStatus: () => chainStatus,
     setPermissionBehavior: (behavior) => {
-      devicePermissions = behavior;
-      remotePermissions = behavior;
+      const policy = normalizePermissionPolicy(behavior);
+      devicePermissions = policy;
+      remotePermissions = policy;
     },
     dispose() {
       this.reset();
@@ -1301,17 +1551,31 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         .sort(),
     grantPermission: (permission) => {
       permissionDecisions.set(permission, true);
+      forgetStoredAuthorization(permission);
     },
     revokePermission: (permission) => {
       permissionDecisions.set(permission, false);
+      forgetStoredAuthorization(permission);
     },
     resetPermission: (permission) => {
       permissionDecisions.delete(permission);
+      forgetStoredAuthorization(permission);
     },
     setEnforcePermissions: (enforce) => {
       enforcePermissions = enforce;
     },
     getTheme: () => currentTheme,
+    setScanAnswer: (answer) => {
+      if (scan === undefined) {
+        throw new Error(
+          "this mock serves no scanner: create it with a `scanner` answer",
+        );
+      }
+      scan.answer = answer;
+    },
+    setConfirmUserActions: (confirm) => {
+      confirming = confirm;
+    },
     setTheme: (variant) => {
       currentTheme = variant;
       const item: HostThemeSubscribeItem = {
@@ -1337,8 +1601,17 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     getChatMessageLog: () => [...chatMessages],
     seedPreimage(value) {
       const key = preimageKey(value);
-      preimages.set(hex(key), value);
+      const id = hex(key);
+      // A key names its content, so a value already held is already what
+      // every open lookup was given; pushing it again would deliver it twice.
+      if (preimages.has(id)) return key;
+      preimages.set(id, value);
+      for (const push of preimageSubscribers.get(id) ?? []) push(value);
       return key;
+    },
+    writeProductStorage(storedKey, value) {
+      storage.set(productKey(storedKey), value);
+      publishStorage(storedKey, value);
     },
     getProductStorage: () => {
       const prefix = productKey("");
@@ -1347,6 +1620,26 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         if (key.startsWith(prefix)) entries[key.slice(prefix.length)] = value;
       }
       return entries;
+    },
+    getProductStorageValue: (key: string) => {
+      const prefix = productKey("");
+      for (const [stored, value] of storage) {
+        if (!stored.startsWith(prefix)) continue;
+        const local = stored.slice(prefix.length);
+        const namespaced = coreProductStorageKey(local);
+        // Falls back to the whole key for a value written straight through the
+        // host seam, which never passed through the core's namespacing.
+        if ((namespaced ?? local) !== key) continue;
+        try {
+          return new TextDecoder("utf-8", { fatal: true }).decode(value);
+        } catch {
+          // A lenient decode answers replacement characters, which read as a
+          // value the product wrote. An absence instead sends a suite to
+          // `getProductStorage`, which hands back the bytes themselves.
+          return undefined;
+        }
+      }
+      return undefined;
     },
     getPreimages: () => [...preimages.values()],
     clearNavigationLog: () => {
@@ -1401,6 +1694,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       remotePermissions = remotePermissionsInitial;
       chainStatus = "Idle";
       enforcePermissions = false;
+      confirming = confirmUserActions;
       nextNotificationId = 1;
       nextChatMessageId = 0;
       hostCallCount = 0;
@@ -1420,23 +1714,75 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
  * all-zero hash is also the natural placeholder a caller passes by accident.
  */
 export const MOCK_GENESIS = {
-  people:
-    "0x1111111111111111111111111111111111111111111111111111111111111111",
+  people: "0x1111111111111111111111111111111111111111111111111111111111111111",
   bulletin:
     "0x2222222222222222222222222222222222222222222222222222222222222222",
   assetHub:
     "0x3333333333333333333333333333333333333333333333333333333333333333",
 } as const;
 
+/** One chain of a {@link TestStack}. */
+export interface TestStackChain {
+  /** The chain's genesis hash, as 0x-prefixed hex or bytes. */
+  genesisHash: string | Uint8Array;
+}
+
 /**
- * A default {@link ProductRuntimeConfig} for a mock host. Override any field;
- * the genesis hashes and product id are placeholders suitable for tests.
+ * The stack a test host runs, built from its parts because a test host has no
+ * signed descriptor to bundle. Only the testing wasm bundle reads it; the
+ * production bundle takes a {@link ProductRuntimeConfig.stack} only.
+ */
+export interface TestStack {
+  /** The network `getChainInfo` reports. */
+  network: string;
+  /** The dotNS TLD a signing host derives its reserved identities under. */
+  tld: string;
+  /** The People chain, which the core runs SSO over. */
+  people: TestStackChain;
+  /** The Bulletin chain, which takes the core's own preimage submissions. */
+  bulletin: TestStackChain;
+  /**
+   * Asset Hub, where product manifests resolve from dotNS. Leave it out for a
+   * host with no Asset Hub; an all-zero hash is refused.
+   */
+  assetHub?: TestStackChain;
+  /** The relay chain. */
+  relay?: TestStackChain;
+  /**
+   * Whether the stack may use Polkadot's genesis hashes or the `dot` TLD.
+   * Defaults to `false`, as on a real host.
+   */
+  allowsReservedValues?: boolean;
+}
+
+/** A {@link ProductRuntimeConfig} for a test host, with a {@link TestStack}. */
+export type MockRuntimeConfig = Omit<ProductRuntimeConfig, "stack"> & {
+  testStack: TestStack;
+};
+
+/**
+ * The stack a mock host runs by default: network `mock` under the `paseo`
+ * TLD, over the {@link MOCK_GENESIS} chains.
+ */
+export function mockTestStack(): TestStack {
+  return {
+    network: "mock",
+    tld: "paseo",
+    people: { genesisHash: MOCK_GENESIS.people },
+    bulletin: { genesisHash: MOCK_GENESIS.bulletin },
+    assetHub: { genesisHash: MOCK_GENESIS.assetHub },
+  };
+}
+
+/**
+ * A default {@link MockRuntimeConfig} for a mock host. Override any field;
+ * the stack and product id are placeholders suitable for tests.
  */
 export function mockRuntimeConfig(
-  overrides: Partial<ProductRuntimeConfig> = {},
-): ProductRuntimeConfig {
+  overrides: Partial<MockRuntimeConfig> = {},
+): MockRuntimeConfig {
   return {
-    productId: "mock.dot",
+    productId: asProductId("mock.dot"),
     host: {
       name: "Mock Host",
       icon: "https://example.invalid/mock.png",
@@ -1446,15 +1792,10 @@ export function mockRuntimeConfig(
       type: "node",
       version: "0",
     },
-    people: { genesisHash: MOCK_GENESIS.people },
-    bulletin: { genesisHash: MOCK_GENESIS.bulletin },
-    assetHub: { genesisHash: MOCK_GENESIS.assetHub },
+    testStack: mockTestStack(),
     pairing: {
       deeplinkScheme: "polkadotapp",
     },
-    // A signing host refuses to start without this; a pairing host ignores it.
-    // Setting it unconditionally keeps one config usable for both roles.
-    networkSuffix: "paseo",
     ...overrides,
   };
 }

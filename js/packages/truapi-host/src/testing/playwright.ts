@@ -9,21 +9,48 @@
 // because TrUAPI has no seam for it -- see `notModeled` in
 // `create-mock-host.ts`; those throw rather than silently pass.
 
+import type { ProductId } from "@parity/truapi";
 import type { Page, FrameLocator } from "@playwright/test";
 
-import type {
-  ChainStatus,
-  ChatMessageRecord,
-  MockHostConfig,
-  NotificationLogEntry,
-  PermissionLogEntry,
-  PermissionPolicy,
-  SigningLogEntry,
+import {
+  coreProductStorageKey,
+  type ChainStatus,
+  type ChatMessageRecord,
+  type MockHostConfig,
+  type MockRuntimeConfig,
+  type NotificationLogEntry,
+  type PermissionLogEntry,
+  type PermissionPolicy,
+  type PermissionPolicyAlias,
+  type SigningLogEntry,
+  type StatementEntry,
 } from "../web/create-mock-host.js";
+import type { HostScan } from "../generated/host-callbacks.js";
+import type { HostPaymentStatusSubscribeItem } from "@parity/truapi";
+import type { StatementInput } from "../web/loopback-statements.js";
+
+// The statement shapes `@parity/host-api-test-sdk` names, so a suite that
+// annotates what it injects or reads back compiles unchanged.
+export type { StatementEntry } from "../web/create-mock-host.js";
+export type { StatementInput } from "../web/loopback-statements.js";
+
+// The address a product account will be given, derivable without a host: a
+// suite funding that account does it once, in setup, not per test.
+export { productAccountAddress } from "./product-account.js";
+export type { ProductAccountQuery } from "./product-account.js";
 
 import { PRODUCT_FRAME_ID } from "./host-page.js";
+import {
+  withNetworks,
+  type LoopbackStatements,
+  type NetworkConfig,
+} from "./networks.js";
 import { createTestHostServer } from "./server.js";
-import { hostPageUrl } from "./host-page-url.js";
+
+export { fromNetworks } from "./networks.js";
+export type { LoopbackStatements, NetworkConfig } from "./networks.js";
+import { accountNames, deepLinkUrl, hostPageUrl } from "./host-page-url.js";
+import type { LoginRequestBehavior } from "./login-requests.js";
 import type { TestHostServer } from "./server.js";
 
 // Re-exported so a test file imports the fixture and the chain constants from
@@ -38,6 +65,10 @@ export {
 export { DEV_ACCOUNT_NAMES } from "./dev-accounts.js";
 export type { DevAccount, DevAccountName } from "./dev-accounts.js";
 
+// A suite that annotates a `genesisHash` reaches for this name from the same
+// path `@parity/host-api-test-sdk/playwright` offers it on.
+export type { HexString } from "@parity/truapi";
+
 // Log entry types under the names `@parity/host-api-test-sdk` exports them by,
 // so a suite that annotates a control-surface result compiles unchanged.
 export type {
@@ -48,6 +79,7 @@ export type {
   SigningLogEntry,
 } from "../web/create-mock-host.js";
 export type { LoginBehavior } from "./host-page.js";
+export type { LoginRequestBehavior } from "./login-requests.js";
 
 /** Selector for the product iframe the host page creates. */
 const PRODUCT_FRAME = `#${PRODUCT_FRAME_ID}`;
@@ -67,10 +99,10 @@ export interface TestHostFixtureOptions {
   /**
    * Chains to serve, in `@parity/host-api-test-sdk`'s `NetworkConfig` shape.
    *
-   * A convenience over spelling out `mock.chainProxies`, `mock.supportedChains`
-   * and `runtimeConfig` separately, which have to agree. The chain's role is
-   * read from the `id` suffix (`-asset-hub`, `-people`, `-bulletin`, else the
-   * relay) and the rest of the id is the network name.
+   * A convenience over spelling out `mock.chainProxies`, `mock.servedChains`
+   * and `runtimeConfig.testStack` separately, which have to agree. The chain's
+   * role is read from the `id` suffix (`-asset-hub`, `-people`, `-bulletin`,
+   * else the relay) and the rest of the id is the network name.
    *
    * Explicit `mock` or `runtimeConfig` values win, so a suite can start here
    * and override one piece.
@@ -96,7 +128,7 @@ export interface TestHostFixtureOptions {
    * signing request whose account is scoped to a different product, so a
    * mismatch surfaces as `PermissionDenied` rather than as a config error.
    */
-  productId?: string;
+  productId?: ProductId;
   /** Behaviour knobs forwarded to the mock host, including `chainProxies`. */
   mock?: MockHostConfig;
   /**
@@ -106,7 +138,7 @@ export interface TestHostFixtureOptions {
    * hash the config declares, so that hash has to be the real one rather than
    * a {@link MOCK_GENESIS} placeholder.
    */
-  runtimeConfig?: Record<string, unknown>;
+  runtimeConfig?: Partial<MockRuntimeConfig>;
   /**
    * Accounts the host can sign as. Defaults to `["alice"]`.
    *
@@ -140,10 +172,27 @@ export interface TestHostFixtureOptions {
    */
   allowances?: "granted" | "chain";
   /**
+   * Decisions applied before the product loads.
+   *
+   * `resourceAllocation` names resources the host refuses; anything unlisted
+   * stays granted. A boot option rather than a call, because a product asks for
+   * its resources on connect and a later call would land after that.
+   *
+   * A refusal here is answered as refused whatever {@link allowances} would
+   * otherwise say, which is what makes a product's refusal path reachable: with
+   * allocation granted there is nothing a suite could do to see one.
+   */
+  behaviors?: { resourceAllocation?: Record<string, boolean> };
+  /**
    * Serve the statement store in-page instead of forwarding it to the chains
    * the host proxies. Defaults to on when `allowances` is `"granted"`, so the
    * two halves of a statement flow agree: a product that is handed an
    * unregistered allowance key can still submit with it.
+   *
+   * The store rides on the People chain's proxy, or on the single proxy of a
+   * one-chain suite. Several chains with no People among them carry no store:
+   * left to the default the fixture serves none, and `true` is refused, because
+   * attaching it to a hub would answer reads a real hub refuses.
    *
    * Nothing submitted this way leaves the page, and a real store would refuse
    * it. Set `false` to send statements to the chain and see what it says.
@@ -157,6 +206,13 @@ export interface TestHostFixtureOptions {
    * `topology: "main-thread"` to read those lines from a test.
    */
   logLevel?: string;
+  /**
+   * Product storage the host holds before the product loads, by the product's
+   * own keys, stored as UTF-8. Use it for state a product reads once at
+   * startup, which `seedProductStorage` can land too late for. A reload of
+   * the host page and `reset()` both start from it again.
+   */
+  productStorage?: Record<string, string>;
   /** How long to wait for the host page to publish its control surface. */
   readyTimeoutMs?: number;
 }
@@ -180,7 +236,9 @@ export interface TestHost {
   grantPermission(permission: string): Promise<void>;
   revokePermission(permission: string): Promise<void>;
   setEnforcePermissions(enforce: boolean): Promise<void>;
-  setPermissionBehavior(behavior: PermissionPolicy): Promise<void>;
+  setPermissionBehavior(
+    behavior: PermissionPolicy | PermissionPolicyAlias,
+  ): Promise<void>;
   getChatRooms(): Promise<unknown[]>;
   getChatBots(): Promise<unknown[]>;
   getChatMessageLog(): Promise<ChatMessageRecord[]>;
@@ -193,13 +251,70 @@ export interface TestHost {
    * Find the value the product stored under `key`.
    *
    * The core namespaces product storage keys before the host ever sees them,
-   * so a test matching on the product's own key wants a suffix match rather
-   * than the full namespaced string, which is an internal shape.
+   * so this reads the product's own key back out of that shape rather than
+   * matching the internal string. Answers the bytes, where
+   * {@link TestHost.getProductStorageValue} answers them decoded as UTF-8.
    */
   findProductStorage(key: string): Promise<Uint8Array | undefined>;
+  /**
+   * Store `value` under the product's own `key`, where the core will read it,
+   * as an entry persisted from an earlier session would be. It reaches a
+   * product that subscribes to the key or reads it afterwards, not a read the
+   * product already made at startup; boot-time state goes in `productStorage`.
+   * A string is stored as UTF-8.
+   */
+  seedProductStorage(
+    key: string,
+    value: Uint8Array | string,
+    productId?: ProductId,
+  ): Promise<void>;
+  /**
+   * The SS58 address of a product account, at the prefix the core mandates.
+   *
+   * A product account is derived from the active session's root, so this
+   * answers `undefined` while the host is signed out and a different address
+   * after `switchAccount`. Read it here rather than out of the product's own
+   * UI: a suite funding that account, or asserting on it, should not depend on
+   * the product rendering it.
+   *
+   * Encoded at the prefix the core mandates, which is not necessarily the one
+   * the product displays: a product rendering at another prefix shows a
+   * different string for the same account. Compare against a product's own
+   * rendering by decoding both, and pass this to a faucet or a transfer as it
+   * stands.
+   */
+  getProductAccountAddress(
+    productId?: ProductId,
+    index?: number,
+  ): Promise<string | undefined>;
+  /**
+   * The value the product stored under `key`, decoded as UTF-8.
+   *
+   * `@parity/host-api-test-sdk` spells this `getProductStorageValue` and
+   * returns a string, so a migrating suite's storage assertions compile
+   * unchanged. Use {@link findProductStorage} for a value that is not text.
+   */
+  getProductStorageValue(key: string): Promise<string | undefined>;
   clearPreimages(): Promise<void>;
   getTheme(): Promise<string>;
   setTheme(variant: string): Promise<void>;
+  /** Set the next scan's answer. Throws unless created with a `scanner` answer. */
+  setScanAnswer(answer: HostScan): Promise<void>;
+  /**
+   * Open the product at `link`, a path with an optional query and hash such
+   * as `/notes/1?view=raw#top`, as a link opened from outside the product
+   * would. The host page loads again with the fixture's configuration, so the
+   * host starts fresh: only state the configuration carries, such as
+   * `productStorage`, is there again.
+   */
+  openDeepLink(link: string): Promise<void>;
+  /**
+   * Confirm or decline reviews, such as a signature, from now on. One test
+   * can decline a signature without a fixture booted with
+   * `confirmUserActions: false`. A permission the core has cached keeps its
+   * answer.
+   */
+  setConfirmUserActions(confirm: boolean): Promise<void>;
   getIsAuthenticated(): Promise<boolean>;
   getChainStatus(): Promise<ChainStatus>;
   getConnectionStatus(): Promise<ChainStatus>;
@@ -245,21 +360,29 @@ export interface TestHost {
    * for the host to record -- not a host seam the mock declined to implement.
    */
   /**
-   * Statements the product submitted, as `0x` hex, read off the chain
-   * transport rather than a host-side log.
+   * Statements the product submitted, decoded, read off the chain transport
+   * rather than a host-side log.
    *
    * Empty for a product that asks the host to sign
    * (`createProofAuthorized`): that needs a statement allowance, and without
    * one no statement is ever built to submit. A product that signs its own
    * statements is observable here.
    */
-  getSubmittedStatements(): Promise<string[]>;
+  getSubmittedStatements(): Promise<StatementEntry[]>;
+  /** Every statement the store holds, submitted or injected, in order. */
+  getStatements(): Promise<StatementEntry[]>;
   /**
-   * Deliver a statement to the product as a chain notification, returning how
-   * many live subscriptions it reached. Subscribe first: zero means nothing
-   * was listening.
+   * Deliver a statement to the product as a chain notification, answering the
+   * entry the store retained.
+   *
+   * Takes the topics and payload as a structure, or the SCALE wire bytes the
+   * chain would have sent. Retained either way, so a suite that injects before
+   * its product subscribes has the statement replayed to it on subscribe
+   * rather than losing it.
    */
-  injectStatement(statement: Uint8Array | string): Promise<number>;
+  injectStatement(
+    statement: StatementInput | Uint8Array | string,
+  ): Promise<StatementEntry>;
   /** Statements injected so far, in order. */
   getInjectedStatements(): Promise<string[]>;
   /** Forget the injected statements. */
@@ -275,7 +398,10 @@ export interface TestHost {
    */
   dispose(): Promise<void>;
 
-  /** Set the spendable balance. Always throws; payments are unimplemented. */
+  /**
+   * Set the spendable balance. Always throws: this host cannot serve
+   * payments, and answers every payment call `Unsupported`.
+   */
   setPaymentBalance(amount: bigint): Promise<never>;
   /** Payment operations the product performed. Always throws; see above. */
   getPaymentLog(): Promise<never>;
@@ -283,10 +409,14 @@ export interface TestHost {
   clearPaymentLog(): Promise<never>;
   /** How top-ups resolve. Always throws; see above. */
   setPaymentTopUpBehavior(behavior: unknown): Promise<never>;
-  /** Force a payment's status. Always throws; see above. */
+  /**
+   * Force the status of the payment with this 32-byte id. Always throws; see
+   * above. The string id and loose status are `@parity/host-api-test-sdk`'s
+   * shapes, still accepted so a suite written against it type-checks.
+   */
   simulatePaymentStatus(
-    paymentId: string,
-    status: { tag: string; value?: string },
+    id: Uint8Array | string,
+    status: HostPaymentStatusSubscribeItem | { tag: string; value?: string },
   ): Promise<never>;
 
   /**
@@ -307,43 +437,35 @@ export interface TestHost {
   injectChatAction(action: unknown): Promise<void>;
 
   /**
-   * Change the login behaviour after boot.
-   *
-   * Always throws, and says what to do instead: the host page reads it once at
-   * start, so it is a `loginBehavior` option on `createTestHostFixture`.
+   * Answer a product's login request while the host is signed out, as a user
+   * would on a real host. `"success"` signs in `account`, or the first account
+   * when none is named, and the product gets `Success`. `"reject"` answers
+   * `Rejected`. Unset, a signed-out host answers `Rejected`, and a signed-in
+   * one answers `AlreadyConnected` either way, as does a second request made
+   * while the first is signing in. A withdrawn request gets `Cancelled`.
+   * `reset` unsets it. Whether the host starts signed in is the
+   * `loginBehavior` fixture option.
    */
-  setLoginBehavior(behavior: "auto" | "manual"): Promise<never>;
+  setLoginBehavior(
+    behavior: LoginRequestBehavior,
+    account?: string,
+  ): Promise<void>;
 }
 
 /**
  * Why the payment controls cannot be served.
  *
- * Not a seam the mock declined to implement: every method in the core's
- * `capabilities/payment.rs` returns an error and ignores its arguments, so
- * there is no behaviour for a host to model or a test to observe.
+ * The core serves payments through `TopUpPlatform`, `PaymentPlatform` and
+ * `BalancePlatform`, which only a native or Rust host can install: the browser
+ * host-callback bridge cannot carry them yet. This host therefore answers
+ * every payment call `Unsupported`, and has no payment engine to record or
+ * drive.
  */
 const NO_PAYMENT_SEAM =
-  "is not available in the TrUAPI test host: the protocol declares payments " +
-  "but no host implements them -- every method in the core's payment " +
-  "capability returns an error and ignores its arguments, so there is nothing " +
-  "to record or simulate. See docs/rfcs/0006-payments.md.";
-
-/** Why login behaviour is fixed once the host page has booted. */
-const LOGIN_BEHAVIOR_IS_CONSTRUCTION_TIME =
-  "cannot be changed after boot in the TrUAPI test host: the host page reads " +
-  "it once at start. Pass `loginBehavior: \"auto\" | \"manual\"` to " +
-  "createTestHostFixture instead.";
-
-/** One chain, in `@parity/host-api-test-sdk`'s shape. */
-export interface NetworkConfig {
-  /** e.g. `paseo-asset-hub`; the suffix names the chain's role. */
-  id: string;
-  name?: string;
-  genesisHash: string;
-  rpcUrl: string;
-  tokenSymbol?: string;
-  tokenDecimals?: number;
-}
+  "is not available in the TrUAPI test host: payments are served only by " +
+  "native and Rust hosts, since the browser host-callback bridge cannot carry " +
+  "the payment platforms yet, so this host answers every payment call " +
+  "Unsupported. See the payment platforms in rust/crates/truapi/RUNTIME.md.";
 
 /** Why a product account cannot be pinned to a chosen key. */
 const NO_PINNED_PRODUCT_ACCOUNT =
@@ -355,107 +477,23 @@ const NO_PINNED_PRODUCT_ACCOUNT =
   "call derives from the new session root, with no reconnect needed. That is " +
   "the real behaviour, not a test-host limitation.";
 
-/** Why a derivation URI cannot name an account. */
-const NO_DERIVATION_URI =
-  "is not supported by the TrUAPI test host: a session activates from 32 " +
-  "bytes of BIP-39 entropy, not a `//Alice`-style derivation path, so the " +
-  "addresses differ from polkadot-js's by construction. Use a built-in name " +
-  "(alice, bob, charlie, dave) or pass explicit entropy.";
-
-/** Role and network implied by a `NetworkConfig.id`. */
-function splitChainId(id: string): {
-  network: string;
-  identifier: "AssetHub" | "People" | "Bulletin" | "Relay";
-  configKey?: "assetHub" | "people" | "bulletin";
-} {
-  const suffixes = [
-    ["-asset-hub", "AssetHub", "assetHub"],
-    ["-people", "People", "people"],
-    ["-bulletin", "Bulletin", "bulletin"],
-  ] as const;
-  for (const [suffix, identifier, configKey] of suffixes) {
-    if (id.endsWith(suffix)) {
-      return { network: id.slice(0, -suffix.length), identifier, configKey };
-    }
-  }
-  // No suffix: the id names the network and the chain is its relay. The
-  // runtime config has no relay slot, so there is no key to declare it under.
-  return { network: id, identifier: "Relay" };
-}
-
 /**
- * Expand `networks` into the three settings that have to agree.
+ * The product-storage entry `key` names, or `undefined` when nothing holds it.
  *
- * A single proxy carries no genesis hash: an unhashed proxy takes every
- * request, so routing survives a chain reset while only the DECLARED hash --
- * which the product checks against its descriptor bundle -- needs re-pinning.
- *
- * Several proxies have to be hashed, because an unhashed one would answer the
- * other chain's requests too. That is not hypothetical: with a hub and a People
- * chain both unhashed, the hub took the People reads and allowance registration
- * failed looking for personhood collections on a chain that has none.
+ * Reads the product's own key out of each stored one with the parse
+ * `getProductStorageValue` uses, so the byte reader and the string reader
+ * cannot disagree about which entry a key names. Falls back to the whole key
+ * for a value written straight through the host seam, which never passed
+ * through the core's namespacing.
  */
-export function fromNetworks(
-  networks: NetworkConfig[],
-  loopbackStatements = false,
-): {
-  mock: Pick<MockHostConfig, "chainProxies" | "supportedChains">;
-  runtimeConfig: Record<string, unknown>;
-} {
-  const runtimeConfig: Record<string, unknown> = {};
-  const chains: { identifier: string; genesisHash: string }[] = [];
-  let network = "paseo";
-  for (const entry of networks) {
-    const split = splitChainId(entry.id);
-    network = split.network || network;
-    chains.push({
-      identifier: split.identifier,
-      genesisHash: entry.genesisHash,
-    });
-    if (split.configKey) {
-      runtimeConfig[split.configKey] = { genesisHash: entry.genesisHash };
-    }
-  }
-  return {
-    mock: {
-      chainProxies: networks.map((entry) => ({
-        ...(networks.length > 1 ? { genesisHash: entry.genesisHash } : {}),
-        rpcUrl: entry.rpcUrl,
-        // Only the People chain carries the statement store, so serving it
-        // locally on the hub as well would claim a store where none exists.
-        ...(loopbackStatements && splitChainId(entry.id).identifier === "People"
-          ? { loopbackStatements: true }
-          : {}),
-      })),
-      supportedChains: { network, chains },
-    } as Pick<MockHostConfig, "chainProxies" | "supportedChains">,
-    runtimeConfig,
-  };
-}
-
-/** Account names for the page URL, rejecting anything the host cannot honour. */
-function accountNames(
-  accounts: (string | { name: string; uri?: string; entropy?: Uint8Array })[],
-): (string | { name: string; entropy: Uint8Array })[] {
-  return accounts.map((account) => {
-    if (typeof account === "string") return account;
-    if (account.uri !== undefined) {
-      throw new Error(
-        `testHost account "${account.name}": \`uri\` ${NO_DERIVATION_URI}`,
-      );
-    }
-    // Entropy is carried through rather than reduced to a name: it is the only
-    // way to sign as an identity that is not one of the built-ins.
-    if (account.entropy !== undefined) {
-      if (account.entropy.length !== 32) {
-        throw new Error(
-          `testHost account "${account.name}": entropy must be 32 bytes, got ${account.entropy.length}`,
-        );
-      }
-      return { name: account.name, entropy: account.entropy };
-    }
-    return account.name;
-  });
+export function productStorageEntry(
+  stored: Record<string, Uint8Array>,
+  key: string,
+): Uint8Array | undefined {
+  const match = Object.entries(stored).find(
+    ([entry]) => (coreProductStorageKey(entry) ?? entry) === key,
+  );
+  return match?.[1];
 }
 
 /**
@@ -470,7 +508,9 @@ function accountNames(
  */
 export function createTestHostFixture(defaults: TestHostFixtureOptions) {
   if (defaults.productAccounts) {
-    throw new Error(`testHost \`productAccounts\` ${NO_PINNED_PRODUCT_ACCOUNT}`);
+    throw new Error(
+      `testHost \`productAccounts\` ${NO_PINNED_PRODUCT_ACCOUNT}`,
+    );
   }
   // Started at most once and shared by every test in the file. Held as the
   // promise, not the server, so concurrent first tests await one start rather
@@ -487,26 +527,22 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
     return (await ownServer).url;
   };
 
-  if (defaults.chain && defaults.networks) {
-    throw new Error(
-      "testHost fixture: pass either `chain` (one chain, the older " +
-        "`@parity/host-api-test-sdk` spelling) or `networks` (several), not " +
-        "both -- `chain: x` is exactly `networks: [x]`.",
-    );
-  }
-  const chains = defaults.networks ?? (defaults.chain ? [defaults.chain] : undefined);
   // Defaults to on when allocation is granted unchecked, so a product handed
   // an unregistered allowance key has somewhere its statements are accepted.
-  const loopbackStatements =
-    defaults.loopbackStatements ?? (defaults.allowances ?? "granted") === "granted";
-  const expanded = chains
-    ? fromNetworks(chains, loopbackStatements)
-    : undefined;
-  // Explicit settings win over anything derived from `networks`.
-  const mock = expanded ? { ...expanded.mock, ...defaults.mock } : defaults.mock;
-  const runtimeConfig = expanded
-    ? { ...expanded.runtimeConfig, ...defaults.runtimeConfig }
-    : defaults.runtimeConfig;
+  // Carried as "default" rather than `true` so the networks the suite declared
+  // decide the rest: a derived store steps aside where none can be served, a
+  // named one says so.
+  const loopbackStatements: LoopbackStatements =
+    defaults.loopbackStatements ??
+    ((defaults.allowances ?? "granted") === "granted" ? "default" : false);
+  // Only the refused entries travel: `true` is what every unlisted resource
+  // already is, so carrying it would say something the host does not act on.
+  const withheldResources = Object.entries(
+    defaults.behaviors?.resourceAllocation ?? {},
+  )
+    .filter(([, allowed]) => !allowed)
+    .map(([resource]) => resource);
+  const { mock, runtimeConfig } = withNetworks(defaults, loopbackStatements);
 
   return {
     testHost: async (
@@ -522,12 +558,15 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
         loginBehavior: defaults.loginBehavior,
         topology: defaults.topology,
         allowances: defaults.allowances,
+        withheldResources,
         logLevel: defaults.logLevel,
+        productStorage: defaults.productStorage,
       });
       await page.goto(url);
 
-      // The page publishes its control surface only once the WASM core is up
-      // and the product has its port, so this doubles as the wire's ready gate.
+      // The page publishes its control surface once the WASM core is up and
+      // the product iframe is created. The product may still be loading, so
+      // a spec waits for the product's own UI before relying on it.
       await page.waitForFunction(() => !!window.__TRUAPI_TEST_HOST__, {
         timeout: defaults.readyTimeoutMs ?? 30_000,
       });
@@ -592,13 +631,34 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
             ]),
           );
         },
-        async findProductStorage(key: string) {
-          const stored = await testHost.getProductStorage();
-          const match = Object.entries(stored).find(([stored]) =>
-            stored.endsWith(`:${key}`),
-          );
-          return match?.[1];
-        },
+        getProductAccountAddress: (productId?: ProductId, index?: number) =>
+          call("getProductAccountAddress", productId, index),
+        seedProductStorage: (key, value, productId) =>
+          page.evaluate(
+            ([storageKey, stored, product]) => {
+              const host = window.__TRUAPI_TEST_HOST__;
+              if (!host)
+                throw new Error("test host is not running on this page");
+              return host.seedProductStorage(
+                storageKey,
+                typeof stored === "string" ? stored : Uint8Array.from(stored),
+                product,
+              );
+            },
+            [
+              key,
+              typeof value === "string" ? value : Array.from(value),
+              productId,
+            ] as const,
+          ),
+        findProductStorage: async (key: string) =>
+          productStorageEntry(await testHost.getProductStorage(), key),
+        getProductStorageValue: async (key: string) =>
+          page.evaluate((storageKey) => {
+            const host = window.__TRUAPI_TEST_HOST__;
+            if (!host) throw new Error("test host is not running on this page");
+            return host.getProductStorageValue(storageKey);
+          }, key),
         getPreimages: async () => {
           const raw = await page.evaluate(() => {
             const host = window.__TRUAPI_TEST_HOST__;
@@ -607,10 +667,30 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
           });
           return raw.map((value) => Uint8Array.from(value));
         },
-        seedPreimage: (value) => call("seedPreimage", value),
+        // Bytes cross `page.evaluate` as arrays in both directions, as for
+        // `getPreimages`, rather than relying on how a Playwright version
+        // serialises a Uint8Array.
+        seedPreimage: async (value) =>
+          Uint8Array.from(
+            await page.evaluate((bytes) => {
+              const host = window.__TRUAPI_TEST_HOST__;
+              if (!host)
+                throw new Error("test host is not running on this page");
+              return Array.from(host.seedPreimage(Uint8Array.from(bytes)));
+            }, Array.from(value)),
+          ),
         clearPreimages: () => call("clearPreimages"),
         getTheme: () => call("getTheme"),
         setTheme: (variant) => call("setTheme", variant),
+        setScanAnswer: (answer) => call("setScanAnswer", answer),
+        setConfirmUserActions: (confirm) =>
+          call("setConfirmUserActions", confirm),
+        openDeepLink: async (link) => {
+          await page.goto(deepLinkUrl(url, link));
+          await page.waitForFunction(() => !!window.__TRUAPI_TEST_HOST__, {
+            timeout: defaults.readyTimeoutMs ?? 30_000,
+          });
+        },
         getIsAuthenticated: () => call("getIsAuthenticated"),
         getChainStatus: () => call("getChainStatus"),
         getConnectionStatus: () => call("getConnectionStatus"),
@@ -628,8 +708,9 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
         },
         getAccounts: () => call("getAccounts"),
         getActiveAccount: () => call("getActiveAccount"),
-        // Switching account re-activates the session, which reloads the
-        // product iframe; wait for it so the next action does not race it.
+        // Switching account re-activates the session; the product is not
+        // reloaded, as on a real host. The wait below only confirms the frame
+        // is still attached, so a spec waits on the product's UI for the change.
         switchAccount: async (name) => {
           await call("switchAccount", name);
           await page
@@ -650,15 +731,25 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
         // Sent as hex, not bytes: `page.evaluate` serialises a Uint8Array as a
         // plain index object, which would inject a statement of nothing.
         injectStatement: (statement) =>
-          page.evaluate((value) => {
-            const host = window.__TRUAPI_TEST_HOST__;
-            if (!host) throw new Error("test host is not running on this page");
-            return host.injectStatement(value);
-          }, typeof statement === "string" ? statement : `0x${Array.from(statement, (b) => b.toString(16).padStart(2, "0")).join("")}`),
+          page.evaluate(
+            (value) => {
+              const host = window.__TRUAPI_TEST_HOST__;
+              if (!host)
+                throw new Error("test host is not running on this page");
+              return host.injectStatement(value);
+            },
+            // A `Uint8Array` is reduced to hex here because `page.evaluate`
+            // serialises it as a plain index object, which would inject a
+            // statement of nothing. The decoded shape survives as it is.
+            statement instanceof Uint8Array
+              ? `0x${Array.from(statement, (byte) => byte.toString(16).padStart(2, "0")).join("")}`
+              : statement,
+          ),
         getInjectedStatements: () => call("getInjectedStatements"),
         clearStatements: () => call("clearStatements"),
 
         getSubmittedStatements: () => call("getSubmittedStatements"),
+        getStatements: () => call("getStatements"),
 
         // Playwright closes the page after the fixture yields, so there is
         // genuinely nothing to do -- not a silent stub standing in for work.
@@ -674,7 +765,9 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
           throw new Error(`testHost.clearPaymentLog ${NO_PAYMENT_SEAM}`);
         },
         setPaymentTopUpBehavior: () => {
-          throw new Error(`testHost.setPaymentTopUpBehavior ${NO_PAYMENT_SEAM}`);
+          throw new Error(
+            `testHost.setPaymentTopUpBehavior ${NO_PAYMENT_SEAM}`,
+          );
         },
         simulatePaymentStatus: () => {
           throw new Error(`testHost.simulatePaymentStatus ${NO_PAYMENT_SEAM}`);
@@ -685,10 +778,16 @@ export function createTestHostFixture(defaults: TestHostFixtureOptions) {
             if (!host) throw new Error("test host is not running on this page");
             return host.injectChatAction(value);
           }, action as never),
-        setLoginBehavior: () => {
-          throw new Error(
-            `testHost.setLoginBehavior ${LOGIN_BEHAVIOR_IS_CONSTRUCTION_TIME}`,
-          );
+        setLoginBehavior: (behavior, account) => {
+          // A function cannot cross into the page, so the old package's custom
+          // answer has no equivalent here.
+          if (typeof behavior === "function") {
+            throw new Error(
+              'testHost.setLoginBehavior takes "success" or "reject". A ' +
+                "function cannot reach the host page, which answers the request.",
+            );
+          }
+          return call("setLoginBehavior", behavior, account);
         },
       };
 

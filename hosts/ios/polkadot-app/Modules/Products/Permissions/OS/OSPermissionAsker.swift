@@ -1,12 +1,18 @@
+import AlarmKit
 import AVFoundation
 import Foundation
 import Products
 
 final class OSPermissionAsker: @unchecked Sendable {
     private let notificationService: UserNotificationServicing
+    private let locationAuthorizer: LocationAuthorizing
 
-    init(notificationService: UserNotificationServicing = UserNotificationService.shared) {
+    init(
+        notificationService: UserNotificationServicing = UserNotificationService.shared,
+        locationAuthorizer: LocationAuthorizing = LocationAuthorizationRequester()
+    ) {
         self.notificationService = notificationService
+        self.locationAuthorizer = locationAuthorizer
     }
 }
 
@@ -19,9 +25,13 @@ extension OSPermissionAsker: OSPermissionAsking {
             checkCaptureDeviceStatus(.video)
         case .microphone:
             checkCaptureDeviceStatus(.audio)
+        case .motion:
+            // iOS has no OS gate for motion; WebKit's request is the only one.
+            .allowed
+        case .location:
+            await locationAuthorizer.status()
         case .bluetooth,
              .nfc,
-             .location,
              .clipboard,
              .openUrl,
              .biometrics:
@@ -40,9 +50,12 @@ extension OSPermissionAsker: OSPermissionAsking {
             await askCaptureDevice(.video)
         case .microphone:
             await askCaptureDevice(.audio)
+        case .motion:
+            true
+        case .location:
+            await locationAuthorizer.requestWhenInUse()
         case .bluetooth,
              .nfc,
-             .location,
              .clipboard,
              .openUrl,
              .biometrics:
@@ -54,17 +67,47 @@ extension OSPermissionAsker: OSPermissionAsking {
     }
 }
 
+extension OSPermissionAsker: ReminderPermissionAsking {
+    func askNotifications() async -> Bool {
+        await withCheckedContinuation { continuation in
+            notificationService.requestNotificationsAuthorization { granted in
+                continuation.resume(returning: granted)
+            }
+        }
+    }
+
+    func askAlarm() async -> Bool {
+        guard #available(iOS 26.1, *) else {
+            return false
+        }
+        switch alarmAuthorizationStatus() {
+        case .allowed:
+            return true
+        case .notDetermined:
+            return await (try? AlarmManager.shared.requestAuthorization()) == .authorized
+        case .denied:
+            return false
+        }
+    }
+}
+
 private extension OSPermissionAsker {
     func checkNotificationStatus() async -> OSPermissionStatus {
         let notificationStatus = await notificationService.notificationAccessStatus()
         return OSPermissionStatus(notificationStatus: notificationStatus)
     }
 
-    func askNotifications() async -> Bool {
-        await withCheckedContinuation { continuation in
-            notificationService.requestNotificationsAuthorization { granted in
-                continuation.resume(returning: granted)
-            }
+    @available(iOS 26.1, *)
+    func alarmAuthorizationStatus() -> OSPermissionStatus {
+        switch AlarmManager.shared.authorizationState {
+        case .authorized:
+            .allowed
+        case .denied:
+            .denied
+        case .notDetermined:
+            .notDetermined
+        @unknown default:
+            .notDetermined
         }
     }
 

@@ -3,9 +3,9 @@
 include!("../support/wire.rs");
 include!("../support/runtime.rs");
 
-use host_logic::sso::{
-    messages::*,
-    wire::{ResponseOutcome, SsoRequest},
+use host_internal::{
+    sso_messages::*,
+    sso_wire::{ResponseOutcome, SsoRequest},
 };
 use runtime::sso_service::{SsoReply, SsoRequestContext};
 

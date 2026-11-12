@@ -5,11 +5,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
+import io.paritytech.polkadotapp.common.presentation.compose.withCurrencyTickerStyle
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
+import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.design.components.spacer.HorizontalSpacer
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -36,7 +40,7 @@ internal fun EnterAmountBalance(
             verticalAlignment = Alignment.CenterVertically
         ) {
             NovaText(
-                text = amount,
+                text = amount.withCurrencyTickerStyle(PolkadotTheme.typography.body.large),
                 style = PolkadotTheme.typography.body.large,
                 color = PolkadotTheme.colors.fg.primary
             )
@@ -65,10 +69,12 @@ internal fun EnterAmountBalance(
 
 @Preview
 @Composable
-private fun EnterAmountBalancePreview() {
+private fun EnterAmountBalancePreview() = CompositionLocalProvider(
+    LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
+) {
     PolkadotTheme {
         EnterAmountBalance(
-            amount = "300",
+            amount = "$300 CASH",
             gainingPrivacy = "150"
         )
     }
@@ -77,10 +83,12 @@ private fun EnterAmountBalancePreview() {
 @Preview
 @Preview(widthDp = 320, fontScale = 2f)
 @Composable
-private fun EnterAmountBalanceNothingExposedPreview() {
+private fun EnterAmountBalanceNothingExposedPreview() = CompositionLocalProvider(
+    LocalPaymentAssetBrand provides PaymentAssetBrand.mocked
+) {
     PolkadotTheme {
         EnterAmountBalance(
-            amount = "999,999.99",
+            amount = "$999,999.99 CASH",
             gainingPrivacy = null
         )
     }

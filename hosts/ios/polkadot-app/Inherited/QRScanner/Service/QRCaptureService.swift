@@ -7,7 +7,6 @@ protocol QRCaptureServiceProtocol: AnyObject {
 
     func start()
     func stop()
-    func setRecognitionArmed(_ armed: Bool)
 }
 
 enum QRCaptureServiceError: Error {
@@ -17,9 +16,19 @@ enum QRCaptureServiceError: Error {
     case unsupportedFormat
 }
 
+/// One code the camera read. `text` is nil for a code with no string form.
+struct CapturedCode {
+    let type: AVMetadataObject.ObjectType
+    let text: String?
+}
+
 protocol QRCaptureServiceDelegate: AnyObject {
+    /// Called on the main thread before the session starts, while it is stopped: attaching a preview layer then
+    /// avoids reconfiguring a running session.
+    func qrCapture(service: QRCaptureServiceProtocol, willStart captureSession: AVCaptureSession)
     func qrCapture(service: QRCaptureServiceProtocol, didSetup captureSession: AVCaptureSession)
-    func qrCapture(service: QRCaptureServiceProtocol, didReceive code: String)
+    /// Every code in one frame, in the order the camera reports them.
+    func qrCapture(service: QRCaptureServiceProtocol, didReceive codes: [CapturedCode])
     func qrCapture(service: QRCaptureServiceProtocol, didFailure error: Error)
 }
 
@@ -27,24 +36,26 @@ final class QRCaptureService: NSObject {
     static let processingQueue = DispatchQueue(label: "nova.qr.capture.service.queue")
 
     private(set) var captureSession: AVCaptureSession?
-    private var metadataOutput: AVCaptureMetadataOutput?
-    private var isRecognitionArmed = true
+    /// Read and written on `processingQueue`, which also delivers metadata. Armed exactly while the
+    /// session runs: flipped in the same block that starts or stops it, so a frame delivered in
+    /// between cannot yield a code after the stop was asked for. Filtering here instead of clearing
+    /// `metadataObjectTypes` avoids reconfiguring the running session, which would stall the preview.
+    private var isRecognitionArmed = false
 
     weak var delegate: QRCaptureServiceDelegate?
     var delegateQueue: DispatchQueue
+    private let metadataObjectTypes: [AVMetadataObject.ObjectType]
 
     init(
         delegate: QRCaptureServiceDelegate?,
-        delegateQueue: DispatchQueue? = nil
+        delegateQueue: DispatchQueue? = nil,
+        metadataObjectTypes: [AVMetadataObject.ObjectType] = [.qr]
     ) {
         self.delegate = delegate
         self.delegateQueue = delegateQueue ?? QRCaptureService.processingQueue
+        self.metadataObjectTypes = metadataObjectTypes
 
         super.init()
-    }
-
-    private func applyRecognitionArmed() {
-        metadataOutput?.metadataObjectTypes = isRecognitionArmed ? [.qr] : []
     }
 
     private func configureSessionIfNeeded() throws {
@@ -74,11 +85,9 @@ final class QRCaptureService: NSObject {
         captureSession.addOutput(output)
 
         self.captureSession = captureSession
-        metadataOutput = output
 
         output.setMetadataObjectsDelegate(self, queue: QRCaptureService.processingQueue)
-        // A disarm requested before the session exists survives here until the session is built.
-        applyRecognitionArmed()
+        output.metadataObjectTypes = metadataObjectTypes
     }
 
     private func startAuthorizedSession() {
@@ -87,6 +96,12 @@ final class QRCaptureService: NSObject {
                 try self.configureSessionIfNeeded()
 
                 if let captureSession = self.captureSession {
+                    DispatchQueue.main.sync {
+                        self.delegate?.qrCapture(service: self, willStart: captureSession)
+                    }
+
+                    self.isRecognitionArmed = true
+
                     captureSession.startRunning()
 
                     self.notifyDelegateWithCreation(of: captureSession)
@@ -109,9 +124,9 @@ final class QRCaptureService: NSObject {
         }
     }
 
-    private func notifyDelegateWithCode(_ code: String) {
+    private func notifyDelegate(with codes: [CapturedCode]) {
         run(in: delegateQueue) {
-            self.delegate?.qrCapture(service: self, didReceive: code)
+            self.delegate?.qrCapture(service: self, didReceive: codes)
         }
     }
 
@@ -127,7 +142,10 @@ final class QRCaptureService: NSObject {
 
     deinit {
         QRCaptureService.processingQueue.async { [captureSession] in
-            captureSession?.stopRunning()
+            guard let captureSession, captureSession.isRunning else {
+                return
+            }
+            captureSession.stopRunning()
         }
     }
 }
@@ -154,16 +172,15 @@ extension QRCaptureService: QRCaptureServiceProtocol {
         }
     }
 
+    /// A stopped session is left alone: a repeated stop could land inside the preview layer's detach, which throws.
     func stop() {
         QRCaptureService.processingQueue.async {
-            self.captureSession?.stopRunning()
-        }
-    }
+            self.isRecognitionArmed = false
 
-    func setRecognitionArmed(_ armed: Bool) {
-        QRCaptureService.processingQueue.async {
-            self.isRecognitionArmed = armed
-            self.applyRecognitionArmed()
+            guard let captureSession = self.captureSession, captureSession.isRunning else {
+                return
+            }
+            captureSession.stopRunning()
         }
     }
 }
@@ -174,15 +191,18 @@ extension QRCaptureService: AVCaptureMetadataOutputObjectsDelegate {
         didOutput metadataObjects: [AVMetadataObject],
         from _: AVCaptureConnection
     ) {
-        guard let metadata = metadataObjects.first as? AVMetadataMachineReadableCodeObject else {
+        guard isRecognitionArmed else {
             return
         }
 
-        guard let possibleCode = metadata.stringValue else {
-            notifyDelegate(with: QRCaptureServiceError.unsupportedFormat)
+        let codes = metadataObjects
+            .compactMap { $0 as? AVMetadataMachineReadableCodeObject }
+            .map { CapturedCode(type: $0.type, text: $0.stringValue) }
+
+        guard !codes.isEmpty else {
             return
         }
 
-        notifyDelegateWithCode(possibleCode)
+        notifyDelegate(with: codes)
     }
 }

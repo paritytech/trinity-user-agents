@@ -20,7 +20,6 @@ protocol RootWireframeProtocol: AnyObject {
     func showUsernameClaim(with observer: RootStateObserving)
     func showThemeSelection(with observer: RootStateObserving)
     func showBroken()
-    func showJailbroken()
     #if TESTNET_FEATURE
         func showAppFactoryResetSheet()
     #endif

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import ChainRegistry
 import Foundation
 import Products
@@ -7,7 +8,7 @@ import Products
 /// are exercised, so the rest are inert stand-ins.
 @MainActor
 func makeChatBridgeDependencies(
-    productId: String = "test.dot"
+    productId: ProductId = try! ProductId("test.dot")
 ) -> RustProductExecutionBridge.Dependencies {
     let defaults = UserDefaults(suiteName: "io.parity.tests.chat-bridge") ?? .standard
     return .init(
@@ -15,10 +16,14 @@ func makeChatBridgeDependencies(
         permissionGuard: MockPermissionGuard(),
         osPermissionAsker: MockOSPermissionAsker(),
         notificationScheduler: MockNotificationScheduler(),
+        gameReminders: MockGameReminderScheduler(),
+        reminderPermissionAsker: MockReminderPermissionAsker(),
         navigationRouter: MockNavigationRouter(),
         chainRegistry: MockChainRegistry(),
-        chainConnections: TrUAPIChainConnectionPool(
-            engineResolver: { _ in nil },
+        chainConnections: TrUAPIV2SpecConnectionPool(
+            chainRegistry: MockChainRegistry(),
+            applicationHandler: MockApplicationHandler(),
+            dateProvider: MockDateProvider(),
             logger: Logger.shared
         ),
         productStorage: TrUAPILocalStorage.createProductLocalStorage(
@@ -29,6 +34,7 @@ func makeChatBridgeDependencies(
         confirmationPresenter: MockConfirmationPresenter(),
         preimageCache: TrUAPIPreimageCache { _ in nil },
         hostProvider: InertHostProvider(),
+        themeManager: MockThemeManager(),
         logger: Logger.shared
     )
 }
@@ -44,5 +50,7 @@ private struct InertHostProvider: ProductHostProviding {
     func page(navigationDestination _: String) -> ProductPage? { nil }
     func resolveHost(label _: String) async throws -> ProductHost? { nil }
     func resolveHost(rawString _: String) async throws -> ProductHost? { nil }
-    func resolvePage(destination _: String) async throws -> ProductPage? { nil }
+    func resolvePage(destination: String) async throws -> ProductPage {
+        throw ProductPageResolutionError.destinationNotOnNetwork(destination: destination, tld: "")
+    }
 }

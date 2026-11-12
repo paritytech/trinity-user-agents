@@ -40,7 +40,7 @@ File-by-file code review. For each rule violated, note severity (blocking/major/
 - [ ] UIHostingController pattern for SwiftUI views
 - [ ] @Observable ViewModels (not @StateObject/Combine)
 - [ ] SwiftUI color shorthand (`.fgPrimary` not `Color(.fgPrimary)`)
-- [ ] Opacity/crossfade transitions for visual state changes
+- [ ] Opacity/crossfade transitions for visual state changes (not for a Tab switch, which is instant like the system tab bar)
 - [ ] Design system tokens for colors/spacing/typography
 - [ ] Missing DS values discussed with design team (not just TODO)
 - [ ] No light mode code (dark mode enforced)
@@ -51,6 +51,9 @@ File-by-file code review. For each rule violated, note severity (blocking/major/
 - [ ] No unnecessary abstraction wrappers
 - [ ] Preview/debug Tasks removed before merge
 - [ ] Stack view insertions use natural ordering (no manual index tracking)
+- [ ] SwiftUI gestures: state set in `onChanged` is reset when the gesture is cancelled (`@GestureState`), since `onEnded` does not run on cancellation.
+- [ ] Custom gesture-driven controls expose an accessibility label, trait and action.
+- [ ] Content that overhangs a hosting view is inside the view's hit region.
 
 **Ref:** code/ui-uikit.md, code/design-system.md
 
