@@ -114,7 +114,6 @@ import uniffi.truapi.FundingFrameTarget
 import uniffi.truapi.FundingOptions
 import uniffi.truapi.FundingPresentOutcome
 import uniffi.truapi.FundingProgress
-import uniffi.truapi.FundingProviderEntry
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSession
@@ -1203,12 +1202,12 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     fun fundingEntries(): List<FundingBookEntry> = inner.fundingEntries()
 
     /**
-     * Offer the providers Remote Config lists by name, then the [bundled] ones it does not name. Call it on every
-     * configuration refresh: a call listing what the last one listed changes nothing.
+     * Offer the providers Remote Config lists by name. Call it on every configuration refresh: a call listing what
+     * the last one listed changes nothing.
      */
     @Throws(HostRejection::class)
-    fun setFundingProviderConfig(publishedNames: List<String>, bundled: List<FundingProviderEntry>) {
-        inner.setFundingProviderConfig(publishedNames, bundled)
+    fun setFundingProviderConfig(publishedNames: List<String>) {
+        inner.setFundingProviderConfig(publishedNames, emptyList())
     }
 
     /**
