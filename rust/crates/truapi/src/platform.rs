@@ -2489,15 +2489,32 @@ pub enum HostContactPick {
 	Unsupported,
 }
 
+/// The usernames a host lists for the game product.
+#[derive(Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum HostContactUsernames {
+	/// The DotNS usernames of the unblocked contacts the picker would offer,
+	/// in host order, each the bare label with no top-level domain.
+	Listed {
+		/// One username per contact that has one.
+		usernames: Vec<String>,
+	},
+	/// This host resolves contacts but does not list their usernames. The core
+	/// answers the product `Unsupported`.
+	Unsupported,
+}
+
 /// Host-owned contact picker, drawn from the chat lists the host's chat
 /// extensions hold.
 ///
 /// Optional, and listed on [`OptionalPlatform`] as [`ChatPlatform`] is.
 ///
 /// The host owns the UI and the list. It draws the names, so nothing it renders
-/// reaches the product, and the list never crosses to the core either: the core
-/// asks only about the handles a transaction names. A host omits contacts the
-/// user has blocked, from the picker and from lookups alike.
+/// reaches the product, and the accounts on the list never cross to the core:
+/// the core asks only about the handles a transaction names. Usernames cross
+/// only through [`Self::contact_usernames`], for the game product. A
+/// host omits contacts the user has blocked, from the picker, from lookups and
+/// from usernames alike.
 #[async_trait::async_trait]
 pub trait ContactsPlatform: Send + Sync {
 	/// Resolve `lookup.handles` to the contacts they name.
@@ -2535,6 +2552,21 @@ pub trait ContactsPlatform: Send + Sync {
 		_product: &ProductContext,
 	) -> Result<HostContactPick, GenericError> {
 		Ok(HostContactPick::Unsupported)
+	}
+
+	/// List the DotNS usernames of the unblocked contacts the picker would
+	/// offer.
+	///
+	/// The core calls this only for the game product, so a host does not
+	/// check `product` itself: it says who is asking and is not a filter.
+	/// Answer from the contacts the host already holds, without a prompt.
+	/// Defaults to [`HostContactUsernames::Unsupported`], so a host that lists
+	/// nothing gives its products a truthful answer.
+	async fn contact_usernames(
+		&self,
+		_product: &ProductContext,
+	) -> Result<HostContactUsernames, GenericError> {
+		Ok(HostContactUsernames::Unsupported)
 	}
 }
 

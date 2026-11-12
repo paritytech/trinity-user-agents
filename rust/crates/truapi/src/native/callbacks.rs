@@ -348,12 +348,14 @@ pub trait NativeGameCallbacks: Send + Sync {
 /// implementation to [`NativeTrUApiHostRuntime::set_contacts_callbacks`]; one
 /// without leaves `contacts.pick` answering `Unsupported`.
 ///
-/// The lookup runs inline, because it is a store read the host already has in
-/// hand. Presenting the picker is async, because it is the user.
+/// The lookup and the usernames run inline, because each is a store read the
+/// host already has in hand. Presenting the picker is async, because it is the
+/// user.
 ///
-/// Nothing here reaches a product, and the list never reaches the core: it asks
-/// only about the handles a transaction names, and the picker returns the one
-/// person the user chose.
+/// No account reaches a product, and the accounts on the list never reach the
+/// core: it asks only about the handles a transaction names, and the picker
+/// returns the one person the user chose. Usernames reach the core only
+/// through [`Self::contact_usernames`], for the game product.
 #[uniffi::export(rust, foreign)]
 #[async_trait::async_trait]
 pub trait NativeContactsCallbacks: Send + Sync {
@@ -372,6 +374,16 @@ pub trait NativeContactsCallbacks: Send + Sync {
 		&self,
 		product_id: ProductId,
 	) -> Result<crate::platform::HostContactPick, HostRejection>;
+
+	/// List the DotNS usernames of the unblocked contacts the picker would
+	/// offer, asked on behalf of `product_id`.
+	///
+	/// The core asks only for the game product. A host that does not list
+	/// usernames answers `Unsupported`.
+	fn contact_usernames(
+		&self,
+		product_id: ProductId,
+	) -> Result<crate::platform::HostContactUsernames, HostRejection>;
 }
 
 /// Native payment engine, which pays from the user's balance to an account.

@@ -244,6 +244,14 @@ pub mod latest {
 	pub type HostContactsPickResponse = LatestOf<versioned::contacts::HostContactsPickResponse>;
 	/// Contact picker failure.
 	pub type HostContactsPickError = LatestOf<versioned::contacts::HostContactsPickError>;
+	/// Contact usernames request.
+	pub type HostContactsUsernamesRequest =
+		LatestOf<versioned::contacts::HostContactsUsernamesRequest>;
+	/// The usernames of the chat contacts of the user.
+	pub type HostContactsUsernamesResponse =
+		LatestOf<versioned::contacts::HostContactsUsernamesResponse>;
+	/// Contact usernames failure.
+	pub type HostContactsUsernamesError = LatestOf<versioned::contacts::HostContactsUsernamesError>;
 	/// Scanner request.
 	pub type HostScannerScanRequest = LatestOf<versioned::scanner::HostScannerScanRequest>;
 	/// Scanner outcome.

@@ -4,7 +4,8 @@
 //! entries separated by `;`. With nothing configured the host serves a small
 //! development list, so the generated example and the battery have someone to
 //! pick without a chat extension behind them. An empty spec is an empty list,
-//! which is how `NoContacts` gets exercised.
+//! which is how `NoContacts` gets exercised. Each name is also the username the
+//! game product reads, so a spec names contacts by their DotNS label.
 //!
 //! The picker is this host's own approval surface: it names the contact it
 //! would return and takes yes or no. A headless run auto-approves it, an
@@ -16,7 +17,8 @@ use std::sync::Arc;
 use truapi::{
 	latest::GenericError,
 	platform::{
-		ContactsPlatform, HostContactLookup, HostContactMatches, HostContactPick, ProductContext,
+		ContactsPlatform, HostContactLookup, HostContactMatches, HostContactPick,
+		HostContactUsernames, ProductContext,
 	},
 };
 
@@ -132,6 +134,18 @@ impl ContactsPlatform for CliContactsHost {
 		} else {
 			Ok(HostContactPick::Dismissed)
 		}
+	}
+
+	async fn contact_usernames(
+		&self,
+		_product: &ProductContext,
+	) -> Result<HostContactUsernames, GenericError> {
+		let usernames = self
+			.contacts
+			.iter()
+			.filter_map(|contact| contact.display_name.clone())
+			.collect();
+		Ok(HostContactUsernames::Listed { usernames })
 	}
 }
 

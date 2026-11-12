@@ -35,6 +35,7 @@ pub struct JsBridge {
     pub subscribe_chat_rooms: Function,
     pub contacts: Function,
     pub pick_contact: Function,
+    pub contact_usernames: Function,
     pub read_core_storage: Function,
     pub write_core_storage: Function,
     pub clear_core_storage: Function,
@@ -89,6 +90,8 @@ impl JsBridge {
                 .unwrap_or_else(|| missing_callback("contacts")),
             pick_contact: get_optional_function(callbacks, "pickContact")?
                 .unwrap_or_else(|| missing_callback("pickContact")),
+            contact_usernames: get_optional_function(callbacks, "contactUsernames")?
+                .unwrap_or_else(|| missing_callback("contactUsernames")),
             read_core_storage: get_function(callbacks, "readCoreStorage")?,
             write_core_storage: get_function(callbacks, "writeCoreStorage")?,
             clear_core_storage: get_function(callbacks, "clearCoreStorage")?,
@@ -131,7 +134,8 @@ impl JsBridge {
                 && get_optional_function(callbacks, "setChatRoomFooter")?.is_some()
                 && get_optional_function(callbacks, "subscribeChatRooms")?.is_some(),
             contacts_present: get_optional_function(callbacks, "contacts")?.is_some()
-                && get_optional_function(callbacks, "pickContact")?.is_some(),
+                && get_optional_function(callbacks, "pickContact")?.is_some()
+                && get_optional_function(callbacks, "contactUsernames")?.is_some(),
             game_present: get_optional_function(callbacks, "scheduleGameReminder")?.is_some()
                 && get_optional_function(callbacks, "cancelGameReminder")?.is_some(),
             permission_status_present: get_optional_function(callbacks, "devicePermissionStatus")?
@@ -300,6 +304,21 @@ impl crate::platform::ContactsPlatform for WasmPlatform {
         Ok(decode_bytes::<crate::platform::HostContactPick>(
             bytes,
             "pickContact response did not decode",
+        )?)
+    }
+
+    async fn contact_usernames(
+        &self,
+        _product: &crate::platform::ProductContext,
+    ) -> Result<crate::platform::HostContactUsernames, latest::GenericError> {
+        let bytes = invoke_bytes_return(
+            &self.bridge.contact_usernames,
+            vec![Uint8Array::from(_product.encode().as_slice()).into()],
+        )
+        .await?;
+        Ok(decode_bytes::<crate::platform::HostContactUsernames>(
+            bytes,
+            "contactUsernames response did not decode",
         )?)
     }
 }
