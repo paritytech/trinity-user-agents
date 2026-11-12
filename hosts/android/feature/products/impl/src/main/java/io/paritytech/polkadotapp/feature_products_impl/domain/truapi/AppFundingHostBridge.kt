@@ -5,12 +5,8 @@ import io.parity.truapi.FundingHostBridge
 import io.paritytech.polkadotapp.chains.network.binding.Balance
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlay
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayOutcome
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingOverlayRequest
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameOutcome
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.ProviderFrameTarget
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingService
 import uniffi.truapi.FundingChangeKind
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingFrameTarget
@@ -21,15 +17,11 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import uniffi.truapi.FundingDirection as CoreFundingDirection
 
-/**
- * Serves the core's funding sessions through the app's [FundingOverlay]. The core keeps every session, option and
- * quote list; a change notice goes to [TrUAPIFundingRuntime], which reads the new state back.
- */
+/** Serves the core's funding callbacks through the app's one [RealFundingService]. */
 @Singleton
 class AppFundingHostBridge @Inject constructor(
-    // Lazy: the overlay reaches the runtime, whose provider is built with this bridge.
-    private val overlay: Lazy<FundingOverlay>,
-    private val funding: Lazy<TrUAPIFundingRuntime>,
+    // Lazy: the service reaches the runtime, whose provider is built with this bridge.
+    private val funding: Lazy<RealFundingService>,
     private val countryDetector: CountryDetector,
 ) : FundingHostBridge {
     override suspend fun presentFunding(
@@ -37,44 +29,22 @@ class AppFundingHostBridge @Inject constructor(
         intent: String,
         direction: CoreFundingDirection,
         amount: U128?,
-    ): FundingPresentOutcome {
-        val request = FundingOverlayRequest(
-            productId = productId,
-            intent = intent,
-            direction = direction.toDomain(),
-            amount = amount?.toBalance(),
-        )
-        return when (overlay.get().present(request)) {
-            FundingOverlayOutcome.STARTED -> FundingPresentOutcome.STARTED
-            FundingOverlayOutcome.DISMISSED -> FundingPresentOutcome.DISMISSED
-        }
-    }
+    ): FundingPresentOutcome = funding.get().present(intent, direction, amount)
 
     override suspend fun presentProviderFrame(
         providerId: ProductId,
         intent: String,
         target: FundingFrameTarget,
-    ): FundingFrameOutcome {
-        val frameTarget = when (target) {
-            // The core checked the route, which is the path inside the App.
-            is FundingFrameTarget.App -> ProviderFrameTarget.App(target.route)
-            is FundingFrameTarget.Page -> ProviderFrameTarget.Page(target.url, target.returnUrl)
-        }
-        return when (val outcome = overlay.get().presentProviderFrame(providerId, intent, frameTarget)) {
-            ProviderFrameOutcome.Closed -> FundingFrameOutcome.Closed
-            ProviderFrameOutcome.Dismissed -> FundingFrameOutcome.Dismissed
-            is ProviderFrameOutcome.Returned -> FundingFrameOutcome.Returned(outcome.url)
-        }
-    }
+    ): FundingFrameOutcome = funding.get().presentFrame(providerId, intent, target)
 
     override fun closeProviderFrame(providerId: ProductId, intent: String) {
-        overlay.get().closeProviderFrame(providerId, intent)
+        funding.get().closeFrames(providerId, intent)
     }
 
     override suspend fun detectedCountry(): String? = countryDetector.detect()
 
     override fun fundingChanged(intent: String?, kind: FundingChangeKind) {
-        funding.get().onChanged(intent, kind)
+        funding.get().changed(intent, kind)
     }
 }
 
