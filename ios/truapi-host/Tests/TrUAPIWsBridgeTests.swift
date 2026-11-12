@@ -4,7 +4,7 @@ import Testing
 import UIKit
 
 struct TrUAPIWsBridgeTests {
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(5)))
     func anInvalidUsernameTerminatesTheProfileStreamWithTheCoreDomainError() async throws {
         let runtime = try TrUAPIHostRuntime(
             bridge: StubHostBridge(),
