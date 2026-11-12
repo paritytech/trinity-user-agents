@@ -89,7 +89,17 @@ export function createHeadlessHostCallbacks(
   let nextOperationId = 0;
 
   return {
-    coreStorage: host.coreStorage,
+    coreStorage: {
+      readCoreStorage: (key) => host.coreStorage.readCoreStorage(key),
+      writeCoreStorage: (key, value) =>
+        host.coreStorage.writeCoreStorage(key, value),
+      clearCoreStorage: (key) => host.coreStorage.clearCoreStorage(key),
+      // A host that kept nothing under a slot alone has no value to hand over.
+      readUnscopedCoreStorage: async (slot) =>
+        host.coreStorage.readUnscopedCoreStorage?.(slot),
+      clearUnscopedCoreStorage: async (slot) =>
+        host.coreStorage.clearUnscopedCoreStorage?.(slot),
+    },
     chain: host.chain,
     auth: host.auth,
     productStorage: host.productStorage,

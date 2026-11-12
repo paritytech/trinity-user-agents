@@ -1977,6 +1977,23 @@ export interface CoreStorage {
    * Clear a core-owned value by typed slot.
    */
   clearCoreStorage(key: StackStorageKey): Promise<void>;
+
+  /**
+   * Read a value the host holds under `slot` alone, with no stack id.
+   *
+   * A host that stored core state before keys included a stack id serves
+   * those entries here, by the key it stored them under: the SCALE-encoded
+   * slot. The core moves each one under the stack it runs the first time it
+   * reads the slot. A host with no such entries has none to return.
+   */
+  readUnscopedCoreStorage?(
+    slot: CoreStorageKey,
+  ): Promise<Uint8Array | undefined>;
+
+  /**
+   * Clear the value the host holds under `slot` alone, with no stack id.
+   */
+  clearUnscopedCoreStorage?(slot: CoreStorageKey): Promise<void>;
 }
 
 /**

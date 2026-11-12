@@ -1297,7 +1297,8 @@ async fn run_pairing_host(
 	let product =
 		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context());
 	let product_id = product.current();
-	let storage_paths = CliStoragePaths::pairing(base_path.join(network.namespace()));
+	let storage_paths =
+		CliStoragePaths::pairing(base_path.join(network.namespace()), &network.identity().id);
 	let (terminal_ui, ui_handle) = if interactive {
 		let (ui, handle) = TerminalUi::new_pairing(
 			network.namespace(),

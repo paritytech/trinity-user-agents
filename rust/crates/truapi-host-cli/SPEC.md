@@ -1502,7 +1502,7 @@ The layout may contain compatibility paths as well as identity-owned paths:
           <product-file>.json
 
     pairing-host/
-      current-user
+      current-user.<stack>            # user last paired on that stack
       session.json                    # bootstrap script metadata, when used
       core-storage.json               # bootstrap auth/core state
       scripts/
@@ -1542,7 +1542,11 @@ Before the first resolved user, pairing state uses
 - display identity prefers the full username and falls back to the Lite
   username;
 - the target is `<username>_pairing_host`; and
-- `pairing-host/current-user` is updated atomically.
+- `pairing-host/current-user.<stack>` is updated atomically. `<stack>` is the
+  first 16 hex digits of the SHA-256 of the stack's id, so a fork and its
+  source, which share the directory, each remember their own last user. A
+  `current-user` file with no suffix names the user for a stack that has no
+  file of its own yet.
 
 For the first bootstrap migration, in-memory bootstrap core and product values
 move into the resolved user's directory.
@@ -1643,7 +1647,11 @@ hex values are ignored with warnings.
 ```
 
 A key is a slot together with the identity of the stack it belongs to, so a
-fork and its source keep separate entries in one file.
+fork and its source keep separate entries in one file. A write replaces only
+the writing stack's entries and leaves the rest as the file has them, so two
+hosts on a fork and its source can run at once. An entry keyed by a slot
+alone was written before keys had a stack id: the first stack to read the
+slot moves it under its own key.
 
 Core state includes auth sessions, pairing bootstrap material, permission
 state, and other role-owned runtime data.
@@ -1813,6 +1821,12 @@ refused with `--stack`, since the light client syncs only the networks
 `network`. The product namespace (the state directory) is the descriptor's `id`
 without a trailing `-fork`, which must be a lowercase label; the `polkadot-fork`
 namespace is its full `id`, so it does not share the `polkadot` namespace.
+
+The stack's id, which the core takes with the descriptor's `generation`, is the
+key of the link when it has one, and otherwise the URL. The URL of a built-in
+stack with no key is read with that stack's key, so it is verified and is the
+same stack as under its network name. A local file's id is its canonical path:
+two files are two stacks, and a file that moves becomes another stack.
 
 #### `network-check`
 

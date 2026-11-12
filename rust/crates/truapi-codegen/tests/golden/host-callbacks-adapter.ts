@@ -31,6 +31,7 @@ import {
 import type { GenericError } from "@parity/truapi";
 import {
   AuthState,
+  CoreStorageKey,
   DevicePermissionStatus,
   ExtensionVersionMap,
   HostContactLookup,
@@ -78,6 +79,10 @@ export interface RawCallbacks {
   readCoreStorage(key: Uint8Array): Promise<Uint8Array | null | undefined>;
   writeCoreStorage(key: Uint8Array, value: Uint8Array): Promise<void>;
   clearCoreStorage(key: Uint8Array): Promise<void>;
+  readUnscopedCoreStorage(
+    slot: Uint8Array,
+  ): Promise<Uint8Array | null | undefined>;
+  clearUnscopedCoreStorage(slot: Uint8Array): Promise<void>;
   transactionExtensionVersions(): Promise<Uint8Array>;
   featureSupported(request: Uint8Array): Promise<Uint8Array>;
   scheduleGameReminder?(product: Uint8Array, startsAt: bigint): Promise<void>;
@@ -199,6 +204,14 @@ export function createWasmRawCallbacks(
       ),
     clearCoreStorage: async (key) =>
       await callbacks.coreStorage.clearCoreStorage(StackStorageKey.dec(key)),
+    readUnscopedCoreStorage: async (slot) =>
+      await callbacks.coreStorage.readUnscopedCoreStorage(
+        CoreStorageKey.dec(slot),
+      ),
+    clearUnscopedCoreStorage: async (slot) =>
+      await callbacks.coreStorage.clearUnscopedCoreStorage(
+        CoreStorageKey.dec(slot),
+      ),
     transactionExtensionVersions: async () =>
       ExtensionVersionMap.enc(
         await callbacks.extrinsicVersion.transactionExtensionVersions(),

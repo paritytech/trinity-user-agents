@@ -48,6 +48,8 @@ export function makeHostCallbacks(
       readCoreStorage: async () => undefined,
       writeCoreStorage: async () => {},
       clearCoreStorage: async () => {},
+      readUnscopedCoreStorage: async () => undefined,
+      clearUnscopedCoreStorage: async () => {},
     },
     auth: { authStateChanged: () => {} },
     userConfirmation: {

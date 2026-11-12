@@ -1168,6 +1168,15 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         if (faults.storageError) throw new Error(faults.storageError);
         storage.delete(coreKey(key));
       },
+      // The mock keeps nothing under a slot alone, so the core finds no value
+      // to move under its stack.
+      async readUnscopedCoreStorage() {
+        if (faults.storageError) throw new Error(faults.storageError);
+        return undefined;
+      },
+      async clearUnscopedCoreStorage() {
+        if (faults.storageError) throw new Error(faults.storageError);
+      },
     },
 
     navigation: {
@@ -1774,7 +1783,10 @@ export type MockRuntimeConfig = Omit<ProductRuntimeConfig, "stack"> & {
 
 /**
  * The stack a mock host runs by default: network `mock` under the `paseo`
- * TLD, over the {@link MOCK_GENESIS} chains.
+ * TLD, over the {@link MOCK_GENESIS} chains. Its `id` is `mock`, and so is
+ * the `id` of every stack built from it, such as `fromNetworks` and
+ * `liveChain` return. Two hosts that share one storage backend and must not
+ * share state need different ids.
  */
 export function mockTestStack(): TestStack {
   return {

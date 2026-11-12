@@ -350,6 +350,14 @@ pub fn test_storage_key(slot: CoreStorageKey) -> StackStorageKey {
 #[derive(Default)]
 pub struct MemoryCoreStorage(Mutex<HashMap<Vec<u8>, Vec<u8>>>);
 
+impl MemoryCoreStorage {
+	/// Stores `value` under `slot` alone, as a host did before keys included
+	/// a stack id.
+	pub fn store_unscoped(&self, slot: CoreStorageKey, value: Vec<u8>) {
+		self.0.lock().expect("storage mutex poisoned").insert(slot.encode(), value);
+	}
+}
+
 #[async_trait::async_trait]
 impl PlatformCoreStorage for MemoryCoreStorage {
 	async fn read_core_storage(
@@ -370,6 +378,21 @@ impl PlatformCoreStorage for MemoryCoreStorage {
 
 	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), v01::GenericError> {
 		self.0.lock().expect("storage mutex poisoned").remove(&key.encode());
+		Ok(())
+	}
+
+	async fn read_unscoped_core_storage(
+		&self,
+		slot: CoreStorageKey,
+	) -> Result<Option<Vec<u8>>, v01::GenericError> {
+		Ok(self.0.lock().expect("storage mutex poisoned").get(&slot.encode()).cloned())
+	}
+
+	async fn clear_unscoped_core_storage(
+		&self,
+		slot: CoreStorageKey,
+	) -> Result<(), v01::GenericError> {
+		self.0.lock().expect("storage mutex poisoned").remove(&slot.encode());
 		Ok(())
 	}
 }
