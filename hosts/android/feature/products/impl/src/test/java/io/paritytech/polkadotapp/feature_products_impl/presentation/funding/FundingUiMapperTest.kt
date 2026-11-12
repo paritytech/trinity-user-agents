@@ -36,7 +36,7 @@ class FundingUiMapperTest {
     fun `the core's best of several quotes is marked and the countdown runs to its refresh`() {
         val state = flow()
             .asked()
-            .receiving(bothQuoted())
+            .received(bothQuoted())
 
         val providers = state.toProvidersUiState(emptyMap())
 
@@ -56,7 +56,7 @@ class FundingUiMapperTest {
             val fees = requireNotNull(
                 flow()
                     .asked()
-                    .receiving(bothQuoted())
+                    .received(bothQuoted())
                     .toFeesUiState(),
             )
 
@@ -73,7 +73,7 @@ class FundingUiMapperTest {
     fun `asking the same again keeps what each price was for while the new one loads`() {
         val quotedOnce = flow()
             .asked()
-            .receiving(bothQuoted())
+            .received(bothQuoted())
 
         val providers = quotedOnce.asked()
             .toProvidersUiState(emptyMap())
@@ -95,8 +95,11 @@ class FundingUiMapperTest {
         assertNull(bank.bandLine(FundingBand.ENDED, null))
     }
 
-    /** Asks for quotes of the amount on screen. */
-    private fun FundingFlowState.asked(): FundingFlowState = asking(requireNotNull(askAmount))
+    /** Asks for quotes of the amount on screen, as the funding service reports a new ask of the same amount. */
+    private fun FundingFlowState.asked(): FundingFlowState = withQuotes(null, quotedProviders.toMap(), asking = true)
+
+    /** The ask's list, as the funding service reports it. */
+    private fun FundingFlowState.received(list: FundingQuoteList?): FundingFlowState = withQuotes(list, emptyMap(), asking = false)
 
     private fun flow() = FundingFlowState.initial(
         direction = FundingDirection.IN,

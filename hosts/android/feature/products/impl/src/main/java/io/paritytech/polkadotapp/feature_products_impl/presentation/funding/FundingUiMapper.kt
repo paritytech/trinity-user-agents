@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
 import io.paritytech.polkadotapp.feature_products_api.presentation.funding.FundingReasonText
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FUNDING_RAIL_ORDER
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
@@ -64,6 +65,7 @@ private const val RATE_SCALE = 4
 fun FundingFlowState.toSummaryUiState(
     brands: Map<ProductId, FundingProviderBrand>,
     start: FundingStartState,
+    failure: FundingFailureReason?,
 ): FundingSummaryUiState {
     val quote = selectedQuote
     val inbound = direction == FundingDirection.IN
@@ -79,15 +81,15 @@ fun FundingFlowState.toSummaryUiState(
         payout = quote?.let { if (inbound) format.label(cash.decimal(it.receiveAmount)) else unitOf(it).format(it.receiveAmount) },
         eta = quote?.etaSecs?.let(::etaOf),
         bankRateNoteSymbol = format.symbol().takeIf { rail == FundingRail.BANK && inbound },
-        problem = summaryProblem(start),
-        canStart = quote != null && !start.isStarting && !start.started,
-        isStarting = start.isStarting,
+        problem = summaryProblem(start, failure),
+        canStart = quote != null && (start == FundingStartState.Idle || start == FundingStartState.StartFailed),
+        isStarting = start == FundingStartState.Starting,
     )
 }
 
-private fun FundingFlowState.summaryProblem(start: FundingStartState): FundingSummaryProblem? = when {
-    start.failure != null -> FundingSummaryProblem.Failed(start.failure)
-    start.failed -> FundingSummaryProblem.StartFailed
+private fun FundingFlowState.summaryProblem(start: FundingStartState, failure: FundingFailureReason?): FundingSummaryProblem? = when {
+    failure != null -> FundingSummaryProblem.Failed(failure)
+    start == FundingStartState.StartFailed -> FundingSummaryProblem.StartFailed
     !noProviderQuoted -> null
     else -> when (val issue = unavailableIssue) {
         is FundingAmountIssue.BelowMinimum -> FundingSummaryProblem.Minimum(format.label(cash.decimal(issue.min)))
@@ -290,7 +292,11 @@ fun FundingFlowState.toTokensUiState(): FundingTokensUiState {
     )
 }
 
-fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: FundingStartState): FundingDepositUiState {
+fun FundingFlowState.toDepositUiState(
+    progress: FundingProgress?,
+    session: FundingSessionFacts,
+    isCancelling: Boolean,
+): FundingDepositUiState {
     val content = when (val deposit = progress?.deposit) {
         is FundingDeposit.Crypto -> FundingDepositContent.Crypto(
             qrPayload = deposit.uri ?: deposit.address,
@@ -309,31 +315,30 @@ fun FundingFlowState.toDepositUiState(progress: FundingProgress?, start: Funding
         )
 
         null -> when {
-            start.failed -> FundingDepositContent.Problem(FundingSummaryProblem.StartFailed)
-            noProviderQuoted && !start.started -> FundingDepositContent.Problem(noProviderProblem())
-            else -> FundingDepositContent.Waiting(preparing = start.started, card = rail == FundingRail.CARD)
+            noProviderQuoted && !session.started -> FundingDepositContent.Problem(noProviderProblem())
+            else -> FundingDepositContent.Waiting(preparing = session.started, card = rail == FundingRail.CARD)
         }
     }
 
     return FundingDepositUiState(
         rail = rail,
         withdraw = direction == FundingDirection.OUT,
-        started = start.started,
-        failed = start.failure != null,
-        isCancelling = start.isCancelling,
-        cancel = start.cancel?.toUi(cash, format),
+        started = session.started,
+        failed = session.failure != null,
+        isCancelling = isCancelling,
+        cancel = session.cancel?.toUi(cash, format),
         moneyMoved = progress?.moneyMoved == true,
         cancelAvailability = progress?.cancel ?: FundingCancelAvailability.UNAVAILABLE,
         figure = format.figure(amount),
-        progress = progress?.takeIf { start.started }?.let { live ->
+        progress = progress?.takeIf { session.started }?.let { live ->
             FundingLiveProgressUi(
-                timeline = FundingTimeline.live(live.steps, live.band, direction, failed = start.failure != null),
+                timeline = FundingTimeline.live(live.steps, live.band, direction, failed = session.failure != null),
                 band = bandLine(live.band, (live.deposit as? FundingDeposit.Crypto)?.asset ?: asset),
                 lastHeardAtMs = live.lastHeardAtMs?.toLong(),
                 detail = live.detail,
             )
         },
-        content = start.failure?.let { FundingDepositContent.Problem(FundingSummaryProblem.Failed(it)) } ?: content,
+        content = session.failure?.let { FundingDepositContent.Problem(FundingSummaryProblem.Failed(it)) } ?: content,
     )
 }
 
@@ -391,4 +396,3 @@ private fun FundingCancel.toUi(cash: FundingCash, format: FundingCashFormat): Fu
     is FundingCancel.Accepted -> FundingCancelUiState.Cancelling
     FundingCancel.Declined, is FundingCancel.Overtaken -> null
 }
-

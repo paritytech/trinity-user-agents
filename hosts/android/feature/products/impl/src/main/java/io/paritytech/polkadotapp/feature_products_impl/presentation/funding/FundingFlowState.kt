@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding
 
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.isPending
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.quote
 import uniffi.truapi.FundingAmountIssue
 import uniffi.truapi.FundingAmountLimits
@@ -28,9 +27,9 @@ data class FundingLimits(
 )
 
 /**
- * What the user has chosen in one funding overlay, with the core's options for it and its latest quote list. The
- * core decides the rails, the asset an ask names, who is asked and whether the amount can go ahead; this holds the
- * user's picks and reads those facts for the screens.
+ * What the user has chosen in one funding sheet, with the core's options for it and the quotes of its latest ask, as
+ * the funding service reports them. The core decides the rails, the asset an ask names, who is asked and whether the
+ * amount can go ahead; this holds the user's picks and reads those facts for the screens.
  */
 data class FundingFlowState(
     val direction: FundingDirection,
@@ -48,12 +47,12 @@ data class FundingFlowState(
     val asset: String?,
     val chosenProviderId: ProductId?,
     val rows: Map<ProductId, FundingQuoteState>,
-    /** The amount quotes were last asked for, in balance units; `null` while none are. */
-    val askedAmount: U128?,
     /** The quotes on screen before the same amount was asked again, shown greyed while the new ones arrive. */
     val staleQuotes: Map<ProductId, FundingQuote>,
-    /** The core's list for [askedAmount]; `null` from a new ask until its first list arrives. */
+    /** The core's list for the latest ask; `null` from a new ask until its first list arrives. */
     val list: FundingQuoteList?,
+    /** An ask waits for its first list. */
+    val quoting: Boolean,
     /** Why the typed amount cannot go ahead, as the core last answered for it. */
     val amountIssue: FundingAmountIssue?,
 ) {
@@ -80,9 +79,9 @@ data class FundingFlowState(
             asset = null,
             chosenProviderId = null,
             rows = emptyMap(),
-            askedAmount = null,
             staleQuotes = emptyMap(),
             list = null,
+            quoting = false,
             amountIssue = null,
         )
 
@@ -139,7 +138,11 @@ data class FundingFlowState(
 
     /** Asked and waiting: the ask's first list has not come, or a provider on it has not answered. */
     val isQuoting: Boolean
-        get() = selectedQuote == null && askedAmount != null && list?.complete != true
+        get() = selectedQuote == null && (quoting || list?.complete == false)
+
+    /** The amount of the list on screen, in balance units. */
+    val askedAmount: U128?
+        get() = list?.amount
 
     val allAnswered: Boolean
         get() = list?.complete == true && rows.isNotEmpty()
@@ -185,11 +188,7 @@ data class FundingFlowState(
         }
 
     fun withRail(newRail: FundingRail): FundingFlowState =
-        if (newRail == rail) {
-            copy(railChosen = true)
-        } else {
-            dropped().copy(rail = newRail, railChosen = true, network = null, asset = null)
-        }
+        if (newRail == rail) copy(railChosen = true) else copy(rail = newRail, railChosen = true, network = null, asset = null)
 
     fun withAmountText(text: String): FundingFlowState = copy(amountText = text)
 
@@ -204,31 +203,15 @@ data class FundingFlowState(
     fun withAmountIssue(issue: FundingAmountIssue?): FundingFlowState = copy(amountIssue = issue)
 
     /**
-     * Quotes of [amount] were asked: its rows read pending until the core's first list for it names who is asked.
-     * Asking the same amount again keeps its quotes greyed until they are answered.
+     * The quotes of the latest ask as the service holds them. Until the ask's first list, the providers that last
+     * quoted the same amount read pending with their quotes greyed.
      */
-    fun asking(amount: U128): FundingFlowState = copy(
-        askedAmount = amount,
-        rows = rows.mapValues { FundingQuoteState.Pending },
-        staleQuotes = if (amount == askedAmount) quotedProviders.toMap() else emptyMap(),
-        list = null,
+    fun withQuotes(newList: FundingQuoteList?, stale: Map<ProductId, FundingQuote>, asking: Boolean): FundingFlowState = copy(
+        rows = newList?.rows?.associate { it.providerId to it.state } ?: stale.mapValues { FundingQuoteState.Pending },
+        staleQuotes = stale,
+        list = newList,
+        quoting = asking,
     )
-
-    /**
-     * The core's list for its current request, which is the only one it keeps; `null` once a selection withdrew it.
-     * A row still pending after the same amount was asked again keeps its last quote greyed until it answers.
-     */
-    fun receiving(newList: FundingQuoteList?): FundingFlowState {
-        if (newList == null) return dropped()
-
-        val newRows = newList.rows.associate { it.providerId to it.state }
-        val stale = newRows
-            .filterValues { it.isPending }
-            .mapNotNull { (providerId, _) -> (rows[providerId]?.quote ?: staleQuotes[providerId])?.let { providerId to it } }
-            .toMap()
-
-        return copy(askedAmount = newList.amount, rows = newRows, staleQuotes = stale, list = newList)
-    }
 
     /**
      * The rail, asset, network and country on screen, as the core is told of them, with the country's currency from
@@ -249,12 +232,9 @@ data class FundingFlowState(
         return if (railChosen || newOptions.defaultRail == rail) {
             updated
         } else {
-            updated.dropped().copy(rail = newOptions.defaultRail, network = null, asset = null)
+            updated.copy(rail = newOptions.defaultRail, network = null, asset = null)
         }
     }
-
-    /** No quotes and no ask. */
-    private fun dropped(): FundingFlowState = copy(rows = emptyMap(), askedAmount = null, staleQuotes = emptyMap(), list = null)
 
     private fun FundingAmountLimits?.toLimits() = FundingLimits(
         minimum = this?.min?.let(cash::decimal),

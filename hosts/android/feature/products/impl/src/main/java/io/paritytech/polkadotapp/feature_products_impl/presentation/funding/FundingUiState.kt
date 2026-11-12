@@ -25,18 +25,6 @@ enum class FundingScreen {
     CANCEL_OFFER,
 }
 
-data class FundingSheetUiState(
-    val screen: FundingScreen,
-    val amount: FundingAmountUiState,
-    val summary: FundingSummaryUiState,
-    val fees: FundingFeesUiState?,
-    val country: FundingCountryUiState,
-    val providers: FundingProvidersUiState,
-    val networks: ImmutableList<FundingNetworkRow>,
-    val tokens: FundingTokensUiState,
-    val deposit: FundingDepositUiState,
-)
-
 data class FundingAmountUiState(
     val isWithdraw: Boolean,
     val rails: ImmutableList<FundingRailTab>,

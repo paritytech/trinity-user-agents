@@ -130,10 +130,14 @@ class ProductsNavigator @Inject constructor(
         popIfOnTop(R.id.fundingEndedBottomSheet, FundingEndedBottomSheet.INTENT, intent)
     }
 
-    override suspend fun openFundingProviderFrame(intent: String) = withContext(dispatchers.main) {
+    override suspend fun isFundingOverlayShown(intent: String): Boolean = withContext(dispatchers.main) {
+        sessionOnTop(R.id.fundingBottomSheet, FundingBottomSheet.INTENT, intent)
+    }
+
+    override suspend fun openFundingProviderFrame(intent: String, requestId: String) = withContext(dispatchers.main) {
         performNavigation(
             R.id.action_global_to_fundingProviderFrameBottomSheet,
-            bundleOf(FundingProviderFrameBottomSheet.INTENT to intent),
+            bundleOf(FundingProviderFrameBottomSheet.INTENT to intent, FundingProviderFrameBottomSheet.REQUEST to requestId),
         )
     }
 
@@ -146,14 +150,17 @@ class ProductsNavigator @Inject constructor(
      * session, so it goes too. Anything else on top is left alone, and so is the sheet under it.
      */
     private fun popSession(destinationId: Int, argument: String, intent: String) {
-        val controller = navigationHolder.navController ?: return
-        val stack = controller.currentBackStack.value
+        if (sessionOnTop(destinationId, argument, intent)) navigationHolder.navController?.popBackStack(destinationId, inclusive = true)
+    }
+
+    /** Whether the screen for [intent] is on the stack with nothing but the session's own provider screens over it. */
+    private fun sessionOnTop(destinationId: Int, argument: String, intent: String): Boolean {
+        val stack = navigationHolder.navController?.currentBackStack?.value.orEmpty()
         val index = stack.indexOfLast { it.destination.id == destinationId && it.arguments?.getString(argument) == intent }
-        if (index < 0) return
+        if (index < 0) return false
 
         val above = stack.drop(index + 1).filter { it.destination !is NavGraph }
-        val sameSession = above.all { it.arguments?.getString(FundingProviderFrameBottomSheet.INTENT) == intent }
-        if (sameSession) controller.popBackStack(destinationId, inclusive = true)
+        return above.all { it.arguments?.getString(FundingProviderFrameBottomSheet.INTENT) == intent }
     }
 
     private fun popIfOnTop(destinationId: Int, argument: String, value: String) {
