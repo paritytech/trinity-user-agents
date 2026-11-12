@@ -980,12 +980,16 @@ impl<H: AccountHolder> HostAccounts<H> {
 		let revision = self.grants.lifecycle().revision();
 		let product = &connection.product;
 		if let Some(grant) = self.product_signing_grant(session, product, &account).await? {
-			let _lifecycle = self.hold_grant(session, revision)?;
-			let keypair = Self::grant_keypair(&grant, &account)?;
-			return Ok(keypair
-				.secret
-				.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
-				.to_bytes());
+			let cx = super::remote_authority_context(cx);
+			return super::remote_authority_call(&cx, async {
+				let _lifecycle = self.hold_grant(session, revision)?;
+				let keypair = Self::grant_keypair(&grant, &account)?;
+				Ok(keypair
+					.secret
+					.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
+					.to_bytes())
+			})
+			.await;
 		}
 		let review =
 			UserConfirmationReview::StatementStoreProductSign(StatementStoreProductSignReview {

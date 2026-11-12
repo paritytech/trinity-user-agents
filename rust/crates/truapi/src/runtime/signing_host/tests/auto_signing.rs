@@ -288,6 +288,40 @@ fn a_kept_key_registers_through_the_hosts_ring_resolver() {
 	assert_eq!(registered, Ok(member));
 }
 
+/// A product that withdrew its call gets no statement proof signed for it,
+/// even when a kept key could sign without asking anyone.
+#[test]
+fn a_withdrawn_statement_proof_is_not_signed_with_a_kept_key() {
+	let (services, activation) = signing_runtime_with_platform(granting_platform());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	grant_auto_signing(&product_runtime(services, activation.clone()));
+	let session = activation.accounts().current_session().expect("an active wallet");
+	let cancel = truapi::CancellationToken::default();
+	cancel.cancel();
+	let cx = CallContext::with_parts("withdrawn-proof".to_string(), cancel);
+
+	let signed =
+		futures::executor::block_on(activation.accounts().sign_statement_store_product_payload(
+			&session,
+			&cx,
+			&connection(&activation, "myapp.dot"),
+			v01::ProductAccountId {
+				dot_ns_identifier: ProductId::for_test("myapp.dot"),
+				derivation_index: v01::DerivationIndex::Index(0),
+			},
+			b"statement".to_vec(),
+		));
+
+	assert_eq!(
+		signed,
+		Err(AuthorityError::Cancelled(crate::runtime::authority::AuthorityCancelError::new(
+			"withdrawn-proof",
+			truapi::CancellationReason::Cancelled,
+		)))
+	);
+}
+
 /// The user's own account, `identity`, asked to sign `hello world`.
 fn identity_raw_request(identity: &schnorrkel::Keypair) -> HostSignRawWithLegacyAccountRequest {
 	HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {
