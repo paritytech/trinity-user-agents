@@ -6,17 +6,17 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { x25519Pair } from "../../../src/invitations/sealing.js";
 import type { PromptRequest } from "../../../src/app/prompt.js";
 import {
-  FieldHost,
-  type FieldLabel,
-  type FieldSession,
+  LocketHost,
+  type LocketLabel,
+  type LocketSession,
   type KeyBinder,
-} from "../../../src/fields/host.js";
+} from "../../../src/locket/host.js";
 import type {
-  FieldDescriptor,
-  FieldGrant,
+  DetailDescriptor,
+  DetailGrant,
   OpenedEnvelope,
-  ReceiveKey,
-} from "../../../bridges/fields/protocol.js";
+  RecipientKey,
+} from "../../../bridges/locket/protocol.js";
 import {
   concat,
   fromHex,
@@ -59,7 +59,7 @@ function fakeBinder(wallet: string): KeyBinder {
   };
 }
 
-const hosts: FieldHost[] = [];
+const hosts: LocketHost[] = [];
 const ports: MessagePort[] = [];
 afterEach(() => {
   for (const host of hosts.splice(0)) host.setSession(null);
@@ -75,7 +75,7 @@ function makeHost(
   people = PEOPLE,
 ) {
   const sheets: PromptRequest<unknown>[] = [];
-  const labels: FieldLabel[] = [];
+  const labels: LocketLabel[] = [];
   let choice: (sheet: PromptRequest<unknown>) => unknown = (sheet) =>
     sheet.choices[0]!.value;
   let onAsk: () => void = () => {};
@@ -89,7 +89,7 @@ function makeHost(
     string,
     { image: { product: string; svg: string }; revoked: boolean }
   >();
-  const host = new FieldHost({
+  const host = new LocketHost({
     images: {
       issue: async (image) => {
         if (gate !== null) await gate;
@@ -120,7 +120,7 @@ function makeHost(
     now: () => clock,
   });
   hosts.push(host);
-  const session: FieldSession = {
+  const session: LocketSession = {
     network: "test-net",
     people,
     walletId: wallet,
@@ -210,10 +210,10 @@ async function provider(
   await app.call({
     op: "declare",
     name: product.split(".")[0],
-    fields: ["address", "phone"],
+    details: ["address", "phone"],
   });
   await app.call({
-    op: "save",
+    op: "setValues",
     values: { address: null, phone: null, ...values },
   });
   return app;
@@ -238,36 +238,36 @@ function shows(
 /** Alice requests to `key` from her market; answers the grant. */
 async function share(
   alice: ReturnType<typeof makeHost>,
-  key: ReceiveKey,
+  key: RecipientKey,
   market = alice.connect(MARKET, "consumer"),
 ) {
   return {
     market,
     grant: (await market.call({
       op: "request",
-      fields: FIELDS,
+      details: FIELDS,
       purpose: "Ship “Lamp” to you",
       context: CONTEXT,
       recipient: key,
-    })) as FieldGrant,
+    })) as DetailGrant,
   };
 }
 
-describe("the draft field bridge", () => {
-  test("a provider declares and saves with no sheet, and learns only which kinds it saved", async () => {
+describe("the draft Locket bridge", () => {
+  test("a provider declares and sets values with no sheet, and learns only which kinds it saved", async () => {
     const alice = makeHost("alice");
     const app = await provider(alice, "notes.example", { address: ADDRESS });
     expect({
       status: await app.call({ op: "status" }),
       sheets: alice.sheets.length,
       undeclared: await codeOf(
-        app.call({ op: "save", values: { email: "a@example.test" } }),
+        app.call({ op: "setValues", values: { email: "a@example.test" } }),
       ),
     }).toEqual({
       status: {
         registered: true,
         name: "notes",
-        fields: ["address", "phone"],
+        details: ["address", "phone"],
         saved: ["address"],
       },
       sheets: 0,
@@ -275,13 +275,13 @@ describe("the draft field bridge", () => {
     });
   });
 
-  test("declaring again is the same declaration or invalid, and save replaces every value", async () => {
+  test("declaring again is the same declaration or invalid, and setValues replaces every value", async () => {
     const alice = makeHost("alice");
     const app = await provider(alice, "notes.example", { address: ADDRESS });
-    const declare = (name: string, fields: string[]) =>
-      codeOf(app.call({ op: "declare", name, fields }));
+    const declare = (name: string, details: string[]) =>
+      codeOf(app.call({ op: "declare", name, details }));
     const save = (values: Record<string, unknown>) =>
-      codeOf(app.call({ op: "save", values }));
+      codeOf(app.call({ op: "setValues", values }));
     const saved = async () =>
       ((await app.call({ op: "status" })) as { saved: string[] }).saved;
     const declarations = {
@@ -290,7 +290,7 @@ describe("the draft field bridge", () => {
       fewer: await declare("notes", ["address"]),
     };
     const saves = {
-      // Each save names every declared kind; null clears one.
+      // Each setValues names every declared kind; null clears one.
       phoneOnly: await save({ address: null, phone: PHONE }),
       afterPhoneOnly: await saved(),
       missingKind: await save({ address: ADDRESS }),
@@ -320,9 +320,9 @@ describe("the draft field bridge", () => {
     const bob = makeHost("bob", storage);
     const market = bob.connect(MARKET, "consumer");
     const key = (await market.call({
-      op: "createReceiveKey",
+      op: "recipientKey",
       index: INDEX,
-    })) as ReceiveKey;
+    })) as RecipientKey;
     const alice = makeHost("alice");
     await provider(alice, "notes.example", { address: ADDRESS });
     const envelope = (await share(alice, key)).grant.envelope!;
@@ -361,19 +361,19 @@ describe("the draft field bridge", () => {
     });
   });
 
-  test("seals address and optional phone to a bound key; only the recipient's host opens it, into fresh handles", async () => {
+  test("seals address and optional phone to a bound key; only the recipient's host opens it, into fresh refs", async () => {
     const bob = makeHost("bob");
     const bobMarket = bob.connect(MARKET, "consumer");
     const key = (await bobMarket.call({
-      op: "createReceiveKey",
+      op: "recipientKey",
       index: INDEX,
-    })) as ReceiveKey;
+    })) as RecipientKey;
     expect(
       (
         (await bobMarket.call({
-          op: "createReceiveKey",
+          op: "recipientKey",
           index: INDEX,
-        })) as ReceiveKey
+        })) as RecipientKey
       ).keyId,
     ).toBe(key.keyId);
 
@@ -385,7 +385,7 @@ describe("the draft field bridge", () => {
       title: sheet.title,
       from: sheet.from,
       choices: sheet.choices.map((choice) => choice.label),
-      kinds: grant.fields.map((field) => field.kind),
+      kinds: grant.details.map((field) => field.kind),
       envelope: typeof grant.envelope,
     }).toEqual({
       title: "Send your address?",
@@ -411,16 +411,16 @@ describe("the draft field bridge", () => {
     })) as OpenedEnvelope;
     expect({
       sameEnvelope: first.envelopeId === second.envelopeId,
-      freshHandles: first.fields[0]!.handle !== second.fields[0]!.handle,
-      descriptor: { ...first.fields[0], handle: "…" },
+      freshRefs: first.details[0]!.ref !== second.details[0]!.ref,
+      descriptor: { ...first.details[0], ref: "…" },
     }).toEqual({
       sameEnvelope: true,
-      freshHandles: true,
+      freshRefs: true,
       descriptor: {
         id: "ship-to",
         kind: "address",
         schema: "postal-address/1",
-        handle: "…",
+        ref: "…",
       },
     });
 
@@ -464,11 +464,11 @@ describe("the draft field bridge", () => {
     const bobMarket = bob.connect(MARKET, "consumer");
     const OTHER_INDEX = `0x${"33".repeat(32)}`;
     const keyFor = async (index: string, market = bobMarket) =>
-      (await market.call({ op: "createReceiveKey", index })) as ReceiveKey;
+      (await market.call({ op: "recipientKey", index })) as RecipientKey;
     const a = await keyFor(INDEX);
     const b = await keyFor(OTHER_INDEX);
     const binder = fakeBinder("bob");
-    const signedBy = async (key: ReceiveKey) =>
+    const signedBy = async (key: RecipientKey) =>
       binder.verify(
         MARKET,
         fromHex(key.account),
@@ -566,7 +566,7 @@ describe("the draft field bridge", () => {
     const legacyKey = async (
       account: string,
       index: string,
-    ): Promise<ReceiveKey> => {
+    ): Promise<RecipientKey> => {
       const network = PEOPLE;
       const signed = await binder.sign(
         MARKET,
@@ -606,9 +606,9 @@ describe("the draft field bridge", () => {
         (error: Error) => error.message,
       );
     const fresh = (await market.call({
-      op: "createReceiveKey",
+      op: "recipientKey",
       index: indexB,
-    })) as ReceiveKey;
+    })) as RecipientKey;
     expect({
       wrongContext,
       forA: (
@@ -619,7 +619,7 @@ describe("the draft field bridge", () => {
         })) as OpenedEnvelope
       ).account,
       account: opened.account,
-      kinds: opened.fields.map((field) => field.kind),
+      kinds: opened.details.map((field) => field.kind),
       freshKey: fresh.keyId !== keyId && fresh.publicKey !== publicKey,
       freshAccount: fresh.account,
     }).toEqual({
@@ -636,7 +636,7 @@ describe("the draft field bridge", () => {
     const bob = makeHost("bob");
     const key = (await bob
       .connect(MARKET, "consumer")
-      .call({ op: "createReceiveKey", index: INDEX })) as ReceiveKey;
+      .call({ op: "recipientKey", index: INDEX })) as RecipientKey;
     const alice = makeHost("alice");
     await provider(alice, "notes.example", { address: ADDRESS });
     const market = alice.connect(MARKET, "consumer");
@@ -644,7 +644,7 @@ describe("the draft field bridge", () => {
       codeOf(
         market.call({
           op: "request",
-          fields: FIELDS,
+          details: FIELDS,
           purpose: "Ship it",
           context: CONTEXT,
           recipient,
@@ -679,9 +679,9 @@ describe("the draft field bridge", () => {
     const bob = makeHost("bob");
     const bobMarket = bob.connect(MARKET, "consumer");
     const key = (await bobMarket.call({
-      op: "createReceiveKey",
+      op: "recipientKey",
       index: INDEX,
-    })) as ReceiveKey;
+    })) as RecipientKey;
     const alice = makeHost("alice");
     expect(await codeOf(share(alice, key))).toBe("unavailable");
     expect(alice.sheets).toEqual([]);
@@ -700,7 +700,7 @@ describe("the draft field bridge", () => {
     alice.whenAsked(
       () =>
         void home.call({
-          op: "save",
+          op: "setValues",
           values: { address: "Changed Lane 1", phone: null },
         }),
     );
@@ -713,7 +713,7 @@ describe("the draft field bridge", () => {
     const surface = (
       (await bobMarket.call({
         op: "display",
-        handle: opened.fields[0]!.handle,
+        ref: opened.details[0]!.ref,
       })) as { surface: unknown }
     ).surface;
     expect(shows(bob, surface, ADDRESS_LINES)).toBe(true);
@@ -723,7 +723,7 @@ describe("the draft field bridge", () => {
     expect(await codeOf(share(alice, key))).toBe("cancelled");
   });
 
-  test("issues one image per display, refuses a released handle, and release and sign-out end the unused ones", async () => {
+  test("issues one image per display, refuses a released ref, and release and sign-out end the unused ones", async () => {
     const alice = makeHost("alice");
     await provider(alice, "notes.example", { address: ADDRESS });
     const market = alice.connect(MARKET, "consumer");
@@ -731,14 +731,13 @@ describe("the draft field bridge", () => {
       (
         (await market.call({
           op: "request",
-          fields: [{ id: "ship-to", kind: "address" }],
+          details: [{ id: "ship-to", kind: "address" }],
           purpose: "Show it",
           context: CONTEXT,
-        })) as FieldGrant
-      ).fields[0]!.handle;
-    const handle = await request();
-    const show = (theme?: string) =>
-      market.call({ op: "display", handle, theme });
+        })) as DetailGrant
+      ).details[0]!.ref;
+    const ref = await request();
+    const show = (theme?: string) => market.call({ op: "display", ref, theme });
     const first = ((await show()) as { surface: unknown }).surface;
     const dark = ((await show("dark")) as { surface: unknown }).surface;
     expect({
@@ -748,13 +747,13 @@ describe("the draft field bridge", () => {
       replies: JSON.stringify(market.received).includes("Sample Lane"),
     }).toEqual({ first: true, dark: true, sameUrl: false, replies: false });
 
-    await market.call({ op: "release", handles: [handle] });
+    await market.call({ op: "release", refs: [ref] });
     expect({
       revoked: [...alice.images.values()].map((entry) => entry.revoked),
       again: await codeOf(show()),
-    }).toEqual({ revoked: [true, true], again: "missing-handle" });
+    }).toEqual({ revoked: [true, true], again: "missing-ref" });
 
-    await market.call({ op: "display", handle: await request() });
+    await market.call({ op: "display", ref: await request() });
     alice.host.setSession(null);
     expect(alice.images.get("image:2")?.revoked).toBe(true);
   });
@@ -763,15 +762,15 @@ describe("the draft field bridge", () => {
     const alice = makeHost("alice");
     await provider(alice, "notes.example", { address: ADDRESS });
     const market = alice.connect(MARKET, "consumer");
-    const handle = (
+    const ref = (
       (await market.call({
         op: "request",
-        fields: [{ id: "ship-to", kind: "address" }],
+        details: [{ id: "ship-to", kind: "address" }],
         purpose: "Show it",
         context: CONTEXT,
-      })) as FieldGrant
-    ).fields[0]!.handle;
-    const show = () => codeOf(market.call({ op: "display", handle }));
+      })) as DetailGrant
+    ).details[0]!.ref;
+    const show = () => codeOf(market.call({ op: "display", ref }));
     for (let index = 0; index < 50; index++) await show();
     const full = await show();
     alice.advance(60_001);
@@ -796,15 +795,15 @@ describe("the draft field bridge", () => {
     const alice = makeHost("alice");
     await provider(alice, "notes.example", { address: ADDRESS });
     const market = alice.connect(MARKET, "consumer");
-    const handle = (
+    const ref = (
       (await market.call({
         op: "request",
-        fields: [{ id: "ship-to", kind: "address" }],
+        details: [{ id: "ship-to", kind: "address" }],
         purpose: "Show it",
         context: CONTEXT,
-      })) as FieldGrant
-    ).fields[0]!.handle;
-    const show = () => codeOf(market.call({ op: "display", handle }));
+      })) as DetailGrant
+    ).details[0]!.ref;
+    const show = () => codeOf(market.call({ op: "display", ref }));
     for (let index = 0; index < 30; index++) await show();
 
     // A failing service, held: its 20 issues take slots, then give them back.
@@ -836,40 +835,43 @@ describe("the draft field bridge", () => {
     const alice = makeHost("alice");
     await provider(alice, "notes.example", { address: ADDRESS });
     const market = alice.connect(MARKET, "consumer");
-    const handle = (
+    const ref = (
       (await market.call({
         op: "request",
-        fields: [{ id: "ship-to", kind: "address" }],
+        details: [{ id: "ship-to", kind: "address" }],
         purpose: "Show it",
         context: CONTEXT,
-      })) as FieldGrant
-    ).fields[0]!.handle;
+      })) as DetailGrant
+    ).details[0]!.ref;
     const open = alice.holdService();
     const shows = Array.from({ length: 40 }, () =>
-      codeOf(market.call({ op: "display", handle })),
+      codeOf(market.call({ op: "display", ref })),
     );
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const released = await market.call({ op: "release", handles: [handle] });
+    const released = await market.call({ op: "release", refs: [ref] });
     open();
     const codes = await Promise.all(shows);
     expect({
       busy: codes.filter((code) => code === "busy").length,
-      // The release went first, so every display still waiting finds no handle.
-      gone: codes.filter((code) => code === "missing-handle").length,
+      // The release went first, so every display still waiting finds no ref.
+      gone: codes.filter((code) => code === "missing-ref").length,
       released,
     }).toEqual({ busy: 8, gone: 32, released: { released: 1 } });
   });
 
-  test("refuses to save a value its image cannot show", async () => {
+  test("refuses to set a value its image cannot show", async () => {
     const alice = makeHost("alice");
     const app = alice.connect("notes.example", "provider");
     await app.call({
       op: "declare",
       name: "notes",
-      fields: ["address", "phone"],
+      details: ["address", "phone"],
     });
     const phone = await app
-      .call({ op: "save", values: { address: null, phone: "9".repeat(150) } })
+      .call({
+        op: "setValues",
+        values: { address: null, phone: "9".repeat(150) },
+      })
       .then(
         () => "saved",
         (error: Error) => error.message,
@@ -878,7 +880,7 @@ describe("the draft field bridge", () => {
       phone,
       wideAddress: await codeOf(
         app.call({
-          op: "save",
+          op: "setValues",
           values: {
             address:
               "東京都架空区試験町一丁目二番三号サンプルマンション四〇五号室",
@@ -897,7 +899,7 @@ describe("the draft field bridge", () => {
     const bob = makeHost("bob", storage);
     const key = (await bob
       .connect(MARKET, "consumer")
-      .call({ op: "createReceiveKey", index: INDEX })) as ReceiveKey;
+      .call({ op: "recipientKey", index: INDEX })) as RecipientKey;
     const alice = makeHost("alice");
     await provider(alice, "notes.example", { address: ADDRESS });
     const { grant } = await share(alice, key);
@@ -910,7 +912,7 @@ describe("the draft field bridge", () => {
     const surface = (
       (await market.call({
         op: "display",
-        handle: opened.fields[0]!.handle,
+        ref: opened.details[0]!.ref,
       })) as { surface: unknown }
     ).surface;
     expect(shows(restarted, surface, ADDRESS_LINES)).toBe(true);
@@ -935,7 +937,7 @@ describe("the draft field bridge", () => {
           envelope: grant.envelope,
           context: CONTEXT,
         })) as OpenedEnvelope
-      ).fields.map((field: FieldDescriptor) => field.kind),
+      ).details.map((field: DetailDescriptor) => field.kind),
     ).toEqual(["address"]);
 
     const elsewhere = makeHost("alice", new Map(), `0x${"55".repeat(32)}`);
@@ -949,16 +951,16 @@ describe("the draft field bridge", () => {
     const market = alice.connect(MARKET, "consumer");
     const grant = (await market.call({
       op: "request",
-      fields: FIELDS,
+      details: FIELDS,
       purpose: "Label",
       context: CONTEXT,
-    })) as FieldGrant;
+    })) as DetailGrant;
     expect(
       await market.call({
         op: "print",
         title: "Shipping label",
         lines: ["#ABC", "1 × Lamp"],
-        handles: grant.fields.map((field) => field.handle),
+        refs: grant.details.map((field) => field.ref),
       }),
     ).toEqual({ printed: true });
     expect(alice.labels).toEqual([
@@ -966,7 +968,7 @@ describe("the draft field bridge", () => {
         product: MARKET,
         title: "Shipping label",
         lines: ["#ABC", "1 × Lamp"],
-        fields: [
+        details: [
           { kind: "address", lines: ADDRESS_LINES },
           { kind: "phone", lines: [PHONE] },
         ],
@@ -978,11 +980,11 @@ describe("the draft field bridge", () => {
     const alice = makeHost("alice");
     await provider(alice, "notes.example", { address: ADDRESS });
     const market = alice.connect(MARKET, "consumer");
-    const ask = (fields: unknown, extra: Record<string, unknown> = {}) =>
+    const ask = (details: unknown, extra: Record<string, unknown> = {}) =>
       codeOf(
         market.call({
           op: "request",
-          fields,
+          details,
           purpose: "Ship it",
           context: CONTEXT,
           ...extra,

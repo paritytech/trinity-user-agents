@@ -1,14 +1,14 @@
 /**
- * The draft field bridge (dev server only) between two host tabs, Alice's
+ * The draft Locket bridge (dev server only) between two host tabs, Alice's
  * and Bob's, on the simulated Statement Store (`?field-demo=simulation`):
  * two providers on their own origins and Small Market, which posts its own
  * listings and orders through its TrUAPI Statement Store. The host binds
- * Bob's receiving key with the core, checks it in Alice's tab, asks her once
+ * Bob's recipient key with the core, checks it in Alice's tab, asks her once
  * which details to send, seals them, and draws them in both markets; Bob's
  * host opens the order again after a restart.
  *
  * The field apps run on this test's own Vite servers, and the browser reaches
- * them under the exact origins the host allows (`FIELD_APPS` in
+ * them under the exact origins the host allows (`LOCKET_APPS` in
  * `tools/demos/field-demo.ts`), so the host's own allowlist decides their
  * roles. Every other request outside the host is refused and every socket is
  * closed: nothing reaches a chain and no allowance is claimed. The host and
@@ -233,7 +233,7 @@ async function viewShows(page: Page, text: string): Promise<boolean> {
               .evaluate(() =>
                 [
                   ...document.querySelectorAll<HTMLImageElement>(
-                    "img.protected-field",
+                    "img.protected-detail",
                   ),
                 ]
                   .filter((image) => image.complete && image.naturalWidth > 0)
@@ -259,12 +259,12 @@ async function viewShows(page: Page, text: string): Promise<boolean> {
   return false;
 }
 
-/** The titles of the field bridge's own sheets. Every other sheet is the core's. */
+/** The titles of the Locket bridge's own sheets. Every other sheet is the core's. */
 const FIELD_SHEETS = /^(Send your|Show your)/;
 
 /**
  * Answer the core's sheets as they come, until `done` resolves: approve a
- * review, allow a permission. The field bridge's own sheets are left to the
+ * review, allow a permission. The Locket bridge's own sheets are left to the
  * test.
  */
 async function approveCore(page: Page, done: Promise<unknown>): Promise<void> {
@@ -348,7 +348,7 @@ async function noPlaintext(pages: Page[]): Promise<string[]> {
       for (const secret of SECRETS)
         if (text.includes(secret)) found.push(`market: ${secret}`);
     }
-    // The simulated store, the market's TrUAPI storage and the receiving
+    // The simulated store, the market's TrUAPI storage and the recipient
     // keys all live in the host origin's storage.
     const store = await page.evaluate(() =>
       JSON.stringify({ ...localStorage }),
@@ -359,7 +359,7 @@ async function noPlaintext(pages: Page[]): Promise<string[]> {
   return found;
 }
 
-describe("the draft field bridge demo", () => {
+describe("the draft Locket bridge demo", () => {
   test(
     "a buyer sends address and optional phone to a bound key, only hosts draw them, and the seller's host opens the order again after a restart",
     async () => {
@@ -510,7 +510,7 @@ describe("the draft field bridge demo", () => {
         expect(await viewShows(bob, HOME[1]!)).toBe(true);
         const restartedSheets = [...run.sheets.bob!];
 
-        // The receiving keys are lost, as when site data is cleared: the
+        // The recipient keys are lost, as when site data is cleared: the
         // order cannot be opened, and the market says why.
         await bob.close();
         bob = await boot(run, "bob");
@@ -899,7 +899,7 @@ describe("the draft field bridge demo", () => {
           plaintext: (await forged.text()).includes(HOME[1]!),
         }).toEqual({ forged: 200, plaintext: true });
 
-        // Release: Back on a sale releases its handles. An unused image no
+        // Release: Back on a sale releases its refs. An unused image no
         // longer loads; one the market kept stays drawn.
         await bob.bringToFront();
         const bobMarket = app(bob, MARKET);

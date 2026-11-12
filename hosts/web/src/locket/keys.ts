@@ -7,11 +7,11 @@ import {
   utf8,
   type RandomBytes,
 } from "../../bridges/primitives/bytes.js";
-import { FieldError } from "../../bridges/fields/protocol.js";
+import { LocketError } from "../../bridges/locket/protocol.js";
 import { x25519Pair, type X25519Pair } from "../invitations/sealing.js";
 
 /**
- * PROTOTYPE. The receiving keys this host keeps, across reloads on this
+ * PROTOTYPE. The recipient keys this host keeps, across reloads on this
  * device: one per wallet, network, product and product account, so two
  * accounts of one product never publish the same key.
  *
@@ -21,7 +21,7 @@ import { x25519Pair, type X25519Pair } from "../invitations/sealing.js";
  * {@link WRAP_DOMAIN}, salted with the network id). The associated data binds
  * the network, product, account, key id and public key, so a record copied
  * to another slot or account does not open. Nothing opens while no wallet is
- * signed in: {@link ReceiveKeys.lock} forgets the wrapping key and keeps the
+ * signed in: {@link RecipientKeys.lock} forgets the wrapping key and keeps the
  * records.
  *
  * Storage is this origin's `localStorage`, where this development host also
@@ -33,15 +33,17 @@ import { x25519Pair, type X25519Pair } from "../invitations/sealing.js";
  *
  * Earlier builds kept one key per product, shared by its accounts. Such a
  * record is still read, only to open envelopes already sealed to it
- * ({@link ReceiveKeys.open}); no new binding is ever made for it.
+ * ({@link RecipientKeys.open}); no new binding is ever made for it.
  */
 
+// These strings derive and name stored records: changing one makes every
+// stored key unreadable.
 const WRAP_DOMAIN = "truapi-web-host/fields/v1/receive-key-wrap";
 const PREFIX = "truapi-web-signing-host:fields:v1";
-/** The most accounts of one product that keep a receiving key. */
+/** The most accounts of one product that keep a recipient key. */
 export const MAX_ACCOUNTS = 16;
 
-/** A receiving key as stored: public parts in clear, the secret sealed. */
+/** A recipient key as stored: public parts in clear, the secret sealed. */
 interface StoredKey {
   keyId: string;
   publicKey: string;
@@ -61,7 +63,7 @@ interface LegacyKey extends StoredKey {
   accounts: string[];
 }
 
-/** A receiving key's public parts. */
+/** A recipient key's public parts. */
 export interface KeyRecord {
   keyId: string;
   publicKey: string;
@@ -159,9 +161,9 @@ function readLegacy(raw: string | null): LegacyKey | null | "damaged" {
  * not reported as a bad envelope.
  */
 const unreadable = () =>
-  new FieldError(
+  new LocketError(
     "unavailable",
-    "This device's receiving key for it cannot be read.",
+    "This device's recipient key for it cannot be read.",
   );
 
 const publicPart = ({ keyId, publicKey, created }: StoredKey): KeyRecord => ({
@@ -170,12 +172,12 @@ const publicPart = ({ keyId, publicKey, created }: StoredKey): KeyRecord => ({
   created,
 });
 
-/** A key not yet bound: made by {@link ReceiveKeys.prepare}, kept by {@link ReceiveKeys.keep}. */
+/** A key not yet bound: made by {@link RecipientKeys.prepare}, kept by {@link RecipientKeys.keep}. */
 export interface PreparedKey extends KeyRecord {
   secret: Uint8Array;
 }
 
-export class ReceiveKeys {
+export class RecipientKeys {
   private owner: {
     network: string;
     walletId: string;
@@ -212,9 +214,9 @@ export class ReceiveKeys {
 
   private current() {
     if (this.owner === null)
-      throw new FieldError(
+      throw new LocketError(
         "session",
-        "Sign in with a wallet to use receiving keys.",
+        "Sign in with a wallet to use recipient keys.",
       );
     return this.owner;
   }
@@ -286,14 +288,14 @@ export class ReceiveKeys {
           (kept) => kept.index === lowerIndex || kept.account === lowerAccount,
         )
       )
-        throw new FieldError(
+        throw new LocketError(
           "busy",
-          "This account already has a receiving key.",
+          "This account already has a recipient key.",
         );
       if (keys.length >= MAX_ACCOUNTS)
-        throw new FieldError(
+        throw new LocketError(
           "limit",
-          "This app keeps receiving keys for too many accounts.",
+          "This app keeps recipient keys for too many accounts.",
         );
       const nonce = this.random(24);
       const record: AccountKey = {

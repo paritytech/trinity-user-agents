@@ -1,20 +1,20 @@
 import "./style.css";
-import { connectFields } from "../../bridges/fields/product.js";
-import { FieldError, type FieldRole } from "../../bridges/fields/protocol.js";
+import { connectLocket } from "../../bridges/locket/product.js";
+import { LocketError, type LocketRole } from "../../bridges/locket/protocol.js";
 
-export { FieldError };
+export { LocketError };
 
-/** Every message the host sent over the field bridge, for this demo's privacy checks. */
+/** Every message the host sent over the Locket bridge, for this demo's privacy checks. */
 declare global {
   interface Window {
     __fieldDemoReceived: unknown[];
   }
 }
 
-/** Connect this page's field bridge in `role`, recording what the host sends. */
-export function connect<Role extends FieldRole>(role: Role) {
+/** Connect this page's Locket bridge in `role`, recording what the host sends. */
+export function connect<Role extends LocketRole>(role: Role) {
   window.__fieldDemoReceived = [];
-  return connectFields(role, {
+  return connectLocket(role, {
     observe: (message) => {
       window.__fieldDemoReceived.push(message);
       if (window.__fieldDemoReceived.length > 100)

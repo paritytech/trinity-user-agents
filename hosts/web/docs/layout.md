@@ -59,8 +59,8 @@ Three owners, which [`tests/unit/boundaries.test.ts`](../tests/unit/boundaries.t
 - `backup/`: the wallet's backup on the network: `host-backup.ts` (keeping and restoring), `snapshot.ts` (what is
   copied), `sealing.ts` (keys and envelopes), `pointer.ts`. See [Backup](backup.md).
 - `assets/`: fonts and Pocket artwork, with licence notices.
-- `fields/`: the host side of the draft field bridge, dev server only: `host.ts` (the bridge), `envelope.ts` (the sealed
-  envelope), `keys.ts` (receiving keys kept encrypted), `svg.ts` (a value drawn as SVG).
+- `locket/`: the host side of the draft Locket bridge, dev server only: `host.ts` (the bridge), `envelope.ts` (the
+  sealed envelope), `keys.ts` (recipient keys kept encrypted), `svg.ts` (a value drawn as SVG).
 
 ## `bridges/`
 
@@ -71,8 +71,8 @@ What the host and its products both read. The contracts are drafts, not TrUAPI.
 - `host-requests/`: the request service's contract, `contract.ts`, and the product's end, `product.ts`.
 - `nova-chat/`: `nova-chat/1` between the host and Nova Chat's worker, `contract.ts`, and the Nova apps' wire,
   `wire.ts`.
-- `fields/`: the draft field bridge `web-fields/2`: `protocol.ts` (the contract), `product.ts` (the product end),
-  `web.ts` and `protected-field.ts` (how a web product places a host-drawn field).
+- `locket/`: the draft Locket bridge `web-locket/1`: `protocol.ts` (the contract), `product.ts` (the product end),
+  `web.ts` and `protected-detail.ts` (how a web product places a host-drawn detail).
 - `diagnostics.ts`: what a product worker reports about its conversations to the developer tools.
 - `worker-probe.ts`: a chat worker's status on its console, and the test probe a dev server tab may ask for.
 - `primitives/`: `bytes.ts` (hex, UTF-8, randomness), `codec.ts` and `scale-reader.ts` (SCALE), `crypto.ts` (hashes,
@@ -92,7 +92,7 @@ The products the host runs, each loaded through the ordinary loader.
   See [Nova Chat](nova-chat.md).
 - `field-demo/`: the provider app (`provider.html`, run as Field notebook and as Travel notebook) and Small Market
   (`market.html`, with its own board in `board.ts` and messages in `messages.ts`), dev only, served on their own origins
-  by `field-products.config.ts`. Only the origins in `FIELD_APPS` (`tools/demos/field-demo.ts`) get the field bridge.
+  by `field-products.config.ts`. Only the origins in `LOCKET_APPS` (`tools/demos/field-demo.ts`) get the Locket bridge.
 - `shared/product-storage.ts`: a product's storage over its TrUAPI `localStorage`.
 
 ## `tools/`
@@ -110,7 +110,7 @@ The developer tools, in every build.
   `no-submit.ts`, `kettle-demo.ts` (the demo's simulated Statement Store and allowance), `backup-demo.ts` (the simulated
   network a browser test runs for the backup), `wallet-deliveries.ts` (the Developer section's other request
   deliveries), `demo-session.ts` (the tab as a demo user), `worker-probes.ts` (which chat workers start with their test
-  probe), `field-demo.ts` and `field-label.ts` (the field demo's wiring and printed label).
+  probe), `field-demo.ts` and `field-label.ts` (the field demo's Locket wiring and printed label).
 
 ## Other
 
@@ -119,4 +119,4 @@ The developer tools, in every build.
 - `tests/unit/` follows the code that it covers. `tests/support/` holds helpers, including in-memory statement stores.
 - `browser/`: browser tests. `browser/support/` holds the Playwright setup.
 - Vite plugins: `sandbox-plugin.ts` (loader and service worker), `contact-chat-plugin.ts`, `browse-seed-plugin.ts`,
-  `username-search-plugin.ts`, `field-image-plugin.ts` (the field bridge's image service, dev server only).
+  `username-search-plugin.ts`, `field-image-plugin.ts` (the Locket bridge's image service, dev server only).

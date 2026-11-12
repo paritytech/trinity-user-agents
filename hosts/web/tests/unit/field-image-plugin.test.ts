@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { TOKEN_MS, createFieldImages } from "../../field-image-plugin.js";
-import { fieldSvg } from "../../src/fields/svg.js";
+import { detailSvg } from "../../src/locket/svg.js";
 
 /**
  * The dev server's field images over real HTTP on loopback, as raw clients
@@ -12,7 +12,7 @@ import { fieldSvg } from "../../src/fields/svg.js";
  */
 
 const PRODUCT = "http://localhost:5183";
-const SVG = fieldSvg(
+const SVG = detailSvg(
   "address",
   ["Ada Example", "24 Sample Lane", "Example City 01234"],
   "paper",

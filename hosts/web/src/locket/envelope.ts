@@ -8,16 +8,16 @@ import {
   type RandomBytes,
 } from "../../bridges/primitives/bytes.js";
 import {
-  FIELD_SCHEMAS,
-  FieldError,
+  DETAIL_SCHEMAS,
+  LocketError,
   MAX_ADDRESS_LINES,
-  MAX_FIELDS,
+  MAX_DETAILS,
   MAX_VALUE_CHARS,
-  isFieldId,
-  isFieldKind,
+  isDetailId,
+  isDetailKind,
   isHex32,
-  type FieldKind,
-} from "../../bridges/fields/protocol.js";
+  type DetailKind,
+} from "../../bridges/locket/protocol.js";
 import {
   digest,
   openSealed,
@@ -26,7 +26,7 @@ import {
 } from "../invitations/sealing.js";
 
 /**
- * PROTOTYPE. The sealed field envelope, version 1, for one recipient:
+ * PROTOTYPE. The sealed Locket envelope, version 1, for one recipient:
  *
  *   version (1) = 1 || suite (1) = 1 || key id (16) || sealed
  *
@@ -57,10 +57,10 @@ const MAX_PLAINTEXT = 1024;
 const SEAL_OVERHEAD = 32 + 16;
 export const MAX_ENVELOPE_BYTES = HEADER_BYTES + SEAL_OVERHEAD + MAX_PLAINTEXT;
 
-/** One field inside an envelope. */
-export interface SealedField {
+/** One detail inside an envelope. */
+export interface SealedDetail {
   id: string;
-  kind: FieldKind;
+  kind: DetailKind;
   schema: string;
   value: string;
 }
@@ -80,11 +80,13 @@ export interface EnvelopeRecipient {
   publicKey: string;
 }
 
+// The domain is part of every sealed envelope's key: changing it stops
+// envelopes already sealed from opening.
 const purposeOf = (header: Uint8Array, publicKey: string): string =>
   toHex(digest("web-fields/envelope/v1", header, publicKey.toLowerCase()));
 
 /** A value's lines as a host view shows them: trimmed and non-empty. */
-export function valueLines(kind: FieldKind, value: string): string[] {
+export function valueLines(kind: DetailKind, value: string): string[] {
   const lines = value
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -93,7 +95,7 @@ export function valueLines(kind: FieldKind, value: string): string[] {
 }
 
 /** Whether `value` is a valid value of `kind` for this draft. */
-export function validValue(kind: FieldKind, value: unknown): value is string {
+export function validValue(kind: DetailKind, value: unknown): value is string {
   if (
     typeof value !== "string" ||
     value.trim().length === 0 ||
@@ -105,42 +107,42 @@ export function validValue(kind: FieldKind, value: unknown): value is string {
     : !/[\r\n]/.test(value);
 }
 
-/** Whether `fields` fit an envelope: 1 to {@link MAX_FIELDS}, valid, no id or kind twice. */
-function validFields(fields: readonly SealedField[]): boolean {
+/** Whether `details` fit an envelope: 1 to {@link MAX_DETAILS}, valid, no id or kind twice. */
+function validDetails(details: readonly SealedDetail[]): boolean {
   return (
-    fields.length > 0 &&
-    fields.length <= MAX_FIELDS &&
-    new Set(fields.map((field) => field.id)).size === fields.length &&
-    new Set(fields.map((field) => field.kind)).size === fields.length &&
-    fields.every(
-      (field) =>
-        isFieldId(field.id) &&
-        isFieldKind(field.kind) &&
-        field.schema === FIELD_SCHEMAS[field.kind] &&
-        validValue(field.kind, field.value),
+    details.length > 0 &&
+    details.length <= MAX_DETAILS &&
+    new Set(details.map((detail) => detail.id)).size === details.length &&
+    new Set(details.map((detail) => detail.kind)).size === details.length &&
+    details.every(
+      (detail) =>
+        isDetailId(detail.id) &&
+        isDetailKind(detail.kind) &&
+        detail.schema === DETAIL_SCHEMAS[detail.kind] &&
+        validValue(detail.kind, detail.value),
     )
   );
 }
 
-/** Seal `fields` for `binding` to `recipient`'s key. */
+/** Seal `details` for `binding` to `recipient`'s key. */
 export function sealEnvelope(
   recipient: EnvelopeRecipient,
   binding: EnvelopeBinding,
-  fields: readonly SealedField[],
+  details: readonly SealedDetail[],
   random: RandomBytes,
 ): Uint8Array {
   if (
-    !validFields(fields) ||
+    !validDetails(details) ||
     !isHex32(binding.account) ||
     !isHex32(binding.context)
   )
-    throw new FieldError("invalid", "The fields do not fit an envelope.");
+    throw new LocketError("invalid", "The details do not fit an envelope.");
   const json = utf8(
     JSON.stringify({
       product: binding.product,
       account: binding.account.toLowerCase(),
       context: binding.context.toLowerCase(),
-      fields: fields.map(({ id, kind, schema, value }) => ({
+      fields: details.map(({ id, kind, schema, value }) => ({
         id,
         kind,
         schema,
@@ -150,7 +152,7 @@ export function sealEnvelope(
   );
   const size = Math.ceil((2 + json.length) / PAD_BYTES) * PAD_BYTES;
   if (size > MAX_PLAINTEXT)
-    throw new FieldError("limit", "These values are too long to send.");
+    throw new LocketError("limit", "These values are too long to send.");
   const plaintext = new Uint8Array(size);
   new DataView(plaintext.buffer).setUint16(0, json.length);
   plaintext.set(json, 2);
@@ -177,12 +179,12 @@ export function sealEnvelope(
 /** The key id an envelope names, after checking its version, suite and size. */
 export function envelopeKeyId(envelope: Uint8Array): string {
   if (envelope.length < 2 || envelope[0] !== ENVELOPE_VERSION)
-    throw new FieldError(
+    throw new LocketError(
       "unsupported",
       "This envelope's version is not supported.",
     );
   if (envelope[1] !== SUITE)
-    throw new FieldError(
+    throw new LocketError(
       "unsupported",
       "This envelope's suite is not supported.",
     );
@@ -192,7 +194,7 @@ export function envelopeKeyId(envelope: Uint8Array): string {
     body < PAD_BYTES ||
     body % PAD_BYTES !== 0
   )
-    throw new FieldError("invalid", "This envelope is malformed.");
+    throw new LocketError("invalid", "This envelope is malformed.");
   return toHex(envelope.subarray(2, HEADER_BYTES));
 }
 
@@ -201,21 +203,21 @@ export const envelopeId = (envelope: Uint8Array): string =>
   toHex(blake2b(envelope, { dkLen: 32 }));
 
 const malformed = () =>
-  new FieldError("invalid", "This envelope's contents are malformed.");
+  new LocketError("invalid", "This envelope's contents are malformed.");
 
 /**
  * Open `envelope` with the recipient's pair and check it is for `expected`.
  * Throws `invalid` when it does not open, its contents break a rule, or it
  * names another product, account or context; `unsupported` for a version,
- * suite, field kind or schema this host does not read. Either refuses the
- * whole envelope. Answers the fields and which of `expected.accounts` the
+ * suite, detail kind or schema this host does not read. Either refuses the
+ * whole envelope. Answers the details and which of `expected.accounts` the
  * envelope names.
  */
 export function openEnvelope(
   pair: X25519Pair,
   envelope: Uint8Array,
   expected: { product: string; accounts: readonly string[]; context: string },
-): { account: string; fields: SealedField[] } {
+): { account: string; details: SealedDetail[] } {
   envelopeKeyId(envelope);
   const header = envelope.subarray(0, HEADER_BYTES);
   const plaintext = openSealed(
@@ -224,7 +226,7 @@ export function openEnvelope(
     purposeOf(header, toHex(pair.public)),
   );
   if (plaintext === null)
-    throw new FieldError(
+    throw new LocketError(
       "invalid",
       "This envelope does not open with this app's key: it was changed or sealed to another key.",
     );
@@ -261,36 +263,36 @@ export function openEnvelope(
     typeof inner.account !== "string" ||
     !expected.accounts.includes(inner.account)
   )
-    throw new FieldError(
+    throw new LocketError(
       "invalid",
       "This envelope is for another app or account.",
     );
   if (inner.context !== expected.context.toLowerCase())
-    throw new FieldError("invalid", "This envelope is for another context.");
-  const fields = (inner.fields as unknown[]).map((item): SealedField => {
-    const field = (item ?? {}) as Record<string, unknown>;
+    throw new LocketError("invalid", "This envelope is for another context.");
+  const details = (inner.fields as unknown[]).map((item): SealedDetail => {
+    const detail = (item ?? {}) as Record<string, unknown>;
     return {
-      id: field.id as string,
-      kind: field.kind as FieldKind,
-      schema: field.schema as string,
-      value: field.value as string,
+      id: detail.id as string,
+      kind: detail.kind as DetailKind,
+      schema: detail.schema as string,
+      value: detail.value as string,
     };
   });
-  // A field this host does not read refuses the whole envelope, as
+  // A detail this host does not read refuses the whole envelope, as
   // `unsupported`, so the product can tell it from a broken one.
   if (
-    fields.some(
-      (field) =>
-        typeof field.kind === "string" &&
-        typeof field.schema === "string" &&
-        (!isFieldKind(field.kind) ||
-          field.schema !== FIELD_SCHEMAS[field.kind]),
+    details.some(
+      (detail) =>
+        typeof detail.kind === "string" &&
+        typeof detail.schema === "string" &&
+        (!isDetailKind(detail.kind) ||
+          detail.schema !== DETAIL_SCHEMAS[detail.kind]),
     )
   )
-    throw new FieldError(
+    throw new LocketError(
       "unsupported",
-      "This envelope holds a field kind or schema this host does not read.",
+      "This envelope holds a detail kind or schema this host does not read.",
     );
-  if (!validFields(fields)) throw malformed();
-  return { account: inner.account, fields };
+  if (!validDetails(details)) throw malformed();
+  return { account: inner.account, details };
 }

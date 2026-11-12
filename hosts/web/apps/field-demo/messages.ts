@@ -1,23 +1,23 @@
 import { blake2b256 } from "../../bridges/primitives/crypto.js";
 import { toHex, utf8 } from "../../bridges/primitives/bytes.js";
 import {
-  readReceiveKey,
-  type ReceiveKey,
-} from "../../bridges/fields/protocol.js";
+  readRecipientKey,
+  type RecipientKey,
+} from "../../bridges/locket/protocol.js";
 
 /**
  * Small Market's own messages on its Statement Store board. They are the
  * market's protocol, not the host's: the host only makes the seller's
- * receiving key and seals and opens the envelope an order carries.
+ * recipient key and seals and opens the envelope an order carries.
  */
 
-/** A listing: the item and the seller's receiving key, which names the seller's account. */
+/** A listing: the item and the seller's recipient key, which names the seller's account. */
 export interface Listing {
   v: 1;
   type: "listing";
   id: string;
   item: string;
-  seller: ReceiveKey;
+  seller: RecipientKey;
 }
 
 /** An order: which listing, and the buyer's details sealed to the seller's key. */
@@ -41,7 +41,7 @@ export function readMessage(value: unknown): BoardMessage | null {
   const message = value as Record<string, unknown>;
   if (message.v !== 1 || !isId(message.id)) return null;
   if (message.type === "listing") {
-    const seller = readReceiveKey(message.seller);
+    const seller = readRecipientKey(message.seller);
     return typeof message.item === "string" &&
       message.item.length > 0 &&
       message.item.length <= 80 &&

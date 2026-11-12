@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { PromptRequest } from "../../../src/app/prompt.js";
-import { FieldHost } from "../../../src/fields/host.js";
-import { fieldClient } from "../../../bridges/fields/product.js";
+import { LocketHost } from "../../../src/locket/host.js";
+import { locketClient } from "../../../bridges/locket/product.js";
 import {
-  FieldError,
-  type FieldGrant,
-} from "../../../bridges/fields/protocol.js";
+  LocketError,
+  type DetailGrant,
+} from "../../../bridges/locket/protocol.js";
 import { cryptoRandom, utf8 } from "../../../bridges/primitives/bytes.js";
 
 /**
@@ -21,7 +21,7 @@ const CONTEXT = `0x${"33".repeat(32)}`;
 const ADDRESS_ONLY = [{ id: "ship-to", kind: "address" as const }];
 
 const ports: MessagePort[] = [];
-const hosts: FieldHost[] = [];
+const hosts: LocketHost[] = [];
 afterEach(() => {
   for (const host of hosts.splice(0)) host.setSession(null);
   for (const port of ports.splice(0)) port.close();
@@ -41,7 +41,7 @@ function setup() {
   const stored = new Map<string, string>();
   /** While set, signing a binding waits for it. */
   let signGate: Promise<void> | null = null;
-  const host = new FieldHost({
+  const host = new LocketHost({
     ask: <T>(sheet: PromptRequest<T>) =>
       new Promise<T>((resolve) => {
         if (answerAtOnce) return resolve(sheet.choices[0]!.value);
@@ -125,16 +125,16 @@ const codeOf = (promise: Promise<unknown>) =>
   promise.then(
     () => "ok",
     (error: unknown) =>
-      error instanceof FieldError ? error.code : String(error),
+      error instanceof LocketError ? error.code : String(error),
   );
 
 async function withAddress(tab: ReturnType<typeof setup>) {
-  const provider = fieldClient(
+  const provider = locketClient(
     tab.portTo("notes.example", "provider"),
     "provider",
   );
-  await provider.declare({ name: "notes", fields: ["address", "phone"] });
-  await provider.save({ values: { address: ADDRESS, phone: null } });
+  await provider.declare({ name: "notes", details: ["address", "phone"] });
+  await provider.setValues({ values: { address: ADDRESS, phone: null } });
 }
 
 describe("calls the product stops waiting for", () => {
@@ -144,10 +144,10 @@ describe("calls the product stops waiting for", () => {
     tab.holdSheets();
     const port = tab.portTo(MARKET, "consumer");
     const replies = received(port);
-    const fields = fieldClient(port, "consumer", { timeoutMs: 50 });
+    const details = locketClient(port, "consumer", { timeoutMs: 50 });
     const outcome = await codeOf(
-      fields.request({
-        fields: ADDRESS_ONLY,
+      details.request({
+        details: ADDRESS_ONLY,
         purpose: "Ship it",
         context: CONTEXT,
       }),
@@ -159,7 +159,7 @@ describe("calls the product stops waiting for", () => {
     expect({
       outcome,
       sheetClosed: sheet!.sheet.signal?.aborted,
-      // No handle was made and nothing was sealed after the answer.
+      // No ref was made and nothing was sealed after the answer.
       randomAfterLateAnswer: tab.randomCalls() - before,
       replies,
     }).toEqual({
@@ -177,15 +177,15 @@ describe("calls the product stops waiting for", () => {
       ],
     });
 
-    const next = fields.request({
-      fields: ADDRESS_ONLY,
+    const next = details.request({
+      details: ADDRESS_ONLY,
       purpose: "Ship it",
       context: CONTEXT,
     });
     await settle();
     tab.sheets[1]!.answer(0);
     expect(
-      ((await next) as FieldGrant).fields.map((field) => field.kind),
+      ((await next) as DetailGrant).details.map((field) => field.kind),
     ).toEqual(["address"]);
   });
 
@@ -194,26 +194,26 @@ describe("calls the product stops waiting for", () => {
     await withAddress(tab);
     const port = tab.portTo(MARKET, "consumer");
     const replies = received(port);
-    const fields = fieldClient(port, "consumer");
-    const grant = await fields.request({
-      fields: ADDRESS_ONLY,
+    const details = locketClient(port, "consumer");
+    const grant = await details.request({
+      details: ADDRESS_ONLY,
       purpose: "Show it",
       context: CONTEXT,
     });
-    const handle = grant.fields[0]!.handle;
+    const ref = grant.details[0]!.ref;
     tab.holdSheets();
     // Raw calls on the same port, with ids the client does not use.
     const send = (message: Record<string, unknown>) =>
       port.postMessage(message);
     const request = {
       op: "request",
-      fields: ADDRESS_ONLY,
+      details: ADDRESS_ONLY,
       purpose: "Again",
       context: CONTEXT,
     };
     send({ ...request, id: 101 });
-    send({ op: "display", handle, theme: "paper", id: 102 });
-    send({ op: "release", handles: [handle], id: 103 });
+    send({ op: "display", ref, theme: "paper", id: 102 });
+    send({ op: "release", refs: [ref], id: 103 });
     send({ ...request, id: 104 });
     send({ cancel: 104 });
     await settle();
@@ -240,15 +240,15 @@ describe("calls the product stops waiting for", () => {
     // Registered before the client's own timer, so the user answers just
     // before the client gives up: the grant is on its way when the cancel goes.
     setTimeout(() => tab.sheets[0]!.answer(0), 50);
-    const fields = fieldClient(port, "consumer", { timeoutMs: 50 });
-    const grant = await fields.request({
-      fields: ADDRESS_ONLY,
+    const details = locketClient(port, "consumer", { timeoutMs: 50 });
+    const grant = await details.request({
+      details: ADDRESS_ONLY,
       purpose: "Ship it",
       context: CONTEXT,
     });
     await settle();
     expect({
-      kinds: grant.fields.map((field) => field.kind),
+      kinds: grant.details.map((field) => field.kind),
       answers: replies.map((reply) => reply.id),
     }).toEqual({ kinds: ["address"], answers: [1] });
   });
@@ -258,16 +258,16 @@ describe("calls the product stops waiting for", () => {
     const port = tab.portTo(MARKET, "consumer");
     const INDEX = `0x${"0a".repeat(32)}`;
     let open = tab.holdSigning();
-    const fields = fieldClient(port, "consumer", { timeoutMs: 30 });
-    const withdrawn = await codeOf(fields.createReceiveKey({ index: INDEX }));
+    const details = locketClient(port, "consumer", { timeoutMs: 30 });
+    const withdrawn = await codeOf(details.recipientKey({ index: INDEX }));
     open();
     await settle();
     const storedAfterCancel = tab.stored.size;
 
     open = tab.holdSigning();
-    const patient = fieldClient(port, "consumer");
+    const patient = locketClient(port, "consumer");
     const racing = Array.from({ length: 5 }, () =>
-      patient.createReceiveKey({ index: INDEX }),
+      patient.recipientKey({ index: INDEX }),
     );
     await settle();
     open();
@@ -290,10 +290,10 @@ describe("calls the product stops waiting for", () => {
     const tab = setup();
     await withAddress(tab);
     tab.holdSheets();
-    const fields = fieldClient(tab.portTo(MARKET, "consumer"), "consumer");
+    const details = locketClient(tab.portTo(MARKET, "consumer"), "consumer");
     const asked = codeOf(
-      fields.request({
-        fields: ADDRESS_ONLY,
+      details.request({
+        details: ADDRESS_ONLY,
         purpose: "Ship it",
         context: CONTEXT,
       }),

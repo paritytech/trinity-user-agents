@@ -14,7 +14,7 @@ import { readMessage, type BoardMessage } from "./messages.js";
  * Statement Store, through the market's own TrUAPI `statementStore` and
  * `resourceAllocation`. The host asks before the first post spends an
  * allowance; the core signs as the market's allowance account. Nothing here
- * goes through the field bridge.
+ * goes through the Locket bridge.
  *
  * The store keeps the latest statement per account and channel, so one
  * account has one live listing and one live order at a time, and a seller

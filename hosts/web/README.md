@@ -54,35 +54,41 @@ npm run build                      # served from the root
 
 Details, the username search route and phones: [docs/running.md](docs/running.md).
 
-## Field bridge demo (dev server only)
+## Locket bridge demo (dev server only)
 
-A web-only DRAFT of a generic field bridge (`web-fields/2`), not TrUAPI. The contract in `bridges/fields/` names no DOM,
-URL or browser store, so iOS and Android could implement the same calls later; only `web.ts` and `protected-field.ts`
-are the web form of drawing a field. Nothing here changes TrUAPI wire ids, traits or the native apps.
+Locket is a web-only DRAFT of a generic bridge for the user's private details (`web-locket/1`), not TrUAPI. The contract
+in `bridges/locket/` names no DOM, URL or browser store, so iOS and Android could implement the same calls later; only
+`web.ts` and `protected-detail.ts` are the web form of drawing a detail. Nothing here changes TrUAPI wire ids, traits or
+the native apps, and there is no `truapi.locket` namespace. The strings that derive or name stored keys, envelopes and
+key bindings keep their `fields` names (such as `web-fields/envelope/v1`), because they are part of those bytes.
+
+| Role                        | Calls                                                            | Types                                                                                                        |
+| --------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| consumer (`locket`)         | `recipientKey`, `request`, `open`, `release`, `display`, `print` | `DetailKind`, `DetailRef`, `RecipientKey`, `DetailDescriptor`, `DetailRequest`, `DetailGrant`, `LocketError` |
+| provider (`locketProvider`) | `status`, `declare`, `setValues`                                 | `DetailValues`, `ProviderStatus`                                                                             |
 
 - A **provider** app (Field notebook, and the same app as Travel notebook on a second origin) declares `address` and
-  `phone` and saves values. The host keeps them in memory. Declaring the same name and kinds again is harmless; a
-  different declaration fails `invalid`. `save` replaces every value and names each declared kind, `null` for none.
-- A **consumer** app (Small Market) asks for typed fields: here a required address and an optional phone. The host shows
-  the exact values per provider in one sheet, and answers with descriptors `{ id, kind, schema, handle }` and, when the
-  request names a recipient, a sealed envelope. The app never gets a value.
-- The recipient's market asks its host for a **receiving key** for one of its accounts, by account index. The host
-  makes one random X25519 key per wallet, network, product and product account, keeps it encrypted, and returns its
-  public key, key id, the product account the core resolved the index to, and a binding signature. The core signs that
-  binding as the market's product account under its own sr25519 signing context, which no product signing call uses
-  (`rust/crates/truapi/src/host_logic/field_key_binding.rs`, a prototype core extension). The buyer's host checks the
-  signature through the core before it asks anything; the buyer does not compare keys by hand.
+  `phone` and sets their values. The host keeps them in memory. Declaring the same name and kinds again is harmless; a
+  different declaration fails `invalid`. `setValues` replaces every value and names each declared kind, `null` for none.
+- A **consumer** app (Small Market) asks for typed `details`: here a required address and an optional phone. The host
+  shows the exact values per provider in one sheet, and answers with descriptors `{ id, kind, schema, ref }` and, when
+  the request names a recipient, a sealed envelope. The app never gets a value.
+- The recipient's market asks its host for a **recipient key** (`recipientKey`) for one of its accounts, by account
+  index. The host makes one random X25519 key per wallet, network, product and product account, keeps it encrypted, and
+  returns its public key, key id, the product account the core resolved the index to, and a binding signature. The core
+  signs that binding as the market's product account under its own sr25519 signing context, which no product signing
+  call uses (`rust/crates/truapi/src/host_logic/field_key_binding.rs`, a prototype core extension). The buyer's host
+  checks the signature through the core before it asks anything; the buyer does not compare keys by hand.
 - **Delivery is the product's.** The host's calls and the envelope name no transport, order or topic: a product carries
-  receiving keys and envelopes as opaque bytes over whatever it uses, such as the Statement Store now or a contract
+  recipient keys and envelopes as opaque bytes over whatever it uses, such as the Statement Store now or a contract
   later. Its size limit, lifetime, delivery and replay handling are its own. Small Market posts listings and orders to
-  its own board through its TrUAPI
-  `statementStore` (`createProofAuthorized`, `submit`, `subscribe`) after `resourceAllocation` for a Statement Store
-  allowance, and keeps its listings, sales and purchases in its TrUAPI storage (`apps/field-demo/board.ts`). The host
-  does not post, list or buy.
-- The seller's market gives the stored envelope and its order context back to `open`, and gets fresh handles. It places
-  `mountProtectedField` (`bridges/fields/protected-field.ts`) where the address and phone go; the host draws each as an
-  SVG image (`src/fields/svg.ts`) that the dev server serves (`field-image-plugin.ts`). `print` prints the market's own
-  title and lines with the held values from a host document.
+  its own board through its TrUAPI `statementStore` (`createProofAuthorized`, `submit`, `subscribe`) after
+  `resourceAllocation` for a Statement Store allowance, and keeps its listings, sales and purchases in its TrUAPI
+  storage (`apps/field-demo/board.ts`). The host does not post, list or buy.
+- The seller's market gives the stored envelope and its order context back to `open`, and gets fresh refs. It places
+  `mountProtectedDetail` (`bridges/locket/protected-detail.ts`) where the address and phone go; the host draws each as
+  an SVG image (`src/locket/svg.ts`) that the dev server serves (`field-image-plugin.ts`). `print` prints the market's
+  own title and lines with the held values from a host document.
 
 From `hosts/web`, run these in separate terminals, with the normal host prerequisites above already built. The binding
 calls need a core built from this tree (`make wasm`):
@@ -94,60 +100,60 @@ npm run dev:field-provider-2       # Travel notebook, separate origin, localhost
 npm run dev:field-market           # separate origin, localhost:5183
 ```
 
-Only these exact origins and pages may use the field bridge (`FIELD_APPS` in `tools/demos/field-demo.ts`); any other URL
-gets no bridge. Use two host tabs, each signed in through **Account**, and open each URL from **Product**:
+Only these exact origins and pages may use the Locket bridge (`LOCKET_APPS` in `tools/demos/field-demo.ts`); any other
+URL gets no bridge. Use two host tabs, each signed in through **Account**, and open each URL from **Product**:
 
-1. Alice opens `http://localhost:5182/provider.html` and saves a made-up address and, optionally, a phone. Optionally she
-   does the same in `http://localhost:5185/provider.html`.
+1. Alice opens `http://localhost:5182/provider.html` and saves a made-up address and, optionally, a phone. Optionally
+   she does the same in `http://localhost:5185/provider.html`.
 2. Bob opens `http://localhost:5183/market.html`, goes to **Sell** and lists an item. The first post asks his host for
    the posting allowance and the submit permission (the core's own sheets).
-3. Alice opens the market in the same tab, opens the item and selects **Buy now**. One host sheet shows the app's purpose,
-   the recipient account and, per provider, the exact values: address with phone, or address only. Her first post then
-   asks for the allowance and permission. Her receipt shows her details, drawn by her host.
+3. Alice opens the market in the same tab, opens the item and selects **Buy now**. One host sheet shows the app's
+   purpose, the recipient account and, per provider, the exact values: address with phone, or address only. Her first
+   post then asks for the allowance and permission. Her receipt shows her details, drawn by her host.
 4. Bob's **Orders** shows the order. Opening it shows the packing slip with the address and phone drawn by his host.
    **Print shipping label** prints from the host with no further sheet. A new host tab for Bob, signed in to the same
    wallet, opens the order again.
 
 **Host sheets:** a sheet asks only when something leaves the host, spends a limited resource or is a real choice. Saving
-in a provider, making the receiving key, opening an envelope, drawing and printing ask nothing. Sending fields asks once,
-with the exact values. Posting is the core's allowance and permission sheets. A sheet's values are read when it opens;
-that snapshot is what gets sealed.
+in a provider, making the recipient key, opening an envelope, drawing and printing ask nothing. Sending details asks
+once, with the exact values. Posting is the core's allowance and permission sheets. A sheet's values are read when it
+opens; that snapshot is what gets sealed.
 
-**Envelope** (`src/fields/envelope.ts`): `version (1) || suite (1) || key id (16) || sealed`, where `sealed` is X25519,
-HKDF-SHA256 and ChaCha20-Poly1305 from `src/invitations/sealing.ts`, and the key derivation binds the version, suite, key
-id and recipient public key. Inside, padded to 256-byte buckets with at most 1,024 bytes: the product, the recipient
-account, the context and the fields with their schemas. Opening refuses a changed byte, another key, product, account or
-context, and a duplicate field id or kind as `invalid`; an unknown version, suite, field kind or schema as
-`unsupported`; either refuses the whole envelope. An envelope whose key id matches no receiving key on this device fails
-`missing-key`: nothing restores a lost key, so if the envelope was meant for this account, the sender has to send again.
-The code says nothing about who sealed it or for whom. The context labels one use (here the listing and the order); it
-does not prove a purchase or who sent it. The sender is not authenticated. Opening the same bytes twice gives the same
-`envelopeId` and new handles; spotting a replay is the product's job. The suite is a prototype choice and is not
-reviewed for envelopes kept long term, for example on a chain: anyone who keeps the bytes keeps them, and the suite is
-not post-quantum.
+**Envelope** (`src/locket/envelope.ts`): `version (1) || suite (1) || key id (16) || sealed`, where `sealed` is X25519,
+HKDF-SHA256 and ChaCha20-Poly1305 from `src/invitations/sealing.ts`, and the key derivation binds the version, suite,
+key id and recipient public key. Inside, padded to 256-byte buckets with at most 1,024 bytes: the product, the recipient
+account, the context and the details with their schemas (the JSON member is `fields`). Opening refuses a changed byte,
+another key, product, account or context, and a duplicate detail id or kind as `invalid`; an unknown version, suite,
+detail kind or schema as `unsupported`; either refuses the whole envelope. An envelope whose key id matches no recipient
+key on this device fails `missing-key`: nothing restores a lost key, so if the envelope was meant for this account, the
+sender has to send again. The code says nothing about who sealed it or for whom. The context labels one use (here the
+listing and the order); it does not prove a purchase or who sent it. The sender is not authenticated. Opening the same
+bytes twice gives the same `envelopeId` and new refs; spotting a replay is the product's job. The suite is a prototype
+choice and is not reviewed for envelopes kept long term, for example on a chain: anyone who keeps the bytes keeps them,
+and the suite is not post-quantum.
 
-**Handles** are random, held per bridge connection, and end on `release`, on the next load or close of the document, and
-on sign-out; a handle that ended fails `missing-handle`. The product chooses where a field goes and how wide; the host
-chooses what it shows.
+**Refs** (`DetailRef`) are random, held per bridge connection, and end on `release`, on the next load or close of the
+document, and on sign-out; a ref that ended fails `missing-ref`. The product chooses where a detail goes and how wide;
+the host chooses what it shows.
 
 **Calls:** a product's `request`s wait for each other, so the user sees one sheet at a time; every other call runs at
 once, so `display` and `release` do not wait behind an open sheet. At most 32 calls per connection wait at once; more
 fail `busy`. A call the client still has no answer for after 180 seconds is cancelled at the host (`{ cancel: id }`):
 the host stops its pending work, its sheet closes, nothing it would have returned is kept, and it fails `timeout`. Work
-already done stays done, such as handles a `release` had let go, so retry. A result the host sent before it saw the
-cancel is still the answer. The user's own Cancel fails `cancelled`. The codes are listed on `FieldErrorCode` in
-`bridges/fields/protocol.ts`.
+already done stays done, such as refs a `release` had let go, so retry. A result the host sent before it saw the cancel
+is still the answer. The user's own Cancel fails `cancelled`. The codes are listed on `LocketErrorCode` in
+`bridges/locket/protocol.ts`.
 
 **Drawing:** `display` gives the product a surface only the platform adapter places. On the web it is an image URL the
-product embeds with `<img>`. The host draws the value as SVG with `src/fields/svg.ts`: text only, escaped, no script,
+product embeds with `<img>`. The host draws the value as SVG with `src/locket/svg.ts`: text only, escaped, no script,
 link, style or image, at one fixed size per kind (address 360 × 150, phone 360 × 26), wrapping long values and then
 using smaller type. Widths are estimated per grapheme, wide scripts and emoji as a whole em, so an unusually wide font
 can still run past the edge; a value that does not fit is refused when it is saved, never cut. The dev server
 (`field-image-plugin.ts`) holds that SVG in memory and serves it once, within 60 seconds, to a loopback request with
 `Sec-Fetch-Dest: image` and a `Referer` of the product's origin, `no-store` and with no CORS grant. The browser keeps a
-cross-origin image's text and pixels from the product's scripts. `release` and sign-out ask the dev server to end
-images not loaded yet; that is best effort, and a failed request or a closed tab leaves them until they expire. This
-dev server is the web stand-in for a native host's own local image scheme; native drawing is not built.
+cross-origin image's text and pixels from the product's scripts. `release` and sign-out ask the dev server to end images
+not loaded yet; that is best effort, and a failed request or a closed tab leaves them until they expire. This dev server
+is the web stand-in for a native host's own local image scheme; native drawing is not built.
 
 Known limits of this prototype, accepted: the image URL is a bearer link. Product frames are `credentialless`, so the
 request carries no host cookie; until it is used, anything on this machine that gets the URL can send those two headers
@@ -155,7 +161,7 @@ and receive the SVG, value included, and a page of the product's origin in anoth
 image already shown stays on screen after release; sign-out closes the product's document. The dev server's 500 tokens
 are shared by every product, so one product can fill them for a minute. A screen reader gets only the image's alt text.
 
-**Receiving keys** (`src/fields/keys.ts`): one per wallet, network, product and product account, reused for every order
+**Recipient keys** (`src/locket/keys.ts`): one per wallet, network, product and product account, reused for every order
 to that account, so two accounts of one product publish different keys. `open` reports the account an envelope was
 sealed for. The secret is encrypted with XChaCha20-Poly1305 under a key derived from the signed-in wallet's entropy and
 kept in this origin's `localStorage`, bound to its account; sign-out forgets the derived key and keeps the records.
@@ -186,12 +192,12 @@ since the bridge became generic.
 who is away can miss an order. A purchase's receipt draws the buyer's details only while the market document that made
 it is open. No revocation, payments, contracts or multi-device recovery. Public statement metadata is not hidden.
 
-Unit checks: `bun test tests/unit/fields tests/unit/field-image-plugin.test.ts tests/unit/boundaries.test.ts` (envelope,
-receiving keys, the SVG drawing, the host's bridge with a stand-in binder and image service, the dev server's image
-service over HTTP, the calls a product stops waiting for, and the import boundaries). The
-binding signature has Rust tests: `cargo test -p truapi --lib field_key_binding`. Browser check, run by hand (CI does not
-run it): `bun test browser/field-demo.spec.ts --timeout 300000`. It runs both providers, the market and two host tabs on
-the simulated store, with its own Vite servers and caches, and refuses every request outside them.
+Unit checks: `bun test tests/unit/locket tests/unit/field-image-plugin.test.ts tests/unit/boundaries.test.ts` (envelope,
+recipient keys, the SVG drawing, the host's bridge with a stand-in binder and image service, the dev server's image
+service over HTTP, the calls a product stops waiting for, and the import boundaries). The binding signature has Rust
+tests: `cargo test -p truapi --lib field_key_binding`. Browser check, run by hand (CI does not run it):
+`bun test browser/field-demo.spec.ts --timeout 300000`. It runs both providers, the market and two host tabs on the
+simulated store, with its own Vite servers and caches, and refuses every request outside them.
 
 When running another host dev server beside an existing one, give it a separate Vite `cacheDir`. Concurrent servers
 sharing the dependency optimizer cache can fail with HTTP 504 `Outdated Optimize Dep`, before the core boots.
@@ -309,15 +315,15 @@ Three owners, kept apart by `tests/unit/boundaries.test.ts`:
   - `src/integrations/nova-chat/`: the host side of Nova Chat's own protocol (prototype): the key boundary that holds
     the user's keys, the request host, and `start.ts`, which the Chat tab's Nova Chat spec hands the host. Only the
     composition wires it in.
-  - `src/fields/`: the host side of the draft field bridge: provider declarations, consent, the envelope, receiving
-    keys, handles and the SVG a value is drawn as (`svg.ts`), loaded only on the dev server.
+  - `src/locket/`: the host side of the draft Locket bridge: provider declarations, consent, the envelope, recipient
+    keys, refs and the SVG a value is drawn as (`svg.ts`), loaded only on the dev server.
     `tools/demos/field-demo.ts` wires it, the dev server's image service and the explicit simulation;
     `field-label.ts` prints a label.
 - `apps/`: the products the host runs, each in its own folder: `contact-chat/`, `kettle-chat/` (with Kettle's engine as
   WebAssembly in `wasm/`, built with `npm run build:kettle`), `nova-chat/`, and `field-demo/` (the provider and Small
   Market, served on separate origins by `field-products.config.ts`). `apps/shared/` is code the products share.
 - `bridges/`: what both sides read: the draft contracts between the host and its products (`chat-v2/`, `host-requests/`,
-  `nova-chat/`, `fields/`, `diagnostics.ts`, `worker-probe.ts`) and the pure byte, SCALE, hash and statement code they
+  `nova-chat/`, `locket/`, `diagnostics.ts`, `worker-probe.ts`) and the pure byte, SCALE, hash and statement code they
   are written with (`primitives/`).
 - `tools/`: developer tools. `tools/demos/` is dev-server only.
 - `fixtures/`: synthetic data and test products. `tests/`, `browser/`: tests.

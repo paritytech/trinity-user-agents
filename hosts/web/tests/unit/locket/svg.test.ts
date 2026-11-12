@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { FieldError } from "../../../bridges/fields/protocol.js";
-import { fieldSvg, fitsField, xmlText } from "../../../src/fields/svg.js";
+import { LocketError } from "../../../bridges/locket/protocol.js";
+import { detailSvg, fitsDetail, xmlText } from "../../../src/locket/svg.js";
 
 /** Every element and attribute name an SVG uses. */
 const vocabulary = (svg: string) => ({
@@ -40,14 +40,14 @@ const limitOf = (run: () => unknown) => {
     run();
     return null;
   } catch (error) {
-    return error instanceof FieldError ? error.code : String(error);
+    return error instanceof LocketError ? error.code : String(error);
   }
 };
 
-describe("the field SVG", () => {
+describe("the detail SVG", () => {
   test("escapes every value and uses only text: no script, link, style or image", () => {
     const hostile = `</text><script>alert(1)</script><image href="https://x.test/a.png"/>&\u0001`;
-    const svg = fieldSvg("address", [hostile], "paper");
+    const svg = detailSvg("address", [hostile], "paper");
     expect({
       escaped: xmlText(hostile),
       vocabulary: vocabulary(svg),
@@ -73,13 +73,13 @@ describe("the field SVG", () => {
   });
 
   test("keeps one size per kind, and wraps and shrinks long values instead of growing", () => {
-    const short = fieldSvg("address", ["A"], "paper");
-    const long = fieldSvg(
+    const short = detailSvg("address", ["A"], "paper");
+    const long = detailSvg(
       "address",
       ["x".repeat(60), "b", "c", "d", "e", "f"],
       "paper",
     );
-    const sixLines = fieldSvg(
+    const sixLines = detailSvg(
       "address",
       Array.from(
         { length: 6 },
@@ -89,7 +89,7 @@ describe("the field SVG", () => {
     );
     expect({
       sizes: [short, long, sixLines].map(size),
-      phone: size(fieldSvg("phone", ["+1 555 010 0123"], "paper")),
+      phone: size(detailSvg("phone", ["+1 555 010 0123"], "paper")),
       longRows: rowsOf(long).length,
       longSmaller: fontSize(long) < fontSize(short),
       longText: rowsOf(long).join(""),
@@ -115,7 +115,7 @@ describe("the field SVG", () => {
     const family = "👨‍👩‍👧‍👦";
     const emoji = `${family} 🇧🇷 ${"🏠".repeat(30)}`;
     const drawn = [japanese, korean, fullwidth, emoji].map((line) =>
-      fieldSvg("address", [line], "paper"),
+      detailSvg("address", [line], "paper"),
     );
     const japaneseRows = rowsOf(drawn[0]!);
     expect({
@@ -141,11 +141,11 @@ describe("the field SVG", () => {
     // phone can reach the refusal through the bridge.
     const tooWide = "電".repeat(500);
     expect({
-      addressAtLimit: fitsField("address", ["電".repeat(160)]),
-      addressWide: fitsField("address", [tooWide]),
-      phoneLong: fitsField("phone", ["9".repeat(160)]),
-      phoneShort: fitsField("phone", ["+1 555 010 0123"]),
-      latinMax: fitsField("address", [
+      addressAtLimit: fitsDetail("address", ["電".repeat(160)]),
+      addressWide: fitsDetail("address", [tooWide]),
+      phoneLong: fitsDetail("phone", ["9".repeat(160)]),
+      phoneShort: fitsDetail("phone", ["+1 555 010 0123"]),
+      latinMax: fitsDetail("address", [
         "x".repeat(60),
         "x".repeat(20),
         "x".repeat(20),
@@ -153,7 +153,7 @@ describe("the field SVG", () => {
         "x".repeat(20),
         "x".repeat(20),
       ]),
-      thrown: limitOf(() => fieldSvg("address", [tooWide], "paper")),
+      thrown: limitOf(() => detailSvg("address", [tooWide], "paper")),
     }).toEqual({
       addressAtLimit: true,
       addressWide: false,

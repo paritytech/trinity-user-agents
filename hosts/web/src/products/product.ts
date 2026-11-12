@@ -8,9 +8,9 @@ import {
 } from "../../bridges/chat-v2/contract.js";
 import type { FrameTap } from "./tap.js";
 import {
-  FIELDS_OFFER,
-  FIELDS_PROTOCOL,
-} from "../../bridges/fields/protocol.js";
+  LOCKET_OFFER,
+  LOCKET_PROTOCOL,
+} from "../../bridges/locket/protocol.js";
 import {
   readDiagnosticsMessage,
   type DiagnosticsReport,
@@ -219,25 +219,25 @@ export async function openProduct(
     },
   });
   let loads = 0;
-  let closeFields = () => {};
-  // Each loaded document gets its own field-demo bridge, offered by the host
+  let closeLocket = () => {};
+  // Each loaded document gets its own Locket bridge, offered by the host
   // after the load, so a bridge never outlives the document it was made for.
-  const offerFields = (): void => {
-    closeFields();
-    closeFields = () => {};
+  const offerLocket = (): void => {
+    closeLocket();
+    closeLocket = () => {};
     const target = frame.iframe.contentWindow;
     if (onFieldDemoPort === undefined || target === null) return;
     const channel = new MessageChannel();
-    closeFields = onFieldDemoPort(channel.port1);
+    closeLocket = onFieldDemoPort(channel.port1);
     target.postMessage(
-      { type: FIELDS_OFFER, protocol: FIELDS_PROTOCOL },
+      { type: LOCKET_OFFER, protocol: LOCKET_PROTOCOL },
       url.origin,
       [channel.port2],
     );
   };
   const onLoad = (): void => {
     loads += 1;
-    offerFields();
+    offerLocket();
     onFrameLoad?.(loads);
   };
   frame.iframe.addEventListener("load", onLoad);
@@ -318,7 +318,7 @@ export async function openProduct(
     dispose() {
       if (!closed) onClose?.();
       closed = true;
-      closeFields();
+      closeLocket();
       window.removeEventListener("message", onWindowMessage);
       frame.iframe.removeEventListener("load", onLoad);
       unsubscribe();

@@ -5,14 +5,17 @@ import {
   utf8,
   concat,
 } from "../../../bridges/primitives/bytes.js";
-import { FieldError, FIELD_SCHEMAS } from "../../../bridges/fields/protocol.js";
+import {
+  LocketError,
+  DETAIL_SCHEMAS,
+} from "../../../bridges/locket/protocol.js";
 import {
   envelopeId,
   envelopeKeyId,
   openEnvelope,
   sealEnvelope,
-  type SealedField,
-} from "../../../src/fields/envelope.js";
+  type SealedDetail,
+} from "../../../src/locket/envelope.js";
 import {
   sealTo,
   x25519Pair,
@@ -36,17 +39,17 @@ const expected = {
   accounts: [ACCOUNT],
   context: CONTEXT,
 };
-const FIELDS: SealedField[] = [
+const FIELDS: SealedDetail[] = [
   {
     id: "ship-to",
     kind: "address",
-    schema: FIELD_SCHEMAS.address,
+    schema: DETAIL_SCHEMAS.address,
     value: "Ada Example\n24 Sample Lane",
   },
   {
     id: "phone",
     kind: "phone",
-    schema: FIELD_SCHEMAS.phone,
+    schema: DETAIL_SCHEMAS.phone,
     value: "+1 555 010 0123",
   },
 ];
@@ -56,12 +59,12 @@ const failure = (run: () => unknown): string | null => {
     run();
     return null;
   } catch (error) {
-    return error instanceof FieldError ? error.code : "not a FieldError";
+    return error instanceof LocketError ? error.code : "not a LocketError";
   }
 };
 
-describe("the field envelope", () => {
-  test("opens for its recipient into the same fields, in padded buckets", () => {
+describe("the Locket envelope", () => {
+  test("opens for its recipient into the same details, in padded buckets", () => {
     const sealed = sealEnvelope(recipient, binding, FIELDS, random);
     expect({
       opened: openEnvelope(pair, sealed, {
@@ -72,7 +75,7 @@ describe("the field envelope", () => {
       bucketed: (sealed.length - 18 - 48) % 256,
       id: envelopeId(sealed) === envelopeId(sealed.slice()),
     }).toEqual({
-      opened: { account: ACCOUNT, fields: FIELDS },
+      opened: { account: ACCOUNT, details: FIELDS },
       keyId: recipient.keyId,
       bucketed: 0,
       id: true,
@@ -135,7 +138,7 @@ describe("the field envelope", () => {
   });
 
   test("refuses duplicate ids or kinds, wrong schemas and values too long, when sealing", () => {
-    const [address, phone] = FIELDS as [SealedField, SealedField];
+    const [address, phone] = FIELDS as [SealedDetail, SealedDetail];
     expect({
       sameId: failure(() =>
         sealEnvelope(
@@ -234,7 +237,7 @@ describe("the field envelope", () => {
         openEnvelope(pair, craft([{ ...FIELDS[0], kind: 7 }]), expected),
       ),
     }).toEqual({
-      valid: { account: ACCOUNT, fields: [FIELDS[0]!] },
+      valid: { account: ACCOUNT, details: [FIELDS[0]!] },
       twice: "invalid",
       unknownKind: "unsupported",
       newerSchema: "unsupported",

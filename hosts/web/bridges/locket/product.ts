@@ -1,17 +1,17 @@
 import {
-  FIELDS_OFFER,
-  FIELDS_PROTOCOL,
-  FieldError,
-  type ConsumerCalls,
-  type FieldErrorReply,
-  type FieldRole,
-  type ProviderCalls,
+  LOCKET_OFFER,
+  LOCKET_PROTOCOL,
+  LocketError,
+  type LocketCalls,
+  type LocketErrorReply,
+  type LocketRole,
+  type LocketProviderCalls,
 } from "./protocol.js";
 
 /**
- * DRAFT, web-only. The product end of the field bridge: wait for the port the
+ * DRAFT, web-only. The product end of the Locket bridge: wait for the port the
  * host offers this document, then call it. Each call answers with its result
- * or rejects with a {@link FieldError}.
+ * or rejects with a {@link LocketError}.
  *
  * On the port, a call is `{ ...input, op, id }` and its answer `{ id, result }`
  * or `{ id, error }`. `{ cancel: id }` withdraws a call not answered yet: the
@@ -22,15 +22,15 @@ import {
  */
 
 /** A typed bridge: one method per operation of `Calls`. */
-export type FieldClient<Calls> = {
+export type LocketClient<Calls> = {
   [Op in keyof Calls]: Calls[Op] extends (input: infer Input) => infer Output
     ? (input: Input) => Promise<Output>
     : never;
 };
 
-type Calls<Role extends FieldRole> = Role extends "consumer"
-  ? ConsumerCalls
-  : ProviderCalls;
+type Calls<Role extends LocketRole> = Role extends "consumer"
+  ? LocketCalls
+  : LocketProviderCalls;
 
 /** How long a call waits for the host, which may be showing the user a sheet. */
 export const CALL_TIMEOUT_MS = 180_000;
@@ -38,20 +38,13 @@ export const CALL_TIMEOUT_MS = 180_000;
 const CANCEL_GRACE_MS = 10_000;
 const OFFER_TIMEOUT_MS = 15_000;
 
-const OPS: Readonly<Record<FieldRole, readonly string[]>> = {
-  consumer: [
-    "createReceiveKey",
-    "request",
-    "open",
-    "release",
-    "display",
-    "print",
-  ],
-  provider: ["status", "declare", "save"],
+const OPS: Readonly<Record<LocketRole, readonly string[]>> = {
+  consumer: ["recipientKey", "request", "open", "release", "display", "print"],
+  provider: ["status", "declare", "setValues"],
 };
 
 /** How a client over a port behaves; tests shorten the timeout. */
-export interface FieldClientOptions {
+export interface LocketClientOptions {
   /** See every message the host sends. */
   observe?(message: unknown): void;
   /** How long a call waits before it is cancelled with `timeout`. */
@@ -65,11 +58,11 @@ export interface FieldClientOptions {
  * host had already sent. With no answer at all it rejects with `timeout`
  * after a short grace.
  */
-export function fieldClient<Role extends FieldRole>(
+export function locketClient<Role extends LocketRole>(
   port: MessagePort,
   role: Role,
-  options: FieldClientOptions = {},
-): FieldClient<Calls<Role>> {
+  options: LocketClientOptions = {},
+): LocketClient<Calls<Role>> {
   const timeoutMs = options.timeoutMs ?? CALL_TIMEOUT_MS;
   let nextId = 1;
   const waiting = new Map<
@@ -79,14 +72,14 @@ export function fieldClient<Role extends FieldRole>(
   port.addEventListener("message", (message: MessageEvent<unknown>) => {
     const data = message.data as {
       id?: unknown;
-      error?: FieldErrorReply;
+      error?: LocketErrorReply;
       result?: unknown;
     } | null;
     if (typeof data?.id !== "number") return;
     const pending = waiting.get(data.id);
     waiting.delete(data.id);
     if (data.error !== undefined)
-      pending?.reject(new FieldError(data.error.code, data.error.message));
+      pending?.reject(new LocketError(data.error.code, data.error.message));
     else pending?.resolve(data.result);
   });
   port.start();
@@ -98,7 +91,9 @@ export function fieldClient<Role extends FieldRole>(
         port.postMessage({ cancel: id });
         grace = setTimeout(() => {
           waiting.delete(id);
-          reject(new FieldError("timeout", "The host did not answer in time."));
+          reject(
+            new LocketError("timeout", "The host did not answer in time."),
+          );
         }, CANCEL_GRACE_MS);
       }, timeoutMs);
       const done = () => {
@@ -119,27 +114,28 @@ export function fieldClient<Role extends FieldRole>(
     });
   return Object.fromEntries(
     OPS[role].map((op) => [op, (input: object) => call(op, input)]),
-  ) as FieldClient<Calls<Role>>;
+  ) as LocketClient<Calls<Role>>;
 }
 
 /**
- * Connect this document to the host's field bridge in `role`. Rejects when
+ * Connect this document to the host's Locket bridge in `role`: `"consumer"`
+ * for `locket`, `"provider"` for `locketProvider`. Rejects when
  * the page is not inside a host, the host offers no bridge, or it gave this
  * page another role.
  */
-export async function connectFields<Role extends FieldRole>(
+export async function connectLocket<Role extends LocketRole>(
   role: Role,
-  options: FieldClientOptions = {},
-): Promise<FieldClient<Calls<Role>>> {
+  options: LocketClientOptions = {},
+): Promise<LocketClient<Calls<Role>>> {
   if (parent === window) throw new Error("Open this page inside the host.");
   const observe = options.observe ?? (() => {});
   const port = await new Promise<MessagePort>((resolve, reject) => {
     const timer = setTimeout(
       () =>
         reject(
-          new FieldError(
+          new LocketError(
             "unsupported",
-            "The host did not offer the field bridge. Sign in, then reopen this product.",
+            "The host did not offer the Locket bridge. Sign in, then reopen this product.",
           ),
         ),
       OFFER_TIMEOUT_MS,
@@ -149,8 +145,8 @@ export async function connectFields<Role extends FieldRole>(
       const offer = event.data as { type?: unknown; protocol?: unknown } | null;
       if (
         event.source !== parent ||
-        offer?.type !== FIELDS_OFFER ||
-        offer.protocol !== FIELDS_PROTOCOL ||
+        offer?.type !== LOCKET_OFFER ||
+        offer.protocol !== LOCKET_PROTOCOL ||
         event.ports.length !== 1
       )
         return;
@@ -162,12 +158,12 @@ export async function connectFields<Role extends FieldRole>(
           protocol?: unknown;
           role?: unknown;
         } | null;
-        if (data?.protocol !== FIELDS_PROTOCOL) return;
+        if (data?.protocol !== LOCKET_PROTOCOL) return;
         clearTimeout(timer);
         if (data.role === role) resolve(offered);
         else
           reject(
-            new FieldError(
+            new LocketError(
               "unsupported",
               "This app is not registered for that role.",
             ),
@@ -177,5 +173,5 @@ export async function connectFields<Role extends FieldRole>(
     };
     window.addEventListener("message", onOffer);
   });
-  return fieldClient(port, role, options);
+  return locketClient(port, role, options);
 }

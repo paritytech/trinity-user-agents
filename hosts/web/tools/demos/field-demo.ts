@@ -1,19 +1,19 @@
 import type { WorkerPairingHostRuntime } from "@parity/truapi-host/web";
 import { ask } from "../../src/app/prompt.js";
-import { FieldHost, type FieldSession } from "../../src/fields/host.js";
+import { LocketHost, type LocketSession } from "../../src/locket/host.js";
 import type { Network } from "../../src/platform/network.js";
 import { printLabel } from "./field-label.js";
 import { simulatedStatements } from "./kettle-demo.js";
 
 /**
- * The apps this host lets use the draft field bridge, each by its exact
- * origin and page, and the role it gets. Nothing else may declare fields or
- * ask for them. Each provider is its own product, named by its origin: the
+ * The apps this host lets use the draft Locket bridge, each by its exact
+ * origin and page, and the role it gets. Nothing else may declare details
+ * or ask for them. Each provider is its own product, named by its origin: the
  * same provider app runs on two origins (`npm run dev:field-provider` and
  * `dev:field-provider-2`), and the host keeps their declarations and values
  * apart.
  */
-export const FIELD_APPS: readonly {
+export const LOCKET_APPS: readonly {
   origin: string;
   path: string;
   role: "provider" | "consumer";
@@ -42,7 +42,7 @@ const imagesPost = (path: string, body?: unknown): Promise<Response> =>
 
 /**
  * The web host's local image service: the dev server's single-use images
- * (`field-image-plugin.ts`), each for the product origin `FIELD_APPS` gives
+ * (`field-image-plugin.ts`), each for the product origin `LOCKET_APPS` gives
  * the product id.
  */
 function fieldImages() {
@@ -51,7 +51,7 @@ function fieldImages() {
       product: string;
       svg: string;
     }): Promise<{ url: string; expires: number; revoke(): Promise<void> }> {
-      const origin = FIELD_APPS.find(
+      const origin = LOCKET_APPS.find(
         (app) => new URL(app.origin).host === image.product,
       )?.origin;
       if (origin === undefined) throw new Error("No origin for this product.");
@@ -75,7 +75,7 @@ function fieldImages() {
 }
 
 /**
- * DEV ONLY. Wires the draft field bridge (`src/fields/`) into the host.
+ * DEV ONLY. Wires the draft Locket bridge (`src/locket/`) into the host.
  *
  * `?field-demo=simulation` makes this tab's People Statement Store the
  * browser-local simulated one and has the core grant allowances without
@@ -88,7 +88,7 @@ export function createFieldDemo(options: {
 }) {
   const simulated =
     new URLSearchParams(location.search).get("field-demo") === "simulation";
-  const fields = new FieldHost({
+  const locket = new LocketHost({
     images: fieldImages(),
     ask,
     storage: localStorage,
@@ -103,7 +103,7 @@ export function createFieldDemo(options: {
     print: printLabel,
   });
   return {
-    setSession: (session: FieldSession | null) => fields.setSession(session),
+    setSession: (session: LocketSession | null) => locket.setSession(session),
     /** `network`, with its Statement Store simulated when this tab asked for it. */
     network(network: Network): Network {
       return simulated ? simulatedStatements(network, options.log) : network;
@@ -117,14 +117,14 @@ export function createFieldDemo(options: {
       );
     },
     connect(url: URL, product: string, port: MessagePort): () => void {
-      const role = FIELD_APPS.find(
+      const role = LOCKET_APPS.find(
         (app) => app.origin === url.origin && app.path === url.pathname,
       )?.role;
       if (role === undefined || product !== url.host) {
         port.close();
         return () => {};
       }
-      return fields.connect(product, role, port);
+      return locket.connect(product, role, port);
     },
   };
 }

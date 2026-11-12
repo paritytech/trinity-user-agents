@@ -3,8 +3,8 @@ import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { hkdf } from "@noble/hashes/hkdf.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { toHex, utf8 } from "../../../bridges/primitives/bytes.js";
-import { FieldError } from "../../../bridges/fields/protocol.js";
-import { MAX_ACCOUNTS, ReceiveKeys } from "../../../src/fields/keys.js";
+import { LocketError } from "../../../bridges/locket/protocol.js";
+import { MAX_ACCOUNTS, RecipientKeys } from "../../../src/locket/keys.js";
 import { x25519Pair } from "../../../src/invitations/sealing.js";
 
 /** A `Storage` subset over a plain map, as one browser profile's `localStorage`. */
@@ -36,18 +36,18 @@ const code = (run: () => unknown): string | null => {
     run();
     return null;
   } catch (error) {
-    return error instanceof FieldError ? error.code : String(error);
+    return error instanceof LocketError ? error.code : String(error);
   }
 };
 
 /** Store a key for `account` at `index`, as the host does once the core resolved it. */
-const make = (keys: ReceiveKeys, index: string, account: string) =>
+const make = (keys: RecipientKeys, index: string, account: string) =>
   keys.keep(PRODUCT, index, account, keys.prepare());
 
-describe("receiving keys", () => {
+describe("recipient keys", () => {
   test("one key per account, kept across a restart, opening only with the same wallet", () => {
     const storage = memoryStorage();
-    const first = new ReceiveKeys(storage, random);
+    const first = new RecipientKeys(storage, random);
     first.unlock(owner());
     const a = make(first, INDEX_A, ACCOUNT_A);
     const b = make(first, INDEX_B, ACCOUNT_B);
@@ -63,7 +63,7 @@ describe("receiving keys", () => {
       again: "busy",
     });
 
-    const restarted = new ReceiveKeys(storage, random);
+    const restarted = new RecipientKeys(storage, random);
     expect(code(() => restarted.open(PRODUCT, a.keyId))).toBe("session");
     restarted.unlock(owner());
     const opened = restarted.open(PRODUCT, b.keyId)!;
@@ -80,14 +80,14 @@ describe("receiving keys", () => {
     });
 
     // The same wallet id with other entropy, as after a phrase change, opens nothing.
-    const other = new ReceiveKeys(storage, random);
+    const other = new RecipientKeys(storage, random);
     other.unlock(owner(2));
     expect(code(() => other.open(PRODUCT, a.keyId))).toBe("unavailable");
   });
 
   test("stores no secret in clear, and a record moved to another account or product does not open", () => {
     const storage = memoryStorage();
-    const keys = new ReceiveKeys(storage, random);
+    const keys = new RecipientKeys(storage, random);
     keys.unlock(owner());
     const a = make(keys, INDEX_A, ACCOUNT_A);
     const secret = toHex(keys.open(PRODUCT, a.keyId)!.pair.secret);
@@ -107,7 +107,7 @@ describe("receiving keys", () => {
 
   test("lock keeps the records; unlocking again opens them; accounts are bounded", () => {
     const storage = memoryStorage();
-    const keys = new ReceiveKeys(storage, random);
+    const keys = new RecipientKeys(storage, random);
     keys.unlock(owner());
     const a = make(keys, INDEX_A, ACCOUNT_A);
     keys.lock();
@@ -128,7 +128,7 @@ describe("receiving keys", () => {
 
   test("an unreadable record is kept: no new key is written over it, and nothing reports it missing", () => {
     const storage = memoryStorage();
-    const keys = new ReceiveKeys(storage, random);
+    const keys = new RecipientKeys(storage, random);
     keys.unlock(owner());
     const a = make(keys, INDEX_A, ACCOUNT_A);
     const [slot, record] = [...storage.items][0]!;
@@ -199,7 +199,7 @@ describe("receiving keys", () => {
         ),
       }),
     );
-    const keys = new ReceiveKeys(storage, random);
+    const keys = new RecipientKeys(storage, random);
     keys.unlock(owner());
     const legacy = keys.open(PRODUCT, keyId)!;
     expect({

@@ -39,7 +39,7 @@
   --error: #d9363e;
   --focus: #ffffff29;
   --shadow: #0000007a;
-  /* The host's field images draw on this exact color (`COLORS.paper`, src/fields/svg.ts). */
+  /* The host's field images draw on this exact color (`COLORS.paper`, src/locket/svg.ts). */
   --paper: #fbfaf6;
   --ink: #16171b;
   --ink-muted: #6b6d75;
@@ -954,7 +954,7 @@ button.row:hover {
 }
 
 /* The host draws this image; the product only places it and sets its width. */
-.protected-field {
+.protected-detail {
   display: block;
   width: 100%;
   max-width: 420px;

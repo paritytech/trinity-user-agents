@@ -1,10 +1,10 @@
-import type { FieldLabel } from "../../src/fields/host.js";
+import type { LocketLabel } from "../../src/locket/host.js";
 
 /**
  * DEV ONLY. Prints a label from a host document. Product frames run
  * sandboxed without `allow-modals`, so a product cannot call `print()`; the
  * host composes the label from the product's public title and lines and the
- * values its handles hold, and prints that. Nothing here reaches a product.
+ * values its refs hold, and prints that. Nothing here reaches a product.
  */
 
 const LABEL_CSS = `
@@ -40,7 +40,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
 const KIND_LABELS = { address: "Address", phone: "Phone" } as const;
 
 /** Fill `doc` with `label`. Text only, through `textContent`. */
-export function drawLabel(doc: Document, label: FieldLabel): void {
+export function drawLabel(doc: Document, label: LocketLabel): void {
   doc.title = label.title;
   const style = doc.createElement("style");
   style.textContent = LABEL_CSS;
@@ -52,11 +52,11 @@ export function drawLabel(doc: Document, label: FieldLabel): void {
   );
   const sheet = el(doc, "main", "label");
   sheet.append(top);
-  for (const field of label.fields) {
+  for (const detail of label.details) {
     const section = el(doc, "section", "");
     const value = el(doc, "address", "");
-    for (const line of field.lines) value.append(el(doc, "span", "", line));
-    section.append(el(doc, "p", "k", KIND_LABELS[field.kind]), value);
+    for (const line of detail.lines) value.append(el(doc, "span", "", line));
+    section.append(el(doc, "p", "k", KIND_LABELS[detail.kind]), value);
     sheet.append(section);
   }
   for (const line of label.lines.slice(1))
@@ -82,7 +82,7 @@ const LABEL_LIFETIME_MS = 60_000;
  * browser cannot be recalled.
  */
 export function printLabel(
-  label: FieldLabel,
+  label: LocketLabel,
   signal: AbortSignal,
 ): Promise<void> {
   if (signal.aborted) return Promise.reject(new Error("Session ended."));

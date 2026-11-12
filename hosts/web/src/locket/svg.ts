@@ -1,11 +1,11 @@
 import {
-  FieldError,
-  type FieldKind,
-  type FieldTheme,
-} from "../../bridges/fields/protocol.js";
+  LocketError,
+  type DetailKind,
+  type DetailTheme,
+} from "../../bridges/locket/protocol.js";
 
 /**
- * PROTOTYPE. How a host draws a field value as an SVG image: text only, no
+ * PROTOTYPE. How a host draws a detail value as an SVG image: text only, no
  * script, link, style sheet, image or any other reference, so the image
  * never fetches or runs anything. The size is fixed per kind, so a value's
  * length does not show in the image's size. Long values wrap into more rows
@@ -20,7 +20,7 @@ import {
  */
 
 const WIDTH = 360;
-const HEIGHTS: Record<FieldKind, number> = { address: 150, phone: 26 };
+const HEIGHTS: Record<DetailKind, number> = { address: 150, phone: 26 };
 /** Room the address keeps under its rows for the line saying who drew it. */
 const SEAL = 18;
 const LARGEST = 14;
@@ -29,10 +29,11 @@ const SMALLEST = 9;
 const NARROW = 0.62;
 const LEADING = 1.35;
 
-const COLORS: Record<FieldTheme, { ink: string; muted: string; bg: string }> = {
-  paper: { ink: "#16171b", muted: "#6b6d75", bg: "#fbfaf6" },
-  dark: { ink: "#f4f4f5", muted: "#8c8f98", bg: "#17181c" },
-};
+const COLORS: Record<DetailTheme, { ink: string; muted: string; bg: string }> =
+  {
+    paper: { ink: "#16171b", muted: "#6b6d75", bg: "#fbfaf6" },
+    dark: { ink: "#f4f4f5", muted: "#8c8f98", bg: "#17181c" },
+  };
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 /** Graphemes drawn about a whole em wide. */
@@ -114,25 +115,27 @@ function layout(
   return null;
 }
 
-const room = (kind: FieldKind) =>
+const room = (kind: DetailKind) =>
   kind === "address" ? HEIGHTS[kind] - SEAL : HEIGHTS[kind];
 
 /** Whether `lines` of a `kind` fit its image at the smallest type. */
-export const fitsField = (kind: FieldKind, lines: readonly string[]): boolean =>
-  layout(lines, room(kind)) !== null;
+export const fitsDetail = (
+  kind: DetailKind,
+  lines: readonly string[],
+): boolean => layout(lines, room(kind)) !== null;
 
 /**
- * The SVG image of a field value's `lines`. Throws a `limit`
- * {@link FieldError} when they do not fit, rather than drop any.
+ * The SVG image of a detail value's `lines`. Throws a `limit`
+ * {@link LocketError} when they do not fit, rather than drop any.
  */
-export function fieldSvg(
-  kind: FieldKind,
+export function detailSvg(
+  kind: DetailKind,
   lines: readonly string[],
-  theme: FieldTheme,
+  theme: DetailTheme,
 ): string {
   const placed = layout(lines, room(kind));
   if (placed === null)
-    throw new FieldError("limit", "This value is too long to draw.");
+    throw new LocketError("limit", "This value is too long to draw.");
   const { size, rows } = placed;
   const height = HEIGHTS[kind];
   const color = COLORS[theme];

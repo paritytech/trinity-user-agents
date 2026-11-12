@@ -3,14 +3,14 @@ import { ProductStorage } from "../shared/product-storage.js";
 import { blake2b256 } from "../../bridges/primitives/crypto.js";
 import { toHex, utf8 } from "../../bridges/primitives/bytes.js";
 import {
-  mountProtectedField,
-  type ProtectedField,
-} from "../../bridges/fields/protected-field.js";
+  mountProtectedDetail,
+  type ProtectedDetail,
+} from "../../bridges/locket/protected-detail.js";
 import type {
-  FieldDescriptor,
-  ReceiveKey,
-} from "../../bridges/fields/protocol.js";
-import { connect, element, FieldError } from "./client.js";
+  DetailDescriptor,
+  RecipientKey,
+} from "../../bridges/locket/protocol.js";
+import { connect, element, LocketError } from "./client.js";
 import { openBoard, type Heard } from "./board.js";
 import { orderContext, type Listing } from "./messages.js";
 import { createToast, fillIcons, icon, node, paint } from "./ui.js";
@@ -19,7 +19,7 @@ import { createToast, fillIcons, icon, node, paint } from "./ui.js";
  * Small Market. It owns its listings, orders and their delivery on its
  * Statement Store board (`board.ts`), and keeps its own records in its
  * TrUAPI storage. It asks the host for a buyer's details through the draft
- * field bridge and gets only descriptors, handles and a sealed envelope;
+ * Locket bridge and gets only descriptors, refs and a sealed envelope;
  * the host draws the values where the market places them.
  */
 
@@ -50,7 +50,7 @@ type Opened =
   | { kind: "purchase"; purchase: Purchase };
 const TABS: readonly Tab[] = ["shop", "sell", "orders"];
 
-/** The market's account index, which its receiving key is bound to. */
+/** The market's account index, which its recipient key is bound to. */
 const MARKET_INDEX = toHex(blake2b256(utf8("small-market/account/v1")));
 const LISTINGS_KEY = "small-market:own-listings";
 const SALES_KEY = "small-market:sales";
@@ -170,7 +170,7 @@ function report(error: unknown): void {
     error instanceof Error ? error.message : "That didn't work. Try again.";
   toast(
     text,
-    error instanceof FieldError && error.code === "cancelled"
+    error instanceof LocketError && error.code === "cancelled"
       ? "info"
       : "error",
   );
@@ -205,7 +205,7 @@ for (const name of TABS) element(`tab-${name}`).onclick = () => select(name);
 try {
   const client = getClientSync();
   if (client === null) throw new Error("Open Small Market inside the host.");
-  const fields = await connect("consumer");
+  const locket = await connect("consumer");
   const storage = await ProductStorage.load(
     client,
     [LISTINGS_KEY, SALES_KEY, PURCHASES_KEY],
@@ -219,7 +219,7 @@ try {
       return [];
     }
   };
-  const me: ReceiveKey = await fields.createReceiveKey({ index: MARKET_INDEX });
+  const me: RecipientKey = await locket.recipientKey({ index: MARKET_INDEX });
   let own = read<Listing>(LISTINGS_KEY);
   let sales = read<Sale>(SALES_KEY);
   let purchases = read<Purchase>(PURCHASES_KEY);
@@ -229,12 +229,12 @@ try {
     { listing: Listing; expires: number; at: number }
   >();
   /** Fields this market holds for a purchase it placed in this document. */
-  const shared = new Map<string, FieldDescriptor[]>();
+  const shared = new Map<string, DetailDescriptor[]>();
   let busy = false;
   let openItem: Listing | null = null;
   let opened: Opened | null = null;
-  let mounted: ProtectedField[] = [];
-  let openHandles: string[] = [];
+  let mounted: ProtectedDetail[] = [];
+  let openRefs: string[] = [];
   const seen = new Set<string>();
 
   const hear = ({ signer, message, expires }: Heard) => {
@@ -462,36 +462,31 @@ try {
   avatar.title = `Your seller account ${me.account}`;
   paint(avatar, me.account);
 
-  /** Remove drawn fields and give back the handles of the open order. */
+  /** Remove drawn details and give back the refs of the open order. */
   const clearOrder = (): void => {
     for (const field of mounted) field.remove();
     mounted = [];
-    if (openHandles.length > 0)
-      void fields.release({ handles: openHandles }).catch(() => {});
-    openHandles = [];
+    if (openRefs.length > 0)
+      void locket.release({ refs: openRefs }).catch(() => {});
+    openRefs = [];
     element("slip-address").replaceChildren();
     element("slip-phone").replaceChildren();
   };
 
   /** Draw `descriptors` in the slip. Answers false when there is no address. */
-  const draw = async (descriptors: FieldDescriptor[]): Promise<boolean> => {
+  const draw = async (descriptors: DetailDescriptor[]): Promise<boolean> => {
     const address = descriptors.find((field) => field.kind === "address");
     const phone = descriptors.find((field) => field.kind === "phone");
     element("slip-phone-block").hidden = phone === undefined;
     if (address === undefined) return false;
     mounted.push(
-      await mountProtectedField(
-        element("slip-address"),
-        fields,
-        address.handle,
-        {
-          title: "Shipping address",
-        },
-      ),
+      await mountProtectedDetail(element("slip-address"), locket, address.ref, {
+        title: "Shipping address",
+      }),
     );
     if (phone !== undefined)
       mounted.push(
-        await mountProtectedField(element("slip-phone"), fields, phone.handle, {
+        await mountProtectedDetail(element("slip-phone"), locket, phone.ref, {
           title: "Phone",
         }),
       );
@@ -540,14 +535,14 @@ try {
     showScreen(orderScreen);
     renderOrders();
     try {
-      let descriptors: FieldDescriptor[] | undefined;
+      let descriptors: DetailDescriptor[] | undefined;
       if (sale) {
-        const result = await fields.open({
+        const result = await locket.open({
           envelope: next.sale.envelope,
           context: orderContext(next.sale.listing, next.sale.order),
         });
-        descriptors = result.fields;
-        openHandles = descriptors.map((field) => field.handle);
+        descriptors = result.details;
+        openRefs = descriptors.map((field) => field.ref);
       } else descriptors = shared.get(next.purchase.order);
       if (opened !== next) return;
       if (descriptors === undefined || !(await draw(descriptors))) {
@@ -564,7 +559,7 @@ try {
         node(
           "p",
           "fine",
-          error instanceof FieldError && error.code === "missing-key"
+          error instanceof LocketError && error.code === "missing-key"
             ? "This order's details are sealed to a receiving key this device does not have, so they cannot be opened here. If the order is real, ask the buyer to order again."
             : error instanceof Error
               ? error.message
@@ -595,8 +590,8 @@ try {
           "This listing expired. Ask the seller to list it again.",
         );
       const order = crypto.randomUUID();
-      const grant = await fields.request({
-        fields: FIELDS,
+      const grant = await locket.request({
+        details: FIELDS,
         purpose: `Ship “${listing.item}” to you`,
         context: orderContext(listing.id, order),
         recipient: listing.seller,
@@ -612,12 +607,12 @@ try {
           envelope: grant.envelope,
         });
       } catch (error) {
-        void fields
-          .release({ handles: grant.fields.map((field) => field.handle) })
+        void locket
+          .release({ refs: grant.details.map((field) => field.ref) })
           .catch(() => {});
         throw error;
       }
-      shared.set(order, grant.fields);
+      shared.set(order, grant.details);
       const purchase: Purchase = {
         order,
         listing: listing.id,
@@ -635,11 +630,11 @@ try {
   printButton.onclick = () =>
     void action(
       async () => {
-        if (opened?.kind !== "sale" || openHandles.length === 0) return;
-        await fields.print({
+        if (opened?.kind !== "sale" || openRefs.length === 0) return;
+        await locket.print({
           title: "Shipping label",
           lines: [orderCode(opened.sale.order), `1 × ${opened.sale.item}`],
-          handles: openHandles,
+          refs: openRefs,
         });
         toast("Label sent to your printer", "success");
       },

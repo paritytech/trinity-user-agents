@@ -7,26 +7,26 @@ import {
   type RandomBytes,
 } from "../../bridges/primitives/bytes.js";
 import {
-  FIELDS_PROTOCOL,
-  FIELD_SCHEMAS,
-  FieldError,
-  MAX_FIELDS,
-  isFieldId,
-  isFieldKind,
+  LOCKET_PROTOCOL,
+  DETAIL_SCHEMAS,
+  LocketError,
+  MAX_DETAILS,
+  isDetailId,
+  isDetailKind,
   isHex32,
-  readReceiveKey,
-  type FieldDescriptor,
-  type FieldErrorReply,
-  type FieldGrant,
-  type FieldKind,
-  type FieldRequestItem,
-  type FieldRole,
-  type FieldTheme,
+  readRecipientKey,
+  type DetailDescriptor,
+  type LocketErrorReply,
+  type DetailGrant,
+  type DetailKind,
+  type DetailRequestItem,
+  type LocketRole,
+  type DetailTheme,
   type OpenedEnvelope,
   type ProviderStatus,
-  type ReceiveKey,
-} from "../../bridges/fields/protocol.js";
-import type { WebImageSurface } from "../../bridges/fields/web.js";
+  type RecipientKey,
+} from "../../bridges/locket/protocol.js";
+import type { WebImageSurface } from "../../bridges/locket/web.js";
 import {
   envelopeId,
   envelopeKeyId,
@@ -34,21 +34,21 @@ import {
   sealEnvelope,
   validValue,
   valueLines,
-  type SealedField,
+  type SealedDetail,
 } from "./envelope.js";
-import { ReceiveKeys } from "./keys.js";
-import { fieldSvg, fitsField } from "./svg.js";
+import { RecipientKeys } from "./keys.js";
+import { detailSvg, fitsDetail } from "./svg.js";
 
 /**
- * PROTOTYPE, web-only (`web-fields/2`): the host side of the draft field
+ * PROTOTYPE, web-only (`web-locket/1`): the host side of the draft Locket
  * bridge. It keeps provider declarations and values, asks the user before
- * any value leaves for a product, seals values to a recipient's receiving
- * key, makes and keeps this wallet's receiving keys, opens envelopes into
- * handles and draws handles as images in products. A product gets
- * descriptors and handles, never a value. Delivery is the product's.
+ * any value leaves for a product, seals values to a recipient's key, makes
+ * and keeps this wallet's recipient keys, opens envelopes into refs and
+ * draws refs as images in products. A product gets descriptors and refs,
+ * never a value. Delivery is the product's.
  */
 
-/** Signs and checks receiving key bindings in the core (signing hosts only). */
+/** Signs and checks recipient key bindings in the core (signing hosts only). */
 export interface KeyBinder {
   sign(
     product: string,
@@ -64,7 +64,7 @@ export interface KeyBinder {
 }
 
 /** The signed-in wallet the bridge works for. */
-export interface FieldSession {
+export interface LocketSession {
   /** The host's network id, which scopes stored keys. */
   network: string;
   /** The network's People chain genesis hash, `0x` hex, which a binding names. */
@@ -74,17 +74,17 @@ export interface FieldSession {
 }
 
 /** A label the host prints: the product's public text, then protected values. */
-export interface FieldLabel {
+export interface LocketLabel {
   product: string;
   title: string;
   lines: string[];
-  fields: { kind: FieldKind; lines: string[] }[];
+  details: { kind: DetailKind; lines: string[] }[];
 }
 
-export interface FieldHostOptions {
+export interface LocketHostOptions {
   ask<T>(request: PromptRequest<T>): Promise<T>;
   binder: KeyBinder;
-  /** Where receiving keys are kept, encrypted. */
+  /** Where recipient keys are kept, encrypted. */
   storage: Pick<Storage, "getItem" | "setItem">;
   /**
    * The local image service: serves `svg` once to `product` and answers its
@@ -102,7 +102,7 @@ export interface FieldHostOptions {
    * Print `label` from a host document. Products cannot print: their frame
    * has no `allow-modals`. `signal` aborts it when the product or session ends.
    */
-  print(label: FieldLabel, signal: AbortSignal): Promise<void>;
+  print(label: LocketLabel, signal: AbortSignal): Promise<void>;
   now?(): number;
   random?: RandomBytes;
 }
@@ -110,13 +110,13 @@ export interface FieldHostOptions {
 interface Provider {
   /** The name the provider gives itself. Shown beside its verified product id, never alone. */
   name: string;
-  fields: FieldKind[];
-  values: Partial<Record<FieldKind, string>>;
+  details: DetailKind[];
+  values: Partial<Record<DetailKind, string>>;
 }
 
-/** A value a handle stands for, on one connection. */
+/** A value a ref stands for, on one connection. */
 interface Held {
-  kind: FieldKind;
+  kind: DetailKind;
   lines: string[];
   /**
    * This value's images the service may still serve, each by how to end it
@@ -127,20 +127,20 @@ interface Held {
   issuing: number;
 }
 
-/** The most handles one connection holds at once. */
-const MAX_HANDLES = 64;
+/** The most refs one connection holds at once. */
+const MAX_REFS = 64;
 /**
  * The most calls one connection has unanswered at once. More fail `busy`.
  * A cancel never counts, and a `release` is never refused, so cleanup always
  * goes through.
  */
 const MAX_PENDING = 32;
-/** The most images of one handle the service may serve at once. */
+/** The most images of one ref the service may serve at once. */
 const MAX_IMAGES = 50;
 const MAX_LABEL_LINES = 6;
 const MAX_LABEL_CHARS = 80;
 
-const KIND_NAMES: Record<FieldKind, string> = {
+const KIND_NAMES: Record<DetailKind, string> = {
   address: "address",
   phone: "phone",
 };
@@ -153,11 +153,11 @@ const shortText = (value: unknown, max: number): string | null => {
 };
 
 /**
- * A failure as the product sees it. Only {@link FieldError}s keep their text;
+ * A failure as the product sees it. Only {@link LocketError}s keep their text;
  * anything else is reported generically, so no unexpected message crosses.
  */
-const errorReply = (error: unknown): FieldErrorReply =>
-  error instanceof FieldError
+const errorReply = (error: unknown): LocketErrorReply =>
+  error instanceof LocketError
     ? { code: error.code, message: error.message }
     : { code: "unavailable", message: "Request failed." };
 
@@ -172,46 +172,46 @@ const bindingBytes = (key: {
 }): Uint8Array =>
   concat(fromHex(key.keyId), fromHex(key.publicKey), fromHex(key.network));
 
-/** Read a product's field request list. Throws `invalid`. */
-function readItems(value: unknown): FieldRequestItem[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_FIELDS)
-    throw new FieldError("invalid", `Ask for 1 to ${MAX_FIELDS} fields.`);
-  const items = value.map((item: unknown): FieldRequestItem => {
-    const field = (item ?? {}) as Record<string, unknown>;
+/** Read a product's detail request list. Throws `invalid`. */
+function readItems(value: unknown): DetailRequestItem[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_DETAILS)
+    throw new LocketError("invalid", `Ask for 1 to ${MAX_DETAILS} details.`);
+  const items = value.map((item: unknown): DetailRequestItem => {
+    const detail = (item ?? {}) as Record<string, unknown>;
     if (
-      !isFieldId(field.id) ||
-      !isFieldKind(field.kind) ||
-      (field.optional !== undefined && typeof field.optional !== "boolean")
+      !isDetailId(detail.id) ||
+      !isDetailKind(detail.kind) ||
+      (detail.optional !== undefined && typeof detail.optional !== "boolean")
     )
-      throw new FieldError("invalid", "A requested field is malformed.");
+      throw new LocketError("invalid", "A requested detail is malformed.");
     return {
-      id: field.id,
-      kind: field.kind,
-      optional: field.optional === true,
+      id: detail.id,
+      kind: detail.kind,
+      optional: detail.optional === true,
     };
   });
   if (
     new Set(items.map((item) => item.id)).size !== items.length ||
     new Set(items.map((item) => item.kind)).size !== items.length
   )
-    throw new FieldError(
+    throw new LocketError(
       "invalid",
-      "Ask for each field id and each kind once.",
+      "Ask for each detail id and each kind once.",
     );
   if (items.every((item) => item.optional))
-    throw new FieldError("invalid", "Ask for at least one required field.");
+    throw new LocketError("invalid", "Ask for at least one required detail.");
   return items;
 }
 
-export class FieldHost {
-  private session: FieldSession | null = null;
-  private readonly keys: ReceiveKeys;
+export class LocketHost {
+  private session: LocketSession | null = null;
+  private readonly keys: RecipientKeys;
   private readonly providers = new Map<string, Provider>();
   private readonly connections = new Set<() => void>();
   private printing = false;
 
-  constructor(private readonly options: FieldHostOptions) {
-    this.keys = new ReceiveKeys(options.storage, this.random, this.now);
+  constructor(private readonly options: LocketHostOptions) {
+    this.keys = new RecipientKeys(options.storage, this.random, this.now);
   }
 
   private readonly now = (): number => this.options.now?.() ?? Date.now();
@@ -220,11 +220,11 @@ export class FieldHost {
 
   /**
    * Work for `session`, or for nobody. A change ends every connection, drops
-   * provider values and handles, ends images not loaded yet, and locks
-   * receiving keys; stored
+   * provider values and refs, ends images not loaded yet, and locks
+   * recipient keys; stored
    * keys stay and open again for the same wallet.
    */
-  setSession(session: FieldSession | null): void {
+  setSession(session: LocketSession | null): void {
     const same =
       session !== null &&
       this.session !== null &&
@@ -239,7 +239,7 @@ export class FieldHost {
   }
 
   /** Attach an already source- and origin-checked product port, with the role the host gave it. */
-  connect(product: string, role: FieldRole, port: MessagePort): () => void {
+  connect(product: string, role: LocketRole, port: MessagePort): () => void {
     const session = this.session;
     const controller = new AbortController();
     const heldValues = new Map<string, Held>();
@@ -252,18 +252,18 @@ export class FieldHost {
      * Every operation checks it after each wait, so a withdrawn call never
      * holds, seals or keeps anything after it was withdrawn.
      */
-    const active = (signal: AbortSignal = controller.signal): FieldSession => {
+    const active = (signal: AbortSignal = controller.signal): LocketSession => {
       if (
         session === null ||
         session !== this.session ||
         controller.signal.aborted
       )
-        throw new FieldError(
+        throw new LocketError(
           "session",
           "Session ended. Sign in and reopen the app.",
         );
       if (signal.aborted)
-        throw new FieldError("timeout", "The app withdrew this request.");
+        throw new LocketError("timeout", "The app withdrew this request.");
       return session;
     };
     const blank = async (held: Held): Promise<void> => {
@@ -294,35 +294,34 @@ export class FieldHost {
       active(signal);
       return result;
     };
-    const hold = (fields: readonly SealedField[]): FieldDescriptor[] => {
-      if (heldValues.size + fields.length > MAX_HANDLES)
-        throw new FieldError(
+    const hold = (details: readonly SealedDetail[]): DetailDescriptor[] => {
+      if (heldValues.size + details.length > MAX_REFS)
+        throw new LocketError(
           "limit",
-          "Too many fields held. Release some first.",
+          "Too many details held. Release some first.",
         );
-      return fields.map((field) => {
-        const handle = toHex(this.random(16)).slice(2);
-        heldValues.set(handle, {
-          kind: field.kind,
-          lines: valueLines(field.kind, field.value),
+      return details.map((detail) => {
+        const ref = toHex(this.random(16)).slice(2);
+        heldValues.set(ref, {
+          kind: detail.kind,
+          lines: valueLines(detail.kind, detail.value),
           images: new Map(),
           issuing: 0,
         });
         return {
-          id: field.id,
-          kind: field.kind,
-          schema: field.schema,
-          handle,
+          id: detail.id,
+          kind: detail.kind,
+          schema: detail.schema,
+          ref,
         };
       });
     };
-    const held = (handle: unknown): Held => {
-      const found =
-        typeof handle === "string" ? heldValues.get(handle) : undefined;
+    const held = (ref: unknown): Held => {
+      const found = typeof ref === "string" ? heldValues.get(ref) : undefined;
       if (found === undefined)
-        throw new FieldError(
-          "missing-handle",
-          "This field is no longer held. Open it again.",
+        throw new LocketError(
+          "missing-ref",
+          "This detail is no longer held. Open it again.",
         );
       return found;
     };
@@ -331,18 +330,18 @@ export class FieldHost {
       request: Record<string, unknown>,
     ): Promise<unknown> => {
       if (request.op === "declare") {
-        const fields = request.fields;
+        const details = request.details;
         if (
-          !Array.isArray(fields) ||
-          fields.length === 0 ||
-          fields.length > MAX_FIELDS ||
-          !fields.every(isFieldKind) ||
-          new Set(fields).size !== fields.length
+          !Array.isArray(details) ||
+          details.length === 0 ||
+          details.length > MAX_DETAILS ||
+          !details.every(isDetailKind) ||
+          new Set(details).size !== details.length
         )
-          throw new FieldError("invalid", "Declare known field kinds once.");
+          throw new LocketError("invalid", "Declare known detail kinds once.");
         const name = shortText(request.name, 40);
         if (name === null)
-          throw new FieldError(
+          throw new LocketError(
             "invalid",
             "Name the app in 1 to 40 characters.",
           );
@@ -352,49 +351,49 @@ export class FieldHost {
         if (known !== undefined) {
           if (
             known.name !== name ||
-            known.fields.length !== fields.length ||
-            !known.fields.every((kind) => fields.includes(kind))
+            known.details.length !== details.length ||
+            !known.details.every((kind) => details.includes(kind))
           )
-            throw new FieldError(
+            throw new LocketError(
               "invalid",
-              "This app already declared another name or other fields.",
+              "This app already declared another name or other details.",
             );
-          return { registered: known.fields };
+          return { registered: known.details };
         }
         this.providers.set(product, {
           name,
-          fields: fields as FieldKind[],
+          details: details as DetailKind[],
           values: {},
         });
-        return { registered: fields };
+        return { registered: details };
       }
-      if (request.op === "save") {
+      if (request.op === "setValues") {
         const found = this.providers.get(product);
         if (found === undefined)
-          throw new FieldError("invalid", "Declare fields first.");
+          throw new LocketError("invalid", "Declare details first.");
         if (typeof request.values !== "object" || request.values === null)
-          throw new FieldError("invalid", "Invalid values.");
+          throw new LocketError("invalid", "Invalid values.");
         // A full replacement: every declared kind, a value or null, and no other.
         const values = request.values as Record<string, unknown>;
         if (
-          Object.keys(values).length !== found.fields.length ||
-          !found.fields.every((kind) => Object.hasOwn(values, kind))
+          Object.keys(values).length !== found.details.length ||
+          !found.details.every((kind) => Object.hasOwn(values, kind))
         )
-          throw new FieldError(
+          throw new LocketError(
             "invalid",
-            "Give every declared field, null for none, and no other.",
+            "Give every declared detail, null for none, and no other.",
           );
-        const next: Partial<Record<FieldKind, string>> = {};
-        for (const kind of found.fields) {
+        const next: Partial<Record<DetailKind, string>> = {};
+        for (const kind of found.details) {
           const value = values[kind];
           if (value === null) continue;
           if (!validValue(kind, value))
-            throw new FieldError(
+            throw new LocketError(
               "invalid",
-              "Use 1 to 160 characters for each field, an address in at most 6 lines.",
+              "Use 1 to 160 characters for each detail, an address in at most 6 lines.",
             );
-          if (!fitsField(kind, valueLines(kind, value)))
-            throw new FieldError(
+          if (!fitsDetail(kind, valueLines(kind, value)))
+            throw new LocketError(
               "invalid",
               `This ${KIND_NAMES[kind]} is too long to show. Shorten it.`,
             );
@@ -408,24 +407,29 @@ export class FieldHost {
         const status: ProviderStatus = {
           registered: found !== undefined,
           name: found?.name ?? null,
-          fields: found?.fields ?? [],
+          details: found?.details ?? [],
           saved:
             found === undefined
               ? []
-              : found.fields.filter((kind) => found.values[kind] !== undefined),
+              : found.details.filter(
+                  (kind) => found.values[kind] !== undefined,
+                ),
         };
         return status;
       }
-      throw new FieldError("unsupported", "Provider operation not supported.");
+      throw new LocketError("unsupported", "Provider operation not supported.");
     };
 
-    const createReceiveKey = async (
+    const recipientKey = async (
       request: Record<string, unknown>,
       signal: AbortSignal,
-    ): Promise<ReceiveKey> => {
+    ): Promise<RecipientKey> => {
       const current = active(signal);
       if (!isHex32(request.index))
-        throw new FieldError("invalid", "An account index is 32 bytes of hex.");
+        throw new LocketError(
+          "invalid",
+          "An account index is 32 bytes of hex.",
+        );
       const index = request.index;
       const network = current.people.toLowerCase();
       // No sheet: the key is new or this account's own, the signature is
@@ -438,7 +442,7 @@ export class FieldHost {
           bindingBytes({ ...key, network }),
         );
         active(signal);
-        const answer: ReceiveKey = {
+        const answer: RecipientKey = {
           v: 1,
           keyId: key.keyId,
           publicKey: key.publicKey,
@@ -459,16 +463,16 @@ export class FieldHost {
       }) => {
         const key = await bind(kept);
         if (key.account !== kept.account)
-          throw new FieldError(
+          throw new LocketError(
             "invalid",
-            "The stored receiving key is for another account.",
+            "The stored recipient key is for another account.",
           );
         return key;
       };
       const kept = this.keys.find(product, index);
       if (kept !== null) return rebind(kept);
       const fresh = this.keys.prepare();
-      let key: ReceiveKey;
+      let key: RecipientKey;
       try {
         key = await bind(fresh);
       } catch (error) {
@@ -481,7 +485,7 @@ export class FieldHost {
       } catch (error) {
         // Another call stored this account's key meanwhile: answer that one.
         const stored = this.keys.find(product, index);
-        if (error instanceof FieldError && error.code === "busy" && stored)
+        if (error instanceof LocketError && error.code === "busy" && stored)
           return rebind(stored);
         throw error;
       }
@@ -490,30 +494,30 @@ export class FieldHost {
     const request = async (
       input: Record<string, unknown>,
       signal: AbortSignal,
-    ): Promise<FieldGrant> => {
+    ): Promise<DetailGrant> => {
       const current = active(signal);
-      const items = readItems(input.fields);
+      const items = readItems(input.details);
       const purpose = shortText(input.purpose, 80);
       if (purpose === null)
-        throw new FieldError(
+        throw new LocketError(
           "invalid",
           "Give a purpose of 1 to 80 characters.",
         );
       if (!isHex32(input.context))
-        throw new FieldError("invalid", "A context is 32 bytes of hex.");
+        throw new LocketError("invalid", "A context is 32 bytes of hex.");
       const context = input.context;
-      let recipient: ReceiveKey | null = null;
+      let recipient: RecipientKey | null = null;
       if (input.recipient !== undefined) {
-        recipient = readReceiveKey(input.recipient);
+        recipient = readRecipientKey(input.recipient);
         if (recipient === null)
-          throw new FieldError("invalid", "The recipient key is malformed.");
+          throw new LocketError("invalid", "The recipient key is malformed.");
         if (recipient.product !== product)
-          throw new FieldError(
+          throw new LocketError(
             "invalid",
             "The recipient key is for another app.",
           );
         if (recipient.network !== current.people.toLowerCase())
-          throw new FieldError(
+          throw new LocketError(
             "invalid",
             "The recipient key is for another network.",
           );
@@ -525,7 +529,7 @@ export class FieldHost {
         );
         active(signal);
         if (!valid)
-          throw new FieldError(
+          throw new LocketError(
             "invalid",
             "The recipient key's host signature does not verify.",
           );
@@ -540,34 +544,34 @@ export class FieldHost {
         const extra = optional.filter(
           (item) => found.values[item.kind] !== undefined,
         );
-        const pick = (chosen: FieldRequestItem[]) =>
+        const pick = (chosen: DetailRequestItem[]) =>
           chosen.map((item) => ({
             id: item.id,
             kind: item.kind,
-            schema: FIELD_SCHEMAS[item.kind],
+            schema: DETAIL_SCHEMAS[item.kind],
             value: found.values[item.kind]!,
           }));
         const from = `${found.name} · ${id}`;
         return [
           ...(extra.length > 0
-            ? [{ from, fields: pick([...required, ...extra]) }]
+            ? [{ from, details: pick([...required, ...extra]) }]
             : []),
-          { from, fields: pick(required) },
+          { from, details: pick(required) },
         ];
       });
       const wanted = required
         .map((item) => KIND_NAMES[item.kind])
         .join(" and ");
       if (options.length === 0)
-        throw new FieldError(
+        throw new LocketError(
           "unavailable",
           `No details app holds your ${wanted} yet. Save it in one first.`,
         );
-      const describe = (fields: readonly SealedField[]) =>
-        fields
+      const describe = (details: readonly SealedDetail[]) =>
+        details
           .map(
-            (field) =>
-              `${KIND_NAMES[field.kind]}: ${valueLines(field.kind, field.value).join(", ")}`,
+            (detail) =>
+              `${KIND_NAMES[detail.kind]}: ${valueLines(detail.kind, detail.value).join(", ")}`,
           )
           .join(" · ");
       const chosen = await ask<number | null>(
@@ -615,7 +619,7 @@ export class FieldHost {
           layout: "list",
           choices: [
             ...options.map((option, index) => ({
-              label: `Share ${describe(option.fields)} · from ${option.from}`,
+              label: `Share ${describe(option.details)} · from ${option.from}`,
               value: index,
             })),
             { label: "Cancel", value: null, tone: "cancel" as const },
@@ -625,8 +629,8 @@ export class FieldHost {
         signal,
       );
       if (chosen === null)
-        throw new FieldError("cancelled", "You chose not to share.");
-      const fields = options[chosen]!.fields;
+        throw new LocketError("cancelled", "You chose not to share.");
+      const details = options[chosen]!.details;
       const envelope =
         recipient === null
           ? undefined
@@ -634,12 +638,12 @@ export class FieldHost {
               sealEnvelope(
                 recipient,
                 { product, account: recipient.account, context },
-                fields,
+                details,
                 this.random,
               ),
             );
       return {
-        fields: hold(fields),
+        details: hold(details),
         ...(envelope === undefined ? {} : { envelope }),
       };
     };
@@ -647,18 +651,18 @@ export class FieldHost {
     const open = (input: Record<string, unknown>): OpenedEnvelope => {
       active();
       if (!isHex32(input.context))
-        throw new FieldError("invalid", "A context is 32 bytes of hex.");
+        throw new LocketError("invalid", "A context is 32 bytes of hex.");
       let bytes: Uint8Array;
       try {
         bytes = fromHex(input.envelope as string);
       } catch {
-        throw new FieldError("invalid", "An envelope is hex.");
+        throw new LocketError("invalid", "An envelope is hex.");
       }
       const key = this.keys.open(product, envelopeKeyId(bytes));
       if (key === null)
-        throw new FieldError(
+        throw new LocketError(
           "missing-key",
-          "No receiving key of this app on this device matches this envelope, so it cannot be opened here. If it was meant for this account, ask the sender to send it again.",
+          "No recipient key of this app on this device matches this envelope, so it cannot be opened here. If it was meant for this account, ask the sender to send it again.",
         );
       try {
         // A legacy shared key may name several accounts: the envelope opens
@@ -671,7 +675,7 @@ export class FieldHost {
         return {
           envelopeId: envelopeId(bytes),
           account: opened.account,
-          fields: hold(opened.fields),
+          details: hold(opened.details),
         };
       } finally {
         key.pair.secret.fill(0);
@@ -680,15 +684,14 @@ export class FieldHost {
 
     /** Answers once the released values' unused images no longer load. */
     const release = async (input: Record<string, unknown>) => {
-      const handles = Array.isArray(input.handles) ? input.handles : [];
+      const refs = Array.isArray(input.refs) ? input.refs : [];
       const revoking: Promise<void>[] = [];
       let released = 0;
-      for (const handle of handles) {
-        const found =
-          typeof handle === "string" ? heldValues.get(handle) : undefined;
+      for (const ref of refs) {
+        const found = typeof ref === "string" ? heldValues.get(ref) : undefined;
         if (found === undefined) continue;
         revoking.push(blank(found));
-        heldValues.delete(handle as string);
+        heldValues.delete(ref as string);
         released += 1;
       }
       await Promise.all(revoking);
@@ -699,37 +702,37 @@ export class FieldHost {
       input: Record<string, unknown>,
       signal: AbortSignal,
     ): Promise<{ surface: WebImageSurface }> => {
-      const value = held(input.handle);
-      const theme: FieldTheme = input.theme === "dark" ? "dark" : "paper";
+      const value = held(input.ref);
+      const theme: DetailTheme = input.theme === "dark" ? "dark" : "paper";
       const now = this.now();
       for (const [revoke, expires] of value.images)
         if (expires <= now) value.images.delete(revoke);
       if (value.images.size + value.issuing >= MAX_IMAGES)
-        throw new FieldError("limit", "Too many views. Open it again.");
-      const svg = fieldSvg(value.kind, value.lines, theme);
+        throw new LocketError("limit", "Too many views. Open it again.");
+      const svg = detailSvg(value.kind, value.lines, theme);
       // The slot is taken before the wait, so concurrent displays cannot
       // all pass the check above.
       value.issuing += 1;
-      let image: Awaited<ReturnType<FieldHostOptions["images"]["issue"]>>;
+      let image: Awaited<ReturnType<LocketHostOptions["images"]["issue"]>>;
       try {
         image = await this.options.images.issue({ product, svg });
       } catch {
         active(signal);
-        throw new FieldError(
+        throw new LocketError(
           "unavailable",
-          "The host could not draw this field. Try again.",
+          "The host could not draw this detail. Try again.",
         );
       } finally {
         value.issuing -= 1;
       }
-      // The handle may have been released, the call withdrawn or the
+      // The ref may have been released, the call withdrawn or the
       // session ended meanwhile.
-      if (signal.aborted || heldValues.get(input.handle as string) !== value) {
+      if (signal.aborted || heldValues.get(input.ref as string) !== value) {
         void image.revoke();
         active(signal);
-        throw new FieldError(
-          "missing-handle",
-          "This field is no longer held. Open it again.",
+        throw new LocketError(
+          "missing-ref",
+          "This detail is no longer held. Open it again.",
         );
       }
       value.images.set(image.revoke, image.expires);
@@ -742,24 +745,24 @@ export class FieldHost {
     ) => {
       const title = shortText(input.title, MAX_LABEL_CHARS);
       const lines = Array.isArray(input.lines) ? input.lines : [];
-      const handles = Array.isArray(input.handles) ? input.handles : [];
+      const refs = Array.isArray(input.refs) ? input.refs : [];
       if (
         title === null ||
         lines.length > MAX_LABEL_LINES ||
         lines.some((line) => shortText(line, MAX_LABEL_CHARS) === null) ||
-        handles.length === 0 ||
-        handles.length > MAX_FIELDS
+        refs.length === 0 ||
+        refs.length > MAX_DETAILS
       )
-        throw new FieldError(
+        throw new LocketError(
           "invalid",
-          "Print a title, up to 6 short lines and 1 to 4 fields.",
+          "Print a title, up to 6 short lines and 1 to 4 details.",
         );
-      const fields = handles.map((handle) => {
-        const found = held(handle);
+      const details = refs.map((ref) => {
+        const found = held(ref);
         return { kind: found.kind, lines: [...found.lines] };
       });
       if (this.printing)
-        throw new FieldError("busy", "A label is already printing.");
+        throw new LocketError("busy", "A label is already printing.");
       this.printing = true;
       try {
         await this.options.print(
@@ -767,7 +770,7 @@ export class FieldHost {
             product,
             title,
             lines: lines.map((line) => shortText(line, MAX_LABEL_CHARS)!),
-            fields,
+            details,
           },
           signal,
         );
@@ -785,8 +788,8 @@ export class FieldHost {
       active(signal);
       if (role === "provider") return provider(input);
       switch (input.op) {
-        case "createReceiveKey":
-          return createReceiveKey(input, signal);
+        case "recipientKey":
+          return recipientKey(input, signal);
         case "request":
           return request(input, signal);
         case "open":
@@ -798,7 +801,7 @@ export class FieldHost {
         case "print":
           return print(input, signal);
       }
-      throw new FieldError("unsupported", "Operation not supported.");
+      throw new LocketError("unsupported", "Operation not supported.");
     };
     // `request`s wait for each other, so the user sees one sheet at a time
     // per app. Every other call runs at once: `display` and `release` do not
@@ -820,7 +823,7 @@ export class FieldHost {
           error: {
             code: "timeout",
             message: "The app stopped waiting for this.",
-          } satisfies FieldErrorReply,
+          } satisfies LocketErrorReply,
         });
         return;
       }
@@ -837,7 +840,7 @@ export class FieldHost {
           error: {
             code: "busy",
             message: "Too many calls at once. Wait for some to answer.",
-          } satisfies FieldErrorReply,
+          } satisfies LocketErrorReply,
         });
         return;
       }
@@ -862,7 +865,7 @@ export class FieldHost {
       else void run();
     };
     port.start();
-    port.postMessage({ protocol: FIELDS_PROTOCOL, role });
+    port.postMessage({ protocol: LOCKET_PROTOCOL, role });
     return close;
   }
 }

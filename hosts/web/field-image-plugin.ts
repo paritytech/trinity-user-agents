@@ -5,7 +5,7 @@ import { LOOPBACK_HOSTNAMES } from "./tools/demos/local-demo-route.js";
 
 /**
  * DEV ONLY, PROTOTYPE. The web host's local image service for protected
- * fields: the host page draws a value as SVG (`src/fields/svg.ts`) and hands
+ * details: the host page draws a value as SVG (`src/locket/svg.ts`) and hands
  * it here; a product embeds the URL it gets with `<img>`. The browser keeps a
  * cross-origin image's pixels from the product's scripts. This dev server is
  * an extra trusted component: it holds the SVG in memory until it is served

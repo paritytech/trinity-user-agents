@@ -57,10 +57,10 @@ a Chromium (`npx playwright-core install chromium`, or set `CHROMIUM_PATH`).
   archive, no dev demos, and a wallet running Kettle Chat alone from it. Skipped until `npm run build:kettle` has run.
 - [`nova-chat.spec.ts`](../browser/nova-chat.spec.ts): Nova Chat between three demo users, over the simulated Statement
   Store, both directions and a reload, and its conversation in the inspector's Chat view with no test probe.
-- [`field-demo.spec.ts`](../browser/field-demo.spec.ts): the draft field bridge on the simulated store: a seller's key
+- [`field-demo.spec.ts`](../browser/field-demo.spec.ts): the draft Locket bridge on the simulated store: a seller's key
   bound by the core and checked in the buyer's tab, two providers and an optional phone in one sheet, cancel, the market
   posting through its own TrUAPI Statement Store, receipt and slip drawn as SVG images, printing with no host sheet, the
-  seller's order reopened from a new host tab and refused with its reason once the receiving keys are cleared, no
+  seller's order reopened from a new host tab and refused with its reason once the recipient keys are cleared, no
   provider, a market reloaded during its sheet, and sign-out. For the images: canvas, `fetch`, `XMLHttpRequest` and
   document embeds read nothing, another origin is refused, a market-origin page in another profile and a local request
   with the two headers are served (the accepted bearer limit), single use, release and sign-out, and a PDF print.

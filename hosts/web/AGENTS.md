@@ -54,12 +54,13 @@ Put code with the feature that owns its behavior, not with the screen or tool th
   a tool, even though only the dev server and a build with `WEB_SIGNING_KETTLE_CHAT=1` serve it.
 - Keep official TrUAPI and drafts apart. Official product rooms are `src/chat/product-chat.ts` and
   `product-room-provider.ts`. The draft bridges are labelled draft: their contracts and product ends are in `bridges/`
-  (`chat-v2/`, `host-requests/`, `nova-chat/`, `fields/`), and the host's end of Chat Extension v2 is `src/chat/draft/`.
+  (`chat-v2/`, `host-requests/`, `nova-chat/`, `locket/`), and the host's end of Chat Extension v2 is `src/chat/draft/`.
   Use canonical types from `@parity/truapi` and `@parity/truapi-host`; do not copy or redefine them.
 - A demo product runs as a product: loaded through the ordinary loader and reaching the host only through TrUAPI or its
   declared bridge. Do not reproduce a product's actions as host buttons, which would skip the path it tests.
-- The field demo's bridge goes only to the exact origins and pages in `FIELD_APPS` (`tools/demos/field-demo.ts`), each
-  its own provider or market. Never give a role from what a page declares about itself.
+- The field demo's Locket bridge goes only to the exact origins and pages in `LOCKET_APPS`
+  (`tools/demos/field-demo.ts`), each its own provider or market. Never give a role from what a page declares about
+  itself.
 - Developer views show state the host actually holds, never state inferred from logs. Keep what they record bounded and
   in memory, keep payload capture opt-in, and never record private keys, shared secrets, recovery phrases or
   authentication credentials. Public keys, topics and protocol bytes are what the inspector is for.
