@@ -13,9 +13,7 @@ use super::{
 	product_consent::ProductConsent,
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure},
 	services::RuntimeServices,
-	signing_host::ring_vrf::{
-		ChainRingResolver, MemberCandidate, RingResolver, context_bytes, create_proof,
-	},
+	signing_host::ring_vrf::{MemberCandidate, RingResolver, context_bytes, create_proof},
 	sso_request_service::PairedSessionOwner,
 	statement_allowance, vrf,
 };
@@ -95,10 +93,14 @@ impl<H: AccountHolder> PairedSessionOwner for HostAccounts<H> {
 
 impl<H: AccountHolder> HostAccounts<H> {
 	/// Compose one host's policy with its canonical session and grant owners.
+	///
+	/// Kept keys read their rings through `ring_resolver`, which should be the
+	/// one `holder` reads them through.
 	pub fn new(
 		services: Arc<RuntimeServices>,
 		holder: Arc<H>,
 		session_state: Arc<SessionState>,
+		ring_resolver: Arc<dyn RingResolver>,
 		ring_vrf_registry: Arc<RingVrfRegistryStore>,
 		consent: Arc<ProductConsent>,
 		#[cfg(feature = "test-host")] resource_controls: Arc<
@@ -106,7 +108,6 @@ impl<H: AccountHolder> HostAccounts<H> {
 		>,
 	) -> Self {
 		Self {
-			ring_resolver: ChainRingResolver::new(services.chain.clone()),
 			grants: HostGrantStore::new(
 				services.platform.clone(),
 				H::GRANT_KEEPING,
@@ -115,6 +116,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 			services,
 			holder,
 			session_state,
+			ring_resolver,
 			ring_vrf_registry,
 			consent,
 			#[cfg(feature = "test-host")]

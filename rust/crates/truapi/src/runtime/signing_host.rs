@@ -73,13 +73,14 @@ impl SigningHost {
 			services.clone(),
 			network_suffix,
 			consent.clone(),
-			ring_resolver,
+			ring_resolver.clone(),
 			ring_vrf_registry.clone(),
 		));
 		let accounts = Arc::new(HostAccounts::new(
 			services.clone(),
 			wallet.clone(),
 			wallet.session_state(),
+			ring_resolver,
 			ring_vrf_registry,
 			consent.clone(),
 			#[cfg(feature = "test-host")]

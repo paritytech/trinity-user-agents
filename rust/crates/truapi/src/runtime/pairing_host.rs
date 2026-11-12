@@ -10,6 +10,7 @@ use super::{
 	product_consent::ProductConsent,
 	ring_vrf_registry::RingVrfRegistryStore,
 	services::RuntimeServices,
+	signing_host::ring_vrf::ChainRingResolver,
 	sso_request_service::{PairedSessionOwner, SsoRequestService},
 };
 use crate::platform::{PairingHostConfig, ProductId};
@@ -52,6 +53,7 @@ impl PairingHost {
 					services.spawner.clone(),
 				)),
 				service.session_state(),
+				ChainRingResolver::new(services.chain.clone()),
 				ring_vrf_registry,
 				Arc::new(ProductConsent::new(services.platform.clone())),
 				#[cfg(feature = "test-host")]
