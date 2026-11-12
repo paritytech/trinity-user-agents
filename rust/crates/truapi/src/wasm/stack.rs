@@ -20,7 +20,7 @@ use crate::{
 		Stack, StackFetchRequest, StackFetchResponse, StackHost, StackRecords, StackRefresh,
 		StackRefreshOutcome, StackStatus,
 	},
-	time::RealTimer,
+	time::{RealTimer, SystemClock},
 };
 
 /// The stack a runtime was built on, and its refresh when the stack came
@@ -90,6 +90,7 @@ pub fn stack_from_js(
 		allows_reserved_values,
 		Box::new(records),
 		Arc::new(RealTimer),
+		Box::new(SystemClock),
 	)
 	.map_err(|error| JsValue::from_str(&format!("runtimeConfig.stack: {error}")))?;
 	if let Some(fetch) = get_optional_function(callbacks, "fetchStackDescriptor")? {
@@ -97,7 +98,8 @@ pub fn stack_from_js(
 			fetch: SendWrapper::new(fetch),
 			changed: get_optional_function(callbacks, "stackChanged")?.map(SendWrapper::new),
 		};
-		refresh.start(Box::new(host), spawner);
+		let started = refresh.start(Box::new(host), spawner);
+		debug_assert!(started, "a refresh that was just loaded has not started");
 	}
 	Ok(WasmStack { stack: refresh.stack(), refresh: Some(refresh) })
 }

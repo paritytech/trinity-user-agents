@@ -62,8 +62,9 @@ export interface WorkerHostRuntime extends PermissionAuthorizationRuntime {
   stackStatus(): StackStatus | undefined;
   /**
    * Fetch the stack's descriptor now instead of when the copy is an hour old.
-   * The result arrives through `stackChanged`. Does nothing without a
-   * `fetchStackDescriptor` callback.
+   * Call it when the page becomes visible again: a sleeping device can
+   * stretch that hour. The result arrives through `stackChanged`. Does
+   * nothing without a `fetchStackDescriptor` callback.
    */
   refreshStack(): void;
   /** Only on a core built with `test-host`. */

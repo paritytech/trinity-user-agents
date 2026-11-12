@@ -53,7 +53,8 @@ callbacks to the runtime constructor, typed as `StackCallbacks`:
   following redirects, and answer `document` or `notModified`. Throw for
   anything else.
   The core asks at start, again once its copy is an hour old, and on
-  `refreshStack()`.
+  `refreshStack()`. A sleeping device can stretch that hour, so call
+  `refreshStack()` when the page becomes visible again.
 - `stackChanged(status)`: the `StackStatus` at start and on each change. The
   same value comes from `stackStatus()`. `restartRequired` means a newer copy
   changes a chain, the network or the TLD, and applies once the runtime is
