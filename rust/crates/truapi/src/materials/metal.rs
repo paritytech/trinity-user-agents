@@ -21,7 +21,7 @@ use super::{
 };
 
 /// The Metal language version the shaders are written for: the oldest the iOS
-/// app supports (iOS 17, Metal 3.1). CI compiles them with the same version.
+/// app supports (iOS 17, Metal 3.1).
 const METAL_VERSION: (u8, u8) = (3, 1);
 
 /// The vertex function an app looks up in the Metal library.
