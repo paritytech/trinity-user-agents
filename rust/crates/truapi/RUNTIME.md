@@ -171,14 +171,24 @@ a compile error, not a runtime `Unavailable`.
 A local session's usernames come from the dotNS contracts on Asset Hub, read
 after activation. A name the host passes is shown until a record answers.
 
-`SigningHostConfig.network_suffix` is the network's bare dotNS TLD (`dot`,
-`paseo`, or `testnet`). The shell supplies it alongside the chain genesis hashes
-from the same network configuration used by wallet onboarding. It must match
-the People chain's `NetworkSuffix.NetworkSuffix`: reserved identities derive
-under `peopl.<suffix>`, while the chain uses that suffix for
-proof contexts. Configuration keeps local activation and key derivation
-available offline. The core validates supported suffixes but does not
-automatically check that the configured suffix matches the chain.
+### Stack
+
+Both host configs carry a `Stack`, the core's only chain configuration: the
+Relay, Asset Hub, People and Bulletin genesis hashes, the network
+`get_chain_info` reports, and the dotNS TLD.
+
+A native or browser shell builds it with `Stack::bundled` from the stack's
+pointer, the signed descriptor its build bundles, and whether the build allows
+Polkadot's reserved values. A Rust host that resolves its chains itself, such as
+the CLI, uses `Stack::new`, and a test-host browser bundle passes
+`runtimeConfig.testStack`. Each constructor documents what it refuses.
+
+Reserved identities derive under `peopl.<tld>`, and the People
+chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
+to be equal. Taking the TLD from the stack keeps local activation and key
+derivation working offline. The core does not check it against the chain, does
+not check genesis hashes against the live chains, and does not fetch newer
+copies.
 
 ### Core database
 

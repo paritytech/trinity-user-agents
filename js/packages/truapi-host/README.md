@@ -31,20 +31,25 @@ A suite moving from `@parity/host-api-test-sdk` follows the [migration guide](..
 `WasmSigningHostRuntime`; `wasm/testing` adds the Rust `wasm-signing-host` and
 `test-host` features, which is what lets the test host hold keys and answer
 resource allocation as granted without allocating anything.
-`ProductRuntimeConfig` configures the pairing host and requires no network
-suffix. The signing constructor's configuration requires
-`runtimeConfig.networkSuffix` in addition: the bare TLD (`dot`, `paseo`, or
-`testnet`) matching the People chain and the wallet's onboarding
-configuration.
 
-`runtimeConfig.assetHub` is required by both configurations, pairing and
-signing. It is the Asset Hub genesis hash, in the same shape as
-`runtimeConfig.people` and `runtimeConfig.bulletin`. Product manifests are read
-from the dotNS contracts deployed there, so it is what makes a
-`trustedProducts` grant resolvable: without a usable value no manifest resolves,
-so every cross-product grant not already cached is refused, and the refusal is
-indistinguishable from the other product having granted nothing. A config
-omitting it is rejected.
+`ProductRuntimeConfig` configures both host roles. `stack` is the Trinity stack
+the host build runs:
+
+- `pointer`: the stack's link, `polkadotapp://stack?key=0x…&url=…`.
+- `descriptor`: the bytes of the signed copy the build bundles. The core checks
+  it against the pointer's key.
+- `allowsReservedValues`: set only by a Polkadot or Polkadot-fork build. Without
+  it the core refuses Polkadot's genesis hashes and the `dot` TLD.
+
+The core takes every chain it uses, the network `getChainInfo` reports and the
+signing host's TLD from the descriptor. It refuses a pointer without a key and a
+descriptor without a People or Bulletin chain. Without an Asset Hub no product
+manifest resolves, so a cross-product grant that is not cached is refused.
+
+The test host has no descriptor, so it passes `testStack` instead: the network,
+the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it.
+`mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
+fixture builds it from `networks`.
 
 ## Bundler requirements
 
@@ -352,7 +357,7 @@ const runtime = await createNodePairingHostRuntime(
     chain, // opens a JSON-RPC WebSocket per genesis hash
     auth: { authStateChanged: (state) => state.tag === "Pairing" && showQr(state.value.deeplink) },
     productStorage,
-    supportedChains,
+    servedChains, // genesis hashes `chain` can reach
     userConfirmation, // the user's answer to reviews, e.g. a CLI prompt
     permissions,
   }),

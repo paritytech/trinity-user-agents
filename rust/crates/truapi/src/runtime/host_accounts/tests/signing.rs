@@ -29,7 +29,7 @@ use crate::{
 		signing_host::WalletAccountHolder,
 		statement_allowance::slot,
 	},
-	test_support::StubPlatform,
+	test_support::{StubPlatform, test_stack},
 };
 
 const ENTROPY: [u8; 16] = [0xAB; 16];
@@ -48,12 +48,10 @@ fn signing_runtime_with_platform(
 			version: None,
 			platform: truapi::latest::HostPlatform::Ios,
 		},
-		[0; 32],
-		[0xbb; 32],
-		[0; 32],
+		test_stack("dot", [0; 32], [0xbb; 32], None),
 		Spawner::for_test(),
 	);
-	let signing_host = SigningHostRole::new(services.clone(), "dot".to_string());
+	let signing_host = SigningHostRole::new(services.clone());
 	(services, signing_host)
 }
 

@@ -10,7 +10,9 @@ rust/crates/
                          (canonical), plus the runtime hosts implement (default `runtime`
                          feature); ships as WASM (browser/node); its `platform` module
                          holds the host syscall traits (storage, navigation, consent, ...),
-                         its `chain` module builds the core's own extrinsics through
+                         its `stack` module resolves the Trinity stack the host runs, the
+                         core's only chain configuration, from the descriptor its build
+                         bundles, its `chain` module builds the core's own extrinsics through
                          `ExtrinsicService` and reads and writes contracts through
                          `EvmContractCaller` with signer-bound prepared transactions;
                          on native targets, its `durable` module follows presigned
@@ -93,6 +95,9 @@ hosts/android/             Android host app
 hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule
+stacks/                    the link and signed descriptor of each Trinity stack a host build
+                           bundles; `scripts/update-stacks.sh` refreshes each descriptor from
+                           its link
 docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate
 scripts/battery.sh         run the generated battery against both headless CLI host roles,
@@ -172,7 +177,10 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   Archives are uploaded to the
   `@parity/truapi@<version>` release, followed by the `truapi-host-cli-stable`
   pointer that `scripts/truapi-host-installer.sh` and the CLI's own updater
-  read. Release asset URLs must percent-encode the tag
+  read, and then the `truapi-host-cli-v<version>` tag that workflows pin
+  `.github/actions/install-truapi-host` to; that action installs the CLI
+  version of the commit it is checked out at, so the tag installs its own
+  release. Release asset URLs must percent-encode the tag
   (`%40parity%2Ftruapi%40<version>`). `make cli-dist CLI_TARGET=<triple>`
   reproduces one archive locally, and `make e2e-cli-update` installs and
   self-updates it against a loopback release server.

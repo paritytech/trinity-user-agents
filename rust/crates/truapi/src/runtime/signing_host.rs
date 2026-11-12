@@ -55,15 +55,14 @@ pub struct SigningHost {
 }
 
 impl SigningHost {
-	/// Build a locked signing host for the network's dotNS suffix.
-	pub fn new(services: Arc<RuntimeServices>, network_suffix: String) -> Arc<Self> {
+	/// Build a locked signing host for the stack `services` runs.
+	pub fn new(services: Arc<RuntimeServices>) -> Arc<Self> {
 		let ring_resolver = ChainRingResolver::new(services.chain.clone());
-		Self::with_ring_resolver(services, network_suffix, ring_resolver)
+		Self::with_ring_resolver(services, ring_resolver)
 	}
 
 	fn with_ring_resolver(
 		services: Arc<RuntimeServices>,
-		network_suffix: String,
 		ring_resolver: Arc<dyn RingResolver>,
 	) -> Arc<Self> {
 		let platform = services.platform.clone();
@@ -71,7 +70,6 @@ impl SigningHost {
 		let consent = Arc::new(ProductConsent::new(platform.clone()));
 		let wallet = Arc::new(WalletAccountHolder::new(
 			services.clone(),
-			network_suffix,
 			consent.clone(),
 			ring_resolver.clone(),
 			ring_vrf_registry.clone(),
@@ -127,12 +125,15 @@ impl SigningHost {
 				version: None,
 				platform: truapi::latest::HostPlatform::Unknown,
 			},
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			crate::test_support::test_stack(
+				TEST_NETWORK_SUFFIX,
+				[0; 32],
+				[0xbb; 32],
+				Some([0xcc; 32]),
+			),
 			crate::Spawner::for_test(),
 		);
-		Self::with_ring_resolver(services, TEST_NETWORK_SUFFIX.to_string(), ring_resolver)
+		Self::with_ring_resolver(services, ring_resolver)
 	}
 
 	/// Incoming SSO for this host's wallet, answered by its runtime.

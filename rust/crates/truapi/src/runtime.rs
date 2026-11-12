@@ -104,7 +104,8 @@ use crate::platform::{
 	ChatFieldError, IdentityDisclosureReview, PermissionAuthorizationRequest,
 	PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext, ProductId,
 	ProductStorageKey, SessionUiInfo, UserConfirmationReview, normalize_chat_identifier,
-	validate_chat_icon, validate_chat_message_content, validate_chat_name,
+	validate_chat_custom_message, validate_chat_icon, validate_chat_message_content,
+	validate_chat_name,
 };
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
@@ -1475,6 +1476,12 @@ impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 				};
 				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
 					.map_err(|error| failure(error.to_string()))?;
+				if let latest::ChatRoomFooter::Card(card) = request.footer {
+					request.footer = latest::ChatRoomFooter::Card(
+						validate_chat_custom_message(card)
+							.map_err(|error| failure(error.to_string()))?,
+					);
+				}
 
 				// Checked here rather than by each host, so every host answers a room
 				// the product never created the same way.
@@ -1862,9 +1869,7 @@ impl ProductRuntimeHost<RemoteAccountHolder> {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			crate::platform::PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			crate::test_support::paseo_test_stack(),
 			"polkadotapp".to_string(),
 		)
 		.expect("compat runtime config is valid")
@@ -1903,9 +1908,7 @@ impl ProductRuntimeHost<RemoteAccountHolder> {
 		let services = RuntimeServices::new(
 			platform.clone(),
 			host_config.host.host_info.clone(),
-			host_config.people_chain_genesis_hash,
-			host_config.bulletin_chain_genesis_hash,
-			host_config.asset_hub_chain_genesis_hash,
+			host_config.stack.clone(),
 			spawner.clone(),
 		);
 		let pairing = PairingHost::new(services.clone(), host_config);
