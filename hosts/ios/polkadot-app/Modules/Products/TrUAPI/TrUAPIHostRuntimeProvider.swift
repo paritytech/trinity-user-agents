@@ -48,7 +48,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
-    private let bundledProducts: BundledProducts
     private let remoteConfig: RemoteConfigObserving?
     private let appliedConfig: () -> RemoteAppConfig?
     private let logger: LoggerProtocol
@@ -73,7 +72,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
-        bundledProducts: BundledProducts = .app,
         remoteConfig: RemoteConfigObserving? = nil,
         appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
         logger: LoggerProtocol
@@ -84,7 +82,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
-        self.bundledProducts = bundledProducts
         self.remoteConfig = remoteConfig
         self.appliedConfig = appliedConfig
         self.logger = logger
@@ -191,7 +188,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         ))
         paymentsBridge?.install(on: runtime)
         // Also before any execution opens: the core offers only the providers
-        // the host lists, the ones `funding_config` names, then the ones it ships.
+        // the host lists, the ones `funding_config` names.
         listFundingProviders(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
@@ -284,12 +281,11 @@ private extension TrUAPIHostRuntimeProvider {
     /// usually lands after the runtime is built. Later refreshes are not
     /// followed until known products carry the funding providers.
     func listFundingProviders(on runtime: TrUAPIHostRuntime) {
-        let bundled = bundledProducts.fundingProviders()
         if let config = appliedConfig() {
-            apply(publishedNames: config.fundingProviders, bundled: bundled, on: runtime)
+            apply(publishedNames: config.fundingProviders, on: runtime)
             return
         }
-        apply(publishedNames: [], bundled: bundled, on: runtime)
+        apply(publishedNames: [], on: runtime)
 
         guard let stream = remoteConfig?.remoteConfigStream() else { return }
 
@@ -299,7 +295,7 @@ private extension TrUAPIHostRuntimeProvider {
                 for try await config in stream {
                     guard let self, let runtime, !Task.isCancelled else { return }
 
-                    apply(publishedNames: config.fundingProviders, bundled: bundled, on: runtime)
+                    apply(publishedNames: config.fundingProviders, on: runtime)
                     return
                 }
             } catch {
@@ -308,9 +304,9 @@ private extension TrUAPIHostRuntimeProvider {
         }
     }
 
-    func apply(publishedNames: [String], bundled: [FundingProviderEntry], on runtime: TrUAPIHostRuntime) {
+    func apply(publishedNames: [String], on runtime: TrUAPIHostRuntime) {
         do {
-            try runtime.setFundingProviderConfig(publishedNames: publishedNames, bundled: bundled)
+            try runtime.setFundingProviderConfig(publishedNames: publishedNames)
         } catch {
             logger.error("[truapi] the funding providers were refused: \(error)")
         }

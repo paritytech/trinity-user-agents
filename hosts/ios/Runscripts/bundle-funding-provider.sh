@@ -15,7 +15,6 @@
 #
 # Output, ignored by git:
 #   polkadot-app/BundledProducts.bundle/fundtest-provider.dot/
-#     manifest.json          the root manifest, for the name and icon shown
 #     worker-manifest.json
 #     worker/index.js
 #     app/...
@@ -109,19 +108,6 @@ STAGING="$DEST_ROOT/.$PRODUCT_ID.staging"
 rm -rf "$STAGING"
 mkdir -p "$STAGING/worker"
 cp "$SOURCE/worker-manifest.json" "$STAGING/worker-manifest.json"
-# The root manifest as published. A source without one gets the display name
-# its bulletin-deploy config declares; the icon's CID exists only once
-# published, so it is left out.
-if [ -f "$SOURCE/manifest.json" ]; then
-  cp "$SOURCE/manifest.json" "$STAGING/manifest.json"
-else
-  NAME="$(sed -n 's/^ *displayName: *"\(.*\)",$/\1/p' "$SOURCE/bulletin-deploy.config.ts" 2>/dev/null | head -n 1)"
-  if [ -n "$NAME" ]; then
-    printf '{"$v":1,"displayName":"%s"}\n' "$NAME" > "$STAGING/manifest.json"
-  else
-    echo "bundle-funding-provider: $SOURCE has no root manifest; the provider ships without a name or icon" >&2
-  fi
-fi
 cp "$SOURCE/dist/worker/index.js" "$STAGING/worker/index.js"
 cp -R "$SOURCE/dist/app" "$STAGING/app"
 echo "$SHA" > "$STAGING/SOURCE_COMMIT"
