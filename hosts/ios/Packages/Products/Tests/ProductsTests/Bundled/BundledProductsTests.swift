@@ -31,6 +31,23 @@ struct BundledProductsTests {
         ))
     }
 
+    /// An App's route that names a directory loads that directory's page,
+    /// and the App's root is a directory, not a single-file archive.
+    @Test func servesARouteFromItsDirectoryPage() throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try write("<html>start</html>", to: root, "app/index.html")
+        try write("<html>card</html>", to: root, "app/card/index.html")
+        let app = root.appendingPathComponent("app").path
+
+        let card = archiveFile(root: app, requestPath: "/card", isMainFrame: true, reader: FileBundleReader())
+        let start = archiveFile(root: app, requestPath: "/", isMainFrame: true, reader: FileBundleReader())
+
+        #expect(card?.path == app + "/card/index.html")
+        #expect(start?.path == app + "/index.html")
+        #expect(!FileBundleReader().exists(path: app))
+    }
+
     /// The app's network has its own top-level domain, which a bundled id
     /// need not end in, and a provider's screen must still resolve.
     @Test func opensPagesUnderItsOwnIdOnAnyNetwork() throws {
