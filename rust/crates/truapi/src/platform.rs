@@ -1607,6 +1607,24 @@ pub trait CoreStorage: Send + Sync {
 
 	/// Clear a core-owned value by typed slot.
 	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), GenericError>;
+
+	/// Read a value the host holds under `slot` alone, with no stack id.
+	///
+	/// A host that stored core state before keys included a stack id serves
+	/// those entries here, by the key it stored them under: the SCALE-encoded
+	/// slot. The core moves each one under the stack it runs the first time it
+	/// reads the slot. A host with no such entries has none to return.
+	async fn read_unscoped_core_storage(
+		&self,
+		_slot: CoreStorageKey,
+	) -> Result<Option<Vec<u8>>, GenericError> {
+		Ok(None)
+	}
+
+	/// Clear the value the host holds under `slot` alone, with no stack id.
+	async fn clear_unscoped_core_storage(&self, _slot: CoreStorageKey) -> Result<(), GenericError> {
+		Ok(())
+	}
 }
 
 /// Decoded session fields a host shell needs to render account UI without

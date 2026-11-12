@@ -101,15 +101,17 @@ pub trait HostCallbacks: Send + Sync {
 	fn auth_state_changed(&self, state: AuthState);
 
 	/// Read a core-owned host-private storage slot. `key` is a SCALE-encoded
-	/// [`CoreStorageKey`].
+	/// [`StackStorageKey`](crate::platform::StackStorageKey), or a
+	/// [`CoreStorageKey`] alone when the core looks for a value stored with no
+	/// stack id.
 	async fn core_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
 
 	/// Persist a core-owned host-private storage slot. `key` is a
-	/// SCALE-encoded [`CoreStorageKey`].
+	/// SCALE-encoded [`StackStorageKey`](crate::platform::StackStorageKey).
 	async fn core_storage_write(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), HostRejection>;
 
-	/// Clear a core-owned host-private storage slot. `key` is a SCALE-encoded
-	/// [`CoreStorageKey`].
+	/// Clear a core-owned host-private storage slot. `key` is encoded as for
+	/// [`Self::core_storage_read`].
 	async fn core_storage_clear(&self, key: Vec<u8>) -> Result<(), HostRejection>;
 
 	/// Open a JSON-RPC connection for a chain. Return a host-assigned

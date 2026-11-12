@@ -142,8 +142,9 @@ interface HostStorage {
  * Core-owned key-value storage the host backs with its own persistence. The
  * core writes auth session, pairing identity, and persisted permission
  * decisions here. [key] is a SCALE-encoded `StackStorageKey`: a slot and the
- * id of the stack it belongs to, so stacks do not share entries. Throws
- * [HostRejection] on failure.
+ * id of the stack it belongs to, so stacks do not share entries. When the core
+ * looks for a value stored before keys had a stack id, [key] is the slot
+ * alone, as it was stored. Throws [HostRejection] on failure.
  */
 interface HostCoreStorage {
     @Throws(HostRejection::class)

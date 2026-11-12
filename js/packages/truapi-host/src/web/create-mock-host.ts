@@ -1168,6 +1168,15 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         if (faults.storageError) throw new Error(faults.storageError);
         storage.delete(coreKey(key));
       },
+      // The mock keeps nothing under a slot alone, so the core finds no value
+      // to move under its stack.
+      async readUnscopedCoreStorage() {
+        if (faults.storageError) throw new Error(faults.storageError);
+        return undefined;
+      },
+      async clearUnscopedCoreStorage() {
+        if (faults.storageError) throw new Error(faults.storageError);
+      },
     },
 
     navigation: {

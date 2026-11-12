@@ -7,10 +7,11 @@ use std::sync::{
 use crate::{
 	markers,
 	platform::{
-		AuthPresenter, ChainProvider, CoreStorage, DevicePermissionStatus, ExtrinsicVersionHost,
-		Features, JsonRpcConnection, LocaleHost, Navigation, Notifications, PermissionDecision,
-		Permissions, PreimageHost, ProductContext, ProductId, ProductOperations, ProductStorage,
-		ProviderError, StackStorageKey, ThemeHost, UserConfirmation, UserConfirmationReview,
+		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
+		ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
+		PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
+		ProductOperations, ProductStorage, ProviderError, StackStorageKey, ThemeHost,
+		UserConfirmation, UserConfirmationReview,
 	},
 };
 use futures::{
@@ -384,6 +385,26 @@ impl CoreStorage for CallbackPlatform {
 	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), v01::GenericError> {
 		self.callbacks
 			.core_storage_clear(key.encode())
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn read_unscoped_core_storage(
+		&self,
+		slot: CoreStorageKey,
+	) -> Result<Option<Vec<u8>>, v01::GenericError> {
+		self.callbacks
+			.core_storage_read(slot.encode())
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
+	async fn clear_unscoped_core_storage(
+		&self,
+		slot: CoreStorageKey,
+	) -> Result<(), v01::GenericError> {
+		self.callbacks
+			.core_storage_clear(slot.encode())
 			.await
 			.map_err(v01::GenericError::from)
 	}
