@@ -25,6 +25,10 @@
 
 import type { ProductId } from "@parity/truapi";
 import { DerivationIndex } from "@parity/truapi";
+import {
+  createLoginRequests,
+  type LoginRequestBehavior,
+} from "./login-requests.js";
 
 import { createIframeHost } from "../web/create-iframe-host.js";
 import { createWebWorkerPairingHostRuntime } from "../web/create-worker-host-runtime.js";
@@ -33,8 +37,8 @@ import {
   mockRuntimeConfig,
   type MockHost,
   type MockHostConfig,
+  type MockRuntimeConfig,
 } from "../web/create-mock-host.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
 import {
   checkDerivationIndex,
   resolveAccount,
@@ -59,7 +63,7 @@ export interface TestHostPageOptions {
   /** Behaviour knobs forwarded to {@link createMockHost}. */
   mock?: MockHostConfig;
   /** Overrides merged into {@link mockRuntimeConfig}. */
-  runtimeConfig?: Partial<ProductRuntimeConfig>;
+  runtimeConfig?: Partial<MockRuntimeConfig>;
   /**
    * Resolved WASM entry. Defaults to the signing-enabled `testing` bundle,
    * which is what lets the host own dev accounts instead of waiting on a
@@ -152,6 +156,17 @@ export interface AccountControl {
   setAccounts(names: (DevAccountName | DevAccount)[]): Promise<void>;
   /** Drop the session, leaving the host signed out. */
   signOut(): Promise<void>;
+  /**
+   * Answer a product's login request while the host is signed out, as a user
+   * would on a real host. `"success"` signs in `account`, or the first account
+   * when none is named, and answers `Success`. `"reject"` answers `Rejected`.
+   * Unset, the request reaches the core, which answers `Rejected` while signed
+   * out. A request made while signed in always reaches the core, which
+   * answers `AlreadyConnected`, and so does a second request made while the
+   * first is signing in. A withdrawn request is answered `Cancelled`.
+   * `reset` unsets it.
+   */
+  setLoginBehavior(behavior: LoginRequestBehavior, account?: string): void;
   /**
    * The SS58 address of a product account, at the prefix the core mandates.
    *
@@ -365,6 +380,16 @@ export async function startTestHost(
     await activate(first);
   }
 
+  const loginRequests = createLoginRequests({
+    signedIn: () => active !== undefined,
+    accounts: () => roster.map((account) => account.name),
+    async signIn(name) {
+      const account = roster.find((entry) => entry.name === name);
+      if (!account) throw new Error(`no account "${name}" on this host`);
+      await activate(account);
+    },
+  });
+
   // The core and the product each hold one end of a MessageChannel. Frames are
   // raw SCALE bytes in both directions; nothing interprets them here.
   //
@@ -414,7 +439,13 @@ export async function startTestHost(
           });
           port.onmessage = (event: MessageEvent) => {
             const frame = event.data;
-            if (frame instanceof Uint8Array) provider.postMessage(frame);
+            if (!(frame instanceof Uint8Array)) return;
+            if (
+              loginRequests.handle(frame, (answer) => port.postMessage(answer))
+            ) {
+              return;
+            }
+            provider.postMessage(frame);
           };
           const publish = provider.publishChatAction
             ? (action: unknown) => provider.publishChatAction!(action)
@@ -436,7 +467,13 @@ export async function startTestHost(
           );
           port.onmessage = (event: MessageEvent) => {
             const frame = event.data;
-            if (frame instanceof Uint8Array) void core.receiveFrame(frame);
+            if (!(frame instanceof Uint8Array)) return;
+            if (
+              loginRequests.handle(frame, (answer) => port.postMessage(answer))
+            ) {
+              return;
+            }
+            void core.receiveFrame(frame);
           };
           // The direct core takes bytes, so the value is encoded here rather
           // than inside the provider.
@@ -471,6 +508,7 @@ export async function startTestHost(
     reset() {
       resetMock();
       writeBootStorage();
+      loginRequests.clear();
     },
     getAccounts: () => roster.map((account) => account.name),
     getActiveAccount: () => active?.name,
@@ -513,6 +551,7 @@ export async function startTestHost(
       await publishChatAction(action);
     },
     async switchAccount(name: string) {
+      await loginRequests.settled();
       const account = roster.find((entry) => entry.name === name);
       if (!account) {
         throw new Error(
@@ -524,15 +563,20 @@ export async function startTestHost(
       await activate(account);
     },
     async setAccounts(names: (DevAccountName | DevAccount)[]) {
+      await loginRequests.settled();
       roster = names.map(resolveAccount);
       const first = roster[0];
       if (!first) throw new Error("test host needs at least one account");
       await activate(first);
     },
     async signOut() {
+      await loginRequests.settled();
       if (!active) return;
       await runtime.disconnectSession();
       active = undefined;
+    },
+    setLoginBehavior(behavior: LoginRequestBehavior, account?: string) {
+      loginRequests.set(behavior, account);
     },
   });
 

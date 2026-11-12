@@ -6,6 +6,7 @@ use super::*;
 #[derive(Default)]
 struct Recorder {
 	seen: Mutex<Vec<(String, WorkerTransition)>>,
+	crashing: Mutex<Vec<(String, u32)>>,
 }
 
 impl Recorder {
@@ -20,6 +21,13 @@ impl WorkerController for Recorder {
 			.lock()
 			.expect("recorder mutex poisoned")
 			.push((product_id.to_string(), transition));
+	}
+
+	fn worker_crashing(&self, product_id: &ProductId, crashes: u32) {
+		self.crashing
+			.lock()
+			.expect("recorder mutex poisoned")
+			.push((product_id.to_string(), crashes));
 	}
 }
 
@@ -64,6 +72,101 @@ fn releasing_without_a_reference_is_a_no_op() {
 		]
 	);
 	assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 0);
+}
+
+#[test]
+fn a_worker_that_exits_while_needed_is_started_again() {
+	let (ledger, recorder) = observed();
+	assert_eq!(ledger.exited(&ProductId::for_test("a.dot"), 0), None);
+	assert!(recorder.seen().is_empty(), "a worker nothing needs stays stopped");
+	ledger.acquire(&ProductId::for_test("a.dot"));
+	ledger.acquire(&ProductId::for_test("a.dot"));
+	assert_eq!(ledger.exited(&ProductId::for_test("a.dot"), 0), None, "restarted at once");
+	assert_eq!(ledger.count(&ProductId::for_test("a.dot")), 2, "the references stand");
+	ledger.release(&ProductId::for_test("a.dot"));
+	ledger.release(&ProductId::for_test("a.dot"));
+	assert_eq!(
+		recorder.seen(),
+		vec![
+			("a.dot".to_string(), WorkerTransition::Start),
+			("a.dot".to_string(), WorkerTransition::Start),
+			("a.dot".to_string(), WorkerTransition::Stop),
+		]
+	);
+}
+
+// A worker that keeps crashing waits longer before each restart, and the
+// host hears it is not working on the run's third crash; a quiet minute
+// starts a new run.
+#[test]
+fn a_worker_that_keeps_crashing_backs_off_and_the_host_is_told() {
+	let (ledger, recorder) = observed();
+	let product = ProductId::for_test("a.dot");
+	ledger.acquire(&product);
+	let waits: Vec<_> = (0..12).map(|n| ledger.exited(&product, n * 10)).collect();
+	let restarts_before = recorder.seen().len();
+	ledger.restart(&product);
+	ledger.restart(&product);
+	let after_quiet = ledger.exited(&product, 11 * 10 + CRASH_RUN_WINDOW_MS + 1);
+
+	assert_eq!(
+		(
+			waits,
+			recorder.seen().len() - restarts_before,
+			after_quiet,
+			recorder.crashing.lock().expect("recorder mutex poisoned").clone()
+		),
+		(
+			vec![
+				None,
+				Some(1_000),
+				Some(2_000),
+				Some(4_000),
+				Some(8_000),
+				Some(16_000),
+				Some(32_000),
+				Some(64_000),
+				Some(128_000),
+				Some(256_000),
+				Some(RESTART_BACKOFF_LONGEST.as_millis() as u64),
+				Some(RESTART_BACKOFF_LONGEST.as_millis() as u64),
+			],
+			// The restart once, not twice, then the new run's at once.
+			2,
+			None,
+			vec![("a.dot".to_string(), CRASH_NOTICE_AFTER)]
+		)
+	);
+}
+
+// A restart waiting out its backoff does nothing once nothing holds the
+// worker, or once it was started again meanwhile.
+#[test]
+fn a_pending_restart_is_dropped_when_it_is_no_longer_needed() {
+	let (ledger, recorder) = observed();
+	let product = ProductId::for_test("a.dot");
+	ledger.acquire(&product);
+	ledger.exited(&product, 0);
+	assert!(ledger.exited(&product, 1).is_some());
+	ledger.release(&product);
+	ledger.restart(&product);
+	ledger.acquire(&product);
+	assert!(ledger.exited(&product, 2).is_some());
+	ledger.release(&product);
+	ledger.acquire(&product);
+	ledger.restart(&product);
+
+	assert_eq!(
+		recorder.seen(),
+		vec![
+			("a.dot".to_string(), WorkerTransition::Start),
+			("a.dot".to_string(), WorkerTransition::Start),
+			("a.dot".to_string(), WorkerTransition::Stop),
+			("a.dot".to_string(), WorkerTransition::Start),
+			("a.dot".to_string(), WorkerTransition::Stop),
+			("a.dot".to_string(), WorkerTransition::Start),
+		]
+	);
 }
 
 #[test]

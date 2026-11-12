@@ -14,10 +14,10 @@
 //! Two kinds of event reach the sink a host installs with [`set_host_sink`],
 //! whatever the console level is, because a native host keeps stderr out of its
 //! log files and crash reports. An event whose target starts with
-//! [`HOST_MARKER_PREFIX`] is addressed to the host rather than to the console,
-//! and its target is the marker the host receives. Any warning or error is
-//! forwarded too, under a marker naming its level, so a host's log does not
-//! depend on anyone lowering the level for everything else.
+//! [`markers::HOST_MARKER_PREFIX`] is addressed to the host rather than to the
+//! console, and its target is the marker the host receives. Any warning or
+//! error is forwarded too, under a marker naming its level, so a host's log
+//! does not depend on anyone lowering the level for everything else.
 //!
 //! On wasm each level maps to the matching `console` method
 //! (`error`/`warn`/`info`/`debug`); on native everything goes to stderr.
@@ -56,11 +56,6 @@ static HOST_SINK: RwLock<Option<HostSink>> = RwLock::new(None);
 
 /// Takes a marker and a detail line for the native host log.
 type HostSink = Arc<dyn Fn(&str, &str) + Send + Sync>;
-
-/// Prefix that marks an event's target as addressed to the host rather than
-/// naming a module. Rust module paths separate with `::`, so a dotted target
-/// cannot collide with one, and the rest of the target names the condition.
-pub const HOST_MARKER_PREFIX: &str = "truapi.";
 
 /// Targets this crate family owns, whether a module path (`truapi::chain_runtime`)
 /// or a marker addressed to the host (`truapi.chain.follow_budget_reached`). A
@@ -107,14 +102,132 @@ const HOST_SINK_EVENT_LEVEL: Level = Level::WARN;
 /// How much of an account a line that leaves the device may name.
 const ACCOUNT_HANDLE_BYTES: usize = 4;
 
-/// A short handle for an account, for a line that leaves the device.
+/// An account named in a log line.
 ///
-/// Enough to tell two accounts apart within one log, and not the identifier
-/// itself. A host ships these lines to a crash reporter, where a whole account
-/// id is a public key that indexes everything that account has ever done. Lines
-/// that stay on the device can name it in full.
-pub fn account_handle(account: &[u8]) -> String {
-	hex::encode(&account[..account.len().min(ACCOUNT_HANDLE_BYTES)])
+/// Both `Display` and `Debug` write a short handle of the account's leading
+/// bytes, so either sigil in a `tracing` field is safe to use. The handle is
+/// enough to tell two accounts apart within one log and is not the identifier
+/// itself. A host ships warnings and errors to a crash reporter, where a whole
+/// account id is a public key that indexes everything that account has ever
+/// done.
+///
+/// A line that stays on the device names the account in full through
+/// [`Account::in_full`], which has to be asked for by name.
+#[derive(Clone, Copy)]
+pub struct Account<'a>(&'a [u8]);
+
+impl<'a> Account<'a> {
+	/// Names `account` in a log line.
+	pub fn new(account: &'a [u8]) -> Self {
+		Self(account)
+	}
+
+	/// The whole account, for a line that stays on the device.
+	pub fn in_full(&self) -> String {
+		hex::encode(self.0)
+	}
+}
+
+impl fmt::Display for Account<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		for byte in &self.0[..self.0.len().min(ACCOUNT_HANDLE_BYTES)] {
+			write!(f, "{byte:02x}")?;
+		}
+		Ok(())
+	}
+}
+
+impl fmt::Debug for Account<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(self, f)
+	}
+}
+
+/// Longest a host-supplied string may run in a line that leaves the device,
+/// counted after escaping and not counting the quotes around it.
+const HOST_TEXT_MAX_CHARS: usize = 160;
+
+/// Text a host handed the core, named in a log line.
+///
+/// A foreign exception message is written by code the core does not control.
+/// It can run to any length, can carry newlines and the separators a detail
+/// is built from, and the host ships warnings and errors to a crash reporter.
+/// Both `Display` and `Debug` write it quoted and escaped the way a Rust
+/// string literal is written, and stop after a bounded number of characters,
+/// so it stays on one line, cannot be read as the fields beside it, and
+/// cannot reorder what follows it.
+///
+/// Escaping goes through `char::escape_debug`, which covers the categories
+/// `char::is_control` leaves out, the line and paragraph separators and the
+/// bidirectional overrides among them.
+///
+/// The wording of the text is not otherwise rewritten. This bounds its shape,
+/// and it is the one place a rule about its content would go.
+#[derive(Clone, Copy)]
+pub struct HostText<'a>(&'a str);
+
+impl<'a> HostText<'a> {
+	/// Names `text`, which came from a host, in a log line.
+	pub fn new(text: &'a str) -> Self {
+		Self(text)
+	}
+}
+
+impl fmt::Display for HostText<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		f.write_char('"')?;
+		let stopped_early = write_bounded_escaped(f, self.0)?;
+		f.write_char('"')?;
+		if stopped_early {
+			f.write_char('\u{2026}')?;
+		}
+		Ok(())
+	}
+}
+
+/// Writes `text` escaped into `out`, stopping at [`HOST_TEXT_MAX_CHARS`].
+///
+/// Returns whether it stopped early. The bound counts the escape rather than
+/// the character behind it, so what is written is what is bounded and an
+/// escape is never cut in half.
+fn write_bounded_escaped(out: &mut impl fmt::Write, text: &str) -> Result<bool, fmt::Error> {
+	let mut written = 0;
+	for character in text.chars() {
+		let escaped = character.escape_debug();
+		if written + escaped.len() > HOST_TEXT_MAX_CHARS {
+			return Ok(true);
+		}
+		written += escaped.len();
+		for part in escaped {
+			out.write_char(part)?;
+		}
+	}
+	Ok(false)
+}
+
+/// `text`, as a host handed it, bounded and escaped so it is safe to keep.
+///
+/// [`HostText`] makes a host's string safe in the one line that names it.
+/// A string the core stores and hands on travels to places that line cannot
+/// reach: the warnings raised about it later, and the product the error is
+/// returned to. Bounding it where it enters means the value carries its own
+/// bound, so none of those places has to remember.
+///
+/// The result is one line, bounded to the same number of characters as the
+/// log field, plus a mark when something was dropped. It is not quoted,
+/// because it is read by a person rather than by a log parser.
+pub fn bound_host_text(text: &str) -> String {
+	let mut bounded = String::new();
+	if write_bounded_escaped(&mut bounded, text).expect("writing to a String cannot fail") {
+		bounded.push('\u{2026}');
+	}
+	bounded
+}
+
+impl fmt::Debug for HostText<'_> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		fmt::Display::fmt(self, f)
+	}
 }
 
 /// Longest detail the host sink forwards, in characters.
@@ -150,7 +263,7 @@ fn subscriber(
 				if !meta.target().starts_with(CRATE_TARGET_PREFIX) {
 					return false;
 				}
-				if meta.target().starts_with(HOST_MARKER_PREFIX) {
+				if meta.target().starts_with(markers::HOST_MARKER_PREFIX) {
 					// A host-addressed target the table does not list is a
 					// mistake, not a line to pass on: nothing downstream knows
 					// what its detail carries.
@@ -345,7 +458,7 @@ impl<S: Subscriber> Layer<S> for HostSinkLayer {
 		// A marked target names its own condition, so it is the marker. Anything
 		// else reaches a host only for being a warning, so the marker names the
 		// level and the detail keeps the module that raised it.
-		let (marker, detail) = if meta.target().starts_with(HOST_MARKER_PREFIX) {
+		let (marker, detail) = if meta.target().starts_with(markers::HOST_MARKER_PREFIX) {
 			(meta.target().to_string(), visitor.detail())
 		} else {
 			(

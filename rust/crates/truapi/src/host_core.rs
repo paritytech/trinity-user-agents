@@ -32,19 +32,20 @@ use futures::{
 use parity_scale_codec::{Decode, Encode};
 use thiserror::Error;
 use tracing::{instrument, warn};
-use truapi::{CallContext, CancellationReason, v01};
+use truapi::{CallContext, CancellationReason, latest, v01, versioned::FromLatest};
 
 use crate::{
+	Spawner,
 	frame::ProtocolMessage,
-	host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome},
 	host_logic::worker::WorkerLedger,
 	runtime::{
-		ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
-		FundingProviderLink, HostSession, LocalActivation, PairedSsoPeer, PairingHostRole,
-		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, RuntimeServices,
-		SigningHostRole, SigningHostSsoService, SsoResponderService, sso_service::Dispatch,
+		ActionChannel, AuthorityError, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+		DevicePairingObserver, FundingProviderLink, HostSession, LocalActivation, PairedSsoPeer,
+		PairingHostRole, ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit,
+		ResumePairingError, RuntimeServices, SigningHostRole, SsoAccountHolderService,
+		SsoResponderService,
 	},
-	subscription::{HostInitiatedSubscriptionManager, Spawner},
+	subscription::HostInitiatedSubscriptionManager,
 	transport::Transport,
 	truapi_core::TrUApiCore,
 };
@@ -185,6 +186,7 @@ fn product_context(product_id: &ProductId) -> ProductContext {
 pub struct PairingHostRuntime {
 	services: Arc<RuntimeServices>,
 	pairing_host: Arc<PairingHostRole>,
+	image_loader: crate::image_loader::ImageLoader,
 }
 
 impl PairingHostRuntime {
@@ -239,9 +241,7 @@ impl PairingHostRuntime {
 		let services = RuntimeServices::with_chat_platform(
 			platform,
 			config.host.host_info.clone(),
-			config.people_chain_genesis_hash,
-			config.bulletin_chain_genesis_hash,
-			config.asset_hub_chain_genesis_hash,
+			config.stack.clone(),
 			spawner.clone(),
 			chat_platform,
 		);
@@ -250,7 +250,39 @@ impl PairingHostRuntime {
 		}
 		let pairing_host = PairingHostRole::new(services.clone(), config);
 		pairing_host.session().clone().start_session_store_sync(spawner);
-		Self { services, pairing_host }
+		Self {
+			image_loader: crate::image_loader::ImageLoader::new(
+				services.clone(),
+				Arc::new(crate::time::RealTimer),
+			),
+			services,
+			pairing_host,
+		}
+	}
+
+	/// Resolves public profile metadata without loading image bytes.
+	///
+	/// Native records expire after one hour; `force` skips that cache. Browsers always
+	/// read the chain. Invalid usernames and lookup or storage failures return errors.
+	pub async fn resolve_public_profile(
+		&self,
+		username: &str,
+		force: bool,
+	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
+		crate::public_profile::PublicProfiles::new(self.services.clone())
+			.resolve(username, force)
+			.await
+	}
+
+	/// The image `reference` names, checked against its CID and the image policy.
+	///
+	/// Unsupported CIDs, unavailable bytes and image policy failures return errors.
+	/// Dropping the future cancels the load.
+	pub async fn load_image(
+		&self,
+		reference: crate::ImageReference,
+	) -> Result<crate::LoadedImage, crate::ImageError> {
+		self.image_loader.load(reference).await
 	}
 
 	/// Install the host's [`PermissionStatusHost`], which carries the reasoning
@@ -444,6 +476,13 @@ impl PairingHostRuntime {
 	/// this host.
 	pub fn worker_ledger(&self) -> &WorkerLedger {
 		&self.services.worker_ledger
+	}
+
+	/// Report that the product's worker stopped without being asked to:
+	/// it is started again while something holds it, with a growing wait
+	/// when it keeps crashing.
+	pub fn worker_exited(&self, product_id: &ProductId) {
+		self.services.worker_exited(product_id);
 	}
 
 	/// Read the active session's X25519 chat identity private key, for hosts
@@ -653,7 +692,7 @@ impl SigningHostRuntime {
 		product_id: &ProductId,
 	) -> Result<Option<[u8; 32]>, v01::GenericError> {
 		self.signing_host
-			.derive_subtree_public_key(product_id)
+			.product_subtree_public_key(product_id)
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
@@ -723,10 +762,8 @@ impl SigningHostRuntime {
 		let platform: Arc<dyn Platform> = platform;
 		let services = RuntimeServices::with_chat_platform(
 			platform,
-			config.host.host_info.clone(),
-			config.people_chain_genesis_hash,
-			config.bulletin_chain_genesis_hash,
-			config.asset_hub_chain_genesis_hash,
+			config.host.host_info,
+			config.stack,
 			spawner,
 			chat_platform,
 		);
@@ -738,20 +775,19 @@ impl SigningHostRuntime {
 			// indistinguishable from an ungranted read. Only as visible as the
 			// host's log level, which defaults to `ERROR`.
 			warn!(
-				"no Asset Hub configured: no product manifest will resolve, so \
+				"the stack has no Asset Hub: no product manifest will resolve, so \
                  every cross-product grant not already cached is refused"
 			);
 		}
-		let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
-		let sso_responder = SsoResponderService::new(services.clone(), signing_host.clone());
+		let signing_host = SigningHostRole::new(services.clone());
 		Self {
 			image_loader: crate::image_loader::ImageLoader::new(
 				services.clone(),
 				Arc::new(crate::time::RealTimer),
 			),
 			services,
+			sso_responder: signing_host.sso_responder(),
 			signing_host,
-			sso_responder,
 		}
 	}
 
@@ -785,31 +821,105 @@ impl SigningHostRuntime {
 		self.services.install_funding_platform(platform)
 	}
 
-	/// Install the feed a native host draws its funding screens from. Install
-	/// it before [`Self::set_funding_platform`], which resumes funding.
-	/// Set-once; returns whether this call installed it.
+	/// Install the feed the host draws its funding screens from: sessions,
+	/// whether funding is in progress, and the overlay's options.
+	/// Install it before [`Self::set_funding_platform`], which resumes
+	/// funding. Set-once; returns whether this call installed it.
 	pub fn set_funding_feed(&self, feed: Arc<dyn crate::runtime::FundingFeed>) -> bool {
 		self.services.funding().install_feed(feed)
 	}
 
-	/// Every funding session the core keeps, in flight first, then ended,
-	/// each newest first.
-	pub fn funding_sessions(&self) -> Vec<crate::host_logic::funding::FundingSession> {
-		self.services.funding().sessions()
-	}
-
-	/// Every ended funding session the host recorded or the core compacted,
-	/// as summaries newest first,
-	/// for rebuilding the host's own history when it was lost. Compacted
-	/// sessions are kept for good, so this never forgets one.
+	/// Every ended funding session, as summaries newest first: the ones
+	/// held in full and the ones compacted, which are kept for good. The
+	/// host reads it whenever it shows history.
 	pub fn funding_history(&self) -> Vec<crate::host_logic::funding::FundingSessionSummary> {
 		self.services.funding().history()
 	}
 
-	/// Record that the host wrote ended session `intent` into its own
-	/// history. Until it does, the session is handed over again through
-	/// `funding_session_changed` each time funding resumes; the host reads
-	/// the full record with `funding_session`.
+	/// Why `amount` cannot go ahead in funding session `intent`, if it
+	/// cannot, given what the user can spend; see the native
+	/// `funding_amount_issue`.
+	pub fn funding_amount_issue(
+		&self,
+		intent: &str,
+		amount: u128,
+		spendable: Option<u128>,
+	) -> Option<crate::platform::FundingAmountIssue> {
+		self.services.funding_amount_issue(intent, amount, spendable)
+	}
+
+	/// Ended funding session `intent`'s summary, held in full or compacted,
+	/// including a cancel that moved no money, which `funding_history`
+	/// leaves out.
+	pub fn funding_summary(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding::FundingSessionSummary> {
+		self.services.funding().summary(intent)
+	}
+
+	/// Funding session `intent` as the core holds it in full.
+	///
+	/// `None` once only its summary is kept, or for no such session.
+	pub fn funding_session(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding::FundingSession> {
+		self.services.funding().get(intent)
+	}
+
+	/// Funding session `intent`'s progress now, while the core holds it in
+	/// full.
+	pub fn funding_progress(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding::FundingProgress> {
+		self.funding_session(intent)
+			.map(|session| session.progress(crate::current_unix_millis()))
+	}
+
+	/// What funding session `intent`'s overlay offers while it is up,
+	/// worked out as it is read.
+	pub fn funding_options(
+		&self,
+		intent: &str,
+	) -> Option<crate::host_logic::funding_providers::FundingOptions> {
+		let presenting = self.services.funding().presenting();
+		if !presenting.iter().any(|up| up == intent) {
+			return None;
+		}
+		self.services.funding_options(intent)
+	}
+
+	/// Funding session `intent`'s latest quote list, while its overlay is up.
+	pub fn funding_quotes(&self, intent: &str) -> Option<crate::platform::FundingQuoteList> {
+		self.services.funding_quotes().list(intent)
+	}
+
+	/// The funding sessions the host has heard of that the core holds in
+	/// full, with their progress now, newest opened first.
+	pub fn funding_entries(&self) -> Vec<crate::host_logic::funding::FundingBookEntry> {
+		self.services.funding().entries(crate::current_unix_millis())
+	}
+
+	/// Offer the funding providers the remote configuration names, then the
+	/// `bundled` ones it does not.
+	///
+	/// Names that are not product ids are skipped and logged. A call listing
+	/// what the last one listed changes nothing, so the host calls it on
+	/// every configuration refresh.
+	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_provider_config"))]
+	pub fn set_funding_provider_config(
+		&self,
+		published_names: Vec<String>,
+		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
+	) -> Result<(), v01::GenericError> {
+		Ok(self.services.set_funding_provider_config(published_names, bundled)?)
+	}
+
+	/// Record that the host told the user how ended session `intent` went.
+	/// Until it does, the session is handed over again through
+	/// `funding_session_changed` each time funding resumes.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.acknowledge_funding_session"))]
 	pub async fn acknowledge_funding_session(
 		&self,
@@ -842,51 +952,45 @@ impl SigningHostRuntime {
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
 	}
 
-	/// The providers funding session `intent` can be handed to, with the
-	/// routes that serve its direction, in the host's order. Empty for a
-	/// session the core does not know.
-	pub fn funding_candidates(
-		&self,
-		intent: &str,
-	) -> Vec<crate::host_logic::funding_providers::FundingCandidate> {
-		self.services
-			.funding()
-			.get(intent)
-			.map(|session| self.services.funding_candidates(session.direction))
-			.unwrap_or_default()
+	/// Quotes of `amount` for funding session `intent` on the rail, asset,
+	/// network and country the user selected, sent through
+	/// [`FundingPlatform::funding_quotes_changed`] (natively `funding_changed`
+	/// with `Quotes`). An ask the running request already prices keeps it.
+	/// Returns the request id each list carries, `None` while the selection
+	/// names no asset or `amount` is zero.
+	pub fn request_funding_quotes(&self, intent: &str, amount: u128) -> Option<u64> {
+		self.services.request_selected_quotes(intent, amount)
 	}
 
-	/// Live quotes for funding session `intent`: one row per funding
-	/// provider, whatever routes its manifest declares, `Pending` and then
-	/// `Quoted` or `Unavailable` as each provider answers or runs out of time.
-	/// The stream ends once every provider has, or once a newer ask for the
-	/// session starts, and never errors; dropping it withdraws the asks still
-	/// open.
-	pub fn get_funding_quote(
-		&self,
-		intent: &str,
-		ask: v01::FundingQuoteAsk,
-	) -> futures::stream::BoxStream<'static, crate::platform::FundingQuoteRow> {
-		self.services.get_funding_quote(intent, ask)
+	/// Start funding session `intent` on the best quote of request
+	/// `request_id` once every provider answered it. A new request, a
+	/// selection, [`Self::cancel_funding_auto_start`] or a list with no usable
+	/// quote cancels it.
+	pub fn start_funding_when_quoted(&self, intent: &str, request_id: u64) {
+		self.services.start_funding_when_quoted(intent, request_id);
 	}
 
-	/// [`Self::get_funding_quote`] for hosts that take each row through
-	/// [`FundingPlatform::funding_quote_changed`] instead of a stream. A newer
-	/// request for the session withdraws this one, so the host only ever
-	/// hears rows for the last ask it made.
-	pub fn request_funding_quotes(&self, intent: &str, ask: v01::FundingQuoteAsk) {
-		let rows = self.services.get_funding_quote(intent, ask);
-		let platform = self.services.funding().platform();
-		let intent = intent.to_string();
-		(self.services.spawner)(Box::pin(async move {
-			let Some(platform) = platform else {
-				return;
-			};
-			futures::pin_mut!(rows);
-			while let Some(row) = futures::StreamExt::next(&mut rows).await {
-				platform.funding_quote_changed(intent.clone(), row);
-			}
-		}));
+	/// Disarm [`Self::start_funding_when_quoted`] for session `intent`.
+	pub fn cancel_funding_auto_start(&self, intent: &str) {
+		self.services.cancel_funding_auto_start(intent);
+	}
+
+	/// Whether the host offers any funding provider.
+	pub fn funding_available(&self) -> bool {
+		!self.services.funding_providers().is_empty()
+	}
+
+	/// Record what the user picked in funding session `intent`'s overlay;
+	/// the options it leads to arrive through
+	/// [`crate::runtime::FundingFeed::funding_options_changed`] (natively
+	/// `funding_changed` with `Options`). A selection naming another route
+	/// than the quote request withdraws it.
+	pub fn select_funding_options(
+		&self,
+		intent: &str,
+		selection: crate::host_logic::funding_providers::FundingSelection,
+	) {
+		self.services.select_funding_options(intent, selection);
 	}
 
 	/// Answer the provider's cancel offer on funding session `intent`:
@@ -916,15 +1020,6 @@ impl SigningHostRuntime {
 			.select_funding_provider(intent, provider_id, quote_id)
 			.await
 			.map_err(|err| v01::GenericError { reason: err.to_string() })
-	}
-
-	/// One funding session as the core holds it, for the host's own status
-	/// and history views.
-	pub fn funding_session(
-		&self,
-		intent: &str,
-	) -> Option<crate::host_logic::funding::FundingSession> {
-		self.services.funding().get(intent)
 	}
 
 	/// Open a funding session on the host's own behalf, as the Balance card's
@@ -1135,6 +1230,20 @@ impl SigningHostRuntime {
 		self.services.core_db()?.status().await
 	}
 
+	/// Resolves public profile metadata without loading image bytes.
+	///
+	/// Native records expire after one hour; `force` skips that cache. Browsers always
+	/// read the chain. Invalid usernames and lookup or storage failures return errors.
+	pub async fn resolve_public_profile(
+		&self,
+		username: &str,
+		force: bool,
+	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
+		crate::public_profile::PublicProfiles::new(self.services.clone())
+			.resolve(username, force)
+			.await
+	}
+
 	/// The image `reference` names, checked against its CID and the image policy.
 	pub async fn load_image(
 		&self,
@@ -1212,6 +1321,13 @@ impl SigningHostRuntime {
 	/// this host.
 	pub fn worker_ledger(&self) -> &WorkerLedger {
 		&self.services.worker_ledger
+	}
+
+	/// Report that the product's worker stopped without being asked to:
+	/// it is started again while something holds it, with a growing wait
+	/// when it keeps crashing.
+	pub fn worker_exited(&self, product_id: &ProductId) {
+		self.services.worker_exited(product_id);
 	}
 
 	/// Return whether this host currently has an authenticated signing session.
@@ -1394,12 +1510,15 @@ impl SigningHostRuntime {
 	///
 	/// Only [`ResponderExit::PeerDisconnected`] authorizes removing the durable
 	/// pairing. Retain it after [`ResponderExit::SubscriptionEnded`] or an error.
+	/// After [`ResumePairingError::Interrupted`] the call can be made again;
+	/// after [`ResumePairingError::CannotServe`] it fails the same way until
+	/// the local session changes.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.resume_pairing"))]
 	pub async fn resume_pairing(
 		&self,
 		peer: PairedSsoPeer,
-	) -> Result<ResponderExit, v01::GenericError> {
-		self.sso_responder.resume_pairing(peer).await.map_err(Into::into)
+	) -> Result<ResponderExit, ResumePairingError> {
+		self.sso_responder.resume_pairing(peer).await
 	}
 
 	/// Notify a paired host that this signing host is ending their SSO session.
@@ -1411,19 +1530,14 @@ impl SigningHostRuntime {
 		self.sso_responder.disconnect_paired_host(peer).await.map_err(Into::into)
 	}
 
-	/// Answer one SSO request using this signing host.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
-	pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
-		let service = SigningHostSsoService::new(self.signing_host.clone());
-		match service.answer(message).await {
-			Dispatch::Response(answer) => {
-				SsoRequestOutcome::Response { message: answer.message.encode() }
-			},
-			Dispatch::Disconnected => SsoRequestOutcome::Disconnected,
-			Dispatch::NotARequest(_) | Dispatch::Withdraw(_) | Dispatch::Withdrawn => {
-				SsoRequestOutcome::Ignored
-			},
-		}
+	/// Bind an external SSO transport to the wallet matching both of its keys.
+	pub fn open_sso_service(
+		&self,
+		own_statement_account_id: [u8; 32],
+		own_encryption_public_key: [u8; 32],
+	) -> Result<SsoAccountHolderService, AuthorityError> {
+		self.sso_responder
+			.open_service(own_statement_account_id, own_encryption_public_key)
 	}
 }
 
@@ -1896,6 +2010,10 @@ pub struct ProductRuntimeControl {
 	disposed: Arc<AtomicBool>,
 }
 
+/// A context v0.1 can express goes out as V1 so a v0.1 product decodes it, and
+/// only a footer context, which a product docks through a v0.2 call, goes out as V2.
+const RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES: u8 = 1;
+
 impl ProductRuntimeControl {
 	fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
 		if self.disposed.load(Ordering::Acquire) {
@@ -1919,11 +2037,9 @@ impl ProductRuntimeControl {
 	/// subscribes.
 	pub fn publish_renderer_action(
 		&self,
-		item: v01::HostRendererActionSubscribeItem,
+		item: truapi::latest::HostRendererActionSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
-		self.connection()?.publish_renderer_action(
-			truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(item),
-		)
+		self.connection()?.publish_renderer_action(item.into())
 	}
 
 	/// Ask this connection's product to draw one body, streaming replacement
@@ -1935,14 +2051,17 @@ impl ProductRuntimeControl {
 	/// [`WorkerLedger::install_worker_controller`].
 	pub fn render(
 		&self,
-		request: v01::ProductRendererRenderRequest,
+		request: truapi::latest::ProductRendererRenderRequest,
 	) -> Result<
 		truapi::Subscription<v01::RendererNode, truapi::CallError<v01::GenericError>>,
 		ProductRuntimeError,
 	> {
 		self.connection()?.renderer_access()?;
-		let reference = WorkerReference::acquire(self.connection.clone());
-		let request = truapi::versioned::renderer::ProductRendererRenderRequest::V1(request);
+		let reference = self.connection.hold_worker();
+		let request = truapi::versioned::renderer::ProductRendererRenderRequest::from_latest(
+			request,
+			RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES,
+		);
 		let transport: Arc<dyn Transport> = self.transport.clone();
 		let stream = crate::generated::dispatcher::renderer_render(
 			&self.host_subscriptions,
@@ -1957,9 +2076,10 @@ impl ProductRuntimeControl {
 			(stream, Some(reference)),
 			|(mut stream, reference)| async move {
 				match stream.next().await? {
-					Ok(truapi::versioned::renderer::ProductRendererRenderItem::V1(node)) => {
-						Some((Ok(node), (stream, reference)))
-					},
+					Ok(
+						truapi::versioned::renderer::ProductRendererRenderItem::V1(node) |
+						truapi::versioned::renderer::ProductRendererRenderItem::V2(node),
+					) => Some((Ok(node), (stream, reference))),
 					Err(interrupt) => Some((
 						Err(crate::interrupt::interrupt_into_latest(interrupt)),
 						(stream, None),
@@ -2002,7 +2122,7 @@ impl FundingProviderLink for WorkerFundingLink {
 
 	fn quote(
 		&self,
-		ask: v01::FundingQuoteAsk,
+		ask: latest::FundingQuoteAsk,
 	) -> BoxFuture<'static, Option<v01::FundingQuoteAnswer>> {
 		use truapi::versioned::funding_provider::{
 			ProductFundingQuoteRequest, ProductFundingQuoteResponse,
@@ -2061,25 +2181,6 @@ impl FundingProviderLink for WorkerFundingLink {
 			.await
 			.is_ok()
 		})
-	}
-}
-
-/// One reference the core holds on a product's worker, released on drop.
-struct WorkerReference {
-	connection: Arc<ProductConnection>,
-}
-
-impl WorkerReference {
-	/// Take a reference on the worker of the product `connection` serves.
-	fn acquire(connection: Arc<ProductConnection>) -> Self {
-		connection.acquire_worker_reference();
-		Self { connection }
-	}
-}
-
-impl Drop for WorkerReference {
-	fn drop(&mut self) {
-		self.connection.release_worker_reference();
 	}
 }
 

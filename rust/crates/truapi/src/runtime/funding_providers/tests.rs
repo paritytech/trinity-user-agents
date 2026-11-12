@@ -4,6 +4,61 @@ use truapi::latest::FundingRail;
 
 use crate::host_logic::worker_manifest::FundingRoute;
 
+// The network picker lists each network a crypto route declares once, in
+// the order the providers declare them: for the picked asset, or for any
+// asset before one is picked.
+#[test]
+fn declared_networks_are_listed_once_in_order() {
+	let route = |rail, assets: &[&str], networks: Option<&[&str]>| FundingRoute {
+		rail,
+		directions: vec![FundingDirection::In],
+		assets: assets.iter().map(|asset| asset.to_string()).collect(),
+		networks: networks.map(|n| n.iter().map(|network| network.to_string()).collect()),
+		countries: None,
+	};
+	let candidate = |routes| FundingCandidate {
+		provider_id: ProductId::for_test("ramp.dot"),
+		routes,
+		unsupported: Vec::new(),
+		limits: Vec::new(),
+		declares_routes: true,
+		brand: None,
+	};
+	let candidates = [
+		candidate(vec![
+			route(FundingRail::Crypto, &["USDT"], Some(&["polkadot", "ethereum"])),
+			route(FundingRail::Crypto, &["USDC"], Some(&["base"])),
+			route(FundingRail::Card, &["USDT"], None),
+		]),
+		candidate(vec![route(FundingRail::Crypto, &["USDT"], Some(&["ethereum", "tron"]))]),
+	];
+
+	let usdt = |networks: &[&str]| -> Vec<(String, Vec<String>)> {
+		networks
+			.iter()
+			.map(|network| (network.to_string(), vec!["USDT".to_string()]))
+			.collect()
+	};
+	assert_eq!(
+		(
+			declared_networks(&candidates, FundingDirection::In, Some("USDT")),
+			declared_networks(&candidates, FundingDirection::In, None)
+				.into_iter()
+				.map(|(network, _)| network)
+				.collect::<Vec<_>>(),
+		),
+		(
+			usdt(&["polkadot", "ethereum", "tron"]),
+			vec![
+				"polkadot".to_string(),
+				"ethereum".to_string(),
+				"base".to_string(),
+				"tron".to_string()
+			]
+		)
+	);
+}
+
 fn manifest(routes: &str) -> String {
 	format!(
 		r#"{{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"index.js","includes":{{"funding":{{"routes":[{routes}]}}}}}}"#
@@ -21,6 +76,9 @@ fn providers(entries: &[(&str, Option<String>)]) -> FundingProviders {
 			.map(|(product_id, worker_manifest)| FundingProviderEntry {
 				product_id: ProductId::for_test(product_id),
 				worker_manifest: worker_manifest.clone(),
+				root_manifest: None,
+				origin: FundingProviderOrigin::Published,
+				app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 			})
 			.collect(),
 	)
@@ -62,6 +120,30 @@ fn candidates_come_from_the_snapshot_until_dotns_answers() {
 	);
 }
 
+// A provider the host ships in the app is never published, so dotNS
+// answering "nothing" must not drop it the way it drops a listed one.
+#[test]
+fn a_bundled_provider_keeps_the_hosts_manifest() {
+	let providers = providers(&[("listed.dot", Some(manifest(CARD_IN)))]);
+	lock(&providers.entries).extend(
+		offered_providers(vec![FundingProviderEntry {
+			product_id: ProductId::for_test("bundled.dot"),
+			worker_manifest: Some(manifest(CARD_IN)),
+			root_manifest: None,
+			origin: FundingProviderOrigin::Bundled,
+			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+		}])
+		.expect("offered"),
+	);
+	providers.answered(&ProductId::for_test("listed.dot"), None);
+	providers.answered(&ProductId::for_test("bundled.dot"), None);
+
+	assert_eq!(
+		ids(providers.candidates(FundingDirection::In)),
+		vec![ProductId::for_test("bundled.dot")]
+	);
+}
+
 // A snapshot the core cannot read is the host's mistake, so it is refused
 // when offered rather than leaving the provider silently missing.
 #[test]
@@ -70,6 +152,9 @@ fn an_unreadable_snapshot_is_refused_when_offered() {
 		offered_providers(vec![FundingProviderEntry {
 			product_id: ProductId::for_test("card.dot"),
 			worker_manifest: Some(worker_manifest.to_string()),
+			root_manifest: None,
+			origin: FundingProviderOrigin::Published,
+			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
 		}])
 		.map(|offered| offered.len())
 		.map_err(|error| matches!(error, FundingSessionError::InvalidProvider { .. }))
@@ -88,11 +173,9 @@ fn dotns_answer_wins_over_the_snapshot() {
 		("unshipped.dot", None),
 	]);
 	let live = |routes: &str| WorkerManifest::parse(&manifest(routes)).ok();
-	lock(&providers.live).extend([
-		(ProductId::for_test("withdrawn.dot"), None),
-		(ProductId::for_test("changed.dot"), live(CRYPTO_OUT)),
-		(ProductId::for_test("unshipped.dot"), live(CARD_IN)),
-	]);
+	providers.answered(&ProductId::for_test("withdrawn.dot"), None);
+	providers.answered(&ProductId::for_test("changed.dot"), live(CRYPTO_OUT));
+	providers.answered(&ProductId::for_test("unshipped.dot"), live(CARD_IN));
 
 	assert_eq!(
 		(
@@ -100,6 +183,79 @@ fn dotns_answer_wins_over_the_snapshot() {
 			ids(providers.candidates(FundingDirection::Out)),
 		),
 		(vec![ProductId::for_test("unshipped.dot")], vec![ProductId::for_test("changed.dot")])
+	);
+}
+
+// What dotNS answers for a provider the host stopped listing is dropped,
+// so listing it again starts from the host's snapshot, while a provider
+// listed throughout keeps its answer.
+#[test]
+fn an_answer_for_a_provider_no_longer_listed_is_dropped() {
+	let listed = |product_ids: &[&str]| {
+		offered_providers(
+			product_ids
+				.iter()
+				.map(|product_id| FundingProviderEntry {
+					product_id: ProductId::for_test(product_id),
+					worker_manifest: Some(manifest(CARD_IN)),
+					root_manifest: None,
+					origin: FundingProviderOrigin::Published,
+					app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+				})
+				.collect(),
+		)
+		.expect("offered")
+	};
+	let providers = FundingProviders::default();
+	providers.offer(listed(&["kept.dot", "dropped.dot"]));
+	providers.answered(&ProductId::for_test("kept.dot"), None);
+	providers.offer(listed(&["kept.dot"]));
+	let late = providers.answered(&ProductId::for_test("dropped.dot"), None);
+	providers.offer(listed(&["kept.dot", "dropped.dot"]));
+
+	assert_eq!(
+		(late, ids(providers.candidates(FundingDirection::In))),
+		(false, vec![ProductId::for_test("dropped.dot")])
+	);
+}
+
+// A limit stands on its own clock: a later quote does not renew it, and a
+// quote at an amount below a known minimum shows that minimum is gone.
+#[test]
+fn a_limit_ages_on_its_own_and_a_lower_quote_clears_it() {
+	use crate::host_logic::funding_providers::{LEARNED_SUPPORT_TTL_MS, LearnedLimit};
+	let ask = |asked, min: Option<u128>, at_ms| LearnedSupport {
+		provider_id: ProductId::for_test("ramp.dot"),
+		direction: FundingDirection::In,
+		rail: truapi::latest::FundingRail::Card,
+		asset: "EUR".to_string(),
+		network: None,
+		country: None,
+		asked,
+		supported: true,
+		min: min.map(|amount| LearnedLimit { amount, learned_at_ms: at_ms }),
+		max: None,
+		learned_at_ms: at_ms,
+	};
+	let min_after = |answers: &[LearnedSupport]| {
+		let providers = FundingProviders::default();
+		for answer in answers {
+			providers.learn(answer.clone());
+		}
+		lock(&providers.learned)
+			.iter()
+			.map(|known| known.min.map(|min| min.amount))
+			.collect::<Vec<_>>()
+	};
+	let later = LEARNED_SUPPORT_TTL_MS - 1;
+
+	assert_eq!(
+		(
+			min_after(&[ask(5, Some(10), 1_000), ask(20, None, 2_000)]),
+			min_after(&[ask(5, Some(10), 1_000), ask(8, None, 2_000)]),
+			min_after(&[ask(5, Some(10), 1_000), ask(20, None, 1_000 + later + 2)]),
+		),
+		(vec![Some(10)], vec![None], vec![None])
 	);
 }
 
@@ -113,7 +269,7 @@ fn quotes_go_to_the_providers_a_session_can_be_handed_to() {
 		("unshipped.dot", None),
 		("withdrawn.dot", Some(manifest(CARD_IN))),
 	]);
-	lock(&providers.live).insert(ProductId::for_test("withdrawn.dot"), None);
+	providers.answered(&ProductId::for_test("withdrawn.dot"), None);
 
 	assert_eq!(
 		(
@@ -123,4 +279,73 @@ fn quotes_go_to_the_providers_a_session_can_be_handed_to() {
 		),
 		(vec![ProductId::for_test("card.dot")], [true, false, false])
 	);
+}
+
+// A provider's candidate carries the name and icon its root manifest gives
+// it, so hosts load no brand of their own; a brand read later replaces the
+// shipped one.
+#[test]
+fn a_candidate_carries_its_providers_brand() {
+	let root = |name: &str| {
+		format!(
+			r#"{{"$v":1,"displayName":"{name}","description":"d","icon":{{"cid":"bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy","format":"png"}}}}"#
+		)
+	};
+	let providers = providers(&[]);
+	lock(&providers.entries).extend(
+		offered_providers(vec![FundingProviderEntry {
+			product_id: ProductId::for_test("bundled.dot"),
+			worker_manifest: Some(manifest(CARD_IN)),
+			root_manifest: Some(root("Shipped")),
+			origin: FundingProviderOrigin::Bundled,
+			app: crate::host_logic::funding_providers::FundingProviderApp::Unknown,
+		}])
+		.expect("offered"),
+	);
+	let branded = providers.branded(
+		&ProductId::for_test("bundled.dot"),
+		ProductBrand::parse(&root("Live")).expect("brand"),
+	);
+	let names = |providers: &FundingProviders| {
+		providers
+			.candidates(FundingDirection::In)
+			.into_iter()
+			.map(|candidate| candidate.brand.map(|brand| brand.display_name))
+			.collect::<Vec<_>>()
+	};
+
+	assert_eq!((branded, names(&providers)), (true, vec![Some("Live".to_string())]));
+}
+
+// A provider that does not route the rail has nothing to say about its
+// amounts, so its missing record leaves the bounds of the rail known.
+#[test]
+fn limits_count_only_the_providers_routing_the_rail() {
+	use crate::host_logic::funding_providers::{LearnedLimit, LimitScope};
+	let providers = providers(&[
+		("ramp.dot", Some(manifest(CARD_IN))),
+		("swap.dot", Some(manifest(CRYPTO_OUT))),
+	]);
+	let now_ms = current_unix_millis();
+	providers.learn(LearnedSupport {
+		provider_id: ProductId::for_test("ramp.dot"),
+		direction: FundingDirection::In,
+		rail: FundingRail::Card,
+		asset: "EUR".to_string(),
+		network: None,
+		country: None,
+		asked: 5,
+		supported: true,
+		min: Some(LearnedLimit { amount: 20_000_000, learned_at_ms: now_ms }),
+		max: Some(LearnedLimit { amount: 90_000_000, learned_at_ms: now_ms }),
+		learned_at_ms: now_ms,
+	});
+	let limits = providers.amount_limits(LimitScope {
+		direction: FundingDirection::In,
+		rail: FundingRail::Card,
+		asset: "EUR",
+		network: None,
+		country: None,
+	});
+	assert_eq!((limits.min, limits.max), (Some(20_000_000), Some(90_000_000)));
 }

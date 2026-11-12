@@ -42,6 +42,7 @@ use parity_scale_codec::{Decode, Encode};
 
 pub mod api;
 mod dotns_name;
+pub mod markers;
 mod product_id;
 pub use product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 pub mod v01;
@@ -93,34 +94,37 @@ pub mod latest {
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
 		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
-		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
-		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
+		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
+		ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
+		ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions, Effect,
+		EffectProps, FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES,
 		FUNDING_DETAIL_MAX_CHARS, FundingAssignment, FundingCancelAnswer, FundingCancelDecision,
-		FundingDeposit, FundingDirection, FundingFailure, FundingFrameOutcome, FundingFrameTarget,
-		FundingInboundUpdate, FundingOutboundUpdate, FundingQuote, FundingQuoteAnswer,
-		FundingQuoteAsk, FundingQuoteRefusal, FundingRail, FundingReceived, FundingUpdate,
-		GenericError, HorizontalAlignment, HostAccountCreateProofRequest,
-		HostAccountGetAliasRequest, HostAccountGetError, HostAccountListRingVrfKeysRequest,
-		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination,
-		NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference,
-		NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
+		FundingDeposit, FundingDetail, FundingDirection, FundingFact, FundingFailure,
+		FundingFrameOutcome, FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate,
+		FundingPayout, FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal,
+		FundingRail, FundingReceived, FundingUpdate, GenericError, HorizontalAlignment,
+		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
+		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
+		HostWorkerOperationError, ImageFit, ImageProps, ImageSource, Modifier,
+		NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination, NftPurseChequeId,
+		NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference, NftPurseId,
+		NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
 		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
 		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
 		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
 		RemotePermission, RemoteStatementStoreCreateProofError,
 		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
-		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
-		SignedStatement, Size, Statement, StatementProof, StatementTopic, StorageQueryItem,
-		StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
-		TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
+		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RendererNode,
+		ResourceAllocationError, RingLocation, RingLocationJunction, RingVrfKeyDisclosure,
+		RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size,
+		Statement, StatementProof, StatementTopic, StorageQueryItem, StorageQueryType,
+		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
+		TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
 	};
+
+	pub use crate::v02::{ChatRoomFooter, RenderContext};
 
 	/// Latest payload type of a versioned envelope.
 	pub type LatestOf<T> = <T as Versioned>::Latest;
@@ -333,6 +337,12 @@ pub mod latest {
 	/// Failure showing a provider screen.
 	pub type HostFundingPresentFrameError =
 		LatestOf<versioned::funding_provider::HostFundingPresentFrameError>;
+	/// Request to close a provider screen.
+	pub type HostFundingCloseFrameRequest =
+		LatestOf<versioned::funding_provider::HostFundingCloseFrameRequest>;
+	/// Failure closing a provider screen.
+	pub type HostFundingCloseFrameError =
+		LatestOf<versioned::funding_provider::HostFundingCloseFrameError>;
 	/// Payment request.
 	pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
 	/// Payment request failure.
@@ -485,6 +495,12 @@ pub mod latest {
 	/// Face visibility change failure.
 	pub type HostExpandedCardSetFaceShownError =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
+	/// Request to turn the card above the calling Widget to one side.
+	pub type HostExpandedCardSetBackShownRequest =
+		LatestOf<versioned::expanded_card::HostExpandedCardSetBackShownRequest>;
+	/// Card turn failure.
+	pub type HostExpandedCardSetBackShownError =
+		LatestOf<versioned::expanded_card::HostExpandedCardSetBackShownError>;
 	/// Push notification scheduling request.
 	pub type HostPushNotificationRequest =
 		LatestOf<versioned::notifications::HostPushNotificationRequest>;
@@ -846,6 +862,8 @@ mod dotns_views;
 #[cfg(feature = "runtime")]
 mod dynamic_vrf;
 #[cfg(feature = "runtime")]
+mod evm_contract;
+#[cfg(feature = "runtime")]
 pub mod frame;
 #[cfg(feature = "runtime")]
 mod host_core;
@@ -861,15 +879,19 @@ mod interrupt;
 pub mod logging;
 
 #[cfg(feature = "runtime")]
-pub mod markers;
-#[cfg(feature = "runtime")]
 pub mod platform;
 #[cfg(feature = "runtime")]
 mod protocol_error;
 #[cfg(feature = "runtime")]
+mod public_profile;
+#[cfg(feature = "runtime")]
 mod runtime;
 #[cfg(feature = "runtime")]
 mod session_usernames;
+#[cfg(feature = "runtime")]
+mod spawner;
+#[cfg(feature = "runtime")]
+mod stack;
 #[cfg(feature = "runtime")]
 mod stream_extensions;
 #[cfg(feature = "runtime")]
@@ -886,6 +908,8 @@ mod truapi_core;
 mod test_support;
 #[cfg(feature = "runtime")]
 mod unix_time;
+#[cfg(feature = "runtime")]
+mod wake;
 
 // Dispatch must keep serving deprecated APIs while clients migrate.
 #[cfg(feature = "runtime")]
@@ -937,6 +961,9 @@ mod nft_purse;
 mod pocket_cards;
 
 #[cfg(feature = "runtime")]
+pub use spawner::Spawner;
+
+#[cfg(feature = "runtime")]
 pub use truapi_core::TrUApiCore;
 
 #[cfg(feature = "runtime")]
@@ -973,6 +1000,8 @@ pub use platform::{
 	ProductContext, SigningHostConfig, describe_core_storage_key,
 };
 #[cfg(feature = "runtime")]
+pub use public_profile::{ProfileAvatar, PublicProfile, PublicProfileError};
+#[cfg(feature = "runtime")]
 pub use runtime::StatementRenewalTarget;
 #[cfg(feature = "runtime")]
 pub use runtime::contacts::contact_handle;
@@ -984,8 +1013,8 @@ pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest
 pub use runtime::statement_allowance;
 #[cfg(feature = "runtime")]
 pub use runtime::{
-	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit,
+	AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
+	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
 };
 #[cfg(feature = "runtime")]
 pub use unix_time::current_unix_millis;

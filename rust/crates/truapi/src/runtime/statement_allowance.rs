@@ -24,7 +24,8 @@ mod test_fixtures;
 #[cfg(test)]
 pub use test_fixtures::{
 	ASSET_HUB_METADATA as ASSET_HUB_TEST_METADATA_BYTES, asset_hub as asset_hub_test_metadata,
-	people as people_test_metadata,
+	people as people_test_metadata, people_extrinsics as people_test_extrinsics,
+	people_target as people_test_target,
 };
 mod view;
 mod view_cache;
@@ -66,6 +67,9 @@ const RESOURCES_PALLET: &str = "Resources";
 /// for allowance authorization.
 #[derive(Debug, Error)]
 pub enum StatementAllowanceError {
+	/// The selected wallet can no longer authorize this operation.
+	#[error(transparent)]
+	Authority(#[from] crate::runtime::authority::AuthorityError),
 	/// JSON-RPC transport, request, subscription, or storage hex failure.
 	#[error(transparent)]
 	Rpc(#[from] rpc::RpcError),
@@ -568,6 +572,7 @@ pub async fn find_including_rings(
 			// One collection's failure must not take down the others. A device
 			// that can only prove light personhood should still get its
 			// allowance when the full-personhood storage is unreadable.
+			Err(err @ StatementAllowanceError::Authority(_)) => return Err(err),
 			Err(err) => {
 				warn!(%collection, %err, "could not resolve this collection");
 				if first_error.is_none() {
@@ -792,6 +797,10 @@ pub async fn scan_collections(
 	.await;
 	let mut scans = Vec::new();
 	for (collection, selection) in selections {
+		let selection = match selection {
+			Err(err @ StatementAllowanceError::Authority(_)) => return Err(err),
+			other => other,
+		};
 		if allocated_in(&scans).is_some() {
 			continue;
 		}

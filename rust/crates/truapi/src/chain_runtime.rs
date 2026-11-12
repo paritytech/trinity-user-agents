@@ -22,23 +22,23 @@ use core::{
 	task::{Context, Poll},
 };
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use std::{
 	collections::{BTreeMap, HashMap, HashSet, VecDeque},
 	sync::{
-		Arc, Mutex, OnceLock,
+		Arc, Mutex, OnceLock, Weak,
 		atomic::{AtomicBool, AtomicU64, Ordering},
 	},
 };
 #[cfg(target_arch = "wasm32")]
-use web_time::Duration;
+use web_time::{Duration, SystemTime};
 
-use crate::platform::{ChainProvider, JsonRpcConnection};
+use crate::platform::{ChainProvider, JsonRpcConnection, ProviderError};
 use derive_more::{Display, Error};
 use futures::{
 	FutureExt, Stream, StreamExt,
 	channel::mpsc,
-	future::{AbortHandle, Abortable, BoxFuture, Shared},
+	future::{AbortHandle, Abortable, BoxFuture, Shared, join_all},
 	pin_mut,
 	stream::BoxStream,
 };
@@ -73,8 +73,8 @@ use truapi::v01::{
 };
 
 use crate::{
+	Spawner,
 	host_rpc_client::HostRpcClient,
-	subscription::Spawner,
 	time::{RealTimer, Timer},
 };
 
@@ -163,6 +163,16 @@ pub struct SubxtConnection {
 	pub client: OnlineClient<SubstrateConfig>,
 	/// What the backend's RPC client has learned about its follow.
 	follow: Arc<FollowReport>,
+	/// The connection the client reads over. Weak, since that connection
+	/// caches this bundle.
+	connection: Weak<ChainConnection>,
+}
+
+impl SubxtConnection {
+	/// Whether the connection under this client has closed, or is gone.
+	fn connection_closed(&self) -> bool {
+		self.connection.upgrade().is_none_or(|connection| connection.is_closed())
+	}
 }
 
 /// Cached Subxt client over the legacy JSON-RPC methods, which reach any
@@ -187,7 +197,9 @@ pub struct LegacyConnection {
 /// `ProductRuntimeHost` boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum RuntimeFailureKind {
-	/// Backend is not wired or refused the request for plumbing reasons.
+	/// The chain could not be reached: the backend is not wired, the node
+	/// could not be dialled, or the connection is gone. A later attempt can
+	/// succeed.
 	Unavailable,
 	/// Backend responded but the payload was malformed or the call failed.
 	HostFailure,
@@ -325,9 +337,23 @@ impl RuntimeChainProvider for HostChainProvider {
 				format!("genesis_hash must be 32 bytes, got {}", genesis_hash.len()),
 			)
 		})?;
-		self.provider.connect(genesis_hash).await.map(Arc::from).map_err(|err| {
-			RuntimeFailure::unavailable_with_reason("remote_chain_connect", format!("{err:?}"))
-		})
+		self.provider
+			.connect(genesis_hash)
+			.await
+			.map(Arc::from)
+			.map_err(|err| match err {
+				// The node could not be reached, which a later attempt can outlast.
+				ProviderError::Handshake { .. } | ProviderError::Transport { .. } => {
+					RuntimeFailure::unavailable_with_reason(
+						"remote_chain_connect",
+						format!("{err:?}"),
+					)
+				},
+				// The provider refused: it does not serve the chain, is not set
+				// up to connect, or holds all the connections it allows. Asking
+				// again straight away gets the same answer.
+				_ => RuntimeFailure::host_failure("remote_chain_connect", format!("{err:?}")),
+			})
 	}
 }
 
@@ -605,12 +631,9 @@ impl ChainRuntime {
 		.boxed()
 		.shared();
 		self.record_follow_start(follow_start_key, start.clone());
-		(self.spawner)(
-			async move {
-				let _ = start.await;
-			}
-			.boxed(),
-		);
+		self.spawner.spawn(async move {
+			let _ = start.await;
+		});
 
 		ManagedSubscription::new(
 			rx.boxed(),
@@ -731,6 +754,77 @@ impl ChainRuntime {
 			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 			.and_then(operation_started_result)?;
 		Ok(RemoteChainHeadCallResponse { operation })
+	}
+
+	/// Starts calls concurrently and returns their outcomes in request order.
+	///
+	/// Every request must belong to the supplied follow. The timeout starts
+	/// after all startup responses arrive and applies only to unfinished calls.
+	/// A stopped follow fails unfinished calls while retaining completed results.
+	pub async fn chain_head_call_batch(
+		&self,
+		follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
+		requests: Vec<RemoteChainHeadCallRequest>,
+		label: &'static str,
+		timeout: Duration,
+		timer: &dyn Timer,
+	) -> Vec<Result<Vec<u8>, String>> {
+		let operations =
+			join_all(requests.into_iter().map(|request| self.remote_chain_head_call(request)))
+				.await;
+		let mut results = vec![None; operations.len()];
+		let mut pending = HashMap::new();
+		for (index, response) in operations.into_iter().enumerate() {
+			match response.map(|response| response.operation) {
+				Ok(OperationStartedResult::Started { operation_id }) => {
+					pending.insert(operation_id, index);
+				},
+				Ok(OperationStartedResult::LimitReached) => {
+					results[index] = Some(Err(format!("{label} operation limit reached")));
+				},
+				Err(failure) => results[index] = Some(Err(failure.reason())),
+			}
+		}
+		let timeout = timer.sleep(timeout).fuse();
+		pin_mut!(timeout);
+		let failure = loop {
+			if pending.is_empty() {
+				break None;
+			}
+			let next = follow.next().fuse();
+			pin_mut!(next);
+			let item = futures::select! {
+				item = next => item,
+				() = timeout => break Some(format!("{label} runtime call timed out")),
+			};
+			let (operation_id, result) = match item {
+				Some(RemoteChainHeadFollowItem::OperationCallDone { operation_id, output }) => {
+					(operation_id, Ok(output))
+				},
+				Some(RemoteChainHeadFollowItem::OperationInaccessible { operation_id }) => {
+					(operation_id, Err(format!("{label} runtime call was inaccessible")))
+				},
+				Some(RemoteChainHeadFollowItem::OperationError { operation_id, error }) => {
+					(operation_id, Err(error))
+				},
+				Some(RemoteChainHeadFollowItem::Stop) | None => {
+					break Some(format!("{label} follow stopped during runtime call"));
+				},
+				_ => continue,
+			};
+			if let Some(index) = pending.remove(&operation_id) {
+				results[index] = Some(result);
+			}
+		};
+		if let Some(error) = failure {
+			for index in pending.into_values() {
+				results[index] = Some(Err(error.clone()));
+			}
+		}
+		results
+			.into_iter()
+			.map(|result| result.expect("every call has an outcome"))
+			.collect()
 	}
 
 	/// Release pinned blocks.
@@ -1174,6 +1268,7 @@ impl ChainRuntime {
 		};
 		let remote_follow_id =
 			connection.require_remote_follow(method, local_follow_id.clone()).await?;
+		connection.note_follow_call(&local_follow_id);
 		if with_runtime && !connection.follow_with_runtime(&local_follow_id) {
 			return Err(RuntimeFailure::host_failure(
 				method,
@@ -1433,27 +1528,24 @@ impl ChainConnection {
 		// The pump holds only a weak handle so a torn-down connection is not
 		// kept alive by its own driver task.
 		let pump_connection = Arc::downgrade(&self);
-		(self.spawner)(
-			async move {
-				while let Some(result) = driver.next().await {
-					if let Err(error) = result {
-						warn!(target: "subxt", "chainHead backend error={error}");
-					}
-				}
-				// The backend can make no further progress; drop the cached
-				// Subxt bundle so the next caller rebuilds instead of hitting
-				// a permanently dead backend.
-				if let Some(connection) = pump_connection.upgrade() {
-					connection.invalidate_subxt_connection(generation);
+		self.spawner.spawn(async move {
+			while let Some(result) = driver.next().await {
+				if let Err(error) = result {
+					warn!(target: "subxt", "chainHead backend error={error}");
 				}
 			}
-			.boxed(),
-		);
+			// The backend can make no further progress; drop the cached
+			// Subxt bundle so the next caller rebuilds instead of hitting
+			// a permanently dead backend.
+			if let Some(connection) = pump_connection.upgrade() {
+				connection.invalidate_subxt_connection(generation);
+			}
+		});
 		let backend = Arc::new(backend);
 		let client = OnlineClient::from_backend_with_config(config, backend.clone())
 			.await
 			.map_err(|error| RuntimeFailure::host_failure(METHOD, error.to_string()))?;
-		Ok(SubxtConnection { client, follow })
+		Ok(SubxtConnection { client, follow, connection: Arc::downgrade(&self) })
 	}
 
 	/// The config every Subxt client on this connection is built with. It
@@ -1552,6 +1644,13 @@ impl ChainConnection {
 		Some(local_follow_id.clone())
 	}
 
+	/// Record a chainHead call made on `local_follow_id`, for the budget line.
+	fn note_follow_call(&self, local_follow_id: &str) {
+		if let Some(follow) = self.follows.lock().unwrap().get_mut(local_follow_id) {
+			follow.activity.saw_call();
+		}
+	}
+
 	fn remote_follow_id(&self, local_follow_id: &str) -> Option<String> {
 		self.follows
 			.lock()
@@ -1586,6 +1685,7 @@ impl ChainConnection {
 						abort: None,
 						sender,
 						cancelled,
+						activity: FollowActivity::new(),
 					},
 				);
 			},
@@ -1742,7 +1842,7 @@ impl ChainConnection {
 			return Err(follow_closed());
 		}
 
-		(self.spawner)(Abortable::new(pump, abort_registration).map(|_| ()).boxed());
+		self.spawner.spawn(Abortable::new(pump, abort_registration).map(|_| ()));
 		Ok(remote_follow_id)
 	}
 
@@ -1759,30 +1859,108 @@ impl ChainConnection {
 		follow.remote_subscription_id = Some(remote_follow_id);
 		follow.abort = Some(abort);
 		let holding = Self::follows_holding_a_slot(&follows);
-		drop(follows);
 		let at_budget = holding.len() >= FOLLOWS_A_NODE_BUDGETS;
 		// Reported on the way into the budget and again only after the
 		// connection has come back out of it, so a connection that sits there
 		// says so once rather than on every follow that renews the condition.
 		let already_reported = self.budget_reported.swap(at_budget, Ordering::Relaxed);
-		if at_budget && !already_reported {
+		let report = at_budget && !already_reported;
+		let line = report.then(|| {
+			Self::budget_line(
+				&encode_hex(&self.genesis_hash),
+				&holding,
+				&follows,
+				SystemTime::now(),
+			)
+		});
+		drop(follows);
+		if let Some(line) = line {
 			// The refusal this predicts surfaces far from here, on whichever
 			// call happens to open the next follow, and says nothing about
 			// follows when it does. The target addresses it to the host, so it
 			// arrives whatever the level is, and hosts run at `ERROR`.
-			let genesis = encode_hex(&self.genesis_hash);
-			let held = holding.len();
-			let occupants = holding
-				.iter()
-				.map(|held| Self::occupant_name(held))
-				.collect::<Vec<_>>()
-				.join(", ");
-			warn!(
-				target: crate::markers::CHAIN_FOLLOW_BUDGET_REACHED.target,
-				"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows; its next follow will be refused: {occupants}",
-			);
+			warn!(target: crate::markers::CHAIN_FOLLOW_BUDGET_REACHED.target, "{line}");
 		}
 		true
+	}
+
+	/// What the budget marker carries: the chain, how many follows hold a slot,
+	/// and each of those follows with its activity.
+	///
+	/// Every follow is named, because a leak shows as one follow open far longer
+	/// than the rest, and a line that named only some of them could leave that
+	/// one out. The follows read in the order [`Self::follows_holding_a_slot`]
+	/// gives them, which is by id rather than by age.
+	fn budget_line(
+		genesis: &str,
+		holding: &[String],
+		follows: &HashMap<String, FollowState>,
+		now: SystemTime,
+	) -> String {
+		let held = holding.len();
+		let head = format!(
+			"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows, the next is refused: "
+		);
+		let entries = holding
+			.iter()
+			.map(|follow_id| {
+				let activity = follows
+					.get(follow_id)
+					.map(|follow| follow.describe_activity(now))
+					.unwrap_or_default();
+				(Self::occupant_name(follow_id), activity)
+			})
+			.collect::<Vec<_>>();
+		let room = crate::logging::HOST_SINK_DETAIL_MAX_CHARS
+			.saturating_sub(head.chars().count() + held.saturating_sub(1) * 2);
+		let occupants = Self::fit_entries(&entries, room).join(", ");
+		format!("{head}{occupants}")
+	}
+
+	/// Each `(name, activity)` as `name activity`, all of them inside `room`
+	/// characters between them.
+	///
+	/// Nothing is cut when everything fits. Otherwise the shortest entries
+	/// are kept whole and the longest share what is left equally. A cut
+	/// entry loses the end of its name and keeps its activity, which is what
+	/// says whether a follow is stale or its receiver gone; only an entry
+	/// whose activity alone outruns its share is cut at its end.
+	fn fit_entries(entries: &[(String, String)], room: usize) -> Vec<String> {
+		let whole = entries
+			.iter()
+			.map(|(name, activity)| format!("{name} {activity}"))
+			.collect::<Vec<_>>();
+		let mut by_length = (0..whole.len()).collect::<Vec<_>>();
+		by_length.sort_by_key(|&index| whole[index].chars().count());
+		let mut fitted = whole.clone();
+		let mut left = room;
+		for (placed, &index) in by_length.iter().enumerate() {
+			let share = left / (whole.len() - placed);
+			let length = whole[index].chars().count();
+			if length <= share {
+				left = left.saturating_sub(length);
+				continue;
+			}
+			let (name, activity) = &entries[index];
+			let name_room = share.saturating_sub(activity.chars().count() + 1);
+			fitted[index] = if name_room >= 2 {
+				format!("{} {activity}", Self::bound_entry(name, name_room))
+			} else {
+				Self::bound_entry(&whole[index], share)
+			};
+			left = left.saturating_sub(fitted[index].chars().count());
+		}
+		fitted
+	}
+
+	/// `entry` within `max_chars`, marking a cut so a name read short is not
+	/// mistaken for a name that is short.
+	fn bound_entry(entry: &str, max_chars: usize) -> String {
+		if entry.chars().count() <= max_chars {
+			return entry.to_string();
+		}
+		let kept = crate::logging::truncate_to_chars(entry, max_chars.saturating_sub(1));
+		format!("{kept}\u{2026}")
 	}
 
 	/// Local ids of the follows holding a slot in this connection's budget.
@@ -1803,14 +1981,16 @@ impl ChainConnection {
 
 	/// Name one follow holding a slot, for a line that leaves the device.
 	///
-	/// The core's own follow ids are its own words and are named in full. A
-	/// product's follow id is built from the request id it chose, which is
-	/// arbitrary text off the wire, so only the runtime it belongs to is named.
+	/// The core's own follow ids are its own words, so one is named by what it
+	/// says less the prefix every core follow shares, and the line's own budget
+	/// is what bounds its length. A product's follow id is built from the
+	/// request id it chose, which is arbitrary text off the wire, so only the
+	/// runtime it belongs to is named.
 	/// Which products hold how many is the diagnostic; what a product called
 	/// its request is not, and is not ours to repeat.
 	fn occupant_name(local_follow_id: &str) -> String {
-		if local_follow_id.starts_with("truapi:") {
-			return local_follow_id.to_string();
+		if let Some(core_follow) = local_follow_id.strip_prefix("truapi:") {
+			return core_follow.to_string();
 		}
 		match local_follow_id.split_once(':') {
 			Some((runtime, _)) => format!("{runtime}:product"),
@@ -1853,7 +2033,10 @@ impl ChainConnection {
 	/// Cleanup never aborts: the only caller is the pump itself, which the
 	/// stored abort handle targets.
 	fn deliver_follow_event(&self, local_follow_id: &str, event: RemoteChainHeadFollowItem) {
-		let sender = self.follow_sender(local_follow_id);
+		let sender = self.follows.lock().unwrap().get_mut(local_follow_id).map(|follow| {
+			follow.activity.saw_event();
+			follow.sender.clone()
+		});
 		let is_stop = matches!(event, RemoteChainHeadFollowItem::Stop);
 		// Recorded before the subscriber sees the stop, so a caller that reacts
 		// to it by calling again already finds the reason.
@@ -1927,6 +2110,58 @@ struct FollowState {
 	/// local follow stream.
 	sender: mpsc::UnboundedSender<Result<RemoteChainHeadFollowItem, RuntimeFailure>>,
 	cancelled: Arc<AtomicBool>,
+	activity: FollowActivity,
+}
+
+impl FollowState {
+	/// What this follow has been doing, for the budget line.
+	///
+	/// The node sends new blocks to every live follow, so a recent event only
+	/// says the follow is alive. The calls made on it say whether anyone still
+	/// uses it, so a follow open for minutes with no recent call is the one to
+	/// suspect, though a reader that only watches blocks makes no calls
+	/// either. A dropped receiver on a follow still here means the cleanup
+	/// that should have ended it missed this connection.
+	fn describe_activity(&self, now: SystemTime) -> String {
+		let FollowActivity { opened_at, last_event_at, calls, last_call_at } = &self.activity;
+		let elapsed = |at: &SystemTime| now.duration_since(*at).unwrap_or_default().as_secs();
+		let since = |at: &Option<SystemTime>| match at {
+			Some(at) => format!("{}s", elapsed(at)),
+			None => "never".to_string(),
+		};
+		let open = elapsed(opened_at);
+		let last_event = since(last_event_at);
+		let last_call = since(last_call_at);
+		// A live receiver is the ordinary case, so only a dropped one is named.
+		let receiver = if self.sender.is_closed() { ", dropped" } else { "" };
+		format!("open {open}s, event {last_event}, calls {calls}, call {last_call}{receiver}")
+	}
+}
+
+/// When a follow was opened, when it last delivered an event, and how often
+/// and how recently a chainHead call, an unpin included, was made on it.
+/// Wall-clock times, since a phone's monotonic clock stops while it sleeps and
+/// a follow left open across a screen-off would read as fresh.
+struct FollowActivity {
+	opened_at: SystemTime,
+	last_event_at: Option<SystemTime>,
+	calls: u64,
+	last_call_at: Option<SystemTime>,
+}
+
+impl FollowActivity {
+	fn new() -> Self {
+		Self { opened_at: SystemTime::now(), last_event_at: None, calls: 0, last_call_at: None }
+	}
+
+	fn saw_event(&mut self) {
+		self.last_event_at = Some(SystemTime::now());
+	}
+
+	fn saw_call(&mut self) {
+		self.calls += 1;
+		self.last_call_at = Some(SystemTime::now());
+	}
 }
 
 /// Subscription wrapper that runs an `on_drop` cleanup when the stream is
@@ -2193,7 +2428,9 @@ fn is_transport_loss(error: &SubxtRpcError) -> bool {
 	matches!(error, SubxtRpcError::Client(_) | SubxtRpcError::DisconnectedWillReconnect(_))
 }
 
-fn rpc_failure(method: &'static str, error: SubxtRpcError) -> RuntimeFailure {
+/// A failed or closed transport is `Unavailable`; any other error is a
+/// `HostFailure`.
+pub fn rpc_failure(method: &'static str, error: SubxtRpcError) -> RuntimeFailure {
 	match error {
 		SubxtRpcError::Client(_) | SubxtRpcError::DisconnectedWillReconnect(_) => {
 			RuntimeFailure::unavailable_with_reason(method, error.to_string())
@@ -2355,46 +2592,6 @@ pub async fn wait_for_chain_head_storage_value(
 	}
 }
 
-/// Waits for one runtime-API call operation's output from a
-/// `chainHead_v1_follow` stream.
-pub async fn wait_for_chain_head_call_output(
-	follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
-	operation_id: &str,
-	label: &'static str,
-	timeout: Duration,
-) -> Result<Vec<u8>, String> {
-	let timeout = futures_timer::Delay::new(timeout).fuse();
-	pin_mut!(timeout);
-	loop {
-		let next = follow.next().fuse();
-		pin_mut!(next);
-		futures::select! {
-			item = next => match item {
-				Some(RemoteChainHeadFollowItem::OperationCallDone { operation_id: item_operation_id, output })
-					if item_operation_id == operation_id =>
-				{
-					return Ok(output);
-				}
-				Some(RemoteChainHeadFollowItem::OperationInaccessible { operation_id: item_operation_id })
-					if item_operation_id == operation_id =>
-				{
-					return Err(format!("{label} runtime call was inaccessible"));
-				}
-				Some(RemoteChainHeadFollowItem::OperationError { operation_id: item_operation_id, error })
-					if item_operation_id == operation_id =>
-				{
-					return Err(error);
-				}
-				Some(RemoteChainHeadFollowItem::Stop) | None => {
-					return Err(format!("{label} follow stopped during runtime call"));
-				}
-				_ => {}
-			},
-			() = timeout => return Err(format!("{label} runtime call timed out")),
-		}
-	}
-}
-
 #[cfg(test)]
 fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
 	hex::decode(value.strip_prefix("0x").unwrap_or(value)).map_err(|_| "invalid hex".to_string())
@@ -2422,11 +2619,10 @@ mod occupant_name_tests {
 	}
 
 	/// The core's own ids are its own words, and say which read holds the slot.
+	/// The prefix they all share says nothing one from another, and the line
+	/// they go into has room for four of them.
 	#[test]
-	fn a_core_follow_is_named_in_full() {
-		assert_eq!(
-			ChainConnection::occupant_name("truapi:dotns:3:identity"),
-			"truapi:dotns:3:identity"
-		);
+	fn a_core_follow_is_named_by_what_its_id_says() {
+		assert_eq!(ChainConnection::occupant_name("truapi:dotns:3:identity"), "dotns:3:identity");
 	}
 }

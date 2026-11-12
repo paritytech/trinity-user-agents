@@ -1,13 +1,18 @@
 import Foundation
+import PolkadotUI
 import Products
 import UIKit
 import UIKitExt
+import WebKit
 
 @MainActor
 protocol SPAViewProtocol: ControllerBackedProtocol {
     /// The page's own scroll view, which a screen around it can hang a header
     /// in so the header rides the page rather than pinning above it.
     var pageScrollView: UIScrollView { get }
+
+    /// The web view the page loads in, which a screen watches to know the load has finished.
+    var pageWebView: WKWebView { get }
 
     func navigate(to url: URL)
     func navigate(to page: ProductPage)
@@ -17,6 +22,11 @@ protocol SPAViewProtocol: ControllerBackedProtocol {
     func hideLoading()
     func showLoadFailure(_ content: ErrorContent)
     func updateLoadPhase(_ phase: ProductLoadPhase)
+    func showChainStatus(_ rows: [ChainConnectionStatusViewModel])
+}
+
+extension SPAViewProtocol {
+    func showChainStatus(_: [ChainConnectionStatusViewModel]) {}
 }
 
 @MainActor
@@ -52,6 +62,7 @@ protocol SPAInteractorOutputProtocol: AnyObject {
     func didRestartLoading()
     func didPrepareChat(chatId: Chat.Id)
     func didUpdateLoadPhase(_ phase: ProductLoadPhase)
+    func didReceiveChainStatus(_ rows: [ChainConnectionStatusViewModel])
 }
 
 @MainActor
@@ -71,4 +82,5 @@ protocol SPAWireframeProtocol: AlertPresentable, ErrorPresentable {
     )
 
     func close(tabId: UUID)
+    func dismiss(view: ControllerBackedProtocol?)
 }

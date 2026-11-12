@@ -14,7 +14,8 @@
 //! Byte layouts mirror `pallets/dotns-gateway` in `paritytech/individuality`
 //! and the dotNS contracts (`paritytech/dotns`).
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::SolCall;
 use parity_scale_codec::Encode;
 use sp_crypto_hashing::{blake2_128, blake2_256, keccak_256, twox_128};
 use subxt::{ext::scale_encode::EncodeAsType, utils::MultiSignature};
@@ -381,6 +382,14 @@ pub enum DotnsError {
 	/// A pending-claim page could not be read.
 	#[error("DotnsPopController.pendingClaims")]
 	PendingClaims(#[source] DotnsCallError),
+	/// A personhood name's reservation queue could not be read.
+	#[error("DotnsPopController.{view}")]
+	ReservationQueue {
+		/// Queue view that failed.
+		view: &'static str,
+		/// Failure reading the view.
+		source: DotnsCallError,
+	},
 	/// The network's top-level domain could not be read.
 	#[error("ProtocolRegistry.tld()")]
 	Tld(#[source] DotnsCallError),
@@ -390,9 +399,9 @@ pub enum DotnsError {
 	/// A name's content resolver could not be located.
 	#[error("DotnsRegistry.resolver()")]
 	Resolver(#[source] DotnsCallError),
-	/// A product's manifest record could not be read.
+	/// A text record could not be read.
 	#[error("ContentResolver.text()")]
-	ManifestText(#[source] DotnsCallError),
+	TextRecord(#[source] DotnsCallError),
 	/// The stored dispatcher address has the wrong width.
 	#[error("DotnsGateway.DispatcherAddress is {actual} bytes")]
 	DispatcherAddressLength {
@@ -439,11 +448,11 @@ pub enum DotnsCallError {
 
 /// How a caller reaches Asset Hub for dotNS reads.
 ///
-/// The surface is one storage read plus one contract view. The headless CLI
+/// The surface is storage reads and single or batched contract views. The headless CLI
 /// implements it over plain RPC. The in-core runtime implements it over a
 /// `chainHead_v1` follow. The resolution steps below are written once.
 #[async_trait::async_trait]
-pub trait DotnsTransport {
+pub trait DotnsTransport: Send {
 	/// Reads one storage value. `None` when the entry is absent.
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError>;
 
@@ -452,6 +461,16 @@ pub trait DotnsTransport {
 	/// [`EvmContractError::Reverted`] is an answer from the contract; any other
 	/// error leaves the view's result unknown.
 	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError>;
+
+	/// Reads independent contract views for the same destination.
+	///
+	/// Returns one result per input in input order, retaining individual failures.
+	/// The transport controls concurrency and the block context.
+	async fn views(
+		&mut self,
+		dest: &[u8; 20],
+		inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>>;
 }
 
 /// Resolves the `DotnsPopController` address from `DotnsGateway.DispatcherAddress`.
@@ -564,10 +583,10 @@ pub async fn resolve_labels<T: DotnsTransport + ?Sized>(
 			break;
 		}
 		if page + 1 == LABEL_PAGE_MAX {
-			// A warning leaves the device, and a LabelStore address resolves
-			// back to the account that owns it, so it is named by a handle.
+			// A LabelStore address resolves back to the account that owns it,
+			// so it is named as an account.
 			warn!(
-				store = %crate::logging::account_handle(&store[..]),
+				store = %crate::logging::Account::new(&store[..]),
 				read = LABEL_PAGE_MAX * LABEL_PAGE_LIMIT,
 				"LabelStore holds more labels than the pages read; a name past this point is not resolved"
 			);
@@ -626,6 +645,88 @@ pub async fn label_available<T: DotnsTransport + ?Sized>(
 	.map_err(|source| DotnsError::RegistrarExists { label: label.to_string(), source })
 }
 
+/// Why a gateway claim of a personhood name would revert on the name's
+/// reservation queue in `DotnsPopController`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaimBlocker {
+	/// Another account holds the first active reservation. Only it can claim the name.
+	HeldBy([u8; 20]),
+	/// More expired or emptied reservations stand in front of the claim than one
+	/// gateway call clears (dotNS 1.1.0 and later).
+	/// `DotnsPopController.expireReservation(label)` clears them.
+	ClearFirst {
+		/// Expired or emptied entries in front of the claim.
+		dead: u64,
+	},
+}
+
+/// Whether a gateway `register_name` of `label` by `claimant` would revert on
+/// the name's reservation queue, and why. `None` when the queue lets it through.
+///
+/// A claim first clears up to `MAX_QUEUE_STEPS_PER_CALL` expired or emptied
+/// entries from the front of the queue, and its revert discards that clearing,
+/// so a retry gets no further. A controller without that constant (dotNS 1.0.0)
+/// has no such limit and clears every one of them in the claim itself, so only
+/// another account's active reservation blocks it there. An entry is active
+/// while it has an owner and `joinedAt + reservationDuration` has not passed
+/// `now_secs`.
+pub async fn claim_blocker<T: DotnsTransport + ?Sized>(
+	transport: &mut T,
+	controller: &[u8; 20],
+	label: &str,
+	claimant: &[u8; 20],
+	now_secs: u64,
+) -> Result<Option<ClaimBlocker>, DotnsError> {
+	let queue_error =
+		|view: &'static str, source: DotnsCallError| DotnsError::ReservationQueue { view, source };
+	let labelhash = B256::from(keccak_256(label.as_bytes()));
+	let queue =
+		read_view(transport, controller, DotnsPopController::reservationMetaCall { labelhash })
+			.await
+			.map_err(|source| queue_error("reservationMeta", source))?;
+	if queue.head >= queue.tail {
+		return Ok(None);
+	}
+	let duration = read_view(transport, controller, DotnsPopController::reservationDurationCall {})
+		.await
+		.map_err(|source| queue_error("reservationDuration", source))?;
+	let max_steps =
+		match read_view(transport, controller, DotnsPopController::MAX_QUEUE_STEPS_PER_CALLCall {})
+			.await
+		{
+			Ok(steps) => Some(u64::try_from(steps).unwrap_or(u64::MAX)),
+			Err(DotnsCallError::View(EvmContractError::Reverted { .. })) => None,
+			Err(error) => return Err(queue_error("MAX_QUEUE_STEPS_PER_CALL", error)),
+		};
+
+	let mut dead = 0;
+	for index in queue.head..queue.tail {
+		let entry = read_view(
+			transport,
+			controller,
+			DotnsPopController::reservationEntryCall { labelhash, index },
+		)
+		.await
+		.map_err(|source| queue_error("reservationEntry", source))?;
+		let owner = entry.entryOwner.into_array();
+		if owner != [0u8; 20] && entry.joinedAt.saturating_add(duration) >= now_secs {
+			if owner != *claimant {
+				return Ok(Some(ClaimBlocker::HeldBy(owner)));
+			}
+			break;
+		}
+		dead += 1;
+	}
+	let clears_too_few = max_steps.is_some_and(|max_steps| dead > max_steps);
+	Ok(clears_too_few.then_some(ClaimBlocker::ClearFirst { dead }))
+}
+
+/// Calldata for `DotnsPopController.expireReservation(label)`, which clears
+/// every expired or emptied reservation from the front of the name's queue.
+pub fn expire_reservation_call(label: &str) -> Vec<u8> {
+	DotnsPopController::expireReservationCall { label: label.to_string() }.abi_encode()
+}
+
 /// Gateway-minted labels of `user` still waiting for `claimLabelStore`, paged
 /// out of `DotnsPopController.pendingClaims(address,uint256,uint256)`. Every
 /// entry counts, whatever its `mintedAt`: the controller no longer expires
@@ -665,10 +766,8 @@ async fn pending_claim_labels<T: DotnsTransport + ?Sized>(
 			break;
 		}
 		if page + 1 == CLAIM_PAGE_MAX {
-			// A warning leaves the device, so the user is named by a handle
-			// rather than in full.
 			warn!(
-				user = %crate::logging::account_handle(&user[..]),
+				user = %crate::logging::Account::new(&user[..]),
 				read = CLAIM_PAGE_MAX * CLAIM_PAGE_LIMIT,
 				"pending-claim page cap reached; later entries, if any, are not resolved"
 			);

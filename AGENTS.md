@@ -10,7 +10,9 @@ rust/crates/
                          (canonical), plus the runtime hosts implement (default `runtime`
                          feature); ships as WASM (browser/node); its `platform` module
                          holds the host syscall traits (storage, navigation, consent, ...),
-                         its `chain` module builds the core's own extrinsics through
+                         its `stack` module resolves the Trinity stack the host runs, the
+                         core's only chain configuration, from the descriptor its build
+                         bundles, its `chain` module builds the core's own extrinsics through
                          `ExtrinsicService` and reads and writes contracts through
                          `EvmContractCaller` with signer-bound prepared transactions;
                          on native targets, its `durable` module follows presigned
@@ -22,9 +24,12 @@ rust/crates/
                          Asset Hub) and `nft_purse` (the NFT purses RFC over them)
                          modules keep NFT purses in the same database, transfer items
                          as scheduled durable transactions, and receive cheques over
-                         the statement store; its `image_loader` module reads the
-                         images hosts draw from Bulletin by CID and checks them
-  truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
+                         the statement store; its `public_profile` domain resolves and caches
+                         profile records, and its `image_loader` reads the images they name
+                         from Bulletin by CID and checks them
+  truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
+                         also links the truapi crate to emit the core marker
+                         table as TypeScript, which rustdoc JSON does not carry
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol
                          One implementation module per macro; lib.rs holds entry points
@@ -39,12 +44,15 @@ rust/crates/
 js/packages/
   truapi/                  @parity/truapi TS package; generated TS lives under ignored paths
   truapi-host/            @parity/truapi-host: WASM-backed host runtime. Subpath entries:
-                          `.` (shared host types), `/web` (iframe + Web
-                          Worker), `/worker-runtime` (Worker entry), and the
-                          test host `/testing` (createMockHost),
-                          `/testing/playwright` (fixture), `/testing/server`
-                          (node server), `/testing/client` (no-iframe client),
-                          `/testing/dev-accounts`, `/testing/host-page`.
+                          `.` (shared host types), `/markers` (the core's
+                          table of which log markers may leave the device),
+                          `/web` (iframe + Web Worker), `/node` (worker
+                          thread), `/worker-runtime`
+                          (Worker entry), and the test host `/testing`
+                          (createMockHost), `/testing/playwright` (fixture),
+                          `/testing/server` (node server), `/testing/client`
+                          (no-iframe client), `/testing/dev-accounts`,
+                          `/testing/host-page`.
                           Two WASM bundles (gitignored) under dist/wasm/, built
                           via `make wasm`: `web/` is the production browser host
                           and `testing/` adds the `wasm-signing-host` and
@@ -83,10 +91,13 @@ ios/truapi-host/           TrUAPIHost Swift package over the truapi UniFFI core;
                            ios/truapi-host/scripts/rebuild.sh
 playground/                Next.js interactive playground; deploys to the truapi-playground dotNS label
 hosts/ios/                 iOS host app; resolves the core from this tree
-hosts/android/             Android host app
+hosts/android/             Android host app; resolves the core from this tree
 hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule
+stacks/                    the link and signed descriptor of each Trinity stack a host build
+                           bundles; `scripts/update-stacks.sh` refreshes each descriptor from
+                           its link
 docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate
 scripts/battery.sh         run the generated battery against both headless CLI host roles,
@@ -166,7 +177,10 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   Archives are uploaded to the
   `@parity/truapi@<version>` release, followed by the `truapi-host-cli-stable`
   pointer that `scripts/truapi-host-installer.sh` and the CLI's own updater
-  read. Release asset URLs must percent-encode the tag
+  read, and then the `truapi-host-cli-v<version>` tag that workflows pin
+  `.github/actions/install-truapi-host` to; that action installs the CLI
+  version of the commit it is checked out at, so the tag installs its own
+  release. Release asset URLs must percent-encode the tag
   (`%40parity%2Ftruapi%40<version>`). `make cli-dist CLI_TARGET=<triple>`
   reproduces one archive locally, and `make e2e-cli-update` installs and
   self-updates it against a loopback release server.
@@ -304,6 +318,16 @@ Two ways to lose work that involve no pushing at all:
   get the build it runs. Labels are defined in `.github/labels.yml`, so never
   create one with `gh label` or the web UI. `docs/labels.md` describes the
   system.
+
+## Host telemetry
+
+- Follow the Conventions section of `docs/design/host-telemetry.md` for anything
+  that sends telemetry from a host. Read it before adding an event, a log line
+  or a metric, and before touching a sender. It covers which Sentry product a
+  signal belongs in, which field a query can select on, why every captured event
+  sets a fingerprint, and what the core's marker table decides. Its `Adding a
+  signal` subsection shows what a host event looks like on each host, how a
+  core log line is registered and raised, and how to check one in Sentry.
 
 ## Scope of a change
 
