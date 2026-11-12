@@ -2,7 +2,7 @@
 
 *Kotlin bindings for the `truapi-provider` crate (UniFFI). An embedded smoldot light client and the bundled chain-spec catalog stay in Rust; the host addresses a chain by genesis hash and exchanges JSON-RPC strings.*
 
-> **Status:** built from source only. Integrate with `make provider-android-publish-local` + `mavenLocal()`. The module itself has not been built on CI or a machine with the Android toolchain, so treat the Gradle wiring below as unverified.
+> **Status:** there is no remote coordinate yet. JitPack cannot serve this module as it stands — it builds from a git tag, and both the bindings and the cdylib are generated rather than committed — and no hosted Maven publication is wired up. Until one is, integrate with `make provider-android-publish-local` + `mavenLocal()`. The module itself has not been built on CI or a machine with the Android toolchain, so treat the Gradle wiring below as unverified.
 
 Unlike [`truapi-host`](../truapi-host), whose AAR leaves the cdylib to the integrator, this AAR bundles `libtruapi_provider.so` for every published ABI. That is the point of the package: a consumer adds one coordinate and calls `ChainProvider()`, with no Rust toolchain and no dependency on the crate.
 

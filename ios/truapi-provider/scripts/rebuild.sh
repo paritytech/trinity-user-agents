@@ -9,7 +9,8 @@
 # exist until this has run.
 # Usage: ./scripts/rebuild.sh [--sim-only]
 #
-# --sim-only drops the device slice for a faster loop.
+# --sim-only drops the device slice for a faster loop; publish.sh rejects the
+# result, since a release asset without a device slice cannot ship.
 set -euo pipefail
 
 PACKAGE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -63,3 +64,4 @@ xcodebuild -create-xcframework "${ARGS[@]}" -output "$OUT"
 PROVIDER_XCFRAMEWORK="$OUT" sh "$PACKAGE_ROOT/scripts/stage-xcframework.sh"
 
 echo "done."
+echo "Build against it with TRUAPI_PROVIDER_USE_LOCAL_BINARY=1; publish with scripts/publish.sh."

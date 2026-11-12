@@ -114,4 +114,4 @@ Title the pull request as a conventional commit, since the title becomes the squ
 
 ## Releasing
 
-See [`docs/RELEASE_PROCESS.md`](docs/RELEASE_PROCESS.md) for the release flow of the npm packages and the `truapi-host` CLI binaries.
+See [`docs/RELEASE_PROCESS.md`](docs/RELEASE_PROCESS.md) for the release flow, covering the npm packages and the iOS and Android host artifacts.

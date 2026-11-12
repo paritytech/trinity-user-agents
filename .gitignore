@@ -12,13 +12,10 @@ node_modules
 target
 /artifacts/
 
-# SwiftPM (root Package.swift for ios/truapi-host, ios/truapi-provider/Package.swift)
+# SwiftPM (root Package.swift for ios/truapi-host)
 /.build/
 /.swiftpm/
 /Package.resolved
-/ios/truapi-provider/.build/
-/ios/truapi-provider/.swiftpm/
-/ios/truapi-provider/Package.resolved
 
 # Gradle (Android workspace at repo root)
 /.gradle/

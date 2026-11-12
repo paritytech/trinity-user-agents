@@ -39,7 +39,7 @@ die() {
 }
 
 # The release tag is "@parity/truapi@<version>"; both "@" and "/" have to be
-# percent-encoded to address its assets.
+# percent-encoded to address its assets. Mirrors ios/truapi-host/scripts/publish.sh.
 release_asset_url() {
     local version="$1" name="$2" base
     base="${TRUAPI_HOST_RELEASE_BASE_URL:-$DEFAULT_BASE_URL}"

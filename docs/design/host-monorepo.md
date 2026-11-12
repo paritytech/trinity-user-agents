@@ -142,8 +142,8 @@ Two further details, each of which costs a failed run to discover. Tasks in a co
 directly, so the root needs one delegate task per host, and that delegate names the included build by its **directory**,
 not by its `rootProject.name`.
 
-Swift needs no equivalent. The root `Package.swift` stays at the repository root, and a host's own manifest lives in its
-own directory without conflict.
+Swift needs no equivalent. The root `Package.swift` stays at the repository root because external consumers resolve its
+products by URL, and a host's own manifest lives in its own directory without conflict.
 
 ### What building at HEAD costs
 
@@ -206,6 +206,6 @@ checklist.
 ## References
 
 - `.github/workflows/ci.yml`, the change-detection job and aggregate status job
-- `Package.swift`, the root manifest
+- `Package.swift`, the root manifest external consumers resolve
 - `settings.gradle.kts`, the root Gradle build
 - Epic #669, for work items and sequence

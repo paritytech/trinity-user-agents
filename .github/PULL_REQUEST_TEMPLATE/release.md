@@ -2,7 +2,7 @@
 
 > [!IMPORTANT]
 > The PR title must start with `release:` for the publish workflow to fire.
-> Example: `release: @parity/truapi 0.5.0, @parity/truapi-host 0.2.0`.
+> Example: `release: @parity/truapi 0.5.0, @parity/truapi-host 0.2.0, @parity/ios-host 0.2.0, @parity/android-host 0.1.0`.
 > Don't rewrite the squash commit subject in the merge dialog — the
 > `release:` prefix has to land on `main`.
 
@@ -16,6 +16,9 @@
 - [ ] Ran `npm run version-packages` to consume the changeset
 - [ ] `js/packages/truapi/package.json` version is bumped
 - [ ] `js/packages/truapi-host/package.json` version is bumped when releasing the host
+- [ ] The PR title includes `@parity/ios-host <version>` when publishing the iOS host
+- [ ] Regenerated iOS bindings and container outputs are committed; CI builds and simulator-tests the XCFramework, publishes it, then commits `Package.swift`
+- [ ] The PR title includes `@parity/android-host <version>` when publishing the Android host AAR; nothing in the tree records that version, so there is no manifest to bump
 - [ ] `@parity/truapi-host` depends on `^<current @parity/truapi version>`
 - [ ] `js/packages/truapi/CHANGELOG.md` has the new entry
 - [ ] `js/packages/truapi-host/CHANGELOG.md` has the new entry when releasing the host

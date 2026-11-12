@@ -1,9 +1,9 @@
 name: "Bootstrap the in-tree core for iOS"
 description: >-
   Generates the core artifacts hosts/ios resolves from this tree: the Rust
-  codegen output and the TrUAPIHost bindings and xcframework. Without these
-  the app's package graph cannot resolve, because the generated directories
-  are gitignored.
+  codegen output, the TrUAPIHost bindings and xcframework, and the
+  TrUAPIProvider bindings. Without these the app's package graph cannot
+  resolve, because the generated directories are gitignored.
 
 inputs:
   sim-only:
@@ -68,3 +68,12 @@ runs:
       env:
         SIM_ONLY: ${{ inputs.sim-only == 'true' && '1' || '0' }}
       run: ./ios/truapi-host/scripts/rebuild.sh
+
+    # Package.swift declares TrUAPIProvider as a source target, so its bindings
+    # have to exist even for a consumer that only imports TrUAPIHost.
+    - name: Generate the provider bindings
+      shell: bash
+      run: |
+        set -euo pipefail
+        make provider-swift
+        ./ios/truapi-provider/scripts/sync-bindings.sh

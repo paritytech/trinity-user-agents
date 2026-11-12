@@ -4,7 +4,7 @@
 #
 # The bindings are gitignored build outputs, so the package's Swift targets do
 # not exist until this runs. Split out of rebuild.sh so a caller that only needs
-# the sources (CI's compile gate) does not have to build an
+# the sources (the release tag, CI's compile gate) does not have to build an
 # xcframework, which needs Xcode and the iOS targets.
 #
 # Requires `make provider-swift` (or rebuild.sh, which generates the same
