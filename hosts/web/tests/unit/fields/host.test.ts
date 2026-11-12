@@ -70,7 +70,30 @@ function makeHost(
   let choice: (sheet: PromptRequest<unknown>) => unknown = (sheet) =>
     sheet.choices[0]!.value;
   let onAsk: () => void = () => {};
+  let clock = 1_800_000_000_000;
+  /** When "fail", the image service fails. */
+  let service: "ok" | "fail" = "ok";
+  /** Images issued, by url, and whether each was revoked. */
+  const images = new Map<
+    string,
+    { image: { product: string; svg: string }; revoked: boolean }
+  >();
   const host = new FieldHost({
+    images: {
+      issue: async (image) => {
+        if (service === "fail") throw new Error("service down");
+        const url = `image:${images.size}`;
+        const entry = { image, revoked: false };
+        images.set(url, entry);
+        return {
+          url,
+          expires: clock + 60_000,
+          revoke: async () => {
+            entry.revoked = true;
+          },
+        };
+      },
+    },
     ask: async <T>(sheet: PromptRequest<T>) => {
       sheets.push(sheet as PromptRequest<unknown>);
       onAsk();
@@ -81,8 +104,8 @@ function makeHost(
       getItem: (key) => storage.get(key) ?? null,
       setItem: (key, value) => void storage.set(key, value),
     },
-    viewUrl: (token, theme) => `view:${token}?${theme}`,
     print: async (label) => void labels.push(label),
+    now: () => clock,
   });
   hosts.push(host);
   const session: FieldSession = {
@@ -93,10 +116,9 @@ function makeHost(
   };
   host.setSession(session);
   const connect = (product: string, role: "provider" | "consumer") => {
-    const frame = { product };
     const channel = new MessageChannel();
     ports.push(channel.port1);
-    const close = host.connect(product, role, channel.port2, () => frame);
+    const close = host.connect(product, role, channel.port2);
     const received: unknown[] = [];
     let nextId = 1;
     const pending = new Map<
@@ -128,7 +150,7 @@ function makeHost(
         pending.set(id, { resolve, reject });
         channel.port1.postMessage({ ...request, id });
       });
-    return { call, received, child: { parent: frame }, close };
+    return { call, received, close };
   };
   return {
     host,
@@ -136,6 +158,13 @@ function makeHost(
     connect,
     sheets,
     labels,
+    images,
+    advance: (ms: number) => {
+      clock += ms;
+    },
+    serviceIs: (next: typeof service) => {
+      service = next;
+    },
     choose: (next: typeof choice) => {
       choice = next;
     },
@@ -166,22 +195,20 @@ async function provider(
   return app;
 }
 
-/** What a host-origin frame inside `owner` gets for `view`, or for another source. */
-async function draw(
+/** Whether `tab` issued `surface` for `product` as an image showing every one of `lines`. */
+function shows(
   tab: ReturnType<typeof makeHost>,
   surface: unknown,
-  source: unknown,
-): Promise<unknown> {
-  const url = (surface as { url: string }).url;
-  const token = url.slice("view:".length).split("?")[0];
-  const channel = new MessageChannel();
-  ports.push(channel.port1);
-  const answer = new Promise((resolve) => {
-    channel.port1.onmessage = (event) => resolve(event.data);
-  });
-  channel.port1.start();
-  tab.host.attachView(token, source, channel.port2);
-  return answer;
+  lines: readonly string[],
+  product = MARKET,
+): boolean {
+  const issued = tab.images.get((surface as { url: string }).url);
+  return (
+    (surface as { platform?: unknown }).platform === "web-image" &&
+    issued?.image.product === product &&
+    !issued.revoked &&
+    lines.every((line) => issued.image.svg.includes(line))
+  );
 }
 
 /** Alice requests to `key` from her market; answers the grant. */
@@ -402,46 +429,111 @@ describe("the draft field bridge", () => {
         handle: opened.fields[0]!.handle,
       })) as { surface: unknown }
     ).surface;
-    expect(await draw(bob, surface, bobMarket.child)).toEqual({
-      lines: ADDRESS_LINES,
-    });
+    expect(shows(bob, surface, ADDRESS_LINES)).toBe(true);
 
     alice.whenAsked(() => {});
     alice.choose((sheet) => sheet.choices.at(-1)!.value);
     expect(await codeOf(share(alice, key))).toBe("cancelled");
   });
 
-  test("draws a handle only in a host frame inside its own product frame, once per token, and stops after release", async () => {
+  test("issues one image per display, refuses a released handle, and release and sign-out end the unused ones", async () => {
     const alice = makeHost("alice");
     await provider(alice, "notes.example", { address: ADDRESS });
     const market = alice.connect(MARKET, "consumer");
-    const grant = (await market.call({
-      op: "request",
-      fields: [{ id: "ship-to", kind: "address" }],
-      purpose: "Show your address on the receipt",
-      context: CONTEXT,
-    })) as FieldGrant;
-    expect(grant.envelope).toBeUndefined();
-    const handle = grant.fields[0]!.handle;
-    const view = async () =>
-      ((await market.call({ op: "display", handle })) as { surface: unknown })
-        .surface;
-    const surface = await view();
-    expect(surface).toMatchObject({ platform: "web-frame" });
+    const request = async () =>
+      (
+        (await market.call({
+          op: "request",
+          fields: [{ id: "ship-to", kind: "address" }],
+          purpose: "Show it",
+          context: CONTEXT,
+        })) as FieldGrant
+      ).fields[0]!.handle;
+    const handle = await request();
+    const show = (theme?: string) =>
+      market.call({ op: "display", handle, theme });
+    const first = ((await show()) as { surface: unknown }).surface;
+    const dark = ((await show("dark")) as { surface: unknown }).surface;
     expect({
-      foreign: await draw(alice, surface, { parent: { product: "other" } }),
-    }).toEqual({ foreign: { unavailable: true } });
-    const again = await view();
-    expect(await draw(alice, again, market.child)).toEqual({
-      lines: ADDRESS_LINES,
-    });
-    expect(await draw(alice, again, market.child)).toEqual({
-      unavailable: true,
-    });
+      first: shows(alice, first, ADDRESS_LINES),
+      dark: alice.images.get("image:1")!.image.svg.includes("#17181c"),
+      sameUrl: first === dark,
+      replies: JSON.stringify(market.received).includes("Sample Lane"),
+    }).toEqual({ first: true, dark: true, sameUrl: false, replies: false });
+
     await market.call({ op: "release", handles: [handle] });
-    expect(await codeOf(market.call({ op: "display", handle }))).toBe(
-      "unavailable",
-    );
+    expect({
+      revoked: [...alice.images.values()].map((entry) => entry.revoked),
+      again: await codeOf(show()),
+    }).toEqual({ revoked: [true, true], again: "unavailable" });
+
+    await market.call({ op: "display", handle: await request() });
+    alice.host.setSession(null);
+    expect(alice.images.get("image:2")?.revoked).toBe(true);
+  });
+
+  test("counts only images the service may still serve, and a failing service does not block later calls", async () => {
+    const alice = makeHost("alice");
+    await provider(alice, "notes.example", { address: ADDRESS });
+    const market = alice.connect(MARKET, "consumer");
+    const handle = (
+      (await market.call({
+        op: "request",
+        fields: [{ id: "ship-to", kind: "address" }],
+        purpose: "Show it",
+        context: CONTEXT,
+      })) as FieldGrant
+    ).fields[0]!.handle;
+    const show = () => codeOf(market.call({ op: "display", handle }));
+    for (let index = 0; index < 50; index++) await show();
+    const full = await show();
+    alice.advance(60_001);
+    const afterExpiry = await show();
+    alice.serviceIs("fail");
+    const failed = await show();
+    alice.serviceIs("ok");
+    expect({
+      full,
+      afterExpiry,
+      failed,
+      next: await show(),
+    }).toEqual({
+      full: "limit",
+      afterExpiry: "ok",
+      failed: "unavailable",
+      next: "ok",
+    });
+  });
+
+  test("refuses to save a value its image cannot show", async () => {
+    const alice = makeHost("alice");
+    const app = alice.connect("notes.example", "provider");
+    await app.call({
+      op: "declare",
+      name: "notes",
+      fields: ["address", "phone"],
+    });
+    const phone = await app
+      .call({ op: "save", values: { phone: "9".repeat(150) } })
+      .then(
+        () => "saved",
+        (error: Error) => error.message,
+      );
+    expect({
+      phone,
+      wideAddress: await codeOf(
+        app.call({
+          op: "save",
+          values: {
+            address:
+              "東京都架空区試験町一丁目二番三号サンプルマンション四〇五号室",
+          },
+        }),
+      ),
+    }).toEqual({
+      phone: "This phone is too long to show. Shorten it.",
+      wideAddress: "ok",
+    });
   });
 
   test("a restarted host opens a stored envelope again; sign-out locks it; another network's key is refused", async () => {
@@ -465,9 +557,7 @@ describe("the draft field bridge", () => {
         handle: opened.fields[0]!.handle,
       })) as { surface: unknown }
     ).surface;
-    expect(await draw(restarted, surface, market.child)).toEqual({
-      lines: ADDRESS_LINES,
-    });
+    expect(shows(restarted, surface, ADDRESS_LINES)).toBe(true);
 
     // Sign-out ends the bridge; while signed out, nothing opens.
     restarted.host.setSession(null);

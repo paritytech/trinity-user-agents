@@ -970,8 +970,7 @@ const navigation: ProductNavigation = new ProductNavigation({
           url: URL,
           productId: string,
           port: MessagePort,
-          frame: () => Window | null,
-        ) => fieldDemo.connect(url, productId, port, frame),
+        ) => fieldDemo.connect(url, productId, port),
       }),
   showAddress: (text) => {
     addressInput.value = text;

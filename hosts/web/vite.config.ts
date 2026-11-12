@@ -5,6 +5,7 @@ import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { browseSeed } from "./browse-seed-plugin.js";
+import { fieldImages } from "./field-image-plugin.js";
 import { contactChatWorker } from "./contact-chat-plugin.js";
 import { sandboxAssets } from "./sandbox-plugin.js";
 import { usernameSearch } from "./username-search-plugin.js";
@@ -143,6 +144,7 @@ export default defineConfig({
     contactChatWorker(),
     browseSeed(),
     usernameSearch(),
+    fieldImages(),
     assetLicenses,
   ],
   resolve: { alias: [signingCore] },

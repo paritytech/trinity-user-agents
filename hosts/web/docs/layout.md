@@ -60,7 +60,7 @@ Three owners, which [`tests/unit/boundaries.test.ts`](../tests/unit/boundaries.t
   copied), `sealing.ts` (keys and envelopes), `pointer.ts`. See [Backup](backup.md).
 - `assets/`: fonts and Pocket artwork, with licence notices.
 - `fields/`: the host side of the draft field bridge, dev server only: `host.ts` (the bridge), `envelope.ts` (the sealed
-  envelope), `keys.ts` (receiving keys kept encrypted).
+  envelope), `keys.ts` (receiving keys kept encrypted), `svg.ts` (a value drawn as SVG).
 
 ## `bridges/`
 
@@ -110,7 +110,7 @@ The developer tools, in every build.
   `no-submit.ts`, `kettle-demo.ts` (the demo's simulated Statement Store and allowance), `backup-demo.ts` (the simulated
   network a browser test runs for the backup), `wallet-deliveries.ts` (the Developer section's other request
   deliveries), `demo-session.ts` (the tab as a demo user), `worker-probes.ts` (which chat workers start with their test
-  probe), `field-demo.ts`, `field-view.*` and `field-label.ts` (the field demo's wiring, host-drawn view and label).
+  probe), `field-demo.ts` and `field-label.ts` (the field demo's wiring and printed label).
 
 ## Other
 
@@ -119,4 +119,4 @@ The developer tools, in every build.
 - `tests/unit/` follows the code that it covers. `tests/support/` holds helpers, including in-memory statement stores.
 - `browser/`: browser tests. `browser/support/` holds the Playwright setup.
 - Vite plugins: `sandbox-plugin.ts` (loader and service worker), `contact-chat-plugin.ts`, `browse-seed-plugin.ts`,
-  `username-search-plugin.ts`.
+  `username-search-plugin.ts`, `field-image-plugin.ts` (the field bridge's image service, dev server only).

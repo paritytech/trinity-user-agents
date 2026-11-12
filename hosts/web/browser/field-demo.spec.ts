@@ -17,7 +17,7 @@
  * or set CHROMIUM_PATH.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,6 +96,33 @@ interface Run {
   outside: string[];
   /** Titles of the host sheets each tab opened, in order. */
   sheets: Record<string, string[]>;
+  /** What the dev server answered for each field image, as the network saw it. */
+  images: ImageAnswer[];
+}
+
+interface ImageAnswer {
+  token: string;
+  status: number;
+  body: string;
+  headers: Record<string, string>;
+}
+
+/** The runs, by browser context, so a page finds the images its context saw. */
+const runs = new Map<BrowserContext, Run>();
+const tokenOf = (url: string) => /([0-9a-f]{64})\.svg$/.exec(url)?.[1] ?? "";
+
+/** Record the field images `context` receives into `into`. */
+function recordImages(context: BrowserContext, into: ImageAnswer[]): void {
+  context.on("response", async (response) => {
+    const token = tokenOf(response.url());
+    if (token === "" || !response.url().includes("/__field-images/")) return;
+    into.push({
+      token,
+      status: response.status(),
+      headers: response.headers(),
+      body: response.status() === 200 ? await response.text() : "",
+    });
+  });
 }
 
 async function offline(): Promise<Run> {
@@ -103,7 +130,16 @@ async function offline(): Promise<Run> {
     viewport: { width: 1280, height: 900 },
   });
   context.setDefaultTimeout(60_000);
-  const run: Run = { context, errors: [], leaks: [], outside: [], sheets: {} };
+  const run: Run = {
+    context,
+    errors: [],
+    leaks: [],
+    outside: [],
+    sheets: {},
+    images: [],
+  };
+  runs.set(context, run);
+  recordImages(context, run.images);
   await context.routeWebSocket(/.*/, (socket) => socket.close());
   await context.route(/.*/, async (route) => {
     const url = new URL(route.request().url());
@@ -181,22 +217,43 @@ const app = (page: Page, url: string) =>
 const appFrame = (page: Page, url: string): Frame =>
   page.frames().find((frame) => frame.url().startsWith(new URL(url).origin))!;
 const sheet = (page: Page) => page.locator("dialog[open]");
-/** The host-origin frames that draw an address inside a product. */
-const views = (page: Page): Frame[] =>
-  page.frames().filter((frame) => frame.url().includes("/field-view.html"));
-
-/** Wait until a host-drawn view in `page` shows `text`. */
+/**
+ * Wait until a field image the host drew in `page` shows `text`: an image
+ * loaded in one of its frames, whose SVG the dev server served with `text`.
+ */
 async function viewShows(page: Page, text: string): Promise<boolean> {
+  const run = runs.get(page.context())!;
   for (let attempt = 0; attempt < 50; attempt++) {
-    const shown = await Promise.all(
-      views(page).map((frame) =>
-        frame
-          .locator("body")
-          .innerText()
-          .catch(() => ""),
-      ),
-    );
-    if (shown.some((body) => body.includes(text))) return true;
+    const loaded = (
+      await Promise.all(
+        page
+          .frames()
+          .map((frame) =>
+            frame
+              .evaluate(() =>
+                [
+                  ...document.querySelectorAll<HTMLImageElement>(
+                    "img.protected-field",
+                  ),
+                ]
+                  .filter((image) => image.complete && image.naturalWidth > 0)
+                  .map((image) => image.src),
+              )
+              .catch(() => [] as string[]),
+          ),
+      )
+    ).flat();
+    if (
+      loaded.some((src) =>
+        run.images.some(
+          (answer) =>
+            answer.token === tokenOf(src) &&
+            answer.status === 200 &&
+            answer.body.includes(text),
+        ),
+      )
+    )
+      return true;
     await page.waitForTimeout(200);
   }
   return false;
@@ -360,30 +417,49 @@ describe("the draft field bridge demo", () => {
         expect(await viewShows(alice, HOME[1]!)).toBe(true);
         expect(await viewShows(alice, HOME_PHONE)).toBe(true);
 
-        // The market can place the view but not read it, and its token opens once.
+        // The market places the image but cannot read its pixels, and its URL loads once.
         const marketFrame = appFrame(alice, MARKET);
         const probe = await marketFrame.evaluate(async () => {
-          const frame = [...document.querySelectorAll("iframe")].find((each) =>
-            each.src.includes("/field-view.html"),
-          )!;
-          let readable: boolean;
+          const image =
+            document.querySelector<HTMLImageElement>("#slip-address img")!;
+          const canvas = document.createElement("canvas");
+          canvas.width = image.naturalWidth;
+          canvas.height = image.naturalHeight;
+          const context = canvas.getContext("2d")!;
+          context.drawImage(image, 0, 0);
+          let pixels: string;
           try {
-            readable = frame.contentWindow!.document.body !== null;
-          } catch {
-            readable = false;
+            context.getImageData(0, 0, 1, 1);
+            pixels = "read";
+          } catch (error) {
+            pixels = (error as Error).name;
           }
-          const replay = document.createElement("iframe");
-          replay.src = frame.src;
-          document.body.append(replay);
-          await new Promise((resolve) =>
-            replay.addEventListener("load", resolve),
-          );
-          return { readable, contentDocument: frame.contentDocument === null };
+          const replay = await new Promise<string>((resolve) => {
+            const again = new Image();
+            again.referrerPolicy = "origin";
+            again.onload = () => resolve("loaded");
+            again.onerror = () => resolve("refused");
+            again.src = image.src;
+          });
+          return { pixels, replay };
         });
-        expect(probe).toEqual({ readable: false, contentDocument: true });
-        expect(await viewShows(alice, "Unavailable. Open it again.")).toBe(
-          true,
+        // A new image of the same URL in the same document is drawn from the
+        // browser's list of images that document already has; the server
+        // served the URL once.
+        const slipImage = await marketFrame.evaluate(
+          () =>
+            document.querySelector<HTMLImageElement>("#slip-address img")!.src,
         );
+        expect({
+          ...probe,
+          served: run.images
+            .filter((answer) => answer.token === tokenOf(slipImage))
+            .map((answer) => answer.status),
+        }).toEqual({
+          pixels: "SecurityError",
+          replay: "loaded",
+          served: [200],
+        });
 
         // Bob's packing slip shows what Alice chose, and printing asks nothing.
         await bob.bringToFront();
@@ -467,7 +543,7 @@ describe("the draft field bridge demo", () => {
   );
 
   test(
-    "no provider asks nothing, a reloaded market ends its open sheet, and sign-out blanks what is drawn",
+    "no provider asks nothing, a reloaded market ends its open sheet, and sign-out closes what is drawn",
     async () => {
       const run = await offline();
       try {
@@ -523,6 +599,365 @@ describe("the draft field bridge demo", () => {
           errors: run.errors,
         }).toEqual({ plaintext: [], leaks: [], errors: [] });
       } finally {
+        await run.context.close();
+      }
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "the SVG image: the market reads neither text nor pixels, an unused URL is a bearer capability on this machine, and release and sign-out refuse new loads",
+    async () => {
+      const run = await offline();
+      const other = await browser.newContext();
+      try {
+        const bob = await boot(run, "bob");
+        await list(bob, "Tin cup");
+        const alice = await boot(run, "alice");
+        await saveDetails(run, alice, PROVIDER, HOME, "");
+        await open(alice, MARKET);
+        const market = app(alice, MARKET);
+        await openItem(alice, "Tin cup");
+        await market.getByRole("button", { name: "Buy now" }).click();
+        await sheet(alice)
+          .getByRole("button", { name: /^Share address/ })
+          .click();
+        await approveCore(
+          alice,
+          market.locator("#order-screen:not([hidden])").waitFor(),
+        );
+        expect(await viewShows(alice, HOME[1]!)).toBe(true);
+
+        const answers = run.images;
+        recordImages(other, answers);
+        // While held, an image request stops in the browser, so its token stays unused.
+        let hold = false;
+        const holdImages = (page: Page) =>
+          page.route(/\/__field-images\/[0-9a-f]{64}\.svg$/, (route) =>
+            hold ? route.abort() : route.fallback(),
+          );
+        await holdImages(alice);
+        await holdImages(bob);
+        const marketFrame = () => appFrame(alice, MARKET);
+        const loaded = (frame: Frame, selector: string) =>
+          frame.evaluate(
+            (query) =>
+              new Promise<boolean>((resolve) => {
+                const image = document.querySelector<HTMLImageElement>(query)!;
+                if (image.complete) resolve(image.naturalWidth > 0);
+                else {
+                  image.onload = () => resolve(true);
+                  image.onerror = () => resolve(false);
+                }
+              }),
+            selector,
+          );
+        /** Open Alice's receipt afresh; answers its address image's URL. */
+        const reopen = async (): Promise<string> => {
+          if (await market.locator("#order-screen:not([hidden])").count())
+            await market.locator("#back").click();
+          await market.getByRole("tab", { name: /Orders/ }).click();
+          await market.locator("#bought .row").first().click();
+          await market
+            .locator("#slip-address img")
+            .waitFor({ state: "attached" });
+          return marketFrame().evaluate(
+            () =>
+              document.querySelector<HTMLImageElement>("#slip-address img")!
+                .src,
+          );
+        };
+        const unused = async (): Promise<string> => {
+          hold = true;
+          const url = await reopen();
+          await alice.waitForTimeout(300);
+          hold = false;
+          return url;
+        };
+        /** Load `url` as an image in `frame`, as an honest embed does; answers what drew. */
+        const loadIn = (frame: Frame, url: string) =>
+          frame.evaluate(
+            (src) =>
+              new Promise<string>((resolve) => {
+                const image = new Image();
+                image.referrerPolicy = "origin";
+                image.onload = () => resolve(`loaded ${image.naturalWidth}`);
+                image.onerror = () => resolve("refused");
+                image.src = src;
+              }),
+            url,
+          );
+        /**
+         * A page of `origin` in `context`, outside the host: the field app's
+         * page, served from loopback as the market is, since Chromium keeps a
+         * page with no network address from requests to this machine.
+         */
+        const probePage = async (context: BrowserContext, origin: string) => {
+          const page = await context.newPage();
+          await page.goto(`${origin}/provider.html`);
+          return page;
+        };
+        await other.route(/.*/, (route) => {
+          const url = new URL(route.request().url());
+          const target = served.get(url.origin);
+          if (target !== undefined)
+            return route.continue({
+              url: `${target}${url.pathname}${url.search}`,
+            });
+          return url.origin === host.origin ? route.fallback() : route.abort();
+        });
+
+        // What was served: the address, uncached, with no CORS grant.
+        const shown = await reopen();
+        expect(await loaded(marketFrame(), "#slip-address img")).toBe(true);
+        const first = answers.find((entry) => entry.token === tokenOf(shown))!;
+        expect({
+          status: first.status,
+          body: HOME.every((line) => first.body.includes(line)),
+          cache: first.headers["cache-control"],
+          cors: Object.keys(first.headers).filter((name) =>
+            name.startsWith("access-control"),
+          ),
+        }).toEqual({ status: 200, body: true, cache: "no-store", cors: [] });
+        const out = process.env.FIELD_DEMO_OUT;
+        if (out !== undefined) {
+          mkdirSync(out, { recursive: true });
+          await market
+            .locator(".slip")
+            .screenshot({ path: join(out, "receipt.png") });
+        }
+
+        // Printing the host page to PDF (headless Chromium's renderer, not an
+        // OS print dialog) asks the dev server for nothing: the browser
+        // prints the image it already holds.
+        const beforePrint = answers.length;
+        const pdf = await alice.pdf({ printBackground: true });
+        await alice.waitForTimeout(500);
+        expect({
+          printed: pdf.length > 0,
+          requests: answers.length - beforePrint,
+        }).toEqual({ printed: true, requests: 0 });
+        if (out !== undefined) writeFileSync(join(out, "host-page.pdf"), pdf);
+
+        // The market's scripts cannot read the loaded image's pixels.
+        const pixels = await marketFrame().evaluate(async () => {
+          const image =
+            document.querySelector<HTMLImageElement>("#slip-address img")!;
+          const canvas = document.createElement("canvas");
+          canvas.width = image.naturalWidth;
+          canvas.height = image.naturalHeight;
+          const context = canvas.getContext("2d")!;
+          context.drawImage(image, 0, 0);
+          const attempt = (run: () => unknown) => {
+            try {
+              run();
+              return "read";
+            } catch (error) {
+              return (error as Error).name;
+            }
+          };
+          const second = document.createElement("canvas").getContext("2d")!;
+          second.drawImage(await createImageBitmap(image), 0, 0);
+          return {
+            size: [image.naturalWidth, image.naturalHeight],
+            getImageData: attempt(() => context.getImageData(0, 0, 1, 1)),
+            toDataURL: attempt(() => canvas.toDataURL()),
+            bitmap: attempt(() => second.getImageData(0, 0, 1, 1)),
+          };
+        });
+        expect(pixels).toEqual({
+          size: [360, 150],
+          getImageData: "SecurityError",
+          toDataURL: "SecurityError",
+          bitmap: "SecurityError",
+        });
+
+        // With an unused URL, nothing the market's scripts try returns the image.
+        const stolen = await unused();
+        const reads = await marketFrame().evaluate(async (url) => {
+          const outcome = async (run: () => Promise<string>) => {
+            try {
+              return await run();
+            } catch (error) {
+              return (error as Error).name;
+            }
+          };
+          return {
+            cors: await outcome(async () =>
+              (await fetch(url, { credentials: "include" })).text(),
+            ),
+            noCors: await outcome(async () => {
+              const answer = await fetch(url, {
+                mode: "no-cors",
+                credentials: "include",
+              });
+              return `${answer.type} ${answer.status} [${await answer.text()}]`;
+            }),
+            xhr: await outcome(
+              () =>
+                new Promise((resolve, reject) => {
+                  const request = new XMLHttpRequest();
+                  request.open("GET", url);
+                  request.onload = () => resolve(request.responseText);
+                  request.onerror = () =>
+                    reject(
+                      Object.assign(new Error(), { name: "NetworkError" }),
+                    );
+                  request.send();
+                }),
+            ),
+            documents: await Promise.all(
+              (["iframe", "object", "embed"] as const).map(
+                (tag) =>
+                  new Promise<string>((resolve) => {
+                    const element = document.createElement(tag);
+                    if (element instanceof HTMLObjectElement)
+                      element.data = url;
+                    else (element as HTMLIFrameElement).src = url;
+                    document.body.append(element);
+                    setTimeout(() => {
+                      let readable = "no";
+                      try {
+                        readable =
+                          (element as HTMLIFrameElement).contentDocument
+                            ?.documentElement?.outerHTML ?? "no";
+                      } catch {
+                        readable = "no";
+                      }
+                      element.remove();
+                      resolve(`${tag}: ${readable}`);
+                    }, 1_500);
+                  }),
+              ),
+            ),
+          };
+        }, stolen);
+        expect(reads).toEqual({
+          cors: "TypeError",
+          noCors: "opaque 0 []",
+          xhr: "NetworkError",
+          documents: ["iframe: no", "object: no", "embed: no"],
+        });
+        // Another product's origin in this browser, and a plain request, are refused.
+        const foreign = await loadIn(
+          (await probePage(run.context, "http://localhost:5182")).mainFrame(),
+          stolen,
+        );
+        const plain = await fetch(
+          stolen.replace("//localhost:", "//127.0.0.1:"),
+        );
+        // A page of the market's origin in another browser profile draws it,
+        // once: nothing ties the request to this browser.
+        const elsewhere = await probePage(other, "http://localhost:5183");
+        const otherProfile = await loadIn(elsewhere.mainFrame(), stolen);
+        const replay = await loadIn(marketFrame(), stolen);
+        expect({
+          foreign,
+          plain: plain.status,
+          otherProfile,
+          replay,
+        }).toEqual({
+          foreign: "refused",
+          plain: 404,
+          otherProfile: "loaded 360",
+          replay: "refused",
+        });
+
+        // The accepted limit: a client on this machine with the URL sends the
+        // two headers and gets the SVG, value included.
+        const forgedUrl = await unused();
+        const forged = await fetch(
+          forgedUrl.replace("//localhost:", "//127.0.0.1:"),
+          {
+            headers: {
+              "sec-fetch-dest": "image",
+              referer: "http://localhost:5183/",
+            },
+          },
+        );
+        expect({
+          forged: forged.status,
+          plaintext: (await forged.text()).includes(HOME[1]!),
+        }).toEqual({ forged: 200, plaintext: true });
+
+        // Release: Back on a sale releases its handles. An unused image no
+        // longer loads; one the market kept stays drawn.
+        await bob.bringToFront();
+        const bobMarket = app(bob, MARKET);
+        const bobFrame = appFrame(bob, MARKET);
+        await bobMarket.getByRole("tab", { name: /Orders/ }).click();
+        hold = true;
+        await bobMarket.locator("#to-ship .row").first().click();
+        await bobMarket
+          .locator("#slip-address img")
+          .waitFor({ state: "attached" });
+        const bobUnused = await bobFrame.evaluate(
+          () =>
+            document.querySelector<HTMLImageElement>("#slip-address img")!.src,
+        );
+        await bob.waitForTimeout(300);
+        hold = false;
+        const revoked = bob.waitForResponse((response) =>
+          response.url().endsWith("/__field-images/revoke"),
+        );
+        await bobMarket.locator("#back").click();
+        await revoked;
+        const releasedLoad = await loadIn(bobFrame, bobUnused);
+        await bobMarket.locator("#to-ship .row").first().click();
+        await bobMarket
+          .locator("#slip-address img")
+          .waitFor({ state: "attached" });
+        expect(await loaded(bobFrame, "#slip-address img")).toBe(true);
+        // As a market that keeps the element does.
+        await bobFrame.evaluate(() => {
+          const image =
+            document.querySelector<HTMLImageElement>("#slip-address img")!;
+          image.id = "kept-image";
+          image.remove = () => {};
+          document.body.append(image);
+        });
+        await bobMarket.locator("#back").click();
+        await bob.waitForTimeout(500);
+        const kept = await bobFrame.evaluate(() => {
+          const image = document.getElementById(
+            "kept-image",
+          ) as HTMLImageElement | null;
+          return image !== null && image.complete && image.naturalWidth > 0;
+        });
+
+        // Sign-out ends the unused images and closes the market's document.
+        await alice.bringToFront();
+        const beforeSignOut = await unused();
+        await alice.getByRole("tab", { name: "Account", exact: true }).click();
+        await alice.locator("#sign-out").click();
+        await alice
+          .locator("#session")
+          .filter({ hasText: "Signed out" })
+          .waitFor({ state: "attached" });
+        await alice.waitForTimeout(500);
+        const afterSignOut = await loadIn(
+          (await probePage(run.context, "http://localhost:5183")).mainFrame(),
+          beforeSignOut,
+        );
+        expect({
+          releasedLoad,
+          kept,
+          afterSignOut,
+          uncached: answers
+            .filter((entry) => entry.status === 200)
+            .every((entry) => entry.headers["cache-control"] === "no-store"),
+          leaks: run.leaks,
+          errors: run.errors,
+        }).toEqual({
+          releasedLoad: "refused",
+          kept: true,
+          afterSignOut: "refused",
+          uncached: true,
+          leaks: [],
+          errors: [],
+        });
+      } finally {
+        await other.close();
         await run.context.close();
       }
     },

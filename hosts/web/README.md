@@ -78,9 +78,9 @@ are the web form of drawing a field. Nothing here changes TrUAPI wire ids, trait
   allowance, and keeps its listings, sales and purchases in its TrUAPI storage (`apps/field-demo/board.ts`). The host
   does not post, list or buy.
 - The seller's market gives the stored envelope and its order context back to `open`, and gets fresh handles. It places
-  `mountProtectedField` (`bridges/fields/protected-field.ts`) where the address and phone go; the host draws them in a
-  host-origin frame (`tools/demos/field-view.html`). `print` prints the market's own title and lines with the held values
-  from a host document.
+  `mountProtectedField` (`bridges/fields/protected-field.ts`) where the address and phone go; the host draws each as an
+  SVG image (`src/fields/svg.ts`) that the dev server serves (`field-image-plugin.ts`). `print` prints the market's own
+  title and lines with the held values from a host document.
 
 From `hosts/web`, run these in separate terminals, with the normal host prerequisites above already built. The binding
 calls need a core built from this tree (`make wasm`):
@@ -122,11 +122,24 @@ suite is a prototype choice and is not reviewed for envelopes kept long term, fo
 bytes keeps them, and the suite is not post-quantum.
 
 **Handles** are random, held per bridge connection, and end on `release`, on the next load or close of the document, and
-on sign-out, which also blanks every drawn view. A view token is single use, valid for 60 seconds, and only a host-origin
-frame whose parent is the exact product frame it was issued to can redeem it. The product chooses where a field goes and
-its size; the host chooses what it shows. The host-origin frame is this web host's way to draw it, not part of the
-contract: another platform would draw a native view behind the same `display` call. Native drawing and screen-reader
-behavior are not built or checked.
+on sign-out. The product chooses where a field goes and how wide; the host chooses what it shows.
+
+**Drawing:** `display` gives the product a surface only the platform adapter places. On the web it is an image URL the
+product embeds with `<img>`. The host draws the value as SVG with `src/fields/svg.ts`: text only, escaped, no script,
+link, style or image, at one fixed size per kind (address 360 × 150, phone 360 × 26), wrapping long values and then
+using smaller type. Widths are estimated per grapheme, wide scripts and emoji as a whole em, so an unusually wide font
+can still run past the edge; a value that does not fit is refused when it is saved, never cut. The dev server
+(`field-image-plugin.ts`) holds that SVG in memory and serves it once, within 60 seconds, to a loopback request with
+`Sec-Fetch-Dest: image` and a `Referer` of the product's origin, `no-store` and with no CORS grant. The browser keeps a
+cross-origin image's text and pixels from the product's scripts. `release` and sign-out ask the dev server to end
+images not loaded yet; that is best effort, and a failed request or a closed tab leaves them until they expire. This
+dev server is the web stand-in for a native host's own local image scheme; native drawing is not built.
+
+Known limits of this prototype, accepted: the image URL is a bearer link. Product frames are `credentialless`, so the
+request carries no host cookie; until it is used, anything on this machine that gets the URL can send those two headers
+and receive the SVG, value included, and a page of the product's origin in another browser profile can display it. An
+image already shown stays on screen after release; sign-out closes the product's document. The dev server's 500 tokens
+are shared by every product, so one product can fill them for a minute. A screen reader gets only the image's alt text.
 
 **Receiving keys** (`src/fields/keys.ts`): one per wallet, network and product, reused for every order. The secret is
 encrypted with XChaCha20-Poly1305 under a key derived from the signed-in wallet's entropy and kept in this origin's
@@ -154,7 +167,9 @@ since the bridge became generic.
 who is away can miss an order. A purchase's receipt draws the buyer's details only while the market document that made
 it is open. No revocation, payments, contracts or multi-device recovery. Public statement metadata is not hidden.
 
-Unit checks: `bun test tests/unit/fields` (envelope, receiving keys, the host's bridge with a stand-in binder). The
+Unit checks: `bun test tests/unit/fields tests/unit/field-image-plugin.test.ts tests/unit/boundaries.test.ts` (envelope,
+receiving keys, the SVG drawing, the host's bridge with a stand-in binder and image service, the dev server's image
+service over HTTP, and the import boundaries). The
 binding signature has Rust tests: `cargo test -p truapi --lib field_key_binding`. Browser check, run by hand (CI does not
 run it): `bun test browser/field-demo.spec.ts --timeout 300000`. It runs both providers, the market and two host tabs on
 the simulated store, with its own Vite servers and caches, and refuses every request outside them.
@@ -276,9 +291,9 @@ Three owners, kept apart by `tests/unit/boundaries.test.ts`:
     the user's keys, the request host, and `start.ts`, which the Chat tab's Nova Chat spec hands the host. Only the
     composition wires it in.
   - `src/fields/`: the host side of the draft field bridge: provider declarations, consent, the envelope, receiving
-    keys, handles and host-drawn view tokens, loaded only on the dev server. `tools/demos/field-demo.ts` wires it and
-    the explicit simulation; `field-view.*` is the host-origin view a product embeds and `field-label.ts` prints a
-    label.
+    keys, handles and the SVG a value is drawn as (`svg.ts`), loaded only on the dev server.
+    `tools/demos/field-demo.ts` wires it, the dev server's image service and the explicit simulation;
+    `field-label.ts` prints a label.
 - `apps/`: the products the host runs, each in its own folder: `contact-chat/`, `kettle-chat/` (with Kettle's engine as
   WebAssembly in `wasm/`, built with `npm run build:kettle`), `nova-chat/`, and `field-demo/` (the provider and Small
   Market, served on separate origins by `field-products.config.ts`). `apps/shared/` is code the products share.

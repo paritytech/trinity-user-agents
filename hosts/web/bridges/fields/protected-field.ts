@@ -1,17 +1,17 @@
 import type { FieldClient } from "./product.js";
 import type { ConsumerCalls, FieldHandle, FieldTheme } from "./protocol.js";
-import { isWebFieldSurface } from "./web.js";
+import { isWebImageSurface } from "./web.js";
 
 /**
  * DRAFT, web-only. The product-side protected field: give it a handle and a
  * place, and the host draws the value there. The product decides where and
- * how big; the host decides what. On the web the host draws in a host-origin
- * frame, so the product's scripts cannot read its text or pixels. Another
- * platform would place a native view through its own adapter behind the same
- * call.
+ * how wide; the host decides what. On the web the host draws a cross-origin
+ * SVG image, whose pixels the browser keeps from the product's scripts.
+ * Another platform would place a native view through its own adapter behind
+ * the same call.
  */
 export interface ProtectedField {
-  /** Stop drawing: removes the host view. Releasing the handle is separate. */
+  /** Stop drawing: removes the image. Releasing the handle is separate. */
   remove(): void;
 }
 
@@ -31,13 +31,15 @@ export async function mountProtectedField(
     handle,
     theme: options.theme ?? "paper",
   });
-  if (!isWebFieldSurface(surface))
+  if (!isWebImageSurface(surface))
     throw new Error("This host draws fields in a way this page cannot place.");
-  const frame = document.createElement("iframe");
-  frame.className = "protected-field";
-  frame.title = options.title;
-  frame.referrerPolicy = "no-referrer";
-  frame.src = surface.url;
-  slot.replaceChildren(frame);
-  return { remove: () => frame.remove() };
+  const image = document.createElement("img");
+  image.className = "protected-field";
+  // The value is pixels only; this is all a screen reader gets.
+  image.alt = `${options.title}, drawn by your host`;
+  // The host serves it only to a request whose Referer is this product's origin.
+  image.referrerPolicy = "origin";
+  image.src = surface.url;
+  slot.replaceChildren(image);
+  return { remove: () => image.remove() };
 }

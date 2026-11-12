@@ -26,7 +26,7 @@ import {
   type ProviderStatus,
   type ReceiveKey,
 } from "../../bridges/fields/protocol.js";
-import type { WebFieldSurface } from "../../bridges/fields/web.js";
+import type { WebImageSurface } from "../../bridges/fields/web.js";
 import {
   envelopeId,
   envelopeKeyId,
@@ -37,13 +37,14 @@ import {
   type SealedField,
 } from "./envelope.js";
 import { ReceiveKeys } from "./keys.js";
+import { fieldSvg, fitsField } from "./svg.js";
 
 /**
  * PROTOTYPE, web-only (`web-fields/2`): the host side of the draft field
  * bridge. It keeps provider declarations and values, asks the user before
  * any value leaves for a product, seals values to a recipient's receiving
  * key, makes and keeps this wallet's receiving keys, opens envelopes into
- * handles and draws handles inside product frames. A product gets
+ * handles and draws handles as images in products. A product gets
  * descriptors and handles, never a value. Delivery is the product's.
  */
 
@@ -85,8 +86,18 @@ export interface FieldHostOptions {
   binder: KeyBinder;
   /** Where receiving keys are kept, encrypted. */
   storage: Pick<Storage, "getItem" | "setItem">;
-  /** The host-origin page that draws one single-use view token. */
-  viewUrl(token: string, theme: FieldTheme): string;
+  /**
+   * The local image service: serves `svg` once to `product` and answers its
+   * URL, when it stops serving it (milliseconds since the epoch), and how to
+   * end it unused. Ending is best effort: a revoke that fails, or a tab
+   * closed before it is sent, leaves the URL until it expires.
+   */
+  images: {
+    issue(image: {
+      product: string;
+      svg: string;
+    }): Promise<{ url: string; expires: number; revoke(): Promise<void> }>;
+  };
   /**
    * Print `label` from a host document. Products cannot print: their frame
    * has no `allow-modals`. `signal` aborts it when the product or session ends.
@@ -107,29 +118,17 @@ interface Provider {
 interface Held {
   kind: FieldKind;
   lines: string[];
-  /** Host views drawing it, blanked on release. */
-  views: Set<MessagePort>;
+  /**
+   * This value's images the service may still serve, each by how to end it
+   * and when it expires. An image already drawn stays drawn.
+   */
+  images: Map<() => Promise<void>, number>;
 }
 
-interface Connection {
-  /** The window of the product frame the bridge port came from. */
-  frame(): unknown;
-  handles: Map<string, Held>;
-  /** Unused view tokens issued to this connection. */
-  tokens: Set<string>;
-}
-
-interface PendingView {
-  owner: Connection;
-  handle: string;
-  expires: number;
-}
-
-/** How long an issued view token waits for its frame. */
-const VIEW_TOKEN_MS = 60_000;
 /** The most handles one connection holds at once. */
 const MAX_HANDLES = 64;
-const MAX_TOKENS = 50;
+/** The most images of one handle the service may serve at once. */
+const MAX_IMAGES = 50;
 const MAX_LABEL_LINES = 6;
 const MAX_LABEL_CHARS = 80;
 
@@ -153,17 +152,6 @@ const errorReply = (error: unknown): FieldErrorReply =>
   error instanceof FieldError
     ? { code: error.code, message: error.message }
     : { code: "unavailable", message: "Request failed." };
-
-/** Whether `source` is a window whose parent is exactly `frame`. */
-const isChildOf = (source: unknown, frame: unknown): boolean => {
-  if (typeof source !== "object" || source === null || frame === null)
-    return false;
-  try {
-    return (source as { parent?: unknown }).parent === frame;
-  } catch {
-    return false;
-  }
-};
 
 const shortAccount = (account: string) =>
   `${account.slice(0, 8)}…${account.slice(-6)}`;
@@ -212,7 +200,6 @@ export class FieldHost {
   private readonly keys: ReceiveKeys;
   private readonly providers = new Map<string, Provider>();
   private readonly connections = new Set<() => void>();
-  private readonly views = new Map<string, PendingView>();
   private printing = false;
 
   constructor(private readonly options: FieldHostOptions) {
@@ -225,7 +212,8 @@ export class FieldHost {
 
   /**
    * Work for `session`, or for nobody. A change ends every connection, drops
-   * provider values, handles and views, and locks receiving keys; stored
+   * provider values and handles, ends images not loaded yet, and locks
+   * receiving keys; stored
    * keys stay and open again for the same wallet.
    */
   setSession(session: FieldSession | null): void {
@@ -237,59 +225,16 @@ export class FieldHost {
     if (same) return;
     for (const close of [...this.connections]) close();
     this.providers.clear();
-    this.views.clear();
     this.session = session;
     if (session === null) this.keys.lock();
     else this.keys.unlock(session);
   }
 
-  /**
-   * Redeem a view token for a host-origin frame. Answers `{ lines }` only when
-   * the token is live and `source` is a direct child of the frame the token
-   * was issued to; anything else gets `{ unavailable: true }`.
-   */
-  attachView(token: unknown, source: unknown, port: MessagePort): void {
-    const view = typeof token === "string" ? this.views.get(token) : undefined;
-    if (view !== undefined) {
-      this.views.delete(token as string);
-      view.owner.tokens.delete(token as string);
-    }
-    const held =
-      view !== undefined &&
-      view.expires >= this.now() &&
-      isChildOf(source, view.owner.frame())
-        ? view.owner.handles.get(view.handle)
-        : undefined;
-    if (held === undefined) {
-      port.postMessage({ unavailable: true });
-      port.close();
-      return;
-    }
-    port.postMessage({ lines: held.lines });
-    held.views.add(port);
-    // The view says when its document goes away, so drawn views do not pile up.
-    port.onmessage = (event: MessageEvent<unknown>) => {
-      if ((event.data as { release?: unknown } | null)?.release !== true)
-        return;
-      held.views.delete(port);
-      port.close();
-    };
-  }
-
   /** Attach an already source- and origin-checked product port, with the role the host gave it. */
-  connect(
-    product: string,
-    role: FieldRole,
-    port: MessagePort,
-    frame: () => unknown = () => null,
-  ): () => void {
+  connect(product: string, role: FieldRole, port: MessagePort): () => void {
     const session = this.session;
     const controller = new AbortController();
-    const connection: Connection = {
-      frame,
-      handles: new Map(),
-      tokens: new Set(),
-    };
+    const heldValues = new Map<string, Held>();
     let queue = Promise.resolve();
     const active = (): FieldSession => {
       if (
@@ -303,21 +248,17 @@ export class FieldHost {
         );
       return session;
     };
-    const blank = (held: Held) => {
-      for (const view of held.views) {
-        view.postMessage({ clear: true });
-        view.close();
-      }
-      held.views.clear();
+    const blank = async (held: Held): Promise<void> => {
+      const revokes = [...held.images.keys()].map((revoke) => revoke());
+      held.images.clear();
+      await Promise.all(revokes);
     };
     const close = () => {
       if (controller.signal.aborted) return;
       controller.abort();
       port.close();
-      for (const held of connection.handles.values()) blank(held);
-      connection.handles.clear();
-      for (const token of connection.tokens) this.views.delete(token);
-      connection.tokens.clear();
+      for (const held of heldValues.values()) void blank(held);
+      heldValues.clear();
       this.connections.delete(close);
     };
     this.connections.add(close);
@@ -332,17 +273,17 @@ export class FieldHost {
       return result;
     };
     const hold = (fields: readonly SealedField[]): FieldDescriptor[] => {
-      if (connection.handles.size + fields.length > MAX_HANDLES)
+      if (heldValues.size + fields.length > MAX_HANDLES)
         throw new FieldError(
           "limit",
           "Too many fields held. Release some first.",
         );
       return fields.map((field) => {
         const handle = toHex(this.random(16)).slice(2);
-        connection.handles.set(handle, {
+        heldValues.set(handle, {
           kind: field.kind,
           lines: valueLines(field.kind, field.value),
-          views: new Set(),
+          images: new Map(),
         });
         return {
           id: field.id,
@@ -354,7 +295,7 @@ export class FieldHost {
     };
     const held = (handle: unknown): Held => {
       const found =
-        typeof handle === "string" ? connection.handles.get(handle) : undefined;
+        typeof handle === "string" ? heldValues.get(handle) : undefined;
       if (found === undefined)
         throw new FieldError(
           "unavailable",
@@ -409,6 +350,13 @@ export class FieldHost {
             throw new FieldError(
               "invalid",
               "Use declared fields, each 1 to 160 characters, an address in at most 6 lines.",
+            );
+          if (
+            !fitsField(kind as FieldKind, valueLines(kind as FieldKind, value))
+          )
+            throw new FieldError(
+              "invalid",
+              `This ${KIND_NAMES[kind as FieldKind]} is too long to show. Shorten it.`,
             );
           next[kind as FieldKind] = value;
         }
@@ -643,48 +591,58 @@ export class FieldHost {
       }
     };
 
-    const release = (input: Record<string, unknown>) => {
+    /** Answers once the released values' unused images no longer load. */
+    const release = async (input: Record<string, unknown>) => {
       const handles = Array.isArray(input.handles) ? input.handles : [];
+      const revoking: Promise<void>[] = [];
       let released = 0;
       for (const handle of handles) {
         const found =
-          typeof handle === "string"
-            ? connection.handles.get(handle)
-            : undefined;
+          typeof handle === "string" ? heldValues.get(handle) : undefined;
         if (found === undefined) continue;
-        blank(found);
-        connection.handles.delete(handle as string);
+        revoking.push(blank(found));
+        heldValues.delete(handle as string);
         released += 1;
       }
+      await Promise.all(revoking);
       return { released };
     };
 
-    const display = (
+    const display = async (
       input: Record<string, unknown>,
-    ): { surface: WebFieldSurface } => {
-      held(input.handle);
+    ): Promise<{ surface: WebImageSurface }> => {
+      const value = held(input.handle);
       const theme: FieldTheme = input.theme === "dark" ? "dark" : "paper";
       const now = this.now();
-      for (const token of connection.tokens)
-        if ((this.views.get(token)?.expires ?? 0) < now) {
-          this.views.delete(token);
-          connection.tokens.delete(token);
-        }
-      if (connection.tokens.size >= MAX_TOKENS)
-        throw new FieldError("limit", "Too many open views. Reopen the app.");
-      const token = toHex(this.random(16)).slice(2);
-      this.views.set(token, {
-        owner: connection,
-        handle: input.handle as string,
-        expires: now + VIEW_TOKEN_MS,
-      });
-      connection.tokens.add(token);
-      return {
-        surface: {
-          platform: "web-frame",
-          url: this.options.viewUrl(token, theme),
-        },
-      };
+      for (const [revoke, expires] of value.images)
+        if (expires <= now) value.images.delete(revoke);
+      if (value.images.size >= MAX_IMAGES)
+        throw new FieldError("limit", "Too many views. Open it again.");
+      const svg = fieldSvg(value.kind, value.lines, theme);
+      let image: Awaited<ReturnType<FieldHostOptions["images"]["issue"]>>;
+      try {
+        image = await this.options.images.issue({ product, svg });
+      } catch {
+        active();
+        throw new FieldError(
+          "unavailable",
+          "The host could not draw this field. Try again.",
+        );
+      }
+      // The handle may have been released, or the session ended, meanwhile.
+      if (
+        controller.signal.aborted ||
+        heldValues.get(input.handle as string) !== value
+      ) {
+        void image.revoke();
+        active();
+        throw new FieldError(
+          "unavailable",
+          "This field is no longer held. Open it again.",
+        );
+      }
+      value.images.set(image.revoke, image.expires);
+      return { surface: { platform: "web-image", url: image.url } };
     };
 
     const print = async (input: Record<string, unknown>) => {

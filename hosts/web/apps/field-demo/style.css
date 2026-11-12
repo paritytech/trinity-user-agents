@@ -39,7 +39,7 @@
   --error: #d9363e;
   --focus: #ffffff29;
   --shadow: #0000007a;
-  /* The host's field view draws on this exact color (tools/demos/field-view.css). */
+  /* The host's field images draw on this exact color (`COLORS.paper`, src/fields/svg.ts). */
   --paper: #fbfaf6;
   --ink: #16171b;
   --ink-muted: #6b6d75;
@@ -953,18 +953,12 @@ button.row:hover {
   margin: 0 0 8px;
 }
 
-/* The host draws this frame; the product only places it. */
-/* Sized for six address lines; the host's view shrinks longer text to fit. */
+/* The host draws this image; the product only places it and sets its width. */
 .protected-field {
   display: block;
   width: 100%;
-  height: 156px;
-  border: 0;
-  background: var(--paper);
-}
-
-#slip-phone .protected-field {
-  height: 52px;
+  max-width: 420px;
+  height: auto;
 }
 
 .address-wait {

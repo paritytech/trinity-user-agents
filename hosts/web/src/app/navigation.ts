@@ -102,7 +102,6 @@ export interface NavigationDeps {
     url: URL,
     productId: ProductId,
     port: MessagePort,
-    frame: () => Window | null,
   ): () => void;
   /** Show `text` in the address bar. */
   showAddress(text: string): void;
@@ -774,16 +773,12 @@ export class ProductNavigation {
           ...(this.deps.fieldDemoPort === undefined
             ? {}
             : {
-                onFieldDemoPort: (
-                  port: MessagePort,
-                  frame: () => Window | null,
-                ) =>
+                onFieldDemoPort: (port: MessagePort) =>
                   this.deps.fieldDemoPort!(
                     runtime,
                     target.url,
                     productId,
                     port,
-                    frame,
                   ),
               }),
           onFrameLoad: (count) => {

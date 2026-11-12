@@ -181,6 +181,7 @@ export interface ConsumerCalls {
   request(input: FieldRequest): FieldGrant;
   open(input: { envelope: string; context: string }): OpenedEnvelope;
   release(input: { handles: FieldHandle[] }): { released: number };
+  /** Where the host draws `handle`: a surface only the platform's adapter places. */
   display(input: { handle: FieldHandle; theme: FieldTheme }): {
     surface: FieldSurface;
   };

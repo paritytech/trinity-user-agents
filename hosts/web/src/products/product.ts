@@ -139,7 +139,7 @@ export interface OpenProductOptions {
    * Attach the noncanonical web-only field demo to the document that just
    * loaded. Returns its cleanup, which runs on the next load or on close.
    */
-  onFieldDemoPort?(port: MessagePort, frame: () => Window | null): () => void;
+  onFieldDemoPort?(port: MessagePort): () => void;
   /**
    * Called with each console line the frame's worker shell forwards
    * (`worker-console.ts`). Heard as {@link onChatV2Port} is, so a line is
@@ -228,10 +228,7 @@ export async function openProduct(
     const target = frame.iframe.contentWindow;
     if (onFieldDemoPort === undefined || target === null) return;
     const channel = new MessageChannel();
-    closeFields = onFieldDemoPort(
-      channel.port1,
-      () => frame.iframe.contentWindow,
-    );
+    closeFields = onFieldDemoPort(channel.port1);
     target.postMessage(
       { type: FIELDS_OFFER, protocol: FIELDS_PROTOCOL },
       url.origin,

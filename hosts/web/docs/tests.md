@@ -59,9 +59,12 @@ a Chromium (`npx playwright-core install chromium`, or set `CHROMIUM_PATH`).
   Store, both directions and a reload, and its conversation in the inspector's Chat view with no test probe.
 - [`field-demo.spec.ts`](../browser/field-demo.spec.ts): the draft field bridge on the simulated store: a seller's key
   bound by the core and checked in the buyer's tab, two providers and an optional phone in one sheet, cancel, the market
-  posting through its own TrUAPI Statement Store, protected receipt and slip the market cannot read or replay, printing
-  with no host sheet, the seller's order reopened from a new host tab, no provider, a market reloaded during its sheet,
-  and sign-out. Its own Vite servers and caches; nothing leaves the test.
+  posting through its own TrUAPI Statement Store, receipt and slip drawn as SVG images, printing with no host sheet, the
+  seller's order reopened from a new host tab, no provider, a market reloaded during its sheet, and sign-out. For the
+  images: canvas, `fetch`, `XMLHttpRequest` and document embeds read nothing, another origin is refused, a market-origin
+  page in another profile and a local request with the two headers are served (the accepted bearer limit), single use,
+  release and sign-out, and a PDF print. `FIELD_DEMO_OUT=<dir>` keeps a screenshot of the receipt and the PDF. Its own
+  Vite servers and caches; nothing leaves the test.
 - [`guarded-posting.spec.ts`](../browser/guarded-posting.spec.ts): Contact Chat, Kettle and Nova on controlled
   best-ready allowances, first messages and provisional renewal; Nova acceptance confirmation after reload, identical
   `noAllowance` retries and visible reorg recovery; Contact Chat's failed window and explicit retry; and a simulated
