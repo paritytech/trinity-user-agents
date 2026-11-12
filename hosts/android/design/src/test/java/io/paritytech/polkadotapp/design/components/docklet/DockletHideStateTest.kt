@@ -395,10 +395,79 @@ class DockletHideStateTest {
         assertTrue(state.isOffScreen)
     }
 
-    private fun TestScope.hideState() = DockletHideState(
+    @Test
+    fun `the hidden fraction follows the dock out and back`() = runTest {
+        val state = hideState()
+        assertEquals(0f, state.hiddenFraction, EPS)
+
+        swipe(state, fromX = 50f, toX = 250f)
+        state.releaseHide()
+        advanceTimeBy(FrameMillis * 6)
+        runCurrent()
+        val midway = state.hiddenFraction
+        advanceUntilIdle()
+        val hidden = state.hiddenFraction
+        state.restore()
+        advanceUntilIdle()
+
+        assertTrue(midway > 0f && midway < 1f)
+        assertEquals(1f, hidden, EPS)
+        assertEquals(0f, state.hiddenFraction, EPS)
+    }
+
+    @Test
+    fun `the hidden fraction dips while a hidden dock peeks`() = runTest {
+        val state = hiddenState()
+
+        state.peek()
+        advanceTimeBy(700L + 200L)
+        runCurrent()
+
+        assertTrue(state.hiddenFraction < 1f)
+    }
+
+    @Test
+    fun `the hidden fraction stays within 0 and 1 through a flung hide`() = runTest {
+        val state = hideState()
+        swipe(state, fromX = 50f, toX = 300f, stepMillis = 4L)
+        state.releaseHide()
+
+        val fractions = (1..60).map {
+            advanceTimeBy(FrameMillis)
+            runCurrent()
+            state.hiddenFraction
+        }
+
+        assertTrue(fractions.all { it in 0f..1f })
+    }
+
+    @Test
+    fun `with reduced motion the hidden fraction follows the fade both ways`() = runTest {
+        val state = hideState(DockletMotionMode.CrossFade)
+        swipe(state, fromX = 50f, toX = 250f)
+        state.releaseHide()
+        advanceTimeBy(HalfFadeMillis)
+        runCurrent()
+        val fadingOut = state.hiddenFraction
+        advanceUntilIdle()
+        val hidden = state.hiddenFraction
+
+        state.restore()
+        advanceTimeBy(HalfFadeMillis)
+        runCurrent()
+        val fadingIn = state.hiddenFraction
+        advanceUntilIdle()
+
+        assertTrue(fadingOut > 0f && fadingOut < 1f)
+        assertEquals(1f, hidden, EPS)
+        assertTrue(fadingIn > 0f && fadingIn < 1f)
+        assertEquals(0f, state.hiddenFraction, EPS)
+    }
+
+    private fun TestScope.hideState(motionMode: DockletMotionMode = DockletMotionMode.Morph) = DockletHideState(
         scope = CoroutineScope(coroutineContext + TestMonotonicFrameClock(this) + Job()),
         haptics = { moments += it },
-        motionMode = { DockletMotionMode.Morph },
+        motionMode = { motionMode },
         currentDrawbridge = { bridge },
         onLanded = { landings += it },
     )
@@ -425,5 +494,6 @@ class DockletHideStateTest {
     private companion object {
         const val EPS = 1e-2f
         const val FrameMillis = 16L
+        const val HalfFadeMillis = 110L
     }
 }

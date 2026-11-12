@@ -8,15 +8,23 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
-class BottomNavHeightProvider @Inject constructor() {
+class BottomNavPositionProvider @Inject constructor() {
     private val mutableHeightDp = MutableStateFlow(0.dp)
     val heightDp: StateFlow<Dp> = mutableHeightDp
+
+    private val mutableHiddenFraction = MutableStateFlow(0f)
+    val hiddenFraction: StateFlow<Float> = mutableHiddenFraction
 
     fun set(heightDp: Dp) {
         mutableHeightDp.value = heightDp
     }
 
+    fun setHiddenFraction(fraction: Float) {
+        mutableHiddenFraction.value = fraction
+    }
+
     fun clear() {
         mutableHeightDp.value = 0.dp
+        mutableHiddenFraction.value = 0f
     }
 }

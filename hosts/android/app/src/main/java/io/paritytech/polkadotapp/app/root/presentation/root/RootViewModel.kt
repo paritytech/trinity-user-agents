@@ -5,7 +5,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.paritytech.polkadotapp.app.root.domain.RootInteractor
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
-import io.paritytech.polkadotapp.app.root.presentation.main.BottomNavHeightProvider
+import io.paritytech.polkadotapp.app.root.presentation.main.BottomNavPositionProvider
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
@@ -70,14 +70,14 @@ class RootViewModel @Inject constructor(
     chatEngine: ChatEngine,
     featureOverlays: Set<@JvmSuppressWildcards ChatOverlay>,
     observeAccountOnboardingStatus: ObserveAccountOnboardingStatusUseCase,
-    bottomNavHeightProvider: BottomNavHeightProvider,
+    bottomNavPositionProvider: BottomNavPositionProvider,
     chainHealthMixinFactory: ChainHealthMixin.Factory,
     coroutineDispatchers: CoroutineDispatchers,
 ) : BaseViewModel(), RootContract {
     // Prepended: each overlay gets its own padded box, so appending would push the extension overlays up.
     override val chatOverlays = chatEngine.observeActiveOverlays().map { featureOverlays.toList() + it }
     override val isOnboarded = observeAccountOnboardingStatus().map { it.isOnboarded }
-    override val bottomNavHeight = bottomNavHeightProvider.heightDp
+    override val bottomNavHeight = bottomNavPositionProvider.heightDp
     val appTheme = appThemeSelector.selectedTheme
     override val chainsHealth = chainHealthMixinFactory.create(this).model
     override val currentTab = navigationHolder.currentTab

@@ -1,7 +1,10 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -16,6 +19,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -25,6 +29,7 @@ import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButto
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
 import io.paritytech.polkadotapp.design.components.docklet.DockletGlassTheme
 import io.paritytech.polkadotapp.design.components.docklet.rememberDockletGlassButtonStyle
+import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarHiddenFraction
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -65,6 +70,9 @@ private fun ChatListScreenInternal(
     val density = LocalDensity.current
     var newChatButtonHeight by remember { mutableStateOf(0.dp) }
     val newChatButtonBottomOffset = PolkadotTheme.spacings.mediumIncreased
+    val barInsets = LocalAppNavigationBarInsets.current
+    val navigationBars = WindowInsets.navigationBars
+    val barHiddenFraction = LocalAppNavigationBarHiddenFraction.current
 
     PolkadotSurface {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -90,8 +98,11 @@ private fun ChatListScreenInternal(
             NewChatButton(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .windowInsetsPadding(LocalAppNavigationBarInsets.current)
+                    .windowInsetsPadding(barInsets)
                     .padding(end = PolkadotTheme.spacings.large, bottom = newChatButtonBottomOffset)
+                    .offset {
+                        IntOffset(0, newChatButtonDrop(barInsets.getBottom(this), navigationBars.getBottom(this), barHiddenFraction()))
+                    }
                     .onSizeChanged { newChatButtonHeight = with(density) { it.height.toDp() } }
                     .testTag(ChatTestTags.NEW_CHAT_BUTTON),
                 onClick = onAddContactClick,
