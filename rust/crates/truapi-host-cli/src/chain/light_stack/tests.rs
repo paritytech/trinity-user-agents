@@ -27,6 +27,16 @@ fn light_client(stack: &Stack) -> &StackLightClient {
 	stack.light_client().expect("the stack runs on the light client")
 }
 
+/// Dates the kept spec at `path` to before [`KEPT_SPEC_LIFETIME`] ago.
+fn age(path: &Path) {
+	let long_ago = SystemTime::now() - KEPT_SPEC_LIFETIME - Duration::from_secs(60);
+	std::fs::File::options()
+		.write(true)
+		.open(path)
+		.and_then(|file| file.set_modified(long_ago))
+		.expect("age the kept spec");
+}
+
 fn kept_specs(directory: &Path) -> Vec<PathBuf> {
 	let Ok(entries) = std::fs::read_dir(directory) else {
 		return Vec::new();
@@ -145,16 +155,66 @@ fn keeping_a_spec_removes_the_expired_ones() {
 	for path in [&expired, &recent] {
 		std::fs::write(path, "{}").expect("write a kept spec");
 	}
-	let long_ago = SystemTime::now() - KEPT_SPEC_LIFETIME - Duration::from_secs(60);
-	std::fs::File::options()
-		.write(true)
-		.open(&expired)
-		.and_then(|file| file.set_modified(long_ago))
-		.expect("age the kept spec");
+	age(&expired);
 
 	keep(&new, b"{}").expect("the directory is writable");
 
 	let mut kept = kept_specs(directory.path());
 	kept.sort();
 	assert_eq!(kept, [new, recent]);
+}
+
+/// A spec read from its kept copy is in use, however long ago it was fetched.
+/// Removing it would make the next run depend on the spec's server again.
+#[tokio::test]
+async fn a_kept_spec_still_in_use_is_not_removed() {
+	let (server, requests) = serve_light_specs().await;
+	let directory = tempfile::tempdir().expect("temporary directory");
+	let relay = light_spec_genesis(RELAY_LIGHT_SPEC);
+	let first = stack_served_by(&server, directory.path());
+	light_client(&first).load_spec(relay).await.expect("spec matches");
+	let [kept] = kept_specs(directory.path()).try_into().expect("one spec is kept");
+	age(&kept);
+
+	let second = stack_served_by(&server, directory.path());
+	light_client(&second).load_spec(relay).await.expect("the kept copy matches");
+	keep(&directory.path().join("new.json"), b"{}").expect("the directory is writable");
+
+	assert!(kept.exists(), "the spec the second run read is still kept");
+	assert_eq!(requests.load(Ordering::Relaxed), 1);
+}
+
+/// A spec whose server does not answer must hold up only its own chain: the
+/// others have their specs and a command may need none but them.
+#[tokio::test]
+async fn a_spec_being_fetched_does_not_hold_up_another_chain() {
+	let (server, _) = serve_light_specs().await;
+	let directory = tempfile::tempdir().expect("temporary directory");
+	let stack = stack_served_by(&server, directory.path());
+	let light = light_client(&stack);
+	let (relay, people) =
+		(light_spec_genesis(RELAY_LIGHT_SPEC), light_spec_genesis(PEOPLE_LIGHT_SPEC));
+
+	let mut relay_load = std::pin::pin!(light.load_spec(relay));
+	assert!(futures::poll!(relay_load.as_mut()).is_pending(), "the relay's load has begun");
+	let people_load = tokio::time::timeout(Duration::from_secs(5), light.load_spec(people)).await;
+
+	assert!(matches!(people_load, Ok(Ok(()))), "{people_load:?}");
+}
+
+/// A spec larger than the CLI reads stays that large, so it is not reported as
+/// one to fetch again.
+#[tokio::test]
+async fn a_spec_too_large_to_read_is_not_unreachable() {
+	let (server, _) = serve_light_specs().await;
+	let directory = tempfile::tempdir().expect("temporary directory");
+	let relay = light_spec_genesis(RELAY_LIGHT_SPEC);
+	let stack = stack_served_at(&server, "large.json", "people.json", directory.path());
+
+	let refused = light_client(&stack).load_spec(relay).await;
+
+	assert!(
+		matches!(&refused, Err(MissingSpec::TooLarge { role, .. }) if role == "Relay"),
+		"{refused:?}"
+	);
 }

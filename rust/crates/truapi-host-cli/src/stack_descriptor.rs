@@ -10,7 +10,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use reqwest::Url;
 use trinity_stack::{Descriptor, Fetched, Pointer, accept};
 
-/// A local file has no URL of its own; the pointer only carries the key to check.
+/// A local file has no URL of its own; the pointer only carries the key to check. Every local
+/// file is read under it, so its `stack_id` does not tell one file's stack from another's.
 const LOCAL_FILE_URL: &str = "https://local-file.invalid/";
 pub const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 /// The largest body `fetch` reads. A descriptor is a few kilobytes, and the
@@ -149,6 +150,9 @@ pub enum FetchError {
 	/// No answer, or a body that cannot be a descriptor.
 	#[display("{_0}")]
 	Transport(String),
+	/// The body is larger than `fetch` reads.
+	#[display("larger than {MAX_FETCH_BYTES} bytes")]
+	TooLarge,
 }
 
 /// The bytes a descriptor or light spec URL serves, or why it is unreachable. Redirects are
@@ -176,16 +180,15 @@ pub async fn fetch(url: &str, timeout: Duration) -> Result<Vec<u8>, FetchError> 
 	if !status.is_success() {
 		return Err(FetchError::Http(format!("HTTP {status}")));
 	}
-	let too_large = || FetchError::Transport(format!("larger than {MAX_FETCH_BYTES} bytes"));
 	if response.content_length().is_some_and(|length| length > MAX_FETCH_BYTES as u64) {
-		return Err(too_large());
+		return Err(FetchError::TooLarge);
 	}
 	let mut response = response;
 	let mut body = Vec::new();
 	while let Some(chunk) = response.chunk().await.map_err(transport)? {
 		body.extend_from_slice(&chunk);
 		if body.len() > MAX_FETCH_BYTES {
-			return Err(too_large());
+			return Err(FetchError::TooLarge);
 		}
 	}
 	Ok(body)

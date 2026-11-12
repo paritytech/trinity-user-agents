@@ -225,9 +225,10 @@ pub async fn serve_silent() -> String {
 	url
 }
 
-/// A loopback HTTP server with [`RELAY_LIGHT_SPEC`] at `/relay.json` and
-/// [`PEOPLE_LIGHT_SPEC`] at `/people.json`. Returns its base URL and the
-/// number of requests it has answered.
+/// A loopback HTTP server with [`RELAY_LIGHT_SPEC`] at `/relay.json`,
+/// [`PEOPLE_LIGHT_SPEC`] at `/people.json` and a body larger than the CLI
+/// reads at `/large.json`. Returns its base URL and the number of requests it
+/// has answered.
 pub async fn serve_light_specs() -> (String, Arc<AtomicUsize>) {
 	use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -243,9 +244,10 @@ pub async fn serve_light_specs() -> (String, Arc<AtomicUsize>) {
 			let read = socket.read(&mut request).await.unwrap_or(0);
 			let request = String::from_utf8_lossy(&request[..read]);
 			let body = match request.split_whitespace().nth(1) {
-				Some("/relay.json") => RELAY_LIGHT_SPEC,
-				Some("/people.json") => PEOPLE_LIGHT_SPEC,
-				_ => "",
+				Some("/relay.json") => RELAY_LIGHT_SPEC.to_owned(),
+				Some("/people.json") => PEOPLE_LIGHT_SPEC.to_owned(),
+				Some("/large.json") => " ".repeat(2 * 1024 * 1024),
+				_ => String::new(),
 			};
 			let status = if body.is_empty() { "404 Not Found" } else { "200 OK" };
 			let head = format!(

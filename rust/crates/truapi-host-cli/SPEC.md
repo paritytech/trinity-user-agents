@@ -1797,10 +1797,13 @@ chain without the storage item, is logged and left to fail on first use.
 
 With `--chain-backend light-client` the endpoints are not used, and the light
 specs are checked instead (§14.3). A spec whose bytes differ from the
-descriptor's `sha256`, or that implies another genesis hash than its chain's, is
-an error handled like an endpoint's wrong genesis: the descriptor is fetched
-once more when the shipped copy is in use. A spec that cannot be fetched is
-logged, and fetched again when a command first connects to its chain.
+descriptor's `sha256`, that implies another genesis hash than its chain's, or
+that is larger than 1 MiB is an error handled like an endpoint's wrong genesis:
+the descriptor is fetched once more when the shipped copy is in use. A spec
+that cannot be fetched is logged, and fetched again when a command first
+connects to its chain. People's `NetworkSuffix` is not compared with the `tld`
+on the light client: reading it needs a synced chain, which takes longer than a
+command may wait before it starts.
 
 `--stack` (§4.4) replaces the network with another stack. A link on any scheme or
 domain is read for its `url` and `key`; a URL is read as a pointer without a
@@ -1933,7 +1936,8 @@ each parachain syncs through and the chains that run the statement-store
 protocol. A checked spec is kept in `light-specs/<sha256>.json` under the state
 directory (`$XDG_STATE_HOME/truapi-host`), outside any `--base-path`, and a
 later run reads it from there while it still passes the check. Keeping a spec
-removes the kept ones written more than 30 days earlier. One light client per
+removes the kept ones no run has read for 30 days. Each chain's spec is fetched
+on its own, so one that does not answer delays no other chain. One light client per
 resolved stack serves the process and keeps each chain running after its last
 connection closes, so a chain syncs once per process. It stores no
 database, so every process syncs from the specs' checkpoints.

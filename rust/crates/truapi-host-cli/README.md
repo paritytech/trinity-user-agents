@@ -1115,7 +1115,8 @@ that reports a genesis other than the one it is routed as is an error; for a bui
 it reports that the stack restarted from genesis and which descriptor is in use, after
 fetching the published descriptor once more when it could not be fetched before. A
 `NetworkSuffix` other than the `tld` is an error. An endpoint that does not answer
-within 3 seconds is logged and left to fail on first use.
+within 3 seconds is logged and left to fail on first use. On the light client the
+light specs are checked instead, and the `NetworkSuffix` is not.
 A fork of Polkadot may keep Polkadot's genesis hashes and use the `dot` TLD. Any endpoint
 with one of Polkadot's genesis hashes, from a built-in or a stack, is compared with real
 Polkadot, whose signed descriptor the binary ships as a reference, with every node the

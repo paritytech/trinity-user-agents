@@ -6,6 +6,7 @@
 //! [`StackLightClient::new`].
 
 use std::{
+	collections::HashMap,
 	path::{Path, PathBuf},
 	time::{Duration, SystemTime},
 };
@@ -17,10 +18,10 @@ use truapi_provider::{EmbeddedChainProvider, LightSpecSource, LightStack};
 use crate::{
 	network::ChainEndpoint,
 	platform::{StorageError, atomic_write},
-	stack_descriptor::{FETCH_TIMEOUT, Roles, fetch},
+	stack_descriptor::{FETCH_TIMEOUT, FetchError, Roles, fetch},
 };
 
-/// How long a kept spec outlives its last write. A relay's spec is replaced
+/// How long a kept spec outlives its last use. A relay's spec is replaced
 /// whenever its operator publishes a fresher checkpoint, so old ones pile up.
 const KEPT_SPEC_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
@@ -32,9 +33,11 @@ pub struct StackLightClient {
 	/// Checked specs by the `sha256` their descriptor names, so a run does not
 	/// depend on the server a spec came from.
 	spec_directory: PathBuf,
-	/// Held while a spec is fetched, so connects that need the same spec
-	/// fetch it once.
-	fetching: tokio::sync::Mutex<()>,
+	/// Each light spec the descriptor names, by its chain's genesis hash, with
+	/// the lock held while it is loaded. Connects that need the same spec
+	/// fetch it once, and a spec that cannot be fetched holds up no other
+	/// chain.
+	named: HashMap<[u8; 32], (LightSpecSource, tokio::sync::Mutex<()>)>,
 }
 
 impl core::fmt::Debug for StackLightClient {
@@ -58,6 +61,15 @@ pub enum MissingSpec {
 		/// Why the fetch failed.
 		cause: String,
 	},
+	/// The spec is larger than the CLI reads, so fetching it again gets
+	/// nowhere.
+	#[display("the light spec of {role} at {url} is {}", FetchError::TooLarge)]
+	TooLarge {
+		/// The chain's role in the descriptor.
+		role: String,
+		/// Where the spec is published.
+		url: String,
+	},
 	/// The spec is not the one the descriptor names.
 	#[display("{_0}")]
 	Wrong(ProviderError),
@@ -72,10 +84,15 @@ impl StackLightClient {
 		spec_directory: PathBuf,
 	) -> Result<Self, ProviderError> {
 		let stack = LightStack::new(stack_id, descriptor)?;
+		let named = stack
+			.light_specs()
+			.into_iter()
+			.map(|named| (named.genesis_hash, (named, tokio::sync::Mutex::new(()))))
+			.collect();
 		Ok(Self {
 			provider: EmbeddedChainProvider::builder().stack(stack).keep_chains_running().build(),
 			spec_directory,
-			fetching: tokio::sync::Mutex::new(()),
+			named,
 		})
 	}
 
@@ -103,8 +120,8 @@ impl StackLightClient {
 			match self.load_spec(genesis).await {
 				Ok(()) => {},
 				Err(MissingSpec::Wrong(error)) => return Err(error),
-				Err(unreachable @ MissingSpec::Unreachable { .. }) => {
-					return Err(ProviderError::Transport { reason: unreachable.to_string() });
+				Err(missing) => {
+					return Err(ProviderError::Transport { reason: missing.to_string() });
 				},
 			}
 		}
@@ -115,16 +132,14 @@ impl StackLightClient {
 	/// once. The kept copy is used while it passes the check. Otherwise the
 	/// spec is fetched, checked and kept.
 	pub async fn load_spec(&self, genesis_hash: [u8; 32]) -> Result<(), MissingSpec> {
-		let _fetching = self.fetching.lock().await;
+		let (LightSpecSource { role, url, sha256, .. }, loading) = self
+			.named
+			.get(&genesis_hash)
+			.ok_or(MissingSpec::Wrong(ProviderError::UnknownGenesis { genesis: genesis_hash }))?;
+		let _loading = loading.lock().await;
 		if self.provider.has_light_spec(genesis_hash) {
 			return Ok(());
 		}
-		let LightSpecSource { role, url, sha256, .. } = self
-			.provider
-			.light_specs()
-			.into_iter()
-			.find(|named| named.genesis_hash == genesis_hash)
-			.ok_or(MissingSpec::Wrong(ProviderError::UnknownGenesis { genesis: genesis_hash }))?;
 		let kept = self.spec_directory.join(format!("{sha256}.json"));
 
 		let read = kept.clone();
@@ -132,28 +147,47 @@ impl StackLightClient {
 		if let Ok(Ok(bytes)) = kept_bytes &&
 			self.provider.add_light_spec(genesis_hash, &bytes).is_ok()
 		{
+			if let Ok(Err(error)) = tokio::task::spawn_blocking(move || mark_used(&kept)).await {
+				tracing::debug!("cannot mark the kept light spec of {role} as used: {error}");
+			}
 			return Ok(());
 		}
 
-		let bytes = match fetch(&url, FETCH_TIMEOUT).await {
+		let bytes = match fetch(url, FETCH_TIMEOUT).await {
 			Ok(bytes) => bytes,
 			Err(cause) => {
-				return Err(MissingSpec::Unreachable { role, url, cause: cause.to_string() });
+				let (role, url) = (role.clone(), url.clone());
+				return Err(match cause {
+					FetchError::TooLarge => MissingSpec::TooLarge { role, url },
+					cause => MissingSpec::Unreachable { role, url, cause: cause.to_string() },
+				});
 			},
 		};
 		self.provider.add_light_spec(genesis_hash, &bytes).map_err(MissingSpec::Wrong)?;
 		let kept_at = kept.display().to_string();
-		match tokio::task::spawn_blocking(move || keep(&kept, &bytes)).await {
-			Ok(Ok(())) => {},
-			Ok(Err(error)) => tracing::debug!("cannot keep the light spec at {kept_at}: {error}"),
-			Err(error) => tracing::debug!("cannot keep the light spec at {kept_at}: {error}"),
+		let written = tokio::task::spawn_blocking(move || {
+			keep(&kept, &bytes).map_err(|error| error.to_string())
+		})
+		.await
+		.map_err(|error| error.to_string());
+		if let Err(error) | Ok(Err(error)) = written {
+			tracing::warn!(
+				"cannot keep the light spec of {role} at {kept_at}, so the next run fetches it \
+				 again: {error}"
+			);
 		}
 		Ok(())
 	}
 }
 
+/// Marks the kept spec at `path` as used now, since [`remove_expired`] counts
+/// from a spec's last use.
+fn mark_used(path: &Path) -> std::io::Result<()> {
+	std::fs::File::options().write(true).open(path)?.set_modified(SystemTime::now())
+}
+
 /// Keeps `bytes` at `path`, replacing it in one step so a reader never sees a
-/// spec cut short, and removes the specs beside it that are older than
+/// spec cut short, and removes the specs beside it that went unused for
 /// [`KEPT_SPEC_LIFETIME`].
 fn keep(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
 	atomic_write(path, bytes)?;
@@ -163,8 +197,9 @@ fn keep(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
 	Ok(())
 }
 
-/// Removes the files of `directory` written more than [`KEPT_SPEC_LIFETIME`]
-/// ago. One that cannot be read or removed is left for the next time.
+/// Removes the files of `directory` last used more than
+/// [`KEPT_SPEC_LIFETIME`] ago. One that cannot be read or removed is left for
+/// the next time.
 fn remove_expired(directory: &Path) {
 	let expired = |entry: std::fs::DirEntry| {
 		let written = entry.metadata().and_then(|metadata| metadata.modified()).ok()?;

@@ -135,9 +135,9 @@ async fn test_polkadot_fork_check_wiring() {
 	assert!(error.to_string().contains("cannot tell ws://127.0.0.1:"));
 }
 
-/// A spec that is not the one the descriptor names is a wrong answer, which
-/// makes the CLI fetch the descriptor again, while one that cannot be fetched
-/// only leaves its chain unavailable.
+/// A spec that is not the one the descriptor names, or one too large to read,
+/// is a wrong answer, which makes the CLI fetch the descriptor again, while
+/// one that cannot be fetched only leaves its chain unavailable.
 #[tokio::test]
 async fn test_light_spec_wrong_or_unreachable() {
 	let (server, _) = crate::network::serve_light_specs().await;
@@ -151,6 +151,14 @@ async fn test_light_spec_wrong_or_unreachable() {
 		.expect("no chain has one of Polkadot's genesis hashes")
 		.expect_err("each chain is served the other's spec");
 	assert!(error.to_string().contains(&trinity_stack::Error::SpecDigest.to_string()), "{error}");
+
+	let large = format!("{server}/large.json");
+	let oversized = bundled.with_light_specs_at(&large, &people, directory.path());
+	let error = verify_chains(&oversized, None)
+		.await
+		.expect("no chain has one of Polkadot's genesis hashes")
+		.expect_err("the relay's spec is larger than the CLI reads");
+	assert!(error.to_string().contains("--chain-backend rpc"), "{error}");
 
 	let moved = format!("{server}/moved.json");
 	let missing = bundled.with_light_specs_at(&relay, &moved, directory.path());

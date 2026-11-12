@@ -39,9 +39,9 @@ pub async fn verify_chains(stack: &Stack, built_in: Option<&BuiltInOrigin>) -> R
 }
 
 /// Gets the light spec of every routed chain of `stack`, and of their relay,
-/// into `light`. Fails when one is not the spec the descriptor names. A spec
-/// that cannot be fetched is logged, and fetched again when a command first
-/// connects to its chain.
+/// into `light`. Fails when one is not the spec the descriptor names or is
+/// larger than the CLI reads. A spec that cannot be fetched is logged, and
+/// fetched again when a command first connects to its chain.
 async fn verify_light_specs(light: &StackLightClient, stack: &Stack) -> Result<()> {
 	let loads = light.chains(stack.chains()).into_iter().map(|genesis| async move {
 		match light.load_spec(genesis).await {
@@ -50,7 +50,11 @@ async fn verify_light_specs(light: &StackLightClient, stack: &Stack) -> Result<(
 				tracing::warn!("{unreachable}; the chain is unavailable until it can be fetched");
 				Ok(())
 			},
-			Err(MissingSpec::Wrong(error)) => bail!("the {} stack: {error}", stack.namespace()),
+			Err(error) => bail!(
+				"the {} stack: {error}; use --chain-backend rpc until the stack's operator \
+				 republishes its light specs",
+				stack.namespace()
+			),
 		}
 	});
 	futures::future::try_join_all(loads).await?;
