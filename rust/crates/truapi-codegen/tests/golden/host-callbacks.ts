@@ -9,7 +9,6 @@ import * as S from "@parity/truapi/scale";
 import {
   AllocatableResource,
   Bytes32,
-  ChainIdentifier,
   CodeFormat,
   FundingDirection,
   FundingQuote,
@@ -250,7 +249,12 @@ export type CoreStorageKey =
    * What funding providers' quote answers showed about what they serve,
    * each record trusted for twelve hours.
    */
-  | { tag: "FundingSupport"; value?: undefined };
+  | { tag: "FundingSupport"; value?: undefined }
+  /**
+   * A product's App executable manifest as last read from dotNS, and when,
+   * cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "AppManifest"; value: { productLabel: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -354,6 +358,23 @@ export interface ExtensionVersionMap {
 }
 
 /**
+ * Why an amount cannot go ahead.
+ */
+export type FundingAmountIssue =
+  /**
+   * A withdrawal of more than the user can spend.
+   */
+  | { tag: "NotEnoughBalance"; value?: undefined }
+  /**
+   * Below the smallest amount any provider takes.
+   */
+  | { tag: "BelowMinimum"; value: { min: bigint } }
+  /**
+   * Above the largest amount any provider takes.
+   */
+  | { tag: "AboveMaximum"; value: { max: bigint } };
+
+/**
  * How the user left the funding overlay.
  */
 export type FundingPresentOutcome = "Started" | "Dismissed";
@@ -384,9 +405,8 @@ export interface FundingPresentation {
 export interface FundingQuoteList {
   /**
    * The request this list answers, as `request_funding_quotes` returned
-   * it. Ids only grow, and a list can reach the host before the call that
-   * returns its id does, so a host shows a list only when its id is at
-   * least the latest it has seen, and drops the rest.
+   * it. The core keeps only the current request's list, so a list read
+   * back is always the one to show.
    */
   requestId: bigint;
 
@@ -407,6 +427,31 @@ export interface FundingQuoteList {
    * row keeps its answer until the provider answers again.
    */
   refreshAtMs: bigint;
+
+  /**
+   * The amount the list prices, in balance units, which `issue` is
+   * about.
+   */
+  amount: bigint;
+
+  /**
+   * Once every provider answered and none quoted, the reason they all
+   * gave. ``undefined`` while any is pending or quoted, or when they gave
+   * different reasons.
+   */
+  refusal?: FundingQuoteUnavailable;
+
+  /**
+   * Once every provider answered and none quoted, what their refusals
+   * say about the amount: the lowest minimum any showed, otherwise the
+   * highest maximum.
+   */
+  issue?: FundingAmountIssue;
+
+  /**
+   * Whether every provider answered: no row is pending.
+   */
+  complete: boolean;
 }
 
 /**
@@ -454,37 +499,6 @@ export type FundingQuoteUnavailable =
    * The provider did not answer in time.
    */
   | { tag: "Timeout"; value?: undefined };
-
-/**
- * One chain a host serves: a protocol chain role mapped to the concrete
- * chain of the host's configured environment.
- */
-export interface HostChainEntry {
-  /**
-   * Protocol role this entry answers for.
-   */
-  identifier: ChainIdentifier;
-
-  /**
-   * Genesis hash identifying the chain in all chain-scoped calls.
-   */
-  genesisHash: Bytes32;
-}
-
-/**
- * The chain set a host serves: its environment plus one entry per chain role.
- */
-export interface HostChainSet {
-  /**
-   * Ecosystem the host is configured for, e.g. "polkadot", "paseo".
-   */
-  network: string;
-
-  /**
-   * Chains this host serves, keyed by protocol role.
-   */
-  chains: Array<HostChainEntry>;
-}
 
 /**
  * Contact handles the core needs turned back into accounts, and the key they
@@ -1095,6 +1109,10 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
       FundingSupport: [15, S._void] as const,
+      AppManifest: [
+        16,
+        S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
+      ] as const,
     }),
 );
 
@@ -1192,6 +1210,18 @@ export const ExtensionVersionMap: S.Codec<ExtensionVersionMap> = S.lazy(
 );
 
 /**
+ * Why an amount cannot go ahead.
+ */
+export const FundingAmountIssue: S.Codec<FundingAmountIssue> = S.lazy(
+  (): S.Codec<FundingAmountIssue> =>
+    S.TaggedUnion({
+      NotEnoughBalance: S._void,
+      BelowMinimum: S.Struct({ min: S.u128 }) as S.Codec<{ min: bigint }>,
+      AboveMaximum: S.Struct({ max: S.u128 }) as S.Codec<{ max: bigint }>,
+    }),
+);
+
+/**
  * How the user left the funding overlay.
  */
 export const FundingPresentOutcome: S.Codec<FundingPresentOutcome> = S.lazy(
@@ -1220,6 +1250,10 @@ export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
       rows: S.Vector(FundingQuoteRow),
       best: S.Option(ProductId),
       refreshAtMs: S.u64,
+      amount: S.u128,
+      refusal: S.Option(FundingQuoteUnavailable),
+      issue: S.Option(FundingAmountIssue),
+      complete: S.bool,
     }) as S.Codec<FundingQuoteList>,
 );
 
@@ -1261,29 +1295,6 @@ export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
       }>,
       Timeout: S._void,
     }),
-);
-
-/**
- * One chain a host serves: a protocol chain role mapped to the concrete
- * chain of the host's configured environment.
- */
-export const HostChainEntry: S.Codec<HostChainEntry> = S.lazy(
-  (): S.Codec<HostChainEntry> =>
-    S.Struct({
-      identifier: ChainIdentifier,
-      genesisHash: Bytes32,
-    }) as S.Codec<HostChainEntry>,
-);
-
-/**
- * The chain set a host serves: its environment plus one entry per chain role.
- */
-export const HostChainSet: S.Codec<HostChainSet> = S.lazy(
-  (): S.Codec<HostChainSet> =>
-    S.Struct({
-      network: S.str,
-      chains: S.Vector(HostChainEntry),
-    }) as S.Codec<HostChainSet>,
 );
 
 /**
@@ -1966,12 +1977,6 @@ export interface Features {
   featureSupported(
     request: HostFeatureSupportedRequest,
   ): Promise<HostFeatureSupportedResponse>;
-
-  /**
-   * Enumerate the chains this host serves (RFC 0026). The core resolves
-   * `get_chain_info` requests against the returned set.
-   */
-  supportedChains(): Promise<HostChainSet>;
 }
 
 /**
@@ -1993,7 +1998,9 @@ export interface FundingPlatform {
    * Show `target` for `provider`'s session `intent` in a frame the host
    * owns, and answer once it closes. A page is an https URL the core has
    * checked: the host shows its origin, and closes the frame with
-   * `Returned` when the page reaches its return URL.
+   * `Returned` when the page reaches its return URL. The core closes the
+   * frame itself, through
+   * `Self::close_provider_frame`, once the session's payment moved.
    */
   presentProviderFrame(
     provider: ProductContext,
@@ -2008,12 +2015,6 @@ export interface FundingPlatform {
    * open for it.
    */
   closeProviderFrame(provider: ProductContext, intent: string): void;
-
-  /**
-   * Whether `provider` ships an App, so an App route of its can be shown.
-   * A provider without one shows only external pages.
-   */
-  providerHasApp?(provider: ProductContext): Promise<boolean>;
 
   /**
    * The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
@@ -2036,9 +2037,12 @@ export interface FundingPlatform {
   /**
    * Observe the quote list the host requested, for the provider list:
    * again whenever a provider answers, and each time the core asks every
-   * provider again.
+   * provider again. ``undefined`` once a selection on another route withdrew it.
    */
-  fundingQuotesChanged?(intent: string, quotes: FundingQuoteList): void;
+  fundingQuotesChanged?(
+    intent: string,
+    quotes: FundingQuoteList | undefined,
+  ): void;
 }
 
 /**

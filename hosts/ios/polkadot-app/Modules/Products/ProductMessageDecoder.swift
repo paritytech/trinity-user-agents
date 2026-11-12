@@ -13,6 +13,8 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
     private let description: String?
     private let logger: LoggerProtocol
     private var viewModels: [String: ProductWidgetViewModel] = [:]
+    private var roomFooterCards: [String: (footer: Chat.RoomFooter, viewModel: ProductWidgetViewModel)] = [:]
+    private var refusedRoomFooters: [String: Chat.RoomFooter] = [:]
 
     init(
         runtime: ChatRuntimeProtocol,
@@ -57,6 +59,60 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
         )
 
         return [SwiftUIContentConfiguration(view: widgetView)]
+    }
+
+    /// The input slot that holds the card the product docked in the footer of `roomId`.
+    func makeRoomFooterCard(
+        roomId: String,
+        messageType: String,
+        payload: Data
+    ) -> (any ChatInputViewConfigurationProtocol)? {
+        let footer = Chat.RoomFooter.card(messageType: messageType, payload: payload)
+        guard let handler = runtime as? TrUAPIChatHandler else {
+            if refusedRoomFooters[roomId] != footer {
+                refusedRoomFooters[roomId] = footer
+                logger.warning("[truapi.product] A \(messageType) card is docked, but only the TrUAPI chat runtime can draw one")
+            }
+            return nil
+        }
+
+        let viewModel: ProductWidgetViewModel
+        if let docked = roomFooterCards[roomId], docked.footer == footer {
+            viewModel = docked.viewModel
+        } else {
+            clearRoomFooterCard(roomId: roomId)
+            viewModel = ProductWidgetViewModel(
+                messageId: roomId,
+                render: { await handler.renderRoomFooter(roomId: roomId, messageType: messageType, payload: payload) },
+                tokenResolver: tokenResolver,
+                logger: logger
+            )
+            roomFooterCards[roomId] = (footer, viewModel)
+        }
+
+        return ProductRoomFooterCardConfiguration(
+            roomId: roomId,
+            messageType: messageType,
+            payload: payload,
+            nodeProvider: viewModel,
+            onAction: { actionId, actionPayload in
+                Task {
+                    await handler.dispatchRoomFooterEvent(
+                        roomId: roomId,
+                        messageType: messageType,
+                        actionId: actionId,
+                        payload: actionPayload
+                    )
+                }
+            },
+            resolveImage: resolveImage
+        )
+    }
+
+    /// Stops drawing the card docked in the footer of `roomId`, once the room docks another or none.
+    func clearRoomFooterCard(roomId: String) {
+        refusedRoomFooters.removeValue(forKey: roomId)
+        roomFooterCards.removeValue(forKey: roomId)?.viewModel.renderTask?.cancel()
     }
 
     func previewString(data _: Data) -> String {

@@ -37,7 +37,7 @@ The interactive playground lets you browse every method, edit request payloads, 
 curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 ```
 
-Prebuilt for macOS on Apple silicon and Linux on x86_64 and arm64. No Rust toolchain or checkout needed, and it keeps itself up to date. `/script` opens a persistent TypeScript project with the Product SDK quickstart, pinned published dependencies, and editor types. Use `/script --run` to rerun it or `/script --edit` to edit without running. Projects survive session cleanup. See the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for setup and existing project scripts. Release checks install and typecheck the default SDK template against the public registry.
+Prebuilt for macOS on Apple silicon and Linux on x86_64 and arm64. No Rust toolchain or checkout needed, and it keeps itself up to date. A workflow installs the same binaries with [`install-truapi-host`](rust/crates/truapi-host-cli/README.md#in-github-actions), pinned to a CLI release. `/script` opens a persistent TypeScript project with the Product SDK quickstart, pinned published dependencies, and editor types. Use `/script --run` to rerun it or `/script --edit` to edit without running. Projects survive session cleanup. See the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for setup and existing project scripts. Release checks install and typecheck the default SDK template against the public registry.
 
 `truapi-host signing-host --session <name>` opens an interactive session and
 restores or creates its signer. `/session <name>` switches to the saved account
@@ -171,6 +171,8 @@ hosts/android/             Android host app
 hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
 e2e/host-playground/       host-playground suite run inside the native host apps; see its README
+stacks/                    Link and signed descriptor of each Trinity stack a host build bundles;
+                           scripts/update-stacks.sh refreshes each descriptor from its link
 docs/                      Design docs, RFCs, feature proposals
 scripts/codegen.sh         Regenerate the TS client from the Rust source
 scripts/refresh-host-import.sh
@@ -224,13 +226,7 @@ native-only adapter types are limited to lifecycle and callback behavior.
 The core requests product worker transitions through `requestWorkerTransition`
 (`request_worker_transition` in Rust). `Start` requires the worker to run;
 `Stop` permits it to stop when no references remain.
-On iOS, a wallet host that manages its own statement-store SSO session can call
-`handleSsoRequest` (routes one decrypted remote message through the core,
-returning a typed outcome: response bytes to post back, a disconnect marker, or
-ignored; a `Cancel` returns at once, so the wallet passes it on without queueing
-it behind the request it withdraws) and `prepareDisconnectRequest` (builds the SCALE-encoded wire message
-for a wallet-initiated disconnect) on `TrUAPIHostRuntime`. Response posting and
-session-record cleanup remain on the wallet side.
+A native wallet that runs its own SSO transport opens one SSO service per peer with `openSsoService` and passes it each incoming message; `prepareDisconnectRequest` builds a wallet-initiated disconnect. The core binds each service to the wallet activation that authenticated the peer. The [iOS SDK guide](ios/truapi-host/README.md#sso-session-handling) gives the call sequence.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
 SSO session, responder identity and handshake payload structs zeroize their fields on drop; debug output redacts their secret fields.
@@ -461,6 +457,8 @@ A stack descriptor describes one deployment of chains and services, as
 [`trinity-stack`](rust/crates/trinity-stack) crate holds every rule a reader applies and the
 conformance vectors. The plan for it and the tools on top of it is in
 [docs/design/trinity-stack-library.md](docs/design/trinity-stack-library.md).
+
+The core takes all of its chain configuration from one stack. See [RUNTIME.md](rust/crates/truapi/RUNTIME.md#stack).
 
 ### Wire debugger
 

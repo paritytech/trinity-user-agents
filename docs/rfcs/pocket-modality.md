@@ -353,8 +353,9 @@ The back adds one variant to the renderer's `RenderContext`, `PocketCardBack { c
 so existing contexts keep their encoding.
 
 Instances add two variants, `PocketCardInstance { card_id, instance_id }` for the face and
-`PocketCardInstanceBack { card_id, instance_id }` for the back, appended in that order after `PocketCardBack` for the
-same reason. A worker on an SDK without them cannot label an instance either, so the host never asks it to draw one.
+`PocketCardInstanceBack { card_id, instance_id }` for the back, appended in that order after the last variant,
+`ChatRoomFooter`, for the same reason. A worker on an SDK without them cannot label an instance either, so the host
+never asks it to draw one.
 
 **Bounds.** `card_id` is a product-supplied identifier and carries the rules chat already applies to its own, through
 `normalize_chat_identifier`: trimmed, NFC-normalized, non-empty, at most `CHAT_FIELD_MAX_BYTES` (256) bytes once

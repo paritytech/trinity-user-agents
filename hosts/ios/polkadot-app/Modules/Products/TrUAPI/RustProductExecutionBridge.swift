@@ -184,10 +184,6 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         }
     }
 
-    func supportedChains() throws -> HostChainSet {
-        TrUAPISupportedChains.make(chainRegistry: dependencies.chainRegistry)
-    }
-
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         try TrUAPIExtensionVersions.make(chainRegistry: dependencies.chainRegistry)
     }
