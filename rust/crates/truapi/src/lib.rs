@@ -847,8 +847,8 @@ impl<Item, Interrupt> Subscription<Item, Interrupt> {
 	}
 }
 
-cfg_if::cfg_if! {
-	if #[cfg(feature = "runtime")] {
+cfg_select! {
+	feature = "runtime" => {
 		pub mod background_task;
 		pub mod bootstrap;
 		pub mod chain;
@@ -932,11 +932,13 @@ cfg_if::cfg_if! {
 			bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get, preimage_key},
 			extrinsic::Sr25519Signer,
 		};
-		pub use host_logic::session::{
-			ExternalPairedSession, SsoSessionInfo, decode_persisted_session,
-			encode_external_paired_session,
+		pub use host_logic::{
+			session::{
+				ExternalPairedSession, SsoSessionInfo, decode_persisted_session,
+				encode_external_paired_session,
+			},
+			worker::{WorkerLedger, WorkerTransition},
 		};
-		pub use host_logic::worker::{WorkerLedger, WorkerTransition};
 		pub use host_rpc_client::HostRpcClient;
 		pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
 		#[cfg(not(target_arch = "wasm32"))]
@@ -975,7 +977,8 @@ cfg_if::cfg_if! {
 			has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
 			wire_schema_hash,
 		};
-	}
+	},
+	_ => {},
 }
 
 #[cfg(test)]

@@ -95,7 +95,6 @@ mock = ["runtime"]
 truapi-macros = { path = "../truapi-macros" }
 strum = { workspace = true }
 async-trait = { workspace = true }
-cfg-if = { workspace = true }
 derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
 futures = { workspace = true }
 hex = { workspace = true }

@@ -122,6 +122,7 @@ scripts/cli-runner-package.test.ts
 .github/consumers.json     maps each released package to the repos notified by a bump issue
 nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc JSON; CI, the
                            scripts and the Makefile all read it
+rust-toolchain.toml        pins every other cargo command in the repo to stable
 .github/registry-drift-exceptions.json
                            documents intentionally unpublished npm package versions
 ```
