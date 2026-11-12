@@ -255,7 +255,7 @@ The core has no HTTP client, so the host fetches and reports what it got:
 | Host         | Fetch and status                                                                | Stored copy                                                 |
 | ------------ | ------------------------------------------------------------------------------- | ----------------------------------------------------------- |
 | iOS, Android | `NativeStackCallbacks`, installed with `set_stack_callbacks`                    | the core database                                           |
-| Browser      | the `fetchStackDescriptor`, `stackChanged` and `storeStackRecord` raw callbacks | the host keeps the record and passes it as `stack.stored`   |
+| Browser      | the `fetchStackDescriptor` and `stackChanged` raw callbacks                     | the host, through `storeStackRecord` and `stack.stored`     |
 
 Without the callbacks the core stays on the descriptor it started from.
 
