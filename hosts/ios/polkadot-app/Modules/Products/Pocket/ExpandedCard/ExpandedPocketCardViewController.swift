@@ -149,7 +149,7 @@ extension ExpandedPocketCardViewController: ExpandedPocketCardViewProtocol {
         guard !pullDown.isPulling else { return .userMoving }
 
         faceSetByPage = true
-        rootView.isFaceCovered = !shown
+        setFaceCovered(!shown)
         return .applied
     }
 
@@ -157,7 +157,7 @@ extension ExpandedPocketCardViewController: ExpandedPocketCardViewProtocol {
     func applyOpeningFace(shown: Bool) {
         guard isOnDisplay, !faceSetByPage else { return }
 
-        rootView.isFaceCovered = !shown
+        setFaceCovered(!shown)
     }
 }
 
@@ -238,6 +238,11 @@ private extension ExpandedPocketCardViewController {
         let cardInset = view.safeAreaInsets.top + PocketOpenedCardView.height
         widgetView.setCardInset(cardInset)
         presenter.setup(engine: engine, cardInset: cardInset)
+    }
+
+    func setFaceCovered(_ covered: Bool) {
+        rootView.isFaceCovered = covered
+        pullDown.isEnabled = !covered
     }
 
     func close() {
