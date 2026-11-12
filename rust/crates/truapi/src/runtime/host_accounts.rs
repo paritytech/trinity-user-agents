@@ -660,30 +660,6 @@ impl<H: AccountHolder> HostAccounts<H> {
 		self.holder.contact_handles(session)
 	}
 
-	/// Revision of the kept grants, for tests that pin grant work to it.
-	#[cfg(test)]
-	pub fn grant_revision(&self) -> u64 {
-		self.grants.lifecycle().revision()
-	}
-
-	/// Kept grants, for tests that seed and inspect them.
-	#[cfg(test)]
-	pub fn grants_for_tests(&self) -> &HostGrantStore {
-		&self.grants
-	}
-
-	/// Register fixture material in the registry this host reads.
-	#[cfg(test)]
-	pub async fn register_ring_vrf_key_for_tests(
-		&self,
-		root_public_key: [u8; 32],
-		handle: api::ProductAccountId,
-		ring: api::RingLocation,
-		public_key: [u8; 32],
-	) -> Result<(), RingVrfError> {
-		self.ring_vrf_registry.register(root_public_key, handle, ring, public_key).await
-	}
-
 	/// Seed a subtree without an account-holder exchange.
 	#[cfg(test)]
 	pub fn cache_product_subtree_for_test(
@@ -1273,3 +1249,6 @@ fn local_invocation<'a>(
 ) -> AccountInvocation<'a> {
 	AccountInvocation { call: cx, session, caller: AccountCaller::Local { product } }
 }
+
+#[cfg(test)]
+mod tests;

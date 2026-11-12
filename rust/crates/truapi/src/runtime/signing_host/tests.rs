@@ -51,7 +51,7 @@ use truapi::{
 	api::{Account, Entropy, ResourceAllocation, Signing},
 	latest::{
 		HostAccountCreateProofRequest, HostAccountGetAliasRequest,
-		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
+		HostAccountRegisterRingVrfKeyRequest,
 	},
 	v01,
 	versioned::{
@@ -232,19 +232,6 @@ fn sso_service(authority: &SigningHostRole) -> SsoAccountHolderService {
 		.sso_responder()
 		.open_service(statement.public.to_bytes(), encryption)
 		.unwrap()
-}
-
-/// Whether this host keeps an AutoSigning key for `product_id` in this activation.
-fn keeps_auto_signing(authority: &SigningHostRole, product_id: &str) -> bool {
-	let session = authority.session_state().current().expect("an active wallet");
-	futures::executor::block_on(
-		authority
-			.accounts()
-			.grants_for_tests()
-			.auto_signing_key(&session, &ProductId::for_test(product_id)),
-	)
-	.expect("kept keys are readable")
-	.is_some()
 }
 
 fn vrf_request(product_id: &str) -> v01::HostAccountSignVrfRequest {
@@ -1795,42 +1782,6 @@ fn alias_checks_the_exact_registry_ring_before_resolving_it() {
 }
 
 #[test]
-fn direct_signing_rejects_registry_public_key_mismatched_with_wallet() {
-	let platform: Arc<dyn crate::platform::Platform> = Arc::new(StubPlatform::default());
-	let authority = SigningHostRole::new_with_ring_resolver(platform, full_person_ring_resolver());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-	let session = authority.accounts().current_session().expect("active session");
-	let handle = v01::ProductAccountId {
-		dot_ns_identifier: ProductId::for_test("myapp.dot"),
-		derivation_index: v01::DerivationIndex::Index(8),
-	};
-	futures::executor::block_on(authority.accounts().register_ring_vrf_key_for_tests(
-		session.public_key,
-		handle.clone(),
-		full_person_ring_location(),
-		[0xFF; 32],
-	))
-	.expect("synthetic registry entry persists");
-
-	let error = futures::executor::block_on(authority.accounts().ring_vrf_sign(
-		&session,
-		&CallContext::default(),
-		&ProductContext::new(ProductId::for_test("myapp.dot")),
-		HostAccountRingVrfSignRequest {
-			key_handle: handle,
-			message: b"reject mismatched registry state".to_vec(),
-		},
-	))
-	.unwrap_err();
-
-	assert!(matches!(
-		error,
-		RingVrfError::Unknown { reason } if reason.contains("does not match the active wallet")
-	));
-}
-
-#[test]
 fn foreign_alias_prompts_but_foreign_proof_is_refused_without_a_prompt() {
 	let platform = Arc::new(StubPlatform::default());
 	let authority =
@@ -2068,55 +2019,6 @@ fn approved_auto_signing_product_skips_vrf_confirmation_but_other_product_does_n
 		.expect("VRF signing review list mutex poisoned");
 	assert_eq!(reviews.len(), 1);
 	assert_eq!(reviews[0].calling_product_id, ProductId::for_test("other.dot"));
-}
-
-/// A product reset revokes that product's grant and fences grant work begun
-/// before it, while the wallet session and other products' grants survive.
-#[test]
-fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
-	let platform =
-		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
-	let (services, authority) = signing_runtime_with_platform(platform);
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-	let authority_session = authority.accounts().current_session().unwrap();
-	let revision = authority.accounts().grant_revision();
-	for product in ["myapp.dot", "other.dot"] {
-		auto_signing::grant_auto_signing(&product_runtime_for(
-			services.clone(),
-			authority.clone(),
-			product,
-		));
-	}
-	let myapp = ProductId::for_test("myapp.dot");
-	let wallet_session = authority.session_state().current().unwrap();
-	let key = futures::executor::block_on(
-		authority
-			.accounts()
-			.grants_for_tests()
-			.auto_signing_key(&wallet_session, &myapp),
-	)
-	.unwrap()
-	.unwrap();
-	let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
-	let subtree =
-		crate::host_logic::product_account::derive_product_subtree_keypair(&root, &myapp).unwrap();
-	authority.clear_product_state(&myapp);
-	let current_session = authority.wallet.current_session().unwrap();
-	let own = keeps_auto_signing(&authority, "myapp.dot");
-	let other = keeps_auto_signing(&authority, "other.dot");
-	let stale = futures::executor::block_on(
-		authority.accounts().grants_for_tests().remember_auto_signing_key(
-			&wallet_session,
-			revision,
-			&myapp,
-			subtree.public.to_bytes(),
-			key,
-		),
-	);
-	assert_eq!(
-		(current_session.validation_id, own, other, stale),
-		(authority_session.validation_id, false, true, Err(AuthorityError::Disconnected)),
-	);
 }
 
 #[test]
