@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
+import io.paritytech.polkadotapp.feature_products_api.model.JsSlideToConfirmVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsTypographyStyle
 import io.paritytech.polkadotapp.feature_products_api.model.JsVerticalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
@@ -28,6 +29,7 @@ import uniffi.truapi.Modifier
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
 import uniffi.truapi.Size
+import uniffi.truapi.SlideToConfirmVariant
 import uniffi.truapi.TypographyStyle
 import uniffi.truapi.VerticalAlignment
 
@@ -89,6 +91,18 @@ fun RendererNode.toJsWidget(): JsWidget = when (this) {
     is RendererNode.Effect -> JsWidget.Effect(
         effect = props.effect.toJs(),
         children = children.toJsChildren(),
+    )
+    is RendererNode.SlideToConfirm -> JsWidget.SlideToConfirm(
+        text = props.text,
+        secondaryText = props.secondaryText,
+        confirmedText = props.confirmedText,
+        variant = props.variant?.toJs() ?: JsSlideToConfirmVariant.THUMB,
+        accent = props.accent?.toJs(),
+        onConfirm = props.confirmAction,
+        enabled = props.enabled ?: true,
+        loading = props.loading ?: false,
+        confirmed = props.confirmed ?: false,
+        modifiers = modifiers.toJsModifiers(),
     )
 }
 
@@ -219,6 +233,11 @@ private fun ButtonVariant.toJs(): JsButtonVariant = when (this) {
     ButtonVariant.PRIMARY -> JsButtonVariant.PRIMARY
     ButtonVariant.SECONDARY -> JsButtonVariant.SECONDARY
     ButtonVariant.TEXT -> JsButtonVariant.TEXT
+}
+
+private fun SlideToConfirmVariant.toJs(): JsSlideToConfirmVariant = when (this) {
+    SlideToConfirmVariant.THUMB -> JsSlideToConfirmVariant.THUMB
+    SlideToConfirmVariant.REVEAL -> JsSlideToConfirmVariant.REVEAL
 }
 
 private fun ContentAlignment.toJs(): JsAlignment = when (this) {

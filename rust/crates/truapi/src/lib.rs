@@ -120,7 +120,7 @@ pub mod latest {
 		ResourceAllocationError, RingLocation, RingLocationJunction, RingVrfKeyDisclosure,
 		RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size,
 		Statement, StatementProof, StatementTopic, StorageQueryItem, StorageQueryType,
-		StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
+		SlideToConfirmProps, SlideToConfirmVariant, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
 		TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
 	};
 
