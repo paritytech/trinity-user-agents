@@ -113,7 +113,19 @@ async fn a_default_reverse_resolver_does_not_hide_the_public_profile() {
 		ProfileRecord { entries: vec![subxt::utils::WrapperKeepOpaque::from_encoded(vec![7, 8])] };
 	let mut transport = ProfileContracts::new(Ok(STANDARD.encode(record.encode())));
 
-	assert_eq!(PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap(), record);
+	assert_eq!(read_record_from(&mut transport, "alice.01").await.unwrap(), record);
+}
+
+/// Reads one username's record over `transport`.
+async fn read_record_from<T: DotnsTransport + ?Sized>(
+	transport: &mut T,
+	username: &str,
+) -> Result<ProfileRecord, DotnsError> {
+	let directory = ProfileDirectory::find(transport).await?;
+	read_records(transport, directory.as_ref(), &[username.to_owned()])
+		.await
+		.pop()
+		.expect("one username has one record")
 }
 
 /// Text records by the node they are published at.
@@ -218,7 +230,7 @@ async fn an_absent_gateway_or_record_has_an_empty_profile() {
 			ProfileContracts { deployed, ..ProfileContracts::new(Ok(String::new())) };
 
 		assert_eq!(
-			PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap(),
+			read_record_from(&mut transport, "alice.01").await.unwrap(),
 			ProfileRecord::default()
 		);
 	}
@@ -276,9 +288,8 @@ async fn a_profile_failure_retains_the_contract_error_source() {
 	let mut transport = ProfileContracts::new(Err(EvmContractError::Reverted {
 		detail: "profile unavailable".into(),
 	}));
-	let error = PublicProfileError::from(
-		PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap_err(),
-	);
+	let error =
+		PublicProfileError::from(read_record_from(&mut transport, "alice.01").await.unwrap_err());
 	let source = core::error::Error::source(&error).expect("dotNS error is retained");
 
 	assert!(matches!(
@@ -446,28 +457,28 @@ async fn an_invalid_username_does_not_need_storage_or_a_chain() {
 	));
 }
 
-/// A burst of profile reads, of one username and of many, reads over one
-/// Asset Hub follow instead of one each.
+/// A burst of profile reads shares one follow, and once that round fails the
+/// next read opens a follow of its own instead of waiting behind it.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn a_burst_of_profile_reads_opens_one_follow() {
-	assert_eq!(
-		follows_opened_by([
-			"alice01", "alice01", "bob01", "carol01", "dave01", "erin01", "frank01"
-		]),
-		1
-	);
-}
+fn a_burst_of_profile_reads_shares_one_follow_per_round() {
+	use futures::{executor::block_on, future};
 
-/// The follows a burst of profile reads opens while the chain answers none of
-/// them, counted well inside the time an unanswered follow is given.
-#[cfg(not(target_arch = "wasm32"))]
-fn follows_opened_by<const N: usize>(usernames: [&str; N]) -> usize {
 	let platform = Arc::new(StubPlatform::default());
 	let profiles = PublicProfiles::new(services_with_platform(platform.clone()));
-	futures::executor::block_on(futures::future::select(
-		futures::future::join_all(usernames.map(|username| profiles.read_record(username))),
-		futures_timer::Delay::new(std::time::Duration::from_millis(40)),
+	let follows = || {
+		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chainHead_v1_follow")
+	};
+
+	let burst = ["alice01", "bob01", "carol01", "dave01", "erin01", "frank01"]
+		.map(|username| profiles.read_record(username));
+	let answers = block_on(future::join_all(burst));
+	assert!(answers.iter().all(Result::is_err), "the stub chain never answers a follow");
+	assert_eq!(follows(), 1);
+
+	block_on(future::select(
+		Box::pin(profiles.read_record("alice01")),
+		futures_timer::Delay::new(std::time::Duration::from_secs(5)),
 	));
-	crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chainHead_v1_follow")
+	assert_eq!(follows(), 2);
 }

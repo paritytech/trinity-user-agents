@@ -189,7 +189,7 @@ async fn read_records<T: DotnsTransport + ?Sized>(
 			.iter()
 			.map(|username| {
 				ContentResolver::textCall {
-					node: directory.location(username).node.into(),
+					node: username_node(&directory.tld, username).into(),
 					key: PROFILE_RECORD_KEY.to_string(),
 				}
 				.abi_encode()
@@ -287,19 +287,6 @@ impl PublicProfiles {
 		reads::read(&self.services, genesis, username)
 			.await
 			.map_err(PublicProfileError::Dotns)
-	}
-
-	/// Reads one username's record over `transport`.
-	#[cfg(test)]
-	async fn read_record_from<T: DotnsTransport + ?Sized>(
-		transport: &mut T,
-		username: &str,
-	) -> Result<ProfileRecord, DotnsError> {
-		let directory = ProfileDirectory::find(transport).await?;
-		read_records(transport, directory.as_ref(), &[username.to_owned()])
-			.await
-			.pop()
-			.expect("one username has one record")
 	}
 }
 
