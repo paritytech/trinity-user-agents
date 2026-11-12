@@ -22,16 +22,13 @@ enum ExpandedPocketCardViewFactory {
         )
         let routers = ProductRoutersFacade.spa()
         let schemeHandlerProxy = SchemeHandlerProxy()
-        // Portrait only, so the face's bottom edge is fixed for the screen's life.
-        let cardInset = (UIWindow.keyWindow?.safeAreaInsets.top ?? 0) + PocketOpenedCardView.height
 
         let runtimeFactory = ExpandedPocketCardRuntimeFactory(
             rust: rust,
             configuration: configuration,
             flowState: flowState,
             schemeHandlerProxy: schemeHandlerProxy,
-            routers: routers,
-            cardInset: cardInset
+            routers: routers
         )
         let interactor = ExpandedPocketCardInteractor(
             runtimeFactory: runtimeFactory,
@@ -44,7 +41,7 @@ enum ExpandedPocketCardViewFactory {
             wireframe: ExpandedPocketCardWireframe(),
             hostProvider: flowState.hostProvider
         )
-        let widgetView = WidgetView(cardInset: cardInset, schemeHandler: schemeHandlerProxy)
+        let widgetView = WidgetView(schemeHandler: schemeHandlerProxy)
         let engine = SPAJSEngine(
             webView: widgetView.webView,
             navigationDecisionHandler: navigationDecisionHandler(
@@ -94,9 +91,8 @@ private struct ExpandedPocketCardRuntimeFactory: ExpandedPocketCardRuntimeMaking
     let flowState: SPAFlowState
     let schemeHandlerProxy: SchemeHandlerProxy
     let routers: ProductRoutersFacadeProtocol
-    let cardInset: CGFloat
 
-    func makeRuntime(face: any ExpandedCardFaceShowing) throws -> SPARuntimeProtocol {
+    func makeRuntime(face: any ExpandedCardFaceShowing, cardInset: CGFloat) throws -> SPARuntimeProtocol {
         let executionModel = try rust.makeExpandedCardExecution(
             productId: configuration.productId,
             routers: routers,

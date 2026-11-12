@@ -22,7 +22,7 @@ protocol ExpandedPocketCardViewProtocol: ControllerBackedProtocol {
 
 @MainActor
 protocol ExpandedPocketCardPresenterProtocol: AnyObject {
-    func setup(engine: JSEngineProtocol)
+    func setup(engine: JSEngineProtocol, cardInset: CGFloat)
     func didBecomeVisible()
     func didTapRetry()
     func didInterceptNavigation(to url: URL)
@@ -31,7 +31,7 @@ protocol ExpandedPocketCardPresenterProtocol: AnyObject {
 
 @MainActor
 protocol ExpandedPocketCardInteractorInputProtocol: AnyObject {
-    func setup(engine: JSEngineProtocol)
+    func setup(engine: JSEngineProtocol, cardInset: CGFloat)
     func retry()
     func checkForNewBuild()
 }
@@ -53,5 +53,5 @@ protocol ExpandedPocketCardWireframeProtocol: AnyObject, AlertPresentable, Error
 
 @MainActor
 protocol ExpandedPocketCardRuntimeMaking {
-    func makeRuntime(face: any ExpandedCardFaceShowing) throws -> SPARuntimeProtocol
+    func makeRuntime(face: any ExpandedCardFaceShowing, cardInset: CGFloat) throws -> SPARuntimeProtocol
 }

@@ -22,9 +22,9 @@ final class ExpandedPocketCardPresenter {
 }
 
 extension ExpandedPocketCardPresenter: ExpandedPocketCardPresenterProtocol {
-    func setup(engine: JSEngineProtocol) {
+    func setup(engine: JSEngineProtocol, cardInset: CGFloat) {
         view?.showLoading()
-        interactor.setup(engine: engine)
+        interactor.setup(engine: engine, cardInset: cardInset)
     }
 
     func didBecomeVisible() {

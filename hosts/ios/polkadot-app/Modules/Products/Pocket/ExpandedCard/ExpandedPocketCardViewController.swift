@@ -19,6 +19,7 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
     private let face: UIHostingController<PocketOpenedCardView>
 
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
+    private var didStartPage = false
     private var faceSetByPage = false
     private var isClosing = false
     private var isInFlight = false
@@ -64,6 +65,8 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
 
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
+
+        startPageIfNeeded()
 
         guard isEnteringScreen else { return }
 
@@ -224,8 +227,17 @@ private extension ExpandedPocketCardViewController {
         widgetView.onRetry = { [weak self] in self?.presenter.didTapRetry() }
         engine.onNavigationIntercepted = { [weak self] url in self?.presenter.didInterceptNavigation(to: url) }
         engine.onDeeplinkRequested = { [weak self] url in self?.presenter.didRequestDeeplink(url) }
+    }
 
-        presenter.setup(engine: engine)
+    /// The page starts where the face ends, which the safe area decides, navigation bar included,
+    /// and the safe area is final only once the view is appearing.
+    func startPageIfNeeded() {
+        guard !didStartPage else { return }
+        didStartPage = true
+
+        let cardInset = view.safeAreaInsets.top + PocketOpenedCardView.height
+        widgetView.setCardInset(cardInset)
+        presenter.setup(engine: engine, cardInset: cardInset)
     }
 
     func close() {

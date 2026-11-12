@@ -12,6 +12,7 @@ final class ExpandedPocketCardInteractor {
     private let logger: LoggerProtocol
 
     private var engine: JSEngineProtocol?
+    private var cardInset: CGFloat = 0
     private var runtime: SPARuntimeProtocol?
     private var servedContent: ProductContent?
     private var displayName: String?
@@ -44,8 +45,9 @@ final class ExpandedPocketCardInteractor {
 }
 
 extension ExpandedPocketCardInteractor: ExpandedPocketCardInteractorInputProtocol {
-    func setup(engine: JSEngineProtocol) {
+    func setup(engine: JSEngineProtocol, cardInset: CGFloat) {
         self.engine = engine
+        self.cardInset = cardInset
         startRuntime(engine: engine)
     }
 
@@ -104,7 +106,7 @@ private extension ExpandedPocketCardInteractor {
         servedContent = nil
 
         do {
-            let newRuntime = try runtimeFactory.makeRuntime(face: self)
+            let newRuntime = try runtimeFactory.makeRuntime(face: self, cardInset: cardInset)
             runtime = newRuntime
 
             let onPhase = phaseHandler()

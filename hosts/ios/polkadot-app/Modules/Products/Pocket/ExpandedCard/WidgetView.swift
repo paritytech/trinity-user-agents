@@ -8,7 +8,7 @@ import UIKitExt
 import WebKit
 
 /// A Pocket card's page in a transparent web view over the whole screen. The page starts its
-/// content at `cardInset` and leaves the area above it to the card face drawn underneath.
+/// content at the card inset and leaves the area above it to the card face drawn underneath.
 final class WidgetView: UIView {
     let webView: WKWebView
 
@@ -16,8 +16,8 @@ final class WidgetView: UIView {
     var onScroll: ((CGFloat) -> Void)?
     var onRetry: (() -> Void)?
 
-    private let cardInset: CGFloat
     private let contentArea = UILayoutGuide()
+    private var contentTop: Constraint?
     private let loadingView = PolkadotLogoLoadingView()
     private let loadProgressView: UIProgressView = {
         let progressView = UIProgressView(progressViewStyle: .bar)
@@ -42,8 +42,7 @@ final class WidgetView: UIView {
     private var failureView: UIContentUnavailableView?
     private var offsetObservation: NSKeyValueObservation?
 
-    init(cardInset: CGFloat, schemeHandler: SchemeHandlerProxy) {
-        self.cardInset = cardInset
+    init(schemeHandler: SchemeHandlerProxy) {
         webView = WKWebView(frame: .zero, configuration: Self.makeConfiguration(schemeHandler: schemeHandler))
         super.init(frame: .zero)
 
@@ -59,6 +58,10 @@ final class WidgetView: UIView {
 
     deinit {
         offsetObservation?.invalidate()
+    }
+
+    func setCardInset(_ inset: CGFloat) {
+        contentTop?.update(offset: inset)
     }
 
     func showLoading() {
@@ -126,7 +129,7 @@ private extension WidgetView {
 
         addLayoutGuide(contentArea)
         contentArea.snp.makeConstraints { make in
-            make.top.equalToSuperview().offset(cardInset)
+            contentTop = make.top.equalToSuperview().constraint
             make.leading.trailing.bottom.equalToSuperview()
         }
 
