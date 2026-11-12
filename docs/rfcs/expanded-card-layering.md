@@ -21,9 +21,9 @@ the WebView's scroll view inside a scroll view that carries the face, and keeps 
 face with the page and resizes the page after each gesture. The two scroll views fight over gestures, and every resize
 makes the page lay out again.
 
-Products also need the face to stay on screen while the page draws modal content over it. For example, The Humanity product's
-daily-dollar scratch card is a full-screen route that calls `expandedCard.setFaceShown({ shown: false })` while it is
-open. Under pocket-modality that moves the face away instead of letting the scratch card sit over it.
+Products also need the face to stay on screen while the page draws modal content over it. For example, The Humanity
+product's daily-dollar scratch card is a full-screen route that calls `expandedCard.setFaceShown({ shown: false })`
+while it is open. Under pocket-modality that moves the face away instead of letting the scratch card sit over it.
 
 ## Requirements
 
@@ -45,7 +45,9 @@ The design has five parts:
 
 ### Executable
 
-Tapping a face opens the product's `widget` executable, or its `app` executable when the product publishes no widget, with `card=<card_id>` in the launch URL as pocket-modality defines. Either one runs as a Widget execution, so either can call `ExpandedCard`.
+Tapping a face opens the product's `widget` executable, or its `app` executable when the product publishes no widget,
+with `card=<card_id>` in the launch URL as pocket-modality defines. Either one runs as a Widget execution, so either can
+call `ExpandedCard`.
 
 ### Layering
 
@@ -55,25 +57,27 @@ lays out its content below the face and may draw over the face, for example a mo
 
 ### Inset
 
-Before the page runs, the host sets the CSS custom property `--pocket-card-inset` on the page's root element, and
-updates it when it changes. Its value is the distance from the top of the viewport to the bottom of the face when the
-document is scrolled to the top. In its normal state the page paints nothing above the inset and starts its content
-there. A page reads it as `var(--pocket-card-inset, 0px)`, so the same page works where no face is drawn: in a tab, in a
-browser, and on a host that sets no inset.
+Before the page runs, the host sets the CSS custom property `--pocket-card-inset` on the page's root element. Its value
+is the distance from the top of the viewport to the bottom of the face when the document is scrolled to the top, and it
+stays the same while the card is open. A host whose face can move restarts the page or sets the new value before the
+next load. In its normal state the page paints nothing above the inset and starts its content there. A page reads it as
+`var(--pocket-card-inset, 0px)`, so the same page works where no face is drawn: in a tab, in a browser, and on a host
+that sets no inset.
 
 ### Scrolling
 
 The face follows the WebView's scroll offset as if it were the first thing in the document, overscroll past the top
 included, so the page and the card read as one column. There is one scroll view, and the host never resizes the page for
-the face. Widget manifest `dimensions` size nothing on the expanded card.
+the face.
 
 ### Face state
 
 `set_face_shown(false)` marks the face covered: it stays drawn where it is, and touches over it go to the page.
 `set_face_shown(true)` sends touches over the face back to the face. Neither call moves the face or resizes the page. A
 card definition's `faceShown` sets whether the face starts covered, with `false` meaning covered. Covering applies to
-the card whichever side is up, and turning the card keeps it covered or uncovered. The host keeps its own gestures for
-leaving the card, covered or not.
+the card whichever side is up, and turning the card keeps it covered or uncovered. Gestures that move the card, such as
+pulling it down to close it, start only while the face is uncovered, so they never take a stroke the page draws over the
+face. A covered page is still never a trap: the host keeps a way to leave the card, such as its back navigation.
 
 `UserMoving` means the user is moving the card, such as pulling it down to close it, and the request has no effect.
 `NotPresented` keeps its meaning. Trait id `23`, method `0`, and the request, response and error types are unchanged;
@@ -146,8 +150,9 @@ pub enum HostExpandedCardSetFaceShownError {
 
 ### Compatibility
 
-A host that keeps pocket-modality's layout, works with a page that reads the inset: the inset falls
-back to `0px`, and covering the face still gives the page the face's area because that host moves the face away. A page that paints its whole viewport opaque hides the face on a layered host, so Humanity adopts the inset before any host ships the layered layout.
+A host that keeps pocket-modality's layout, works with a page that reads the inset: the inset falls back to `0px`, and
+covering the face still gives the page the face's area because that host moves the face away. A page that paints its
+whole viewport opaque hides the face on a layered host.
 
 ## Trade-offs
 
@@ -156,5 +161,3 @@ back to `0px`, and covering the face still gives the page the face's area becaus
 - **A covered face is inert.** Face actions are out of reach while the face is covered.
 - **The inset is outside the wire.** It is a host-to-page contract carried as CSS, so the generated TrUAPI client
   neither exposes nor checks it.
-- **Manifest dimensions stop sizing the expanded card.** The page always gets the whole screen and fits its content
-  below the inset.
