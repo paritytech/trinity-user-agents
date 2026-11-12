@@ -21,7 +21,7 @@ final class ChatIconViewModelFactory {
         case let .product(domain):
             AnyImageViewModel(productFactory.createViewModel(for: domain))
         case let .publicProfile(username):
-            AnyImageViewModel(publicProfileFactory.createViewModel(for: username, options: options))
+            publicProfileFactory.createViewModel(for: username, options: options)
         case .image,
              .bot:
             nil

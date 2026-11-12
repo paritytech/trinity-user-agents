@@ -152,9 +152,9 @@ private struct UnusedPublicProfileAvatarFactory: PublicProfileAvatarViewModelMak
     func createViewModel(
         for _: String,
         options _: PublicProfileResolutionOptions
-    ) -> any IdentifiableImageViewModelProtocol {
+    ) -> AnyImageViewModel {
         Issue.record("Product icons must not resolve public profiles")
-        return EmptyProductIconViewModel(identifier: "unused")
+        return AnyImageViewModel(EmptyProductIconViewModel(identifier: "unused"))
     }
 }
 
