@@ -72,7 +72,8 @@ private func makeRuntime(
     contentLoader: ProductContentLoading = StubProductContentLoader(),
     strategy: ExecutableKindStrategy = .fixed(.app),
     productResolver: ProductResolving = StubProductResolver(),
-    hostEventRecorder: HostEventRecording = NoopHostEventRecorder()
+    hostEventRecorder: HostEventRecording = NoopHostEventRecorder(),
+    pageScripts: [JSEngineScript] = []
 ) -> SPARustRuntime {
     SPARustRuntime(
         executionModel: makeExecutionModel(execution: execution, chainConnections: chainConnections),
@@ -84,7 +85,8 @@ private func makeRuntime(
         ),
         schemeHandlerProxy: SchemeHandlerProxy(),
         logger: Logger.shared,
-        hostEventRecorder: hostEventRecorder
+        hostEventRecorder: hostEventRecorder,
+        pageScripts: pageScripts
     )
 }
 
@@ -184,6 +186,20 @@ struct SPARustRuntimeTests {
 
         #expect(start.resolution.product == (resolves ? product : nil))
         #expect(start.resolution.content == nil)
+
+        await runtime.dispose()
+    }
+
+    @Test func startInjectsThePageScriptsAfterItsOwn() async throws {
+        let configuration = try makeConfiguration(
+            contentSource: .directURL(#require(URL(string: "http://localhost:3000")))
+        )
+        let engine = MockJSEngine()
+        let runtime = makeRuntime(configuration: configuration, pageScripts: [.pocketCardInset(300)])
+
+        _ = try await runtime.start(with: engine)
+
+        #expect(engine.initializedScripts.last?.content == JSEngineScript.pocketCardInset(300).content)
 
         await runtime.dispose()
     }
