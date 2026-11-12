@@ -254,7 +254,14 @@ export type CoreStorageKey =
    * A product's App executable manifest as last read from dotNS, and when,
    * cached for the same lifetime as `Self::ProductManifest`.
    */
-  | { tag: "AppManifest"; value: { productLabel: string } };
+  | { tag: "AppManifest"; value: { productLabel: string } }
+  /**
+   * The `StackRun` in which the core last read what it stores about the
+   * stack's chains: the session's usernames, allowance keys and the
+   * ring-VRF registry. When the stack is in another run the core drops
+   * them before a session uses them.
+   */
+  | { tag: "ChainRun"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -1133,6 +1140,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         16,
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
+      ChainRun: [17, S._void] as const,
     }),
 );
 

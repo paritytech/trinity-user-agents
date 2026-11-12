@@ -302,11 +302,6 @@ impl CliPlatform {
 		*self.approval.lock().expect("approval policy mutex poisoned") = approval;
 	}
 
-	/// Identity of the stack this host runs.
-	pub fn stack_identity(&self) -> &StackIdentity {
-		&self.stack_identity
-	}
-
 	fn core_key(key: &StackStorageKey) -> Vec<u8> {
 		use parity_scale_codec::Encode;
 		key.encode()
@@ -1353,6 +1348,12 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
 		.and_then(|directory| directory.sync_all())
 		.map_err(|source| StorageError::SyncDirectory { path: parent.to_path_buf(), source })?;
 	Ok(())
+}
+
+/// The entries of a core storage file, by key.
+#[cfg(test)]
+pub fn stored_core_values(path: &Path) -> HashMap<Vec<u8>, Vec<u8>> {
+	load_hex_key_map(path)
 }
 
 fn load_hex_key_map(path: &Path) -> HashMap<Vec<u8>, Vec<u8>> {

@@ -13,8 +13,8 @@ use crate::{
 	},
 	platform::{CoreStorageKey, ProductContext},
 	test_support::{
-		StubPlatform, TEST_STACK_GENERATION, account_id, new_statements_frame, runtime_config,
-		signed_statement, sso_session_info, sso_success_response_script, statement, stub_platform,
+		StubPlatform, account_id, new_statements_frame, runtime_config, signed_statement,
+		sso_session_info, sso_success_response_script, statement, stub_platform,
 		submitted_remote_message, subscribe_ack_frame, test_storage_key,
 	},
 };
@@ -45,7 +45,7 @@ fn assert_sr25519_signature(signer: [u8; 32], signature: [u8; 64], payload: &[u8
 /// resolves without a chain.
 fn cache_context_grant(platform: &StubPlatform, owner: &str, grantee: &str) {
 	let entry = crate::runtime::product_manifest::CachedManifest {
-		generation: TEST_STACK_GENERATION.to_string(),
+		run: crate::test_support::paseo_test_stack().run(),
 		fetched_at_secs: crate::unix_time::current_unix_secs(),
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{{"{grantee}":["context"]}}}}"#)),
 	};

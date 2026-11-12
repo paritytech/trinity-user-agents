@@ -472,7 +472,7 @@ fn stale_secret_allocations_cannot_persist_after_reset_and_same_owner_reactivati
 		"the stale allocation must not restore durable AutoSigning authority"
 	);
 	assert!(
-		platform.local_storage.lock().expect("local storage mutex poisoned").is_empty(),
+		only_the_chain_run_is_stored(&platform),
 		"stale allowance completions must not restore durable slot secrets"
 	);
 	assert!(
@@ -748,7 +748,7 @@ fn identity_replacement_clears_all_stale_wallet_capabilities() {
 			.contains_key(&core_storage_test_key(CoreStorageKey::AutoSigningKeys))
 	);
 	assert!(
-		platform.local_storage.lock().expect("local storage mutex poisoned").is_empty(),
+		only_the_chain_run_is_stored(&platform),
 		"a replacement wallet must not leave the prior session's durable allowance secrets"
 	);
 	assert!(
@@ -1330,4 +1330,77 @@ async fn register_vrf_key(
 
 fn cache_sizes(pairing_host: &PairingHost) -> (usize, usize, usize, usize) {
 	pairing_host.grants.capability_cache_sizes_for_tests()
+}
+
+/// A pairing host on a stack with no Asset Hub, so a session's usernames
+/// resolve to nothing without a chain.
+fn pairing_host_without_asset_hub(platform: Arc<StubPlatform>) -> Arc<PairingHost> {
+	let stack = test_stack("paseo", [0; 32], [0xbb; 32], None);
+	let (config, _) = runtime_config("dim2.dot");
+	let config = crate::platform::PairingHostConfig::new(
+		config.host.host_info,
+		config.host.platform_info,
+		stack.clone(),
+		config.pairing_deeplink_scheme,
+	)
+	.expect("test host runtime config is valid");
+	let host_info = config.host.host_info.clone();
+	let services = RuntimeServices::new(platform, host_info, stack, Spawner::for_test());
+	PairingHost::new(services, config)
+}
+
+/// After a wipe a stack keeps its id and its chains are new. The username in
+/// the stored session, the allowance keys and the ring-VRF registry were all
+/// read from the old chains, so the session must not come back with them.
+/// Without a wipe the same session keeps all three.
+#[test]
+fn a_wipe_drops_what_the_stored_session_read_from_the_old_chains() {
+	for (recorded, kept) in [(test_run(Some([0x99; 32])), false), (test_run(None), true)] {
+		let session = crate::host_logic::session::SessionInfo {
+			lite_username: Some("alice".to_string()),
+			..sso_session_info()
+		};
+		let blob = crate::host_logic::session::encode_persisted_session(&session);
+		let platform =
+			Arc::new(StubPlatform { session_blob: Some(blob), ..StubPlatform::default() });
+		let sso = session.sso.as_ref().expect("the fixture is an SSO session");
+		let allowances = CoreStorageKey::AllowanceKeys {
+			session_id: crate::runtime::allowances::session_storage_id(sso),
+		};
+		let registry = CoreStorageKey::RingVrfRegistry { root_public_key: session.public_key };
+		let storage = test_storage(platform.as_ref());
+		futures::executor::block_on(async {
+			for (slot, value) in [
+				(CoreStorageKey::ChainRun, parity_scale_codec::Encode::encode(&recorded)),
+				(allowances.clone(), vec![1]),
+				(registry.clone(), vec![2]),
+			] {
+				storage.write(slot, value).await.expect("stub core storage writes");
+			}
+		});
+
+		let pairing_host = pairing_host_without_asset_hub(platform.clone());
+		futures::executor::block_on(pairing_host.session().activate_stored_session())
+			.expect("the stored session activates");
+
+		let stored = |slot| futures::executor::block_on(storage.read(slot)).expect("stub reads");
+		let installed = pairing_host.session().session_state().current();
+		assert_eq!(
+			(
+				installed.map(|session| session.lite_username),
+				platform.session_writes.lock().expect("session writes").len(),
+				stored(allowances).is_some(),
+				stored(registry).is_some(),
+				stored(CoreStorageKey::ChainRun),
+			),
+			(
+				Some(kept.then(|| "alice".to_string())),
+				usize::from(!kept),
+				kept,
+				kept,
+				Some(parity_scale_codec::Encode::encode(&test_run(None))),
+			),
+			"kept: {kept}"
+		);
+	}
 }

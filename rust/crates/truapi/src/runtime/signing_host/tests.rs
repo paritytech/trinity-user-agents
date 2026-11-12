@@ -41,7 +41,7 @@ use crate::{
 		CoreStorageKey, HostInfo, Platform, PlatformInfo, ProductContext, ProductId,
 		SigningHostConfig,
 	},
-	test_support::{StubPlatform, TEST_STACK_GENERATION, test_storage, test_storage_key},
+	test_support::{StubPlatform, test_storage, test_storage_key},
 };
 use truapi::{
 	CallContext, CallError,
@@ -285,7 +285,7 @@ fn cache_grant(platform: &StubPlatform, owner: &str, trusted_products: &str) {
              "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted_products}}}"#
 	);
 	let entry = crate::runtime::product_manifest::CachedManifest {
-		generation: TEST_STACK_GENERATION.to_string(),
+		run: crate::test_support::paseo_test_stack().run(),
 		fetched_at_secs: crate::unix_time::current_unix_secs(),
 		json: Some(json),
 	};
@@ -582,7 +582,7 @@ fn refusal_lines_from_an_hour_old_cache(trusted_products: Option<&str>) -> Vec<S
 					crate::runtime::product_manifest::encode_cached_root_manifest(
 						json.as_deref(),
 						fetched_at_secs,
-						TEST_STACK_GENERATION,
+						&crate::test_support::paseo_test_stack().run(),
 					),
 				),
 			)
@@ -807,7 +807,7 @@ fn third_product_context(
 				crate::runtime::product_manifest::encode_cached_root_manifest(
 					None,
 					crate::unix_time::current_unix_secs(),
-					TEST_STACK_GENERATION,
+					&crate::test_support::paseo_test_stack().run(),
 				),
 			),
 		)
@@ -2680,5 +2680,38 @@ fn direct_allocation_handles_empty_and_optional_resource_batches() {
 			// And the resource that needs no chain still allocates.
 			v01::AllocationOutcome::Allocated,
 		]
+	);
+}
+
+/// The wallet's registry names rings on the People chain. After a wipe those
+/// rings are gone, and a proof against one would fail, so the wallet starts
+/// the new run with an empty registry.
+#[test]
+fn a_wipe_drops_the_wallets_ring_vrf_registry() {
+	let platform = Arc::new(StubPlatform::default());
+	let activate = || {
+		let (_services, authority) = signing_runtime_with_platform(platform.clone());
+		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+			.expect("activation succeeds");
+		authority.current_session().expect("active session").public_key
+	};
+	let registry = CoreStorageKey::RingVrfRegistry { root_public_key: activate() };
+	let storage = test_storage(platform.as_ref());
+	let earlier = crate::test_support::test_run(Some([0x99; 32]));
+	futures::executor::block_on(async {
+		for (slot, value) in [
+			(CoreStorageKey::ChainRun, parity_scale_codec::Encode::encode(&earlier)),
+			(registry.clone(), vec![2]),
+		] {
+			storage.write(slot, value).await.expect("stub core storage writes");
+		}
+	});
+
+	activate();
+
+	let stored = |slot| futures::executor::block_on(storage.read(slot)).expect("stub reads");
+	assert_eq!(
+		(stored(registry), stored(CoreStorageKey::ChainRun)),
+		(None, Some(parity_scale_codec::Encode::encode(&crate::test_support::test_run(None))))
 	);
 }

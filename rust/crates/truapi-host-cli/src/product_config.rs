@@ -30,7 +30,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use truapi::{
 	encode_cached_root_manifest,
-	platform::{CoreStorage, CoreStorageKey, ProductId, StackIdentity, StackStorage},
+	platform::{CoreStorage, CoreStorageKey, ProductId, Stack},
 };
 
 /// The developer-authored config for one product.
@@ -119,18 +119,18 @@ impl AppliedGrants {
 /// again on the same period.
 pub async fn apply(
 	platform: &dyn CoreStorage,
-	stack: &StackIdentity,
+	stack: &Stack,
 	configs: &[LocalProductConfig],
 	now_secs: u64,
 ) -> Result<AppliedGrants> {
-	let storage = StackStorage::new(platform, &stack.id);
+	let (storage, run) = (stack.storage(platform), stack.run());
 	let mut lines = Vec::with_capacity(configs.len());
 	for config in configs {
 		let manifest = config.root_manifest_json();
 		storage
 			.write(
 				CoreStorageKey::product_manifest(&config.product_name),
-				encode_cached_root_manifest(Some(&manifest), now_secs, &stack.generation),
+				encode_cached_root_manifest(Some(&manifest), now_secs, &run),
 			)
 			.await
 			.map_err(|error| anyhow::anyhow!("{error:?}"))

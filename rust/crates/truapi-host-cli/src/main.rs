@@ -605,7 +605,12 @@ async fn main() -> Result<()> {
 		None => normalized(std::env::var(STACK_ENV).ok())
 			.map(|value| StackArg { value, source: STACK_ENV }),
 	};
-	let source = NetworkSource::new(cli.chain_backend, cli.network, stack)?;
+	// Only a host keeps the descriptor it ran on: `stack` and the one-off
+	// commands have no state of their own to protect from an older copy.
+	let hosts =
+		matches!(cli.command, Command::PairingHost(_) | Command::Dev(_) | Command::SigningHost(_));
+	let stack_copies = hosts.then(|| command_base_path(&cli.command).join("stacks"));
+	let source = NetworkSource::new(cli.chain_backend, cli.network, stack, stack_copies)?;
 
 	// A background check runs alongside the command rather than delaying it, and
 	// reports through `tracing`, which the terminal UI renders in its transcript
@@ -1771,7 +1776,8 @@ async fn start_signing_host(
 		chat.clone(),
 		pocket.clone(),
 	)?;
-	apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
+	let core_stack = network.core_stack().context("invalid stack")?;
+	apply_local_product_grants(platform.as_ref(), &core_stack, &args.product_config).await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
 	let last_script = profile
 		.as_ref()
@@ -2183,7 +2189,11 @@ const INTERRUPTED_EXIT_CODE: i32 = 130;
 /// cannot tell them is that the manifest is not published yet, so the host says
 /// it every run: a grant that works locally and was never deployed is the
 /// failure this feature would otherwise cause.
-async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -> Result<()> {
+async fn apply_local_product_grants(
+	platform: &CliPlatform,
+	stack: &truapi::platform::Stack,
+	paths: &[PathBuf],
+) -> Result<()> {
 	if paths.is_empty() {
 		return Ok(());
 	}
@@ -2192,7 +2202,7 @@ async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -
 		.duration_since(std::time::UNIX_EPOCH)
 		.context("system clock is before the Unix epoch")?
 		.as_secs();
-	let applied = product_config::apply(platform, platform.stack_identity(), &configs, now).await?;
+	let applied = product_config::apply(platform, stack, &configs, now).await?;
 	if applied.is_empty() {
 		return Ok(());
 	}
@@ -4277,7 +4287,6 @@ mod cli_tests {
 					profile.path.join("session.json"),
 					br#"{"version":1,"last_script":"saved.ts"}"#.to_vec(),
 				),
-				(profile.path.join("core-storage.json"), br#"{"values":{}}"#.to_vec()),
 				(profile.path.join("scripts/saved.ts"), b"console.log('saved');".to_vec()),
 				(profile.product_storage_dir.join("saved"), b"product data".to_vec()),
 			];
@@ -4285,6 +4294,8 @@ mod cli_tests {
 				std::fs::create_dir_all(path.parent().unwrap())?;
 				std::fs::write(path, bytes)?;
 			}
+			let core_storage = profile.path.join("core-storage.json");
+			std::fs::write(&core_storage, br#"{"values":{}}"#)?;
 			let role = session.catalog.profile(DEFAULT_SESSION_NAME)?;
 			let blocked_pointer =
 				role.path.join(format!(".current-session.{}.tmp", std::process::id()));
@@ -4326,6 +4337,17 @@ mod cli_tests {
 					path.display()
 				);
 			}
+			// Activating the signer records the run of the stack's chains, which
+			// is the profile's own state and comes back with it.
+			let stack = Network::default().bundled_stack(ChainBackend::Rpc).core_stack()?;
+			let run_record = truapi::platform::StackStorageKey {
+				stack: stack.id().to_owned(),
+				slot: truapi::platform::CoreStorageKey::ChainRun,
+			};
+			assert_eq!(
+				crate::platform::stored_core_values(&core_storage),
+				HashMap::from([(run_record.encode(), stack.run().encode())]),
+			);
 
 			std::fs::remove_dir(blocked_pointer)?;
 			if slash_command {

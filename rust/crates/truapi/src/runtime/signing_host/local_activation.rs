@@ -34,6 +34,7 @@ impl LocalActivation for SigningHost {
 		lite_username: Option<String>,
 	) -> Result<(), AuthorityError> {
 		let activation = self.wallet.prepare_activation(secret, lite_username)?;
+		self.enter_chain_run(activation.root_public_key()).await;
 		let session = self.change_activation(|| self.wallet.install(activation));
 		self.auth_state.connected(&connected_session_ui_info(&session));
 

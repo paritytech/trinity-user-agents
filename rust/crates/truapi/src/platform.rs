@@ -31,7 +31,7 @@ pub use crate::{
 	product_id::{
 		PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError, REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
-	stack::{Stack, StackChains, StackError, StackIdentity, StackStorage},
+	stack::{Stack, StackChains, StackError, StackIdentity, StackRun, StackStorage},
 };
 
 use truapi::{
@@ -1234,6 +1234,12 @@ pub enum CoreStorageKey {
 		/// Bare label of the product whose App manifest was cached.
 		product_label: String,
 	},
+	/// The [`StackRun`] in which the core last read what it stores about the
+	/// stack's chains: the session's usernames, allowance keys and the
+	/// ring-VRF registry. When the stack is in another run the core drops
+	/// them before a session uses them.
+	#[codec(index = 17)]
+	ChainRun,
 }
 
 /// The key a host stores core-owned state under: a [`CoreStorageKey`] slot
@@ -1369,6 +1375,7 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::AppManifest { product_label } => {
 			("AppManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
+		CoreStorageKey::ChainRun => ("ChainRun", None),
 	};
 	Ok(CoreStorageKeyDescription { stack, kind, owner })
 }

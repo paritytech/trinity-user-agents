@@ -16,6 +16,7 @@ mod authority;
 /// In-core Bulletin preimage submission over the shared Subxt client.
 pub mod bulletin_rpc;
 mod capabilities;
+mod chain_run;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;

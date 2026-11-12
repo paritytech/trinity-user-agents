@@ -166,6 +166,13 @@ pub struct PreparedWalletActivation {
 	session: SessionInfo,
 }
 
+impl PreparedWalletActivation {
+	/// Root public key of the wallet being activated.
+	pub fn root_public_key(&self) -> [u8; 32] {
+		self.session.public_key
+	}
+}
+
 impl WalletAccountHolder {
 	/// Start locked, with no wallet secrets, asking `consent` before a product uses another
 	/// product's ring-VRF keys.

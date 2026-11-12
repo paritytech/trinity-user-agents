@@ -73,6 +73,8 @@ fn namespace_of(id: &str) -> &str {
 pub struct NetworkSource {
 	chain_backend: ChainBackend,
 	network: NetworkChoice,
+	/// Where the published descriptor a built-in network last ran on is kept.
+	stack_copies: Option<std::path::PathBuf>,
 }
 
 /// The network a command runs on, before anything is fetched.

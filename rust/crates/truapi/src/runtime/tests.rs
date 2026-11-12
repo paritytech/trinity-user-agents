@@ -12,7 +12,7 @@ use crate::{
 		CreateTransactionReview, ExecutableKind, HostScan, LegacySigningAccount,
 		PermissionAuthorizationRequest, SignPayloadReview, SignRawReview,
 	},
-	test_support::{TEST_STACK_GENERATION, test_storage_key},
+	test_support::test_storage_key,
 };
 use parity_scale_codec::{Decode, Encode};
 use truapi::{
@@ -410,7 +410,7 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
                 "icon":{{"cid":"c","format":"png"}},"trustedProducts":{trusted}}}"#
 	);
 	let entry = CachedManifest {
-		generation: TEST_STACK_GENERATION.to_string(),
+		run: crate::test_support::paseo_test_stack().run(),
 		fetched_at_secs,
 		json: Some(json),
 	};
@@ -423,11 +423,20 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 
 /// Seeds `owner`'s cached lookup, `None` standing for "publishes no manifest".
 fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<String>, age_secs: u64) {
-	let entry = CachedManifest {
-		generation: TEST_STACK_GENERATION.to_string(),
-		fetched_at_secs: current_unix_secs().saturating_sub(age_secs),
-		json,
-	};
+	let run = crate::test_support::paseo_test_stack().run();
+	cache_manifest_entry_in(platform, run, owner, json, age_secs);
+}
+
+/// [`cache_manifest_entry`] for a host whose stack is in `run`.
+fn cache_manifest_entry_in(
+	platform: &StubPlatform,
+	run: crate::platform::StackRun,
+	owner: &str,
+	json: Option<String>,
+	age_secs: u64,
+) {
+	let entry =
+		CachedManifest { run, fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
 	futures::executor::block_on(platform.write_core_storage(
 		test_storage_key(CoreStorageKey::product_manifest(&ProductId::for_test(owner))),
 		entry.encode(),
@@ -674,7 +683,7 @@ fn host_on_stack(platform: Arc<StubPlatform>, id: &str, generation: &str) -> Pro
 fn store_grant_and_permission(host: &ProductRuntimeHost) {
 	let storage = host.connection.services.storage();
 	let entry = CachedManifest {
-		generation: host.connection.services.stack().generation().to_string(),
+		run: host.connection.services.stack().run(),
 		fetched_at_secs: current_unix_secs(),
 		json: Some(test_manifest_json(r#"{"unknown":["storage"]}"#)),
 	};
@@ -747,6 +756,20 @@ fn a_fork_honours_neither_grants_nor_permissions_stored_for_its_source() {
 		),
 		(access_not_granted(), PermissionAuthorizationStatus::NotDetermined)
 	);
+}
+
+/// An operator can wipe a stack and leave `generation` as it was. The genesis
+/// hashes still change, so a grant read from the old Asset Hub must not apply.
+#[test]
+fn a_grant_cached_from_another_asset_hub_is_not_honoured() {
+	let platform = stub_platform();
+	let manifest = test_manifest_json(r#"{"unknown":["storage"]}"#);
+	let other_asset_hub = crate::test_support::test_run(Some([0x99; 32]));
+	cache_manifest_entry_in(&platform, other_asset_hub, "wallet.dot", Some(manifest), 0);
+	seed_owner_value(&platform, "wallet.dot");
+	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
+
+	assert_eq!(read_storage(&host, Some("wallet.dot"), "k").unwrap_err(), access_not_granted());
 }
 
 /// With no session, every proof refusal is the same refusal.
@@ -7877,7 +7900,9 @@ fn a_frontend_lookup_past_its_deadline_tells_the_host_it_timed_out() {
 #[test]
 fn a_refusal_past_the_frontend_is_warned_once() {
 	let platform = stub_platform();
-	cache_manifest(&platform, "peopl.dot", r#"{"dim2":["context"]}"#, 0);
+	let manifest = test_manifest_json(r#"{"dim2":["context"]}"#);
+	let run = crate::test_support::test_run(None);
+	cache_manifest_entry_in(&platform, run, "peopl.dot", Some(manifest), 0);
 	let host = dim2_with_a_pairing_session(platform, None);
 	let HostAccountCreateProofRequest::V1(mut request) = create_proof_request("peopl.dot");
 	request.context.product_id = ProductId::for_test("dim2.paseo");

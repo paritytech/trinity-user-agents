@@ -9,6 +9,7 @@ use super::{
 	HostSession,
 	auth_state::AuthStateMachine,
 	authority::{AuthoritySession, authority_session},
+	chain_run::{ChainRun, StoredRun},
 	connected_session_ui_info,
 	host_grants::GrantBarrier,
 	identity::resolve_session_identity_with_chain,
@@ -55,6 +56,10 @@ pub trait PairedSessionOwner: Send + Sync {
 
 	/// Finish pending durable revocation; failures stay pending.
 	async fn finish_cleanup(&self, barrier: &GrantBarrier) -> Result<(), String>;
+
+	/// Drop what the owner keeps for `session` that was read from chains the
+	/// stack no longer runs, and say whether all of it is gone.
+	async fn forget_chain_data(&self, barrier: &GrantBarrier, session: &SessionInfo) -> bool;
 
 	/// Reconcile kept grants with `next` before it is published.
 	async fn prepare_session(
@@ -162,6 +167,7 @@ pub struct SsoRequestService {
 	selection: Mutex<Selection>,
 	owner: Weak<dyn PairedSessionOwner>,
 	session_store_activation: futures::lock::Mutex<()>,
+	chain_run: ChainRun,
 	#[cfg(test)]
 	external_session_activation_pause: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
 	#[cfg(test)]
@@ -199,6 +205,7 @@ impl SsoRequestService {
 			selection: Mutex::new(Selection::default()),
 			owner,
 			session_store_activation: futures::lock::Mutex::new(()),
+			chain_run: ChainRun::default(),
 			#[cfg(test)]
 			external_session_activation_pause: Mutex::new(None),
 			#[cfg(test)]
@@ -293,6 +300,7 @@ impl SsoRequestService {
 	async fn install_external_session(&self, blob: &[u8]) -> Result<(), String> {
 		let _activation = self.session_store_activation.lock().await;
 		let session = crate::host_logic::session::decode_persisted_session(blob)?;
+		let session = self.without_usernames_of_an_earlier_run(session).await;
 		self.invalidate_login_attempts();
 		let activation_epoch = self.advance_session_lifecycle();
 		let resolved = resolve_session_identity_with_chain(
@@ -358,6 +366,7 @@ impl SsoRequestService {
 				return Err(StoredSessionActivationError::Invalid(error));
 			},
 		};
+		let session = self.without_usernames_of_an_earlier_run(session).await;
 		let resolved = resolve_session_identity_with_chain(
 			&self.dotns_reads,
 			&self.chain,
@@ -384,7 +393,7 @@ impl SsoRequestService {
 			}
 			return Err(error);
 		}
-		self.prepare_session_installation(hold.as_ref(), &resolved).await;
+		let entered_run = self.prepare_session_installation(hold.as_ref(), &resolved).await;
 		if self.session_epoch() != activation_epoch {
 			return Err(StoredSessionActivationError::Changed);
 		}
@@ -392,8 +401,16 @@ impl SsoRequestService {
 		if !self.install_session_if_current(resolved, activation_epoch, false, None) {
 			return Err(StoredSessionActivationError::Changed);
 		}
-		if resolved_blob != blob && self.session_epoch() == activation_epoch {
-			let _ = self.storage().write(CoreStorageKey::AuthSession, resolved_blob).await;
+		// The stored session still names the usernames of an earlier run until
+		// this write lands, so the run is recorded only after it has.
+		let stored = resolved_blob == blob ||
+			(self.session_epoch() == activation_epoch &&
+				self.storage()
+					.write(CoreStorageKey::AuthSession, resolved_blob)
+					.await
+					.is_ok());
+		if entered_run && stored {
+			self.record_chain_run().await;
 		}
 		self.drain_session_deletions(hold.as_ref()).await;
 		Ok(())
@@ -433,7 +450,7 @@ impl SsoRequestService {
 		if !self.is_current_login_attempt(generation) {
 			return Ok(false);
 		}
-		self.prepare_session_installation(hold.as_ref(), session).await;
+		let entered_run = self.prepare_session_installation(hold.as_ref(), session).await;
 		let mut epoch = {
 			let mut selection = self.selection.lock().expect("session selection mutex poisoned");
 			if selection.login_generation != generation {
@@ -464,6 +481,9 @@ impl SsoRequestService {
 				epoch = latest_epoch;
 			}
 			if self.install_session_if_current(session.clone(), epoch, false, Some(generation)) {
+				if entered_run {
+					self.record_chain_run().await;
+				}
 				return Ok(true);
 			}
 		}
@@ -630,13 +650,44 @@ impl SsoRequestService {
 		self.drain_session_deletions(hold.as_ref()).await;
 	}
 
-	async fn prepare_session_installation(&self, hold: Option<&OwnerHold>, session: &SessionInfo) {
+	/// Prepare the owner for `session`, and say whether the run of the
+	/// stack's chains is to be recorded once `session` is installed.
+	///
+	/// What the owner keeps for `session` from an earlier run is dropped
+	/// here. The run is not recorded while any of it is left, so the next
+	/// start drops it again.
+	async fn prepare_session_installation(
+		&self,
+		hold: Option<&OwnerHold>,
+		session: &SessionInfo,
+	) -> bool {
 		self.drain_session_deletions(hold).await;
-		if let Some(hold) = hold {
-			hold.owner
-				.prepare_session(&hold.barrier, self.session_state.current().as_ref(), session)
-				.await;
+		let Some(hold) = hold else {
+			return false;
+		};
+		hold.owner
+			.prepare_session(&hold.barrier, self.session_state.current().as_ref(), session)
+			.await;
+		match self.chain_run.stored(&self.storage(), &self.host_config.stack).await {
+			None | Some(StoredRun::Current) => false,
+			Some(StoredRun::Unrecorded) => true,
+			Some(StoredRun::Earlier) => hold.owner.forget_chain_data(&hold.barrier, session).await,
 		}
+	}
+
+	/// `session` without the usernames it carries from an earlier run of the
+	/// stack's chains, so they are looked up on the chains it runs now.
+	async fn without_usernames_of_an_earlier_run(&self, session: SessionInfo) -> SessionInfo {
+		match self.chain_run.stored(&self.storage(), &self.host_config.stack).await {
+			Some(StoredRun::Earlier) => {
+				SessionInfo { lite_username: None, full_username: None, ..session }
+			},
+			_ => session,
+		}
+	}
+
+	async fn record_chain_run(&self) {
+		self.chain_run.record(&self.storage(), &self.host_config.stack).await;
 	}
 
 	async fn set_connected_session_if_current(
@@ -649,8 +700,13 @@ impl SsoRequestService {
 		if self.session_epoch() != activation_epoch {
 			return false;
 		}
-		self.prepare_session_installation(hold.as_ref(), &session).await;
-		self.install_session_if_current(session, activation_epoch, external_session, None)
+		let entered_run = self.prepare_session_installation(hold.as_ref(), &session).await;
+		let installed =
+			self.install_session_if_current(session, activation_epoch, external_session, None);
+		if installed && entered_run {
+			self.record_chain_run().await;
+		}
+		installed
 	}
 
 	fn install_session_if_current(
