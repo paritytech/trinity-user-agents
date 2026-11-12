@@ -515,7 +515,7 @@ fn product_context_decoding_rejects_ids_the_constructor_rejects() {
 	// Hand-built frames, not values this crate can encode: `Decode` must
 	// apply the same product-id policy as the constructor so decoding
 	// cannot mint a context with an unscoped or empty product id.
-	for product_id in ["evil.com", "", "  "] {
+	for product_id in ["evil", "", "  "] {
 		let frame = (product_id.to_string(), ExecutableKind::App).encode();
 		assert!(
 			ProductContext::decode(&mut frame.as_slice()).is_err(),

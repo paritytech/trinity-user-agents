@@ -19,9 +19,9 @@ fn the_product_name_is_normalized_like_any_product_id() {
 
 #[test]
 fn a_product_name_that_is_not_a_product_id_fails_the_read_and_names_the_value() {
-	let error = serde_json::from_str::<LocalProductConfig>(r#"{"productName":"example.com"}"#)
-		.expect_err("example.com is not a product id");
-	assert!(error.to_string().contains(r#""example.com""#), "{error}");
+	let error = serde_json::from_str::<LocalProductConfig>(r#"{"productName":"my_app.dot"}"#)
+		.expect_err("my_app.dot is not a product id");
+	assert!(error.to_string().contains(r#""my_app.dot""#), "{error}");
 }
 
 #[test]

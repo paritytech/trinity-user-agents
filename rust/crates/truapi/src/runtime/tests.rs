@@ -4586,23 +4586,150 @@ fn a_request_for_an_account_of_no_product_does_not_decode() {
 		|product: &str| (0u8, product.to_string(), v01::DerivationIndex::Index(0)).encode();
 
 	assert!(HostAccountGetRequest::decode(&mut &request_naming("myapp.dot")[..]).is_ok());
-	assert!(HostAccountGetRequest::decode(&mut &request_naming("example.com")[..]).is_err());
+	assert!(HostAccountGetRequest::decode(&mut &request_naming("example")[..]).is_err());
 }
 
 #[test]
 fn list_ring_vrf_keys_rejects_invalid_owners_before_dispatch() {
-	let frame = (0u8, "example.com", v01::RingVrfKeyDisclosure::Anonymized).encode();
+	let frame = (0u8, "example", v01::RingVrfKeyDisclosure::Anonymized).encode();
 	assert!(HostAccountListRingVrfKeysRequest::decode(&mut frame.as_slice()).is_err());
 }
 
 #[test]
 fn cross_product_storage_rejects_invalid_targets_before_dispatch() {
-	for target in ["not a product", "", "example.com"] {
+	for target in ["not a product", "", "example"] {
 		let frame = (1u8, Some(target), "k").encode();
 		assert!(HostLocalStorageReadRequest::decode(&mut frame.as_slice()).is_err());
 	}
 	let frame = (1u8, Some("wallet.dot"), "k").encode();
 	assert!(HostLocalStorageReadRequest::decode(&mut frame.as_slice()).is_ok());
+}
+
+fn is_malformed<T, E>(result: Result<T, CallError<E>>) -> bool {
+	matches!(result, Err(CallError::MalformedFrame { .. }))
+}
+
+/// A product on a TLD the stack does not serve still decodes, since decoding
+/// has no stack to ask. Every call naming one answers as it would for an id
+/// that does not decode, before a key, grant or manifest is looked up for it.
+#[test]
+fn a_call_naming_a_product_the_stack_does_not_serve_is_malformed() {
+	use futures::executor::block_on;
+
+	let host =
+		ProductRuntimeHost::new(stub_platform(), runtime_config("myapp.dot"), Spawner::for_test());
+	install_pairing_session(&host, session_info());
+	let cx = CallContext::default();
+
+	for product in ["other.testnet", "example.com"] {
+		let account = account_id(product, 0);
+		let own_account = account_id("myapp.dot", 0);
+		let get_account = HostAccountGetRequest::V1(v01::HostAccountGetRequest {
+			product_account_id: account.clone(),
+		});
+		let sign_payload = HostSignPayloadRequest::V1(v01::HostSignPayloadRequest {
+			account: account.clone(),
+			payload: crate::test_support::sign_payload_data(),
+		});
+		let sign_raw = HostSignRawRequest::V1(v01::HostSignRawRequest {
+			account: account.clone(),
+			payload: raw_payload(),
+		});
+		let sign_vrf = HostAccountSignVrfRequest::V1(v01::HostAccountSignVrfRequest {
+			account: account.clone(),
+			transcript_label: b"ctx".to_vec(),
+			items: vec![],
+		});
+		let create_transaction = HostCreateTransactionRequest::V1(v01::ProductAccountTxPayload {
+			signer: account.clone(),
+			genesis_hash: [1; 32],
+			call_data: vec![],
+			extensions: vec![],
+			tx_ext_version: 0,
+			contacts: vec![],
+		});
+		let list_keys =
+			HostAccountListRingVrfKeysRequest::V1(v01::HostAccountListRingVrfKeysRequest {
+				owner: ProductId::for_test(product),
+				disclosure: v01::RingVrfKeyDisclosure::Anonymized,
+			});
+		let statement_proof = RemoteStatementStoreCreateProofRequest::V1(
+			truapi::latest::RemoteStatementStoreCreateProofRequest {
+				product_account_id: account.clone(),
+				statement: statement(),
+			},
+		);
+		let storage_read = HostLocalStorageReadRequest::V2(v02::HostLocalStorageReadRequest {
+			product: Some(ProductId::for_test(product)),
+			key: "k".to_string(),
+		});
+		// The key handle and the context are checked separately, so each names
+		// the unserved product while the other names the caller.
+		let alias = |key_handle: &v01::ProductAccountId, context: &str| {
+			truapi::versioned::account::HostAccountGetAliasRequest::V1(
+				v01::HostAccountGetAliasRequest {
+					key_handle: key_handle.clone(),
+					context: product_proof_context(context),
+					ring_location: ring_location_fixture(),
+				},
+			)
+		};
+		let proof = |key_handle: &v01::ProductAccountId, context: &str| {
+			HostAccountCreateProofRequest::V1(v01::HostAccountCreateProofRequest {
+				key_handle: key_handle.clone(),
+				context: product_proof_context(context),
+				ring_location: ring_location_fixture(),
+				message: vec![],
+			})
+		};
+
+		let calls = [
+			("get_account", is_malformed(block_on(host.get_account(&cx, get_account)))),
+			("sign_payload", is_malformed(block_on(host.sign_payload(&cx, sign_payload)))),
+			("sign_raw", is_malformed(block_on(host.sign_raw(&cx, sign_raw)))),
+			("sign_vrf", is_malformed(block_on(host.sign_vrf(&cx, sign_vrf)))),
+			(
+				"create_transaction",
+				is_malformed(block_on(host.create_transaction(&cx, create_transaction))),
+			),
+			("list_ring_vrf_keys", is_malformed(block_on(host.list_ring_vrf_keys(&cx, list_keys)))),
+			(
+				"ring_vrf_sign",
+				is_malformed(block_on(host.ring_vrf_sign(&cx, ring_vrf_sign_request(product)))),
+			),
+			(
+				"get_account_alias key handle",
+				is_malformed(block_on(host.get_account_alias(&cx, alias(&account, "myapp.dot")))),
+			),
+			(
+				"get_account_alias context",
+				is_malformed(block_on(host.get_account_alias(&cx, alias(&own_account, product)))),
+			),
+			(
+				"create_account_proof key handle",
+				is_malformed(block_on(
+					host.create_account_proof(&cx, proof(&account, "myapp.dot")),
+				)),
+			),
+			(
+				"create_account_proof context",
+				is_malformed(block_on(
+					host.create_account_proof(&cx, proof(&own_account, product)),
+				)),
+			),
+			(
+				"statement create_proof",
+				is_malformed(block_on(StatementStore::create_proof(&host, &cx, statement_proof))),
+			),
+			(
+				"local storage read",
+				is_malformed(block_on(LocalStorage::read(&host, &cx, storage_read))),
+			),
+		];
+		for (call, malformed) in calls {
+			assert!(malformed, "{call} naming {product}");
+		}
+	}
 }
 
 #[test]

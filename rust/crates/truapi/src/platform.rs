@@ -27,7 +27,7 @@ use truapi::Bytes32;
 pub mod mock;
 
 pub use crate::{
-	dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN, has_dotns_tld, is_dns_label},
+	dotns_name::{MAX_DNS_LABEL_LEN, is_dns_label},
 	product_id::{
 		PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError, REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
@@ -240,6 +240,25 @@ impl ProductContext {
 	/// A product context for a host-selected executable kind.
 	pub fn new_with_execution(product_id: ProductId, execution_kind: ExecutableKind) -> Self {
 		Self { product_id, execution_kind }
+	}
+
+	/// The product a host asks the core to run on `stack`.
+	///
+	/// Fails when the stack does not serve the product's TLD. Every bridge
+	/// builds a host-supplied product through here, so a name that only parses
+	/// never gets a runtime.
+	pub fn served_by(
+		stack: &Stack,
+		product_id: ProductId,
+		execution_kind: ExecutableKind,
+	) -> Result<Self, RuntimeConfigValidationError> {
+		if !stack.serves(&product_id) {
+			return Err(RuntimeConfigValidationError::UnservedProduct {
+				product_id,
+				tld: stack.tld().to_owned(),
+			});
+		}
+		Ok(Self::new_with_execution(product_id, execution_kind))
 	}
 }
 
@@ -738,6 +757,14 @@ pub enum RuntimeConfigValidationError {
 	#[display("{_0}")]
 	#[from]
 	InvalidProductId(#[error(not(source))] ProductIdError),
+	/// The product's TLD is not one the host's stack serves.
+	#[display("product {product_id} is not under a TLD the {tld} stack serves")]
+	UnservedProduct {
+		/// The product the host asked to run.
+		product_id: ProductId,
+		/// The stack's own TLD.
+		tld: String,
+	},
 }
 
 const PRODUCT_STORAGE_KEY_PREFIX: &str = "truapi:product-storage:v1:";

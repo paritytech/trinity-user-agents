@@ -127,7 +127,8 @@ impl System for ProductRuntimeHost {
 	) -> Result<HostNavigateToResponse, CallError<HostNavigateToError>> {
 		version(request)
 			.exec(|latest::HostNavigateToRequest { url }| async move {
-				let resolved = match parse_navigate(&url) {
+				let network_suffix = self.connection.services.stack().tld();
+				let resolved = match parse_navigate(&url, network_suffix) {
 					NavigateDecision::Reject { reason } => {
 						return Err(CallError::Domain(latest::HostNavigateToError::Unknown {
 							reason,
@@ -289,6 +290,7 @@ impl LocalStorage for ProductRuntimeHost {
 					|| CallError::Domain(latest::HostLocalStorageReadError::AccessNotGranted);
 				let owner = match product {
 					Some(target) => {
+						self.connection.require_served(&target)?;
 						if !self
 							.connection
 							.holds_cross_product_scope(&target, Granted::Storage)

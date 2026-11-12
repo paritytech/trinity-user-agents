@@ -1294,8 +1294,12 @@ async fn run_pairing_host(
 	}
 	let network = source.resolve_checked().await?;
 	let base_path = state_base_path(args.base_path);
-	let product =
-		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context());
+	let stack = network.core_stack().context("invalid stack")?;
+	let product = frame_server::ProductSelection::new(
+		args.product_id,
+		args.execution_kind.context(),
+		stack.clone(),
+	)?;
 	let product_id = product.current();
 	let storage_paths = CliStoragePaths::pairing(base_path.join(network.namespace()));
 	let (terminal_ui, ui_handle) = if interactive {
@@ -1320,7 +1324,7 @@ async fn run_pairing_host(
 	let config = PairingHostConfig::new(
 		host_info("Headless Pairing Host"),
 		platform_info(),
-		network.core_stack().context("invalid stack")?,
+		stack,
 		DEEPLINK_SCHEME.to_string(),
 	)
 	.context("invalid pairing host config")?;
@@ -1410,10 +1414,13 @@ async fn run_signing_host(
 	let exec_command = exec_input
 		.as_deref()
 		.map(|input| parse_command(input).unwrap_or_else(|error| invalid_invocation(error)));
-	let product =
-		frame_server::ProductSelection::new(args.product_id.clone(), args.execution_kind.context());
-	let product_id = product.current();
 	let network = source.resolve_checked().await?;
+	let product = frame_server::ProductSelection::new(
+		args.product_id.clone(),
+		args.execution_kind.context(),
+		network.core_stack().context("invalid stack")?,
+	)?;
+	let product_id = product.current();
 	let base_path = state_base_path(args.base_path.clone());
 	let session_catalog = SessionCatalog::new(base_path.clone(), network.namespace())?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
@@ -3403,15 +3410,17 @@ async fn pairing_interactive_loop(
 			},
 			ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
 			ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-				if product.select(product_id) {
-					let product_id = product.current();
-					ui.set_product(product_id.clone());
-					ui.success(
-						format!("Product set to {product_id}"),
-						Some("Reconnect product clients to continue.".to_string()),
-					);
-				} else {
-					ui.system(product.current());
+				match product.select(product_id) {
+					Ok(true) => {
+						let product_id = product.current();
+						ui.set_product(product_id.clone());
+						ui.success(
+							format!("Product set to {product_id}"),
+							Some("Reconnect product clients to continue.".to_string()),
+						);
+					},
+					Ok(false) => ui.system(product.current()),
+					Err(error) => ui.error(error.to_string()),
 				}
 			},
 			ShellCommand::Quit => return Ok(()),
@@ -3591,15 +3600,17 @@ async fn signing_interactive_loop(
 			},
 			ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
 			ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-				if product.select(product_id) {
-					let product_id = product.current();
-					ui.set_product(product_id.clone());
-					ui.success(
-						format!("Product set to {product_id}"),
-						Some("Reconnect product clients to continue.".to_string()),
-					);
-				} else {
-					ui.system(product.current());
+				match product.select(product_id) {
+					Ok(true) => {
+						let product_id = product.current();
+						ui.set_product(product_id.clone());
+						ui.success(
+							format!("Product set to {product_id}"),
+							Some("Reconnect product clients to continue.".to_string()),
+						);
+					},
+					Ok(false) => ui.system(product.current()),
+					Err(error) => ui.error(error.to_string()),
 				}
 			},
 			ShellCommand::Session(SessionCommand::Current) => {
@@ -3944,7 +3955,7 @@ async fn execute_non_interactive_command(
 			println!("{}", product.current());
 		},
 		ShellCommand::Product(ProductCommand::Switch(product_id)) => {
-			if product.select(product_id) {
+			if product.select(product_id)? {
 				terminal_ui::output_success(
 					format!("Product set to {}", product.current()),
 					Some("Reconnect product clients to continue.".to_string()),
@@ -4812,9 +4823,10 @@ mod cli_tests {
 			let directory = socket.parent().context("socket has no directory")?;
 			assert!(socket.exists());
 			let product = frame_server::ProductSelection::new(
-				ProductId::for_test("script-cleanup.testnet"),
+				ProductId::for_test("script-cleanup.dot"),
 				ExecutableKind::App,
-			);
+				network::Network::default().bundled_stack(ChainBackend::Rpc).core_stack()?,
+			)?;
 			let result = with_frame_server(
 				Arc::new(UnusedRuntimeFactory),
 				product,

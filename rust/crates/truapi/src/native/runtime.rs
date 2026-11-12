@@ -621,8 +621,9 @@ impl NativeTrUApiHostRuntime {
 	/// Chat modality pass `None`. `game_callbacks` does the same for game
 	/// reminders.
 	///
-	/// Returns a `Result` so an `execution_config.product_id` UniFFI cannot
-	/// parse throws in Swift and Kotlin.
+	/// Fails when the stack does not serve the product's TLD. An
+	/// `execution_config.product_id` UniFFI cannot parse throws in Swift and
+	/// Kotlin the same way.
 	pub fn open_product_execution(
 		&self,
 		callbacks: Arc<dyn HostCallbacks>,
@@ -630,11 +631,13 @@ impl NativeTrUApiHostRuntime {
 		game_callbacks: Option<Arc<dyn NativeGameCallbacks>>,
 		execution_config: ProductExecutionConfig,
 	) -> Result<Arc<NativeProductExecution>, NativeRuntimeConfigError> {
+		let ProductExecutionConfig { product_id, execution_kind } = execution_config;
+		let product = ProductContext::served_by(self.runtime.stack(), product_id, execution_kind)?;
 		Ok(self.open_product_execution_with_callbacks(
 			callbacks,
 			chat_callbacks,
 			game_callbacks,
-			execution_config.into(),
+			product,
 		))
 	}
 

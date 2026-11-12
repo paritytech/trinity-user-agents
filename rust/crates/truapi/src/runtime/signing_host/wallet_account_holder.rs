@@ -32,6 +32,7 @@ use crate::{
 		},
 	},
 	platform::ProductId,
+	stack::serves,
 	runtime::{
 		RuntimeServices,
 		authority::{
@@ -338,10 +339,22 @@ impl WalletKeys {
 		derive_root_keypair_from_entropy(&self.entropy).map(|root| root.public.to_bytes())
 	}
 
+	/// Refuses a product the stack does not serve, so no key is derived for a
+	/// name that only parses, whichever caller or request named it.
+	fn require_served(&self, product_id: &ProductId) -> Result<(), AuthorityError> {
+		if serves(&self.network_suffix, product_id) {
+			return Ok(());
+		}
+		Err(AuthorityError::NotSupported {
+			reason: format!("product {product_id} is not under a TLD this host serves"),
+		})
+	}
+
 	fn product_subtree_keypair(
 		&self,
 		product_id: &ProductId,
 	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		self.require_served(product_id)?;
 		let root = derive_root_keypair_from_entropy(&self.entropy)?;
 		Ok(derive_product_subtree_keypair(&root, product_id)?)
 	}
@@ -353,6 +366,7 @@ impl WalletKeys {
 		&self,
 		account: &ProductAccountId,
 	) -> Result<schnorrkel::Keypair, AuthorityError> {
+		self.require_served(&account.dot_ns_identifier)?;
 		let root = derive_root_keypair_from_entropy(&self.entropy)?;
 		Ok(derive_product_keypair(
 			&root,
@@ -384,12 +398,14 @@ impl WalletKeys {
 		&self,
 		handle: &ProductAccountId,
 	) -> Result<Zeroizing<[u8; 32]>, RingVrfError> {
+		self.require_served(&handle.dot_ns_identifier)?;
 		derive_ring_vrf_entropy(&self.entropy, &handle.dot_ns_identifier, &handle.derivation_index)
 			.map(Zeroizing::new)
 			.map_err(|err| RingVrfError::Unknown { reason: err.to_string() })
 	}
 
 	fn ring_vrf_domain_entropy(&self, product_id: &ProductId) -> Result<[u8; 32], AuthorityError> {
+		self.require_served(product_id)?;
 		Ok(derive_ring_vrf_domain_entropy(&self.entropy, product_id)?)
 	}
 

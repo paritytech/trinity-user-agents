@@ -1982,6 +1982,6 @@ fn a_signature_approval_is_administered_in_memory_only() {
 
 #[test]
 fn a_signature_approval_for_a_target_that_names_no_product_is_refused() {
-	let encoded = (4u8, "example.com", CrossProductSignatureKind::Payload).encode();
+	let encoded = (4u8, "example", CrossProductSignatureKind::Payload).encode();
 	assert!(PermissionAuthorizationRequest::decode(&mut encoded.as_slice()).is_err());
 }

@@ -40,13 +40,17 @@ fn test_stack_from_descriptor() {
 	assert_eq!(*stack.chains(), Roles { people, ..paseo.chains().clone() });
 }
 
-/// Reserved identities derive under the TLD, and navigation accepts only the
-/// TLDs the core serves.
+/// A stack brings its own TLD: the core serves names under it without
+/// knowing it in advance.
 #[test]
-fn test_stack_unserved_tld_error() {
+fn test_stack_runs_on_its_own_tld() {
 	let staging = edit_stack(|descriptor| descriptor["tld"] = "staging".into());
-	let error = read_stack(staging).unwrap_err();
-	assert!(error.to_string().contains("staging"));
+	let stack = read_stack(staging).expect("any label is a TLD").core_stack().expect("core stack");
+	let served = |product_id: &str| stack.serves(&truapi::platform::ProductId::for_test(product_id));
+	assert_eq!(
+		["app.staging", "app.dot", "app.paseo"].map(served),
+		[true, true, false]
+	);
 }
 
 /// The host routes each role by its genesis, so two roles on one genesis

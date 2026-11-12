@@ -45,6 +45,7 @@ impl Signing for ProductRuntimeHost {
 			.exec(|inner| async move {
 				debug!("sign_payload: requesting signing-host signature");
 				let owner = inner.account.dot_ns_identifier.clone();
+				self.connection.require_served(&owner)?;
 				self.connection
 					.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 					.await?;
@@ -120,6 +121,7 @@ impl Signing for ProductRuntimeHost {
 			.exec(|mut inner| async move {
 				debug!("create_transaction: requesting signing-host signature");
 				let owner = inner.signer.dot_ns_identifier.clone();
+				self.connection.require_served(&owner)?;
 				self.connection
 					.require_chain_submit(latest::HostCreateTransactionError::PermissionDenied)
 					.await?;
@@ -361,6 +363,7 @@ impl ProductRuntimeHost {
 		debug!("sign_raw: requesting signing-host signature");
 		let inner = request;
 		let owner = inner.account.dot_ns_identifier.clone();
+		self.connection.require_served(&owner)?;
 		self.connection
 			.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 			.await?;

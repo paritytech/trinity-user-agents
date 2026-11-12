@@ -46,6 +46,7 @@ impl Account for ProductRuntimeHost {
 		version(request)
 			.exec(|latest::HostAccountGetRequest { product_account_id }| async move {
 				let owner = product_account_id.dot_ns_identifier.clone();
+				self.connection.require_served(&owner)?;
 				let session = self
 					.accounts
 					.current_session()
@@ -104,6 +105,8 @@ impl Account for ProductRuntimeHost {
 	) -> Result<HostAccountGetAliasResponse, CallError<HostAccountGetAliasError>> {
 		version(request)
 			.exec(|request| async move {
+				self.connection.require_served(&request.key_handle.dot_ns_identifier)?;
+				self.connection.require_served(&request.context.product_id)?;
 				let session = self
 					.accounts
 					.current_session()
@@ -125,6 +128,8 @@ impl Account for ProductRuntimeHost {
 	) -> Result<HostAccountCreateProofResponse, CallError<HostAccountCreateProofError>> {
 		version(request)
 			.exec(|request| async move {
+				self.connection.require_served(&request.key_handle.dot_ns_identifier)?;
+				self.connection.require_served(&request.context.product_id)?;
 				let session = self
 					.accounts
 					.current_session()
@@ -185,6 +190,7 @@ impl Account for ProductRuntimeHost {
 	) -> Result<HostAccountListRingVrfKeysResponse, CallError<HostAccountListRingVrfKeysError>> {
 		version(request)
 			.exec(|request| async move {
+				self.connection.require_served(&request.owner)?;
 				let session = self.accounts.current_session().ok_or(CallError::Domain(
 					latest::HostAccountListRingVrfKeysError::NotConnected,
 				))?;
@@ -204,6 +210,7 @@ impl Account for ProductRuntimeHost {
 	) -> Result<HostAccountRingVrfSignResponse, CallError<HostAccountRingVrfSignError>> {
 		version(request)
 			.exec(|request| async move {
+				self.connection.require_served(&request.key_handle.dot_ns_identifier)?;
 				let session = self
 					.accounts
 					.current_session()
@@ -240,6 +247,7 @@ impl Account for ProductRuntimeHost {
 	) -> Result<HostAccountSignVrfResponse, CallError<HostAccountSignVrfError>> {
 		version(request)
 			.exec(|request| async move {
+				self.connection.require_served(&request.account.dot_ns_identifier)?;
 				validate_vrf_transcript(&request).map_err(|reason| {
 					CallError::Domain(latest::HostAccountSignVrfError::Unknown { reason })
 				})?;

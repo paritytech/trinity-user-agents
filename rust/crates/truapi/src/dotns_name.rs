@@ -1,17 +1,7 @@
-//! The names dotNS can register: its top-level domains and its label syntax.
+//! The label syntax of the names dotNS can register.
 
 #[cfg(feature = "runtime")]
 use unicode_normalization::UnicodeNormalization;
-
-/// Top-level domains dotNS registers names under, one per network a host can
-/// use, not only production.
-pub const DOTNS_TLDS: &[&str] = &["dot", "paseo", "testnet"];
-
-/// Whether `normalized` ends in one of [`DOTNS_TLDS`]. Expects an
-/// already-lowercased host with no trailing root dot.
-pub fn has_dotns_tld(normalized: &str) -> bool {
-	normalized.rsplit_once('.').is_some_and(|(_, tld)| DOTNS_TLDS.contains(&tld))
-}
 
 /// RFC 1035 label bound the contracts enforce (`StringUtils.MAX_DNS_LABEL_OCTETS`).
 pub const MAX_DNS_LABEL_LEN: usize = 63;

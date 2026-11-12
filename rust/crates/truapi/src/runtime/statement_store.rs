@@ -75,6 +75,7 @@ impl StatementStore for ProductRuntimeHost {
 		version(request)
 			.exec(|request| async move {
 				let owner = request.product_account_id.dot_ns_identifier.clone();
+				self.connection.require_served(&owner)?;
 				if !self.may_use_product_account(&owner, cx).await {
 					return Err(CallError::Domain(
 						latest::RemoteStatementStoreCreateProofError::UnknownAccount,

@@ -22,7 +22,8 @@ use crate::platform::{
 	BalancePlatform, ChatPlatform, ContactsPlatform, CoreAdmin, ExecutableKind, ExpandedCardHost,
 	FundingPlatform, GamePlatform, PairingHostAdmin, PairingHostConfig, PaymentPlatform,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-	PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig, TopUpPlatform,
+	PocketPlatform, ProductContext, ProductId, ScannerPlatform, SigningHostConfig, Stack,
+	TopUpPlatform,
 };
 use futures::{
 	FutureExt, StreamExt,
@@ -470,6 +471,11 @@ impl PairingHostRuntime {
 			.select_ring_vrf_provider(ring, handle)
 			.await
 			.map_err(ring_vrf_admin_error)
+	}
+
+	/// The stack this host runs.
+	pub fn stack(&self) -> &Stack {
+		self.services.stack()
 	}
 
 	/// Reference counts per product worker, shared by every connection of
@@ -1315,6 +1321,11 @@ impl SigningHostRuntime {
 			product,
 			adapters,
 		)
+	}
+
+	/// The stack this host runs.
+	pub fn stack(&self) -> &Stack {
+		self.services.stack()
 	}
 
 	/// Reference counts per product worker, shared by every connection of

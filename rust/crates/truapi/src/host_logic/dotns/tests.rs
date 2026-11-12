@@ -1,8 +1,16 @@
 use super::*;
 
+/// The stack TLD the cases run on unless they name another.
+const STACK_TLD: &str = "paseo";
+
+fn navigate(input: &str) -> NavigateDecision {
+	parse_navigate(input, STACK_TLD)
+}
+
 #[test]
 fn product_links_require_the_explicit_network_for_direct_and_share_forms() {
-	for suffix in crate::dotns_name::DOTNS_TLDS {
+	let suffixes = ["dot", "paseo", "fork"];
+	for suffix in suffixes {
 		for mirror in ["", ".li"] {
 			let input = format!("https://app.arena.coinflip.{suffix}{mirror}/play?mode=1#turn");
 			assert_eq!(
@@ -13,7 +21,7 @@ fn product_links_require_the_explicit_network_for_direct_and_share_forms() {
 					canonical_url: format!("https://app.arena.coinflip.{suffix}/play?mode=1#turn"),
 				})
 			);
-			for other in crate::dotns_name::DOTNS_TLDS.iter().filter(|other| *other != suffix) {
+			for other in suffixes.into_iter().filter(|other| *other != suffix) {
 				assert_eq!(ProductLink::parse(&input, other), None);
 			}
 		}
@@ -68,8 +76,66 @@ fn product_links_reject_non_product_authorities() {
 }
 
 #[test]
-fn share_hosts_use_the_canonical_network_suffixes() {
-	assert_eq!(product_share_hosts(), ["dot.li", "paseo.li", "testnet.li"]);
+fn share_hosts_are_the_reserved_tld_and_the_stacks_own() {
+	assert_eq!(product_share_hosts("paseo"), ["dot.li", "paseo.li"]);
+	assert_eq!(product_share_hosts("fork"), ["dot.li", "fork.li"]);
+	assert_eq!(product_share_hosts("dot"), ["dot.li"]);
+}
+
+/// A name on a network whose TLD is the share suffix is that network's
+/// product, not a share link to a name one label shorter.
+#[test]
+fn a_network_on_the_share_suffix_keeps_its_own_names() {
+	assert_eq!(
+		ProductLink::parse("https://app.arena.li/play", "li").map(|link| link.identifier),
+		Some(ProductId::for_test("app.arena.li"))
+	);
+}
+
+/// A fork runs products under its own TLD and under Polkadot's, and reads any
+/// other network's names as the web addresses they are.
+#[test]
+fn a_host_reads_only_its_own_and_the_reserved_tld_as_dotns() {
+	for (input, stack_tld, is_dotns) in [
+		("browse.fork", "fork", true),
+		("browse.dot", "fork", true),
+		("browse.paseo", "fork", false),
+		("browse.testnet", "paseo", false),
+		("browse.dot", "paseo", true),
+		("browse.paseo", "dot", false),
+	] {
+		let expected = if is_dotns {
+			NavigateDecision::DotName {
+				identifier: ProductId::for_test(input),
+				path: String::new(),
+				canonical_url: format!("polkadot://{input}"),
+			}
+		} else {
+			NavigateDecision::External { url: format!("https://{input}/") }
+		};
+		assert_eq!(parse_navigate(input, stack_tld), expected, "{input} on a {stack_tld} stack");
+	}
+}
+
+/// A Pocket deeplink is the host's own, so it is refused rather than opened
+/// elsewhere when its product is on a TLD the stack does not serve.
+#[test]
+fn a_pocket_deeplink_names_a_product_the_stack_serves() {
+	let link = |product: &str| format!("polkadotapp://pocket/add?product={product}&card=loyalty");
+	for (product, stack_tld, served) in [
+		("game.fork", "fork", true),
+		("game.dot", "fork", true),
+		("game.paseo", "fork", false),
+		("game.testnet", "paseo", false),
+	] {
+		let decision = parse_navigate(&link(product), stack_tld);
+		assert_eq!(
+			matches!(decision, NavigateDecision::Pocket { .. }),
+			served,
+			"{product} on a {stack_tld} stack: {decision:?}"
+		);
+		assert!(served || matches!(decision, NavigateDecision::Reject { .. }), "{decision:?}");
+	}
 }
 
 enum Expected {
@@ -130,7 +196,7 @@ fn external(url: &str) -> Expected {
 #[test]
 fn product_destinations_require_canonical_product_identifiers() {
 	for input in ["polkadot://invalid_name.dot", "localhost.dot", "-invalid.dot"] {
-		assert!(matches!(parse_navigate(input), NavigateDecision::Reject { .. }), "{input}");
+		assert!(matches!(navigate(input), NavigateDecision::Reject { .. }), "{input}");
 	}
 }
 
@@ -143,7 +209,7 @@ fn a_product_destination_is_handed_over_as_a_polkadot_url() {
 		("calculator.paseo/deep/path?q=1#frag", "polkadot://calculator.paseo/deep/path?q=1#frag"),
 		("MyTestApp.DOT", "polkadot://mytestapp.dot"),
 	] {
-		let NavigateDecision::DotName { canonical_url, .. } = parse_navigate(input) else {
+		let NavigateDecision::DotName { canonical_url, .. } = navigate(input) else {
 			panic!("{input} should classify as a dotNS product destination");
 		};
 		assert_eq!(canonical_url, expected, "for {input}");
@@ -153,7 +219,7 @@ fn a_product_destination_is_handed_over_as_a_polkadot_url() {
 /// A web address keeps its scheme, so the two stay distinguishable.
 #[test]
 fn a_web_address_is_still_handed_over_as_https() {
-	let NavigateDecision::External { url } = parse_navigate("https://example.com/x") else {
+	let NavigateDecision::External { url } = navigate("https://example.com/x") else {
 		panic!("example.com should classify as external");
 	};
 	assert_eq!(url, "https://example.com/x");
@@ -339,31 +405,6 @@ fn parse_navigate_cases() {
 			expected: Expected::Reject,
 		},
 		TestCase {
-			name: "testnet bare",
-			input: "browse.testnet",
-			expected: dot("browse.testnet", ""),
-		},
-		TestCase {
-			name: "testnet mixed case with path",
-			input: "Browse.TESTNET/Path",
-			expected: dot("browse.testnet", "Path"),
-		},
-		TestCase {
-			name: "polkadot scheme testnet host",
-			input: "polkadot://currenthost.testnet/browse.testnet",
-			expected: dot("currenthost.testnet", "browse.testnet"),
-		},
-		TestCase {
-			name: "testnet with port is rejected",
-			input: "https://x.testnet:8443/path",
-			expected: Expected::Reject,
-		},
-		TestCase {
-			name: "testnet with userinfo is rejected",
-			input: "https://user:pass@x.testnet/path",
-			expected: Expected::Reject,
-		},
-		TestCase {
 			name: "trim whitespace",
 			input: "  mytestapp.dot/path  ",
 			expected: dot("mytestapp.dot", "path"),
@@ -464,7 +505,7 @@ fn parse_navigate_cases() {
 	];
 
 	for case in cases {
-		let actual = parse_navigate(case.input);
+		let actual = navigate(case.input);
 		match case.expected {
 			Expected::Decision(expected) => assert_eq!(actual, expected, "{}", case.name),
 			Expected::Reject => {
@@ -477,8 +518,8 @@ fn parse_navigate_cases() {
 		}
 	}
 
-	let nfc = parse_navigate("café.dot");
-	let nfd = parse_navigate("cafe\u{0301}.dot");
+	let nfc = navigate("café.dot");
+	let nfd = navigate("cafe\u{0301}.dot");
 	match (&nfc, &nfd) {
 		(
 			NavigateDecision::DotName { identifier: a, .. },
@@ -493,7 +534,7 @@ fn pocket_deeplinks_screen_the_card_id_the_way_removal_does() {
 	// A deeplink and `remove_card` name the same card, so they have to
 	// agree on what the name is. Removal normalizes, so navigation does
 	// too, or `?card=%20loyalty%20` adds a card that cannot be removed.
-	match parse_navigate("polkadotapp://pocket/add?product=game.dot&card=%20loyalty%20") {
+	match navigate("polkadotapp://pocket/add?product=game.dot&card=%20loyalty%20") {
 		NavigateDecision::Pocket { card_id, canonical_url, .. } => {
 			assert_eq!(card_id, "loyalty");
 			assert_eq!(
@@ -505,8 +546,8 @@ fn pocket_deeplinks_screen_the_card_id_the_way_removal_does() {
 	}
 
 	// NFD and NFC spellings of one name must not be two cards.
-	let nfc = parse_navigate("polkadotapp://pocket/open?product=game.dot&card=caf%C3%A9");
-	let nfd = parse_navigate("polkadotapp://pocket/open?product=game.dot&card=cafe%CC%81");
+	let nfc = navigate("polkadotapp://pocket/open?product=game.dot&card=caf%C3%A9");
+	let nfd = navigate("polkadotapp://pocket/open?product=game.dot&card=cafe%CC%81");
 	match (&nfc, &nfd) {
 		(
 			NavigateDecision::Pocket { card_id: a, .. },
@@ -528,7 +569,7 @@ fn pocket_deeplinks_screen_the_card_id_the_way_removal_does() {
 		"polkadotapp://pocket/open?product=game.dot&card=a&v=%+1".to_string(),
 	] {
 		assert!(
-			matches!(parse_navigate(&input), NavigateDecision::Reject { .. }),
+			matches!(navigate(&input), NavigateDecision::Reject { .. }),
 			"{input} should be refused"
 		);
 	}
@@ -554,11 +595,11 @@ fn pocket_canonical_url_reencodes_the_card_id() {
 			"polkadotapp://pocket/open?product=game.dot&card=x&v=a+b%26c&flag",
 		),
 	] {
-		match parse_navigate(input) {
+		match navigate(input) {
 			NavigateDecision::Pocket { canonical_url, card_id, .. } => {
 				assert_eq!(canonical_url, expected, "canonical url for {input}");
 				// Re-parsing the canonical form has to name the same card.
-				match parse_navigate(&canonical_url) {
+				match navigate(&canonical_url) {
 					NavigateDecision::Pocket { card_id: again, .. } => {
 						assert_eq!(again, card_id, "round trip for {input}")
 					},

@@ -82,9 +82,12 @@ use crate::{PairingProposal, ProductId, ProductIdError, host_logic::dotns};
 /// call: the Pocket deeplink first, then dotNS, then `localhost`, then
 /// normalized external, with everything else rejected. Pure and stateless;
 /// hosts call it on every webview-internal navigation.
+///
+/// `network_suffix` is the TLD of the host's stack, which decides the names
+/// read as dotNS.
 #[uniffi::export]
-pub fn parse_navigate(input: String) -> NavigateDecision {
-	dotns::parse_navigate(&input)
+pub fn parse_navigate(input: String, network_suffix: String) -> NavigateDecision {
+	dotns::parse_navigate(&input, &network_suffix)
 }
 
 /// The canonical app scheme used for deeplinks and native handoffs.
@@ -160,10 +163,10 @@ pub fn parse_product_link(input: String, network_suffix: String) -> Option<Produ
 	ProductLink::parse(&input, &network_suffix)
 }
 
-/// Recognize a supported share host without consulting host configuration.
+/// Recognize a share host of a TLD the stack on `network_suffix` serves.
 #[uniffi::export]
-pub fn parse_product_share_host(input: String) -> Option<ProductId> {
-	ProductId::from_share_host(&input)
+pub fn parse_product_share_host(input: String, network_suffix: String) -> Option<ProductId> {
+	ProductId::from_share_host(&input, &network_suffix)
 }
 
 /// The public share host for this identity, excluding local development.
@@ -172,10 +175,10 @@ pub fn product_id_share_host(product_id: ProductId) -> Option<String> {
 	product_id.to_share_host()
 }
 
-/// Share domains recognized by the canonical Rust parser.
+/// Share domains of the TLDs the stack on `network_suffix` serves.
 #[uniffi::export]
-pub fn product_share_hosts() -> Vec<String> {
-	dotns::product_share_hosts()
+pub fn product_share_hosts(network_suffix: String) -> Vec<String> {
+	dotns::product_share_hosts(&network_suffix)
 }
 
 /// The development product a debug build opens for an address the developer
@@ -391,8 +394,8 @@ pub fn screen_chat_icon(icon: String) -> Result<String, NativeChatFieldError> {
 /// permissions still need the OS grant. Hosts mediating product network access
 /// can use this check before storage.
 #[uniffi::export]
-pub fn has_trusted_remote_permissions(product_id: ProductId) -> bool {
-	product_id.has_trusted_remote_permissions()
+pub fn has_trusted_remote_permissions(product_id: ProductId, network_suffix: String) -> bool {
+	crate::stack::trusts(&network_suffix, &product_id)
 }
 
 /// Set the live log level (`off`/`error`/`warn`/`info`/`debug`/`trace`) for

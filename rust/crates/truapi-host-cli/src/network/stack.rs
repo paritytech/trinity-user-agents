@@ -2,7 +2,6 @@
 
 use anyhow::{Context, Result, ensure};
 use trinity_stack::Descriptor;
-use truapi::platform::DOTNS_TLDS;
 
 use super::{ChainEndpoint, POLKADOT_NAMESPACE, Stack, namespace_of};
 use crate::{
@@ -13,9 +12,8 @@ use crate::{
 impl Stack {
 	/// `descriptor` connected to over `chain_backend`. Fails when People,
 	/// Asset Hub or Bulletin is missing, when two of them share a genesis hash,
-	/// when the TLD is not one the core serves, when the namespace is not a
-	/// lowercase label or is the `polkadot` one, and when the stack has
-	/// no `dub` service or no `dotns.popController`.
+	/// when the namespace is not a lowercase label or is the `polkadot` one,
+	/// and when the stack has no `dub` service or no `dotns.popController`.
 	pub fn new(descriptor: Descriptor, chain_backend: ChainBackend) -> Result<Self> {
 		let id = &descriptor.id;
 		ensure!(
@@ -40,12 +38,6 @@ impl Stack {
 				asset_hub.genesis != bulletin.genesis,
 			"People, Asset Hub and Bulletin need distinct genesis hashes: the host routes each role \
 			 by its genesis"
-		);
-		ensure!(
-			DOTNS_TLDS.contains(&descriptor.tld.as_str()),
-			"the {id} stack's tld {} is not one the core serves ({})",
-			descriptor.tld,
-			DOTNS_TLDS.join(", ")
 		);
 		let dub = descriptor.service("dub").with_context(|| {
 			format!("the {id} stack has no dub service, which the CLI uses as its identity backend")

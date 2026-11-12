@@ -169,9 +169,3 @@ impl From<&ProductContext> for ProductExecutionConfig {
 		Self { product_id: product.product_id.clone(), execution_kind: product.execution_kind }
 	}
 }
-
-impl From<ProductExecutionConfig> for ProductContext {
-	fn from(config: ProductExecutionConfig) -> Self {
-		ProductContext::new_with_execution(config.product_id, config.execution_kind)
-	}
-}

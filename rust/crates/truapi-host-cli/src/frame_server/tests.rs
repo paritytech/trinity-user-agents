@@ -58,7 +58,7 @@ async fn start_tcp_server(
 	let listener = TcpListener::bind("127.0.0.1:0").await?;
 	let address = listener.local_addr()?;
 	let endpoint = format!("ws://{address}");
-	let product = ProductSelection::new(ProductId::for_test("localhost:3000"), ExecutableKind::App);
+	let product = selection("localhost:3000");
 	let container = tempfile::NamedTempFile::new()?;
 	std::fs::write(container.path(), "installSandbox();")?;
 	let server = tokio::spawn(async move {
@@ -66,6 +66,16 @@ async fn start_tcp_server(
 		serve_tcp_connection(runtime, product, stream, &endpoint, container.path()).await
 	});
 	Ok((address, server))
+}
+
+/// An App selection on the default network's stack.
+fn selection(product_id: &str) -> Arc<ProductSelection> {
+	let stack = crate::network::Network::default()
+		.bundled_stack(ChainBackend::Rpc)
+		.core_stack()
+		.expect("the bundled stack is valid");
+	ProductSelection::new(ProductId::for_test(product_id), ExecutableKind::App, stack)
+		.expect("the stack serves the product")
 }
 
 fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
@@ -217,7 +227,7 @@ async fn fragmented_request_heads_do_not_starve_the_executor() -> Result<()> {
 	let mut client = TcpStream::connect(address).await?;
 	let (server_stream, _) = listener.accept().await?;
 	client.write_all(b"GET /boot").await?;
-	let product = ProductSelection::new(ProductId::for_test("localhost:3000"), ExecutableKind::App);
+	let product = selection("localhost:3000");
 	let endpoint = format!("ws://{address}");
 
 	let client_exchange = async move {
@@ -264,7 +274,7 @@ async fn disconnect_cancels_pending_dispatch_and_disposes_runtime() -> Result<()
 	let address = listener.local_addr()?;
 	let runtime = Arc::new(PendingRuntime::default());
 	let server_runtime = runtime.clone();
-	let product = ProductSelection::new(ProductId::for_test("localhost:3000"), ExecutableKind::App);
+	let product = selection("localhost:3000");
 	let product_updates = product.subscribe();
 	let server = tokio::spawn(async move {
 		let (stream, _) = listener.accept().await?;
@@ -345,23 +355,39 @@ async fn a_non_loopback_origin_cannot_open_the_tcp_websocket() -> Result<()> {
 
 #[test]
 fn product_selection_compares_canonical_ids() {
-	let product = ProductSelection::new(ProductId::for_test(" Dotli.DOT "), ExecutableKind::App);
+	let product = selection(" Dotli.DOT ");
 
 	assert_eq!(product.current().as_str(), "dotli.dot");
-	assert!(product.select(ProductId::for_test("localhost:3000")));
+	assert_eq!(product.select(ProductId::for_test("localhost:3000")), Ok(true));
 	assert_eq!(product.current().as_str(), "localhost:3000");
-	assert!(!product.select(ProductId::for_test("LOCALHOST:3000")));
+	assert_eq!(product.select(ProductId::for_test("LOCALHOST:3000")), Ok(false));
+}
+
+/// The host runs no product on a TLD its stack does not serve, so the
+/// selection stays where it was.
+#[test]
+fn product_selection_refuses_a_tld_the_stack_does_not_serve() {
+	let product = selection("first.dot");
+	let tld = product.stack.tld().to_owned();
+
+	assert_eq!(product.select(ProductId::for_test(&format!("second.{tld}"))), Ok(true));
+	let unserved = ProductId::for_test("third.elsewhere");
+	assert_eq!(
+		product.select(unserved.clone()),
+		Err(RuntimeConfigValidationError::UnservedProduct { product_id: unserved, tld: tld.clone() })
+	);
+	assert_eq!(product.current().as_str(), format!("second.{tld}"));
 }
 
 #[tokio::test]
 async fn changing_product_notifies_connections() -> Result<()> {
-	let product = ProductSelection::new(ProductId::for_test("first.dot"), ExecutableKind::App);
+	let product = selection("first.dot");
 	let mut connection = product.subscribe();
 
-	assert!(product.select(ProductId::for_test("second.dot")));
+	assert_eq!(product.select(ProductId::for_test("second.dot")), Ok(true));
 	connection.changed().await?;
 	assert_eq!(connection.borrow().product_id.as_str(), "second.dot");
-	assert!(!product.select(ProductId::for_test("SECOND.DOT")));
+	assert_eq!(product.select(ProductId::for_test("SECOND.DOT")), Ok(false));
 	assert!(!connection.has_changed()?);
 	Ok(())
 }

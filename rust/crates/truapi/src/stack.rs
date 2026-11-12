@@ -11,7 +11,7 @@ use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
-use crate::dotns_name::DOTNS_TLDS;
+use crate::{ProductId, dotns_name::is_dns_label};
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -46,6 +46,32 @@ const RESERVED_GENESIS_HASHES: [[u8; 32]; 4] = [
 /// Polkadot's dotNS TLD. The RFC-0022 identities derived under it are a
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
+
+/// The dotNS TLDs a stack on `stack_tld` serves names under: Polkadot's
+/// reserved TLD, then the stack's own when it is another one.
+///
+/// This is the only list of TLDs the core accepts. Product ids, dotNS links
+/// and share hosts are all judged against it.
+pub fn served_tlds(stack_tld: &str) -> impl Iterator<Item = &str> {
+	[RESERVED_TLD].into_iter().chain((stack_tld != RESERVED_TLD).then_some(stack_tld))
+}
+
+/// Whether `tld` is one of the [`served_tlds`] of a stack on `stack_tld`.
+pub fn serves_tld(stack_tld: &str, tld: &str) -> bool {
+	served_tlds(stack_tld).any(|served| served == tld)
+}
+
+/// [`Stack::serves`] for a caller that holds only the stack's TLD, such as a
+/// host asking over FFI.
+pub fn serves(stack_tld: &str, product_id: &ProductId) -> bool {
+	product_id.network_suffix().is_none_or(|tld| serves_tld(stack_tld, tld))
+}
+
+/// Whether a stack on `stack_tld` gives `product_id` every `RemotePermission`
+/// without a prompt: a trusted label under a TLD the stack serves.
+pub fn trusts(stack_tld: &str, product_id: &ProductId) -> bool {
+	serves(stack_tld, product_id) && product_id.has_trusted_remote_permissions()
+}
 
 /// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
 /// and the genesis hash of each chain role the core uses.
@@ -102,9 +128,9 @@ pub enum StackError {
 		/// The role with the all-zero hash.
 		chain: ChainIdentifier,
 	},
-	/// The TLD is not one the core serves dotNS names under.
-	#[display("stack tld {tld:?} is not one of {}", DOTNS_TLDS.join(", "))]
-	UnsupportedTld {
+	/// The TLD is not a DNS label, so no dotNS name can end in it.
+	#[display("stack tld {tld:?} is not a lowercase DNS label")]
+	InvalidTld {
 		/// The descriptor's TLD.
 		tld: String,
 	},
@@ -168,8 +194,8 @@ impl Stack {
 		chains: StackChains,
 		allows_reserved_values: bool,
 	) -> Result<Self, StackError> {
-		if !DOTNS_TLDS.contains(&tld.as_str()) {
-			return Err(StackError::UnsupportedTld { tld });
+		if !is_dns_label(&tld) {
+			return Err(StackError::InvalidTld { tld });
 		}
 		let StackChains { relay, asset_hub, people, bulletin } = chains;
 		let optional_roles =
@@ -201,6 +227,12 @@ impl Stack {
 	/// account and for the person ring-VRF keys.
 	pub fn tld(&self) -> &str {
 		&self.tld
+	}
+
+	/// Whether this stack runs `product_id`: a localhost development id, or a
+	/// name under Polkadot's reserved TLD or the stack's own.
+	pub fn serves(&self, product_id: &ProductId) -> bool {
+		serves(&self.tld, product_id)
 	}
 
 	/// The stack's chains.

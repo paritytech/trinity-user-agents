@@ -429,6 +429,19 @@ impl ProductConnection {
 		&self.product.product_id
 	}
 
+	/// Refuses a product a request names when the stack does not serve its
+	/// TLD, before any key, grant or manifest is looked up for it.
+	///
+	/// Answers `MalformedFrame`, as decoding does for an id that does not parse.
+	fn require_served<D>(&self, product_id: &ProductId) -> Result<(), CallError<D>> {
+		if self.services.stack().serves(product_id) {
+			return Ok(());
+		}
+		Err(CallError::MalformedFrame {
+			reason: format!("product {product_id} is not under a TLD this host serves"),
+		})
+	}
+
 	// Foreign reads must keep the authorized owner, not the calling product.
 	fn product_storage_key(&self, owner: &ProductId, key: String) -> String {
 		ProductStorageKey::new(owner.clone(), key).encode()
