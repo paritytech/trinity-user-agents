@@ -7,6 +7,7 @@ import UIKitExt
 @MainActor
 protocol ExpandedPocketCardViewProtocol: ControllerBackedProtocol {
     var isOnDisplay: Bool { get }
+    var origin: PocketOrigin? { get set }
 
     func navigate(to url: URL)
     func navigate(to page: ProductPage)

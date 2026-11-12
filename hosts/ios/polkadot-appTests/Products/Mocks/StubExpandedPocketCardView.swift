@@ -21,6 +21,7 @@ final class StubExpandedPocketCardView: ExpandedPocketCardViewProtocol {
     private(set) var faceRequests: [Bool] = []
     var faceOutcome: ExpandedCardFaceOutcome = .applied
     var isOnDisplay = true
+    weak var origin: PocketOrigin?
 
     let controller = UIViewController()
     var isSetup: Bool { true }

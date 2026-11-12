@@ -9,8 +9,6 @@ import Testing
 /// that keeps a Pocket full of cards from becoming a web view each.
 @MainActor
 struct PocketCardHostsTests {
-    /// The surface is how a warm page reaches whichever screen shows it next,
-    /// so the card reopened must find the one its page was built with.
     @Test
     func opensACardOnceAndReusesItAfterwards() {
         let hosts = PocketCardHosts()
@@ -21,7 +19,6 @@ struct PocketCardHostsTests {
 
         #expect(factory.built == 1)
         #expect(first?.view === second?.view)
-        #expect(second?.surface === factory.surfaces.first)
     }
 
     /// A page is loaded with the params of the link that opened it, so a link
@@ -60,21 +57,32 @@ struct PocketCardHostsTests {
         #expect(reopened?.view === held?.view)
     }
 
-    /// One at a time: a second card takes the first down rather than adding to
-    /// it. Each has its own surface, since another card's page must never move
-    /// this card's face.
+    /// One at a time: a second card takes the first down rather than adding to it.
     @Test
     func openingAnotherCardTakesTheFirstDown() {
         let hosts = PocketCardHosts()
         let factory = CountingFactory()
 
         let first = hosts.product(for: loyalty, make: factory.make)
-        let second = hosts.product(for: trophy, make: factory.make)
+        _ = hosts.product(for: trophy, make: factory.make)
         let loyaltyAgain = hosts.product(for: loyalty, make: factory.make)
 
         #expect(factory.built == 3)
         #expect(first?.view !== loyaltyAgain?.view)
-        #expect(first?.surface !== second?.surface)
+    }
+
+    @Test
+    func isOnDisplayOnlyWhileTheHeldCardsScreenIs() {
+        let hosts = PocketCardHosts()
+        let factory = CountingFactory()
+        _ = hosts.product(for: loyalty, make: factory.make)
+
+        #expect(hosts.isOnDisplay(loyalty))
+        #expect(!hosts.isOnDisplay(trophy))
+
+        factory.views.first?.isOnDisplay = false
+
+        #expect(!hosts.isOnDisplay(loyalty))
     }
 
     /// A card the collection no longer holds has no next tap, so the product
@@ -126,11 +134,12 @@ private let trophy = PocketCardKey(productId: try! ProductId("game.paseo"), card
 
 @MainActor
 private final class CountingFactory {
-    private(set) var surfaces: [PocketCardSurface] = []
-    var built: Int { surfaces.count }
+    private(set) var views: [StubExpandedPocketCardView] = []
+    var built: Int { views.count }
 
-    func make(surface: PocketCardSurface) -> SPAViewProtocol? {
-        surfaces.append(surface)
-        return StubSPAView()
+    func make() -> ExpandedPocketCardViewProtocol? {
+        let view = StubExpandedPocketCardView()
+        views.append(view)
+        return view
     }
 }

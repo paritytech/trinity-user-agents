@@ -19,8 +19,7 @@ final class PocketCardHosts {
     struct CardProduct {
         let key: PocketCardKey
         let pageQuery: String
-        let view: SPAViewProtocol
-        let surface: PocketCardSurface
+        let view: ExpandedPocketCardViewProtocol
     }
 
     private var held: CardProduct?
@@ -30,33 +29,32 @@ final class PocketCardHosts {
     func product(
         for key: PocketCardKey,
         pageQuery: String = "",
-        make: (PocketCardSurface) -> SPAViewProtocol?
+        make: () -> ExpandedPocketCardViewProtocol?
     ) -> CardProduct? {
         if let held, held.key == key, held.pageQuery == pageQuery { return held }
 
         release()
 
-        let surface = PocketCardSurface()
-        guard let view = make(surface) else { return nil }
+        guard let view = make() else { return nil }
 
-        let product = CardProduct(key: key, pageQuery: pageQuery, view: view, surface: surface)
+        let product = CardProduct(key: key, pageQuery: pageQuery, view: view)
         held = product
         return product
     }
 
     /// Has `load` take the held product for `key` to `pageQuery`, unless its
     /// page already shows it.
-    func reload(_ key: PocketCardKey, at pageQuery: String, using load: (SPAViewProtocol) -> Void) {
+    func reload(_ key: PocketCardKey, at pageQuery: String, using load: (ExpandedPocketCardViewProtocol) -> Void) {
         guard let held, held.key == key, held.pageQuery != pageQuery else { return }
 
         load(held.view)
-        self.held = CardProduct(key: key, pageQuery: pageQuery, view: held.view, surface: held.surface)
+        self.held = CardProduct(key: key, pageQuery: pageQuery, view: held.view)
     }
 
     func isOnDisplay(_ key: PocketCardKey) -> Bool {
         guard let held, held.key == key else { return false }
 
-        return held.surface.isOnDisplay
+        return held.view.isOnDisplay
     }
 
     /// Gives up a product held for a card the collection no longer has, since a
