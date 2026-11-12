@@ -327,14 +327,15 @@ impl RuntimeServices {
 	}
 
 	/// Offer the providers the host's remote configuration lists by name,
-	/// telling the feed when the list changed. A name that is not a product
-	/// id is skipped and logged. A call listing what the last one did changes
+	/// without a TLD, read on the network the stack is on, telling the feed
+	/// when the list changed. A name that is not a product id, or that names
+	/// a TLD, is skipped and logged. A call listing what the last one did changes
 	/// nothing the host sees, so the host can call it on every refresh.
 	pub fn set_funding_provider_config(
 		self: &Arc<Self>,
 		published_names: Vec<String>,
 	) -> Result<(), FundingSessionError> {
-		let (entries, invalid) = provider_config(&published_names);
+		let (entries, invalid) = provider_config(&published_names, self.stack().tld());
 		for name in invalid {
 			warn!(%name, "funding provider configuration names no product");
 		}

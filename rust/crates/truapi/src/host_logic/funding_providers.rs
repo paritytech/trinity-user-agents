@@ -53,12 +53,20 @@ pub enum FundingProviderApp {
 
 /// The providers the host offers from its remote configuration's
 /// `published_names`, in order and each once, with the names that are not
-/// product ids.
-pub fn provider_config(published_names: &[String]) -> (Vec<FundingProviderEntry>, Vec<String>) {
+/// product ids. A name carries no TLD: the core reads it on the network it is
+/// connected to, as `<name>.<tld>`, so one configuration serves every network.
+/// A name that names a TLD would pin one network, so it is skipped.
+pub fn provider_config(
+	published_names: &[String],
+	tld: &str,
+) -> (Vec<FundingProviderEntry>, Vec<String>) {
 	let mut entries: Vec<FundingProviderEntry> = Vec::new();
 	let mut invalid = Vec::new();
 	for name in published_names {
-		let Ok(product_id) = name.trim().parse::<ProductId>() else {
+		let label = name.trim();
+		let product_id =
+			if label.contains('.') { None } else { ProductId::from_name(label, tld).ok() };
+		let Some(product_id) = product_id else {
 			invalid.push(name.clone());
 			continue;
 		};

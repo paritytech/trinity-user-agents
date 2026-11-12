@@ -3337,10 +3337,10 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	assert_eq!(
 		(
 			host.funding_available(),
-			configure(&["ramp.dot"]),
-			configure(&["ramp.dot"]),
+			configure(&["ramp"]),
+			configure(&["ramp"]),
 			configure(&[]),
-			configure(&["ramp.dot"])
+			configure(&["ramp"])
 		),
 		(false, (1, true), (1, true), (2, false), (3, true))
 	);

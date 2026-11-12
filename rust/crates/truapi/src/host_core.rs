@@ -914,9 +914,12 @@ impl SigningHostRuntime {
 		self.services.funding().entries(crate::current_unix_millis())
 	}
 
-	/// Offer the funding providers the remote configuration names.
+	/// Offer the funding providers the remote configuration names, each
+	/// without a TLD (`fundtest-provider`, not `fundtest-provider.paseo`):
+	/// the core reads it on the network it is connected to.
 	///
-	/// Names that are not product ids are skipped and logged. A call listing
+	/// Names that are not product ids, or that name a TLD, are skipped and
+	/// logged. A call listing
 	/// what the last one listed changes nothing, so the host calls it on
 	/// every configuration refresh.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_provider_config"))]
