@@ -1410,6 +1410,85 @@ fn a_foreign_ring_vrf_sign_is_refused_when_the_owner_granted_nothing() {
 	);
 }
 
+/// A product's request for another product's ring-VRF key meets the owner's
+/// grants even when this host keeps the owner's AutoSigning key.
+///
+/// `HostAccounts` answers from a kept key without asking the wallet, so its
+/// own manifest and context checks are the only ones such a request passes.
+/// The granted proof in the caller's own context shows the kept key does
+/// answer once both grants admit the request.
+#[test]
+fn a_kept_key_answers_another_product_only_within_the_owners_grants() {
+	let proof_in = |trusted_products: &str, context: &str| {
+		let (authority, session) = with_the_owners_kept_key(trusted_products);
+		Door::Product
+			.create_proof(
+				&authority,
+				&session,
+				"dim2.dot",
+				HostAccountCreateProofRequest {
+					key_handle: full_person_key_handle(),
+					context: context_of(context),
+					ring_location: full_person_ring_location(),
+					message: b"prove me".to_vec(),
+				},
+			)
+			.map(|_| ())
+	};
+	let signed_without_a_grant = {
+		let (authority, session) = with_the_owners_kept_key(r#"{"someone-else":["context"]}"#);
+		Door::Product
+			.ring_vrf_sign(
+				&authority,
+				&session,
+				"dim2.dot",
+				v01::HostAccountRingVrfSignRequest {
+					key_handle: full_person_key_handle(),
+					message: b"sign me".to_vec(),
+				},
+			)
+			.map(|_| ())
+	};
+	let granted = r#"{"dim2":["context"]}"#;
+
+	assert_eq!(
+		[
+			proof_in(r#"{"someone-else":["context"]}"#, "dim2.dot"),
+			signed_without_a_grant,
+			proof_in(granted, "bank.dot"),
+			proof_in(granted, "dim2.dot"),
+		],
+		[
+			Err(RingVrfError::NotAllowlisted),
+			Err(RingVrfError::NotAllowlisted),
+			Err(RingVrfError::NotAllowlisted),
+			Ok(()),
+		]
+	);
+}
+
+/// A signing host that keeps `peopl.dot`'s AutoSigning key and registered its
+/// ring-VRF key from it, with `peopl.dot`'s manifest listing
+/// `trusted_products` and `bank.dot`'s granting nothing.
+fn with_the_owners_kept_key(trusted_products: &str) -> (Arc<SigningHostRole>, AuthoritySession) {
+	let platform =
+		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
+	cache_grant(&platform, "peopl.dot", trusted_products);
+	cache_grant(&platform, "bank.dot", "{}");
+	let (services, authority) =
+		signing_runtime_with_ring_resolver(platform, full_person_ring_resolver());
+	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	auto_signing::grant_auto_signing(&product_runtime_for(
+		services,
+		authority.clone(),
+		"peopl.dot",
+	));
+	let session = authority.accounts().current_session().expect("active session");
+	register_full_person_key(&authority, &session, &full_person_ring_location());
+	(authority, session)
+}
+
 /// An unreadable permission store refuses an ordinary product's grant.
 ///
 /// The stored `AccountAccess` decision is the only thing that can override a
