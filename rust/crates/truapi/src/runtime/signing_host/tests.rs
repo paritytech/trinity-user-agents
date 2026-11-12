@@ -2685,10 +2685,10 @@ fn a_pgas_request_waits_on_the_asset_hub_connection() {
 	}
 }
 
-/// Each allocation spends on chain, so a withdrawn call must not start the
-/// next one.
+/// A product's allocation withdrawn before it is confirmed ends at its
+/// review: the withdrawal is the answer, and no resource is requested.
 #[test]
-fn a_withdrawn_allocation_starts_no_further_resource() {
+fn a_withdrawn_allocation_is_refused_before_its_review() {
 	let (_services, authority) = signing_runtime_with_platform(Arc::new(StubPlatform::default()));
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation");
@@ -2712,6 +2712,66 @@ fn a_withdrawn_allocation_starts_no_further_resource() {
 			"allocation-withdrawn",
 			truapi::CancellationReason::Cancelled,
 		)))
+	);
+}
+
+/// Each allocation spends on chain, so a call withdrawn partway must not
+/// start the next one.
+///
+/// Driven at the wallet, which a paired allocation reaches from
+/// `SsoAccountHolderService` once its review is answered: the wallet's own
+/// check between resources is the only thing that sees the withdrawal.
+#[test]
+fn a_withdrawn_allocation_starts_no_further_resource() {
+	use crate::{
+		host_internal::sso_messages::OnExistingAllowancePolicy,
+		runtime::authority::{AccountGrantOutcome, AuthorityCancelError},
+	};
+	use futures::StreamExt;
+
+	let (_services, authority) = signing_runtime_with_platform(Arc::new(StubPlatform::default()));
+	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation");
+	let session = authority.accounts().current_session().expect("connected");
+	let cancel = truapi::CancellationToken::default();
+	let cx = CallContext::with_parts("allocation-withdrawn".to_string(), cancel.clone());
+	let caller = ProductId::for_test("myapp.dot");
+	let mut grants = futures::executor::block_on(authority.wallet.allocate_grants(
+		AccountInvocation {
+			call: &cx,
+			session: &session,
+			caller: AccountCaller::Remote { product_id: Some(&caller) },
+		},
+		v01::HostRequestResourceAllocationRequest {
+			resources: vec![v01::AllocatableResource::AutoSigning; 2],
+		},
+		OnExistingAllowancePolicy::Increase,
+	))
+	.expect("the allocation starts");
+
+	let first = futures::executor::block_on(grants.next()).expect("a first outcome");
+	cancel.cancel();
+	let rest = futures::executor::block_on(grants.collect::<Vec<_>>());
+	let outcomes: Vec<_> = core::iter::once(first)
+		.chain(rest)
+		.map(|outcome| {
+			outcome.map(|outcome| match outcome {
+				AccountGrantOutcome::Allocated(_) => "allocated",
+				AccountGrantOutcome::Rejected => "rejected",
+				AccountGrantOutcome::NotAvailable { .. } => "not available",
+			})
+		})
+		.collect();
+
+	assert_eq!(
+		outcomes,
+		vec![
+			Ok("allocated"),
+			Err(AuthorityError::Cancelled(AuthorityCancelError::new(
+				"allocation-withdrawn",
+				truapi::CancellationReason::Cancelled,
+			))),
+		]
 	);
 }
 
