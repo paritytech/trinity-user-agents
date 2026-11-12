@@ -8,7 +8,6 @@ import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.slot
 import io.mockk.unmockkObject
-import io.mockk.verify
 import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedPocketCards
@@ -28,7 +27,6 @@ import org.junit.rules.TemporaryFolder
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.NativeTrUApiHostRuntime
 import uniffi.truapi.PinnedPocketCard
-import uniffi.truapi.ProductId
 
 class TrUAPIHostRuntimeProviderTest {
     @get:Rule
@@ -101,6 +99,7 @@ class TrUAPIHostRuntimeProviderTest {
         pinnedPocketCards = FakePinnedPocketCards(listOf(pinnedCard(personhoodProduct, "humanity"))),
         workerSupervisor = { mockk(relaxed = true) },
         workerCrashNotice = mockk(relaxed = true),
+        fundingService = { mockk(relaxed = true) },
         dispatchers = testDispatchers(),
     )
 
