@@ -29,7 +29,16 @@ fn load(bundled: &serde_json::Value, stored: Option<&[u8]>) -> StackSource {
 
 fn serve(source: &mut StackSource, descriptor: &serde_json::Value, now: i64) -> Option<Vec<u8>> {
 	let bytes = signed(descriptor);
-	source.fetched(Served::Document { bytes: &bytes, etag: None }, now)
+	source.fetched(Ok(Served::Document { bytes: &bytes, etag: None }), now)
+}
+
+fn unreachable() -> StackRefreshOutcome {
+	StackRefreshOutcome::Unreachable { reason: "connection refused".to_string() }
+}
+
+/// A fetch that failed at `now`.
+fn fail(source: &mut StackSource, now: i64) -> Option<Vec<u8>> {
+	source.fetched(Err("connection refused".to_string()), now)
 }
 
 fn status(
@@ -38,10 +47,10 @@ fn status(
 ) -> StackStatus {
 	StackStatus {
 		descriptor: plain(descriptor),
+		generation: descriptor["generation"].as_str().expect("generation is a string").to_string(),
 		stale: false,
 		expired: false,
 		restart_required: false,
-		new_generation: false,
 		last_refresh,
 	}
 }
@@ -85,11 +94,11 @@ fn a_newer_copy_on_the_same_chains_is_used_at_once() {
 #[test]
 fn a_restarted_stack_is_stored_and_runs_from_the_next_start() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let wiped = published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE);
 	let mut source = load(&bundled, None);
 
-	let record =
-		serve(&mut source, &published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE), START)
-			.expect("the newer copy is stored");
+	let record = serve(&mut source, &wiped, START).expect("the newer copy is stored");
+	source.record_stored();
 
 	assert_eq!(
 		(source.stack().chains().people, source.status()),
@@ -97,12 +106,44 @@ fn a_restarted_stack_is_stored_and_runs_from_the_next_start() {
 			TEST_STACK_PEOPLE,
 			StackStatus {
 				restart_required: true,
-				new_generation: true,
 				..status(&bundled, Some(StackRefreshOutcome::Current))
 			}
 		)
 	);
-	assert_eq!(load(&bundled, Some(&record)).stack().chains().people, TEST_STACK_WIPED_PEOPLE);
+	// An app killed before it restarts gets no second notice. The status at
+	// its next start still names the new generation, so the host can tell
+	// its cached chain data is for the old chains.
+	let restarted = load(&bundled, Some(&record));
+	assert_eq!(
+		(restarted.stack().chains().people, restarted.status()),
+		(TEST_STACK_WIPED_PEOPLE, status(&wiped, None))
+	);
+}
+
+/// A host told to restart before the record is stored would start from the
+/// old copy, fetch the new one and be told to restart again, for as long as
+/// the store fails.
+#[test]
+fn a_restart_is_asked_for_only_once_the_record_is_stored() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let wiped = published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE);
+	let mut source = load(&bundled, None);
+
+	let first_record = serve(&mut source, &wiped, START);
+	let before_the_store = source.status().restart_required;
+	let second_record = serve(&mut source, &wiped, START + 3600);
+	source.record_stored();
+
+	assert_eq!(
+		(
+			first_record.is_some(),
+			before_the_store,
+			second_record.is_some(),
+			source.status().restart_required
+		),
+		(true, false, true, true),
+		"a later fetch hands the record over again, for a store that failed"
+	);
 }
 
 /// A failed fetch only delays a change. The core keeps the copy it has and
@@ -112,12 +153,9 @@ fn an_unreachable_server_keeps_the_copy_in_use() {
 	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
 	let mut source = load(&bundled, None);
 
-	let record = source.fetched(Served::Unreachable, START);
+	let record = fail(&mut source, START);
 
-	assert_eq!(
-		(record, source.status()),
-		(None, status(&bundled, Some(StackRefreshOutcome::Unreachable)))
-	);
+	assert_eq!((record, source.status()), (None, status(&bundled, Some(unreachable()))));
 }
 
 /// A signed descriptor without a Bulletin chain passes the descriptor rules
@@ -146,6 +184,26 @@ fn a_copy_the_core_cannot_run_is_refused_and_not_stored() {
 				})
 			)
 		)
+	);
+}
+
+/// The reader judges every fetch against the copy it holds. A copy the core
+/// refused must not become that copy, or the operator's corrected descriptor
+/// at the same `sequence` would be turned away as a conflict.
+#[test]
+fn a_refused_copy_does_not_stand_in_the_way_of_the_corrected_one() {
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
+	let mut source = load(&bundled, None);
+	let corrected = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
+	let mut on_dot = corrected.clone();
+	on_dot["tld"] = "dot".into();
+
+	let refused = serve(&mut source, &on_dot, START);
+	let record = serve(&mut source, &corrected, START + 3600);
+
+	assert_eq!(
+		(refused, record.is_some(), source.status()),
+		(None, true, status(&corrected, Some(StackRefreshOutcome::Current)))
 	);
 }
 
@@ -200,7 +258,7 @@ fn a_fetch_is_due_an_hour_after_the_last_one() {
 
 	assert_eq!(source.due_fetch(START + 3599), None);
 	assert!(source.forced_fetch(START + 3599).is_some(), "a host may ask sooner");
-	let _no_record = source.fetched(Served::Unreachable, START + 3599);
+	let _no_record = fail(&mut source, START + 3599);
 	assert_eq!(source.due_fetch(START + 3599 + 3599), None, "a failed fetch also waits an hour");
 	assert!(source.due_fetch(START + 3599 + 3600).is_some());
 }
@@ -237,17 +295,13 @@ fn a_stale_or_expired_copy_is_reported() {
 
 	serve(&mut source, &newer, START);
 	let stale = source.status();
-	let _no_record = source.fetched(Served::Unreachable, START + 10);
+	let _no_record = fail(&mut source, START + 10);
 
 	assert_eq!(
 		[stale, source.status()],
 		[
 			StackStatus { stale: true, ..status(&newer, Some(StackRefreshOutcome::Current)) },
-			StackStatus {
-				stale: true,
-				expired: true,
-				..status(&newer, Some(StackRefreshOutcome::Unreachable))
-			},
+			StackStatus { stale: true, expired: true, ..status(&newer, Some(unreachable())) },
 		]
 	);
 }

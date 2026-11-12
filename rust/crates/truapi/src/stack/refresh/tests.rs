@@ -1,9 +1,10 @@
 use std::{
 	collections::{HashMap, VecDeque},
 	sync::{
-		atomic::{AtomicU64, AtomicUsize, Ordering},
+		atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 		mpsc::{Receiver, RecvTimeoutError, Sender, channel},
 	},
+	time::Instant,
 };
 
 use truapi::latest::GenericError;
@@ -43,13 +44,21 @@ fn unreachable() -> Result<StackFetchResponse, GenericError> {
 	Err("connection refused".to_string().into())
 }
 
+fn unreachable_because(reason: &str) -> Option<StackRefreshOutcome> {
+	Some(StackRefreshOutcome::Unreachable { reason: reason.to_string() })
+}
+
 #[derive(Default)]
-struct MemoryRecords(Mutex<HashMap<String, Vec<u8>>>);
+struct MemoryRecords {
+	records: Mutex<HashMap<String, Vec<u8>>>,
+	/// Whether a write fails, as a full disk makes it.
+	disk_full: AtomicBool,
+}
 
 #[async_trait::async_trait]
 impl StackRecords for Arc<MemoryRecords> {
 	fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError> {
-		Ok(self.0.lock().expect("records mutex poisoned").get(stack_id).cloned())
+		Ok(self.records.lock().expect("records mutex poisoned").get(stack_id).cloned())
 	}
 
 	async fn write_stack_record(
@@ -57,7 +66,10 @@ impl StackRecords for Arc<MemoryRecords> {
 		stack_id: &str,
 		record: Vec<u8>,
 	) -> Result<(), GenericError> {
-		self.0
+		if self.disk_full.load(Ordering::SeqCst) {
+			return Err("disk full".to_string().into());
+		}
+		self.records
 			.lock()
 			.expect("records mutex poisoned")
 			.insert(stack_id.to_string(), record);
@@ -115,7 +127,13 @@ impl Started {
 
 	/// Waits until the refresh loop has started its `sleeps`-th wait.
 	fn wait_for_sleeps(&self, sleeps: usize) {
+		let deadline = Instant::now() + ANSWER_WAIT;
 		while self.timer.sleeps() < sleeps {
+			assert!(
+				Instant::now() < deadline,
+				"the loop started {} waits, not {sleeps}",
+				self.timer.sleeps()
+			);
 			std::thread::yield_now();
 		}
 	}
@@ -162,7 +180,7 @@ fn an_offline_host_starts_from_the_bundled_copy() {
 
 	assert_eq!(
 		(started.refresh.stack().chains().people, at_start.last_refresh, after_fetch.last_refresh),
-		(TEST_STACK_PEOPLE, None, Some(StackRefreshOutcome::Unreachable))
+		(TEST_STACK_PEOPLE, None, unreachable_because("connection refused"))
 	);
 }
 
@@ -179,15 +197,41 @@ fn a_newer_sequence_is_reported_and_starts_the_next_runtime() {
 
 	let _at_start = started.next_status();
 	let after_fetch = started.next_status();
+	let restarted = load(records, Arc::default(), manual_clock());
 
 	assert_eq!(
 		(
 			started.refresh.stack().chains().people,
 			after_fetch.restart_required,
-			after_fetch.new_generation,
-			load(records, Arc::default(), manual_clock()).stack().chains().people,
+			after_fetch.generation.as_str(),
+			restarted.stack().chains().people,
+			restarted.status().generation.as_str(),
 		),
-		(TEST_STACK_PEOPLE, true, true, TEST_STACK_WIPED_PEOPLE)
+		(TEST_STACK_PEOPLE, true, "first", TEST_STACK_WIPED_PEOPLE, "second")
+	);
+}
+
+/// A restart only helps once the new copy is on disk. While the store fails
+/// the host is not told to restart, and the next fetch stores the copy again.
+#[test]
+fn a_copy_that_could_not_be_stored_asks_for_no_restart() {
+	let records = Arc::<MemoryRecords>::default();
+	records.disk_full.store(true, Ordering::SeqCst);
+	let wiped = published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE);
+	let started = start(records.clone(), vec![published(&wiped), published(&wiped)]);
+	let _at_start = started.next_status();
+	let while_full = started.next_status();
+
+	records.disk_full.store(false, Ordering::SeqCst);
+	started.refresh.refresh_now();
+	let once_stored = started.next_status();
+
+	assert_eq!(
+		[
+			(while_full.last_refresh, while_full.restart_required),
+			(once_stored.last_refresh, once_stored.restart_required),
+		],
+		[(Some(StackRefreshOutcome::Current), false), (Some(StackRefreshOutcome::Current), true)]
 	);
 }
 
@@ -214,7 +258,7 @@ fn a_server_that_comes_back_is_followed() {
 			(once_back.last_refresh, once_back.restart_required),
 		],
 		[
-			(Some(StackRefreshOutcome::Unreachable), false),
+			(unreachable_because("connection refused"), false),
 			(Some(StackRefreshOutcome::Current), true),
 		]
 	);
@@ -230,7 +274,7 @@ fn a_host_that_never_answers_counts_as_unreachable() {
 	started.wait_for_sleeps(1);
 	started.advance(FETCH_TIMEOUT);
 
-	assert_eq!(started.next_status().last_refresh, Some(StackRefreshOutcome::Unreachable));
+	assert_eq!(started.next_status().last_refresh, unreachable_because("no answer within 30s"));
 }
 
 /// A host may ask for a refresh on every return to the foreground. Asking
@@ -267,7 +311,10 @@ fn a_document_past_the_size_cap_is_not_read() {
 	let started = start(Arc::default(), vec![oversized]);
 	let _at_start = started.next_status();
 
-	assert_eq!(started.next_status().last_refresh, Some(StackRefreshOutcome::Unreachable));
+	assert_eq!(
+		started.next_status().last_refresh,
+		unreachable_because("1048577 bytes is larger than 1048576")
+	);
 }
 
 /// A core that woke every minute to ask whether a fetch is due would keep a
