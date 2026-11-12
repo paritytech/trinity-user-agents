@@ -238,10 +238,13 @@ The core starts from the bundled descriptor or the last one it verified,
 whichever has the higher `sequence`. It never waits on the network to start.
 
 While it runs, the core fetches the published descriptor once its own is an
-hour old, and whenever the host asks. `trinity-stack`'s `StackReader` decides
-whether to take it: a failed fetch, a refused descriptor or a lower `sequence`
-keeps the current one. The core also refuses a descriptor it could not start
-from, such as one without a People chain.
+hour old, and whenever the host asks. A sleeping device can stretch that hour,
+so a host calls `refresh_stack` when its app returns to the foreground.
+
+`trinity-stack`'s `StackReader` decides whether to take a fetched descriptor:
+a failed fetch, a refused descriptor or a lower `sequence` keeps the current
+one. The core also refuses a descriptor it could not start from, such as one
+without a People chain.
 
 The core has no HTTP client, so the host fetches and reports what it got:
 
