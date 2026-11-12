@@ -143,6 +143,7 @@ extension ExpandedPocketCardViewController: ExpandedPocketCardViewProtocol {
 
     func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
         guard isOnDisplay, !isClosing else { return .notPresented }
+        guard !pullDown.isPulling else { return .userMoving }
 
         faceSetByPage = true
         rootView.isFaceCovered = !shown

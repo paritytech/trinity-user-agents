@@ -21,6 +21,10 @@ final class PocketPullDown: NSObject, UIGestureRecognizerDelegate {
         self.close = close
     }
 
+    var isPulling: Bool {
+        pan.state == .began || pan.state == .changed
+    }
+
     func install() {
         pan.delegate = self
         screen?.view.addGestureRecognizer(pan)
