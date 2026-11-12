@@ -28,7 +28,8 @@ use crate::{
 	Spawner,
 	host_internal::{
 		extrinsic::tests::split_v4,
-		sso_messages::{ProductRequest, RingVrfError},
+		sso_messages::{ProductRequest, RemoteMessage, RemoteMessageData, RingVrfError},
+		sso_wire::SsoRequest,
 		transaction::{extrinsic_payload_extensions, extrinsic_payload_preimage},
 	},
 	host_logic::{
@@ -42,6 +43,7 @@ use crate::{
 		CoreStorageKey, HostInfo, Platform, PlatformInfo, ProductContext, ProductId,
 		SigningHostConfig,
 	},
+	runtime::sso_service::Dispatch,
 	test_support::StubPlatform,
 };
 use truapi::{
@@ -419,7 +421,7 @@ fn a_refusal_tells_the_host_what_it_judged_by() {
 #[test]
 fn a_failed_lookup_is_named_in_the_refusal() {
 	let lines = crate::logging::testing::host_sink_lines(|| {
-		let _ = foreign_proof_through_the_authority(None);
+		let _ = foreign_proof_through(Door::Product, None);
 	});
 	assert_eq!(
 		lines,
@@ -442,7 +444,7 @@ fn a_refused_signature_tells_the_host_what_it_judged_by() {
 	let seeded_at_secs = crate::unix_time::current_unix_secs();
 	let lines = crate::logging::testing::host_sink_lines(|| {
 		let _ =
-			foreign_ring_vrf_sign_through_the_authority(Some(r#"{"someone-else":["context"]}"#));
+			foreign_ring_vrf_sign_through(Door::Product, Some(r#"{"someone-else":["context"]}"#));
 	});
 	assert_eq!(
 		pin_cache_ages(lines, seeded_at_secs, 0),
@@ -464,6 +466,7 @@ fn a_context_refusal_tells_the_host_which_context() {
 	let seeded_at_secs = crate::unix_time::current_unix_secs();
 	let denied = crate::logging::testing::host_sink_lines(|| {
 		let _ = third_product_context(
+			Door::Product,
 			OWNER_GRANTS_DIM2NEXT,
 			context_grants,
 			context_of("dim2.dot"),
@@ -472,6 +475,7 @@ fn a_context_refusal_tells_the_host_which_context() {
 	});
 	let off_network = crate::logging::testing::host_sink_lines(|| {
 		let _ = third_product_context(
+			Door::Product,
 			OWNER_GRANTS_DIM2NEXT,
 			context_grants,
 			context_of("dim2.paseo"),
@@ -498,6 +502,7 @@ fn a_context_refusal_tells_the_host_which_context() {
 fn a_granted_proof_warns_nobody() {
 	let lines = crate::logging::testing::host_sink_lines(|| {
 		let (proof, alias) = third_product_context(
+			Door::Product,
 			OWNER_GRANTS_DIM2NEXT,
 			Some(r#"{"dim2next":["context"]}"#),
 			context_of("dim2.dot"),
@@ -579,7 +584,7 @@ fn refusal_lines_from_an_hour_old_cache(trusted_products: Option<&str>) -> Vec<S
 	let fetched_at_secs = seeded_at_secs - HOUR_SECS;
 	let json = trusted_products.map(crate::host_internal::product_manifest::test_manifest_json);
 	let lines = crate::logging::testing::host_sink_lines(|| {
-		let _ = foreign_proof_through_the_authority_with(None, |platform| {
+		let _ = foreign_proof_through_with(Door::Product, None, |platform| {
 			futures::executor::block_on(
 				<StubPlatform as crate::platform::CoreStorage>::write_core_storage(
 					platform,
@@ -597,48 +602,48 @@ fn refusal_lines_from_an_hour_old_cache(trusted_products: Option<&str>) -> Vec<S
 }
 
 /// **The one that matters.** Nothing in the request can stand in for the
-/// manifest.
+/// manifest, whichever door the request comes through.
 ///
-/// This drives the authority directly, the way `sso_responder` does for a
-/// request arriving over the pairing wire. The frontend, and its grant
-/// check, are not on this path at all. The request names `dim2.dot` as the
-/// caller and `peopl.dot`'s key as the handle, which is the most a peer can
-/// assert. With no grant published it is refused; with the grant published
-/// and nothing else changed it succeeds. So the admitting fact is the
-/// manifest the authority resolved for itself, not any field the caller
-/// set.
+/// The request names `dim2.dot` as the caller and `peopl.dot`'s key as the
+/// handle, which is the most a peer can assert. With no grant published it
+/// is refused; with the grant published and nothing else changed it
+/// succeeds. So the admitting fact is the manifest the host resolved for
+/// itself, not any field the caller set.
 ///
-/// What makes this cover the wire path is an invariant, not a convention:
-/// the authority has exactly one behaviour, shared by both doors, because
-/// nothing it reads records which door a request came through. Should a
-/// door-dependent relaxation ever land (a dev allowlist consulted only for
-/// local callers, say), that invariant is gone, and this test has to
-/// declare the paired-peer door explicitly or it silently stops covering
-/// it. Whoever adds the distinction owns updating this.
+/// The paired door is driven explicitly because it has its own check: a
+/// peer's request goes from `SsoAccountHolderService` to the wallet without
+/// passing `HostAccounts`, so the wallet's check is all that stands between
+/// the peer and the owner's key.
 #[test]
 fn a_request_cannot_substitute_for_the_owners_manifest() {
-	let refusal = foreign_proof_through_the_authority(None);
+	let outcomes = DOORS.map(|door| {
+		(
+			door,
+			foreign_proof_through(door, None).err(),
+			foreign_proof_through(door, Some(r#"{"dim2":["context"]}"#)).map(|_| ()),
+		)
+	});
 	assert_eq!(
-		refusal.err(),
-		Some(RingVrfError::NotAllowlisted),
-		"with no manifest grant the authority must refuse, whatever the request says"
-	);
-
-	let granted = foreign_proof_through_the_authority(Some(r#"{"dim2":["context"]}"#));
-	assert!(
-		granted.is_ok(),
-		"the identical request must succeed once the owner's manifest grants it, \
-         which is what proves the manifest is the deciding input; got {granted:?}"
+		outcomes,
+		DOORS.map(|door| (door, Some(RingVrfError::NotAllowlisted), Ok(()))),
+		"each door must refuse with no manifest grant, whatever the request says, and \
+         admit the identical request once the owner's manifest grants it"
 	);
 }
 
 #[test]
 fn a_blessed_product_proves_with_a_context_grant_despite_a_stored_denial() {
-	let proof =
-		foreign_proof_through_the_authority_with(Some(r#"{"dim2":["context"]}"#), |platform| {
+	let proofs = DOORS.map(|door| {
+		let proof = foreign_proof_through_with(door, Some(r#"{"dim2":["context"]}"#), |platform| {
 			deny_account_access(platform, "dim2.dot", "peopl.dot")
 		});
-	assert!(proof.is_ok(), "blessed account access ignores the saved denial: {proof:?}");
+		(door, proof.map(|_| ()))
+	});
+	assert_eq!(
+		proofs,
+		DOORS.map(|door| (door, Ok(()))),
+		"blessed account access ignores the saved denial"
+	);
 }
 
 /// A `context` grant covers the identity read, so the two calls agree.
@@ -779,13 +784,18 @@ fn a_grantee_cannot_mint_the_owners_alias_in_a_third_partys_context() {
 	);
 }
 
-/// `dim2next.dot`'s proof and alias read with `peopl.dot`'s key in
-/// `context`, after seeding `peopl.dot`'s manifest with `owner_grants` and
-/// `dim2`'s with `context_grants`.
+/// `dim2next.dot`'s proof, entering through `door`, and alias read with
+/// `peopl.dot`'s key in `context`, after seeding `peopl.dot`'s manifest with
+/// `owner_grants` and `dim2`'s with `context_grants`.
+///
+/// The alias read always enters as a product's: `HostAccounts` hands a read
+/// of another product's key to the wallet, whose check a paired read also
+/// meets.
 ///
 /// `context_grants` of `None` caches the chain's answer that `dim2`
 /// publishes no manifest, so no case reaches for a chain the stub lacks.
 fn third_product_context(
+	door: Door,
 	owner_grants: &str,
 	context_grants: Option<&str>,
 	context: v01::ProductProofContext,
@@ -819,17 +829,17 @@ fn third_product_context(
 	let ring = full_person_ring_location();
 	register_full_person_key(&authority, &session, &ring);
 
-	let proof = futures::executor::block_on(authority.accounts().create_proof(
+	let proof = door.create_proof(
+		&authority,
 		&session,
-		&CallContext::default(),
-		&ProductContext::new(ProductId::for_test("dim2next.dot")),
+		"dim2next.dot",
 		v01::HostAccountCreateProofRequest {
 			key_handle: full_person_key_handle(),
 			context: context.clone(),
 			ring_location: ring.clone(),
 			message: b"m".to_vec(),
 		},
-	));
+	);
 	let alias = futures::executor::block_on(authority.accounts().account_alias(
 		&session,
 		&CallContext::default(),
@@ -867,14 +877,25 @@ fn a_product_may_grant_a_grantee_its_context() {
 		(r#"{"dim2next":["context"]}"#, "app.dim2.dot"),
 		(r#"{"dim2next":["context"]}"#, "DIM2.DOT"),
 	] {
-		let (proof, alias) =
-			third_product_context(OWNER_GRANTS_DIM2NEXT, Some(grants), context_of(context), |_| {});
-		assert!(proof.is_ok(), "{grants} admits a proof in {context}: {proof:?}");
-		assert!(alias.is_ok(), "{grants} admits the read in {context}: {alias:?}");
+		for door in DOORS {
+			let (proof, alias) = third_product_context(
+				door,
+				OWNER_GRANTS_DIM2NEXT,
+				Some(grants),
+				context_of(context),
+				|_| {},
+			);
+			assert!(
+				proof.is_ok(),
+				"{grants} admits a proof in {context} through {door:?}: {proof:?}"
+			);
+			assert!(alias.is_ok(), "{grants} admits the read in {context}: {alias:?}");
+		}
 	}
 }
 
-/// Everything a context grant does not cover stays refused, on both calls.
+/// Everything a context grant does not cover stays refused, on both calls
+/// and at each door.
 #[test]
 fn a_context_the_naming_product_did_not_grant_is_refused() {
 	let cases: [(&str, Option<&str>, &str, &str); 5] = [
@@ -912,9 +933,16 @@ fn a_context_the_naming_product_did_not_grant_is_refused() {
 		),
 	];
 	for (owner, grants, context, why) in cases {
-		let (proof, alias) = third_product_context(owner, grants, context_of(context), |_| {});
-		assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted), "proof: {why}");
-		assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted), "read: {why}");
+		for door in DOORS {
+			let (proof, alias) =
+				third_product_context(door, owner, grants, context_of(context), |_| {});
+			assert_eq!(
+				proof.err(),
+				Some(RingVrfError::NotAllowlisted),
+				"proof through {door:?}: {why}"
+			);
+			assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted), "read: {why}");
+		}
 	}
 }
 
@@ -925,42 +953,55 @@ fn a_context_the_naming_product_did_not_grant_is_refused() {
 /// before the context is looked at, and the read falls back to the prompt.
 #[test]
 fn a_context_grant_without_the_owners_key_grant_is_refused() {
-	let (proof, alias) = third_product_context(
-		r#"{"someone-else":["context"]}"#,
-		Some(r#"{"dim2next":["context"]}"#),
-		context_of("dim2.dot"),
-		|_| {},
-	);
-	assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted));
-	assert_eq!(
-		alias.err(),
-		Some(RingVrfError::Rejected),
-		"the ungranted read takes the prompt path, which the stub declines"
-	);
+	for door in DOORS {
+		let (proof, alias) = third_product_context(
+			door,
+			r#"{"someone-else":["context"]}"#,
+			Some(r#"{"dim2next":["context"]}"#),
+			context_of("dim2.dot"),
+			|_| {},
+		);
+		assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted), "{door:?}");
+		assert_eq!(
+			alias.err(),
+			Some(RingVrfError::Rejected),
+			"the ungranted read takes the prompt path, which the stub declines"
+		);
+	}
 }
 
 /// A refusal the user stored for the pair overrides the context product's
 /// grant, as it overrides the owner's.
 #[test]
 fn a_stored_refusal_overrides_a_context_grant() {
-	let (proof, alias) = third_product_context(
-		OWNER_GRANTS_DIM2NEXT,
-		Some(r#"{"dim2next":["context"]}"#),
-		context_of("dim2.dot"),
-		|platform| deny_account_access(platform, "dim2next.dot", "dim2.dot"),
-	);
-	assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted));
-	assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted));
+	for door in DOORS {
+		let (proof, alias) = third_product_context(
+			door,
+			OWNER_GRANTS_DIM2NEXT,
+			Some(r#"{"dim2next":["context"]}"#),
+			context_of("dim2.dot"),
+			|platform| deny_account_access(platform, "dim2next.dot", "dim2.dot"),
+		);
+		assert_eq!(proof.err(), Some(RingVrfError::NotAllowlisted), "{door:?}");
+		assert_eq!(alias.err(), Some(RingVrfError::NotAllowlisted));
+	}
 }
 
 /// The caller's own context and the owner's need no third manifest.
 #[test]
 fn own_and_owner_contexts_need_no_context_grant() {
 	for context in ["dim2next.dot", "peopl.dot"] {
-		let (proof, alias) =
-			third_product_context(OWNER_GRANTS_DIM2NEXT, None, context_of(context), |_| {});
-		assert!(proof.is_ok(), "proof in {context}: {proof:?}");
-		assert!(alias.is_ok(), "read in {context}: {alias:?}");
+		for door in DOORS {
+			let (proof, alias) = third_product_context(
+				door,
+				OWNER_GRANTS_DIM2NEXT,
+				None,
+				context_of(context),
+				|_| {},
+			);
+			assert!(proof.is_ok(), "proof in {context} through {door:?}: {proof:?}");
+			assert!(alias.is_ok(), "read in {context}: {alias:?}");
+		}
 	}
 }
 
@@ -1333,8 +1374,9 @@ fn a_refusal_covers_every_executable_of_the_refused_product() {
 /// not only in the manifest parser.
 #[test]
 fn a_grant_of_all_satisfies_context_at_the_authority() {
-	let granted = foreign_proof_through_the_authority(Some(r#"{"dim2":["all"]}"#));
-	assert!(granted.is_ok(), "`all` must satisfy `context`, got {granted:?}");
+	let granted = DOORS
+		.map(|door| (door, foreign_proof_through(door, Some(r#"{"dim2":["all"]}"#)).map(|_| ())));
+	assert_eq!(granted, DOORS.map(|door| (door, Ok(()))), "`all` must satisfy `context`");
 }
 
 fn signing_runtime_with_ring_resolver(
@@ -1348,38 +1390,36 @@ fn signing_runtime_with_ring_resolver(
 /// The grant admits `ring_vrf_sign`, not only `create_proof`.
 ///
 /// #655 lists this as untested and it was: the other grant tests here all
-/// drive `create_proof`. Both authorities call the same
+/// drive `create_proof`. `HostAccounts` and the wallet each call their
 /// `require_ring_vrf_key_access` from both methods, so the code was
 /// covered, but a scope that admits one call and not the other is exactly
 /// the kind of half-wired gate this issue exists to fix, and nothing
 /// asserted the second half.
 ///
-/// Driven at the authority, where the wire path also arrives, so this
-/// covers the paired case as well. Success is the owner's own signature:
-/// the grant lets `dim2.dot` produce what `peopl.dot` would have.
+/// Driven through both doors, since a paired peer's request reaches only the
+/// wallet's check. Success is the owner's own signature: the grant lets
+/// `dim2.dot` produce what `peopl.dot` would have.
 #[test]
 fn a_context_grant_lets_a_foreign_product_sign_with_the_owners_key() {
-	let granted = foreign_ring_vrf_sign_through_the_authority(Some(r#"{"dim2":["context"]}"#));
-	let owners_own = foreign_ring_vrf_sign_through_the_authority_as(
-		Some(r#"{"dim2":["context"]}"#),
-		"peopl.dot",
-	);
+	let grant = Some(r#"{"dim2":["context"]}"#);
+	let signatures = DOORS.map(|door| (door, foreign_ring_vrf_sign_through(door, grant)));
 	assert!(
-		granted.is_ok(),
-		"a granted cross-product ring-VRF signature must be produced, got {granted:?}"
+		signatures.iter().all(|(_, signature)| signature.is_ok()),
+		"a granted cross-product ring-VRF signature must be produced: {signatures:?}"
 	);
 	assert_eq!(
-		granted, owners_own,
+		signatures,
+		DOORS.map(|door| (door, foreign_ring_vrf_sign_through_as(door, grant, "peopl.dot"))),
 		"the grant must yield the owner's own signature, not a caller-derived one"
 	);
 }
 
-/// The same call with no grant.
+/// The same call with no grant, refused at each door.
 #[test]
 fn a_foreign_ring_vrf_sign_is_refused_when_the_owner_granted_nothing() {
 	assert_eq!(
-		foreign_ring_vrf_sign_through_the_authority(None).err(),
-		Some(RingVrfError::NotAllowlisted)
+		DOORS.map(|door| (door, foreign_ring_vrf_sign_through(door, None).err())),
+		DOORS.map(|door| (door, Some(RingVrfError::NotAllowlisted)))
 	);
 }
 
@@ -1476,16 +1516,95 @@ fn a_grant_lookup_with_a_cold_cache_dials_the_configured_asset_hub() {
 	);
 }
 
-fn foreign_ring_vrf_sign_through_the_authority(
-	trusted_products: Option<&str>,
-) -> Result<Vec<u8>, RingVrfError> {
-	foreign_ring_vrf_sign_through_the_authority_as(trusted_products, "dim2.dot")
+/// Where a request for another product's ring-VRF key enters a signing host.
+///
+/// A product's request passes `HostAccounts`, which checks the owner's
+/// manifest before it serves a kept key or asks the wallet. A paired peer's
+/// request goes from `SsoAccountHolderService` straight to the wallet, whose
+/// check is then the only one.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Door {
+	Product,
+	Paired,
 }
 
-/// Drive `ring_vrf_sign` straight at the authority with `caller` naming
-/// `peopl.dot`'s key handle, bypassing the frontend exactly as
-/// `sso_responder` does.
-fn foreign_ring_vrf_sign_through_the_authority_as(
+const DOORS: [Door; 2] = [Door::Product, Door::Paired];
+
+/// The account holder's answer to `payload` from a paired peer naming itself `caller`.
+fn paired_request<P>(
+	authority: &SigningHostRole,
+	caller: &str,
+	payload: P,
+) -> <ProductRequest<P> as SsoRequest>::Response
+where
+	ProductRequest<P>: SsoRequest,
+{
+	let request = RemoteMessage::request(
+		"paired".to_string(),
+		ProductRequest { calling_product_id: ProductId::for_test(caller), payload },
+	);
+	let Ok(Dispatch::Response(answer)) =
+		futures::executor::block_on(sso_service(authority).answer(request))
+	else {
+		panic!("the paired request is answered");
+	};
+	let RemoteMessageData::V1(message) = answer.message.data;
+	ProductRequest::<P>::response_from_message(message)
+		.expect("the answer is the request's own response")
+		.payload
+}
+
+impl Door {
+	/// `caller`'s ring proof for `request`, entering through this door.
+	fn create_proof(
+		self,
+		authority: &SigningHostRole,
+		session: &AuthoritySession,
+		caller: &str,
+		request: v01::HostAccountCreateProofRequest,
+	) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
+		match self {
+			Door::Product => futures::executor::block_on(authority.accounts().create_proof(
+				session,
+				&CallContext::default(),
+				&ProductContext::new(ProductId::for_test(caller)),
+				request,
+			)),
+			Door::Paired => paired_request(authority, caller, request),
+		}
+	}
+
+	/// `caller`'s ring-VRF signature for `request`, entering through this door.
+	fn ring_vrf_sign(
+		self,
+		authority: &SigningHostRole,
+		session: &AuthoritySession,
+		caller: &str,
+		request: v01::HostAccountRingVrfSignRequest,
+	) -> Result<Vec<u8>, RingVrfError> {
+		match self {
+			Door::Product => futures::executor::block_on(authority.accounts().ring_vrf_sign(
+				session,
+				&CallContext::default(),
+				&ProductContext::new(ProductId::for_test(caller)),
+				request,
+			)),
+			Door::Paired => paired_request(authority, caller, request),
+		}
+	}
+}
+
+fn foreign_ring_vrf_sign_through(
+	door: Door,
+	trusted_products: Option<&str>,
+) -> Result<Vec<u8>, RingVrfError> {
+	foreign_ring_vrf_sign_through_as(door, trusted_products, "dim2.dot")
+}
+
+/// `caller`'s ring-VRF signature with `peopl.dot`'s key, entering through
+/// `door`, with `peopl.dot`'s manifest listing `trusted_products`.
+fn foreign_ring_vrf_sign_through_as(
+	door: Door,
 	trusted_products: Option<&str>,
 	caller: &str,
 ) -> Result<Vec<u8>, RingVrfError> {
@@ -1500,26 +1619,29 @@ fn foreign_ring_vrf_sign_through_the_authority_as(
 	let session = authority.accounts().current_session().expect("active session");
 	register_full_person_key(&authority, &session, &full_person_ring_location());
 
-	futures::executor::block_on(authority.accounts().ring_vrf_sign(
+	door.ring_vrf_sign(
+		&authority,
 		&session,
-		&CallContext::default(),
-		&ProductContext::new(ProductId::for_test(caller)),
+		caller,
 		v01::HostAccountRingVrfSignRequest {
 			key_handle: full_person_key_handle(),
 			message: b"sign me".to_vec(),
 		},
-	))
+	)
 }
 
-fn foreign_proof_through_the_authority(
+fn foreign_proof_through(
+	door: Door,
 	trusted_products: Option<&str>,
 ) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
-	foreign_proof_through_the_authority_with(trusted_products, |_| {})
+	foreign_proof_through_with(door, trusted_products, |_| {})
 }
 
-/// Drive `create_proof` straight at the authority, bypassing the frontend,
-/// with `dim2.dot` naming `peopl.dot`'s key handle.
-fn foreign_proof_through_the_authority_with(
+/// `dim2.dot`'s proof with `peopl.dot`'s key, entering through `door`, with
+/// `peopl.dot`'s manifest listing `trusted_products` and the platform then
+/// prepared by `seed`.
+fn foreign_proof_through_with(
+	door: Door,
 	trusted_products: Option<&str>,
 	seed: impl FnOnce(&StubPlatform),
 ) -> Result<v01::HostAccountCreateProofResponse, RingVrfError> {
@@ -1536,10 +1658,10 @@ fn foreign_proof_through_the_authority_with(
 	let ring_location = full_person_ring_location();
 	register_full_person_key(&authority, &session, &ring_location);
 
-	futures::executor::block_on(authority.accounts().create_proof(
+	door.create_proof(
+		&authority,
 		&session,
-		&CallContext::default(),
-		&ProductContext::new(ProductId::for_test("dim2.dot")),
+		"dim2.dot",
 		v01::HostAccountCreateProofRequest {
 			key_handle: full_person_key_handle(),
 			context: v01::ProductProofContext {
@@ -1549,7 +1671,7 @@ fn foreign_proof_through_the_authority_with(
 			ring_location,
 			message: b"prove me".to_vec(),
 		},
-	))
+	)
 }
 
 fn foreign_proof_request(
