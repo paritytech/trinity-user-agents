@@ -4,7 +4,7 @@ import Foundation
 /// `{ "onrampUrl": …, "offrampUrl": …, "providers": ["ramp.dot", …] }`, the
 /// CASH card's destinations and the dotNS names of the funding providers the
 /// overlay offers. The core offers only the providers the host lists, so a
-/// build with none configured (and none bundled) offers none.
+/// build with none configured offers none.
 enum FundingConfig {
     enum Key {
         static let providers = "providers"
