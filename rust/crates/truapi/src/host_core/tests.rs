@@ -1720,6 +1720,41 @@ fn the_materials_answer_does_not_wait_for_the_core_database() {
 	assert!(runtime.services.draws_materials(1, &[]));
 }
 
+/// The CLI plans faces from material files, so a material kept by hand draws
+/// in the first plan, without Bulletin. A file the core cannot read is refused
+/// with the reason a fetched one would get.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_material_kept_by_hand_draws_without_bulletin() {
+	use truapi::latest::{MaterialFailure, MaterialInstance, MaterialsProps, RendererNode};
+	let text = b"// @material 1\nvec4 material(vec2 uv) {\n  return texture(r_input, uv);\n}\n";
+	let no_entry_point = b"// @material 1\nfloat shade(vec2 uv) {\n  return 1.0;\n}\n";
+	let (runtime, _platform) = test_signing_runtime();
+	runtime.services.enable_materials();
+	let keep = |text: &[u8]| futures::executor::block_on(runtime.keep_material(text.to_vec()));
+	assert_eq!(
+		keep(text),
+		Err(MaterialFailure::Unsupported),
+		"nothing is kept before the database"
+	);
+
+	runtime.set_core_db(crate::store::open_memory_core_db());
+	runtime.start_core_services();
+	let id = keep(text).expect("a material is kept");
+	assert_eq!(id, crate::host_internal::bulletin::preimage_key(text));
+	assert_eq!(keep(no_entry_point), Err(MaterialFailure::InvalidMaterial));
+
+	let face = RendererNode::Materials {
+		props: MaterialsProps { layers: vec![MaterialInstance { material: id, args: Vec::new() }] },
+		children: Vec::new(),
+	};
+	let card = truapi::latest::RenderContext::PocketCard { card_id: "card".to_string() };
+	let language = crate::ShaderLanguage::GlslEs;
+	let mut plans = runtime.material_plan(&face, &card, language, true, Box::new(|_| {}));
+	let plan = crate::test_support::next(&mut plans).expect("a plan");
+	assert!(matches!(plan.nodes[..], [crate::NodePlan::Ready { .. }]), "{:?}", plan.nodes);
+}
+
 /// The runtime keeps one set of materials, so every renderer tree shares
 /// the fetches the start-up fetch began, and a second start begins none.
 #[cfg(not(target_arch = "wasm32"))]

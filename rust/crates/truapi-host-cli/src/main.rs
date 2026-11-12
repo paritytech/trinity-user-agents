@@ -25,6 +25,7 @@ mod frame_server;
 mod funding_host;
 mod game;
 mod installation;
+mod materials;
 mod network;
 mod platform;
 mod pocket;
@@ -348,6 +349,11 @@ enum Command {
 	Stack {
 		#[command(subcommand)]
 		command: stack::StackCommand,
+	},
+	/// Plan card faces' materials as a phone would, to check materials without one.
+	Materials {
+		#[command(subcommand)]
+		command: materials::MaterialsCommand,
 	},
 }
 
@@ -704,6 +710,7 @@ async fn dispatch(
 			Ok(())
 		},
 		Command::Stack { command } => stack::run(command).await,
+		Command::Materials { command } => materials::run(command, &source.resolve().await?).await,
 	}
 }
 

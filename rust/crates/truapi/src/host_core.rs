@@ -1115,6 +1115,22 @@ impl SigningHostRuntime {
 		self.image_loader.load(reference).await
 	}
 
+	/// Keeps `text` on the device as a material, as a fetch from Bulletin
+	/// would, and returns its ID. Refused with its reason when the core cannot
+	/// read it, and as unsupported until the core services start over a core
+	/// database.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn keep_material(
+		&self,
+		text: Vec<u8>,
+	) -> Result<[u8; 32], truapi::latest::MaterialFailure> {
+		let materials =
+			self.services.materials().ok_or(truapi::latest::MaterialFailure::Unsupported)?;
+		let id = crate::host_internal::bulletin::preimage_key(&text);
+		materials.keep(id, text).await?;
+		Ok(id)
+	}
+
 	/// The plans for `tree` in `context`, its shaders in `language`, filtering
 	/// 32-bit float images themselves unless `float_filterable`. Each node that
 	/// falls back reaches `failures` once. Until the core services start over

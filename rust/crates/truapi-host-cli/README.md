@@ -29,6 +29,7 @@ One binary, `truapi-host`:
 | `attest` | Attest a given mnemonic's `peopl.<tld>` identity for a lite username, wait for its ring membership, and print `{address, publicKey, liteUsername}` as JSON. For e2e suites that hold their own mnemonics. |
 | `network-check` | Resolve the network (`--network` or `--stack`) and print it as JSON, without contacting a chain. |
 | `stack` | Trinity stack descriptors: `keygen`, `publish` a model to `.well-known/trinity-stack.json`, `verify` a link, URL or file, `bundle` the signed copy a host build ships, and print a pointer's `link` and QR code. The rules come from the [`trinity-stack`](../trinity-stack) crate. |
+| `materials` | `plan` a card face's materials as a phone would: each node loading, ready with its shaders, or drawn plain and why. Checks a material end to end without a phone. |
 
 The repository's `make e2e-dotli` target builds this binary and runs the
 dotli/playground Diagnosis suite with a non-interactive signing-host responder.
@@ -941,6 +942,22 @@ That report is the reason the flag needs no build gate: a stale exported
 Frames are forwarded whole and the debugger decodes all of them, so a tapped
 signing host puts its payloads on that socket. Point it at a debugger you are
 running yourself.
+
+## Materials
+
+`truapi-host materials plan` checks a material the way a phone uses it: fetched
+from Bulletin (or kept from a file), checked, limited and built into shaders by
+the same core:
+
+```sh
+truapi-host materials plan face.json --out shaders            # fetches from Bulletin
+truapi-host materials plan face.json --materials ./materials  # keeps local files first
+truapi-host materials plan face.json --metal --out shaders    # iOS shaders instead of Android's
+```
+
+`face.json` is a card face as the generated client writes a renderer tree, with
+`Materials` nodes naming material IDs. Each line of the plan is a node:
+`ready`, `loading`, or `plain` with its reason. See [SPEC.md](SPEC.md#68-top-level-materials).
 
 ## Trinity stacks
 
