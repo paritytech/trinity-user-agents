@@ -248,6 +248,29 @@ fn a_builds_extra_reserved_values_leave_the_cores_in_force() {
 	);
 }
 
+/// A reserved TLD is compared with a stack's as written, so an entry that is
+/// not a TLD would reserve nothing. The build is told instead, whether or not
+/// it allows its stack reserved values.
+#[test]
+fn an_extra_tld_that_is_not_a_tld_is_refused() {
+	let descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], None);
+	let entries = [".testnet", "Testnet", "testnet ", ""];
+	let reserving = |entry: &str, allowed| ReservedValuesPolicy {
+		allowed,
+		extra_tlds: vec!["testnet".to_string(), entry.to_string()],
+		..ReservedValuesPolicy::default()
+	};
+
+	assert_eq!(
+		entries.map(|entry| {
+			[false, true].map(|allowed| bundled(&descriptor, &reserving(entry, allowed)))
+		}),
+		entries.map(|entry| {
+			[false, true].map(|_| Err(StackError::MalformedReservedTld { tld: entry.to_string() }))
+		}),
+	);
+}
+
 /// An all-zero Asset Hub is not a way to say the stack has none: the core
 /// would wait on a chain no host can dial. Such a stack leaves the role out.
 #[test]

@@ -178,6 +178,44 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     ).not.toThrow();
   });
 
+  it("refuses reserved values it cannot read in full", async () => {
+    // A field or entry the core skipped would leave the build reserving less
+    // than it wrote, with nothing to say so.
+    const start = await pairingHostStarter();
+    const stack = bundledTestStack();
+    const path = "runtimeConfig.stack.reservedValues";
+    const refusal = (reservedValues: unknown) => {
+      try {
+        start({ ...stack, reservedValues } as BundledStack);
+        return "started";
+      } catch (error) {
+        return String(error);
+      }
+    };
+
+    expect(
+      [
+        ["testnet"],
+        { extraTLDs: ["testnet"] },
+        { allowed: "true" },
+        { extraTlds: "testnet" },
+        { extraTlds: ["paseo", null] },
+        { extraTlds: [".testnet"] },
+        { extraGenesisHashes: ["0x1234"] },
+        { extraGenesisHashes: [new Uint8Array(31)] },
+      ].map(refusal),
+    ).toEqual([
+      `${path} must be an object`,
+      `${path}.extraTLDs is not a field; ${path} takes allowed, extraGenesisHashes, extraTlds`,
+      `${path}.allowed must be a boolean`,
+      `${path}.extraTlds must be an array`,
+      `${path}.extraTlds[1] must be a string`,
+      'runtimeConfig.stack: reserved tld ".testnet" must be one lowercase label of a-z, 0-9 and -, without the leading dot',
+      `${path}.extraGenesisHashes[0]: expected 32-byte hex string, got 4 hex chars`,
+      `${path}.extraGenesisHashes[0] must be exactly 32 bytes, got 31`,
+    ]);
+  });
+
   it("isolates one real-core boot from the next through reset()", async () => {
     // The surface-agreement test proves the Rust and JS mocks expose the same
     // control methods. It cannot prove those methods hold against a real core.

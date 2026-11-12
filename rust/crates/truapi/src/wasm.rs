@@ -600,11 +600,26 @@ fn stack_from_js(value: &JsValue) -> Result<Stack, JsValue> {
 }
 
 /// A stack config's optional `reservedValues`, at `path`. Each of its fields
-/// is optional.
+/// is optional. A field it does not have is refused, because a misspelt one
+/// would be read as absent and reserve nothing.
 fn reserved_values_from_js(stack: &JsValue, path: &str) -> Result<ReservedValuesPolicy, JsValue> {
+	const FIELDS: [&str; 3] = ["allowed", "extraGenesisHashes", "extraTlds"];
 	let Some(reserved_values) = get_optional_object(stack, "reservedValues", path)? else {
 		return Ok(ReservedValuesPolicy::default());
 	};
+	if Array::is_array(&reserved_values) {
+		return Err(JsValue::from_str(&format!("{path} must be an object")));
+	}
+	let unknown_field = Reflect::own_keys(&reserved_values)?
+		.iter()
+		.filter_map(|key| key.as_string())
+		.find(|key| !FIELDS.contains(&key.as_str()));
+	if let Some(field) = unknown_field {
+		return Err(JsValue::from_str(&format!(
+			"{path}.{field} is not a field; {path} takes {}",
+			FIELDS.join(", ")
+		)));
+	}
 	Ok(ReservedValuesPolicy {
 		allowed: get_optional_bool_at(&reserved_values, "allowed", &format!("{path}.allowed"))?
 			.unwrap_or(false),
@@ -771,8 +786,8 @@ fn get_optional_bool_at(value: &JsValue, name: &str, path: &str) -> Result<Optio
 		.transpose()
 }
 
-/// Each entry of an optional array property, read with `entry`. Empty when
-/// the property is absent.
+/// Each entry of an optional array property, read with `entry` at the entry's
+/// own path. Empty when the property is absent.
 fn get_optional_array_at<T>(
 	value: &JsValue,
 	name: &str,
@@ -785,7 +800,11 @@ fn get_optional_array_at<T>(
 	if !Array::is_array(&property) {
 		return Err(JsValue::from_str(&format!("{path} must be an array")));
 	}
-	Array::from(&property).iter().map(|item| entry(item, path)).collect()
+	Array::from(&property)
+		.iter()
+		.enumerate()
+		.map(|(index, item)| entry(item, &format!("{path}[{index}]")))
+		.collect()
 }
 
 fn get_required_string_at(value: &JsValue, name: &str, path: &str) -> Result<String, JsValue> {

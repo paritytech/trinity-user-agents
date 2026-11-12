@@ -12,7 +12,7 @@ use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
-use crate::dotns_name::DOTNS_TLDS;
+use crate::dotns_name::{DOTNS_TLDS, is_dns_label};
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -62,7 +62,8 @@ pub struct ReservedValuesPolicy {
 	/// Genesis hashes reserved on top of the core's.
 	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
 	pub extra_genesis_hashes: Vec<[u8; 32]>,
-	/// dotNS TLDs reserved on top of the core's, without the leading dot.
+	/// dotNS TLDs reserved on top of the core's, each one lowercase label
+	/// without the leading dot. A stack is refused under any other entry.
 	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
 	pub extra_tlds: Vec<String>,
 }
@@ -71,6 +72,15 @@ impl ReservedValuesPolicy {
 	/// Allows the stack every reserved value and reserves no extra ones.
 	pub const ALLOWED: Self =
 		Self { allowed: true, extra_genesis_hashes: Vec::new(), extra_tlds: Vec::new() };
+
+	/// Refuses an entry of `extra_tlds` that could match no stack's TLD, which
+	/// would otherwise reserve nothing.
+	fn refuse_malformed_extra_tld(&self) -> Result<(), StackError> {
+		match self.extra_tlds.iter().find(|tld| !is_dns_label(tld)) {
+			Some(tld) => Err(StackError::MalformedReservedTld { tld: tld.clone() }),
+			None => Ok(()),
+		}
+	}
 
 	fn refuse_tld(&self, tld: &str) -> Result<(), StackError> {
 		if self.allowed {
@@ -161,6 +171,15 @@ pub enum StackError {
 		/// The descriptor's TLD.
 		tld: String,
 	},
+	/// The build reserves a TLD that is not one lowercase label, so it could
+	/// match no stack's.
+	#[display(
+		"reserved tld {tld:?} must be one lowercase label of a-z, 0-9 and -, without the leading dot"
+	)]
+	MalformedReservedTld {
+		/// The entry as the build wrote it.
+		tld: String,
+	},
 	/// The TLD is reserved, and the build does not allow it.
 	#[display("stack uses the reserved tld {tld}, which this build does not allow")]
 	ReservedTld {
@@ -233,6 +252,7 @@ impl Stack {
 		{
 			return Err(StackError::ZeroGenesis { chain });
 		}
+		reserved_values.refuse_malformed_extra_tld()?;
 		reserved_values.refuse_tld(&tld)?;
 		reserved_values
 			.refuse_genesis([relay, asset_hub].into_iter().flatten().chain([people, bulletin]))?;

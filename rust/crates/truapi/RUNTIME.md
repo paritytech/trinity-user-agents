@@ -228,6 +228,8 @@ the CLI, uses `Stack::new`, and a test-host browser bundle passes
 The core reserves Polkadot's genesis hashes and the `dot` TLD, and a build can
 reserve more in `ReservedValuesPolicy` but not fewer. A stack that names a
 reserved value under any chain role starts only when the build sets `allowed`.
+An extra TLD is one lowercase label without the leading dot, and no stack starts
+under a policy with any other entry.
 
 Reserved identities derive under `peopl.<tld>`, and the People
 chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have

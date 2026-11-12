@@ -63,7 +63,7 @@ export type LogLevel = string;
 /**
  * A host build's policy on reserved values for its stack. The core reserves
  * Polkadot's genesis hashes and the `dot` TLD. A build can reserve more here
- * and cannot reserve fewer.
+ * and cannot reserve fewer. The core refuses a field this type does not have.
  */
 export interface ReservedValuesPolicy {
   /**
@@ -73,7 +73,10 @@ export interface ReservedValuesPolicy {
   allowed?: boolean;
   /** Genesis hashes reserved on top of the core's, as 0x-prefixed hex or bytes. */
   extraGenesisHashes?: (string | Uint8Array)[];
-  /** dotNS TLDs reserved on top of the core's, without the leading dot. */
+  /**
+   * dotNS TLDs reserved on top of the core's, each one lowercase label without
+   * the leading dot. The core refuses any other entry.
+   */
   extraTlds?: string[];
 }
 

@@ -104,7 +104,8 @@ as a `BundledStack`:
 - `reservedValues.allowed` is true only in a Polkadot or Polkadot-fork build.
   Without it the core refuses a stack that uses Polkadot's genesis hashes or the
   `dot` TLD, or an entry of the build's own `extraGenesisHashes` and
-  `extraTlds`.
+  `extraTlds`. An `extraTlds` entry is one lowercase label without the leading
+  dot, and the core refuses any other.
 
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the
