@@ -67,7 +67,7 @@ private actor CapabilityLog {
     }
 }
 
-final class LoadObserver: NSObject, WKNavigationDelegate {
+private final class LoadObserver: NSObject, WKNavigationDelegate {
     var continuation: CheckedContinuation<Void, Error>?
 
     func webView(_: WKWebView, didFinish _: WKNavigation!) {
