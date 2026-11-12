@@ -101,8 +101,8 @@ impl<H: AccountHolder> PairedSessionOwner for HostAccounts<H> {
 impl<H: AccountHolder> HostAccounts<H> {
 	/// Compose one host's policy with its canonical session and grant owners.
 	///
-	/// Kept keys read their rings through `ring_resolver`, which should be the
-	/// one `holder` reads them through.
+	/// Kept keys read their rings through `ring_resolver`. A holder that reads
+	/// rings itself, as the wallet does, should read them through the same one.
 	pub fn new(
 		services: Arc<RuntimeServices>,
 		holder: Arc<H>,
@@ -606,7 +606,9 @@ impl<H: AccountHolder> HostAccounts<H> {
 	}
 
 	/// Increase or replace the product's Bulletin allowance after a submission
-	/// was refused. The kept key stays until its replacement is retained.
+	/// was refused.
+	///
+	/// The kept key stays until its replacement is retained.
 	pub async fn refresh_bulletin_allowance_key(
 		&self,
 		cx: &CallContext,

@@ -6427,8 +6427,8 @@ fn resource_allocation_accepts_confirmation_then_returns_sso_response() {
 }
 
 /// A paired host is granted nothing when its session drops while the phone is
-/// asked, so the product gets the same failure as for a session lost before
-/// the call, not an answer that reads as unavailable resources.
+/// asked, so the product gets `Unknown`, as for a session lost before the call,
+/// and no resource reads as unavailable.
 #[test]
 fn a_paired_allocation_fails_when_the_session_drops_during_the_wait() {
 	let session = sso_session_info();

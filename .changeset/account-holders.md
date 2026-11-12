@@ -6,4 +6,3 @@ Product account operations on both host roles go through `HostAccounts` over an 
 
 - A paired host answers `NotAvailable` for an allocated resource whose grant it cannot keep, instead of failing the whole allocation.
 - A paired host keeps its Bulletin allowance key when a refresh fails, and replaces it once the phone issues a new one.
-- The VRF signing prompt opens on the requesting product's connection, like the other signing prompts.

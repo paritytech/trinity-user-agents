@@ -571,7 +571,10 @@ pub trait AccountHolder: Send + Sync + 'static {
 	/// Reject replacement of the originally selected wallet or paired channel.
 	fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError>;
 
-	/// Lazily issue the ordered grants of an explicit request the caller confirmed.
+	/// Issue the grants of an explicit request the caller confirmed.
+	///
+	/// The stream yields their outcomes in request order. A holder that issues
+	/// grants one at a time issues each as the stream is polled.
 	async fn allocate_grants<'a>(
 		&'a self,
 		invocation: AccountInvocation<'a>,
