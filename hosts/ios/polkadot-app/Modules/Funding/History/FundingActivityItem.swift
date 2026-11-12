@@ -13,10 +13,10 @@ struct FundingActivityItem: Identifiable, Equatable {
         case refunded
         /// The payout failed after the balance was debited; `refunded` is what
         /// the provider's refund returned, once final.
-        case payoutFailed(refunded: U128?)
+        case payoutFailed(refunded: Balance?)
         /// Cancelled at the user's request; `refunded` is what came back when
         /// money had moved.
-        case cancelled(refunded: U128?)
+        case cancelled(refunded: Balance?)
         case failed(FundingFailure)
     }
 
@@ -79,9 +79,9 @@ private extension FundingActivityItem.Status {
         case .succeeded:
             self = summary.direction == .in ? .toppedUp : .sent
         case .payoutFailed:
-            self = .payoutFailed(refunded: summary.refunded)
+            self = .payoutFailed(refunded: summary.refunded.flatMap { Balance($0) })
         case .failed(.cancelled):
-            self = .cancelled(refunded: summary.refunded)
+            self = .cancelled(refunded: summary.refunded.flatMap { Balance($0) })
         case .failed(.refunded):
             self = .refunded
         case let .failed(reason):
@@ -113,5 +113,23 @@ extension FundingStatus {
 extension Date {
     init(milliseconds: UInt64) {
         self.init(timeIntervalSince1970: milliseconds.millisecondsToSeconds())
+    }
+}
+
+extension FundingActivityItem {
+    /// The sessions in flight, newest first, and the ended ones, most
+    /// recently ended first.
+    static func lists(from entries: [FundingEntry])
+        -> (inFlight: [FundingActivityItem], history: [FundingActivityItem]) {
+        let inFlight = entries
+            .filter { $0.progress?.status.isInFlight == true }
+            .compactMap { entry in entry.session.map { FundingActivityItem(session: $0, progress: entry.progress) } }
+            .sorted { $0.date > $1.date }
+        let inFlightIds = Set(inFlight.map(\.id))
+        let history = entries
+            .filter { !inFlightIds.contains($0.id) }
+            .compactMap { $0.summary.flatMap(FundingActivityItem.init(summary:)) }
+            .sorted { $0.date > $1.date }
+        return (inFlight, history)
     }
 }

@@ -49,8 +49,8 @@ struct FundingHistoryTests {
             payoutState: .paidOut
         )
 
-        #expect(FundingActivityItem(summary: cancelled)?.status == .cancelled(refunded: "40000000"))
-        #expect(FundingActivityItem(summary: payoutFailedSummary)?.status == .payoutFailed(refunded: "50000000"))
+        #expect(FundingActivityItem(summary: cancelled)?.status == .cancelled(refunded: 40_000_000))
+        #expect(FundingActivityItem(summary: payoutFailedSummary)?.status == .payoutFailed(refunded: 50_000_000))
         let payoutFailedDetail = try #require(FundingEndedSession(summary: payoutFailedSummary))
         #expect(payoutFailedDetail.outcome == .payoutFailed(reason: "rejected"))
         #expect(payoutFailedDetail.stoppedAt == 2)
@@ -59,57 +59,47 @@ struct FundingHistoryTests {
     }
 }
 
-/// A provider closing its frame answers the frame `.closed` and hands over to
-/// the session sheet.
+/// The provider closing its screens for a session takes them down and hands
+/// over to the session's own screens.
 @MainActor
 struct FundingCloseFrameTests {
     @Test
-    func closingTheFrameAnswersClosedAndShowsTheSessionSheet() async throws {
+    func closingTheFrameTakesItDownAndShowsTheSession() async throws {
         let environment = WindowEnvironment()
-        let runtime = MockFundingRuntime()
-        runtime.hold(session("intent", stage: .open))
-        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
+        let frames = FundingFramePresenter(service: makeService(), environment: environment)
 
-        let answer = Task {
-            await coordinator.presentFrame(
-                providerId: provider,
-                intent: "intent",
-                route: "/",
-                awaitsUserTransfer: false
-            )
-        }
-        try await environment.waitUntil { $0.presented.last is FundingProviderFrameController }
+        await frames.present(frame(for: "intent"))
+        let controller = try #require(environment.presented.last as? FundingProviderFrameController)
 
-        coordinator.closeFrame(providerId: provider, intent: "intent")
+        var shown = false
+        frames.close(entryId: "intent") { shown = true }
 
-        #expect(await answer.value == .closed)
-        try await environment.waitUntil { $0.presented.last is FundingSheetController }
+        try await environment.waitUntil { _ in shown && controller.presentingViewController == nil }
     }
 
     @Test
-    func anotherProvidersCloseLeavesTheFrameOpen() async throws {
+    func anotherSessionsCloseLeavesTheFrameOpen() async throws {
         let environment = WindowEnvironment()
-        let runtime = MockFundingRuntime()
-        runtime.hold(session("intent", stage: .open))
-        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
+        let frames = FundingFramePresenter(service: makeService(), environment: environment)
 
-        let answer = Task {
-            await coordinator.presentFrame(
-                providerId: provider,
-                intent: "intent",
-                route: "/",
-                awaitsUserTransfer: false
-            )
-        }
-        try await environment.waitUntil { $0.presented.last is FundingProviderFrameController }
+        await frames.present(frame(for: "intent"))
+        let controller = try #require(environment.presented.last as? FundingProviderFrameController)
 
-        try coordinator.closeFrame(providerId: ProductId("other.dot"), intent: "intent")
-        coordinator.closeFrame(providerId: provider, intent: "elsewhere")
-        let frame = try #require(environment.presented.last as? FundingProviderFrameController)
-        #expect(frame.presentingViewController != nil)
+        frames.close(entryId: "elsewhere") {}
+        #expect(controller.presentingViewController != nil)
 
-        coordinator.closeFrame(providerId: provider, intent: "intent")
-        #expect(await answer.value == .closed)
+        frames.close(entryId: "intent") {}
+        try await environment.waitUntil { _ in controller.presentingViewController == nil }
+    }
+
+    private func frame(for entryId: String) -> FundingFrame {
+        FundingFrame(
+            id: UUID(),
+            entryId: entryId,
+            providerId: provider,
+            target: .app(route: "/"),
+            awaitsUserTransfer: false
+        )
     }
 }
 
@@ -252,8 +242,6 @@ private final class WindowEnvironment: FundingOverlayEnvironment {
         UIViewController()
     }
 
-    func fundingActivityChanged() {}
-
     private(set) var notices: [String] = []
 
     func showNotice(_ message: String) {
@@ -285,11 +273,11 @@ struct FundingReopenTests {
         let runtime = MockFundingRuntime()
         runtime.hold(session("intent", stage: delivered(2_000)))
         runtime.record(history: [summary("intent", settledAtMs: 2_000)])
-        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
+        let router = FundingFlowRouter(service: makeService(runtime), environment: environment, logger: MockLogger())
 
-        coordinator.reopen(intent: "intent")
+        router.reopen(entryId: "intent")
 
-        #expect(environment.presented.last is FundingEndedSheetController)
+        try await environment.waitUntil { $0.presented.last is FundingEndedSheetController }
         try await environment.waitUntil { _ in runtime.acknowledged == ["intent"] }
     }
 
@@ -300,9 +288,9 @@ struct FundingReopenTests {
         let runtime = MockFundingRuntime()
         runtime.hold(session("intent", stage: delivered(2_000)))
         runtime.record(history: [summary("intent", settledAtMs: 2_000)])
-        let coordinator = FundingOverlayCoordinator(runtime: runtime, environment: environment)
+        let router = FundingFlowRouter(service: makeService(runtime), environment: environment, logger: MockLogger())
 
-        coordinator.reopen(intent: "intent")
+        router.reopen(entryId: "intent")
         try await Task.sleep(for: .milliseconds(200))
 
         #expect(environment.presented.isEmpty)
@@ -310,16 +298,6 @@ struct FundingReopenTests {
     }
 }
 
-/// A worker that keeps crashing is named to the user while the core retries.
-@MainActor
-struct FundingWorkerCrashingTests {
-    @Test
-    func aCrashingProviderIsNamedOverWhateverIsOnScreen() async {
-        let environment = WindowEnvironment()
-        let coordinator = FundingOverlayCoordinator(runtime: MockFundingRuntime(), environment: environment)
-
-        await coordinator.workerCrashing(productId: try! ProductId("ramp.dot"))
-
-        #expect(environment.notices == [String(localized: .Funding.providerCrashing(provider: "Ramp"))])
-    }
+private func makeService(_ runtime: MockFundingRuntime = MockFundingRuntime()) -> FundingService {
+    FundingService(runtime: runtime, logger: MockLogger())
 }

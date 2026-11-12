@@ -3,12 +3,8 @@ import Observation
 import os
 import TrUAPIHost
 
-/// The CASH card's funding lists: the sessions in flight the core last
-/// pushed, then the ended ones from the core's history, read again on every
-/// refresh.
-///
-/// An ended session is acknowledged while the history shows it, after which
-/// the core stops handing it over on each resume.
+/// The CASH card's funding lists: the sessions in flight and the ended ones,
+/// as the funding service lists them.
 @MainActor
 @Observable
 final class FundingActivityCenter {
@@ -20,127 +16,90 @@ final class FundingActivityCenter {
     /// they did, so their rows arrive in the history with their completion.
     private(set) var justFinished: [String: Date] = [:]
 
-    private var historyShown = 0
-    private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private let following = FundingFollowing()
     /// Draws the sessions again when one turns to taking longer.
-    private var longerTask: Task<Void, Never>?
-    private var needsRefresh = false
+    @ObservationIgnored private let longer = FundingFollowing()
 
-    /// The runtime is built off the main thread, so it and its overlay are
-    /// handed over through a lock rather than through the main actor.
-    nonisolated static func attach(runtime: FundingRuntime, overlay: FundingOverlayPresenting) {
+    /// The service and router are built with the runtime, off the main
+    /// thread, so they are handed over through a lock rather than through the
+    /// main actor.
+    nonisolated static func attach(service: FundingServiceProtocol, router: FundingFlowRouting) {
         attached.withLock { attached in
-            attached.runtime = runtime
-            attached.overlay = overlay
+            attached.service = service
+            attached.router = router
         }
-        Task { @MainActor in shared.refresh() }
-    }
-
-    /// Shows a session in flight again, such as the bank details to pay to.
-    func open(intent: String) {
-        Self.attached.withLock { $0.overlay }?.reopen(intent: intent)
+        Task { @MainActor in shared.follow() }
     }
 
     /// Shows a row's session: in flight on its progress screen, ended on its
     /// detail screen.
     func openDetail(_ item: FundingActivityItem) {
-        open(intent: item.id)
+        Self.attached.withLock { $0.router }?.reopen(entryId: item.id)
     }
 
     /// Shows the sessions in flight in `direction` before starting another.
     /// Returns false, showing nothing, when none is.
     func showPending(direction: FundingDirection) -> Bool {
         guard inFlight.contains(where: { $0.direction == direction }),
-              let overlay = Self.attached.withLock({ $0.overlay })
+              let router = Self.attached.withLock({ $0.router })
         else { return false }
-        overlay.showPending(direction: direction)
+        router.showPending(direction: direction)
         return true
     }
 
     /// Shows every session, in flight and ended.
     func showHistory() {
-        Self.attached.withLock { $0.overlay }?.showHistory()
+        Self.attached.withLock { $0.router }?.showHistory()
     }
 
-    /// The history is on screen until the matching ``endShowingHistory()``,
-    /// so the ended sessions it draws are acknowledged.
-    func beginShowingHistory() {
-        historyShown += 1
-        refresh()
-    }
-
-    func endShowingHistory() {
-        historyShown -= 1
-    }
-
-    /// Draws the sessions the core last pushed and its history. Calls that
-    /// arrive while one is running are folded into one more pass.
+    /// Reads the lists again, as when a session turns to taking longer.
     func refresh() {
-        guard refreshTask == nil else {
-            needsRefresh = true
-            return
-        }
-
-        refreshTask = Task {
-            repeat {
-                needsRefresh = false
-                await reload()
-            } while needsRefresh
-            refreshTask = nil
-        }
+        follow()
     }
 }
 
 private extension FundingActivityCenter {
     struct Attached {
-        weak var runtime: FundingRuntime?
-        weak var overlay: FundingOverlayPresenting?
+        weak var service: FundingServiceProtocol?
+        weak var router: FundingFlowRouting?
     }
 
     nonisolated static let attached = OSAllocatedUnfairLock(initialState: Attached())
 
-    var runtime: FundingRuntime? {
-        Self.attached.withLock { $0.runtime }
-    }
+    func follow() {
+        guard let service = Self.attached.withLock({ $0.service }) else { return }
 
-    func reload() async {
-        let runtime = runtime
-        let (entries, summaries) = await Task.detached {
-            (runtime?.fundingEntries() ?? [], runtime?.fundingHistory() ?? [])
-        }.value
-
-        let moving = entries.filter(\.progress.status.isInFlight)
-        justFinished = Self.finished(
-            before: inFlight.map(\.id),
-            after: moving.map(\.session.intent),
-            known: justFinished,
-            now: Date()
-        )
-        inFlight = moving
-            .map { FundingActivityItem(session: $0.session, progress: $0.progress) }
-            .sorted { $0.date > $1.date }
-        scheduleTakingLonger(moving.compactMap(\.progress.longerAtMs))
-
-        let inFlightIds = Set(inFlight.map(\.id))
-        history = summaries
-            .filter { !inFlightIds.contains($0.intent) }
-            .compactMap(FundingActivityItem.init(summary:))
-
-        guard historyShown > 0, let runtime else { return }
-        let owed = Set(entries.filter { !$0.session.acknowledged }.map(\.session.intent))
-        for item in history where owed.contains(item.id) {
-            await runtime.acknowledgeShown(intent: item.id, logger: Logger.shared)
+        following.task?.cancel()
+        following.task = Task { [weak self] in
+            do {
+                for try await entries in service.subscribeEntries() {
+                    self?.show(entries)
+                }
+            } catch {}
         }
     }
 
+    func show(_ entries: [FundingEntry]) {
+        let lists = FundingActivityItem.lists(from: entries)
+        justFinished = Self.finished(
+            before: inFlight.map(\.id),
+            after: lists.inFlight.map(\.id),
+            known: justFinished,
+            now: Date()
+        )
+        inFlight = lists.inFlight
+        history = lists.history
+        scheduleTakingLonger(entries.compactMap { $0.progress?.longerAtMs })
+    }
+
     /// The core turns a session to taking longer at `longerAtMs` without a
-    /// report to announce it, so draw the sessions again then.
+    /// change to announce it, so read the sessions again then.
     func scheduleTakingLonger(_ deadlines: [UInt64]) {
-        longerTask?.cancel()
+        longer.task?.cancel()
         let now = Date()
         guard let next = deadlines.map(Date.init(milliseconds:)).filter({ $0 > now }).min() else { return }
 
-        longerTask = Task { [weak self] in
+        longer.task = Task { [weak self] in
             try? await Task.sleep(for: .seconds(next.timeIntervalSince(now)))
             guard !Task.isCancelled else { return }
             self?.refresh()

@@ -92,10 +92,6 @@ final class AppFundingEnvironment: FundingOverlayEnvironment {
             duration: 4
         )
     }
-
-    func fundingActivityChanged() {
-        FundingActivityCenter.shared.refresh()
-    }
 }
 
 /// Hands a plain controller to the router, which presents views.
