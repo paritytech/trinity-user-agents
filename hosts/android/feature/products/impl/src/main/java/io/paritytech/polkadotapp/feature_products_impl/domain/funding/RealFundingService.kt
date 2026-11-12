@@ -310,11 +310,12 @@ class RealFundingService @Inject constructor(
         }
     }
 
-    /** Every session the core holds, newest first: those it holds in full, then the ended ones from its history. */
+    /** Every session the core holds, newest first: those it holds in full, and the ended ones from its history. */
     private suspend fun readEntries(): List<FundingEntry>? {
         val book = core.entries().logFailure("Funding entries read failed").getOrElse { return null }
         val history = core.history().logFailure("Funding history read failed").getOrElse { return null }
         val held = book.mapTo(mutableSetOf()) { it.session.intent }
+        val ended = history.associateBy { it.intent }
         synchronized(lock) { remember(book.mapNotNull { it.session.providerId }) }
 
         val inBook = book.map { item ->
@@ -325,7 +326,8 @@ class RealFundingService @Inject constructor(
                 fallbackAmount = session.amount,
                 session = session,
                 progress = item.progress,
-                summary = if (session.stage.isOpen) null else core.summary(session.intent).getOrNull(),
+                // An ended session's row reads its summary from the history, which leaves out a cancel that moved no money.
+                summary = if (session.stage.isOpen) null else ended[session.intent],
                 options = null,
                 quotes = null,
                 staleQuotes = emptyMap(),
