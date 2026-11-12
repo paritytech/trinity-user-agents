@@ -53,6 +53,8 @@ struct MemoryRecords {
 	records: Mutex<HashMap<String, Vec<u8>>>,
 	/// Whether a write fails, as a full disk makes it.
 	disk_full: AtomicBool,
+	/// Whether a write never finishes.
+	stuck: AtomicBool,
 }
 
 #[async_trait::async_trait]
@@ -66,6 +68,9 @@ impl StackRecords for Arc<MemoryRecords> {
 		stack_id: &str,
 		record: Vec<u8>,
 	) -> Result<(), GenericError> {
+		if self.stuck.load(Ordering::SeqCst) {
+			return futures::future::pending().await;
+		}
 		if self.disk_full.load(Ordering::SeqCst) {
 			return Err("disk full".to_string().into());
 		}
@@ -235,6 +240,27 @@ fn a_copy_that_could_not_be_stored_asks_for_no_restart() {
 	);
 }
 
+/// A browser host's `storeStackRecord` may return a promise that never
+/// settles. The loop must not wait on it forever, or no later fetch could
+/// start and a wipe would never reach the host.
+#[test]
+fn a_store_that_never_finishes_does_not_hold_the_loop() {
+	let records = Arc::<MemoryRecords>::default();
+	records.stuck.store(true, Ordering::SeqCst);
+	let wiped = published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE);
+	let started = start(records, vec![published(&wiped)]);
+	let _at_start = started.next_status();
+
+	started.wait_for_sleeps(2);
+	started.advance(STORE_TIMEOUT);
+	let after_fetch = started.next_status();
+
+	assert_eq!(
+		(after_fetch.last_refresh, after_fetch.restart_required),
+		(Some(StackRefreshOutcome::Current), false)
+	);
+}
+
 /// A server that is down only delays a change: the core keeps running, and
 /// the host's next request for a refresh picks the new copy up.
 #[test]
@@ -342,7 +368,8 @@ fn a_copy_an_hour_old_is_fetched_again() {
 	);
 	let _at_start = started.next_status();
 	let before_the_wipe = started.next_status();
-	started.wait_for_sleeps(2);
+	// The fetch's timeout, the store's timeout, then the wait for the hour.
+	started.wait_for_sleeps(3);
 
 	started.advance(Duration::from_secs(60 * 60));
 	let after_the_wipe = started.next_status();
