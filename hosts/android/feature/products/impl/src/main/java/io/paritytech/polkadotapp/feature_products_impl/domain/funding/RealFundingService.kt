@@ -326,8 +326,8 @@ class RealFundingService @Inject constructor(
                 fallbackAmount = session.amount,
                 session = session,
                 progress = item.progress,
-                // An ended session's row reads its summary from the history, which leaves out a cancel that moved no money.
-                summary = if (session.stage.isOpen) null else ended[session.intent],
+                // As the history has it, which leaves out a cancel that moved no money.
+                summary = ended[session.intent],
                 options = null,
                 quotes = null,
                 staleQuotes = emptyMap(),
