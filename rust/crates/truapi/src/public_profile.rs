@@ -32,6 +32,8 @@ pub const PROFILE_RECORD_KEY: &str = "profile";
 /// How long a resolved record is served before the chain is read again.
 #[cfg(not(target_arch = "wasm32"))]
 const RECORD_TTL_SECS: u64 = 60 * 60;
+/// Why a shared profile read gave no answer: its task was dropped or panicked.
+const READ_ENDED_UNANSWERED: &str = "the dotNS read ended without answering";
 
 /// The understood metadata in a dotNS public profile.
 ///
@@ -57,7 +59,7 @@ pub enum PublicProfileError {
 	/// The chain was out of reach, or the lookup failed.
 	#[error("dotNS lookup failed: {}", .0.reason())]
 	#[from(DotnsError)]
-	Dotns(#[source] Box<DotnsError>),
+	Dotns(#[source] Arc<DotnsError>),
 	/// The core database could not be read or written.
 	#[cfg(not(target_arch = "wasm32"))]
 	#[error("core database unavailable: {0}")]
@@ -86,6 +88,14 @@ impl ProfileRecordLocation {
 		username: &str,
 	) -> Result<Option<Self>, PublicProfileError> {
 		validate_username(username)?;
+		Ok(Self::locate(transport, username).await?)
+	}
+
+	/// [`Self::resolve`] for a username already validated.
+	async fn locate<T: DotnsTransport + ?Sized>(
+		transport: &mut T,
+		username: &str,
+	) -> Result<Option<Self>, DotnsError> {
 		let Some(protocol_registry) = protocol_registry(transport).await? else {
 			return Ok(None);
 		};
@@ -198,25 +208,39 @@ impl PublicProfiles {
 		Ok(PublicProfile { avatar: record.avatar() })
 	}
 
+	/// Reads `username`'s record from the chain. Reads of one username that
+	/// overlap share one read, and reads of different usernames take turns on
+	/// the profile read slots, so a burst of them holds a bounded number of
+	/// Asset Hub follows.
 	async fn read_record(&self, username: &str) -> Result<ProfileRecord, PublicProfileError> {
 		let genesis = self
 			.services
 			.asset_hub_chain_genesis_hash()
 			.ok_or(PublicProfileError::AssetHubNotConfigured)?;
-		let mut lookup = DotnsLookup::pinned_to_best_block(
-			&self.services.chain,
-			genesis,
-			DotnsLookupKind::PublicProfile,
-		)
-		.await?;
-		Self::read_record_from(&mut lookup, username).await
+		let (services, owned) = (self.services.clone(), username.to_owned());
+		self.services
+			.dotns_reads
+			.public_profiles
+			.run(username.to_owned(), move || async move {
+				let _slot = services.dotns_reads.public_profile_slots.take().await;
+				let mut lookup = DotnsLookup::pinned_to_best_block(
+					&services.chain,
+					genesis,
+					DotnsLookupKind::PublicProfile,
+				)
+				.await?;
+				Ok(Self::read_record_from(&mut lookup, &owned).await?)
+			})
+			.await
+			.unwrap_or_else(|| Err(Arc::new(DotnsError::Follow(READ_ENDED_UNANSWERED.to_string()))))
+			.map_err(PublicProfileError::Dotns)
 	}
 
 	async fn read_record_from<T: DotnsTransport + ?Sized>(
 		transport: &mut T,
 		username: &str,
-	) -> Result<ProfileRecord, PublicProfileError> {
-		let Some(location) = ProfileRecordLocation::resolve(transport, username).await? else {
+	) -> Result<ProfileRecord, DotnsError> {
+		let Some(location) = ProfileRecordLocation::locate(transport, username).await? else {
 			return Ok(ProfileRecord::default());
 		};
 		let text = location.read(transport).await?;

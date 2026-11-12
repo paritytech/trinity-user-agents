@@ -213,11 +213,13 @@ async fn a_profile_failure_retains_the_contract_error_source() {
 	let mut transport = ProfileContracts::new(Err(EvmContractError::Reverted {
 		detail: "profile unavailable".into(),
 	}));
-	let error = PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap_err();
+	let error = PublicProfileError::from(
+		PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap_err(),
+	);
 	let source = core::error::Error::source(&error).expect("dotNS error is retained");
 
 	assert!(matches!(
-		source.downcast_ref::<Box<DotnsError>>().map(Box::as_ref),
+		source.downcast_ref::<Arc<DotnsError>>().map(Arc::as_ref),
 		Some(DotnsError::TextRecord(DotnsCallError::View(EvmContractError::Reverted { detail })))
 			if detail == "profile unavailable"
 	));
@@ -379,4 +381,37 @@ async fn an_invalid_username_does_not_need_storage_or_a_chain() {
 		profiles.resolve("alice.1", false).await,
 		Err(PublicProfileError::InvalidUsername)
 	));
+}
+
+/// Profile reads of one username that overlap share one read, so they hold one
+/// Asset Hub follow between them.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn overlapping_reads_of_one_username_open_one_follow() {
+	assert_eq!(follows_opened_by(["alice01"; 4]), 1);
+}
+
+/// Profile reads of different usernames take turns, so a screen of avatars
+/// holds two follows, not the four a connection has room for.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn reads_of_many_usernames_hold_two_follows_at_a_time() {
+	assert_eq!(
+		follows_opened_by(["alice01", "bob01", "carol01", "dave01", "erin01", "frank01"]),
+		crate::runtime::services::PUBLIC_PROFILE_READS_AT_ONCE
+	);
+}
+
+/// The follows a burst of profile reads opens while the chain answers none of
+/// them. Counted well inside the time an unanswered follow is given, so no
+/// read has given up and handed its turn on.
+#[cfg(not(target_arch = "wasm32"))]
+fn follows_opened_by<const N: usize>(usernames: [&str; N]) -> usize {
+	let platform = Arc::new(StubPlatform::default());
+	let profiles = PublicProfiles::new(services_with_platform(platform.clone()));
+	futures::executor::block_on(futures::future::select(
+		futures::future::join_all(usernames.map(|username| profiles.read_record(username))),
+		futures_timer::Delay::new(std::time::Duration::from_millis(40)),
+	));
+	crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chainHead_v1_follow")
 }
