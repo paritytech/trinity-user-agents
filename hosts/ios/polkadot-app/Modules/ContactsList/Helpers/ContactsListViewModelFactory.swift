@@ -15,8 +15,7 @@ protocol ContactsListViewModelMaking {
 final class ContactsListViewModelFactory {
     let messageTimestampFormatter: TimestampFormatting
     let chatMessageDecoderFactory: ChatMessageDecoderMaking
-    let productIconViewModelFactory: ProductIconViewModelMaking
-    let publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking
+    let iconViewModelFactory: ChatIconViewModelFactory
     let chain: ChainModel
     let tokenFormatter: (AssetBalanceDisplayInfo) -> TransferAmountViewModelFactoryProtocol
     private var _tokenFormatter: TransferAmountViewModelFactoryProtocol?
@@ -24,15 +23,13 @@ final class ContactsListViewModelFactory {
     init(
         messageTimestampFormatter: TimestampFormatting = ContactTimestampFormatter(),
         chatMessageDecoderFactory: ChatMessageDecoderMaking,
-        productIconViewModelFactory: ProductIconViewModelMaking,
-        publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking,
+        iconViewModelFactory: ChatIconViewModelFactory,
         chain: ChainModel,
         tokenFormatter: @escaping (AssetBalanceDisplayInfo) -> TransferAmountViewModelFactoryProtocol
     ) {
         self.messageTimestampFormatter = messageTimestampFormatter
         self.chatMessageDecoderFactory = chatMessageDecoderFactory
-        self.productIconViewModelFactory = productIconViewModelFactory
-        self.publicProfileAvatarViewModelFactory = publicProfileAvatarViewModelFactory
+        self.iconViewModelFactory = iconViewModelFactory
         self.chain = chain
         self.tokenFormatter = tokenFormatter
     }
@@ -71,11 +68,7 @@ extension ContactsListViewModelFactory: ContactsListViewModelMaking {
             let configuration = DSChatListItemConfiguration(
                 dateFormatter: messageTimestampFormatter,
                 avatarViewModel: avatarViewModel,
-                icon: peerMetadata.icon.imageViewModel(
-                    using: productIconViewModelFactory,
-                    publicProfileFactory: publicProfileAvatarViewModelFactory,
-                    options: .init(forceFresh: false, skipStale: false)
-                ),
+                icon: iconViewModelFactory.createViewModel(from: peerMetadata.icon),
                 sender: peerMetadata.name,
                 message: lastMessage,
                 messageKind: messageKind(for: chat.message),

@@ -51,17 +51,14 @@ struct ProductBotChatListTests {
     func aProductPeerLoadsItsIconByDomain() {
         let iconFactory = RecordingProductIconViewModelFactory()
         let publicProfileFactory = UnusedPublicProfileAvatarFactory()
+        let factory = ChatIconViewModelFactory(
+            productFactory: iconFactory,
+            publicProfileFactory: publicProfileFactory,
+            options: .init(forceFresh: false, skipStale: false)
+        )
 
-        #expect(Chat.PeerMetadata.Icon.product(domain: productId).imageViewModel(
-            using: iconFactory,
-            publicProfileFactory: publicProfileFactory,
-            options: .init(forceFresh: false, skipStale: false)
-        ) != nil)
-        #expect(Chat.PeerMetadata.Icon.bot.imageViewModel(
-            using: iconFactory,
-            publicProfileFactory: publicProfileFactory,
-            options: .init(forceFresh: false, skipStale: false)
-        ) == nil)
+        #expect(factory.createViewModel(from: .product(domain: productId)) != nil)
+        #expect(factory.createViewModel(from: .bot) == nil)
         #expect(iconFactory.requestedDomains == [productId])
     }
 }
@@ -110,8 +107,11 @@ private extension ProductBotChatListTests {
         let asset = try #require(chain.assets.first)
         let factory = ContactsListViewModelFactory(
             chatMessageDecoderFactory: FixedChatMessageDecoderFactory(decoders: [bot.messageDecoder]),
-            productIconViewModelFactory: RecordingProductIconViewModelFactory(),
-            publicProfileAvatarViewModelFactory: UnusedPublicProfileAvatarFactory(),
+            iconViewModelFactory: ChatIconViewModelFactory(
+                productFactory: RecordingProductIconViewModelFactory(),
+                publicProfileFactory: UnusedPublicProfileAvatarFactory(),
+                options: .init(forceFresh: false, skipStale: false)
+            ),
             chain: chain,
             tokenFormatter: { info in
                 TransferAmountViewModelFactory(targetAssetInfo: info, formatterFactory: AssetBalanceFormatterFactory())

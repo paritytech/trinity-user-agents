@@ -457,6 +457,7 @@ iOS contacts, search results and chat views consume
 Only avatar changes trigger image requests.
 Shared iOS image views use `AnyImageViewModel` to retain requests while the
 image identity and processing settings match.
+`ChatIconViewModelFactory` selects product icons or public-profile avatars for chats and contact lists.
 New chat headers explicitly request forced
 freshness; cells and search explicitly use the ordinary policy. All app callers
 explicitly set `skipStale` to false. A cancelled header
