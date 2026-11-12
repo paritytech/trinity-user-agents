@@ -44,21 +44,54 @@ private struct StubTldProvider: DotNsTldProviding {
     }
 }
 
+private func productPublishingAWidget() throws -> ResolvedProduct {
+    try ResolvedProduct(
+        id: ProductId("test.dot"),
+        displayName: "Test",
+        description: nil,
+        icon: nil,
+        executables: ProductExecutables(
+            app: ProductExecutable.App(identifier: ProductId("app.test.dot"), appVersion: .zero),
+            widget: ProductExecutable.Widget(
+                identifier: ProductId("widget.test.dot"),
+                appVersion: .zero,
+                description: nil,
+                heights: [2],
+                width: 1
+            ),
+            worker: nil
+        ),
+        hasManifest: true
+    )
+}
+
 private func makeRuntime(
     execution: MockProductExecution = MockProductExecution(),
     chainConnections: MockChainConnections = MockChainConnections(),
     configuration: SPAConfiguration,
     contentLoader: ProductContentLoading = StubProductContentLoader(),
+    strategy: ExecutableKindStrategy = .fixed(.app),
+    productResolver: ProductResolving = StubProductResolver(),
     hostEventRecorder: HostEventRecording = NoopHostEventRecorder()
 ) -> SPARustRuntime {
     SPARustRuntime(
         executionModel: makeExecutionModel(execution: execution, chainConnections: chainConnections),
         configuration: configuration,
-        contentLoader: contentLoader,
+        productOpening: SPARustRuntime.ProductOpening(
+            loader: contentLoader,
+            strategy: strategy,
+            resolver: productResolver
+        ),
         schemeHandlerProxy: SchemeHandlerProxy(),
         logger: Logger.shared,
         hostEventRecorder: hostEventRecorder
     )
+}
+
+private extension SPARustRuntime {
+    func start(with engine: JSEngineProtocol) async throws -> SPARuntimeStart {
+        try await start(with: engine, onPhase: { _ in })
+    }
 }
 
 // MARK: - Tests
@@ -76,7 +109,7 @@ struct SPARustRuntimeTests {
             hostEventRecorder: hostEventRecorder
         )
 
-        let url = try await runtime.start(with: engine)
+        let url = try await runtime.start(with: engine).url
 
         #expect(url == directURL)
         #expect(execution.startWsBridgeCallCount == 1)
@@ -115,7 +148,7 @@ struct SPARustRuntimeTests {
             let loader = StubProductContentLoader()
             let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
 
-            let url = try await runtime.start(with: MockJSEngine())
+            let url = try await runtime.start(with: MockJSEngine()).url
 
             #expect(url == address)
             #expect(loader.openedIds.isEmpty)
@@ -134,19 +167,45 @@ struct SPARustRuntimeTests {
         #expect(configuration.productId.rawValue == "test.dot")
     }
 
-    @Test func startWithDotNsResolvesContentAndReturnsProductURL() async throws {
-        let configuration = try makeConfiguration(contentSource: .dotNs)
-        let loader = StubProductContentLoader()
-        let engine = MockJSEngine()
-        let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
+    @Test(arguments: [true, false])
+    func startWithDirectURLNamesThePageWhenItsLabelResolves(_ resolves: Bool) async throws {
+        let configuration = try makeConfiguration(
+            contentSource: .directURL(#require(URL(string: "http://localhost:3000")))
+        )
+        let product = try productPublishingAWidget()
+        let runtime = makeRuntime(
+            configuration: configuration,
+            productResolver: resolves
+                ? StubProductResolver(alwaysResolvingTo: product)
+                : StubProductResolver(alwaysFailing: URLError(.timedOut))
+        )
 
-        let url = try await runtime.start(with: engine)
+        let start = try await runtime.start(with: MockJSEngine())
+
+        #expect(start.resolution.product == (resolves ? product : nil))
+        #expect(start.resolution.content == nil)
+
+        await runtime.dispose()
+    }
+
+    @Test func startWithDotNsOpensContentWithItsStrategyAndReturnsWhatItServes() async throws {
+        let configuration = try makeConfiguration(contentSource: .dotNs)
+        let loader = try StubProductContentLoader(product: productPublishingAWidget())
+        let engine = MockJSEngine()
+        let runtime = makeRuntime(
+            configuration: configuration,
+            contentLoader: loader,
+            strategy: .withAppFallback(.widget)
+        )
+
+        let start = try await runtime.start(with: engine)
 
         #expect(try loader.openedIds == [ProductId("test.dot")])
-        #expect(loader.openedStrategies == [.fixed(.app)])
-        #expect(url.scheme == productContentScheme())
-        #expect(url.host == "test.dot")
-        #expect(url.path == "/")
+        #expect(loader.openedStrategies == [.withAppFallback(.widget)])
+        #expect(start.resolution.content?.kind == .widget)
+        #expect(start.url.scheme == productContentScheme())
+        #expect(start.url.host == "test.dot")
+        #expect(start.url.path == "/")
         #expect(engine.initializedScripts[0]
             .content == #"window.__truapi_localhost = { url: "ws://127.0.0.1:0/?t=test" };"#)
 
@@ -160,9 +219,9 @@ struct SPARustRuntimeTests {
         _ = try await runtime.start(with: MockJSEngine())
 
         loader.simulate(appliedContentHash: "01")
-        try await runtime.useLatestBuild()
+        let served = try await runtime.useLatestBuild()
 
-        #expect(await runtime.servedBuild()?.contentHash == "01")
+        #expect(served?.archive.contentHash == "01")
 
         await runtime.dispose()
     }
@@ -171,13 +230,31 @@ struct SPARustRuntimeTests {
         let configuration = try makeConfiguration(contentSource: .dotNs)
         let loader = StubProductContentLoader()
         let runtime = makeRuntime(configuration: configuration, contentLoader: loader)
-        _ = try await runtime.start(with: MockJSEngine())
-        let served = await runtime.servedBuild()
+        let start = try await runtime.start(with: MockJSEngine())
 
-        try await runtime.useLatestBuild()
+        let served = try await runtime.useLatestBuild()
 
-        #expect(await runtime.servedBuild() == served)
+        #expect(served == start.resolution.content)
         #expect(loader.openedIds.count == 2)
+
+        await runtime.dispose()
+    }
+
+    @Test(arguments: [true, false])
+    func useLatestBuildReopensTheServedKind(_ publishesWidget: Bool) async throws {
+        let configuration = try makeConfiguration(contentSource: .dotNs)
+        let loader = try StubProductContentLoader(product: publishesWidget ? productPublishingAWidget() : nil)
+        let runtime = makeRuntime(
+            configuration: configuration,
+            contentLoader: loader,
+            strategy: .withAppFallback(.widget)
+        )
+        _ = try await runtime.start(with: MockJSEngine())
+
+        _ = try await runtime.useLatestBuild()
+
+        let servedKind: ExecutableKind = publishesWidget ? .widget : .app
+        #expect(loader.openedStrategies == [.withAppFallback(.widget), .fixed(servedKind)])
 
         await runtime.dispose()
     }

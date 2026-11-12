@@ -11,8 +11,6 @@ final class SPARustRuntimeInteractor {
     weak var presenter: SPAInteractorOutputProtocol?
 
     private let runtimeFactory: SPARuntimeFactoryProtocol
-    private let productResolver: ProductResolving
-    private let contentLoader: ProductContentLoading
     private let presenceRegistry: ProductPresenceRegistering?
     private let configuration: SPAConfiguration
     private let logger: LoggerProtocol
@@ -24,7 +22,7 @@ final class SPARustRuntimeInteractor {
     private var jsEngine: JSEngineProtocol?
     // Held so the synchronous `hasChatEntry` can answer from the manifest without re-resolving.
     private var resolvedProduct: ResolvedProduct?
-    private var servedContent: DotNsResolvedContent?
+    private var servedContent: ProductContent?
     private var isServing = false
     private var presenceId: UUID?
 
@@ -35,8 +33,6 @@ final class SPARustRuntimeInteractor {
 
     init(
         runtimeFactory: SPARuntimeFactoryProtocol,
-        productResolver: ProductResolving,
-        contentLoader: ProductContentLoading,
         presenceRegistry: ProductPresenceRegistering?,
         configuration: SPAConfiguration,
         logger: LoggerProtocol,
@@ -45,8 +41,6 @@ final class SPARustRuntimeInteractor {
         chainStatusProvider: ChainStatusProviding?
     ) {
         self.runtimeFactory = runtimeFactory
-        self.productResolver = productResolver
-        self.contentLoader = contentLoader
         self.presenceRegistry = presenceRegistry
         self.configuration = configuration
         self.logger = logger
@@ -162,33 +156,6 @@ private extension SPARustRuntimeInteractor {
         }
     }
 
-    /// A dotNS page is its manifest, so a resolution failure is the page failing. A direct URL is
-    /// its own content and the manifest only names it, so a label that holds no records — a local
-    /// server opened from debug settings — still opens, unnamed. A bundled product is read from the
-    /// app alone, and a development server page is not published content, so nothing is resolved for
-    /// either.
-    func resolveProduct() async throws -> ResolvedProduct? {
-        let domain = configuration.productDomain
-
-        switch configuration.contentSource {
-        case .dotNs:
-            return try await contentLoader.open(
-                domain,
-                strategy: .fixed(.app),
-                policy: .untilCancelled,
-                onPhase: phaseHandler()
-            ).resolved
-        case .directURL:
-            return try? await productResolver.resolve(domain)
-        case .bundled:
-            return nil
-        #if DEBUG
-            case .devServer:
-                return nil
-        #endif
-        }
-    }
-
     func startRuntime(engine: JSEngineProtocol) {
         setupTask?.cancel()
         isServing = false
@@ -198,13 +165,13 @@ private extension SPARustRuntimeInteractor {
             let newRuntime = try runtimeFactory.createRuntime(for: configuration.productId)
             runtime = newRuntime
 
+            let onPhase = phaseHandler()
             setupTask = Task { [weak self] in
                 do {
-                    self?.resolvedProduct = try await self?.resolveProduct()
-
-                    let url = try await newRuntime.start(with: engine)
-                    self?.presenter?.didRequestNavigation(to: url)
-                    await self?.didStartServing(runtime: newRuntime)
+                    let start = try await newRuntime.start(with: engine, onPhase: onPhase)
+                    self?.resolvedProduct = start.resolution.product
+                    self?.presenter?.didRequestNavigation(to: start.url)
+                    self?.didStartServing(start.resolution.content)
                 } catch is CancellationError {
                     // Superseded by retry/teardown — the replacement reports.
                 } catch {
@@ -251,15 +218,14 @@ private extension SPARustRuntimeInteractor {
 
 extension SPARustRuntimeInteractor: SPAProductReloading {
     var servedContentHash: String? {
-        servedContent?.contentHash
+        servedContent?.archive.contentHash
     }
 
     func serveAppliedBuild() {
         reloadTask?.cancel()
         reloadTask = Task { [weak self, runtime] in
             do {
-                try await runtime?.useLatestBuild()
-                let served = await runtime?.servedBuild()
+                let served = try await runtime?.useLatestBuild()
 
                 guard !Task.isCancelled else { return }
 
@@ -277,7 +243,7 @@ extension SPARustRuntimeInteractor: SPAProductReloading {
 
 private extension SPARustRuntimeInteractor {
     var servedContentId: ProductId? {
-        try? resolvedProduct?.contentId(for: .app)
+        try? servedContent?.contentId
     }
 
     func phaseHandler() -> ProductLoadPhaseHandler {
@@ -286,9 +252,9 @@ private extension SPARustRuntimeInteractor {
         }
     }
 
-    func didStartServing(runtime: SPARuntimeProtocol) async {
+    func didStartServing(_ content: ProductContent?) {
         isServing = true
-        servedContent = await runtime.servedBuild()
+        servedContent = content
 
         guard servedContent != nil, presenceId == nil, let servedContentId else { return }
 

@@ -118,8 +118,6 @@ final class ProductExecutableCacheTests {
         #expect(try opened.contentId == appName)
     }
 
-    /// The cache answers from the saved manifest, so a product with only an app is served its app
-    /// without the chain instead of being refetched on every open in search of a widget.
     @Test func fallbackStrategyServesTheCachedAppWithoutTheChain() async throws {
         publishManifestProduct()
         let opened = try await makeLoader().open(baseName, strategy: .fixed(.app), policy: .attempts(1))
@@ -144,8 +142,6 @@ final class ProductExecutableCacheTests {
         #expect(fetcher.fetchCount == 1)
     }
 
-    /// The served kind depends only on what the manifest declares: a declared widget that cannot be
-    /// downloaded fails the open rather than quietly running the app in its place.
     @Test func fallbackStrategyFailsWhenAPublishedWidgetCannotBeDownloaded() async throws {
         publishManifestProduct()
         publishWidget()

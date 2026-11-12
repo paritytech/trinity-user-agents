@@ -16,8 +16,6 @@ struct ProductArchiveWarmer: Sendable {
         self.dotNsResolver = dotNsResolver
     }
 
-    /// Warms the archive `strategy` serves, which is not the same name for every
-    /// surface: a Pocket card can open the widget where a tab opens the app.
     func warm(_ productId: ProductId, serving strategy: ExecutableKindStrategy) async throws {
         let product = try await products.resolve(productId)
         let contentId = try product.contentId(for: product.servedKind(for: strategy))

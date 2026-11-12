@@ -56,7 +56,6 @@ struct ProductArchiveWarmerTests {
         #expect(archives.resolvedNames == [productId.rawValue])
     }
 
-    /// A card that falls back to the app has to warm the archive it will open, not the widget's.
     @Test(arguments: [true, false])
     func fallbackWarmsTheWidgetWhenPublishedAndTheAppOtherwise(_ publishesWidget: Bool) async throws {
         let archives = StubDotNsResolver()

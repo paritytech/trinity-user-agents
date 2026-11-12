@@ -8,11 +8,8 @@ public enum ProductLoadPolicy: Equatable, Sendable {
     case attempts(Int)
 }
 
-/// Which executable a surface serves, given what the product publishes.
 public enum ExecutableKindStrategy: Equatable, Sendable {
-    /// Only `kind`: a product that does not publish it fails to open.
     case fixed(ExecutableKind)
-    /// `kind` when the product publishes it, the app otherwise.
     case withAppFallback(ExecutableKind)
 }
 
@@ -60,7 +57,7 @@ public struct ExecutableRelease: Equatable, Sendable {
 }
 
 public protocol ProductContentLoading: Sendable {
-    /// The content's `kind` is the one `strategy` resolved to against the product's manifest.
+    /// `content.kind` is the kind actually served.
     func open(
         _ productId: ProductId,
         strategy: ExecutableKindStrategy,

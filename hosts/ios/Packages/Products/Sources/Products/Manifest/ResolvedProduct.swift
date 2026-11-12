@@ -66,9 +66,6 @@ public struct ResolvedProduct: Hashable, Sendable {
         return identifier
     }
 
-    /// The kind `strategy` serves for this product.
-    ///
-    /// Throws `missingExecutable` when the product publishes neither the asked kind nor, for a fallback, the app.
     public func servedKind(for strategy: ExecutableKindStrategy) throws -> ExecutableKind {
         let kind =
             switch strategy {
