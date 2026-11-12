@@ -536,3 +536,23 @@ fn a_stack_provider_does_not_resolve_from_the_catalog() {
 	assert_eq!(error, crate::ProviderError::UnknownGenesis { genesis: catalog.people });
 	assert!(provider.relay_of(catalog.people).is_none());
 }
+
+/// A host waits on the relay `relay_of` names, so it must be the one a connect
+/// brings up: none for a chain registered as a remote node, whatever the stack
+/// says of it.
+#[cfg(all(feature = "ws", feature = "smoldot"))]
+#[test]
+fn a_registered_chain_has_only_the_relay_it_was_registered_with() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, genesis, synced_stack};
+
+	let (relay, people) = (genesis(RELAY_SPEC), genesis(PEOPLE_SPEC));
+	let url = url::Url::parse("ws://people.invalid").expect("static URL parses");
+
+	let from_stack = EmbeddedChainProvider::builder().stack(synced_stack(STACK_ID, "one")).build();
+	let registered = EmbeddedChainProvider::builder()
+		.chain(people, ChainSource::rpc_node(url))
+		.stack(synced_stack(STACK_ID, "one"))
+		.build();
+
+	assert_eq!([from_stack.relay_of(people), registered.relay_of(people)], [Some(relay), None]);
+}
