@@ -49,8 +49,8 @@ struct FundingHistoryTests {
             payoutState: .paidOut
         )
 
-        #expect(FundingActivityItem(summary: cancelled)?.status == .cancelled(refunded: "40000000"))
-        #expect(FundingActivityItem(summary: payoutFailedSummary)?.status == .payoutFailed(refunded: "50000000"))
+        #expect(FundingActivityItem(summary: cancelled)?.status == .cancelled(refunded: 40_000_000))
+        #expect(FundingActivityItem(summary: payoutFailedSummary)?.status == .payoutFailed(refunded: 50_000_000))
         let payoutFailedDetail = try #require(FundingEndedSession(summary: payoutFailedSummary))
         #expect(payoutFailedDetail.outcome == .payoutFailed(reason: "rejected"))
         #expect(payoutFailedDetail.stoppedAt == 2)

@@ -19,7 +19,7 @@ struct FundingScreenTests {
     func rowsTitleTheAmountSignedOnceValueMoved() {
         let toppedUp = content(.toppedUp, direction: .in, rail: .card)
         let sent = content(.sent, direction: .out, rail: .crypto)
-        let payoutFailed = content(.payoutFailed(refunded: "5000"), direction: .out, rail: .bank)
+        let payoutFailed = content(.payoutFailed(refunded: 5_000), direction: .out, rail: .bank)
         let failed = content(.failed(.declined), direction: .in, rail: .card)
 
         #expect(toppedUp.title == "+$50 CASH")
