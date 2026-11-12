@@ -249,7 +249,7 @@ fn classify_pocket(input: &str, network_suffix: &str) -> Option<NavigateDecision
 		},
 		_ => {
 			return Some(NavigateDecision::Reject {
-				reason: "pocket deeplink names a product that is not a dotNS name".to_string(),
+				reason: "pocket deeplink names no dotNS product this host serves".to_string(),
 			});
 		},
 	};

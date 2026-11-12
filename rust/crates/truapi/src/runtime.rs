@@ -435,6 +435,15 @@ impl ProductConnection {
 		Ok(self.services.stack().require_served(product_id)?)
 	}
 
+	/// [`Self::require_served`] for a purse owner a request names. An owner
+	/// that is not a product passes.
+	fn require_served_owner<D>(&self, owner: &latest::NftPurseOwner) -> Result<(), CallError<D>> {
+		match owner {
+			latest::NftPurseOwner::Product(product_id) => self.require_served(product_id),
+			latest::NftPurseOwner::Root => Ok(()),
+		}
+	}
+
 	// Foreign reads must keep the authorized owner, not the calling product.
 	fn product_storage_key(&self, owner: &ProductId, key: String) -> String {
 		ProductStorageKey::new(owner.clone(), key).encode()

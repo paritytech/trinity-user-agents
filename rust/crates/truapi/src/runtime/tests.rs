@@ -4708,7 +4708,29 @@ fn a_call_naming_a_product_the_stack_does_not_serve_is_malformed() {
 			})
 		};
 
+		let list_purses = truapi::versioned::nft_purse::HostNftPurseListPursesRequest::V1(
+			v01::HostNftPurseListPursesRequest {
+				owner: v01::NftPurseOwner::Product(ProductId::for_test(product)),
+			},
+		);
+
+		let read_purses_permission = truapi::versioned::permissions::RemotePermissionRequest::V1(
+			v01::RemotePermissionRequest {
+				permission: v01::RemotePermission::NftPurseRead {
+					owner: v01::NftPurseOwner::Product(ProductId::for_test(product)),
+				},
+			},
+		);
+
 		let calls = [
+			(
+				"request_remote_permission",
+				is_malformed(block_on(host.request_remote_permission(&cx, read_purses_permission))),
+			),
+			(
+				"list_purses",
+				is_malformed(block_on(crate::api::NftPurse::list_purses(&host, &cx, list_purses))),
+			),
 			("get_account", is_malformed(block_on(host.get_account(&cx, get_account)))),
 			("sign_payload", is_malformed(block_on(host.sign_payload(&cx, sign_payload)))),
 			("sign_raw", is_malformed(block_on(host.sign_raw(&cx, sign_raw)))),

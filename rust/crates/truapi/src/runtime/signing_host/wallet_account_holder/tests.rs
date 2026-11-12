@@ -64,8 +64,9 @@ fn reserved_identities_follow_the_network_and_collection_order() {
 	}
 }
 
-/// Every product key the wallet derives passes one refusal, so a name that
-/// only parses gets none, whichever caller or request named it.
+/// Every derivation keyed by a product id is refused for a product the stack
+/// does not serve, whichever caller or request named it. A paired host's
+/// request reaches these without passing a handler's check.
 #[test]
 fn no_key_is_derived_for_a_product_the_stack_does_not_serve() {
 	let keys = WalletKeys::new(vec![7; 32], "paseo".to_string());
@@ -80,11 +81,14 @@ fn no_key_is_derived_for_a_product_the_stack_does_not_serve() {
 			keys.product_keypair(&account).is_ok(),
 			keys.ring_vrf_entropy(&account).is_ok(),
 			keys.ring_vrf_domain_entropy(&product_id).is_ok(),
+			keys.derive_entropy(&product_id, b"context").is_ok(),
+			keys.statement_allowance_key(&product_id).is_ok(),
+			keys.bulletin_allowance_key(&product_id).is_ok(),
 		]
 	};
 
-	assert_eq!(derives("myapp.paseo"), [true; 4]);
-	assert_eq!(derives("myapp.dot"), [true; 4]);
-	assert_eq!(derives("myapp.testnet"), [false; 4]);
-	assert_eq!(derives("example.com"), [false; 4]);
+	assert_eq!(derives("myapp.paseo"), [true; 7]);
+	assert_eq!(derives("myapp.dot"), [true; 7]);
+	assert_eq!(derives("myapp.testnet"), [false; 7]);
+	assert_eq!(derives("example.com"), [false; 7]);
 }

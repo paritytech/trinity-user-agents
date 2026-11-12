@@ -51,11 +51,11 @@ const RESERVED_TLD: &str = "dot";
 /// reserved TLD, then the stack's own when it is another one.
 ///
 /// The core has no other list of TLDs. Product ids, dotNS links and share
-/// hosts are all judged against this one.
+/// hosts are all judged against this one. A `stack_tld` that is not a DNS
+/// label is left out, since a host can pass any string over FFI.
 pub fn served_tlds(stack_tld: &str) -> impl Iterator<Item = &str> {
-	[RESERVED_TLD]
-		.into_iter()
-		.chain((stack_tld != RESERVED_TLD).then_some(stack_tld))
+	let own = stack_tld != RESERVED_TLD && is_dns_label(stack_tld);
+	[RESERVED_TLD].into_iter().chain(own.then_some(stack_tld))
 }
 
 /// Whether `tld` is one of the [`served_tlds`] of a stack on `stack_tld`.

@@ -463,9 +463,10 @@ a product enters the runtime:
 - `ProductContext::served_by` builds the product a host asks the core to run,
   for the wasm, native and CLI bridges alike.
 - Each call that names another product (an account owner, a proof context, a
-  storage owner) answers `MalformedFrame` for one the stack does not serve.
-- The signing role's wallet derives no key for one, so a paired host's request
-  is covered too.
+  storage owner, a purse owner) answers `MalformedFrame` for one the stack does
+  not serve.
+- The signing role's wallet derives no key for one, and refuses a paired host's
+  request from one before it asks the user.
 - `parse_navigate` reads a name as dotNS only under a served TLD and passes any
   other host on as external. A dotNS name resolves back into the host's own
   product surface, so it bypasses the outbound domain grant.

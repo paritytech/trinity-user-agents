@@ -244,6 +244,38 @@ fn a_relayed_vrf_signature_cannot_reuse_a_local_auto_signing_grant() {
 	);
 }
 
+/// A paired host on an older core can still relay a request for a product
+/// this stack does not serve. It is refused before the user is asked, since
+/// an approval could never be honoured.
+#[test]
+fn a_relayed_request_from_an_unserved_product_never_prompts() {
+	let platform = granting_platform();
+	let (_services, activation) = signing_runtime_with_platform(platform.clone());
+	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+
+	let Ok(Dispatch::Response(answer)) =
+		futures::executor::block_on(sso_service(&activation).answer(RemoteMessage::request(
+			"relayed-vrf".to_string(),
+			ProductRequest {
+				calling_product_id: ProductId::for_test("myapp.paseo"),
+				payload: vrf_request("myapp.paseo"),
+			},
+		)))
+	else {
+		panic!("expected a VRF response")
+	};
+	let RemoteMessageData::V1(v1::RemoteMessage::SignVrfResponse(response)) = answer.message.data
+	else {
+		panic!("expected a VRF signing response")
+	};
+
+	assert_eq!(
+		(response.payload.is_err(), platform.sign_vrf_reviews.lock().unwrap().len()),
+		(true, 0),
+	);
+}
+
 /// The user's own account, `identity`, asked to sign `hello world`.
 fn identity_raw_request(identity: &schnorrkel::Keypair) -> HostSignRawWithLegacyAccountRequest {
 	HostSignRawWithLegacyAccountRequest::V1(v01::HostSignRawWithLegacyAccountRequest {

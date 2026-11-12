@@ -166,6 +166,16 @@ fn the_reserved_tld_is_served_once() {
 	assert_eq!(served_tlds("paseo").collect::<Vec<_>>(), ["dot", "paseo"]);
 }
 
+/// A host passes the TLD over FFI as any string. One that is not a label
+/// serves nothing of its own, so an empty one does not yield a `.li` share
+/// host.
+#[test]
+fn a_malformed_stack_tld_serves_only_the_reserved_one() {
+	for malformed in ["", "PASEO", "pa.seo", ".paseo"] {
+		assert_eq!(served_tlds(malformed).collect::<Vec<_>>(), ["dot"], "{malformed:?}");
+	}
+}
+
 /// Polkadot's values, the `dot` TLD or a Polkadot genesis hash under any role,
 /// a role the core reads or one it never reads, start only in a build that
 /// allows them.
