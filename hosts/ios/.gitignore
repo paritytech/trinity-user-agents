@@ -115,5 +115,5 @@ tmp/
 # Merge leftovers
 *.orig
 
-## Bundled products, built by Runscripts/bundle-funding-provider.sh
+## Bundled products, built locally
 polkadot-app/BundledProducts.bundle/

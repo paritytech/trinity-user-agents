@@ -20,7 +20,6 @@ use crate::{
 
 /// A provider the host offers, as the host supplies it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct FundingProviderEntry {
 	/// The provider's product id.
 	pub product_id: ProductId,
@@ -41,7 +40,6 @@ pub struct FundingProviderEntry {
 /// Whether a funding provider ships an App, so an App route of its can be
 /// shown.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingProviderApp {
 	/// The host does not know: the core looks the App up on dotNS when an
 	/// App route is shown.
@@ -54,16 +52,21 @@ pub enum FundingProviderApp {
 }
 
 /// The providers the host offers from its remote configuration's
-/// `published_names`, in order and each once, then the `bundled` ones the
-/// configuration does not name, with the names that are not product ids.
+/// `published_names`, in order and each once, with the names that are not
+/// product ids. A name carries no TLD: the core reads it on the network it is
+/// connected to, as `<name>.<tld>`, so one configuration serves every network.
+/// A name that names a TLD would pin one network, so it is skipped.
 pub fn provider_config(
 	published_names: &[String],
-	bundled: Vec<FundingProviderEntry>,
+	tld: &str,
 ) -> (Vec<FundingProviderEntry>, Vec<String>) {
 	let mut entries: Vec<FundingProviderEntry> = Vec::new();
 	let mut invalid = Vec::new();
 	for name in published_names {
-		let Ok(product_id) = name.trim().parse::<ProductId>() else {
+		let label = name.trim();
+		let product_id =
+			if label.contains('.') { None } else { ProductId::from_name(label, tld).ok() };
+		let Some(product_id) = product_id else {
 			invalid.push(name.clone());
 			continue;
 		};
@@ -77,17 +80,11 @@ pub fn provider_config(
 			});
 		}
 	}
-	for entry in bundled {
-		if entries.iter().all(|known| known.product_id != entry.product_id) {
-			entries.push(entry);
-		}
-	}
 	(entries, invalid)
 }
 
 /// Where the core reads a provider's manifests.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum FundingProviderOrigin {
 	/// Published on dotNS: the core reads the live manifests, and goes by the
 	/// host's snapshots until it has.
