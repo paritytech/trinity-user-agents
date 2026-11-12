@@ -1064,12 +1064,15 @@ fn a_compaction_that_fails_to_store_keeps_every_session() {
 #[test]
 fn a_replaced_frame_leaves_its_successor_tracked() {
 	let registry = FundingRegistry::default();
-	let first = registry.track_frame("fs_1", worker("ramp.dot"));
-	let second = registry.track_frame("fs_1", worker("ramp.dot"));
+	let mut first = registry.request_frame("fs_1", worker("ramp.dot"));
+	let mut second = registry.request_frame("fs_1", worker("ramp.dot"));
+	assert_eq!(block_on(first.opened()), Some(FundingFrameOutcome::Dismissed));
+	assert!(registry.open_frame("fs_1"));
+	assert_eq!(block_on(second.opened()), None);
 	drop(first);
-	let tracked = lock(&registry.frames).contains_key("fs_1");
+	let tracked = registry.frame_open("fs_1");
 	drop(second);
-	assert_eq!((tracked, lock(&registry.frames).contains_key("fs_1")), (true, false));
+	assert_eq!((tracked, registry.frame_open("fs_1")), (true, false));
 }
 
 // A cancel that moved no money is left out of history, yet its summary still

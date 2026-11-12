@@ -142,8 +142,9 @@ pub trait FundingProvider: Send + Sync {
 	/// the user looks at the session, otherwise once the user taps a notice
 	/// that the provider wants to show something. Until then the call waits.
 	/// One screen waits per session: a newer call replaces it, and the one it
-	/// replaced answers `Dismissed`. `close_frame`, or the session's payment
-	/// moving or the session ending, drops a waiting screen with `Closed`.
+	/// replaced answers `Dismissed`. `close_frame` closes the screen on show
+	/// and drops a waiting one, which answers `Closed`; so do the session's
+	/// payment moving and the session ending.
 	///
 	/// ```ts
 	/// const result = await truapi.fundingProvider.presentFrame({

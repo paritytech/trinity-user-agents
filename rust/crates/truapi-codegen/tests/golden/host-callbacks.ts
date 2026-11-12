@@ -2006,11 +2006,11 @@ export interface FundingPlatform {
   /**
    * Show `target` for `provider`'s session `intent` in a frame the host
    * owns, and answer once it closes. Called only once the host opened the
-   * request `Self::provider_frame_requested` announced. A page is an https URL the core has
-   * checked: the host shows its origin, and closes the frame with
-   * `Returned` when the page reaches its return URL. The core closes the
-   * frame itself, through
-   * `Self::close_provider_frame`, once the session's payment moved.
+   * request `Self::provider_frame_requested` announced. A page is an
+   * https URL the core has checked: the host shows its origin, and closes
+   * the frame with `Returned` when the page reaches its return URL. The
+   * core closes the frame itself, through `Self::close_provider_frame`,
+   * once the session's payment moved.
    */
   presentProviderFrame(
     provider: ProductContext,

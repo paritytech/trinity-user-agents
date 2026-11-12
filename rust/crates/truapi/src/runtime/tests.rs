@@ -2730,7 +2730,7 @@ struct RecordingFundingPlatform {
 	requested: Mutex<Vec<String>>,
 	/// The services whose waiting frames this host opens as soon as they are
 	/// asked for, as a host does while the user looks at the session.
-	opens: Mutex<Option<std::sync::Weak<RuntimeServices>>>,
+	opens: std::sync::OnceLock<std::sync::Weak<RuntimeServices>>,
 	country: Option<String>,
 	in_progress: Mutex<Vec<bool>>,
 	quote_lists: Mutex<Vec<(String, crate::platform::FundingQuoteList)>>,
@@ -2746,7 +2746,7 @@ impl RecordingFundingPlatform {
 			framed: Mutex::new(Vec::new()),
 			closed: Mutex::new(Vec::new()),
 			requested: Mutex::new(Vec::new()),
-			opens: Mutex::new(None),
+			opens: std::sync::OnceLock::new(),
 			country: None,
 			in_progress: Mutex::new(Vec::new()),
 			quote_lists: Mutex::new(Vec::new()),
@@ -2767,7 +2767,7 @@ impl RecordingFundingPlatform {
 
 	/// Open every provider frame `services` hold as soon as it is asked for.
 	fn open_frames_of(&self, services: &Arc<RuntimeServices>) {
-		*self.opens.lock().expect("opens mutex poisoned") = Some(Arc::downgrade(services));
+		assert!(self.opens.set(Arc::downgrade(services)).is_ok(), "opens set once");
 	}
 
 	fn in_country(country: &str) -> Arc<Self> {
@@ -2809,8 +2809,7 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 
 	fn provider_frame_requested(&self, _provider: &ProductContext, intent: String) {
 		self.requested.lock().expect("requested mutex poisoned").push(intent.clone());
-		let services = self.opens.lock().expect("opens mutex poisoned").clone();
-		if let Some(services) = services.and_then(|services| services.upgrade()) {
+		if let Some(services) = self.opens.get().and_then(std::sync::Weak::upgrade) {
 			services.funding().open_frame(&intent);
 		}
 	}
@@ -8837,8 +8836,12 @@ fn a_provider_frame_closes_once_the_payment_moved() {
 	);
 	let worker = provider_worker(&services, "ramp.dot");
 	let provider = ProductContext::new(ProductId::for_test("ramp.dot"));
-	let _frame = services.funding().track_frame(&intent, provider.clone());
-	let _unknown = services.funding().track_frame("fs_unknown", provider);
+	let mut frame = services.funding().request_frame(&intent, provider.clone());
+	let mut unknown = services.funding().request_frame("fs_unknown", provider);
+	for (frame, intent) in [(&mut frame, intent.as_str()), (&mut unknown, "fs_unknown")] {
+		assert!(services.funding().open_frame(intent));
+		assert_eq!(futures::executor::block_on(frame.opened()), None);
+	}
 	let closed = || platform.closed.lock().expect("closed mutex poisoned").clone();
 	report_funding(
 		&worker,
@@ -8990,54 +8993,99 @@ fn present_frame(
 	}
 }
 
+fn framed(platform: &RecordingFundingPlatform) -> Vec<v01::FundingFrameTarget> {
+	platform.framed.lock().expect("framed mutex poisoned").clone()
+}
+
+fn announced(platform: &RecordingFundingPlatform) -> usize {
+	platform.announced.lock().expect("announced mutex poisoned").len()
+}
+
 // A worker never puts a screen in front of the user on its own: the core
 // holds it and tells the host, which opens it.
 #[test]
 fn a_provider_frame_waits_until_the_host_opens_it() {
 	let (services, platform, intent, worker) = framing_session();
 
-	let (held, requested, waiting, opened, answer, framed, after) =
-		futures::executor::block_on(async {
-			let mut frame = Box::pin(present_frame(&worker, &intent, widget_page("buy")));
-			let held = futures::poll!(&mut frame).is_pending();
-			let requested = platform.requested.lock().expect("requested mutex poisoned").clone();
-			let waiting = services.funding().frame_waiting(&intent);
-			let framed = platform.framed.lock().expect("framed mutex poisoned").len();
-			let opened = services.funding().open_frame(&intent);
-			let answer = frame.await;
-			(
-				held,
-				requested,
-				waiting,
-				opened,
-				answer,
-				framed,
-				services.funding().frame_waiting(&intent),
-			)
-		});
+	let answer = futures::executor::block_on(async {
+		let mut frame = Box::pin(present_frame(&worker, &intent, widget_page("buy")));
+		assert!(futures::poll!(&mut frame).is_pending());
+		assert_eq!(
+			*platform.requested.lock().expect("requested mutex poisoned"),
+			vec![intent.clone()]
+		);
+		assert!(services.funding().frame_waiting(&intent));
+		assert_eq!(framed(&platform), Vec::new());
 
-	assert_eq!(
-		(
-			held,
-			requested,
-			waiting,
-			framed,
-			opened,
-			answer,
-			platform.framed.lock().expect("framed mutex poisoned").clone(),
-			after,
-		),
-		(
-			true,
-			vec![intent.clone()],
-			true,
-			0,
-			true,
-			Ok(v01::FundingFrameOutcome::Closed),
-			vec![widget_page("buy")],
-			false,
-		)
-	);
+		assert!(services.funding().open_frame(&intent));
+		frame.await
+	});
+
+	assert_eq!(answer, Ok(v01::FundingFrameOutcome::Closed));
+	assert_eq!(framed(&platform), vec![widget_page("buy")]);
+	assert!(!services.funding().frame_waiting(&intent));
+}
+
+// Opening the screen tells the host the session changed, so it takes its
+// notice down.
+#[test]
+fn opening_a_provider_frame_announces_the_session() {
+	let (services, platform, intent, worker) = framing_session();
+
+	let (before, after) = futures::executor::block_on(async {
+		let mut frame = Box::pin(present_frame(&worker, &intent, widget_page("buy")));
+		assert!(futures::poll!(&mut frame).is_pending());
+		let before = announced(&platform);
+		assert!(services.funding().open_frame(&intent));
+		let after = announced(&platform);
+		frame.await.expect("presented");
+		(before, after)
+	});
+
+	assert_eq!(after, before + 1);
+}
+
+// A worker that stops waiting leaves no screen behind: the host hears the
+// session changed and finds nothing to open.
+#[test]
+fn a_worker_that_stops_waiting_leaves_no_provider_frame() {
+	let (services, platform, intent, worker) = framing_session();
+
+	let (before, after) = futures::executor::block_on(async {
+		let mut frame = Box::pin(present_frame(&worker, &intent, widget_page("buy")));
+		assert!(futures::poll!(&mut frame).is_pending());
+		let before = announced(&platform);
+		drop(frame);
+		(before, announced(&platform))
+	});
+
+	assert_eq!(after, before + 1);
+	assert!(!services.funding().frame_waiting(&intent));
+	assert!(!services.funding().open_frame(&intent));
+	assert_eq!(framed(&platform), Vec::new());
+}
+
+// A session that ends after the host opened its provider's screen but before
+// the worker ran again shows nothing.
+#[test]
+fn a_session_ending_before_an_opened_frame_shows_drops_it() {
+	let (services, platform, intent, worker) = framing_session();
+
+	let answer = futures::executor::block_on(async {
+		let mut frame = Box::pin(present_frame(&worker, &intent, widget_page("buy")));
+		assert!(futures::poll!(&mut frame).is_pending());
+		assert!(services.funding().open_frame(&intent));
+		let declined = crate::host_logic::funding::FundingStage::Failed {
+			reason: v01::FundingFailure::Declined,
+			settled_at_ms: crate::current_unix_millis(),
+		};
+		assert!(services.settle_funding_for_test(&intent, declined).await.expect("ended"));
+		frame.await
+	});
+
+	assert_eq!(answer, Ok(v01::FundingFrameOutcome::Closed));
+	assert_eq!(framed(&platform), Vec::new());
+	assert!(!services.funding().frame_open(&intent));
 }
 
 // One screen waits per session: a newer request replaces it, and the one it

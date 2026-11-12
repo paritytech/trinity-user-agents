@@ -1735,11 +1735,10 @@ impl FundingProvider for ProductRuntimeHost {
 				}
 				// The worker never puts a screen in front of the user on its own:
 				// the host opens it, at once or from a notice the user taps.
-				let gate = services.funding().admit_frame(&intent, provider);
-				if let funding::FrameGate::Answer(outcome) = gate.await {
+				let mut frame = services.funding().request_frame(&intent, provider.clone());
+				if let Some(outcome) = frame.opened().await {
 					return Ok(latest::HostFundingPresentFrameResponse { outcome });
 				}
-				let _frame = services.funding().track_frame(&intent, provider.clone());
 				let outcome = platform
 					.present_provider_frame(provider, intent, target)
 					.await
@@ -1761,8 +1760,12 @@ impl FundingProvider for ProductRuntimeHost {
 				if !self.serves(&intent) {
 					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
 				}
+				// Closes the screen on show and drops one still waiting; a call
+				// that only dropped a waiting screen leaves the host nothing to close.
 				let funding = self.connection.services.funding();
-				if !funding.drop_waiting_frame(&intent, latest::FundingFrameOutcome::Closed) {
+				let dropped =
+					funding.drop_waiting_frame(&intent, latest::FundingFrameOutcome::Closed);
+				if !dropped || funding.frame_open(&intent) {
 					platform.close_provider_frame(&self.connection.product, intent);
 				}
 				Ok(())
