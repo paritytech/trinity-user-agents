@@ -138,6 +138,13 @@ pub trait FundingProvider: Send + Sync {
 	/// external https page such as an onramp's widget, in a frame the host
 	/// owns. Answers once it closes.
 	///
+	/// The screen never opens on its own: the host opens it, at once while
+	/// the user looks at the session, otherwise once the user taps a notice
+	/// that the provider wants to show something. Until then the call waits.
+	/// One screen waits per session: a newer call replaces it, and the one it
+	/// replaced answers `Dismissed`. `close_frame`, or the session's payment
+	/// moving or the session ending, drops a waiting screen with `Closed`.
+	///
 	/// ```ts
 	/// const result = await truapi.fundingProvider.presentFrame({
 	///   intent: "fs_example",

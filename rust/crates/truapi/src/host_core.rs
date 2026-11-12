@@ -872,6 +872,18 @@ impl SigningHostRuntime {
 		self.services.funding().get(intent)
 	}
 
+	/// Show the screen funding session `intent`'s provider asked for. Answers
+	/// whether one was waiting.
+	pub fn open_provider_frame(&self, intent: &str) -> bool {
+		self.services.funding().open_frame(intent)
+	}
+
+	/// Whether funding session `intent`'s provider waits for its screen to be
+	/// opened.
+	pub fn funding_frame_waiting(&self, intent: &str) -> bool {
+		self.services.funding().frame_waiting(intent)
+	}
+
 	/// Funding session `intent`'s progress now, while the core holds it in
 	/// full.
 	pub fn funding_progress(

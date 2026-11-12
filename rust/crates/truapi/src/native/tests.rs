@@ -3242,6 +3242,8 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 
 	fn close_provider_frame(&self, _provider_id: ProductId, _intent: String) {}
 
+	fn provider_frame_requested(&self, _provider_id: ProductId, _intent: String) {}
+
 	async fn detected_country(&self) -> Option<String> {
 		None
 	}

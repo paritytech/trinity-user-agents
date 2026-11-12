@@ -65,10 +65,10 @@ use futures::{
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{
 	FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDirection,
-	FundingFailure, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate, GenericError,
-	HostFundingReportError, HostFundingStatusSubscribeItem, HostPaymentStatusSubscribeError,
-	HostPaymentStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError,
-	HostPaymentTopUpStatusSubscribeItem,
+	FundingFailure, FundingFrameOutcome, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate,
+	GenericError, HostFundingReportError, HostFundingStatusSubscribeItem,
+	HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem,
+	HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem,
 };
 
 use super::{funding_quotes::WorkerHold, services::RuntimeServices};
@@ -427,6 +427,18 @@ pub struct FundingRegistry {
 	frames: Mutex<HashMap<String, (u64, ProductContext)>>,
 	/// The number the next tracked frame takes.
 	next_frame: AtomicU64,
+	/// The provider frame each session holds until the host opens it, at
+	/// most one per session.
+	waiting: Mutex<HashMap<String, oneshot::Sender<FrameGate>>>,
+}
+
+/// What a provider frame does once it may go on screen.
+#[derive(Debug)]
+pub enum FrameGate {
+	/// Present it now.
+	Present,
+	/// Present nothing, and answer the provider this.
+	Answer(FundingFrameOutcome),
 }
 
 impl FundingRegistry {
@@ -796,10 +808,84 @@ impl FundingRegistry {
 		if !self.frame_done(intent) {
 			return;
 		}
+		let waiting = lock(&self.waiting).remove(intent);
+		if let Some(waiting) = waiting {
+			let _ = waiting.send(FrameGate::Answer(FundingFrameOutcome::Closed));
+		}
 		let Some((_, provider)) = lock(&self.frames).remove(intent) else {
 			return;
 		};
 		platform.close_provider_frame(&provider, intent.to_string());
+	}
+
+	/// Hold session `intent`'s provider frame until the host opens it with
+	/// [`Self::open_frame`]: the host is told through
+	/// [`FundingPlatform::provider_frame_requested`] and decides, at once
+	/// while the user looks at the session or once they tap a notice. A
+	/// frame already waiting is answered `Dismissed`, as the new one replaces
+	/// it, and one for a session whose payment moved is answered `Closed`.
+	pub fn admit_frame(
+		&self,
+		intent: &str,
+		provider: &ProductContext,
+	) -> BoxFuture<'static, FrameGate> {
+		if self.frame_done(intent) {
+			return Box::pin(core::future::ready(FrameGate::Answer(FundingFrameOutcome::Closed)));
+		}
+		let (sender, receiver) = oneshot::channel();
+		let replaced = lock(&self.waiting).insert(intent.to_string(), sender);
+		if let Some(replaced) = replaced {
+			let _ = replaced.send(FrameGate::Answer(FundingFrameOutcome::Dismissed));
+		}
+		if let Some(platform) = self.platform() {
+			platform.provider_frame_requested(provider, intent.to_string());
+		}
+		// A dropped sender means the registry went away: nothing to show.
+		Box::pin(
+			async move { receiver.await.unwrap_or(FrameGate::Answer(FundingFrameOutcome::Closed)) },
+		)
+	}
+
+	/// The host opens session `intent`'s waiting provider frame. Returns
+	/// whether one was waiting.
+	pub fn open_frame(&self, intent: &str) -> bool {
+		let waiting = lock(&self.waiting).remove(intent);
+		let Some(waiting) = waiting else {
+			return false;
+		};
+		// A worker that stopped waiting has nothing left to show.
+		let opened = waiting.send(FrameGate::Present).is_ok();
+		self.retell(intent);
+		opened
+	}
+
+	/// Whether session `intent` holds a provider frame until the host opens
+	/// it, so the host can show a notice again after redrawing.
+	pub fn frame_waiting(&self, intent: &str) -> bool {
+		lock(&self.waiting).get(intent).is_some_and(|waiting| !waiting.is_canceled())
+	}
+
+	/// Drop session `intent`'s waiting frame, answering its provider
+	/// `outcome`. Returns whether one was waiting.
+	pub fn drop_waiting_frame(&self, intent: &str, outcome: FundingFrameOutcome) -> bool {
+		let Some(waiting) = lock(&self.waiting).remove(intent) else {
+			return false;
+		};
+		let _ = waiting.send(FrameGate::Answer(outcome));
+		self.retell(intent);
+		true
+	}
+
+	/// Tell the host session `intent` changed though its record did not: its
+	/// waiting provider frame was opened or dropped.
+	fn retell(&self, intent: &str) {
+		let item = self.lock_held().sessions.get(intent).map(FundingSession::wire_item);
+		if let Some(item) = item &&
+			self.platform.get().is_some()
+		{
+			self.lock_announcements().pending.push_back((intent.to_string(), item));
+		}
+		self.announce();
 	}
 
 	/// The sessions whose overlay is up.

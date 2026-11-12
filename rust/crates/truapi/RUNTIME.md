@@ -700,8 +700,13 @@ for raw bytes signed inside the `<Bytes>` watermark.
   session is open), `presentFrame` asks the host to
   show one of its screens through `present_provider_frame` (an App route only
   when the provider ships an App: a bundled entry's `app`, else an `app`
-  subname dotNS publishes, read within ten seconds; otherwise `NoApp`), and
-  `closeFrame`
+  subname dotNS publishes, read within ten seconds; otherwise `NoApp`). The
+  core never shows it on its own: it holds the call, tells the host through
+  `provider_frame_requested`, and presents it once the host calls
+  `open_provider_frame`, at once while the user looks at the session or when
+  the user taps a notice. One waits per session: a newer call replaces it
+  (`Dismissed`), and `closeFrame`, the payment moving or the session ending
+  drops it (`Closed`). `closeFrame`
   closes it through `close_provider_frame` once the provider is done with it,
   such as a card payment the user made: the open `presentFrame` answers
   `Closed` and the host shows the session sheet in its place. The core holds the

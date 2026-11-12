@@ -597,6 +597,8 @@ impl FundingPlatform for ReentrantHost {
 
 	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
 
+	fn provider_frame_requested(&self, _provider: &ProductContext, _intent: String) {}
+
 	fn funding_session_changed(&self, intent: String, _status: HostFundingStatusSubscribeItem) {
 		let registry = self.registry.get().and_then(Weak::upgrade).expect("registry alive");
 		// Calling back while the lock is held would hang, so that is
@@ -692,6 +694,8 @@ impl FundingPlatform for SilentPlatform {
 	}
 
 	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+
+	fn provider_frame_requested(&self, _provider: &ProductContext, _intent: String) {}
 }
 
 /// A host feed that records each session it is told changed.

@@ -381,6 +381,18 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_amount_issue(&intent, amount, spendable)
 	}
 
+	/// Show the screen funding session `intent`'s provider asked for, after
+	/// `provider_frame_requested`. Answers whether one was waiting.
+	pub fn open_provider_frame(&self, intent: String) -> bool {
+		self.runtime.open_provider_frame(&intent)
+	}
+
+	/// Whether funding session `intent`'s provider waits for its screen to be
+	/// opened, so the host can show the notice again after redrawing.
+	pub fn funding_frame_waiting(&self, intent: String) -> bool {
+		self.runtime.funding_frame_waiting(&intent)
+	}
+
 	/// Funding session `intent`'s latest quote list, while its overlay is up.
 	pub fn funding_quotes(&self, intent: String) -> Option<crate::platform::FundingQuoteList> {
 		self.runtime.funding_quotes(&intent)

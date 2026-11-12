@@ -1737,6 +1737,12 @@ impl FundingProvider for ProductRuntimeHost {
 						return Err(domain(latest::HostFundingPresentFrameError::NoApp));
 					}
 				}
+				// The worker never puts a screen in front of the user on its own:
+				// the host opens it, at once or from a notice the user taps.
+				let gate = services.funding().admit_frame(&intent, provider);
+				if let funding::FrameGate::Answer(outcome) = gate.await {
+					return Ok(latest::HostFundingPresentFrameResponse { outcome });
+				}
 				let _frame = services.funding().track_frame(&intent, provider.clone());
 				let outcome = platform
 					.present_provider_frame(provider, intent, target)
@@ -1759,7 +1765,10 @@ impl FundingProvider for ProductRuntimeHost {
 				if !self.serves(&intent) {
 					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
 				}
-				platform.close_provider_frame(&self.connection.product, intent);
+				let funding = self.connection.services.funding();
+				if !funding.drop_waiting_frame(&intent, latest::FundingFrameOutcome::Closed) {
+					platform.close_provider_frame(&self.connection.product, intent);
+				}
 				Ok(())
 			})
 			.await
