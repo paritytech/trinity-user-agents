@@ -481,9 +481,9 @@ pub trait NativeScannerCallbacks: Send + Sync {
 #[async_trait::async_trait]
 pub trait NativeStackCallbacks: Send + Sync {
 	/// Fetch the stack's descriptor over HTTP, as `request` describes, with
-	/// the host's HTTP client. Fail when the server gave no usable answer.
-	/// The core awaits this on a background thread and gives up after 30
-	/// seconds.
+	/// the host's HTTP client. Fail when the server gave no usable answer:
+	/// the status reports the failure's reason. The core awaits this on a
+	/// background thread and gives up after 30 seconds.
 	async fn fetch_stack_descriptor(
 		&self,
 		request: StackFetchRequest,
