@@ -66,13 +66,16 @@ pub struct DotnsReads {
 	pub public_profiles: SingleFlight<String, Result<ProfileRecord, Arc<DotnsError>>>,
 	/// What public profile reads of different usernames take turns on, so a
 	/// screen of avatars holds at most [`PUBLIC_PROFILE_READS_AT_ONCE`]
-	/// follows and leaves the rest of the connection's room to everything else.
+	/// follows however many it asks for at once.
 	pub public_profile_slots: Arc<ReadSlots>,
 }
 
 /// Public profile reads of different usernames that run at once. Half of the
 /// four follows a connection has room for.
 pub const PUBLIC_PROFILE_READS_AT_ONCE: usize = 2;
+
+/// Why a shared dotNS read gave no answer: its task ended first.
+pub(crate) const READ_ENDED_UNANSWERED: &str = "the dotNS read ended without answering";
 
 impl DotnsReads {
 	/// Reads spawned through `spawner`.

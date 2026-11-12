@@ -24,7 +24,10 @@ use crate::{
 		namehash_under,
 	},
 	platform::is_dns_label,
-	runtime::{DotnsLookup, DotnsLookupKind, services::RuntimeServices},
+	runtime::{
+		DotnsLookup, DotnsLookupKind,
+		services::{READ_ENDED_UNANSWERED, RuntimeServices},
+	},
 };
 
 /// Text record a username publishes its profile at.
@@ -32,8 +35,6 @@ pub const PROFILE_RECORD_KEY: &str = "profile";
 /// How long a resolved record is served before the chain is read again.
 #[cfg(not(target_arch = "wasm32"))]
 const RECORD_TTL_SECS: u64 = 60 * 60;
-/// Why a shared profile read gave no answer: its task was dropped or panicked.
-const READ_ENDED_UNANSWERED: &str = "the dotNS read ended without answering";
 
 /// The understood metadata in a dotNS public profile.
 ///

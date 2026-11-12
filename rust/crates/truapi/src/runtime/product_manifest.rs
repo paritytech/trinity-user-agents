@@ -34,7 +34,7 @@ use crate::{
 	},
 	runtime::{
 		dotns_lookup::{DotnsLookup, DotnsLookupKind},
-		services::RuntimeServices,
+		services::{READ_ENDED_UNANSWERED, RuntimeServices},
 	},
 	unix_time::current_unix_secs,
 };
@@ -703,9 +703,6 @@ async fn root_manifest(
 		Err(source) => (None, source),
 	}
 }
-
-/// Why a shared dotNS read gave no answer: its task ended first.
-const READ_ENDED_UNANSWERED: &str = "the dotNS read ended without answering";
 
 /// `product_id`'s Worker manifest, cached and shared as [`root_manifest`] is.
 /// `Ok(None)` when it publishes none or what it publishes cannot be used, which

@@ -1,9 +1,8 @@
 //! A fixed number of reads at a time.
 //!
 //! A dotNS read holds an Asset Hub follow while it runs, and a connection has
-//! room for four. Reads that take a slot first leave the rest of that room to
-//! everything else on the connection, however many of them are asked for at
-//! once.
+//! room for four. Reads that take a slot first hold no more follows than there
+//! are slots, however many of them are asked for at once.
 
 use futures::{
 	future::select_all,
