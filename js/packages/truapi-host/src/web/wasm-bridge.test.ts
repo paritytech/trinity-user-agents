@@ -201,11 +201,15 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     ]);
     expect(statuses.map((status) => status.lastRefresh)).toEqual([
       undefined,
-      { outcome: "unreachable" },
+      { outcome: "unreachable", reason: "offline" },
       { outcome: "current" },
     ]);
     expect(runtime.stackStatus()).toEqual(statuses[2]);
-    expect(JSON.parse(statuses[2].descriptor).id).toBe("previewnet");
+    const descriptor = JSON.parse(statuses[2].descriptor);
+    expect([descriptor.id, statuses[2].generation]).toEqual([
+      "previewnet",
+      descriptor.generation,
+    ]);
     expect(records).toHaveLength(1);
 
     // The record is what the next start reads, so it has to be accepted back.

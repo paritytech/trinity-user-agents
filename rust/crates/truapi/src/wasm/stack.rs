@@ -134,7 +134,11 @@ impl StackRecords for JsStackRecords {
 		_stack_id: &str,
 		record: Vec<u8>,
 	) -> Result<(), GenericError> {
-		let Some(store) = &self.store else { return Ok(()) };
+		// Without the callback nothing is kept, and the core must not ask for
+		// a restart that would start from the old copy.
+		let Some(store) = &self.store else {
+			return Err("the host passed no storeStackRecord callback".to_string().into());
+		};
 		Ok(invoke_unit(store, vec![Uint8Array::from(record.as_slice()).into()]).await?)
 	}
 }
@@ -213,22 +217,22 @@ fn response_from_js(response: &JsValue) -> Result<StackFetchResponse, String> {
 /// lastRefresh? }`, where `lastRefresh` is `{ outcome, reason? }` and
 /// `outcome` is `current`, `unreachable` or `refused`.
 fn status_to_js(status: &StackStatus) -> JsValue {
-	let StackStatus { descriptor, stale, expired, restart_required, new_generation, last_refresh } =
+	let StackStatus { descriptor, generation, stale, expired, restart_required, last_refresh } =
 		status;
 	let last_refresh = last_refresh.as_ref().map_or(JsValue::UNDEFINED, |outcome| {
 		let (outcome, reason) = match outcome {
 			StackRefreshOutcome::Current => ("current", None),
-			StackRefreshOutcome::Unreachable => ("unreachable", None),
+			StackRefreshOutcome::Unreachable { reason } => ("unreachable", Some(reason.as_str())),
 			StackRefreshOutcome::Refused { reason } => ("refused", Some(reason.as_str())),
 		};
 		object(&[("outcome", JsValue::from_str(outcome)), ("reason", JsValue::from(reason))])
 	});
 	object(&[
 		("descriptor", JsValue::from_str(descriptor)),
+		("generation", JsValue::from_str(generation)),
 		("stale", JsValue::from(*stale)),
 		("expired", JsValue::from(*expired)),
 		("restartRequired", JsValue::from(*restart_required)),
-		("newGeneration", JsValue::from(*new_generation)),
 		("lastRefresh", last_refresh),
 	])
 }

@@ -57,11 +57,13 @@ callbacks to the runtime constructor, typed as `StackCallbacks`:
   `refreshStack()` when the page becomes visible again.
 - `stackChanged(status)`: the `StackStatus` at start and on each change. The
   same value comes from `stackStatus()`. `restartRequired` means a newer copy
-  changes a chain, the network or the TLD, and applies once the runtime is
-  built again.
+  changes a chain, the network, the TLD or the generation, and applies once
+  the runtime is built again. `generation` changes when the stack restarts its
+  chains: key cached chain data by it.
 - `storeStackRecord(record)`: keep the bytes and pass them back as
   `stack.stored` at the next start, so the core starts from the last copy it
-  verified instead of the bundled one.
+  verified instead of the bundled one. Without it the core never sets
+  `restartRequired`, because the next start could not read the newer copy.
 
 Without `fetchStackDescriptor` the core stays on the copy it started from. The
 `/web` worker runtime does not pass these callbacks yet.

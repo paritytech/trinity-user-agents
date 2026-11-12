@@ -116,21 +116,28 @@ export interface StackStatus {
    * host's own features read their chains and services from it.
    */
   descriptor: string;
-  /** Past `validUntil`: show the stack as stale and keep running on it. */
+  /**
+   * The descriptor's `generation`, which changes when the stack restarts its
+   * chains. Key cached chain data by it, such as a light client's database:
+   * data kept under another generation is for chains that are gone.
+   */
+  generation: string;
+  /**
+   * Past `validUntil` when the core last looked, at start and after each
+   * fetch: show the stack as stale and keep running on it.
+   */
   stale: boolean;
-  /** Past `expiresAt`: the stack has shut down. */
+  /**
+   * Past `expiresAt` when the core last looked, at start and after each
+   * fetch: the stack has shut down.
+   */
   expired: boolean;
   /**
-   * The core holds a newer copy that changes a chain, the network or the TLD.
-   * It runs that copy from its next start, so build the runtime again to
-   * follow it.
+   * The core handed `storeStackRecord` a newer copy that changes a chain, the
+   * network, the TLD or the generation. It runs that copy from its next
+   * start, so build the runtime again to follow it.
    */
   restartRequired: boolean;
-  /**
-   * The stack restarted its chains in that newer copy: drop cached chain
-   * data, such as a light client's database, before the next start.
-   */
-  newGeneration: boolean;
   /** The last finished fetch. Not set before the first one. */
   lastRefresh?: {
     /**
@@ -138,7 +145,10 @@ export interface StackStatus {
      * `unreachable` and `refused`: the core keeps the copy it holds.
      */
     outcome: "current" | "unreachable" | "refused";
-    /** The rule a refused descriptor breaks. */
+    /**
+     * Why a fetch was `unreachable`, or the rule a `refused` descriptor
+     * breaks.
+     */
     reason?: string;
   };
 }
@@ -161,7 +171,10 @@ export interface StackCallbacks {
   stackChanged?(status: StackStatus): void;
   /**
    * Keep `record` and pass it back as {@link BundledStack.stored} at the next
-   * start. Each call replaces the record before it.
+   * start. Each call replaces the record before it. Throw or reject when the
+   * record could not be kept. Without this callback, or while it fails, the
+   * core never sets `restartRequired`: the next start could not read the
+   * newer copy.
    */
   storeStackRecord?(record: Uint8Array): void | Promise<void>;
 }
