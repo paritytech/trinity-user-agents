@@ -133,10 +133,10 @@ rust-toolchain.toml        pins every other cargo command in the repo to stable
   `runtime` feature, the host runtime. The protocol half builds without the
   runtime (`--no-default-features`), which is what codegen links and reads, so
   protocol modules never depend on runtime modules. The feature gates only the
-  runtime block in `lib.rs`. Serde and UniFFI derives on protocol types do not
-  depend on it (UniFFI is native-only), and methods on protocol types that need
-  the runtime live in runtime modules. Syscall traits live in the `platform`
-  module, host-side runtime types in the runtime modules. The whole
+  runtime block in `lib.rs`. Protocol types, their derives and their methods
+  do not depend on it (UniFFI derives are native-only); what they need lives on
+  the protocol side too. Syscall traits live in the `platform` module,
+  host-side runtime types in the runtime modules. The whole
   crate is one UniFFI namespace, `truapi`, so native bindings use protocol types
   directly. The published binaries keep their `truapi_server` names
   (`truapi_server.xcframework`, `dist/wasm/*/truapi_server*`).

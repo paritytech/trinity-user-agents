@@ -145,7 +145,7 @@ pub fn product_id_executable(
 /// The manifest discriminator and dotNS prefix for an executable kind.
 #[uniffi::export]
 pub fn executable_kind_label(kind: crate::platform::ExecutableKind) -> String {
-	kind.dotns_label().to_owned()
+	<&str>::from(kind).to_owned()
 }
 
 /// Resolve an executable identity to its owning product without losing nested labels.

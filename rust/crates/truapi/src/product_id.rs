@@ -6,7 +6,7 @@ use parity_scale_codec::{Decode, Encode};
 
 use crate::{
 	CallError,
-	dotns_name::{DOTNS_TLDS, has_dotns_tld, is_dns_label},
+	dotns_name::{DOTNS_TLDS, has_dotns_tld, is_dns_label, normalize_host},
 };
 
 /// Largest accepted product identifier, in bytes. Manifest lookups are cached
@@ -30,6 +30,9 @@ const LOCALHOST_PRODUCT_LABEL: &str = "localhost";
 
 /// The start of a development product identifier that names a port.
 const LOCALHOST_PORT_PREFIX: &str = "localhost:";
+
+/// Public share hosts append this suffix to a complete dotNS identity.
+pub const PRODUCT_SHARE_SUFFIX: &str = ".li";
 
 /// A product identifier in normalized form: trimmed, lowercased, and either a
 /// name dotNS can register or a localhost development identifier.
@@ -78,6 +81,28 @@ pub enum ProductIdError {
 		/// Normalized length, in bytes.
 		actual: usize,
 	},
+}
+
+/// Trusted kind of product executable attached to a TrUAPI connection.
+///
+/// Mirrors the executable kinds a product manifest declares. The variants are
+/// capability classes: a connection reaches an execution-gated service only
+/// when its kind matches exactly, so `App` and `Widget` carry the same
+/// capability and differ only in how the host presents them, and `Worker` is
+/// the only kind that may serve the Chat modality. Its `&'static str` form is
+/// the dotNS prefix of the kind's executable records.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum ExecutableKind {
+	/// Visible full-page entrypoint such as `app/index.html`.
+	#[default]
+	App,
+	/// Visible embedded surface such as a dashboard card.
+	Widget,
+	/// Headless executable the host runs while a modality holds a reference
+	/// to it; the only kind that may serve the Chat modality.
+	Worker,
 }
 
 /// A product-supplied id that does not parse is a malformed request, not a
@@ -218,6 +243,39 @@ impl ProductId {
 	/// is not.
 	pub fn is_game_product(&self) -> bool {
 		self.dotns_name() == Some(GAME_PRODUCT_LABEL)
+	}
+
+	/// Parse only a supported share host, without a URL or network lookup.
+	pub fn from_share_host(input: &str) -> Option<Self> {
+		let hostname = normalize_host(input);
+		let identifier = hostname.strip_suffix(PRODUCT_SHARE_SUFFIX)?.parse::<Self>().ok()?;
+		identifier.network_suffix()?;
+		Some(identifier)
+	}
+
+	/// The public share host on this identity's network, excluding local development.
+	pub fn to_share_host(&self) -> Option<String> {
+		self.network_suffix()?;
+		Some(format!("{self}{PRODUCT_SHARE_SUFFIX}"))
+	}
+
+	/// Name an executable without changing its product's nested namespace.
+	pub fn executable(&self, kind: ExecutableKind) -> Result<Self, ProductIdError> {
+		format!("{}.{self}", <&str>::from(kind)).parse()
+	}
+
+	/// Remove one executable prefix while keeping a complete, valid product name.
+	pub fn executable_owner(&self) -> Result<Self, ProductIdError> {
+		if let Some((prefix, owner)) = self.as_str().split_once('.') {
+			let is_executable =
+				[ExecutableKind::App, ExecutableKind::Widget, ExecutableKind::Worker]
+					.iter()
+					.any(|kind| <&str>::from(kind) == prefix);
+			if is_executable && owner.contains('.') {
+				return owner.parse();
+			}
+		}
+		Ok(self.clone())
 	}
 }
 

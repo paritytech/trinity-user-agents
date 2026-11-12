@@ -1,14 +1,14 @@
-//! dotns URL parsing, normalization, and classification, and the share-host
-//! and executable names of a [`ProductId`].
+//! dotns URL parsing, normalization, and classification.
 //!
 //! The Rust core owns the whole decision so every platform host sees the
 //! same categorization and the `navigate_to` callback only receives
 //! already-validated input.
 
-use crate::platform::{
-	ExecutableKind, ProductId, ProductIdError, has_dotns_tld, normalize_chat_identifier,
+use crate::{
+	dotns_name::normalize_host,
+	platform::{ProductId, has_dotns_tld, normalize_chat_identifier},
+	product_id::PRODUCT_SHARE_SUFFIX,
 };
-use unicode_normalization::UnicodeNormalization;
 use url::{Url, form_urlencoded};
 
 /// The app's own URL scheme, which its host routes such as `pair` and
@@ -17,9 +17,6 @@ pub const APP_SCHEME: &str = "polkadotapp";
 
 /// The internal URL scheme under which hosts serve product content.
 pub const PRODUCT_SCHEME: &str = "polkadot";
-
-/// Public share hosts append this suffix to a complete dotNS identity.
-pub const PRODUCT_SHARE_SUFFIX: &str = ".li";
 
 const HTTP_SCHEME: &str = "http";
 const HTTPS_SCHEME: &str = "https";
@@ -143,41 +140,6 @@ impl ProductLink {
 	}
 }
 
-impl ProductId {
-	/// Parse only a supported share host, without a URL or network lookup.
-	pub fn from_share_host(input: &str) -> Option<Self> {
-		let hostname = normalize_host(input);
-		let identifier = hostname.strip_suffix(PRODUCT_SHARE_SUFFIX)?.parse::<Self>().ok()?;
-		identifier.network_suffix()?;
-		Some(identifier)
-	}
-
-	/// The public share host on this identity's network, excluding local development.
-	pub fn to_share_host(&self) -> Option<String> {
-		self.network_suffix()?;
-		Some(format!("{self}{PRODUCT_SHARE_SUFFIX}"))
-	}
-
-	/// Name an executable without changing its product's nested namespace.
-	pub fn executable(&self, kind: ExecutableKind) -> Result<Self, ProductIdError> {
-		format!("{}.{self}", kind.dotns_label()).parse()
-	}
-
-	/// Remove one executable prefix while keeping a complete, valid product name.
-	pub fn executable_owner(&self) -> Result<Self, ProductIdError> {
-		if let Some((prefix, owner)) = self.as_str().split_once('.') {
-			let is_executable =
-				[ExecutableKind::App, ExecutableKind::Widget, ExecutableKind::Worker]
-					.iter()
-					.any(|kind| kind.dotns_label() == prefix);
-			if is_executable && owner.contains('.') {
-				return owner.parse();
-			}
-		}
-		Ok(self.clone())
-	}
-}
-
 /// Public share domains for the canonical dotNS networks.
 pub fn product_share_hosts() -> Vec<String> {
 	crate::dotns_name::DOTNS_TLDS
@@ -214,15 +176,6 @@ pub fn parse_navigate(input: &str) -> NavigateDecision {
 		Ok(url) => NavigateDecision::External { url },
 		Err(reason) => NavigateDecision::Reject { reason },
 	}
-}
-
-/// Canonical host form: case-folded and NFC-normalized (belt-and-suspenders;
-/// `url` already applies IDNA to parsed hosts), with a trailing root dot
-/// dropped so the absolute form `example.dot.` keys identically to
-/// `example.dot`.
-fn normalize_host(host: &str) -> String {
-	let normalized: String = host.nfc().collect::<String>().to_lowercase();
-	normalized.strip_suffix('.').unwrap_or(&normalized).to_string()
 }
 
 /// dotNS TLD check, applied to the [`normalize_host`] form so `Example.DOT`

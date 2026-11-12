@@ -29,7 +29,8 @@ pub mod mock;
 pub use crate::{
 	dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN, has_dotns_tld, is_dns_label},
 	product_id::{
-		PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError, REMOTE_PERMISSION_TRUSTED_LABELS,
+		ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError,
+		REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
 	stack::{Stack, StackChains, StackError},
 };
@@ -118,37 +119,6 @@ pub struct ProductContext {
 	pub product_id: ProductId,
 	/// Trusted kind of executable attached to this connection by the host.
 	pub execution_kind: ExecutableKind,
-}
-
-/// Trusted kind of product executable attached to a TrUAPI connection.
-///
-/// Mirrors the executable kinds a product manifest declares. The variants are
-/// capability classes: a connection reaches an execution-gated service only
-/// when its kind matches exactly, so `App` and `Widget` carry the same
-/// capability and differ only in how the host presents them, and `Worker` is
-/// the only kind that may serve the Chat modality.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum ExecutableKind {
-	/// Visible full-page entrypoint such as `app/index.html`.
-	#[default]
-	App,
-	/// Visible embedded surface such as a dashboard card.
-	Widget,
-	/// Headless executable the host runs while a modality holds a reference
-	/// to it; the only kind that may serve the Chat modality.
-	Worker,
-}
-
-impl ExecutableKind {
-	/// The dotNS prefix used for this kind's executable records.
-	pub fn dotns_label(self) -> &'static str {
-		match self {
-			Self::App => "app",
-			Self::Widget => "widget",
-			Self::Worker => "worker",
-		}
-	}
 }
 
 /// Host metadata.

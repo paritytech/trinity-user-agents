@@ -41,7 +41,6 @@ runtime = [
     "dep:scale-info",
     "dep:serde_json",
     "dep:thiserror",
-    "dep:unicode-normalization",
     "dep:url",
     "dep:nanoid",
     "dep:blake2b_simd",
@@ -102,6 +101,7 @@ hex = { workspace = true }
 # only with codec's own serde support.
 parity-scale-codec = { workspace = true, features = ["derive", "serde"] }
 serde = { workspace = true, features = ["derive"] }
+unicode-normalization = { workspace = true }
 
 truapi-provider = { path = "../truapi-provider", default-features = false, optional = true }
 trinity-stack = { path = "../trinity-stack", optional = true }
@@ -113,7 +113,6 @@ frame-metadata = { workspace = true, features = ["std", "current", "decode"], op
 scale-info = { workspace = true, features = ["decode", "derive"], optional = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
-unicode-normalization = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }

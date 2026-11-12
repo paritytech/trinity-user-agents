@@ -72,30 +72,6 @@ fn share_hosts_use_the_canonical_network_suffixes() {
 	assert_eq!(product_share_hosts(), ["dot.li", "paseo.li", "testnet.li"]);
 }
 
-#[test]
-fn share_hosts_require_supported_dotns_identities() {
-	assert_eq!(
-		ProductId::from_share_host("BROWSE.TESTNET.LI"),
-		Some(ProductId::for_test("browse.testnet"))
-	);
-	for input in ["browse.test.li", "browse.dot", "https://browse.dot.li", "localhost.li"] {
-		assert_eq!(ProductId::from_share_host(input), None, "{input}");
-	}
-}
-
-#[test]
-fn share_hosts_preserve_the_product_network() {
-	for (input, expected) in [
-		("browse.dot", Some("browse.dot.li")),
-		("browse.paseo", Some("browse.paseo.li")),
-		("widget.browse.testnet", Some("widget.browse.testnet.li")),
-		("localhost", None),
-		("localhost:3000", None),
-	] {
-		assert_eq!(ProductId::for_test(input).to_share_host().as_deref(), expected);
-	}
-}
-
 enum Expected {
 	Decision(NavigateDecision),
 	Reject,
@@ -592,42 +568,4 @@ fn pocket_canonical_url_reencodes_the_card_id() {
 			other => panic!("expected a Pocket decision for {input}, got {other:?}"),
 		}
 	}
-}
-
-#[test]
-fn executable_owners_preserve_nested_product_names() {
-	let owner = ProductId::for_test("arena.coinflip.paseo");
-	for (kind, expected) in [
-		(ExecutableKind::App, "app.arena.coinflip.paseo"),
-		(ExecutableKind::Widget, "widget.arena.coinflip.paseo"),
-		(ExecutableKind::Worker, "worker.arena.coinflip.paseo"),
-	] {
-		let executable = owner.executable(kind).unwrap();
-		assert_eq!(executable, ProductId::for_test(expected));
-		assert_eq!(executable.executable_owner().unwrap(), owner);
-	}
-}
-
-#[test]
-fn only_an_executable_prefix_with_a_complete_owner_is_removed() {
-	for (input, expected) in [
-		("app.dot", "app.dot"),
-		("arena.coinflip.dot", "arena.coinflip.dot"),
-		("app.worker.coinflip.dot", "worker.coinflip.dot"),
-		("localhost:3000", "localhost:3000"),
-	] {
-		assert_eq!(
-			ProductId::for_test(input).executable_owner().unwrap(),
-			ProductId::for_test(expected)
-		);
-	}
-}
-
-#[test]
-fn executable_names_cannot_create_invalid_product_ids() {
-	assert!(ProductId::for_test("app.localhost.dot").executable_owner().is_err());
-	assert!(ProductId::for_test("localhost:3000").executable(ExecutableKind::App).is_err());
-	let label = "a".repeat(63);
-	let longest = ProductId::for_test(&format!("{label}.{label}.{label}.{}.dot", "b".repeat(60)));
-	assert!(longest.executable(ExecutableKind::Worker).is_err());
 }
