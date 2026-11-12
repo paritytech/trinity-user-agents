@@ -350,9 +350,10 @@ impl ChainProvider {
 	/// state.
 	///
 	/// `link` and `descriptor` are the stack's link and its descriptor as
-	/// served. `light_specs` are the specs fetched from the URLs
-	/// `stack_light_specs` lists. A chain left out is unknown until
-	/// [`add_light_spec`](Self::add_light_spec) supplies it.
+	/// served. The descriptor's `validUntil`, `expiresAt` and `sequence` are
+	/// not read, so pass a copy a stack reader accepted. `light_specs` are the
+	/// specs fetched from the URLs `stack_light_specs` lists. A chain left out
+	/// is unknown until [`add_light_spec`](Self::add_light_spec) supplies it.
 	///
 	/// Fails with `Stack` when the link or the descriptor is refused, and with
 	/// `LightSpec` when a spec is not the one the descriptor names.

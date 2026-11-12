@@ -417,14 +417,16 @@ impl EmbeddedChainProvider {
 	}
 
 	/// Read what this provider stored for `genesis_hash`. What another stack
-	/// or generation stored reads as nothing.
+	/// or generation stored reads as nothing, and so does what any stack
+	/// stored on a provider without one.
 	async fn load_stored(
 		&self,
 		store: &dyn crate::storage::StorageClient,
 		genesis_hash: [u8; 32],
 	) -> Result<Option<String>, ProviderError> {
 		let Some(stack) = &self.stack else {
-			return Ok(store.load(genesis_hash, None).await?);
+			let stored = store.load(genesis_hash, None).await?;
+			return Ok(stored.filter(|stored| !crate::storage::carries_header(stored)));
 		};
 		let stored = store.load(genesis_hash, Some(stack.id().to_owned())).await?;
 		Ok(stored.and_then(|stored| stack.database_header().unseal(stored)))

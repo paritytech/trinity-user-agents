@@ -617,3 +617,33 @@ fn a_registered_chain_has_only_the_relay_it_was_registered_with() {
 
 	assert_eq!([from_stack.relay_of(people), registered.relay_of(people)], [Some(relay), None]);
 }
+
+/// A store that ignores the stack answers a provider without one with what a
+/// stack's provider stored. The light client would discard it, so it must not
+/// count as stored state either, or its runtime code would keep this
+/// provider's own snapshot out.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_provider_without_a_stack_does_not_read_a_stacks_blob() {
+	use futures::executor::block_on;
+
+	const GENESIS: [u8; 32] = [11; 32];
+	const WITH_CODE: &str = r#"{"chain":{"a":1},"runtimeCode":"AAAA"}"#;
+	const WITHOUT_CODE: &str = r#"{"chain":{"a":1}}"#;
+	let of_a_stack = crate::storage::Header { stack: "stack", generation: "one" }.seal(WITH_CODE);
+	let client = std::sync::Arc::new(MemoryStorageClient::default());
+	client.put(GENESIS, &of_a_stack);
+	let provider = EmbeddedChainProvider::builder()
+		.chain(GENESIS, ChainSource::light_client("{}").build())
+		.storage(client.clone())
+		.build();
+
+	let loaded = block_on(provider.load_database(GENESIS)).expect("the client answers");
+	let replaced = block_on(provider.store_blob(GENESIS, WITHOUT_CODE.to_owned()))
+		.expect("the client answers");
+
+	assert_eq!(
+		(loaded, replaced, client.blob(GENESIS)),
+		(false, true, Some(WITHOUT_CODE.to_owned()))
+	);
+}

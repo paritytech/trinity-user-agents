@@ -57,3 +57,13 @@ fn a_blob_without_a_header_is_not_opened() {
 	let header = Header { stack: "stack", generation: "one" };
 	assert_eq!(header.unseal(r#"{"chain":{"a":1}}"#.to_owned()), None);
 }
+
+/// A provider without a stack tells a stack's blob from its own by the header,
+/// and its own blob is the light client's database as it is.
+#[test]
+fn only_a_sealed_blob_carries_a_header() {
+	let blob = r#"{"chain":{"a":1}}"#;
+	let sealed = Header { stack: "stack", generation: "one" }.seal(blob);
+
+	assert_eq!([blob, sealed.as_str(), "not json\n{}"].map(carries_header), [false, true, false]);
+}

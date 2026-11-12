@@ -12,8 +12,9 @@
 //! A blob is stored per stack and per chain, because a fork shares its
 //! source's genesis hashes. A stack's provider starts what it stores with a
 //! line naming the stack and its `generation`, and reads back only its own,
-//! whatever the store does with the stack it is handed. The next save
-//! replaces what it did not read.
+//! whatever the store does with the stack it is handed. A provider without a
+//! stack reads nothing that starts with such a line. The next save replaces
+//! what was not read.
 //!
 //! Reads and writes are explicit, through
 //! [`load_database`](crate::EmbeddedChainProvider::load_database) and
@@ -117,6 +118,15 @@ impl Header<'_> {
 		stored.drain(..=end);
 		Some(stored)
 	}
+}
+
+/// Whether `stored` starts with a [`Header`], as only what a stack's provider
+/// stored does.
+pub fn carries_header(stored: &str) -> bool {
+	stored.split_once('\n').is_some_and(|(first, _)| {
+		serde_json::from_str::<serde_json::Value>(first)
+			.is_ok_and(|named| named.get("stack").is_some())
+	})
 }
 
 /// Whether `blob` carries the runtime code.
