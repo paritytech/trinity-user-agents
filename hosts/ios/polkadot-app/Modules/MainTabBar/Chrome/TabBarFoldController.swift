@@ -15,7 +15,6 @@ final class TabBarFoldController {
     private let outputs: Outputs
 
     private(set) var state: TabBarVisibilityState = .shown
-    private(set) var isTabRoot = true
     /// Set together with the offset, so it can lead `state` during an interactive transition.
     private(set) var isTucked = false
 
@@ -71,7 +70,6 @@ final class TabBarFoldController {
         if context.screen !== navigationScreen {
             userOverride = state.carriedOverride
         }
-        isTabRoot = context.isTabRoot
         foldDerived = context.foldDerived
         navigationScreen = context.screen
     }

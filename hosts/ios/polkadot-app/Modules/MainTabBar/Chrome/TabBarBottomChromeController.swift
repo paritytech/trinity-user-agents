@@ -150,18 +150,18 @@ final class TabBarBottomChromeController: UIViewController {
     /// so its tip anchor is handed down rather than reached for.
     var statusStripAnchorProvider: (() -> (any UIPopoverPresentationControllerSourceItem)?)?
 
-    /// Height the bar occupies at the bottom edge once it has settled. Folding and panel
-    /// animations move the chrome without changing it, so the host can lay out against it.
-    var restingBarHeight: CGFloat {
-        guard foldController.isTabRoot else {
-            return view.safeAreaInsets.bottom
-        }
-        return DSTabBarStyle.restingHeight(bottomSafeAreaInset: view.safeAreaInsets.bottom)
+    /// Height the bar occupies at the bottom edge once it has settled in the state `context` resolves to. Drags and
+    /// panel animations move the chrome without changing it; it changes when the Docklet settles on a state.
+    func restingBarHeight(for context: TabBarChromeContext) -> CGFloat {
+        view.safeAreaInsets.bottom + bottomClearance(for: context)
     }
 
-    /// The part of `restingBarHeight` the safe area does not already cover.
-    var restingBottomClearance: CGFloat {
-        max(0, restingBarHeight - view.safeAreaInsets.bottom)
+    /// The Clearance the bar publishes for `context`, which is zero unless the bar resolves to shown.
+    func bottomClearance(for context: TabBarChromeContext) -> CGFloat {
+        TabBarVisibilityPolicy.bottomClearance(
+            for: resolvedState(for: context),
+            bottomSafeAreaInset: view.safeAreaInsets.bottom
+        )
     }
 
     deinit {

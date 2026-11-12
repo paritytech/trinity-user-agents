@@ -14,7 +14,10 @@ final class MainTabBarViewController: UIViewController {
     let chromeController = TabBarBottomChromeController()
 
     lazy var widgetController = TabBarWidgetController { [weak self] in
-        self?.updateWidgetLayout()
+        guard let self else {
+            return
+        }
+        updateWidgetLayout(for: chromeContext(for: container.selectedController))
     }
 
     private lazy var statusBarHost = UIHostingController(rootView: ChainConnectionStatusBarView(models: []))
@@ -262,7 +265,6 @@ private extension MainTabBarViewController {
             return TabBarChromeContext(
                 tabController: controller,
                 contentController: controller,
-                isTabRoot: true,
                 foldDerived: .none,
                 screen: controller
             )

@@ -102,8 +102,6 @@ final class CollectiblesViewController: UIViewController {
     }
 }
 
-extension CollectiblesViewController: TabBarRootStandIn {}
-
 extension CollectiblesViewController: PocketItemScreen {
     var pocketItem: PocketItem {
         .collectibles

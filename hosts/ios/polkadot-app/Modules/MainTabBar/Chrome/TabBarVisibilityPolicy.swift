@@ -1,4 +1,5 @@
 import Foundation
+import PolkadotUI
 
 enum TabBarVisibilityState: Equatable {
     case shown
@@ -31,6 +32,15 @@ enum TabBarVisibilityPolicy {
         case .none:
             return derived.defaultState
         }
+    }
+
+    /// The Clearance a bar in `state` publishes for its content. A shown bar takes its resting height above the
+    /// bottom safe area; a tucked or hidden bar takes none.
+    static func bottomClearance(for state: TabBarVisibilityState, bottomSafeAreaInset: CGFloat) -> CGFloat {
+        guard state == .shown else {
+            return 0
+        }
+        return DSTabBarStyle.restingHeight(bottomSafeAreaInset: bottomSafeAreaInset) - bottomSafeAreaInset
     }
 }
 

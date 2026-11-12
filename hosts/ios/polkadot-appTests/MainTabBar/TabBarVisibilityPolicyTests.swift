@@ -1,3 +1,5 @@
+import Foundation
+import PolkadotUI
 import Testing
 @testable import polkadot_app
 
@@ -71,5 +73,22 @@ struct TabBarVisibilityPolicyTests {
         #expect(!TabBarVisibilityState.shown.isOffScreenSwap(to: .hidden))
         #expect(!TabBarVisibilityState.hidden.isOffScreenSwap(to: .shown))
         #expect(!TabBarVisibilityState.shown.isOffScreenSwap(to: .tucked))
+    }
+
+    @Test("A shown bar publishes its resting height above the safe area as clearance")
+    func shownClearanceIsRestingHeightAboveSafeArea() {
+        let clearance = TabBarVisibilityPolicy.bottomClearance(for: .shown, bottomSafeAreaInset: 34)
+        let expected: CGFloat = DSTabBarStyle.restingHeight(bottomSafeAreaInset: 34) - 34
+        #expect(clearance == expected)
+    }
+
+    @Test("A tucked bar publishes no clearance")
+    func tuckedClearanceIsZero() {
+        #expect(TabBarVisibilityPolicy.bottomClearance(for: .tucked, bottomSafeAreaInset: 34) == 0)
+    }
+
+    @Test("A hidden bar publishes no clearance")
+    func hiddenClearanceIsZero() {
+        #expect(TabBarVisibilityPolicy.bottomClearance(for: .hidden, bottomSafeAreaInset: 34) == 0)
     }
 }

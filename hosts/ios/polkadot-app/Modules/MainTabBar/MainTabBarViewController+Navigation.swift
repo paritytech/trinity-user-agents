@@ -11,7 +11,6 @@ extension MainTabBarViewController {
         TabBarChromeContext(
             tabController: tabController,
             contentController: target,
-            isTabRoot: TabBarHiddenPolicy.isTabRoot(in: stack, showing: target),
             foldDerived: TabBarHiddenPolicy.deriveFoldState(in: stack, showing: target),
             screen: target
         )
