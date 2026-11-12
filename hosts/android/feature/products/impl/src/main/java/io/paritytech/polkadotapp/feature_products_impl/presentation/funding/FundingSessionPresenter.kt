@@ -42,7 +42,7 @@ class FundingSessionPresenter @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.main)
 
     /** Serves the service's events until the caller stops collecting; events wait while nothing does. */
-    suspend fun present() {
+    override suspend fun present() {
         service.events.collect(::on)
     }
 

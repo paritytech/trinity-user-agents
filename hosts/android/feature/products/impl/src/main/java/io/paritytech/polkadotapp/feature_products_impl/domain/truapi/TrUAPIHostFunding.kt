@@ -1,21 +1,21 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.paritytech.polkadotapp.chains.network.binding.Balance
-import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivity
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityItem
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEntry
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.history.toActivityStatus
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.onStart
-import uniffi.truapi.FundingBookEntry
+import kotlinx.coroutines.flow.map
 import uniffi.truapi.FundingFailure
+import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingRail
+import uniffi.truapi.FundingSession
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import uniffi.truapi.FundingStatus
@@ -26,34 +26,40 @@ import uniffi.truapi.FundingDirection as CoreFundingDirection
 
 /** The host's funding entry points over the core, which holds the sessions and their history. */
 class TrUAPIHostFunding @Inject constructor(
-    private val runtime: FundingRuntime,
+    private val service: FundingService,
     private val sessionScreens: FundingSessionScreens,
 ) : HostFunding {
     override suspend fun openFunding(direction: FundingDirection, amount: Balance?): Result<String?> =
-        runtime.openFunding(direction.toCore(), amount?.toU128())
+        service.open(direction.toCore(), amount?.toU128())
 
-    override fun observeActivity(): Flow<FundingActivity> =
-        combine(runtime.sessions, runtime.history) { sessions, history -> activityOf(sessions.values, history) }
-            .onStart { runtime.start().logFailure("Failed to start the core for funding activity") }
+    override fun observeActivity(): Flow<FundingActivity> = service.entries().map(::activityOf)
 
     override suspend fun acknowledgeShown(intents: List<String>) {
-        intents.forEach { runtime.acknowledge(it).logFailure("Funding acknowledgement failed") }
+        intents.forEach { service.acknowledge(it) }
     }
 
     override suspend fun showSession(intent: String) = sessionScreens.show(intent)
+
+    override suspend fun presentScreens() = sessionScreens.present()
 }
 
 /** In flight while its status says so, newest opened first; history leaves those out, newest ended first. */
-private fun activityOf(entries: Collection<FundingBookEntry>, history: List<FundingSessionSummary>): FundingActivity {
-    val inFlight = entries.filter { fundingStatusInFlight(it.progress.status) }.sortedByDescending { it.session.openedAtMs }
+private fun activityOf(entries: List<FundingEntry>): FundingActivity {
+    val inFlight = entries.mapNotNull { entry ->
+        val session = entry.session ?: return@mapNotNull null
+        val progress = entry.progress?.takeIf { fundingStatusInFlight(it.status) } ?: return@mapNotNull null
+        InFlight(session, progress)
+    }.sortedByDescending { it.session.openedAtMs }
     val flying = inFlight.mapTo(mutableSetOf()) { it.session.intent }
     return FundingActivity(
         inFlight = inFlight.map { it.toItem() },
-        history = history.filter { it.intent !in flying }.sortedByDescending { it.ended.atMs }.map { it.toItem() },
+        history = entries.mapNotNull { it.summary }.filter { it.intent !in flying }.sortedByDescending { it.ended.atMs }.map { it.toItem() },
     )
 }
 
-private fun FundingBookEntry.toItem(): FundingActivityItem {
+private class InFlight(val session: FundingSession, val progress: FundingProgress)
+
+private fun InFlight.toItem(): FundingActivityItem {
     val quoted = session.choice?.quote?.let { if (session.direction == CoreFundingDirection.IN) it.receiveAmount else it.sendAmount }
     return FundingActivityItem(
         id = session.intent,

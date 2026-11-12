@@ -5,7 +5,7 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingRuntime
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
 import org.junit.Test
@@ -16,8 +16,8 @@ class FundingResumeTest {
     @get:Rule
     val tempFolder = TemporaryFolder()
 
-    private val runtime = mockk<FundingRuntime> {
-        coEvery { start() } returns Result.success(Unit)
+    private val service = mockk<FundingService> {
+        coEvery { resume() } returns Result.success(Unit)
     }
     private val context = mockk<Context> {
         every { noBackupFilesDir } answers { tempFolder.root }
@@ -29,7 +29,7 @@ class FundingResumeTest {
 
         initialize()
 
-        coVerify(exactly = 1) { runtime.start() }
+        coVerify(exactly = 1) { service.resume() }
     }
 
     // Nothing to resume, so the core waits for a screen or product to start it.
@@ -37,10 +37,10 @@ class FundingResumeTest {
     fun `leaves the core alone at launch without the marker`() = runTest {
         initialize()
 
-        coVerify(exactly = 0) { runtime.start() }
+        coVerify(exactly = 0) { service.resume() }
     }
 
-    private suspend fun initialize() = FundingResume(runtime, context).resumeUnfinished()
+    private suspend fun initialize() = FundingResume(service, context).resumeUnfinished()
 
     private companion object {
         // The core's name for the marker, which only the core writes.

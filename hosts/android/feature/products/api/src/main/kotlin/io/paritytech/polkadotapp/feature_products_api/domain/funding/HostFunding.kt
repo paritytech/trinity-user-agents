@@ -34,4 +34,11 @@ interface HostFunding {
      * provider still waits on one, and an ended one on its detail screen.
      */
     suspend fun showSession(intent: String)
+
+    /**
+     * Shows the funding screens the core asks for, a session's sheet and a provider's screen, over whatever is on
+     * screen, until the caller stops. The app's main screen runs it while it is started; what the core asks meanwhile
+     * waits.
+     */
+    suspend fun presentScreens()
 }
