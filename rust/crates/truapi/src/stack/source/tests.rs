@@ -2,11 +2,10 @@ use trinity_stack::{Descriptor, Refresh, Served, StackReader};
 
 use super::*;
 use crate::{
-	stack::{
-		fixtures::{PEOPLE, WIPED_PEOPLE},
-		signed_pointer,
+	stack::signed_pointer,
+	test_support::{
+		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, published_test_descriptor, sign_test_descriptor,
 	},
-	test_support::{published_test_descriptor, sign_test_descriptor},
 };
 
 const START: i64 = 1_800_000_000;
@@ -51,10 +50,13 @@ fn status(
 /// to start, and the first fetch is only asked for.
 #[test]
 fn the_bundled_copy_starts_the_stack_and_a_fetch_is_due() {
-	let bundled = published_test_descriptor(1, "first", PEOPLE);
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
 	let mut source = load(&bundled, None);
 
-	assert_eq!((source.stack().chains().people, source.status()), (PEOPLE, status(&bundled, None)));
+	assert_eq!(
+		(source.stack().chains().people, source.status()),
+		(TEST_STACK_PEOPLE, status(&bundled, None))
+	);
 	let request = source.due_fetch(START).expect("a build copy is due at once");
 	assert_eq!(
 		(request.url.as_str(), request.if_none_match),
@@ -68,8 +70,8 @@ fn the_bundled_copy_starts_the_stack_and_a_fetch_is_due() {
 /// without a restart.
 #[test]
 fn a_newer_copy_on_the_same_chains_is_used_at_once() {
-	let mut source = load(&published_test_descriptor(1, "first", PEOPLE), None);
-	let newer = published_test_descriptor(2, "first", PEOPLE);
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+	let newer = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
 
 	let record = serve(&mut source, &newer, START);
 
@@ -82,16 +84,17 @@ fn a_newer_copy_on_the_same_chains_is_used_at_once() {
 /// restart, and starts from the new copy next time.
 #[test]
 fn a_restarted_stack_is_stored_and_runs_from_the_next_start() {
-	let bundled = published_test_descriptor(1, "first", PEOPLE);
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
 	let mut source = load(&bundled, None);
 
-	let record = serve(&mut source, &published_test_descriptor(2, "second", WIPED_PEOPLE), START)
-		.expect("the newer copy is stored");
+	let record =
+		serve(&mut source, &published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE), START)
+			.expect("the newer copy is stored");
 
 	assert_eq!(
 		(source.stack().chains().people, source.status()),
 		(
-			PEOPLE,
+			TEST_STACK_PEOPLE,
 			StackStatus {
 				restart_required: true,
 				new_generation: true,
@@ -99,14 +102,14 @@ fn a_restarted_stack_is_stored_and_runs_from_the_next_start() {
 			}
 		)
 	);
-	assert_eq!(load(&bundled, Some(&record)).stack().chains().people, WIPED_PEOPLE);
+	assert_eq!(load(&bundled, Some(&record)).stack().chains().people, TEST_STACK_WIPED_PEOPLE);
 }
 
 /// A failed fetch only delays a change. The core keeps the copy it has and
 /// the host can show that the stack is unreachable.
 #[test]
 fn an_unreachable_server_keeps_the_copy_in_use() {
-	let bundled = published_test_descriptor(1, "first", PEOPLE);
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
 	let mut source = load(&bundled, None);
 
 	let record = source.fetched(Served::Unreachable, START);
@@ -122,9 +125,9 @@ fn an_unreachable_server_keeps_the_copy_in_use() {
 /// refused like any other bad copy.
 #[test]
 fn a_copy_the_core_cannot_run_is_refused_and_not_stored() {
-	let bundled = published_test_descriptor(1, "first", PEOPLE);
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
 	let mut source = load(&bundled, None);
-	let mut without_bulletin = published_test_descriptor(2, "first", PEOPLE);
+	let mut without_bulletin = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
 	without_bulletin["chains"]
 		.as_array_mut()
 		.expect("chains is an array")
@@ -150,10 +153,11 @@ fn a_copy_the_core_cannot_run_is_refused_and_not_stored() {
 /// must not take the stack back to chains that no longer exist.
 #[test]
 fn an_older_copy_is_refused() {
-	let bundled = published_test_descriptor(2, "first", PEOPLE);
+	let bundled = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
 	let mut source = load(&bundled, None);
 
-	let record = serve(&mut source, &published_test_descriptor(1, "first", WIPED_PEOPLE), START);
+	let record =
+		serve(&mut source, &published_test_descriptor(1, "first", TEST_STACK_WIPED_PEOPLE), START);
 
 	assert_eq!(
 		(record, source.status()),
@@ -168,10 +172,10 @@ fn an_older_copy_is_refused() {
 /// run. The bundled copy still starts the host.
 #[test]
 fn a_stored_copy_the_core_cannot_run_is_ignored() {
-	let bundled = published_test_descriptor(1, "first", PEOPLE);
+	let bundled = published_test_descriptor(1, "first", TEST_STACK_PEOPLE);
 	let (link, _) = sign_test_descriptor(&bundled);
 	let pointer = signed_pointer(&link).expect("test link carries a key");
-	let mut on_dot = published_test_descriptor(2, "first", PEOPLE);
+	let mut on_dot = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
 	on_dot["tld"] = "dot".into();
 	let mut reader = StackReader::new(Refresh::Never);
 	let record = reader
@@ -190,9 +194,9 @@ fn a_stored_copy_the_core_cannot_run_is_ignored() {
 /// host can still ask for one sooner.
 #[test]
 fn a_fetch_is_due_an_hour_after_the_last_one() {
-	let mut source = load(&published_test_descriptor(1, "first", PEOPLE), None);
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
 	source.due_fetch(START).expect("a build copy is due at once");
-	serve(&mut source, &published_test_descriptor(2, "first", PEOPLE), START);
+	serve(&mut source, &published_test_descriptor(2, "first", TEST_STACK_PEOPLE), START);
 
 	assert_eq!(source.due_fetch(START + 3599), None);
 	assert!(source.forced_fetch(START + 3599).is_some(), "a host may ask sooner");
@@ -205,11 +209,11 @@ fn a_fetch_is_due_an_hour_after_the_last_one() {
 /// early would make it spin, and one that came late would delay a wipe.
 #[test]
 fn the_wait_for_the_next_fetch_counts_down_to_the_hour() {
-	let mut source = load(&published_test_descriptor(1, "first", PEOPLE), None);
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
 	let before_first_fetch = source.next_fetch_in(START);
 	source.due_fetch(START).expect("a build copy is due at once");
 	let while_fetching = source.next_fetch_in(START);
-	serve(&mut source, &published_test_descriptor(2, "first", PEOPLE), START);
+	serve(&mut source, &published_test_descriptor(2, "first", TEST_STACK_PEOPLE), START);
 
 	assert_eq!(
 		[
@@ -226,8 +230,8 @@ fn the_wait_for_the_next_fetch_counts_down_to_the_hour() {
 /// it can show the stack as stale or shut down.
 #[test]
 fn a_stale_or_expired_copy_is_reported() {
-	let mut source = load(&published_test_descriptor(1, "first", PEOPLE), None);
-	let mut newer = published_test_descriptor(2, "first", PEOPLE);
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+	let mut newer = published_test_descriptor(2, "first", TEST_STACK_PEOPLE);
 	newer["validUntil"] = (START - 10).into();
 	newer["expiresAt"] = (START + 10).into();
 

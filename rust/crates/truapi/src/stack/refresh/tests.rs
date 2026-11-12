@@ -10,11 +10,10 @@ use truapi::latest::GenericError;
 
 use super::*;
 use crate::{
-	stack::{
-		StackRefreshOutcome,
-		fixtures::{PEOPLE, WIPED_PEOPLE},
+	stack::StackRefreshOutcome,
+	test_support::{
+		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, published_test_descriptor, sign_test_descriptor,
 	},
-	test_support::{published_test_descriptor, sign_test_descriptor},
 	time::ManualTimer,
 };
 
@@ -100,7 +99,8 @@ impl Started {
 }
 
 fn load(records: Arc<MemoryRecords>, timer: Arc<ManualTimer>) -> StackRefresh {
-	let (link, bundled) = sign_test_descriptor(&published_test_descriptor(1, "first", PEOPLE));
+	let (link, bundled) =
+		sign_test_descriptor(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE));
 	StackRefresh::load(&link, &bundled, false, Box::new(records), timer)
 		.expect("bundled copy is valid")
 }
@@ -134,7 +134,7 @@ fn an_offline_host_starts_from_the_bundled_copy() {
 
 	assert_eq!(
 		(started.refresh.stack().chains().people, at_start.last_refresh, after_fetch.last_refresh),
-		(PEOPLE, None, Some(StackRefreshOutcome::Unreachable))
+		(TEST_STACK_PEOPLE, None, Some(StackRefreshOutcome::Unreachable))
 	);
 }
 
@@ -146,7 +146,7 @@ fn a_newer_sequence_is_reported_and_starts_the_next_runtime() {
 	let records = Arc::<MemoryRecords>::default();
 	let started = start(
 		records.clone(),
-		vec![published(&published_test_descriptor(2, "second", WIPED_PEOPLE))],
+		vec![published(&published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE))],
 	);
 
 	let _at_start = started.next_status();
@@ -159,7 +159,7 @@ fn a_newer_sequence_is_reported_and_starts_the_next_runtime() {
 			after_fetch.new_generation,
 			load(records, Arc::default()).stack().chains().people,
 		),
-		(PEOPLE, true, true, WIPED_PEOPLE)
+		(TEST_STACK_PEOPLE, true, true, TEST_STACK_WIPED_PEOPLE)
 	);
 }
 
@@ -169,7 +169,10 @@ fn a_newer_sequence_is_reported_and_starts_the_next_runtime() {
 fn a_server_that_comes_back_is_followed() {
 	let started = start(
 		Arc::default(),
-		vec![unreachable(), published(&published_test_descriptor(2, "second", WIPED_PEOPLE))],
+		vec![
+			unreachable(),
+			published(&published_test_descriptor(2, "second", TEST_STACK_WIPED_PEOPLE)),
+		],
 	);
 	let _at_start = started.next_status();
 	let while_down = started.next_status();
