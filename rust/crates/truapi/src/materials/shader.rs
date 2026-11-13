@@ -144,7 +144,7 @@ pub fn material_shader(
 	float_filterable: bool,
 ) -> Result<MaterialShader, MaterialFailure> {
 	// The compiler joins a backslash-ended line to the next before reading
-	// anything, and part 2's rules hold for the joined body.
+	// anything, and the format's body rules hold for the joined body.
 	let body = &body.replace("\\\n", "");
 	let fallback = !float_filterable;
 	let typed = typed_pass(params, body).ok_or(MaterialFailure::Unsupported)?;
