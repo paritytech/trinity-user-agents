@@ -2057,8 +2057,8 @@ Deliberately unavailable methods:
 - the product-initiated `Renderer/action_subscribe`, because
   `renderer_access_for` grants product Renderer access only to a `Worker`
   execution and these reports run the CLI as `App`; the host-initiated
-  `Renderer` render subscription is also unused because the CLI draws no
-  product-rendered bodies;
+  `Renderer` render subscription opens only on a signing host serving Pocket,
+  which these reports do not run;
 - the product-initiated `Renderer/failure_subscribe`, which reports only on the
   Pocket cards a `Worker` execution draws, so these reports never hear from it;
 - all nine Coin Payment methods, which answer `CallError::Unsupported`; and

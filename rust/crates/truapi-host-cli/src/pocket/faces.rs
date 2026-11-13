@@ -9,7 +9,7 @@ use truapi::{
 	FrameSink, MaterialPlan, NodePlan, PlanStream, ProductRuntime, ProductRuntimeControl,
 	ShaderLanguage,
 	latest::{ProductRendererRenderRequest, RenderContext},
-	platform::{ExecutableKind, ProductContext},
+	platform::ProductContext,
 };
 
 use super::CliPocketHost;
@@ -32,10 +32,8 @@ impl PocketFaces {
 impl ProductRuntimeFactory for PocketFaces {
 	fn product_runtime(&self, product: ProductContext, sink: Arc<dyn FrameSink>) -> ProductRuntime {
 		let runtime = self.inner.product_runtime(product.clone(), sink);
-		if product.execution_kind == ExecutableKind::Worker {
-			for card_id in self.pocket.cards(&product) {
-				tokio::spawn(follow(runtime.control(), card_id, self.pocket.clone()));
-			}
+		for card_id in self.pocket.cards(&product) {
+			tokio::spawn(follow(runtime.control(), card_id, self.pocket.clone()));
 		}
 		runtime
 	}
@@ -50,8 +48,12 @@ impl ProductRuntimeFactory for PocketFaces {
 async fn follow(control: ProductRuntimeControl, card_id: String, pocket: Arc<CliPocketHost>) {
 	let context = RenderContext::PocketCard { card_id: card_id.clone() };
 	let request = ProductRendererRenderRequest { context: context.clone(), payload: Vec::new() };
-	let Ok(mut faces) = control.render(request) else {
-		return;
+	let mut faces = match control.render(request) {
+		Ok(faces) => faces,
+		Err(error) => {
+			tracing::warn!(%error, card_id, "the card was not rendered");
+			return;
+		},
 	};
 	let mut plans: Option<PlanStream> = None;
 	loop {
@@ -60,10 +62,13 @@ async fn follow(control: ProductRuntimeControl, card_id: String, pocket: Arc<Cli
 				let Some(Ok(face)) = face else {
 					return;
 				};
-				let Ok(plan) = control.material_plan(&face, &context, ShaderLanguage::GlslEs, false) else {
-					return;
-				};
-				plans = Some(plan);
+				match control.material_plan(&face, &context, ShaderLanguage::GlslEs, false) {
+					Ok(plan) => plans = Some(plan),
+					Err(error) => {
+						tracing::warn!(%error, card_id, "the face was not planned");
+						return;
+					},
+				}
 			},
 			Some(plan) = next_plan(&mut plans) => pocket.record_plan(&card_id, &plan),
 		}

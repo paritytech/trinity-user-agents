@@ -1462,11 +1462,12 @@ async fn run_signing_host(
 		terminal_ui::output_event(SystemEvent::BridgeReady { url });
 	}
 	report_debugger(debugger.as_ref());
-	let runtime_factory: Arc<dyn frame_server::ProductRuntimeFactory> = match &session.pocket {
-		Some(pocket) => pocket::PocketFaces::new(session.runtime_factory.clone(), pocket.clone()),
-		None => session.runtime_factory.clone(),
+	let tapped = tap_for_debugger(session.runtime_factory.clone(), debugger.map(|d| d.sink));
+	// Outside the tap, so the debugger sees each card's render from its first frame.
+	let runtime_for_frames: Arc<dyn frame_server::ProductRuntimeFactory> = match &session.pocket {
+		Some(pocket) => pocket::PocketFaces::new(tapped, pocket.clone()),
+		None => tapped,
 	};
-	let runtime_for_frames = tap_for_debugger(runtime_factory, debugger.map(|d| d.sink));
 
 	if let Some(script) = args.script {
 		let product_id = product.current();
