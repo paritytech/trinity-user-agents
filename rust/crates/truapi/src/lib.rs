@@ -988,7 +988,8 @@ pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, che
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-	NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
+	NativePublicProfileObserver, NativeRendererObserver, NativeSubscription, WsBridgeEndpoint,
+	WsBridgeStartError,
 };
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
@@ -1002,7 +1003,7 @@ pub use platform::{
 #[cfg(feature = "runtime")]
 pub use public_profile::{
 	PROFILE_RECORD_KEY, ProfileAvatar, ProfileRecord, ProfileRecordLocation, PublicProfile,
-	PublicProfileError,
+	PublicProfileError, PublicProfileResolutionOptions,
 };
 #[cfg(feature = "runtime")]
 pub use runtime::StatementRenewalTarget;

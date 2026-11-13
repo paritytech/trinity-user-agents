@@ -9,7 +9,7 @@ use futures::{
 };
 use truapi::latest::ProductRendererRenderItem;
 
-use super::renderer::{NativeRendererObserver, NativeSubscription, spawn_observation};
+use super::renderer::{NativeRendererObserver, NativeSubscription};
 use crate::{
 	Spawner,
 	platform::ProductId,
@@ -35,7 +35,7 @@ pub fn observe_pocket_cards(
 	spawner: &Spawner,
 ) -> Arc<NativeSubscription> {
 	let mut cards = cards.observe();
-	spawn_observation(spawner, async move {
+	spawner.spawn_observation(async move {
 		while let Some(item) = cards.next().await {
 			match item {
 				Ok(cards) => observer.on_cards(cards),
