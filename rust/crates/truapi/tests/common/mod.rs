@@ -24,9 +24,7 @@ pub fn test_runtime_config() -> (PairingHostConfig, ProductContext) {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			PlatformInfo::default(),
-			[0xa2; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], Some([0xcc; 32])),
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
@@ -127,16 +125,6 @@ impl Features for WireShapePlatform {
 		_request: v01::HostFeatureSupportedRequest,
 	) -> Result<v01::HostFeatureSupportedResponse, v01::GenericError> {
 		Ok(v01::HostFeatureSupportedResponse { supported: true })
-	}
-
-	async fn supported_chains(&self) -> Result<truapi::platform::HostChainSet, v01::GenericError> {
-		Ok(truapi::platform::HostChainSet {
-			network: "paseo".to_string(),
-			chains: vec![truapi::platform::HostChainEntry {
-				identifier: v01::ChainIdentifier::AssetHub,
-				genesis_hash: [0xaa; 32],
-			}],
-		})
 	}
 }
 

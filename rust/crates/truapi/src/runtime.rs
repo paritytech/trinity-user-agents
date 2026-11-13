@@ -19,9 +19,11 @@ mod capabilities;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
+pub use dotns_lookup::{DotnsLookup, DotnsLookupKind};
 mod funding;
 mod funding_providers;
 mod funding_quotes;
+mod host_grants;
 mod host_session;
 mod identity;
 pub mod login_failure;
@@ -31,11 +33,14 @@ mod product_accounts;
 mod product_consent;
 pub mod product_manifest;
 mod product_subtree;
+mod remote_account_holder;
 mod renderer;
 mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
+mod single_flight;
+mod sso_account_holder_service;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
 mod sso_request_service;
@@ -63,11 +68,12 @@ use std::{
 
 pub use actions::ActionChannel;
 use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
-pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
+pub use authority::{AccountHolder, AuthorityError, BulletinAllowanceKey, ProductAuthority};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 pub use funding::{FundingFeed, FundingProviderLink};
 pub use host_session::HostSession;
+pub use remote_account_holder::RemoteAccountHolder;
 
 /// The host's contact picker plus the key its handles are minted under:
 /// everything one `contacts.pick` call needs from the connection.
@@ -80,10 +86,12 @@ pub use pairing_host::PairingHost as PairingHostRole;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-pub use signing_host::{LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService};
+pub use signing_host::{LocalActivation, SigningHost as SigningHostRole};
+pub use sso_account_holder_service::SsoAccountHolderService;
 pub use sso_responder_service::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
+	PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
+	SsoResponderService,
 };
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
@@ -91,11 +99,11 @@ pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
+	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview, LegacySigningAccount,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
 	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
-	normalize_chat_identifier, validate_chat_icon, validate_chat_message_content,
-	validate_chat_name,
+	normalize_chat_identifier, validate_chat_custom_message, validate_chat_icon,
+	validate_chat_message_content, validate_chat_name,
 };
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
@@ -123,9 +131,10 @@ use truapi::{
 			HostFundingStatusSubscribeRequest,
 		},
 		funding_provider::{
-			HostFundingPresentFrameError, HostFundingPresentFrameRequest,
-			HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
-			HostFundingReportResponse,
+			HostFundingCloseFrameError, HostFundingCloseFrameRequest,
+			HostFundingCloseFrameResponse, HostFundingPresentFrameError,
+			HostFundingPresentFrameRequest, HostFundingPresentFrameResponse,
+			HostFundingReportError, HostFundingReportRequest, HostFundingReportResponse,
 		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
@@ -142,7 +151,7 @@ use truapi::{
 use web_time::Instant;
 
 #[cfg(test)]
-use crate::subscription::Spawner;
+use crate::Spawner;
 use crate::{
 	chain_runtime::{RuntimeFailure, RuntimeFailureKind},
 	host_internal::{
@@ -197,8 +206,17 @@ const LEGACY_ACCOUNT_UNAVAILABLE_REASON: &str = "Account is not available in the
 
 #[derive(Clone)]
 enum LegacySigner {
-	Product,
+	Product(latest::ProductAccountId),
 	Identity([u8; 32]),
+}
+
+impl LegacySigner {
+	fn review_account(&self) -> LegacySigningAccount {
+		match self {
+			Self::Product(account) => LegacySigningAccount::Product(account.clone()),
+			Self::Identity(_) => LegacySigningAccount::Identity,
+		}
+	}
 }
 
 #[derive(derive_more::From)]
@@ -376,7 +394,7 @@ impl ProductConnection {
 	}
 
 	/// Role-neutral services shared with the owning host runtime.
-	pub fn services(&self) -> &Arc<RuntimeServices> {
+	pub(crate) fn services(&self) -> &Arc<RuntimeServices> {
 		&self.services
 	}
 
@@ -582,6 +600,11 @@ impl ProductConnection {
 		self.services.worker_ledger.release(&self.product.product_id);
 	}
 
+	/// Hold this connection's product worker until the hold is dropped.
+	pub(crate) fn hold_worker(&self) -> funding_quotes::WorkerHold {
+		funding_quotes::WorkerHold::acquire(&self.services, &self.product.product_id)
+	}
+
 	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
 	async fn begin_operation_with_host(
 		&self,
@@ -590,12 +613,12 @@ impl ProductConnection {
 		let (tx, rx) = futures::channel::oneshot::channel();
 		let platform = self.platform.clone();
 		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
+		self.services.spawner.spawn(async move {
 			let begun = platform.begin_operation(&product, label).await;
 			if let Err(Ok(response)) = tx.send(begun) {
 				let _ = platform.end_operation(&product, response.id).await;
 			}
-		}));
+		});
 		rx.await.unwrap_or_else(|_| {
 			Err(latest::HostWorkerOperationError::Unknown {
 				reason: "the host did not answer".to_string(),
@@ -624,11 +647,11 @@ impl ProductConnection {
 		}
 		let platform = self.platform.clone();
 		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
+		self.services.spawner.spawn(async move {
 			for id in open {
 				let _ = platform.end_operation(&product, id).await;
 			}
-		}));
+		});
 	}
 
 	/// Release one open operation's demand; unknown ids leave demand unchanged.
@@ -762,9 +785,7 @@ impl ProductRuntimeHost {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			crate::platform::PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			crate::test_support::paseo_test_stack(),
 			"polkadotapp".to_string(),
 		)
 		.expect("compat runtime config is valid")
@@ -806,9 +827,7 @@ impl ProductRuntimeHost {
 		let services = RuntimeServices::new(
 			platform.clone(),
 			host_config.host.host_info.clone(),
-			host_config.people_chain_genesis_hash,
-			host_config.bulletin_chain_genesis_hash,
-			host_config.asset_hub_chain_genesis_hash,
+			host_config.stack.clone(),
 			spawner.clone(),
 		);
 		let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -982,7 +1001,10 @@ impl ProductRuntimeHost {
 		}
 		let product_public_key = self.legacy_slot_zero_public_key(cx, session).await?;
 		if requested_key == product_public_key {
-			return Ok(LegacySigner::Product);
+			return Ok(LegacySigner::Product(latest::ProductAccountId {
+				dot_ns_identifier: self.connection.product_id().clone(),
+				derivation_index: latest::DerivationIndex::Index(0),
+			}));
 		}
 		Err(LegacySignerError::Unavailable)
 	}
@@ -1577,6 +1599,12 @@ impl Chat for ProductRuntimeHost {
 				};
 				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
 					.map_err(|error| failure(error.to_string()))?;
+				if let latest::ChatRoomFooter::Card(card) = request.footer {
+					request.footer = latest::ChatRoomFooter::Card(
+						validate_chat_custom_message(card)
+							.map_err(|error| failure(error.to_string()))?,
+					);
+				}
 
 				// Checked here rather than by each host, so every host answers a room
 				// the product never created the same way.
@@ -1678,21 +1706,70 @@ impl FundingProvider for ProductRuntimeHost {
 			.exec(|latest::HostFundingPresentFrameRequest { intent, target }| async move {
 				let domain = CallError::Domain;
 				let platform = self.connection.funding_provider_access()?;
-				if !self
-					.connection
-					.services
-					.funding()
-					.is_serving(&self.connection.product.product_id, &intent)
-				{
+				if !self.serves(&intent) {
 					return Err(domain(latest::HostFundingPresentFrameError::NotFound));
 				}
 				let target = crate::host_logic::funding::checked_frame_target(target)
 					.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
+				let services = &self.connection.services;
+				let provider = &self.connection.product;
+				if matches!(target, latest::FundingFrameTarget::App { .. }) {
+					use crate::host_logic::funding_providers::FundingProviderApp;
+					let has_app = match services.funding_providers().app(&provider.product_id) {
+						FundingProviderApp::Shipped => true,
+						FundingProviderApp::Absent => false,
+						FundingProviderApp::Unknown => {
+							crate::runtime::product_manifest::publishes_app(
+								services,
+								services.platform.as_ref(),
+								&provider.product_id,
+								APP_LOOKUP_CEILING,
+							)
+							.await
+							.unwrap_or(false)
+						},
+					};
+					if !has_app {
+						return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+					}
+				}
+				// The worker never puts a screen in front of the user on its own:
+				// the host opens it, at once or from a notice the user taps.
+				let mut frame = services.funding().request_frame(&intent, provider.clone());
+				if let Some(outcome) = frame.opened().await {
+					return Ok(latest::HostFundingPresentFrameResponse { outcome });
+				}
 				let outcome = platform
-					.present_provider_frame(&self.connection.product, intent, target)
+					.present_provider_frame(provider, intent, target)
 					.await
 					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
 				Ok(latest::HostFundingPresentFrameResponse { outcome })
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.close_frame"))]
+	async fn close_frame(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingCloseFrameRequest,
+	) -> Result<HostFundingCloseFrameResponse, CallError<HostFundingCloseFrameError>> {
+		version(request)
+			.exec(|latest::HostFundingCloseFrameRequest { intent }| async move {
+				let platform = self.connection.funding_provider_access()?;
+				if !self.serves(&intent) {
+					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
+				}
+				// Closes the screen on show, one the host opened but the worker
+				// has not presented yet, and one still waiting; a call that only
+				// dropped a waiting screen leaves the host nothing to close.
+				let funding = self.connection.services.funding();
+				let dropped =
+					funding.drop_waiting_frame(&intent, latest::FundingFrameOutcome::Closed);
+				if funding.close_open_frame(&intent) || !dropped {
+					platform.close_provider_frame(&self.connection.product, intent);
+				}
+				Ok(())
 			})
 			.await
 	}
@@ -1870,6 +1947,14 @@ impl ProductRuntimeHost {
 			self.connection.services.cache_preimage(key_bytes, value);
 		}
 	}
+
+	/// Whether this connection's product serves funding session `intent`.
+	fn serves(&self, intent: &str) -> bool {
+		self.connection
+			.services
+			.funding()
+			.is_serving(&self.connection.product.product_id, intent)
+	}
 }
 
 /// Build the product-facing `Unknown` wire error carrying `reason`.
@@ -1888,6 +1973,10 @@ fn bulletin_allowance_error_reason(err: AuthorityError) -> String {
 		other => other.to_string(),
 	}
 }
+
+/// How long the core waits for dotNS to say whether a provider ships an App
+/// before showing it as having none.
+const APP_LOOKUP_CEILING: core::time::Duration = core::time::Duration::from_secs(10);
 
 #[cfg(test)]
 mod tests;

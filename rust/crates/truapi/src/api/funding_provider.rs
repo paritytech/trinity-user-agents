@@ -3,6 +3,7 @@
 use crate::{
 	CallContext, CallError,
 	versioned::funding_provider::{
+		HostFundingCloseFrameError, HostFundingCloseFrameRequest, HostFundingCloseFrameResponse,
 		HostFundingPresentFrameError, HostFundingPresentFrameRequest,
 		HostFundingPresentFrameResponse, HostFundingReportError, HostFundingReportRequest,
 		HostFundingReportResponse, ProductFundingAssignError, ProductFundingAssignRequest,
@@ -137,6 +138,14 @@ pub trait FundingProvider: Send + Sync {
 	/// external https page such as an onramp's widget, in a frame the host
 	/// owns. Answers once it closes.
 	///
+	/// The screen never opens on its own: the host opens it, at once while
+	/// the user looks at the session, otherwise once the user taps a notice
+	/// that the provider wants to show something. Until then the call waits.
+	/// One screen waits per session: a newer call replaces it, and the one it
+	/// replaced answers `Dismissed`. `close_frame` closes the screen on show
+	/// and drops a waiting one, which answers `Closed`; so do the session's
+	/// payment moving and the session ending.
+	///
 	/// ```ts
 	/// const result = await truapi.fundingProvider.presentFrame({
 	///   intent: "fs_example",
@@ -150,6 +159,27 @@ pub trait FundingProvider: Send + Sync {
 		_cx: &CallContext,
 		_request: HostFundingPresentFrameRequest,
 	) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
+		Err(CallError::unavailable())
+	}
+
+	/// Close the screen `present_frame` opened for a session once the
+	/// provider is done with it, such as a card payment the user made. That
+	/// `present_frame` call answers `Closed`, and the host shows the
+	/// session's progress in its place. Closing a session with no screen
+	/// open does nothing.
+	///
+	/// ```ts
+	/// const result = await truapi.fundingProvider.closeFrame({
+	///   intent: "fs_example",
+	/// });
+	/// console.log("provider frame closed:", result);
+	/// ```
+	#[wire(id = 6)]
+	async fn close_frame(
+		&self,
+		_cx: &CallContext,
+		_request: HostFundingCloseFrameRequest,
+	) -> Result<HostFundingCloseFrameResponse, CallError<HostFundingCloseFrameError>> {
 		Err(CallError::unavailable())
 	}
 }

@@ -29,6 +29,7 @@ mod network;
 mod platform;
 mod pocket;
 mod product_config;
+mod profile;
 mod qr_scanner;
 mod register_name;
 mod scanner;
@@ -60,14 +61,13 @@ use clap::{
 	ArgMatches, Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
 	parser::ValueSource,
 };
-use futures::future::BoxFuture;
 use subxt::utils::H256;
 use tracing_subscriber::{Layer, layer::SubscriberExt, util::SubscriberInitExt};
 use truapi::{
 	AnnouncedPairing, DebugSink, PairedSsoPeer, PairingHostConfig, PairingHostRuntime,
-	PairingProposal, ResponderExit, SigningHostConfig, SigningHostRuntime, StatementRenewalTarget,
-	WsDebugSink,
-	chain::ExtrinsicService,
+	PairingProposal, ResponderExit, ResumePairingError, SigningHostConfig, SigningHostRuntime,
+	Spawner, StatementRenewalTarget, WsDebugSink,
+	chain::{EvmContractCaller, ExtrinsicService},
 	host_logic::dotns_gateway::{
 		MAX_BASE_LABEL_LEN, MIN_PERSON_LABEL_LEN, is_lite_label, is_registrable_full_label,
 	},
@@ -77,14 +77,13 @@ use truapi::{
 	},
 	statement_allowance as alloc,
 	statement_allowance::{ExtrinsicTarget, PersonhoodSigner, collection::PersonhoodCollection},
-	subscription::Spawner,
 	time::{Backoff, retry},
 };
 
 use crate::{
 	accounts::{ResolveSignerConfig, ResolvedSigner},
 	chain::ChainBackend,
-	network::{Network, NetworkConfig, NetworkSource, STACK_ENV, StackArg, local_network},
+	network::{Network, NetworkSource, STACK_ENV, Stack, StackArg},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
 		CurrentSession, DEFAULT_SESSION_NAME, PairedHost, PairedHostMetadata, SessionCatalog,
@@ -92,7 +91,7 @@ use crate::{
 	},
 	signing_shell::{
 		ApprovalCommand, DeviceCommand, HELP_TEXT, PAIRING_HELP_TEXT, PairCommand, ProductCommand,
-		ScriptCommand, SessionCommand, ShellCommand, parse_command,
+		ProfileCommand, ScriptCommand, SessionCommand, ShellCommand, parse_command,
 	},
 	terminal_ui::{
 		ActiveTerminalUi, ActivityState, DriveResult, PairingImageInput, SystemEvent, TerminalUi,
@@ -159,19 +158,8 @@ enum LogLevel {
 }
 
 impl LogLevel {
-	const fn as_filter(self) -> &'static str {
-		match self {
-			Self::Error => "error",
-			Self::Warn => "warn",
-			Self::Info => "info",
-			Self::Debug => "debug",
-			Self::Trace => "trace",
-		}
-	}
-
 	fn scoped_filter(self) -> String {
-		let level = self.as_filter();
-		format!("warn,truapi={level},truapi_host={level}")
+		format!("warn,truapi={self},truapi_host={self}")
 	}
 }
 
@@ -248,14 +236,8 @@ impl LogController {
 
 #[derive(Subcommand)]
 enum Command {
-	/// Resolve the network, with any `HOST_CLI_*_WS` or
-	/// `HOST_CLI_LOCAL_NETWORK_CONFIG` routing, and print it as JSON without
-	/// contacting any chain.
+	/// Resolve the network and print it as JSON without contacting any chain.
 	NetworkCheck,
-	/// Resolve the `HOST_CLI_LOCAL_NETWORK_CONFIG` network, ask every node for
-	/// its genesis, and print the routing as `network-check` does.
-	#[command(hide = true)]
-	LocalNetworkCheck,
 	/// Run a seedless pairing host for product scripts or interactive pairing.
 	///
 	/// With `--script`, exits with the script's status. Without it, stays in an
@@ -300,7 +282,7 @@ enum Command {
 		#[arg(long)]
 		chat_key: Option<String>,
 	},
-	/// Attest a mnemonic's `uid.<tld>` identity for a lite username, wait until
+	/// Attest a mnemonic's `peopl.<tld>` identity for a lite username, wait until
 	/// it is a personhood ring member, and print `{address, publicKey,
 	/// liteUsername}` as one JSON line. For e2e suites that hold their own
 	/// test mnemonics; the account store is not touched.
@@ -605,6 +587,15 @@ async fn main() -> Result<()> {
 		tracing::warn!(%error, "could not restore saved log level; using fallback");
 	}
 
+	// Read here rather than through clap's `env`, so an exported blank value is
+	// unset rather than a `--stack` next to `--network`.
+	let stack = match normalized(cli.stack) {
+		Some(value) => Some(StackArg { value, source: "--stack" }),
+		None => normalized(std::env::var(STACK_ENV).ok())
+			.map(|value| StackArg { value, source: STACK_ENV }),
+	};
+	let source = NetworkSource::new(cli.chain_backend, cli.network, stack)?;
+
 	// A background check runs alongside the command rather than delaying it, and
 	// reports through `tracing`, which the terminal UI renders in its transcript
 	// so it cannot corrupt the full-screen display. The command then waits for
@@ -615,14 +606,6 @@ async fn main() -> Result<()> {
 		tokio::spawn(update::run_background_check())
 	});
 
-	// Read here rather than through clap's `env`, so an exported blank value is
-	// unset rather than a `--stack` next to `--network`.
-	let stack = match normalized(cli.stack) {
-		Some(value) => Some(StackArg { value, source: "--stack" }),
-		None => normalized(std::env::var(STACK_ENV).ok())
-			.map(|value| StackArg { value, source: STACK_ENV }),
-	};
-	let source = NetworkSource { chain_backend: cli.chain_backend, network: cli.network, stack };
 	let outcome = dispatch(cli.command, log_filter, log_controller, debugger, source).await;
 
 	if let Some(check) = check {
@@ -654,15 +637,6 @@ async fn dispatch(
 			print_network(&source.resolve().await?);
 			Ok(())
 		},
-		Command::LocalNetworkCheck => {
-			anyhow::ensure!(
-				local_network::config_path().is_some(),
-				"{} must be set",
-				local_network::CONFIG_ENV
-			);
-			print_network(&source.cli_config().await?);
-			Ok(())
-		},
 		Command::PairingHost(args) => {
 			run_pairing_host(args, log_filter, log_controller, debugger, &source).await
 		},
@@ -674,7 +648,7 @@ async fn dispatch(
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 				.context("invalid BIP-39 mnemonic")?
 				.to_entropy();
-			attestation::check_identity(source.cli_config().await?, &entropy).await
+			attestation::check_identity(&source.resolve_checked().await?, &entropy).await
 		},
 		Command::RegisterName { mnemonic, label, link_lite, chat_key } => {
 			let entropy = bip39::Mnemonic::parse(mnemonic.trim())
@@ -690,7 +664,7 @@ async fn dispatch(
 				})
 				.transpose()?;
 			register_name::register_name(&register_name::RegisterNameConfig {
-				network: source.cli_config().await?,
+				network: source.resolve_checked().await?,
 				entropy,
 				label,
 				link_lite,
@@ -699,14 +673,16 @@ async fn dispatch(
 			.await
 		},
 		Command::AllocCheck { mnemonic, target, lookback, submit } => {
-			run_alloc_check(mnemonic, source.cli_config().await?, target, lookback, submit).await
+			run_alloc_check(mnemonic, source.resolve_checked().await?, target, lookback, submit)
+				.await
 		},
 		Command::PgasCheck { mnemonic, target, lookback, submit } => {
-			run_pgas_check(mnemonic, source.cli_config().await?, target, lookback, submit).await
+			run_pgas_check(mnemonic, source.resolve_checked().await?, target, lookback, submit)
+				.await
 		},
 		Command::Attest { mnemonic, username } => {
-			let attested =
-				accounts::attest_mnemonic(source.cli_config().await?, &mnemonic, &username).await?;
+			let network = source.resolve_checked().await?;
+			let attested = accounts::attest_mnemonic(&network, &mnemonic, &username).await?;
 			println!(
 				"{}",
 				serde_json::json!({
@@ -721,19 +697,20 @@ async fn dispatch(
 	}
 }
 
-/// Prints `config`'s routing as the one JSON line `network-check` writes.
-fn print_network(config: &NetworkConfig) {
-	let chain = |ws: &str, genesis: [u8; 32]| serde_json::json!({ "ws": ws, "genesis": format!("0x{}", hex::encode(genesis)) });
+/// Prints `stack`'s routing as the one JSON line `network-check` writes.
+fn print_network(stack: &Stack) {
+	let chain = |endpoint: &network::ChainEndpoint| serde_json::json!({ "ws": endpoint.ws, "genesis": format!("0x{}", hex::encode(endpoint.genesis)) });
+	let chains = stack.chains();
 	println!(
 		"{}",
 		serde_json::json!({
 			"schema_version": 1,
-			"network": config.id,
-			"namespace": config.network_suffix,
-			"identity_backend_base": config.identity_backend_base,
-			"people": chain(config.people_ws, config.people_genesis),
-			"asset_hub": chain(config.asset_hub_ws, config.asset_hub_genesis),
-			"bulletin": chain(config.bulletin_ws, config.bulletin_genesis),
+			"network": stack.namespace(),
+			"namespace": stack.tld(),
+			"identity_backend_base": stack.identity_backend(),
+			"people": chain(&chains.people),
+			"asset_hub": chain(&chains.asset_hub),
+			"bulletin": chain(&chains.bulletin),
 		})
 	);
 }
@@ -746,14 +723,14 @@ fn print_network(config: &NetworkConfig) {
 /// as a role, so this is a choice about the subcommand rather than a workaround.
 async fn run_pgas_check(
 	mnemonic: String,
-	network: crate::network::NetworkConfig,
+	network: crate::network::Stack,
 	target: Option<String>,
 	lookback: u32,
 	submit: bool,
 ) -> Result<()> {
 	use truapi::statement_allowance::pgas;
 
-	if submit && network.chain_backend == chain::ChainBackend::LightClient {
+	if submit && network.chain_backend() == chain::ChainBackend::LightClient {
 		bail!(
 			"--submit needs --chain-backend rpc: the light client drops a PGAS claim, because \
 			 smoldot refuses the proof Asset Hub's nodes return for its validation"
@@ -762,7 +739,7 @@ async fn run_pgas_check(
 	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 		.context("invalid BIP-39 mnemonic")?
 		.to_entropy();
-	let candidates = accounts::collection_candidates(&entropy, network.network_suffix);
+	let candidates = accounts::collection_candidates(&entropy, network.tld());
 	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 
 	if submit && target.is_none() {
@@ -779,18 +756,18 @@ async fn run_pgas_check(
 	};
 
 	let chains = chain::CliChainProvider::new(&network);
-	let people_location = chains.location(network.people_genesis);
+	let people_location = chains.location(network.genesis().people);
 	let people_rpc = alloc::rpc::RpcClient::new(
 		chains
-			.rpc_client(network.people_genesis)
+			.rpc_client(network.genesis().people)
 			.await
 			.with_context(|| format!("connect to People ({people_location})"))?,
 	);
 	let people_metadata = alloc::fetch_metadata(&people_rpc).await.map_err(anyhow::Error::msg)?;
-	let asset_hub_location = chains.location(network.asset_hub_genesis);
+	let asset_hub_location = chains.location(network.genesis().asset_hub);
 	let asset_hub_rpc = alloc::rpc::RpcClient::new(
 		chains
-			.rpc_client(network.asset_hub_genesis)
+			.rpc_client(network.genesis().asset_hub)
 			.await
 			.with_context(|| format!("connect to Asset Hub ({asset_hub_location})"))?,
 	);
@@ -892,7 +869,7 @@ async fn run_pgas_check(
 
 	let extrinsics = extrinsic_service(&network);
 	let asset_hub_target =
-		ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(network.asset_hub_genesis) };
+		ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(network.genesis().asset_hub) };
 	let outcome = pgas::claim_pgas(pgas::PgasClaim {
 		asset_hub_rpc: &asset_hub_rpc,
 		asset_hub_metadata: &asset_hub_metadata,
@@ -925,7 +902,7 @@ fn log_target_is_visible(target: &str) -> bool {
 /// slot, and (with `submit`) the `set_statement_store_account` extrinsic.
 async fn run_alloc_check(
 	mnemonic: String,
-	network: NetworkConfig,
+	network: Stack,
 	target: Option<String>,
 	lookback: u32,
 	submit: bool,
@@ -933,7 +910,7 @@ async fn run_alloc_check(
 	let entropy = bip39::Mnemonic::parse(mnemonic.trim())
 		.context("invalid BIP-39 mnemonic")?
 		.to_entropy();
-	let candidates = accounts::collection_candidates(&entropy, network.network_suffix);
+	let candidates = accounts::collection_candidates(&entropy, network.tld());
 	let signer = alloc::FixedPersonhoodSigner::new(&candidates).await?;
 
 	if submit && target.is_none() {
@@ -951,10 +928,10 @@ async fn run_alloc_check(
 	};
 
 	let chains = chain::CliChainProvider::new(&network);
-	let location = chains.location(network.people_genesis);
+	let location = chains.location(network.genesis().people);
 	let rpc = alloc::rpc::RpcClient::new(
 		chains
-			.rpc_client(network.people_genesis)
+			.rpc_client(network.genesis().people)
 			.await
 			.with_context(|| format!("connect to People ({location})"))?,
 	);
@@ -1046,7 +1023,7 @@ async fn run_alloc_check(
 		.map_err(anyhow::Error::msg)?;
 		let extrinsics = extrinsic_service(&network);
 		let target_chain =
-			ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(network.people_genesis) };
+			ExtrinsicTarget { extrinsics: &extrinsics, genesis: H256(network.genesis().people) };
 		match alloc::register_statement_account_pooled(
 			&rpc,
 			&metadata,
@@ -1134,48 +1111,32 @@ async fn report_slot_scan(
 	Ok(())
 }
 
-/// Map the `--auto-accept` flag to an approval policy: auto-accept, or prompt
-/// each confirmation on the CLI.
-///
-/// Auto-accept is refused on a network whose identities are real, so a local
-/// page can never get a real identity's signature without a prompt.
-fn approval_policy(auto_accept: bool, network: NetworkConfig) -> Result<ApprovalPolicy> {
-	if !auto_accept {
-		return Ok(ApprovalPolicy::Prompt);
-	}
-	anyhow::ensure!(
-		network.disposable_identities,
-		"{} has real identities, so every confirmation must be approved by hand; \
-		 automatic approval, which `dev` always uses, is only available on disposable-identity \
-		 networks",
-		network.id
-	);
-	Ok(ApprovalPolicy::AutoAccept)
+fn approval_policy(auto_accept: bool) -> ApprovalPolicy {
+	if auto_accept { ApprovalPolicy::AutoAccept } else { ApprovalPolicy::Prompt }
 }
 
 /// Builds the CLI's own extrinsics over `network`'s chains, with the
 /// network's V5 pipelines as the default extrinsic versions.
-fn extrinsic_service(network: &NetworkConfig) -> ExtrinsicService {
+fn extrinsic_service(network: &Stack) -> ExtrinsicService {
 	let provider = Arc::new(chain::CliChainProvider::new(network));
 	let versions = Arc::new(chain::PresetExtensionVersions(network.extension_versions()));
-	ExtrinsicService::from_provider(provider, tokio_spawner(), versions)
+	ExtrinsicService::from_provider(
+		provider,
+		Spawner::new(tokio::runtime::Handle::current()),
+		versions,
+	)
 }
 
-/// Spawner that runs runtime futures on the tokio runtime, so their WebSocket
-/// connects and timers have a reactor.
-///
-/// The core spawns teardown work from `Drop`, which can run after the runtime
-/// has shut down; `tokio::spawn` panics there, so the handle is looked up
-/// rather than assumed.
-fn tokio_spawner() -> Spawner {
-	Arc::new(|fut: BoxFuture<'static, ()>| match tokio::runtime::Handle::try_current() {
-		Ok(handle) => {
-			handle.spawn(fut);
-		},
-		Err(error) => {
-			tracing::warn!(%error, "dropping a runtime future: no tokio runtime is running");
-		},
-	})
+/// Reads and writes contracts on `network`'s Asset Hub over the CLI's chains.
+fn asset_hub_contracts(network: &Stack) -> EvmContractCaller {
+	let provider = Arc::new(chain::CliChainProvider::new(network));
+	let versions = Arc::new(chain::PresetExtensionVersions(network.extension_versions()));
+	EvmContractCaller::from_provider(
+		provider,
+		Spawner::new(tokio::runtime::Handle::current()),
+		versions,
+		H256(network.genesis().asset_hub),
+	)
 }
 
 fn host_info(name: &str) -> HostInfo {
@@ -1320,16 +1281,16 @@ async fn run_pairing_host(
 			"interactive pairing-host requires a TTY; use pairing-host --script <path>",
 		);
 	}
-	let network = source.cli_config().await?;
+	let network = source.resolve_checked().await?;
 	let base_path = state_base_path(args.base_path);
 	let product =
 		frame_server::ProductSelection::new(args.product_id, args.execution_kind.context());
 	let product_id = product.current();
-	let storage_paths = CliStoragePaths::pairing(base_path.join(network.id));
+	let storage_paths = CliStoragePaths::pairing(base_path.join(network.namespace()));
 	let (terminal_ui, ui_handle) = if interactive {
 		let (ui, handle) = TerminalUi::new_pairing(
-			network.id,
-			network.chain_backend,
+			network.namespace(),
+			network.chain_backend(),
 			product_id.clone(),
 			initial_log_filter,
 		);
@@ -1338,9 +1299,9 @@ async fn run_pairing_host(
 		(None, None)
 	};
 	let platform = CliPlatform::new(
-		network,
+		&network,
 		Some(storage_paths),
-		approval_policy(args.auto_accept, network)?,
+		approval_policy(args.auto_accept),
 		ui_handle,
 	);
 	// SSO runs over the real People chain. Usernames resolve from the dotNS
@@ -1348,9 +1309,7 @@ async fn run_pairing_host(
 	let config = PairingHostConfig::new(
 		host_info("Headless Pairing Host"),
 		platform_info(),
-		network.people_genesis,
-		network.bulletin_genesis,
-		network.asset_hub_genesis,
+		network.core_stack().context("invalid stack")?,
 		DEEPLINK_SCHEME.to_string(),
 	)
 	.context("invalid pairing host config")?;
@@ -1361,7 +1320,7 @@ async fn run_pairing_host(
 	let pairing_runtime = Arc::new(PairingHostRuntime::with_chat_platform(
 		platform,
 		config,
-		tokio_spawner(),
+		Spawner::new(tokio::runtime::Handle::current()),
 		chat_host.map(|chat| chat as Arc<dyn ChatPlatform>),
 	));
 	pairing_runtime.set_permission_status_host(status_host);
@@ -1443,15 +1402,15 @@ async fn run_signing_host(
 	let product =
 		frame_server::ProductSelection::new(args.product_id.clone(), args.execution_kind.context());
 	let product_id = product.current();
-	let network = source.cli_config().await?;
+	let network = source.resolve_checked().await?;
 	let base_path = state_base_path(args.base_path.clone());
-	let session_catalog = SessionCatalog::new(base_path.clone(), network.id)?;
+	let session_catalog = SessionCatalog::new(base_path.clone(), network.namespace())?;
 	let initial_session_name = initial_session_name(&args, &session_catalog)?;
 	let initial_session_names = session_catalog.list()?;
 	let (terminal_ui, ui_handle) = if interactive {
 		let (ui, handle) = TerminalUi::new(
-			network.id,
-			network.chain_backend,
+			network.namespace(),
+			network.chain_backend(),
 			product_id,
 			initial_session_name.clone(),
 			initial_session_names,
@@ -1604,7 +1563,7 @@ struct SigningHostSession {
 	script_projects: PathBuf,
 	catalog: SessionCatalog,
 	profile: Option<SessionProfile>,
-	network: NetworkConfig,
+	network: Stack,
 	mnemonic: Option<String>,
 	default_account: Option<String>,
 	reserved_username: Option<String>,
@@ -1728,10 +1687,10 @@ async fn start_signing_host(
 	args: &SigningHostArgs,
 	catalog: SessionCatalog,
 	session_name: String,
-	network: NetworkConfig,
+	network: Stack,
 	ui: Option<UiHandle>,
 ) -> Result<SigningHostSession> {
-	let approval = approval_policy(args.auto_accept, network)?;
+	let approval = approval_policy(args.auto_accept);
 	let mnemonic = normalized(args.mnemonic.clone());
 	let mut profile =
 		if mnemonic.is_some() { None } else { Some(catalog.ensure_profile(&session_name)?) };
@@ -1751,7 +1710,7 @@ async fn start_signing_host(
 		.map(|profile| {
 			accounts::resolve_cached_signer(
 				&profile.account_base_path,
-				network,
+				&network,
 				selected_account.as_deref(),
 			)
 		})
@@ -1774,14 +1733,14 @@ async fn start_signing_host(
 	if signer.is_none() && mnemonic.is_some() {
 		let mut explicit_signer = accounts::resolve_signer(ResolveSignerConfig {
 			base_path: &storage_profile.account_base_path,
-			network,
+			network: &network,
 			mnemonic: mnemonic.clone(),
 			account: None,
 			lite_username_prefix: None,
 			reserved_username: None,
 		})
 		.await?;
-		match attestation::registered_lite_username(network, &explicit_signer.entropy).await {
+		match attestation::registered_lite_username(&network, &explicit_signer.entropy).await {
 			Ok(user_id) => explicit_signer.lite_username = Some(user_id),
 			Err(error) => {
 				tracing::warn!(error = %format!("{error:#}"), "explicit signer has no resolvable dotNS username")
@@ -1792,7 +1751,7 @@ async fn start_signing_host(
 	let chat = args.execution_kind.chat_host();
 	let pocket = args.execution_kind.pocket_host();
 	let (runtime, platform) = build_signing_runtime(
-		network,
+		&network,
 		storage_profile.path,
 		storage_profile.product_storage_dir,
 		approval,
@@ -1800,7 +1759,7 @@ async fn start_signing_host(
 		chat.clone(),
 		pocket.clone(),
 	)?;
-	apply_local_product_grants(platform.as_ref(), network, &args.product_config).await?;
+	apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
 	let last_script = profile
 		.as_ref()
@@ -1867,7 +1826,7 @@ async fn start_signing_host(
 }
 
 fn build_signing_runtime(
-	network: NetworkConfig,
+	network: &Stack,
 	storage_path: PathBuf,
 	product_storage_dir: PathBuf,
 	approval: ApprovalPolicy,
@@ -1895,17 +1854,14 @@ fn build_signing_runtime(
 	let config = SigningHostConfig::new(
 		host_info("Headless Signing Host"),
 		platform_info(),
-		network.people_genesis,
-		network.bulletin_genesis,
-		network.asset_hub_genesis,
-		network.network_suffix.to_string(),
+		network.core_stack().context("invalid stack")?,
 	)
 	.context("invalid signing host config")?;
 	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
 	let runtime = Arc::new(SigningHostRuntime::with_chat_platform(
 		platform.clone(),
 		config,
-		tokio_spawner(),
+		Spawner::new(tokio::runtime::Handle::current()),
 		chat.map(|chat| chat as Arc<dyn ChatPlatform>),
 	));
 	runtime.set_permission_status_host(status_host);
@@ -2056,41 +2012,55 @@ fn persist_paired_host(session: &SigningHostSession, host: &PairedHost) -> Resul
 const RESPONDER_RETRY_PAUSES: Backoff =
 	Backoff::new(Duration::from_secs(1), Duration::from_secs(30));
 
-fn spawn_supervised_responder(
+/// A responder that ran this long before failing restarts after one second
+/// again.
+const RESET_RESTART_PAUSES_AFTER: Duration = Duration::from_secs(30);
+
+/// Serve `host` until it sends `Disconnected`, restarting the responder after
+/// a failure or an ended subscription.
+///
+/// Fails without restarting when the session cannot be served at all, such
+/// as without an active local session.
+async fn supervise_responder(
 	runtime: Arc<SigningHostRuntime>,
 	host: PairedHost,
 	persisted: Option<(SessionCatalog, SessionProfile)>,
-) -> tokio::task::JoinHandle<()> {
-	tokio::spawn(async move {
-		let peer = paired_sso_peer(&host);
-		let mut pauses = RESPONDER_RETRY_PAUSES;
-		retry(
-			|| async {
-				match runtime.resume_pairing(peer).await {
-					Ok(ResponderExit::PeerDisconnected) => ControlFlow::Break(()),
-					Ok(exit @ ResponderExit::SubscriptionEnded) => {
-						ControlFlow::Continue(SystemEvent::SigningHostExit {
-							outcome: format!("{exit:?}"),
-						})
-					},
-					Err(error) => ControlFlow::Continue(SystemEvent::SigningHostError {
-						reason: error.reason,
-					}),
-				}
-			},
-			|event| {
-				terminal_ui::output_event(event);
-				pauses.next_pause()
-			},
-		)
-		.await;
-		if let Some((catalog, profile)) = &persisted {
-			forget_disconnected_peer(&runtime, peer, catalog, profile, &mut pauses).await;
-		}
-		terminal_ui::output_event(SystemEvent::SigningHostExit {
-			outcome: format!("{:?}", ResponderExit::PeerDisconnected),
-		});
-	})
+) -> Result<(), ResumePairingError> {
+	let peer = paired_sso_peer(&host);
+	let mut pauses = RESPONDER_RETRY_PAUSES;
+	retry(
+		|| async {
+			let started = std::time::Instant::now();
+			let event = match runtime.resume_pairing(peer).await {
+				Ok(ResponderExit::PeerDisconnected) => return ControlFlow::Break(Ok(())),
+				Ok(exit @ ResponderExit::SubscriptionEnded) => {
+					SystemEvent::SigningHostExit { outcome: format!("{exit:?}") }
+				},
+				Err(ResumePairingError::Interrupted { reason }) => {
+					SystemEvent::SigningHostError { reason }
+				},
+				Err(error @ ResumePairingError::CannotServe { .. }) => {
+					return ControlFlow::Break(Err(error));
+				},
+			};
+			ControlFlow::Continue((event, started.elapsed()))
+		},
+		|(event, served_for)| {
+			terminal_ui::output_event(event);
+			if served_for > RESET_RESTART_PAUSES_AFTER {
+				pauses.reset();
+			}
+			pauses.next_pause()
+		},
+	)
+	.await?;
+	if let Some((catalog, profile)) = &persisted {
+		forget_disconnected_peer(&runtime, peer, catalog, profile, &mut pauses).await;
+	}
+	terminal_ui::output_event(SystemEvent::SigningHostExit {
+		outcome: format!("{:?}", ResponderExit::PeerDisconnected),
+	});
+	Ok(())
 }
 
 /// Remove a disconnected pairing host from the session and stop renewing its
@@ -2125,10 +2095,23 @@ async fn forget_disconnected_peer(
 	}
 }
 
+/// The catalog and profile that record `session`'s paired hosts, if it has a
+/// profile.
+fn paired_host_catalog(session: &SigningHostSession) -> Option<(SessionCatalog, SessionProfile)> {
+	session.profile.clone().map(|profile| (session.catalog.clone(), profile))
+}
+
 fn start_paired_host_responder(session: &mut SigningHostSession, host: PairedHost) {
 	let statement_account_id = host.statement_account_id();
-	let persisted = session.profile.clone().map(|profile| (session.catalog.clone(), profile));
-	let task = spawn_supervised_responder(session.runtime.clone(), host, persisted);
+	let responder =
+		supervise_responder(session.runtime.clone(), host, paired_host_catalog(session));
+	let task = tokio::spawn(async move {
+		if let Err(error) = responder.await {
+			terminal_ui::output_event(SystemEvent::SigningHostError {
+				reason: format!("stopped serving the paired host: {error}"),
+			});
+		}
+	});
 	session.responders.insert(statement_account_id, task);
 	terminal_ui::output_event(SystemEvent::SigningHostResponderStarted);
 }
@@ -2188,21 +2171,10 @@ const INTERRUPTED_EXIT_CODE: i32 = 130;
 /// cannot tell them is that the manifest is not published yet, so the host says
 /// it every run: a grant that works locally and was never deployed is the
 /// failure this feature would otherwise cause.
-async fn apply_local_product_grants(
-	platform: &CliPlatform,
-	network: NetworkConfig,
-	paths: &[PathBuf],
-) -> Result<()> {
+async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -> Result<()> {
 	if paths.is_empty() {
 		return Ok(());
 	}
-	// Seeded grants persist in the core database and are never prompted for.
-	anyhow::ensure!(
-		network.disposable_identities,
-		"{} has real identities, so --product-config grants are only available on \
-		 disposable-identity networks",
-		network.id
-	);
 	let configs = product_config::read_all(paths)?;
 	let now = std::time::SystemTime::now()
 		.duration_since(std::time::UNIX_EPOCH)
@@ -2241,7 +2213,7 @@ async fn run_dev(
 		product_config: args.product_config,
 		frame_listen: Some(SocketAddr::from((Ipv4Addr::LOCALHOST, args.port))),
 		// A process with no terminal cannot prompt, so `dev` approves every
-		// confirmation and refuses to start on a preset whose identities are real.
+		// confirmation.
 		serve: true,
 		auto_accept: true,
 		..Default::default()
@@ -2396,7 +2368,7 @@ async fn ensure_signer(session: &mut SigningHostSession) -> Result<()> {
 	session.signer = Some(
 		resolve_session_signer(ResolveSignerConfig {
 			base_path: &profile.account_base_path,
-			network: session.network,
+			network: &session.network,
 			mnemonic: session.mnemonic.clone(),
 			account: None,
 			lite_username_prefix: None,
@@ -2567,7 +2539,7 @@ async fn prepare_pairing_response(
 					let account_base_path = current_account_base_path(session)?;
 					accounts::mark_account_exhausted(
 						&account_base_path,
-						session.network.id,
+						session.network.namespace(),
 						name,
 						period,
 					)?;
@@ -2585,7 +2557,7 @@ async fn prepare_pairing_response(
 				session.signer = Some(
 					accounts::resolve_signer(ResolveSignerConfig {
 						base_path: &account_base_path,
-						network: session.network,
+						network: &session.network,
 						mnemonic: None,
 						account: None,
 						lite_username_prefix,
@@ -2841,22 +2813,23 @@ fn mark_current_account_exhausted(session: &SigningHostSession) -> Result<()> {
 	};
 	let period = accounts::current_statement_period()?;
 	let account_base_path = current_account_base_path(session)?;
-	accounts::mark_account_exhausted(&account_base_path, session.network.id, &name, period)?;
+	accounts::mark_account_exhausted(
+		&account_base_path,
+		session.network.namespace(),
+		&name,
+		period,
+	)?;
 	terminal_ui::output_event(SystemEvent::SigningHostAccountExhausted { name, period });
 	Ok(())
 }
 
 async fn respond_to_deeplink(session: &mut SigningHostSession, deeplink: String) -> Result<()> {
 	let host = establish_paired_host(session, &deeplink).await?;
-	let exit = session
-		.runtime
-		.resume_pairing(paired_sso_peer(&host))
+	supervise_responder(session.runtime.clone(), host, paired_host_catalog(session))
 		.await
-		.map_err(SessionOperationError::Pairing)?;
-	if exit == ResponderExit::PeerDisconnected && session.profile.is_some() {
-		remove_paired_host_locally(session, &host.statement_account_id()).await?;
-	}
-	terminal_ui::output_event(SystemEvent::SigningHostExit { outcome: format!("{exit:?}") });
+		.map_err(|error| {
+			SessionOperationError::Pairing(GenericError { reason: error.to_string() })
+		})?;
 	Ok(())
 }
 
@@ -3159,7 +3132,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 	)?;
 	if is_lite_label(&name) &&
 		accounts::AccountStore::load(&provisional_profile.account_base_path)?
-			.created_at(session.network.id, account.as_deref())?
+			.created_at(session.network.namespace(), account.as_deref())?
 			.is_none()
 	{
 		bail!("session {name:?} has no saved account; choose a username base to create one");
@@ -3197,7 +3170,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 	}
 	let signer = resolve_session_signer(ResolveSignerConfig {
 		base_path: &provisional_profile.account_base_path,
-		network: session.network,
+		network: &session.network,
 		mnemonic: None,
 		account,
 		lite_username_prefix,
@@ -3212,7 +3185,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 	};
 	let last_script = session.catalog.last_script(&profile)?;
 	let (runtime, platform) = build_signing_runtime(
-		session.network,
+		&session.network,
 		profile.path.clone(),
 		profile.product_storage_dir.clone(),
 		session.platform.approval_policy(),
@@ -3275,7 +3248,7 @@ async fn import_mnemonic_session(
 		ActivityState::Running,
 	);
 	let imported =
-		accounts::inspect_imported_signer(session.network, mnemonic.expose_secret()).await?;
+		accounts::inspect_imported_signer(&session.network, mnemonic.expose_secret()).await?;
 	let username = imported.username().map(str::to_string);
 	let session_name = imported.session_name().to_string();
 	sessions::validate_selectable_name(&session_name)?;
@@ -3297,7 +3270,7 @@ async fn import_mnemonic_session(
 	let profile = session.catalog.ensure_profile(&session_name)?;
 	let last_script = session.catalog.last_script(&profile)?;
 	let (runtime, platform) = build_signing_runtime(
-		session.network,
+		&session.network,
 		profile.path.clone(),
 		profile.product_storage_dir.clone(),
 		session.platform.approval_policy(),
@@ -3314,7 +3287,7 @@ async fn import_mnemonic_session(
 		})?;
 
 	let signer =
-		accounts::persist_imported_signer(&profile.account_base_path, session.network, &imported)?;
+		accounts::persist_imported_signer(&profile.account_base_path, &session.network, &imported)?;
 	let account_name = signer
 		.account_name
 		.as_deref()
@@ -3460,6 +3433,7 @@ async fn pairing_interactive_loop(
 			ShellCommand::Devices(_) |
 			ShellCommand::Approval(_) |
 			ShellCommand::Session(_) |
+			ShellCommand::Profile(_) |
 			ShellCommand::Renew => {
 				ui.error("command is only available on the signing host");
 			},
@@ -3596,19 +3570,13 @@ async fn signing_interactive_loop(
 				);
 			},
 			ShellCommand::Approval(ApprovalCommand::Automatic) => {
-				match approval_policy(true, session.network) {
-					Ok(policy) => {
-						session.platform.set_approval_policy(policy);
-						ui.success(
-							"Approval mode set to automatic",
-							Some(
-								"Future product confirmations will be approved automatically."
-									.to_string(),
-							),
-						);
-					},
-					Err(error) => ui.error(error.to_string()),
-				}
+				session.platform.set_approval_policy(ApprovalPolicy::AutoAccept);
+				ui.success(
+					"Approval mode set to automatic",
+					Some(
+						"Future product confirmations will be approved automatically.".to_string(),
+					),
+				);
 			},
 			ShellCommand::Product(ProductCommand::Current) => ui.system(product.current()),
 			ShellCommand::Product(ProductCommand::Switch(product_id)) => {
@@ -3878,6 +3846,7 @@ async fn execute_interactive_operation(
 			import_mnemonic_session(session, &mnemonic).await?;
 		},
 		ShellCommand::Renew => run_renew(session).await?,
+		ShellCommand::Profile(command) => run_profile_command(session, command).await?,
 		ShellCommand::Login => bail!("/login is only available on the pairing host"),
 		ShellCommand::Logout => bail!("/logout is only available on the pairing host"),
 		ShellCommand::Product(_) | ShellCommand::Devices(_) | ShellCommand::Approval(_) => {
@@ -4018,8 +3987,34 @@ async fn execute_non_interactive_command(
 			return Ok(Some(target));
 		},
 		ShellCommand::Renew => run_renew(session).await?,
+		ShellCommand::Profile(command) => run_profile_command(session, command).await?,
 	}
 	Ok(None)
+}
+
+async fn run_profile_command(session: &SigningHostSession, command: ProfileCommand) -> Result<()> {
+	let output = match command {
+		ProfileCommand::Current => {
+			let (_, username) = profile_identity(session)?;
+			profile::read(&session.runtime, username).await?
+		},
+		ProfileCommand::Get(username) => profile::read(&session.runtime, &username).await?,
+		ProfileCommand::Upload(path) => {
+			let (signer, username) = profile_identity(session)?;
+			profile::upload(&session.runtime, &session.network, &signer.entropy, username, &path)
+				.await?
+		},
+	};
+	terminal_ui::output_info(output);
+	Ok(())
+}
+
+fn profile_identity(session: &SigningHostSession) -> Result<(&ResolvedSigner, &str)> {
+	session
+		.signer
+		.as_ref()
+		.and_then(|signer| signer.lite_username.as_deref().map(|username| (signer, username)))
+		.context("no active identity username; select an existing identity with /session <name>")
 }
 
 fn select_script_to_edit(
@@ -4149,6 +4144,8 @@ fn default_base_path() -> PathBuf {
 
 #[cfg(test)]
 mod cli_tests {
+	mod profile_tests;
+
 	use super::*;
 	use crate::frame_server::ProductRuntimeFactory;
 	use parity_scale_codec::Encode;
@@ -4156,8 +4153,8 @@ mod cli_tests {
 	const SESSION_MNEMONIC: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
 	async fn unfinished_session(base_path: &Path, name: &str) -> Result<SigningHostSession> {
-		let network = Network::default().config();
-		let catalog = SessionCatalog::new(base_path.to_path_buf(), network.id)?;
+		let network = Network::default().bundled_stack(ChainBackend::Rpc);
+		let catalog = SessionCatalog::new(base_path.to_path_buf(), network.namespace())?;
 		catalog.set_current(name)?;
 		start_signing_host(&SigningHostArgs::default(), catalog, name.to_string(), network, None)
 			.await
@@ -4169,7 +4166,7 @@ mod cli_tests {
 			"version": 1,
 			"accounts": [{
 				"name": "auto-1",
-				"network": session.network.id,
+				"network": session.network.namespace(),
 				"mnemonic": SESSION_MNEMONIC,
 				"lite_username": "pending.01",
 				"public_key_hex": "0x00",
@@ -4186,7 +4183,7 @@ mod cli_tests {
 	async fn session_selection_retries_the_active_unfinished_profile() -> Result<()> {
 		let temporary = tempfile::tempdir()?;
 		let mut session = unfinished_session(temporary.path(), "pending").await?;
-		session.network.identity_backend_base = Some("invalid-backend-url");
+		session.network = session.network.with_dub("http://127.0.0.1:1/");
 		let runtime = session.runtime.clone();
 
 		let error = switch_session(&mut session, "pending".to_string())
@@ -4215,7 +4212,7 @@ mod cli_tests {
 		let temporary = tempfile::tempdir()?;
 		let mut session = unfinished_session(temporary.path(), "pending").await?;
 		let accounts = finish_session_account(&session)?;
-		session.network.identity_backend_base = Some("invalid-backend-url");
+		session.network = session.network.with_dub("http://127.0.0.1:1/");
 		let mut resets = session.runtime_factory.connection_reset().unwrap();
 		let expected_key =
 			truapi::host_logic::product_account::derive_root_keypair_from_entropy(&[0; 16])
@@ -4350,7 +4347,7 @@ mod cli_tests {
 		let responder = tokio::spawn(std::future::pending::<()>());
 		let responder_abort = responder.abort_handle();
 		session.responders.insert([7; 32], responder);
-		session.network.identity_backend_base = Some("invalid-backend-url");
+		session.network = session.network.with_dub("http://127.0.0.1:1/");
 
 		session.catalog.ensure_profile("workbench.99")?;
 		for name in ["foo", "carol", "workbench.99", "another"] {
@@ -4397,13 +4394,38 @@ mod cli_tests {
 		Ok(())
 	}
 
+	/// Without a local session every restart fails the same way, so `/pair`
+	/// has to end with the failure instead of restarting forever.
+	#[tokio::test]
+	async fn a_responder_without_a_local_session_stops_instead_of_restarting() {
+		let profile = tempfile::tempdir().unwrap();
+		let (runtime, _platform) = build_signing_runtime(
+			&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
+			profile.path().to_path_buf(),
+			profile.path().join("storage"),
+			ApprovalPolicy::AutoAccept,
+			None,
+			None,
+			None,
+		)
+		.unwrap();
+		let host = PairedHost::new([0x31; 32], [0x42; 32], PairedHostMetadata::default());
+
+		let served =
+			tokio::time::timeout(Duration::from_secs(5), supervise_responder(runtime, host, None))
+				.await
+				.expect("the responder stops instead of restarting");
+
+		assert!(matches!(served, Err(ResumePairingError::CannotServe { .. })), "{served:?}");
+	}
+
 	#[tokio::test]
 	async fn the_signing_runtime_keeps_its_core_database_in_the_profile_directory() {
 		// Each profile keeps its own durable state, so switching users never
 		// mixes two ledgers.
 		let profile = tempfile::tempdir().unwrap();
 		let (runtime, _platform) = build_signing_runtime(
-			crate::network::Network::PaseoNextV2.config(),
+			&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
 			profile.path().to_path_buf(),
 			profile.path().join("storage"),
 			ApprovalPolicy::AutoAccept,
@@ -4437,7 +4459,7 @@ mod cli_tests {
 			.unwrap();
 		let build = || {
 			build_signing_runtime(
-				crate::network::Network::PaseoNextV2.config(),
+				&crate::network::Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc),
 				profile.clone(),
 				profile.join("storage"),
 				ApprovalPolicy::AutoAccept,
@@ -4525,10 +4547,7 @@ mod cli_tests {
 	/// out its timeout. It is refused before a key is derived or a chain dialed.
 	#[tokio::test]
 	async fn pgas_check_refuses_to_submit_on_the_light_client() {
-		let network = NetworkConfig {
-			chain_backend: chain::ChainBackend::LightClient,
-			..Network::default().config()
-		};
+		let network = Network::default().bundled_stack(ChainBackend::LightClient);
 
 		let error = run_pgas_check(String::new(), network, Some("00".repeat(32)), 8, true)
 			.await
@@ -4688,7 +4707,6 @@ mod cli_tests {
 
 		assert_eq!(before.log_level, Some(LogLevel::Trace));
 		assert_eq!(after.log_level, Some(LogLevel::Trace));
-		assert_eq!(LogLevel::Trace.as_filter(), "trace");
 		assert_eq!(LogLevel::Trace.scoped_filter(), "warn,truapi=trace,truapi_host=trace");
 	}
 
@@ -4940,41 +4958,6 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 				.unwrap_err()
 				.to_string()
 				.contains("--serve cannot be combined with the exec subcommand")
-		);
-	}
-
-	/// `dev` always auto-accepts, so this is what stops it signing for a real
-	/// identity without a prompt.
-	/// A seeded grant is never prompted for and outlives the run, so a preset
-	/// whose identities are real refuses it before reading any config.
-	#[tokio::test]
-	async fn a_real_identity_network_refuses_local_product_grants() {
-		let production = NetworkConfig {
-			disposable_identities: false,
-			..crate::network::Network::Polkadot.config()
-		};
-		let platform = CliPlatform::new(production, None, ApprovalPolicy::Prompt, None);
-		let error = apply_local_product_grants(
-			&platform,
-			production,
-			&[PathBuf::from("/nonexistent/product.json")],
-		)
-		.await
-		.expect_err("grants are refused on a real-identity preset");
-		assert!(error.to_string().contains("--product-config"), "{error}");
-	}
-
-	#[test]
-	fn a_real_identity_network_never_approves_without_a_prompt() {
-		let testnet = crate::network::Network::PaseoNextV2.config();
-		let production = NetworkConfig { disposable_identities: false, ..testnet };
-		assert_eq!(
-			[
-				approval_policy(true, testnet).ok(),
-				approval_policy(false, production).ok(),
-				approval_policy(true, production).ok(),
-			],
-			[Some(ApprovalPolicy::AutoAccept), Some(ApprovalPolicy::Prompt), None,]
 		);
 	}
 

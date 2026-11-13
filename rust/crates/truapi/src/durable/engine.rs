@@ -8,7 +8,6 @@ mod registration;
 mod reporting;
 mod tracker;
 mod verdict;
-mod wake;
 
 use std::sync::Arc;
 
@@ -23,13 +22,13 @@ use super::{
 	ownership::Ownership,
 };
 use crate::{
+	Spawner,
 	chain::{BlockBackend, ChainHeads, TxSubmitter, TxValidator},
 	store::{Db, DbError},
-	subscription::Spawner,
 	time::Timer,
+	wake::WakeSignal,
 };
 use executor::SubmissionExecutor;
-use wake::WakeSignal;
 
 pub use recovery::RecoveryError;
 pub use registration::{DurableRequest, DurableSubmission, EmptyRequest, RegistrationError};

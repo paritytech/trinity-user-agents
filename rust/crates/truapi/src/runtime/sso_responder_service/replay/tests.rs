@@ -6,6 +6,10 @@ use std::sync::{
 use super::*;
 use crate::test_support::StubPlatform;
 
+/// A request that has not expired at any `now` these tests use.
+const REQUEST: ReplayRequest<'static> =
+	ReplayRequest { id: "request-1", expires_at_unix_secs: Some(200) };
+
 fn scope(root: u8, peer: u8, encryption: u8) -> SsoReplayScope {
 	SsoReplayScope {
 		root_public_key: [root; 32],
@@ -93,9 +97,9 @@ fn legacy_unbounded_entries_do_not_block_new_requests() {
 			&platform,
 			&SsoReplayLocks::default(),
 			request_scope,
-			"fresh",
-			Some(200),
+			ReplayRequest { id: "fresh", expires_at_unix_secs: Some(200) },
 			100,
+			async { Ok(()) },
 			|| async { Ok::<_, String>("executed") },
 		)
 		.await
@@ -129,8 +133,9 @@ fn ledger_rejects_a_new_entry_at_its_bound_without_eviction() {
 	assert_eq!(error, "SSO replay ledger is full with 1024 unexpired requests");
 }
 
+/// An ack promises an answer, so a refused request must not get one.
 #[test]
-fn full_ledger_rejects_before_executing_the_request() {
+fn full_ledger_rejects_before_acknowledging_or_executing_the_request() {
 	futures::executor::block_on(async {
 		let platform = StubPlatform::default();
 		let request_scope = scope(1, 2, 3);
@@ -139,6 +144,7 @@ fn full_ledger_rejects_before_executing_the_request() {
 			ledger.start(format!("request-{index}"), None, 0).unwrap();
 		}
 		write_ledger(&platform, request_scope, &ledger).await.unwrap();
+		let acknowledgements = AtomicUsize::new(0);
 		let executions = Arc::new(AtomicUsize::new(0));
 		let request_executions = executions.clone();
 
@@ -146,9 +152,12 @@ fn full_ledger_rejects_before_executing_the_request() {
 			&platform,
 			&SsoReplayLocks::default(),
 			request_scope,
-			"overflow",
-			None,
+			ReplayRequest { id: "overflow", expires_at_unix_secs: None },
 			0,
+			async {
+				acknowledgements.fetch_add(1, Ordering::SeqCst);
+				Ok(())
+			},
 			move || async move {
 				request_executions.fetch_add(1, Ordering::SeqCst);
 				Ok::<_, String>(())
@@ -157,8 +166,14 @@ fn full_ledger_rejects_before_executing_the_request() {
 		.await
 		.unwrap_err();
 
-		assert_eq!(error, "SSO replay ledger is full with 1024 unexpired requests");
-		assert_eq!(executions.load(Ordering::SeqCst), 0);
+		assert_eq!(
+			(
+				error.as_str(),
+				acknowledgements.load(Ordering::SeqCst),
+				executions.load(Ordering::SeqCst)
+			),
+			("SSO replay ledger is full with 1024 unexpired requests", 0, 0)
+		);
 	});
 }
 
@@ -168,19 +183,24 @@ fn completed_request_survives_store_reconstruction() {
 		let platform = StubPlatform::default();
 		let locks = SsoReplayLocks::default();
 		let request_scope = scope(1, 2, 3);
-		let first =
-			execute_once(&platform, &locks, request_scope, "request-1", Some(200), 100, || async {
-				Ok::<_, String>("executed")
-			})
-			.await
-			.unwrap();
+		let first = execute_once(
+			&platform,
+			&locks,
+			request_scope,
+			REQUEST,
+			100,
+			async { Ok(()) },
+			|| async { Ok::<_, String>("executed") },
+		)
+		.await
+		.unwrap();
 		assert_eq!(first, ReplayExecution::Executed("executed"));
 		assert_eq!(
 			read_ledger(&platform, request_scope).await.unwrap(),
 			RequestLedger {
 				entries: vec![RequestLedgerEntry {
-					request_id: "request-1".to_string(),
-					expires_at_unix_secs: Some(200),
+					request_id: REQUEST.id.to_string(),
+					expires_at_unix_secs: REQUEST.expires_at_unix_secs,
 					state: RequestLedgerState::Completed,
 				}],
 			}
@@ -191,9 +211,9 @@ fn completed_request_survives_store_reconstruction() {
 			&platform,
 			&reconstructed_locks,
 			request_scope,
-			"request-1",
-			Some(200),
+			REQUEST,
 			101,
+			async { Ok(()) },
 			|| async { Ok::<_, String>("executed twice") },
 		)
 		.await
@@ -212,9 +232,9 @@ fn started_request_is_not_executed_after_store_reconstruction() {
 			&platform,
 			&SsoReplayLocks::default(),
 			request_scope,
-			"request-1",
-			Some(200),
+			REQUEST,
 			100,
+			async { Ok(()) },
 			|| async { Err::<(), _>("simulated process failure".to_string()) },
 		)
 		.await
@@ -224,8 +244,8 @@ fn started_request_is_not_executed_after_store_reconstruction() {
 			read_ledger(&platform, request_scope).await.unwrap(),
 			RequestLedger {
 				entries: vec![RequestLedgerEntry {
-					request_id: "request-1".to_string(),
-					expires_at_unix_secs: Some(200),
+					request_id: REQUEST.id.to_string(),
+					expires_at_unix_secs: REQUEST.expires_at_unix_secs,
 					state: RequestLedgerState::Started,
 				}],
 			}
@@ -237,9 +257,9 @@ fn started_request_is_not_executed_after_store_reconstruction() {
 			&platform,
 			&SsoReplayLocks::default(),
 			request_scope,
-			"request-1",
-			Some(200),
+			REQUEST,
 			101,
+			async { Ok(()) },
 			move || async move {
 				replay_executions.fetch_add(1, Ordering::SeqCst);
 				Ok::<_, String>(())
@@ -266,9 +286,9 @@ fn request_ids_are_isolated_by_root_and_peer() {
 				&platform,
 				&locks,
 				request_scope,
-				"same-request-id",
-				Some(200),
+				REQUEST,
 				100,
+				async { Ok(()) },
 				move || async move {
 					executions.fetch_add(1, Ordering::SeqCst);
 					Ok::<_, String>(())
@@ -283,11 +303,13 @@ fn request_ids_are_isolated_by_root_and_peer() {
 	});
 }
 
+/// The first ack may not have arrived, so a duplicate is acknowledged again.
 #[test]
-fn duplicate_request_does_not_execute_side_effect_twice() {
+fn duplicate_request_is_acknowledged_again_but_not_executed_twice() {
 	futures::executor::block_on(async {
 		let platform = StubPlatform::default();
 		let locks = SsoReplayLocks::default();
+		let acknowledgements = AtomicUsize::new(0);
 		let executions = Arc::new(AtomicUsize::new(0));
 
 		for expected in [ReplayExecution::Executed(()), ReplayExecution::Duplicate] {
@@ -296,9 +318,12 @@ fn duplicate_request_does_not_execute_side_effect_twice() {
 				&platform,
 				&locks,
 				scope(1, 2, 3),
-				"request-1",
-				Some(200),
+				REQUEST,
 				100,
+				async {
+					acknowledgements.fetch_add(1, Ordering::SeqCst);
+					Ok(())
+				},
 				move || async move {
 					executions.fetch_add(1, Ordering::SeqCst);
 					Ok::<_, String>(())
@@ -309,6 +334,9 @@ fn duplicate_request_does_not_execute_side_effect_twice() {
 			assert_eq!(actual, expected);
 		}
 
-		assert_eq!(executions.load(Ordering::SeqCst), 1);
+		assert_eq!(
+			(acknowledgements.load(Ordering::SeqCst), executions.load(Ordering::SeqCst)),
+			(2, 1)
+		);
 	});
 }

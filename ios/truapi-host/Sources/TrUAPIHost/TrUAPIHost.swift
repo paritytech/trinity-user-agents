@@ -151,10 +151,6 @@ public protocol HostBridge: AnyObject, Sendable {
     /// return promptly.
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool
 
-    /// Enumerate the chains this host serves: its environment plus one entry
-    /// per chain role. Invoked on the dispatcher thread; must return promptly.
-    func supportedChains() throws -> HostChainSet
-
     /// The chains this host builds as V5 general transactions, each with its
     /// transaction extension pipeline; every other chain is built as V4. The
     /// core builds its own extrinsics the same way. Defaults to none.
@@ -175,6 +171,12 @@ public protocol HostBridge: AnyObject, Sendable {
     /// another thread from inside it. Defaults to a no-op for a host that
     /// runs no workers.
     func requestWorkerTransition(productId: ProductId, transition: WorkerTransition)
+
+    /// The product's worker crashed `crashes` times in a row while it was
+    /// needed: tell the user that product is not working. The core keeps
+    /// starting it again, waiting longer each time, so this needs no answer.
+    /// Can arrive on any thread. Defaults to a no-op.
+    func workerCrashing(productId: ProductId, crashes: UInt32)
 
     /// Begin a pending operation, whose id keeps the product's worker alive
     /// until it ends. `label` is a log/UI hint, empty when the product gave none.
@@ -350,10 +352,13 @@ public protocol TopUpHostBridge: AnyObject, Sendable {
     /// else reaches the product as `Unknown`.
     func topUp(productId: ProductId, request: HostPaymentTopUpRequest) async throws
 
-    /// The current status of `productId`'s top-up `id`, or `nil` when the
-    /// host holds none. Report every later status with
-    /// ``TrUAPIHostRuntime/notifyTopUpStatus(productId:id:status:)``.
-    func topUpStatus(productId: ProductId, id: Data) throws -> HostPaymentTopUpStatusSubscribeItem?
+    /// Follow `productId`'s top-up `id` on the engine, pushing each status
+    /// it reports with
+    /// ``TrUAPIHostRuntime/notifyTopUpStatus(productId:id:status:)``, and
+    /// return when the engine's stream ends. Throw `TopUpNotFound` when the
+    /// engine holds no such top-up. The core cancels the call once it has a
+    /// final status.
+    func followTopUp(productId: ProductId, id: Data) async throws
 }
 
 /// Host-implemented payment engine: pays from the user's balance to an
@@ -370,10 +375,13 @@ public protocol PaymentHostBridge: AnyObject, Sendable {
     /// `Unknown`.
     func requestPayment(productId: ProductId, request: HostPaymentRequest) async throws
 
-    /// The current status of `productId`'s payment `id`, or `nil` when the
-    /// host holds none. Report every later status with
-    /// ``TrUAPIHostRuntime/notifyPaymentStatus(productId:id:status:)``.
-    func paymentStatus(productId: ProductId, id: Data) throws -> HostPaymentStatusSubscribeItem?
+    /// Follow `productId`'s payment `id` on the engine, pushing each status
+    /// it reports with
+    /// ``TrUAPIHostRuntime/notifyPaymentStatus(productId:id:status:)``, and
+    /// return when the engine's stream ends. Throw `PaymentNotFound` when the
+    /// engine holds no such payment. The core cancels the call once it has a
+    /// final status.
+    func followPayment(productId: ProductId, id: Data) async throws
 }
 
 /// Host-implemented balance view: what a payment request can spend right now.
@@ -383,11 +391,11 @@ public protocol PaymentHostBridge: AnyObject, Sendable {
 /// it here. A runtime without one answers `balanceSubscribe` with
 /// `Unsupported`.
 public protocol BalanceHostBridge: AnyObject, Sendable {
-    /// The current balance of `purse` (`nil` for the main purse), a decimal
-    /// string of CASH units. The balance is the user's, the same for every
-    /// product; `productId` only names who is asking. Report every change with
-    /// ``TrUAPIHostRuntime/notifyBalance(purse:available:)``.
-    func balance(productId: ProductId, purse: UInt32?) async throws -> U128
+    /// Follow the user's spendable balance, pushing the current one and each
+    /// change with ``TrUAPIHostRuntime/notifyBalance(available:)``, and
+    /// return when the stream ends. The core cancels the call once no product
+    /// follows the balance, and calls again when one does.
+    func followBalance() async throws
 }
 
 /// Draws the viewfinder for `scanner.scan`, following the rules on the core's
@@ -422,11 +430,11 @@ public extension HostBridge {
             languageTag: Locale.current.language.languageCode?.identifier ?? "en"
         )
     }
-    func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         ExtensionVersionMap(chains: [])
     }
     func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {}
+    func workerCrashing(productId: ProductId, crashes: UInt32) {}
     func devicePaired(device: PairedSsoPeer) {}
     func durableWorkChanged(pending: Bool) {}
     func currentInstallation() async throws -> Data {
@@ -599,13 +607,13 @@ private final class TopUpCallbackAdapter: NativeTopUpCallbacks, @unchecked Senda
         }
     }
 
-    func topUpStatus(productId: ProductId, id: Bytes32) throws -> HostPaymentTopUpStatusSubscribeItem? {
+    func followTopUp(productId: ProductId, id: Bytes32) async throws {
         do {
-            return try bridge.topUpStatus(productId: productId, id: id)
-        } catch let error as HostRejection {
+            try await bridge.followTopUp(productId: productId, id: id)
+        } catch let error as HostPaymentTopUpStatusSubscribeError {
             throw error
         } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+            throw HostPaymentTopUpStatusSubscribeError.Unknown(reason: hostRejectionReason(error))
         }
     }
 }
@@ -629,13 +637,13 @@ private final class PaymentCallbackAdapter: NativePaymentCallbacks, @unchecked S
         }
     }
 
-    func paymentStatus(productId: ProductId, id: Bytes32) throws -> HostPaymentStatusSubscribeItem? {
+    func followPayment(productId: ProductId, id: Bytes32) async throws {
         do {
-            return try bridge.paymentStatus(productId: productId, id: id)
-        } catch let error as HostRejection {
+            try await bridge.followPayment(productId: productId, id: id)
+        } catch let error as HostPaymentStatusSubscribeError {
             throw error
         } catch {
-            throw HostRejection.Rejected(reason: hostRejectionReason(error))
+            throw HostPaymentStatusSubscribeError.Unknown(reason: hostRejectionReason(error))
         }
     }
 }
@@ -649,13 +657,13 @@ private final class BalanceCallbackAdapter: NativeBalanceCallbacks, @unchecked S
         self.bridge = bridge
     }
 
-    func balance(productId: ProductId, purse: UInt32?) async throws -> U128 {
+    func followBalance() async throws {
         do {
-            return try await bridge.balance(productId: productId, purse: purse)
-        } catch let error as HostPaymentBalanceSubscribeError {
+            try await bridge.followBalance()
+        } catch let error as HostRejection {
             throw error
         } catch {
-            throw HostPaymentBalanceSubscribeError.Unknown(reason: hostRejectionReason(error))
+            throw HostRejection.Rejected(reason: hostRejectionReason(error))
         }
     }
 }
@@ -676,6 +684,10 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
 
     func requestWorkerTransition(productId: ProductId, transition: WorkerTransition) {
         bridge.requestWorkerTransition(productId: productId, transition: transition)
+    }
+
+    func workerCrashing(productId: ProductId, crashes: UInt32) {
+        bridge.workerCrashing(productId: productId, crashes: crashes)
     }
 
     func devicePaired(device: PairedSsoPeer) {
@@ -842,12 +854,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func supportedChains() throws -> HostChainSet {
-        try withHostRejection {
-            try bridge.supportedChains()
-        }
-    }
-
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         try await withHostRejection {
             try await bridge.transactionExtensionVersions()
@@ -1001,8 +1007,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         return true
     }
 
-    /// Report a later status of `productId`'s top-up `id` to the products
-    /// following it. A terminal status ends their streams.
+    /// Push a status the engine reported for `productId`'s top-up `id`,
+    /// which the core asked to follow through `followTopUp`.
     public func notifyTopUpStatus(productId: ProductId, id: Data, status: HostPaymentTopUpStatusSubscribeItem) throws {
         try inner.notifyTopUpStatus(productId: productId, id: id, status: status)
     }
@@ -1017,8 +1023,8 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         return true
     }
 
-    /// Report a later status of `productId`'s payment `id` to the products
-    /// following it. A terminal status ends their streams.
+    /// Push a status the engine reported for `productId`'s payment `id`,
+    /// which the core asked to follow through `followPayment`.
     public func notifyPaymentStatus(productId: ProductId, id: Data, status: HostPaymentStatusSubscribeItem) throws {
         try inner.notifyPaymentStatus(productId: productId, id: id, status: status)
     }
@@ -1033,10 +1039,10 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         return true
     }
 
-    /// Report the new balance of `purse` (`nil` for the main purse), a decimal
-    /// string of CASH units, to the products following it.
-    public func notifyBalance(purse: UInt32?, available: U128) {
-        inner.notifyBalance(purse: purse, available: available)
+    /// Push the user's spendable balance, a decimal string of CASH units,
+    /// while the core follows it through `followBalance`.
+    public func notifyBalance(available: U128) {
+        inner.notifyBalance(available: available)
     }
 
     /// Open one executable connection with a host-assigned immutable context.
@@ -1162,6 +1168,17 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try await inner.coreDatabaseStatus()
     }
 
+    /// Profile metadata according to the requested freshness and stale-value policy.
+    /// At most two values are emitted. Cancellation stops the core observation.
+    public func resolvePublicProfile(
+        username: String,
+        options: PublicProfileResolutionOptions
+    ) -> AsyncThrowingStream<PublicProfile, Error> {
+        observedStream(PublicProfileStreamObserver.init(continuation:)) { observer in
+            inner.observePublicProfile(username: username, options: options, observer: observer)
+        }
+    }
+
     /// The image `reference` names, read from Bulletin by the core and checked against its
     /// CID and the image policy. Key a disk cache on ``LoadedImage/contentKey``.
     public func loadImage(reference: ImageReference) async throws -> LoadedImage {
@@ -1209,16 +1226,15 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
     }
 
-    /// Answer one decrypted SSO remote message from the wallet-managed
-    /// statement-store session. `message` is one SCALE-encoded
-    /// `RemoteMessage` exactly as decrypted. `.response` carries the
-    /// SCALE-encoded reply to post back over the same session;
-    /// `.disconnected` means the peer ended the session (perform native
-    /// teardown); `.ignored` means the message was not a request.
-    /// Confirmation-gated requests await `confirmUserAction`, so this can
-    /// take arbitrarily long — call from a `Task`, never the main thread.
-    public func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome {
-        try await inner.handleSsoRequest(message: message)
+    /// Bind one peer to the wallet matching the transport's public keys.
+    public func openSsoService(
+        ownStatementAccountId: Data,
+        ownEncryptionPublicKey: Data
+    ) throws -> SsoAccountHolderService {
+        try inner.openSsoService(
+            ownStatementAccountId: ownStatementAccountId,
+            ownEncryptionPublicKey: ownEncryptionPublicKey
+        )
     }
 
     /// Build the SCALE-encoded `Disconnected` message to post over a
@@ -1508,6 +1524,26 @@ private func observedStream<Element, Observer>(
         subscription.cancel()
     }
     return stream
+}
+
+private final class PublicProfileStreamObserver: NativePublicProfileObserver {
+    private let continuation: AsyncThrowingStream<PublicProfile, Error>.Continuation
+
+    init(continuation: AsyncThrowingStream<PublicProfile, Error>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func onProfile(profile: PublicProfile) {
+        continuation.yield(profile)
+    }
+
+    func onComplete() {
+        continuation.finish()
+    }
+
+    func onError(error: PublicProfileError) {
+        continuation.finish(throwing: error)
+    }
 }
 
 private final class RendererStreamObserver: NativeRendererObserver, @unchecked Sendable {

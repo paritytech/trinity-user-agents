@@ -9,45 +9,73 @@
 //! the manifest cache, so a provider whose publisher changed, withdrew or
 //! unpublished it is corrected within the cache lifetime.
 
-use std::{
-	collections::{HashMap, HashSet},
-	sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
-use truapi::latest::FundingDirection;
+use truapi::latest::{FundingDirection, FundingRail};
 
-use futures::lock::Mutex as AsyncMutex;
+use futures::{channel::mpsc, lock::Mutex as AsyncMutex};
 use parity_scale_codec::{Decode, Encode};
+use tracing::warn;
 
-use super::{funding::lock, product_manifest::worker_manifest, services::RuntimeServices};
+use super::{
+	funding::lock,
+	product_manifest::{product_brand, worker_manifest},
+	services::RuntimeServices,
+};
 use crate::{
+	host_internal::product_manifest::ProductBrand,
 	host_logic::{
 		funding::FundingSessionError,
-		funding_providers::{FundingCandidate, FundingProviderEntry, LearnedSupport},
+		funding_providers::{
+			FundingAmountLimits, FundingCandidate, FundingCountry, FundingNetworkLimits,
+			FundingOptions, FundingProviderApp, FundingProviderEntry, FundingProviderOrigin,
+			FundingSelection, LearnedSupport, LimitScope, amount_limits, country_support,
+			provider_config,
+		},
+		funding_view,
 		worker_manifest::WorkerManifest,
 	},
 	platform::{CoreStorageKey, ProductId},
 	unix_time::current_unix_millis,
+	wake::WakeSignal,
 };
 
 /// A provider the host offers, with the Worker manifest it shipped already
-/// read.
+/// read and what dotNS says it publishes.
 #[derive(Clone)]
 struct OfferedProvider {
 	product_id: ProductId,
 	snapshot: Option<WorkerManifest>,
+	origin: FundingProviderOrigin,
+	/// Whether it ships an App, as the host said.
+	app: FundingProviderApp,
+	/// What dotNS last said the provider publishes: its Worker manifest, or
+	/// `None` for nothing usable. `None` until dotNS has answered.
+	live: Option<Option<WorkerManifest>>,
+	/// Whether its manifest is being read.
+	reading: bool,
+	/// The name and icon its root manifest gives it: the host's for a
+	/// bundled provider, dotNS's once read for a published one.
+	brand: Option<ProductBrand>,
+}
+
+impl OfferedProvider {
+	/// The manifest the core goes by: the host's for a bundled provider;
+	/// otherwise dotNS's answer once it has one, the host's snapshot until
+	/// then.
+	fn manifest(&self) -> Option<WorkerManifest> {
+		match (&self.live, self.origin) {
+			(Some(live), FundingProviderOrigin::Published) => live.clone(),
+			_ => self.snapshot.clone(),
+		}
+	}
 }
 
 /// The host's funding providers and what each one serves.
 #[derive(Default)]
 pub struct FundingProviders {
-	/// The providers, in the host's order.
+	/// The providers, in the host's order, each once.
 	entries: Mutex<Vec<OfferedProvider>>,
-	/// What dotNS last said each provider publishes: its Worker manifest, or
-	/// `None` for nothing usable.
-	live: Mutex<HashMap<ProductId, Option<WorkerManifest>>>,
-	/// Providers whose manifest is being read.
-	refreshing: Mutex<HashSet<ProductId>>,
 	/// What providers' quote answers showed about what they serve, newest
 	/// per ask, persisted under [`CoreStorageKey::FundingSupport`].
 	learned: Mutex<Vec<LearnedSupport>>,
@@ -55,9 +83,18 @@ pub struct FundingProviders {
 	/// order and none lands before the stored records are in; the flag
 	/// records whether they are.
 	learned_store: AsyncMutex<bool>,
+	/// Quote lists waiting for the providers to change before their next
+	/// round.
+	changed: WakeSignal,
 }
 
 impl FundingProviders {
+	/// Resolves once the providers the core goes by next change: the host
+	/// lists others, or dotNS answers for one with what it serves.
+	pub fn on_change(&self) -> mpsc::Receiver<()> {
+		self.changed.subscribe()
+	}
+
 	/// Every provider serving `direction`, in the host's order. What their
 	/// recent quote answers showed is folded into what their manifests say.
 	pub fn candidates(&self, direction: FundingDirection) -> Vec<FundingCandidate> {
@@ -73,6 +110,10 @@ impl FundingProviders {
 					direction,
 					now_ms,
 				)
+			})
+			.map(|candidate| FundingCandidate {
+				brand: self.brand(&candidate.provider_id),
+				..candidate
 			})
 			.collect()
 	}
@@ -92,64 +133,354 @@ impl FundingProviders {
 			.collect()
 	}
 
+	/// The quote targets asked to price an ask in `direction` on `rail`: those
+	/// whose routes, as declared and as their answers confirmed, carry the
+	/// rail, or that declare none, in the host's order.
+	pub fn quote_targets_for(
+		&self,
+		direction: FundingDirection,
+		rail: FundingRail,
+	) -> Vec<ProductId> {
+		let candidates = self.candidates(direction);
+		self.quote_targets()
+			.into_iter()
+			.filter(|provider_id| {
+				candidates.iter().any(|candidate| {
+					candidate.provider_id == *provider_id &&
+						funding_view::routes_rail(candidate, rail)
+				})
+			})
+			.collect()
+	}
+
 	/// The host's providers in its order, each with the manifest the core
 	/// goes by.
 	fn providers(&self) -> Vec<(ProductId, Option<WorkerManifest>)> {
-		let entries = lock(&self.entries).clone();
-		entries
+		manifests(&lock(&self.entries))
+	}
+
+	/// Make `offered` the providers, keeping what dotNS said of each one
+	/// listed before. Returns whether the providers the core goes by changed.
+	fn offer(&self, mut offered: Vec<OfferedProvider>) -> Offered {
+		let mut entries = lock(&self.entries);
+		let before = manifests(&entries);
+		let listed_before: Vec<ProductId> =
+			entries.iter().map(|entry| entry.product_id.clone()).collect();
+		for entry in &mut offered {
+			if let Some(known) = entries.iter().find(|known| known.product_id == entry.product_id) {
+				entry.live = known.live.clone();
+				entry.reading = known.reading;
+				if entry.origin == FundingProviderOrigin::Published && known.brand.is_some() {
+					entry.brand = known.brand.clone();
+				}
+			}
+		}
+		*entries = offered;
+		Offered {
+			manifests_changed: manifests(&entries) != before,
+			listed_changed: entries.iter().map(|entry| &entry.product_id).ne(listed_before.iter()),
+		}
+	}
+
+	/// Keep `manifest` as what dotNS says `product_id` publishes. A provider
+	/// the host no longer lists is left out. Returns whether the providers
+	/// the core goes by changed.
+	fn answered(&self, product_id: &ProductId, manifest: Option<WorkerManifest>) -> bool {
+		let mut entries = lock(&self.entries);
+		let Some(entry) = entries.iter_mut().find(|entry| entry.product_id == *product_id) else {
+			return false;
+		};
+		let before = entry.manifest();
+		entry.live = Some(manifest);
+		entry.manifest() != before
+	}
+
+	/// Record `brand` as what dotNS gives `product_id`. Returns whether it
+	/// changed.
+	fn branded(&self, product_id: &ProductId, brand: ProductBrand) -> bool {
+		let mut entries = lock(&self.entries);
+		let Some(entry) = entries.iter_mut().find(|entry| entry.product_id == *product_id) else {
+			return false;
+		};
+		let changed = entry.brand.as_ref() != Some(&brand);
+		entry.brand = Some(brand);
+		changed
+	}
+
+	/// The name and icon `provider_id` is shown by, when known.
+	fn brand(&self, provider_id: &ProductId) -> Option<ProductBrand> {
+		lock(&self.entries)
 			.iter()
-			.map(|entry| (entry.product_id.clone(), self.manifest(entry)))
+			.find(|entry| entry.product_id == *provider_id)
+			.and_then(|entry| entry.brand.clone())
+	}
+
+	/// Mark every published provider whose manifest is not being read as
+	/// being read, and return them.
+	fn start_reads(&self) -> Vec<ProductId> {
+		lock(&self.entries)
+			.iter_mut()
+			.filter(|entry| entry.origin == FundingProviderOrigin::Published && !entry.reading)
+			.map(|entry| {
+				entry.reading = true;
+				entry.product_id.clone()
+			})
 			.collect()
 	}
 
 	/// Record what an answer showed, replacing what was known for the same
 	/// ask and dropping what is no longer trusted.
-	fn learn(&self, support: LearnedSupport) {
+	fn learn(&self, mut support: LearnedSupport) {
 		let mut learned = lock(&self.learned);
 		let now_ms = support.learned_at_ms;
+		if let Some(known) =
+			learned.iter().find(|known| known.is_fresh(now_ms) && known.same_ask(&support))
+		{
+			support.keep_limits_of(known);
+		}
 		learned.retain(|known| known.is_fresh(now_ms) && !known.same_ask(&support));
 		learned.push(support);
+	}
+
+	/// The amounts a session can take in `scope`, across every provider a
+	/// quote is asked of.
+	fn amount_limits(&self, scope: LimitScope<'_>) -> FundingAmountLimits {
+		let learned = lock(&self.learned).clone();
+		let targets = self.quote_targets_for(scope.direction, scope.rail);
+		amount_limits(&targets, &learned, scope, current_unix_millis())
+	}
+
+	/// What the providers' manifests and recent quote answers say about each
+	/// country for `direction`, `rail` and `asset`.
+	fn countries(
+		&self,
+		direction: FundingDirection,
+		rail: FundingRail,
+		asset: &str,
+	) -> Vec<FundingCountry> {
+		let learned = lock(&self.learned).clone();
+		country_support(&self.providers(), &learned, direction, rail, asset, current_unix_millis())
+	}
+
+	/// Whether `provider_id` ships an App, as the host said.
+	pub fn app(&self, provider_id: &ProductId) -> FundingProviderApp {
+		lock(&self.entries)
+			.iter()
+			.find(|entry| entry.product_id == *provider_id)
+			.map_or(FundingProviderApp::Unknown, |entry| entry.app)
+	}
+
+	/// Whether the host offers no funding provider.
+	pub fn is_empty(&self) -> bool {
+		lock(&self.entries).is_empty()
 	}
 
 	/// Whether a session can be handed to `provider_id`: it is a quote target.
 	pub fn is_quote_target(&self, provider_id: &ProductId) -> bool {
 		self.quote_targets().contains(provider_id)
 	}
+}
 
-	/// The manifest the core goes by for `entry`: dotNS's answer once it has
-	/// one, the host's snapshot until then.
-	fn manifest(&self, entry: &OfferedProvider) -> Option<WorkerManifest> {
-		match lock(&self.live).get(&entry.product_id) {
-			Some(live) => live.clone(),
-			None => entry.snapshot.clone(),
+/// Each of `entries` with the manifest the core goes by, in order.
+fn manifests(entries: &[OfferedProvider]) -> Vec<(ProductId, Option<WorkerManifest>)> {
+	entries
+		.iter()
+		.map(|entry| (entry.product_id.clone(), entry.manifest()))
+		.collect()
+}
+
+/// A provider's manifest read in flight. Dropping it, as the read ends or
+/// its task is dropped, lets the next refresh read the manifest again.
+struct ManifestRead {
+	services: Arc<RuntimeServices>,
+	product_id: ProductId,
+}
+
+impl Drop for ManifestRead {
+	fn drop(&mut self) {
+		let mut entries = lock(&self.services.funding_providers().entries);
+		if let Some(entry) = entries.iter_mut().find(|entry| entry.product_id == self.product_id) {
+			entry.reading = false;
 		}
 	}
 }
 
 impl RuntimeServices {
 	/// Replace the funding providers the host offers, and start reading their
-	/// manifests. A shipped manifest that does not parse is refused, and
-	/// nothing changes.
+	/// manifests, telling the feed when the providers listed changed. A
+	/// shipped manifest that does not parse is refused, and nothing changes.
 	pub fn set_funding_providers(
 		self: &Arc<Self>,
 		entries: Vec<FundingProviderEntry>,
 	) -> Result<(), FundingSessionError> {
-		let offered = offered_providers(entries)?;
-		let providers = &self.funding_providers();
-		lock(&providers.live)
-			.retain(|product_id, _| offered.iter().any(|entry| &entry.product_id == product_id));
-		*lock(&providers.entries) = offered;
+		let offered = self.funding_providers().offer(offered_providers(entries)?);
+		if offered.manifests_changed {
+			self.funding_providers_changed();
+		}
+		if offered.listed_changed &&
+			let Some(feed) = self.funding().feed()
+		{
+			feed.funding_providers_changed();
+		}
 		self.refresh_funding_providers();
 		Ok(())
 	}
 
-	/// The providers a session in `direction` can be handed to.
-	pub fn funding_candidates(
+	/// Offer the providers the host's remote configuration lists by name,
+	/// without a TLD, read on the network the stack is on, telling the feed
+	/// when the list changed. A name that is not a product id, or that names
+	/// a TLD, is skipped and logged. A call listing what the last one did changes
+	/// nothing the host sees, so the host can call it on every refresh.
+	pub fn set_funding_provider_config(
 		self: &Arc<Self>,
-		direction: FundingDirection,
-	) -> Vec<FundingCandidate> {
-		self.refresh_funding_providers();
-		self.funding_providers().candidates(direction)
+		published_names: Vec<String>,
+	) -> Result<(), FundingSessionError> {
+		let (entries, invalid) = provider_config(&published_names, self.stack().tld());
+		for name in invalid {
+			warn!(%name, "funding provider configuration names no product");
+		}
+		self.set_funding_providers(entries)
+	}
+
+	/// Record what the user picked in session `intent`'s overlay, and send
+	/// the host the options it leads to. A session whose overlay is not up
+	/// offers nothing to pick, so its selection is ignored. Either way it
+	/// disarms the session's start when quoted and withdraws a quote request
+	/// the selection no longer matches.
+	pub fn select_funding_options(self: &Arc<Self>, intent: &str, selection: FundingSelection) {
+		self.withdraw_unselected_quotes(intent, &selection);
+		if self.funding().select(intent, selection) {
+			self.send_funding_options(intent);
+		}
+	}
+
+	/// Why `amount` (balance units) cannot go ahead in session `intent`, if
+	/// it cannot: more than `spendable` on a withdrawal, then what every
+	/// provider's refusal of this same amount in its quote list said, then
+	/// the amount limits its options show. `None` for a session the core
+	/// does not hold.
+	pub fn funding_amount_issue(
+		self: &Arc<Self>,
+		intent: &str,
+		amount: u128,
+		spendable: Option<u128>,
+	) -> Option<crate::platform::FundingAmountIssue> {
+		let session = self.funding().get(intent)?;
+		let limits = self
+			.funding_options(intent)
+			.map_or(FundingAmountLimits::ANY, |options| options.limits);
+		let quotes = self.funding_quotes().list(intent);
+		funding_view::amount_issue(
+			session.direction,
+			&limits,
+			quotes.as_ref().map(|quotes| (quotes.amount, quotes.issue.as_ref())),
+			amount,
+			spendable,
+		)
+	}
+
+	/// Tell the host what session `intent`'s overlay offers changed, for a
+	/// session the core holds.
+	pub fn send_funding_options(self: &Arc<Self>, intent: &str) {
+		if let Some(feed) = self.funding().feed() &&
+			self.funding().get(intent).is_some()
+		{
+			feed.funding_options_changed(intent.to_string());
+		}
+	}
+
+	/// What session `intent`'s overlay offers for the user's selection so
+	/// far, worked out as it is read. `None` for a session the core does not
+	/// hold.
+	pub fn funding_options(self: &Arc<Self>, intent: &str) -> Option<FundingOptions> {
+		let session = self.funding().get(intent)?;
+		let providers = self.funding_providers();
+		let selection = self.funding().selection(intent);
+		let candidates = providers.candidates(session.direction);
+		let limits_on = |selection: &FundingSelection, asset: &str, network: Option<&str>| {
+			providers.amount_limits(LimitScope {
+				direction: session.direction,
+				rail: selection.rail,
+				asset,
+				network,
+				country: selection.country.as_deref(),
+			})
+		};
+		// The asset the overlay works in: the one the user picked, else the
+		// one the core resolves for the rail, so a selection without an asset
+		// already gets that asset's countries and limits.
+		let asset = selection
+			.as_ref()
+			.and_then(|selection| funding_view::selected_asset(&candidates, selection));
+		let (countries, limits, networks) = match &selection {
+			None => (Vec::new(), FundingAmountLimits::ANY, Vec::new()),
+			Some(selection) => {
+				let countries = asset
+					.as_deref()
+					.map(|asset| providers.countries(session.direction, selection.rail, asset))
+					.unwrap_or_default();
+				let networks = match selection.rail {
+					FundingRail::Crypto => {
+						declared_networks(&candidates, session.direction, asset.as_deref())
+							.into_iter()
+							.map(|(network, assets)| {
+								let limits = assets
+									.iter()
+									.map(|asset| limits_on(selection, asset, Some(&network)))
+									.reduce(FundingAmountLimits::widest)
+									.unwrap_or(FundingAmountLimits::ANY);
+								FundingNetworkLimits { network, limits }
+							})
+							.collect()
+					},
+					_ => Vec::new(),
+				};
+				let limits = limits_on(
+					selection,
+					asset.as_deref().unwrap_or_default(),
+					selection.network.as_deref(),
+				);
+				(countries, limits, networks)
+			},
+		};
+		let rails = funding_view::routed_rails(&candidates);
+		let tokens = funding_view::crypto_tokens(
+			&candidates,
+			selection.as_ref().and_then(|selection| selection.network.as_deref()),
+		);
+		let detected_country = self.recent_funding_country();
+		if detected_country.is_none() {
+			self.detect_country_for_options();
+		}
+		Some(FundingOptions {
+			candidates,
+			countries,
+			limits,
+			networks,
+			rails,
+			asset,
+			tokens,
+			detected_country: detected_country.flatten(),
+		})
+	}
+
+	/// Ask the host for the user's country in the background, unless a
+	/// detection is under way, and send every overlay still up its options
+	/// again once it answered one.
+	fn detect_country_for_options(self: &Arc<Self>) {
+		if !self.ask_funding_country() {
+			return;
+		}
+		let services = self.clone();
+		self.spawner.spawn(async move {
+			let found = services.detected_funding_country().await.is_some();
+			services.funding_country_asked();
+			if found {
+				for intent in services.funding().presenting() {
+					services.send_funding_options(&intent);
+				}
+			}
+		});
 	}
 
 	/// Read every host provider's manifest that is not already being read. A
@@ -157,19 +488,15 @@ impl RuntimeServices {
 	/// the provider.
 	pub fn refresh_funding_providers(self: &Arc<Self>) {
 		let services = self.clone();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			let mut loaded = services.funding_providers().learned_store.lock().await;
 			services.load_learned_support(&mut loaded).await;
-		}));
-		let entries = lock(&self.funding_providers().entries).clone();
-		for entry in entries {
-			if !lock(&self.funding_providers().refreshing).insert(entry.product_id.clone()) {
-				continue;
-			}
-			let services = self.clone();
-			(self.spawner)(Box::pin(async move {
-				services.read_provider_manifest(&entry.product_id).await;
-			}));
+		});
+		for product_id in self.funding_providers().start_reads() {
+			let read = ManifestRead { services: self.clone(), product_id };
+			self.spawner.spawn(async move {
+				read.services.read_provider_manifest(&read.product_id).await;
+			});
 		}
 	}
 
@@ -179,7 +506,7 @@ impl RuntimeServices {
 	pub fn learn_funding_support(self: &Arc<Self>, support: LearnedSupport) {
 		self.funding_providers().learn(support);
 		let services = self.clone();
-		(self.spawner)(Box::pin(async move {
+		self.spawner.spawn(async move {
 			// Each write takes the records as they are once it holds the
 			// lock, so the last one to land is the newest.
 			let mut loaded = services.funding_providers().learned_store.lock().await;
@@ -194,7 +521,7 @@ impl RuntimeServices {
 			{
 				tracing::warn!(reason = %error.reason, "storing what funding providers serve failed");
 			}
-		}));
+		});
 	}
 
 	/// Load what earlier answers showed unless `loaded` says it is in,
@@ -229,15 +556,38 @@ impl RuntimeServices {
 		true
 	}
 
-	/// Read `product_id`'s Worker manifest into what the core goes by.
-	async fn read_provider_manifest(&self, product_id: &ProductId) {
+	/// Read `product_id`'s Worker manifest and brand into what the core goes
+	/// by.
+	async fn read_provider_manifest(self: &Arc<Self>, product_id: &ProductId) {
 		let read = worker_manifest(self, self.platform.as_ref(), product_id).await;
-		let providers = &self.funding_providers();
-		if let Ok(manifest) = read {
-			lock(&providers.live).insert(product_id.clone(), manifest);
+		let mut changed =
+			read.is_ok_and(|manifest| self.funding_providers().answered(product_id, manifest));
+		if let Ok(Some(brand)) = product_brand(self, self.platform.as_ref(), product_id).await {
+			changed |= self.funding_providers().branded(product_id, brand);
 		}
-		lock(&providers.refreshing).remove(product_id);
+		if changed {
+			self.funding_providers_changed();
+		}
 	}
+
+	/// The providers the core goes by changed, often because dotNS answered
+	/// for one the host lists without a manifest: every open overlay is sent
+	/// its options again, and every watched quote list asks again at once,
+	/// so a provider read after the overlay opened still shows and quotes.
+	fn funding_providers_changed(self: &Arc<Self>) {
+		self.funding_providers().changed.wake();
+		for intent in self.funding().presenting() {
+			self.send_funding_options(&intent);
+		}
+	}
+}
+
+/// What offering a list of providers changed.
+struct Offered {
+	/// The manifests the core goes by.
+	manifests_changed: bool,
+	/// Which providers the host lists.
+	listed_changed: bool,
 }
 
 /// The host's `entries` with their shipped manifests read, in its order,
@@ -256,11 +606,68 @@ fn offered_providers(
 			.map_err(|reason| FundingSessionError::InvalidProvider {
 				reason: format!("{product_id}: {reason}"),
 			})?;
+		if entry.origin == FundingProviderOrigin::Bundled && snapshot.is_none() {
+			return Err(FundingSessionError::InvalidProvider {
+				reason: format!("{product_id}: a bundled provider needs its manifest"),
+			});
+		}
 		if offered.iter().all(|kept| kept.product_id != product_id) {
-			offered.push(OfferedProvider { product_id, snapshot });
+			let brand = entry.root_manifest.as_deref().and_then(|json| {
+				ProductBrand::parse(json)
+					.inspect_err(
+						|reason| tracing::warn!(%product_id, %reason, "shipped root manifest gives no brand"),
+					)
+					.ok()
+			});
+			offered.push(OfferedProvider {
+				product_id,
+				snapshot,
+				origin: entry.origin,
+				app: entry.app,
+				live: None,
+				reading: false,
+				brand,
+			});
 		}
 	}
 	Ok(offered)
+}
+
+/// The networks `candidates`' crypto routes declare in `direction`, each
+/// once in the order first declared, with the assets declared on it: only
+/// `asset` when one is picked, otherwise every one.
+fn declared_networks(
+	candidates: &[FundingCandidate],
+	direction: FundingDirection,
+	asset: Option<&str>,
+) -> Vec<(String, Vec<String>)> {
+	let mut networks: Vec<(String, Vec<String>)> = Vec::new();
+	let routes = candidates
+		.iter()
+		.flat_map(|candidate| &candidate.routes)
+		.filter(|route| route.rail == FundingRail::Crypto && route.directions.contains(&direction));
+	for route in routes {
+		let assets = route
+			.assets
+			.iter()
+			.filter(|declared| asset.is_none_or(|asset| *declared == asset));
+		for network in route.networks.iter().flatten() {
+			let index = match networks.iter().position(|(known, _)| known == network) {
+				Some(index) => index,
+				None => {
+					networks.push((network.clone(), Vec::new()));
+					networks.len() - 1
+				},
+			};
+			for declared in assets.clone() {
+				if !networks[index].1.contains(declared) {
+					networks[index].1.push(declared.clone());
+				}
+			}
+		}
+	}
+	networks.retain(|(_, assets)| !assets.is_empty());
+	networks
 }
 
 #[cfg(test)]

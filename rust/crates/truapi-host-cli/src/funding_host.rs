@@ -159,6 +159,16 @@ impl FundingPlatform for CliFundingHost {
 		Ok(truapi::latest::FundingFrameOutcome::Dismissed)
 	}
 
+	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+
+	// The scripted user always looks at the session, so a provider's screen
+	// opens as soon as it is asked for.
+	fn provider_frame_requested(&self, _provider: &ProductContext, intent: String) {
+		if let Some(runtime) = self.runtime.upgrade() {
+			runtime.open_provider_frame(&intent);
+		}
+	}
+
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
 		let (tag, amount) = match status {
 			HostFundingStatusSubscribeItem::InProgress { .. } => ("InProgress", None),

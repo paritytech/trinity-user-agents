@@ -39,15 +39,19 @@ consumes it, bumps the selected package `package.json`, appends the package
 `scripts/sync-release-versions.mjs`. That script keeps
 `rust/crates/truapi/Cargo.toml`, the host package's `@parity/truapi`
 dependency and the `@parity/truapi` version recorded in
-`js/container/package-lock.json` aligned with `js/packages/truapi/package.json`;
-the command then refreshes `package-lock.json`. A protocol release should
+`js/container/package-lock.json` aligned with `js/packages/truapi/package.json`,
+and `rust/crates/trinity-stack/Cargo.toml` aligned with
+`js/packages/trinity-stack/package.json`; the command then refreshes
+`package-lock.json` and the workspace members' versions in `Cargo.lock`. A protocol release should
 therefore include the `@parity/truapi` package, its changelog, the Cargo
-version, the host dependency, and both lockfiles. A host-runtime-only release can bump
+version, the host dependency, and the lockfiles. A host-runtime-only release can bump
 `@parity/truapi-host` without changing the Rust crate version.
 
 `@parity/trinity-stack` ships the `rust/crates/trinity-stack` crate built to
 WebAssembly, so a change to that crate needs a changeset for the package. Its
 version is independent of the protocol, and a release of it alone skips step 2.
+The same release publishes the crate to crates.io as `trinity-stack` with the
+package's version.
 
 ### 2. Cut the protocol version
 
@@ -166,7 +170,35 @@ version (`scripts/sync-release-versions.mjs` keeps it there, and
 `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` natively, uploads
 each archive and its `.sha256` to the `@parity/truapi@<version>` release, and
 only then moves the `truapi-host-cli-stable` pointer that the installer and the
-in-binary updater read. There is no separate release subject entry for it.
+in-binary updater read. Last, it tags the release commit
+`truapi-host-cli-v<version>` for workflows that use
+`.github/actions/install-truapi-host`; the action reads the CLI version from
+the commit it is checked out at, so the tag installs its own release. There is
+no separate release subject entry for it.
+
+`@parity/trinity-stack <version>` also tags the release commit
+`trinity-stack-v<version>` for workflows that use
+`.github/actions/install-trinity-stack`, which installs the package version of
+the commit it is checked out at. It also publishes the `trinity-stack` crate to
+[crates.io](https://crates.io/crates/trinity-stack) with the same version, which
+`npm run check-release-versions` verifies against
+`rust/crates/trinity-stack/Cargo.toml`. The `publish-crate` job runs once the
+release job succeeds, so the crate never appears before the npm package. It
+packages the crate with `cargo package`, which builds it, uploads the `.crate`
+file as the run's `crates` artifact, and dispatches
+[`paritytech/crates_publish_automation`](https://github.com/paritytech/crates_publish_automation),
+which publishes it as the [`parity-crate-owner`](https://crates.io/users/parity-crate-owner)
+account. The job then polls the crates.io index for up to ten minutes and fails
+if the version does not appear; a failed automation run also opens an issue
+here. A version crates.io already serves is skipped without a dispatch, so
+re-running the release is safe.
+
+This needs two things outside this repository: a
+`"trinity-user-agents": ["trinity-stack"]` entry in the automation's `crates.ts`,
+which lists the crates each repository may publish, and access for this
+repository to the org-level `CRATES_NPM_PUBLISHING_APP_CLIENT_ID` variable and
+`CRATES_NPM_PUBLISHING_APP_PRIVATE_KEY` secret of the `CRATES_NPM_PUBLISHING_APP`
+GitHub App, which mints the dispatch token.
 
 `@parity/ios-host <version>` publishes two artifacts, because SwiftPM splits a
 package across both. The xcframework goes to the `@parity/ios-host@<version>`
@@ -320,8 +352,11 @@ has to be one of ours rather than a personal one.
   consumers still install the previous version.
 - Publishing uses the default `GITHUB_TOKEN`. The only other credentials are the
   org-level `NPM_PUBLISH_AUTOMATION_TOKEN` that the automation itself relies on,
-  and the notification app's client id and private key, which are read by the
-  notification job alone and can reach nothing in this repository.
+  the `CRATES_NPM_PUBLISHING_APP` client id and private key that the crates.io
+  publish job alone reads to dispatch `crates_publish_automation`, which stores
+  the crates.io token, and the notification app's client id and private key,
+  which are read by the notification job alone and can reach nothing in this
+  repository.
 - The consumer notifications are the last step and announce only the versions the
   registry confirmed. A repository that cannot be reached is a warning and does
   not stop the others, though the run still ends red so the failure is visible.

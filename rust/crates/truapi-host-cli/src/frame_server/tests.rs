@@ -3,6 +3,9 @@ use futures_util::{SinkExt, StreamExt};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::{sync::Notify, task::JoinHandle};
 use tokio_tungstenite::{client_async, tungstenite::client::IntoClientRequest};
+use truapi::Spawner;
+
+use crate::chain::ChainBackend;
 
 struct UnusedRuntimeFactory;
 
@@ -66,9 +69,9 @@ async fn start_tcp_server(
 }
 
 fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
-	let network = crate::network::Network::default().config();
+	let network = crate::network::Network::default().bundled_stack(ChainBackend::Rpc);
 	let platform = crate::platform::CliPlatform::new(
-		network,
+		&network,
 		None,
 		crate::platform::ApprovalPolicy::AutoAccept,
 		None,
@@ -81,12 +84,11 @@ fn signing_runtime() -> Result<Arc<dyn ProductRuntimeFactory>> {
 			platform: truapi::latest::HostPlatform::Cli,
 		},
 		truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-		network.people_genesis,
-		network.bulletin_genesis,
-		network.asset_hub_genesis,
-		network.network_suffix.to_string(),
+		network.core_stack()?,
 	)?;
-	let spawner: truapi::subscription::Spawner = Arc::new(|_| {});
+	let executor = tokio::runtime::Builder::new_current_thread().build()?;
+	let spawner = Spawner::new(executor.handle().clone());
+	executor.shutdown_background();
 	Ok(Arc::new(SigningHostRuntime::new(platform, config, spawner)))
 }
 
@@ -464,19 +466,13 @@ mod cross_product_storage {
 	}
 
 	fn host() -> Result<(Arc<crate::platform::CliPlatform>, SigningHostRuntime)> {
-		// The override must land on `live_chain_endpoints`: that is the
-		// table `CliPlatform` resolves a genesis through. `asset_hub_ws`
-		// feeds the standalone `AssetHubReader` subcommands. Only Asset Hub
-		// is rerouted here.
-		let mut network = crate::network::Network::default().config();
-		network.live_chain_endpoints = Box::leak(Box::new([crate::network::ChainEndpoint {
-			genesis: network.asset_hub_genesis,
-			ws: "ws://127.0.0.1:1",
-			required_for_host: true,
-		}]));
-		let asset_hub_genesis = network.asset_hub_genesis;
+		// Every chain routes to a closed port, so nothing connects to live Paseo.
+		let network = crate::network::Network::default()
+			.bundled_stack(ChainBackend::Rpc)
+			.with_rpc("ws://127.0.0.1:1");
+		let asset_hub_genesis = network.genesis().asset_hub;
 		let platform = crate::platform::CliPlatform::new(
-			network,
+			&network,
 			None,
 			crate::platform::ApprovalPolicy::AutoAccept,
 			None,
@@ -489,19 +485,16 @@ mod cross_product_storage {
 				platform: truapi::latest::HostPlatform::Cli,
 			},
 			truapi::platform::PlatformInfo { kind: Some("test".into()), version: None },
-			network.people_genesis,
-			network.bulletin_genesis,
-			network.asset_hub_genesis,
-			network.network_suffix.to_string(),
+			network.core_stack()?,
 		)?;
-		// An override written to a field this path never reads compiles,
-		// changes nothing, and looks identical in timings. Assert it.
 		assert_eq!(
 			platform.routed_url(&asset_hub_genesis),
 			"ws://127.0.0.1:1",
 			"the Asset Hub genesis must route to the closed port, not to live Paseo"
 		);
-		let spawner: truapi::subscription::Spawner = Arc::new(|_| {});
+		let executor = tokio::runtime::Builder::new_current_thread().build()?;
+		let spawner = Spawner::new(executor.handle().clone());
+		executor.shutdown_background();
 		Ok((platform.clone(), SigningHostRuntime::new(platform, config, spawner)))
 	}
 

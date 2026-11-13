@@ -10,38 +10,10 @@ fn the_table_and_the_lookup_agree() {
 }
 
 #[test]
-fn the_exported_map_holds_every_entry_and_nothing_else() {
-	let exported = crate::native::core_markers();
-	assert_eq!(exported.len(), MARKERS.len(), "the exported map lost or gained an entry");
-	for marker in MARKERS {
-		assert_eq!(
-			exported.get(marker.target),
-			Some(&marker.class),
-			"{} did not survive the crossing",
-			marker.target
-		);
-	}
-}
-
-#[test]
-fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
-	let exported = crate::native::core_markers();
-	assert_eq!(
-		exported.get(TRACING_ERROR.target),
-		Some(&MarkerClass::Export { severity: Severity::Error })
-	);
-	assert_eq!(
-		exported.get(TRACING_WARN.target),
-		Some(&MarkerClass::Export { severity: Severity::Warn })
-	);
-	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
-}
-
-#[test]
 fn every_target_is_host_addressed() {
 	for marker in MARKERS {
 		assert!(
-			marker.target.starts_with(crate::logging::HOST_MARKER_PREFIX),
+			marker.target.starts_with(HOST_MARKER_PREFIX),
 			"{} is not addressed to a host",
 			marker.target
 		);

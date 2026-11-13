@@ -248,6 +248,16 @@ final class TabBarBottomChromeController: UIViewController {
         rebuildItems()
     }
 
+    #if !FEATURE_PRODUCTS
+        func setChainStatus(_ rows: [ChainConnectionStatusViewModel]) {
+            barModel.chainStatusRows = rows
+        }
+    #endif
+
+    func setSettingsAttention(_ isVisible: Bool) {
+        barModel.showsSettingsAttention = isVisible
+    }
+
     func setSPATabs(_ chips: [TabBarShelfChip], selected: UUID?) {
         if spaTabCount != chips.count {
             spaTabCount = chips.count
@@ -465,17 +475,6 @@ extension TabBarBottomChromeController {
         let isReselection = tabIndex == selectedTabIndex
         setSelectedIndex(tabIndex)
         onSelect?(tabIndex, isReselection)
-    }
-
-    private func handleAction(_ action: TabBarAction) {
-        switch action {
-        case .connectionStatus:
-            onConnectionStatusTapped?()
-        case .spaTabs:
-            panelController.togglePanel(.shelf)
-        case .scan:
-            panelController.togglePanel(.content(.scan))
-        }
     }
 }
 

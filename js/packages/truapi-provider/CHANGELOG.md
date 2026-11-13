@@ -1,5 +1,35 @@
 # @parity/truapi-provider
 
+## 0.5.0
+
+### Minor Changes
+
+- 0d63024: truapi-provider bundles the `paseo` network: the Paseo relay with Asset Hub Paseo, People Paseo and Bulletin
+  Paseo. A host starts any of them on the light client from its genesis hash alone, or registers all four with
+  `addNetwork("paseo")`. The statement store runs on People Paseo. The Paseo relay is shared with `paseo-next-v2`, and a
+  lookup by the relay's genesis hash still resolves to `paseo-next-v2`; each parachain resolves to its own network.
+  truapi-host compiles the catalog in, so it ships the new specs too.
+
+### Patch Changes
+
+- 9646fa5: truapi-host ships refreshed stack descriptors for previewnet (sequence 1794171056). truapi-provider and
+  truapi-host ship refreshed light-client chain specs.
+
+## 0.4.0
+
+### Minor Changes
+
+- 88cf440: `connect` on a provider with an `addRpcChain` registration fails for any chain not registered on it, instead
+  of starting the light client for it from the bundled catalog. A provider without one still reaches every bundled
+  network by genesis hash. To mix the two, call `addNetwork` before `addRpcChain`: `addNetwork` registers all four
+  chains of the network, and a later registration replaces an earlier one.
+
+### Patch Changes
+
+- 220baea: Refactor the Rust host runtime and browser provider to the workspace Rust guidance: unit tests live in their
+  own files, lint suppressions are removed by fixing their causes, unused functions and derives are dropped, and
+  truncating casts are checked. The JavaScript API and wire protocol are unchanged.
+
 ## 0.3.2
 
 ### Patch Changes

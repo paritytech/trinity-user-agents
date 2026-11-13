@@ -262,17 +262,6 @@
         }
       }
     },
-    "address.copied" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Address copied"
-          }
-        }
-      }
-    },
     "app.permissions.title.format" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -350,79 +339,46 @@
         }
       }
     },
-    "backup.action.backup" : {
+    "backup.cell.cloud.backup" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Backup Your Account"
+            "value" : "Cloud backup"
           }
         }
       }
     },
-    "backup.action.settings" : {
+    "backup.cell.cloud.off" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Backup Your Account"
+            "value" : "Off"
           }
         }
       }
     },
-    "backup.action.view.secret" : {
+    "backup.cell.cloud.on" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "View Secret Recovery Phrase"
+            "value" : "On"
           }
         }
       }
     },
-    "backup.info.created.subtitle" : {
+    "backup.cell.secret.phrase" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your account is backed up to iCloud. If you lose your device or get a new one, you’ll be able to recover the account."
-          }
-        }
-      }
-    },
-    "backup.info.created.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Account is Backed Up"
-          }
-        }
-      }
-    },
-    "backup.info.disabled.subtitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Securely back up your account to iCloud so you can restore it if you lose your device or get a new one."
-          }
-        }
-      }
-    },
-    "backup.info.disabled.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Backup your account"
+            "value" : "Secret phrase"
           }
         }
       }
@@ -438,28 +394,6 @@
         }
       }
     },
-    "backup.info.notfound.subtitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Securely back up your account to iCloud so you can restore them if lose your device or get a new one."
-          }
-        }
-      }
-    },
-    "backup.info.notfound.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Backup your account"
-          }
-        }
-      }
-    },
     "backup.main.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -467,6 +401,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Backup"
+          }
+        }
+      }
+    },
+    "backup.section.recovery" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recovery"
           }
         }
       }
@@ -1964,50 +1909,6 @@
         }
       }
     },
-    "identity.card.scan.qr.hint" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Show this QR to someone who wants to add you as a contact or send you %@"
-          }
-        }
-      }
-    },
-    "identity.card.scan.qr.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Scan with a camera"
-          }
-        }
-      }
-    },
-    "identity.card.share.message" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hey! I’m using the Polkadot app for chat. It’s private and easy to use. Download it at %1$@ and add me – my username is %2$@."
-          }
-        }
-      }
-    },
-    "identity.card.share.message.no.link" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Hey! I’m using the Polkadot app for chat. It’s private and easy to use. Add me – my username is %@."
-          }
-        }
-      }
-    },
     "leave.chat.action" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -2513,6 +2414,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "OK"
+          }
+        }
+      }
+    },
+    "report.issue.github.username" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "GitHub username (optional)"
+          }
+        }
+      }
+    },
+    "report.issue.github.username.invalid" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a valid GitHub username"
           }
         }
       }
@@ -3669,17 +3592,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Wallet creation failed with error %@. Please, contact support"
-          }
-        }
-      }
-    },
-    "wallet.main.idCard" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "ID card"
           }
         }
       }

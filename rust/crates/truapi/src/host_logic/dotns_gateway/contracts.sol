@@ -21,6 +21,18 @@ interface DotnsPopController {
 	/// Returns a paginated slice of a user's pending claims in queue order.
 	function pendingClaims(address user, uint256 offset, uint256 limit)
 		external view returns (PendingClaim[]);
+	/// Most expired or emptied entries one gateway call clears from the front of a
+	/// reservation queue.
+	function MAX_QUEUE_STEPS_PER_CALL() external view returns (uint256);
+	/// Returns the window, in seconds, after which a reservation-queue entry lapses.
+	function reservationDuration() external view returns (uint64 duration);
+	/// Returns the queue metadata (`head`, `tail`) for `labelhash`.
+	function reservationMeta(bytes32 labelhash) external view returns (uint64 head, uint64 tail);
+	/// Returns the queue entry at `index` for `labelhash`.
+	function reservationEntry(bytes32 labelhash, uint64 index)
+		external view returns (address entryOwner, uint64 joinedAt);
+	/// Permissionlessly removes expired entries from the head of a reservation queue.
+	function expireReservation(string label) external;
 }
 
 /// Non-upgradeable shim that translates a substrate Root-origin dispatch into
@@ -78,6 +90,8 @@ interface DotnsRegistry {
 	function recordExists(bytes32 node) external view returns (bool);
 	/// Returns the resolver of a node, or zero when the node does not resolve.
 	function resolver(bytes32 node) external view returns (address);
+	/// Returns the owner of a node.
+	function owner(bytes32 node) external view returns (address);
 }
 
 /// Implements `IDotnsContentResolver` interface with content hash, text
@@ -87,4 +101,6 @@ interface DotnsRegistry {
 interface ContentResolver {
 	/// Returns a text record for a node.
 	function text(bytes32 node, string key) external view returns (string);
+	/// Sets a text record for a node.
+	function setText(bytes32 node, string key, string value) external;
 }

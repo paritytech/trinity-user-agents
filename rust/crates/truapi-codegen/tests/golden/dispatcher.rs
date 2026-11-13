@@ -1063,7 +1063,7 @@ where
 {
     {
         let execution_allowed = dispatcher.allows_execution(ExecutableKind::Widget);
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::EXPANDED_CARD_SET_FACE_SHOWN, move |request_id: String, request: versioned::expanded_card::HostExpandedCardSetFaceShownRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -1077,6 +1077,31 @@ where
                 let result: Result<versioned::expanded_card::HostExpandedCardSetFaceShownResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardSetFaceShownError>> =
                     match host.set_face_shown(&cx, request).await {
                         Ok(_) => Ok(<versioned::expanded_card::HostExpandedCardSetFaceShownResponse as truapi::versioned::FromLatest>::from_latest(
+                            (),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Widget);
+        let host = host;
+        dispatcher.on_request(wire_table::EXPANDED_CARD_SET_BACK_SHOWN, move |request_id: String, request: versioned::expanded_card::HostExpandedCardSetBackShownRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::expanded_card::HostExpandedCardSetBackShownError> = truapi::CallError::Denied;
+                    let result: Result<versioned::expanded_card::HostExpandedCardSetBackShownResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardSetBackShownError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::expanded_card::HostExpandedCardSetBackShownResponse, truapi::CallError<versioned::expanded_card::HostExpandedCardSetBackShownError>> =
+                    match host.set_back_shown(&cx, request).await {
+                        Ok(_) => Ok(<versioned::expanded_card::HostExpandedCardSetBackShownResponse as truapi::versioned::FromLatest>::from_latest(
                             (),
                             target_version,
                         )),
@@ -1212,7 +1237,7 @@ where
     }
     {
         let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
-        let host = host;
+        let host = host.clone();
         dispatcher.on_request(wire_table::FUNDING_PROVIDER_PRESENT_FRAME, move |request_id: String, request: versioned::funding_provider::HostFundingPresentFrameRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
@@ -1227,6 +1252,31 @@ where
                     match host.present_frame(&cx, request).await {
                         Ok(response) => Ok(<versioned::funding_provider::HostFundingPresentFrameResponse as truapi::versioned::FromLatest>::from_latest(
                             truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
+        let host = host;
+        dispatcher.on_request(wire_table::FUNDING_PROVIDER_CLOSE_FRAME, move |request_id: String, request: versioned::funding_provider::HostFundingCloseFrameRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::funding_provider::HostFundingCloseFrameError> = truapi::CallError::Denied;
+                    let result: Result<versioned::funding_provider::HostFundingCloseFrameResponse, truapi::CallError<versioned::funding_provider::HostFundingCloseFrameError>> = Err(error);
+                    return result.encode();
+                }
+                let result: Result<versioned::funding_provider::HostFundingCloseFrameResponse, truapi::CallError<versioned::funding_provider::HostFundingCloseFrameError>> =
+                    match host.close_frame(&cx, request).await {
+                        Ok(_) => Ok(<versioned::funding_provider::HostFundingCloseFrameResponse as truapi::versioned::FromLatest>::from_latest(
+                            (),
                             target_version,
                         )),
                         Err(err) => Err(downgrade_call_error(err, target_version)),

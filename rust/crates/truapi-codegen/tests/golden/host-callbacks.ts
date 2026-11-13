@@ -9,8 +9,8 @@ import * as S from "@parity/truapi/scale";
 import {
   AllocatableResource,
   Bytes32,
-  ChainIdentifier,
   CodeFormat,
+  ExecutableKind,
   FundingDirection,
   FundingQuote,
   FundingQuoteRefusal,
@@ -250,7 +250,12 @@ export type CoreStorageKey =
    * What funding providers' quote answers showed about what they serve,
    * each record trusted for twelve hours.
    */
-  | { tag: "FundingSupport"; value?: undefined };
+  | { tag: "FundingSupport"; value?: undefined }
+  /**
+   * A product's App executable manifest as last read from dotNS, and when,
+   * cached for the same lifetime as `Self::ProductManifest`.
+   */
+  | { tag: "AppManifest"; value: { productLabel: string } };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -291,7 +296,10 @@ export type CreateTransactionReview =
   /**
    * Legacy-account transaction request.
    */
-  | { tag: "LegacyAccount"; value: LegacyAccountTxPayload };
+  | {
+      tag: "LegacyAccount";
+      value: { account: LegacySigningAccount; payload: LegacyAccountTxPayload };
+    };
 
 /**
  * A kind of signature a product makes with another product's account.
@@ -320,17 +328,6 @@ export type DevicePermissionStatus =
   | "NotApplicable";
 
 /**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export type ExecutableKind = "App" | "Widget" | "Worker";
-
-/**
  * What the host did with a request to show or hide the expanded card face.
  */
 export type ExpandedCardFaceOutcome =
@@ -349,6 +346,23 @@ export interface ExtensionVersionMap {
    */
   chains: Array<ChainExtensionVersion>;
 }
+
+/**
+ * Why an amount cannot go ahead.
+ */
+export type FundingAmountIssue =
+  /**
+   * A withdrawal of more than the user can spend.
+   */
+  | { tag: "NotEnoughBalance"; value?: undefined }
+  /**
+   * Below the smallest amount any provider takes.
+   */
+  | { tag: "BelowMinimum"; value: { min: bigint } }
+  /**
+   * Above the largest amount any provider takes.
+   */
+  | { tag: "AboveMaximum"; value: { max: bigint } };
 
 /**
  * How the user left the funding overlay.
@@ -373,6 +387,61 @@ export interface FundingPresentation {
    * Amount the caller asked for, or ``undefined`` to let the user choose.
    */
   amount?: bigint;
+}
+
+/**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export interface FundingQuoteList {
+  /**
+   * The request this list answers, as `request_funding_quotes` returned
+   * it. The core keeps only the current request's list, so a list read
+   * back is always the one to show.
+   */
+  requestId: bigint;
+
+  /**
+   * One row per provider asked, in the host's provider order.
+   */
+  rows: Array<FundingQuoteRow>;
+
+  /**
+   * The provider whose quote is best for the user, which the host selects
+   * until the user picks another: the least to pay inbound, the most to
+   * receive outbound. ``undefined`` until one quotes.
+   */
+  best?: ProductId;
+
+  /**
+   * When the core asks every provider again, in Unix milliseconds. Each
+   * row keeps its answer until the provider answers again.
+   */
+  refreshAtMs: bigint;
+
+  /**
+   * The amount the list prices, in balance units, which `issue` is
+   * about.
+   */
+  amount: bigint;
+
+  /**
+   * Once every provider answered and none quoted, the reason they all
+   * gave. ``undefined`` while any is pending or quoted, or when they gave
+   * different reasons.
+   */
+  refusal?: FundingQuoteUnavailable;
+
+  /**
+   * Once every provider answered and none quoted, what their refusals
+   * say about the amount: the lowest minimum any showed, otherwise the
+   * highest maximum.
+   */
+  issue?: FundingAmountIssue;
+
+  /**
+   * Whether every provider answered: no row is pending.
+   */
+  complete: boolean;
 }
 
 /**
@@ -420,37 +489,6 @@ export type FundingQuoteUnavailable =
    * The provider did not answer in time.
    */
   | { tag: "Timeout"; value?: undefined };
-
-/**
- * One chain a host serves: a protocol chain role mapped to the concrete
- * chain of the host's configured environment.
- */
-export interface HostChainEntry {
-  /**
-   * Protocol role this entry answers for.
-   */
-  identifier: ChainIdentifier;
-
-  /**
-   * Genesis hash identifying the chain in all chain-scoped calls.
-   */
-  genesisHash: Bytes32;
-}
-
-/**
- * The chain set a host serves: its environment plus one entry per chain role.
- */
-export interface HostChainSet {
-  /**
-   * Ecosystem the host is configured for, e.g. "polkadot", "paseo".
-   */
-  network: string;
-
-  /**
-   * Chains this host serves, keyed by protocol role.
-   */
-  chains: Array<HostChainEntry>;
-}
 
 /**
  * Contact handles the core needs turned back into accounts, and the key they
@@ -546,6 +584,20 @@ export interface IdentityDisclosureReview {
    */
   productId: ProductId;
 }
+
+/**
+ * Account a legacy-account request resolved to, so a host knows the signer
+ * without resolving the request's address itself.
+ */
+export type LegacySigningAccount =
+  /**
+   * The wallet's identity account.
+   */
+  | { tag: "Identity"; value?: undefined }
+  /**
+   * The requesting product's account at derivation index 0.
+   */
+  | { tag: "Product"; value: ProductAccountId };
 
 /**
  * Why a login attempt failed, for hosts that need to act on the cause rather
@@ -768,9 +820,16 @@ export type SignPayloadReview =
       value: { callingProductId?: ProductId; request: HostSignPayloadRequest };
     }
   /**
-   * Legacy-account signing request.
+   * Legacy-account signing request, which only the product's account at
+   * index 0 may sign.
    */
-  | { tag: "LegacyAccount"; value: HostSignPayloadWithLegacyAccountRequest };
+  | {
+      tag: "LegacyAccount";
+      value: {
+        account: ProductAccountId;
+        request: HostSignPayloadWithLegacyAccountRequest;
+      };
+    };
 
 /**
  * Review shown before a sign-raw request is sent to the paired wallet.
@@ -795,6 +854,7 @@ export type SignRawReview =
   | {
       tag: "LegacyAccount";
       value: {
+        account: LegacySigningAccount;
         request: HostSignRawWithLegacyAccountRequest;
         watermarked: boolean;
       };
@@ -1039,6 +1099,10 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
       FundingSupport: [15, S._void] as const,
+      AppManifest: [
+        16,
+        S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
+      ] as const,
     }),
 );
 
@@ -1068,7 +1132,13 @@ export const CreateTransactionReview: S.Codec<CreateTransactionReview> = S.lazy(
         callingProductId?: ProductId;
         payload: ProductAccountTxPayload;
       }>,
-      LegacyAccount: LegacyAccountTxPayload,
+      LegacyAccount: S.Struct({
+        account: LegacySigningAccount,
+        payload: LegacyAccountTxPayload,
+      }) as S.Codec<{
+        account: LegacySigningAccount;
+        payload: LegacyAccountTxPayload;
+      }>,
     }),
 );
 
@@ -1098,19 +1168,6 @@ export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
 );
 
 /**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export const ExecutableKind: S.Codec<ExecutableKind> = S.lazy(
-  (): S.Codec<ExecutableKind> => S.Status("App", "Widget", "Worker"),
-);
-
-/**
  * What the host did with a request to show or hide the expanded card face.
  */
 export const ExpandedCardFaceOutcome: S.Codec<ExpandedCardFaceOutcome> = S.lazy(
@@ -1130,6 +1187,18 @@ export const ExtensionVersionMap: S.Codec<ExtensionVersionMap> = S.lazy(
 );
 
 /**
+ * Why an amount cannot go ahead.
+ */
+export const FundingAmountIssue: S.Codec<FundingAmountIssue> = S.lazy(
+  (): S.Codec<FundingAmountIssue> =>
+    S.TaggedUnion({
+      NotEnoughBalance: S._void,
+      BelowMinimum: S.Struct({ min: S.u128 }) as S.Codec<{ min: bigint }>,
+      AboveMaximum: S.Struct({ max: S.u128 }) as S.Codec<{ max: bigint }>,
+    }),
+);
+
+/**
  * How the user left the funding overlay.
  */
 export const FundingPresentOutcome: S.Codec<FundingPresentOutcome> = S.lazy(
@@ -1146,6 +1215,23 @@ export const FundingPresentation: S.Codec<FundingPresentation> = S.lazy(
       direction: FundingDirection,
       amount: S.Option(S.u128),
     }) as S.Codec<FundingPresentation>,
+);
+
+/**
+ * The providers' quotes for one ask, as the host draws its provider list.
+ */
+export const FundingQuoteList: S.Codec<FundingQuoteList> = S.lazy(
+  (): S.Codec<FundingQuoteList> =>
+    S.Struct({
+      requestId: S.u64,
+      rows: S.Vector(FundingQuoteRow),
+      best: S.Option(ProductId),
+      refreshAtMs: S.u64,
+      amount: S.u128,
+      refusal: S.Option(FundingQuoteUnavailable),
+      issue: S.Option(FundingAmountIssue),
+      complete: S.bool,
+    }) as S.Codec<FundingQuoteList>,
 );
 
 /**
@@ -1186,29 +1272,6 @@ export const FundingQuoteUnavailable: S.Codec<FundingQuoteUnavailable> = S.lazy(
       }>,
       Timeout: S._void,
     }),
-);
-
-/**
- * One chain a host serves: a protocol chain role mapped to the concrete
- * chain of the host's configured environment.
- */
-export const HostChainEntry: S.Codec<HostChainEntry> = S.lazy(
-  (): S.Codec<HostChainEntry> =>
-    S.Struct({
-      identifier: ChainIdentifier,
-      genesisHash: Bytes32,
-    }) as S.Codec<HostChainEntry>,
-);
-
-/**
- * The chain set a host serves: its environment plus one entry per chain role.
- */
-export const HostChainSet: S.Codec<HostChainSet> = S.lazy(
-  (): S.Codec<HostChainSet> =>
-    S.Struct({
-      network: S.str,
-      chains: S.Vector(HostChainEntry),
-    }) as S.Codec<HostChainSet>,
 );
 
 /**
@@ -1277,6 +1340,15 @@ export const IdentityDisclosureReview: S.Codec<IdentityDisclosureReview> =
     (): S.Codec<IdentityDisclosureReview> =>
       S.Struct({ productId: ProductId }) as S.Codec<IdentityDisclosureReview>,
   );
+
+/**
+ * Account a legacy-account request resolved to, so a host knows the signer
+ * without resolving the request's address itself.
+ */
+export const LegacySigningAccount: S.Codec<LegacySigningAccount> = S.lazy(
+  (): S.Codec<LegacySigningAccount> =>
+    S.TaggedUnion({ Identity: S._void, Product: ProductAccountId }),
+);
 
 /**
  * Why a login attempt failed, for hosts that need to act on the cause rather
@@ -1427,7 +1499,13 @@ export const SignPayloadReview: S.Codec<SignPayloadReview> = S.lazy(
         callingProductId?: ProductId;
         request: HostSignPayloadRequest;
       }>,
-      LegacyAccount: HostSignPayloadWithLegacyAccountRequest,
+      LegacyAccount: S.Struct({
+        account: ProductAccountId,
+        request: HostSignPayloadWithLegacyAccountRequest,
+      }) as S.Codec<{
+        account: ProductAccountId;
+        request: HostSignPayloadWithLegacyAccountRequest;
+      }>,
     }),
 );
 
@@ -1449,9 +1527,11 @@ export const SignRawReview: S.Codec<SignRawReview> = S.lazy(
         watermarked: boolean;
       }>,
       LegacyAccount: S.Struct({
+        account: LegacySigningAccount,
         request: HostSignRawWithLegacyAccountRequest,
         watermarked: S.bool,
       }) as S.Codec<{
+        account: LegacySigningAccount;
         request: HostSignRawWithLegacyAccountRequest;
         watermarked: boolean;
       }>,
@@ -1874,12 +1954,6 @@ export interface Features {
   featureSupported(
     request: HostFeatureSupportedRequest,
   ): Promise<HostFeatureSupportedResponse>;
-
-  /**
-   * Enumerate the chains this host serves (RFC 0026). The core resolves
-   * `get_chain_info` requests against the returned set.
-   */
-  supportedChains(): Promise<HostChainSet>;
 }
 
 /**
@@ -1898,16 +1972,45 @@ export interface FundingPlatform {
   ): Promise<FundingPresentOutcome>;
 
   /**
+   * `provider` asked to show a screen for session `intent`. The core
+   * holds it until the host calls `open_provider_frame(intent)`, which
+   * the host does at once while the user looks at the session, or once
+   * the user taps a notice that the provider wants to show something.
+   * A worker never puts a screen in front of the user on its own.
+   */
+  providerFrameRequested(provider: ProductContext, intent: string): void;
+
+  /**
    * Show `target` for `provider`'s session `intent` in a frame the host
-   * owns, and answer once it closes. A page is an https URL the core has
-   * checked: the host shows its origin, and closes the frame with
-   * `Returned` when the page reaches its return URL.
+   * owns, and answer once it closes. Called only once the host opened the
+   * request `Self::provider_frame_requested` announced. A page is an
+   * https URL the core has checked: the host shows its origin, and closes
+   * the frame with `Returned` when the page reaches its return URL. The
+   * core closes the frame itself, through `Self::close_provider_frame`,
+   * once the session's payment moved.
    */
   presentProviderFrame(
     provider: ProductContext,
     intent: string,
     target: FundingFrameTarget,
   ): Promise<FundingFrameOutcome>;
+
+  /**
+   * Close the frame `present_provider_frame` shows for `provider`'s
+   * session `intent`, answering that call `Closed`, and show the
+   * session's progress in its place. Does nothing when no frame is
+   * open for it.
+   */
+  closeProviderFrame(provider: ProductContext, intent: string): void;
+
+  /**
+   * The country the user is likely in, as an ISO 3166-1 alpha-2 code, for
+   * the quotes the core asks before the user picks one. Best effort,
+   * without asking for any permission: the device's coarse location when
+   * already permitted, then its SIM or network country, then its locale's
+   * region. ``undefined`` when nothing says.
+   */
+  detectedCountry?(): Promise<string | undefined>;
 
   /**
    * Observe a session's status change, for host UI such as the in-flight
@@ -1919,11 +2022,14 @@ export interface FundingPlatform {
   ): void;
 
   /**
-   * Observe one provider's row of a quote list the host requested, for the
-   * provider list. Each provider's row arrives `Pending`, then once more
-   * with its quote or why it is unavailable.
+   * Observe the quote list the host requested, for the provider list:
+   * again whenever a provider answers, and each time the core asks every
+   * provider again. ``undefined`` once a selection on another route withdrew it.
    */
-  fundingQuoteChanged?(intent: string, row: FundingQuoteRow): void;
+  fundingQuotesChanged?(
+    intent: string,
+    quotes: FundingQuoteList | undefined,
+  ): void;
 }
 
 /**

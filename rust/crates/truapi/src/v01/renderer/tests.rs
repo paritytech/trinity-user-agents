@@ -46,6 +46,10 @@ fn renderer_node() -> RendererNode {
 					fit: Some(ImageFit::Cover),
 				},
 			},
+			RendererNode::Image {
+				modifiers: Vec::new(),
+				props: ImageProps { source: ImageSource::Inline(vec![0x89, 0x50]), fit: None },
+			},
 			RendererNode::Effect {
 				props: EffectProps { effect: Effect::Rainbow },
 				children: vec![RendererNode::Nil],
@@ -75,6 +79,8 @@ fn variants_encode_only_the_fields_they_carry() {
 		children: Vec::new(),
 	};
 	assert_eq!(effect.encode(), vec![10, 0, 0]);
+
+	assert_eq!(ImageSource::Inline(vec![1]).encode(), vec![2, 4, 1]);
 }
 
 #[test]
@@ -84,7 +90,7 @@ fn tree_round_trips_through_scale() {
 	assert_eq!(decoded, node);
 }
 
-#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn tree_round_trips_through_uniffi() {
 	let node = renderer_node();

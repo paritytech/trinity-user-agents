@@ -50,6 +50,8 @@ enum ChatViewFactory {
         // at this time we should already have chains and assets
         let chainRegistry = ChainRegistryFacade.sharedRegistry
         guard
+            let publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking =
+            RootDependencyLocator.getDependency(),
             let chain = chainRegistry.getChain(for: AppConfig.Assets.mainAsset.chainId),
             let asset = chain.chainAsset(for: AppConfig.Assets.mainAsset.assetId),
             let uploadAttachmentStore = AttachmentStore.uploads(),
@@ -84,17 +86,24 @@ enum ChatViewFactory {
             formatterFactory: AssetBalanceFormatterFactory()
         )
         let viewModelFactory = ChatViewModelFactory(
-            balanceFactory: amountFormatter,
-            customDecoders: messageDecoders,
-            attachmentViewModelFactory: ChatAttachmentViewModelFactory(
-                uploadAttachmentStore: uploadAttachmentStore,
-                attachmentUploadStateProvider: flowState.attachmentUploadStateProvider,
-                downloadAttachmentStore: downloadAttachmentStore,
-                attachmentDownloadStateProvider: flowState.attachmentDownloadStateProvider
-            ),
-            productRepository: ProductRepositoryFactory().createRepository(),
-            productNameCache: ProductNameCache(),
-            flowState: flowState.flowState
+            dependencies: .init(
+                balanceFactory: amountFormatter,
+                customDecoders: messageDecoders,
+                attachmentViewModelFactory: ChatAttachmentViewModelFactory(
+                    uploadAttachmentStore: uploadAttachmentStore,
+                    attachmentUploadStateProvider: flowState.attachmentUploadStateProvider,
+                    downloadAttachmentStore: downloadAttachmentStore,
+                    attachmentDownloadStateProvider: flowState.attachmentDownloadStateProvider
+                ),
+                productRepository: ProductRepositoryFactory().createRepository(),
+                productNameCache: ProductNameCache(),
+                flowState: flowState.flowState,
+                iconViewModelFactory: ChatIconViewModelFactory(
+                    productFactory: flowState.flowState.iconViewModelFactory,
+                    publicProfileFactory: publicProfileAvatarViewModelFactory,
+                    options: .init(forceFresh: true, skipStale: false)
+                )
+            )
         )
 
         let presenter = ChatPresenter(

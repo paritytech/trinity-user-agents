@@ -17,6 +17,7 @@ TrUAPI (Triangle User-Agent Programming Interface) is the API surface that hosts
 - [Rust API reference](https://paritytech.github.io/trinity-user-agents/)
 - [Labels](docs/labels.md)
 - [Building the apps for development](docs/local-app-builds.md)
+- [Moving an e2e suite to the TrUAPI test host](docs/migration/test-host.md)
 
 <!-- TODO: Add hero screenshot of the playground showing methods + a live call/response. Capture with a screenshot tool, save to `assets/screenshots/playground.png`, then place it here. -->
 
@@ -36,7 +37,7 @@ The interactive playground lets you browse every method, edit request payloads, 
 curl -fsSL https://raw.githubusercontent.com/paritytech/trinity-user-agents/main/scripts/truapi-host-installer.sh | bash
 ```
 
-Prebuilt for macOS on Apple silicon and Linux on x86_64 and arm64. No Rust toolchain or checkout needed, and it keeps itself up to date. `/script` opens a persistent TypeScript project with the Product SDK quickstart, pinned published dependencies, and editor types. Use `/script --run` to rerun it or `/script --edit` to edit without running. Projects survive session cleanup. See the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for setup and existing project scripts. Release checks install and typecheck the default SDK template against the public registry.
+Prebuilt for macOS on Apple silicon and Linux on x86_64 and arm64. No Rust toolchain or checkout needed, and it keeps itself up to date. A workflow installs the same binaries with [`install-truapi-host`](rust/crates/truapi-host-cli/README.md#in-github-actions), pinned to a CLI release. `/script` opens a persistent TypeScript project with the Product SDK quickstart, pinned published dependencies, and editor types. Use `/script --run` to rerun it or `/script --edit` to edit without running. Projects survive session cleanup. See the [`truapi-host-cli` guide](rust/crates/truapi-host-cli/README.md) for setup and existing project scripts. Release checks install and typecheck the default SDK template against the public registry.
 
 `truapi-host signing-host --session <name>` opens an interactive session and
 restores or creates its signer. `/session <name>` switches to the saved account
@@ -146,7 +147,8 @@ js/packages/
   truapi/                  @parity/truapi TypeScript client
   truapi-host/            @parity/truapi-host: WASM-backed host runtime; entries `.`
                           (shared host types), `/web` (iframe + Web Worker),
-                          `/worker-runtime`, and the test host: `/testing`
+                          `/node` (worker thread), `/worker-runtime`, and the
+                          test host: `/testing`
                           (createMockHost), `/testing/playwright`,
                           `/testing/server`, `/testing/client`,
                           `/testing/dev-accounts`, `/testing/host-page`
@@ -165,10 +167,12 @@ ios/truapi-host/           Swift host adapter package over the truapi UniFFI cor
 ios/truapi-provider/       TrUAPIProvider Swift package: chain transport over UniFFI
 playground/                Interactive Next.js playground (truapi-playground dotNS label)
 hosts/ios/                 iOS host app; resolves the core from this tree
-hosts/android/             Android host app
+hosts/android/             Android host app; resolves the core from this tree
 hosts/dotli/               dotli host, vendored as a submodule
 hosts/imports.json         Source repository and imported revision per host
 e2e/host-playground/       host-playground suite run inside the native host apps; see its README
+stacks/                    Link and signed descriptor of each Trinity stack a host build bundles;
+                           scripts/update-stacks.sh refreshes each descriptor from its link
 docs/                      Design docs, RFCs, feature proposals
 scripts/codegen.sh         Regenerate the TS client from the Rust source
 scripts/refresh-host-import.sh
@@ -222,13 +226,7 @@ native-only adapter types are limited to lifecycle and callback behavior.
 The core requests product worker transitions through `requestWorkerTransition`
 (`request_worker_transition` in Rust). `Start` requires the worker to run;
 `Stop` permits it to stop when no references remain.
-On iOS, a wallet host that manages its own statement-store SSO session can call
-`handleSsoRequest` (routes one decrypted remote message through the core,
-returning a typed outcome: response bytes to post back, a disconnect marker, or
-ignored; a `Cancel` returns at once, so the wallet passes it on without queueing
-it behind the request it withdraws) and `prepareDisconnectRequest` (builds the SCALE-encoded wire message
-for a wallet-initiated disconnect) on `TrUAPIHostRuntime`. Response posting and
-session-record cleanup remain on the wallet side.
+A native wallet that runs its own SSO transport opens one SSO service per peer with `openSsoService` and passes it each incoming message; `prepareDisconnectRequest` builds a wallet-initiated disconnect. The core binds each service to the wallet activation that authenticated the peer. The [iOS SDK guide](ios/truapi-host/README.md#sso-session-handling) gives the call sequence.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
 SSO session, responder identity and handshake payload structs zeroize their fields on drop; debug output redacts their secret fields.
@@ -241,8 +239,12 @@ JS hosts integrate the Rust core through [`@parity/truapi-host`](js/packages/tru
 a single package with tree-shakeable subpath entries:
 
 - `@parity/truapi-host` (the `.` entry) exposes shared host runtime types and generated callback contracts.
+- `@parity/truapi-host/markers` carries `CORE_MARKERS`, the core's table of which log markers may
+  leave the device, on its own entry so reading telemetry policy pulls in no host runtime.
 - `@parity/truapi-host/web` wires the WASM provider into a browser host: the iframe
   MessageChannel handshake (`createIframeHost`) plus `createWebWorkerProvider`.
+- `@parity/truapi-host/node` runs the same pairing host in a Node process, with the core in
+  a `node:worker_threads` thread (`createNodePairingHostRuntime`, `createHeadlessHostCallbacks`).
 - `@parity/truapi-host/worker-runtime` is the Web Worker entrypoint so the WASM core can
   run off the page main thread.
 
@@ -316,7 +318,7 @@ runtime's type by name.
 ### Contract calls
 
 `chain::EvmContractCaller` reads pallet-revive contracts and prepares writes.
-`read` returns ABI data through a `RuntimeApiCaller` transport. For writes,
+`RuntimeApiCaller` transports support individual and batched reads of ABI data. For writes,
 `dry_run` simulates as the signer and returns a prepared transaction;
 `execute_until_finalized` submits it and waits for successful finalized dispatch.
 
@@ -427,8 +429,8 @@ A host without a core database, such as the browser core, answers
 
 ### Images
 
-Native hosts draw images with `loadImage(reference)`, the Bulletin part of the
-[image loader RFC](https://github.com/paritytech/trinity-user-agents/pull/1800).
+Native hosts draw images with `loadImage(reference)`, as described in the
+[image loader RFC](docs/rfcs/image-loader.md).
 A reference is a Bulletin CID, with the format its source declares if it
 declares one. The core reads the blob with `bitswap_v1_get` over its own
 Bulletin connection, the call the CLI host's preimage lookup also makes, and
@@ -438,7 +440,42 @@ rejects bytes in a format other than the declared one. A load asks again every
 6 seconds while Bulletin does not hold the blob, and a second after a failed
 request, such as a light client's before its first Bitswap peer connects, for
 up to 30 seconds in all. The content key it returns is the CID, for keying a
-host's disk cache. The browser core does not expose it.
+host's disk cache. JavaScript bindings are deferred.
+
+`observe_public_profile(username, options)` streams
+[dotNS profile metadata](docs/rfcs/core-resolved-public-profiles.md#the-host-calls).
+Native hosts emit cached metadata, then refresh missing or expired records
+(one-hour TTL). Required options: `force_fresh` bypasses the TTL; `skip_stale`
+suppresses expired cached values (false in app callers). Streams emit up to two
+distinct profiles; cancellation or drop stops resolution. Invalid usernames
+return an error subscription. SQLite stores full records and keeps the
+1,000 most recently used. Cache reads use the reader pool; recency updates are
+batched with profile writes or after one second. Avatar CIDs key the image cache;
+only misses call `loadImage`.
+WASM resolves once without caching. A lookup requires the stack's Asset Hub.
+
+Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
+
+iOS contacts, search results and chat views consume
+`resolvePublicProfile(username:options:)` as a finite `AsyncThrowingStream`.
+Only avatar changes trigger image requests.
+The public-profile factory returns `AnyImageViewModel`, which shared image views
+use to retain requests while the image identity and processing settings match.
+`ChatIconViewModelFactory` selects product icons or public-profile avatars for chats and contact lists.
+New chat headers explicitly request forced
+freshness; cells and search explicitly use the ordinary policy. All app callers
+explicitly set `skipStale` to false. A cancelled header
+observation retains its forced intent until an observation completes or fails.
+[The CID image loader](hosts/ios/polkadot-app/Common/ImageViewModel/CID/CIDImageLoader.swift)
+uses Kingfisher's cache without a freshness expiry, including on cache hits,
+with a 100 MiB disk budget configured during root setup, before onboarding. It keeps
+the current image while loading; avatar views cancel metadata observation and image work
+when their view is reused or released.
+
+The [CLI](rust/crates/truapi-host-cli/README.md#interactive-terminal-ui) resolves
+avatar metadata with `/profile [username]`. `/profile upload <image>` publishes an
+avatar as the identity's Humanity product, calling the core's TrUAPI resource
+allocation and preimage methods directly.
 
 ### Trinity stack descriptors
 
@@ -447,6 +484,8 @@ A stack descriptor describes one deployment of chains and services, as
 [`trinity-stack`](rust/crates/trinity-stack) crate holds every rule a reader applies and the
 conformance vectors. The plan for it and the tools on top of it is in
 [docs/design/trinity-stack-library.md](docs/design/trinity-stack-library.md).
+
+The core takes all of its chain configuration from one stack. See [RUNTIME.md](rust/crates/truapi/RUNTIME.md#stack).
 
 ### Wire debugger
 
@@ -485,6 +524,8 @@ A method returning `Subscription` generates a streaming handler. See the
 
 Wire ids are append-only per trait: a trait id is never reassigned and a method id is never renumbered or reused within its trait, so deployed products stay compatible across protocol revisions. New methods take the next free method ids in their own trait and leave every other trait untouched. Trait 255 is permanently reserved for a correlated protocol error, allowing either peer to reject API messages introduced after it was released instead of leaving the caller pending.
 
+Rust embedders use `truapi::Spawner::new(handle)` with a Tokio runtime handle on native targets and `truapi::Spawner::default()` on WASM. Shared core code schedules background work with `spawner.spawn(async move { ... })`, which dispatches to the platform executor. The native runtime must remain alive to run its tasks; submissions after shutdown are cancelled.
+
 ## Develop
 
 Common tasks are wrapped in the top-level `Makefile`. Run `make help` for the full list.
@@ -504,7 +545,7 @@ CI and `make check` enforce Rust formatting, including the runtime module tree, 
 
 Rust linting treats correctness and complexity diagnostics as errors, and public Rust items must have documentation.
 
-Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
+Rust runtime tests live beside their components; [native binding tests](rust/crates/truapi/src/native/tests.rs) exercise the exported host API. Unit tests schedule tasks with the `#[cfg(test)]` helpers in [`spawner.rs`](rust/crates/truapi/src/spawner.rs). Integration tests in `rust/crates/truapi/tests/` share platform and spawner helpers, while frame recording stays with the wire-shape tests that use it.
 Contract response fixtures encode the Revive result structs, re-exported only in test builds.
 Run the crate's runtime integration tests with `cargo test -p truapi --features mock`;
 their product fixtures use `ProductId::for_test` from that feature.
@@ -686,10 +727,10 @@ pull request means running the command above and deleting the file.
 
 ### Working on the iOS host
 
-`hosts/ios/` is the iOS app, and it resolves the core from this tree rather than
-from a published version. The core's bindings, xcframework and FFI headers are
-gitignored build outputs, so a fresh clone cannot load the app's package graph
-until they exist. Generate them once:
+`hosts/ios/` is the iOS app, and it resolves the core from this tree. The
+core's bindings, xcframework and FFI headers are gitignored build outputs, so a
+fresh clone cannot load the app's package graph until they exist. Generate them
+once:
 
 ```bash
 make ios-bootstrap
@@ -731,7 +772,7 @@ the labels that build it: `ci:ios-simulator`, `ci:ios-device` and
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
-- `test`, the unit test suite
+- `test`, the [unit test suite](hosts/ios/polkadot-appTests/)
 - `preview`, an installable simulator `.app` attached to the run, stamped with
   the commit it came from in `TrUAPICommit`
 
@@ -880,70 +921,10 @@ Each job removes what it materialised, and the last verdict is carried into the
 pull request summary, so it is visible before someone starts a release rather
 than after. A workflow that has never run reports as never run, not as healthy.
 
-### Building the standalone iOS host app
+### Chat diagnosis on Android
 
-The targets below build `polkadot-app-ios-v2`, a separate checkout set by
-`IOS_HOST`, not `hosts/ios`. To build the playground in Simulator against it:
-
-```bash
-make ios-run
-```
-
-The target regenerates the UniFFI Swift bindings, builds the matching Rust
-simulator library, and builds the sibling `polkadot-app-ios-v2` checkout with the Nightly feature
-flags and release Firebase app used by the Nightly TestFlight build. Native
-Chat and the Paseo chain catalog come from the same Nightly Remote Config as
-TestFlight. The executable keeps the development bundle and app-group identity
-so Simulator can reuse its already registered wallet; keychain data cannot be
-transferred to the production bundle. The simulator also adds the
-`IOS_PASEO_E2E` conveniences needed to start on the real `browse.dot` Browse tab
-and activate the embedded signing host. Embedded product host sessions use the
-same Paseo People and Bulletin chains selected by the Nightly app
-configuration. The launcher starts the playground at `http://localhost:3100`
-when needed and uses that local source only after Browse opens
-`truapi-playground.dot`. It refuses to launch if the local URL belongs to a
-different app. Override the product, URL, or simulator with `IOS_PRODUCT_HOST`,
-`IOS_PRODUCT_URL`, or `TRUAPI_IOS_E2E_DEVICE`. The simulator launch reuses the
-wallet and registered username already stored by the iOS app. Opening a product
-activates the embedded `truapi-host` signing-host session from that wallet; it
-does not provision or pair a signer-bot user.
-
-To exercise the shared-core Chat path with the first-party TrUAPI Playground
-worker, build and serve the local product, install its worker into the
-simulator app's product storage, and open its native Chat application. The
-worker drives all five Chat methods and both Renderer methods, so a host
-without bot registration reports that row red:
-
-```bash
-make ios-chat-run
-```
-
-The launcher verifies the Chat connection and runs a correlated Chat-only
-diagnosis. The worker proves create-room idempotency, observes the new room on
-the live list subscription, posts text and custom messages, receives
-`!diagnose` through `chat_action_subscribe`, and serves live renderer trees.
-The launcher also verifies that a renderer update reaches native code and that
-the final Markdown report reaches CoreData. It writes the host-labelled report
-to `playground/test-results/ios-chat/diagnosis-report.md`. The product builds
-against the workspace-linked `@parity/truapi`. Override the product source,
-identity, SPA URL, room, input, or report path with
-`IOS_CHAT_PRODUCT_DIR`, `IOS_CHAT_PRODUCT_HOST`, `IOS_CHAT_PRODUCT_URL`,
-`TRUAPI_IOS_E2E_CHAT_ROOM_ID`, `TRUAPI_IOS_E2E_CHAT_MESSAGE`, or
-`TRUAPI_IOS_E2E_CHAT_REPORT`.
-
-The same harness can run the legacy Product SDK worker from the sibling
-`host-playground` checkout. This target builds the current TrUAPI client, links
-it over Host Playground's transitive `@parity/truapi`, then builds and runs
-that product:
-
-```bash
-make ios-chat-host-playground-run
-```
-
-Run both integrations with one iOS build using `make ios-chat-all`.
-
-The Android twin of that launcher runs the same TrUAPI Playground worker
-against the shared core inside a headless emulator, and writes its report to
+`make android-chat-playground-run` runs the TrUAPI Playground worker against the
+shared core inside a headless emulator, and writes its report to
 `playground/test-results/android-chat/diagnosis-report.md`:
 
 ```bash
@@ -962,8 +943,7 @@ Prerequisites:
   must pass `TRUAPI_ANDROID_E2E_PACKAGE`
 
 The `TRUAPI_ANDROID_E2E_*` environment variables override every default
-(device, APK, product, room, message, username, URL, report path); they
-mirror the iOS `TRUAPI_IOS_E2E_*` ones.
+(device, APK, product, room, message, username, URL, report path).
 
 The public `host-playground` test list runs inside the native host apps; see [e2e/host-playground/README.md](e2e/host-playground/README.md).
 

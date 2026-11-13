@@ -62,10 +62,7 @@ class ContainerHttpAuthorizationTest {
         val authorizedLoads = AtomicInteger()
         val config = HostRuntimeConfig(
             hostName = "HTTP authorization test",
-            peopleChainGenesisHash = ByteArray(32),
-            bulletinChainGenesisHash = ByteArray(32),
-            assetHubChainGenesisHash = ByteArray(32),
-            networkSuffix = "paseo",
+            stack = previewnetStack(),
             databaseDirectory = createTempDirectory("truapi").toString(),
         )
 

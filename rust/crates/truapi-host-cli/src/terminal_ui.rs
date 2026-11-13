@@ -380,31 +380,26 @@ pub fn output_event(event: SystemEvent) {
 	}
 }
 
+/// Emit a command result through the active transcript or standard output.
+pub fn output_info(text: impl Into<String>) {
+	output_notice(NoticeTone::Info, text.into(), None, write_human_stdout);
+}
+
 /// Emit a success notice through the active transcript or streaming renderer.
 pub fn output_success(title: impl Into<String>, detail: Option<String>) {
-	let title = title.into();
-	if !send_to_active(UiEvent::Notice {
-		tone: NoticeTone::Success,
-		title: title.clone(),
-		detail: detail.clone(),
-	}) {
-		let mut app = App::transcript();
-		app.notice(NoticeTone::Success, title, detail);
-		write_human_stdout(&app.transcript_text());
-	}
+	output_notice(NoticeTone::Success, title.into(), detail, write_human_stdout);
 }
 
 /// Emit a warning through the active transcript or standard error.
 pub fn output_warning(title: impl Into<String>, detail: Option<String>) {
-	let title = title.into();
-	if !send_to_active(UiEvent::Notice {
-		tone: NoticeTone::Warning,
-		title: title.clone(),
-		detail: detail.clone(),
-	}) {
+	output_notice(NoticeTone::Warning, title.into(), detail, write_human_stderr);
+}
+
+fn output_notice(tone: NoticeTone, title: String, detail: Option<String>, write: fn(&str)) {
+	if !send_to_active(UiEvent::Notice { tone, title: title.clone(), detail: detail.clone() }) {
 		let mut app = App::transcript();
-		app.notice(NoticeTone::Warning, title, detail);
-		write_human_stderr(&app.transcript_text());
+		app.notice(tone, title, detail);
+		write(&app.transcript_text());
 	}
 }
 
@@ -1611,7 +1606,7 @@ impl App {
                     if auto_accept {
                         "Confirmations are approved automatically"
                     } else {
-                        "Confirmations will be denied: there is no terminal to prompt on. On a disposable-identity network, pass --auto-accept"
+                        "Confirmations will be denied: there is no terminal to prompt on. Pass --auto-accept to approve them"
                     }
                 )),
             ),

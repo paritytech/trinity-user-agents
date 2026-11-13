@@ -2,7 +2,7 @@
 //! device.
 //!
 //! A marker is a dotted target such as `truapi.chain.follow_budget_reached`.
-//! The core raises it, [`crate::logging`] hands it to the host, and the host
+//! The core raises it, the host sink hands it to the host, and the host
 //! decides what to do with it by looking it up here rather than by matching a
 //! prefix of its own. A host-addressed target this table does not list has no
 //! class, and nothing downstream knows what its detail carries. Every call
@@ -14,6 +14,11 @@
 //! prose a reviewer reads when deciding whether a marker may be exported, and
 //! it is the reason the class is a property of the marker rather than of the
 //! call site.
+
+/// Prefix that marks an event's target as addressed to the host rather than
+/// naming a module. Rust module paths separate with `::`, so a dotted target
+/// cannot collide with one, and the rest of the target names the condition.
+pub const HOST_MARKER_PREFIX: &str = "truapi.";
 
 /// Whether a marker may leave the device, and at what severity if it may.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,8 +37,10 @@ pub enum MarkerClass {
 ///
 /// The core raises most markers without a level, so this is assigned here
 /// rather than read from the event, and it is what lets a core error be
-/// alerted on separately from a core warning.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// alerted on separately from a core warning. Its `&'static str` form is the
+/// lowercase name the generated marker table uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum Severity {
 	/// Routine progress. Useful as context around a failure, not on its own.
@@ -142,9 +149,6 @@ markers! {
 
 	/// The host was asked whether it supports a feature. Detail names it.
 	NATIVE_FEATURE_SUPPORTED = "truapi.native.callback.feature_supported" => Local;
-
-	/// The host was asked which chains it supports.
-	NATIVE_SUPPORTED_CHAINS = "truapi.native.callback.supported_chains" => Local;
 
 	/// The host was asked for a chain's transaction extension versions.
 	NATIVE_TRANSACTION_EXTENSION_VERSIONS = "truapi.native.callback.transaction_extension_versions" => Local;

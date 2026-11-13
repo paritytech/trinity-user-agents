@@ -5,7 +5,7 @@ import SwiftUI
 import UIKit
 
 /// The bar row: four fixed slots around the centre hole, with the centre control in the hole and the
-/// shelf growing above it with open products.
+/// shelf growing above it with open products, or with chain status in builds without Browse.
 struct TabBarBarView: View {
     @Bindable var model: TabBarBarViewModel
 
@@ -26,7 +26,11 @@ struct TabBarBarView: View {
                 TabBarCenterSlot(model: model)
             },
             shelf: {
-                TabBarShelfView(model: model, pillProductId: pillProductId)
+                #if FEATURE_PRODUCTS
+                    TabBarShelfView(model: model, pillProductId: pillProductId)
+                #else
+                    ConnectionStatusPanelView(rows: model.chainStatusRows)
+                #endif
             }
         )
         .padding(.bottom, model.keyboardLift)
@@ -94,6 +98,7 @@ private extension TabBarSlotView {
         } label: {
             VStack(spacing: 0) {
                 icon(for: item)
+                    .attentionDot(model.showsSettingsAttention && index == model.appsItemIndex)
                 if let title = item.title {
                     Text(title)
                         .font(Font(UIFont.labelSmallEmphasized))

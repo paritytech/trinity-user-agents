@@ -5,6 +5,111 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.31.0] - 2026-11-12
+
+### RFCs
+
+- **Accepted:** Personhood identity account
+
+### Added
+
+- bundle the Paseo system parachains as the paseo network (#2058)
+- read and publish public profiles (#1844)
+- move update to settings (#1925)
+- install truapi-host and trinity-stack from GitHub Actions workflows (#2046)
+- resolve a Trinity stack from a signed descriptor (#1963)
+- tuck the Docklet into the right edge and bring it back (#1989)
+- add a ./node entry that runs the pairing host in a worker thread (#1481)
+- show contacts' public profile avatars (#1837)
+- open and close the Balance card, Pocket cards and Collectibles the same way (#1986)
+- open Collectibles inside the Pocket tab as a book (#1979)
+- peek the tucked docklet on auto-hide (#1934)
+- ask for an optional GitHub username on issue reports (#1981)
+- move the screen title and product menu into the status bar (#1854)
+
+### Changed
+
+- take chain config from the Trinity stack (#1964)
+- let a product dock its own card in a chat room footer (#1781)
+- RemoteAccountHolder for the paired host (#1999)
+- one SSO service per paired peer (#1977)
+- the core holds the funding facts and host state both apps share (#1983)
+- replace deprecated UniFFI trait exports with foreign (#2025)
+- resolve public profile metadata (#1838)
+- use a concrete task spawner (#1546)
+- let a renderer image carry its own bytes (#1862)
+- let a Pocket card have a back the user can turn to (#1559)
+- report issues as host events through one sender (#1988)
+- devicehood derivation change (#1974)
+
+### Fixed
+
+- open network status inside the docklet like iOS (#2008)
+- hide navigation bar on Settings root (#2035)
+- make the tab switch instant like the system tab bar (#2037)
+- wait for the tab's navigation transition before a tab switch (#2038)
+- prune dropped preimage and storage change subscriptions (#2028)
+- keep every follow in the budget line the host receives (#1992)
+- reuse a presented product and confirm before replacing it (#1991)
+- share overlapping dotNS reads so a burst holds one follow (#1993)
+- clear the dotNS reservation queue before register-name claims (#1691)
+- group host events by their name (#1985)
+- keep a paired signing host serving when the People chain drops (#1821)
+
+## [0.30.0] - 2026-11-09
+
+### Added
+
+- emit the core marker table for the web hosts (#1971)
+- report product notification shown and tapped to Sentry (#1874)
+- report product notification shown and tapped to Sentry (#1875)
+- say what each follow holding a slot is doing when a connection fills (#1961)
+- name accounts and host text through types (#1938)
+- publish the crate to crates.io (#1943)
+- let the test host approve a product's login request (#1956)
+- swipe down to close Pocket product cards (#1832)
+- move product and tab title with menu into the status (#1744)
+- inject and read a statement's channel, expiry and key (#1935)
+- pass deep links from the test host page to the product (#1932)
+- load products from the app bundle; funding-only workers; headless worker prompts (#1865)
+- read the core's marker table instead of a prefix list (#1907)
+- let one test decline a confirmation (#1926)
+- Docklet R2 implementation (#1883)
+- load verified Bulletin images in the core for native hosts (#1906)
+- open Pocket Collectibles inside a turning book (#1886)
+- one table decides which markers leave a device (#1797)
+- live preimage lookups, product storage seeding and networks on the test server (#1431)
+- remove a product chat room from its chat menu (#1562)
+
+### Changed
+
+- @parity/truapi 0.30.0, @parity/truapi-host 0.30.0, @parity/truapi-provider 0.4.0, @parity/trinity-stack 0.2.1 (#1978)
+- one WalletAccountHolder owns the signing host's wallet (#1952)
+- send game reminder events through the host capture (#1975)
+- run every network from its stack descriptor (#1944)
+- crypto networks, learned limits, retrying, payout and refunds for the funding screens (#1344)
+- name the signing account in legacy-account reviews (#1888)
+- remove Browse tab (#1951)
+- one HostGrantStore for kept grants (#1688)
+- show network status instead of browse in the docklet on every build (#1942)
+- carry createTransaction through a chain halt and report ChainUnavailable (#1807)
+- apply Rust guidance across the workspace (#1929)
+- keep RPC providers off the catalog and light-client chains running (#1793)
+- take every test network from its Trinity stack descriptor (#1885)
+- prepare and execute EVM contract calls (#1873)
+- funding discovery, quotes, progress and deposit instructions (#1318)
+
+### Fixed
+
+- tuck the Docklet at once on a touch outside it (#1962)
+- wait out a lost connection for the current block (#1939)
+- open a Pocket card from its app when the product publishes no widget (#1955)
+- expand the Collectibles page only once the SPA is visible (#1920)
+- find contacts renamed to a full username (#1743)
+- give Sentry traces sample-rate a float value (#1823)
+- reconnect a product that navigates its whole document (#1895)
+- take a product's latest room name and icon when it registers again (#1717)
+
 ## [0.29.0] - 2026-11-04
 
 ### Added
@@ -18,6 +123,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.29.0, @parity/truapi-host 0.29.0, @parity/truapi-provider 0.3.2 (#1879)
 - keep the Pocket collection in the core database (#1757)
 - encode dotNS contract calls with alloy sol! (#1845)
 - funding provider trait, reports and settlement (#1317)

@@ -234,6 +234,10 @@ extension ServiceCoordinator {
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
+        RootDependencyLocator.setDependency(
+            PublicProfileAvatarViewModelFactory(runtimeProvider: truapiRuntimeProvider)
+                as PublicProfileAvatarViewModelMaking
+        )
         CoreDurableRecoveryTask.shared.attach(
             truapiRuntimeProvider,
             executor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
@@ -391,6 +395,7 @@ extension ServiceCoordinator {
             chainRegistry: ChainRegistryFacade.sharedRegistry,
             logger: logger
         )
+        RootDependencyLocator.setDependency(chainStatusProvider as ChainStatusProviding)
 
         return ServiceCoordinator(
             chatCoordinator: chatCoordinator,
@@ -484,7 +489,7 @@ private extension ServiceCoordinator {
                 logger: Logger.shared
             ),
             notificationAllocator: notificationAllocator,
-            signingFallback: signingFallback,
+            signingFallback: ForegroundConsentSigningFallback(base: signingFallback, activity: ApplicationActivity()),
             backgroundExecutor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry),
             issueReporter: IssueReportingFacade.shared
         )
