@@ -35,9 +35,7 @@ pub struct DurableSubmission {
 }
 
 pub struct SubmissionPlan {
-    /// The registered policy that builds it.
-    pub policy: PolicyId,
-    /// Opaque bytes, interpreted by the policy.
+    /// Opaque bytes, interpreted by the domain's policy.
     pub params: PolicyParams,
 }
 ```
@@ -147,8 +145,6 @@ Transaction mortality and block inclusion alone can drive a transaction to a ter
 ```rust
 #[async_trait::async_trait]
 pub trait CompletionOracle: Send + Sync {
-    fn chain(&self) -> H256;
-
     // Prefetch all the data this oracle needs for the given batch of `transactions`
     async fn open_pass(
         &self,
@@ -179,8 +175,6 @@ A submission policy is the mechanism for both scheduled submission and retries: 
 
 ```rust
 pub trait SubmissionPolicy: Send + Sync {
-    fn id(&self) -> PolicyId;
-
     fn can_retry(
         &self,
         entry: &DurableTxEntry,
@@ -213,6 +207,8 @@ The engine offers consumers two ways to organize transactions.
 #### Domains
 
 A domain, identified by a `DomainId`, separates features from each other, so one generic engine can serve transactions from completely unrelated features. For example, Coinage has its own domain and NFTs have another.
+
+The engine is created from a `DurableRegistry` with one entry per domain: its name, the genesis hash of the chain it lives on, its completion oracle and its one submission policy. Every plan of a domain is built by that policy, so a row stores only its params. A domain that needs several kinds of transaction branches on a field of its params, or uses separate groups or domains. A domain that never schedules or retries registers a policy that never builds.
 
 #### Groups
 

@@ -16,7 +16,7 @@ use crate::{
 	chain::MortalExtrinsic,
 	durable::{
 		dao,
-		model::{DomainId, DurableTxId, GroupId, PolicyId, PolicyParams, SubmissionPlan},
+		model::{DomainId, DurableTxId, GroupId, PolicyParams, SubmissionPlan},
 		ownership::Ownership,
 	},
 	store::DbError,
@@ -53,13 +53,8 @@ enum RequestedTransactions<E> {
 	Presigned(Vec<DurableSubmission>),
 	/// Built later, each through its plan.
 	Scheduled(Vec<SubmissionPlan>),
-	/// Built later by `policy`, with params worked out in the write.
-	PlannedInWrite {
-		/// The policy that builds every one of them.
-		policy: PolicyId,
-		/// Their params, one transaction each.
-		plan: PlanInWrite<E>,
-	},
+	/// Built later, with params worked out in the write.
+	PlannedInWrite(PlanInWrite<E>),
 }
 
 /// A request named no transaction.
@@ -71,14 +66,10 @@ pub struct EmptyRequest;
 /// `E` is what the caller's hook refuses with.
 #[derive(Debug, thiserror::Error)]
 pub enum RegistrationError<E = DbError> {
-	/// No oracle is registered for the domain, so nothing could decide its
+	/// The domain is not registered, so nothing could decide or build its
 	/// transactions.
-	#[error("no durable domain {}: register an oracle for it first", .0.as_str())]
+	#[error("no durable domain {}: register it first", .0.as_str())]
 	UnknownDomain(DomainId),
-	/// The request names a submission policy the registry does not have, so
-	/// nothing could build or rebuild its transaction.
-	#[error("no submission policy {}: register it first", .0.as_str())]
-	UnknownPolicy(PolicyId),
 	/// The write failed.
 	#[error(transparent)]
 	Db(#[from] DbError),
@@ -94,7 +85,7 @@ impl<E> RequestedTransactions<E> {
 		match self {
 			Self::Presigned(submissions) => submissions.is_empty(),
 			Self::Scheduled(plans) => plans.is_empty(),
-			Self::PlannedInWrite { .. } => false,
+			Self::PlannedInWrite(_) => false,
 		}
 	}
 
@@ -102,20 +93,17 @@ impl<E> RequestedTransactions<E> {
 	fn presigned(&self) -> &[DurableSubmission] {
 		match self {
 			Self::Presigned(submissions) => submissions,
-			Self::Scheduled(_) | Self::PlannedInWrite { .. } => &[],
+			Self::Scheduled(_) | Self::PlannedInWrite(_) => &[],
 		}
 	}
 
-	/// Every policy named to build or rebuild a transaction.
-	fn named_policies(&self) -> Vec<&PolicyId> {
+	/// Whether the domain's policy builds or rebuilds any of them.
+	fn uses_submission_policy(&self) -> bool {
 		match self {
-			Self::Presigned(submissions) => submissions
-				.iter()
-				.filter_map(|submission| submission.plan.as_ref())
-				.map(|plan| &plan.policy)
-				.collect(),
-			Self::Scheduled(plans) => plans.iter().map(|plan| &plan.policy).collect(),
-			Self::PlannedInWrite { policy, .. } => vec![policy],
+			Self::Presigned(submissions) => {
+				submissions.iter().any(|submission| submission.plan.is_some())
+			},
+			Self::Scheduled(_) | Self::PlannedInWrite(_) => true,
 		}
 	}
 }
@@ -142,17 +130,15 @@ impl<E> DurableRequest<E> {
 	}
 
 	/// One transaction per params `plan` works out inside the registration
-	/// write, each recorded as waiting and built by `policy` once committed.
+	/// write, each recorded as waiting and built once committed.
 	/// An `Err` from `plan` refuses the registration as
 	/// [`RegistrationError::Hook`].
 	pub fn scheduled_in(
 		domain: DomainId,
 		group: Option<GroupId>,
-		policy: PolicyId,
 		plan: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<Vec<PolicyParams>, E> + Send + 'static,
 	) -> Self {
-		let plan = Box::new(plan);
-		Self { domain, group, transactions: RequestedTransactions::PlannedInWrite { policy, plan } }
+		Self { domain, group, transactions: RequestedTransactions::PlannedInWrite(Box::new(plan)) }
 	}
 
 	fn new(
@@ -164,11 +150,6 @@ impl<E> DurableRequest<E> {
 			return Err(EmptyRequest);
 		}
 		Ok(Self { domain, group, transactions })
-	}
-
-	/// Whether anything in the request is built or rebuilt by a policy.
-	fn uses_submission_policy(&self) -> bool {
-		!self.transactions.named_policies().is_empty()
 	}
 
 	/// Records every transaction as a row, in order, or returns the plan's
@@ -183,8 +164,8 @@ impl<E> DurableRequest<E> {
 				return insert_presigned(tx, &domain, group.as_ref(), &submissions).map(Ok);
 			},
 			RequestedTransactions::Scheduled(plans) => plans,
-			RequestedTransactions::PlannedInWrite { policy, plan } => match plan(tx) {
-				Ok(params) => plans_of(&policy, params),
+			RequestedTransactions::PlannedInWrite(plan) => match plan(tx) {
+				Ok(params) => params.into_iter().map(|params| SubmissionPlan { params }).collect(),
 				Err(refusal) => return Ok(Err(refusal)),
 			},
 		};
@@ -217,14 +198,6 @@ fn schedule_all(
 	plans.iter().map(|plan| dao::schedule(tx, domain, group, plan)).collect()
 }
 
-/// One plan of `policy` per params.
-fn plans_of(policy: &PolicyId, params: Vec<PolicyParams>) -> Vec<SubmissionPlan> {
-	params
-		.into_iter()
-		.map(|params| SubmissionPlan { policy: policy.clone(), params })
-		.collect()
-}
-
 impl DurableTxEngine {
 	/// Records `request` in its own write and broadcasts it once committed.
 	pub async fn execute(
@@ -252,8 +225,7 @@ impl DurableTxEngine {
 		E: Send + 'static,
 	{
 		let genesis = self.registered_chain(&request.domain)?;
-		self.check_policies_registered(&request)?;
-		if request.uses_submission_policy() {
+		if request.transactions.uses_submission_policy() {
 			self.ensure_submissions_started();
 		}
 		// Detached from the caller: once queued, the write commits on the
@@ -272,20 +244,6 @@ impl DurableTxEngine {
 	fn registered_chain<E>(&self, domain: &DomainId) -> Result<H256, RegistrationError<E>> {
 		self.chain_of(domain)
 			.ok_or_else(|| RegistrationError::UnknownDomain(domain.clone()))
-	}
-
-	/// Refuses a request naming a policy that is not registered, which
-	/// nothing could ever build.
-	fn check_policies_registered<E>(
-		&self,
-		request: &DurableRequest<E>,
-	) -> Result<(), RegistrationError<E>> {
-		let named = request.transactions.named_policies();
-		let unknown = named.into_iter().find(|id| self.registry.submission_policy(id).is_none());
-		match unknown {
-			Some(policy) => Err(RegistrationError::UnknownPolicy(policy.clone())),
-			None => Ok(()),
-		}
 	}
 
 	/// Records the rows, then broadcasts what was committed.

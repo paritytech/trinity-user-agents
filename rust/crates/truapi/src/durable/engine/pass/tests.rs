@@ -9,7 +9,9 @@ use crate::{
 	durable::{
 		model::{DurableTxFailureKind, DurableTxStatus, HeadKind},
 		oracle::{DurableRegistry, PassScope, Unobservable},
-		testing::{FakeChain, GENESIS, ScriptedScope, block, engine_with, extrinsic, insert},
+		testing::{
+			FakeChain, ScriptedScope, ServesTestDomains, block, engine_with, extrinsic, insert,
+		},
 	},
 	store::Db,
 };
@@ -50,10 +52,6 @@ impl<F> CompletionOracle for ScriptedOracle<F>
 where
 	F: Fn() -> Box<dyn PassScope> + Send + Sync,
 {
-	fn chain(&self) -> H256 {
-		GENESIS
-	}
-
 	async fn open_pass(
 		&self,
 		transactions: &[DurableTxEntry],
@@ -76,8 +74,7 @@ fn completed_at_finalized() -> ScriptedScope {
 #[test]
 fn a_settled_ledger_reads_no_chain() {
 	let chain = FakeChain::new(150, 200);
-	let registry =
-		DurableRegistry::new().with_domain(test_domain(), says(completed_at_finalized()));
+	let registry = DurableRegistry::new().serving(test_domain(), says(completed_at_finalized()));
 	let (_dir, engine, _timer) = engine_with(&chain, registry);
 
 	block_on(engine.run_pass());
@@ -88,8 +85,7 @@ fn a_settled_ledger_reads_no_chain() {
 #[test]
 fn the_oracles_answer_is_written() {
 	let chain = FakeChain::new(150, 200);
-	let registry =
-		DurableRegistry::new().with_domain(test_domain(), says(completed_at_finalized()));
+	let registry = DurableRegistry::new().serving(test_domain(), says(completed_at_finalized()));
 	let (_dir, engine, _timer) = engine_with(&chain, registry);
 	let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
 
@@ -103,8 +99,7 @@ fn the_oracles_answer_is_written() {
 #[test]
 fn a_transaction_a_watch_owns_gets_no_verdict() {
 	let chain = FakeChain::new(150, 200);
-	let registry =
-		DurableRegistry::new().with_domain(test_domain(), says(completed_at_finalized()));
+	let registry = DurableRegistry::new().serving(test_domain(), says(completed_at_finalized()));
 	let (_dir, engine, _timer) = engine_with(&chain, registry);
 	let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
 	engine.ownership.acquire(id);
@@ -150,7 +145,7 @@ fn a_pass_asks_the_oracle_once_about_the_undecided_rows() {
 	let chain = FakeChain::new(150, 200);
 	let oracle =
 		ScriptedOracle::new(|| Box::new(CompletedAtFinalized(vec![PROVEN])) as Box<dyn PassScope>);
-	let registry = DurableRegistry::new().with_domain(test_domain(), oracle.clone());
+	let registry = DurableRegistry::new().serving(test_domain(), oracle.clone());
 	let (_dir, engine, _timer) = engine_with(&chain, registry);
 	for tag in 1..=3 {
 		let id = insert(&engine.db, &test_domain(), extrinsic(tag, 100, 64));
@@ -177,8 +172,8 @@ fn a_pass_asks_the_oracle_once_about_the_undecided_rows() {
 fn two_domains_on_one_chain_read_its_heads_once() {
 	let chain = FakeChain::new(150, 200);
 	let registry = DurableRegistry::new()
-		.with_domain(DomainId::new("a"), Arc::new(Unobservable(GENESIS)))
-		.with_domain(DomainId::new("b"), Arc::new(Unobservable(GENESIS)));
+		.serving(DomainId::new("a"), Arc::new(Unobservable))
+		.serving(DomainId::new("b"), Arc::new(Unobservable));
 	let (_dir, engine, _timer) = engine_with(&chain, registry);
 	insert(&engine.db, &DomainId::new("a"), extrinsic(1, 100, 64));
 	insert(&engine.db, &DomainId::new("b"), extrinsic(2, 100, 64));
@@ -194,8 +189,7 @@ fn two_domains_on_one_chain_read_its_heads_once() {
 fn a_chain_whose_heads_cannot_be_read_gets_no_verdict() {
 	let chain = FakeChain::new(150, 200);
 	chain.state().heads_unavailable = true;
-	let registry =
-		DurableRegistry::new().with_domain(test_domain(), says(completed_at_finalized()));
+	let registry = DurableRegistry::new().serving(test_domain(), says(completed_at_finalized()));
 	let (_dir, engine, _timer) = engine_with(&chain, registry);
 	let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
 
@@ -218,7 +212,7 @@ fn an_oracle_that_fails_to_open_leaves_its_domain_untouched() {
 		shown: Mutex::default(),
 	});
 	let (_dir, engine, _timer) =
-		engine_with(&chain, DurableRegistry::new().with_domain(test_domain(), oracle));
+		engine_with(&chain, DurableRegistry::new().serving(test_domain(), oracle));
 	let id = insert(&engine.db, &test_domain(), tx);
 
 	block_on(engine.run_pass());
@@ -231,10 +225,8 @@ fn an_oracle_that_fails_to_open_leaves_its_domain_untouched() {
 #[test]
 fn a_record_whose_block_was_reorged_out_is_demoted_and_cleared() {
 	let chain = FakeChain::new(150, 200);
-	let (_dir, engine, _timer) = engine_with(
-		&chain,
-		DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
-	);
+	let (_dir, engine, _timer) =
+		engine_with(&chain, DurableRegistry::new().serving(test_domain(), Arc::new(Unobservable)));
 	let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
 	record_success(&engine.db, id, block(160));
 	chain.state().reorged.insert(160, H256::repeat_byte(0x99));
@@ -250,10 +242,8 @@ fn a_record_whose_block_was_reorged_out_is_demoted_and_cleared() {
 #[test]
 fn an_unreadable_record_height_keeps_the_success() {
 	let chain = FakeChain::new(150, 200);
-	let (_dir, engine, _timer) = engine_with(
-		&chain,
-		DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
-	);
+	let (_dir, engine, _timer) =
+		engine_with(&chain, DurableRegistry::new().serving(test_domain(), Arc::new(Unobservable)));
 	let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
 	record_success(&engine.db, id, block(160));
 	chain.state().unreadable_heights.insert(160);
@@ -268,10 +258,8 @@ fn an_unreadable_record_height_keeps_the_success() {
 #[test]
 fn a_chain_shorter_than_the_record_clears_it() {
 	let chain = FakeChain::new(150, 155);
-	let (_dir, engine, _timer) = engine_with(
-		&chain,
-		DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
-	);
+	let (_dir, engine, _timer) =
+		engine_with(&chain, DurableRegistry::new().serving(test_domain(), Arc::new(Unobservable)));
 	let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
 	record_success(&engine.db, id, block(160));
 
@@ -287,10 +275,8 @@ fn a_transaction_found_in_a_finalized_block_finalizes() {
 	let chain = FakeChain::new(150, 200);
 	let tx = extrinsic(1, 100, 64);
 	chain.include(120, tx.extrinsic.hash(), DispatchOutcome::Succeeded);
-	let (_dir, engine, _timer) = engine_with(
-		&chain,
-		DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
-	);
+	let (_dir, engine, _timer) =
+		engine_with(&chain, DurableRegistry::new().serving(test_domain(), Arc::new(Unobservable)));
 	let id = insert(&engine.db, &test_domain(), tx);
 
 	block_on(engine.run_pass());
@@ -304,10 +290,8 @@ fn a_transaction_found_in_a_finalized_block_finalizes() {
 #[test]
 fn best_height_alone_never_expires_a_transaction() {
 	let chain = FakeChain::new(150, 400);
-	let (_dir, engine, _timer) = engine_with(
-		&chain,
-		DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
-	);
+	let (_dir, engine, _timer) =
+		engine_with(&chain, DurableRegistry::new().serving(test_domain(), Arc::new(Unobservable)));
 	let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
 
 	block_on(engine.run_pass());
@@ -318,10 +302,8 @@ fn best_height_alone_never_expires_a_transaction() {
 #[test]
 fn absence_over_a_closed_window_fails_the_transaction() {
 	let chain = FakeChain::new(200, 210);
-	let (_dir, engine, _timer) = engine_with(
-		&chain,
-		DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
-	);
+	let (_dir, engine, _timer) =
+		engine_with(&chain, DurableRegistry::new().serving(test_domain(), Arc::new(Unobservable)));
 	let id = insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
 
 	block_on(engine.run_pass());
@@ -335,10 +317,8 @@ fn absence_over_a_closed_window_fails_the_transaction() {
 #[test]
 fn a_later_pass_reads_only_the_blocks_finalized_since() {
 	let chain = FakeChain::new(120, 140);
-	let (_dir, engine, _timer) = engine_with(
-		&chain,
-		DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
-	);
+	let (_dir, engine, _timer) =
+		engine_with(&chain, DurableRegistry::new().serving(test_domain(), Arc::new(Unobservable)));
 	insert(&engine.db, &test_domain(), extrinsic(1, 100, 64));
 	block_on(engine.run_pass());
 	chain.state().finalized = 123;

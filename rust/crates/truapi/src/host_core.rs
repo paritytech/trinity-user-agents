@@ -1600,7 +1600,7 @@ fn durable_engine(
 	})
 }
 
-/// The domains and policies the durable engine serves: NFT transfers, on the
+/// The domains the durable engine serves: NFT transfers, on the
 /// Asset Hub that runs the Scarcity pallet. They need encrypted storage, which
 /// keeps the secrets of imported item keys.
 #[cfg(not(target_arch = "wasm32"))]

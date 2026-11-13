@@ -1,15 +1,16 @@
 use futures::executor::block_on;
+use subxt::utils::H256;
 
 use super::*;
 use crate::{
 	chain::Mortality,
-	durable::{DomainId, DurableTxStatus, PolicyId, SubmissionPlan},
+	durable::{DomainId, DurableTxStatus, SubmissionPlan},
 	nft::{
 		ItemSlot, PurseId, TEST_INSTALLATION,
 		keys::ItemIndex,
 		scarcity::{
 			chain::{KeyLocks, TransferContext},
-			policy::{TRANSFER_POLICY, TransferSigner},
+			policy::TransferSigner,
 		},
 	},
 };
@@ -90,16 +91,13 @@ fn transfer_entry(signed_state_nonce: Option<u64>) -> DurableTxEntry {
 		mortality: Mortality::new(FINALIZED, 64).unwrap(),
 		status: DurableTxStatus::Pending,
 		scanned_to: None,
-		plan: Some(SubmissionPlan {
-			policy: PolicyId::new(TRANSFER_POLICY),
-			params: params.into(),
-		}),
+		plan: Some(SubmissionPlan { params: params.into() }),
 	}
 }
 
 /// Whether `entry` is proven at the finalized head and at the best head.
 fn proven_at_both_heads(entry: DurableTxEntry, holds: DestinationHolds) -> (bool, bool) {
-	let oracle = ScarcityTransferOracle::new(Arc::new(holds), H256([0xab; 32]));
+	let oracle = ScarcityTransferOracle::new(Arc::new(holds));
 	let heads = Heads { finalized: FINALIZED, best: BEST };
 	let scope = block_on(oracle.open_pass(core::slice::from_ref(&entry), &heads)).unwrap();
 	let at_finalized = scope.proven_completed(&entry, HeadKind::Finalized);

@@ -129,7 +129,7 @@ fn registered_import_until(give_up_after: u64) -> RegisteredTransfer {
 
 fn scheduled_transfer(params: TransferParams, attempts: u32) -> RegisteredTransfer {
 	let source = params.source;
-	let plan = SubmissionPlan { policy: PolicyId::new(TRANSFER_POLICY), params: params.into() };
+	let plan = SubmissionPlan { params: params.into() };
 	let id = DurableTxId(1);
 	let scheduled =
 		ScheduledDurableTx { id, domain: DomainId::new("nft"), group: None, plan, attempts };

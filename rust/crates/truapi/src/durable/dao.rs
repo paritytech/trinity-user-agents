@@ -10,7 +10,7 @@ use subxt::utils::H256;
 
 use super::model::{
 	DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState, DurableTxStatus,
-	GroupId, PolicyId, PolicyParams, ScheduledDurableTx, SubmissionPlan,
+	GroupId, PolicyParams, ScheduledDurableTx, SubmissionPlan,
 };
 use crate::{
 	chain::{HashAndNumber, MortalExtrinsic, Mortality},
@@ -18,10 +18,9 @@ use crate::{
 };
 
 const INSERT: &str = "INSERT INTO durable_tx
-    (domain, group_id, tx_hash, birth_number, birth_hash, period, status, policy_id,
-     policy_params)
+    (domain, group_id, tx_hash, birth_number, birth_hash, period, status, policy_params)
     VALUES (:domain, :group_id, :tx_hash, :birth_number, :birth_hash, :period, 'PENDING',
-     :policy_id, :policy_params)
+     :policy_params)
     RETURNING id";
 
 /// Records a presigned extrinsic as a `Pending` row, rebuilt through `plan`
@@ -42,7 +41,6 @@ pub fn insert(
 			":birth_number": birth.number,
 			":birth_hash": birth.hash.0,
 			":period": extrinsic.mortality.period(),
-			":policy_id": plan.map(|plan| plan.policy.as_str()),
 			":policy_params": plan.map(|plan| &plan.params),
 		},
 		|row| row.get("id").map(DurableTxId),
@@ -51,8 +49,8 @@ pub fn insert(
 }
 
 const SCHEDULE: &str = "INSERT INTO durable_tx
-    (domain, group_id, status, policy_id, policy_params)
-    VALUES (:domain, :group_id, 'PENDING_SUBMISSION', :policy_id, :policy_params)
+    (domain, group_id, status, policy_params)
+    VALUES (:domain, :group_id, 'PENDING_SUBMISSION', :policy_params)
     RETURNING id";
 
 /// Records a transaction built later through `plan`, as a
@@ -67,7 +65,6 @@ pub fn schedule(
 		named_params! {
 			":domain": domain.as_str(),
 			":group_id": group.map(GroupId::as_str),
-			":policy_id": plan.policy.as_str(),
 			":policy_params": plan.params,
 		},
 		|row| row.get("id").map(DurableTxId),
@@ -112,8 +109,8 @@ pub fn abandon_submission(tx: &Transaction<'_>, id: DurableTxId) -> Result<bool,
 	Ok(changed == 1)
 }
 
-const SUBMISSION_PLAN: &str = "SELECT policy_id, policy_params FROM durable_tx
-    WHERE id = :id AND policy_id IS NOT NULL";
+const SUBMISSION_PLAN: &str = "SELECT policy_params FROM durable_tx
+    WHERE id = :id AND policy_params IS NOT NULL";
 
 /// The plan that rebuilds the row with `id`, when it has one.
 pub fn submission_plan(
@@ -125,7 +122,7 @@ pub fn submission_plan(
 	Ok(rows.next()?.map(SubmissionPlan::from_row).transpose()?)
 }
 
-const PENDING_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_id, policy_params, attempts
+const PENDING_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_params, attempts
     FROM durable_tx WHERE status = 'PENDING_SUBMISSION' ORDER BY id";
 
 /// Every row waiting to be built, in registration order, re-read after every
@@ -136,37 +133,35 @@ pub fn observe_pending_submissions(
 	db.observe(PENDING_SUBMISSIONS, |stmt| stmt.query_map([], ScheduledDurableTx::from_row))
 }
 
-const WAITING_PLANS: &str = "SELECT DISTINCT domain, policy_id FROM durable_tx
+const WAITING_DOMAINS: &str = "SELECT DISTINCT domain FROM durable_tx
     WHERE status = 'PENDING_SUBMISSION'";
 
-/// The domain and policy of every row waiting to be built.
-pub fn waiting_plans(conn: &Connection) -> Result<Vec<LivePlan>, DbError> {
-	let mut stmt = conn.prepare_cached(WAITING_PLANS)?;
-	let plans = stmt.query_map([], LivePlan::from_row)?;
-	Ok(plans.collect::<rusqlite::Result<_>>()?)
+/// The domain of every row waiting to be built.
+pub fn waiting_domains(conn: &Connection) -> Result<Vec<DomainId>, DbError> {
+	let mut stmt = conn.prepare_cached(WAITING_DOMAINS)?;
+	let domains = stmt.query_map([], domain_from_row)?;
+	Ok(domains.collect::<rusqlite::Result<_>>()?)
 }
 
-/// [`waiting_plans`], re-read after every commit that changes it.
-pub fn observe_waiting_plans(db: &Db) -> BoxStream<'static, Result<Vec<LivePlan>, DbError>> {
-	db.observe(WAITING_PLANS, |stmt| stmt.query_map([], LivePlan::from_row))
+/// [`waiting_domains`], re-read after every commit that changes it.
+pub fn observe_waiting_domains(db: &Db) -> BoxStream<'static, Result<Vec<DomainId>, DbError>> {
+	db.observe(WAITING_DOMAINS, |stmt| stmt.query_map([], domain_from_row))
 }
 
-const BUCKET_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_id, policy_params, attempts
+const BUCKET_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_params, attempts
     FROM durable_tx WHERE status = 'PENDING_SUBMISSION' AND domain = :domain
-    AND policy_id = :policy_id AND group_id IS :group_id ORDER BY id";
+    AND group_id IS :group_id ORDER BY id";
 
-/// The rows of one domain, policy and group waiting to be built, in
-/// registration order.
+/// The rows of one domain and group waiting to be built, in registration
+/// order.
 pub fn bucket_submissions(
 	conn: &Connection,
 	domain: &DomainId,
-	policy: &PolicyId,
 	group: Option<&GroupId>,
 ) -> Result<Vec<ScheduledDurableTx>, DbError> {
 	let mut stmt = conn.prepare_cached(BUCKET_SUBMISSIONS)?;
 	let params = named_params! {
 		":domain": domain.as_str(),
-		":policy_id": policy.as_str(),
 		":group_id": group.map(GroupId::as_str),
 	};
 	let rows = stmt.query_map(params, ScheduledDurableTx::from_row)?;
@@ -246,7 +241,7 @@ pub fn observe_status(
 }
 
 const GROUP: &str = concat!(
-	"SELECT id, tx_hash, policy_id, policy_params, ",
+	"SELECT id, tx_hash, policy_params, ",
 	status_columns!(),
 	" FROM durable_tx WHERE domain = :domain AND group_id = :group_id ORDER BY id"
 );
@@ -327,34 +322,15 @@ macro_rules! live_statuses {
 	};
 }
 
-const LIVE_PLANS: &str = concat!(
-	"SELECT DISTINCT domain,
-    CASE WHEN status = 'PENDING_SUBMISSION' THEN policy_id END AS policy_id
-    FROM durable_tx WHERE status IN ",
-	live_statuses!()
-);
+const LIVE_TRANSACTION_DOMAINS: &str =
+	concat!("SELECT DISTINCT domain FROM durable_tx WHERE status IN ", live_statuses!());
 
-/// The domain of every live transaction, with the policy of those waiting
-/// to be built, re-read after every commit that changes them.
-pub fn observe_live_plans(db: &Db) -> BoxStream<'static, Result<Vec<LivePlan>, DbError>> {
-	db.observe(LIVE_PLANS, |stmt| stmt.query_map([], LivePlan::from_row))
-}
-
-/// The domain of a live transaction, and the policy that builds it while
-/// it waits to be built.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LivePlan {
-	/// The domain the transaction belongs to.
-	pub domain: DomainId,
-	/// The policy that builds it, while it waits to be built.
-	pub policy: Option<PolicyId>,
-}
-
-impl LivePlan {
-	fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
-		let policy: Option<String> = row.get("policy_id")?;
-		Ok(Self { domain: domain_from_row(row)?, policy: policy.map(PolicyId::new) })
-	}
+/// The domain of every live transaction, re-read after every commit that
+/// changes them.
+pub fn observe_live_transaction_domains(
+	db: &Db,
+) -> BoxStream<'static, Result<Vec<DomainId>, DbError>> {
+	db.observe(LIVE_TRANSACTION_DOMAINS, |stmt| stmt.query_map([], domain_from_row))
 }
 
 impl DurableTxEntry {
@@ -414,10 +390,7 @@ impl ScheduledDurableTx {
 
 impl SubmissionPlan {
 	fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
-		Ok(Self {
-			policy: PolicyId::new(row.get::<_, String>("policy_id")?),
-			params: PolicyParams(row.get("policy_params")?),
-		})
+		Ok(Self { params: PolicyParams(row.get("policy_params")?) })
 	}
 }
 
@@ -435,9 +408,8 @@ impl DurableTxState {
 
 /// The row's plan, when a policy builds it.
 fn plan_from_row(row: &Row<'_>) -> rusqlite::Result<Option<SubmissionPlan>> {
-	row.get::<_, Option<String>>("policy_id")?
-		.map(|_| SubmissionPlan::from_row(row))
-		.transpose()
+	let params: Option<Vec<u8>> = row.get("policy_params")?;
+	Ok(params.map(|params| SubmissionPlan { params: PolicyParams(params) }))
 }
 
 impl ToSql for PolicyParams {

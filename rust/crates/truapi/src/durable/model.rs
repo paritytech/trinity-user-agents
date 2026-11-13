@@ -24,33 +24,15 @@ impl DomainId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DurableTxId(pub i64);
 
-/// A submission policy's name, as the ledger stores it.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct PolicyId(String);
-
-impl PolicyId {
-	/// A policy with this name.
-	pub fn new(name: impl Into<String>) -> Self {
-		Self(name.into())
-	}
-
-	/// The name stored in the ledger.
-	pub fn as_str(&self) -> &str {
-		&self.0
-	}
-}
-
 /// What a policy stores with each transaction it builds. Opaque to the
 /// engine.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PolicyParams(pub Vec<u8>);
 
-/// How a transaction gets built: the policy that builds it, and that
-/// policy's params for it.
+/// How a transaction gets built: the params its domain's policy builds it
+/// from.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubmissionPlan {
-	/// The registered policy that builds it.
-	pub policy: PolicyId,
 	/// Handed back to the policy on every call.
 	pub params: PolicyParams,
 }

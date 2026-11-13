@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 
 use super::model::{
-	DurableTxEntry, DurableTxId, PolicyId, PolicyParams, ScheduledDurableTx, VerdictFailureKind,
+	DurableTxEntry, DurableTxId, PolicyParams, ScheduledDurableTx, VerdictFailureKind,
 };
 use crate::chain::MortalExtrinsic;
 
@@ -12,9 +12,6 @@ use crate::chain::MortalExtrinsic;
 /// decides which proven failures are worth another attempt.
 #[async_trait::async_trait]
 pub trait SubmissionPolicy: Send + Sync {
-	/// The name rows store to find this policy again after a restart.
-	fn id(&self) -> PolicyId;
-
 	/// Whether `entry`, which failed for `failure`, goes back to
 	/// [`Self::prepare`] instead of failing for good. Asked while its verdict
 	/// is written, so it decides from what it is given and never waits.
@@ -25,9 +22,9 @@ pub trait SubmissionPolicy: Send + Sync {
 		failure: VerdictFailureKind,
 	) -> bool;
 
-	/// What to do with each transaction of `batch`, which share a domain, a
-	/// policy and a group. A transaction missing from the answer keeps
-	/// waiting. An error is never a verdict: the batch is asked again later.
+	/// What to do with each transaction of `batch`, which share a domain and
+	/// a group. A transaction missing from the answer keeps waiting. An error is never a verdict:
+	/// the batch is asked again later.
 	async fn prepare(
 		&self,
 		batch: &[ScheduledDurableTx],

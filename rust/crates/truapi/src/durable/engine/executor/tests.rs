@@ -13,27 +13,23 @@ use super::*;
 use crate::{
 	Spawner,
 	durable::{
-		model::{
-			DurableTxFailureKind, DurableTxId, DurableTxStatus, PolicyId, PolicyParams,
-			SubmissionPlan,
-		},
+		model::{DurableTxFailureKind, DurableTxId, DurableTxStatus, PolicyParams, SubmissionPlan},
 		oracle::{DurableRegistry, Unobservable},
 		policy::{PolicyError, Preparation},
 		testing::{
-			FakeChain, GENESIS, PrepareAnswer, ScheduledTxHarness, ScriptedPolicy, answer_all_with,
-			engine_with_spawner, extrinsic, extrinsic_for_index, first_builds, other_domain,
-			test_domain, test_plan, test_policy_id,
+			FakeChain, PrepareAnswer, ScheduledTxHarness, ScriptedPolicy, ServesTestDomains,
+			answer_all_with, engine_with_spawner, extrinsic, extrinsic_for_index, first_builds,
+			other_domain, test_domain, test_plan,
 		},
 	},
 	store::Db,
 	test_support::wait_until,
 };
 
-/// The rows of the test domain waiting for the test policy, read straight
-/// from the ledger.
+/// The rows of the test domain waiting to be built, read straight from the
+/// ledger.
 fn waiting_ids(db: &Db) -> Vec<DurableTxId> {
-	let read =
-		db.read(|conn| dao::bucket_submissions(conn, &test_domain(), &test_policy_id(), None));
+	let read = db.read(|conn| dao::bucket_submissions(conn, &test_domain(), None));
 	let rows = block_on(read).unwrap();
 	rows.iter().map(|scheduled| scheduled.id).collect()
 }
@@ -59,16 +55,13 @@ fn a_policy_that_gives_up_fails_the_transaction_without_broadcasting() {
 	assert_eq!(harness.broadcast(), vec![]);
 }
 
-/// The domain or policy that rows from an earlier run name is not
-/// registered on this start, perhaps only for now. Nothing builds them, and
-/// they keep waiting rather than reach a final status; they are not counted
-/// as live work either, or the host would keep recovery running for nothing.
+/// The domain that rows from an earlier run name is not registered on this
+/// start, perhaps only for now. Nothing builds them, and they keep waiting
+/// rather than reach a final status; they are not counted as live work
+/// either, or the host would keep recovery running for nothing.
 #[test]
-fn rows_of_an_unregistered_domain_or_policy_keep_waiting() {
+fn rows_of_an_unregistered_domain_keep_waiting() {
 	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::building_everything());
-	let removed_policy =
-		SubmissionPlan { policy: PolicyId::new("removed"), params: PolicyParams::default() };
-	let unknown_policy = harness.leave_waiting(test_domain(), removed_policy);
 	let unknown_domain = harness.leave_waiting(DomainId::new("removed"), test_plan(vec![]));
 	let mut live = harness.engine().live_work();
 	assert!(!block_on(live.next()).unwrap().unwrap());
@@ -77,7 +70,6 @@ fn rows_of_an_unregistered_domain_or_policy_keep_waiting() {
 	let built = harness.schedule_one();
 
 	harness.wait_for(built, DurableTxStatus::Pending);
-	assert_eq!(harness.status(unknown_policy), DurableTxStatus::PendingSubmission);
 	assert_eq!(harness.status(unknown_domain), DurableTxStatus::PendingSubmission);
 	assert_eq!(harness.policy().batches(), vec![vec![built]]);
 }
@@ -94,8 +86,7 @@ fn starting_the_executor_twice_runs_one_builder() {
 		counter.fetch_add(1, Ordering::SeqCst);
 		inner.spawn(task)
 	});
-	let registry =
-		DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS)));
+	let registry = DurableRegistry::new().serving(test_domain(), Arc::new(Unobservable));
 	let (_dir, engine, _timer) = engine_with_spawner(&chain, registry, spawner);
 
 	engine.ensure_submissions_started();
@@ -114,9 +105,9 @@ fn dropping_the_engine_mid_build_leaves_the_transaction_waiting() {
 	wait_until(|| harness.policy().batches().len() == 1, "the build starts");
 	let db = harness.db().clone();
 
-	let (_dir, policies) = harness.drop_engine();
+	let (_dir, policy) = harness.drop_engine();
 
-	let released = || Arc::strong_count(&policies[0]) == 1;
+	let released = || Arc::strong_count(&policy) == 1;
 	wait_until(released, "the build is abandoned with the engine");
 	assert_eq!(waiting_ids(&db), vec![id]);
 }

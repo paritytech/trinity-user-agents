@@ -27,8 +27,8 @@ impl DurableTxEngine {
 	pub fn live_work(&self) -> BoxStream<'static, Result<bool, DbError>> {
 		let handed_back = self.host_wakes.subscribe().map(|()| Ok(true));
 		let registry = self.registry.clone();
-		let live = dao::observe_live_plans(&self.db)
-			.map(move |plans| plans.map(|plans| registry.serves_any(&plans)));
+		let live = dao::observe_live_transaction_domains(&self.db)
+			.map(move |domains| domains.map(|domains| registry.serves_any(&domains)));
 		stream::select(live, handed_back).boxed()
 	}
 

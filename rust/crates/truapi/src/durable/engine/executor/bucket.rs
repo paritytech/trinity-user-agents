@@ -72,7 +72,7 @@ impl RoundOutcome {
 
 impl BucketRun {
 	/// The worker for `bucket`, which sends `bucket` on `finished` once it
-	/// finds the bucket empty, or `None` when its domain or policy is not
+	/// finds the bucket empty, or `None` when its domain is not
 	/// registered: its rows are then left waiting untouched.
 	pub fn new(
 		engine: &Arc<DurableTxEngine>,
@@ -210,9 +210,7 @@ impl BucketRun {
 	async fn read_bucket_rows(&self) -> Result<Vec<ScheduledDurableTx>, DbError> {
 		let bucket = self.bucket.clone();
 		self.db
-			.read(move |conn| {
-				dao::bucket_submissions(conn, &bucket.domain, &bucket.policy, bucket.group.as_ref())
-			})
+			.read(move |conn| dao::bucket_submissions(conn, &bucket.domain, bucket.group.as_ref()))
 			.await
 	}
 }
@@ -225,9 +223,9 @@ fn without_followed(
 	rows.into_iter().filter(|row| !engine.ownership.is_owned(row.id)).collect()
 }
 
-/// The policy and chain that build `bucket`, when both are still registered.
+/// The policy and chain that build `bucket`, when its domain is registered.
 fn resolve_policy(engine: &DurableTxEngine, bucket: &SubmissionBucket) -> Option<ResolvedPolicy> {
 	let genesis = engine.chain_of(&bucket.domain)?;
-	let policy = engine.registry.submission_policy(&bucket.policy)?.clone();
+	let policy = engine.registry.submission_policy(&bucket.domain)?.clone();
 	Some(ResolvedPolicy { policy, genesis })
 }

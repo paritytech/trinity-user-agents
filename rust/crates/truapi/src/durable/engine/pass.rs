@@ -58,23 +58,25 @@ impl DurableTxEngine {
 		futures::future::join_all(chains).await;
 	}
 
-	/// Groups `domains` by the chain their oracle names, so each chain's
-	/// heads are read once.
+	/// Groups `domains` by the chain they live on, so each chain's heads
+	/// are read once.
 	fn group_domains_by_chain(&self, domains: Vec<DomainId>) -> HashMap<H256, Vec<LiveDomain<'_>>> {
 		domains
 			.into_iter()
 			.filter_map(|domain| self.live_domain(domain))
-			.into_group_map_by(|live| live.oracle.chain())
+			.into_group_map()
 	}
 
-	/// `domain` with its oracle. A domain with no oracle has no chain and is
-	/// skipped.
-	fn live_domain(&self, domain: DomainId) -> Option<LiveDomain<'_>> {
-		let Some(oracle) = self.registry.oracle(&domain) else {
-			warn!(domain = domain.as_str(), "durable recovery pass skips a domain with no oracle");
+	/// `domain` with its oracle, keyed by its chain. An unregistered domain
+	/// is skipped.
+	fn live_domain(&self, domain: DomainId) -> Option<(H256, LiveDomain<'_>)> {
+		let (Some(chain), Some(oracle)) =
+			(self.registry.chain(&domain), self.registry.oracle(&domain))
+		else {
+			warn!(domain = domain.as_str(), "durable recovery pass skips an unregistered domain");
 			return None;
 		};
-		Some(LiveDomain { domain, oracle })
+		Some((chain, LiveDomain { domain, oracle }))
 	}
 
 	/// Pins the chain with `genesis` and decides each of its domains.

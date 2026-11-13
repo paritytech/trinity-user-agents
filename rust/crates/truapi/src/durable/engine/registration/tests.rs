@@ -179,7 +179,7 @@ fn the_same_extrinsic_registered_again_after_a_rollback_is_broadcast() {
 }
 
 #[test]
-fn a_domain_without_an_oracle_cannot_register() {
+fn an_unregistered_domain_cannot_register() {
 	let chain = FakeChain::new(130, 140);
 	let (_dir, engine, _timer) = test_engine(&chain);
 	let orphan = DurableRequest::presigned(
@@ -232,10 +232,10 @@ fn a_scheduled_transaction_waits_for_its_policy_and_broadcasts_nothing() {
 	assert!(ids.iter().all(|id| !engine.ownership.is_owned(*id)));
 }
 
-/// A presigned transaction that names a policy is rebuilt by it after a
-/// failure, so the row must remember which policy that is.
+/// A presigned transaction with a plan is rebuilt from it after a failure,
+/// so the row must keep it.
 #[test]
-fn a_presigned_transaction_keeps_the_policy_that_rebuilds_it() {
+fn a_presigned_transaction_keeps_the_plan_that_rebuilds_it() {
 	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::never_answering());
 	let submission =
 		DurableSubmission { extrinsic: extrinsic(1, 100, 64), plan: Some(test_plan(vec![1])) };
@@ -247,24 +247,6 @@ fn a_presigned_transaction_keeps_the_policy_that_rebuilds_it() {
 	assert_eq!(plan.unwrap(), Some(test_plan(vec![1])));
 	let presigned_sent = || harness.broadcast() == vec![extrinsic(1, 100, 64).extrinsic];
 	wait_until(presigned_sent, "the presigned extrinsic is broadcast");
-}
-
-/// A policy missing from the registry is a wiring bug: refused at the
-/// call site instead of surfacing as a failed transaction later.
-#[test]
-fn a_request_naming_an_unregistered_policy_writes_nothing() {
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::never_answering());
-	let engine = harness.engine();
-	let unknown =
-		SubmissionPlan { policy: PolicyId::new("unknown"), params: PolicyParams::default() };
-
-	let result = block_on(engine.execute(scheduled_in_op(vec![test_plan(vec![1]), unknown])));
-
-	assert!(matches!(
-		result,
-		Err(RegistrationError::UnknownPolicy(policy)) if policy == PolicyId::new("unknown")
-	));
-	assert_eq!(op_group(engine), vec![]);
 }
 
 /// The domain locks what the scheduled transaction will spend in the same
@@ -287,11 +269,11 @@ fn planned_in_op<E: Send + 'static>(
 	plan: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<Vec<PolicyParams>, E> + Send + 'static,
 ) -> DurableRequest<E> {
 	let group = Some(GroupId::new("op"));
-	DurableRequest::scheduled_in(domain(), group, test_plan(vec![]).policy, plan)
+	DurableRequest::scheduled_in(domain(), group, plan)
 }
 
 /// A domain that works its params out from rows it reads in the same
-/// write gets one waiting row per params, built by the policy it named.
+/// write gets one waiting row per params, built by its policy.
 #[test]
 fn a_schedule_planned_in_the_write_records_one_waiting_row_per_params() {
 	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::never_answering());
@@ -328,20 +310,4 @@ fn a_plan_that_refuses_records_nothing() {
 
 	assert!(matches!(result, Err(RegistrationError::Hook(DomainRefusal::ItemSpent))));
 	assert_eq!(op_group(engine), vec![]);
-}
-
-/// A planned schedule names its policy up front, so an unknown one is
-/// refused before the write and the plan never runs.
-#[test]
-fn a_planned_schedule_naming_an_unknown_policy_is_refused_before_planning() {
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::never_answering());
-	let engine = harness.engine();
-	let group = Some(GroupId::new("op"));
-	let request = DurableRequest::scheduled_in(domain(), group, PolicyId::new("unknown"), |_| {
-		panic!("an unknown policy is refused before planning")
-	});
-
-	let result = block_on(engine.execute_with(request, |_, _| Ok::<_, DbError>(())));
-
-	assert!(matches!(result, Err(RegistrationError::UnknownPolicy(_))));
 }

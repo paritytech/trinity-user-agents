@@ -18,9 +18,9 @@ fn wait_for_batch(policy: &ScriptedPolicy, batch: Vec<DurableTxId>, what: &str) 
 	wait_until(|| policy.batches().contains(&batch), what);
 }
 
-/// `count` transactions of `domain` in `group`, built by `policy`.
-fn scheduled_in(domain: DomainId, group: &str, policy: &PolicyId, count: usize) -> DurableRequest {
-	let plan = SubmissionPlan { policy: policy.clone(), params: PolicyParams::default() };
+/// `count` transactions of `domain` in `group`.
+fn scheduled_in(domain: DomainId, group: &str, count: usize) -> DurableRequest {
+	let plan = SubmissionPlan { params: PolicyParams::default() };
 	DurableRequest::scheduled(domain, Some(GroupId::new(group)), vec![plan; count]).unwrap()
 }
 
@@ -47,28 +47,21 @@ fn first_build_gated() -> (oneshot::Sender<()>, PrepareScript) {
 /// A policy batches what it builds, so a batch must never mix domains or
 /// groups: one domain's fee payer or nonce sequence is not another's.
 #[test]
-fn each_domain_policy_and_group_is_built_in_its_own_batch() {
-	let second_policy_id = PolicyId::new("second");
-	let harness = ScheduledTxHarness::with_policies(vec![
-		ScriptedPolicy::answering_nothing(),
-		ScriptedPolicy::answering_nothing().named(second_policy_id.clone()),
-	]);
-	let test_policy = harness.policy();
-	let second_policy = harness.policy_named(&second_policy_id);
+fn each_domain_and_group_is_built_in_its_own_batch() {
+	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::answering_nothing());
+	let policy = harness.policy();
 
-	let together = harness.schedule(scheduled_in(test_domain(), "g1", &test_policy_id(), 2));
-	let other_policy = harness.schedule(scheduled_in(test_domain(), "g1", &second_policy_id, 1));
-	let other_group = harness.schedule(scheduled_in(test_domain(), "g2", &test_policy_id(), 1));
-	let other_domain = harness.schedule(scheduled_in(other_domain(), "g1", &test_policy_id(), 1));
+	let together = harness.schedule(scheduled_in(test_domain(), "g1", 2));
+	let other_group = harness.schedule(scheduled_in(test_domain(), "g2", 1));
+	let other_domain = harness.schedule(scheduled_in(other_domain(), "g1", 1));
 
-	wait_for_batch(test_policy, together, "the shared batch");
-	wait_for_batch(test_policy, other_group, "the other group alone");
-	wait_for_batch(test_policy, other_domain, "the other domain alone");
-	wait_for_batch(second_policy, other_policy, "the other policy alone");
+	wait_for_batch(policy, together, "the shared batch");
+	wait_for_batch(policy, other_group, "the other group alone");
+	wait_for_batch(policy, other_domain, "the other domain alone");
 }
 
 /// One group's build waits on something slow, such as a remote signer. The
-/// other groups of the same policy must not wait behind it.
+/// other groups of the same domain must not wait behind it.
 #[test]
 fn a_batch_stuck_in_its_policy_does_not_hold_up_another_group() {
 	let first_row = DurableTxId(1);
@@ -81,10 +74,10 @@ fn a_batch_stuck_in_its_policy_does_not_hold_up_another_group() {
 		Box::pin(ready(answer_all_with(ids, Preparation::Ready { extrinsic: built, params: None })))
 	});
 	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::from_script(stuck_on_first_row));
-	let blocked = harness.schedule(scheduled_in(test_domain(), "g1", &test_policy_id(), 1))[0];
+	let blocked = harness.schedule(scheduled_in(test_domain(), "g1", 1))[0];
 	assert_eq!(blocked, first_row);
 
-	let free = harness.schedule(scheduled_in(test_domain(), "g2", &test_policy_id(), 1))[0];
+	let free = harness.schedule(scheduled_in(test_domain(), "g2", 1))[0];
 
 	harness.wait_for(free, DurableTxStatus::Pending);
 	assert_eq!(harness.status(blocked), DurableTxStatus::PendingSubmission);

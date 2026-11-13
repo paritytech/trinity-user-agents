@@ -2,9 +2,7 @@ use futures::{FutureExt, StreamExt, executor::block_on};
 
 use super::*;
 use crate::{
-	durable::testing::{
-		block, extrinsic, insert_retryable, open_db, pending_presigned, test_plan, test_policy_id,
-	},
+	durable::testing::{block, extrinsic, insert_retryable, open_db, pending_presigned, test_plan},
 	test_support::wait_until,
 };
 
@@ -233,7 +231,7 @@ fn only_domains_with_a_transaction_awaiting_a_verdict_are_live() {
 fn observed_queries_follow_commits() {
 	let (_dir, db) = open_db();
 	let group_id = GroupId::new("payment");
-	let mut live = observe_live_plans(&db);
+	let mut live = observe_live_transaction_domains(&db);
 	let mut grouped = observe_group(&db, domain(), group_id.clone());
 	assert_eq!(next(&mut live), vec![]);
 	assert_eq!(next(&mut grouped), vec![]);
@@ -241,7 +239,7 @@ fn observed_queries_follow_commits() {
 	let id = register(&db, Some(group_id), 1);
 	let mut status = observe_status(&db, id);
 
-	assert_eq!(next(&mut live), vec![LivePlan { domain: domain(), policy: None }]);
+	assert_eq!(next(&mut live), vec![domain()]);
 	assert_eq!(next(&mut grouped), vec![pending_presigned(id, 1)]);
 	assert_eq!(next(&mut status), Some(DurableTxStatus::Pending));
 }
@@ -298,9 +296,8 @@ fn a_transaction_waiting_to_be_built_is_live_but_not_decidable() {
 	let (_dir, db) = open_db();
 	schedule_in(&db, domain(), None);
 
-	let waiting = vec![LivePlan { domain: domain(), policy: Some(test_plan(vec![1]).policy) }];
-	assert_eq!(next(&mut observe_live_plans(&db)), waiting);
-	assert_eq!(read(&db, waiting_plans), waiting);
+	assert_eq!(next(&mut observe_live_transaction_domains(&db)), vec![domain()]);
+	assert_eq!(read(&db, waiting_domains), vec![domain()]);
 	assert_eq!(read(&db, live_domains), Vec::<DomainId>::new());
 	assert_eq!(read(&db, |conn| undecided_entries(conn, &domain())), vec![]);
 }
@@ -434,32 +431,38 @@ fn a_verdict_can_send_a_submitted_row_back_to_its_policy() {
 	);
 }
 
+/// A row has a plan exactly when it stores params, so a plan whose params
+/// are empty must still read back as a plan.
 #[test]
-fn a_row_names_the_policy_it_was_registered_with() {
+fn a_row_keeps_the_plan_it_was_registered_with() {
 	let (_dir, db) = open_db();
-	let with_policy = insert_rebuildable(&db, 3);
+	let with_plan = insert_rebuildable(&db, 3);
+	let with_empty_plan =
+		insert_retryable(&db, &domain(), extrinsic(3, 100, 64), test_plan(vec![]));
 	let without = register(&db, None, 2);
 
-	assert_eq!(read(&db, move |conn| submission_plan(conn, with_policy)), Some(test_plan(vec![3])));
+	assert_eq!(read(&db, move |conn| submission_plan(conn, with_plan)), Some(test_plan(vec![3])));
+	assert_eq!(
+		read(&db, move |conn| submission_plan(conn, with_empty_plan)),
+		Some(test_plan(vec![]))
+	);
 	assert_eq!(read(&db, move |conn| submission_plan(conn, without)), None);
 }
 
-/// A bucket builds one domain's rows of one policy and group. A row with
+/// A bucket builds one domain's rows of one group. A row with
 /// no group is a bucket of its own, not a match for every group.
 #[test]
-fn a_bucket_lists_only_its_domain_policy_and_group() {
+fn a_bucket_lists_only_its_domain_and_group() {
 	let (_dir, db) = open_db();
 	let grouped = schedule_in(&db, domain(), Some(GroupId::new("g1")));
 	let ungrouped = schedule_in(&db, domain(), None);
 	schedule_in(&db, DomainId::new("other"), Some(GroupId::new("g1")));
 	schedule_in(&db, domain(), Some(GroupId::new("g2")));
 	let bucket = |group: Option<GroupId>| {
-		read(&db, move |conn| {
-			bucket_submissions(conn, &domain(), &test_policy_id(), group.as_ref())
-		})
-		.iter()
-		.map(|scheduled| scheduled.id)
-		.collect::<Vec<_>>()
+		read(&db, move |conn| bucket_submissions(conn, &domain(), group.as_ref()))
+			.iter()
+			.map(|scheduled| scheduled.id)
+			.collect::<Vec<_>>()
 	};
 
 	assert_eq!(bucket(Some(GroupId::new("g1"))), vec![grouped]);

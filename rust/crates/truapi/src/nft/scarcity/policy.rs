@@ -13,16 +13,13 @@ use super::{
 use crate::{
 	chain::{ExtrinsicService, MortalExtrinsic},
 	durable::{
-		DurableTxEntry, DurableTxId, PolicyError, PolicyId, PolicyParams, Preparation,
-		ScheduledDurableTx, SubmissionPolicy, VerdictFailureKind,
+		DurableTxEntry, DurableTxId, PolicyError, PolicyParams, Preparation, ScheduledDurableTx,
+		SubmissionPolicy, VerdictFailureKind,
 	},
 	host_internal::extrinsic::Sr25519Signer,
 	nft::{ImportedSecretStore, ItemKey, ItemSigner, ItemSlot},
 	unix_time::current_unix_secs,
 };
-
-/// The name rows store for this policy.
-pub const TRANSFER_POLICY: &str = "nft.scarcity.transfer";
 
 /// Attempts after which a transfer is given up, so a rejection that repeats
 /// cannot loop forever.
@@ -179,10 +176,6 @@ enum SignedTransfer {
 
 #[async_trait::async_trait]
 impl SubmissionPolicy for ScarcityTransferPolicy {
-	fn id(&self) -> PolicyId {
-		PolicyId::new(TRANSFER_POLICY)
-	}
-
 	/// Every proven failure is built again: the next build reads the chain
 	/// afresh and gives up once the transfer can never land.
 	fn can_retry(&self, _: &DurableTxEntry, _: &PolicyParams, _: VerdictFailureKind) -> bool {

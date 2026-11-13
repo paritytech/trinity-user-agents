@@ -17,7 +17,8 @@ use crate::{
 	durable::{
 		oracle::{DurableRegistry, Unobservable},
 		testing::{
-			FakeChain, GENESIS, block, block_hash, engine_with_spawner, extrinsic, without_plan,
+			FakeChain, ServesTestDomains, block, block_hash, engine_with_spawner, extrinsic,
+			without_plan,
 		},
 	},
 	test_support::wait_until,
@@ -72,7 +73,7 @@ fn register(
 	let (spawner, finished) = Spawner::counting();
 	let (dir, engine, timer) = engine_with_spawner(
 		&chain,
-		DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),
+		DurableRegistry::new().serving(test_domain(), Arc::new(Unobservable)),
 		spawner,
 	);
 	let nudges = engine.recovery_wakes.subscribe();

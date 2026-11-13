@@ -1,5 +1,5 @@
-//! [`DurableRegistry`]: the oracle of every domain the engine serves and
-//! every submission policy that builds its transactions.
+//! [`DurableRegistry`]: every domain the engine serves, with the chain it
+//! lives on, the oracle that decides it and the policy that builds it.
 
 use std::{
 	collections::{BTreeSet, HashMap},
@@ -9,18 +9,20 @@ use std::{
 use subxt::utils::H256;
 
 use super::CompletionOracle;
-use crate::durable::{
-	dao::LivePlan,
-	model::{DomainId, PolicyId},
-	policy::SubmissionPolicy,
-};
+use crate::durable::{model::DomainId, policy::SubmissionPolicy};
 
-/// The oracle of every domain the engine serves, and every submission policy.
-/// A domain without an oracle cannot register transactions.
+/// Every domain the engine serves. A domain missing from it cannot register
+/// transactions.
 #[derive(Default)]
 pub struct DurableRegistry {
-	oracles: HashMap<DomainId, Arc<dyn CompletionOracle>>,
-	policies: HashMap<PolicyId, Arc<dyn SubmissionPolicy>>,
+	domains: HashMap<DomainId, RegisteredDomain>,
+}
+
+/// What serves one domain.
+struct RegisteredDomain {
+	chain: H256,
+	oracle: Arc<dyn CompletionOracle>,
+	policy: Arc<dyn SubmissionPolicy>,
 }
 
 impl DurableRegistry {
@@ -29,58 +31,49 @@ impl DurableRegistry {
 		Self::default()
 	}
 
-	/// Adds `domain`, decided by `oracle`.
+	/// Adds `domain`, living on the chain with genesis hash `chain`, decided
+	/// by `oracle` and built by `policy`.
 	///
 	/// # Panics
 	///
-	/// When `domain` is already registered: two oracles for one domain is a
-	/// wiring bug.
-	pub fn with_domain(mut self, domain: DomainId, oracle: Arc<dyn CompletionOracle>) -> Self {
-		assert!(!self.oracles.contains_key(&domain), "durable domain {domain:?} registered twice");
-		self.oracles.insert(domain, oracle);
+	/// When `domain` is already registered: two registrations of one domain
+	/// is a wiring bug.
+	pub fn with_domain(
+		mut self,
+		domain: DomainId,
+		chain: H256,
+		oracle: Arc<dyn CompletionOracle>,
+		policy: Arc<dyn SubmissionPolicy>,
+	) -> Self {
+		assert!(!self.domains.contains_key(&domain), "durable domain {domain:?} registered twice");
+		self.domains.insert(domain, RegisteredDomain { chain, oracle, policy });
 		self
 	}
 
-	/// Adds `policy` under its own id.
-	///
-	/// # Panics
-	///
-	/// When a policy with that id is already registered: rows naming it
-	/// could not tell the two apart.
-	pub fn with_policy(mut self, policy: Arc<dyn SubmissionPolicy>) -> Self {
-		let id = policy.id();
-		let name = id.as_str().to_owned();
-		assert!(
-			self.policies.insert(id, policy).is_none(),
-			"submission policy {name} registered twice"
-		);
-		self
-	}
-
-	/// The policy registered as `id`.
-	pub fn submission_policy(&self, id: &PolicyId) -> Option<&Arc<dyn SubmissionPolicy>> {
-		self.policies.get(id)
+	/// The policy that builds the transactions of `domain`.
+	pub fn submission_policy(&self, domain: &DomainId) -> Option<&Arc<dyn SubmissionPolicy>> {
+		self.domains.get(domain).map(|registered| &registered.policy)
 	}
 
 	/// The oracle of `domain`.
 	pub fn oracle(&self, domain: &DomainId) -> Option<&Arc<dyn CompletionOracle>> {
-		self.oracles.get(domain)
+		self.domains.get(domain).map(|registered| &registered.oracle)
 	}
 
-	/// Whether any of `plans` names a registered domain and, for a
-	/// transaction waiting to be built, a registered policy. Transactions of
-	/// anything else are left as they are: the domain or policy may be back
-	/// on a later start.
-	pub fn serves_any(&self, plans: &[LivePlan]) -> bool {
-		plans.iter().any(|plan| {
-			self.oracles.contains_key(&plan.domain) &&
-				plan.policy.as_ref().is_none_or(|policy| self.policies.contains_key(policy))
-		})
+	/// Genesis hash of the chain `domain` lives on.
+	pub fn chain(&self, domain: &DomainId) -> Option<H256> {
+		self.domains.get(domain).map(|registered| registered.chain)
+	}
+
+	/// Whether any of `domains` is registered. Transactions of anything else
+	/// are left as they are: the domain may be back on a later start.
+	pub fn serves_any(&self, domains: &[DomainId]) -> bool {
+		domains.iter().any(|domain| self.domains.contains_key(domain))
 	}
 
 	/// Genesis hashes of every chain a registered domain lives on.
 	pub fn chains(&self) -> BTreeSet<H256> {
-		self.oracles.values().map(|oracle| oracle.chain()).collect()
+		self.domains.values().map(|registered| registered.chain).collect()
 	}
 }
 

@@ -31,7 +31,7 @@ pub use engine::{
 };
 pub use model::{
 	DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState, DurableTxStatus,
-	GroupId, HeadKind, PolicyId, PolicyParams, ScheduledDurableTx, SubmissionPlan, Verdict,
+	GroupId, HeadKind, PolicyParams, ScheduledDurableTx, SubmissionPlan, Verdict,
 	VerdictFailureKind, VerdictStatus,
 };
 pub use oracle::{CompletionOracle, DurableRegistry, PassScope, Unobservable};

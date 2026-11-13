@@ -1,8 +1,6 @@
 //! [`CompletionOracle`]: what a domain tells a recovery pass about its
 //! transactions.
 
-use subxt::utils::H256;
-
 use crate::{
 	chain::Heads,
 	chain_runtime::RuntimeFailure,
@@ -16,9 +14,6 @@ use crate::{
 /// block-body search.
 #[async_trait::async_trait]
 pub trait CompletionOracle: Send + Sync {
-	/// Genesis hash of the chain this domain's transactions live on.
-	fn chain(&self) -> H256;
-
 	/// Every chain read the pass needs, for every transaction in it, at
 	/// `heads`. The scope does not read the chain, so the reads are batched.
 	/// An error leaves the domain undecided until the next pass.

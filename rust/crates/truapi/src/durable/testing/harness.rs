@@ -14,9 +14,8 @@ use crate::{
 	durable::{
 		dao,
 		engine::{DurableDeps, DurableRequest, DurableTxEngine},
-		model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, PolicyId, SubmissionPlan},
+		model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, SubmissionPlan},
 		oracle::{DurableRegistry, Unobservable},
-		policy::SubmissionPolicy,
 	},
 	store::Db,
 	test_support::wait_until,
@@ -34,7 +33,7 @@ pub fn other_domain() -> DomainId {
 }
 
 /// An engine serving [`test_domain`] and [`other_domain`], which nothing on
-/// chain decides, with scripted policies, a [`ManualTimer`] and scripted
+/// chain decides, built by one scripted policy, with a [`ManualTimer`] and scripted
 /// finalized heads.
 pub struct ScheduledTxHarness {
 	_dir: TempDir,
@@ -43,28 +42,25 @@ pub struct ScheduledTxHarness {
 	engine: Arc<DurableTxEngine>,
 	timer: Arc<ManualTimer>,
 	heads: mpsc::UnboundedSender<Result<HeadEvent, RuntimeFailure>>,
-	policies: Vec<Arc<ScriptedPolicy>>,
+	policy: Arc<ScriptedPolicy>,
 }
 
 impl ScheduledTxHarness {
-	/// A harness registering `policy`.
+	/// A harness whose domains are both built by `policy`.
 	pub fn with_policy(policy: ScriptedPolicy) -> Self {
-		Self::with_policies(vec![policy])
-	}
-
-	/// A harness registering every policy of `policies`. With none, rows
-	/// naming the test policy name one that is not registered.
-	pub fn with_policies(policies: Vec<ScriptedPolicy>) -> Self {
 		let chain = FakeChain::new(130, 140);
 		let heads = chain.script_heads();
-		let policies: Vec<Arc<ScriptedPolicy>> = policies.into_iter().map(Arc::new).collect();
-		let registry = policies
-			.iter()
-			.fold(served_domains(), |registry, policy| registry.with_policy(policy.clone()));
+		let policy = Arc::new(policy);
+		let registry = [test_domain(), other_domain()].into_iter().fold(
+			DurableRegistry::new(),
+			|registry, domain| {
+				registry.with_domain(domain, GENESIS, Arc::new(Unobservable), policy.clone())
+			},
+		);
 		let (dir, db) = open_db();
 		let timer = Arc::new(ManualTimer::default());
 		let engine = engine_over(&chain, db.clone(), registry, timer.clone());
-		Self { _dir: dir, chain, db, engine, timer, heads, policies }
+		Self { _dir: dir, chain, db, engine, timer, heads, policy }
 	}
 
 	/// The engine's ledger.
@@ -87,27 +83,18 @@ impl ScheduledTxHarness {
 		&self.timer
 	}
 
-	/// The first policy registered.
+	/// The policy that builds both domains.
 	pub fn policy(&self) -> &Arc<ScriptedPolicy> {
-		&self.policies[0]
+		&self.policy
 	}
 
-	/// The registered policy with the id `id`.
-	pub fn policy_named(&self, id: &PolicyId) -> &Arc<ScriptedPolicy> {
-		let named = self.policies.iter().find(|policy| policy.id() == *id);
-		named.unwrap_or_else(|| {
-			panic!("no policy {id:?} is registered, expected one of the harness's")
-		})
-	}
-
-	/// Schedules one transaction of the test domain, in no group, for the
-	/// test policy.
+	/// Schedules one transaction of the test domain, in no group.
 	pub fn schedule_one(&self) -> DurableTxId {
 		self.schedule_repeated(1)[0]
 	}
 
-	/// Schedules `count` transactions of the test domain, in no group, for
-	/// the test policy, in one write.
+	/// Schedules `count` transactions of the test domain, in no group, in one
+	/// write.
 	pub fn schedule_repeated(&self, count: usize) -> Vec<DurableTxId> {
 		let plans = vec![test_plan(vec![]); count];
 		let request = DurableRequest::scheduled(test_domain(), None, plans).unwrap();
@@ -119,7 +106,7 @@ impl ScheduledTxHarness {
 		block_on(self.engine.execute(request)).unwrap()
 	}
 
-	/// A test-domain row waiting for the test policy, written as a previous
+	/// A test-domain row waiting to be built, written as a previous
 	/// process would have left it: no executor hears of it.
 	pub fn leave_waiting_from_previous_process(&self) -> DurableTxId {
 		self.leave_waiting(test_domain(), test_plan(vec![]))
@@ -179,10 +166,10 @@ impl ScheduledTxHarness {
 		std::thread::sleep(Duration::from_millis(50));
 	}
 
-	/// Drops the engine, keeping its database directory and the policies so
-	/// a test can check what outlives it.
-	pub fn drop_engine(self) -> (TempDir, Vec<Arc<ScriptedPolicy>>) {
-		(self._dir, self.policies)
+	/// Drops the engine, keeping its database directory and the policy so a
+	/// test can check what outlives it.
+	pub fn drop_engine(self) -> (TempDir, Arc<ScriptedPolicy>) {
+		(self._dir, self.policy)
 	}
 }
 
@@ -203,13 +190,4 @@ fn engine_over(
 		timer,
 		spawner: crate::Spawner::for_test(),
 	})
-}
-
-/// A registry serving both harness domains.
-fn served_domains() -> DurableRegistry {
-	[test_domain(), other_domain()]
-		.into_iter()
-		.fold(DurableRegistry::new(), |registry, domain| {
-			registry.with_domain(domain, Arc::new(Unobservable(GENESIS)))
-		})
 }

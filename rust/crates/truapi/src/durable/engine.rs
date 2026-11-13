@@ -135,7 +135,7 @@ impl DurableTxEngine {
 
 	/// Genesis hash of the chain `domain` lives on.
 	fn chain_of(&self, domain: &DomainId) -> Option<H256> {
-		self.registry.oracle(domain).map(|oracle| oracle.chain())
+		self.registry.chain(domain)
 	}
 }
 

@@ -14,7 +14,7 @@ use crate::{
 	durable::{
 		engine::DurableSubmission,
 		model::{
-			DomainId, DurableTxEntry, DurableTxId, PolicyId, PolicyParams, ScheduledDurableTx,
+			DomainId, DurableTxEntry, DurableTxId, PolicyParams, ScheduledDurableTx,
 			SubmissionPlan, VerdictFailureKind,
 		},
 		policy::{PolicyError, Preparation, SubmissionPolicy},
@@ -22,14 +22,9 @@ use crate::{
 	store::Db,
 };
 
-/// The id of the policy a test uses unless it needs a second one.
-pub fn test_policy_id() -> PolicyId {
-	PolicyId::new("test-policy")
-}
-
-/// A plan of the test policy with `params`.
+/// A plan with `params`.
 pub fn test_plan(params: Vec<u8>) -> SubmissionPlan {
-	SubmissionPlan { policy: test_policy_id(), params: PolicyParams(params) }
+	SubmissionPlan { params: PolicyParams(params) }
 }
 
 /// What a [`ScriptedPolicy`] answers for one batch.
@@ -49,7 +44,6 @@ enum RetryAnswer {
 /// A policy that answers batches with a script and retries every failure
 /// unless told otherwise, recording every question.
 pub struct ScriptedPolicy {
-	id: PolicyId,
 	retry_answer: RetryAnswer,
 	script: PrepareScript,
 	retry_questions: Mutex<Vec<RetryQuestion>>,
@@ -68,10 +62,9 @@ pub struct RetryQuestion {
 }
 
 impl ScriptedPolicy {
-	/// The test policy, answering every batch with `script`.
+	/// A policy, answering every batch with `script`.
 	pub fn from_script(script: PrepareScript) -> Self {
 		Self {
-			id: test_policy_id(),
 			retry_answer: RetryAnswer::Retry,
 			script,
 			retry_questions: Mutex::new(Vec::new()),
@@ -79,7 +72,7 @@ impl ScriptedPolicy {
 		}
 	}
 
-	/// The test policy, answering every batch at once with what `answer`
+	/// A policy, answering every batch at once with what `answer`
 	/// gives for its ids.
 	pub fn answering_with(
 		answer: impl Fn(&[DurableTxId]) -> PrepareAnswer + Send + Sync + 'static,
@@ -87,7 +80,7 @@ impl ScriptedPolicy {
 		Self::from_script(Box::new(move |ids| Box::pin(ready(answer(ids)))))
 	}
 
-	/// The test policy, building every row it is asked about into new bytes:
+	/// A policy, building every row it is asked about into new bytes:
 	/// [`extrinsic_for_index`] of each build's index, from 0.
 	pub fn building_everything() -> Self {
 		let builds = AtomicU8::new(0);
@@ -99,25 +92,20 @@ impl ScriptedPolicy {
 		})
 	}
 
-	/// The test policy, with nothing to say about any row yet, so every row
+	/// A policy, with nothing to say about any row yet, so every row
 	/// keeps waiting.
 	pub fn answering_nothing() -> Self {
 		Self::answering_with(|_| Ok(HashMap::new()))
 	}
 
-	/// The test policy, giving up on every row it is asked about.
+	/// A policy, giving up on every row it is asked about.
 	pub fn giving_up() -> Self {
 		Self::answering_with(|ids| answer_all_with(ids, Preparation::GiveUp))
 	}
 
-	/// The test policy, whose builds never finish.
+	/// A policy, whose builds never finish.
 	pub fn never_answering() -> Self {
 		Self::from_script(Box::new(|_| Box::pin(pending())))
-	}
-
-	/// This policy under the id `id`, for a test with a second policy.
-	pub fn named(self, id: PolicyId) -> Self {
-		Self { id, ..self }
 	}
 
 	/// This policy, answering that no failure is worth another attempt.
@@ -138,10 +126,6 @@ impl ScriptedPolicy {
 
 #[async_trait::async_trait]
 impl SubmissionPolicy for ScriptedPolicy {
-	fn id(&self) -> PolicyId {
-		self.id.clone()
-	}
-
 	fn can_retry(
 		&self,
 		entry: &DurableTxEntry,

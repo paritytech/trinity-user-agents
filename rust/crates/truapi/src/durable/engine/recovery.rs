@@ -131,8 +131,8 @@ impl DurableTxEngine {
 	/// with no pass left to notice.
 	async fn built_triggers(&self) -> Triggers {
 		let registry = self.registry.clone();
-		let mut waiting = dao::observe_waiting_plans(&self.db)
-			.map(move |plans| plans.map(|plans| registry.serves_any(&plans)));
+		let mut waiting = dao::observe_waiting_domains(&self.db)
+			.map(move |domains| domains.map(|domains| registry.serves_any(&domains)));
 		waiting.next().await;
 		waiting.filter_map(|waiting| ready(as_built_trigger(waiting))).boxed()
 	}
@@ -153,7 +153,7 @@ impl DurableTxEngine {
 
 	/// Whether recovery goes on after a pass. It goes on while a transaction
 	/// some registered domain can decide is live on a chain whose heads it
-	/// still receives. Rows of a domain without an oracle do not count: no
+	/// still receives. Rows of an unregistered domain do not count: no
 	/// pass could decide them. Once no such chain is left, it fails if a
 	/// chain whose heads were lost still has live transactions, and
 	/// otherwise goes on only while a transaction waits to be built.
@@ -180,11 +180,11 @@ impl DurableTxEngine {
 		Some(self.chains_of(&domains))
 	}
 
-	/// Whether a transaction of a registered domain and policy waits to be
-	/// built. An unreadable ledger counts as one waiting.
+	/// Whether a transaction of a registered domain waits to be built. An unreadable ledger counts
+	/// as one waiting.
 	async fn waits_to_be_built(&self) -> bool {
-		let waiting = self.read_or_warn(dao::waiting_plans).await;
-		waiting.is_none_or(|plans| self.registry.serves_any(&plans))
+		let waiting = self.read_or_warn(dao::waiting_domains).await;
+		waiting.is_none_or(|domains| self.registry.serves_any(&domains))
 	}
 
 	/// The result of `query`, or `None` when the ledger cannot be read.
@@ -203,13 +203,9 @@ impl DurableTxEngine {
 			.ok()
 	}
 
-	/// The chains `domains` live on, skipping domains without an oracle.
+	/// The chains `domains` live on, skipping unregistered domains.
 	fn chains_of(&self, domains: &[DomainId]) -> BTreeSet<H256> {
-		domains
-			.iter()
-			.filter_map(|domain| self.registry.oracle(domain))
-			.map(|oracle| oracle.chain())
-			.collect()
+		domains.iter().filter_map(|domain| self.registry.chain(domain)).collect()
 	}
 }
 

@@ -1,5 +1,5 @@
 //! The submission executor: builds every transaction waiting for its policy,
-//! with one worker per domain, policy and group, started and stopped by one
+//! with one worker per domain and group, started and stopped by one
 //! builder task.
 
 mod attempt;
@@ -27,7 +27,7 @@ use super::DurableTxEngine;
 use crate::{
 	durable::{
 		dao,
-		model::{DomainId, GroupId, PolicyId, ScheduledDurableTx},
+		model::{DomainId, GroupId, ScheduledDurableTx},
 	},
 	store::DbError,
 };
@@ -40,27 +40,21 @@ pub struct SubmissionExecutor {
 	builder: Mutex<Option<AbortHandle>>,
 }
 
-/// The rows one task builds together: one domain's, of one policy and group.
+/// The rows one task builds together: one domain's, of one group.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, derive_more::Display)]
 #[display(
-    "domain {} policy {} group {:?}",
+    "domain {} group {:?}",
     domain.as_str(),
-    policy.as_str(),
     group.as_ref().map(GroupId::as_str)
 )]
 pub struct SubmissionBucket {
 	domain: DomainId,
-	policy: PolicyId,
 	group: Option<GroupId>,
 }
 
 impl From<&ScheduledDurableTx> for SubmissionBucket {
 	fn from(scheduled: &ScheduledDurableTx) -> Self {
-		Self {
-			domain: scheduled.domain.clone(),
-			policy: scheduled.plan.policy.clone(),
-			group: scheduled.group.clone(),
-		}
+		Self { domain: scheduled.domain.clone(), group: scheduled.group.clone() }
 	}
 }
 
@@ -165,7 +159,7 @@ impl Builder {
 	}
 
 	/// Starts a worker for every waiting bucket that has none, unless its
-	/// domain or policy is not registered. A finished
+	/// domain is not registered. A finished
 	/// worker's bucket is started again when the latest rows still wait in
 	/// it: those rows may have been scheduled after the worker's last read.
 	fn handle(&mut self, engine: &Arc<DurableTxEngine>, event: BuilderEvent) {

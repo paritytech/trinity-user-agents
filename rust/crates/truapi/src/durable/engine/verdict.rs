@@ -55,23 +55,23 @@ async fn status_to_write(
 	Ok(status.into())
 }
 
-/// Asks the policy `plan` names whether `observed` is built again. A policy
-/// that is not registered retries nothing.
+/// Asks the policy of `observed`'s domain whether it is built again. A
+/// domain that is not registered retries nothing.
 fn policy_retries(
 	engine: &DurableTxEngine,
 	observed: &DurableTxEntry,
 	plan: &SubmissionPlan,
 	failure: VerdictFailureKind,
 ) -> bool {
-	let Some(registered) = engine.registry.submission_policy(&plan.policy) else {
+	let Some(policy) = engine.registry.submission_policy(&observed.domain) else {
 		error!(
 			id = observed.id.0,
-			policy = plan.policy.as_str(),
-			"durable failure names a submission policy that is not registered"
+			domain = observed.domain.as_str(),
+			"durable failure belongs to a domain that is not registered"
 		);
 		return false;
 	};
-	registered.can_retry(observed, &plan.params, failure)
+	policy.can_retry(observed, &plan.params, failure)
 }
 
 #[cfg(test)]

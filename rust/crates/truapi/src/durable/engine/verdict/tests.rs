@@ -65,19 +65,6 @@ fn a_failure_the_policy_declines_stays_final() {
 	assert_eq!(harness.status(observed.id), rejected);
 }
 
-/// An app update dropped the policy a row from an earlier run names.
-/// Nothing can build it again, so the failure is final.
-#[test]
-fn a_failure_whose_policy_is_no_longer_registered_stays_final() {
-	let harness = ScheduledTxHarness::with_policies(vec![]);
-	let observed = rebuildable(&harness);
-
-	write(&harness, &observed, failure(VerdictFailureKind::Expired));
-
-	let expired = DurableTxStatus::Failure(DurableTxFailureKind::Expired);
-	assert_eq!(harness.status(observed.id), expired);
-}
-
 #[test]
 fn a_success_is_written_without_asking_the_policy() {
 	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::never_answering());
