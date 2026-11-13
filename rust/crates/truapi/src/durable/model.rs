@@ -37,7 +37,8 @@ pub struct SubmissionPlan {
 	pub params: PolicyParams,
 }
 
-/// A caller-chosen operation that several transactions belong to.
+/// A caller-chosen operation that several transactions belong to: a label to
+/// list and observe them by. It does not affect how they are built.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct GroupId(String);
 

@@ -19,6 +19,10 @@ impl Timer for RecordingTimer {
 		self.waits.lock().push(duration);
 		Box::pin(ready(()))
 	}
+
+	fn now(&self) -> Duration {
+		Duration::ZERO
+	}
 }
 
 fn pauses(backoff: &mut Backoff, count: usize) -> Vec<Duration> {
@@ -90,6 +94,10 @@ struct PendingTimer;
 impl Timer for PendingTimer {
 	fn sleep(&self, _duration: Duration) -> BoxFuture<'static, ()> {
 		Box::pin(futures::future::pending())
+	}
+
+	fn now(&self) -> Duration {
+		Duration::ZERO
 	}
 }
 

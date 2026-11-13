@@ -449,24 +449,20 @@ fn a_row_keeps_the_plan_it_was_registered_with() {
 	assert_eq!(read(&db, move |conn| submission_plan(conn, without)), None);
 }
 
-/// A bucket builds one domain's rows of one group. A row with
-/// no group is a bucket of its own, not a match for every group.
+/// A domain's worker builds all of its waiting rows, whatever their group,
+/// and never another domain's: each domain has its own policy.
 #[test]
-fn a_bucket_lists_only_its_domain_and_group() {
+fn a_domain_lists_its_rows_of_every_group_and_no_other_domain() {
 	let (_dir, db) = open_db();
 	let grouped = defer_in(&db, domain(), Some(GroupId::new("g1")));
 	let ungrouped = defer_in(&db, domain(), None);
 	defer_in(&db, DomainId::new("other"), Some(GroupId::new("g1")));
-	defer_in(&db, domain(), Some(GroupId::new("g2")));
-	let bucket = |group: Option<GroupId>| {
-		read(&db, move |conn| bucket_submissions(conn, &domain(), group.as_ref()))
-			.iter()
-			.map(|deferred| deferred.id)
-			.collect::<Vec<_>>()
-	};
+	let other_group = defer_in(&db, domain(), Some(GroupId::new("g2")));
 
-	assert_eq!(bucket(Some(GroupId::new("g1"))), vec![grouped]);
-	assert_eq!(bucket(None), vec![ungrouped]);
+	let listed = read(&db, |conn| domain_submissions(conn, &domain()));
+
+	let ids: Vec<_> = listed.iter().map(|deferred| deferred.id).collect();
+	assert_eq!(ids, vec![grouped, ungrouped, other_group]);
 }
 
 /// A transaction given up before it was ever built has no attempt. It

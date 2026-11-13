@@ -350,8 +350,8 @@ fn recovery_runs_until_waiting_transactions_are_decided() {
 	harness.settle();
 	assert!(!running.is_finished());
 	give_up.store(true, Ordering::SeqCst);
-	wait_until(|| harness.timer().sleeps() == 1, "the bucket backs off");
-	harness.timer().advance(Duration::from_secs(2));
+	// The policy is asked again once the worker's wait passes.
+	harness.timer().advance(Duration::from_secs(30));
 	let abandoned = DurableTxStatus::Failure(DurableTxFailureKind::Abandoned);
 	harness.wait_for(id, abandoned);
 

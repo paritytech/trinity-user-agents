@@ -44,26 +44,25 @@ fn first_build_gated() -> (oneshot::Sender<()>, PrepareScript) {
 	(release, script)
 }
 
-/// A policy batches what it builds, so a batch must never mix domains or
-/// groups: one domain's fee payer or nonce sequence is not another's.
+/// Each domain has its own policy, so a batch never mixes domains. Groups
+/// are labels only: every group of a domain is built in the same batch.
 #[test]
-fn each_domain_and_group_is_built_in_its_own_batch() {
+fn each_domain_is_built_in_its_own_batch_whatever_the_groups() {
 	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::answering_nothing());
 	let policy = harness.policy();
 
-	let together = harness.defer(deferred_in(test_domain(), "g1", 2));
-	let other_group = harness.defer(deferred_in(test_domain(), "g2", 1));
+	let mut together = harness.defer(deferred_in(test_domain(), "g1", 2));
+	together.extend(harness.defer(deferred_in(test_domain(), "g2", 1)));
 	let other_domain = harness.defer(deferred_in(other_domain(), "g1", 1));
 
-	wait_for_batch(policy, together, "the shared batch");
-	wait_for_batch(policy, other_group, "the other group alone");
+	wait_for_batch(policy, together, "one batch for every group of the domain");
 	wait_for_batch(policy, other_domain, "the other domain alone");
 }
 
-/// One group's build waits on something slow, such as a remote signer. The
-/// other groups of the same domain must not wait behind it.
+/// One domain's build waits on something slow, such as a remote signer.
+/// Another domain must not wait behind it.
 #[test]
-fn a_batch_stuck_in_its_policy_does_not_hold_up_another_group() {
+fn a_batch_stuck_in_its_policy_does_not_hold_up_another_domain() {
 	let first_row = DurableTxId(1);
 	let builds = AtomicU8::new(0);
 	let stuck_on_first_row: PrepareScript = Box::new(move |ids| {
@@ -77,13 +76,13 @@ fn a_batch_stuck_in_its_policy_does_not_hold_up_another_group() {
 	let blocked = harness.defer(deferred_in(test_domain(), "g1", 1))[0];
 	assert_eq!(blocked, first_row);
 
-	let free = harness.defer(deferred_in(test_domain(), "g2", 1))[0];
+	let free = harness.defer(deferred_in(other_domain(), "g1", 1))[0];
 
 	harness.wait_for(free, DurableTxStatus::Pending);
 	assert_eq!(harness.status(blocked), DurableTxStatus::PendingSubmission);
 }
 
-/// A row deferred while its bucket is mid-build must not be lost when that
+/// A row deferred while its domain is mid-build must not be lost when that
 /// build ends: it is built in the next round.
 #[test]
 fn a_transaction_deferred_during_a_build_is_built_in_the_next_round() {

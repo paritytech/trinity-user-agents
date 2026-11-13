@@ -29,7 +29,7 @@ use crate::{
 /// The rows of the test domain waiting to be built, read straight from the
 /// ledger.
 fn waiting_ids(db: &Db) -> Vec<DurableTxId> {
-	let read = db.read(|conn| dao::bucket_submissions(conn, &test_domain(), None));
+	let read = db.read(|conn| dao::domain_submissions(conn, &test_domain()));
 	let rows = block_on(read).unwrap();
 	rows.iter().map(|deferred| deferred.id).collect()
 }
@@ -75,7 +75,7 @@ fn rows_of_an_unregistered_domain_keep_waiting() {
 }
 
 /// Recovery and registration both start the executor. A second builder
-/// would start every bucket twice as often.
+/// would start every worker twice as often.
 #[test]
 fn starting_the_executor_twice_runs_one_builder() {
 	let chain = FakeChain::new(130, 140);

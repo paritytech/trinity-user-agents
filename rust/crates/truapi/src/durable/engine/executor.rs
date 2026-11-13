@@ -1,10 +1,10 @@
 //! The submission executor: builds every transaction waiting for its policy,
-//! with one worker per domain and group, started and stopped by one
-//! builder task.
+//! with one worker per domain, started and stopped by one builder task.
 
 mod attempt;
 mod backoff;
-mod bucket;
+mod domain_run;
+mod schedule;
 
 #[cfg(test)]
 mod tests;
@@ -27,35 +27,17 @@ use super::DurableTxEngine;
 use crate::{
 	durable::{
 		dao,
-		model::{DeferredDurableTx, DomainId, GroupId},
+		model::{DeferredDurableTx, DomainId},
 	},
 	store::DbError,
 };
-use bucket::BucketRun;
+use domain_run::DomainRun;
 
 /// The executor's builder task. Held in memory only: after a restart every
 /// waiting row is simply built again.
 #[derive(Default)]
 pub struct SubmissionExecutor {
 	builder: Mutex<Option<AbortHandle>>,
-}
-
-/// The rows one task builds together: one domain's, of one group.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, derive_more::Display)]
-#[display(
-    "domain {} group {:?}",
-    domain.as_str(),
-    group.as_ref().map(GroupId::as_str)
-)]
-pub struct SubmissionBucket {
-	domain: DomainId,
-	group: Option<GroupId>,
-}
-
-impl From<&DeferredDurableTx> for SubmissionBucket {
-	fn from(deferred: &DeferredDurableTx) -> Self {
-		Self { domain: deferred.domain.clone(), group: deferred.group.clone() }
-	}
 }
 
 impl SubmissionExecutor {
@@ -110,19 +92,19 @@ impl Drop for Worker {
 enum BuilderEvent {
 	/// The waiting rows changed.
 	Waiting(Result<Vec<DeferredDurableTx>, DbError>),
-	/// The worker of this bucket found it empty and returned.
-	Finished(SubmissionBucket),
+	/// The worker of this domain found no waiting row and returned.
+	Finished(DomainId),
 }
 
-/// The only task that starts and stops workers, so a bucket never has two
-/// and a waiting bucket always has one.
+/// The only task that starts and stops workers, so a domain never has two
+/// and a domain with waiting rows always has one.
 struct Builder {
 	engine: Weak<DurableTxEngine>,
-	workers: HashMap<SubmissionBucket, Worker>,
-	/// The buckets of the latest waiting rows.
-	waiting: HashSet<SubmissionBucket>,
-	finished_tx: UnboundedSender<SubmissionBucket>,
-	finished_rx: UnboundedReceiver<SubmissionBucket>,
+	workers: HashMap<DomainId, Worker>,
+	/// The domains of the latest waiting rows.
+	waiting: HashSet<DomainId>,
+	finished_tx: UnboundedSender<DomainId>,
+	finished_rx: UnboundedReceiver<DomainId>,
 }
 
 impl Builder {
@@ -143,7 +125,7 @@ impl Builder {
 					Some(read) => BuilderEvent::Waiting(read),
 					None => break,
 				},
-				bucket = self.finished_rx.select_next_some() => BuilderEvent::Finished(bucket),
+				domain = self.finished_rx.select_next_some() => BuilderEvent::Finished(domain),
 			};
 			let Some(engine) = self.engine.upgrade() else {
 				return;
@@ -158,39 +140,39 @@ impl Builder {
 		}
 	}
 
-	/// Starts a worker for every waiting bucket that has none, unless its
-	/// domain is not registered. A finished
-	/// worker's bucket is started again when the latest rows still wait in
-	/// it: those rows may have been deferred after the worker's last read.
+	/// Starts a worker for every domain with waiting rows that has none,
+	/// unless the domain is not registered. A finished worker's domain is
+	/// started again when the latest rows still wait in it: those rows may
+	/// have been deferred after the worker's last read.
 	fn handle(&mut self, engine: &Arc<DurableTxEngine>, event: BuilderEvent) {
 		match event {
 			BuilderEvent::Waiting(Ok(rows)) => {
-				self.waiting = rows.iter().map(SubmissionBucket::from).collect();
-				for bucket in self.waiting.clone() {
-					self.start_if_idle(engine, bucket);
+				self.waiting = rows.iter().map(|row| row.domain.clone()).collect();
+				for domain in self.waiting.clone() {
+					self.start_if_idle(engine, domain);
 				}
 			},
 			BuilderEvent::Waiting(Err(error)) => {
 				warn!(%error, "durable submissions could not be read")
 			},
-			BuilderEvent::Finished(bucket) => {
-				self.workers.remove(&bucket);
-				if self.waiting.contains(&bucket) {
-					self.start_if_idle(engine, bucket);
+			BuilderEvent::Finished(domain) => {
+				self.workers.remove(&domain);
+				if self.waiting.contains(&domain) {
+					self.start_if_idle(engine, domain);
 				}
 			},
 		}
 	}
 
-	fn start_if_idle(&mut self, engine: &Arc<DurableTxEngine>, bucket: SubmissionBucket) {
-		if self.workers.contains_key(&bucket) {
+	fn start_if_idle(&mut self, engine: &Arc<DurableTxEngine>, domain: DomainId) {
+		if self.workers.contains_key(&domain) {
 			return;
 		}
-		let Some(run) = BucketRun::new(engine, bucket.clone(), self.finished_tx.clone()) else {
+		let Some(run) = DomainRun::new(engine, domain.clone(), self.finished_tx.clone()) else {
 			return;
 		};
 		let (abort, registration) = AbortHandle::new_pair();
-		self.workers.insert(bucket, Worker(abort));
+		self.workers.insert(domain, Worker(abort));
 		engine.spawn_abortable(run.run_until_drained(), registration);
 	}
 }

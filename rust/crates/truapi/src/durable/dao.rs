@@ -148,24 +148,36 @@ pub fn observe_waiting_domains(db: &Db) -> BoxStream<'static, Result<Vec<DomainI
 	db.observe(WAITING_DOMAINS, |stmt| stmt.query_map([], domain_from_row))
 }
 
-const BUCKET_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_params, attempts
-    FROM durable_tx WHERE status = 'PENDING_SUBMISSION' AND domain = :domain
-    AND group_id IS :group_id ORDER BY id";
+const DOMAIN_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_params, attempts
+    FROM durable_tx WHERE status = 'PENDING_SUBMISSION' AND domain = :domain ORDER BY id";
 
-/// The rows of one domain and group waiting to be built, in registration
-/// order.
-pub fn bucket_submissions(
+/// The rows of one domain waiting to be built, of every group, in
+/// registration order.
+pub fn domain_submissions(
 	conn: &Connection,
 	domain: &DomainId,
-	group: Option<&GroupId>,
 ) -> Result<Vec<DeferredDurableTx>, DbError> {
-	let mut stmt = conn.prepare_cached(BUCKET_SUBMISSIONS)?;
-	let params = named_params! {
-		":domain": domain.as_str(),
-		":group_id": group.map(GroupId::as_str),
-	};
+	let mut stmt = conn.prepare_cached(DOMAIN_SUBMISSIONS)?;
+	let params = named_params! { ":domain": domain.as_str() };
 	let rows = stmt.query_map(params, DeferredDurableTx::from_row)?;
 	Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+const LIVE_IN_DOMAIN: &str = "SELECT id, status FROM durable_tx WHERE domain = :domain
+    AND status IN ('PENDING_SUBMISSION', 'PENDING', 'PENDING_SUCCESS') ORDER BY id";
+
+/// Emits whenever a row of `domain` is registered, changes between live
+/// statuses, or reaches a final status. What it emits is only a signal: the
+/// ids and statuses of the domain's live rows.
+pub fn observe_domain_changes(
+	db: &Db,
+	domain: DomainId,
+) -> BoxStream<'static, Result<Vec<(i64, String)>, DbError>> {
+	db.observe(LIVE_IN_DOMAIN, move |stmt| {
+		stmt.query_map(named_params! { ":domain": domain.as_str() }, |row| {
+			Ok((row.get(0)?, row.get(1)?))
+		})
+	})
 }
 
 const COMPARE_AND_SET: &str = "UPDATE durable_tx

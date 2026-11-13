@@ -74,7 +74,7 @@ fn a_build_for_a_row_that_changed_meanwhile_starts_no_attempt() {
 
 	let id = harness.defer_one();
 
-	wait_until(|| harness.timer().sleeps() == 1, "the bucket backs off");
+	wait_until(|| harness.timer().sleeps() == 1, "the worker backs off");
 	assert_eq!(harness.status(id), DurableTxStatus::Failure(DurableTxFailureKind::Abandoned));
 	assert_eq!(harness.broadcast(), vec![]);
 	assert!(!harness.engine().ownership.is_owned(id));
@@ -90,7 +90,7 @@ fn giving_up_on_a_row_that_changed_meanwhile_fails_nothing() {
 
 	let id = harness.defer_one();
 
-	wait_until(|| harness.timer().sleeps() == 1, "the bucket backs off");
+	wait_until(|| harness.timer().sleeps() == 1, "the worker backs off");
 	assert_eq!(harness.status(id), DurableTxStatus::Pending);
 }
 
@@ -157,7 +157,7 @@ fn a_waiting_row_still_owned_by_a_watch_is_built_only_once_released() {
 
 	harness.engine().ensure_submissions_started();
 
-	wait_until(|| harness.timer().sleeps() == 1, "the bucket backs off");
+	wait_until(|| harness.timer().sleeps() == 1, "the worker backs off");
 	assert_eq!(harness.policy().batches(), Vec::<Vec<DurableTxId>>::new());
 
 	harness.engine().ownership.release(id);
@@ -167,11 +167,11 @@ fn a_waiting_row_still_owned_by_a_watch_is_built_only_once_released() {
 	assert_eq!(harness.policy().batches(), vec![vec![id]]);
 }
 
-/// A worker returns once a round finds its bucket empty. A transaction
+/// A worker returns once a round finds its domain has no waiting row. A transaction
 /// deferred just then must still get a worker, from the builder, rather
 /// than wait with nobody to build it.
 #[test]
-fn a_transaction_deferred_as_its_bucket_drains_is_still_built() {
+fn a_transaction_deferred_as_its_worker_returns_is_still_built() {
 	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::building_everything());
 
 	for _ in 0..30 {
@@ -182,11 +182,11 @@ fn a_transaction_deferred_as_its_bucket_drains_is_still_built() {
 	assert_eq!(harness.policy().batches().len(), 30);
 }
 
-/// Two workers for one bucket would build its rows twice, broadcasting two
+/// Two workers for one domain would build its rows twice, broadcasting two
 /// attempts of one transaction. Rows deferred while workers drain and the
 /// builder restarts them must still meet one worker at a time.
 #[test]
-fn a_bucket_never_has_two_workers_building_at_once() {
+fn a_domain_never_has_two_workers_building_at_once() {
 	let in_flight = Arc::new(AtomicUsize::new(0));
 	let most_in_flight = Arc::new(AtomicUsize::new(0));
 	let builds = Arc::new(AtomicU8::new(0));
