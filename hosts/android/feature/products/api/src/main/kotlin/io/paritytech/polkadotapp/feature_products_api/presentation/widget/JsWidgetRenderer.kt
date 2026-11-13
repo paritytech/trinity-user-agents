@@ -89,6 +89,7 @@ private fun JsWidgetContent(
         is JsWidget.Spacer -> JsSpacerRenderer(widget, modifier)
         is JsWidget.Text -> JsTextRenderer(widget, modifier)
         is JsWidget.Button -> JsButtonRenderer(widget, modifier)
+        is JsWidget.SlideToConfirm -> JsSlideToConfirmRenderer(widget, modifier)
         is JsWidget.TextField -> JsTextFieldRenderer(widget, modifier)
         is JsWidget.Image -> JsImageRenderer(widget, modifier)
     }
@@ -296,6 +297,7 @@ private fun JsWidget.fillsHeight(): Boolean = when (this) {
     is JsWidget.Spacer -> modifiers
     is JsWidget.Text -> modifiers
     is JsWidget.Button -> modifiers
+    is JsWidget.SlideToConfirm -> modifiers
     is JsWidget.TextField -> modifiers
     is JsWidget.Image -> modifiers
 }.any { it is JsModifier.FillMaxHeight }
@@ -393,6 +395,19 @@ private fun JsButtonRenderer(
             }
         }
     }
+}
+
+@Composable
+private fun JsSlideToConfirmRenderer(
+    widget: JsWidget.SlideToConfirm,
+    modifier: Modifier = Modifier,
+) {
+    val eventDispatcher = LocalJsEventHandler.current
+    JsSlideToConfirm(
+        widget = widget,
+        onConfirm = { widget.onConfirm?.let { actionId -> eventDispatcher(actionId, JsUiEvent.Type.ButtonClick) } },
+        modifier = modifier.then(widget.modifiers.toComposeModifier()),
+    )
 }
 
 @Composable

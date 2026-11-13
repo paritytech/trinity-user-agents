@@ -66,6 +66,33 @@ sealed interface JsWidget {
     ) : JsWidget
 
     /**
+     * Slide-to-confirm control: the user drags a thumb across the track to confirm.
+     * @param text Track label
+     * @param secondaryText Optional second line under the label
+     * @param confirmedText What the control reads once slid; a reveal shows it under the face
+     * @param variant How the control draws and moves
+     * @param accent Tint of the thumb, or of the surface a reveal uncovers
+     * @param onConfirm Action ID invoked once when the slide completes, delivered like a button press
+     * @param enabled Whether the control accepts a slide
+     * @param loading Holds the control at the end with a progress indicator and accepts no slide
+     * @param confirmed Draws the control as already slid and accepts no slide
+     */
+    @Serializable
+    @SerialName("slideToConfirm")
+    data class SlideToConfirm(
+        val text: String,
+        val secondaryText: String? = null,
+        val confirmedText: String? = null,
+        val variant: JsSlideToConfirmVariant = JsSlideToConfirmVariant.THUMB,
+        val accent: JsColor? = null,
+        val onConfirm: String? = null,
+        val enabled: Boolean = true,
+        val loading: Boolean = false,
+        val confirmed: Boolean = false,
+        val modifiers: List<JsModifier> = emptyList(),
+    ) : JsWidget
+
+    /**
      * Text input field widget.
      * @param value Current text value
      * @param onValueChange Action ID invoked when text changes (receives new value in payload)
