@@ -11,7 +11,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.takeWhile
 import uniffi.truapi.CancelConfirmation
@@ -37,7 +36,7 @@ class FakeFundingService : FundingService {
     var answerResult: Result<CancelConfirmation> = Result.success(CancelConfirmation.ACCEPTED)
     var answeredTerms: CancelTerms? = null
 
-    override fun entries(): Flow<List<FundingEntry>> = emptyFlow()
+    override fun entries(): Flow<List<FundingEntry>> = listed
 
     override fun entryState(id: String): Flow<FundingEntry> = entry.takeWhile { it != null }.map { requireNotNull(it) }
 
@@ -80,7 +79,16 @@ class FakeFundingService : FundingService {
 
     override val events: Flow<FundingEvent> = eventQueue
 
-    override fun openProviderFrame(request: FundingFrameRequest) = Unit
+    /** Sessions whose provider waits for its screen to be opened. */
+    val waitingFrames = mutableSetOf<String>()
+
+    /** Every session listed, as [entries] gives them. */
+    val listed = MutableStateFlow<List<FundingEntry>>(emptyList())
+
+    override suspend fun openProviderFrame(entryId: String): Boolean =
+        waitingFrames.remove(entryId).also { calls += "openProviderFrame $entryId" }
+
+    override suspend fun isFrameWaiting(entryId: String): Boolean = entryId in waitingFrames
 
     override fun answerFrame(request: FundingFrameRequest, outcome: FundingFrameOutcome) = Unit
 }

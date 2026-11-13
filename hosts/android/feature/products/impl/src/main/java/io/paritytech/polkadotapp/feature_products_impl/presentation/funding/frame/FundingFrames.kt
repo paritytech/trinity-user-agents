@@ -34,7 +34,7 @@ data class FundingExternalPage(
 )
 
 /**
- * A provider's screen the core asked for, and what it shows, for as long as the request stands rather than as long as
+ * A provider's screen the core presents, and what it shows, for as long as the request stands rather than as long as
  * a fragment shows it. Leaving the frame, reopening it from the CASH card, or a configuration change keeps the
  * provider's App session or the external page where the user had got to, as in the middle of a KYC check or a card's
  * 3-D Secure step.
@@ -105,7 +105,7 @@ class FundingFrame(
 fun originOf(url: String): String? =
     fundingPageOrigin(url)?.let { origin -> origin.host + origin.port?.let { ":$it" }.orEmpty() }
 
-/** The provider screens the core asked for and has not had answered, by request. */
+/** The provider screens the core presents and has not had answered, by request. */
 @Singleton
 class FundingFrames @Inject constructor(
     private val spaHost: SpaHost,
