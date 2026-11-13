@@ -100,6 +100,7 @@ import uniffi.truapi.ProductId
 import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
+import uniffi.truapi.HostContactUsernames
 import uniffi.truapi.NativeContactsCallbacks
 import uniffi.truapi.HostPaymentException
 import uniffi.truapi.HostPaymentRequest
@@ -745,9 +746,11 @@ private class ChatCallbackAdapter(private val bridge: ChatHostBridge) : NativeCh
  * belongs to the host and not to any one product. A runtime without one
  * answers `contacts.pick` with `Unsupported`.
  *
- * Nothing here reaches a product, and the list never reaches the core: it
- * asks only about the handles a transaction names, and the picker returns the
- * one person the user chose. Omit the contacts the user has blocked, from both.
+ * No account reaches a product, and the accounts on the list never reach the
+ * core: it asks only about the handles a transaction names, and the picker
+ * returns the one person the user chose. Usernames reach the core only through
+ * [contactUsernames], for the game product. Omit the contacts the
+ * user has blocked, from all three.
  */
 interface ContactsHostBridge {
     /**
@@ -766,6 +769,16 @@ interface ContactsHostBridge {
      */
     @Throws(HostRejection::class)
     suspend fun pickContact(productId: ProductId): HostContactPick
+
+    /**
+     * List the DotNS usernames of the unblocked contacts the picker would
+     * offer, each the bare label with no top-level domain. The core asks only
+     * for the game product, so [productId] is not a filter. Runs inline, so
+     * answer from what is already in hand. Defaults to
+     * [HostContactUsernames.Unsupported].
+     */
+    @Throws(HostRejection::class)
+    fun contactUsernames(productId: ProductId): HostContactUsernames = HostContactUsernames.Unsupported
 }
 
 private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : NativeContactsCallbacks {
@@ -774,6 +787,9 @@ private class ContactsCallbackAdapter(private val bridge: ContactsHostBridge) : 
 
     override suspend fun pickContact(productId: ProductId): HostContactPick =
         withHostRejection { bridge.pickContact(productId) }
+
+    override fun contactUsernames(productId: ProductId): HostContactUsernames =
+        withHostRejection { bridge.contactUsernames(productId) }
 }
 
 /**

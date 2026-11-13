@@ -563,6 +563,21 @@ export type HostContactPick =
   | { tag: "Unsupported"; value?: undefined };
 
 /**
+ * The usernames a host lists for the game product.
+ */
+export type HostContactUsernames =
+  /**
+   * The DotNS usernames of the unblocked contacts the picker would offer,
+   * in host order, each the bare label with no top-level domain.
+   */
+  | { tag: "Listed"; value: { usernames: Array<string> } }
+  /**
+   * This host resolves contacts but does not list their usernames. The core
+   * answers the product `Unsupported`.
+   */
+  | { tag: "Unsupported"; value?: undefined };
+
+/**
  * How the host's scanner ended.
  */
 export type HostScan =
@@ -1340,6 +1355,19 @@ export const HostContactPick: S.Codec<HostContactPick> = S.lazy(
 );
 
 /**
+ * The usernames a host lists for the game product.
+ */
+export const HostContactUsernames: S.Codec<HostContactUsernames> = S.lazy(
+  (): S.Codec<HostContactUsernames> =>
+    S.TaggedUnion({
+      Listed: S.Struct({ usernames: S.Vector(S.str) }) as S.Codec<{
+        usernames: Array<string>;
+      }>,
+      Unsupported: S._void,
+    }),
+);
+
+/**
  * How the host's scanner ended.
  */
 export const HostScan: S.Codec<HostScan> = S.lazy(
@@ -1760,9 +1788,11 @@ export interface ChatPlatform {
  * Optional, and listed on `OptionalPlatform` as `ChatPlatform` is.
  *
  * The host owns the UI and the list. It draws the names, so nothing it renders
- * reaches the product, and the list never crosses to the core either: the core
- * asks only about the handles a transaction names. A host omits contacts the
- * user has blocked, from the picker and from lookups alike.
+ * reaches the product, and the accounts on the list never cross to the core:
+ * the core asks only about the handles a transaction names. Usernames cross
+ * only through `Self::contact_usernames`, for the game product. A
+ * host omits contacts the user has blocked, from the picker, from lookups and
+ * from usernames alike.
  */
 export interface ContactsPlatform {
   /**
@@ -1797,6 +1827,18 @@ export interface ContactsPlatform {
    * `HostContactPick::NoContacts` instead of drawing an empty overlay.
    */
   pickContact?(product: ProductContext): Promise<HostContactPick>;
+
+  /**
+   * List the DotNS usernames of the unblocked contacts the picker would
+   * offer.
+   *
+   * The core calls this only for the game product, so a host does not
+   * check `product` itself: it says who is asking and is not a filter.
+   * Answer from the contacts the host already holds, without a prompt.
+   * Defaults to `HostContactUsernames::Unsupported`, so a host that lists
+   * nothing gives its products a truthful answer.
+   */
+  contactUsernames?(product: ProductContext): Promise<HostContactUsernames>;
 }
 
 /**

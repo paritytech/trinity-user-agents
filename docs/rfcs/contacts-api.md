@@ -14,7 +14,8 @@ _How the implemented pieces fit together is in
 A product asks the Host to let the user pick a contact. The Host renders an overlay from its Chat
 workers' chat lists, the user selects one person, and the product receives one opaque handle — never
 the list, a name, or an account. The handle is not an address: the core resolves it when building a
-transaction.
+transaction. The game product, Jollity, may also read the usernames of the contacts of the user, never their
+accounts.
 
 ## Motivation
 
@@ -26,8 +27,8 @@ not the address book — so this exposes the interaction rather than the list.
 ## Approach
 
 Contacts come from the chat lists the Host's chat extensions hold; Hosts keep their own schema
-and no new address book is imposed. A Host **renders the picker itself** and resolves handles on request, so names never cross to the product — which matters because a Host's only name for a contact
-is often a globally correlatable People-chain username.
+and no new address book is imposed. A Host **renders the picker itself** and resolves handles on request, so names cross only to the game product. That matters because the only name a Host has for a
+contact is often a globally correlatable People-chain username.
 
 ```rust
 enum ContactPickOutcome {
@@ -43,6 +44,18 @@ Three outcomes because the retry decision differs: `Dismissed` is worth offering
 is not, and a Host with no picker answers `Unsupported`. No permission is requested — the user
 selecting a contact is the consent.
 
+The game product, Jollity (`dim2` on every network), may also read the DotNS usernames of the
+unblocked contacts of the user, without a prompt:
+
+```rust
+fn host_contacts_usernames() -> Result<Vec<String>, HostContactsUsernamesError>;
+```
+
+Each username is the bare DotNS label without a top-level domain, and a contact without one is left
+out. The list carries no account and no handle. Every other product, and a Host that lists no
+usernames, gets `Unsupported`, and the Host is never asked on their behalf. While nobody is signed in,
+Jollity gets `NotConnected`, as `contacts.pick` does.
+
 The handle is one value per contact, the same in every product and on every Host of this user, keyed
 on the user's entropy so no product can turn it back into an account. It is not an address: a product
 names it as the recipient and the core substitutes the account when it builds the transaction. A
@@ -55,6 +68,8 @@ directly usable.
 - `NoContacts` reveals whether the user has any contacts — zero-or-not, never a count.
 - No product-rendered contact UI, every selection is a user interaction, one contact per call,
   read-only.
+- The game product reads the username of every contact, a globally correlatable name, without asking
+  the user. The core fixes this to the game product, so no other product can be granted it.
 - Dropped: returning the list scoped per product (`display_name` was a correlator no scoping fixed,
   and it needed a permission over the whole social graph); per-product handles (forfeit a durable
   shared id, break under contact sync); returning the chat account (transactable, but a global

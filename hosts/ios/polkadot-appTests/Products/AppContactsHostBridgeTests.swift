@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Operation_iOS
 import Products
 import SubstrateSdk
 import TrUAPIHost
@@ -60,12 +61,50 @@ struct AppContactsHostBridgeTests {
         #expect(matches.accounts == [nil, alice])
     }
 
-    private func makeBridge() -> AppContactsHostBridge {
+    @Test("Usernames leave out blocked contacts and contacts without one")
+    func listsUnblockedUsernames() throws {
+        let bridge = makeBridge()
+        bridge.update(contacts: [
+            makeContact(accountId: alice, username: "alice.07"),
+            makeContact(accountId: bob, username: "bob", isBlocked: true),
+            makeContact(accountId: carol, username: "")
+        ])
+
+        let listing = try bridge.contactUsernames(productId: ProductId("dim2.dot"))
+
+        #expect(listing == .listed(usernames: ["alice.07"]))
+    }
+
+    @Test("Before the first snapshot usernames come from the store, and nothing is kept")
+    func listsStoredUsernamesBeforeTheFirstSnapshot() throws {
+        let repositoryFactory = MockChatContactRepositoryFactory()
+        save([
+            makeContact(accountId: alice, username: "alice.07"),
+            makeContact(accountId: bob, username: "bob", isBlocked: true),
+            makeContact(accountId: carol, username: "")
+        ], to: repositoryFactory)
+        let bridge = makeBridge(repositoryFactory: repositoryFactory)
+
+        let first = try bridge.contactUsernames(productId: ProductId("dim2.dot"))
+        save([makeContact(accountId: alice, username: "alice.08")], to: repositoryFactory)
+        let second = try bridge.contactUsernames(productId: ProductId("dim2.dot"))
+
+        #expect([first, second] == [.listed(usernames: ["alice.07"]), .listed(usernames: ["alice.08"])])
+    }
+
+    private func makeBridge(
+        repositoryFactory: ChatContactRepositoryMaking = MockChatContactRepositoryFactory()
+    ) -> AppContactsHostBridge {
         AppContactsHostBridge(
-            repositoryFactory: MockChatContactRepositoryFactory(),
+            repositoryFactory: repositoryFactory,
             operationQueue: OperationQueue(),
             routerFacade: UnusedRouters()
         )
+    }
+
+    private func save(_ contacts: [Chat.Contact], to repositoryFactory: ChatContactRepositoryMaking) {
+        let operation = repositoryFactory.createRepository(forFilter: nil).saveOperation({ contacts }, { [] })
+        OperationQueue().addOperations([operation], waitUntilFinished: true)
     }
 
     private func handle(_ account: Data, _ key: Data) -> Data {
@@ -76,6 +115,7 @@ struct AppContactsHostBridgeTests {
 
 private let alice = Data(repeating: 0xA1, count: 32)
 private let bob = Data(repeating: 0xB0, count: 32)
+private let carol = Data(repeating: 0xC0, count: 32)
 
 /// The lookup never presents UI, so nothing here is reached.
 private final class UnusedRouters: ProductRoutersFacadeProtocol {
@@ -85,10 +125,14 @@ private final class UnusedRouters: ProductRoutersFacadeProtocol {
     @MainActor func setPresentationView(_: ControllerBackedProtocol) {}
 }
 
-private func makeContact(accountId: AccountId, isBlocked: Bool = false) -> Chat.Contact {
+private func makeContact(
+    accountId: AccountId,
+    username: String = "test_user",
+    isBlocked: Bool = false
+) -> Chat.Contact {
     Chat.Contact(
         accountId: accountId,
-        username: "test_user",
+        username: username,
         publicKey: Data(repeating: 0, count: 32),
         pin: nil,
         pushId: nil,

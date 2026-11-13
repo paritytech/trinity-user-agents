@@ -66,3 +66,38 @@ pub enum HostContactsPickError {
 		reason: String,
 	},
 }
+
+/// Request for the usernames of the chat contacts of the user.
+///
+/// Carries no arguments: the host answers from the contacts it already holds,
+/// with no prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostContactsUsernamesRequest {}
+
+/// The DotNS usernames of the unblocked chat contacts of the user.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostContactsUsernamesResponse {
+	/// One username per contact, in host order, and empty when the user has no
+	/// contacts. A contact without a username is left out.
+	///
+	/// Each entry is the bare DotNS label with no top-level domain: the full
+	/// name when the contact has one (`alice`), otherwise the lite name with its
+	/// two-digit index (`alice.07`).
+	pub usernames: Vec<String>,
+}
+
+/// Error returned when the host cannot read the contact usernames.
+///
+/// Any product other than the game product, and a host that lists no
+/// usernames, get `Unsupported` at the framework level rather than through
+/// this enum.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostContactsUsernamesError {
+	/// No active session.
+	NotConnected,
+	/// Catch-all.
+	Unknown {
+		/// Human-readable reason.
+		reason: String,
+	},
+}

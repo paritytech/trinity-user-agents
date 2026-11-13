@@ -160,16 +160,17 @@ fn a_known_handle_the_call_does_not_declare_is_caught() {
 }
 
 #[test]
-fn the_product_wire_surface_is_the_picker_and_nothing_else() {
-	// The contact list must not be reachable from a product. This asserts
-	// the dispatch table itself, so adding a list or subscribe method to the
-	// `Contacts` trait fails here rather than shipping.
+fn the_product_wire_surface_is_the_picker_and_the_blessed_username_read() {
+	// No product reaches contact accounts or the list, and only the blessed
+	// product reaches usernames, which the refusal tests in `runtime/tests.rs`
+	// hold for every other product. This asserts the dispatch table itself, so
+	// any other `Contacts` method fails here rather than shipping.
 	let contacts: Vec<&str> = crate::generated::wire_table::WIRE_TABLE
 		.iter()
 		.map(|entry| entry.method)
 		.filter(|method| method.starts_with("contacts_"))
 		.collect();
-	assert_eq!(contacts, vec!["contacts_pick"]);
+	assert_eq!(contacts, vec!["contacts_pick", "contacts_usernames"]);
 }
 
 #[test]

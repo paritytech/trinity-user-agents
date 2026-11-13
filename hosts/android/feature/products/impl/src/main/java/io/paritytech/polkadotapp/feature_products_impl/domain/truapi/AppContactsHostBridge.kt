@@ -14,13 +14,15 @@ import kotlinx.coroutines.runBlocking
 import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
+import uniffi.truapi.HostContactUsernames
 import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /**
- * Resolves the contact handles a transaction names back to accounts, and draws
- * the picker. The list never leaves the host: the core asks about handles, and
- * a product gets 32 bytes for the one person the user picked.
+ * Resolves the contact handles a transaction names back to accounts, draws the
+ * picker, and lists contact usernames. No account leaves the host: the core
+ * asks about handles, a product gets 32 bytes for the one person the user
+ * picked, and the game product gets usernames only.
  *
  * The lookup runs inline on the core's dispatcher thread, so it answers from
  * the latest contact snapshot and a handle index kept per handle key: a map
@@ -37,12 +39,16 @@ class AppContactsHostBridge @Inject constructor(
     /** Unblocked contacts' accounts, from the latest snapshot. */
     private var accounts: List<ByteArray>? = null
 
+    /** Usernames of the unblocked contacts, from the latest snapshot. */
+    private var usernames: List<String>? = null
+
     /** Rebuilt when the contacts or the key change; the key changes with the session. */
     private var index: HandleIndex? = null
 
     /** Take the latest contacts, dropping the handle index built from the old ones. */
     internal fun update(contacts: List<Contact>) = synchronized(lock) {
         accounts = contacts.map { it.accountId.value }
+        usernames = contacts.usernames()
         index = null
     }
 
@@ -93,6 +99,20 @@ class AppContactsHostBridge @Inject constructor(
 
         return HostContactPick.Picked(picked.account)
     }
+
+    /**
+     * The usernames of the contacts the picker would offer, as the chain
+     * record labels them. Only before the first snapshot does it fetch,
+     * blocking the caller, and it does not keep what it read, so a list with
+     * no snapshot behind it cannot go stale.
+     */
+    override fun contactUsernames(productId: ProductId): HostContactUsernames {
+        val snapshot = synchronized(lock) { usernames }
+        val current = snapshot ?: runBlocking { directory.getContacts().usernames() }
+        return HostContactUsernames.Listed(current)
+    }
+
+    private fun List<Contact>.usernames(): List<String> = mapNotNull { it.username?.takeIf(String::isNotEmpty) }
 
     /**
      * Emits whenever someone leaves the user's contacts, removed or blocked.

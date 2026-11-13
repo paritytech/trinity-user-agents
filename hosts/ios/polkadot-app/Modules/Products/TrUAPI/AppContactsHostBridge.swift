@@ -4,9 +4,10 @@ import Products
 import SubstrateSdk
 import TrUAPIHost
 
-/// Resolves the contact handles a transaction names back to accounts, and draws
-/// the picker. The list never leaves the host: the core asks about handles, and
-/// a product gets 32 bytes for the one person the user picked.
+/// Resolves the contact handles a transaction names back to accounts, draws the
+/// picker, and lists contact usernames. No account leaves the host: the core
+/// asks about handles, a product gets 32 bytes for the one person the user
+/// picked, and the game product gets usernames only.
 ///
 /// Answers from the latest contact snapshot ``ContactsChangeNotifier`` hands
 /// it, plus a handle index kept per handle key, so a lookup is a dictionary read
@@ -20,6 +21,8 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
     private let lock = NSLock()
     /// Unblocked contacts' accounts, from the latest snapshot.
     private var accounts: [Data]?
+    /// Usernames of the unblocked contacts, from the latest snapshot.
+    private var usernames: [String]?
     /// Handle to account under one handle key. Rebuilt when the key or the
     /// contacts change; the key changes with the session.
     private var index: (handleKey: Data, accountsByHandle: [Data: Data])?
@@ -37,9 +40,10 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
     /// Take the latest contacts, dropping the handle index built from the old
     /// ones.
     func update(contacts: [Chat.Contact]) {
-        let unblocked = Self.unblocked(contacts).map(\.accountId)
+        let unblocked = Self.unblocked(contacts)
         lock.lock()
-        accounts = unblocked
+        accounts = unblocked.map(\.accountId)
+        usernames = Self.usernames(of: unblocked)
         index = nil
         lock.unlock()
     }
@@ -75,6 +79,16 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
 
         guard let picked else { return .dismissed }
         return .picked(account: picked)
+    }
+
+    /// The usernames of the contacts the picker would offer, as the chain
+    /// record labels them. Only before the first snapshot does it fetch,
+    /// blocking the caller, and it does not keep what it read, so a list with
+    /// no snapshot behind it cannot go stale.
+    func contactUsernames(productId _: ProductId) throws -> HostContactUsernames {
+        let snapshot = lock.withLock { usernames }
+        let current = try snapshot ?? Self.usernames(of: fetchUnblockedContactsBlocking())
+        return .listed(usernames: current)
     }
 
     private func handleIndex(for handleKey: Data) throws -> [Data: Data] {
@@ -137,6 +151,10 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
     /// user refused.
     private static func unblocked(_ contacts: [Chat.Contact]) -> [Chat.Contact] {
         contacts.filter { !$0.isBlocked }
+    }
+
+    private static func usernames(of contacts: [Chat.Contact]) -> [String] {
+        contacts.map(\.username).filter { !$0.isEmpty }
     }
 }
 

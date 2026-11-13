@@ -36,6 +36,9 @@ use truapi::{
 			RemoteChainTransactionBroadcastError, RemoteChainTransactionBroadcastRequest,
 			RemoteChainTransactionBroadcastResponse,
 		},
+		contacts::{
+			HostContactsUsernamesError, HostContactsUsernamesRequest, HostContactsUsernamesResponse,
+		},
 		entropy::{HostDeriveEntropyError, HostDeriveEntropyRequest, HostDeriveEntropyResponse},
 		expanded_card::{
 			HostExpandedCardSetBackShownError, HostExpandedCardSetBackShownRequest,
@@ -708,16 +711,33 @@ struct StubContactsPlatform {
 	failure: Option<&'static str>,
 	/// Products the picker was opened on behalf of, in order.
 	asked_for: Mutex<Vec<String>>,
+	/// The usernames the host lists, in host order.
+	usernames: Vec<String>,
+	/// How many times the core read the usernames.
+	username_reads: std::sync::atomic::AtomicUsize,
 }
 
 impl StubContactsPlatform {
 	fn new(listed: Vec<[u8; 32]>, pick: crate::platform::HostContactPick) -> Arc<Self> {
-		Arc::new(Self {
+		Arc::new(Self::answering(listed, pick))
+	}
+
+	fn answering(listed: Vec<[u8; 32]>, pick: crate::platform::HostContactPick) -> Self {
+		Self {
 			listed: Mutex::new(listed),
 			lookups: Default::default(),
 			pick,
 			failure: None,
 			asked_for: Mutex::new(Vec::new()),
+			usernames: Vec::new(),
+			username_reads: Default::default(),
+		}
+	}
+
+	fn listing(usernames: &[&str]) -> Arc<Self> {
+		Arc::new(Self {
+			usernames: usernames.iter().map(|username| username.to_string()).collect(),
+			..Self::answering(vec![[10u8; 32]], crate::platform::HostContactPick::Dismissed)
 		})
 	}
 
@@ -739,11 +759,8 @@ impl StubContactsPlatform {
 
 	fn failing(reason: &'static str) -> Arc<Self> {
 		Arc::new(Self {
-			listed: Mutex::new(vec![[10u8; 32]]),
-			lookups: Default::default(),
-			pick: crate::platform::HostContactPick::Dismissed,
 			failure: Some(reason),
-			asked_for: Mutex::new(Vec::new()),
+			..Self::answering(vec![[10u8; 32]], crate::platform::HostContactPick::Dismissed)
 		})
 	}
 }
@@ -784,6 +801,19 @@ impl crate::platform::ContactsPlatform for StubContactsPlatform {
 		match self.failure {
 			Some(reason) => Err(truapi::latest::GenericError { reason: reason.to_string() }),
 			None => Ok(self.pick),
+		}
+	}
+
+	async fn contact_usernames(
+		&self,
+		_product: &ProductContext,
+	) -> Result<crate::platform::HostContactUsernames, truapi::latest::GenericError> {
+		self.username_reads.fetch_add(1, Ordering::SeqCst);
+		match self.failure {
+			Some(reason) => Err(truapi::latest::GenericError { reason: reason.to_string() }),
+			None => Ok(crate::platform::HostContactUsernames::Listed {
+				usernames: self.usernames.clone(),
+			}),
 		}
 	}
 }
@@ -832,6 +862,16 @@ fn pick(
 	))
 }
 
+fn usernames(
+	host: &ProductRuntimeHost,
+) -> Result<HostContactsUsernamesResponse, CallError<HostContactsUsernamesError>> {
+	futures::executor::block_on(Contacts::usernames(
+		host,
+		&CallContext::default(),
+		HostContactsUsernamesRequest::V1(v01::HostContactsUsernamesRequest {}),
+	))
+}
+
 /// A host that implements only the required `contacts` method.
 struct LookupOnlyContactsPlatform;
 
@@ -861,12 +901,10 @@ impl crate::platform::ContactsPlatform for MisanswerContactsPlatform {
 	}
 }
 
-#[test]
-fn a_host_that_only_resolves_contacts_reports_unsupported() {
-	// `pick_contact` is defaulted so a host needs to write one method. The
-	// default is truthful: a product learns the picker will never work here,
-	// rather than a dismissal it would keep retrying.
-	let (host_config, product) = runtime_config("voting.dot");
+/// A runtime for `product_id` on a host that serves only
+/// [`LookupOnlyContactsPlatform`], with a session.
+fn lookup_only_contacts_host(product_id: &str) -> ProductRuntimeHost {
+	let (host_config, product) = runtime_config(product_id);
 	let services = RuntimeServices::with_chat_platform(
 		stub_platform() as Arc<dyn Platform>,
 		host_config.host.host_info.clone(),
@@ -885,6 +923,15 @@ fn a_host_that_only_resolves_contacts_reports_unsupported() {
 		product,
 	);
 	install_pairing_session(&host, session_info());
+	host
+}
+
+#[test]
+fn a_host_that_only_resolves_contacts_reports_unsupported() {
+	// `pick_contact` is defaulted so a host needs to write one method. The
+	// default is truthful: a product learns the picker will never work here,
+	// rather than a dismissal it would keep retrying.
+	let host = lookup_only_contacts_host("voting.dot");
 
 	assert_eq!(pick(&host).unwrap_err(), CallError::Unsupported);
 }
@@ -1067,6 +1114,170 @@ fn contacts_pick_maps_a_platform_failure_to_unknown() {
 		CallError::Domain(HostContactsPickError::V1(v01::HostContactsPickError::Unknown {
 			reason: "overlay unavailable".to_string(),
 		}))
+	);
+}
+
+#[test]
+fn contacts_usernames_returns_the_hosts_list_to_a_blessed_product() {
+	// Given
+	let host = contacts_host(
+		"dim2.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::listing(&["alice", "bob"])),
+		true,
+	);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Ok(HostContactsUsernamesResponse::V1(v01::HostContactsUsernamesResponse {
+			usernames: vec!["alice".to_string(), "bob".to_string()],
+		}))
+	);
+}
+
+#[test]
+fn contacts_usernames_is_unsupported_for_a_product_that_is_not_blessed() {
+	// Given
+	let contacts = StubContactsPlatform::listing(&["alice", "bob"]);
+	let host = contacts_host("voting.dot", stub_platform(), Some(contacts.clone()), true);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		(response, contacts.username_reads.load(Ordering::SeqCst)),
+		(Err(CallError::Unsupported), 0)
+	);
+}
+
+#[test]
+fn contacts_usernames_is_unsupported_for_the_other_trusted_products() {
+	// Given
+	let contacts = StubContactsPlatform::listing(&["alice", "bob"]);
+	let hosts = ["peopl.dot", "stash.dot"]
+		.map(|product_id| contacts_host(product_id, stub_platform(), Some(contacts.clone()), true));
+
+	// When
+	let responses = hosts.each_ref().map(usernames);
+
+	// Then
+	assert_eq!(
+		(responses, contacts.username_reads.load(Ordering::SeqCst)),
+		([Err(CallError::Unsupported), Err(CallError::Unsupported)], 0)
+	);
+}
+
+#[test]
+fn contacts_usernames_without_a_platform_is_unsupported() {
+	// Given
+	let host = contacts_host("dim2.dot", stub_platform(), None, true);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(response, Err(CallError::Unsupported));
+}
+
+#[test]
+fn a_host_that_does_not_list_usernames_reports_unsupported() {
+	// Given
+	let host = lookup_only_contacts_host("dim2.dot");
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(response, Err(CallError::Unsupported));
+}
+
+#[test]
+fn contacts_usernames_with_no_contacts_is_an_empty_list() {
+	// Given
+	let host =
+		contacts_host("dim2.dot", stub_platform(), Some(StubContactsPlatform::listing(&[])), true);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Ok(HostContactsUsernamesResponse::V1(v01::HostContactsUsernamesResponse {
+			usernames: Vec::new(),
+		}))
+	);
+}
+
+#[test]
+fn contacts_usernames_leaves_out_a_contact_without_a_username() {
+	// Given
+	let host = contacts_host(
+		"dim2.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::listing(&["alice", "", "bob.07"])),
+		true,
+	);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Ok(HostContactsUsernamesResponse::V1(v01::HostContactsUsernamesResponse {
+			usernames: vec!["alice".to_string(), "bob.07".to_string()],
+		}))
+	);
+}
+
+#[test]
+fn contacts_usernames_maps_a_platform_failure_to_unknown() {
+	// Given
+	let host = contacts_host(
+		"dim2.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::failing("contacts store unavailable")),
+		true,
+	);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Err(CallError::Domain(HostContactsUsernamesError::V1(
+			v01::HostContactsUsernamesError::Unknown {
+				reason: "contacts store unavailable".to_string(),
+			}
+		)))
+	);
+}
+
+#[test]
+fn contacts_usernames_without_a_session_is_not_connected() {
+	// Given
+	let contacts = StubContactsPlatform::listing(&["alice"]);
+	let host = contacts_host("dim2.dot", stub_platform(), Some(contacts.clone()), false);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		(response, contacts.username_reads.load(Ordering::SeqCst)),
+		(
+			Err(CallError::Domain(HostContactsUsernamesError::V1(
+				v01::HostContactsUsernamesError::NotConnected
+			))),
+			0
+		)
 	);
 }
 

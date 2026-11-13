@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "cebcc89a5e45bbd3";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "2e0b492a461665ae";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -552,6 +552,12 @@ pub const WORKER_END_OPERATION: MethodIds = MethodIds {
 pub const CONTACTS_PICK: MethodIds = MethodIds {
     trait_id: 20,
     method_id: 0,
+};
+
+/// Wire discriminants for `contacts_usernames`.
+pub const CONTACTS_USERNAMES: MethodIds = MethodIds {
+    trait_id: 20,
+    method_id: 1,
 };
 
 /// Wire discriminants for `game_remind_next_game`.
@@ -1071,6 +1077,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "contacts_pick",
         kind: WireKind::Request(CONTACTS_PICK),
+    },
+    WireEntry {
+        method: "contacts_usernames",
+        kind: WireKind::Request(CONTACTS_USERNAMES),
     },
     WireEntry {
         method: "game_remind_next_game",

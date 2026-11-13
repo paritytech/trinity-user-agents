@@ -321,9 +321,11 @@ public protocol GameHostBridge: AnyObject, Sendable {
 /// and not to any one product. A runtime without one answers `contacts.pick`
 /// with `Unsupported`.
 ///
-/// Nothing here reaches a product, and the list never reaches the core: it
-/// asks only about the handles a transaction names, and the picker returns the
-/// one person the user chose. Omit the contacts the user has blocked, from both.
+/// No account reaches a product, and the accounts on the list never reach the
+/// core: it asks only about the handles a transaction names, and the picker
+/// returns the one person the user chose. Usernames reach the core only through
+/// ``contactUsernames(productId:)``, for the game product. Omit the
+/// contacts the user has blocked, from all three.
 public protocol ContactsHostBridge: AnyObject, Sendable {
     /// Resolve `lookup.handles` to contacts: one entry per handle, in order,
     /// `nil` where none matches. A contact's handle is BLAKE2b-256 keyed with
@@ -335,6 +337,18 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     /// did. With no contacts, answer `.noContacts` instead of drawing an empty
     /// overlay.
     func pickContact(productId: ProductId) async throws -> HostContactPick
+
+    /// List the DotNS usernames of the unblocked contacts the picker would
+    /// offer, each the bare label with no top-level domain. The core asks only
+    /// for the game product, so `productId` is not a filter. Called inline,
+    /// so answer from what is already in hand. Defaults to `.unsupported`.
+    func contactUsernames(productId: ProductId) throws -> HostContactUsernames
+}
+
+public extension ContactsHostBridge {
+    func contactUsernames(productId _: ProductId) throws -> HostContactUsernames {
+        .unsupported
+    }
 }
 
 /// Host-implemented top-up engine: claims a source's funds into the user's
@@ -565,6 +579,10 @@ private final class ContactsCallbackAdapter: NativeContactsCallbacks, @unchecked
 
     func pickContact(productId: ProductId) async throws -> HostContactPick {
         try await withHostRejection { try await bridge.pickContact(productId: productId) }
+    }
+
+    func contactUsernames(productId: ProductId) throws -> HostContactUsernames {
+        try withHostRejection { try bridge.contactUsernames(productId: productId) }
     }
 }
 

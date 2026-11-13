@@ -27,4 +27,25 @@ struct HostBridgeDefaultsTests {
 
         #expect(outcome == .unsupported)
     }
+
+    /// A host that resolves and picks contacts but never lists usernames must
+    /// say so, not hand the game product an empty list.
+    @Test
+    func defaultContactUsernamesIsUnsupported() throws {
+        let bridge: ContactsHostBridge = LookupAndPickContactsBridge()
+
+        let listing = try bridge.contactUsernames(productId: ProductId("dim2.dot"))
+
+        #expect(listing == .unsupported)
+    }
+}
+
+private final class LookupAndPickContactsBridge: ContactsHostBridge, @unchecked Sendable {
+    func contacts(lookup: HostContactLookup) throws -> HostContactMatches {
+        HostContactMatches(accounts: lookup.handles.map { _ in nil })
+    }
+
+    func pickContact(productId _: ProductId) async throws -> HostContactPick {
+        .dismissed
+    }
 }

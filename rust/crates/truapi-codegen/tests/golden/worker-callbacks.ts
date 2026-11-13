@@ -18,6 +18,7 @@ export const CALLBACK_NAMES = [
   "setChatRoomFooter",
   "contacts",
   "pickContact",
+  "contactUsernames",
   "readCoreStorage",
   "writeCoreStorage",
   "clearCoreStorage",
@@ -233,7 +234,9 @@ function chatRawCallbacks(
 
 function contactsRawCallbacks(
   bridge: WorkerCallbackBridge,
-): Required<Pick<RawCallbacks, "contacts" | "pickContact">> {
+): Required<
+  Pick<RawCallbacks, "contacts" | "pickContact" | "contactUsernames">
+> {
   return {
     contacts: (lookup) =>
       bridge.callbackRequest("contacts", [lookup]) as ReturnType<
@@ -242,6 +245,10 @@ function contactsRawCallbacks(
     pickContact: (product) =>
       bridge.callbackRequest("pickContact", [product]) as ReturnType<
         Required<RawCallbacks>["pickContact"]
+      >,
+    contactUsernames: (product) =>
+      bridge.callbackRequest("contactUsernames", [product]) as ReturnType<
+        Required<RawCallbacks>["contactUsernames"]
       >,
   };
 }

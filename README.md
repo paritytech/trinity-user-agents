@@ -578,6 +578,13 @@ resting on the product's word. The report lands at
 `explorer/diagnosis-reports/pocket/signing-host-cli.md` and feeds the explorer's
 Pocket compatibility matrix.
 
+`contacts.usernames` serves only the game product, `dim2` on every network,
+and answers `Unsupported` to any other, and `NotConnected` while nobody is
+signed in. The battery runs as another product, so its generated example
+accepts `Unsupported`. The CLI hosts list the names of their configured
+contacts, and the `truapi` runtime tests cover the product gate, a host that
+lists nothing, and host failures.
+
 `Game` (`remind_next_game`, `cancel_next_game`) serves only the game product,
 `dim2` on every network, and answers `Unsupported` to any other. The battery
 runs as another product, so it skips the `Game` service, and so does the
