@@ -213,14 +213,24 @@ a compile error, not a runtime `Unavailable`.
 A local session's usernames come from the dotNS contracts on Asset Hub, read
 after activation. A name the host passes is shown until a record answers.
 
-`SigningHostConfig.network_suffix` is the network's bare dotNS TLD (`dot`,
-`paseo`, or `testnet`). The shell supplies it alongside the chain genesis hashes
-from the same network configuration used by wallet onboarding. It must match
-the People chain's `NetworkSuffix.NetworkSuffix`: reserved identities derive
-under `peopl.<suffix>`, while the chain uses that suffix for
-proof contexts. Configuration keeps local activation and key derivation
-available offline. The core validates supported suffixes but does not
-automatically check that the configured suffix matches the chain.
+### Stack
+
+Both host configs carry a `Stack`, the core's only chain configuration: the
+Relay, Asset Hub, People and Bulletin genesis hashes, the network
+`get_chain_info` reports, and the dotNS TLD.
+
+A native or browser shell builds it with `Stack::bundled` from the stack's
+pointer, the signed descriptor its build bundles, and whether the build allows
+Polkadot's reserved values. A Rust host that resolves its chains itself, such as
+the CLI, uses `Stack::new`, and a test-host browser bundle passes
+`runtimeConfig.testStack`. Each constructor documents what it refuses.
+
+Reserved identities derive under `peopl.<tld>`, and the People
+chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
+to be equal. Taking the TLD from the stack keeps local activation and key
+derivation working offline. The core does not check it against the chain, does
+not check genesis hashes against the live chains, and does not fetch newer
+copies.
 
 ### Core database
 
@@ -295,11 +305,13 @@ that can't mean it:
 - **`PairingHost`** (seedless): the user's keys live in an external wallet, so
   signing/aliases/entropy relay over an encrypted SSO channel (statement store
   on the People chain). The v2 wire protocol uses raw X25519 keys, HKDF-SHA256,
-  and ChaCha20-Poly1305. `PairingHost` keeps the paired session's account
-  material; [`SsoRequestService`](src/runtime/sso_request_service.rs) owns
+  and ChaCha20-Poly1305. `PairingHost` keeps the paired session's grants and
+  sends each wallet operation through `RemoteAccountHolder`;
+  [`SsoRequestService`](src/runtime/sso_request_service.rs) owns
   pairing and login state, persisted auth-session reload, remote signing-host
   liveness monitoring and the request channel, and reports session changes to
-  `PairingHost` through `PairedSessionOwner`.
+  `PairingHost` through `PairedSessionOwner`, holding back its grant writes
+  until each change and the cleanup it leaves are done.
 - **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
   from host-held secret material. Its public identity is the RFC-0028
@@ -344,13 +356,9 @@ the page.
 
 ### Inter-host SSO
 
-`SsoRequestService::call(request)` sends typed requests to
-[`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Handlers own
-consent and business logic; [`SsoResponderService`](src/runtime/sso_responder_service.rs)
-owns the transport loop: it answers pairing, serves the session and drops
-duplicate requests. Resource consent is bound to the request's signing session:
-account changes, disconnects, and reactivation invalidate pending approval before
-allocation or key return. Allocation failure details stay in local transcripts.
+On the signing host, [`SsoResponderService`](src/runtime/sso_responder_service.rs) owns the transport: it answers pairing, runs the serve loop, drops duplicate requests, and gives each peer its own [`SsoAccountHolderService`](src/runtime/sso_account_holder_service.rs). That service is bound to the wallet activation that authenticated the peer's channel and calls `WalletAccountHolder` directly; once that activation ends it answers only not-connected. A native wallet with its own transport opens the same per-peer service from the native runtime.
+
+On the paired host, `SsoRequestService::call(request)` sends typed requests to the peer's `SsoAccountHolderService`. That service confirms each signing, transaction, VRF and allocation request with the user before `WalletAccountHolder` acts on it, and approval is bound to the request's signing session, so account changes, disconnects and reactivation invalidate a pending one. Allocation failure details stay in local transcripts.
 Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
 Signing uses canonical request and result types. Product-scoped VRF requests use
 `ProductRequest<P>` to attach the caller to a canonical payload. Both product and
@@ -540,19 +548,19 @@ for raw bytes signed inside the `<Bytes>` watermark.
   needs the core database: natively the configured `database_directory`,
   otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.
-  The host lists its providers with `set_funding_provider_config` (Rust hosts
-  with `set_funding_providers`), each with the
-  Worker manifest it ships for it. Before the overlay shows, the core
-  announces the session's options, which `funding_options(intent)` works out
+  The host lists its providers by their published names with
+  `set_funding_provider_config`; a Rust host can instead hand
+  `set_funding_providers` the Worker manifest it ships for each. Before the
+  overlay shows, the core announces the session's options, which `funding_options(intent)` works out
   as it is read: `candidates` are the
   providers serving that session's direction, with their routes, from what the
   `includes.funding` configuration of each provider's Worker manifest declares:
   dotNS's answer once the core has read it (cached for a day, re-checked in the
   background on every query), the shipped snapshot until then, so the list
   renders with no chain read. A provider whose manifest no longer serves
-  Funding drops out. A provider whose `origin` is `Bundled` ships inside
-  the host: its shipped manifest is what the core goes by, and dotNS is never
-  read for it.
+  Funding drops out. A provider a Rust host offers with `origin: Bundled`
+  ships inside it: its shipped manifest is what the core goes by, and dotNS
+  is never read for it.
   `get_funding_quote(intent, amount)` prices `amount` on the rail, asset,
   network and country the last `select_funding_options` named (card and bank
   take the resolved fiat asset), returning `None` while there is nothing to
@@ -702,8 +710,13 @@ for raw bytes signed inside the `<Bytes>` watermark.
   session is open), `presentFrame` asks the host to
   show one of its screens through `present_provider_frame` (an App route only
   when the provider ships an App: a bundled entry's `app`, else an `app`
-  subname dotNS publishes, read within ten seconds; otherwise `NoApp`), and
-  `closeFrame`
+  subname dotNS publishes, read within ten seconds; otherwise `NoApp`). The
+  core never shows it on its own: it holds the call, tells the host through
+  `provider_frame_requested`, and presents it once the host calls
+  `open_provider_frame`, at once while the user looks at the session or when
+  the user taps a notice. One waits per session: a newer call replaces it
+  (`Dismissed`), and `closeFrame`, the payment moving or the session ending
+  drops it (`Closed`). `closeFrame`
   closes it through `close_provider_frame` once the provider is done with it,
   such as a card payment the user made: the open `presentFrame` answers
   `Closed` and the host shows the session sheet in its place. The core holds the

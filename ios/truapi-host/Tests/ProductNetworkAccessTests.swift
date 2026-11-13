@@ -275,9 +275,7 @@ private struct NetworkTestProduct {
         let server = try await NetworkTestServer.start()
         do {
             let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: HostRuntimeConfig(
-                hostName: "network-tests", peopleChainGenesisHash: Data(repeating: 0, count: 32),
-                bulletinChainGenesisHash: Data(repeating: 0, count: 32),
-                assetHubChainGenesisHash: Data(repeating: 1, count: 32), networkSuffix: "paseo",
+                hostName: "network-tests", stack: previewnetStack(),
                 databaseDirectory: temporaryDatabaseDirectory()
             ))
             let execution = try runtime.openProductExecution(

@@ -20,7 +20,7 @@ If you experience problems with any product or service that was built on or depl
 
 </div>
 
-The app uses the in-tree TrUAPIHost SDK in this repository. A standalone host checkout requires a published SDK with `ProductId` support. Its version is pinned in `AppDependencies`, `Products`, `KeyDerivation`, and `Coinage`; update all four pins together.
+The app uses the in-tree TrUAPIHost SDK in this repository.
 
 ## Features
 
@@ -120,6 +120,8 @@ Built with **UIKit** and programmatic layout (no Storyboards), using **VIPER** f
 Non-release TrUAPI SPA runtimes publish an immutable `globalThis.__trinityHostTelemetry` schema-v1 object before
 the product container starts. It contains the WebView's `hostSessionId` plus the native app version, build, variant,
 platform, OS version and TrUAPI host version used to correlate product diagnostics with `host.webview.created`.
+
+With the Rust runtime enabled, the SSO coordinator binds its transport keys to one wallet activation and retains a separate account-holder service for each peer. Ordinary requests share one FIFO queue; cancellation reaches its peer's service immediately. Replies validate the same wallet activation before posting.
 
 This repository ships a **GitHub Actions + Fastlane CI/CD setup** — PR build and
 tests, plus maintainer-gated TestFlight and Firebase App Distribution. Build-time
