@@ -20,7 +20,7 @@ struct FundingTokenView: View {
                     Text(verbatim: network.name)
                         .typography(.captionMedium)
                         .foregroundStyle(.fgPrimary)
-                    FundingAssetMark(logo: network.logo, letter: network.monogram, tint: network.tint, size: .s20)
+                    FundingAssetMark(logo: network.logo, letter: network.monogram, size: .s20)
                 }
                 .padding(.horizontal, DSSpacings.smallIncreased)
                 .frame(height: 32)
@@ -31,7 +31,7 @@ struct FundingTokenView: View {
                 VStack(spacing: DSSpacings.small) {
                     ForEach(model.tokens) { token in
                         DisclosureListRow(title: token.symbol) {
-                            FundingAssetMark(logo: token.logo, letter: token.monogram, tint: token.tint)
+                            FundingAssetMark(logo: token.logo, letter: token.monogram)
                         } onTap: {
                             presenter.chooseToken(token.symbol)
                         }
@@ -42,6 +42,3 @@ struct FundingTokenView: View {
         }
     }
 }
-
-/// A network's or token's mark: the app's logo where it has one, else its
-/// first letter in its colour.
