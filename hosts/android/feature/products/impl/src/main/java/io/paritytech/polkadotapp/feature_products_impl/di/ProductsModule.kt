@@ -169,10 +169,10 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotMa
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaBrowser.SpaBrowserFragment
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.RuntimeSelectingSpaHost
 import io.paritytech.polkadotapp.feature_scan_api.domain.ScanContentParser
-import java.util.concurrent.TimeUnit
-import javax.inject.Singleton
 import okhttp3.Call
 import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
+import javax.inject.Singleton
 
 @Module
 @InstallIn(SingletonComponent::class)

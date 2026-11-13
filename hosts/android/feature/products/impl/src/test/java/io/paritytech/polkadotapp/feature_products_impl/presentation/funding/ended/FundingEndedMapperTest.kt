@@ -1,10 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended
 
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.testCashFormat
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDotState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.testCashFormat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue

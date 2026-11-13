@@ -1,11 +1,11 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose
 
-import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,10 +28,10 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.comp
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingKeypad
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingRailTabs
-import java.math.BigDecimal
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import uniffi.truapi.FundingRail
+import java.math.BigDecimal
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val PRESET_HEIGHT = 36.dp
@@ -110,7 +110,6 @@ private fun AmountFigure(state: FundingAmountUiState) {
         )
     }
 }
-
 
 @Composable
 private fun noteText(note: FundingAmountNote): String = when (note) {

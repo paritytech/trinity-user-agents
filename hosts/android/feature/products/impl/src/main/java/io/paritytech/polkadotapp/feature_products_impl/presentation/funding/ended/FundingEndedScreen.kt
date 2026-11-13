@@ -38,8 +38,8 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.comp
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingInfoRow
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingTimelineCard
-import kotlin.time.Instant
 import kotlinx.collections.immutable.ImmutableList
+import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
 private val ICON_SIZE = 40.dp
