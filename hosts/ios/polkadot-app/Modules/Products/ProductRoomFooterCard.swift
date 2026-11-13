@@ -18,6 +18,10 @@ struct ProductRoomFooterCardConfiguration: @preconcurrency ChatInputViewConfigur
         false
     }
 
+    var safeAreaFillColor: UIColor? {
+        UIColor.bgSurfaceMain
+    }
+
     @MainActor
     func makeContentView(for _: ChatInputHandling?) -> UIView {
         UIHostingConfiguration {
@@ -28,7 +32,8 @@ struct ProductRoomFooterCardConfiguration: @preconcurrency ChatInputViewConfigur
                 resolveImage: resolveImage
             )
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.top, 12)
+            .padding(.bottom, DSSpacings.small)
             .background(
                 LinearGradient(
                     colors: [Color.bgSurfaceMain.opacity(0), Color.bgSurfaceMain],
