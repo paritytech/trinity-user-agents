@@ -51,6 +51,22 @@ a `generation`, the network, the TLD and each chain's genesis hash. Only the
 `wasm/testing` bundle reads it. `mockRuntimeConfig` fills it with the
 `MOCK_GENESIS` chains, and the Playwright fixture builds it from `networks`.
 
+The core keeps what it stores apart per stack. Every `coreStorage` callback
+takes a `StackStorageKey`, `{ stack, slot }`: the slot and the identity of the
+stack it belongs to, which is the key in the stack's pointer, or a test
+stack's `id`. Store each value under the whole key. A fork and its source then
+share nothing, although their genesis hashes are equal. A host that keeps a
+slot under a fixed key of its own, such as a session shared between origins,
+has to put `stack` in that key as well.
+
+A host that stored core state before keys had a stack implements
+`readUnscopedCoreStorage(slot)` and `clearUnscopedCoreStorage(slot)`: return
+and remove the value it stored for that `CoreStorageKey`. On a miss the core
+reads it, writes it under the stack's key and clears it, so the session, the
+device key and the permissions survive the update. The first stack to read a
+slot takes its value. `createHeadlessHostCallbacks` treats a host without the
+two as holding nothing.
+
 ## Bundler requirements
 
 The worker imports the WASM glue by a literal specifier, so every bundler

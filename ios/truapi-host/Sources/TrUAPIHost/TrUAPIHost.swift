@@ -38,8 +38,11 @@ public protocol HostStorageBackend: AnyObject, Sendable {
 }
 
 /// Core-owned host-private storage backend. Keys are SCALE-encoded
-/// `truapi::platform::CoreStorageKey` values, so embedders can persist them
-/// opaquely or decode them to choose a secure backing store per slot.
+/// `truapi::platform::StackStorageKey` values: a slot and the id of the stack
+/// it belongs to, so stacks do not share entries. When the core looks for a
+/// value stored before keys had a stack id, the key is the slot alone, as it
+/// was stored. Embedders can persist keys opaquely or decode them to choose a
+/// secure backing store per slot.
 public protocol HostCoreStorageBackend: AnyObject, Sendable {
     func read(key: Data) throws -> Data?
     func write(key: Data, value: Data) throws

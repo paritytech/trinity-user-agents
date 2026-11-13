@@ -38,6 +38,8 @@ pub struct JsBridge {
     pub read_core_storage: Function,
     pub write_core_storage: Function,
     pub clear_core_storage: Function,
+    pub read_unscoped_core_storage: Function,
+    pub clear_unscoped_core_storage: Function,
     pub transaction_extension_versions: Function,
     pub feature_supported: Function,
     pub schedule_game_reminder: Function,
@@ -92,6 +94,8 @@ impl JsBridge {
             read_core_storage: get_function(callbacks, "readCoreStorage")?,
             write_core_storage: get_function(callbacks, "writeCoreStorage")?,
             clear_core_storage: get_function(callbacks, "clearCoreStorage")?,
+            read_unscoped_core_storage: get_function(callbacks, "readUnscopedCoreStorage")?,
+            clear_unscoped_core_storage: get_function(callbacks, "clearUnscopedCoreStorage")?,
             transaction_extension_versions: get_function(
                 callbacks,
                 "transactionExtensionVersions",
@@ -308,7 +312,7 @@ impl crate::platform::ContactsPlatform for WasmPlatform {
 impl crate::platform::CoreStorage for WasmPlatform {
     async fn read_core_storage(
         &self,
-        key: crate::platform::CoreStorageKey,
+        key: crate::platform::StackStorageKey,
     ) -> Result<Option<Vec<u8>>, latest::GenericError> {
         Ok(invoke_optional_bytes_return(
             &self.bridge.read_core_storage,
@@ -320,7 +324,7 @@ impl crate::platform::CoreStorage for WasmPlatform {
 
     async fn write_core_storage(
         &self,
-        key: crate::platform::CoreStorageKey,
+        key: crate::platform::StackStorageKey,
         value: Vec<u8>,
     ) -> Result<(), latest::GenericError> {
         invoke_unit(
@@ -336,11 +340,35 @@ impl crate::platform::CoreStorage for WasmPlatform {
 
     async fn clear_core_storage(
         &self,
-        key: crate::platform::CoreStorageKey,
+        key: crate::platform::StackStorageKey,
     ) -> Result<(), latest::GenericError> {
         invoke_unit(
             &self.bridge.clear_core_storage,
             vec![Uint8Array::from(key.encode().as_slice()).into()],
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn read_unscoped_core_storage(
+        &self,
+        _slot: crate::platform::CoreStorageKey,
+    ) -> Result<Option<Vec<u8>>, latest::GenericError> {
+        Ok(invoke_optional_bytes_return(
+            &self.bridge.read_unscoped_core_storage,
+            vec![Uint8Array::from(_slot.encode().as_slice()).into()],
+            "readUnscopedCoreStorage must resolve to Uint8Array, null or undefined",
+        )
+        .await?)
+    }
+
+    async fn clear_unscoped_core_storage(
+        &self,
+        _slot: crate::platform::CoreStorageKey,
+    ) -> Result<(), latest::GenericError> {
+        invoke_unit(
+            &self.bridge.clear_unscoped_core_storage,
+            vec![Uint8Array::from(_slot.encode().as_slice()).into()],
         )
         .await?;
         Ok(())

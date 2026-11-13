@@ -886,6 +886,26 @@ export interface SignVrfReview {
 }
 
 /**
+ * The key a host stores core-owned state under: a `CoreStorageKey` slot
+ * and the id of the stack it belongs to.
+ *
+ * `stack` is `Stack::id`. A fork has the same genesis hashes as its source
+ * and a different id, so the two never share a key. A host stores each value
+ * under the whole encoded key, never under the slot alone.
+ */
+export interface StackStorageKey {
+  /**
+   * Id of the stack the slot belongs to.
+   */
+  stack: string;
+
+  /**
+   * The slot.
+   */
+  slot: CoreStorageKey;
+}
+
+/**
  * Review shown before a product account signs a Statement Store proof
  * payload. Distinct from raw-message signing: the payload is the exact
  * unsigned statement, signed as-is (no `<Bytes>` envelope), so the host must
@@ -1573,6 +1593,22 @@ export const SignVrfReview: S.Codec<SignVrfReview> = S.lazy(
 );
 
 /**
+ * The key a host stores core-owned state under: a `CoreStorageKey` slot
+ * and the id of the stack it belongs to.
+ *
+ * `stack` is `Stack::id`. A fork has the same genesis hashes as its source
+ * and a different id, so the two never share a key. A host stores each value
+ * under the whole encoded key, never under the slot alone.
+ */
+export const StackStorageKey: S.Codec<StackStorageKey> = S.lazy(
+  (): S.Codec<StackStorageKey> =>
+    S.Struct({
+      stack: S.str,
+      slot: CoreStorageKey,
+    }) as S.Codec<StackStorageKey>,
+);
+
+/**
  * Review shown before a product account signs a Statement Store proof
  * payload. Distinct from raw-message signing: the payload is the exact
  * unsigned statement, signed as-is (no `<Bytes>` envelope), so the host must
@@ -1911,6 +1947,9 @@ export interface CoreAdmin {
 /**
  * Host-private persistence for core-owned state.
  *
+ * Every key includes the id of the stack it belongs to, and the core only
+ * uses keys of the stack it runs. Stacks therefore do not share entries.
+ *
  * Clearing product-indexed slots is the host's job. The core drops the ones
  * it is holding when a session ends, but a product it never opened this run
  * has no entry to drop, so those slots outlive the disconnect. A host that
@@ -1927,17 +1966,34 @@ export interface CoreStorage {
   /**
    * Read a core-owned value by typed slot.
    */
-  readCoreStorage(key: CoreStorageKey): Promise<Uint8Array | undefined>;
+  readCoreStorage(key: StackStorageKey): Promise<Uint8Array | undefined>;
 
   /**
    * Write a core-owned value by typed slot.
    */
-  writeCoreStorage(key: CoreStorageKey, value: Uint8Array): Promise<void>;
+  writeCoreStorage(key: StackStorageKey, value: Uint8Array): Promise<void>;
 
   /**
    * Clear a core-owned value by typed slot.
    */
-  clearCoreStorage(key: CoreStorageKey): Promise<void>;
+  clearCoreStorage(key: StackStorageKey): Promise<void>;
+
+  /**
+   * Read a value the host holds under `slot` alone, with no stack id.
+   *
+   * A host that stored core state before keys included a stack id serves
+   * those entries here, by the key it stored them under: the SCALE-encoded
+   * slot. The core moves each one under the stack it runs the first time it
+   * reads the slot. A host with no such entries has none to return.
+   */
+  readUnscopedCoreStorage?(
+    slot: CoreStorageKey,
+  ): Promise<Uint8Array | undefined>;
+
+  /**
+   * Clear the value the host holds under `slot` alone, with no stack id.
+   */
+  clearUnscopedCoreStorage?(slot: CoreStorageKey): Promise<void>;
 }
 
 /**

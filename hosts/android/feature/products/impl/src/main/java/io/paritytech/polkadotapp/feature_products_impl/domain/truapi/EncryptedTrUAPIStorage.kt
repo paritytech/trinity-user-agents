@@ -42,7 +42,8 @@ class EncryptedHostStorage(
  * Deliberately *not* product-scoped. The pairing identity belongs to the user,
  * not to a product, and scoping it per product would make every product demand
  * its own pairing. The core disambiguates internally through the SCALE-encoded
- * `CoreStorageKey` it passes here.
+ * `StackStorageKey` it passes here, which also names the stack, so stacks do
+ * not share entries.
  */
 class EncryptedHostCoreStorage(
     private val preferences: EncryptedPreferences,

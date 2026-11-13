@@ -12,6 +12,7 @@ use crate::{
 		CreateTransactionReview, ExecutableKind, HostScan, LegacySigningAccount,
 		PermissionAuthorizationRequest, SignPayloadReview, SignRawReview,
 	},
+	test_support::test_storage_key,
 };
 use parity_scale_codec::{Decode, Encode};
 use truapi::{
@@ -410,7 +411,7 @@ fn cache_manifest_at(platform: &StubPlatform, owner: &str, trusted: &str, fetche
 	);
 	let entry = CachedManifest { fetched_at_secs, json: Some(json) };
 	futures::executor::block_on(platform.write_core_storage(
-		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+		test_storage_key(CoreStorageKey::product_manifest(&ProductId::for_test(owner))),
 		entry.encode(),
 	))
 	.expect("stub core storage accepts the entry");
@@ -421,7 +422,7 @@ fn cache_manifest_entry(platform: &StubPlatform, owner: &str, json: Option<Strin
 	let entry =
 		CachedManifest { fetched_at_secs: current_unix_secs().saturating_sub(age_secs), json };
 	futures::executor::block_on(platform.write_core_storage(
-		CoreStorageKey::product_manifest(&ProductId::for_test(owner)),
+		test_storage_key(CoreStorageKey::product_manifest(&ProductId::for_test(owner))),
 		entry.encode(),
 	))
 	.expect("stub core storage accepts the entry");
@@ -633,6 +634,91 @@ fn a_cached_grant_stops_being_honoured_once_it_expires() {
 	seed_owner_value(&platform, "wallet.dot");
 	let host = ProductRuntimeHost::new_compat(platform, Spawner::for_test());
 	assert_eq!(read_storage(&host, Some("wallet.dot"), "k").unwrap_err(), access_not_granted());
+}
+
+/// A product runtime for `unknown.dot` on a stack with this `id` and
+/// `generation`. The chains are the same for every id and generation.
+fn host_on_stack(platform: Arc<StubPlatform>, id: &str, generation: &str) -> ProductRuntimeHost {
+	let identity =
+		crate::platform::StackIdentity { id: id.to_string(), generation: generation.to_string() };
+	let chains = crate::test_support::paseo_test_stack().chains().clone();
+	let stack = crate::platform::Stack::new(
+		identity,
+		"paseo".to_string(),
+		"paseo".to_string(),
+		chains,
+		true,
+	)
+	.expect("test stack is valid");
+	let (config, _) = crate::test_support::runtime_config("unknown.dot");
+	let config = crate::platform::PairingHostConfig::new(
+		config.host.host_info,
+		config.host.platform_info,
+		stack,
+		config.pairing_deeplink_scheme,
+	)
+	.expect("test host runtime config is valid");
+	let product = ProductContext::new(ProductId::for_test("unknown.dot"));
+	ProductRuntimeHost::new_pairing_for_tests(platform, config, product, Spawner::for_test()).0
+}
+
+/// Stores, for `host`'s stack, a cached manifest in which `wallet.dot` grants
+/// storage access, and an allowed identity disclosure.
+fn store_grant_and_permission(host: &ProductRuntimeHost) {
+	let storage = host.connection.services.storage();
+	let entry = CachedManifest {
+		fetched_at_secs: current_unix_secs(),
+		json: Some(test_manifest_json(r#"{"unknown":["storage"]}"#)),
+	};
+	futures::executor::block_on(async {
+		storage
+			.write(
+				CoreStorageKey::product_manifest(&ProductId::for_test("wallet.dot")),
+				entry.encode(),
+			)
+			.await
+			.expect("stub core storage accepts the entry");
+		crate::host_internal::permissions::set_authorization_status(
+			&storage,
+			identity_disclosure_key(),
+			PermissionAuthorizationStatus::Authorized,
+		)
+		.await
+		.expect("stub core storage accepts the decision");
+	});
+}
+
+fn identity_disclosure_key() -> CoreStorageKey {
+	CoreStorageKey::identity_disclosure_authorization(&ProductId::for_test("unknown.dot"))
+}
+
+fn stored_identity_disclosure(host: &ProductRuntimeHost) -> PermissionAuthorizationStatus {
+	futures::executor::block_on(crate::host_internal::permissions::authorization_status(
+		&host.connection.services.storage(),
+		identity_disclosure_key(),
+	))
+	.expect("stub core storage reads")
+}
+
+/// A fork has the same genesis hashes as its source and a different id. After
+/// a host switches to the fork, a grant cached on the source and a permission
+/// stored there must not apply.
+#[test]
+fn a_fork_honours_neither_grants_nor_permissions_stored_for_its_source() {
+	let platform = stub_platform();
+	seed_owner_value(&platform, "wallet.dot");
+	let source = host_on_stack(platform.clone(), "source", "first");
+	store_grant_and_permission(&source);
+	assert!(granted_value(&source, "wallet.dot").is_some());
+
+	let fork = host_on_stack(platform, "fork", "first");
+	assert_eq!(
+		(
+			read_storage(&fork, Some("wallet.dot"), "k").unwrap_err(),
+			stored_identity_disclosure(&fork),
+		),
+		(access_not_granted(), PermissionAuthorizationStatus::NotDetermined)
+	);
 }
 
 /// With no session, every proof refusal is the same refusal.
@@ -4753,9 +4839,11 @@ fn get_account_allow_once_answers_later_disclosures_without_saving() {
 			disclosed.push(response.account.public_key);
 		}
 		let saved = platform
-			.read_core_storage(CoreStorageKey::product_account_access_authorization(
-				&ProductId::for_test("myapp.dot"),
-				&ProductId::for_test("other.dot"),
+			.read_core_storage(test_storage_key(
+				CoreStorageKey::product_account_access_authorization(
+					&ProductId::for_test("myapp.dot"),
+					&ProductId::for_test("other.dot"),
+				),
 			))
 			.await
 			.unwrap();
@@ -10199,7 +10287,7 @@ fn quotes_ask_providers_routing_the_rail_and_learn_what_they_serve() {
 	// the saved records only once, so both have to be stored before it.
 	for _ in 0..200 {
 		let stored = futures::executor::block_on(
-			storage.read_core_storage(CoreStorageKey::FundingSupport),
+			storage.read_core_storage(test_storage_key(CoreStorageKey::FundingSupport)),
 		)
 		.ok()
 		.flatten()
@@ -10255,7 +10343,7 @@ fn learning_before_the_stored_records_load_keeps_them() {
 		learned_at_ms: crate::unix_time::current_unix_millis(),
 	};
 	futures::executor::block_on(storage.write_core_storage(
-		CoreStorageKey::FundingSupport,
+		test_storage_key(CoreStorageKey::FundingSupport),
 		parity_scale_codec::Encode::encode(&vec![support("earlier.dot")]),
 	))
 	.expect("stored");
@@ -10265,20 +10353,18 @@ fn learning_before_the_stored_records_load_keeps_them() {
 
 	let mut stored = Vec::new();
 	for _ in 0..200 {
-		stored =
-			futures::executor::block_on(storage.read_core_storage(CoreStorageKey::FundingSupport))
-				.ok()
-				.flatten()
-				.and_then(|bytes| {
-					<Vec<LearnedSupport> as parity_scale_codec::Decode>::decode(
-						&mut bytes.as_slice(),
-					)
-					.ok()
-				})
-				.unwrap_or_default()
-				.into_iter()
-				.map(|record| record.provider_id)
-				.collect::<Vec<_>>();
+		stored = futures::executor::block_on(
+			storage.read_core_storage(test_storage_key(CoreStorageKey::FundingSupport)),
+		)
+		.ok()
+		.flatten()
+		.and_then(|bytes| {
+			<Vec<LearnedSupport> as parity_scale_codec::Decode>::decode(&mut bytes.as_slice()).ok()
+		})
+		.unwrap_or_default()
+		.into_iter()
+		.map(|record| record.provider_id)
+		.collect::<Vec<_>>();
 		if stored.len() == 2 {
 			break;
 		}

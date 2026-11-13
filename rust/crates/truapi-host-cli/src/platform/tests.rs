@@ -6,6 +6,11 @@ fn test_network() -> crate::network::Stack {
 	crate::network::Network::default().bundled_stack(ChainBackend::Rpc)
 }
 
+/// `slot` of [`test_network`]'s stack, as the core addresses it.
+fn stack_key(slot: CoreStorageKey) -> StackStorageKey {
+	StackStorageKey { stack: test_network().identity().id, slot }
+}
+
 /// Battery examples that preflight `getChainInfo` resolve the genesis they
 /// ask for through this set, so an error here fails every one of them.
 ///
@@ -163,7 +168,7 @@ fn a_rejected_user_id_does_not_leave_the_previous_users_storage_mounted() {
 
 	let platform = CliPlatform::new(
 		&test_network(),
-		Some(CliStoragePaths::pairing(network_dir.clone())),
+		Some(CliStoragePaths::pairing(network_dir.clone(), &test_network().identity().id)),
 		ApprovalPolicy::AutoAccept,
 		None,
 	);
@@ -212,7 +217,7 @@ async fn auth_state_changed_does_not_inherit_storage_on_a_rejected_username() {
 
 	let platform = CliPlatform::new(
 		&test_network(),
-		Some(CliStoragePaths::pairing(network_dir)),
+		Some(CliStoragePaths::pairing(network_dir, &test_network().identity().id)),
 		ApprovalPolicy::AutoAccept,
 		None,
 	);
@@ -265,8 +270,7 @@ async fn auth_state_changed_does_not_inherit_storage_on_a_rejected_username() {
 /// `CliPlatform` discarded `PairingDeviceIdentity` and then overwrote it on
 /// the next unrelated write.
 ///
-/// Keys on disk are hex of the SCALE-encoded `CoreStorageKey`, so
-/// `AuthSession` is `00` and `PairingDeviceIdentity` is `01`.
+/// Keys on disk are hex of the SCALE-encoded `StackStorageKey`.
 #[tokio::test]
 async fn cli_platform_preserves_unreadable_core_storage() {
 	use truapi::platform::CoreStorage;
@@ -277,8 +281,13 @@ async fn cli_platform_preserves_unreadable_core_storage() {
 	std::fs::create_dir_all(&state_dir).expect("state dir");
 	let core_path = state_dir.join("core-storage.json");
 
-	std::fs::write(&core_path, r#"{"values":{"00":"cafebabe","01":"deadbeef","ff":"zzzz"}}"#)
-		.expect("seed core storage");
+	let on_disk = |slot| hex::encode(parity_scale_codec::Encode::encode(&stack_key(slot)));
+	let seeded = format!(
+		r#"{{"values":{{"{}":"cafebabe","{}":"deadbeef","ff":"zzzz"}}}}"#,
+		on_disk(CoreStorageKey::AuthSession),
+		on_disk(CoreStorageKey::PairingDeviceIdentity),
+	);
+	std::fs::write(&core_path, seeded).expect("seed core storage");
 
 	let platform = CliPlatform::new(
 		&test_network(),
@@ -289,13 +298,16 @@ async fn cli_platform_preserves_unreadable_core_storage() {
 
 	// Nothing loaded: the good entries went with the bad one.
 	assert_eq!(
-		platform.read_core_storage(CoreStorageKey::AuthSession).await.expect("read"),
+		platform
+			.read_core_storage(stack_key(CoreStorageKey::AuthSession))
+			.await
+			.expect("read"),
 		None,
 		"AuthSession should have loaded but the file was discarded"
 	);
 	assert_eq!(
 		platform
-			.read_core_storage(CoreStorageKey::PairingDeviceIdentity)
+			.read_core_storage(stack_key(CoreStorageKey::PairingDeviceIdentity))
 			.await
 			.expect("read"),
 		None
@@ -303,7 +315,7 @@ async fn cli_platform_preserves_unreadable_core_storage() {
 
 	// The host writes one unrelated key. That persists the whole map.
 	platform
-		.write_core_storage(CoreStorageKey::AuthSession, vec![0x42])
+		.write_core_storage(stack_key(CoreStorageKey::AuthSession), vec![0x42])
 		.await
 		.expect("write");
 
@@ -390,7 +402,7 @@ fn pairing_storage_switches_with_the_connected_username() {
 	let network_dir = temporary.path().join("testnet");
 	let platform = CliPlatform::new(
 		&test_network(),
-		Some(CliStoragePaths::pairing(network_dir.clone())),
+		Some(CliStoragePaths::pairing(network_dir.clone(), &test_network().identity().id)),
 		ApprovalPolicy::AutoAccept,
 		None,
 	);
@@ -418,7 +430,8 @@ fn pairing_storage_switches_with_the_connected_username() {
 		Some(network_dir.join("alice.dot_pairing_host").as_path())
 	);
 	assert_eq!(
-		read_current_pairing_user(&network_dir.join("pairing-host")).as_deref(),
+		read_current_pairing_user(&network_dir.join("pairing-host"), &test_network().identity().id)
+			.as_deref(),
 		Some("alice.dot")
 	);
 }
@@ -429,14 +442,14 @@ fn device_encryption_key_outlives_pairing_user_switches() {
 	let network_dir = temporary.path().join("testnet");
 	let platform = CliPlatform::new(
 		&test_network(),
-		Some(CliStoragePaths::pairing(network_dir.clone())),
+		Some(CliStoragePaths::pairing(network_dir.clone(), &test_network().identity().id)),
 		ApprovalPolicy::AutoAccept,
 		None,
 	);
 
 	platform.switch_pairing_user_storage("alice.dot").expect("select alice");
 	futures::executor::block_on(
-		platform.write_core_storage(CoreStorageKey::DeviceEncryptionKey, vec![7; 32]),
+		platform.write_core_storage(stack_key(CoreStorageKey::DeviceEncryptionKey), vec![7; 32]),
 	)
 	.expect("write device key");
 
@@ -445,7 +458,7 @@ fn device_encryption_key_outlives_pairing_user_switches() {
 	platform.switch_pairing_user_storage("bob.dot").expect("select bob");
 	assert_eq!(
 		futures::executor::block_on(
-			platform.read_core_storage(CoreStorageKey::DeviceEncryptionKey)
+			platform.read_core_storage(stack_key(CoreStorageKey::DeviceEncryptionKey))
 		)
 		.expect("read device key as bob"),
 		Some(vec![7; 32])
@@ -454,26 +467,28 @@ fn device_encryption_key_outlives_pairing_user_switches() {
 	// A user-scoped slot stays isolated, so the routing is not simply
 	// making every slot global.
 	futures::executor::block_on(
-		platform.write_core_storage(CoreStorageKey::AutoSigningKeys, vec![1, 2, 3]),
+		platform.write_core_storage(stack_key(CoreStorageKey::AutoSigningKeys), vec![1, 2, 3]),
 	)
 	.expect("write bob auto-signing keys");
 	platform.switch_pairing_user_storage("alice.dot").expect("restore alice");
 	assert_eq!(
-		futures::executor::block_on(platform.read_core_storage(CoreStorageKey::AutoSigningKeys))
-			.expect("read alice auto-signing keys"),
+		futures::executor::block_on(
+			platform.read_core_storage(stack_key(CoreStorageKey::AutoSigningKeys))
+		)
+		.expect("read alice auto-signing keys"),
 		None
 	);
 
 	// It also survives a fresh process reading the same directories.
 	let restarted = CliPlatform::new(
 		&test_network(),
-		Some(CliStoragePaths::pairing(network_dir)),
+		Some(CliStoragePaths::pairing(network_dir, &test_network().identity().id)),
 		ApprovalPolicy::AutoAccept,
 		None,
 	);
 	assert_eq!(
 		futures::executor::block_on(
-			restarted.read_core_storage(CoreStorageKey::DeviceEncryptionKey)
+			restarted.read_core_storage(stack_key(CoreStorageKey::DeviceEncryptionKey))
 		)
 		.expect("read device key after restart"),
 		Some(vec![7; 32])
@@ -496,7 +511,7 @@ fn product_storage_written_before_the_username_carries_into_the_resolved_user() 
 	.expect("write bootstrap pairing product storage");
 	let platform = CliPlatform::new(
 		&test_network(),
-		Some(CliStoragePaths::pairing(network_dir.clone())),
+		Some(CliStoragePaths::pairing(network_dir.clone(), &test_network().identity().id)),
 		ApprovalPolicy::AutoAccept,
 		None,
 	);
@@ -686,5 +701,135 @@ fn product_storage_is_isolated_by_session_then_product() {
 	assert_ne!(
 		fs::read_to_string(first_path).expect("read first session file"),
 		fs::read_to_string(second_path).expect("read second session file")
+	);
+}
+
+/// A second stack that keeps its state in [`test_network`]'s directory, as a
+/// fork keeps its state in its source's.
+fn fork_network() -> crate::network::Stack {
+	use clap::ValueEnum;
+
+	let fork = crate::network::Network::value_variants()
+		.iter()
+		.map(|network| network.bundled_stack(ChainBackend::Rpc))
+		.find(|network| network.identity().id != test_network().identity().id);
+	fork.expect("the CLI bundles more than one stack")
+}
+
+fn pairing_platform(network: &crate::network::Stack, network_dir: &Path) -> Arc<CliPlatform> {
+	CliPlatform::new(
+		network,
+		Some(CliStoragePaths::pairing(network_dir.to_path_buf(), &network.identity().id)),
+		ApprovalPolicy::AutoAccept,
+		None,
+	)
+}
+
+fn session_of(network: &crate::network::Stack) -> StackStorageKey {
+	StackStorageKey { stack: network.identity().id, slot: CoreStorageKey::AuthSession }
+}
+
+/// A fork and its source share a state directory. Pairing the fork as bob
+/// must not start the source in bob's directory, where alice's session is
+/// not, and so show the source as signed out.
+#[tokio::test]
+async fn pairing_a_fork_as_someone_else_leaves_the_sources_session_in_reach() {
+	use truapi::platform::CoreStorage;
+
+	let temporary = tempdir().expect("create pairing storage root");
+	let network_dir = temporary.path().join("previewnet");
+	let (source, fork) = (test_network(), fork_network());
+
+	let on_source = pairing_platform(&source, &network_dir);
+	on_source.switch_pairing_user_storage("alice.dot").expect("select alice");
+	on_source
+		.write_core_storage(session_of(&source), b"alice".to_vec())
+		.await
+		.expect("write");
+
+	let on_fork = pairing_platform(&fork, &network_dir);
+	on_fork.switch_pairing_user_storage("bob.dot").expect("select bob");
+	on_fork
+		.write_core_storage(session_of(&fork), b"bob".to_vec())
+		.await
+		.expect("write");
+
+	let sessions = (
+		pairing_platform(&source, &network_dir)
+			.read_core_storage(session_of(&source))
+			.await,
+		pairing_platform(&fork, &network_dir).read_core_storage(session_of(&fork)).await,
+	);
+	assert_eq!(sessions, (Ok(Some(b"alice".to_vec())), Ok(Some(b"bob".to_vec()))));
+}
+
+/// A fork and its source can run at once, each holding the file as it was
+/// when it started. A write by one must not put that stale copy of the
+/// other's entries back, or the other loses what it wrote since.
+#[tokio::test]
+async fn two_stacks_writing_one_file_keep_each_others_entries() {
+	use truapi::platform::CoreStorage;
+
+	let temporary = tempdir().expect("create storage root");
+	let paths = || {
+		let state_dir = temporary.path().join("state");
+		CliStoragePaths::new(state_dir.clone(), state_dir.join("storage"))
+	};
+	let (source, fork) = (test_network(), fork_network());
+	let platform = |network: &crate::network::Stack| {
+		CliPlatform::new(network, Some(paths()), ApprovalPolicy::AutoAccept, None)
+	};
+	let (on_source, on_fork) = (platform(&source), platform(&fork));
+
+	on_source
+		.write_core_storage(session_of(&source), b"source".to_vec())
+		.await
+		.expect("write");
+	on_fork
+		.write_core_storage(session_of(&fork), b"fork".to_vec())
+		.await
+		.expect("write");
+	on_source.clear_core_storage(session_of(&source)).await.expect("clear");
+
+	let restarted = platform(&fork);
+	assert_eq!(
+		(
+			restarted.read_core_storage(session_of(&source)).await,
+			restarted.read_core_storage(session_of(&fork)).await,
+		),
+		(Ok(None), Ok(Some(b"fork".to_vec())))
+	);
+}
+
+/// State a host wrote before keys included a stack id sits in the same file
+/// under the slot alone. The core has to find it there, and once it has moved
+/// it under its stack, the old entry must be gone from the file.
+#[tokio::test]
+async fn a_value_stored_with_no_stack_id_is_read_and_then_removed_from_the_file() {
+	let temporary = tempdir().expect("create storage root");
+	let state_dir = temporary.path().join("state");
+	std::fs::create_dir_all(&state_dir).expect("state dir");
+	let core_path = state_dir.join("core-storage.json");
+	std::fs::write(&core_path, r#"{"values":{"00":"cafebabe"}}"#).expect("seed core storage");
+	let network = test_network();
+	let platform = CliPlatform::new(
+		&network,
+		Some(CliStoragePaths::new(state_dir.clone(), state_dir.join("storage"))),
+		ApprovalPolicy::AutoAccept,
+		None,
+	);
+
+	let id = network.identity().id;
+	let storage = truapi::platform::StackStorage::new(platform.as_ref(), &id);
+	let read = storage.read(CoreStorageKey::AuthSession).await;
+
+	let stored = load_hex_key_map(&core_path);
+	let moved = parity_scale_codec::Encode::encode(&session_of(&network));
+	assert_eq!(
+		(read, stored),
+		(
+			Ok(Some(vec![0xca, 0xfe, 0xba, 0xbe])),
+			HashMap::from([(moved, vec![0xca, 0xfe, 0xba, 0xbe])])
+		)
 	);
 }

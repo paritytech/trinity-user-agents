@@ -7,7 +7,8 @@
 //! chain's genesis hash, and answers `get_chain_info`.
 //!
 //! [`Stack::storage`] is the only way the core reaches
-//! [`CoreStorage`](crate::platform::CoreStorage).
+//! [`CoreStorage`](crate::platform::CoreStorage). It adds [`Stack::id`] to
+//! every key, so stacks do not share stored state.
 
 mod storage;
 
@@ -224,20 +225,21 @@ impl Stack {
 		Ok(Self { identity, network, tld, chains })
 	}
 
-	/// The stack's identity. See [`StackIdentity::id`].
+	/// The stack's id. Every storage key includes it. See
+	/// [`StackIdentity::id`].
 	pub fn id(&self) -> &str {
 		&self.identity.id
 	}
 
-	/// The run of the stack's chains. What the core cached about the chains
-	/// under another generation is stale. See [`StackIdentity::generation`].
+	/// The descriptor's `generation`. Chain data cached under another
+	/// generation is stale. See [`StackIdentity::generation`].
 	pub fn generation(&self) -> &str {
 		&self.identity.generation
 	}
 
 	/// The core's storage for this stack over the host's `storage`.
 	pub fn storage<'a, S: CoreStorage + ?Sized>(&'a self, storage: &'a S) -> StackStorage<'a, S> {
-		StackStorage::new(storage)
+		StackStorage::new(storage, &self.identity.id)
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.

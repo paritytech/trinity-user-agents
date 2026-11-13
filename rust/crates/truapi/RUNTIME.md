@@ -470,7 +470,16 @@ for raw bytes signed inside the `<Bytes>` watermark.
 
 - `ProductStorage`: product-scoped key-value storage.
 - `CoreStorage`: typed core-owned storage slots such as auth session, pairing
-  identity, and permission authorization state.
+  identity, and permission authorization state. Every key is a
+  `StackStorageKey`: a `CoreStorageKey` slot together with the identity of the
+  stack it belongs to (`Stack::id`, the stack's key in hex). The core reaches
+  storage only through `Stack::storage`, which adds that identity, so a fork
+  and its source share nothing although their genesis hashes are equal. A
+  value a host holds under a slot alone, with no stack id, is moved under the
+  stack that first reads the slot: the read falls back to
+  `read_unscoped_core_storage`, writes the stack's copy and then clears the
+  other. A clear removes both, the unscoped one first, so a kill between the
+  two cannot bring a cleared value back.
 - `Navigation`: open URLs in the system browser.
 - `Notifications`: deliver and cancel push notifications.
 - `Permissions`: prompt for device and remote authorizations.

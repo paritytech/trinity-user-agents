@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use super::*;
-use crate::test_support::{StubPlatform, test_storage};
+use crate::test_support::{MemoryCoreStorage, StubPlatform, test_storage};
 
 /// A request that has not expired at any `now` these tests use.
 const REQUEST: ReplayRequest<'static> =
@@ -337,6 +337,44 @@ fn duplicate_request_is_acknowledged_again_but_not_executed_twice() {
 		assert_eq!(
 			(acknowledgements.load(Ordering::SeqCst), executions.load(Ordering::SeqCst)),
 			(2, 1)
+		);
+	});
+}
+
+/// A wallet that served a request and then updated holds its ledger under a
+/// key with no stack id. The request statement can still be on the channel,
+/// so the wallet has to find that ledger and refuse to run the request again.
+#[test]
+fn a_request_served_before_keys_included_a_stack_is_not_executed_again() {
+	futures::executor::block_on(async {
+		let host = MemoryCoreStorage::default();
+		let mut ledger = RequestLedger::default();
+		ledger.start(REQUEST.id.to_string(), REQUEST.expires_at_unix_secs, 100).unwrap();
+		ledger.complete(REQUEST.id);
+		host.store_unscoped(
+			scope(1, 2, 3).storage_key(),
+			VersionedRequestLedger::V1(ledger).encode(),
+		);
+		let executions = Arc::new(AtomicUsize::new(0));
+
+		let counted = executions.clone();
+		let outcome = execute_once(
+			&test_storage(&host),
+			&SsoReplayLocks::default(),
+			scope(1, 2, 3),
+			REQUEST,
+			100,
+			async { Ok(()) },
+			move || async move {
+				counted.fetch_add(1, Ordering::SeqCst);
+				Ok::<_, String>(())
+			},
+		)
+		.await;
+
+		assert_eq!(
+			(outcome, executions.load(Ordering::SeqCst)),
+			(Ok(ReplayExecution::Duplicate), 0)
 		);
 	});
 }

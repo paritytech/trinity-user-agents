@@ -77,7 +77,7 @@ Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrU
 
 - `HostBridge` - callback bundle the embedding app implements. Splits device permissions, remote permissions, navigation, push, feature support, action and permission confirmations, and both storage backends.
 - `HostStorage` - product-scoped read/write/clear interface the host backs with its own persistence. Its methods suspend, so a backend can await disk or keystore work.
-- `HostCoreStorage` - core-owned read/write/clear interface for auth session, pairing identity, and persisted permission decisions (`key` is a SCALE-encoded `CoreStorageKey`). Its methods suspend, like `HostStorage`'s.
+- `HostCoreStorage` - core-owned read/write/clear interface for auth session, pairing identity, and persisted permission decisions (`key` is a SCALE-encoded `StackStorageKey`: a slot and the identity of the stack it belongs to). Its methods suspend, like `HostStorage`'s.
 - `LocalhostBridgeBootstrap` - supplies the private WebSocket endpoint to the container.
 - `ContainerScriptBundle` - loads the bundled browser container for installation at document start.
 - `TrUAPIHostRuntime` - process-owned runtime whose product executions share one authentication session. Open a connection per executable with `openProductExecution`, which returns a `TrUAPIProductExecution` holding its own token on the runtime's shared WS bridge, permission authorization, theme/preimage/chain notifications, and the Chat controls below.
@@ -332,7 +332,7 @@ class MyStorage : HostStorage {
     override suspend fun clear(key: String) { map.remove(key) }
 }
 
-// Core-owned storage: keyed by SCALE-encoded CoreStorageKey bytes. Back it with
+// Core-owned storage: keyed by SCALE-encoded StackStorageKey bytes. Back it with
 // real persistence (e.g. EncryptedSharedPreferences); an in-memory map is shown
 // for brevity.
 class MyCoreStorage : HostCoreStorage {

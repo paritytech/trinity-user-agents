@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
-	platform::{AuthState, CoreStorage, ProductId},
+	platform::{AuthState, CoreStorage, ProductId, StackStorageKey},
 	runtime::{ProductAuthority, ProductRuntimeHost, allowances},
-	test_support::{StubPlatform, sso_session_info},
+	test_support::{StubPlatform, sso_session_info, test_storage_key},
 };
 use futures::{FutureExt, executor::block_on};
 use parity_scale_codec::Encode;
@@ -21,14 +21,14 @@ struct CleanupStorage {
 impl CoreStorage for CleanupStorage {
 	async fn read_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: StackStorageKey,
 	) -> Result<Option<Vec<u8>>, GenericError> {
 		Ok(self.values.lock().unwrap().get(&key.encode()).cloned())
 	}
 
 	async fn write_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: StackStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), GenericError> {
 		self.values.lock().unwrap().insert(key.encode(), value);
@@ -39,10 +39,10 @@ impl CoreStorage for CleanupStorage {
 		Ok(())
 	}
 
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
+	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), GenericError> {
 		let pause = {
 			let mut pause = self.pause.lock().unwrap();
-			if pause.as_ref().is_some_and(|(paused, _)| *paused == key) {
+			if pause.as_ref().is_some_and(|(paused, _)| *paused == key.slot) {
 				pause.take().map(|(_, receiver)| receiver)
 			} else {
 				None
@@ -51,7 +51,7 @@ impl CoreStorage for CleanupStorage {
 		if let Some(pause) = pause {
 			let _ = pause.await;
 		}
-		if self.failure.lock().unwrap().as_ref() == Some(&key) {
+		if self.failure.lock().unwrap().as_ref() == Some(&key.slot) {
 			return Err(GenericError { reason: "storage deletion failed".to_string() });
 		}
 		self.values.lock().unwrap().remove(&key.encode());
@@ -81,7 +81,7 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 			CoreStorageKey::AllowanceKeys { session_id: session_id.clone() },
 			CoreStorageKey::ProductSubtree { session_id, product_id: product_id.clone() },
 		] {
-			block_on(storage.write_core_storage(key, blob.clone())).unwrap();
+			block_on(storage.write_core_storage(test_storage_key(key), blob.clone())).unwrap();
 		}
 		pairing.cache_product_subtree_for_test(&session, &product_id, [0xAB; 32]);
 		let (release, pause) = oneshot::channel();
@@ -100,14 +100,20 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 		block_on(repeated);
 		assert_eq!(
 			storage.values.lock().unwrap().clone(),
-			BTreeMap::from([(CoreStorageKey::AutoSigningKeys.encode(), blob.clone())])
+			BTreeMap::from([(
+				test_storage_key(CoreStorageKey::AutoSigningKeys).encode(),
+				blob.clone()
+			)])
 		);
 		block_on(host.activate_external_session(&blob)).unwrap();
 		assert_eq!(
 			(host.session_state.current(), storage.values.lock().unwrap().clone()),
 			(
 				Some(session.clone()),
-				BTreeMap::from([(CoreStorageKey::AutoSigningKeys.encode(), blob.clone())])
+				BTreeMap::from([(
+					test_storage_key(CoreStorageKey::AutoSigningKeys).encode(),
+					blob.clone()
+				)])
 			)
 		);
 
@@ -177,7 +183,7 @@ fn login_store_notifications_follow_the_persisted_value() {
 		if changed {
 			stored.public_key = [0x56; 32];
 			block_on(storage.write_core_storage(
-				CoreStorageKey::AuthSession,
+				test_storage_key(CoreStorageKey::AuthSession),
 				encode_persisted_session(&stored),
 			))
 			.unwrap();
@@ -190,7 +196,7 @@ fn login_store_notifications_follow_the_persisted_value() {
 				Ok(!changed),
 				(!changed).then_some(session),
 				BTreeMap::from([(
-					CoreStorageKey::AuthSession.encode(),
+					test_storage_key(CoreStorageKey::AuthSession).encode(),
 					encode_persisted_session(&stored)
 				)]),
 			),

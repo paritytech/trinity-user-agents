@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
 	host_logic::product_account::derive_sr25519_hard_path,
-	test_support::{StubPlatform, test_storage},
+	test_support::{StubPlatform, test_storage, test_storage_key},
 };
 use std::{
 	collections::HashMap,
@@ -31,14 +31,14 @@ impl MemStorage {
 impl CoreStorage for MemStorage {
 	async fn read_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: crate::platform::StackStorageKey,
 	) -> Result<Option<Vec<u8>>, GenericError> {
 		Ok(self.inner.lock().expect("storage mutex poisoned").get(&key.encode()).cloned())
 	}
 
 	async fn write_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: crate::platform::StackStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), GenericError> {
 		*self.writes.lock().expect("write counter mutex poisoned") += 1;
@@ -46,7 +46,10 @@ impl CoreStorage for MemStorage {
 		Ok(())
 	}
 
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
+	async fn clear_core_storage(
+		&self,
+		key: crate::platform::StackStorageKey,
+	) -> Result<(), GenericError> {
 		self.inner.lock().expect("storage mutex poisoned").remove(&key.encode());
 		Ok(())
 	}
@@ -77,7 +80,7 @@ struct YieldingStorage(MemStorage);
 impl CoreStorage for YieldingStorage {
 	async fn read_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: crate::platform::StackStorageKey,
 	) -> Result<Option<Vec<u8>>, GenericError> {
 		let value = self.0.read_core_storage(key).await;
 		yield_once().await;
@@ -86,13 +89,16 @@ impl CoreStorage for YieldingStorage {
 
 	async fn write_core_storage(
 		&self,
-		key: CoreStorageKey,
+		key: crate::platform::StackStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), GenericError> {
 		self.0.write_core_storage(key, value).await
 	}
 
-	async fn clear_core_storage(&self, key: CoreStorageKey) -> Result<(), GenericError> {
+	async fn clear_core_storage(
+		&self,
+		key: crate::platform::StackStorageKey,
+	) -> Result<(), GenericError> {
 		self.0.clear_core_storage(key).await
 	}
 }
@@ -443,7 +449,10 @@ fn an_undecodable_ledger_lists_as_empty() {
 
 	futures::executor::block_on(async {
 		storage
-			.write_core_storage(CoreStorageKey::StatementRenewalTargets, vec![0xff; 8])
+			.write_core_storage(
+				test_storage_key(CoreStorageKey::StatementRenewalTargets),
+				vec![0xff; 8],
+			)
 			.await
 			.unwrap();
 
@@ -466,7 +475,10 @@ fn an_undecodable_ledger_reads_as_empty() {
 
 	futures::executor::block_on(async {
 		storage
-			.write_core_storage(CoreStorageKey::StatementRenewalTargets, vec![0xff, 0xff, 0xff])
+			.write_core_storage(
+				test_storage_key(CoreStorageKey::StatementRenewalTargets),
+				vec![0xff, 0xff, 0xff],
+			)
 			.await
 			.unwrap();
 
@@ -482,7 +494,10 @@ fn tracking_over_an_undecodable_ledger_starts_a_fresh_one() {
 
 	futures::executor::block_on(async {
 		storage
-			.write_core_storage(CoreStorageKey::StatementRenewalTargets, vec![0xff; 3])
+			.write_core_storage(
+				test_storage_key(CoreStorageKey::StatementRenewalTargets),
+				vec![0xff; 3],
+			)
 			.await
 			.unwrap();
 		wallet.track_statement_renewal_targets(vec![product("a.dot")]).await.unwrap();
