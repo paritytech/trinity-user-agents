@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.app.root.navigation.products
 
 import androidx.core.os.bundleOf
+import androidx.navigation.NavGraph
 import io.paritytech.polkadotapp.app.R
 import io.paritytech.polkadotapp.app.root.navigation.BaseNavigator
 import io.paritytech.polkadotapp.app.root.navigation.NavigationHolder
@@ -12,6 +13,9 @@ import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_api.presentation.PocketAddCardPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.ProductSettingsPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingBottomSheet
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended.FundingEndedBottomSheet
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.FundingProviderFrameBottomSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.PermissionPromptBottomSheet
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.withContext
@@ -102,6 +106,69 @@ class ProductsNavigator @Inject constructor(
 
     override suspend fun openTrUAPIContactPick() = withContext(dispatchers.main) {
         performNavigation(R.id.action_global_to_truapiContactPickBottomSheet)
+    }
+
+    override suspend fun openFundingOverlay(intent: String) = withContext(dispatchers.main) {
+        performNavigation(
+            R.id.action_global_to_fundingBottomSheet,
+            bundleOf(FundingBottomSheet.INTENT to intent),
+        )
+    }
+
+    override suspend fun closeFundingOverlay(intent: String) = withContext(dispatchers.main) {
+        popSession(R.id.fundingBottomSheet, FundingBottomSheet.INTENT, intent)
+    }
+
+    override suspend fun openFundingEnded(intent: String) = withContext(dispatchers.main) {
+        performNavigation(
+            R.id.action_global_to_fundingEndedBottomSheet,
+            bundleOf(FundingEndedBottomSheet.INTENT to intent),
+        )
+    }
+
+    override suspend fun closeFundingEnded(intent: String) = withContext(dispatchers.main) {
+        popIfOnTop(R.id.fundingEndedBottomSheet, FundingEndedBottomSheet.INTENT, intent)
+    }
+
+    override suspend fun isFundingOverlayShown(intent: String): Boolean = withContext(dispatchers.main) {
+        sessionOnTop(R.id.fundingBottomSheet, FundingBottomSheet.INTENT, intent)
+    }
+
+    override suspend fun openFundingProviderFrame(intent: String, requestId: String) = withContext(dispatchers.main) {
+        performNavigation(
+            R.id.action_global_to_fundingProviderFrameBottomSheet,
+            bundleOf(FundingProviderFrameBottomSheet.INTENT to intent, FundingProviderFrameBottomSheet.REQUEST to requestId),
+        )
+    }
+
+    override suspend fun closeFundingProviderFrame(intent: String) = withContext(dispatchers.main) {
+        popIfOnTop(R.id.fundingProviderFrameBottomSheet, FundingProviderFrameBottomSheet.INTENT, intent)
+    }
+
+    /**
+     * Closes the session's sheet even when its provider frame sits on top of it: the frame belongs to the same
+     * session, so it goes too. Anything else on top is left alone, and so is the sheet under it.
+     */
+    private fun popSession(destinationId: Int, argument: String, intent: String) {
+        if (sessionOnTop(destinationId, argument, intent)) navigationHolder.navController?.popBackStack(destinationId, inclusive = true)
+    }
+
+    /** Whether the screen for [intent] is on the stack with nothing but the session's own provider screens over it. */
+    private fun sessionOnTop(destinationId: Int, argument: String, intent: String): Boolean {
+        val stack = navigationHolder.navController?.currentBackStack?.value.orEmpty()
+        val index = stack.indexOfLast { it.destination.id == destinationId && it.arguments?.getString(argument) == intent }
+        if (index < 0) return false
+
+        val above = stack.drop(index + 1).filter { it.destination !is NavGraph }
+        return above.all { it.arguments?.getString(FundingProviderFrameBottomSheet.INTENT) == intent }
+    }
+
+    private fun popIfOnTop(destinationId: Int, argument: String, value: String) {
+        val controller = navigationHolder.navController
+        val entry = controller?.currentBackStackEntry
+        if (entry?.destination?.id == destinationId && entry.arguments?.getString(argument) == value) {
+            controller.popBackStack()
+        }
     }
 
     override suspend fun closeTrUAPIContactPick() = closeIfShowing(R.id.truapiContactPickBottomSheet)

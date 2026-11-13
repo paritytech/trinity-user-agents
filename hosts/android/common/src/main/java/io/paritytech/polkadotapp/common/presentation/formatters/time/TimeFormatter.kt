@@ -88,6 +88,12 @@ interface TimeFormatter {
      */
     fun formatGameDateTime(timestamp: Timestamp): String
 
+    /**
+     * A moment relative to [relativeTo]: "Today at 4:00 PM", "Yesterday at 4:00 PM", "Jan 14 at 4:00 PM" earlier this
+     * year, and "Jan 14, 2023" in another. The time follows the device's 12/24-hour setting.
+     */
+    fun formatDayAndTime(timestamp: Timestamp, relativeTo: Timestamp): String
+
     /** Absolute date with weekday, e.g. "Thu, 14 Jan" (adds the year when [includeYear]). */
     fun formatDateWithWeekday(timestamp: Timestamp, includeYear: Boolean): String
 
@@ -134,6 +140,11 @@ class RealTimeFormatter @Inject constructor(
     private val shortBigPeriodFormatter = ShortBigPeriodsFormatter(context)
 
     private val descriptiveBigPeriodFormatter = DescriptiveBigPeriodsFormatter(context)
+
+    private val dayFormat: SimpleDateFormat by lazy {
+        val locale = Locale.getDefault()
+        SimpleDateFormat(AndroidDateFormat.getBestDateTimePattern(locale, "MMMd"), locale)
+    }
 
     private val gameDateTimeFormat: SimpleDateFormat by lazy {
         val locale = Locale.getDefault()
@@ -250,6 +261,16 @@ class RealTimeFormatter @Inject constructor(
             useRelativeLabels && RelativeDateUtils.isYesterday(timestamp, relativeTo) -> context.getString(R.string.common_relative_time_yesterday)
             RelativeDateUtils.isSameYear(timestamp, relativeTo) -> formatDateWithWeekday(timestamp, includeYear = false)
             else -> formatDateWithWeekday(timestamp, includeYear = true)
+        }
+    }
+
+    override fun formatDayAndTime(timestamp: Timestamp, relativeTo: Timestamp): String {
+        val time = formatTime(timestamp)
+        return when {
+            RelativeDateUtils.isSameDay(timestamp, relativeTo) -> context.getString(R.string.common_date_today_at, time)
+            RelativeDateUtils.isYesterday(timestamp, relativeTo) -> context.getString(R.string.common_date_yesterday_at, time)
+            RelativeDateUtils.isSameYear(timestamp, relativeTo) -> context.getString(R.string.common_date_day_at, dayFormat.format(Date(timestamp)), time)
+            else -> formatDate(timestamp)
         }
     }
 
