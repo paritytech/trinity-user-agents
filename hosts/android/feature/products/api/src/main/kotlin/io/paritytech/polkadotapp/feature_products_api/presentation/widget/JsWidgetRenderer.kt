@@ -1,11 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_api.presentation.widget
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,15 +25,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isSpecified
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -59,7 +47,6 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.model.JsAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
-import io.paritytech.polkadotapp.feature_products_api.model.JsEffect
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
@@ -105,7 +92,6 @@ private fun JsWidgetContent(
         is JsWidget.SlideToConfirm -> JsSlideToConfirmRenderer(widget, modifier)
         is JsWidget.TextField -> JsTextFieldRenderer(widget, modifier)
         is JsWidget.Image -> JsImageRenderer(widget, modifier)
-        is JsWidget.Effect -> JsEffectRenderer(widget, modifier)
     }
 }
 
@@ -222,57 +208,6 @@ private fun JsImageUnavailable() {
     )
 }
 
-@Composable
-private fun JsEffectRenderer(
-    widget: JsWidget.Effect,
-    modifier: Modifier = Modifier,
-) {
-    val sweep by rememberInfiniteTransition(label = "effect").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(EFFECT_SWEEP_MILLIS, easing = LinearEasing), RepeatMode.Reverse),
-        label = "effectSweep",
-    )
-    Box(modifier = modifier) {
-        widget.children.forEach { child ->
-            JsWidgetContent(widget = child)
-        }
-        Box(
-            modifier = Modifier
-                .matchParentSize()
-                .drawWithCache {
-                    val sweepWidth = Size(size.width * 2, size.height)
-                    val brush = widget.effect.toBrush(Offset.Zero, Offset(sweepWidth.width, sweepWidth.height))
-                    onDrawBehind {
-                        clipRect {
-                            translate(left = size.width * (sweep - 1)) {
-                                drawRect(brush, size = sweepWidth, alpha = EFFECT_ALPHA)
-                            }
-                        }
-                    }
-                },
-        )
-    }
-}
-
-private const val EFFECT_ALPHA = 0.3f
-private const val EFFECT_SWEEP_MILLIS = 3000
-
-private fun JsEffect.toBrush(start: Offset, end: Offset): Brush = when (this) {
-    JsEffect.RAINBOW -> Brush.linearGradient(
-        start = start,
-        end = end,
-        colors = listOf(
-            Color(0xFFFF5E5E),
-            Color(0xFFFFD35E),
-            Color(0xFF5EFF8A),
-            Color(0xFF5ED0FF),
-            Color(0xFF8A5EFF),
-            Color(0xFFFF5EDB),
-        ),
-    )
-}
-
 private fun JsImageFit.toContentScale(): ContentScale = when (this) {
     JsImageFit.NONE -> ContentScale.None
     JsImageFit.FILL -> ContentScale.FillBounds
@@ -365,7 +300,6 @@ private fun JsWidget.fillsHeight(): Boolean = when (this) {
     is JsWidget.SlideToConfirm -> modifiers
     is JsWidget.TextField -> modifiers
     is JsWidget.Image -> modifiers
-    is JsWidget.Effect -> emptyList()
 }.any { it is JsModifier.FillMaxHeight }
 
 @Composable

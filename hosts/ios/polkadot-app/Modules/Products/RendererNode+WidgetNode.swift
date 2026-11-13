@@ -17,9 +17,9 @@ extension RendererNode {
              .slideToConfirm:
             return leafWidgetNode(resolver: resolver)
 
-        case let .effect(props, children):
+        case let .materials(_, children):
             return CustomMessageWidgetNode(
-                content: .effect(props.nodeProps, children: children.widgetNodes(resolver: resolver)),
+                content: .box(.init(), children: children.widgetNodes(resolver: resolver)),
                 modifiers: .empty
             )
 
@@ -124,7 +124,7 @@ private extension RendererNode {
         case .box,
              .column,
              .row,
-             .effect:
+             .materials:
             return nil
         }
     }
@@ -364,16 +364,6 @@ private extension ImageProps {
                 .fill
             }
         return .init(source: nodeSource, fit: nodeFit)
-    }
-}
-
-private extension EffectProps {
-    var nodeProps: CustomMessageWidgetNode.EffectProps {
-        let nodeEffect: CustomMessageWidgetNode.Effect =
-            switch effect {
-            case .rainbow: .rainbow
-            }
-        return .init(effect: nodeEffect)
     }
 }
 

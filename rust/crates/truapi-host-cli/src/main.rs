@@ -158,19 +158,8 @@ enum LogLevel {
 }
 
 impl LogLevel {
-	const fn as_filter(self) -> &'static str {
-		match self {
-			Self::Error => "error",
-			Self::Warn => "warn",
-			Self::Info => "info",
-			Self::Debug => "debug",
-			Self::Trace => "trace",
-		}
-	}
-
 	fn scoped_filter(self) -> String {
-		let level = self.as_filter();
-		format!("warn,truapi={level},truapi_host={level}")
+		format!("warn,truapi={self},truapi_host={self}")
 	}
 }
 
@@ -4718,7 +4707,6 @@ mod cli_tests {
 
 		assert_eq!(before.log_level, Some(LogLevel::Trace));
 		assert_eq!(after.log_level, Some(LogLevel::Trace));
-		assert_eq!(LogLevel::Trace.as_filter(), "trace");
 		assert_eq!(LogLevel::Trace.scoped_filter(), "warn,truapi=trace,truapi_host=trace");
 	}
 

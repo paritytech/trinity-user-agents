@@ -105,9 +105,8 @@ private extension CoinageTransferMonitor {
                 let context = try await denominationContext()
 
                 // Anchored to this device's first attempt so two devices' clocks never decide the window.
-                let retryUntil = try await transferStateStore
-                    .beginIncoming(messageId: messageId)
-                    .addingTimeInterval(CoinageConstants.claimRetryWindow)
+                let claimAnchor = try await transferStateStore.beginIncoming(messageId: messageId)
+                let retryUntil = CoinageConstants.claimRetryWindow.map(claimAnchor.addingTimeInterval) ?? .distantFuture
 
                 logger.debug("Starting processing incoming coinage message=\(messageId)")
 

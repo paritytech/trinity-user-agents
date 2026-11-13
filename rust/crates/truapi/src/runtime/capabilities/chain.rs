@@ -33,8 +33,8 @@ use truapi::{
 };
 
 use crate::runtime::{
-	AUTHORITY_CANCEL_UNWIND_GRACE, PERMISSION_DENIED_REASON, ProductConnection, ProductRuntimeHost,
-	runtime_failure_to_call_error, versioning::version,
+	AUTHORITY_CANCEL_UNWIND_GRACE, AccountHolder, PERMISSION_DENIED_REASON, ProductConnection,
+	ProductRuntimeHost, runtime_failure_to_call_error, versioning::version,
 };
 
 impl ProductConnection {
@@ -62,7 +62,7 @@ impl ProductConnection {
 }
 
 #[async_trait::async_trait]
-impl Chain for ProductRuntimeHost {
+impl<H: AccountHolder> Chain for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "chain.follow_head_subscribe"))]
 	async fn follow_head_subscribe(
 		&self,

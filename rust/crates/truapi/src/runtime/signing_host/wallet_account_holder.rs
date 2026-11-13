@@ -62,7 +62,7 @@ pub struct WalletAccountHolder {
 	/// neither the production browser bundle nor a released native host
 	/// enables, so a shipping host has no way to set it.
 	#[cfg(feature = "test-host")]
-	resource_controls: crate::runtime::test_resource_controls::TestResourceControls,
+	resource_controls: Arc<crate::runtime::test_resource_controls::TestResourceControls>,
 	consent: Arc<ProductConsent>,
 	lifecycle: Mutex<WalletState>,
 	session_state: Arc<SessionState>,
@@ -211,7 +211,7 @@ impl WalletAccountHolder {
 	#[cfg(feature = "test-host")]
 	pub fn resource_controls(
 		&self,
-	) -> &crate::runtime::test_resource_controls::TestResourceControls {
+	) -> &Arc<crate::runtime::test_resource_controls::TestResourceControls> {
 		&self.resource_controls
 	}
 

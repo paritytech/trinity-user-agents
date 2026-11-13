@@ -5,7 +5,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsBlendingMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsButtonVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
-import io.paritytech.polkadotapp.feature_products_api.model.JsEffect
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
@@ -21,7 +20,6 @@ import uniffi.truapi.ButtonVariant
 import uniffi.truapi.ColorToken
 import uniffi.truapi.ContentAlignment
 import uniffi.truapi.Dimensions
-import uniffi.truapi.Effect
 import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.ImageFit
 import uniffi.truapi.ImageSource
@@ -88,10 +86,7 @@ fun RendererNode.toJsWidget(): JsWidget = when (this) {
             modifiers = modifiers.toJsModifiers(),
         )
     } ?: JsWidget.Box(modifiers = modifiers.toJsModifiers())
-    is RendererNode.Effect -> JsWidget.Effect(
-        effect = props.effect.toJs(),
-        children = children.toJsChildren(),
-    )
+    is RendererNode.Materials -> JsWidget.Box(children = children.toJsChildren())
     is RendererNode.SlideToConfirm -> JsWidget.SlideToConfirm(
         text = props.text,
         secondaryText = props.secondaryText,
@@ -184,10 +179,6 @@ private fun ImageFit.toJs(): JsImageFit = when (this) {
     ImageFit.COVER -> JsImageFit.COVER
     ImageFit.CONTAIN -> JsImageFit.CONTAIN
     ImageFit.SCALE_DOWN -> JsImageFit.SCALE_DOWN
-}
-
-private fun Effect.toJs(): JsEffect = when (this) {
-    Effect.RAINBOW -> JsEffect.RAINBOW
 }
 
 private fun BlendingMode.toJs(): JsBlendingMode = when (this) {

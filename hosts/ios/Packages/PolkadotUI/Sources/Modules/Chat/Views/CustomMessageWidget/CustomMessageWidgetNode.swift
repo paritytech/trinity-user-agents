@@ -24,7 +24,6 @@ public extension CustomMessageWidgetNode {
         case button(ButtonProps)
         case textField(TextFieldProps)
         case image(ImageProps)
-        case effect(EffectProps, children: [CustomMessageWidgetNode])
         case slideToConfirm(SlideToConfirmProps)
     }
 }
@@ -210,19 +209,6 @@ public extension CustomMessageWidgetNode {
         public init(source: ImageSource, fit: ImageFit = .fill) {
             self.source = source
             self.fit = fit
-        }
-    }
-
-    /// A host-drawn effect applied to the children beneath it.
-    enum Effect {
-        case rainbow
-    }
-
-    struct EffectProps {
-        public let effect: Effect
-
-        public init(effect: Effect) {
-            self.effect = effect
         }
     }
 }

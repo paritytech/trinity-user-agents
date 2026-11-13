@@ -11,7 +11,7 @@ use truapi::{
 use crate::{
 	host_logic::scanner::{accepts, validate_request},
 	platform::{ExecutableKind, HostScan},
-	runtime::{ProductRuntimeHost, until_cancelled, versioning::version},
+	runtime::{AccountHolder, ProductRuntimeHost, until_cancelled, versioning::version},
 };
 
 fn unknown(reason: impl ToString) -> CallError<latest::HostScannerScanError> {
@@ -19,7 +19,7 @@ fn unknown(reason: impl ToString) -> CallError<latest::HostScannerScanError> {
 }
 
 #[async_trait::async_trait]
-impl Scanner for ProductRuntimeHost {
+impl<H: AccountHolder> Scanner for ProductRuntimeHost<H> {
 	/// Checked in this order so a host without a scanner, or a request the
 	/// product could not make, never opens a viewfinder.
 	#[instrument(skip_all, fields(runtime.method = "scanner.scan"))]

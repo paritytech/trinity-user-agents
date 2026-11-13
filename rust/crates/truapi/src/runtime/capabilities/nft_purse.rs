@@ -36,10 +36,10 @@ mod browser {
 		},
 	};
 
-	use crate::runtime::ProductRuntimeHost;
+	use crate::runtime::{AccountHolder, ProductRuntimeHost};
 
 	#[async_trait::async_trait]
-	impl NftPurse for ProductRuntimeHost {
+	impl<H: AccountHolder> NftPurse for ProductRuntimeHost<H> {
 		async fn create_purse(
 			&self,
 			_cx: &CallContext,

@@ -227,7 +227,7 @@ const result = await pending; // Err(CallError.Cancelled) if the host stopped
 
 Cancelling stops the waiting, not necessarily the work. The call still settles with exactly one response, and a host that received the cancel in time answers `Cancelled` whether or not its handler managed to unwind. A cancel that arrives after the response has gone out changes nothing, and the promise resolves with the real result. One that lands while the handler is still unwinding still wins, so a call aborted at the last moment can answer `Cancelled` even though its work completed. A signal already aborted when the call is made sends nothing and rejects immediately.
 
-A host that predates the `Cancel` leg drops the frame with no reply, and the call then settles on the client's own deadline instead. There is no way to detect that first: `system.featureSupported` answers only about chains, so an abort a host never understood looks the same as one it honoured.
+A host that predates the `Cancel` leg drops the frame with no reply, and the call then settles on the client's own deadline instead. There is no way to detect that first: `system.featureSupported` has no question for it, so an abort a host never understood looks the same as one it honoured.
 
 The pair `(255, 255)` is reserved for method-independent protocol errors. When a peer rejects an unknown API message with that frame, requests resolve as `CallError.Unsupported` and subscriptions terminate with an `UnsupportedMessageError` cause carrying the unsupported `(trait, method)` pair.
 

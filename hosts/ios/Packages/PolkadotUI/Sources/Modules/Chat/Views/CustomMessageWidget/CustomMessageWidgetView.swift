@@ -95,8 +95,6 @@ private struct WidgetNodeContent: View {
             NodeTextFieldView(props: props, modifiers: node.modifiers)
         case let .image(props):
             NodeImageView(props: props, modifiers: node.modifiers)
-        case let .effect(props, children):
-            NodeEffectView(props: props, children: children, modifiers: node.modifiers)
         case let .slideToConfirm(props):
             NodeSlideToConfirmView(props: props, modifiers: node.modifiers)
         }
@@ -188,41 +186,6 @@ private extension CustomMessageWidgetNode.ImageFit {
             ViewThatFits {
                 image
                 image.resizable().scaledToFit()
-            }
-        }
-    }
-}
-
-// MARK: - Effect
-
-private struct NodeEffectView: View {
-    let props: CustomMessageWidgetNode.EffectProps
-    let children: [CustomMessageWidgetNode]
-    let modifiers: CustomMessageWidgetNode.Modifiers
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(children.indices, id: \.self) { index in
-                WidgetNodeContent(node: children[index])
-            }
-        }
-        .modifier(NodeEffectModifier(effect: props.effect))
-        .applyWidgetNodeModifiers(modifiers)
-    }
-}
-
-private struct NodeEffectModifier: ViewModifier {
-    let effect: CustomMessageWidgetNode.Effect
-
-    func body(content: Content) -> some View {
-        switch effect {
-        case .rainbow:
-            // As strong as Android's tint, and over the children so they keep their taps.
-            content.overlay {
-                Rectangle()
-                    .motionFillingShader(shader: HolographicShaders.iridescentShine)
-                    .opacity(0.3)
-                    .allowsHitTesting(false)
             }
         }
     }
