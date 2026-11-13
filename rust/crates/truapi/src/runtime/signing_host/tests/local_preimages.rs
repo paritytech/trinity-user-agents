@@ -111,9 +111,9 @@ fn a_signing_host_sends_preimages_to_the_chain_unless_told_or_unchecked() {
 	let (_, checked) = activated(false, &[]);
 	let (_, unchecked) = activated(true, &[]);
 	let (_, told) = activated(false, &[]);
-	told.accounts().set_submit_preimages_locally(true);
+	told.accounts().resource_controls().set_submit_preimages_locally(true);
 
-	assert!(!checked.accounts().submits_preimages_locally());
-	assert!(unchecked.accounts().submits_preimages_locally());
-	assert!(told.accounts().submits_preimages_locally());
+	assert!(!checked.accounts().resource_controls().submits_preimages_locally());
+	assert!(unchecked.accounts().resource_controls().submits_preimages_locally());
+	assert!(told.accounts().resource_controls().submits_preimages_locally());
 }

@@ -598,7 +598,7 @@ fn a_pairing_test_host_keeps_a_submitted_preimage_and_serves_it_back() {
 		allowance.secret.to_bytes().to_vec(),
 	))
 	.expect("the wallet's allowance is cached");
-	pairing_host.accounts().set_submit_preimages_locally(true);
+	pairing_host.accounts().resource_controls().set_submit_preimages_locally(true);
 	let value = b"pairing test host preimage".to_vec();
 	let cx = CallContext::default();
 

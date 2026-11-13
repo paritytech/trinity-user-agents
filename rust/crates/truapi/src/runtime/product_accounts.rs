@@ -251,7 +251,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 	/// Whether preimage submissions stay in the core instead of reaching Bulletin.
 	#[cfg(feature = "test-host")]
 	pub fn submits_preimages_locally(&self) -> bool {
-		self.accounts.submits_preimages_locally()
+		self.accounts.resource_controls().submits_preimages_locally()
 	}
 
 	/// Bulletin allowance key material for this product.

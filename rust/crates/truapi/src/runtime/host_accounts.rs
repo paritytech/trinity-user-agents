@@ -62,11 +62,6 @@ pub struct HostAccounts<H: AccountHolder> {
 	consent: Arc<ProductConsent>,
 	#[cfg(feature = "test-host")]
 	resource_controls: Arc<super::test_resource_controls::TestResourceControls>,
-	/// Keep preimage submissions in the core instead of sending them to the
-	/// Bulletin chain. A test host whose wallet answers allowances in-page
-	/// holds no on-chain authorization to submit with.
-	#[cfg(feature = "test-host")]
-	submit_preimages_locally: core::sync::atomic::AtomicBool,
 }
 
 #[async_trait::async_trait]
@@ -128,8 +123,6 @@ impl<H: AccountHolder> HostAccounts<H> {
 			consent,
 			#[cfg(feature = "test-host")]
 			resource_controls,
-			#[cfg(feature = "test-host")]
-			submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
 		}
 	}
 
@@ -175,25 +168,12 @@ impl<H: AccountHolder> HostAccounts<H> {
 		self.grants.persistence().await.clear_auto_signing_keys().await
 	}
 
-	/// Keep preimage submissions in the core instead of the Bulletin chain.
+	/// The test host's allocation and preimage controls.
 	///
 	/// For test hosts only, with the `test-host` feature enabled.
 	#[cfg(feature = "test-host")]
-	pub fn set_submit_preimages_locally(&self, local: bool) {
-		self.submit_preimages_locally
-			.store(local, core::sync::atomic::Ordering::Relaxed);
-	}
-
-	/// Whether a preimage submission is kept in the core instead of being sent
-	/// to the Bulletin chain.
-	///
-	/// True for a test host that answers allowances as granted without
-	/// performing them: the Bulletin allowance it hands out was never
-	/// authorized on chain, so a real `store` would always be refused.
-	#[cfg(feature = "test-host")]
-	pub fn submits_preimages_locally(&self) -> bool {
-		self.resource_controls.grants_allowances_unchecked() ||
-			self.submit_preimages_locally.load(core::sync::atomic::Ordering::Relaxed)
+	pub fn resource_controls(&self) -> &super::test_resource_controls::TestResourceControls {
+		&self.resource_controls
 	}
 
 	/// Selected account holder identity.
@@ -545,24 +525,18 @@ impl<H: AccountHolder> HostAccounts<H> {
 				return Ok(key);
 			}
 		}
-		let grant = self
-			.holder
-			.ensure_allowance(
-				local_invocation(cx, session, product),
-				AllowanceResource::StatementStore,
-				OnExistingAllowancePolicy::Ignore,
-			)
-			.await?;
-		let AccountGrant::Allowance(allowance @ Allowance::StatementStore { key, .. }) = &grant
-		else {
-			return Err(AuthorityError::Unknown {
-				reason: "Unexpected statement-store allowance response resource".to_string(),
-			});
-		};
-		self.grants
-			.retain_allowance(&current, revision, &product.product_id, allowance)
-			.await?;
-		Ok(key.clone())
+		self.issue_allowance(
+			cx,
+			session,
+			product,
+			AllowanceResource::StatementStore,
+			OnExistingAllowancePolicy::Ignore,
+			|allowance| match allowance {
+				Allowance::StatementStore { key, .. } => Some(key.clone()),
+				Allowance::Bulletin(_) => None,
+			},
+		)
+		.await
 	}
 
 	/// Forget the product's kept Statement Store key only if it is still
@@ -596,13 +570,8 @@ impl<H: AccountHolder> HostAccounts<H> {
 		{
 			return Ok(key);
 		}
-		self.allocate_bulletin_allowance_key(
-			cx,
-			session,
-			product,
-			OnExistingAllowancePolicy::Ignore,
-		)
-		.await
+		self.issue_bulletin_allowance_key(cx, session, product, OnExistingAllowancePolicy::Ignore)
+			.await
 	}
 
 	/// Increase or replace the product's Bulletin allowance after a submission
@@ -618,40 +587,60 @@ impl<H: AccountHolder> HostAccounts<H> {
 		#[cfg(feature = "test-host")]
 		self.resource_controls
 			.refuse_withheld(&api::AllocatableResource::BulletinAllowance)?;
-		self.allocate_bulletin_allowance_key(
-			cx,
-			session,
-			product,
-			OnExistingAllowancePolicy::Increase,
-		)
-		.await
+		self.issue_bulletin_allowance_key(cx, session, product, OnExistingAllowancePolicy::Increase)
+			.await
 	}
 
-	async fn allocate_bulletin_allowance_key(
+	async fn issue_bulletin_allowance_key(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
 		product: &ProductContext,
 		policy: OnExistingAllowancePolicy,
 	) -> Result<BulletinAllowanceKey, AuthorityError> {
+		self.issue_allowance(
+			cx,
+			session,
+			product,
+			AllowanceResource::Bulletin,
+			policy,
+			|allowance| match allowance {
+				Allowance::Bulletin(key) => Some(key.clone()),
+				Allowance::StatementStore { .. } => None,
+			},
+		)
+		.await
+	}
+
+	/// Ask the account holder for `resource`'s allowance and retain it,
+	/// answering the key `key` reads from it.
+	///
+	/// An answer for another resource is `Unknown` and nothing is retained.
+	async fn issue_allowance<K>(
+		&self,
+		cx: &CallContext,
+		session: &AuthoritySession,
+		product: &ProductContext,
+		resource: AllowanceResource,
+		policy: OnExistingAllowancePolicy,
+		key: impl FnOnce(&Allowance) -> Option<K>,
+	) -> Result<K, AuthorityError> {
 		let (current, revision) = self.grant_session(session)?;
 		let grant = self
 			.holder
-			.ensure_allowance(
-				local_invocation(cx, session, product),
-				AllowanceResource::Bulletin,
-				policy,
-			)
+			.ensure_allowance(local_invocation(cx, session, product), resource, policy)
 			.await?;
-		let AccountGrant::Allowance(allowance @ Allowance::Bulletin(key)) = &grant else {
-			return Err(AuthorityError::Unknown {
-				reason: "Unexpected Bulletin allowance response resource".to_string(),
-			});
+		let unexpected = || AuthorityError::Unknown {
+			reason: "Unexpected allowance response resource".to_string(),
 		};
+		let AccountGrant::Allowance(allowance) = &grant else {
+			return Err(unexpected());
+		};
+		let key = key(allowance).ok_or_else(unexpected)?;
 		self.grants
 			.retain_allowance(&current, revision, &product.product_id, allowance)
 			.await?;
-		Ok(key.clone())
+		Ok(key)
 	}
 
 	/// Derive entropy scoped to `product_id` under the selected session.

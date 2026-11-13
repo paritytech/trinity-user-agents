@@ -8,6 +8,7 @@ use std::{collections::HashSet, sync::Mutex};
 #[derive(Default)]
 pub struct TestResourceControls {
 	unchecked: AtomicBool,
+	submit_preimages_locally: AtomicBool,
 	withheld: Mutex<HashSet<String>>,
 }
 
@@ -20,6 +21,22 @@ impl TestResourceControls {
 	/// Answer resource allocation as granted without performing it.
 	pub fn set_grant_allowances_unchecked(&self, granted: bool) {
 		self.unchecked.store(granted, Ordering::Relaxed);
+	}
+
+	/// Keep preimage submissions in the core instead of the Bulletin chain.
+	pub fn set_submit_preimages_locally(&self, local: bool) {
+		self.submit_preimages_locally.store(local, Ordering::Relaxed);
+	}
+
+	/// Whether a preimage submission is kept in the core instead of being sent
+	/// to the Bulletin chain.
+	///
+	/// True when told so, and for a host that answers allowances as granted
+	/// without performing them: the Bulletin allowance it hands out was never
+	/// authorized on chain, so a real `store` would always be refused.
+	pub fn submits_preimages_locally(&self) -> bool {
+		self.grants_allowances_unchecked() ||
+			self.submit_preimages_locally.load(Ordering::Relaxed)
 	}
 
 	/// Replace refused resource tags; SmartContractAllowance covers every index.
