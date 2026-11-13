@@ -1,7 +1,7 @@
 use super::*;
 use indoc::formatdoc;
 
-use truapi::markers::{MARKERS, Marker, MarkerClass, Severity};
+use truapi::markers::{MARKERS, Marker, MarkerClass};
 
 /// Generates `markers.ts` under `output_dir`. The file carries the core's
 /// marker table to the web hosts, which UniFFI cannot reach and which
@@ -49,18 +49,10 @@ fn map_entry(marker: &Marker) -> String {
 	let class = match marker.class {
 		MarkerClass::Local => r#"{ kind: "local" }"#.to_string(),
 		MarkerClass::Export { severity } => {
-			format!(r#"{{ kind: "export", severity: "{}" }}"#, severity_name(severity))
+			format!(r#"{{ kind: "export", severity: "{}" }}"#, <&str>::from(severity))
 		},
 	};
 	format!("[{}, {class}]", ts_string_literal(marker.target))
-}
-
-fn severity_name(severity: Severity) -> &'static str {
-	match severity {
-		Severity::Info => "info",
-		Severity::Warn => "warn",
-		Severity::Error => "error",
-	}
 }
 
 #[cfg(test)]

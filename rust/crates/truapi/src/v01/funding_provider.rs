@@ -28,7 +28,7 @@ pub struct FundingAssignment {
 ///
 /// Parses from the name a Worker manifest's route `mode` uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, strum::EnumString)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 #[strum(serialize_all = "UPPERCASE")]
 pub enum FundingRail {
 	/// A card payment.
@@ -44,7 +44,7 @@ pub enum FundingRail {
 
 /// What the host asks a provider to price.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingQuoteAsk {
 	/// Which way value moves.
 	pub direction: FundingDirection,
@@ -65,7 +65,7 @@ pub struct FundingQuoteAsk {
 
 /// A provider's price for an ask.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingQuote {
 	/// The provider's id for this quote, handed back when the user picks it.
 	pub quote_id: String,
@@ -90,7 +90,7 @@ pub struct FundingQuote {
 
 /// Why a provider will not price an ask.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingQuoteRefusal {
 	/// Not offered in the user's country.
 	#[codec(index = 0)]
@@ -143,7 +143,7 @@ pub enum FundingQuoteAnswer {
 /// inbound session is delivered from the claims of the top-ups it names, an
 /// outbound one is released once the user's payment completes.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingUpdate {
 	/// A step of an inbound session.
 	#[codec(index = 0)]
@@ -184,7 +184,7 @@ pub enum FundingUpdate {
 /// A step of an inbound session: the user pays the provider, which credits
 /// the user's balance.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingInboundUpdate {
 	/// Waiting for the user to pay the provider.
 	#[codec(index = 0)]
@@ -227,7 +227,7 @@ pub enum FundingInboundUpdate {
 /// A step of an outbound session: the provider collects the user's balance
 /// and pays the user out.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingOutboundUpdate {
 	/// The provider asked the user to pay it with `payment.request`. The
 	/// session is released once that payment completes.
@@ -269,7 +269,7 @@ pub enum FundingOutboundUpdate {
 /// The line under a session's status: a fact about the current step, and
 /// when it happened or is due. The host words it.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingDetail {
 	/// What the provider reports.
 	pub fact: FundingFact,
@@ -281,7 +281,7 @@ pub struct FundingDetail {
 /// A fact a provider reports within a step, which the host words in the
 /// user's language.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingFact {
 	/// The provider checked and nothing changed: "Checked with the
 	/// provider".
@@ -350,7 +350,7 @@ pub const FUNDING_DETAIL_MAX_BYTES: usize = 320;
 /// How a provider's payout to the user went after an outbound session was
 /// released.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingPayout {
 	/// The funds reached the user's bank, card or wallet.
 	#[codec(index = 0)]
@@ -366,7 +366,7 @@ pub enum FundingPayout {
 
 /// Where and what the user pays a provider.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingDeposit {
 	/// A transfer to an address on a chain.
 	#[codec(index = 0)]
@@ -413,7 +413,7 @@ pub enum FundingDeposit {
 
 /// What arrived for a payment that differs from what was asked.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingReceived {
 	/// Symbol of the asset that arrived.
 	pub asset: String,
@@ -540,7 +540,7 @@ pub struct HostFundingPresentFrameRequest {
 
 /// What a provider frame shows.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingFrameTarget {
 	/// A route of the provider's own App, such as its KYC or card entry.
 	#[codec(index = 0)]
@@ -562,7 +562,7 @@ pub enum FundingFrameTarget {
 
 /// How a provider screen closed.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingFrameOutcome {
 	/// The provider's screen finished and closed itself.
 	#[codec(index = 0)]

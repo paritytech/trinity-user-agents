@@ -271,6 +271,8 @@ private extension FirebaseApplicationService {
 
 // MARK: - Constants
 
+// These keys have no bundled defaults: values come from Firebase Remote Config at runtime.
+// See README, "Centralised dependencies" (#414).
 private extension String {
     static let latestAppVersion = "latest_ios_version"
     static let chains = "chains_v2"
