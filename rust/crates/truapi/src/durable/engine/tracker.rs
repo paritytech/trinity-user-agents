@@ -18,7 +18,7 @@ use crate::{
 	chain::{DispatchOutcome, EncodedExtrinsic, HashAndNumber, MortalExtrinsic, WatchEvent},
 	durable::{
 		dao,
-		model::{DurableTxId, Verdict, VerdictFailureKind, VerdictStatus},
+		model::{DurableTxId, DurableTxStatus, Verdict, VerdictFailureKind, VerdictStatus},
 		ownership::OwnershipClaim,
 	},
 };
@@ -97,9 +97,8 @@ impl DurableTxEngine {
 	/// Follows `events` until a terminal one, the end of the stream, or
 	/// [`SILENCE_TIMEOUT`] without one.
 	async fn follow(&self, attempt: Attempt, mut events: BoxStream<'static, WatchEvent>) {
-		let mut best = None;
 		while let Some(event) = self.next_event(attempt, &mut events).await {
-			if self.on_event(attempt, &mut best, event).await.is_break() {
+			if self.on_event(attempt, event).await.is_break() {
 				return;
 			}
 		}
@@ -120,18 +119,13 @@ impl DurableTxEngine {
 		}
 	}
 
-	/// Acts on one event. `best` is the best block the extrinsic was last
-	/// seen in, since a retraction does not name it.
-	async fn on_event(
-		&self,
-		attempt: Attempt,
-		best: &mut Option<H256>,
-		event: WatchEvent,
-	) -> ControlFlow<()> {
+	/// Acts on one event by itself, so a report the node drops leaves no
+	/// stale state behind.
+	async fn on_event(&self, attempt: Attempt, event: WatchEvent) -> ControlFlow<()> {
 		debug!(id = attempt.id().0, ?event, "durable submission status");
 		match event {
-			WatchEvent::InBestBlock(hash) => self.on_best_block(attempt, best.insert(hash)).await,
-			WatchEvent::NoLongerInBestBlock => self.on_retraction(attempt, best.take()).await,
+			WatchEvent::InBestBlock(hash) => self.on_best_block(attempt, hash).await,
+			WatchEvent::NoLongerInBestBlock => self.demote(attempt).await,
 			WatchEvent::InFinalizedBlock(hash) => {
 				return self.on_finalized_block(attempt, hash).await;
 			},
@@ -142,12 +136,17 @@ impl DurableTxEngine {
 		ControlFlow::Continue(())
 	}
 
-	/// Records a successful dispatch in the best block. A failure there is
-	/// not final, so it proposes nothing.
-	async fn on_best_block(&self, attempt: Attempt, hash: &H256) {
-		if let Some((block, DispatchOutcome::Succeeded)) = self.outcome_at(attempt, *hash).await {
-			let success = VerdictStatus::PendingSuccess { at: block };
-			self.propose(attempt, success.into()).await;
+	/// Records a successful dispatch in the best block, and demotes a
+	/// recorded success when the dispatch there failed. A failure in a best
+	/// block is not final, so it never fails the transaction.
+	async fn on_best_block(&self, attempt: Attempt, hash: H256) {
+		match self.outcome_at(attempt, hash).await {
+			Some((block, DispatchOutcome::Succeeded)) => {
+				let success = VerdictStatus::PendingSuccess { at: block };
+				self.propose(attempt, success.into()).await;
+			},
+			Some((_, DispatchOutcome::Failed(_))) => self.demote(attempt).await,
+			None => {},
 		}
 	}
 
@@ -184,19 +183,20 @@ impl DurableTxEngine {
 		Some((block, outcome))
 	}
 
-	/// Demotes the transaction when its record names the retracted block:
-	/// a success resting on a block that is gone is no evidence.
-	async fn on_retraction(&self, attempt: Attempt, retracted: Option<H256>) {
-		let Some(retracted) = retracted else {
-			return;
-		};
+	/// Returns a provisional success of the watched attempt to pending. While
+	/// the watch holds its claim, recovery does not decide the attempt, so
+	/// any such success was recorded by this watch, at whatever block.
+	async fn demote(&self, attempt: Attempt) {
 		let id = attempt.id();
 		let Ok(Some(entry)) = self.db.read(move |conn| dao::entry(conn, id)).await else {
 			return;
 		};
-		let recorded = entry.status.success_block();
-		if recorded.map(|block| block.hash) == Some(retracted) {
-			self.propose(attempt, VerdictStatus::Pending.into()).await;
+		let provisional = matches!(entry.status, DurableTxStatus::PendingSuccess { .. });
+		if !provisional || entry.tx_hash != attempt.tx_hash {
+			return;
+		}
+		if let Err(error) = write_verdict(self, &entry, VerdictStatus::Pending.into()).await {
+			warn!(id = id.0, %error, "durable demotion could not be written");
 		}
 	}
 
