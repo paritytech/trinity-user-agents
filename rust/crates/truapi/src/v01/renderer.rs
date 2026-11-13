@@ -646,6 +646,8 @@ pub enum RendererNode {
 	},
 	/// Slide-to-confirm control, as wide as the space it is given unless
 	/// sized. The host owns the drag and reports only a completed slide.
+	/// Index 11 is `Materials`'s.
+	#[codec(index = 12)]
 	SlideToConfirm {
 		/// Layout and styling.
 		modifiers: Vec<Modifier>,
