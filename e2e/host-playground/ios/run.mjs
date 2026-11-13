@@ -37,6 +37,10 @@ const FIRST_LIVENESS_CHECK_MS = 30_000;
 const LIVENESS_INTERVAL_MS = 10_000;
 const MISSED_LIVENESS_CHECKS = 2;
 const POLL_MS = 2_000;
+// Granting notifications restarts SpringBoard, and a launch that lands while it
+// restarts fails with "the system shell probably crashed".
+const LAUNCH_ATTEMPTS = 6;
+const LAUNCH_RETRY_MS = 5_000;
 
 const { values: args } = parseArgs({
   options: {
@@ -90,7 +94,7 @@ if (applesimutils.error) {
   console.log(`applesimutils ${applesimutils.status === 0 ? "granted" : "failed"}${output ? `: ${output}` : ""}`);
 }
 
-const dataContainer = appDataContainer();
+const dataContainer = await appDataContainer();
 const exchange = join(dataContainer, "tmp", "truapi-e2e");
 const seed = join(exchange, "seed");
 
@@ -116,7 +120,7 @@ try {
     { stdio: ["ignore", logFile, "ignore"] },
   );
   try {
-    launch({ terminate: true });
+    await launch({ terminate: true });
     const outcome = await waitForDone(Number(args["timeout-minutes"]) * 60_000);
     exitCode = finish(outcome);
   } finally {
@@ -164,11 +168,11 @@ function chooseDevice(requested) {
   }
 }
 
-function appDataContainer() {
+async function appDataContainer() {
   const query = () => captureOptional("xcrun", ["simctl", "get_app_container", device.udid, bundle, "data"]);
   let container = query();
   if (!container) {
-    run("xcrun", ["simctl", "launch", device.udid, bundle], { stdio: "ignore" });
+    await launch({ terminate: false, e2e: false });
     spawnSync("xcrun", ["simctl", "terminate", device.udid, bundle], { stdio: "ignore" });
     container = query();
   }
@@ -176,15 +180,20 @@ function appDataContainer() {
   return container;
 }
 
-function launch({ terminate }) {
-  run(
-    "xcrun",
-    ["simctl", "launch", ...(terminate ? ["--terminate-running-process"] : []), device.udid, bundle],
-    {
+async function launch({ terminate, e2e = true }) {
+  const command = ["simctl", "launch", ...(terminate ? ["--terminate-running-process"] : []), device.udid, bundle];
+  for (let attempt = 1; ; attempt++) {
+    const result = spawnSync("xcrun", command, {
       stdio: ["ignore", "ignore", "inherit"],
-      env: { ...process.env, SIMCTL_CHILD_TRUAPI_IOS_E2E_HOST_PLAYGROUND: "1" },
-    },
-  );
+      env: e2e ? { ...process.env, SIMCTL_CHILD_TRUAPI_IOS_E2E_HOST_PLAYGROUND: "1" } : process.env,
+    });
+    if (result.status === 0) return;
+    if (attempt === LAUNCH_ATTEMPTS) {
+      throw new Error(`xcrun ${command.join(" ")} failed with ${result.status ?? result.error} after ${attempt} attempts`);
+    }
+    console.log(`Launch attempt ${attempt} of ${LAUNCH_ATTEMPTS} failed with ${result.status ?? result.error}; retrying.`);
+    await delay(LAUNCH_RETRY_MS);
+  }
 }
 
 function readResults() {
@@ -220,7 +229,7 @@ async function waitForDone(timeoutMs) {
     const backgrounded = join(exchange, "backgrounded");
     if (existsSync(backgrounded)) {
       unlinkSync(backgrounded);
-      launch({ terminate: false });
+      await launch({ terminate: false });
     }
 
     const snapshot = readResults();
