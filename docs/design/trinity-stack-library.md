@@ -101,6 +101,7 @@ It also reports a new generation, so the caller drops its chain caches, and whet
   let refreshed = reader.fetched(&pointer, served, now)?; // Document { bytes, etag } | NotModified | Unreachable
   // refreshed: what accept decided, and the record to store when it changed
   reader.due(now);                       // stacks whose background refresh is due
+  reader.due_in(&pointer, now);          // seconds until this stack's refresh is due, for a caller that sleeps
   ```
 
   `get` returns no `current` for a stack the reader has no copy of, and under `"once"` until the stack's first fetch is

@@ -1,17 +1,26 @@
-//! The Trinity stack a host runs, read from the signed descriptor its build
-//! bundles.
+//! The Trinity stack a host runs, read from a signed descriptor.
 //!
 //! The core takes all of its chain configuration from the stack.
-//! [`Stack::bundled`] checks the descriptor against the key in the stack's
-//! link. The [`Stack`] it returns holds the network, the dotNS TLD and each
-//! chain's genesis hash, and answers `get_chain_info`.
+//! [`StackRefresh::load`] checks the descriptor a host build bundles against
+//! the key in the stack's link, starts from it or from a newer copy the core
+//! stored, and fetches newer copies while the core runs. The [`Stack`] it
+//! resolves holds the network, the dotNS TLD and each chain's genesis hash,
+//! and answers `get_chain_info`.
 
-use trinity_stack::{Chain, Pointer, open};
+mod records;
+mod refresh;
+mod source;
+
+use trinity_stack::{Chain, Descriptor, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
 use crate::dotns_name::DOTNS_TLDS;
+
+pub use records::StackRecords;
+pub use refresh::{StackHost, StackRefresh};
+pub use source::{StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus};
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -82,9 +91,9 @@ pub enum StackError {
 	/// copy it fetches later verifies against the same key as the bundled one.
 	#[display("stack pointer has no key; a host's stack must be signed")]
 	Unsigned,
-	/// The bundled descriptor breaks a rule or does not verify under the
-	/// pointer's key.
-	#[display("bundled stack descriptor refused ({}): {_0}", _0.code())]
+	/// The descriptor breaks a rule or does not verify under the pointer's
+	/// key.
+	#[display("stack descriptor refused ({}): {_0}", _0.code())]
 	Descriptor(#[error(not(source))] trinity_stack::Error),
 	/// The descriptor has no chain with this role.
 	#[display("stack has no {} chain", <&str>::from(*chain))]
@@ -124,24 +133,34 @@ pub enum StackError {
 }
 
 impl Stack {
-	/// The stack a host build bundles: `pointer` is the stack's link
-	/// (`polkadotapp://stack?key=0x…&url=…`), `descriptor` the signed copy the
-	/// build ships, and `allows_reserved_values` whether it may use Polkadot's
-	/// genesis hashes and the `dot` TLD.
+	/// The stack a host build bundles, read from the bundled copy alone:
+	/// `pointer` is the stack's link (`polkadotapp://stack?key=0x…&url=…`) and
+	/// `descriptor` the signed copy the build ships. A host starts through
+	/// [`StackRefresh::load`] instead, which also reads the copy the core
+	/// stored.
 	///
-	/// Fails with a [`StackError`] naming the rule the copy breaks. `validUntil`
-	/// and `expiresAt` are not checked, because the bundled copy is the only one
-	/// the host has.
+	/// Fails like [`Self::from_descriptor`], and when the copy does not verify
+	/// under the pointer's key.
 	pub fn bundled(
 		pointer: &str,
 		descriptor: &[u8],
 		allows_reserved_values: bool,
 	) -> Result<Self, StackError> {
-		let pointer = Pointer::from_link(pointer).map_err(StackError::Pointer)?;
-		if pointer.key().is_none() {
-			return Err(StackError::Unsigned);
-		}
-		let descriptor = open(descriptor, &pointer).map_err(StackError::Descriptor)?.descriptor;
+		let pointer = signed_pointer(pointer)?;
+		let verified = open(descriptor, &pointer).map_err(StackError::Descriptor)?;
+		Self::from_descriptor(&verified.descriptor, allows_reserved_values)
+	}
+
+	/// The stack a verified descriptor names, when the core can run it.
+	/// `allows_reserved_values` is whether the build lets it use Polkadot's
+	/// genesis hashes and the `dot` TLD.
+	///
+	/// Fails with a [`StackError`] naming the rule the descriptor breaks.
+	/// `validUntil` and `expiresAt` are not checked.
+	pub fn from_descriptor(
+		descriptor: &Descriptor,
+		allows_reserved_values: bool,
+	) -> Result<Self, StackError> {
 		if !allows_reserved_values {
 			refuse_reserved_genesis(descriptor.chains.iter().map(Chain::genesis))?;
 		}
@@ -154,14 +173,20 @@ impl Stack {
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
-		Self::new(descriptor.network, descriptor.tld, chains, allows_reserved_values)
+		Self::new(
+			descriptor.network.clone(),
+			descriptor.tld.clone(),
+			chains,
+			allows_reserved_values,
+		)
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
 	/// bundled descriptor, such as the CLI's.
 	///
-	/// Applies the same TLD and reserved-value rules as [`Self::bundled`], and
-	/// refuses an all-zero Relay or Asset Hub genesis hash.
+	/// Applies the same TLD and reserved-value rules as
+	/// [`Self::from_descriptor`], and refuses an all-zero Relay or Asset Hub
+	/// genesis hash.
 	pub fn new(
 		network: String,
 		tld: String,
@@ -234,6 +259,16 @@ impl Stack {
 				genesis_hash,
 			})
 			.ok_or(RemoteChainInfoError::NotSupported)
+	}
+}
+
+/// The pointer a stack link carries. A host runs only a signed stack, so a
+/// link without a key is refused.
+fn signed_pointer(link: &str) -> Result<Pointer, StackError> {
+	let pointer = Pointer::from_link(link).map_err(StackError::Pointer)?;
+	match pointer.key() {
+		Some(_) => Ok(pointer),
+		None => Err(StackError::Unsigned),
 	}
 }
 

@@ -256,6 +256,17 @@ impl StackReader {
 			.collect()
 	}
 
+	/// Seconds until the policy makes the stack's fetch due: `Some(0)` when [`StackReader::get`]
+	/// would hand one out now, and `None` while a fetch is out or when the policy never makes
+	/// one due. A caller sleeps this long instead of polling.
+	#[must_use]
+	pub fn due_in(&self, pointer: &Pointer, now_unix_seconds: i64) -> Option<u64> {
+		match self.stacks.get(&pointer.stack_id()) {
+			Some(stack) => stack.due_in(self.refresh, now_unix_seconds),
+			None => Some(0),
+		}
+	}
+
 	/// Takes the answer to the stack's fetch. Fails only when the reader has no copy and the
 	/// answer gives it none, which every caller waiting on the fetch then sees.
 	pub fn fetched(
@@ -303,20 +314,26 @@ impl StackReader {
 
 impl Stack {
 	fn fetch_due(&self, refresh: Refresh, now_unix_seconds: i64) -> bool {
+		self.due_in(refresh, now_unix_seconds) == Some(0)
+	}
+
+	fn due_in(&self, refresh: Refresh, now_unix_seconds: i64) -> Option<u64> {
 		if self.fetches.pending {
-			return false;
+			return None;
 		}
-		let Some(copy) = &self.copy else { return true };
+		let Some(copy) = &self.copy else { return Some(0) };
 		match refresh {
-			Refresh::Never => false,
-			Refresh::Once => self.fetches.requested_at.is_none(),
+			Refresh::Never => None,
+			Refresh::Once => self.fetches.requested_at.is_none().then_some(0),
 			Refresh::MaxAge(age) => {
-				// A fetch time ahead of the clock was recorded under a skewed one, so it is
-				// ignored.
-				let fetched_at = copy.fetched_at.filter(|at| *at <= now_unix_seconds);
-				fetched_at.max(self.fetches.requested_at).is_none_or(|last| {
-					now_unix_seconds.saturating_sub(last) >= i64::try_from(age).unwrap_or(i64::MAX)
-				})
+				// A time ahead of the clock was recorded under a skewed one, so it is ignored.
+				let not_ahead = |at: &i64| *at <= now_unix_seconds;
+				let fetched_at = copy.fetched_at.filter(not_ahead);
+				let requested_at = self.fetches.requested_at.filter(not_ahead);
+				let Some(last) = fetched_at.max(requested_at) else { return Some(0) };
+				let age = i64::try_from(age).unwrap_or(i64::MAX);
+				let remaining = age.saturating_sub(now_unix_seconds.saturating_sub(last));
+				Some(u64::try_from(remaining).unwrap_or(0))
 			},
 		}
 	}
