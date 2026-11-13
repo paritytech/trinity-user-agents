@@ -706,30 +706,20 @@ impl<H: AccountHolder> HostAccounts<H> {
 	///
 	/// Only the product's own accounts are served: a kept key covers its
 	/// owner's subtree, not the subtree of another product it was granted.
-	async fn product_signing_grant(
-		&self,
-		session: &AuthoritySession,
+	async fn kept_signing_key<'a>(
+		&'a self,
+		session: &'a AuthoritySession,
 		product: &ProductContext,
-		account: &api::ProductAccountId,
-	) -> Result<Option<AutoSigningKey>, AuthorityError> {
+		account: &'a api::ProductAccountId,
+	) -> Result<Option<KeptSigningKey<'a, H>>, AuthorityError> {
+		let revision = self.grants.lifecycle().revision();
 		if product.product_id != account.dot_ns_identifier {
 			return Ok(None);
 		}
 		let (current, _) = self.grant_session(session)?;
 		let grant = self.grants.auto_signing_key(&current, &product.product_id).await?;
 		self.holder.require_current_session(session)?;
-		Ok(grant)
-	}
-
-	fn grant_keypair(
-		grant: &AutoSigningKey,
-		account: &api::ProductAccountId,
-	) -> Result<schnorrkel::Keypair, AuthorityError> {
-		derive_product_keypair_from_subtree_secret(
-			*grant.as_secret_bytes(),
-			derivation_index_bytes(&account.derivation_index),
-		)
-		.map_err(|error| AuthorityError::Unknown { reason: error.to_string() })
+		Ok(grant.map(|grant| KeptSigningKey { accounts: self, session, revision, grant, account }))
 	}
 
 	/// Sign with a kept product key, or confirm with the user and ask the holder.
@@ -740,17 +730,15 @@ impl<H: AccountHolder> HostAccounts<H> {
 		connection: &ProductConnection,
 		request: SignPayloadAuthorityRequest,
 	) -> Result<api::HostSignPayloadResponse, AuthorityError> {
-		let revision = self.grants.lifecycle().revision();
 		let product = &connection.product;
 		if let SignPayloadAuthorityRequest::Product(payload) = &request &&
-			let Some(grant) =
-				self.product_signing_grant(session, product, &payload.account).await?
+			let Some(kept) = self.kept_signing_key(session, product, &payload.account).await?
 		{
 			let cx = super::remote_authority_context(cx);
 			return super::remote_authority_call(&cx, async {
-				let _lifecycle = self.hold_grant(session, revision)?;
-				let keypair = Self::grant_keypair(&grant, &payload.account)?;
-				Ok(sign_extrinsic_payload(&keypair, payload.payload.clone())?)
+				kept.sign_with(|keypair| {
+					Ok(sign_extrinsic_payload(keypair, payload.payload.clone())?)
+				})
 			})
 			.await;
 		}
@@ -789,7 +777,6 @@ impl<H: AccountHolder> HostAccounts<H> {
 		request: SignRawAuthorityRequest,
 		watermarked: bool,
 	) -> Result<api::HostSignPayloadResponse, AuthorityError> {
-		let revision = self.grants.lifecycle().revision();
 		let product = &connection.product;
 		let account = match &request {
 			SignRawAuthorityRequest::Product(payload) => Some(&payload.account),
@@ -798,13 +785,13 @@ impl<H: AccountHolder> HostAccounts<H> {
 		};
 		// The unwatermarked API is never grant-covered, so a local signature
 		// would skip a prompt the review deliberately raises.
-		let grant = match account {
+		let kept = match account {
 			Some(account) if watermarked => {
-				self.product_signing_grant(session, product, account).await?
+				self.kept_signing_key(session, product, account).await?
 			},
 			_ => None,
 		};
-		if grant.is_none() || !matches!(request, SignRawAuthorityRequest::Product(_)) {
+		if kept.is_none() || !matches!(request, SignRawAuthorityRequest::Product(_)) {
 			let review = request.review(&AccountCaller::Local { product }, watermarked);
 			match &request {
 				SignRawAuthorityRequest::Product(payload) if watermarked => {
@@ -822,7 +809,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 			}
 		}
 		let cx = super::remote_authority_context(cx);
-		if let (Some(grant), Some(account)) = (grant, account) {
+		if let Some(kept) = kept {
 			let payload = match &request {
 				SignRawAuthorityRequest::Product(request) => &request.payload,
 				SignRawAuthorityRequest::LegacyAccount { request, .. } |
@@ -830,15 +817,15 @@ impl<H: AccountHolder> HostAccounts<H> {
 			};
 			let message = raw_payload_bytes(payload.clone(), watermarked)?;
 			return super::remote_authority_call(&cx, async {
-				let _lifecycle = self.hold_grant(session, revision)?;
-				let keypair = Self::grant_keypair(&grant, account)?;
-				Ok(api::HostSignPayloadResponse {
-					signature: keypair
-						.secret
-						.sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
-						.to_bytes()
-						.to_vec(),
-					signed_transaction: None,
+				kept.sign_with(|keypair| {
+					Ok(api::HostSignPayloadResponse {
+						signature: keypair
+							.secret
+							.sign_simple(SR25519_SIGNING_CONTEXT, &message, &keypair.public)
+							.to_bytes()
+							.to_vec(),
+						signed_transaction: None,
+					})
 				})
 			})
 			.await;
@@ -860,12 +847,10 @@ impl<H: AccountHolder> HostAccounts<H> {
 		connection: &ProductConnection,
 		request: CreateTransactionAuthorityRequest,
 	) -> Result<api::HostCreateTransactionResponse, AuthorityError> {
-		let revision = self.grants.lifecycle().revision();
 		let product = &connection.product;
 		let caller = AccountCaller::Local { product };
 		if let CreateTransactionAuthorityRequest::Product(payload) = &request &&
-			let Some(grant) =
-				self.product_signing_grant(session, product, &payload.signer).await?
+			let Some(kept) = self.kept_signing_key(session, product, &payload.signer).await?
 		{
 			if !payload.contacts.is_empty() {
 				self.confirm(cx, session, connection, request.review(&caller)).await?;
@@ -879,17 +864,17 @@ impl<H: AccountHolder> HostAccounts<H> {
 				// read until its deadline.
 				let metadata =
 					local_transaction_metadata(&self.services.chain, payload.genesis_hash).await?;
-				let _lifecycle = self.hold_grant(session, revision)?;
-				let keypair = Self::grant_keypair(&grant, &payload.signer)?;
-				Ok(api::HostCreateTransactionResponse {
-					transaction: build_signed_transaction(
-						&Sr25519Signer::from_keypair(&keypair),
-						payload.genesis_hash,
-						&payload.call_data,
-						&payload.extensions,
-						payload.tx_ext_version,
-						metadata,
-					)?,
+				kept.sign_with(|keypair| {
+					Ok(api::HostCreateTransactionResponse {
+						transaction: build_signed_transaction(
+							&Sr25519Signer::from_keypair(keypair),
+							payload.genesis_hash,
+							&payload.call_data,
+							&payload.extensions,
+							payload.tx_ext_version,
+							metadata,
+						)?,
+					})
 				})
 			})
 			.await;
@@ -926,19 +911,21 @@ impl<H: AccountHolder> HostAccounts<H> {
 		connection: &ProductConnection,
 		request: api::HostAccountSignVrfRequest,
 	) -> Result<api::VrfSignature, AuthorityError> {
-		let revision = self.grants.lifecycle().revision();
 		let product = &connection.product;
-		if let Some(grant) = self.product_signing_grant(session, product, &request.account).await? {
+		if let Some(kept) = self.kept_signing_key(session, product, &request.account).await? {
 			let cx = super::remote_authority_context(cx);
 			return super::remote_authority_call(&cx, async {
-				let _lifecycle = self.hold_grant(session, revision)?;
-				let keypair = Self::grant_keypair(&grant, &request.account)?;
-				let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
-					&keypair,
-					&request.transcript_label,
-					request.items.iter().map(|item| (item.label.as_slice(), item.value.as_slice())),
-				);
-				Ok(api::VrfSignature { pre_output, proof })
+				kept.sign_with(|keypair| {
+					let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
+						keypair,
+						&request.transcript_label,
+						request
+							.items
+							.iter()
+							.map(|item| (item.label.as_slice(), item.value.as_slice())),
+					);
+					Ok(api::VrfSignature { pre_output, proof })
+				})
 			})
 			.await;
 		}
@@ -965,17 +952,16 @@ impl<H: AccountHolder> HostAccounts<H> {
 		account: api::ProductAccountId,
 		payload: Vec<u8>,
 	) -> Result<[u8; 64], AuthorityError> {
-		let revision = self.grants.lifecycle().revision();
 		let product = &connection.product;
-		if let Some(grant) = self.product_signing_grant(session, product, &account).await? {
+		if let Some(kept) = self.kept_signing_key(session, product, &account).await? {
 			let cx = super::remote_authority_context(cx);
 			return super::remote_authority_call(&cx, async {
-				let _lifecycle = self.hold_grant(session, revision)?;
-				let keypair = Self::grant_keypair(&grant, &account)?;
-				Ok(keypair
-					.secret
-					.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
-					.to_bytes())
+				kept.sign_with(|keypair| {
+					Ok(keypair
+						.secret
+						.sign_simple(SR25519_SIGNING_CONTEXT, &payload, &keypair.public)
+						.to_bytes())
+				})
 			})
 			.await;
 		}
@@ -1271,6 +1257,37 @@ impl<H: AccountHolder> HostAccounts<H> {
 			self.holder.ring_vrf_sign(local_invocation(cx, session, product), request).await
 		})
 		.await
+	}
+}
+
+/// A product's kept AutoSigning key for one of its accounts.
+///
+/// The key signs only through [`Self::sign_with`], so no signature is made
+/// with a key a product reset, a lock or a session change has since revoked.
+struct KeptSigningKey<'a, H: AccountHolder> {
+	accounts: &'a HostAccounts<H>,
+	session: &'a AuthoritySession,
+	/// The grant revision read before the key was looked up.
+	revision: u64,
+	grant: AutoSigningKey,
+	account: &'a api::ProductAccountId,
+}
+
+impl<H: AccountHolder> KeptSigningKey<'_, H> {
+	/// Sign with the account's keypair while grant changes are held off.
+	///
+	/// Fails `Disconnected` when the grants changed since the key was read.
+	fn sign_with<T, E: From<AuthorityError>>(
+		&self,
+		sign: impl FnOnce(&schnorrkel::Keypair) -> Result<T, E>,
+	) -> Result<T, E> {
+		let _lifecycle = self.accounts.hold_grant(self.session, self.revision)?;
+		let keypair = derive_product_keypair_from_subtree_secret(
+			*self.grant.as_secret_bytes(),
+			derivation_index_bytes(&self.account.derivation_index),
+		)
+		.map_err(|error| AuthorityError::Unknown { reason: error.to_string() })?;
+		sign(&keypair)
 	}
 }
 
