@@ -72,12 +72,11 @@ pub trait HostCallbacks: Send + Sync {
 		request: latest::HostDevicePermissionRequest,
 	) -> Result<DevicePermissionStatus, HostRejection>;
 
-	/// Show (`true`) or hide (`false`) the face above this execution's
-	/// expanded card.
+	/// Uncover (`true`) or cover (`false`) the face under this execution's
+	/// page.
 	///
 	/// Answer `NotPresented` when the execution is not under its card and
-	/// `UserMoving` while the user drags it. Return without waiting for the
-	/// animation to finish.
+	/// `UserMoving` while the user moves the card.
 	async fn set_expanded_card_face_shown(
 		&self,
 		shown: bool,

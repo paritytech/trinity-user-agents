@@ -5,8 +5,8 @@ import UIKit
 /// Opens the card's product, at the page the card names, on a screen the card
 /// itself heads.
 ///
-/// An expanded card runs the product's app, the one executable every product
-/// publishes. The origin stays the product's base domain, so the card sees the
+/// An expanded card runs the product's widget, or its app when it publishes no
+/// widget. The origin stays the product's base domain, so the card sees the
 /// same grants and storage its worker does.
 @MainActor
 struct PocketCardOpening {
@@ -30,22 +30,23 @@ struct PocketCardOpening {
                 return
             }
 
-            guard let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: { _ in
-                makeView(for: card, page: page, pageQuery: pageQuery)
-            }) else { return }
+            guard
+                let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: {
+                    makeView(for: card, page: page, pageQuery: pageQuery)
+                }),
+                let screen = product.view.controller as? PocketItemScreen
+            else { return }
 
-            let origin = wallet.viewControllers.first as? PocketOrigin
-            let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
-            PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {
-                product.surface.claim(screen)
-            }
+            let view = product.view
+            view.origin = wallet.viewControllers.first as? PocketOrigin
+            PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {}
 
-            Task { [weak screen] in
+            Task { [weak view] in
                 let shown = await PocketCardFaceOnOpen.faceShown(
                     for: card.key,
                     cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
                 )
-                screen?.applyOpeningFace(shown: shown)
+                view?.applyOpeningFace(shown: shown)
             }
         }
     }
@@ -71,18 +72,15 @@ private extension PocketCardOpening {
         for card: PocketCardViewModel,
         page: ProductPage,
         pageQuery: String
-    ) -> SPAViewProtocol? {
+    ) -> ExpandedPocketCardViewProtocol? {
         let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
-        let configuration = SPAConfiguration(
-            title: card.title,
-            isRootScreen: false,
-            showMoreButton: false,
-            page: page,
-            contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs
-        )
 
-        // A page loaded by its address goes to the Rust runtime on its own.
-        return SPAViewFactory.createView(configuration: configuration, flowState: flowState)
+        return ExpandedPocketCardViewFactory.createView(
+            card: card,
+            page: page,
+            contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs,
+            flowState: flowState
+        )
     }
 
     func debugWidgetURL(for key: PocketCardKey, pageQuery: String) -> URL? {

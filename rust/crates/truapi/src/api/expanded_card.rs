@@ -17,16 +17,18 @@ use crate::{
 #[crate::service(required_execution = Widget)]
 #[async_trait::async_trait]
 pub trait ExpandedCard: Send + Sync {
-	/// Show or hide the face above the calling Widget.
+	/// Cover or uncover the face under the calling Widget.
 	///
-	/// Succeeds when the face is already in that state. Fails with
-	/// `NotPresented` when the Widget is not shown under its card, and
-	/// `UserMoving` while the user moves the face or turns the card.
+	/// A covered face stays where it is and its touches go to the Widget;
+	/// neither state moves the face or resizes the Widget. Succeeds when the
+	/// face is already in that state. Fails with `NotPresented` when the Widget
+	/// is not shown under its card, and `UserMoving` while the user moves or
+	/// turns the card.
 	///
 	/// ```ts
 	/// const result = await truapi.expandedCard.setFaceShown({ shown: false });
 	/// assert(result.isOk(), "setFaceShown failed:", result);
-	/// console.log("face hidden");
+	/// console.log("face covered");
 	/// ```
 	#[wire(id = 0)]
 	async fn set_face_shown(
@@ -38,11 +40,11 @@ pub trait ExpandedCard: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Turn the card above the calling Widget so its back or its front is up.
+	/// Turn the card under the calling Widget so its back or its front is up.
 	///
 	/// Succeeds when that side is already up. Fails with `NotPresented` when
-	/// the Widget is not shown under its card, `UserMoving` while the user turns
-	/// the card or moves its face, `NoBack` when the card has no back to show
+	/// the Widget is not shown under its card, `UserMoving` while the user moves
+	/// or turns the card, `NoBack` when the card has no back to show
 	/// right now, and `Unsupported` on a host that cannot turn cards.
 	///
 	/// ```ts
