@@ -1,8 +1,7 @@
 import Foundation
 
-/// Where to send the funds, as the provider reported it. Crypto value in
-/// starts here, on the core's best quote; once started, the progress screen
-/// sits under it.
+/// Where to send the funds, as the provider reported it, over the session's
+/// progress.
 final class FundingDepositPresenter: FundingScreenPresenter {
     private let interactor: FundingDepositInteractorInputProtocol
     private let wireframe: FundingDepositWireframeProtocol

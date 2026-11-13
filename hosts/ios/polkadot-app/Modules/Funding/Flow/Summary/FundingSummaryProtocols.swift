@@ -23,6 +23,7 @@ protocol FundingSummaryInteractorInputProtocol: AnyObject {
 protocol FundingSummaryWireframeProtocol: AnyObject {
     func show(_ screen: FundingFlowScreen)
     func showProgress()
+    func showDeposit()
     func back()
 }
 

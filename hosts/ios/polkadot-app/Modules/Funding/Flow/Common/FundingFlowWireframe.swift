@@ -99,6 +99,12 @@ extension FundingFlowWireframe {
         }
     }
 
+    /// Where to send a crypto deposit, over the session's progress, in place
+    /// of every screen.
+    func showDeposit() {
+        navigation?.setViewControllers([makeScreen(.progress), makeScreen(.deposit)], animated: true)
+    }
+
     /// Takes the flow down, then calls `completion`. A session that never
     /// started is dropped.
     func close(then completion: (() -> Void)? = nil) {
