@@ -1,14 +1,14 @@
 use super::*;
 use std::{
 	collections::HashMap,
-	sync::{Arc, Mutex, atomic::Ordering},
+	sync::{Arc, Mutex, atomic::Ordering, mpsc},
 };
 
 use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, ExecutableKind, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
-	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, ThemeHost,
-	UserConfirmation, UserConfirmationReview,
+	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, StackFetchRequest,
+	StackFetchResponse, StackStatus, ThemeHost, UserConfirmation, UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -1821,6 +1821,84 @@ fn each_descriptor_chain_reaches_its_own_role() {
 			people: [0xa1; 32],
 			bulletin: [0xb2; 32],
 		},
+	);
+}
+
+/// A host HTTP client that serves one published descriptor, and passes on
+/// each status the core reports.
+struct PublishedStack {
+	document: Vec<u8>,
+	statuses: mpsc::Sender<StackStatus>,
+}
+
+#[async_trait::async_trait]
+impl NativeStackCallbacks for PublishedStack {
+	async fn fetch_stack_descriptor(
+		&self,
+		_request: StackFetchRequest,
+	) -> Result<StackFetchResponse, HostRejection> {
+		Ok(StackFetchResponse::Document { bytes: self.document.clone(), etag: None })
+	}
+
+	fn stack_changed(&self, status: StackStatus) {
+		let _ = self.statuses.send(status);
+	}
+}
+
+/// A wiped stack has to reach an installed app without a release: the
+/// running core fetches the new descriptor and keeps it in its database, and
+/// the next runtime the host builds starts from it instead of the bundle.
+#[test]
+fn a_rebuilt_runtime_runs_the_descriptor_the_last_one_fetched() {
+	let config = HostRuntimeConfig {
+		local_session_secret: None,
+		local_session_lite_username: None,
+		..native_host_runtime_config()
+	};
+	let wiped = crate::test_support::published_test_descriptor(
+		2,
+		"second",
+		crate::test_support::TEST_STACK_WIPED_PEOPLE,
+	);
+	let (told, statuses) = mpsc::channel();
+	let published = PublishedStack {
+		document: crate::test_support::sign_test_descriptor(&wiped).1,
+		statuses: told,
+	};
+	let next_status = || {
+		statuses
+			.recv_timeout(std::time::Duration::from_secs(10))
+			.expect("the host is told the stack's status")
+	};
+	let sequence = |status: &StackStatus| {
+		serde_json::from_str::<serde_json::Value>(&status.descriptor)
+			.expect("the status carries descriptor JSON")["sequence"]
+			.clone()
+	};
+
+	let first = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		config.clone(),
+	)
+	.expect("host runtime config should be valid");
+	assert!(first.set_stack_callbacks(Arc::new(published)));
+	let at_start = next_status();
+	let after_fetch = next_status();
+	drop(first);
+	let rebuilt =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+			.expect("host runtime config should be valid");
+
+	let rebuilt_status = rebuilt.stack_status();
+	assert_eq!(
+		(
+			sequence(&at_start),
+			sequence(&after_fetch),
+			after_fetch.restart_required,
+			sequence(&rebuilt_status),
+			rebuilt_status.generation.as_str(),
+		),
+		(1.into(), 1.into(), true, 2.into(), "second")
 	);
 }
 

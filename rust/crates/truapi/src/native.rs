@@ -49,7 +49,7 @@ pub use bundled_products::{
 pub use callbacks::{
 	HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 	NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks, NativeScannerCallbacks,
-	NativeTopUpCallbacks,
+	NativeStackCallbacks, NativeTopUpCallbacks,
 };
 pub use config::{
 	BundledStack, HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionConfig,

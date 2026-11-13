@@ -37,7 +37,7 @@ use super::{
 	callbacks::{
 		HostCallbacks, NativeBalanceCallbacks, NativeChatCallbacks, NativeContactsCallbacks,
 		NativeFundingCallbacks, NativeGameCallbacks, NativePaymentCallbacks,
-		NativeScannerCallbacks, NativeTopUpCallbacks,
+		NativeScannerCallbacks, NativeStackCallbacks, NativeTopUpCallbacks,
 	},
 	engine_follow::{BalanceFollower, StatusFollower},
 	errors::HostRejection,
@@ -92,6 +92,27 @@ impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
 			.scan_code(product.product_id.clone(), product.execution_kind, request.clone())
 			.await
 			.map_err(|error| v01::GenericError { reason: error.to_string() })
+	}
+}
+
+/// [`crate::platform::StackHost`] served by host-provided
+/// [`NativeStackCallbacks`].
+pub struct StackCallbackHost {
+	/// Host HTTP client and stack status observer.
+	pub stack: Arc<dyn NativeStackCallbacks>,
+}
+
+#[async_trait::async_trait]
+impl crate::platform::StackHost for StackCallbackHost {
+	async fn fetch_stack_descriptor(
+		&self,
+		request: crate::platform::StackFetchRequest,
+	) -> Result<crate::platform::StackFetchResponse, v01::GenericError> {
+		Ok(self.stack.fetch_stack_descriptor(request).await?)
+	}
+
+	fn stack_changed(&self, status: crate::platform::StackStatus) {
+		self.stack.stack_changed(status);
 	}
 }
 
