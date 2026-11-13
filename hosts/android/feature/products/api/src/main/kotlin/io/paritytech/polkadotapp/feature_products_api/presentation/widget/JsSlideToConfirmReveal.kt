@@ -40,6 +40,7 @@ import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowRightShaft
 import io.paritytech.polkadotapp.design.components.icon.vectors.Check
+import io.paritytech.polkadotapp.design.components.progress.NovaCircularProgressIndicator
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import kotlin.math.abs
@@ -68,7 +69,6 @@ internal fun SlideToConfirmRevealFace(
             .fillMaxWidth()
             .height(CARD_HEIGHT)
             .graphicsLayer {
-                alpha = if (widget.enabled) 1f else DISABLED_ALPHA
                 shadowElevation = GLOW_ELEVATION.toPx()
                 shape = RoundedCornerShape(cornerRadius)
                 clip = true
@@ -95,6 +95,12 @@ internal fun SlideToConfirmRevealFace(
             )
             Box(modifier = Modifier.size(BUTTON_SIZE), contentAlignment = Alignment.Center) {
                 when {
+                    widget.loading -> NovaCircularProgressIndicator(
+                        modifier = Modifier.size(ICON_SIZE),
+                        color = onAccent,
+                        strokeWidth = SPINNER_STROKE,
+                        trackColor = Color.Transparent,
+                    )
                     widget.confirmed -> NovaIcon(
                         imageVector = NovaIcons.Check,
                         modifier = Modifier.size(ICON_SIZE),
@@ -251,6 +257,7 @@ private val BORDER_WIDTH = 2.dp
 private val GLOW_ELEVATION = 12.dp
 private val BUTTON_SIZE = 56.dp
 private val ICON_SIZE = 24.dp
+private val SPINNER_STROKE = 2.dp
 private val OUTLINE_INSET = 8.dp
 private val OUTLINE_WIDTH = 1.dp
 private val OUTLINE_DASH = 4.dp
@@ -265,4 +272,4 @@ private const val ROLL_SHEEN_LIFT = 0.3f
 private const val ROLL_SHADE_ALPHA = 0.35f
 private const val ACCENT_DEPTH = 0.3f
 private const val FACE_OUTLINE_ALPHA = 0.5f
-private const val DISABLED_ALPHA = 0.4f
+
