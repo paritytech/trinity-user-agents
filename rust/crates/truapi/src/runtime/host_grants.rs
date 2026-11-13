@@ -709,6 +709,23 @@ impl HostGrantGuard<'_> {
 		self.state.revision
 	}
 
+	/// Whether `key` is still the AutoSigning key kept for `product_id`.
+	///
+	/// A reset of that product and a wallet lock each drop it. A reset of
+	/// another product does not.
+	pub fn keeps_auto_signing_key(
+		&self,
+		session: &SessionInfo,
+		product_id: &ProductId,
+		key: &AutoSigningKey,
+	) -> bool {
+		self.store
+			.caches()
+			.auto_signing_keys
+			.get(&(AutoSigningOwner::from_session(session), product_id.clone()))
+			.is_some_and(|kept| kept.as_secret_bytes() == key.as_secret_bytes())
+	}
+
 	fn is_current(&self, session: &SessionInfo, revision: u64) -> bool {
 		self.state.revision == revision &&
 			GrantScope::from_session(session).matches(&self.store.session_state)

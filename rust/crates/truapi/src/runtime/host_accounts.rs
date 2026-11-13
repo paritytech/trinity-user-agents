@@ -50,7 +50,9 @@ use zeroize::Zeroizing;
 /// under, and a signing, transaction, VRF or allocation request is confirmed
 /// with the user before the account holder acts on it. Kept grants are read
 /// under a revision that a product reset, a lock or a session change advances;
-/// grant work that began before the change fails `Disconnected`.
+/// grant work that began before the change fails `Disconnected`. A kept
+/// signing key is fenced on its own product instead, so resetting one product
+/// does not fail another product's signature.
 ///
 /// Signing, transaction, VRF, ring-VRF, subtree and allocation calls bound
 /// their account-holder exchange by the call's deadline, or the default one,
@@ -678,17 +680,17 @@ impl<H: AccountHolder> HostAccounts<H> {
 	async fn kept_signing_key<'a>(
 		&'a self,
 		session: &'a AuthoritySession,
-		product: &ProductContext,
+		product: &'a ProductContext,
 		account: &'a api::ProductAccountId,
 	) -> Result<Option<KeptSigningKey<'a, H>>, AuthorityError> {
-		let revision = self.grants.lifecycle().revision();
 		if product.product_id != account.dot_ns_identifier {
 			return Ok(None);
 		}
 		let (current, _) = self.grant_session(session)?;
 		let grant = self.grants.auto_signing_key(&current, &product.product_id).await?;
 		self.holder.require_current_session(session)?;
-		Ok(grant.map(|grant| KeptSigningKey { accounts: self, session, revision, grant, account }))
+		let product_id = &product.product_id;
+		Ok(grant.map(|grant| KeptSigningKey { accounts: self, session, product_id, grant, account }))
 	}
 
 	/// Sign with a kept product key, or confirm with the user and ask the holder.
@@ -1236,8 +1238,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 struct KeptSigningKey<'a, H: AccountHolder> {
 	accounts: &'a HostAccounts<H>,
 	session: &'a AuthoritySession,
-	/// The grant revision read before the key was looked up.
-	revision: u64,
+	product_id: &'a ProductId,
 	grant: AutoSigningKey,
 	account: &'a api::ProductAccountId,
 }
@@ -1245,12 +1246,15 @@ struct KeptSigningKey<'a, H: AccountHolder> {
 impl<H: AccountHolder> KeptSigningKey<'_, H> {
 	/// Sign with the account's keypair while grant changes are held off.
 	///
-	/// Fails `Disconnected` when the grants changed since the key was read.
+	/// Fails `Disconnected` when the product no longer keeps this key.
 	fn sign_with<T, E: From<AuthorityError>>(
 		&self,
 		sign: impl FnOnce(&schnorrkel::Keypair) -> Result<T, E>,
 	) -> Result<T, E> {
-		let _lifecycle = self.accounts.hold_grant(self.session, self.revision)?;
+		let (lifecycle, current) = self.accounts.hold_session(self.session)?;
+		if !lifecycle.keeps_auto_signing_key(&current, self.product_id, &self.grant) {
+			return Err(AuthorityError::Disconnected.into());
+		}
 		let keypair = derive_product_keypair_from_subtree_secret(
 			*self.grant.as_secret_bytes(),
 			derivation_index_bytes(&self.account.derivation_index),

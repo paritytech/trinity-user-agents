@@ -6,6 +6,7 @@ use futures::FutureExt;
 use truapi::{
 	CallContext, CallError,
 	api::{ResourceAllocation, StatementStore},
+	latest::{DerivationIndex, ProductAccountId},
 	v01,
 	versioned::{
 		resource_allocation::HostRequestResourceAllocationRequest,
@@ -84,6 +85,47 @@ fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
 	assert_eq!(
 		(current_session.validation_id, own, other, stale),
 		(authority_session.validation_id, false, true, Err(AuthorityError::Disconnected)),
+	);
+}
+
+/// A product reset fails only that product's kept-key signatures: one another
+/// product began before the reset still completes.
+#[test]
+fn a_product_reset_leaves_another_products_kept_key_signing() {
+	let platform =
+		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
+	let (services, authority) = signing_runtime_on_asset_hub(platform, None);
+	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
+	let products =
+		["myapp.dot", "other.dot"].map(|product| ProductContext::new(ProductId::for_test(product)));
+	for product in &products {
+		grant_auto_signing(&product_runtime_for(
+			services.clone(),
+			authority.clone(),
+			product.product_id.as_str(),
+		));
+	}
+	let accounts = authority.accounts();
+	let session = accounts.current_session().unwrap();
+	let [reset_account, other_account] = products.each_ref().map(|product| ProductAccountId {
+		dot_ns_identifier: product.product_id.clone(),
+		derivation_index: DerivationIndex::Index(0),
+	});
+	let [reset, other] = &products;
+	let kept_before_reset = |product, account| {
+		futures::executor::block_on(accounts.kept_signing_key(&session, product, account))
+			.unwrap()
+			.expect("the product keeps an AutoSigning key")
+	};
+	let reset_key = kept_before_reset(reset, &reset_account);
+	let other_key = kept_before_reset(other, &other_account);
+	authority.clear_product_state(&reset.product_id);
+	assert_eq!(
+		(
+			reset_key.sign_with(|_| Ok::<_, AuthorityError>(())),
+			other_key.sign_with(|_| Ok::<_, AuthorityError>(())),
+		),
+		(Err(AuthorityError::Disconnected), Ok(())),
 	);
 }
 
