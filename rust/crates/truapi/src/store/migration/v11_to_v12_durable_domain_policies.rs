@@ -1,4 +1,4 @@
-//! Schema version 11: a durable transaction is built by its domain's one
+//! Schema version 12: a durable transaction is built by its domain's one
 //! policy, so rows no longer name a policy.
 
 use rusqlite_migration::M;

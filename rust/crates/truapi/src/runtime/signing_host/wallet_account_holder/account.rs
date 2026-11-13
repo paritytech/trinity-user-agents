@@ -1,6 +1,8 @@
 //! Wallet account execution and access to other products' keys.
 
 use super::{WalletAccountHolder, WalletKeys, allowance::AllowanceAllocationError};
+use std::sync::Arc;
+
 use crate::{
 	host_internal::{
 		extrinsic::{Sr25519Signer, build_signed_transaction, local_transaction_metadata},
@@ -10,6 +12,7 @@ use crate::{
 	host_logic::{
 		product_account::{SR25519_SIGNING_CONTEXT, personhood_product_id},
 		raw_signing::raw_payload_bytes,
+		session::{SessionInfo, SessionState},
 	},
 	platform::{PermissionAuthorizationStatus, ProductId},
 	runtime::{
@@ -18,7 +21,7 @@ use crate::{
 			AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation, Allowance,
 			AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
 			CreateTransactionAuthorityRequest, GrantKeeping, SignPayloadAuthorityRequest,
-			SignRawAuthorityRequest, StatementStoreAllowanceKey,
+			SignRawAuthorityRequest, StatementStoreAllowanceKey, SubtreeResolution,
 		},
 		authority_cancellation_error,
 		contacts::ContactHandles,
@@ -272,12 +275,18 @@ impl AccountHolder for WalletAccountHolder {
 		Some(state.session(&session))
 	}
 
-	fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError> {
+	fn session_state(&self) -> Arc<SessionState> {
+		WalletAccountHolder::session_state(self)
+	}
+
+	fn require_current_session(
+		&self,
+		session: &AuthoritySession,
+	) -> Result<SessionInfo, AuthorityError> {
 		self.lifecycle
 			.lock()
 			.expect("wallet lifecycle mutex poisoned")
 			.require_session(self.session_state.current(), session)
-			.map(|_| ())
 	}
 
 	async fn allocate_grants<'a>(
@@ -399,13 +408,15 @@ impl AccountHolder for WalletAccountHolder {
 		}
 	}
 
-	async fn product_subtree_public_key(
-		&self,
-		invocation: AccountInvocation<'_>,
-		product_id: &ProductId,
-	) -> Result<[u8; 32], AuthorityError> {
+	async fn product_subtree_public_key<'a>(
+		&'a self,
+		invocation: AccountInvocation<'a>,
+		product_id: &'a ProductId,
+	) -> Result<SubtreeResolution<'a>, AuthorityError> {
 		self.with_keys(invocation.session, |keys| {
-			Ok(keys.product_subtree_keypair(product_id)?.public.to_bytes())
+			Ok(SubtreeResolution::Known(
+				keys.product_subtree_keypair(product_id)?.public.to_bytes(),
+			))
 		})
 	}
 
@@ -462,7 +473,10 @@ impl AccountHolder for WalletAccountHolder {
 					SignRawAuthorityRequest::Product(request) => {
 						(keys.product_keypair(&request.account)?, request.payload)
 					},
-					SignRawAuthorityRequest::LegacyAccount { account, request } => {
+					SignRawAuthorityRequest::LegacyAccount { product_account, request } => {
+						(keys.product_keypair(&product_account)?, request.payload)
+					},
+					SignRawAuthorityRequest::IdentityAccount { account, request } => {
 						(keys.identity_keypair_for(account)?, request.payload)
 					},
 				};

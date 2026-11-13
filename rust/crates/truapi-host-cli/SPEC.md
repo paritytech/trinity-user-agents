@@ -2033,13 +2033,14 @@ Deliberately unavailable methods:
   execution and these reports run the CLI as `App`; the host-initiated
   `Renderer` render subscription is also unused because the CLI draws no
   product-rendered bodies;
+- the product-initiated `Renderer/failure_subscribe`, which no host serves yet;
 - all nine Coin Payment methods, which answer `CallError::Unsupported`; and
 - all four Payment methods, which answer typed `Unknown` domain errors.
 
 A successful `System/feature_supported` call returns `true` for the People,
 Bulletin and Asset Hub genesis hashes of the host's stack, the chains
-`Chain/get_chain_info` answers for, and `false` for anything else. Success means
-the method is wired, not that every feature is present.
+`Chain/get_chain_info` answers for, and `false` for anything else. A materials question returns `false`, answered
+by the core. Success means the method is wired, not that every feature is present.
 
 ### 15.2 Platform-specific semantics
 

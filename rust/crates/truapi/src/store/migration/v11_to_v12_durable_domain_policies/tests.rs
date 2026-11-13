@@ -8,7 +8,7 @@ use crate::store::core_migrations;
 #[test]
 fn rows_keep_their_plan_without_naming_a_policy() {
 	let mut connection = Connection::open_in_memory().unwrap();
-	core_migrations().to_version(&mut connection, 10).unwrap();
+	core_migrations().to_version(&mut connection, 11).unwrap();
 	connection
 		.execute_batch(
 			"INSERT INTO durable_tx (domain, status, policy_id, policy_params)

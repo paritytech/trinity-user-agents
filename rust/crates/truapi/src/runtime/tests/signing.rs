@@ -96,6 +96,7 @@ fn sign_vrf_forwards_cross_product_mobile_sso_request_and_response() {
 		)),
 		..Default::default()
 	});
+	cache_manifest(&platform, "other-product.dot", r#"{"myapp":["context"]}"#, 0);
 	let host =
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, session.clone());
@@ -152,6 +153,7 @@ fn sign_vrf_rejects_declined_pairing_host_confirmation_before_mobile_sso() {
 		)),
 		..Default::default()
 	});
+	cache_manifest(&platform, "other-product.dot", r#"{"myapp":["context"]}"#, 0);
 	let host =
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, session);
@@ -586,7 +588,7 @@ fn create_transaction_accepts_confirmation_then_returns_sso_response() {
 /// halt error, with a phone that signs.
 fn create_transaction_over_halted_store(
 	halted_subscribes: usize,
-) -> (Arc<StubPlatform>, ProductRuntimeHost) {
+) -> (Arc<StubPlatform>, ProductRuntimeHost<RemoteAccountHolder>) {
 	let session = sso_session_info();
 	let platform = Arc::new(StubPlatform {
 		create_transaction_confirmed: true,
@@ -682,7 +684,12 @@ fn a_relayed_create_transaction_withdrawn_during_a_halt_is_never_sent() {
 
 fn gated_create_transaction(
 	request_id: &str,
-) -> (Arc<StubPlatform>, ProductRuntimeHost, CallContext, futures::channel::oneshot::Sender<()>) {
+) -> (
+	Arc<StubPlatform>,
+	ProductRuntimeHost<RemoteAccountHolder>,
+	CallContext,
+	futures::channel::oneshot::Sender<()>,
+) {
 	let (release, gate) = futures::channel::oneshot::channel();
 	let platform = Arc::new(StubPlatform {
 		create_transaction_confirmed: true,

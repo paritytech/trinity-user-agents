@@ -402,7 +402,7 @@ export interface MockHostConfig {
   devicePermissions?: PermissionPolicy;
   /** Answer for `remotePermission`. Default `"allow-all"`. */
   remotePermissions?: PermissionPolicy;
-  /** Whether `featureSupported` reports support. Default `true`. */
+  /** Whether `featureSupported` reports chain support. The core answers materials questions itself. Default `true`. */
   featureSupported?: boolean;
   /**
    * When set, `featureSupported` answers from `servedChains`, as a real host
@@ -1241,12 +1241,13 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async featureSupported(request) {
         if (faults.featureError) throw new Error(faults.featureError);
         const served =
-          !onlyServedChains ||
-          servedChains.some(
-            (genesisHash) =>
-              normalizeHash(genesisHash) ===
-              normalizeHash(request.value.genesisHash),
-          );
+          request.tag === "Chain" &&
+          (!onlyServedChains ||
+            servedChains.some(
+              (genesisHash) =>
+                normalizeHash(genesisHash) ===
+                normalizeHash(request.value.genesisHash),
+            ));
         return { supported: featureSupported && served };
       },
     },
@@ -1742,10 +1743,10 @@ export interface TestStack {
   /** The Bulletin chain, which takes the core's own preimage submissions. */
   bulletin: TestStackChain;
   /**
-   * Asset Hub, where product manifests resolve from dotNS. Leave it out for a
-   * host with no Asset Hub; an all-zero hash is refused.
+   * Asset Hub, where product manifests resolve from dotNS. An all-zero hash
+   * is refused.
    */
-  assetHub?: TestStackChain;
+  assetHub: TestStackChain;
   /** The relay chain. */
   relay?: TestStackChain;
   /**

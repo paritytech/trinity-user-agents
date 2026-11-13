@@ -14,11 +14,11 @@ use truapi::{
 
 use crate::{
 	platform::{ExecutableKind, ExpandedCardFaceOutcome},
-	runtime::{ProductRuntimeHost, versioning::version},
+	runtime::{AccountHolder, ProductRuntimeHost, versioning::version},
 };
 
 #[async_trait::async_trait]
-impl ExpandedCard for ProductRuntimeHost {
+impl<H: AccountHolder> ExpandedCard for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "expanded_card.set_face_shown"))]
 	async fn set_face_shown(
 		&self,
@@ -67,7 +67,7 @@ impl ExpandedCard for ProductRuntimeHost {
 	}
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	// Admin connections call the trait without the dispatcher's kind filter.
 	fn require_widget<E>(&self) -> Result<(), CallError<E>> {
 		if self.connection.product.execution_kind != ExecutableKind::Widget {

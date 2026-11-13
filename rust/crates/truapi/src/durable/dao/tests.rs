@@ -500,3 +500,20 @@ fn a_row_handed_back_between_two_reads_is_reported_again() {
 	};
 	wait_until(reported_again, "the handed-back row is reported");
 }
+
+/// The `status` column outlives any one build, so renaming a variant must not
+/// change what is stored for it.
+#[test]
+fn each_status_keeps_its_stored_column_value() {
+	let statuses = [
+		DurableTxStatus::PendingSubmission,
+		DurableTxStatus::Pending,
+		DurableTxStatus::PendingSuccess { at: block(1) },
+		DurableTxStatus::FinalizedSuccess { at: None },
+		DurableTxStatus::Failure(DurableTxFailureKind::Expired),
+	];
+	assert_eq!(
+		statuses.map(<&str>::from),
+		["PENDING_SUBMISSION", "PENDING", "PENDING_SUCCESS", "FINALIZED_SUCCESS", "FAILURE"]
+	);
+}
