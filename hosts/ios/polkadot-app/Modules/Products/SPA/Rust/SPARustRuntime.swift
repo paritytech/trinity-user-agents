@@ -22,13 +22,16 @@ actor SPARustRuntime {
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
     private let hostEventRecorder: HostEventRecording
-    private let hostSessionId = UUID()
+    private let openTap: HostOpenTap?
+    private let hostSessionId: UUID
 
     private var engine: JSEngineProtocol?
     private var engineMonitor: JSEngineMonitor?
     private var started = false
     private var disposed = false
     private var servedContent: DotNsResolvedContent?
+    private var webViewCreatedAtMilliseconds: Int?
+    private var pageVisibleRecorded = false
 
     init(
         executionModel: RustRuntimeEnvironment.ExecutionModel,
@@ -36,7 +39,9 @@ actor SPARustRuntime {
         contentLoader: ProductContentLoading,
         schemeHandlerProxy: SchemeHandlerProxy,
         logger: LoggerProtocol,
-        hostEventRecorder: HostEventRecording
+        hostEventRecorder: HostEventRecording,
+        hostSessionID: UUID,
+        openTap: HostOpenTap? = nil
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
@@ -44,6 +49,9 @@ actor SPARustRuntime {
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
         self.hostEventRecorder = hostEventRecorder
+        self.openTap = openTap
+        // The view's id, the tap's when a tap opened it, so the tap, a retry and the page share one.
+        hostSessionId = hostSessionID
     }
 
     deinit {
@@ -83,7 +91,8 @@ extension SPARustRuntime: SPARuntimeProtocol {
             bootstrapScript: bootstrapScript,
             hostTelemetry: IssueMonitoringFactory.createNativeHostTelemetry(
                 hostSessionID: hostSessionId,
-                truapiHostVersion: truapiHostVersion()
+                truapiHostVersion: truapiHostVersion(),
+                openTap: openTap
             )
         )
 
@@ -95,11 +104,14 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
         try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
 
+        let createdAtMilliseconds = HostEventClock.monotonicMilliseconds()
+        webViewCreatedAtMilliseconds = createdAtMilliseconds
         hostEventRecorder.record(.webViewCreated(
             hostSessionID: hostSessionId,
             origin: .current,
             truapiHostVersion: truapiHostVersion(),
-            monotonicMilliseconds: HostEventClock.monotonicMilliseconds()
+            monotonicMilliseconds: createdAtMilliseconds,
+            openTap: openTap
         ))
 
         // Disposed while initializing: dispose captured nil for the engine,
@@ -113,6 +125,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
         monitor.start()
         engineMonitor = monitor
         self.engine = engine
+        observeFirstVisibleCommit(of: engine)
 
         logger.debug("SPA(rust): runtime started for \(configuration.page.host.name)")
 
@@ -155,6 +168,24 @@ extension SPARustRuntime: SPARuntimeProtocol {
 
     func servedBuild() -> DotNsResolvedContent? {
         servedContent
+    }
+}
+
+extension SPARustRuntime {
+    /// Sends `host.page.visible` for the first main-frame commit of this session and ignores every later one,
+    /// so a reload or an in-page navigation does not send it again.
+    func pageDidCommit(monotonicMilliseconds: Int) {
+        guard !pageVisibleRecorded, !disposed, let createdAtMilliseconds = webViewCreatedAtMilliseconds else { return }
+
+        pageVisibleRecorded = true
+        hostEventRecorder.record(.pageVisible(
+            hostSessionID: hostSessionId,
+            origin: .current,
+            truapiHostVersion: truapiHostVersion(),
+            monotonicMilliseconds: monotonicMilliseconds,
+            webViewMilliseconds: monotonicMilliseconds - createdAtMilliseconds,
+            openTap: openTap
+        ))
     }
 }
 
@@ -201,5 +232,15 @@ private extension SPARustRuntime {
 
     func checkNotDisposed() throws {
         guard !disposed else { throw CancellationError() }
+    }
+
+    /// The clock is read where the commit happens, before the hop onto this actor.
+    func observeFirstVisibleCommit(of engine: JSEngineProtocol) {
+        guard let reporter = engine as? MainFrameCommitReporting else { return }
+
+        reporter.onMainFrameCommit = { [weak self] in
+            let committedAtMilliseconds = HostEventClock.monotonicMilliseconds()
+            Task { await self?.pageDidCommit(monotonicMilliseconds: committedAtMilliseconds) }
+        }
     }
 }

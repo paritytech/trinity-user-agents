@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import Products
 import UIKit
 
@@ -78,8 +79,12 @@ extension PocketOpenService {
                         // presentation.
                         UIWindow.topWindow?.topmostViewController?.present(view, animated: true)
                     case .open:
-                        PocketCardOpening(flowState: flowState, navigator: moduleNavigator, pocket: pocket)
-                            .open(link: link)
+                        PocketCardOpening(
+                            flowState: flowState,
+                            navigator: moduleNavigator,
+                            pocket: pocket,
+                            hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()
+                        ).open(link: link)
                     }
                 }
             },

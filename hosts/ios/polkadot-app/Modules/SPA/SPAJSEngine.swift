@@ -1,8 +1,14 @@
 import Foundation
+import os
 import FoundationExt
 import Products
 import SDKLogger
 import WebKit
+
+/// An engine that reports its page's main frame committing.
+protocol MainFrameCommitReporting: AnyObject {
+    var onMainFrameCommit: (@Sendable () -> Void)? { get set }
+}
 
 final class SPAJSEngine: NSObject, @unchecked Sendable {
     private(set) var state: JSEngineState = .initializing
@@ -17,9 +23,16 @@ final class SPAJSEngine: NSObject, @unchecked Sendable {
     private let logger: LoggerProtocol
     private let scriptHandlers: [JSEngineScriptHandling]
     private let navigationDecisionHandler: SPANavigationDecisionHandling?
+    private let mainFrameCommitHandler = OSAllocatedUnfairLock<(@Sendable () -> Void)?>(initialState: nil)
 
     var onNavigationIntercepted: ((URL) -> Void)?
     var onDeeplinkRequested: ((URL) -> Void)?
+
+    /// Set from the runtime's actor and read by WebKit on the main thread, so it sits behind a lock.
+    var onMainFrameCommit: (@Sendable () -> Void)? {
+        get { mainFrameCommitHandler.withLock { $0 } }
+        set { mainFrameCommitHandler.withLock { $0 = newValue } }
+    }
 
     init(
         webView: WKWebView,
@@ -149,6 +162,8 @@ private extension SPAJSEngine {
 
 // MARK: - JSEngineProtocol
 
+extension SPAJSEngine: MainFrameCommitReporting {}
+
 extension SPAJSEngine: JSEngineProtocol {
     func initialize(with scripts: [JSEngineScript]) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -220,6 +235,12 @@ extension SPAJSEngine: WKNavigationDelegate {
             decisionHandler(.cancel)
             onDeeplinkRequested?(url)
         }
+    }
+
+    /// `didCommit` is the earliest reliable main-frame signal WebKit gives and the closest to Android's
+    /// `onPageCommitVisible`: the new document has replaced the old one. `didFinish` waits for every subresource.
+    func webView(_: WKWebView, didCommit _: WKNavigation!) {
+        onMainFrameCommit?()
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

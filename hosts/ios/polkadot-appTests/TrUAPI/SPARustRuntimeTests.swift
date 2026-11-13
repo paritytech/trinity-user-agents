@@ -49,7 +49,9 @@ private func makeRuntime(
     chainConnections: MockChainConnections = MockChainConnections(),
     configuration: SPAConfiguration,
     contentLoader: ProductContentLoading = StubProductContentLoader(),
-    hostEventRecorder: HostEventRecording = NoopHostEventRecorder()
+    hostEventRecorder: HostEventRecording = NoopHostEventRecorder(),
+    hostSessionID: UUID? = nil,
+    openTap: HostOpenTap? = nil
 ) -> SPARustRuntime {
     SPARustRuntime(
         executionModel: makeExecutionModel(execution: execution, chainConnections: chainConnections),
@@ -57,7 +59,9 @@ private func makeRuntime(
         contentLoader: contentLoader,
         schemeHandlerProxy: SchemeHandlerProxy(),
         logger: Logger.shared,
-        hostEventRecorder: hostEventRecorder
+        hostEventRecorder: hostEventRecorder,
+        hostSessionID: hostSessionID ?? openTap?.sessionID ?? UUID(),
+        openTap: openTap
     )
 }
 
@@ -98,8 +102,146 @@ struct SPARustRuntimeTests {
         let webViewEvent = try #require(hostEventRecorder.events.first)
         #expect(webViewEvent.name == "host.webview.created")
         #expect(webViewEvent.tags["host.platform"] == "ios")
-        #expect(webViewEvent.extras["host.session_id"] != nil)
+        #expect(webViewEvent.tags["host.session_id"] != nil)
         #expect(webViewEvent.extras["event.monotonic_ms"] != nil)
+
+        await runtime.dispose()
+    }
+
+    /// The tap minted the id, and the session it opens reports under it, so the tap and the page share one.
+    @Test func aSessionTakingATapAdoptsTheIdMintedAtTheTap() async throws {
+        let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
+        let tap = HostOpenTap(source: .deeplink)
+        let hostEventRecorder = RecordingHostEventRecorder()
+        let runtime = makeRuntime(configuration: configuration, hostEventRecorder: hostEventRecorder, openTap: tap)
+
+        _ = try await runtime.start(with: MockJSEngine())
+
+        let webViewEvent = try #require(hostEventRecorder.events.first)
+        #expect(webViewEvent.tags["host.session_id"] == tap.sessionID.uuidString.lowercased())
+
+        await runtime.dispose()
+    }
+
+    /// A retry builds a second runtime for the same view with no tap. It reports under the tap's id, which the
+    /// Pocket event and the held card already carry, and is not timed from the tap.
+    @Test func aRetryKeepsTheTapsSessionAndIsNotTimedFromIt() async throws {
+        let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
+        let tap = HostOpenTap(source: .pocketCard)
+        var session = SPARustRuntimeFactory.HostSession(openTap: tap)
+        let hostEventRecorder = RecordingHostEventRecorder()
+
+        for _ in 0 ..< 2 {
+            let runtime = makeRuntime(
+                configuration: configuration,
+                hostEventRecorder: hostEventRecorder,
+                hostSessionID: session.id,
+                openTap: session.takeTap()
+            )
+            _ = try await runtime.start(with: MockJSEngine())
+            await runtime.dispose()
+        }
+
+        let events = hostEventRecorder.events
+        #expect(events.map(\.name) == ["host.webview.created", "host.webview.created"])
+        #expect(events.allSatisfy { $0.tags["host.session_id"] == tap.sessionID.uuidString.lowercased() })
+        #expect(events.map { $0.extras["tap_ms"] != nil } == [true, false])
+    }
+
+    /// A view nothing tapped mints one id and keeps it for its retries too.
+    @Test func aViewWithoutATapKeepsOneIdAcrossRetries() {
+        var session = SPARustRuntimeFactory.HostSession(openTap: nil)
+        let id = session.id
+        let tap = session.takeTap()
+
+        #expect(tap == nil)
+        #expect(session.id == id)
+    }
+
+    @Test func aSessionWithoutATapMintsItsOwnId() async throws {
+        let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
+        let hostEventRecorder = RecordingHostEventRecorder()
+        let runtime = makeRuntime(configuration: configuration, hostEventRecorder: hostEventRecorder)
+
+        _ = try await runtime.start(with: MockJSEngine())
+
+        let sessionID = try #require(hostEventRecorder.events.first?.tags["host.session_id"])
+        #expect(UUID(uuidString: sessionID) != nil)
+        #expect(sessionID == sessionID.lowercased())
+
+        await runtime.dispose()
+    }
+
+    /// The first visible commit sends `host.page.visible` once under the tap's id; a reload or an in-page
+    /// navigation commits again and sends nothing.
+    @Test func theFirstMainFrameCommitSendsPageVisibleOnce() async throws {
+        let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
+        let tap = HostOpenTap(source: .pocketCard)
+        let hostEventRecorder = RecordingHostEventRecorder()
+        let engine = MockJSEngine()
+        let runtime = makeRuntime(configuration: configuration, hostEventRecorder: hostEventRecorder, openTap: tap)
+
+        _ = try await runtime.start(with: engine)
+        engine.commitMainFrame()
+        try await hostEventRecorder.waitForEvents(count: 2)
+        await runtime.pageDidCommit(monotonicMilliseconds: HostEventClock.monotonicMilliseconds())
+        await runtime.pageDidCommit(monotonicMilliseconds: HostEventClock.monotonicMilliseconds())
+
+        let events = hostEventRecorder.events
+        #expect(events.map(\.name) == ["host.webview.created", "host.page.visible"])
+        let visible = try #require(events.last)
+        #expect(visible.tags["host.session_id"] == tap.sessionID.uuidString.lowercased())
+        #expect(visible.tags["open.source"] == "pocket_card")
+        #expect(visible.extras["webview_ms"] != nil)
+        #expect(visible.extras["tap_ms"] != nil)
+
+        await runtime.dispose()
+    }
+
+    /// Each span is the later reading minus the earlier one on the clock `event.monotonic_ms` is read from, so
+    /// a test with the subtraction reversed reads -1000 and -700 here and fails.
+    @Test func pageVisibleMeasuresFromTheTapAndFromTheWebView() async throws {
+        let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
+        let tap = HostOpenTap(
+            source: .pocketCard,
+            openedAtMonotonicMilliseconds: HostEventClock.monotonicMilliseconds() - 1_000
+        )
+        let hostEventRecorder = RecordingHostEventRecorder()
+        let runtime = makeRuntime(configuration: configuration, hostEventRecorder: hostEventRecorder, openTap: tap)
+
+        _ = try await runtime.start(with: MockJSEngine())
+        let created = try #require(hostEventRecorder.events.first)
+        guard case let .integer(createdAt) = try #require(created.extras["event.monotonic_ms"]) else {
+            Issue.record("event.monotonic_ms is not an integer")
+            return
+        }
+        await runtime.pageDidCommit(monotonicMilliseconds: createdAt + 700)
+
+        let visible = try #require(hostEventRecorder.events.last)
+        #expect(visible.name == "host.page.visible")
+        #expect(created.extras["tap_ms"] == .integer(createdAt - tap.openedAtMonotonicMilliseconds))
+        #expect(visible.extras["webview_ms"] == .integer(700))
+        #expect(visible.extras["tap_ms"] == .integer(createdAt + 700 - tap.openedAtMonotonicMilliseconds))
+        #expect(createdAt - tap.openedAtMonotonicMilliseconds >= 1_000)
+
+        await runtime.dispose()
+    }
+
+    @Test func aPageNoTapOpenedBecomesVisibleWithoutATapMeasurement() async throws {
+        let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
+        let hostEventRecorder = RecordingHostEventRecorder()
+        let engine = MockJSEngine()
+        let runtime = makeRuntime(configuration: configuration, hostEventRecorder: hostEventRecorder)
+
+        _ = try await runtime.start(with: engine)
+        engine.commitMainFrame()
+        try await hostEventRecorder.waitForEvents(count: 2)
+
+        let visible = try #require(hostEventRecorder.events.last)
+        #expect(visible.name == "host.page.visible")
+        #expect(visible.extras["webview_ms"] != nil)
+        #expect(visible.extras["tap_ms"] == nil)
+        #expect(visible.tags["open.source"] == nil)
 
         await runtime.dispose()
     }
@@ -252,6 +394,39 @@ struct SPARustRuntimeTests {
         #expect(scripts[2].content.contains("__truapi_localhost"))
         #expect(scripts[2].insertionPoint == .atDocStart)
         #expect(scripts[2].frameScope == .allFrames)
+    }
+
+    /// A page a tap opened reads when and how from `__trinityHostTelemetry`, with the schema version unchanged.
+    /// A page nothing tapped has neither field, as the bootstrap test above shows.
+    @Test func bootstrapCarriesTheTapThatOpenedThePage() throws {
+        let origin = try HostEventOrigin(
+            launchID: #require(UUID(uuidString: "18a5320e-3a4d-46df-ad7a-ebba4ef3ee3f")),
+            osVersion: "18.1",
+            appVersion: "1.2.3",
+            appBuild: 456,
+            appVariant: "nightly"
+        )
+        let hostSessionID = try #require(UUID(uuidString: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3"))
+        let openedAt = Date(timeIntervalSince1970: 1_793_900_000.123)
+        let sources: [(HostOpenTap.Source, String)] = [(.pocketCard, "pocket_card"), (.deeplink, "deeplink")]
+
+        for (source, name) in sources {
+            let telemetry = NativeHostTelemetry(
+                hostSessionID: hostSessionID,
+                origin: origin,
+                truapiHostVersion: "0.9.0",
+                openTap: HostOpenTap(source: source, openedAt: openedAt)
+            )
+
+            let scripts = try RustRuntimeScriptsFactory(bootstrapScript: "/*bootstrap*/", hostTelemetry: telemetry)
+                .makeScripts()
+
+            let identity = #"{"appBuild":"456","appVariant":"nightly","appVersion":"1.2.3","#
+                + #""hostSessionId":"d93fe846-8f3c-4cfa-a440-402b6f7b43d3","#
+            let tap = #""openSource":"\#(name)","openedAtEpochMs":1793900000123,"#
+            let rest = #""osVersion":"18.1","platform":"ios","schemaVersion":"1","truapiHostVersion":"0.9.0"}"#
+            #expect(scripts[0].content.contains("Object.freeze(" + identity + tap + rest + ")"))
+        }
     }
 
     @Test func directURLHandlerAllowsSameHostInterceptsOthers() throws {

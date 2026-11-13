@@ -24,6 +24,25 @@ struct PocketCardHostsTests {
         #expect(second?.surface === factory.surfaces.first)
     }
 
+    /// A reopened card shows the page an earlier tap built, so the reopen is
+    /// reported under that page's host session id, not the new tap's.
+    @Test
+    func aReusedProductKeepsTheSessionIDItWasBuiltWith() throws {
+        let hosts = PocketCardHosts()
+        let factory = CountingFactory()
+        let firstTap = UUID()
+        let secondTap = UUID()
+
+        let first = hosts.product(for: loyalty, hostSessionID: firstTap, make: factory.make)
+        let reused = hosts.product(for: loyalty, hostSessionID: secondTap, make: factory.make)
+        hosts.reload(loyalty, at: "open=prizes") { _ in }
+
+        #expect(first?.hostSessionID == firstTap)
+        #expect(reused?.hostSessionID == firstTap)
+        #expect(hosts.hostSessionID(for: loyalty) == firstTap)
+        #expect(hosts.hostSessionID(for: trophy) == nil)
+    }
+
     /// A page is loaded with the params of the link that opened it, so a link
     /// with other params, or a tap with none, has to load the page again.
     @Test

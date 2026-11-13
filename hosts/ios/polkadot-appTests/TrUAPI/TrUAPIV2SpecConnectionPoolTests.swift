@@ -1,6 +1,8 @@
 import Foundation
 import Testing
 import ChainRegistry
+import IssueMonitoring
+import os
 import SDKLogger
 @testable import polkadot_app
 
@@ -37,6 +39,99 @@ struct TrUAPIV2SpecConnectionPoolTests {
             .info("[truapi.chain] chain connection 2 dialling wss://node.example"),
             .info("[truapi.chain] chain connection 2 open on wss://node.example")
         ])
+    }
+
+    /// A dead node is routine, so the pool tells the diagnostic about every dial that died or timed out before
+    /// opening and every socket that did open, and leaves the threshold to it. A close the peer or the pool
+    /// asked for is not a failure.
+    @Test func failedDialsAreFailuresAndOpensRecoveries() throws {
+        struct Refused: Error {}
+        let sockets = [MockChainSocket(), MockChainSocket(), MockChainSocket()]
+        sockets[0].completesOpen = false
+        sockets[1].completesOpen = false
+        let diagnostic = RecordingIssueDiagnostic()
+        let pool = makePool(registry: makeRegistry(serving: sockets), issueDiagnostic: diagnostic)
+        for _ in sockets { _ = try #require(pool.connect(genesisHash: genesis)) }
+
+        sockets[0].simulateClose(.transport(Refused()))
+        sockets[1].simulateClose(.connectTimeout)
+        sockets[2].simulateClose(.peerClosed)
+
+        #expect(diagnostic.failureCount == 2)
+        #expect(diagnostic.recoveryCount == 1)
+    }
+
+    /// One network blip kills every open socket with a transport error at once, which says nothing about the
+    /// node, so sockets that had opened never count towards the threshold.
+    @Test func transportDeathsOfOpenedSocketsAreNotFailures() throws {
+        struct Dropped: Error {}
+        let sockets = [MockChainSocket(), MockChainSocket(), MockChainSocket()]
+        let diagnostic = RecordingIssueDiagnostic()
+        let pool = makePool(registry: makeRegistry(serving: sockets), issueDiagnostic: diagnostic)
+        for _ in sockets { _ = try #require(pool.connect(genesisHash: genesis)) }
+
+        sockets.forEach { $0.simulateClose(.transport(Dropped())) }
+
+        #expect(diagnostic.failureCount == 0)
+    }
+
+    /// Dials that die before opening are the failures the threshold exists for. Each reconnect dials the chain's
+    /// next node, so three failures in a row land on three nodes and still trip it.
+    @Test func transportDeathsOfNeverOpenedSocketsOnRotatingNodesTripTheThreshold() throws {
+        struct Refused: Error {}
+        let sockets = try nodeSockets(count: 3)
+        sockets.forEach { $0.completesOpen = false }
+        let reporter = RecordingIssueReporter()
+        let diagnostic = makeThresholdDiagnostic(reporter)
+        let pool = makePool(registry: makeRegistry(serving: sockets), issueDiagnostic: diagnostic)
+        for _ in sockets { _ = try #require(pool.connect(genesisHash: genesis)) }
+
+        sockets[0].simulateClose(.transport(Refused()))
+        sockets[1].simulateClose(.transport(Refused()))
+        #expect(reporter.issues.isEmpty)
+
+        sockets[2].simulateClose(.transport(Refused()))
+        #expect(Set(sockets.map(\.url)).count == 3)
+        #expect(reporter.issues.map(\.kind) == ["rpcConnectionFailing"])
+    }
+
+    /// Any node of the chain opening ends the run of failures for the whole chain, not only for that node, so
+    /// two later failures on the other nodes start a new count rather than finishing the old one.
+    @Test func anyNodeOpeningClearsTheChainsFailures() throws {
+        struct Refused: Error {}
+        let sockets = try nodeSockets(count: 5)
+        let reporter = RecordingIssueReporter()
+        let diagnostic = makeThresholdDiagnostic(reporter)
+        let pool = makePool(registry: makeRegistry(serving: sockets), issueDiagnostic: diagnostic)
+
+        // Dialled in turn: nodes 0 and 1 fail, node 2 opens, nodes 3 and 4 fail.
+        for (node, socket) in sockets.enumerated() {
+            socket.completesOpen = node == 2
+            _ = try #require(pool.connect(genesisHash: genesis))
+            if node != 2 { socket.simulateClose(node.isMultiple(of: 2) ? .transport(Refused()) : .connectTimeout) }
+        }
+
+        #expect(reporter.issues.isEmpty)
+    }
+
+    /// Two chains keep separate counts, so failures on one never trip the other.
+    @Test func eachChainCountsItsOwnFailures() throws {
+        struct Refused: Error {}
+        let otherGenesis = Data(repeating: 0xBB, count: 32)
+        let sockets = try nodeSockets(count: 2)
+        let otherSockets = try nodeSockets(count: 1)
+        (sockets + otherSockets).forEach { $0.completesOpen = false }
+        let registry = makeRegistry(serving: sockets)
+        let otherChain = register(genesis: otherGenesis, in: registry)
+        registry.enqueueChainSockets(otherSockets, for: otherChain.chainId)
+        let reporter = RecordingIssueReporter()
+        let pool = makePool(registry: registry, issueDiagnostic: makeThresholdDiagnostic(reporter))
+        for _ in sockets { _ = try #require(pool.connect(genesisHash: genesis)) }
+        _ = try #require(pool.connect(genesisHash: otherGenesis))
+
+        (sockets + otherSockets).forEach { $0.simulateClose(.transport(Refused())) }
+
+        #expect(reporter.issues.isEmpty)
     }
 
     @Test func eachConnectGetsItsOwnSocketAndId() throws {
@@ -290,6 +385,16 @@ struct TrUAPIV2SpecConnectionPoolTests {
     }
 }
 
+private final class RecordingIssueReporter: IssueReporting, @unchecked Sendable {
+    private let recorded = OSAllocatedUnfairLock<[CriticalIssue]>(initialState: [])
+
+    var issues: [CriticalIssue] { recorded.withLock { $0 } }
+
+    func report(_ issue: CriticalIssue) {
+        recorded.withLock { $0.append(issue) }
+    }
+}
+
 private extension TrUAPIV2SpecConnectionPoolTests {
     struct Lifecycle {
         let applicationHandler = MockApplicationHandler()
@@ -314,6 +419,15 @@ private extension TrUAPIV2SpecConnectionPoolTests {
         return registry
     }
 
+    /// Sockets on distinct nodes, as the registry hands out one per attempt.
+    func nodeSockets(count: Int) throws -> [MockChainSocket] {
+        try (0 ..< count).map { try MockChainSocket(url: #require(URL(string: "wss://node-\($0).example"))) }
+    }
+
+    func makeThresholdDiagnostic(_ reporter: IssueReporting) -> IssueDiagnostic {
+        ThresholdIssueDiagnostic(flow: "productLoad", kind: "rpcConnectionFailing", threshold: 3, reporter: reporter)
+    }
+
     func register(genesis: Data, in registry: MockChainRegistry) -> ChainModel {
         let chain = ChainMock.makeChainModel(from: ChainMock.makeRemoteChain(name: "TestChain"), order: 0)
         registry.chainsByGenesis[genesis.toHex()] = chain
@@ -324,6 +438,7 @@ private extension TrUAPIV2SpecConnectionPoolTests {
         registry: MockChainRegistry,
         handler: RecordingChainEventHandler? = nil,
         lifecycle: Lifecycle = Lifecycle(),
+        issueDiagnostic: IssueDiagnostic = NoopIssueDiagnostic(),
         logger: SDKLoggerProtocol = StubLogger()
     ) -> TrUAPIV2SpecConnectionPool {
         let pool = TrUAPIV2SpecConnectionPool(
@@ -331,6 +446,7 @@ private extension TrUAPIV2SpecConnectionPoolTests {
             applicationHandler: lifecycle.applicationHandler,
             dateProvider: lifecycle.dateProvider,
             resumePolicy: .init(expiryThreshold: 30, probeTimeout: 5),
+            issueDiagnostic: issueDiagnostic,
             logger: logger
         )
         pool.eventHandler = handler

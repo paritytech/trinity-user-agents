@@ -21,15 +21,19 @@ final class PocketCardHosts {
         let pageQuery: String
         let view: SPAViewProtocol
         let surface: PocketCardSurface
+        /// The host session id of the page `view` was built with: the id of the tap that built it.
+        let hostSessionID: UUID
     }
 
     private var held: CardProduct?
 
     /// The product for `key` at `pageQuery`, built by `make` unless the one
-    /// already held is it.
+    /// already held is it. A product built here keeps `hostSessionID`; one
+    /// already held keeps the id it was built with.
     func product(
         for key: PocketCardKey,
         pageQuery: String = "",
+        hostSessionID: UUID = UUID(),
         make: (PocketCardSurface) -> SPAViewProtocol?
     ) -> CardProduct? {
         if let held, held.key == key, held.pageQuery == pageQuery { return held }
@@ -39,7 +43,13 @@ final class PocketCardHosts {
         let surface = PocketCardSurface()
         guard let view = make(surface) else { return nil }
 
-        let product = CardProduct(key: key, pageQuery: pageQuery, view: view, surface: surface)
+        let product = CardProduct(
+            key: key,
+            pageQuery: pageQuery,
+            view: view,
+            surface: surface,
+            hostSessionID: hostSessionID
+        )
         held = product
         return product
     }
@@ -50,7 +60,20 @@ final class PocketCardHosts {
         guard let held, held.key == key, held.pageQuery != pageQuery else { return }
 
         load(held.view)
-        self.held = CardProduct(key: key, pageQuery: pageQuery, view: held.view, surface: held.surface)
+        self.held = CardProduct(
+            key: key,
+            pageQuery: pageQuery,
+            view: held.view,
+            surface: held.surface,
+            hostSessionID: held.hostSessionID
+        )
+    }
+
+    /// The host session id of the product held for `key`, if one is.
+    func hostSessionID(for key: PocketCardKey) -> UUID? {
+        guard let held, held.key == key else { return nil }
+
+        return held.hostSessionID
     }
 
     func isOnDisplay(_ key: PocketCardKey) -> Bool {
