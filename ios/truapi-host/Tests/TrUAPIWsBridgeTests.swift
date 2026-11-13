@@ -259,7 +259,7 @@ func previewnetStack() throws -> BundledStack {
     return try BundledStack(
         pointer: link.trimmingCharacters(in: .whitespacesAndNewlines),
         descriptor: Data(contentsOf: stacks.appendingPathComponent("previewnet.json")),
-        allowsReservedValues: false
+        reservedValues: ReservedValuesPolicy(allowed: false)
     )
 }
 

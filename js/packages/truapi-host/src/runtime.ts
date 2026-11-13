@@ -56,6 +56,26 @@ export interface ChainConnection {
  */
 export type LogLevel = string;
 
+/**
+ * A host build's policy on reserved values for its stack. The core reserves
+ * Polkadot's genesis hashes and the `dot` TLD. A build can reserve more here
+ * and cannot reserve fewer. The core refuses a field this type does not have.
+ */
+export interface ReservedValuesPolicy {
+  /**
+   * Whether the stack may name reserved values. Only a Polkadot or
+   * Polkadot-fork build sets it. Defaults to `false`.
+   */
+  allowed?: boolean;
+  /** Genesis hashes reserved on top of the core's, as 0x-prefixed hex or bytes. */
+  extraGenesisHashes?: (string | Uint8Array)[];
+  /**
+   * dotNS TLDs reserved on top of the core's, each one lowercase label without
+   * the leading dot. The core refuses any other entry.
+   */
+  extraTlds?: string[];
+}
+
 /** The Trinity stack a host build bundles. */
 export interface BundledStack {
   /**
@@ -68,12 +88,8 @@ export interface BundledStack {
    * under the pointer's key.
    */
   descriptor: Uint8Array;
-  /**
-   * Whether this build may run a stack that uses Polkadot's genesis hashes or
-   * the `dot` TLD. Only a Polkadot or Polkadot-fork build sets it. Defaults to
-   * `false`.
-   */
-  allowsReservedValues?: boolean;
+  /** The build's policy on reserved values. Defaults to refusing the core's. */
+  reservedValues?: ReservedValuesPolicy;
 }
 
 /** Configuration for one product runtime hosted by the wasm core. */

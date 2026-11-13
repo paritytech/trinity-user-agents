@@ -38,8 +38,11 @@ the host build runs:
 - `pointer`: the stack's link, `polkadotapp://stack?key=0x…&url=…`.
 - `descriptor`: the bytes of the signed copy the build bundles. The core checks
   it against the pointer's key.
-- `allowsReservedValues`: set only by a Polkadot or Polkadot-fork build. Without
-  it the core refuses Polkadot's genesis hashes and the `dot` TLD.
+- `reservedValues.allowed`: set only by a Polkadot or Polkadot-fork build.
+  Without it the core refuses Polkadot's genesis hashes and the `dot` TLD, and
+  any entry of the build's own `extraGenesisHashes` and `extraTlds`. An
+  `extraTlds` entry is one lowercase label without the leading dot. The core
+  refuses any other, and any field `reservedValues` does not have.
 
 The core takes every chain it uses, the network `getChainInfo` reports and the
 signing host's TLD from the descriptor. It refuses a pointer without a key and a

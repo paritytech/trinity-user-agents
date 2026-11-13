@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use clap::ValueEnum;
 use trinity_stack::Descriptor;
-use truapi::platform::{ChainExtensionVersion, ExtensionVersionMap, StackChains, StackError};
+use truapi::platform::{
+	ChainExtensionVersion, ExtensionVersionMap, ReservedValuesPolicy, StackChains, StackError,
+};
 
 use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
@@ -173,7 +175,7 @@ impl Stack {
 			self.descriptor.network.clone(),
 			self.descriptor.tld.clone(),
 			chains,
-			true,
+			&ReservedValuesPolicy::ALLOWED,
 		)
 	}
 

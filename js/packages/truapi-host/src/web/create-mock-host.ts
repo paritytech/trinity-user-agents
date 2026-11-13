@@ -49,7 +49,7 @@ import type {
   RequiredHostCallbacks,
   UserConfirmationReview,
 } from "../generated/host-callbacks.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
+import type { ProductRuntimeConfig, ReservedValuesPolicy } from "../runtime.js";
 
 /** How the mock answers a permission prompt for one capability. */
 export type PermissionPolicy = "allow-all" | "deny-all";
@@ -1749,10 +1749,10 @@ export interface TestStack {
   /** The relay chain. */
   relay?: TestStackChain;
   /**
-   * Whether the stack may use Polkadot's genesis hashes or the `dot` TLD.
-   * Defaults to `false`, as on a real host.
+   * The host's policy on reserved values. Defaults to refusing the core's, as on
+   * a real host.
    */
-  allowsReservedValues?: boolean;
+  reservedValues?: ReservedValuesPolicy;
 }
 
 /** A {@link ProductRuntimeConfig} for a test host, with a {@link TestStack}. */

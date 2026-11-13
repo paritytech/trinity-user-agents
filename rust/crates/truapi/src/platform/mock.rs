@@ -996,7 +996,8 @@ pub fn mock_stack(
 	asset_hub: Option<truapi::Bytes32>,
 ) -> crate::platform::Stack {
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
-	crate::platform::Stack::new("mock".to_string(), "paseo".to_string(), chains, false)
+	let reserved_values = crate::platform::ReservedValuesPolicy::default();
+	crate::platform::Stack::new("mock".to_string(), "paseo".to_string(), chains, &reserved_values)
 		.expect("a mock stack names no reserved value")
 }
 
