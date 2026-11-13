@@ -52,6 +52,11 @@ use zeroize::Zeroizing;
 /// with the user before the account holder acts on it. Kept grants are read
 /// under a revision that a product reset, a lock or a session change advances;
 /// grant work that began before the change fails `Disconnected`.
+///
+/// Signing, transaction, VRF, ring-VRF, subtree and allocation calls bound
+/// their account-holder exchange by the call's deadline, or the default one,
+/// and a confirmation waits only on the call being withdrawn. The allowance
+/// key calls run under the `cx` they are given, which their caller bounds.
 pub struct HostAccounts<H: AccountHolder> {
 	services: Arc<RuntimeServices>,
 	holder: Arc<H>,
@@ -924,21 +929,30 @@ impl<H: AccountHolder> HostAccounts<H> {
 		let revision = self.grants.lifecycle().revision();
 		let product = &connection.product;
 		if let Some(grant) = self.product_signing_grant(session, product, &request.account).await? {
-			let _lifecycle = self.hold_grant(session, revision)?;
-			let keypair = Self::grant_keypair(&grant, &request.account)?;
-			let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
-				&keypair,
-				&request.transcript_label,
-				request.items.iter().map(|item| (item.label.as_slice(), item.value.as_slice())),
-			);
-			return Ok(api::VrfSignature { pre_output, proof });
+			let cx = super::remote_authority_context(cx);
+			return super::remote_authority_call(&cx, async {
+				let _lifecycle = self.hold_grant(session, revision)?;
+				let keypair = Self::grant_keypair(&grant, &request.account)?;
+				let (pre_output, proof) = crate::dynamic_vrf::sign_dynamic_vrf(
+					&keypair,
+					&request.transcript_label,
+					request.items.iter().map(|item| (item.label.as_slice(), item.value.as_slice())),
+				);
+				Ok(api::VrfSignature { pre_output, proof })
+			})
+			.await;
 		}
 		let review = UserConfirmationReview::SignVrf(SignVrfReview {
 			calling_product_id: product.product_id.clone(),
 			request: request.clone(),
 		});
 		self.confirm(cx, session, connection, review).await?;
-		self.holder.sign_vrf(local_invocation(cx, session, product), request).await
+		let cx = super::remote_authority_context(cx);
+		super::remote_authority_call(
+			&cx,
+			self.holder.sign_vrf(local_invocation(&cx, session, product), request),
+		)
+		.await
 	}
 
 	/// Sign exact statement proof bytes with a kept product key, or confirm
@@ -1095,20 +1109,28 @@ impl<H: AccountHolder> HostAccounts<H> {
 		request: api::HostAccountGetAliasRequest,
 	) -> Result<api::ContextualAlias, RingVrfError> {
 		let revision = self.grants.lifecycle().revision();
-		if product.product_id == request.key_handle.dot_ns_identifier &&
-			let Some((entropy, vrf)) = self
-				.local_ring_vrf_entropy(session, &request.key_handle, Some(&request.ring_location))
-				.await?
-		{
-			self.ring_resolver.validate(&request.ring_location).await?;
-			let _lifecycle = self.hold_grant(session, revision)?;
-			let context = context_bytes(&request.context);
-			return Ok(api::ContextualAlias {
-				alias: vrf.alias(&entropy, &context)?.to_vec(),
-				context,
-			});
-		}
-		self.holder.account_alias(local_invocation(cx, session, product), request).await
+		let cx = &super::remote_authority_context(cx);
+		super::remote_authority_call(cx, async {
+			if product.product_id == request.key_handle.dot_ns_identifier &&
+				let Some((entropy, vrf)) = self
+					.local_ring_vrf_entropy(
+						session,
+						&request.key_handle,
+						Some(&request.ring_location),
+					)
+					.await?
+			{
+				self.ring_resolver.validate(&request.ring_location).await?;
+				let _lifecycle = self.hold_grant(session, revision)?;
+				let context = context_bytes(&request.context);
+				return Ok(api::ContextualAlias {
+					alias: vrf.alias(&entropy, &context)?.to_vec(),
+					context,
+				});
+			}
+			self.holder.account_alias(local_invocation(cx, session, product), request).await
+		})
+		.await
 	}
 
 	/// Create a ring proof with a kept key, or ask the holder.
@@ -1123,6 +1145,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		request: api::HostAccountCreateProofRequest,
 	) -> Result<api::HostAccountCreateProofResponse, RingVrfError> {
 		let revision = self.grants.lifecycle().revision();
+		let cx = &super::remote_authority_context(cx);
 		let (handle, access) =
 			self.require_ring_vrf_key_access(cx, product, &request.key_handle).await?;
 		super::remote_authority_call(cx, async {
@@ -1171,22 +1194,27 @@ impl<H: AccountHolder> HostAccounts<H> {
 		request: api::HostAccountRegisterRingVrfKeyRequest,
 	) -> Result<[u8; 32], RingVrfError> {
 		let (current, revision) = self.grant_session(session)?;
-		let invocation = local_invocation(cx, session, product);
-		let Some(grant) = self.grants.auto_signing_key(&current, &product.product_id).await? else {
-			return self.holder.register_ring_vrf_key(invocation, request).await;
-		};
-		self.ring_resolver.validate(&request.ring).await?;
-		let vrf = vrf::load().await?;
-		let public_key = {
-			let _lifecycle = self.hold_grant(session, revision)?;
-			let entropy = Zeroizing::new(derive_ring_vrf_entropy_from_domain(
-				grant.ring_vrf_domain_entropy(),
-				&request.index,
-			));
-			vrf.member(&entropy)?
-		};
-		self.holder.record_ring_vrf_key(invocation, request, public_key).await?;
-		Ok(public_key)
+		let cx = &super::remote_authority_context(cx);
+		super::remote_authority_call(cx, async {
+			let invocation = local_invocation(cx, session, product);
+			let Some(grant) = self.grants.auto_signing_key(&current, &product.product_id).await?
+			else {
+				return self.holder.register_ring_vrf_key(invocation, request).await;
+			};
+			self.ring_resolver.validate(&request.ring).await?;
+			let vrf = vrf::load().await?;
+			let public_key = {
+				let _lifecycle = self.hold_grant(session, revision)?;
+				let entropy = Zeroizing::new(derive_ring_vrf_entropy_from_domain(
+					grant.ring_vrf_domain_entropy(),
+					&request.index,
+				));
+				vrf.member(&entropy)?
+			};
+			self.holder.record_ring_vrf_key(invocation, request, public_key).await?;
+			Ok(public_key)
+		})
+		.await
 	}
 
 	/// Answer the product's own complete listing locally; otherwise the
@@ -1198,20 +1226,24 @@ impl<H: AccountHolder> HostAccounts<H> {
 		product: &ProductContext,
 		request: api::HostAccountListRingVrfKeysRequest,
 	) -> Result<Vec<api::RegisteredRingVrfKey>, RingVrfError> {
-		self.holder.require_current_session(session)?;
-		if product.product_id == request.owner &&
-			let Some(mut entries) = self
-				.ring_vrf_registry
-				.complete_owner_entries(session.public_key, &request.owner)
-				.await?
-		{
+		let cx = &super::remote_authority_context(cx);
+		super::remote_authority_call(cx, async {
 			self.holder.require_current_session(session)?;
-			apply_ring_vrf_disclosure(&mut entries, request.disclosure);
-			return Ok(entries);
-		}
-		self.holder
-			.list_ring_vrf_keys(local_invocation(cx, session, product), request)
-			.await
+			if product.product_id == request.owner &&
+				let Some(mut entries) = self
+					.ring_vrf_registry
+					.complete_owner_entries(session.public_key, &request.owner)
+					.await?
+			{
+				self.holder.require_current_session(session)?;
+				apply_ring_vrf_disclosure(&mut entries, request.disclosure);
+				return Ok(entries);
+			}
+			self.holder
+				.list_ring_vrf_keys(local_invocation(cx, session, product), request)
+				.await
+		})
+		.await
 	}
 
 	/// Sign with a registered key from a kept AutoSigning key, or ask the holder.
@@ -1226,6 +1258,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		request: api::HostAccountRingVrfSignRequest,
 	) -> Result<Vec<u8>, RingVrfError> {
 		let revision = self.grants.lifecycle().revision();
+		let cx = &super::remote_authority_context(cx);
 		let (handle, _) =
 			self.require_ring_vrf_key_access(cx, product, &request.key_handle).await?;
 		super::remote_authority_call(cx, async {

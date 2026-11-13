@@ -26,8 +26,7 @@ use truapi::{
 use truapi::versioned::IntoLatest;
 
 use crate::runtime::{
-	AccountHolder, ProductRuntimeHost, account_get_authority_error, remote_authority_call,
-	remote_authority_context, ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error,
+	AccountHolder, ProductRuntimeHost, account_get_authority_error, ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error,
 	ring_vrf_register_error, ring_vrf_sign_error, validate_vrf_transcript, versioning::version,
 	vrf_call_error,
 };
@@ -68,8 +67,8 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostAccountGetAliasError::Rejected))?;
 
-				let cx = remote_authority_context(cx);
-				remote_authority_call(&cx, self.accounts.account_alias(&session, &cx, request))
+				self.accounts
+					.account_alias(&session, cx, request)
 					.await
 					.map_err(|err| CallError::Domain(ring_vrf_alias_error(err)))
 			})
@@ -89,9 +88,8 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostAccountCreateProofError::Rejected))?;
 
-				let cx = remote_authority_context(cx);
 				self.accounts
-					.create_proof(&session, &cx, request)
+					.create_proof(&session, cx, request)
 					.await
 					.map_err(|err| CallError::Domain(ring_vrf_proof_error(err)))
 			})
@@ -110,13 +108,10 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 				let session = self.accounts.current_session().ok_or(CallError::Domain(
 					latest::HostAccountRegisterRingVrfKeyError::NotConnected,
 				))?;
-				let cx = remote_authority_context(cx);
-				remote_authority_call(
-					&cx,
-					self.accounts.register_ring_vrf_key(&session, &cx, request),
-				)
-				.await
-				.map_err(|err| CallError::Domain(ring_vrf_register_error(err)))
+				self.accounts
+					.register_ring_vrf_key(&session, cx, request)
+					.await
+					.map_err(|err| CallError::Domain(ring_vrf_register_error(err)))
 			})
 			.await
 	}
@@ -132,8 +127,8 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 				let session = self.accounts.current_session().ok_or(CallError::Domain(
 					latest::HostAccountListRingVrfKeysError::NotConnected,
 				))?;
-				let cx = remote_authority_context(cx);
-				remote_authority_call(&cx, self.accounts.list_ring_vrf_keys(&session, &cx, request))
+				self.accounts
+					.list_ring_vrf_keys(&session, cx, request)
 					.await
 					.map_err(|err| CallError::Domain(ring_vrf_list_error(err)))
 			})
@@ -152,9 +147,8 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 					.accounts
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostAccountRingVrfSignError::NotConnected))?;
-				let cx = remote_authority_context(cx);
 				self.accounts
-					.ring_vrf_sign(&session, &cx, request)
+					.ring_vrf_sign(&session, cx, request)
 					.await
 					.map_err(|err| CallError::Domain(ring_vrf_sign_error(err)))
 			})
@@ -176,9 +170,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 					.accounts
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostAccountSignVrfError::NotConnected))?;
-				let cx = remote_authority_context(cx);
-				remote_authority_call(&cx, self.accounts.sign_vrf(&session, &cx, request))
-					.await
+				self.accounts.sign_vrf(&session, cx, request).await
 					.map_err(vrf_call_error)
 			})
 			.await
