@@ -15,7 +15,8 @@ struct PocketCardOpening {
     let flowState: SPAFlowState
     let navigator: ModuleNavigating
     let pocket: ProductPocketService
-    var hostEventRecorder: HostEventRecording = IssueMonitoringFactory.createHostEventRecorder()
+    /// Sends nothing unless the composition point passes `IssueMonitoringFactory.createHostEventRecorder()`.
+    var hostEventRecorder: HostEventRecording = NoopHostEventRecorder()
 
     /// `tap` is read where the user acted, so the page measures from the tap, not from this call's hops.
     func open(
