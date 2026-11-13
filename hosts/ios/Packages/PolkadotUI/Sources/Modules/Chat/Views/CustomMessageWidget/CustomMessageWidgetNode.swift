@@ -25,6 +25,7 @@ public extension CustomMessageWidgetNode {
         case textField(TextFieldProps)
         case image(ImageProps)
         case effect(EffectProps, children: [CustomMessageWidgetNode])
+        case slideToConfirm(SlideToConfirmProps)
     }
 }
 
@@ -91,6 +92,76 @@ public extension CustomMessageWidgetNode {
             self.isLoading = isLoading
             self.clickAction = clickAction
         }
+    }
+
+    /// A control the user drags across to confirm. The host owns the drag and
+    /// reports only a completed slide, through `confirmAction`.
+    struct SlideToConfirmProps {
+        public let text: String
+        public let secondaryText: String?
+        /// What the control reads once slid. Nil keeps `text`.
+        public let confirmedText: String?
+        public let variant: SlideToConfirmVariant
+        /// Tint of the thumb, or of the surface a reveal uncovers. Nil leaves it to the host.
+        public let accent: Color?
+        public let isEnabled: Bool
+        public let isLoading: Bool
+        public let isConfirmed: Bool
+        public let confirmAction: String?
+
+        public init(
+            text: String,
+            secondaryText: String? = nil,
+            confirmedText: String? = nil,
+            variant: SlideToConfirmVariant = .thumb,
+            accent: Color? = nil,
+            state: SlideToConfirmState = .init(),
+            confirmAction: String? = nil
+        ) {
+            self.text = text
+            self.secondaryText = secondaryText
+            self.confirmedText = confirmedText
+            self.variant = variant
+            self.accent = accent
+            isEnabled = state.isEnabled
+            isLoading = state.isLoading
+            isConfirmed = state.isConfirmed
+            self.confirmAction = confirmAction
+        }
+
+        /// Whether a drag or an accessibility action can still confirm.
+        public var acceptsSlide: Bool {
+            isEnabled && !isLoading && !isConfirmed && confirmAction != nil
+        }
+
+        /// Loading and confirmed both draw the control as slid to the end.
+        public var isHeldAtEnd: Bool {
+            isLoading || isConfirmed
+        }
+
+        public var displayedText: String {
+            isConfirmed ? confirmedText ?? text : text
+        }
+    }
+
+    /// The states the product drives, grouped so the props initialiser stays short.
+    struct SlideToConfirmState {
+        public let isEnabled: Bool
+        public let isLoading: Bool
+        public let isConfirmed: Bool
+
+        public init(isEnabled: Bool = true, isLoading: Bool = false, isConfirmed: Bool = false) {
+            self.isEnabled = isEnabled
+            self.isLoading = isLoading
+            self.isConfirmed = isConfirmed
+        }
+    }
+
+    enum SlideToConfirmVariant {
+        /// A thumb travels along a pill track.
+        case thumb
+        /// The face is peeled back from the leading edge, uncovering the accent surface.
+        case reveal
     }
 
     struct TextFieldProps {

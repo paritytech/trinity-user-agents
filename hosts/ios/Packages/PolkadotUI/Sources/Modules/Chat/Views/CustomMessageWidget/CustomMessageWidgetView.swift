@@ -97,6 +97,8 @@ private struct WidgetNodeContent: View {
             NodeImageView(props: props, modifiers: node.modifiers)
         case let .effect(props, children):
             NodeEffectView(props: props, children: children, modifiers: node.modifiers)
+        case let .slideToConfirm(props):
+            NodeSlideToConfirmView(props: props, modifiers: node.modifiers)
         }
     }
 }
@@ -464,6 +466,17 @@ private struct NodeTextFieldView: View {
         }
     }
 
+    #Preview("Slide to confirm") {
+        ScrollView {
+            CustomMessageWidgetView(
+                node: .previewSlideToConfirmCard,
+                onAction: { actionId, _ in print("Action: \(actionId)") },
+                resolveImage: nil
+            )
+            .padding()
+        }
+    }
+
     extension CustomMessageWidgetNode {
         // swiftlint:disable function_body_length
         static var previewTransferCard: CustomMessageWidgetNode {
@@ -581,5 +594,39 @@ private struct NodeTextFieldView: View {
         }
 
         // swiftlint:enable function_body_length
+
+        static var previewSlideToConfirmCard: CustomMessageWidgetNode {
+            func slide(_ variant: SlideToConfirmVariant, state: SlideToConfirmState) -> CustomMessageWidgetNode {
+                CustomMessageWidgetNode(
+                    content: .slideToConfirm(SlideToConfirmProps(
+                        text: "Slide to register",
+                        secondaryText: "Friday 20:00",
+                        confirmedText: "I'll be there",
+                        variant: variant,
+                        state: state,
+                        confirmAction: "onRegister"
+                    )),
+                    modifiers: Modifiers(
+                        padding: EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0),
+                        fillWidth: true
+                    )
+                )
+            }
+
+            return CustomMessageWidgetNode(
+                content: .column(
+                    ColumnProps(alignment: .leading, arrangement: .start),
+                    children: [
+                        slide(.thumb, state: .init()),
+                        slide(.thumb, state: .init(isLoading: true)),
+                        slide(.thumb, state: .init(isConfirmed: true)),
+                        slide(.thumb, state: .init(isEnabled: false)),
+                        slide(.reveal, state: .init()),
+                        slide(.reveal, state: .init(isConfirmed: true))
+                    ]
+                ),
+                modifiers: Modifiers(fillWidth: true)
+            )
+        }
     }
 #endif
