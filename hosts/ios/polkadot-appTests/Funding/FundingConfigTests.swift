@@ -10,29 +10,29 @@ struct FundingConfigTests {
         let providers = FundingConfig.providers(
             in: [
                 "onrampUrl": "getcash.dot",
-                "providers": ["ramp.dot", "other.dot", "ramp.dot"]
+                "providers": ["ramp", "other", "ramp"]
             ],
             logger: nil
         )
 
-        #expect(providers == ["ramp.dot", "other.dot", "ramp.dot"])
+        #expect(providers == ["ramp", "other", "ramp"])
     }
 
     @Test("Skips entries that are not names and keeps the rest")
     func skipsEntriesThatAreNotNames() {
         let providers = FundingConfig.providers(
-            in: ["providers": ["", 42, "ramp.dot"]],
+            in: ["providers": ["", 42, "ramp"]],
             logger: nil
         )
 
-        #expect(providers == ["ramp.dot"])
+        #expect(providers == ["ramp"])
     }
 
     @Test("No object or no providers lists none")
     func missingProvidersListsNone() {
         #expect(FundingConfig.providers(in: nil, logger: nil).isEmpty)
         #expect(FundingConfig.providers(in: ["onrampUrl": "getcash.dot"], logger: nil).isEmpty)
-        #expect(FundingConfig.providers(in: ["providers": "ramp.dot"], logger: nil).isEmpty)
+        #expect(FundingConfig.providers(in: ["providers": "ramp"], logger: nil).isEmpty)
     }
 
     @Test("Reads the destinations next to the providers list")
@@ -40,7 +40,7 @@ struct FundingConfigTests {
         let json: [String: Any] = [
             "onrampUrl": "getcash.dot",
             "offrampUrl": "",
-            "providers": ["ramp.dot"],
+            "providers": ["ramp"],
             "other": 42
         ]
 
