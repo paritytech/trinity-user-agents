@@ -17,9 +17,11 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
     private let widgetView: WidgetView
     private let engine: SPAJSEngine
     private let face: UIHostingController<PocketOpenedCardView>
+    /// Holds the page so the face can join the page's safe area through `additionalSafeAreaInsets`
+    /// without moving the face, which follows this screen's own safe area.
+    private let pageController = UIViewController()
 
     private lazy var pullDown = PocketPullDown(screen: self) { [weak self] in self?.close() }
-    private var didStartPage = false
     private var faceSetByPage = false
     private var isClosing = false
     private var isInFlight = false
@@ -43,6 +45,8 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
         self.face = face
 
         super.init(nibName: nil, bundle: nil)
+
+        pageController.view = widgetView
     }
 
     @available(*, unavailable)
@@ -65,8 +69,6 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
 
     override func viewIsAppearing(_ animated: Bool) {
         super.viewIsAppearing(animated)
-
-        startPageIfNeeded()
 
         guard isEnteringScreen else { return }
 
@@ -227,17 +229,12 @@ private extension ExpandedPocketCardViewController {
         widgetView.onRetry = { [weak self] in self?.presenter.didTapRetry() }
         engine.onNavigationIntercepted = { [weak self] url in self?.presenter.didInterceptNavigation(to: url) }
         engine.onDeeplinkRequested = { [weak self] url in self?.presenter.didRequestDeeplink(url) }
-    }
 
-    /// The page starts where the face ends, which the safe area decides, navigation bar included,
-    /// and the safe area is final only once the view is appearing.
-    func startPageIfNeeded() {
-        guard !didStartPage else { return }
-        didStartPage = true
+        addChild(pageController)
+        pageController.didMove(toParent: self)
+        pageController.additionalSafeAreaInsets.top = PocketOpenedCardView.height
 
-        let cardInset = view.safeAreaInsets.top + PocketOpenedCardView.height
-        widgetView.setCardInset(cardInset)
-        presenter.setup(engine: engine, cardInset: cardInset)
+        presenter.setup(engine: engine)
     }
 
     func setFaceCovered(_ covered: Bool) {

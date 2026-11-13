@@ -10,7 +10,7 @@ struct ExpandedPocketCardPresenterTests {
     @Test func setupShowsLoadingBeforeStartingThePage() {
         let environment = Environment()
 
-        environment.presenter.setup(engine: MockJSEngine(), cardInset: 300)
+        environment.presenter.setup(engine: MockJSEngine())
 
         #expect(environment.view.events == [.showLoading])
         #expect(environment.interactor.setupCount == 1)
@@ -72,7 +72,7 @@ private final class RecordingInteractor: ExpandedPocketCardInteractorInputProtoc
     private(set) var setupCount = 0
     private(set) var retryCount = 0
 
-    func setup(engine _: JSEngineProtocol, cardInset _: CGFloat) { setupCount += 1 }
+    func setup(engine _: JSEngineProtocol) { setupCount += 1 }
     func retry() { retryCount += 1 }
     func checkForNewBuild() {}
 }

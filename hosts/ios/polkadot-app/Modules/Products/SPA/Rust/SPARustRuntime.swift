@@ -28,7 +28,6 @@ actor SPARustRuntime {
     private let schemeHandlerProxy: SchemeHandlerProxy
     private let logger: LoggerProtocol
     private let hostEventRecorder: HostEventRecording
-    private let pageScripts: [JSEngineScript]
     private let hostSessionId = UUID()
 
     private var engine: JSEngineProtocol?
@@ -43,8 +42,7 @@ actor SPARustRuntime {
         productOpening: ProductOpening,
         schemeHandlerProxy: SchemeHandlerProxy,
         logger: LoggerProtocol,
-        hostEventRecorder: HostEventRecording,
-        pageScripts: [JSEngineScript] = []
+        hostEventRecorder: HostEventRecording
     ) {
         self.executionModel = executionModel
         self.configuration = configuration
@@ -52,7 +50,6 @@ actor SPARustRuntime {
         self.schemeHandlerProxy = schemeHandlerProxy
         self.logger = logger
         self.hostEventRecorder = hostEventRecorder
-        self.pageScripts = pageScripts
     }
 
     deinit {
@@ -107,7 +104,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
             )
         )
 
-        try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom] + pageScripts)
+        try await engine.initialize(with: scriptsFactory.makeScripts() + [.disableZoom])
 
         hostEventRecorder.record(.webViewCreated(
             hostSessionID: hostSessionId,

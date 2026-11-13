@@ -92,7 +92,7 @@ private struct ExpandedPocketCardRuntimeFactory: ExpandedPocketCardRuntimeMaking
     let schemeHandlerProxy: SchemeHandlerProxy
     let routers: ProductRoutersFacadeProtocol
 
-    func makeRuntime(face: any ExpandedCardFaceShowing, cardInset: CGFloat) throws -> SPARuntimeProtocol {
+    func makeRuntime(face: any ExpandedCardFaceShowing) throws -> SPARuntimeProtocol {
         let executionModel = try rust.makeExpandedCardExecution(
             productId: configuration.productId,
             routers: routers,
@@ -109,8 +109,7 @@ private struct ExpandedPocketCardRuntimeFactory: ExpandedPocketCardRuntimeMaking
             ),
             schemeHandlerProxy: schemeHandlerProxy,
             logger: rust.logger,
-            hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder(),
-            pageScripts: [.pocketCardInset(cardInset)]
+            hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()
         )
     }
 }

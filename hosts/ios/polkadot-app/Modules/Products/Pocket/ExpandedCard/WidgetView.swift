@@ -7,8 +7,8 @@ import UIKit
 import UIKitExt
 import WebKit
 
-/// A Pocket card's page in a transparent web view over the whole screen. The page starts its
-/// content at the card inset and leaves the area above it to the card face drawn underneath.
+/// A Pocket card's page in a transparent web view over the whole screen. The card face drawn
+/// underneath is part of the view's safe area, which the page reads as `env(safe-area-inset-top)`.
 final class WidgetView: UIView {
     let webView: WKWebView
 
@@ -16,8 +16,6 @@ final class WidgetView: UIView {
     var onScroll: ((CGFloat) -> Void)?
     var onRetry: (() -> Void)?
 
-    private let contentArea = UILayoutGuide()
-    private var contentTop: Constraint?
     private let loadingView = PolkadotLogoLoadingView()
     private let loadProgressView: UIProgressView = {
         let progressView = UIProgressView(progressViewStyle: .bar)
@@ -60,10 +58,6 @@ final class WidgetView: UIView {
         offsetObservation?.invalidate()
     }
 
-    func setCardInset(_ inset: CGFloat) {
-        contentTop?.update(offset: inset)
-    }
-
     func showLoading() {
         hideFailure()
         loadingView.startAnimating()
@@ -93,7 +87,7 @@ final class WidgetView: UIView {
         let failureView = UIContentUnavailableView(configuration: configuration)
         addSubview(failureView)
         failureView.snp.makeConstraints { make in
-            make.edges.equalTo(contentArea)
+            make.edges.equalTo(safeAreaLayoutGuide)
         }
         self.failureView = failureView
     }
@@ -127,26 +121,20 @@ private extension WidgetView {
             make.edges.equalToSuperview()
         }
 
-        addLayoutGuide(contentArea)
-        contentArea.snp.makeConstraints { make in
-            contentTop = make.top.equalToSuperview().constraint
-            make.leading.trailing.bottom.equalToSuperview()
-        }
-
         addSubview(loadProgressView)
         loadProgressView.snp.makeConstraints { make in
-            make.top.leading.trailing.equalTo(contentArea)
+            make.top.leading.trailing.equalTo(safeAreaLayoutGuide)
         }
 
         addSubview(loadingView)
         loadingView.snp.makeConstraints { make in
-            make.center.equalTo(contentArea)
+            make.center.equalTo(safeAreaLayoutGuide)
         }
 
         addSubview(loadStatusLabel)
         loadStatusLabel.snp.makeConstraints { make in
             make.top.equalTo(loadingView.snp.bottom).offset(16)
-            make.leading.trailing.equalTo(contentArea).inset(32)
+            make.leading.trailing.equalTo(safeAreaLayoutGuide).inset(32)
         }
     }
 

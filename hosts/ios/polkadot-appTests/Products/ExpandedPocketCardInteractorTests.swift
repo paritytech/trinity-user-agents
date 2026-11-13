@@ -91,7 +91,7 @@ private struct Environment {
     }
 
     func start() async throws {
-        interactor.setup(engine: MockJSEngine(), cardInset: 300)
+        interactor.setup(engine: MockJSEngine())
         await output.waitForNavigations(1)
     }
 }
@@ -107,7 +107,7 @@ private final class RecordingRuntimeFactory: ExpandedPocketCardRuntimeMaking {
         self.loader = loader
     }
 
-    func makeRuntime(face: any ExpandedCardFaceShowing, cardInset: CGFloat) throws -> SPARuntimeProtocol {
+    func makeRuntime(face: any ExpandedCardFaceShowing) throws -> SPARuntimeProtocol {
         faces.append(face)
 
         return SPARustRuntime(
@@ -120,8 +120,7 @@ private final class RecordingRuntimeFactory: ExpandedPocketCardRuntimeMaking {
             ),
             schemeHandlerProxy: SchemeHandlerProxy(),
             logger: Logger.shared,
-            hostEventRecorder: NoopHostEventRecorder(),
-            pageScripts: [.pocketCardInset(cardInset)]
+            hostEventRecorder: NoopHostEventRecorder()
         )
     }
 }
