@@ -167,7 +167,13 @@ impl CliFundingHost {
 				},
 			}
 		}
-		let transcript = Arc::new(Transcript::from_env("TRUAPI_FUNDING_LOG", "funding"));
+		// One transcript per process: each runtime the host builds, such as one
+		// provisioned after startup, appends to it rather than truncating what
+		// an earlier one recorded.
+		static TRANSCRIPT: std::sync::OnceLock<Arc<Transcript>> = std::sync::OnceLock::new();
+		let transcript = TRANSCRIPT
+			.get_or_init(|| Arc::new(Transcript::from_env("TRUAPI_FUNDING_LOG", "funding")))
+			.clone();
 		CliWorkerHost::install(runtime, workers, ui, transcript.clone())?;
 		let host = Arc::new(Self {
 			user,

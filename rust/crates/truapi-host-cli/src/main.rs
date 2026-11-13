@@ -1445,7 +1445,7 @@ async fn run_signing_host(
 
 	if let Some(script) = args.script {
 		if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-			read_script_user_commands(session.runtime.clone(), session.platform.clone());
+			read_script_user_commands(session.runtime_factory.clone());
 		}
 		let product_id = product.current();
 		let script_product_id = product_id.clone();
@@ -1765,6 +1765,7 @@ async fn start_signing_host(
 	apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
 	funding_host::offer_providers(&runtime, platform.as_ref()).await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
+	runtime_factory.set_platform(platform.clone());
 	let last_script = profile
 		.as_ref()
 		.map(|profile| catalog.last_script(profile))
@@ -2737,7 +2738,9 @@ async fn renew_pairing_allowances(
 /// script runs, so a battery can act as the user: `/funding` acts on a
 /// session and `/approval` changes how confirmations are answered. A prompt
 /// still has no terminal to ask on, so under manual approval it is refused.
-fn read_script_user_commands(runtime: Arc<SigningHostRuntime>, platform: Arc<CliPlatform>) {
+/// Each command acts on the session current when it arrives, as the host may
+/// switch to another one, such as one provisioned after the script started.
+fn read_script_user_commands(sessions: Arc<frame_server::SwitchableSigningRuntime>) {
 	tokio::spawn(async move {
 		use tokio::io::AsyncBufReadExt;
 		let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
@@ -2745,14 +2748,21 @@ fn read_script_user_commands(runtime: Arc<SigningHostRuntime>, platform: Arc<Cli
 			if line.trim().is_empty() {
 				continue;
 			}
+			let runtime = sessions.current();
+			let platform = sessions.current_platform();
+			let set_approval = |policy: ApprovalPolicy| {
+				if let Some(platform) = &platform {
+					platform.set_approval_policy(policy);
+				}
+			};
 			let done = match parse_command(&line) {
 				Ok(ShellCommand::Funding(command)) => run_funding(&runtime, command).await,
 				Ok(ShellCommand::Approval(ApprovalCommand::Manual)) => {
-					platform.set_approval_policy(ApprovalPolicy::Prompt);
+					set_approval(ApprovalPolicy::Prompt);
 					Ok("Approval mode set to manual".to_string())
 				},
 				Ok(ShellCommand::Approval(ApprovalCommand::Automatic)) => {
-					platform.set_approval_policy(approval_policy(true));
+					set_approval(approval_policy(true));
 					Ok("Approval mode set to automatic".to_string())
 				},
 				Ok(_) => {
@@ -3309,8 +3319,12 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 		promotion.commit();
 	}
 
+	// Each runtime the host builds offers its funding providers, so one
+	// provisioned or imported after startup serves them as the first did.
+	funding_host::offer_providers(&runtime, platform.as_ref()).await?;
 	session.responders.stop_all();
 	session.runtime_factory.replace(runtime.clone());
+	session.runtime_factory.set_platform(platform.clone());
 	session.runtime = runtime;
 	session.platform = platform;
 	session.cached_user_id = signer.lite_username.clone();
@@ -3400,8 +3414,12 @@ async fn import_mnemonic_session(
 	session.catalog.set_current(&session_name)?;
 	let available_sessions = session.catalog.list()?;
 
+	// Each runtime the host builds offers its funding providers, so one
+	// provisioned or imported after startup serves them as the first did.
+	funding_host::offer_providers(&runtime, platform.as_ref()).await?;
 	session.responders.stop_all();
 	session.runtime_factory.replace(runtime.clone());
+	session.runtime_factory.set_platform(platform.clone());
 	session.runtime = runtime;
 	session.platform = platform;
 	session.cached_user_id = username.clone();

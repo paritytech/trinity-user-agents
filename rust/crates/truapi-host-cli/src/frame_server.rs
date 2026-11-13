@@ -189,13 +189,31 @@ impl ProductRuntimeFactory for DebugTappedRuntime {
 /// restarting the frame listener.
 pub struct SwitchableSigningRuntime {
 	current: RwLock<Arc<SigningHostRuntime>>,
+	/// The host platform the current runtime was built with, for what acts
+	/// on the session from outside a product, such as a script's user.
+	platform: RwLock<Option<Arc<crate::platform::CliPlatform>>>,
 	generation: watch::Sender<u64>,
 }
 
 impl SwitchableSigningRuntime {
 	pub fn new(runtime: Arc<SigningHostRuntime>) -> Arc<Self> {
 		let (generation, _) = watch::channel(0);
-		Arc::new(Self { current: RwLock::new(runtime), generation })
+		Arc::new(Self { current: RwLock::new(runtime), platform: RwLock::new(None), generation })
+	}
+
+	/// The runtime products are served by now.
+	pub fn current(&self) -> Arc<SigningHostRuntime> {
+		self.current.read().expect("runtime lock poisoned").clone()
+	}
+
+	/// The platform the current runtime was built with, once set.
+	pub fn current_platform(&self) -> Option<Arc<crate::platform::CliPlatform>> {
+		self.platform.read().expect("platform lock poisoned").clone()
+	}
+
+	/// Record the platform the current runtime was built with.
+	pub fn set_platform(&self, platform: Arc<crate::platform::CliPlatform>) {
+		*self.platform.write().expect("platform lock poisoned") = Some(platform);
 	}
 
 	/// Replace the runtime and disconnect every product using the old one.
