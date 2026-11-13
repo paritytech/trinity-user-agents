@@ -1241,13 +1241,13 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
       async featureSupported(request) {
         if (faults.featureError) throw new Error(faults.featureError);
         const served =
-          request.tag !== "Chain" ||
-          !onlyServedChains ||
-          servedChains.some(
-            (genesisHash) =>
-              normalizeHash(genesisHash) ===
-              normalizeHash(request.value.genesisHash),
-          );
+          request.tag === "Chain" &&
+          (!onlyServedChains ||
+            servedChains.some(
+              (genesisHash) =>
+                normalizeHash(genesisHash) ===
+                normalizeHash(request.value.genesisHash),
+            ));
         return { supported: featureSupported && served };
       },
     },
