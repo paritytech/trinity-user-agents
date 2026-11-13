@@ -943,7 +943,8 @@ cfg_select! {
 		pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use native::{
-			NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
+			NativePublicProfileObserver, NativeRendererObserver, NativeSubscription,
+			WsBridgeEndpoint, WsBridgeStartError,
 		};
 		#[cfg(not(target_arch = "wasm32"))]
 		pub use native_debug::{DebugSinkError, WsDebugSink};
@@ -955,7 +956,7 @@ cfg_select! {
 		};
 		pub use public_profile::{
 			PROFILE_RECORD_KEY, ProfileAvatar, ProfileRecord, ProfileRecordLocation, PublicProfile,
-			PublicProfileError,
+			PublicProfileError, PublicProfileResolutionOptions,
 		};
 		pub use runtime::{
 			AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
