@@ -34,6 +34,27 @@ enum ChainMock {
         )
     }
 
+    static func makeChain(id: ChainModel.Id) -> ChainModel {
+        ChainModel(
+            chainId: id,
+            parentId: nil,
+            name: id,
+            assets: [],
+            nodes: [],
+            nodeSwitchStrategy: .roundRobin,
+            addressPrefix: 0,
+            explicitGenesisHash: nil,
+            types: nil,
+            icon: nil,
+            options: nil,
+            externalApis: nil,
+            explorers: nil,
+            order: 0,
+            additional: nil,
+            syncMode: .full
+        )
+    }
+
     static func makeRemoteAsset(id: AssetModel.Id = 0) -> RemoteAssetModel {
         RemoteAssetModel(
             assetId: id,

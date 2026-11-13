@@ -177,7 +177,7 @@ impl Stack {
 		let genesis = self.genesis();
 		let chains = StackChains {
 			relay: None,
-			asset_hub: Some(genesis.asset_hub),
+			asset_hub: genesis.asset_hub,
 			people: genesis.people,
 			bulletin: genesis.bulletin,
 		};

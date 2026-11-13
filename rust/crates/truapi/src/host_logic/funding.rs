@@ -72,7 +72,7 @@ const LATE_ARRIVAL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 /// It keeps what history needs, so its owner can still read how it ended and
 /// the host can still list it; the pack is never trimmed.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingSessionSummary {
 	/// The session's identifier.
 	pub intent: String,
@@ -164,7 +164,7 @@ impl FundingSessionSummary {
 
 /// A session the host has heard of, with its progress now.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingBookEntry {
 	/// The session.
 	pub session: FundingSession,
@@ -174,7 +174,7 @@ pub struct FundingBookEntry {
 
 /// What the core knows about one session, independent of any host surface.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingSession {
 	/// Identifier handed back to the caller and used to re-attach.
 	pub intent: String,
@@ -222,7 +222,7 @@ pub struct FundingSession {
 
 /// A provider's latest `Progress`, with the step it was reported in.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingDetailRecord {
 	/// The fact and its time.
 	pub detail: FundingDetail,
@@ -236,7 +236,7 @@ pub struct FundingDetailRecord {
 /// The top-up a provider gives a failed payout back with, and what it
 /// returned.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingRefund {
 	/// The top-up.
 	pub top_up: StartedFunds,
@@ -248,7 +248,7 @@ pub struct FundingRefund {
 /// The quote a session's provider was chosen on, with the rail and asset it
 /// priced.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingChoice {
 	/// The quote.
 	pub quote: FundingQuote,
@@ -274,7 +274,7 @@ impl FundingChoice {
 /// A session's progress as a host draws it: its milestones, each with when it
 /// was reached, the line under them, and when the provider was last heard.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingProgress {
 	/// The milestones in order: Started, Received and Added in; Started,
 	/// Received and Sent out. One reached later fills in any skipped before
@@ -341,7 +341,7 @@ pub struct FundingProgress {
 /// "Yesterday at 12:45", "Jun 12 at 16:40" or, in another year,
 /// "Jun 12, 2025".
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingStatus {
 	/// Inbound bank: waiting for the user's transfer.
 	///
@@ -497,7 +497,7 @@ pub enum FundingStatus {
 
 /// One step of a session's progress.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingProgressStep {
 	/// The step.
 	pub step: FundingStep,
@@ -507,7 +507,7 @@ pub struct FundingProgressStep {
 
 /// A milestone a session reaches, labelled on its timeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingStep {
 	/// The session was opened.
 	///
@@ -543,7 +543,7 @@ impl FundingStep {
 /// Hosts word it with the session's rail, asset and amount: "{rail}" is
 /// "card" or "bank", "{asset}" the crypto the user pays or receives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingBand {
 	/// In: nothing from the user yet.
 	///
@@ -607,7 +607,7 @@ pub enum FundingBand {
 
 /// One update a provider reported, and when the core stored it.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingUpdateRecord {
 	/// The update.
 	pub update: FundingUpdate,
@@ -618,7 +618,7 @@ pub struct FundingUpdateRecord {
 /// A top-up or payment request the provider started for a session with
 /// `payment.topUp` or `payment.request`, recorded before the host is asked.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct StartedFunds {
 	/// Which way they move: a top-up a withdrawal is refunded with moves in.
 	pub direction: FundingDirection,
@@ -658,7 +658,7 @@ pub enum StartRecord {
 /// ends the session. After, a cancel is a request the provider answers with
 /// an offer or a refusal, and only the provider ends the session.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingCancel {
 	/// The user asked to cancel and the provider has not answered.
 	#[codec(index = 0)]
@@ -703,7 +703,7 @@ pub enum FundingCancel {
 
 /// What a user's cancel did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum CancelOutcome {
 	/// The session ended as cancelled: no provider serves it, or no money
 	/// moved and its provider was asked once already.
@@ -720,7 +720,7 @@ pub enum CancelOutcome {
 
 /// What the user's answer to a cancel offer did.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum CancelConfirmation {
 	/// The offer was accepted and passed to the provider to settle.
 	Accepted,
@@ -738,7 +738,7 @@ pub enum CancelConfirmation {
 
 /// The terms of a cancel offer the user accepts, as the host showed them.
 #[derive(Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct CancelTerms {
 	/// What the provider keeps, in payment balance units.
 	pub fee: u128,
@@ -768,7 +768,7 @@ pub enum Settlement {
 
 /// Stage of a session, as the core persists it.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingStage {
 	/// In flight.
 	#[codec(index = 0)]

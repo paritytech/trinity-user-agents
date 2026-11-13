@@ -98,9 +98,9 @@ export function createHeadlessHostCallbacks(
     features: {
       async featureSupported(request) {
         return {
-          supported: supportedGenesis.has(
-            request.value.genesisHash.toLowerCase(),
-          ),
+          supported:
+            request.tag === "Chain" &&
+            supportedGenesis.has(request.value.genesisHash.toLowerCase()),
         };
       },
     },

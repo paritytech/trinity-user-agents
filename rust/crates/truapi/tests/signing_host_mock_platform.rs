@@ -87,6 +87,19 @@ impl FrameSink for RecordingSink {
 	}
 }
 
+/// The chain RPC `platform` has recorded, once it has recorded any or
+/// `timeout` has passed.
+fn first_sent_rpc(platform: &MockPlatform, timeout: Duration) -> Vec<String> {
+	let deadline = Instant::now() + timeout;
+	loop {
+		let sent = platform.sent_rpc();
+		if !sent.is_empty() || Instant::now() >= deadline {
+			return sent;
+		}
+		std::thread::sleep(Duration::from_millis(5));
+	}
+}
+
 /// Signing-host configuration on the `paseo` network suffix.
 fn signing_config() -> SigningHostConfig {
 	SigningHostConfig::new(
@@ -97,7 +110,7 @@ fn signing_config() -> SigningHostConfig {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		truapi::platform::mock::mock_stack([0; 32], [0xbb; 32], None),
+		truapi::platform::mock::mock_stack([0; 32], [0xbb; 32], [0xcc; 32]),
 	)
 	.expect("signing host config is valid")
 }
@@ -190,12 +203,24 @@ fn a_signing_host_on_the_mock_platform_returns_a_verifiable_signature() {
 fn the_mock_platform_never_reaches_the_chain_to_sign_raw() {
 	// The mock's default chain behavior records requests and never answers, so
 	// any genuine chain dependency on this path would park the test rather than
-	// fail it. Asserting the recording is empty is what distinguishes "signing
-	// is local" from "signing got lucky".
+	// fail it. Asserting that signing sent nothing is what distinguishes
+	// "signing is local" from "signing got lucky".
 	let platform = Arc::new(MockPlatform::new());
 	let runtime = SigningHostRuntime::new(platform.clone(), signing_config(), test_spawner());
 	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
 		.expect("local activation succeeds");
+	// Activation looks the session's username up on Asset Hub in the
+	// background. Nothing answers its follow, so once that is sent the lookup
+	// waits out its step budget, seconds longer than signing takes.
+	let sent_by_activation = first_sent_rpc(&platform, Duration::from_secs(5));
+	assert!(
+		matches!(
+			sent_by_activation.as_slice(),
+			[follow] if follow.contains(r#""method":"chainHead_v1_follow""#)
+		),
+		"the username lookup must send one follow and then wait, or what it sends next can \
+		 land while signing and be counted against it; it sent {sent_by_activation:?}",
+	);
 
 	let product = ProductContext::new(ProductId::for_test(PRODUCT_ID));
 	let sink = Arc::new(RecordingSink::default());
@@ -219,11 +244,7 @@ fn the_mock_platform_never_reaches_the_chain_to_sign_raw() {
 	futures::executor::block_on(product_runtime.receive_frame(frame.encode()))
 		.expect("dispatcher accepted the sign_raw frame");
 
-	assert!(
-		platform.sent_rpc().is_empty(),
-		"signing a raw payload sent chain RPC: {:?}",
-		platform.sent_rpc(),
-	);
+	assert_eq!(platform.sent_rpc(), sent_by_activation, "signing a raw payload sent chain RPC");
 }
 
 #[test]
