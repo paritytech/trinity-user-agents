@@ -221,7 +221,7 @@ pub struct ChatCustomMessage {
 }
 
 /// Content of a chat message -- one of several types.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, strum::IntoStaticStr)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatMessageContent {
 	/// Plain text message.

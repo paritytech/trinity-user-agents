@@ -25,8 +25,10 @@ import io.paritytech.polkadotapp.common.presentation.statusBar.LocalStatusBarScr
 import io.paritytech.polkadotapp.common.presentation.statusBar.LocalStatusBarTitle
 import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarScrollHolder
 import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarTitleHolder
+import io.paritytech.polkadotapp.common.presentation.tabbar.LocalTabBarHiddenFraction
 import io.paritytech.polkadotapp.common.presentation.tabbar.LocalTabBarOffset
 import io.paritytech.polkadotapp.common.presentation.tabbar.LocalTabBarVisibility
+import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarHiddenFractionHolder
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarOffsetHolder
 import io.paritytech.polkadotapp.common.presentation.tabbar.TabBarVisibilityHolder
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
@@ -38,6 +40,9 @@ abstract class BaseComposeFragment<T : BaseViewModel> : Fragment() {
     // Injected into every @AndroidEntryPoint subclass; expose the tab-bar state to screens.
     @Inject
     lateinit var tabBarOffsetHolder: TabBarOffsetHolder
+
+    @Inject
+    lateinit var tabBarHiddenFractionHolder: TabBarHiddenFractionHolder
 
     @Inject
     lateinit var tabBarVisibilityHolder: TabBarVisibilityHolder
@@ -69,6 +74,7 @@ abstract class BaseComposeFragment<T : BaseViewModel> : Fragment() {
 
             CompositionLocalProvider(
                 LocalTabBarOffset provides tabBarOffsetHolder.offset,
+                LocalTabBarHiddenFraction provides tabBarHiddenFractionHolder.fraction,
                 LocalTabBarVisibility provides tabBarVisibilityHolder,
                 LocalStatusBarScroll provides statusBarScrollHolder,
                 LocalStatusBarTitle provides statusBarTitleHolder,

@@ -531,7 +531,7 @@ fn remote_authority_error(reason: String) -> AuthorityError {
 /// only the kind so no key material reaches logs.
 fn unexpected_resource(label: &str, resource: &SsoAllocatedResource) -> AuthorityError {
 	AuthorityError::Unknown {
-		reason: format!("Unexpected {label} response resource: {}", resource.kind()),
+		reason: format!("Unexpected {label} response resource: {}", <&str>::from(resource)),
 	}
 }
 
