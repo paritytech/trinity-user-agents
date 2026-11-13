@@ -1784,9 +1784,12 @@ impl FundingRegistry {
 	}
 
 	/// Queue `session`'s current stage for the host, which hears of a session
-	/// once the user starts it.
+	/// once it started: the user started it, or a provider took it while its
+	/// overlay is still up, as the core's start on the best quote does.
 	fn tell_host(&self, held: &Held, session: &FundingSession) {
-		if self.platform.get().is_some() && !held.presenting.contains_key(&session.intent) {
+		let started =
+			!held.presenting.contains_key(&session.intent) || session.provider_id.is_some();
+		if self.platform.get().is_some() && started {
 			self.lock_announcements()
 				.pending
 				.push_back((session.intent.clone(), session.wire_item()));

@@ -9,6 +9,8 @@ final class DashboardServicesCoordinatorSpy: DashboardServicesCoordinating {
     private(set) var stopInteractiveCallCount = 0
     private(set) var stopAllCallCount = 0
 
+    let changes = StateChangeSignal()
+
     private let durabilityStarts: Bool
 
     init(durabilityStarts: Bool = true) {
@@ -17,18 +19,22 @@ final class DashboardServicesCoordinatorSpy: DashboardServicesCoordinating {
 
     func startDurability() async -> Bool {
         startDurabilityCallCount += 1
+        changes.signal()
         return durabilityStarts
     }
 
     func startInteractive() {
         startInteractiveCallCount += 1
+        changes.signal()
     }
 
     func stopInteractive() {
         stopInteractiveCallCount += 1
+        changes.signal()
     }
 
     func stopAll() {
         stopAllCallCount += 1
+        changes.signal()
     }
 }
