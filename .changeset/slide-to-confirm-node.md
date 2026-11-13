@@ -1,6 +1,6 @@
 ---
-"@parity/truapi": minor
-"@parity/truapi-host": minor
+"@parity/truapi": patch
+"@parity/truapi-host": patch
 ---
 
 Adds `RendererNode::SlideToConfirm`, a control the person slides to confirm, at variant index 12. The host owns the drag
