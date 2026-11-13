@@ -59,6 +59,13 @@ class AppFundingHostBridgeTest {
     }
 
     @Test
+    fun `a provider asking for a screen reaches the service`() {
+        bridge.providerFrameRequested(ramp, "intent")
+
+        verify { funding.frameRequested(ramp, "intent") }
+    }
+
+    @Test
     fun `a provider closing its frame reaches the service`() {
         bridge.closeProviderFrame(ramp, "intent")
 
