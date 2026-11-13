@@ -1895,17 +1895,11 @@ impl ChainConnection {
 
 	/// Name one follow holding a slot, for a line that leaves the device.
 	///
-	/// The core's own follow ids are its own words, so one is named by what it
-	/// says less the prefix every core follow shares, and the line's own budget
-	/// is what bounds its length. A product's follow id is built from the
-	/// request id it chose, which is arbitrary text off the wire, so only the
-	/// runtime it belongs to is named.
+	/// A product's follow id is built from the request id it chose, which is
+	/// arbitrary text off the wire, so only the runtime it belongs to is named.
 	/// Which products hold how many is the diagnostic; what a product called
 	/// its request is not, and is not ours to repeat.
 	fn occupant_name(local_follow_id: &str) -> String {
-		if let Some(core_follow) = local_follow_id.strip_prefix("truapi:") {
-			return core_follow.to_string();
-		}
 		match local_follow_id.split_once(':') {
 			Some((runtime, _)) => format!("{runtime}:product"),
 			None => "product".to_string(),
@@ -2382,13 +2376,5 @@ mod occupant_name_tests {
 			"a request id the product chose reached the line",
 		);
 		assert_eq!(ChainConnection::occupant_name("anything"), "product");
-	}
-
-	/// The core's own ids are its own words, and say which read holds the slot.
-	/// The prefix they all share says nothing one from another, and the line
-	/// they go into has room for four of them.
-	#[test]
-	fn a_core_follow_is_named_by_what_its_id_says() {
-		assert_eq!(ChainConnection::occupant_name("truapi:dotns:3:identity"), "dotns:3:identity");
 	}
 }

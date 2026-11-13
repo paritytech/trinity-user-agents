@@ -265,7 +265,7 @@ impl PublicProfilesService {
 	}
 
 	async fn read_record(&self, username: &str) -> Result<ProfileRecord, PublicProfileError> {
-		let mut lookup = DotnsLookup::at_finalized_head(&self.chain, self.genesis).await?;
+		let mut lookup = DotnsLookup::at_best_block(&self.chain, self.genesis).await?;
 		Self::read_record_from(&mut lookup, username).await
 	}
 

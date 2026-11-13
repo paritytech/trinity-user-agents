@@ -6,8 +6,8 @@
 //! path. On the cold path they come from its pending claim on the controller,
 //! covering gateway-minted names before the user settles their store.
 //!
-//! All reads run over one `chainHead_v1` follow via `ReviveApi_call` dry-runs.
-//! No chain metadata is needed.
+//! All reads run at one best block over the core's legacy JSON-RPC connection,
+//! with views as `ReviveApi_call` dry-runs. No chain metadata is needed.
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
@@ -212,7 +212,7 @@ async fn lookup_dotns_identity(
 	account_id: [u8; 32],
 ) -> Result<Option<DotnsIdentity>, DotnsError> {
 	let lookup = async {
-		let mut lookup = DotnsLookup::at_finalized_head(chain, asset_hub_chain_genesis_hash).await?;
+		let mut lookup = DotnsLookup::at_best_block(chain, asset_hub_chain_genesis_hash).await?;
 		let Some(controller) = discover_pop_controller(&mut lookup).await? else {
 			return Ok(None);
 		};

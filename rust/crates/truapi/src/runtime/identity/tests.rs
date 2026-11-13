@@ -1,7 +1,7 @@
-//! The in-core lookup reads dotNS over legacy JSON-RPC at one finalized
+//! The in-core lookup reads dotNS over legacy JSON-RPC at one best
 //! block. This scripts the Asset Hub node end of those reads: storage values
 //! for the pallet keys and `ReviveApi_call` outputs for the contract views, so
-//! the whole chain from the finalized head to classified usernames runs
+//! the whole chain from the best block to classified usernames runs
 //! without a network.
 
 use super::*;
@@ -185,7 +185,7 @@ fn session_without_usernames(public_key: [u8; 32], identity_account_id: [u8; 32]
 }
 
 #[test]
-fn in_core_lookup_resolves_usernames_at_the_finalized_head() {
+fn in_core_lookup_resolves_usernames_at_the_best_block() {
 	let provider = Arc::new(ScriptedAssetHub::new());
 	let chain = ChainRuntime::new(provider.clone(), Spawner::for_test());
 	let session = session_without_usernames([0x11; 32], ACCOUNT);
@@ -259,7 +259,7 @@ fn overlapping_lookups_of_one_session_read_dotns_once() {
 		futures::executor::block_on(futures::future::join_all((0..lookups).map(|_| {
 			lookup_session_identity(&services.dotns_reads, &services.chain, [0xcc; 32], &session)
 		})));
-		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chain_getFinalizedHead")
+		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chain_getBlockHash")
 	};
 
 	assert_eq!(reads_for(2), reads_for(1));

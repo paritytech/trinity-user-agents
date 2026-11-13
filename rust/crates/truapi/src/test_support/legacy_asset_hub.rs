@@ -1,14 +1,14 @@
 //! An Asset Hub node answering the legacy JSON-RPC reads a dotNS lookup makes:
-//! its finalized head, storage values and `ReviveApi_call` views, each checked
-//! to be read at that head.
+//! its best block, storage values and `ReviveApi_call` views, each checked to
+//! be read at that block.
 
 use parity_scale_codec::{Decode, Encode};
 use serde_json::{Value, json};
 
 use crate::chain::{ContractResult, ExecReturnValue, StorageDeposit, Weight};
 
-/// The finalized block every scripted read must name.
-const FINALIZED_HEAD: [u8; 32] = [0x22; 32];
+/// The best block every scripted read must name.
+const BEST_BLOCK: [u8; 32] = [0x22; 32];
 
 /// The `ReviveApi_call` output of a view that returns `data`, or reverts with
 /// it when `reverted`.
@@ -36,18 +36,18 @@ pub fn legacy_asset_hub_frames(
 	let request: Value = serde_json::from_str(request).unwrap();
 	let id = request.get("id").cloned().unwrap_or(Value::Null);
 	let reply = |result: Value| json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string();
-	let head = hex_of(&FINALIZED_HEAD);
+	let head = hex_of(&BEST_BLOCK);
 	let params = &request["params"];
 	match request["method"].as_str().unwrap() {
-		"chain_getFinalizedHead" => vec![reply(json!(head))],
+		"chain_getBlockHash" => vec![reply(json!(head))],
 		"state_getStorage" => {
-			assert_eq!(params[1], json!(head), "a dotNS storage read left the finalized head");
+			assert_eq!(params[1], json!(head), "a dotNS storage read left the best block");
 			let value = storage(&bytes_of(&params[0]));
 			vec![reply(value.map_or(Value::Null, |value| json!(hex_of(&value))))]
 		},
 		"state_call" => {
 			assert_eq!(params[0], "ReviveApi_call");
-			assert_eq!(params[2], json!(head), "a dotNS view left the finalized head");
+			assert_eq!(params[2], json!(head), "a dotNS view left the best block");
 			let args = bytes_of(&params[1]);
 			// origin[32] ‖ dest[20] ‖ value u128 ‖ None ‖ None ‖ Vec(input).
 			assert_eq!(&args[..32], &[0xee; 32], "views run as the always-mapped origin");

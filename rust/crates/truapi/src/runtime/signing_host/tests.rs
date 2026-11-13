@@ -378,11 +378,11 @@ fn a_failed_lookup_is_named_in_the_refusal() {
 		lines,
 		vec![
 			"truapi.tracing.warn truapi::runtime::product_manifest: root manifest lookup \
-			 failed {target=peopl.dot, reason=finding the finalized Asset Hub block timed out}"
+			 failed {target=peopl.dot, reason=finding the best Asset Hub block timed out}"
 				.to_string(),
 			refusal_line(
 				"because=manifest unavailable, entry=dim2, caller=dim2.dot, \
-				 owner=peopl.dot, source=dotNS lookup failed: finding the finalized \
+				 owner=peopl.dot, source=dotNS lookup failed: finding the best \
 				 Asset Hub block timed out, scopes=None"
 			),
 		]

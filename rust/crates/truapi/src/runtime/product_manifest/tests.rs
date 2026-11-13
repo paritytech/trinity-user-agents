@@ -196,7 +196,7 @@ fn concurrent_lookups_for_one_product_read_asset_hub_once() {
 	));
 
 	assert_eq!(
-		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chain_getFinalizedHead"),
+		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chain_getBlockHash"),
 		1
 	);
 }

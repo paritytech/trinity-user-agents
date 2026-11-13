@@ -128,7 +128,7 @@ async fn fetch_text_record(
 	subname: Option<&str>,
 	key: &str,
 ) -> Result<Option<String>, DotnsError> {
-	let mut lookup = DotnsLookup::at_finalized_head(chain, asset_hub_chain_genesis_hash).await?;
+	let mut lookup = DotnsLookup::at_best_block(chain, asset_hub_chain_genesis_hash).await?;
 
 	read_text_record(&mut lookup, product_id, subname, key).await
 }
@@ -196,9 +196,8 @@ pub struct CachedManifest {
 	/// answered that the product publishes none.
 	///
 	/// A miss is cached because refusing is the common outcome: without it every
-	/// refused call reopens a chainHead follow and re-reads the contracts, and
-	/// the round trip tells the caller which targets have a manifest and which
-	/// do not — the distinction one uniform refusal exists to hide.
+	/// refused call re-reads the contracts, and the round trip tells the caller
+	/// which targets have a manifest and which do not — the distinction one uniform refusal exists to hide.
 	pub json: Option<String>,
 }
 

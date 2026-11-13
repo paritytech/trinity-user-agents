@@ -1,7 +1,7 @@
 //! dotNS transport shared by the core's dotNS readers.
 //!
 //! A lookup reads Asset Hub over the core's legacy JSON-RPC connection at one
-//! finalized block, so a sequence of storage reads and contract views sees one
+//! best block, so a sequence of storage reads and contract views sees one
 //! consistent state. It opens no `chainHead_v1_follow`: a node allows only a
 //! few of those per connection, and how many dotNS reads run at once must not
 //! decide whether the core or a product can follow a chain. No chain metadata
@@ -9,6 +9,7 @@
 
 use core::{future::Future, time::Duration};
 
+use async_lock::Semaphore;
 use futures::{FutureExt, future::join_all, pin_mut};
 use subxt::utils::H256;
 use tracing::{debug, info};
@@ -28,6 +29,15 @@ const OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(test)]
 const OPERATION_TIMEOUT: Duration = Duration::from_millis(100);
 
+/// Most dotNS requests in flight at once, across every lookup. The core's
+/// connection queues about a thousand requests before it drops or refuses
+/// them, and its transaction client shares that connection, so a burst of
+/// lookups waits here instead. Waiting does not count against
+/// [`OPERATION_TIMEOUT`].
+const MAX_REQUESTS_IN_FLIGHT: usize = 256;
+
+static REQUESTS_IN_FLIGHT: Semaphore = Semaphore::new(MAX_REQUESTS_IN_FLIGHT);
+
 /// One block context for a sequence of dotNS reads, over the core's legacy
 /// connection to Asset Hub.
 pub struct DotnsLookup {
@@ -36,12 +46,13 @@ pub struct DotnsLookup {
 }
 
 impl DotnsLookup {
-	/// Reads Asset Hub at its latest finalized block, like the core's other
-	/// one-off state reads.
-	pub async fn at_finalized_head(
+	/// Reads Asset Hub at its best block, so a record is visible as soon as
+	/// it is included.
+	pub async fn at_best_block(
 		chain: &ChainRuntime,
 		asset_hub_chain_genesis_hash: [u8; 32],
 	) -> Result<Self, DotnsError> {
+		let _permit = REQUESTS_IN_FLIGHT.acquire().await;
 		let opened = async {
 			let legacy = chain
 				.legacy_connection(&asset_hub_chain_genesis_hash)
@@ -49,27 +60,28 @@ impl DotnsLookup {
 				.map_err(|failure| failure.to_string())?;
 			let at = legacy
 				.methods
-				.chain_get_finalized_head()
+				.chain_get_block_hash(None)
 				.await
-				.map_err(|error| error.to_string())?;
+				.map_err(|error| error.to_string())?
+				.ok_or("the node named no best block")?;
 			Ok::<_, String>(Self { legacy, at })
 		};
 		// This path does network I/O, can stall for `OPERATION_TIMEOUT`, and
 		// fails closed into a refusal a caller cannot tell from "you were not
 		// granted this", so say what it did.
-		let lookup = within(opened, "finding the finalized Asset Hub block")
+		let lookup = within(opened, "finding the best Asset Hub block")
 			.await
 			.and_then(core::convert::identity)
 			.inspect_err(|reason| {
 				info!(
 					target: "truapi::dotns",
 					%reason,
-					"no finalized Asset Hub block to read dotNS at; every grant \
+					"no best Asset Hub block to read dotNS at; every grant \
 					 behind this lookup is refused"
 				);
 			})
 			.map_err(DotnsError::Chain)?;
-		debug!(target: "truapi::dotns", at = ?lookup.at, "reading dotNS at the finalized Asset Hub block");
+		debug!(target: "truapi::dotns", at = ?lookup.at, "reading dotNS at the best Asset Hub block");
 		Ok(lookup)
 	}
 }
@@ -89,6 +101,7 @@ async fn within<T>(step: impl Future<Output = T>, name: &str) -> Result<T, Strin
 impl DotnsTransport for DotnsLookup {
 	/// Reads one storage value at the lookup's block. `Ok(None)` when absent.
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
+		let _permit = REQUESTS_IN_FLIGHT.acquire().await;
 		let read = self.legacy.methods.state_get_storage(&key, Some(self.at));
 		let value = within(read, "an Asset Hub storage read")
 			.await?
@@ -152,6 +165,7 @@ impl RuntimeApiCaller for DotnsLookup {
 	) -> Vec<Result<Vec<u8>, subxt::Error>> {
 		let (methods, at) = (&self.legacy.methods, self.at);
 		join_all(inputs.iter().map(|input| async move {
+			let _permit = REQUESTS_IN_FLIGHT.acquire().await;
 			within(methods.state_call(function, Some(input), Some(at)), "an Asset Hub runtime call")
 				.await
 				.map_err(subxt::Error::other_str)?

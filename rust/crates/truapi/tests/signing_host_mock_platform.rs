@@ -210,16 +210,16 @@ fn the_mock_platform_never_reaches_the_chain_to_sign_raw() {
 	futures::executor::block_on(runtime.activate_local_session(ENTROPY.to_vec()))
 		.expect("local activation succeeds");
 	// Activation looks the session's username up on Asset Hub in the
-	// background. Nothing answers its request for the finalized head, so once
+	// background. Nothing answers its request for the best block, so once
 	// that is sent the lookup waits out its step budget, seconds longer than
 	// signing takes.
 	let sent_by_activation = first_sent_rpc(&platform, Duration::from_secs(5));
 	assert!(
 		matches!(
 			sent_by_activation.as_slice(),
-			[head] if head.contains(r#""method":"chain_getFinalizedHead""#)
+			[head] if head.contains(r#""method":"chain_getBlockHash""#)
 		),
-		"the username lookup must send one finalized head request and then wait, or what it sends next can \
+		"the username lookup must send one best block request and then wait, or what it sends next can \
 		 land while signing and be counted against it; it sent {sent_by_activation:?}",
 	);
 

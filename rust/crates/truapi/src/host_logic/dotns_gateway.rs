@@ -8,8 +8,8 @@
 //!
 //! Username resolution ([`discover_pop_controller`], [`resolve_labels`]) is
 //! written once against the [`DotnsTransport`] trait. The headless CLI's
-//! plain-RPC reader and the in-core `chainHead_v1` lookup therefore walk the
-//! same contract chain.
+//! plain-RPC reader and the in-core lookup therefore walk the same contract
+//! chain.
 //!
 //! Byte layouts mirror `pallets/dotns-gateway` in `paritytech/individuality`
 //! and the dotNS contracts (`paritytech/dotns`).
@@ -451,8 +451,9 @@ pub enum DotnsCallError {
 /// How a caller reaches Asset Hub for dotNS reads.
 ///
 /// The surface is storage reads and single or batched contract views. The headless CLI
-/// implements it over plain RPC. The in-core runtime implements it over a
-/// `chainHead_v1` follow. The resolution steps below are written once.
+/// implements it over plain RPC. The in-core runtime implements it over the
+/// core's legacy JSON-RPC connection at one best block. The resolution steps
+/// below are written once.
 #[async_trait::async_trait]
 pub trait DotnsTransport: Send {
 	/// Reads one storage value. `None` when the entry is absent.
