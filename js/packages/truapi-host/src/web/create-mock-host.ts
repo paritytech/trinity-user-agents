@@ -43,7 +43,6 @@ import type {
 import type {
   AuthState,
   CoreStorageKey,
-  HostChainSet,
   HostScan,
   JsonRpcConnection,
   PermissionDecision,
@@ -164,7 +163,7 @@ export interface MockFaults {
   confirmationError?: string;
   /** Device and remote permission prompts fail with this reason. */
   permissionError?: string;
-  /** `featureSupported` and `supportedChains` fail with this reason. */
+  /** `featureSupported` fails with this reason. */
   featureError?: string;
   /** Chat room, bot, and message calls fail with this reason. */
   chatError?: string;
@@ -406,7 +405,7 @@ export interface MockHostConfig {
   /** Whether `featureSupported` reports support. Default `true`. */
   featureSupported?: boolean;
   /**
-   * When set, `featureSupported` answers from `supportedChains`, as a real host
+   * When set, `featureSupported` answers from `servedChains`, as a real host
    * does, so a chain outside that set is unsupported. Default `false`. It
    * becomes the default in a later breaking release. The Rust
    * `MockConfig::only_served_chains` is the same option.
@@ -454,14 +453,12 @@ export interface MockHostConfig {
    */
   chainProxies?: ChainProxy[];
   /**
-   * Chains the host reports serving (RFC 0026). Defaults to the three
-   * {@link MOCK_GENESIS} chains, which are what {@link mockRuntimeConfig}
-   * declares.
-   *
-   * An empty set type-checks and then fails every chain-routed call, so
-   * override this only to assert that failure.
+   * Genesis hashes of the chains the host serves, which `featureSupported`
+   * answers from when `onlyServedChains` is set. Defaults to the three
+   * {@link MOCK_GENESIS} chains, the ones {@link mockRuntimeConfig}'s stack
+   * names. `getChainInfo` answers from that stack, not from this list.
    */
-  supportedChains?: HostChainSet;
+  servedChains?: string[];
 }
 
 /** A mock host: the callbacks to wire into a provider, plus assertion oracles. */
@@ -900,14 +897,7 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
     languageTag = "en",
     faults = {},
     scanner,
-    supportedChains = {
-      network: "mock",
-      chains: [
-        { identifier: "People", genesisHash: MOCK_GENESIS.people },
-        { identifier: "Bulletin", genesisHash: MOCK_GENESIS.bulletin },
-        { identifier: "AssetHub", genesisHash: MOCK_GENESIS.assetHub },
-      ],
-    },
+    servedChains = Object.values(MOCK_GENESIS),
   } = config;
 
   const scan = scanner === undefined ? undefined : { answer: scanner };
@@ -1252,16 +1242,12 @@ export function createMockHost(config: MockHostConfig = {}): MockHost {
         if (faults.featureError) throw new Error(faults.featureError);
         const served =
           !onlyServedChains ||
-          supportedChains.chains.some(
-            (entry) =>
-              normalizeHash(entry.genesisHash) ===
+          servedChains.some(
+            (genesisHash) =>
+              normalizeHash(genesisHash) ===
               normalizeHash(request.value.genesisHash),
           );
         return { supported: featureSupported && served };
-      },
-      async supportedChains() {
-        if (faults.featureError) throw new Error(faults.featureError);
-        return supportedChains;
       },
     },
 
@@ -1735,13 +1721,66 @@ export const MOCK_GENESIS = {
     "0x3333333333333333333333333333333333333333333333333333333333333333",
 } as const;
 
+/** One chain of a {@link TestStack}. */
+export interface TestStackChain {
+  /** The chain's genesis hash, as 0x-prefixed hex or bytes. */
+  genesisHash: string | Uint8Array;
+}
+
 /**
- * A default {@link ProductRuntimeConfig} for a mock host. Override any field;
- * the genesis hashes and product id are placeholders suitable for tests.
+ * The stack a test host runs, built from its parts because a test host has no
+ * signed descriptor to bundle. Only the testing wasm bundle reads it; the
+ * production bundle takes a {@link ProductRuntimeConfig.stack} only.
+ */
+export interface TestStack {
+  /** The network `getChainInfo` reports. */
+  network: string;
+  /** The dotNS TLD a signing host derives its reserved identities under. */
+  tld: string;
+  /** The People chain, which the core runs SSO over. */
+  people: TestStackChain;
+  /** The Bulletin chain, which takes the core's own preimage submissions. */
+  bulletin: TestStackChain;
+  /**
+   * Asset Hub, where product manifests resolve from dotNS. Leave it out for a
+   * host with no Asset Hub; an all-zero hash is refused.
+   */
+  assetHub?: TestStackChain;
+  /** The relay chain. */
+  relay?: TestStackChain;
+  /**
+   * Whether the stack may use Polkadot's genesis hashes or the `dot` TLD.
+   * Defaults to `false`, as on a real host.
+   */
+  allowsReservedValues?: boolean;
+}
+
+/** A {@link ProductRuntimeConfig} for a test host, with a {@link TestStack}. */
+export type MockRuntimeConfig = Omit<ProductRuntimeConfig, "stack"> & {
+  testStack: TestStack;
+};
+
+/**
+ * The stack a mock host runs by default: network `mock` under the `paseo`
+ * TLD, over the {@link MOCK_GENESIS} chains.
+ */
+export function mockTestStack(): TestStack {
+  return {
+    network: "mock",
+    tld: "paseo",
+    people: { genesisHash: MOCK_GENESIS.people },
+    bulletin: { genesisHash: MOCK_GENESIS.bulletin },
+    assetHub: { genesisHash: MOCK_GENESIS.assetHub },
+  };
+}
+
+/**
+ * A default {@link MockRuntimeConfig} for a mock host. Override any field;
+ * the stack and product id are placeholders suitable for tests.
  */
 export function mockRuntimeConfig(
-  overrides: Partial<ProductRuntimeConfig> = {},
-): ProductRuntimeConfig {
+  overrides: Partial<MockRuntimeConfig> = {},
+): MockRuntimeConfig {
   return {
     productId: asProductId("mock.dot"),
     host: {
@@ -1753,15 +1792,10 @@ export function mockRuntimeConfig(
       type: "node",
       version: "0",
     },
-    people: { genesisHash: MOCK_GENESIS.people },
-    bulletin: { genesisHash: MOCK_GENESIS.bulletin },
-    assetHub: { genesisHash: MOCK_GENESIS.assetHub },
+    testStack: mockTestStack(),
     pairing: {
       deeplinkScheme: "polkadotapp",
     },
-    // A signing host refuses to start without this; a pairing host ignores it.
-    // Setting it unconditionally keeps one config usable for both roles.
-    networkSuffix: "paseo",
     ...overrides,
   };
 }

@@ -8,7 +8,6 @@ use crate::{
 		transaction::sign_extrinsic_payload,
 	},
 	host_logic::{
-		features::genesis_for,
 		product_account::{SR25519_SIGNING_CONTEXT, personhood_product_id},
 		raw_signing::raw_payload_bytes,
 	},
@@ -42,10 +41,9 @@ use futures::{
 use truapi::{
 	latest as api,
 	latest::{
-		ChainIdentifier, DerivationIndex, HostAccountCreateProofRequest,
-		HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
-		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest, ProductAccountId,
-		RingLocation, RingLocationJunction,
+		DerivationIndex, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRingVrfSignRequest, ProductAccountId, RingLocation, RingLocationJunction,
 	},
 };
 
@@ -132,17 +130,10 @@ impl WalletAccountHolder {
 		session: &AuthoritySession,
 		owner: &ProductId,
 	) -> Result<(), RingVrfError> {
-		if owner != &personhood_product_id(&self.network_suffix) {
+		if owner != &personhood_product_id(self.services.stack().tld()) {
 			return Ok(());
 		}
-		let chains = self
-			.services
-			.platform
-			.supported_chains()
-			.await
-			.map_err(|error| RingVrfError::Unknown { reason: error.reason })?;
-		let chain_id =
-			genesis_for(&chains, ChainIdentifier::People).ok_or(RingVrfError::RingNotFound)?;
+		let chain_id = self.services.stack().chains().people;
 		let entries = self.ring_vrf_registry.owner_entries(session.public_key, owner).await?;
 		let missing = [(PersonhoodCollection::People, 0), (PersonhoodCollection::LitePeople, 1)]
 			.into_iter()
