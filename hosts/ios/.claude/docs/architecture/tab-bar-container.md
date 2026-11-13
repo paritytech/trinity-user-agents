@@ -1,6 +1,6 @@
 # Tab Bar Container
 
-The bottom tab bar is SwiftUI inside a thin UIKit shell. SwiftUI draws the bar row, the center control, the center panel and the shelf. UIKit keeps the three jobs that need a `UIViewControllerTransitionCoordinator` or a `UIView` hit test: the fold, the passthrough hit testing, and the resting bottom clearance that content is inset by.
+The bottom tab bar is SwiftUI inside a thin UIKit shell. SwiftUI draws the bar row, the center control, the center panel and the shelf. UIKit keeps the three jobs that need a `UIViewControllerTransitionCoordinator` or a `UIView` hit test: the fold, the passthrough hit testing, and the Clearance that content is inset by.
 
 `MainTabBarViewController` is a plain `UIViewController`. It mounts one child at a time, owns the top status strip, and writes the bottom insets on the tab and content controllers.
 
@@ -68,6 +68,7 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Tip step (anchor, `onShow`), anchors, popover body | `polkadot-app/Modules/MainTabBar/Tips/TabBarTipStep.swift`, `TabBarTipAnchor.swift`, `TabBarTipViewStyle.swift` |
 | First eligible tip step | `polkadot-app/Modules/MainTabBar/Tips/TabBarTipOrderedSequence.swift`, `TabBarTipSequenceProtocol.swift` |
 | Floating widgets | `polkadot-app/Modules/MainTabBar/TabBarWidgetController.swift`, `MainTabBarFloatingWidgetStackView.swift` |
+| Hosted SwiftUI screen safe area (moves with Clearance) | `Packages/PolkadotUI/Sources/Helpers/SafeAreaFollowingHostingController.swift` |
 | Bar, center control, shelf container | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarContainer.swift`, `DSTabBarCenterControl.swift` |
 | Centre glyph, grabber, rim | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarCenterGlyph.swift` |
 | Content fade (icons and labels opacity, read by leaf views) | `Packages/PolkadotUI/Sources/Components/DSTabBarShell/DSTabBarContentFade.swift` |
@@ -243,7 +244,7 @@ The three states are `shown`, `tucked` and `hidden`. The bar's position between 
 
 - **Shown.** The bar sits at the bottom of the screen.
 - **Tucked.** On the Drawbridge, the bar turns a quarter and slides out to the right, and the Edge glow stays on the right edge (`DockletDrawbridge`).
-- **Hidden.** The bar slides fully off the leading edge. There is no Edge glow and no grab zone, so tab navigation is not available on that screen. The only conformer to `TabBarChromeVisibilityCustomizing` in the app is `ChatViewController`.
+- **Hidden.** The bar slides fully off the leading edge. There is no Edge glow and no grab zone, so tab navigation is not available on that screen. No type conforms to `TabBarChromeVisibilityCustomizing` yet, so no screen sets Hidden.
 
 `TabBarVisibilityPolicy.state(derived:override:)` resolves the state in this order:
 
@@ -251,11 +252,11 @@ The three states are `shown`, `tucked` and `hidden`. The bar's position between 
 2. A user override (`tucked` or `shown`) wins.
 3. Otherwise the derived state applies.
 
-A tab root follows the same order and can be tucked by a user override. Tab-root bottom clearance does not change when the bar tucks, and it does not follow the motion.
+A tab root follows the same order and can be tucked by a user override. Its Clearance follows the state, so a tucked tab root takes none, and the floating widgets above it move down with the Docklet.
 
 The derived state comes from `TabBarHiddenPolicy.deriveFoldState(in:showing:)`. It is `hidden` when the target opts out. It is `tucked` when any controller above the root, up to the target, sets `hidesBottomBarWhenPushed`. The root is excluded, so a tab root that sets the flag does not tuck. A mounted product also derives `tucked`. The grab zone can bring the bar back over it.
 
-A screen that conforms to `TabBarRootStandIn` counts as a tab root (`TabBarHiddenPolicy.isTabRoot`), wherever it sits in the stack. It keeps the root's clearance and ignores a tap on the selected tab. The only conformer is `PocketCardScreenViewController`, an open Pocket card pushed over the Wallet.
+A pushed screen without the flag derives no state, so the Docklet stays Shown on it and the screen takes Clearance. `PocketCardScreenViewController` is one such screen: `PocketNavigation` pushes it onto the Wallet's stack without setting the flag.
 
 `TabBarFoldController` holds one user override, not one per screen: `none`, `shown` or `tucked`. A user tuck or restore sets it, and so does an auto-hide tuck. The value lives in memory, so a relaunch starts with the bar shown. The fold controller ignores override requests while the bar is `hidden`.
 
@@ -331,26 +332,61 @@ The R1 tips keep their style: a tap on the body closes the tip, and there is no 
 
 ## Clearance and Safe Area
 
-Two bottom insets stack, and they go on different controllers so they compose.
+Clearance is the space at the bottom of a native screen that a Shown Docklet covers. The Docklet publishes it through the bottom safe area, so screens lay out on it. Two bottom insets stack, and they go on different controllers so they compose.
 
 | Inset | Applied to |
 |---|---|
 | Bar clearance | the tab's `UINavigationController`, or the tab controller itself when there is none |
 | Widget height | the top screen's controller, or added to the tab controller when there is no navigation controller |
 
-The two change at different rates. The navigation controller is stable for the tab's lifetime, and the widget height follows the top screen. `updateContentSafeAreaInset()` zeroes the controller it inset last before it writes the new one.
+The two change at different rates. The navigation controller is stable for the tab's lifetime, and the widget height follows the top screen. `TabBarWidgetController.updateContentSafeAreaInset(barClearance:fittingWidth:)` zeroes the widget inset on the screen it inset last, unless that screen is the one on screen. It then writes both insets.
 
-- `restingBarHeight` is the bar's resting height on a tab root (`DSTabBarStyle.restingHeight`). Elsewhere it is the raw bottom safe area.
-- `restingBottomClearance` is `restingBarHeight` minus the bottom safe area, floored at zero.
-- Clearance is contributed only on a tab root, or on a screen that stands in for one. A pushed screen that does not set `hidesBottomBarWhenPushed` reserves no space. The bar floats over its bottom content and takes touches in its capsule. Such a screen should either set the flag or keep interactive content clear of the bottom.
-- The shelf and the center panel overlay content. They do not change clearance.
+**State-based rule.** The Clearance depends on the state the Docklet resolves to, not on the kind of screen.
+
+- `TabBarVisibilityPolicy.bottomClearance(for:bottomSafeAreaInset:)` returns the resting height minus the bottom safe area when the state is Shown. It returns 0 when the state is Tucked or Hidden.
+- `TabBarBottomChromeController.bottomClearance(for:)` resolves the state a context settles on and applies that rule. `restingBarHeight(for:)` adds the bottom safe area to the result. That sum sets the floating widgets' bottom offset.
+- A tab root, a pushed screen without `hidesBottomBarWhenPushed`, and a screen the user has set to Shown all take the Clearance. A tucked tab root, an open chat and a mounted product take none.
+- The Clearance goes on the tab's navigation controller, so every screen in that stack sees it while the Docklet is Shown.
+- The shelf and the center panel overlay content. They do not change the Clearance.
+
+**Resolved state.** The Clearance is computed for the state a context resolves to, so navigation lays out for the incoming screen. An animated navigation applies the incoming screen's layout with the transition coordinator. An interactive transition moves the Docklet with `setInteractiveTarget(_:)`. A cancelled interactive pop lays out the staying screen.
+
+**In-place commit.** `TabBarBottomChromeController` calls `onDockletStateCommitted` when the fold commits a state outside `apply(_:)`. That covers a drag release, an auto-hide tuck, and a panel that restores the Docklet (`openPanelShowingDocklet`). `apply(_:)` does not fire it, because the host lays out for that context itself.
+
+`MainTabBarViewController.applyDockletStateCommitted()` then re-lays out the widgets and the Clearance inside `DSTabBarStyle.animateCenterChange(in:_:)`. The move runs on the centre control's ease-out, and it snaps under Reduce Motion. A main scroll view of the selected controller keeps its place from the bottom edge. Before the change it records its distance from the bottom. When the bottom edge moved by at least that distance, the scroll view keeps that distance, so its last rows move with the Docklet.
 - `TabBarChromeSurfaceView` reads both safe-area insets from its superview, not from itself. The fold transforms the surface, and a transformed view's own insets change with the transform.
 
-**Recalculation.** Three events recompute the insets from `container.selectedController`: the container's safe area changes, the chrome's safe area changes, and a tab mounts. Re-deriving from the selected controller stops a late `didShow` from a background tab pinning insets to a screen that is not on screen.
+**Recalculation.** Three events recompute the insets from `container.selectedController`:
 
-**Fold inputs.** `isTabRoot`, the derived state and the screen change only through `applyChrome(_:animatingAlongside:)`. The inset path reads them but never writes them.
+- The container's safe area changes (`MainTabBarViewController.viewSafeAreaInsetsDidChange()`).
+- The chrome's safe area changes (`TabBarBottomChromeController.onBottomClearanceInvalidated`).
+- A tab mounts (`TabBarContainer.onContentInsetInvalidated`).
+
+Navigation and tab switches (`applyChrome(_:animatingAlongside:)`), the in-place commit, and widget attach and detach also run the same layout. Re-deriving from the selected controller stops a late `didShow` from a background tab pinning insets to a screen that is not on screen.
+
+**Fold inputs.** The derived state and the screen change only through `TabBarBottomChromeController.apply(_:)`, which `applyChrome(_:animatingAlongside:)` calls. The inset path reads them but never writes them. `resolvedState(for:)` reads the user override and does not change it.
 
 **No window.** `updateWidgetLayout` returns while the view has no window, so a `.fullScreen` presentation elsewhere does not produce bad insets. The last applied insets hold until the view reattaches.
+
+### Hosted SwiftUI screens
+
+A `UIHostingController` passes a new safe area to SwiftUI in a transaction with no animation. A SwiftUI screen therefore jumps to a new Clearance in one frame. `SafeAreaFollowingHostingController<Content>` moves the screen on the Docklet's ease instead.
+
+- It sets `safeAreaRegions = .keyboard`. SwiftUI stops seeing the container's safe area, and keyboard avoidance is unchanged. Its root view, `SafeAreaFollowingRoot`, also applies `.ignoresSafeArea(.container)` outside the padding. On iOS 18, SwiftUI still receives the container safe area after `safeAreaRegions` excludes it, so the insets would count twice without it.
+- It copies `view.safeAreaInsets` into an observable value. Its root view, `SafeAreaFollowingRoot`, applies that value with `.safeAreaPadding`.
+- `applySafeAreaInsets()` writes the current safe area to SwiftUI. The controller calls it for every safe-area change. The subclass's `bottomSafeAreaChange` decides how the write applies:
+  - `animated` (default): the screen moves with the change on `DSTabBarStyle.centerEaseOut`, when `SafeAreaChangeAnimation.animates(from:to:isOnScreen:reduceMotion:)` returns true. That rule needs the view on screen, Reduce Motion off, and a change to the bottom inset alone. Any other change applies at once, including a rotation.
+  - `immediate`: the screen takes the new inset at once.
+  - `held`: SwiftUI keeps the bottom inset it has. The other edges still update. A screen that returns `held` calls `applySafeAreaInsets()` when the hold ends.
+- `viewIsAppearing` writes the current value without animation, so the first frame never lays out on zero insets.
+- A subclass reads and writes its screen through `content`, which replaces `rootView`. It overrides `bottomSafeAreaChange`. `WalletMainViewController` returns `held` while the Collectibles peek is pressed, coloured or lifted, and the Pocket has not cleared for the open item. Otherwise it returns `immediate` while a Pocket item is open, and `animated` when none is.
+  - Why `held`: a touch on the peek also tucks the Docklet. The push starts 0.17 s later, before a 0.33 s move of the peek would end, so the book would lift from a frame the peek has not reached. The press reaches SwiftUI before the tuck changes the safe area, so the peek never moves under the finger and its book lifts from where it was touched. Under Reduce Motion the Collectibles screen fades in and the Pocket does not clear, so the hold lasts until the peek lands at rest after the return, and the Pocket is covered for that time.
+  - Known limit: on iOS 18.6 the hold does not take on a tap, so the peek moves as in an ordinary tuck and its book lifts from the settled place.
+  - Why `immediate`: an open item flies back to the frame the Pocket reports. `WalletMainViewController` calls `applySafeAreaInsets()` when the press changes, when the Pocket clears for the open item, and when the peek lands at rest.
+
+Adopt it for a screen inside the tab container with SwiftUI content pinned to the bottom. Scroll-only screens, modal screens, window-root screens and child views do not need it. Current adopters: `WalletMainViewController` and `ThemeSelectionHostingController`. The latter serves the theme screen opened from Settings (`ThemeSelectionViewFactory.createView(onComplete:)`). The onboarding theme screen is a window root and uses a plain `UIHostingController` (`createView(observer:)`). In a build with `FEATURE_PRODUCTS`, Settings is presented modally, so the Settings theme screen sits inside the tab container only in builds without that flag.
+
+A SwiftUI `ScrollView` in an adopting screen takes the inset on SwiftUI's animation, so the bottom pin in `applyDockletStateCommitted` sees no shift and leaves a list at its bottom where it is.
 
 ## Top Status Strip
 
@@ -368,7 +404,7 @@ A Presented product covers the container, so it draws its own strip with the sam
 
 A tap on the selected tab is a re-tap. `TabBarReselectionPolicy.action(for:)` checks these cases in order:
 
-1. A modal is presented from the target, or the target is a `TabBarRootStandIn`: ignore.
+1. A modal is presented from the target, or there is no target: ignore.
 2. The navigation stack is deeper than its root: pop to root.
 3. Otherwise: scroll to top.
 
@@ -385,7 +421,7 @@ Opening a product with Browse:
 1. `SPABrowserCoordinator.findOrCreateTab(for:)` matches on `dotDomain`. An existing tab with another page is navigated in place.
 2. `SPAControllerPool` vends one `SPAViewController` per tab id.
 3. `container.mountSPA(_:for:)` sets the selection to `.spa(id)` and shows the controller at once.
-4. `applyChrome(.spa(controller))` sets `isTabRoot: false` and a derived state of `tucked`. The bar tucks and contributes no clearance.
+4. `applyChrome(.spa(controller))` uses `TabBarChromeContext.spa(_:)`, which derives `tucked`. The bar tucks, and the product takes no Clearance.
 
 `presentProduct(page:)` is the one-shot path for funding products. In both builds it presents a page sheet. The product never enters the tab store, so closing it leaves no chip.
 
