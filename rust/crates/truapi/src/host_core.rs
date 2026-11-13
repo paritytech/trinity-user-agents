@@ -868,6 +868,18 @@ impl SigningHostRuntime {
 		self.services.funding().get(intent)
 	}
 
+	/// Show the screen funding session `intent`'s provider asked for. Answers
+	/// whether one was waiting.
+	pub fn open_provider_frame(&self, intent: &str) -> bool {
+		self.services.funding().open_frame(intent)
+	}
+
+	/// Whether funding session `intent`'s provider waits for its screen to be
+	/// opened.
+	pub fn funding_frame_waiting(&self, intent: &str) -> bool {
+		self.services.funding().frame_waiting(intent)
+	}
+
 	/// Funding session `intent`'s progress now, while the core holds it in
 	/// full.
 	pub fn funding_progress(
@@ -902,19 +914,20 @@ impl SigningHostRuntime {
 		self.services.funding().entries(crate::current_unix_millis())
 	}
 
-	/// Offer the funding providers the remote configuration names, then the
-	/// `bundled` ones it does not.
+	/// Offer the funding providers the remote configuration names, each
+	/// without a TLD (`fundtest-provider`, not `fundtest-provider.paseo`):
+	/// the core reads it on the network it is connected to.
 	///
-	/// Names that are not product ids are skipped and logged. A call listing
+	/// Names that are not product ids, or that name a TLD, are skipped and
+	/// logged. A call listing
 	/// what the last one listed changes nothing, so the host calls it on
 	/// every configuration refresh.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_provider_config"))]
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
 	) -> Result<(), v01::GenericError> {
-		Ok(self.services.set_funding_provider_config(published_names, bundled)?)
+		Ok(self.services.set_funding_provider_config(published_names)?)
 	}
 
 	/// Record that the host told the user how ended session `intent` went.

@@ -2247,12 +2247,20 @@ pub trait FundingPlatform: Send + Sync {
 		session: FundingPresentation,
 	) -> Result<FundingPresentOutcome, GenericError>;
 
+	/// `provider` asked to show a screen for session `intent`. The core
+	/// holds it until the host calls `open_provider_frame(intent)`, which
+	/// the host does at once while the user looks at the session, or once
+	/// the user taps a notice that the provider wants to show something.
+	/// A worker never puts a screen in front of the user on its own.
+	fn provider_frame_requested(&self, provider: &ProductContext, intent: String);
+
 	/// Show `target` for `provider`'s session `intent` in a frame the host
-	/// owns, and answer once it closes. A page is an https URL the core has
-	/// checked: the host shows its origin, and closes the frame with
-	/// `Returned` when the page reaches its return URL. The core closes the
-	/// frame itself, through
-	/// [`Self::close_provider_frame`], once the session's payment moved.
+	/// owns, and answer once it closes. Called only once the host opened the
+	/// request [`Self::provider_frame_requested`] announced. A page is an
+	/// https URL the core has checked: the host shows its origin, and closes
+	/// the frame with `Returned` when the page reaches its return URL. The
+	/// core closes the frame itself, through [`Self::close_provider_frame`],
+	/// once the session's payment moved.
 	async fn present_provider_frame(
 		&self,
 		provider: &ProductContext,

@@ -797,6 +797,10 @@ impl crate::platform::FundingPlatform for FundingCallbackPlatform {
 		self.funding.close_provider_frame(provider.product_id.clone(), intent);
 	}
 
+	fn provider_frame_requested(&self, provider: &ProductContext, intent: String) {
+		self.funding.provider_frame_requested(provider.product_id.clone(), intent);
+	}
+
 	async fn detected_country(&self) -> Option<String> {
 		self.funding.detected_country().await
 	}

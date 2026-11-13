@@ -53,5 +53,6 @@ fun RootNavBarHost(
         onAppClose = viewModel::onAppClose,
         onOffset = viewModel::setBarOffset,
         onBarHeight = viewModel::setBarHeight,
+        onBarHiddenFraction = viewModel::setBarHiddenFraction,
     )
 }
