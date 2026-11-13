@@ -19,7 +19,7 @@ pub use wallet_account_holder::{StatementRenewalTarget, WalletAccountHolder};
 use super::allowances::current_unix_secs;
 use super::{
 	AccountHolder, HostAccounts, HostSession, RuntimeServices, authority::AuthorityError,
-	connected_session_ui_info, product_consent::ProductConsent,
+	connected_session_ui_info, host_grants::HostGrantStore, product_consent::ProductConsent,
 	ring_vrf_registry::RingVrfRegistryStore, sso_responder_service::SsoResponderService,
 };
 #[cfg(not(target_arch = "wasm32"))]
@@ -77,6 +77,11 @@ impl SigningHost {
 		let accounts = Arc::new(HostAccounts::new(
 			services.clone(),
 			wallet.clone(),
+			Arc::new(HostGrantStore::new(
+				platform.clone(),
+				WalletAccountHolder::GRANT_KEEPING,
+				wallet.session_state(),
+			)),
 			ring_resolver,
 			ring_vrf_registry,
 			consent.clone(),

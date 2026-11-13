@@ -9,12 +9,11 @@ use super::{
 		CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest, SignRawAuthorityRequest,
 		StatementStoreAllowanceKey, SubtreeResolution,
 	},
-	host_grants::{GrantBarrier, HostGrantGuard, HostGrantStore},
+	host_grants::{HostGrantGuard, HostGrantStore},
 	product_consent::ProductConsent,
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure},
 	services::RuntimeServices,
 	signing_host::ring_vrf::{MemberCandidate, RingResolver, context_bytes, create_proof},
-	sso_request_service::PairedSessionOwner,
 	statement_allowance, vrf,
 };
 use crate::{
@@ -60,7 +59,7 @@ use zeroize::Zeroizing;
 pub struct HostAccounts<H: AccountHolder> {
 	services: Arc<RuntimeServices>,
 	holder: Arc<H>,
-	grants: HostGrantStore,
+	grants: Arc<HostGrantStore>,
 	ring_resolver: Arc<dyn RingResolver>,
 	ring_vrf_registry: Arc<RingVrfRegistryStore>,
 	consent: Arc<ProductConsent>,
@@ -68,43 +67,17 @@ pub struct HostAccounts<H: AccountHolder> {
 	resource_controls: Arc<super::test_resource_controls::TestResourceControls>,
 }
 
-#[async_trait::async_trait]
-impl<H: AccountHolder> PairedSessionOwner for HostAccounts<H> {
-	async fn write_barrier(&self) -> GrantBarrier {
-		self.grants.barrier().await
-	}
-
-	fn session_ended(&self, previous: Option<&SessionInfo>, revoked: bool) {
-		self.grants.session_ended(previous, revoked);
-		self.consent.forget_allowed_once();
-	}
-
-	fn begin_cleanup(&self, barrier: &GrantBarrier) -> bool {
-		self.grants.persistence_under(barrier).begin_cleanup()
-	}
-
-	async fn finish_cleanup(&self, barrier: &GrantBarrier) -> Result<(), String> {
-		self.grants.persistence_under(barrier).drain_cleanup().await
-	}
-
-	async fn prepare_session(
-		&self,
-		barrier: &GrantBarrier,
-		previous: Option<&SessionInfo>,
-		next: &SessionInfo,
-	) {
-		self.grants.persistence_under(barrier).prepare_session(previous, next).await;
-	}
-}
-
 impl<H: AccountHolder> HostAccounts<H> {
-	/// Compose one host's policy with its canonical session and grant owners.
+	/// Compose one host's policy with its account holder and grant store.
 	///
-	/// Kept keys read their rings through `ring_resolver`. A holder that reads
-	/// rings itself, as the wallet does, should read them through the same one.
+	/// `grants` keeps grants as [`AccountHolder::GRANT_KEEPING`] says, for the
+	/// session `holder` selects. Kept keys read their rings through
+	/// `ring_resolver`. A holder that reads rings itself, as the wallet does,
+	/// should read them through the same one.
 	pub fn new(
 		services: Arc<RuntimeServices>,
 		holder: Arc<H>,
+		grants: Arc<HostGrantStore>,
 		ring_resolver: Arc<dyn RingResolver>,
 		ring_vrf_registry: Arc<RingVrfRegistryStore>,
 		consent: Arc<ProductConsent>,
@@ -113,11 +86,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		>,
 	) -> Self {
 		Self {
-			grants: HostGrantStore::new(
-				services.platform.clone(),
-				H::GRANT_KEEPING,
-				holder.session_state(),
-			),
+			grants,
 			services,
 			holder,
 			ring_resolver,
