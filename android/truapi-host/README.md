@@ -36,20 +36,22 @@ The package is public, so any authenticated GitHub identity can read it. In GitH
 
 The consuming app must declare `android.permission.INTERNET` — the localhost WebSocket bridge binds a `127.0.0.1` TCP socket, which requires it even for loopback.
 
-`HostRuntimeConfig.networkSuffix` is required. Supply the bare TLD (`dot`,
-`paseo`, or `testnet`) from the same network configuration used by onboarding
-and the People/Bulletin genesis hashes. It must match the People chain's
-`NetworkSuffix.NetworkSuffix`. Include this configuration update in the
-embedding app's package upgrade.
+`HostRuntimeConfig.stack` is required. It is the Trinity stack the build runs,
+as a `BundledStack`:
 
-`HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub
-genesis hash from the same network configuration, as 32 bytes. Product manifests
-are read from the dotNS contracts deployed there, so it is what makes a
-`trustedProducts` grant resolvable: without a usable value no manifest resolves,
-so every cross-product grant not already cached is refused, and the refusal is
-indistinguishable from the other product having granted nothing. Pass 32 zero
-bytes only to declare deliberately that this host has no Asset Hub. Include this
-configuration update in the embedding app's package upgrade.
+- `pointer` is the stack's link, `polkadotapp://stack?key=0x…&url=…`. It must
+  carry a key.
+- `descriptor` is the signed descriptor the build bundles, byte for byte as
+  served. The core verifies it under the pointer's key.
+- `allowsReservedValues` is true only in a Polkadot or Polkadot-fork build.
+  Without it the core refuses a stack that uses Polkadot's genesis hashes or the
+  `dot` TLD.
+
+The core takes every chain it uses from the descriptor, and answers products'
+chain info queries from its `chains` and `network`. The descriptor's TLD is the
+one the wallet's reserved identities derive under. An invalid stack makes the
+`TrUAPIHostRuntime` constructor throw `NativeRuntimeConfigException.Invalid`.
+Include this configuration update in the embedding app's package upgrade.
 
 ### Compatibility
 
@@ -131,10 +133,7 @@ val runtime = TrUAPIHostRuntime(
     bridge = bridge,
     runtimeConfig = HostRuntimeConfig(
         hostName = "My Chat Host",
-        peopleChainGenesisHash = peopleChainGenesisHash,   // exactly 32 bytes
-        bulletinChainGenesisHash = bulletinChainGenesisHash,
-        assetHubChainGenesisHash = assetHubChainGenesisHash,
-        networkSuffix = "dot",
+        stack = bundledStack,
     ),
 )
 // Chat needs an active session; without one every Chat call answers `Denied`.
@@ -308,6 +307,7 @@ import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
+import uniffi.truapi.BundledStack
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ExecutableKind
@@ -420,13 +420,12 @@ val bridge = MyBridge(webView)
 val runtimeConfig = HostRuntimeConfig(
     hostName = "My Host",
     hostIcon = "https://host.example/icon.png",
-    peopleChainGenesisHash = ByteArray(32),
-    bulletinChainGenesisHash = ByteArray(32),
-    // Stand-in for a real Asset Hub genesis hash. Non-zero on purpose:
-    // all-zero is the "no Asset Hub" sentinel and refuses every cross-product
-    // `trustedProducts` grant.
-    assetHubChainGenesisHash = ByteArray(32) { 1.toByte() },
-    networkSuffix = "dot",
+    stack = BundledStack(
+        // The link the bundled descriptor was published under.
+        pointer = "polkadotapp://stack?key=0x…&url=…",
+        descriptor = webView.context.assets.open("trinity-stack.json").use { it.readBytes() },
+        allowsReservedValues = false,
+    ),
     // Optional: activate a local signing session from host-held BIP-39 entropy
     // (no SSO pairing). Omit for the QR pairing flow.
     localSessionSecret = null,

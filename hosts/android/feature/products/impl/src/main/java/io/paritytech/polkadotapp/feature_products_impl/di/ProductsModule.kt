@@ -61,7 +61,9 @@ import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotificatio
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.AssetContainerScriptProvider
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.ContainerScriptProvider
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.ProductLocalStorage
+import io.paritytech.polkadotapp.feature_products_impl.data.storage.ProductRoomFooterStorage
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.RealProductLocalStorage
+import io.paritytech.polkadotapp.feature_products_impl.data.storage.RealProductRoomFooterStorage
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.RealTopUpSourceStorage
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.TopUpSourceStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.ProductAccountDerivationUseCase
@@ -280,6 +282,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindTopUpSourceStorage(impl: RealTopUpSourceStorage): TopUpSourceStorage
+
+    @Binds
+    fun bindProductRoomFooterStorage(impl: RealProductRoomFooterStorage): ProductRoomFooterStorage
 
     @Binds
     fun bindTopUpRepository(impl: RealTopUpRepository): TopUpRepository

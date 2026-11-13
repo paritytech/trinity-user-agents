@@ -51,7 +51,6 @@ import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.ThemeName
 import uniffi.truapi.ThemeVariant
 import uniffi.truapi.AuthState
-import uniffi.truapi.HostChainSet
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
@@ -337,13 +336,6 @@ interface HostBridge {
      */
     @Throws(HostRejection::class)
     suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean
-
-    /**
-     * Enumerate the chains this host serves: its environment plus one entry
-     * per chain role.
-     */
-    @Throws(HostRejection::class)
-    fun supportedChains(): HostChainSet = HostChainSet(network = "", chains = emptyList())
 
     /**
      * The chains this host builds as V5 general transactions, each with its
@@ -672,9 +664,6 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
 
     override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
         withHostRejection { bridge.featureSupported(request) }
-
-    override fun supportedChains(): HostChainSet =
-        withHostRejection { bridge.supportedChains() }
 
     override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
         withHostRejection { bridge.transactionExtensionVersions() }
