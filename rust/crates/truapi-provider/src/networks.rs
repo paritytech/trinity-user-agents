@@ -46,14 +46,26 @@ pub struct NetworkChains {
 	pub people: [u8; 32],
 }
 
+/// The Paseo relay chain, shared by every network built on Paseo.
+const PASEO_RELAY: ChainDef = ChainDef {
+	genesis_hex: "0x374057be67b355151f271ff70c3db98308c62c8adc48dc6724b6a009a1a014fd",
+	spec: include_str!("../networks/paseo.json"),
+	statement_protocol: false,
+};
+
+/// The bundled networks, in lookup order.
+///
+/// A relay can back more than one network, as [`PASEO_RELAY`] does. Looking a
+/// chain up by genesis hash ([`catalog_network_chains`], [`catalog_service`])
+/// returns the first network that lists it, so the shared relay resolves and
+/// is attributed to the earliest of them. That choice does not change how the
+/// relay syncs, because every network carries the same relay definition, and
+/// each parachain still resolves to the one network that lists it. Append new
+/// networks so that existing lookups keep their answer.
 const CATALOG: &[NetworkDef] = &[
 	NetworkDef {
 		name: "paseo-next-v2",
-		relay: ChainDef {
-			genesis_hex: "0x374057be67b355151f271ff70c3db98308c62c8adc48dc6724b6a009a1a014fd",
-			spec: include_str!("../networks/paseo.json"),
-			statement_protocol: false,
-		},
+		relay: PASEO_RELAY,
 		assethub: ChainDef {
 			genesis_hex: "0x4349b00e54897e21196fd331015fc5be0f14e118beb0375ed2bb1793737bb57a",
 			spec: include_str!("../networks/paseo-next-v2-asset-hub.json"),
@@ -90,6 +102,25 @@ const CATALOG: &[NetworkDef] = &[
 		people: ChainDef {
 			genesis_hex: "0x55e3e689ecfa9d2fffcf7d309b8011956671493982230bfd0420c683542249e9",
 			spec: include_str!("../networks/previewnet-people.json"),
+			statement_protocol: true,
+		},
+	},
+	NetworkDef {
+		name: "paseo",
+		relay: PASEO_RELAY,
+		assethub: ChainDef {
+			genesis_hex: "0xd6eec26135305a8ad257a20d003357284c8aa03d0bdb2b357ab0a22371e11ef2",
+			spec: include_str!("../networks/paseo-asset-hub.json"),
+			statement_protocol: false,
+		},
+		bulletin: ChainDef {
+			genesis_hex: "0xe101f0fa4627d29a257645e02be86d80378fea1a2bf8fa6a918d150ebc760a59",
+			spec: include_str!("../networks/paseo-bulletin.json"),
+			statement_protocol: false,
+		},
+		people: ChainDef {
+			genesis_hex: "0xe6c30d6e148f250b887105237bcaa5cb9f16dd203bf7b5b9d4f1da7387cb86ec",
+			spec: include_str!("../networks/paseo-people.json"),
 			statement_protocol: true,
 		},
 	},

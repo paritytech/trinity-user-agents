@@ -268,21 +268,13 @@ fn amount_limits_span_every_provider() {
 	);
 }
 
-// The host applies every refresh; the
-// list puts the configured providers first, each once, then the bundled ones
-// the configuration does not name, and leaves out names that are no product.
+// The host applies every refresh; the list puts the configured providers in
+// order, each once, on the network the core is connected to, and leaves out
+// names that are no product or that pin a network with their own TLD.
 #[test]
-fn the_provider_config_lists_published_then_unnamed_bundled() {
-	let bundled = |name: &str| FundingProviderEntry {
-		product_id: ProductId::for_test(name),
-		worker_manifest: Some("{}".to_string()),
-		root_manifest: None,
-		origin: FundingProviderOrigin::Bundled,
-		app: crate::host_logic::funding_providers::FundingProviderApp::Shipped,
-	};
-	let names = ["ramp.dot", "bank.dot", "ramp.dot", "not a product!"].map(str::to_string);
-	let (entries, invalid) =
-		provider_config(&names, vec![bundled("bank.dot"), bundled("fundtest.dot")]);
+fn the_provider_config_lists_each_published_name_once() {
+	let names = ["ramp", "bank", " ramp ", "ramp.dot", "not a product!"].map(str::to_string);
+	let (entries, invalid) = provider_config(&names, "paseo");
 	assert_eq!(
 		(
 			entries
@@ -293,11 +285,10 @@ fn the_provider_config_lists_published_then_unnamed_bundled() {
 		),
 		(
 			vec![
-				("ramp.dot".to_string(), FundingProviderOrigin::Published),
-				("bank.dot".to_string(), FundingProviderOrigin::Published),
-				("fundtest.dot".to_string(), FundingProviderOrigin::Bundled),
+				("ramp.paseo".to_string(), FundingProviderOrigin::Published),
+				("bank.paseo".to_string(), FundingProviderOrigin::Published),
 			],
-			vec!["not a product!".to_string()],
+			vec!["ramp.dot".to_string(), "not a product!".to_string()],
 		)
 	);
 }
