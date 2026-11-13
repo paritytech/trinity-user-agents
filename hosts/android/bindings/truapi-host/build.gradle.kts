@@ -24,6 +24,9 @@ plugins {
 // produces missing sources rather than an error.
 val truapiDir: String = rootProject.file("../..").path
 
+// Cargo feature of the core that compiles truapi-provider into `libtruapi.so`.
+val chainProviderFeature = "embedded-chain-provider"
+
 // Handwritten Kotlin adapters and value types synced from the core checkout.
 val hostShellDir: Provider<Directory> = layout.buildDirectory.dir("truapi-shell")
 
@@ -87,6 +90,9 @@ tasks.withType<KotlinCompile>().configureEach {
 cargo {
     module = "$truapiDir/rust/crates/truapi"
     libname = "truapi"
+    // Also ships truapi-provider's bindings in this library: the host serves the
+    // core's chain connections through it.
+    features { defaultAnd(arrayOf(chainProviderFeature)) }
     // Narrows the convention's four ABIs to the three truapi itself builds.
     // The core is ~9MB per ABI, by far the largest binding here, and 32-bit x86
     // only ever serves a long-obsolete emulator image.
@@ -158,7 +164,7 @@ val generateCoreDispatcher by tasks.registering(Exec::class) {
 val buildHostCdylib by tasks.registering(Exec::class) {
     dependsOn(generateCoreDispatcher)
     workingDir = file(truapiDir)
-    commandLine("cargo", "build", "-p", "truapi", "--profile", "codegen")
+    commandLine("cargo", "build", "-p", "truapi", "--profile", "codegen", "--features", chainProviderFeature)
     inputs.files(
         fileTree("$truapiDir/rust/crates") { include("**/*.rs", "**/*.js", "**/Cargo.toml") },
         "$truapiDir/Cargo.toml",
@@ -193,6 +199,14 @@ val generateUniffiKotlin by tasks.registering(Exec::class) {
 tasks.matching { it.name.startsWith("cargoBuild") }
     .configureEach { dependsOn(generateCoreDispatcher) }
 
+// JVM unit tests load the host cdylib, as gradle/truapi-unit-tests.gradle.kts
+// does for the modules that depend on this one.
+dependencies.add("testRuntimeOnly", "net.java.dev.jna:jna:5.14.0")
+tasks.withType<Test>().configureEach {
+    dependsOn(buildHostCdylib)
+    systemProperty("jna.library.path", "$truapiDir/target/codegen")
+}
+
 extra["truapiSourceDir"] = file(truapiDir)
 apply(from = file("$truapiDir/android/truapi-container.gradle"))
 
@@ -203,10 +217,8 @@ dependencies {
     // The generated bindings bridge the core's async callbacks onto coroutines.
     api(libs.kotlinx.coroutines.core)
 
-    // OkHttp WebSocket backs the chain JSON-RPC transport (WebSocketChainProvider).
-    implementation(libs.squareup.okhttp3.core)
-
     testImplementation(libs.junit)
+    testImplementation(libs.squareup.okhttp3.core)
     testImplementation(libs.squareup.okhttp3.mockwebserver)
 
     androidTestImplementation(libs.androidx.junit)

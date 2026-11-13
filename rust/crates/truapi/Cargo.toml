@@ -95,6 +95,9 @@ wasm-signing-host = ["runtime"]
 test-host = ["runtime"]
 # In-memory `MockPlatform` for tests and host simulators.
 mock = ["runtime"]
+# Ships truapi-provider's UniFFI surface (embedded smoldot + remote RPC nodes)
+# inside this library, so a native host loads one cdylib for both.
+embedded-chain-provider = ["runtime", "truapi-provider/uniffi"]
 
 [dependencies]
 truapi-macros = { path = "../truapi-macros" }
