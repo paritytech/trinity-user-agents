@@ -1,3 +1,4 @@
+import AsyncExtensions
 import Foundation
 import UIKit
 import UIKitExt
@@ -42,11 +43,14 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
+    private let remoteConfig: RemoteConfigObserving?
+    private let appliedConfig: () -> RemoteAppConfig?
     private let logger: LoggerProtocol
 
     private let lock = NSLock()
     private var cachedRuntime: TrUAPIHostRuntime?
     private var contactsChangeNotifier: ContactsChangeNotifier?
+    private var fundingProvidersObservation: Task<Void, Never>?
 
     /// Set once at startup, before any product opens. The runtime is built on
     /// first use, which is long after, so the manager is in place by then.
@@ -63,6 +67,8 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         coreStorage: TrUAPILocalStoring,
         confirmationRouterFacade: ProductRoutersFacadeProtocol,
         tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared,
+        remoteConfig: RemoteConfigObserving? = nil,
+        appliedConfig: @escaping () -> RemoteAppConfig? = { AppConfigProvider.shared.getRemoteConfig() },
         logger: LoggerProtocol
     ) {
         self.chainRegistry = chainRegistry
@@ -71,7 +77,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         self.coreStorage = coreStorage
         self.confirmationRouterFacade = confirmationRouterFacade
         self.tldProvider = tldProvider
+        self.remoteConfig = remoteConfig
+        self.appliedConfig = appliedConfig
         self.logger = logger
+    }
+
+    deinit {
+        fundingProvidersObservation?.cancel()
     }
 
     @MainActor
@@ -169,6 +181,9 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             visibility: ProductVisibility(application: UIApplication.shared)
         ))
         paymentsBridge?.install(on: runtime)
+        // Also before any execution opens: the core offers only the providers
+        // the host lists, the ones `funding_config` names.
+        listFundingProviders(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
             logger: logger,
@@ -227,5 +242,43 @@ extension TrUAPIHostRuntimeProvider {
         values.isExcludedFromBackup = true
         try directory.setResourceValues(values)
         return directory.path
+    }
+}
+
+private extension TrUAPIHostRuntimeProvider {
+    /// List the providers `funding_config` names once per launch: the config
+    /// already applied, or else the first one remote config delivers, as it
+    /// usually lands after the runtime is built. Later refreshes are not
+    /// followed until known products carry the funding providers.
+    func listFundingProviders(on runtime: TrUAPIHostRuntime) {
+        if let config = appliedConfig() {
+            apply(publishedNames: config.fundingProviders, on: runtime)
+            return
+        }
+        apply(publishedNames: [], on: runtime)
+
+        guard let stream = remoteConfig?.remoteConfigStream() else { return }
+
+        fundingProvidersObservation?.cancel()
+        fundingProvidersObservation = Task { [weak self, weak runtime] in
+            do {
+                for try await config in stream {
+                    guard let self, let runtime, !Task.isCancelled else { return }
+
+                    apply(publishedNames: config.fundingProviders, on: runtime)
+                    return
+                }
+            } catch {
+                self?.logger.error("[truapi] funding providers stopped following remote config: \(error)")
+            }
+        }
+    }
+
+    func apply(publishedNames: [String], on runtime: TrUAPIHostRuntime) {
+        do {
+            try runtime.setFundingProviderConfig(publishedNames: publishedNames)
+        } catch {
+            logger.error("[truapi] the funding providers were refused: \(error)")
+        }
     }
 }

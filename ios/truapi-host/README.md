@@ -340,6 +340,61 @@ the user's calendar, keeps the reminder across app kill and device reboot, and
 drops it once the game has started. A `scheduleReminder` that throws reaches
 the product as a host failure carrying its reason.
 
+## Funding
+
+A host with a funding overlay implements `FundingHostBridge` and installs it
+once with `runtime.setFunding(_:)`, before opening any product execution.
+Without it, Funding calls answer unsupported. Products and the host's own
+Balance card reach the same overlay: the card opens a session with
+`openFunding(direction:amount:)`, a product with its own Funding request, and
+either way the core calls `presentFunding`.
+
+The core owns the sessions and keeps what the host draws. It calls
+`fundingChanged(intent:kind:)` whenever something changes, and the host reads
+the new state back: `fundingSession(intent:)` and `fundingProgress(intent:)`
+for `.session`, `fundingOptions(intent:)` for `.options` and
+`fundingQuotes(intent:)` for `.quotes`. Before `presentFunding` is called, the
+session's options name its providers and the rails, asset and tokens a
+selection can use. While `presentFunding` waits, the session is live:
+report the user's rail, asset, network, country and currency with
+`selectFundingOptions(intent:selection:)` whenever one changes, price it
+with `getFundingQuote(intent:amount:)` on that selection (the quote list carries the request id the
+call returned, `pending` rows first, and once every provider answered without
+a quote, the reason they gave and what it says about the amount; the core asks
+again every minute, each row keeping its answer until the provider answers
+again, until the session is handed over or the overlay closes, and a new
+`getFundingQuote` replaces the ask), hand it to the chosen provider with
+`selectFundingProvider(intent:providerId:quoteId:)`, and only then answer
+`.started`. Answering `.dismissed` discards the session. A provider that needs
+one of its own screens asks first through `providerFrameRequested`; the core
+calls `presentProviderFrame` only once the host opened it with
+`openProviderFrame(intent:)`, at once while the user looks at the session or
+after a tap on a notice, and `fundingFrameWaiting(intent:)` says whether one
+still waits, so the notice can be shown again after redrawing. Whether the session
+waits on a transfer the user makes outside the frame is on its progress
+(`awaitsUserTransfer`). It is answered `.closed` when the screen closed itself or the core
+closed it because the payment moved, `.dismissed` when the user closed it and
+`.returned(url:)` when the page navigated to the request's `return_url`.
+
+`startFundingWhenQuoted(intent:requestId:)` hands the session to the best quote
+once every provider answered, until `cancelFundingAutoStart(intent:)`, a new ask
+or another selection. `fundingAmountIssue(intent:amount:spendable:)` says what
+is wrong with an amount for the selection, and `fundingAvailable()` whether any
+provider is offered, read again on `.providers`.
+
+`fundingEntries()` lists every session the core announced with its progress,
+`fundingHistory()` the ended ones as summaries, each with how it ended in
+`ended`, and `fundingSummary(intent:)` one of them. `fundingSessionOpen(intent:)`
+says whether a session's overlay can be shown again. Ended sessions keep being
+handed over on each resume until the host records each with
+`acknowledgeFundingSession(intent:)`, which it calls only while the history is
+on screen. `setFundingProviderConfig(publishedNames:)` lists the providers the
+remote configuration names, without a TLD, on every refresh; amounts cross as decimal strings of CASH units. Free functions hold
+the rules both apps share: the `fundingPage*` checks
+for a provider's page, `productSource(...)` and `archiveFile(...)` for where a
+product runs from and which file answers a request, and
+`fundingResumePending(databaseDirectory:)` for starting the core at launch.
+
 ## Payments
 
 A host with a wallet serves top-ups, payments and the spendable balance by
