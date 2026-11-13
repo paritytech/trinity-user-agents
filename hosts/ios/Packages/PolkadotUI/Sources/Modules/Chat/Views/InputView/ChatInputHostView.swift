@@ -5,6 +5,7 @@ public final class ChatInputHostView: UIView {
     private var currentContentView: UIView?
     private var currentConfiguration: (any ChatInputViewConfigurationProtocol)?
     private let safeAreaFillView = UIView()
+    private weak var inputHandler: ChatInputHandling?
 
     override public init(frame: CGRect) {
         super.init(frame: frame)
@@ -26,10 +27,17 @@ public final class ChatInputHostView: UIView {
         }
     }
 
+    override public func layoutSubviews() {
+        super.layoutSubviews()
+        // A SwiftUI card renders after it is bound and resizes this view without telling the handler.
+        inputHandler?.chatInputDidChange()
+    }
+
     func clear() {
         currentContentView?.removeFromSuperview()
         currentContentView = nil
         currentConfiguration = nil
+        inputHandler = nil
         safeAreaFillView.backgroundColor = nil
     }
 
@@ -50,6 +58,7 @@ public final class ChatInputHostView: UIView {
         addSubview(newContentView)
 
         currentConfiguration = configuration
+        self.inputHandler = inputHandler
 
         newContentView.snp.makeConstraints { make in
             make.top.leading.trailing.equalToSuperview()
@@ -60,14 +69,14 @@ public final class ChatInputHostView: UIView {
     }
 
     public var contentHeight: CGFloat {
-        guard let currentContentView else {
+        guard let currentContentView, bounds.width > 0 else {
             return 0
         }
-        let height = currentContentView.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize).height
-        if currentConfiguration?.safeAreaFillColor != nil {
-            return height + safeAreaInsets.bottom
-        }
-        return height
+        return currentContentView.systemLayoutSizeFitting(
+            CGSize(width: bounds.width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
     }
 
     public var contentView: UIView? {
