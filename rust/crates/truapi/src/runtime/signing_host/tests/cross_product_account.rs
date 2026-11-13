@@ -15,9 +15,12 @@ use crate::{
 };
 use futures::FutureExt as _;
 use parity_scale_codec::Encode;
-use truapi::versioned::signing::{
-	HostCreateTransactionRequest, HostSignPayloadError, HostSignPayloadRequest,
-	HostSignPayloadResponse, HostSignRawRequest,
+use truapi::versioned::{
+	account::{HostAccountSignVrfError, HostAccountSignVrfRequest},
+	signing::{
+		HostCreateTransactionRequest, HostSignPayloadError, HostSignPayloadRequest,
+		HostSignPayloadResponse, HostSignRawRequest,
+	},
 };
 
 /// Seed `owner`'s manifest cache, so the grant resolves without a chain.
@@ -140,6 +143,36 @@ fn a_blessed_product_signs_with_another_products_account_only_when_granted() {
 		cache_grant(&platform, "dim2.paseo", trusted);
 		let result = sign_as(platform.clone(), "stash.paseo").map(|_| ());
 		assert_eq!((result, platform.sign_payload_reviews.lock().unwrap().len()), (expected, 0),);
+	}
+}
+
+/// A game's draw tickets are VRF signatures with the game's account, signed by
+/// whichever blessed product registered the player, so they follow the same
+/// rule as its payloads rather than prompting once per ticket.
+#[test]
+fn a_blessed_product_signs_a_vrf_with_another_products_account_only_when_granted() {
+	for (trusted, expected) in [
+		(
+			"{}",
+			Err(CallError::Domain(HostAccountSignVrfError::V1(
+				v01::HostAccountSignVrfError::Rejected,
+			))),
+		),
+		(r#"{"stash":["context"]}"#, Ok(())),
+	] {
+		let platform = Arc::new(StubPlatform::default());
+		cache_grant(&platform, "dim2.paseo", trusted);
+		let (services, activation) = signing_runtime_with_platform(platform.clone());
+		futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
+			.expect("the local session activates");
+		let runtime = product_runtime_for(services, activation, "stash.paseo");
+
+		let result = futures::executor::block_on(runtime.sign_vrf(
+			&CallContext::default(),
+			HostAccountSignVrfRequest::V1(vrf_request("dim2.paseo")),
+		))
+		.map(|_| ());
+		assert_eq!((result, platform.sign_vrf_reviews.lock().unwrap().len()), (expected, 0));
 	}
 }
 

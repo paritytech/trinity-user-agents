@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from "node:fs";
 import { asProductId, type ProductId } from "../../../../js/packages/truapi/src/index.ts";
 
 // Cross-product account signing against a real signing-host CLI.
@@ -41,11 +42,17 @@ import { asProductId, type ProductId } from "../../../../js/packages/truapi/src/
 // Both the granted and the untrusted phase run every surface
 // paritytech/platform-issues#20 names, not just the one the deep assertion
 // uses: `sign_raw`, `sign_payload`, `create_transaction` and the
-// statement-store product proof. The bug that issue reports is a granted
-// caller being told `PermissionDenied`, so each surface is checked for exactly
-// that, in both directions. A surface can still fail for its own reasons here
-// (no chain, a payload the host will not build); what may not happen is the
-// refusal.
+// statement-store product proof, plus `sign_vrf`. The bug that issue reports is
+// a granted caller being told `PermissionDenied`, so each surface is checked
+// for exactly that, in both directions. A surface can still fail for its own
+// reasons here (no chain, a payload the host will not build); what may not
+// happen is the refusal.
+//
+// dim2.paseo and stash.paseo are both blessed, which skips the confirmation
+// but never the owner's grant. The granted phase also signs a VRF and requires
+// it to raise no prompt in the approvals transcript the script exports, as a
+// blessed product signing a game's draw tickets with the game's account does
+// (paritytech/platform-bugs#205).
 
 export {};
 
@@ -107,12 +114,26 @@ function statement() {
   return { expiry, topics: [`0x${bytes.toHex()}` as `0x${string}`] };
 }
 
-/// Every surface paritytech/platform-issues#20 names, each naming `account`.
+/// "pop:airdrop", the transcript a game's prize draw ticket is signed under.
+const POP_AIRDROP = "0x706f703a61697264726f70";
+const VRF_PROMPT = "sign VRF transcript";
+
+function signVrfWith(account: typeof OWNER_HANDLE) {
+  return truapi.account.signVrf({
+    account,
+    transcriptLabel: POP_AIRDROP,
+    items: [{ label: "0x7469636b6574", value: "0x01" }],
+  });
+}
+
+/// Every surface paritytech/platform-issues#20 names, plus `signVrf`, each
+/// naming `account`.
 ///
-/// `refusal` differs on the statement-store surface: its error enum carries no
-/// `PermissionDenied`, and answers `UnknownAccount` both for an account this
-/// caller may not use and for one that does not exist, which is the same
-/// indistinguishability the other three get from `PermissionDenied`.
+/// `refusal` differs on two surfaces whose error enums carry no
+/// `PermissionDenied`. The statement-store surface answers `UnknownAccount`
+/// both for an account this caller may not use and for one that does not
+/// exist, which is the same indistinguishability the others get from
+/// `PermissionDenied`. `signVrf` answers `Rejected`.
 const SURFACES: {
   name: string;
   refusal: string;
@@ -166,7 +187,45 @@ const SURFACES: {
         statement: statement(),
       }),
   },
+  {
+    name: "signVrf",
+    refusal: "Rejected",
+    call: (account) => signVrfWith(account),
+  },
 ];
+
+/// How many VRF confirmations the host has decided so far.
+function vrfPrompts(): number {
+  const log = process.env.TRUAPI_APPROVALS_LOG;
+  if (!log) {
+    throw new Error(
+      "TRUAPI_APPROVALS_LOG is not set; run scripts/cross-product-signing-e2e.sh",
+    );
+  }
+  if (!existsSync(log)) {
+    return 0;
+  }
+  return readFileSync(log, "utf8")
+    .split("\n")
+    .filter((line) => line.includes(VRF_PROMPT)).length;
+}
+
+/// Sign a VRF with `OWNER`'s account and require no prompt for it.
+async function expectVrfWithoutPrompt(): Promise<void> {
+  const before = vrfPrompts();
+  const signed = await signVrfWith(OWNER_HANDLE);
+  if (!signed.isOk()) {
+    throw new Error(
+      `${host.productId} was granted ${OWNER} context but signVrf failed: ${stringify(signed.error)}`,
+    );
+  }
+  if (vrfPrompts() !== before) {
+    throw new Error(
+      `${host.productId} was asked to confirm a VRF signature with ${OWNER}'s account despite the grant`,
+    );
+  }
+  console.log(`granted ${host.productId} -> ${OWNER}: signed a VRF without a prompt`);
+}
 
 /// Run every surface against `OWNER`'s account and require that the grant is
 /// the thing that decides, in whichever direction this phase expects.
@@ -298,6 +357,7 @@ switch (phase) {
     expectProduct(GRANTED);
     await expectGrantedSignature();
     await checkEverySurface(false);
+    await expectVrfWithoutPrompt();
     break;
   }
   case "sign-again": {
