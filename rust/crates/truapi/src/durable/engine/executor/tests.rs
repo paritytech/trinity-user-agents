@@ -77,10 +77,10 @@ fn rows_nothing_can_build_are_abandoned() {
 	assert_eq!(harness.policy().batches(), Vec::<Vec<DurableTxId>>::new());
 }
 
-/// Recovery and registration both start the executor. A second collector
-/// would launch every bucket twice as often.
+/// Recovery and registration both start the executor. A second builder
+/// would start every bucket twice as often.
 #[test]
-fn starting_the_executor_twice_runs_one_collector() {
+fn starting_the_executor_twice_runs_one_builder() {
 	let chain = FakeChain::new(130, 140);
 	let spawned = Arc::new(AtomicUsize::new(0));
 	let counter = spawned.clone();
@@ -114,4 +114,23 @@ fn dropping_the_engine_mid_build_leaves_the_transaction_waiting() {
 	let released = || Arc::strong_count(&policies[0]) == 1;
 	wait_until(released, "the build is abandoned with the engine");
 	assert_eq!(waiting_ids(&db), vec![id]);
+}
+
+/// The waiting rows stop being observable, for example when subscribing
+/// fails on a transient read error, while the engine lives on. Recovery
+/// calls `ensure_submissions_started` again, and it must start a new builder
+/// rather than see the ended one as running.
+#[test]
+fn a_builder_whose_waiting_rows_end_is_started_again() {
+	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::building_everything());
+	harness.engine().executor.abort_all();
+	let (stale, _registration) = AbortHandle::new_pair();
+	*harness.engine().executor.builder.lock() = Some(stale);
+
+	let ended = futures::stream::empty().boxed();
+	block_on(Builder::new(Arc::downgrade(harness.engine())).run(ended));
+	harness.engine().ensure_submissions_started();
+
+	let id = harness.schedule_one();
+	harness.wait_for(id, DurableTxStatus::Pending);
 }

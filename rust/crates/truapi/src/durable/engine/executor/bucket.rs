@@ -1,17 +1,17 @@
-//! [`BucketRun`]: one task building the waiting rows of one bucket, round
-//! after round, until none is left.
+//! [`BucketRun`]: one worker building the waiting rows of one bucket, round
+//! after round, until a round finds none.
 
 use std::{
-	collections::{HashMap, hash_map::Entry},
+	collections::HashMap,
 	sync::{Arc, Weak},
 };
 
-use futures::future::{AbortHandle, join_all};
+use futures::{channel::mpsc::UnboundedSender, future::join_all};
 use subxt::utils::H256;
 use tracing::{error, warn};
 
 use super::{
-	SubmissionBucket, SubmissionExecutor,
+	SubmissionBucket,
 	attempt::{LedgerChange, give_up_submission, start_built_attempt},
 	backoff::{backoff, cooldown},
 };
@@ -26,15 +26,14 @@ use crate::{
 	time::Timer,
 };
 
-/// One bucket's task. Holds the engine weakly, so a policy that never
+/// One bucket's worker. Holds the engine weakly, so a policy that never
 /// answers cannot keep a dropped engine alive.
 pub struct BucketRun {
 	engine: Weak<DurableTxEngine>,
-	executor: Arc<SubmissionExecutor>,
 	db: Db,
 	timer: Arc<dyn Timer>,
 	bucket: SubmissionBucket,
-	abort: AbortHandle,
+	finished: UnboundedSender<SubmissionBucket>,
 }
 
 /// What builds a bucket's rows: its policy, and the chain its domain lives
@@ -51,15 +50,6 @@ enum RoundOutcome {
 	Progress,
 	/// Nothing was decided, so the next round backs off.
 	NoProgress,
-}
-
-/// Whether a bucket task ends after a round.
-#[derive(Clone, PartialEq, Eq)]
-enum BucketExit {
-	/// No row is left, or another task took the bucket over.
-	Leave,
-	/// Rows still wait: another round runs.
-	Stay,
 }
 
 impl From<LedgerChange> for RoundOutcome {
@@ -80,50 +70,55 @@ impl RoundOutcome {
 }
 
 impl BucketRun {
-	/// The task for `bucket`, stopped through `abort`.
+	/// The worker for `bucket`, which sends `bucket` on `finished` once it
+	/// finds the bucket empty.
 	pub fn new(
 		engine: &Arc<DurableTxEngine>,
 		bucket: SubmissionBucket,
-		abort: AbortHandle,
+		finished: UnboundedSender<SubmissionBucket>,
 	) -> Self {
 		Self {
 			engine: Arc::downgrade(engine),
-			executor: engine.executor.clone(),
 			db: engine.db.clone(),
 			timer: engine.timer.clone(),
 			bucket,
-			abort,
+			finished,
 		}
 	}
 
-	/// Runs rounds until the bucket is drained, backing off after every round
-	/// that decided nothing.
+	/// Runs rounds until a round finds the bucket empty, backing off after
+	/// every round that decided nothing, then tells the builder.
 	pub async fn run_until_drained(self) {
 		let mut rounds_without_progress = 0;
 		while self.engine.strong_count() > 0 {
 			match self.decide_round().await {
-				RoundOutcome::Progress => rounds_without_progress = 0,
-				RoundOutcome::NoProgress => {
+				None => break,
+				Some(RoundOutcome::Progress) => rounds_without_progress = 0,
+				Some(RoundOutcome::NoProgress) => {
 					rounds_without_progress += 1;
 					self.timer.sleep(backoff(rounds_without_progress)).await;
 				},
 			}
-			if self.leave_if_drained().await == BucketExit::Leave {
-				return;
-			}
 		}
+		// The builder may be gone with the engine; then nobody needs to know.
+		let _ = self.finished.unbounded_send(self.bucket.clone());
 	}
 
-	/// Asks the policy about every waiting row once and applies its answers.
-	/// An empty bucket needs no backoff: its task leaves next. A row still
-	/// owned by a watch is left for a later round.
-	async fn decide_round(&self) -> RoundOutcome {
+	/// Asks the policy about every waiting row once and applies its answers,
+	/// or `None` when no row is waiting. A row still owned by a watch counts
+	/// as waiting but is left for a later round.
+	async fn decide_round(&self) -> Option<RoundOutcome> {
 		let Some(rows) = self.readable_rows().await else {
-			return RoundOutcome::NoProgress;
+			return Some(RoundOutcome::NoProgress);
 		};
 		if rows.is_empty() {
-			return RoundOutcome::Progress;
+			return None;
 		}
+		Some(self.decide_rows(rows).await)
+	}
+
+	/// Builds the waiting `rows` that no watch owns.
+	async fn decide_rows(&self, rows: Vec<ScheduledDurableTx>) -> RoundOutcome {
 		let Some(engine) = self.engine.upgrade() else {
 			return RoundOutcome::NoProgress;
 		};
@@ -212,31 +207,6 @@ impl BucketRun {
 	async fn cool_down(&self, rows: &[ScheduledDurableTx]) {
 		let attempts = rows.iter().map(|row| row.attempts).max().unwrap_or(0);
 		self.timer.sleep(cooldown(attempts)).await;
-	}
-
-	/// Leaves once no row is left. A row scheduled while the task leaves is
-	/// caught by the second read, and the task stays unless a new one
-	/// already took over.
-	async fn leave_if_drained(&self) -> BucketExit {
-		if !self.bucket_is_drained().await {
-			return BucketExit::Stay;
-		}
-		self.executor.buckets.lock().remove(&self.bucket);
-		if self.bucket_is_drained().await {
-			return BucketExit::Leave;
-		}
-		match self.executor.buckets.lock().entry(self.bucket.clone()) {
-			Entry::Vacant(vacant) => {
-				vacant.insert(self.abort.clone());
-				BucketExit::Stay
-			},
-			Entry::Occupied(_) => BucketExit::Leave,
-		}
-	}
-
-	/// Whether no row is waiting. An unreadable ledger counts as not drained.
-	async fn bucket_is_drained(&self) -> bool {
-		matches!(self.read_bucket_rows().await, Ok(rows) if rows.is_empty())
 	}
 
 	async fn read_bucket_rows(&self) -> Result<Vec<ScheduledDurableTx>, DbError> {

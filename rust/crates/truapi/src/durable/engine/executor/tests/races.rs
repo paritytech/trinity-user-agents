@@ -166,3 +166,52 @@ fn a_waiting_row_still_owned_by_a_watch_is_built_only_once_released() {
 	harness.wait_for(id, DurableTxStatus::Pending);
 	assert_eq!(harness.policy().batches(), vec![vec![id]]);
 }
+
+/// A worker returns once a round finds its bucket empty. A transaction
+/// scheduled just then must still get a worker, from the builder, rather
+/// than wait with nobody to build it.
+#[test]
+fn a_transaction_scheduled_as_its_bucket_drains_is_still_built() {
+	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::building_everything());
+
+	for _ in 0..30 {
+		let id = harness.schedule_one();
+		harness.wait_for(id, DurableTxStatus::Pending);
+	}
+
+	assert_eq!(harness.policy().batches().len(), 30);
+}
+
+/// Two workers for one bucket would build its rows twice, broadcasting two
+/// attempts of one transaction. Rows scheduled while workers drain and the
+/// builder restarts them must still meet one worker at a time.
+#[test]
+fn a_bucket_never_has_two_workers_building_at_once() {
+	let in_flight = Arc::new(AtomicUsize::new(0));
+	let most_in_flight = Arc::new(AtomicUsize::new(0));
+	let builds = Arc::new(AtomicU8::new(0));
+	let (counting, most) = (in_flight.clone(), most_in_flight.clone());
+	let script: PrepareScript = Box::new(move |ids| {
+		let now = counting.fetch_add(1, Ordering::SeqCst) + 1;
+		most.fetch_max(now, Ordering::SeqCst);
+		let answers = ids.iter().map(|id| {
+			let index = builds.fetch_add(1, Ordering::SeqCst);
+			(*id, Preparation::Ready { extrinsic: extrinsic_for_index(index), params: None })
+		});
+		let answer = Ok(answers.collect());
+		let counting = counting.clone();
+		Box::pin(async move {
+			std::thread::sleep(core::time::Duration::from_millis(2));
+			counting.fetch_sub(1, Ordering::SeqCst);
+			answer
+		})
+	});
+	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::from_script(script));
+
+	let ids: Vec<DurableTxId> = (0..30).map(|_| harness.schedule_one()).collect();
+
+	for id in ids {
+		harness.wait_for(id, DurableTxStatus::Pending);
+	}
+	assert_eq!(most_in_flight.load(Ordering::SeqCst), 1);
+}

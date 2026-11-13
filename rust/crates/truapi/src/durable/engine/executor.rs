@@ -1,5 +1,6 @@
 //! The submission executor: builds every transaction waiting for its policy,
-//! with one task per domain, policy and group.
+//! with one worker per domain, policy and group, started and stopped by one
+//! builder task.
 
 mod attempt;
 mod backoff;
@@ -15,6 +16,7 @@ use std::{
 };
 
 use futures::{
+	channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
 	future::{AbortHandle, AbortRegistration, Abortable, FutureExt},
 	stream::{BoxStream, StreamExt},
 };
@@ -31,13 +33,11 @@ use crate::{
 };
 use bucket::BucketRun;
 
-/// The executor's running tasks. Held in memory only: after a restart every
+/// The executor's builder task. Held in memory only: after a restart every
 /// waiting row is simply built again.
 #[derive(Default)]
 pub struct SubmissionExecutor {
-	collector: Mutex<Option<AbortHandle>>,
-	/// The running bucket tasks. A bucket in the map is being worked on.
-	buckets: Mutex<HashMap<SubmissionBucket, AbortHandle>>,
+	builder: Mutex<Option<AbortHandle>>,
 }
 
 /// The rows one task builds together: one domain's, of one policy and group.
@@ -65,13 +65,11 @@ impl From<&ScheduledDurableTx> for SubmissionBucket {
 }
 
 impl SubmissionExecutor {
-	/// Stops every task, leaving the rows they worked on waiting.
+	/// Stops the builder and with it every worker, leaving the rows they
+	/// worked on waiting.
 	pub fn abort_all(&self) {
-		if let Some(collector) = self.collector.lock().take() {
-			collector.abort();
-		}
-		for (_, bucket) in self.buckets.lock().drain() {
-			bucket.abort();
+		if let Some(builder) = self.builder.lock().take() {
+			builder.abort();
 		}
 	}
 }
@@ -81,39 +79,16 @@ impl DurableTxEngine {
 	/// are scheduled or handed back, until the engine is dropped. Calling it
 	/// again while it runs does nothing.
 	pub fn ensure_submissions_started(self: &Arc<Self>) {
-		let mut collector = self.executor.collector.lock();
-		if collector.is_some() {
+		let mut builder = self.executor.builder.lock();
+		if builder.is_some() {
 			return;
 		}
 		let (abort, registration) = AbortHandle::new_pair();
-		*collector = Some(abort);
-		drop(collector);
+		*builder = Some(abort);
+		drop(builder);
 		let waiting = dao::observe_pending_submissions(&self.db);
-		let task = launch_on_pending_change(Arc::downgrade(self), waiting);
+		let task = Builder::new(Arc::downgrade(self)).run(waiting);
 		self.spawn_abortable(task, registration);
-	}
-
-	/// Starts a task for every bucket of `waiting` that has none.
-	fn launch_buckets(self: &Arc<Self>, waiting: &[ScheduledDurableTx]) {
-		let buckets: HashSet<SubmissionBucket> =
-			waiting.iter().map(SubmissionBucket::from).collect();
-		for bucket in buckets {
-			self.launch_if_idle(bucket);
-		}
-	}
-
-	/// Starts a task for `bucket` unless one runs. Registered before it is
-	/// spawned, so a task that drains at once cannot leave a stale entry.
-	fn launch_if_idle(self: &Arc<Self>, bucket: SubmissionBucket) {
-		let mut buckets = self.executor.buckets.lock();
-		if buckets.contains_key(&bucket) {
-			return;
-		}
-		let (abort, registration) = AbortHandle::new_pair();
-		buckets.insert(bucket.clone(), abort.clone());
-		drop(buckets);
-		let run = BucketRun::new(self, bucket, abort).run_until_drained();
-		self.spawn_abortable(run, registration);
 	}
 
 	/// Spawns `task`, stopped by the handle paired with `registration`.
@@ -127,23 +102,98 @@ impl DurableTxEngine {
 	}
 }
 
-/// Launches buckets on every change of the waiting rows. Every emission
-/// launches every idle bucket it names, because a bucket may have ended
-/// since the last one.
-async fn launch_on_pending_change(
+/// A running worker. Dropping it stops the worker, so stopping the builder,
+/// which owns every worker, stops them all.
+struct Worker(AbortHandle);
+
+impl Drop for Worker {
+	fn drop(&mut self) {
+		self.0.abort();
+	}
+}
+
+/// What the builder reacts to, one at a time.
+enum BuilderEvent {
+	/// The waiting rows changed.
+	Waiting(Result<Vec<ScheduledDurableTx>, DbError>),
+	/// The worker of this bucket found it empty and returned.
+	Finished(SubmissionBucket),
+}
+
+/// The only task that starts and stops workers, so a bucket never has two
+/// and a waiting bucket always has one.
+struct Builder {
 	engine: Weak<DurableTxEngine>,
-	mut waiting: BoxStream<'static, Result<Vec<ScheduledDurableTx>, DbError>>,
-) {
-	while let Some(read) = waiting.next().await {
-		let Some(engine) = engine.upgrade() else {
-			return;
-		};
-		match read {
-			Ok(rows) => engine.launch_buckets(&rows),
-			Err(error) => warn!(%error, "durable submissions could not be read"),
+	workers: HashMap<SubmissionBucket, Worker>,
+	/// The buckets of the latest waiting rows.
+	waiting: HashSet<SubmissionBucket>,
+	finished_tx: UnboundedSender<SubmissionBucket>,
+	finished_rx: UnboundedReceiver<SubmissionBucket>,
+}
+
+impl Builder {
+	fn new(engine: Weak<DurableTxEngine>) -> Self {
+		let (finished_tx, finished_rx) = mpsc::unbounded();
+		Self { engine, workers: HashMap::new(), waiting: HashSet::new(), finished_tx, finished_rx }
+	}
+
+	/// Handles every change of `waiting` and every finished worker until the
+	/// waiting rows can no longer be observed or the engine is dropped. On
+	/// the former it frees its slot, so the next
+	/// [`DurableTxEngine::ensure_submissions_started`] starts a new builder.
+	async fn run(mut self, waiting: BoxStream<'static, Result<Vec<ScheduledDurableTx>, DbError>>) {
+		let mut waiting = waiting.fuse();
+		loop {
+			let event = futures::select! {
+				read = waiting.next() => match read {
+					Some(read) => BuilderEvent::Waiting(read),
+					None => break,
+				},
+				bucket = self.finished_rx.select_next_some() => BuilderEvent::Finished(bucket),
+			};
+			let Some(engine) = self.engine.upgrade() else {
+				return;
+			};
+			self.handle(&engine, event);
+		}
+		// Workers stop before the slot frees, so a builder started next never
+		// runs beside them.
+		self.workers.clear();
+		if let Some(engine) = self.engine.upgrade() {
+			engine.executor.builder.lock().take();
 		}
 	}
-	if let Some(engine) = engine.upgrade() {
-		engine.executor.collector.lock().take();
+
+	/// Starts a worker for every waiting bucket that has none. A finished
+	/// worker's bucket is started again when the latest rows still wait in
+	/// it: those rows may have been scheduled after the worker's last read.
+	fn handle(&mut self, engine: &Arc<DurableTxEngine>, event: BuilderEvent) {
+		match event {
+			BuilderEvent::Waiting(Ok(rows)) => {
+				self.waiting = rows.iter().map(SubmissionBucket::from).collect();
+				for bucket in self.waiting.clone() {
+					self.start_if_idle(engine, bucket);
+				}
+			},
+			BuilderEvent::Waiting(Err(error)) => {
+				warn!(%error, "durable submissions could not be read")
+			},
+			BuilderEvent::Finished(bucket) => {
+				self.workers.remove(&bucket);
+				if self.waiting.contains(&bucket) {
+					self.start_if_idle(engine, bucket);
+				}
+			},
+		}
+	}
+
+	fn start_if_idle(&mut self, engine: &Arc<DurableTxEngine>, bucket: SubmissionBucket) {
+		if self.workers.contains_key(&bucket) {
+			return;
+		}
+		let (abort, registration) = AbortHandle::new_pair();
+		self.workers.insert(bucket.clone(), Worker(abort));
+		let run = BucketRun::new(engine, bucket, self.finished_tx.clone()).run_until_drained();
+		engine.spawn_abortable(run, registration);
 	}
 }
