@@ -67,9 +67,21 @@ class FundingSessionPresenterTest {
     @Test
     fun `a provider's screen opens at once over its session's sheet`() = runTest {
         coEvery { router.isFundingOverlayShown("intent") } returns true
+        service.waitingFrames += "intent"
+        presenting()
+
+        service.eventQueue.emit(FundingEvent.FrameRequested("intent", ramp))
+        runCurrent()
+
+        assertEquals(listOf("openProviderFrame intent"), service.calls)
+        verify(exactly = 0) { notifier.notify(any()) }
+    }
+
+    @Test
+    fun `the screen the core presents opens over whatever is on screen`() = runTest {
         val (_, frames) = presenting()
 
-        service.eventQueue.emit(FundingEvent.FrameRequested(request))
+        service.eventQueue.emit(FundingEvent.FrameOpened(request))
         runCurrent()
 
         assertNotNull(frames.get("frame-1"))
@@ -84,15 +96,31 @@ class FundingSessionPresenterTest {
         service.entry.emit(entry(session = FundingFixtures.entry().session?.copy(providerId = ramp), isPresented = false))
         presenting()
 
-        service.eventQueue.emit(FundingEvent.FrameRequested(request))
+        service.waitingFrames += "intent"
+        service.eventQueue.emit(FundingEvent.FrameRequested("intent", ramp))
         runCurrent()
-        coVerify(exactly = 0) { router.openFundingProviderFrame(any(), any()) }
+        assertEquals(emptyList<String>(), service.calls)
         assertEquals("Ramp wants to show a screen", notice.captured.message)
 
         (notice.captured as AppNotification.Tappable).onTap()
         runCurrent()
         coVerify { router.openFundingOverlay("intent") }
-        coVerify { router.openFundingProviderFrame("intent", "frame-1") }
+        assertEquals(listOf("openProviderFrame intent"), service.calls)
+    }
+
+    @Test
+    fun `a screen still waiting when the app's screens come back is told of again`() = runTest {
+        coEvery { router.isFundingOverlayShown("intent") } returns false
+        val notice = slot<AppNotification>()
+        every { notifier.notify(capture(notice)) } returns Unit
+        val inFlight = entry(session = FundingFixtures.entry().session?.copy(providerId = ramp), isPresented = false)
+        service.listed.value = listOf(inFlight, inFlight.copy(id = "other"))
+        service.waitingFrames += "intent"
+
+        presenting()
+
+        verify(exactly = 1) { notifier.notify(any()) }
+        assertEquals("Ramp wants to show a screen", notice.captured.message)
     }
 
     @Test

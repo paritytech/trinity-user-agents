@@ -1,10 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.ended
 
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCashFormat
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingFailureReason
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAssetUnit
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCash
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.toReason
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingAssetUnit
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCashFormat
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline.milestone
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimelineUi

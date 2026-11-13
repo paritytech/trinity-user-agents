@@ -1,20 +1,7 @@
 // swift-tools-version: 5.10
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
-import Foundation
 import PackageDescription
-
-let coreIsInTree: Bool = {
-    var root = URL(fileURLWithPath: #filePath)
-    for _ in 0 ..< 5 {
-        root.deleteLastPathComponent()
-    }
-    return FileManager.default.fileExists(atPath: root.appendingPathComponent("rust/crates/truapi").path)
-}()
-
-let coreDependency: Package.Dependency = coreIsInTree
-    ? .package(name: "trinity-user-agents", path: "../../../..")
-    : .package(url: "https://github.com/paritytech/trinity-user-agents", exact: "0.16.0")
 
 let package = Package(
     name: "KeyDerivation",
@@ -27,7 +14,7 @@ let package = Package(
         )
     ],
     dependencies: [
-        coreDependency,
+        .package(name: "trinity-user-agents", path: "../../../.."),
         .package(
             url: "https://github.com/novasamatech/Keystore-iOS",
             from: "1.0.1"

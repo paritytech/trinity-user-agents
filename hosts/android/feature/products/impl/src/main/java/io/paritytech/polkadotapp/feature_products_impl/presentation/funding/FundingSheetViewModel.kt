@@ -92,7 +92,6 @@ class FundingSheetViewModel @Inject constructor(
     }
 
     private fun pop() {
-        if (top() == FundingScreen.DEPOSIT && entryState.value?.hasStarted != true) service.stopStarting(intent)
         stack.update { it.dropLast(1) }
     }
 

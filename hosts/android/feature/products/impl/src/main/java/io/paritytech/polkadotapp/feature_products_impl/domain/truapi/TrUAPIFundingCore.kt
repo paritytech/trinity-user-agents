@@ -72,4 +72,10 @@ class TrUAPIFundingCore @Inject constructor(
 
     override suspend fun acknowledge(intent: String): Result<Boolean> =
         runtimeProvider.runtime().mapCatching { it.acknowledgeFundingSession(intent) }
+
+    override suspend fun openFrame(intent: String): Result<Boolean> =
+        runtimeProvider.runtime().mapCatching { it.openProviderFrame(intent) }
+
+    override suspend fun frameWaiting(intent: String): Result<Boolean> =
+        runtimeProvider.runtime().mapCatching { it.fundingFrameWaiting(intent) }
 }

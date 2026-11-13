@@ -36,20 +36,22 @@ The package is public, so any authenticated GitHub identity can read it. In GitH
 
 The consuming app must declare `android.permission.INTERNET` — the localhost WebSocket bridge binds a `127.0.0.1` TCP socket, which requires it even for loopback.
 
-`HostRuntimeConfig.networkSuffix` is required. Supply the bare TLD (`dot`,
-`paseo`, or `testnet`) from the same network configuration used by onboarding
-and the People/Bulletin genesis hashes. It must match the People chain's
-`NetworkSuffix.NetworkSuffix`. Include this configuration update in the
-embedding app's package upgrade.
+`HostRuntimeConfig.stack` is required. It is the Trinity stack the build runs,
+as a `BundledStack`:
 
-`HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub
-genesis hash from the same network configuration, as 32 bytes. Product manifests
-are read from the dotNS contracts deployed there, so it is what makes a
-`trustedProducts` grant resolvable: without a usable value no manifest resolves,
-so every cross-product grant not already cached is refused, and the refusal is
-indistinguishable from the other product having granted nothing. Pass 32 zero
-bytes only to declare deliberately that this host has no Asset Hub. Include this
-configuration update in the embedding app's package upgrade.
+- `pointer` is the stack's link, `polkadotapp://stack?key=0x…&url=…`. It must
+  carry a key.
+- `descriptor` is the signed descriptor the build bundles, byte for byte as
+  served. The core verifies it under the pointer's key.
+- `allowsReservedValues` is true only in a Polkadot or Polkadot-fork build.
+  Without it the core refuses a stack that uses Polkadot's genesis hashes or the
+  `dot` TLD.
+
+The core takes every chain it uses from the descriptor, and answers products'
+chain info queries from its `chains` and `network`. The descriptor's TLD is the
+one the wallet's reserved identities derive under. An invalid stack makes the
+`TrUAPIHostRuntime` constructor throw `NativeRuntimeConfigException.Invalid`.
+Include this configuration update in the embedding app's package upgrade.
 
 ### Compatibility
 
@@ -82,7 +84,7 @@ Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrU
 - `ChatHostBridge` - native Chat storage and UI, implemented by hosts that serve the Chat modality and passed to `openProductExecution`. Hosts without it pass nothing and Chat calls answer unsupported.
 - Pocket - the core keeps the collection in its database: the cards in the Pocket and the newest face of each. The host lists the cards it pins in `HostRuntimeConfig.pinnedPocketCards`, follows the collection with `pocketCards()` (pinned first, after every change), and calls `addPocketCard`, `removePocketCard` (returning `PocketCardRemoval.REMOVED`, `ABSENT` or `PRIVILEGED`) and `pocketCardFace` on the runtime. The core keeps the newest face from every Pocket card render. Like Chat, Pocket is reachable only from a Worker execution with an active session, so without `activateLocalSession` every Pocket call answers `Denied`.
 - `GameHostBridge` - the host's game-reminder surface, implemented by hosts that can hold reminders and passed as `game` to `openProductExecution`. The host holds one reminder per product: a `scheduleReminder` replaces the reminder the same product already holds. The core asks for no per-product consent: the host asks the OS for what it needs, rings an alarm where the OS allows one and delivers a notification otherwise, may add the game to the user's calendar, keeps the reminder across app kill and reboot, and drops it once the game starts. A `scheduleReminder` that throws reaches the product as a host failure carrying its reason. Hosts without the bridge pass nothing and Game calls answer unsupported, as they do for every product but the game product, `dim2`.
-- `FundingHostBridge` - the host's funding overlay, installed once with `TrUAPIHostRuntime.setFunding` before any execution opens. `presentFunding` shows the overlay for a session and answers `STARTED` or `DISMISSED`; the session stays open in the core while it suspends. The overlay reports the user's rail, asset, network and country with `selectFundingOptions`, asks for quotes of an amount with `getFundingQuote`, and hands the session over with `selectFundingProvider`, or `startFundingWhenQuoted` to start on the best quote once every provider answered. `presentProviderFrame` shows a provider's App route or an external https page, answering `Returned` once it reaches its return URL; `closeProviderFrame` closes it once the provider is done, answering it `Closed`. `detectedCountry` answers the country quotes go by, without asking for a permission. The core tells the host what changed with `fundingChanged(intent, kind)`, and the host reads it back: `fundingSession`, `fundingProgress`, `fundingOptions`, `fundingQuotes`, `fundingEntries`, `fundingSummary`, `fundingHistory`, and `fundingAvailable` for `PROVIDERS`. `cancelFunding` answers what the cancel did: once money has moved it is a request, answered by an offer on the session's `cancel` that the host answers with `confirmFundingCancel`. Call `acknowledgeFundingSession` once the user has been told how a session ended. Without the bridge, Funding calls answer unsupported.
+- `FundingHostBridge` - the host's funding overlay, installed once with `TrUAPIHostRuntime.setFunding` before any execution opens. `presentFunding` shows the overlay for a session and answers `STARTED` or `DISMISSED`; the session stays open in the core while it suspends. The overlay reports the user's rail, asset, network and country with `selectFundingOptions`, asks for quotes of an amount with `getFundingQuote`, and hands the session over with `selectFundingProvider`, or `startFundingWhenQuoted` to start on the best quote once every provider answered. A provider asking for a screen arrives as `providerFrameRequested`; the core holds it until the host calls `openProviderFrame`, at once while the user looks at that session or once the user taps a notice, and `fundingFrameWaiting` says whether one still waits after a redraw. `presentProviderFrame` then shows the provider's App route or an external https page, answering `Returned` once it reaches its return URL; `closeProviderFrame` closes it once the provider is done, answering it `Closed`. `detectedCountry` answers the country quotes go by, without asking for a permission. The core tells the host what changed with `fundingChanged(intent, kind)`, and the host reads it back: `fundingSession`, `fundingProgress`, `fundingOptions`, `fundingQuotes`, `fundingEntries`, `fundingSummary`, `fundingHistory`, and `fundingAvailable` for `PROVIDERS`. `cancelFunding` answers what the cancel did: once money has moved it is a request, answered by an offer on the session's `cancel` that the host answers with `confirmFundingCancel`. Call `acknowledgeFundingSession` once the user has been told how a session ended. Without the bridge, Funding calls answer unsupported.
 - `TopUpHostBridge`, `PaymentHostBridge`, `BalanceHostBridge` - the host's top-up, payment and balance engines, installed once on the runtime with `setTopUp`, `setPayments` and `setBalance` before any execution opens. The core checks the session, amounts, source keys and balance access, and hashes the product into every id it passes. It calls `followTopUp`, `followPayment` and `followBalance` for what it follows, and the host pushes what its engine reports through `notifyTopUpStatus`, `notifyPaymentStatus` and `notifyBalance` until the call returns or is cancelled. `requestPayment` answers `InsufficientBalance` whenever the balance is short, and the core turns that into `Rejected` for a product without balance access. A runtime without a bridge answers those calls unsupported.
 
 ## Chat
@@ -131,10 +133,7 @@ val runtime = TrUAPIHostRuntime(
     bridge = bridge,
     runtimeConfig = HostRuntimeConfig(
         hostName = "My Chat Host",
-        peopleChainGenesisHash = peopleChainGenesisHash,   // exactly 32 bytes
-        bulletinChainGenesisHash = bulletinChainGenesisHash,
-        assetHubChainGenesisHash = assetHubChainGenesisHash,
-        networkSuffix = "dot",
+        stack = bundledStack,
     ),
 )
 // Chat needs an active session; without one every Chat call answers `Denied`.
@@ -308,6 +307,7 @@ import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
+import uniffi.truapi.BundledStack
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ExecutableKind
@@ -420,13 +420,12 @@ val bridge = MyBridge(webView)
 val runtimeConfig = HostRuntimeConfig(
     hostName = "My Host",
     hostIcon = "https://host.example/icon.png",
-    peopleChainGenesisHash = ByteArray(32),
-    bulletinChainGenesisHash = ByteArray(32),
-    // Stand-in for a real Asset Hub genesis hash. Non-zero on purpose:
-    // all-zero is the "no Asset Hub" sentinel and refuses every cross-product
-    // `trustedProducts` grant.
-    assetHubChainGenesisHash = ByteArray(32) { 1.toByte() },
-    networkSuffix = "dot",
+    stack = BundledStack(
+        // The link the bundled descriptor was published under.
+        pointer = "polkadotapp://stack?key=0x…&url=…",
+        descriptor = webView.context.assets.open("trinity-stack.json").use { it.readBytes() },
+        allowsReservedValues = false,
+    ),
     // Optional: activate a local signing session from host-held BIP-39 entropy
     // (no SSO pairing). Omit for the QR pairing flow.
     localSessionSecret = null,

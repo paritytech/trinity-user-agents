@@ -31,6 +31,10 @@ class AppFundingHostBridge @Inject constructor(
         amount: U128?,
     ): FundingPresentOutcome = funding.get().present(intent, direction, amount)
 
+    override fun providerFrameRequested(providerId: ProductId, intent: String) {
+        funding.get().frameRequested(providerId, intent)
+    }
+
     override suspend fun presentProviderFrame(
         providerId: ProductId,
         intent: String,

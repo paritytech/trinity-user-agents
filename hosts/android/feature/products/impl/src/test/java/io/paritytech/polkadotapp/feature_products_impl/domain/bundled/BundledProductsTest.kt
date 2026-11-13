@@ -83,6 +83,7 @@ class BundledProductsTest {
         assertNull(entry("chat.dot")!!.displayName)
     }
 
+    @Test
     fun `reads the Worker it ships under its own subname`() {
         val chat = products.resolved(entry("chat.dot")!!).getOrThrow()
         val worker = requireNotNull(chat.executables.worker)

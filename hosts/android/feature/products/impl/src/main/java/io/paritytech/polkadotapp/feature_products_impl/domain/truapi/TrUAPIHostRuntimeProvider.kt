@@ -8,9 +8,8 @@ import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.TrUAPIHostRuntime
 import io.parity.truapi.WebSocketChainProvider
-import io.paritytech.polkadotapp.chains.multiNetwork.ChainRegistry
-import io.paritytech.polkadotapp.chains.multiNetwork.KnownChains
 import io.paritytech.polkadotapp.common.data.app.AppLifecycleState
+import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.EncryptedPreferences
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
@@ -45,7 +44,6 @@ import okhttp3.OkHttpClient
 import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.ExtensionVersionMap
-import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostLocalStorageReadException
@@ -70,8 +68,7 @@ import javax.inject.Singleton
 @Singleton
 class TrUAPIHostRuntimeProvider @Inject constructor(
     @param:ApplicationContext private val context: Context,
-    private val chainRegistry: ChainRegistry,
-    private val knownChains: KnownChains,
+    private val environment: TestnetEnvironment,
     private val chainDirectory: TrUAPIChainDirectory,
     private val localSessionSource: TrUAPILocalSessionSource,
     private val accountRepository: AccountRepository,
@@ -155,21 +152,15 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     }
 
     private suspend fun buildRuntimeConfig(): HostRuntimeConfig {
-        val peopleGenesis = chainRegistry.getChain(knownChains.people).genesisHash.value
-        val bulletinGenesis = chainRegistry.getChain(knownChains.bulletIn).genesisHash.value
-        val assetHubGenesis = chainRegistry.getChain(knownChains.assetHub).genesisHash.value
         // Booting without a session is the pre-session behaviour: products load
         // and every signing call fails. Worth degrading to rather than refusing
         // every product outright.
         val localSession = localSessionSource.resolve()
             .logFailure("TrUAPI local session unavailable; booting the host runtime without one")
             .getOrNull()
-        // The core derives the wallet's reserved identities under this TLD, so it has
-        // to be the one the app's own built-in accounts derive from. A wrong suffix
-        // mints key material that belongs to no network, so this takes the one an
-        // earlier run read from the chain, else reads it, and fails the boot when
-        // neither answers. A saved suffix is not a guess: a build has one network.
-        // Failing releases the memoised boot so the next caller tries again.
+        // The pinned cards are backed by products named under this TLD, so it has to
+        // be the network's own. A saved one is safe to reuse because a build has one
+        // network. Throwing releases the memoised boot so the next caller tries again.
         val tld = dotNsTldProvider.currentTldOrNull()
             ?: withTimeoutOrNull(TLD_RESOLVE_TIMEOUT_MS) { dotNsTldProvider.getTldRetrying() }
             ?: error("dotNS TLD unresolved after ${TLD_RESOLVE_TIMEOUT_MS}ms")
@@ -177,10 +168,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
         return HostRuntimeConfig(
             hostName = HOST_NAME,
             hostVersion = hostVersion(),
-            peopleChainGenesisHash = peopleGenesis,
-            bulletinChainGenesisHash = bulletinGenesis,
-            assetHubChainGenesisHash = assetHubGenesis,
-            networkSuffix = tld.value,
+            stack = TrUAPIStack.of(environment).bundled(context),
             localSessionSecret = localSession?.secret,
             localSessionLiteUsername = localSession?.liteUsername,
             databaseDirectory = truapiDatabaseDirectory(context).apply { mkdirs() }.absolutePath,
@@ -298,8 +286,6 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             when (request) {
                 is HostFeatureSupportedRequest.Chain -> cachedChains.get().canDial(request.genesisHash)
             }
-
-        override fun supportedChains(): HostChainSet = cachedChains.get().advertised
 
         override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
             extensionVersions.resolve().getOrElse { throw it }

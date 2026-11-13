@@ -123,7 +123,7 @@ fn a_worker_subname_is_the_namehash_of_its_full_name() {
 #[test]
 fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 	let lookup = |platform: crate::test_support::StubPlatform,
-	              asset_hub_chain_genesis_hash: [u8; 32],
+	              asset_hub: Option<[u8; 32]>,
 	              ceiling: Duration| {
 		let platform = std::sync::Arc::new(platform);
 		let services = RuntimeServices::new(
@@ -134,9 +134,7 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 				version: None,
 				platform: truapi::latest::HostPlatform::Unknown,
 			},
-			[0; 32],
-			[0xbb; 32],
-			asset_hub_chain_genesis_hash,
+			crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], asset_hub),
 			crate::Spawner::for_test(),
 		);
 		futures::executor::block_on(root_manifest_within(
@@ -148,13 +146,13 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 	};
 	assert_eq!(
 		[
-			lookup(Default::default(), [0; 32], MANIFEST_RESOLUTION_CEILING),
+			lookup(Default::default(), None, MANIFEST_RESOLUTION_CEILING),
 			lookup(
 				crate::test_support::StubPlatform {
 					chain_connect_error: Some("fixture serves no chain"),
 					..Default::default()
 				},
-				[0xcc; 32],
+				Some([0xcc; 32]),
 				MANIFEST_RESOLUTION_CEILING,
 			),
 			lookup(
@@ -162,7 +160,7 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 					chain_connect_pending: true,
 					..Default::default()
 				},
-				[0xcc; 32],
+				Some([0xcc; 32]),
 				Duration::from_millis(10),
 			),
 		],
@@ -192,9 +190,7 @@ fn concurrent_lookups_for_one_product_open_one_follow() {
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		[0; 32],
-		[0xbb; 32],
-		[0xcc; 32],
+		crate::test_support::paseo_test_stack(),
 		crate::Spawner::for_test(),
 	);
 	let product = ProductId::for_test("peopl.dot");

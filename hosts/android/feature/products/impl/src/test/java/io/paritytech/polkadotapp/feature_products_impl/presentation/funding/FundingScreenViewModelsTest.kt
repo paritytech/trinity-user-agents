@@ -122,17 +122,17 @@ class FundingScreenViewModelsTest {
     }
 
     @Test
-    fun `a crypto top-up starts on the best quote from the deposit, a withdrawal goes to its summary`() = runTest(testDispatcher) {
+    fun `a crypto top-up or withdrawal goes to its summary, and starts only from there`() = runTest(testDispatcher) {
         val topUp = FakeFundingSheet(flow(), entry())
-        FundingTokenViewModel(topUp, service).onTokenChosen("USDC")
+        FundingTokenViewModel(topUp).onTokenChosen("USDC")
         advanceUntilIdle()
 
-        assertEquals(listOf("requote", "push DEPOSIT"), topUp.actions)
-        assertEquals(listOf("start null"), service.calls)
+        assertEquals(listOf("requote", "push SUMMARY"), topUp.actions)
+        assertEquals(emptyList<String>(), service.calls)
         assertEquals("USDC", topUp.flow.value?.asset)
 
         val withdrawal = FakeFundingSheet(flow().copy(direction = FundingDirection.OUT), entry())
-        FundingTokenViewModel(withdrawal, service).onTokenChosen("USDC")
+        FundingTokenViewModel(withdrawal).onTokenChosen("USDC")
         assertEquals(listOf("requote", "push SUMMARY"), withdrawal.actions)
     }
 

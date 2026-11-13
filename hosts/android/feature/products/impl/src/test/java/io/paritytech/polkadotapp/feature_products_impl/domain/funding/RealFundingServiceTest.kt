@@ -298,11 +298,25 @@ class RealFundingServiceTest {
     }
 
     @Test
-    fun `a provider's screen is asked for, and answered as the app took it down`() = runTest {
+    fun `a provider asking for a screen is told to the app, which opens it in the core`() = runTest {
+        val service = service()
+        core.waitingFrames += "intent"
+
+        service.frameRequested(ramp, "intent")
+
+        assertEquals(FundingEvent.FrameRequested("intent", ramp), service.events.first())
+        assertTrue(service.isFrameWaiting("intent"))
+        assertTrue(service.openProviderFrame("intent"))
+        assertFalse(service.isFrameWaiting("intent"))
+        assertFalse(service.openProviderFrame("intent"))
+    }
+
+    @Test
+    fun `a provider's screen the core presents is answered as the app took it down`() = runTest {
         val service = service()
         val target = FundingFrameTarget.App("/kyc")
         val outcome = async(detached) { service.presentFrame(ramp, "intent", target) }
-        val request = (service.events.first() as FundingEvent.FrameRequested).request
+        val request = (service.events.first() as FundingEvent.FrameOpened).request
 
         service.answerFrame(request, FundingFrameOutcome.Dismissed)
 

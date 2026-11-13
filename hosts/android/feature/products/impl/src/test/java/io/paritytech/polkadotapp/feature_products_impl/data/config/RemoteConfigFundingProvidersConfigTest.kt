@@ -17,25 +17,25 @@ class RemoteConfigFundingProvidersConfigTest {
     @Test
     fun `lists the configured names in order on every refresh`() = runTest {
         remoteConfigEmits(
-            """{ "onrampUrl": "legacy.dot", "providers": ["ramp.dot", "other.dot"] }""",
-            """{ "providers": ["ramp.dot"] }""",
+            """{ "onrampUrl": "legacy.dot", "providers": ["ramp", "other"] }""",
+            """{ "providers": ["ramp"] }""",
         )
 
-        assertEquals(listOf(listOf("ramp.dot", "other.dot"), listOf("ramp.dot")), config.publishedNames().toList())
+        assertEquals(listOf(listOf("ramp", "other"), listOf("ramp")), config.publishedNames().toList())
     }
 
     @Test
     fun `leaves out null names and lists none without providers`() = runTest {
-        remoteConfigEmits("""{ "providers": [null, "ramp.dot"] }""", """{ "onrampUrl": "legacy.dot" }""")
+        remoteConfigEmits("""{ "providers": [null, "ramp"] }""", """{ "onrampUrl": "legacy.dot" }""")
 
-        assertEquals(listOf(listOf("ramp.dot"), emptyList()), config.publishedNames().toList())
+        assertEquals(listOf(listOf("ramp"), emptyList()), config.publishedNames().toList())
     }
 
     @Test
     fun `skips a value that does not parse`() = runTest {
-        remoteConfigEmits("not json", """{ "providers": ["ramp.dot"] }""")
+        remoteConfigEmits("not json", """{ "providers": ["ramp"] }""")
 
-        assertEquals(listOf(listOf("ramp.dot")), config.publishedNames().toList())
+        assertEquals(listOf(listOf("ramp")), config.publishedNames().toList())
     }
 
     private fun remoteConfigEmits(vararg values: String) {

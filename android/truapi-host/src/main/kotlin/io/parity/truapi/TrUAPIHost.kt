@@ -51,7 +51,6 @@ import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.ThemeName
 import uniffi.truapi.ThemeVariant
 import uniffi.truapi.AuthState
-import uniffi.truapi.HostChainSet
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
@@ -337,13 +336,6 @@ interface HostBridge {
      */
     @Throws(HostRejection::class)
     suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean
-
-    /**
-     * Enumerate the chains this host serves: its environment plus one entry
-     * per chain role.
-     */
-    @Throws(HostRejection::class)
-    fun supportedChains(): HostChainSet = HostChainSet(network = "", chains = emptyList())
 
     /**
      * The chains this host builds as V5 general transactions, each with its
@@ -673,9 +665,6 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
         withHostRejection { bridge.featureSupported(request) }
 
-    override fun supportedChains(): HostChainSet =
-        withHostRejection { bridge.supportedChains() }
-
     override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
         withHostRejection { bridge.transactionExtensionVersions() }
 
@@ -852,8 +841,15 @@ interface FundingHostBridge {
     ): FundingPresentOutcome
 
     /**
+     * Provider [providerId] asked to show a screen for session [intent]. The core holds it until the host calls
+     * [TrUAPIHostRuntime.openProviderFrame]: at once while the user looks at that session, otherwise once the user
+     * taps a notice that the provider wants to show something. Runs inline on the core's thread, so return promptly.
+     */
+    fun providerFrameRequested(providerId: ProductId, intent: String)
+
+    /**
      * Show [target] for provider [providerId]'s session [intent] in a frame the host owns, and report how it
-     * closed. A page is a checked https URL: show its origin, and answer [FundingFrameOutcome.Returned] when it
+     * closed. Called only once the host opened the request [providerFrameRequested] announced. A page is a checked https URL: show its origin, and answer [FundingFrameOutcome.Returned] when it
      * reaches its return URL. What the frame shows around it, such as whether the user still has to send funds,
      * comes from [TrUAPIHostRuntime.fundingProgress]. The core closes the frame through [closeProviderFrame] once
      * the session's payment moved.
@@ -900,6 +896,11 @@ private class FundingCallbackAdapter(private val bridge: FundingHostBridge) : Na
         intent: String,
         target: FundingFrameTarget,
     ): FundingFrameOutcome = withHostRejection { bridge.presentProviderFrame(providerId, intent, target) }
+
+    // Infallible across the FFI, as `onCoreLog` is.
+    override fun providerFrameRequested(providerId: ProductId, intent: String) {
+        runCatching { bridge.providerFrameRequested(providerId, intent) }
+    }
 
     // Infallible across the FFI, as `onCoreLog` is.
     override fun closeProviderFrame(providerId: ProductId, intent: String) {
@@ -1202,13 +1203,22 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     fun fundingEntries(): List<FundingBookEntry> = inner.fundingEntries()
 
     /**
-     * Offer the providers Remote Config lists by name. Call it on every configuration refresh: a call listing what
+     * Offer the providers Remote Config lists by their published names, without a TLD. Call it on every configuration refresh: a call listing what
      * the last one listed changes nothing.
      */
     @Throws(HostRejection::class)
     fun setFundingProviderConfig(publishedNames: List<String>) {
-        inner.setFundingProviderConfig(publishedNames, emptyList())
+        inner.setFundingProviderConfig(publishedNames)
     }
+
+    /**
+     * Show the screen session [intent]'s provider asked for through [FundingHostBridge.providerFrameRequested].
+     * Answers whether one was waiting.
+     */
+    fun openProviderFrame(intent: String): Boolean = inner.openProviderFrame(intent)
+
+    /** Whether session [intent]'s provider waits for its screen to be opened, to show the notice again after a redraw. */
+    fun fundingFrameWaiting(intent: String): Boolean = inner.fundingFrameWaiting(intent)
 
     /**
      * Ask every provider routing the selected rail to price [amount] for session [intent], on what

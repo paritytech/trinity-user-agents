@@ -166,11 +166,11 @@ class RealFundingService @Inject constructor(
         changes.tryEmit(Change.Entries)
     }
 
-    override fun openProviderFrame(request: FundingFrameRequest) {
-        // TODO(#2057): call the core's `open_provider_frame(request.entryId)` here. Until then the core presents a
-        //  provider's screen as soon as the provider asks, so the request is already the screen and nothing is held.
-        Timber.d("Funding %s: opening %s's screen", request.entryId, request.providerId)
-    }
+    override suspend fun openProviderFrame(entryId: String): Boolean =
+        core.openFrame(entryId).logFailure("Funding provider screen could not open").getOrDefault(false)
+
+    override suspend fun isFrameWaiting(entryId: String): Boolean =
+        core.frameWaiting(entryId).logFailure("Funding provider screen read failed").getOrDefault(false)
 
     override fun answerFrame(request: FundingFrameRequest, outcome: FundingFrameOutcome) {
         val pending = synchronized(lock) { frames.remove(request.id) }
@@ -197,13 +197,18 @@ class RealFundingService @Inject constructor(
         }
     }
 
-    /** A provider's screen the core presents now, answered once the app takes it down. */
+    /** Provider [providerId] asks to show a screen for session [intent], which the core holds until the app opens it. */
+    fun frameRequested(providerId: ProductId, intent: String) {
+        eventQueue.trySend(FundingEvent.FrameRequested(intent, providerId))
+    }
+
+    /** A provider's screen the core presents now, once the app opened it, answered once the app takes it down. */
     suspend fun presentFrame(providerId: ProductId, intent: String, target: FundingFrameTarget): FundingFrameOutcome {
         val request = FundingFrameRequest(id = UUID.randomUUID().toString(), entryId = intent, providerId = providerId, target = target)
         val frame = PendingFrame(request)
         synchronized(lock) { frames[request.id] = frame }
         try {
-            eventQueue.trySend(FundingEvent.FrameRequested(request))
+            eventQueue.trySend(FundingEvent.FrameOpened(request))
             return frame.answer.await()
         } catch (cancellation: CancellationException) {
             synchronized(lock) { frames.remove(request.id) }
