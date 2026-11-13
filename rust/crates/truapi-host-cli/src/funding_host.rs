@@ -9,6 +9,12 @@
 //! provider's worker when the core asks for it, and stops it when the core
 //! lets it go; a provider without a script has no worker here.
 //!
+//! It also offers the providers published on dotNS that
+//! `TRUAPI_FUNDING_PROVIDER_NAMES` names, each by its name without a TLD
+//! (`fundtest-provider`), as an app's remote configuration lists them: the
+//! core reads each one on the stack's TLD, with its manifest from dotNS, and
+//! the host runs the worker each one publishes, fetched from dotNS.
+//!
 //! A product's funding request shows the overlay: the user takes the core's
 //! default rail and, for crypto, its first token and network, the core asks
 //! each provider routing that rail for a quote, and the user picks a quote or
@@ -47,7 +53,7 @@ use truapi::{
 		funding::{CancelTerms, FundingCancel, FundingSession},
 		funding_providers::{
 			FUNDING_MIN_AMOUNT, FundingOptions, FundingProviderApp, FundingProviderEntry,
-			FundingProviderOrigin, FundingSelection,
+			FundingProviderOrigin, FundingSelection, provider_config,
 		},
 	},
 	latest::{
@@ -65,10 +71,12 @@ use truapi::{
 };
 
 use crate::{
+	network::Stack,
 	platform::{ApprovalPolicy, CliPlatform},
+	published_worker::PublishedWorkers,
 	terminal_ui::UiHandle,
 	transcript::Transcript,
-	worker_host::CliWorkerHost,
+	worker_host::{CliWorkerHost, WorkerSource},
 };
 
 /// The manifest the CLI ships for every provider it offers: card in, and
@@ -78,13 +86,17 @@ const SHIPPED_PROVIDER_MANIFEST: &str = r#"{"$v":1,"appVersion":[1,0,0],"kind":"
 /// Offer each product named in `TRUAPI_FUNDING_PROVIDERS` as a funding
 /// provider bundled with [`SHIPPED_PROVIDER_MANIFEST`], so the core never
 /// reads dotNS for what it serves. The manifest is also kept as its cached
-/// dotNS manifest, which its worker execution is read from.
+/// dotNS manifest, which its worker execution is read from. Then each
+/// provider `TRUAPI_FUNDING_PROVIDER_NAMES` names, published on `tld`, whose
+/// manifests the core reads from dotNS.
 pub async fn offer_providers(
 	runtime: &SigningHostRuntime,
 	platform: &dyn CoreStorage,
+	tld: &str,
 ) -> anyhow::Result<()> {
 	let entries = provider_entries();
-	if entries.is_empty() {
+	let published = published_providers(tld);
+	if entries.is_empty() && published.is_empty() {
 		return Ok(());
 	}
 	let now_secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
@@ -109,6 +121,11 @@ pub async fn offer_providers(
 			app: FundingProviderApp::Shipped,
 		});
 	}
+	for entry in published {
+		if providers.iter().all(|offered| offered.product_id != entry.product_id) {
+			providers.push(entry);
+		}
+	}
 	runtime
 		.set_funding_providers(providers)
 		.map_err(|error| anyhow::anyhow!("offering funding providers: {}", error.reason))
@@ -131,6 +148,24 @@ fn provider_entries() -> Vec<(String, Option<PathBuf>)> {
 		.collect()
 }
 
+/// The providers `TRUAPI_FUNDING_PROVIDER_NAMES` names, comma-separated and
+/// each without a TLD, as published on `tld`. A name that is not one is
+/// skipped.
+fn published_providers(tld: &str) -> Vec<FundingProviderEntry> {
+	let names: Vec<String> = std::env::var("TRUAPI_FUNDING_PROVIDER_NAMES")
+		.unwrap_or_default()
+		.split(',')
+		.map(str::trim)
+		.filter(|name| !name.is_empty())
+		.map(str::to_string)
+		.collect();
+	let (entries, invalid) = provider_config(&names, tld);
+	for name in invalid {
+		tracing::warn!(%name, "skipping a published funding provider that is not a name without a TLD");
+	}
+	entries
+}
+
 /// The funding overlay and provider screens of the CLI signing host.
 pub struct CliFundingHost {
 	/// Where the user's answers come from.
@@ -145,22 +180,41 @@ pub struct CliFundingHost {
 }
 
 impl CliFundingHost {
-	/// Serve funding on `runtime`, asking `user`, with the providers, worker
-	/// scripts and files the environment names. Worker output goes to `ui`
-	/// when the host runs one.
+	/// Serve funding on `runtime` of `network`, asking `user`, with the
+	/// providers, worker scripts and files the environment names. Worker
+	/// output goes to `ui` when the host runs one.
 	pub fn install(
 		runtime: &Arc<SigningHostRuntime>,
+		network: &Stack,
 		user: Arc<CliPlatform>,
 		ui: Option<UiHandle>,
 	) -> anyhow::Result<()> {
 		let mut workers = HashMap::new();
+		let published = published_providers(network.tld());
+		if !published.is_empty() {
+			match PublishedWorkers::new(network, user.chains()).zip(user.state_dir()) {
+				Some((source, state_dir)) => {
+					let source = WorkerSource::Published {
+						workers: Arc::new(source),
+						cache: state_dir.join("published-workers"),
+					};
+					for entry in published {
+						workers.insert(entry.product_id, source.clone());
+					}
+				},
+				None => tracing::warn!(
+					"published funding providers get no worker: the stack names no dotNS \
+					 registry or IPFS gateway, or the host keeps no state"
+				),
+			}
+		}
 		for (provider, script) in provider_entries() {
 			let Some(script) = script else {
 				continue;
 			};
 			match provider.parse::<ProductId>() {
 				Ok(provider) => {
-					workers.insert(provider, script);
+					workers.insert(provider, WorkerSource::Script(script));
 				},
 				Err(error) => {
 					tracing::warn!(%provider, %error, "skipping a funding worker that is not a product id");

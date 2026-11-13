@@ -179,6 +179,9 @@ pub async fn run_worker(
 ) -> Result<ExitStatus> {
 	script_project::prepare(script, ui.clone()).await?;
 	let mut command = command(frame_url, product_id, script, ScriptHostRole::SigningHost)?;
+	// A worker runs until the host stops it, even once its module has
+	// evaluated with nothing left to wait on.
+	command.env("TRUAPI_SCRIPT_EXECUTION", "worker");
 	// The host reads the user's commands from its own stdin.
 	command.stdin(Stdio::null());
 	match ui {

@@ -117,6 +117,15 @@ async function main() {
       process.chdir(process.env.TRUAPI_SCRIPT_CWD);
     const module = await import(pathToFileURL(scriptPath).href);
     if (typeof module.default === "function") await module.default(context);
+    // A Worker execution runs until the host stops it or drops its
+    // connection, as a host's worker runtime keeps one, whether or not its
+    // module waits for that itself.
+    if (process.env.TRUAPI_SCRIPT_EXECUTION === "worker")
+      await new Promise<void>((resolve) =>
+        connection.subscribeConnectionStatus((status) => {
+          if (status === "disconnected") resolve();
+        }),
+      );
   } finally {
     clearTimeout(timer);
     connection.dispose();

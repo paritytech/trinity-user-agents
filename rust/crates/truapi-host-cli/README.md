@@ -862,6 +862,23 @@ Scripts under `js/scripts/` include:
   in `HOST_CLI_SIGNER_MNEMONIC` so the host needs no account provisioned on
   chain.
 
+  The signing host also offers funding providers published on dotNS, as the
+  apps do from their remote configuration: `TRUAPI_FUNDING_PROVIDER_NAMES`
+  lists them comma-separated, each by its name without a TLD
+  (`TRUAPI_FUNDING_PROVIDER_NAMES=fundtest-provider` offers
+  `fundtest-provider.paseo` on Paseo Next v2). The core reads each one's
+  Worker manifest from dotNS, and a name that carries a TLD is skipped. Both
+  variables can be set together. When the core asks for a published
+  provider's worker, the host reads the `worker.<name>.<tld>` subname's
+  contenthash and the `entrypoint` of its `executable` manifest, fetches the
+  archive from the stack's `ipfs-gateway` as a CAR (a directory, or an
+  uploaded CAR file of one, the two shapes the iOS app loads), checks every
+  block against its CID, and unpacks it under the session's state directory
+  in `published-workers/<cid>/`. The entry script then runs as a local worker
+  script does, until the host stops it; an archive already unpacked is not
+  fetched again. The script runs under `bun` with the host-script runner's
+  network gates, not in a web view, so offer only providers you trust.
+
   The CLI accepts and logs Game reminders on every execution kind, without
   holding or firing them. The core serves Game to the game product (`dim2`)
   alone, so the battery skips it. To try a game product locally, run

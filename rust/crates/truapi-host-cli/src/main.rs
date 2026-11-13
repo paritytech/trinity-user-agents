@@ -29,6 +29,7 @@ mod platform;
 mod pocket;
 mod product_config;
 mod profile;
+mod published_worker;
 mod qr_scanner;
 mod register_name;
 mod scanner;
@@ -1763,7 +1764,7 @@ async fn start_signing_host(
 		pocket.clone(),
 	)?;
 	apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
-	funding_host::offer_providers(&runtime, platform.as_ref()).await?;
+	funding_host::offer_providers(&runtime, platform.as_ref(), network.tld()).await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
 	runtime_factory.set_platform(platform.clone());
 	let last_script = profile
@@ -1875,7 +1876,7 @@ fn build_signing_runtime(
 	if let Some(pocket) = pocket {
 		runtime.set_pocket_platform(pocket);
 	}
-	funding_host::CliFundingHost::install(&runtime, platform.clone(), ui)?;
+	funding_host::CliFundingHost::install(&runtime, network, platform.clone(), ui)?;
 	runtime.set_game_platform(Arc::new(game::CliGameHost));
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
 	runtime.set_installation_provider(installation);
@@ -3321,7 +3322,7 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 
 	// Each runtime the host builds offers its funding providers, so one
 	// provisioned or imported after startup serves them as the first did.
-	funding_host::offer_providers(&runtime, platform.as_ref()).await?;
+	funding_host::offer_providers(&runtime, platform.as_ref(), session.network.tld()).await?;
 	session.responders.stop_all();
 	session.runtime_factory.replace(runtime.clone());
 	session.runtime_factory.set_platform(platform.clone());
@@ -3416,7 +3417,7 @@ async fn import_mnemonic_session(
 
 	// Each runtime the host builds offers its funding providers, so one
 	// provisioned or imported after startup serves them as the first did.
-	funding_host::offer_providers(&runtime, platform.as_ref()).await?;
+	funding_host::offer_providers(&runtime, platform.as_ref(), session.network.tld()).await?;
 	session.responders.stop_all();
 	session.runtime_factory.replace(runtime.clone());
 	session.runtime_factory.set_platform(platform.clone());

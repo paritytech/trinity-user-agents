@@ -7,6 +7,11 @@
 //! is reported to the core with `worker_exited`, which starts it again while
 //! a session still holds it, waiting longer each time it keeps crashing.
 //!
+//! A worker is a local script, or the one a provider publishes on dotNS,
+//! which each launch resolves and fetches before it runs it, unless the
+//! archive the provider publishes is already unpacked under the state
+//! directory.
+//!
 //! Every launch, stop and exit is appended to the host's transcript, so a
 //! battery can tell the core starting a worker from one already running.
 
@@ -24,12 +29,24 @@ use truapi::{
 	platform::{ExecutableKind, ProductId},
 };
 
-use crate::{frame_server, script_runner, terminal_ui::UiHandle, transcript::Transcript};
+use crate::{
+	frame_server, published_worker::PublishedWorkers, script_runner, terminal_ui::UiHandle,
+	transcript::Transcript,
+};
+
+/// Where a product's worker script comes from.
+#[derive(Clone)]
+pub enum WorkerSource {
+	/// A script on this machine.
+	Script(PathBuf),
+	/// The worker the product publishes on dotNS, fetched into `cache`.
+	Published { workers: Arc<PublishedWorkers>, cache: PathBuf },
+}
 
 /// Launches and stops the worker scripts of the products it knows.
 pub struct CliWorkerHost {
-	/// The script each product's worker runs.
-	scripts: HashMap<ProductId, PathBuf>,
+	/// Where each product's worker script comes from.
+	scripts: HashMap<ProductId, WorkerSource>,
 	runtime: Weak<SigningHostRuntime>,
 	/// Where worker output goes when the host runs a terminal UI.
 	ui: Option<UiHandle>,
@@ -48,7 +65,7 @@ impl CliWorkerHost {
 	/// inside the Tokio runtime the workers are to run on.
 	pub fn install(
 		runtime: &Arc<SigningHostRuntime>,
-		scripts: HashMap<ProductId, PathBuf>,
+		scripts: HashMap<ProductId, WorkerSource>,
 		ui: Option<UiHandle>,
 		transcript: Arc<Transcript>,
 	) -> anyhow::Result<()> {
@@ -142,12 +159,16 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// aborts this task before it gets that far.
 async fn serve(
 	launched: Launch,
-	script: PathBuf,
+	source: WorkerSource,
 	ui: Option<UiHandle>,
 	transcript: Arc<Transcript>,
 ) {
 	let Launch { runtime, product_id, launch, launches } = launched;
-	let exited = match run(runtime.clone(), &product_id, &script, ui).await {
+	let ran = async {
+		let script = script_of(&product_id, source, &transcript).await?;
+		run(runtime.clone(), &product_id, &script, ui).await
+	};
+	let exited = match ran.await {
 		Ok(status) => serde_json::json!(status.code()),
 		Err(error) => {
 			tracing::warn!(%product_id, error = %format!("{error:#}"), "the worker could not run");
@@ -163,6 +184,27 @@ async fn serve(
 	// worker.
 	if launches.ended(product_id.clone(), launch) {
 		runtime.worker_exited(&product_id);
+	}
+}
+
+/// The script `source` names for `product_id`'s worker: the local one, or
+/// the published one once fetched, which the transcript records.
+async fn script_of(
+	product_id: &ProductId,
+	source: WorkerSource,
+	transcript: &Transcript,
+) -> anyhow::Result<PathBuf> {
+	match source {
+		WorkerSource::Script(script) => Ok(script),
+		WorkerSource::Published { workers, cache } => {
+			let script = workers.script(product_id, &cache).await?;
+			transcript.record(serde_json::json!({
+				"kind": "worker",
+				"provider": product_id.as_str(),
+				"published": script.display().to_string(),
+			}));
+			Ok(script)
+		},
 	}
 }
 
