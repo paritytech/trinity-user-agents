@@ -269,20 +269,16 @@ fn editor_command_accepts_quoted_arguments_without_a_shell() -> Result<()> {
 	Ok(())
 }
 
-/// The `truapi-host` binary this test build sits beside, which confines the
-/// worker.
+/// The `truapi-host` binary of the profile this test binary was built in,
+/// which confines the worker. Cargo builds it for the crate's integration
+/// tests.
 fn launcher() -> Result<PathBuf> {
-	if let Some(binary) = option_env!("CARGO_BIN_EXE_truapi-host") {
-		return Ok(PathBuf::from(binary));
-	}
 	let test = std::env::current_exe()?;
-	let profile = test
-		.parent()
-		.and_then(Path::parent)
-		.context("test binary has no profile directory")?;
-	let binary = profile.join("truapi-host");
-	anyhow::ensure!(binary.is_file(), "build truapi-host first: {} is missing", binary.display());
-	Ok(binary)
+	test.ancestors()
+		.skip(1)
+		.map(|directory| directory.join("truapi-host"))
+		.find(|binary| binary.is_file())
+		.with_context(|| format!("build truapi-host first: none above {}", test.display()))
 }
 
 #[tokio::test]
