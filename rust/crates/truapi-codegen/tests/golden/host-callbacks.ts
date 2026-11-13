@@ -10,6 +10,7 @@ import {
   AllocatableResource,
   Bytes32,
   CodeFormat,
+  ExecutableKind,
   FundingDirection,
   FundingQuote,
   FundingQuoteRefusal,
@@ -325,17 +326,6 @@ export type DevicePermissionStatus =
   | "Denied"
   | "NotDetermined"
   | "NotApplicable";
-
-/**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export type ExecutableKind = "App" | "Widget" | "Worker";
 
 /**
  * What the host did with a request to show or hide the expanded card face.
@@ -1175,19 +1165,6 @@ export const CrossProductSignatureKind: S.Codec<CrossProductSignatureKind> =
 export const DevicePermissionStatus: S.Codec<DevicePermissionStatus> = S.lazy(
   (): S.Codec<DevicePermissionStatus> =>
     S.Status("Granted", "Denied", "NotDetermined", "NotApplicable"),
-);
-
-/**
- * Trusted kind of product executable attached to a TrUAPI connection.
- *
- * Mirrors the executable kinds a product manifest declares. The variants are
- * capability classes: a connection reaches an execution-gated service only
- * when its kind matches exactly, so `App` and `Widget` carry the same
- * capability and differ only in how the host presents them, and `Worker` is
- * the only kind that may serve the Chat modality.
- */
-export const ExecutableKind: S.Codec<ExecutableKind> = S.lazy(
-  (): S.Codec<ExecutableKind> => S.Status("App", "Widget", "Worker"),
 );
 
 /**

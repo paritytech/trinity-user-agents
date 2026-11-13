@@ -5,10 +5,10 @@ import StatementDelivery
 struct StatementRenewalBackgroundWork: Sendable {
     func callAsFunction() async -> BackgroundTaskWorkOutcome {
         let manager = await DashboardServices.manager
-        let launchKind = await manager.hasCoordinator ? "warm" : "cold"
+        let interactiveRunning = await manager.isInteractiveRunning
 
         guard let lease = await manager.acquireDurability() else {
-            return .skipped(reason: "notReady launchKind=\(launchKind)")
+            return .skipped(reason: "notReady interactiveRunning=\(interactiveRunning)")
         }
 
         // Not from the expiration handler: stopping durability must not race a claim still in flight.
@@ -16,14 +16,14 @@ struct StatementRenewalBackgroundWork: Sendable {
 
         let renewal = await lease.coordinator.durabilityRenewal.renewAll()
 
-        return .completed(logFields: Self.logFields(launchKind: launchKind, renewal: renewal))
+        return .completed(logFields: Self.logFields(interactiveRunning: interactiveRunning, renewal: renewal))
     }
 }
 
 private extension StatementRenewalBackgroundWork {
-    static func logFields(launchKind: String, renewal: StatementDurabilityRenewalReport) -> String {
+    static func logFields(interactiveRunning: Bool, renewal: StatementDurabilityRenewalReport) -> String {
         [
-            "launchKind=\(launchKind)",
+            "interactiveRunning=\(interactiveRunning)",
             fields(prefix: "requests", renewal.chatRequests),
             fields(prefix: "acceptances", renewal.chatAcceptances)
         ].joined(separator: " ")

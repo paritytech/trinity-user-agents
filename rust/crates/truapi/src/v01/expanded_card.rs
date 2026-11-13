@@ -2,7 +2,7 @@ use parity_scale_codec::{Decode, Encode};
 
 /// Request to show or hide the face above the calling Widget.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostExpandedCardSetFaceShownRequest {
 	/// `true` brings the face back, `false` moves it out of the way.
 	pub shown: bool,
@@ -10,7 +10,7 @@ pub struct HostExpandedCardSetFaceShownRequest {
 
 /// Face visibility change failure.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum HostExpandedCardSetFaceShownError {
 	/// The Widget is not shown under its card right now.
 	NotPresented,
@@ -25,7 +25,7 @@ pub enum HostExpandedCardSetFaceShownError {
 
 /// Request to turn the card above the calling Widget to one side.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostExpandedCardSetBackShownRequest {
 	/// `true` turns the back up, `false` turns the front up.
 	pub shown: bool,
@@ -33,7 +33,7 @@ pub struct HostExpandedCardSetBackShownRequest {
 
 /// Card turn failure.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum HostExpandedCardSetBackShownError {
 	/// The Widget is not shown under its card right now, such as one the host
 	/// keeps loaded after the card closed.

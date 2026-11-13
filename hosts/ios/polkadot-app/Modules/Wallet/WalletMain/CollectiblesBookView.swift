@@ -33,7 +33,7 @@ final class CollectiblesBookView: UIView {
         tiltView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         addSubview(tiltView)
 
-        cover.contentMode = .top
+        cover.contentMode = .scaleAspectFill
         cover.clipsToBounds = true
         cover.layer.anchorPoint = CGPoint(x: 0, y: 0.5)
         tiltView.addSubview(cover)

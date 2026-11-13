@@ -14,18 +14,20 @@ use crate::{
 		ProductContext, ProductId,
 	},
 };
+use futures::StreamExt;
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, v01, versioned::IntoLatest};
 
 use super::{
 	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
+	public_profile::NativePublicProfileObserver,
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
 use crate::{
 	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfile, PublicProfileError,
-	ResponderExit, SigningHostRuntime, Spawner,
+	PublicProfileResolutionOptions, ResponderExit, SigningHostRuntime, Spawner,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
@@ -908,6 +910,28 @@ impl NativeTrUApiHostRuntime {
 		force: bool,
 	) -> Result<PublicProfile, PublicProfileError> {
 		self.runtime.resolve_public_profile(&username, force).await
+	}
+
+	/// Observes public profile metadata until resolution completes or fails.
+	///
+	/// Options control forced lookups and stale stored values. Failures follow any
+	/// emitted value. Cancelling the subscription aborts resolution.
+	pub fn observe_public_profile(
+		&self,
+		username: String,
+		options: PublicProfileResolutionOptions,
+		observer: Arc<dyn NativePublicProfileObserver>,
+	) -> Arc<NativeSubscription> {
+		let mut stream = self.runtime.observe_public_profile(&username, options);
+		self.spawner.spawn_observation(async move {
+			while let Some(item) = stream.next().await {
+				match item {
+					Ok(profile) => observer.on_profile(profile),
+					Err(error) => return observer.on_error(error),
+				}
+			}
+			observer.on_complete();
+		})
 	}
 
 	/// The image `reference` names, read from Bulletin over the core's own connection and

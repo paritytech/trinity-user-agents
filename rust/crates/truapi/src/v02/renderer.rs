@@ -5,7 +5,7 @@ use parity_scale_codec::{Decode, Encode};
 /// v0.2 adds the room footer. The v0.1 contexts come first, so they keep
 /// their wire indexes.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum RenderContext {
 	/// A message in a chat room.
 	ChatMessage {
@@ -45,7 +45,7 @@ pub enum RenderContext {
 
 /// A body the host needs drawn.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductRendererRenderRequest {
 	/// Where the body lives.
 	pub context: RenderContext,
@@ -55,7 +55,7 @@ pub struct ProductRendererRenderRequest {
 
 /// An action triggered inside a product-rendered body.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostRendererActionSubscribeItem {
 	/// Where the body lives.
 	pub context: RenderContext,

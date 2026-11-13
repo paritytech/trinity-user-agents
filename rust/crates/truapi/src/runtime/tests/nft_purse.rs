@@ -42,7 +42,7 @@ pub fn nft_host_with_storage(
 ) -> (tempfile::TempDir, ProductRuntimeHost<RemoteAccountHolder>) {
 	let services = payment_services_over(platform);
 	let (dir, db) = open_temporary_core_db();
-	assert!(services.install_core_db(db.clone()));
+	assert!(services.install_core_db(db.clone()).is_some());
 	assert!(services.install_nft_ledger(test_ledger(db)));
 	assert!(services.install_encrypted_storage(encrypted));
 	assert!(services.install_static_receive_secret(test_static_secret()));
@@ -411,7 +411,7 @@ mod operations {
 		let services = payment_services_over(platform);
 		let (dir, db) = open_temporary_core_db();
 		let ledger = test_ledger(db.clone());
-		assert!(services.install_core_db(db));
+		assert!(services.install_core_db(db).is_some());
 		assert!(services.install_nft_ledger(ledger.clone()));
 		assert!(services.install_encrypted_storage(encrypted));
 		assert!(services.install_static_receive_secret(test_static_secret()));

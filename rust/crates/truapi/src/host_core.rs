@@ -271,9 +271,7 @@ impl PairingHostRuntime {
 		username: &str,
 		force: bool,
 	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
-		crate::public_profile::PublicProfiles::new(self.services.clone())
-			.resolve(username, force)
-			.await
+		self.services.public_profiles.resolve(username, force).await
 	}
 
 	/// The image `reference` names, checked against its CID and the image policy.
@@ -1135,7 +1133,7 @@ impl SigningHostRuntime {
 	#[cfg(not(target_arch = "wasm32"))]
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_core_db"))]
 	pub fn set_core_db(&self, db: crate::store::Db) -> bool {
-		self.services.install_core_db(db)
+		self.services.install_core_db(db).is_some()
 	}
 
 	/// Install the provider of the installation id NFT purse item keys are
@@ -1261,9 +1259,19 @@ impl SigningHostRuntime {
 		username: &str,
 		force: bool,
 	) -> Result<crate::PublicProfile, crate::PublicProfileError> {
-		crate::public_profile::PublicProfiles::new(self.services.clone())
-			.resolve(username, force)
-			.await
+		self.services.public_profiles.resolve(username, force).await
+	}
+
+	/// Resolves public profile metadata with optional cached-first delivery.
+	///
+	/// Options control forced lookups and stale stored values; browsers resolve once.
+	/// At most two values precede completion or an error. Dropping the stream cancels resolution.
+	pub fn observe_public_profile(
+		&self,
+		username: &str,
+		options: crate::PublicProfileResolutionOptions,
+	) -> crate::Subscription<crate::PublicProfile, crate::PublicProfileError> {
+		self.services.public_profiles.clone().observe(username.to_owned(), options)
 	}
 
 	/// The image `reference` names, checked against its CID and the image policy.

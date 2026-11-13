@@ -170,6 +170,9 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 					.accounts
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostAccountSignVrfError::NotConnected))?;
+				if !self.may_use_product_account(&request.account.dot_ns_identifier, cx).await {
+					return Err(CallError::Domain(latest::HostAccountSignVrfError::Rejected));
+				}
 				self.accounts.sign_vrf(&session, cx, request).await.map_err(vrf_call_error)
 			})
 			.await

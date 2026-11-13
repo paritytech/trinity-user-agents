@@ -28,6 +28,7 @@ mod funding_feed;
 mod funding_page;
 mod platform;
 mod pocket;
+mod public_profile;
 mod renderer;
 mod runtime;
 mod sso;
@@ -64,6 +65,7 @@ pub use funding_page::{
 	funding_page_origin,
 };
 pub use pocket::NativePocketObserver;
+pub use public_profile::NativePublicProfileObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{
 	NativeAnnouncedPairing, NativePairingError, NativeProductExecution, NativeTrUApiHostRuntime,
@@ -145,7 +147,7 @@ pub fn product_id_executable(
 /// The manifest discriminator and dotNS prefix for an executable kind.
 #[uniffi::export]
 pub fn executable_kind_label(kind: crate::platform::ExecutableKind) -> String {
-	kind.dotns_label().to_owned()
+	<&str>::from(kind).to_owned()
 }
 
 /// Resolve an executable identity to its owning product without losing nested labels.

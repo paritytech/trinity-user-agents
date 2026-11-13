@@ -5,12 +5,12 @@ import SwiftUI
 /// stays visible for as long as the image is loading, or forever if it never arrives.
 public struct DSAsyncAvatar: View {
     private let placeholder: AvatarViewModel
-    private let icon: (any ImageViewModelProtocol)?
+    private let icon: AnyImageViewModel?
     private let size: DSLetterAvatar.Size
 
     public init(
         placeholder: AvatarViewModel,
-        icon: (any ImageViewModelProtocol)?,
+        icon: AnyImageViewModel?,
         size: DSLetterAvatar.Size
     ) {
         self.placeholder = placeholder
