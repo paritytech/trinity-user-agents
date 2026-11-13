@@ -7,7 +7,7 @@ use std::sync::{
 	atomic::{AtomicU8, AtomicUsize, Ordering},
 };
 
-use futures::executor::block_on;
+use futures::{StreamExt, executor::block_on};
 
 use super::*;
 use crate::{
@@ -59,22 +59,27 @@ fn a_policy_that_gives_up_fails_the_transaction_without_broadcasting() {
 	assert_eq!(harness.broadcast(), vec![]);
 }
 
-/// An app update dropped the policy, or the domain, that rows from an earlier
-/// run name. Nothing can build them, so they fail rather than wait forever.
+/// The domain or policy that rows from an earlier run name is not
+/// registered on this start, perhaps only for now. Nothing builds them, and
+/// they keep waiting rather than reach a final status; they are not counted
+/// as live work either, or the host would keep recovery running for nothing.
 #[test]
-fn rows_nothing_can_build_are_abandoned() {
+fn rows_of_an_unregistered_domain_or_policy_keep_waiting() {
 	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::building_everything());
 	let removed_policy =
 		SubmissionPlan { policy: PolicyId::new("removed"), params: PolicyParams::default() };
 	let unknown_policy = harness.leave_waiting(test_domain(), removed_policy);
 	let unknown_domain = harness.leave_waiting(DomainId::new("removed"), test_plan(vec![]));
+	let mut live = harness.engine().live_work();
+	assert!(!block_on(live.next()).unwrap().unwrap());
 
 	harness.engine().ensure_submissions_started();
+	let built = harness.schedule_one();
 
-	let abandoned = DurableTxStatus::Failure(DurableTxFailureKind::Abandoned);
-	harness.wait_for(unknown_policy, abandoned);
-	harness.wait_for(unknown_domain, abandoned);
-	assert_eq!(harness.policy().batches(), Vec::<Vec<DurableTxId>>::new());
+	harness.wait_for(built, DurableTxStatus::Pending);
+	assert_eq!(harness.status(unknown_policy), DurableTxStatus::PendingSubmission);
+	assert_eq!(harness.status(unknown_domain), DurableTxStatus::PendingSubmission);
+	assert_eq!(harness.policy().batches(), vec![vec![built]]);
 }
 
 /// Recovery and registration both start the executor. A second builder

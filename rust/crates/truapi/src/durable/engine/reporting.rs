@@ -20,13 +20,16 @@ pub trait DurableWorkObserver: Send + Sync {
 }
 
 impl DurableTxEngine {
-	/// Whether any transaction still awaits a verdict, again whenever that
-	/// changes. It also repeats `true` when a submission watch hands a
-	/// transaction back while no recovery is running to take it: the ledger
-	/// did not change, but somebody has to start recovery.
+	/// Whether any transaction of a registered domain still waits to be
+	/// built or awaits a verdict, again whenever that changes. It also repeats `true` when a
+	/// submission watch hands a transaction back while no recovery is running to take it: the
+	/// ledger did not change, but somebody has to start recovery.
 	pub fn live_work(&self) -> BoxStream<'static, Result<bool, DbError>> {
 		let handed_back = self.host_wakes.subscribe().map(|()| Ok(true));
-		stream::select(dao::observe_has_live(&self.db), handed_back).boxed()
+		let registry = self.registry.clone();
+		let live = dao::observe_live_plans(&self.db)
+			.map(move |plans| plans.map(|plans| registry.serves_any(&plans)));
+		stream::select(live, handed_back).boxed()
 	}
 
 	/// Reports [`Self::live_work`] to `observer` until the engine is dropped.

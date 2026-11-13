@@ -130,7 +130,9 @@ impl DurableTxEngine {
 	/// given up after they were lost would otherwise end recovery's work
 	/// with no pass left to notice.
 	async fn built_triggers(&self) -> Triggers {
-		let mut waiting = dao::observe_has_pending_submissions(&self.db);
+		let registry = self.registry.clone();
+		let mut waiting = dao::observe_waiting_plans(&self.db)
+			.map(move |plans| plans.map(|plans| registry.serves_any(&plans)));
 		waiting.next().await;
 		waiting.filter_map(|waiting| ready(as_built_trigger(waiting))).boxed()
 	}
@@ -178,11 +180,11 @@ impl DurableTxEngine {
 		Some(self.chains_of(&domains))
 	}
 
-	/// Whether a transaction waits to be built. An unreadable ledger counts
-	/// as one waiting.
+	/// Whether a transaction of a registered domain and policy waits to be
+	/// built. An unreadable ledger counts as one waiting.
 	async fn waits_to_be_built(&self) -> bool {
-		let waiting = self.read_or_warn(dao::has_pending_submissions).await;
-		waiting.unwrap_or(true)
+		let waiting = self.read_or_warn(dao::waiting_plans).await;
+		waiting.is_none_or(|plans| self.registry.serves_any(&plans))
 	}
 
 	/// The result of `query`, or `None` when the ledger cannot be read.

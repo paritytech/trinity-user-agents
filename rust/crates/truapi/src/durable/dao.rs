@@ -136,20 +136,19 @@ pub fn observe_pending_submissions(
 	db.observe(PENDING_SUBMISSIONS, |stmt| stmt.query_map([], ScheduledDurableTx::from_row))
 }
 
-const HAS_PENDING_SUBMISSIONS: &str = "SELECT EXISTS (SELECT 1 FROM durable_tx
-    WHERE status = 'PENDING_SUBMISSION') AS waiting";
+const WAITING_PLANS: &str = "SELECT DISTINCT domain, policy_id FROM durable_tx
+    WHERE status = 'PENDING_SUBMISSION'";
 
-/// Whether any row is waiting to be built.
-pub fn has_pending_submissions(conn: &Connection) -> Result<bool, DbError> {
-	let mut stmt = conn.prepare_cached(HAS_PENDING_SUBMISSIONS)?;
-	let waiting = stmt.query_row([], |row| row.get("waiting"))?;
-	Ok(waiting)
+/// The domain and policy of every row waiting to be built.
+pub fn waiting_plans(conn: &Connection) -> Result<Vec<LivePlan>, DbError> {
+	let mut stmt = conn.prepare_cached(WAITING_PLANS)?;
+	let plans = stmt.query_map([], LivePlan::from_row)?;
+	Ok(plans.collect::<rusqlite::Result<_>>()?)
 }
 
-/// Whether any row is waiting to be built, re-read after every commit that
-/// changes it.
-pub fn observe_has_pending_submissions(db: &Db) -> BoxStream<'static, Result<bool, DbError>> {
-	db.observe(HAS_PENDING_SUBMISSIONS, |stmt| stmt.query_row([], |row| row.get("waiting")))
+/// [`waiting_plans`], re-read after every commit that changes it.
+pub fn observe_waiting_plans(db: &Db) -> BoxStream<'static, Result<Vec<LivePlan>, DbError>> {
+	db.observe(WAITING_PLANS, |stmt| stmt.query_map([], LivePlan::from_row))
 }
 
 const BUCKET_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_id, policy_params, attempts
@@ -328,16 +327,34 @@ macro_rules! live_statuses {
 	};
 }
 
-const HAS_LIVE: &str = concat!(
-	"SELECT EXISTS (SELECT 1 FROM durable_tx WHERE status IN ",
-	live_statuses!(),
-	") AS live"
+const LIVE_PLANS: &str = concat!(
+	"SELECT DISTINCT domain,
+    CASE WHEN status = 'PENDING_SUBMISSION' THEN policy_id END AS policy_id
+    FROM durable_tx WHERE status IN ",
+	live_statuses!()
 );
 
-/// Whether any transaction is waiting to be built or awaits a verdict,
-/// re-read after every commit that changes it.
-pub fn observe_has_live(db: &Db) -> BoxStream<'static, Result<bool, DbError>> {
-	db.observe(HAS_LIVE, |stmt| stmt.query_row([], |row| row.get("live")))
+/// The domain of every live transaction, with the policy of those waiting
+/// to be built, re-read after every commit that changes them.
+pub fn observe_live_plans(db: &Db) -> BoxStream<'static, Result<Vec<LivePlan>, DbError>> {
+	db.observe(LIVE_PLANS, |stmt| stmt.query_map([], LivePlan::from_row))
+}
+
+/// The domain of a live transaction, and the policy that builds it while
+/// it waits to be built.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LivePlan {
+	/// The domain the transaction belongs to.
+	pub domain: DomainId,
+	/// The policy that builds it, while it waits to be built.
+	pub policy: Option<PolicyId>,
+}
+
+impl LivePlan {
+	fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+		let policy: Option<String> = row.get("policy_id")?;
+		Ok(Self { domain: domain_from_row(row)?, policy: policy.map(PolicyId::new) })
+	}
 }
 
 impl DurableTxEntry {

@@ -10,6 +10,7 @@ use subxt::utils::H256;
 
 use super::CompletionOracle;
 use crate::durable::{
+	dao::LivePlan,
 	model::{DomainId, PolicyId},
 	policy::SubmissionPolicy,
 };
@@ -64,6 +65,17 @@ impl DurableRegistry {
 	/// The oracle of `domain`.
 	pub fn oracle(&self, domain: &DomainId) -> Option<&Arc<dyn CompletionOracle>> {
 		self.oracles.get(domain)
+	}
+
+	/// Whether any of `plans` names a registered domain and, for a
+	/// transaction waiting to be built, a registered policy. Transactions of
+	/// anything else are left as they are: the domain or policy may be back
+	/// on a later start.
+	pub fn serves_any(&self, plans: &[LivePlan]) -> bool {
+		plans.iter().any(|plan| {
+			self.oracles.contains_key(&plan.domain) &&
+				plan.policy.as_ref().is_none_or(|policy| self.policies.contains_key(policy))
+		})
 	}
 
 	/// Genesis hashes of every chain a registered domain lives on.

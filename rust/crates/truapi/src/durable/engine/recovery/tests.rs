@@ -282,6 +282,27 @@ fn live_rows_no_oracle_can_decide_do_not_keep_recovery_running() {
 	assert_eq!(running.join().unwrap(), Ok(()));
 }
 
+/// Nothing builds a row of an unregistered domain, so waiting for it would
+/// keep recovery running forever.
+#[test]
+fn rows_of_an_unregistered_domain_waiting_to_be_built_do_not_keep_recovery_running() {
+	let chain = FakeChain::new(130, 140);
+	chain.script_heads();
+	let (_dir, engine, _timer) = engine_with(
+		&chain,
+		DurableRegistry::new()
+			.with_domain(test_domain(), Arc::new(crate::durable::oracle::Unobservable(GENESIS))),
+	);
+	let orphan = DomainId::new("orphan");
+	let plan = crate::durable::testing::test_plan(vec![1]);
+	block_on(engine.db.write(move |tx| dao::schedule(tx, &orphan, None, &plan))).unwrap();
+
+	let running = run_in_background(&engine);
+
+	wait_until(|| running.is_finished(), "recovery returns");
+	assert_eq!(running.join().unwrap(), Ok(()));
+}
+
 /// The device is offline at launch with nothing live. Recovery must finish
 /// rather than fail on a head subscription it never needed, or the host
 /// would retry it forever.

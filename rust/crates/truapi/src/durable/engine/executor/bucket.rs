@@ -6,9 +6,9 @@ use std::{
 	sync::{Arc, Weak},
 };
 
-use futures::{channel::mpsc::UnboundedSender, future::join_all};
+use futures::channel::mpsc::UnboundedSender;
 use subxt::utils::H256;
-use tracing::{error, warn};
+use tracing::warn;
 
 use super::{
 	SubmissionBucket,
@@ -33,6 +33,7 @@ pub struct BucketRun {
 	db: Db,
 	timer: Arc<dyn Timer>,
 	bucket: SubmissionBucket,
+	resolved: ResolvedPolicy,
 	finished: UnboundedSender<SubmissionBucket>,
 }
 
@@ -71,19 +72,22 @@ impl RoundOutcome {
 
 impl BucketRun {
 	/// The worker for `bucket`, which sends `bucket` on `finished` once it
-	/// finds the bucket empty.
+	/// finds the bucket empty, or `None` when its domain or policy is not
+	/// registered: its rows are then left waiting untouched.
 	pub fn new(
 		engine: &Arc<DurableTxEngine>,
 		bucket: SubmissionBucket,
 		finished: UnboundedSender<SubmissionBucket>,
-	) -> Self {
-		Self {
+	) -> Option<Self> {
+		let resolved = resolve_policy(engine, &bucket)?;
+		Some(Self {
 			engine: Arc::downgrade(engine),
 			db: engine.db.clone(),
 			timer: engine.timer.clone(),
 			bucket,
+			resolved,
 			finished,
-		}
+		})
 	}
 
 	/// Runs rounds until a round finds the bucket empty, backing off after
@@ -128,13 +132,10 @@ impl BucketRun {
 		if rows.is_empty() {
 			return RoundOutcome::NoProgress;
 		}
-		let Some(resolved) = resolve_policy(&engine, &self.bucket) else {
-			return abandon_unbuildable(&engine, &self.bucket, &rows).await;
-		};
 		// The engine is held only while this round decides, never across a
 		// policy call that may not return.
 		drop(engine);
-		self.prepare_and_apply(&resolved, rows).await
+		self.prepare_and_apply(rows).await
 	}
 
 	/// The bucket's waiting rows, or `None` when the ledger cannot be read.
@@ -148,12 +149,9 @@ impl BucketRun {
 		}
 	}
 
-	/// Builds `rows` with `resolved` after their cooldown.
-	async fn prepare_and_apply(
-		&self,
-		resolved: &ResolvedPolicy,
-		rows: Vec<ScheduledDurableTx>,
-	) -> RoundOutcome {
+	/// Builds `rows` with the bucket's policy after their cooldown.
+	async fn prepare_and_apply(&self, rows: Vec<ScheduledDurableTx>) -> RoundOutcome {
+		let resolved = &self.resolved;
 		self.cool_down(&rows).await;
 		let prepared = resolved.policy.prepare(&rows).await;
 		match prepared {
@@ -232,21 +230,4 @@ fn resolve_policy(engine: &DurableTxEngine, bucket: &SubmissionBucket) -> Option
 	let genesis = engine.chain_of(&bucket.domain)?;
 	let policy = engine.registry.submission_policy(&bucket.policy)?.clone();
 	Some(ResolvedPolicy { policy, genesis })
-}
-
-/// Fails every row of a bucket whose policy or domain is no longer
-/// registered: nothing could ever build them.
-async fn abandon_unbuildable(
-	engine: &DurableTxEngine,
-	bucket: &SubmissionBucket,
-	rows: &[ScheduledDurableTx],
-) -> RoundOutcome {
-	let ids: Vec<i64> = rows.iter().map(|row| row.id.0).collect();
-	error!(%bucket, ?ids, "durable submissions name a policy or domain that is not registered, failing them");
-	let abandons = rows.iter().map(|row| give_up_submission(engine, row.id));
-	let abandoned = join_all(abandons).await;
-	abandoned
-		.into_iter()
-		.map(RoundOutcome::from)
-		.fold(RoundOutcome::NoProgress, RoundOutcome::or)
 }

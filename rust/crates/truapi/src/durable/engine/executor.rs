@@ -164,7 +164,8 @@ impl Builder {
 		}
 	}
 
-	/// Starts a worker for every waiting bucket that has none. A finished
+	/// Starts a worker for every waiting bucket that has none, unless its
+	/// domain or policy is not registered. A finished
 	/// worker's bucket is started again when the latest rows still wait in
 	/// it: those rows may have been scheduled after the worker's last read.
 	fn handle(&mut self, engine: &Arc<DurableTxEngine>, event: BuilderEvent) {
@@ -191,9 +192,11 @@ impl Builder {
 		if self.workers.contains_key(&bucket) {
 			return;
 		}
+		let Some(run) = BucketRun::new(engine, bucket.clone(), self.finished_tx.clone()) else {
+			return;
+		};
 		let (abort, registration) = AbortHandle::new_pair();
-		self.workers.insert(bucket.clone(), Worker(abort));
-		let run = BucketRun::new(engine, bucket, self.finished_tx.clone()).run_until_drained();
-		engine.spawn_abortable(run, registration);
+		self.workers.insert(bucket, Worker(abort));
+		engine.spawn_abortable(run.run_until_drained(), registration);
 	}
 }

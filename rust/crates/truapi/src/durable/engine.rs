@@ -63,7 +63,7 @@ pub struct DurableDeps {
 /// engine never signs or deletes anything itself.
 pub struct DurableTxEngine {
 	db: Db,
-	registry: DurableRegistry,
+	registry: Arc<DurableRegistry>,
 	heads: Arc<dyn ChainHeads>,
 	blocks: Arc<dyn BlockBackend>,
 	validator: Arc<dyn TxValidator>,
@@ -85,7 +85,7 @@ impl DurableTxEngine {
 	pub fn new(deps: DurableDeps) -> Arc<Self> {
 		Arc::new(Self {
 			db: deps.db,
-			registry: deps.registry,
+			registry: Arc::new(deps.registry),
 			heads: deps.heads,
 			blocks: deps.blocks,
 			validator: deps.validator,

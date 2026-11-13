@@ -231,15 +231,15 @@ fn only_domains_with_a_transaction_awaiting_a_verdict_are_live() {
 fn observed_queries_follow_commits() {
 	let (_dir, db) = open_db();
 	let group_id = GroupId::new("payment");
-	let mut live = observe_has_live(&db);
+	let mut live = observe_live_plans(&db);
 	let mut grouped = observe_group(&db, domain(), group_id.clone());
-	assert!(!next(&mut live));
+	assert_eq!(next(&mut live), vec![]);
 	assert_eq!(next(&mut grouped), vec![]);
 
 	let id = register(&db, Some(group_id), 1);
 	let mut status = observe_status(&db, id);
 
-	assert!(next(&mut live));
+	assert_eq!(next(&mut live), vec![LivePlan { domain: domain(), policy: None }]);
 	assert_eq!(next(&mut grouped), vec![pending_presigned(id, 1)]);
 	assert_eq!(next(&mut status), Some(DurableTxStatus::Pending));
 }
@@ -296,8 +296,9 @@ fn a_transaction_waiting_to_be_built_is_live_but_not_decidable() {
 	let (_dir, db) = open_db();
 	schedule_in(&db, domain(), None);
 
-	assert!(next(&mut observe_has_live(&db)));
-	assert!(read(&db, has_pending_submissions));
+	let waiting = vec![LivePlan { domain: domain(), policy: Some(test_plan(vec![1]).policy) }];
+	assert_eq!(next(&mut observe_live_plans(&db)), waiting);
+	assert_eq!(read(&db, waiting_plans), waiting);
 	assert_eq!(read(&db, live_domains), Vec::<DomainId>::new());
 	assert_eq!(read(&db, |conn| domain_entries(conn, &domain())), vec![]);
 }

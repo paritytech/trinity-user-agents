@@ -344,6 +344,9 @@ policy too.
 The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
 nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
+Transactions of a domain or policy the core did not register on this start
+are left as they are and do not count as live, so they resume once it is
+registered again.
 
 ### NFT purses
 
