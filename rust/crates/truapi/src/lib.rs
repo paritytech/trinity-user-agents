@@ -119,9 +119,10 @@ pub mod latest {
 		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RendererNode,
 		ResourceAllocationError, RingLocation, RingLocationJunction, RingVrfKeyDisclosure,
 		RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape, SignedStatement, Size,
-		Statement, StatementProof, StatementTopic, StorageQueryItem, StorageQueryType,
-		SlideToConfirmProps, SlideToConfirmVariant, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant, TxPayloadExtension,
-		TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
+		SlideToConfirmProps, SlideToConfirmVariant, Statement, StatementProof, StatementTopic,
+		StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps, TextProps,
+		ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
+		VrfSignature, X25519PublicKey,
 	};
 
 	pub use crate::v02::{ChatRoomFooter, RenderContext};
@@ -984,7 +985,7 @@ pub use host_logic::worker::{WorkerLedger, WorkerTransition};
 #[cfg(feature = "runtime")]
 pub use host_rpc_client::HostRpcClient;
 #[cfg(feature = "runtime")]
-pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage};
+pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{
@@ -1000,7 +1001,10 @@ pub use platform::{
 	ProductContext, SigningHostConfig, describe_core_storage_key,
 };
 #[cfg(feature = "runtime")]
-pub use public_profile::{ProfileAvatar, PublicProfile, PublicProfileError};
+pub use public_profile::{
+	PROFILE_RECORD_KEY, ProfileAvatar, ProfileRecord, ProfileRecordLocation, PublicProfile,
+	PublicProfileError,
+};
 #[cfg(feature = "runtime")]
 pub use runtime::StatementRenewalTarget;
 #[cfg(feature = "runtime")]

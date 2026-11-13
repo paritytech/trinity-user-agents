@@ -65,12 +65,12 @@ import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowRight
 import io.paritytech.polkadotapp.design.components.icon.vectors.Check
+import io.paritytech.polkadotapp.design.components.progress.NovaCircularProgressIndicator
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.model.JsSlideToConfirmVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sign
 
@@ -98,21 +98,20 @@ internal fun JsSlideToConfirm(
     // The product settles the control: loading and confirmed pin it at the end, and a tree that
     // is neither puts a control the user slid back at the start.
     LaunchedEffect(widget.loading, widget.confirmed) {
-        when {
-            widget.loading || widget.confirmed -> {
+        when (SlideToConfirmRules.settle(heldAtEnd, widget.loading, widget.confirmed)) {
+            SlideSettle.PIN_AT_END -> {
                 heldAtEnd = true
                 progress.snapTo(1f)
             }
-            heldAtEnd -> {
+            SlideSettle.RETURN_TO_START -> {
                 heldAtEnd = false
                 progress.animateTo(0f, SpringBack)
             }
+            SlideSettle.STAY -> Unit
         }
     }
 
-    val interactive by rememberUpdatedState(
-        widget.enabled && !widget.loading && !widget.confirmed && !heldAtEnd,
-    )
+    val interactive by rememberUpdatedState(SlideToConfirmRules.acceptsSlide(widget, heldAtEnd))
     val confirm: () -> Unit = {
         if (!heldAtEnd) {
             heldAtEnd = true
@@ -154,7 +153,7 @@ internal fun JsSlideToConfirm(
                     if (!interactive || travelPx <= 0f) return@awaitEachGesture
                     var slid = progress.value
                     fun follow(dx: Float) {
-                        slid = (slid + (if (rtl) -dx else dx) / travelPx).coerceIn(0f, 1f)
+                        slid = SlideToConfirmRules.slideBy(slid, dx, travelPx, rtl)
                         val target = slid
                         scope.launch(start = CoroutineStart.UNDISPATCHED) { progress.snapTo(target) }
                     }
@@ -180,19 +179,21 @@ internal fun JsSlideToConfirm(
                             }
                             dx += delta.x
                             dy += delta.y
-                            if (abs(dx) > slop && abs(dx) >= abs(dy)) {
-                                claimed = true
-                                dragging = true
-                                follow(dx - sign(dx) * slop)
-                                change.consume()
-                            } else if (abs(dy) > slop) {
-                                break
+                            when (SlideToConfirmRules.decide(dx, dy, slop)) {
+                                SlideDragDecision.CLAIM -> {
+                                    claimed = true
+                                    dragging = true
+                                    follow(dx - sign(dx) * slop)
+                                    change.consume()
+                                }
+                                SlideDragDecision.RELEASE -> break
+                                SlideDragDecision.WAIT -> Unit
                             }
                         }
                     } finally {
                         dragging = false
                         if (claimed) {
-                            if (lifted && slid >= CONFIRM_THRESHOLD) {
+                            if (SlideToConfirmRules.completes(slid, lifted)) {
                                 currentConfirm()
                             } else if (!heldAtEnd) {
                                 scope.launch { progress.animateTo(0f, SpringBack) }
@@ -293,6 +294,12 @@ private fun SlideToConfirmThumbFace(
             contentAlignment = Alignment.Center,
         ) {
             when {
+                widget.loading -> NovaCircularProgressIndicator(
+                    modifier = Modifier.size(CHEVRON_SIZE),
+                    color = colors.fg.primaryInverted,
+                    strokeWidth = SPINNER_STROKE,
+                    trackColor = Color.Transparent,
+                )
                 widget.confirmed -> NovaIcon(
                     imageVector = NovaIcons.Check,
                     modifier = Modifier.size(CHEVRON_SIZE),
@@ -331,11 +338,11 @@ private fun Modifier.idleShimmer(sweep: State<Float>?, highlight: Color): Modifi
 private val TRACK_HEIGHT = 72.dp
 private val THUMB_SIZE = 56.dp
 private val CHEVRON_SIZE = 24.dp
+private val SPINNER_STROKE = 2.dp
 
 // What a full slide leaves uncovered at the end: a thumb's width, or the last of a peeled face.
 private val TRAVEL_END_INSET = 56.dp
 private const val DISABLED_ALPHA = 0.4f
-private const val CONFIRM_THRESHOLD = 0.9f
 
 private const val LABEL_GONE_AT_FRACTION = 0.6f
 private const val THUMB_GRADIENT_DEPTH = 0.3f

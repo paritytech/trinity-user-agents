@@ -91,7 +91,7 @@ ios/truapi-host/           TrUAPIHost Swift package over the truapi UniFFI core;
                            ios/truapi-host/scripts/rebuild.sh
 playground/                Next.js interactive playground; deploys to the truapi-playground dotNS label
 hosts/ios/                 iOS host app; resolves the core from this tree
-hosts/android/             Android host app
+hosts/android/             Android host app; resolves the core from this tree
 hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule

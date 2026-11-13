@@ -83,6 +83,49 @@ fn variants_encode_only_the_fields_they_carry() {
 	assert_eq!(ImageSource::Inline(vec![1]).encode(), vec![2, 4, 1]);
 }
 
+fn slide_to_confirm() -> RendererNode {
+	RendererNode::SlideToConfirm {
+		modifiers: Vec::new(),
+		props: SlideToConfirmProps {
+			text: "Go".to_string(),
+			secondary_text: None,
+			confirmed_text: None,
+			variant: Some(SlideToConfirmVariant::Reveal),
+			accent: None,
+			enabled: OptionBool(None),
+			loading: OptionBool(None),
+			confirmed: OptionBool(Some(true)),
+			confirm_action: Some("r".to_string()),
+		},
+	}
+}
+
+/// Index 11 belongs to `Materials`, so a host that reads index 12 as anything
+/// else would misread the control instead of refusing it.
+#[test]
+fn slide_to_confirm_is_variant_twelve() {
+	let expected = [
+		// Variant 12, then an empty modifier list.
+		vec![12, 0],
+		"Go".to_string().encode(),
+		// No second line, no confirmed text, `Some(Reveal)`, no accent.
+		vec![0, 0, 1, 1, 0],
+		// `OptionBool` is one byte: enabled and loading absent, confirmed true.
+		vec![0, 0, 1],
+		Some("r".to_string()).encode(),
+	]
+	.concat();
+
+	assert_eq!(slide_to_confirm().encode(), expected);
+}
+
+#[test]
+fn slide_to_confirm_round_trips_through_scale() {
+	let node = slide_to_confirm();
+	let decoded = RendererNode::decode(&mut node.encode().as_slice()).unwrap();
+	assert_eq!(decoded, node);
+}
+
 #[test]
 fn tree_round_trips_through_scale() {
 	let node = renderer_node();

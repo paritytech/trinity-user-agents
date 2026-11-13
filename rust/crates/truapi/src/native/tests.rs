@@ -3108,6 +3108,34 @@ fn reads_an_inline_image_from_hex() {
 	assert!(parse_renderer_node_json(image("89504e47")).is_err());
 }
 
+/// A face file names the control's fields in camelCase, as the generated
+/// client spells them, and leaves out what it does not set.
+#[test]
+fn reads_a_slide_to_confirm_from_json() {
+	let json = r#"{"tag":"SlideToConfirm","value":{"modifiers":[],"props":{
+		"text":"Slide to register","secondaryText":"Fri 14 Nov","confirmedText":"Registered",
+		"variant":"Reveal","accent":"FgSuccess","loading":true,
+		"confirmAction":"register"}}}"#;
+
+	assert_eq!(
+		parse_renderer_node_json(json.to_string()).expect("slide to confirm reads"),
+		latest::RendererNode::SlideToConfirm {
+			modifiers: Vec::new(),
+			props: latest::SlideToConfirmProps {
+				text: "Slide to register".to_string(),
+				secondary_text: Some("Fri 14 Nov".to_string()),
+				confirmed_text: Some("Registered".to_string()),
+				variant: Some(latest::SlideToConfirmVariant::Reveal),
+				accent: Some(latest::ColorToken::FgSuccess),
+				enabled: parity_scale_codec::OptionBool(None),
+				loading: parity_scale_codec::OptionBool(Some(true)),
+				confirmed: parity_scale_codec::OptionBool(None),
+				confirm_action: Some("register".to_string()),
+			},
+		}
+	);
+}
+
 /// `depth` boxes around an empty node, three brackets per box.
 fn nested_boxes(depth: usize) -> String {
 	let mut json = String::new();
@@ -3238,6 +3266,8 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 
 	fn close_provider_frame(&self, _provider_id: ProductId, _intent: String) {}
 
+	fn provider_frame_requested(&self, _provider_id: ProductId, _intent: String) {}
+
 	async fn detected_country(&self) -> Option<String> {
 		None
 	}
@@ -3324,11 +3354,8 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	let funding = Arc::new(RecordingNativeFunding::default());
 	assert!(host.set_funding_callbacks(funding.clone()));
 	let configure = |names: &[&str]| {
-		host.set_funding_provider_config(
-			names.iter().map(|name| name.to_string()).collect(),
-			vec![],
-		)
-		.expect("configured");
+		host.set_funding_provider_config(names.iter().map(|name| name.to_string()).collect())
+			.expect("configured");
 		let changes = funding.changes.lock().expect("changes mutex poisoned");
 		let announced =
 			changes.iter().filter(|change| **change == (None, FundingChangeKind::Providers));
@@ -3338,10 +3365,10 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	assert_eq!(
 		(
 			host.funding_available(),
-			configure(&["ramp.dot"]),
-			configure(&["ramp.dot"]),
+			configure(&["ramp"]),
+			configure(&["ramp"]),
 			configure(&[]),
-			configure(&["ramp.dot"])
+			configure(&["ramp"])
 		),
 		(false, (1, true), (1, true), (2, false), (3, true))
 	);
