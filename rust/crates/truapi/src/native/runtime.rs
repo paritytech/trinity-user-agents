@@ -29,12 +29,10 @@ use crate::{
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
-		sso_messages::{
-			RemoteMessage, RemoteMessageData, SsoRequestOutcome, decode_remote_message, v1,
-		},
+		sso_messages::{RemoteMessage, RemoteMessageData, v1},
 	},
 	pocket_cards::{PocketAddError, PocketCardRemoval, PocketCards},
-	runtime::{AnnouncedPairing, sso_remote::sso_message_id},
+	runtime::{AnnouncedPairing, SsoAccountHolderService, sso_remote::sso_message_id},
 	store::{Db, core_db_config},
 };
 
@@ -383,6 +381,18 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_amount_issue(&intent, amount, spendable)
 	}
 
+	/// Show the screen funding session `intent`'s provider asked for, after
+	/// `provider_frame_requested`. Answers whether one was waiting.
+	pub fn open_provider_frame(&self, intent: String) -> bool {
+		self.runtime.open_provider_frame(&intent)
+	}
+
+	/// Whether funding session `intent`'s provider waits for its screen to be
+	/// opened, so the host can show the notice again after redrawing.
+	pub fn funding_frame_waiting(&self, intent: String) -> bool {
+		self.runtime.funding_frame_waiting(&intent)
+	}
+
 	/// Funding session `intent`'s latest quote list, while its overlay is up.
 	pub fn funding_quotes(&self, intent: String) -> Option<crate::platform::FundingQuoteList> {
 		self.runtime.funding_quotes(&intent)
@@ -394,14 +404,13 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_entries()
 	}
 
-	/// Offer the funding providers the remote configuration names, then the
-	/// `bundled` ones; see [`SigningHostRuntime::set_funding_provider_config`].
+	/// Offer the funding providers the remote configuration names; see
+	/// [`SigningHostRuntime::set_funding_provider_config`].
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
 	) -> Result<(), HostRejection> {
-		Ok(self.runtime.set_funding_provider_config(published_names, bundled)?)
+		Ok(self.runtime.set_funding_provider_config(published_names)?)
 	}
 
 	/// Every ended funding session, as summaries newest first. The host
@@ -955,27 +964,16 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.run_durable_recovery().await
 	}
 
-	/// Answer one decrypted SSO remote message from a wallet-managed
-	/// statement-store session.
-	///
-	/// `message` is one SCALE-encoded `RemoteMessage` exactly as decrypted from
-	/// the session statement. The bytes are deliberately opaque at this
-	/// boundary: the wallet forwards wire encodings verbatim and never
-	/// constructs them. Session control and transport stay with the wallet —
-	/// `Disconnected` is reported, never handled here. Confirmation-gated
-	/// requests await `confirm_user_action`, so this can take arbitrarily long.
-	///
-	/// A `Cancel` withdraws the request it names and returns at once. It
-	/// reaches a running request only if the wallet passes it on as it
-	/// arrives; queued behind that request it arrives too late to stop it.
-	/// The withdrawn request, and the `Cancel` itself, answer `Ignored`.
-	pub async fn handle_sso_request(
+	/// Bind externally owned SSO transport to its current wallet activation.
+	pub fn open_sso_service(
 		&self,
-		message: Vec<u8>,
-	) -> Result<SsoRequestOutcome, HostRejection> {
-		let message =
-			decode_remote_message(&message).map_err(|reason| HostRejection::Rejected { reason })?;
-		Ok(self.runtime.answer_sso_request(message).await)
+		own_statement_account_id: Bytes32,
+		own_encryption_public_key: Bytes32,
+	) -> Result<Arc<SsoAccountHolderService>, HostRejection> {
+		self.runtime
+			.open_sso_service(own_statement_account_id, own_encryption_public_key)
+			.map(Arc::new)
+			.map_err(|error| HostRejection::Rejected { reason: error.to_string() })
 	}
 
 	/// Build the SCALE-encoded `Disconnected` message a wallet posts over a
@@ -1255,7 +1253,7 @@ impl NativeProductExecution {
 	/// card's newest face is also kept, so the card has it offline.
 	pub fn render(
 		&self,
-		request: v01::ProductRendererRenderRequest,
+		request: truapi::latest::ProductRendererRenderRequest,
 		observer: Arc<dyn NativeRendererObserver>,
 	) -> Result<Arc<NativeSubscription>, crate::ProductRuntimeError> {
 		self.require_renderer()?;
@@ -1287,7 +1285,7 @@ impl NativeProductExecution {
 	/// it until the product connection subscribes.
 	pub fn publish_renderer_action(
 		&self,
-		item: v01::HostRendererActionSubscribeItem,
+		item: truapi::latest::HostRendererActionSubscribeItem,
 	) -> Result<(), crate::ProductRuntimeError> {
 		self.require_renderer()?;
 		self.renderer_connection.publish(item.into())

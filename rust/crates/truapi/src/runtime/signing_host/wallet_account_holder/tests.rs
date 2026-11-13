@@ -1,7 +1,9 @@
 use super::*;
 use crate::{
-	Spawner, platform::HostInfo, runtime::signing_host::ring_vrf::ChainRingResolver,
-	test_support::StubPlatform,
+	Spawner,
+	platform::HostInfo,
+	runtime::signing_host::ring_vrf::ChainRingResolver,
+	test_support::{StubPlatform, test_stack},
 };
 use truapi::latest::DerivationIndex;
 
@@ -19,21 +21,13 @@ pub fn unlocked_wallet(
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		[0; 32],
-		[0; 32],
-		[0; 32],
+		test_stack(network_suffix, [0; 32], [0; 32], None),
 		Spawner::for_test(),
 	);
 	let registry = RingVrfRegistryStore::new(services.platform.clone());
 	let consent = Arc::new(ProductConsent::new(services.platform.clone()));
 	let ring_resolver = ChainRingResolver::new(services.chain.clone());
-	let wallet = WalletAccountHolder::new(
-		services,
-		network_suffix.to_string(),
-		consent,
-		ring_resolver,
-		registry,
-	);
+	let wallet = WalletAccountHolder::new(services, consent, ring_resolver, registry);
 	wallet.install(wallet.prepare_activation(vec![entropy; 32], None).unwrap());
 	wallet
 }

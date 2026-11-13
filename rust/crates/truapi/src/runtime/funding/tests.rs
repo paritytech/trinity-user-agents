@@ -597,6 +597,8 @@ impl FundingPlatform for ReentrantHost {
 
 	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
 
+	fn provider_frame_requested(&self, _provider: &ProductContext, _intent: String) {}
+
 	fn funding_session_changed(&self, intent: String, _status: HostFundingStatusSubscribeItem) {
 		let registry = self.registry.get().and_then(Weak::upgrade).expect("registry alive");
 		// Calling back while the lock is held would hang, so that is
@@ -692,6 +694,8 @@ impl FundingPlatform for SilentPlatform {
 	}
 
 	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+
+	fn provider_frame_requested(&self, _provider: &ProductContext, _intent: String) {}
 }
 
 /// A host feed that records each session it is told changed.
@@ -1060,12 +1064,49 @@ fn a_compaction_that_fails_to_store_keeps_every_session() {
 #[test]
 fn a_replaced_frame_leaves_its_successor_tracked() {
 	let registry = FundingRegistry::default();
-	let first = registry.track_frame("fs_1", worker("ramp.dot"));
-	let second = registry.track_frame("fs_1", worker("ramp.dot"));
+	let mut first = registry.request_frame("fs_1", worker("ramp.dot"));
+	let mut second = registry.request_frame("fs_1", worker("ramp.dot"));
+	assert_eq!(block_on(first.opened()), Some(FundingFrameOutcome::Dismissed));
+	assert!(registry.open_frame("fs_1"));
+	assert_eq!(block_on(second.opened()), None);
 	drop(first);
-	let tracked = lock(&registry.frames).contains_key("fs_1");
+	let tracked = registry.frame_open("fs_1");
 	drop(second);
-	assert_eq!((tracked, lock(&registry.frames).contains_key("fs_1")), (true, false));
+	assert_eq!((tracked, registry.frame_open("fs_1")), (true, false));
+}
+
+// A frame asked for once the payment moved is answered at once, so the
+// worker never waits on a screen the host will not open.
+#[test]
+fn a_frame_asked_for_after_the_payment_moved_is_closed_at_once() {
+	let registry = registry_on(&open_memory_core_db());
+	insert(
+		&registry,
+		FundingSession {
+			stage: FundingStage::Failed { reason: FundingFailure::Declined, settled_at_ms: NOW },
+			..session("fs_1", NOW)
+		},
+	);
+	let mut frame = registry.request_frame("fs_1", worker("ramp.dot"));
+
+	assert_eq!(
+		futures::FutureExt::now_or_never(frame.opened()),
+		Some(Some(FundingFrameOutcome::Closed))
+	);
+	assert!(!registry.frame_waiting("fs_1"));
+}
+
+// A worker that closes its frame after the host opened it, but before the
+// worker presented it, shows nothing.
+#[test]
+fn a_frame_closed_before_it_is_presented_shows_nothing() {
+	let registry = FundingRegistry::default();
+	let mut frame = registry.request_frame("fs_1", worker("ramp.dot"));
+	assert!(registry.open_frame("fs_1"));
+	assert!(registry.close_open_frame("fs_1"));
+
+	assert_eq!(block_on(frame.opened()), Some(FundingFrameOutcome::Closed));
+	assert!(!registry.frame_open("fs_1"));
 }
 
 // A cancel that moved no money is left out of history, yet its summary still
@@ -1082,4 +1123,27 @@ fn an_unmoved_cancel_leaves_history_but_keeps_its_summary() {
 	);
 	block_on(registry.sweep(NOW + 1)).expect("swept");
 	assert_eq!((registry.history().len(), registry.summary("fs_1").is_some()), (0, true));
+}
+
+// A provider that takes a session while its overlay is still up, as the
+// core's start on the best quote does, is announced: the host learns the
+// session started rather than treating it as one the user left unstarted.
+#[test]
+fn a_session_assigned_under_its_overlay_is_announced() {
+	let registry = registry_on(&open_memory_core_db());
+	let feed = Arc::new(RecordingFeed::default());
+	assert!(registry.install_platform(Arc::new(SilentPlatform)));
+	registry.install_feed(feed.clone());
+	block_on(registry.present(NOW, session("fs_1", NOW))).expect("presented");
+	feed.clear();
+
+	let assigned = block_on(registry.select_provider(
+		NOW,
+		"fs_1",
+		&ProductId::for_test("ramp.dot"),
+		crate::host_logic::funding::test_choice(),
+	))
+	.expect("assigned");
+
+	assert_eq!((assigned, feed.sessions("fs_1")), (true, 1));
 }

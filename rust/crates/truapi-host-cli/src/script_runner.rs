@@ -27,20 +27,13 @@ use crate::{
 	terminal_ui::{self, SystemEvent, UiHandle},
 };
 
-/// Host topology serving the product script.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Host topology serving the product script. Its `&'static str` form is the
+/// value of `TRUAPI_CLI_HOST_ROLE`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 pub enum ScriptHostRole {
 	PairingHost,
 	SigningHost,
-}
-
-impl ScriptHostRole {
-	fn as_env_value(self) -> &'static str {
-		match self {
-			Self::PairingHost => "pairing-host",
-			Self::SigningHost => "signing-host",
-		}
-	}
 }
 
 /// Runner bundle shipped next to the binary in a release archive. It has
@@ -251,7 +244,7 @@ fn command(
 		.env("TRUAPI_FRAME_URL", frame_url)
 		.env("TRUAPI_PRODUCT_ID", product_id.as_str())
 		.env("TRUAPI_SCRIPT", &script)
-		.env("TRUAPI_CLI_HOST_ROLE", host_role.as_env_value());
+		.env("TRUAPI_CLI_HOST_ROLE", <&str>::from(host_role));
 	Ok(command)
 }
 

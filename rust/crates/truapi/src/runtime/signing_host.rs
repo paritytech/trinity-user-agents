@@ -4,13 +4,11 @@
 
 mod local_activation;
 pub mod ring_vrf;
-mod sso_service;
 mod wallet_account_holder;
 
 use std::sync::Arc;
 
 pub use local_activation::LocalActivation;
-pub use sso_service::SigningHostSsoService;
 #[cfg(not(target_arch = "wasm32"))]
 use wallet_account_holder::StatementRenewalError;
 #[cfg(not(target_arch = "wasm32"))]
@@ -30,12 +28,13 @@ use super::{
 	host_grants::{HostGrantGuard, HostGrantStore},
 	product_consent::ProductConsent,
 	ring_vrf_registry::RingVrfRegistryStore,
+	sso_responder_service::SsoResponderService,
 	validate_vrf_transcript,
 };
 use crate::{
 	host_internal::sso_messages::{OnExistingAllowancePolicy, ProductRequest, RingVrfError},
 	host_logic::session::{SessionInfo, SessionState},
-	runtime::{auth_state::AuthStateMachine, sso_service::SsoWithdrawals, statement_allowance},
+	runtime::{auth_state::AuthStateMachine, statement_allowance},
 };
 use futures::StreamExt;
 use ring_vrf::{ChainRingResolver, RingResolver};
@@ -66,8 +65,7 @@ pub struct SigningHost {
 	grants: HostGrantStore,
 	/// Durable RFC-0024 registry, scoped by the active wallet root.
 	ring_vrf_registry: Arc<RingVrfRegistryStore>,
-	/// Paired-host requests the pairing host can still withdraw.
-	sso_withdrawals: SsoWithdrawals,
+	sso_responder: Arc<SsoResponderService>,
 	/// Keep preimage submissions in the core instead of the Bulletin chain,
 	/// also implied by unchecked allowance grants.
 	#[cfg(feature = "test-host")]
@@ -77,15 +75,14 @@ pub struct SigningHost {
 }
 
 impl SigningHost {
-	/// Build a locked signing host for the network's dotNS suffix.
-	pub fn new(services: Arc<RuntimeServices>, network_suffix: String) -> Arc<Self> {
+	/// Build a locked signing host for the stack `services` runs.
+	pub fn new(services: Arc<RuntimeServices>) -> Arc<Self> {
 		let ring_resolver = ChainRingResolver::new(services.chain.clone());
-		Self::with_ring_resolver(services, network_suffix, ring_resolver)
+		Self::with_ring_resolver(services, ring_resolver)
 	}
 
 	fn with_ring_resolver(
 		services: Arc<RuntimeServices>,
-		network_suffix: String,
 		ring_resolver: Arc<dyn RingResolver>,
 	) -> Arc<Self> {
 		let platform = services.platform.clone();
@@ -93,13 +90,13 @@ impl SigningHost {
 		let consent = Arc::new(ProductConsent::new(platform.clone()));
 		let wallet = Arc::new(WalletAccountHolder::new(
 			services.clone(),
-			network_suffix,
 			consent.clone(),
 			ring_resolver,
 			ring_vrf_registry.clone(),
 		));
 		Arc::new(Self {
-			services,
+			services: services.clone(),
+			sso_responder: SsoResponderService::new(services, wallet.clone(), consent.clone()),
 			auth_state: AuthStateMachine::new(platform.clone()),
 			consent,
 			grants: HostGrantStore::new(
@@ -109,7 +106,6 @@ impl SigningHost {
 			),
 			wallet,
 			ring_vrf_registry,
-			sso_withdrawals: Default::default(),
 			#[cfg(feature = "test-host")]
 			submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
 			#[cfg(not(target_arch = "wasm32"))]
@@ -151,22 +147,20 @@ impl SigningHost {
 				version: None,
 				platform: truapi::latest::HostPlatform::Unknown,
 			},
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			crate::test_support::test_stack(
+				TEST_NETWORK_SUFFIX,
+				[0; 32],
+				[0xbb; 32],
+				Some([0xcc; 32]),
+			),
 			crate::Spawner::for_test(),
 		);
-		Self::with_ring_resolver(services, TEST_NETWORK_SUFFIX.to_string(), ring_resolver)
+		Self::with_ring_resolver(services, ring_resolver)
 	}
 
-	/// The wallet that answers this host's paired peers.
-	pub fn wallet(&self) -> &Arc<WalletAccountHolder> {
-		&self.wallet
-	}
-
-	/// Paired-host requests the pairing host can still withdraw.
-	pub fn sso_withdrawals(&self) -> &SsoWithdrawals {
-		&self.sso_withdrawals
+	/// Incoming SSO for this host's wallet, answered by its runtime.
+	pub fn sso_responder(&self) -> Arc<SsoResponderService> {
+		self.sso_responder.clone()
 	}
 
 	/// Clear one product's grants and Allow once answers.

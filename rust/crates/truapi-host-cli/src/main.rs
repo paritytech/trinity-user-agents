@@ -28,6 +28,7 @@ mod network;
 mod platform;
 mod pocket;
 mod product_config;
+mod profile;
 mod qr_scanner;
 mod register_name;
 mod scanner;
@@ -90,7 +91,7 @@ use crate::{
 	},
 	signing_shell::{
 		ApprovalCommand, DeviceCommand, FundingCommand, HELP_TEXT, PAIRING_HELP_TEXT, PairCommand,
-		ProductCommand, ScriptCommand, SessionCommand, ShellCommand, parse_command,
+		ProductCommand, ProfileCommand, ScriptCommand, SessionCommand, ShellCommand, parse_command,
 	},
 	terminal_ui::{
 		ActiveTerminalUi, ActivityState, DriveResult, PairingImageInput, SystemEvent, TerminalUi,
@@ -157,19 +158,8 @@ enum LogLevel {
 }
 
 impl LogLevel {
-	const fn as_filter(self) -> &'static str {
-		match self {
-			Self::Error => "error",
-			Self::Warn => "warn",
-			Self::Info => "info",
-			Self::Debug => "debug",
-			Self::Trace => "trace",
-		}
-	}
-
 	fn scoped_filter(self) -> String {
-		let level = self.as_filter();
-		format!("warn,truapi={level},truapi_host={level}")
+		format!("warn,truapi={self},truapi_host={self}")
 	}
 }
 
@@ -1319,9 +1309,7 @@ async fn run_pairing_host(
 	let config = PairingHostConfig::new(
 		host_info("Headless Pairing Host"),
 		platform_info(),
-		network.genesis().people,
-		network.genesis().bulletin,
-		network.genesis().asset_hub,
+		network.core_stack().context("invalid stack")?,
 		DEEPLINK_SCHEME.to_string(),
 	)
 	.context("invalid pairing host config")?;
@@ -1870,10 +1858,7 @@ fn build_signing_runtime(
 	let config = SigningHostConfig::new(
 		host_info("Headless Signing Host"),
 		platform_info(),
-		network.genesis().people,
-		network.genesis().bulletin,
-		network.genesis().asset_hub,
-		network.tld().to_string(),
+		network.core_stack().context("invalid stack")?,
 	)
 	.context("invalid signing host config")?;
 	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
@@ -3548,6 +3533,7 @@ async fn pairing_interactive_loop(
 			ShellCommand::Devices(_) |
 			ShellCommand::Approval(_) |
 			ShellCommand::Session(_) |
+			ShellCommand::Profile(_) |
 			ShellCommand::Renew |
 			ShellCommand::Funding(_) => {
 				ui.error("command is only available on the signing host");
@@ -3965,6 +3951,7 @@ async fn execute_interactive_operation(
 			let done = run_funding(&session.runtime, command).await?;
 			ui.success(done, None);
 		},
+		ShellCommand::Profile(command) => run_profile_command(session, command).await?,
 		ShellCommand::Login => bail!("/login is only available on the pairing host"),
 		ShellCommand::Logout => bail!("/logout is only available on the pairing host"),
 		ShellCommand::Product(_) | ShellCommand::Devices(_) | ShellCommand::Approval(_) => {
@@ -4109,8 +4096,34 @@ async fn execute_non_interactive_command(
 			let done = run_funding(&session.runtime, command).await?;
 			terminal_ui::output_success(done, None);
 		},
+		ShellCommand::Profile(command) => run_profile_command(session, command).await?,
 	}
 	Ok(None)
+}
+
+async fn run_profile_command(session: &SigningHostSession, command: ProfileCommand) -> Result<()> {
+	let output = match command {
+		ProfileCommand::Current => {
+			let (_, username) = profile_identity(session)?;
+			profile::read(&session.runtime, username).await?
+		},
+		ProfileCommand::Get(username) => profile::read(&session.runtime, &username).await?,
+		ProfileCommand::Upload(path) => {
+			let (signer, username) = profile_identity(session)?;
+			profile::upload(&session.runtime, &session.network, &signer.entropy, username, &path)
+				.await?
+		},
+	};
+	terminal_ui::output_info(output);
+	Ok(())
+}
+
+fn profile_identity(session: &SigningHostSession) -> Result<(&ResolvedSigner, &str)> {
+	session
+		.signer
+		.as_ref()
+		.and_then(|signer| signer.lite_username.as_deref().map(|username| (signer, username)))
+		.context("no active identity username; select an existing identity with /session <name>")
 }
 
 fn select_script_to_edit(
@@ -4240,6 +4253,8 @@ fn default_base_path() -> PathBuf {
 
 #[cfg(test)]
 mod cli_tests {
+	mod profile_tests;
+
 	use super::*;
 	use crate::frame_server::ProductRuntimeFactory;
 	use parity_scale_codec::Encode;
@@ -4801,7 +4816,6 @@ mod cli_tests {
 
 		assert_eq!(before.log_level, Some(LogLevel::Trace));
 		assert_eq!(after.log_level, Some(LogLevel::Trace));
-		assert_eq!(LogLevel::Trace.as_filter(), "trace");
 		assert_eq!(LogLevel::Trace.scoped_filter(), "warn,truapi=trace,truapi_host=trace");
 	}
 

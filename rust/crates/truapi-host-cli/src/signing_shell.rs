@@ -19,6 +19,17 @@ pub enum ProductCommand {
 	Switch(ProductId),
 }
 
+/// Operation selected through `/profile`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProfileCommand {
+	/// Read the active identity's public profile.
+	Current,
+	/// Read another username's public profile.
+	Get(String),
+	/// Publish an image as the active identity's avatar.
+	Upload(PathBuf),
+}
+
 /// Operation selected through `/devices`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DeviceCommand {
@@ -187,6 +198,8 @@ pub enum ShellCommand {
 	Log(LogLevel),
 	/// Inspect or switch the product used by scripts and frame connections.
 	Product(ProductCommand),
+	/// Read a public profile or publish the active identity's avatar.
+	Profile(ProfileCommand),
 	/// Inspect, list, or switch the active persistent session.
 	Session(SessionCommand),
 	/// Renew tracked statement-store allowances for the current period.
@@ -232,6 +245,20 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, CommandParseError> {
 		.split_once(char::is_whitespace)
 		.map_or((input, ""), |(name, argument)| (name, argument.trim()));
 	match name {
+		"/profile" => {
+			let arguments = shlex::split(argument).ok_or("invalid /profile quoting")?;
+			let command = match arguments.as_slice() {
+				[] => ProfileCommand::Current,
+				[operation, path] if operation == "upload" && !path.is_empty() => {
+					ProfileCommand::Upload(PathBuf::from(path))
+				},
+				[username] if username != "upload" && !username.is_empty() => {
+					ProfileCommand::Get(username.clone())
+				},
+				_ => return Err("usage: /profile [<username> | upload <image>]".into()),
+			};
+			Ok(ShellCommand::Profile(command))
+		},
 		"/pair" => {
 			if argument.is_empty() {
 				return Ok(ShellCommand::Pair(PairCommand::Scan));
@@ -429,6 +456,7 @@ const SIGNING_COMMANDS: &[(&str, &str)] = &[
 	("/session", "show, switch, or clear sessions"),
 	("/renew", "renew statement-store allowances now"),
 	("/funding", "list funding sessions and history, or cancel one"),
+	("/profile", "read a public profile or upload your avatar"),
 	("/help", "show commands and keyboard shortcuts"),
 	("/clear", "clear the visible transcript"),
 	("/copy", "copy the transcript to the clipboard"),
@@ -472,6 +500,30 @@ fn completions_for_scope(
 	session_names: &[String],
 	scope: CommandScope,
 ) -> Vec<Completion> {
+	if scope == CommandScope::SigningHost &&
+		let Some(argument) = input.strip_prefix("/profile ")
+	{
+		if let Some(path) = argument.strip_prefix("upload ") {
+			let arguments = shlex::split(path);
+			let path = match arguments.as_deref() {
+				Some([path]) => path,
+				_ => path,
+			};
+			return path_completions(path, "/profile upload")
+				.into_iter()
+				.filter_map(|mut completion| {
+					let path = completion.value.strip_prefix("/profile upload ")?;
+					completion.value = format!("/profile upload {}", shlex::try_quote(path).ok()?);
+					Some(completion)
+				})
+				.collect();
+		}
+		return fixed_argument_completions(
+			"/profile",
+			argument,
+			&[("upload", "publish an image as your avatar")],
+		);
+	}
 	if let Some(path) = input.strip_prefix("/script ") {
 		if let Some(path) = path.strip_prefix("--new ") {
 			return path_completions(path, "/script --new");
@@ -894,6 +946,9 @@ pub const HELP_TEXT: &str = "\
 /log <level>            set error, warn, info, debug, or trace
 /product                show the current product
 /product <id>           switch product and reconnect product clients
+/profile                show the active identity's public ProfileRecord
+/profile <username>     show a username's public ProfileRecord
+/profile upload <image> upload an image and publish it as your avatar
 /session                show the current session and path
 /session <name>         restore or provision a session; retry unfinished setup
 /session --mnemonic \"<phrase>\" import an existing signer as its username session

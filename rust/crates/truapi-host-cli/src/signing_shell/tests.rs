@@ -5,6 +5,47 @@ const MNEMONIC: &str =
 const DEVICE_ID: &str = "0101010101010101010101010101010101010101010101010101010101010101";
 
 #[test]
+fn profile_commands_distinguish_reads_from_uploads_and_preserve_quoted_paths() {
+	assert_eq!(
+		[
+			"/profile",
+			"/profile alice.01",
+			r#"/profile upload "pictures/my avatar.png""#,
+			"/profile upload"
+		]
+		.map(parse_command),
+		[
+			Ok(ShellCommand::Profile(ProfileCommand::Current)),
+			Ok(ShellCommand::Profile(ProfileCommand::Get("alice.01".to_string()))),
+			Ok(ShellCommand::Profile(ProfileCommand::Upload(PathBuf::from(
+				"pictures/my avatar.png"
+			)))),
+			Err("usage: /profile [<username> | upload <image>]".into()),
+		]
+	);
+}
+
+#[test]
+fn profile_completion_can_continue_inside_a_quoted_directory() {
+	let directory = tempfile::tempdir().expect("create image directory");
+	let pictures = directory.path().join("my pictures");
+	fs::create_dir(&pictures).expect("create pictures directory");
+	let avatar = pictures.join("avatar.png");
+	fs::write(&avatar, []).expect("create image path");
+	let input = format!("/profile upload {}/my", directory.path().display());
+	let directories = completions_for_scope(&input, &[], CommandScope::SigningHost);
+	let images = completions_for_scope(&directories[0].value, &[], CommandScope::SigningHost);
+
+	assert_eq!(
+		images
+			.iter()
+			.map(|completion| parse_command(&completion.value))
+			.collect::<Vec<_>>(),
+		vec![Ok(ShellCommand::Profile(ProfileCommand::Upload(avatar)))]
+	);
+}
+
+#[test]
 fn script_actions_preserve_paths_with_spaces_and_option_like_filenames() {
 	let inputs = [
 		"/script",

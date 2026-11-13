@@ -513,6 +513,14 @@ impl FundingPlatform for CliFundingHost {
 		Ok(outcome)
 	}
 
+	// The terminal user always looks at the session, so a provider's screen
+	// opens as soon as it is asked for, and its link prints at once.
+	fn provider_frame_requested(&self, _provider: &ProductContext, intent: String) {
+		if let Some(runtime) = self.runtime.upgrade() {
+			runtime.open_provider_frame(&intent);
+		}
+	}
+
 	fn close_provider_frame(&self, provider: &ProductContext, intent: String) {
 		answer_frame(&intent, FundingFrameOutcome::Closed);
 		self.transcript.record(serde_json::json!({
