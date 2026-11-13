@@ -993,7 +993,7 @@ impl Notifications for MockPlatform {
 pub fn mock_stack(
 	people: truapi::Bytes32,
 	bulletin: truapi::Bytes32,
-	asset_hub: Option<truapi::Bytes32>,
+	asset_hub: truapi::Bytes32,
 ) -> crate::platform::Stack {
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
 	crate::platform::Stack::new("mock".to_string(), "paseo".to_string(), chains, false)
@@ -1016,7 +1016,7 @@ pub mod mock_genesis {
 	/// The stack a mock host runs: [`super::mock_stack`] over the three mock
 	/// chains.
 	pub fn stack() -> crate::platform::Stack {
-		super::mock_stack(PEOPLE, BULLETIN, Some(ASSET_HUB))
+		super::mock_stack(PEOPLE, BULLETIN, ASSET_HUB)
 	}
 }
 

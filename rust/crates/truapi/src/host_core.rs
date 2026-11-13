@@ -768,15 +768,6 @@ impl SigningHostRuntime {
 		if let Some(contacts_platform) = contacts_platform {
 			services.install_contacts_platform(contacts_platform);
 		}
-		if services.asset_hub_chain_genesis_hash().is_none() {
-			// Said once at startup because the refusals themselves are
-			// indistinguishable from an ungranted read. Only as visible as the
-			// host's log level, which defaults to `ERROR`.
-			warn!(
-				"the stack has no Asset Hub: no product manifest will resolve, so \
-                 every cross-product grant not already cached is refused"
-			);
-		}
 		let signing_host = SigningHostRole::new(services.clone());
 		Self {
 			image_loader: crate::image_loader::ImageLoader::new(
@@ -1619,10 +1610,6 @@ fn durable_registry(
 	use crate::nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers};
 
 	let registry = crate::durable::DurableRegistry::new();
-	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
-		tracing::warn!("no Asset Hub genesis configured, NFT transfers are off");
-		return registry;
-	};
 	let Some(encrypted) = services.encrypted_storage() else {
 		tracing::warn!("no encrypted storage set, NFT transfers are off");
 		return registry;
@@ -1631,7 +1618,7 @@ fn durable_registry(
 	let deps = ScarcityTransfersDeps {
 		storage: chain.clone(),
 		heads: chain,
-		genesis: genesis.into(),
+		genesis: services.asset_hub_chain_genesis_hash().into(),
 		signer,
 		imported: ImportedSecretStore::new(encrypted),
 		extrinsics: services.extrinsics.clone(),
@@ -1640,19 +1627,15 @@ fn durable_registry(
 }
 
 /// Starts tracking what NFT item keys hold on Asset Hub, which runs the
-/// Scarcity pallet. Without an Asset Hub genesis there is nothing to track.
+/// Scarcity pallet.
 #[cfg(not(target_arch = "wasm32"))]
 fn start_holding_tracker(services: &RuntimeServices, ledger: crate::nft::NftLedger) {
 	use crate::nft::{HoldingTracker, HoldingTrackerDeps};
 
-	let Some(genesis) = services.asset_hub_chain_genesis_hash() else {
-		tracing::warn!("no Asset Hub genesis configured, NFT holdings are not tracked");
-		return;
-	};
 	let tracker = HoldingTracker::start(HoldingTrackerDeps {
 		ledger,
 		storage: Arc::new(services.chain.clone()),
-		genesis: genesis.into(),
+		genesis: services.asset_hub_chain_genesis_hash().into(),
 		spawner: services.spawner.clone(),
 	});
 	services.install_holding_tracker(tracker);
