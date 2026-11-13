@@ -40,7 +40,7 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Tab-vs-SPA selection | `polkadot-app/Modules/MainTabBar/Container/TabBarContentSelection.swift` |
 | `hidesBottomBarWhenPushed` resolution | `polkadot-app/Modules/MainTabBar/Container/TabBarHiddenPolicy.swift` |
 | Re-tap behaviour | `polkadot-app/Modules/MainTabBar/Container/TabBarReselectionPolicy.swift` |
-| Scroll-to-top target search | `polkadot-app/Modules/MainTabBar/Container/TabBarScrollToTopLocator.swift` |
+| Main scroll view search (scroll-to-top, bottom pin) | `polkadot-app/Modules/MainTabBar/MainTabBarViewController.swift` (`UIView.mainScrollView`) |
 | Bottom chrome: bar, panels, fold, clearance | `polkadot-app/Modules/MainTabBar/Chrome/TabBarBottomChromeController.swift` |
 | Chrome apply input | `polkadot-app/Modules/MainTabBar/Chrome/TabBarChromeContext.swift` |
 | Passthrough hit testing | `polkadot-app/Modules/MainTabBar/Chrome/TabBarChromePassthroughView.swift` |
@@ -424,7 +424,7 @@ A tap on the selected tab is a re-tap. `TabBarReselectionPolicy.action(for:)` ch
 2. The navigation stack is deeper than its root: pop to root.
 3. Otherwise: scroll to top.
 
-Scroll-to-top fires only at the tab root, so returning from a detail screen keeps the root's scroll position. `TabBarScrollToTopLocator` picks the scroll view by visible area, then vertical scrolling, then depth. A screen cannot nominate one.
+Scroll-to-top fires only at the tab root, so returning from a detail screen keeps the root's scroll position. `UIView.mainScrollView`, a private extension in `MainTabBarViewController.swift`, picks the scroll view by visible area, then vertical scrolling, then depth. A screen cannot nominate one.
 
 While an SPA is mounted, a tap on the selected tab switches back to the tab. It is not treated as a re-tap.
 
