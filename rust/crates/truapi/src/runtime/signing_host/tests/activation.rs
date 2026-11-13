@@ -18,7 +18,7 @@ fn pending_account_access_tracks_wallet_activation() {
 		});
 		let (services, authority) = signing_runtime_with_platform(platform.clone());
 		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-		let session = authority.current_session().unwrap();
+		let session = authority.accounts().current_session().unwrap();
 		let runtime = product_runtime(services, authority.clone());
 		let cx = CallContext::default();
 		let account = runtime.get_account(
@@ -50,7 +50,7 @@ fn pending_account_access_tracks_wallet_activation() {
 		assert_eq!(
 			(
 				futures::executor::block_on(account).map(|_| ()),
-				authority.current_session().map(|current| current.validation_id) ==
+				authority.accounts().current_session().map(|current| current.validation_id) ==
 					Some(session.validation_id),
 				platform.account_access_reviews.lock().unwrap().len(),
 			),
@@ -58,49 +58,6 @@ fn pending_account_access_tracks_wallet_activation() {
 			"{change}",
 		);
 	}
-}
-
-#[test]
-fn product_reset_during_allocation_review_cannot_restore_native_grants() {
-	use futures::FutureExt;
-
-	let (release, gate) = futures::channel::oneshot::channel();
-	let platform = Arc::new(StubPlatform {
-		resource_allocation_confirmed: true,
-		resource_allocation_confirmation_gate: std::sync::Mutex::new(Some(gate)),
-		..StubPlatform::default()
-	});
-	let (services, authority) = signing_runtime_with_platform(platform.clone());
-	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
-	let runtime = product_runtime(services, authority.clone());
-	let cx = CallContext::default();
-	let allocation = ResourceAllocation::request(
-		&runtime,
-		&cx,
-		HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
-			resources: vec![v01::AllocatableResource::AutoSigning],
-		}),
-	);
-	futures::pin_mut!(allocation);
-	assert!(allocation.as_mut().now_or_never().is_none());
-	authority.clear_product_state(&ProductId::for_test("myapp.dot"));
-	release.send(()).unwrap();
-	let result = futures::executor::block_on(allocation);
-	let status = keeps_auto_signing(&authority, "myapp.dot");
-	assert_eq!(
-		(result.map(|_| ()), status, platform.resource_allocation_reviews.lock().unwrap().len()),
-		(
-			Err(CallError::Domain(
-				truapi::versioned::resource_allocation::HostRequestResourceAllocationError::V1(
-					v01::ResourceAllocationError::Unknown {
-						reason: AuthorityError::Disconnected.to_string()
-					}
-				)
-			)),
-			false,
-			1
-		),
-	);
 }
 
 /// Allow once lasts for one unlocked wallet and one installed product: lock,

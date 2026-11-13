@@ -229,6 +229,11 @@ The core requests product worker transitions through `requestWorkerTransition`
 A native wallet that runs its own SSO transport opens one SSO service per peer with `openSsoService` and passes it each incoming message; `prepareDisconnectRequest` builds a wallet-initiated disconnect. The core binds each service to the wallet activation that authenticated the peer. The [iOS SDK guide](ios/truapi-host/README.md#sso-session-handling) gives the call sequence.
 See the core's [inter-host SSO design](rust/crates/truapi/RUNTIME.md#inter-host-sso)
 for typed handlers, canonical resource types, and consent bound to the signing session.
+
+`HostAccounts` serves every product account operation on both host roles: it checks access, confirms signing and allocation requests with the user, keeps the grants it was issued in its `HostGrantStore`, and signs with delegated keys. Wallet work sits behind an `AccountHolder`: `WalletAccountHolder` on a signing host, or `RemoteAccountHolder` on a paired host, which sends wallet operations to the phone; the phone confirms signing, transaction, VRF and allocation requests again. `RemoteAccountHolder` derives entropy and contact handles from the paired session itself and refuses exact statement proofs, which a paired host signs only with a kept AutoSigning key. One `ProductConsent` per runtime holds account-access decisions and runs their prompts. `PairingHost` and `SigningHost` build these parts for their role. `SigningHost` owns login, logout and the wallet lifecycle; on a paired host `SsoRequestService` owns login and the paired session, and `PairingHost` owns logout; see [runtime ownership and lifecycle](rust/crates/truapi/RUNTIME.md#the-two-roles).
+
+Each product connection is served by a `ProductRuntimeHost`, which combines `HostAccounts`, a `HostSession` (`SigningHost` or `SsoRequestService`) for login, disconnect and identity lookup, and a per-product `ProductConnection` for adapters, permissions and action streams.
+
 SSO session, responder identity and handshake payload structs zeroize their fields on drop; debug output redacts their secret fields.
 Product and SSO signing share canonical payloads and the one-byte `OptionBool`
 encoding for `with_signed_transaction`.
