@@ -1115,10 +1115,12 @@ impl SigningHostRuntime {
 		self.image_loader.load(reference).await
 	}
 
-	/// Keeps `text` on the device as a material and returns its ID. Plans
-	/// started after this draw it without Bulletin. Refused with its reason
-	/// when the core cannot read it, and as unsupported when the host draws no
-	/// materials or before the core services start over a core database.
+	/// Keeps `text` on the device as a material and returns its ID, for plans
+	/// started afterwards to draw without Bulletin. Keep before anything plans
+	/// the material: a fetch already under way for it is not answered. Refused
+	/// with its reason when the core cannot read it, and as unsupported when
+	/// the host draws no materials or before the core services start over a
+	/// core database.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub async fn keep_material(
 		&self,

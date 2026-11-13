@@ -6,7 +6,7 @@ use std::{
 	path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use futures::StreamExt;
 use truapi::{
@@ -19,6 +19,7 @@ use crate::{
 	platform::{ApprovalPolicy, CliPlatform},
 };
 
+/// The `materials` subcommands.
 #[derive(Subcommand)]
 pub enum MaterialsCommand {
 	/// Print the plan for each `Materials` node of a card face, until none is still loading.
@@ -58,12 +59,12 @@ pub async fn run(command: MaterialsCommand, network: &Stack) -> Result<()> {
 		print_plan(&plan);
 		if !plan.nodes.contains(&NodePlan::Loading) {
 			if let Some(out) = out {
-				write_shaders(&plan, &out, metal)?;
+				write_shaders(&plan, &out, language)?;
 			}
-			break;
+			return Ok(());
 		}
 	}
-	Ok(())
+	bail!("the plan ended while a node was still loading")
 }
 
 /// A runtime that draws materials, kept in their own database under `state`, apart from any
@@ -124,18 +125,23 @@ fn print_plan(plan: &MaterialPlan) {
 	}
 }
 
-fn write_shaders(plan: &MaterialPlan, out: &Path, metal: bool) -> Result<()> {
+fn write_shaders(plan: &MaterialPlan, out: &Path, language: ShaderLanguage) -> Result<()> {
 	fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
-	let (vertex, fragment) =
-		if metal { ("vertex.metal", "fragment.metal") } else { ("vert", "frag") };
+	let (vertex, fragment) = match language {
+		ShaderLanguage::Metal => ("vertex.metal", "fragment.metal"),
+		ShaderLanguage::GlslEs => ("vert", "frag"),
+	};
+	let write = |path: PathBuf, contents: &str| {
+		fs::write(&path, contents).with_context(|| format!("writing {}", path.display()))
+	};
 	for (index, node) in plan.nodes.iter().enumerate() {
 		let NodePlan::Ready { layers } = node else { continue };
 		for (number, layer) in layers.iter().enumerate() {
 			let name = format!("node{index}-layer{number}");
 			let shader = &layer.shader;
-			fs::write(out.join(format!("{name}.{vertex}")), &shader.vertex)?;
-			fs::write(out.join(format!("{name}.{fragment}")), &shader.fragment)?;
-			fs::write(out.join(format!("{name}.txt")), feeds(shader))?;
+			write(out.join(format!("{name}.{vertex}")), &shader.vertex)?;
+			write(out.join(format!("{name}.{fragment}")), &shader.fragment)?;
+			write(out.join(format!("{name}.txt")), &feeds(shader))?;
 		}
 	}
 	Ok(())
