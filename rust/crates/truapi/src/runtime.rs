@@ -665,6 +665,15 @@ impl ProductConnection {
 		self.renderer_failures.detach();
 	}
 
+	/// Buffer one report of a `Materials` node that fell back for this
+	/// connection's product.
+	pub fn publish_renderer_failure(
+		&self,
+		item: HostRendererFailureSubscribeItem,
+	) -> Result<(), crate::host_core::ProductRuntimeError> {
+		self.renderer_failures.publish(item)
+	}
+
 	/// Buffer one renderer action for this connection's product.
 	pub fn publish_renderer_action(
 		&self,

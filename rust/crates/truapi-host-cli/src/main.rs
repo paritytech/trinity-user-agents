@@ -1462,8 +1462,11 @@ async fn run_signing_host(
 		terminal_ui::output_event(SystemEvent::BridgeReady { url });
 	}
 	report_debugger(debugger.as_ref());
-	let runtime_for_frames =
-		tap_for_debugger(session.runtime_factory.clone(), debugger.map(|d| d.sink));
+	let runtime_factory: Arc<dyn frame_server::ProductRuntimeFactory> = match &session.pocket {
+		Some(pocket) => pocket::PocketFaces::new(session.runtime_factory.clone(), pocket.clone()),
+		None => session.runtime_factory.clone(),
+	};
+	let runtime_for_frames = tap_for_debugger(runtime_factory, debugger.map(|d| d.sink));
 
 	if let Some(script) = args.script {
 		let product_id = product.current();
@@ -1873,7 +1876,7 @@ fn build_signing_runtime(
 		approval,
 		ui,
 	);
-	let config = SigningHostConfig::new(
+	let mut config = SigningHostConfig::new(
 		host_info("Headless Signing Host"),
 		platform_info(),
 		network.genesis().people,
@@ -1882,6 +1885,8 @@ fn build_signing_runtime(
 		network.tld().to_string(),
 	)
 	.context("invalid signing host config")?;
+	// It draws nothing, but plans every face as a phone does, so products can test materials here.
+	config.materials_enabled = true;
 	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
 	let runtime = Arc::new(SigningHostRuntime::with_chat_platform(
 		platform.clone(),

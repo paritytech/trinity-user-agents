@@ -557,7 +557,9 @@ The Pocket phase runs its product as a Worker execution, the only execution
 Pocket is served to. It seeds the CLI's in-memory Pocket host from
 `TRUAPI_POCKET_CARDS` (`loyalty,humanity:privileged`), which is what makes one
 card removable and one privileged, and records every removal it is asked for in
-the transcript named by `TRUAPI_POCKET_LOG`. The cases read that transcript, so
+the transcript named by `TRUAPI_POCKET_LOG`. As the product connects, the host
+renders each card, plans the materials of every face, reports each fallback to
+the product and records each plan in the same transcript. The cases read that transcript, so
 a pass means the host and the product agree on what happened rather than
 resting on the product's word. The report lands at
 `explorer/diagnosis-reports/pocket/signing-host-cli.md` and feeds the explorer's
