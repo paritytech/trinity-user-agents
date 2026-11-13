@@ -14,6 +14,7 @@ use super::{
 	sso_remote::SsoRemoteResponseError,
 	sso_request_service::SsoRequestService,
 };
+use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::{
 	Spawner,
 	host_internal::{
@@ -153,8 +154,15 @@ impl AccountHolder for RemoteAccountHolder {
 		self.service.current_session()
 	}
 
-	fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError> {
-		require_current_session(&self.service.session_state(), session).map(|_| ())
+	fn session_state(&self) -> Arc<SessionState> {
+		self.service.session_state()
+	}
+
+	fn require_current_session(
+		&self,
+		session: &AuthoritySession,
+	) -> Result<SessionInfo, AuthorityError> {
+		require_current_session(&self.service.session_state(), session)
 	}
 
 	async fn product_subtree_public_key<'a>(

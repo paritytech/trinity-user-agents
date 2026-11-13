@@ -30,7 +30,7 @@ use crate::{
 			derive_ring_vrf_entropy_from_domain,
 		},
 		raw_signing::raw_payload_bytes,
-		session::{SessionInfo, SessionState},
+		session::SessionInfo,
 	},
 	platform::{
 		CrossProductSignatureKind, PermissionAuthorizationStatus, ProductContext, ProductId,
@@ -55,7 +55,6 @@ use zeroize::Zeroizing;
 pub struct HostAccounts<H: AccountHolder> {
 	services: Arc<RuntimeServices>,
 	holder: Arc<H>,
-	session_state: Arc<SessionState>,
 	grants: HostGrantStore,
 	ring_resolver: Arc<dyn RingResolver>,
 	ring_vrf_registry: Arc<RingVrfRegistryStore>,
@@ -101,7 +100,6 @@ impl<H: AccountHolder> HostAccounts<H> {
 	pub fn new(
 		services: Arc<RuntimeServices>,
 		holder: Arc<H>,
-		session_state: Arc<SessionState>,
 		ring_resolver: Arc<dyn RingResolver>,
 		ring_vrf_registry: Arc<RingVrfRegistryStore>,
 		consent: Arc<ProductConsent>,
@@ -113,11 +111,10 @@ impl<H: AccountHolder> HostAccounts<H> {
 			grants: HostGrantStore::new(
 				services.platform.clone(),
 				H::GRANT_KEEPING,
-				session_state.clone(),
+				holder.session_state(),
 			),
 			services,
 			holder,
-			session_state,
 			ring_resolver,
 			ring_vrf_registry,
 			consent,
@@ -145,7 +142,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		let session = {
 			let mut lifecycle = self.grants.lifecycle();
 			lifecycle.revoke_product(product_id);
-			self.session_state.current()
+			self.holder.session_state().current()
 		};
 		self.grants
 			.persistence()
@@ -181,13 +178,14 @@ impl<H: AccountHolder> HostAccounts<H> {
 		self.holder.current_session()
 	}
 
+	/// The grant guard, taken while `session` is still current, and that session.
 	fn hold_session(
 		&self,
 		session: &AuthoritySession,
-	) -> Result<HostGrantGuard<'_>, AuthorityError> {
+	) -> Result<(HostGrantGuard<'_>, SessionInfo), AuthorityError> {
 		let lifecycle = self.grants.lifecycle();
-		self.holder.require_current_session(session)?;
-		Ok(lifecycle)
+		let current = self.holder.require_current_session(session)?;
+		Ok((lifecycle, current))
 	}
 
 	fn hold_grant(
@@ -195,7 +193,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		session: &AuthoritySession,
 		revision: u64,
 	) -> Result<HostGrantGuard<'_>, AuthorityError> {
-		let lifecycle = self.hold_session(session)?;
+		let (lifecycle, _) = self.hold_session(session)?;
 		lifecycle.require_revision(revision)?;
 		Ok(lifecycle)
 	}
@@ -205,9 +203,8 @@ impl<H: AccountHolder> HostAccounts<H> {
 		&self,
 		session: &AuthoritySession,
 	) -> Result<(SessionInfo, u64), AuthorityError> {
-		let lifecycle = self.hold_session(session)?;
-		let session = self.session_state.current().ok_or(AuthorityError::Disconnected)?;
-		Ok((session, lifecycle.revision()))
+		let (lifecycle, current) = self.hold_session(session)?;
+		Ok((current, lifecycle.revision()))
 	}
 
 	/// Disclose an account only after the calling product may access it.
@@ -374,7 +371,7 @@ impl<H: AccountHolder> HostAccounts<H> {
 		connection: &ProductConnection,
 		request: api::HostRequestResourceAllocationRequest,
 	) -> Result<api::HostRequestResourceAllocationResponse, AuthorityError> {
-		let revision = self.hold_session(session)?.revision();
+		let revision = self.hold_session(session)?.0.revision();
 		let product = &connection.product;
 		let review = UserConfirmationReview::ResourceAllocation(ResourceAllocationReview {
 			calling_product_id: product.product_id.clone(),

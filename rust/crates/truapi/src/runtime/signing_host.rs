@@ -77,7 +77,6 @@ impl SigningHost {
 		let accounts = Arc::new(HostAccounts::new(
 			services.clone(),
 			wallet.clone(),
-			wallet.session_state(),
 			ring_resolver,
 			ring_vrf_registry,
 			consent.clone(),

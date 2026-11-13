@@ -568,8 +568,18 @@ pub trait AccountHolder: Send + Sync + 'static {
 	/// Current account-authority session, if connected.
 	fn current_session(&self) -> Option<AuthoritySession>;
 
-	/// Reject replacement of the originally selected wallet or paired channel.
-	fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError>;
+	/// The session this holder's operations run under, which the host keeps
+	/// its grants by.
+	fn session_state(&self) -> std::sync::Arc<SessionState>;
+
+	/// The selected session, still current.
+	///
+	/// Fails `Disconnected` once the originally selected wallet or paired
+	/// channel is replaced.
+	fn require_current_session(
+		&self,
+		session: &AuthoritySession,
+	) -> Result<SessionInfo, AuthorityError>;
 
 	/// Issue the grants of an explicit request the caller confirmed.
 	///

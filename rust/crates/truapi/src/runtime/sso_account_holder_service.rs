@@ -77,7 +77,7 @@ impl SsoAccountHolderService {
 
 	/// Require the activation that authenticated this peer.
 	pub fn require_current_session(&self) -> Result<(), AuthorityError> {
-		self.wallet.require_current_session(&self.session)
+		self.wallet.require_current_session(&self.session).map(drop)
 	}
 
 	/// Apply a withdrawal without waiting behind the request it cancels.

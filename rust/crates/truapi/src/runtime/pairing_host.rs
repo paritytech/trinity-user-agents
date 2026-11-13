@@ -52,7 +52,6 @@ impl PairingHost {
 					ring_vrf_registry.clone(),
 					services.spawner.clone(),
 				)),
-				service.session_state(),
 				ChainRingResolver::new(services.chain.clone()),
 				ring_vrf_registry,
 				Arc::new(ProductConsent::new(services.platform.clone())),

@@ -1,6 +1,9 @@
 //! Wallet account execution and access to other products' keys.
 
 use super::{WalletAccountHolder, WalletKeys, allowance::AllowanceAllocationError};
+use std::sync::Arc;
+
+use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::{
 	host_internal::{
 		extrinsic::{Sr25519Signer, build_signed_transaction, local_transaction_metadata},
@@ -272,12 +275,18 @@ impl AccountHolder for WalletAccountHolder {
 		Some(state.session(&session))
 	}
 
-	fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError> {
+	fn session_state(&self) -> Arc<SessionState> {
+		WalletAccountHolder::session_state(self)
+	}
+
+	fn require_current_session(
+		&self,
+		session: &AuthoritySession,
+	) -> Result<SessionInfo, AuthorityError> {
 		self.lifecycle
 			.lock()
 			.expect("wallet lifecycle mutex poisoned")
 			.require_session(self.session_state.current(), session)
-			.map(|_| ())
 	}
 
 	async fn allocate_grants<'a>(
