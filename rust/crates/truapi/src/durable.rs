@@ -35,7 +35,6 @@ pub use model::{
 	VerdictFailureKind, VerdictStatus,
 };
 pub use oracle::{
-	CompletionOracle, DurableRegistry, LedgerView, Monotone, MonotoneEffect, PassScope,
-	Unobservable,
+	CompletionOracle, DurableRegistry, LedgerView, PassScope, Unobservable,
 };
 pub use policy::{PolicyError, Preparation, SubmissionPolicy};
