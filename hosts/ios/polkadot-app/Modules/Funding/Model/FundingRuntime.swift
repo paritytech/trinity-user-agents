@@ -22,6 +22,9 @@ protocol FundingRuntime: AnyObject, Sendable {
     func confirmFundingCancel(intent: String, terms: CancelTerms?) async throws -> CancelConfirmation
     func fundingHistory() -> [FundingSessionSummary]
     @discardableResult
+    func openProviderFrame(intent: String) -> Bool
+    func fundingFrameWaiting(intent: String) -> Bool
+    @discardableResult
     func acknowledgeFundingSession(intent: String) async throws -> Bool
     func openFunding(direction: FundingDirection, amount: U128?) async throws -> String?
 }

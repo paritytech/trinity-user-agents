@@ -151,10 +151,24 @@ final class FundingService: FundingServiceProtocol, @unchecked Sendable {
     }
 
     func openProviderFrame(_ request: FundingFrameRequest) {
-        // Frame gating (#2057): call the core's `open_provider_frame(intent)` here, and route its
-        // `provider_frame_requested(provider_id, intent)` callback to `providerFrameRequested`
-        // below; until then the core presents frames through `present_provider_frame` unasked.
-        logger.debug("[funding] \(request.entryId): opening \(request.providerId)'s screen")
+        state.withLock { _ = $0.requestedFrames.remove(request.entryId) }
+        calls.run { [runtime, logger] in
+            guard !runtime.openProviderFrame(intent: request.entryId) else { return }
+
+            logger.debug("[funding] \(request.entryId): \(request.providerId) no longer waits to show a screen")
+        }
+    }
+
+    func waitingFrames() -> [FundingFrameRequest] {
+        let waiting = runtime.fundingEntries().compactMap { item -> FundingFrameRequest? in
+            guard let providerId = item.session.providerId,
+                  runtime.fundingFrameWaiting(intent: item.session.intent)
+            else { return nil }
+
+            return FundingFrameRequest(entryId: item.session.intent, providerId: providerId)
+        }
+        state.withLock { $0.requestedFrames.formUnion(waiting.map(\.entryId)) }
+        return waiting
     }
 
     func answer(frame: FundingFrame.ID, with outcome: FundingFrameOutcome) {
@@ -199,7 +213,7 @@ extension FundingService: FundingCoreEventHandling {
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 state.withLock { $0.frames[frame.id] = PendingFrame(entryId: intent, answer: continuation) }
-                eventSink.yield(.frameOpened(frame))
+                eventSink.yield(.presentFrame(frame))
             }
         } onCancel: {
             answer(frame: frame.id, with: .dismissed)
@@ -223,12 +237,14 @@ extension FundingService: FundingCoreEventHandling {
     /// A provider asks to show a screen; the app opens it when the user is
     /// looking at the session, or after a tap on a notice.
     func providerFrameRequested(intent: String, providerId: ProductId) {
+        state.withLock { _ = $0.requestedFrames.insert(intent) }
         eventSink.yield(.frameRequested(FundingFrameRequest(entryId: intent, providerId: providerId)))
     }
 
     func fundingChanged(intent: String, kind: FundingChangeKind) {
         switch kind {
         case .session:
+            withdrawFrameRequest(intent)
             startedWhenQuoted(intent)
             publish(intent)
             publishEntries()
@@ -290,9 +306,21 @@ private extension FundingService {
     struct State {
         var presentations: [String: Presentation] = [:]
         var frames: [FundingFrame.ID: PendingFrame] = [:]
+        /// Sessions whose provider asked for a screen the app has not opened.
+        var requestedFrames: Set<String> = []
         var quotes: [String: QuoteAsk] = [:]
         var entryFollowers: [String: [UUID: AsyncStream<FundingEntry>.Continuation]] = [:]
         var listFollowers: [UUID: AsyncStream<[FundingEntry]>.Continuation] = [:]
+    }
+
+    /// The core dropped the screen session `entryId`'s provider asked for, as
+    /// its payment moved or it ended: the notice about it goes.
+    func withdrawFrameRequest(_ entryId: String) {
+        let requested = state.withLock { $0.requestedFrames.contains(entryId) }
+        guard requested, !runtime.fundingFrameWaiting(intent: entryId) else { return }
+
+        state.withLock { _ = $0.requestedFrames.remove(entryId) }
+        eventSink.yield(.frameClosed(entryId: entryId))
     }
 
     func isPresenting(_ entryId: String) -> Bool {

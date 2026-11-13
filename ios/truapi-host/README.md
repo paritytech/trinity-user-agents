@@ -366,7 +366,11 @@ again, until the session is handed over or the overlay closes, and a new
 `getFundingQuote` replaces the ask), hand it to the chosen provider with
 `selectFundingProvider(intent:providerId:quoteId:)`, and only then answer
 `.started`. Answering `.dismissed` discards the session. A provider that needs
-one of its own screens asks through `presentProviderFrame`; whether the session
+one of its own screens asks first through `providerFrameRequested`; the core
+calls `presentProviderFrame` only once the host opened it with
+`openProviderFrame(intent:)`, at once while the user looks at the session or
+after a tap on a notice, and `fundingFrameWaiting(intent:)` says whether one
+still waits, so the notice can be shown again after redrawing. Whether the session
 waits on a transfer the user makes outside the frame is on its progress
 (`awaitsUserTransfer`). It is answered `.closed` when the screen closed itself or the core
 closed it because the payment moved, `.dismissed` when the user closed it and
@@ -385,7 +389,7 @@ says whether a session's overlay can be shown again. Ended sessions keep being
 handed over on each resume until the host records each with
 `acknowledgeFundingSession(intent:)`, which it calls only while the history is
 on screen. `setFundingProviderConfig(publishedNames:)` lists the providers the
-remote configuration names, on every refresh; amounts cross as decimal strings of CASH units. Free functions hold
+remote configuration names, without a TLD, on every refresh; amounts cross as decimal strings of CASH units. Free functions hold
 the rules both apps share: the `fundingPage*` checks
 for a provider's page, `productSource(...)` and `archiveFile(...)` for where a
 product runs from and which file answers a request, and
