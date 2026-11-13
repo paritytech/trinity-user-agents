@@ -7637,6 +7637,75 @@ fn feature_supported_encodes_response_to_known_bytes() {
 mod nft_purse;
 mod signing;
 
+/// A pairing host's `HostAccounts` holds a grantee's proof context to the same
+/// rule as a signing host: a third product's context needs that product's own
+/// `context` grant.
+///
+/// Driven at the pairing host's `HostAccounts`. The admitted case is
+/// asserted as "not refused by the gate", since the stub has no AutoSigning key
+/// or ring to finish the proof with; what it pins is that the context guard
+/// let it through.
+#[test]
+fn the_pairing_authority_admits_a_context_only_its_product_granted() {
+	let prove_in = |context_grants: &str| {
+		let (host_config, product) = runtime_config("dim2next.dot");
+		let platform = stub_platform();
+		cache_manifest(&platform, "peopl.dot", r#"{"dim2next":["context"]}"#, 0);
+		cache_manifest(&platform, "dim2.dot", context_grants, 0);
+		let platform: Arc<dyn Platform> = platform;
+		let services = RuntimeServices::new(
+			platform.clone(),
+			host_config.host.host_info.clone(),
+			host_config.stack.clone(),
+			Spawner::for_test(),
+		);
+		let pairing_host = PairingHost::new(services.clone(), host_config);
+		let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+		let host = ProductRuntimeHost::from_services(
+			services,
+			adapters,
+			pairing_host.accounts().clone(),
+			pairing_host.session().clone(),
+			product,
+		);
+		install_pairing_session(&host, session_info());
+		let session = pairing_host
+			.accounts()
+			.current_session()
+			.expect("the pairing host has an active session");
+		let mut cx = CallContext::default();
+		cx.set_timeout(Duration::from_millis(200));
+		futures::executor::block_on(pairing_host.accounts().create_proof(
+			&session,
+			&cx,
+			&ProductContext::new(ProductId::for_test("dim2next.dot")),
+			v01::HostAccountCreateProofRequest {
+				key_handle: v01::ProductAccountId {
+					dot_ns_identifier: ProductId::for_test("peopl.dot"),
+					derivation_index: v01::DerivationIndex::Index(0),
+				},
+				context: v01::ProductProofContext {
+					product_id: ProductId::for_test("dim2.dot"),
+					suffix: v01::DerivationIndex::Index(0),
+				},
+				ring_location: ring_location_fixture(),
+				message: b"prove me".to_vec(),
+			},
+		))
+	};
+
+	assert_ne!(
+		prove_in(r#"{"dim2next":["context"]}"#).err(),
+		Some(RingVrfError::NotAllowlisted),
+		"the context product's grant admits its context"
+	);
+	assert_eq!(
+		prove_in(r#"{"other":["context"]}"#).err(),
+		Some(RingVrfError::NotAllowlisted),
+		"a grant to another product admits nothing"
+	);
+}
+
 /// The grant lookup obeys the caller's deadline.
 ///
 /// It can reach dotNS on the Asset Hub, which is several sequential chain
