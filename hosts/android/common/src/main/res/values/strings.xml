@@ -181,6 +181,7 @@
 
     <string name="coinage_recovery_worker_notification_title">Confirming payments</string>
     <string name="coinage_recovery_worker_notification_message">Waiting for your recent payments to settle on chain</string>
+    <string name="worker_crashing_notice">%1$s stopped working. Retrying…</string>
     <string name="core_recovery_worker_notification_title">Confirming transactions</string>
     <string name="core_recovery_worker_notification_message">Waiting for your recent transactions to settle on chain</string>
 
@@ -1051,4 +1052,19 @@
     <string name="debug_report_capture_failed">Could not capture the app screen. Please try another screenshot.</string>
     <string name="debug_report_unavailable">Issue reporting is not configured for this build yet.</string>
     <string name="debug_report_too_large">The screenshot or logs are too large to send.</string>
+
+    <string name="funding_failure_above_maximum">Above the maximum</string>
+    <string name="funding_failure_below_minimum">Below the minimum</string>
+    <string name="funding_failure_cancelled">Cancelled</string>
+    <string name="funding_failure_declined">Payment declined</string>
+    <string name="funding_failure_expired">Expired</string>
+    <string name="funding_failure_failed">Failed · %1$s</string>
+    <string name="funding_failure_insufficient_balance">Not enough balance</string>
+    <string name="funding_failure_provider_timeout">Provider didn\'t respond</string>
+    <string name="funding_failure_refunded">Refunded</string>
+    <string name="funding_failure_region_unavailable">Not available in your region</string>
+    <string name="funding_failure_unknown">Something went wrong</string>
+    <string name="funding_failure_verification_refused">Verification declined</string>
+    <string name="funding_failure_verification_required">Verification needed</string>
+    <string name="funding_failure_wrong_asset_or_chain">Wrong asset or network</string>
 </resources>

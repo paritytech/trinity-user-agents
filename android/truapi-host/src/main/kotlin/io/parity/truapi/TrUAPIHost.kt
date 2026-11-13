@@ -101,6 +101,24 @@ import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
+import uniffi.truapi.CancelConfirmation
+import uniffi.truapi.CancelOutcome
+import uniffi.truapi.CancelTerms
+import uniffi.truapi.FundingAmountIssue
+import uniffi.truapi.FundingBookEntry
+import uniffi.truapi.FundingChangeKind
+import uniffi.truapi.FundingDirection
+import uniffi.truapi.FundingFrameOutcome
+import uniffi.truapi.FundingFrameTarget
+import uniffi.truapi.FundingOptions
+import uniffi.truapi.FundingPresentOutcome
+import uniffi.truapi.FundingProgress
+import uniffi.truapi.FundingQuoteList
+import uniffi.truapi.FundingSelection
+import uniffi.truapi.FundingSession
+import uniffi.truapi.FundingSessionSummary
+import uniffi.truapi.NativeFundingCallbacks
+import uniffi.truapi.U128
 import uniffi.truapi.HostPaymentException
 import uniffi.truapi.HostPaymentRequest
 import uniffi.truapi.HostPaymentStatusSubscribeException
@@ -798,6 +816,114 @@ private class ScannerCallbackAdapter(private val bridge: ScannerHostBridge) : Na
 }
 
 /**
+ * Native funding overlay. Install with [TrUAPIHostRuntime.setFunding], once,
+ * before any product execution opens. A runtime without one answers Funding
+ * requests with `Unsupported`.
+ *
+ * The session stays open in the core while [presentFunding] suspends, so
+ * quote it with [TrUAPIHostRuntime.getFundingQuote] and hand it over with
+ * [TrUAPIHostRuntime.selectFundingProvider] or
+ * [TrUAPIHostRuntime.startFundingWhenQuoted] before answering
+ * [FundingPresentOutcome.STARTED].
+ */
+interface FundingHostBridge {
+    /**
+     * Show the overlay for session [intent], opened by [productId] or by the
+     * host itself when `null`, on the screen [direction] names, and report
+     * whether the user started or dismissed it. [amount] is in CASH units.
+     */
+    @Throws(HostRejection::class)
+    suspend fun presentFunding(
+        productId: ProductId?,
+        intent: String,
+        direction: FundingDirection,
+        amount: U128?,
+    ): FundingPresentOutcome
+
+    /**
+     * Provider [providerId] asked to show a screen for session [intent]. The core holds it until the host calls
+     * [TrUAPIHostRuntime.openProviderFrame]: at once while the user looks at that session, otherwise once the user
+     * taps a notice that the provider wants to show something. Runs inline on the core's thread, so return promptly.
+     */
+    fun providerFrameRequested(providerId: ProductId, intent: String)
+
+    /**
+     * Show [target] for provider [providerId]'s session [intent] in a frame the host owns, and report how it
+     * closed. Called only once the host opened the request [providerFrameRequested] announced. A page is a checked https URL: show its origin, and answer [FundingFrameOutcome.Returned] when it
+     * reaches its return URL. What the frame shows around it, such as whether the user still has to send funds,
+     * comes from [TrUAPIHostRuntime.fundingProgress]. The core closes the frame through [closeProviderFrame] once
+     * the session's payment moved.
+     */
+    @Throws(HostRejection::class)
+    suspend fun presentProviderFrame(
+        providerId: ProductId,
+        intent: String,
+        target: FundingFrameTarget,
+    ): FundingFrameOutcome
+
+    /**
+     * Close the frame [presentProviderFrame] shows for provider [providerId]'s session [intent], answering that
+     * call [FundingFrameOutcome.Closed], and show the session sheet in its place. Does nothing when no frame is
+     * open for it. Runs inline on the core's thread, so return promptly.
+     */
+    fun closeProviderFrame(providerId: ProductId, intent: String)
+
+    /**
+     * The country the user is likely in, as an ISO 3166-1 alpha-2 code: the device's coarse location when
+     * already permitted, then its SIM or network country, then its locale's region. Never asks for a
+     * permission. `null` when nothing says.
+     */
+    suspend fun detectedCountry(): String?
+
+    /**
+     * Funding state the host reads back from [TrUAPIHostRuntime] changed: [kind] says what, [intent] which session,
+     * `null` for [FundingChangeKind.PROVIDERS]. The runtime already answers with the new state. Runs inline on the
+     * core's thread, so return promptly and read it back elsewhere.
+     */
+    fun fundingChanged(intent: String?, kind: FundingChangeKind) {}
+}
+
+private class FundingCallbackAdapter(private val bridge: FundingHostBridge) : NativeFundingCallbacks {
+    override suspend fun presentFunding(
+        productId: ProductId?,
+        intent: String,
+        direction: FundingDirection,
+        amount: U128?,
+    ): FundingPresentOutcome = withHostRejection { bridge.presentFunding(productId, intent, direction, amount) }
+
+    override suspend fun presentProviderFrame(
+        providerId: ProductId,
+        intent: String,
+        target: FundingFrameTarget,
+    ): FundingFrameOutcome = withHostRejection { bridge.presentProviderFrame(providerId, intent, target) }
+
+    // Infallible across the FFI, as `onCoreLog` is.
+    override fun providerFrameRequested(providerId: ProductId, intent: String) {
+        runCatching { bridge.providerFrameRequested(providerId, intent) }
+    }
+
+    // Infallible across the FFI, as `onCoreLog` is.
+    override fun closeProviderFrame(providerId: ProductId, intent: String) {
+        runCatching { bridge.closeProviderFrame(providerId, intent) }
+    }
+
+    // Infallible across the FFI: a host that cannot tell answers no country. A cancelled call stays cancelled.
+    override suspend fun detectedCountry(): String? =
+        try {
+            bridge.detectedCountry()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            null
+        }
+
+    // Infallible across the FFI, as `onCoreLog` is.
+    override fun fundingChanged(intent: String?, kind: FundingChangeKind) {
+        runCatching { bridge.fundingChanged(intent, kind) }
+    }
+}
+
+/**
  * Adapter from the public [GameHostBridge] surface to the generated UniFFI
  * [NativeGameCallbacks] interface.
  */
@@ -1000,6 +1126,138 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
         inner.notifyContactsChanged()
     }
 
+    // Co-owns the funding adapter for as long as the runtime holds it.
+    private var fundingRetainer: NativeFundingCallbacks? = null
+
+    /**
+     * Install the host's funding overlay. Set-once; returns whether this call
+     * installed it. Call it before opening any product execution.
+     */
+    fun setFunding(funding: FundingHostBridge): Boolean {
+        val adapter = FundingCallbackAdapter(funding)
+        fundingRetainer = adapter
+        return inner.setFundingCallbacks(adapter)
+    }
+
+    /**
+     * Open a funding session on the host's own behalf and show the overlay.
+     * Returns the session id, or `null` when the user dismissed it.
+     */
+    @Throws(HostRejection::class)
+    suspend fun openFunding(direction: FundingDirection, amount: U128? = null): String? =
+        inner.openFunding(direction, amount)
+
+    /** Whether the host offers any funding provider; [FundingChangeKind.PROVIDERS] says when it may have changed. */
+    fun fundingAvailable(): Boolean = inner.fundingAvailable()
+
+    /**
+     * Cancel session [intent] at the user's request, and say what that did. Once money has moved, a cancel is a request
+     * its provider answers with a refusal or an offer, which arrives on the session's `cancel`, read through
+     * [fundingSession] once [FundingHostBridge.fundingChanged] says it changed. [CancelOutcome.TOO_LATE] means the
+     * balance was already credited.
+     */
+    @Throws(HostRejection::class)
+    suspend fun cancelFunding(intent: String): CancelOutcome = inner.cancelFunding(intent)
+
+    /**
+     * Answer the provider's cancel offer on session [intent]: the [terms] the host showed to accept them, `null` to
+     * decline. Terms other than the open offer's answer `NO_OFFER`.
+     */
+    @Throws(HostRejection::class)
+    suspend fun confirmFundingCancel(intent: String, terms: CancelTerms?): CancelConfirmation =
+        inner.confirmFundingCancel(intent, terms)
+
+    /** Every ended funding session, as summaries newest first. Read it whenever the host shows history. */
+    fun fundingHistory(): List<FundingSessionSummary> = inner.fundingHistory()
+
+    /** Ended funding session [intent]'s summary, including a cancel that moved no money, which [fundingHistory] leaves out. */
+    fun fundingSummary(intent: String): FundingSessionSummary? = inner.fundingSummary(intent)
+
+    /** Whether funding session [intent] is still open, so its overlay can be shown again. */
+    fun fundingSessionOpen(intent: String): Boolean = inner.fundingSessionOpen(intent)
+
+    /** Record that the host told the user how ended session [intent] went. */
+    @Throws(HostRejection::class)
+    suspend fun acknowledgeFundingSession(intent: String): Boolean = inner.acknowledgeFundingSession(intent)
+
+    /** Funding session [intent] as the core holds it in full; `null` once only its summary is kept. */
+    fun fundingSession(intent: String): FundingSession? = inner.fundingSession(intent)
+
+    /** Funding session [intent]'s progress now, while the core holds it in full. */
+    fun fundingProgress(intent: String): FundingProgress? = inner.fundingProgress(intent)
+
+    /** What funding session [intent]'s overlay offers, while it is up. */
+    fun fundingOptions(intent: String): FundingOptions? = inner.fundingOptions(intent)
+
+    /**
+     * Why [amount] cannot go ahead in session [intent], if it cannot: more than [spendable] on a withdrawal, then
+     * what every provider's refusal of this amount said, then the amount limits its options show.
+     */
+    fun fundingAmountIssue(intent: String, amount: U128, spendable: U128?): FundingAmountIssue? =
+        inner.fundingAmountIssue(intent, amount, spendable)
+
+    /** Funding session [intent]'s latest quote list, while its overlay is up. */
+    fun fundingQuotes(intent: String): FundingQuoteList? = inner.fundingQuotes(intent)
+
+    /** Every funding session the core holds in full, with its progress now, newest opened first. */
+    fun fundingEntries(): List<FundingBookEntry> = inner.fundingEntries()
+
+    /**
+     * Offer the providers Remote Config lists by their published names, without a TLD. Call it on every configuration refresh: a call listing what
+     * the last one listed changes nothing.
+     */
+    @Throws(HostRejection::class)
+    fun setFundingProviderConfig(publishedNames: List<String>) {
+        inner.setFundingProviderConfig(publishedNames)
+    }
+
+    /**
+     * Show the screen session [intent]'s provider asked for through [FundingHostBridge.providerFrameRequested].
+     * Answers whether one was waiting.
+     */
+    fun openProviderFrame(intent: String): Boolean = inner.openProviderFrame(intent)
+
+    /** Whether session [intent]'s provider waits for its screen to be opened, to show the notice again after a redraw. */
+    fun fundingFrameWaiting(intent: String): Boolean = inner.fundingFrameWaiting(intent)
+
+    /**
+     * Ask every provider routing the selected rail to price [amount] for session [intent], on what
+     * [selectFundingOptions] last reported. The list is read through [fundingQuotes] once
+     * [FundingHostBridge.fundingChanged] says it changed, and is asked for again every minute until the session is
+     * handed to a provider, ends or leaves the overlay, or another amount or selection is asked; asking what the
+     * running request prices keeps it. Returns the request id the list carries, `null` while the selection names no
+     * asset or [amount] is zero.
+     */
+    fun getFundingQuote(intent: String, amount: U128): ULong? = inner.getFundingQuote(intent, amount)
+
+    /**
+     * Start session [intent] on the best quote of request [requestId] once every provider answered it, at once when
+     * they already have. A new quote request, selection, [cancelFundingAutoStart] or a list with no usable quote
+     * disarms it.
+     */
+    fun startFundingWhenQuoted(intent: String, requestId: ULong) {
+        inner.startFundingWhenQuoted(intent, requestId)
+    }
+
+    /** Disarm [startFundingWhenQuoted] for session [intent], as the user leaves its quotes. */
+    fun cancelFundingAutoStart(intent: String) {
+        inner.cancelFundingAutoStart(intent)
+    }
+
+    /**
+     * Report what the user picked so far in session [intent]'s overlay, whenever it changes. The countries and
+     * amount limits it leads to are read through [fundingOptions] once [FundingHostBridge.fundingChanged] says they
+     * changed. Ignored once the overlay has closed.
+     */
+    fun selectFundingOptions(intent: String, selection: FundingSelection) {
+        inner.selectFundingOptions(intent, selection)
+    }
+
+    /** Hand session [intent] to provider [providerId], on the quote [quoteId] the user chose it by. */
+    @Throws(HostRejection::class)
+    suspend fun selectFundingProvider(intent: String, providerId: ProductId, quoteId: String): Boolean =
+        inner.selectFundingProvider(intent, providerId, quoteId)
+
     // Co-own the payment adapters for as long as the runtime holds them.
     private var topUpRetainer: NativeTopUpCallbacks? = null
     private var paymentRetainer: NativePaymentCallbacks? = null
@@ -1095,6 +1353,17 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
      */
     fun releaseWorker(productId: ProductId) {
         inner.releaseWorker(productId)
+    }
+
+    /**
+     * Report that the product's worker stopped without the host asking: it
+     * crashed, its JS engine failed, or the system killed it. While references
+     * remain, a start transition follows through
+     * [HostBridge.requestWorkerTransition]. Not for a stop the host made after
+     * a stop transition.
+     */
+    fun workerExited(productId: ProductId) {
+        inner.workerExited(productId)
     }
 
     /**

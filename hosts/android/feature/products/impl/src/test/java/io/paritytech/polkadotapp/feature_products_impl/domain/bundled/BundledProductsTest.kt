@@ -50,7 +50,7 @@ private fun workerManifestJson(includes: String) =
     """{"${'$'}v":1,"kind":"worker","appVersion":[1,0,0],"entrypoint":"index.js","includes":$includes}"""
 
 class BundledProductsTest {
-    private val manifest = """{"${'$'}v":1,"kind":"worker","entrypoint":"index.js","includes":{"funding":{"routes":[]}}}"""
+    private val manifest = workerManifestJson("""{"funding":{"routes":[]}}""")
 
     private val files = mapOf(
         "bundled-products/provider.dot/manifest.json" to """{"${'$'}v":1,"displayName":"Provider","description":"Card top-ups","icon":{"cid":"bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy","format":"png"}}""",
@@ -62,6 +62,8 @@ class BundledProductsTest {
         "bundled-products/chat.dot/worker/index.js" to "export {}",
         "bundled-products/quiet.dot/worker-manifest.json" to workerManifestJson("""{"chat":false}"""),
         "bundled-products/quiet.dot/worker/index.js" to "export {}",
+        "bundled-products/broken.dot/worker-manifest.json" to """{"${'$'}v":1,"kind":"worker"}""",
+        "bundled-products/broken.dot/worker/index.js" to "export {}",
         "bundled-products/.provider.dot.staging/worker/index.js" to "ignored",
     )
 
@@ -94,8 +96,7 @@ class BundledProductsTest {
 
     @Test
     fun `a Worker manifest the parser rejects fails as a published one does`() {
-        // provider.dot's manifest has no appVersion.
-        assertTrue(products.resolved(entry("provider.dot")!!).isFailure)
+        assertTrue(products.resolved(entry("broken.dot")!!).isFailure)
     }
 
     @Test
