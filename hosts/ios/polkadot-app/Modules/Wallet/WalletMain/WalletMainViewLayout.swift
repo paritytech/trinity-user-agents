@@ -166,14 +166,13 @@ private struct ConditionalOverlayModifier<V: View>: ViewModifier {
     let overlay: () -> V
 
     func body(content: Content) -> some View {
-        if available {
-            content
-                .overlay(alignment: .bottom) {
-                    overlay()
-                }
-        } else {
-            content
-        }
+        content
+            .overlay(alignment: .bottom) {
+                overlay()
+                    .opacity(available ? 1 : 0)
+                    .allowsHitTesting(available)
+                    .accessibilityHidden(!available)
+            }
     }
 }
 

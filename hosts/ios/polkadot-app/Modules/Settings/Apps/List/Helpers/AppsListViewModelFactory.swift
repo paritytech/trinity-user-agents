@@ -23,7 +23,7 @@ extension AppsListViewModelFactory: AppsListViewModelMaking {
                 name: product.displayName,
                 subtitle: product.domainSubtitle,
                 avatar: product.placeholderAvatar,
-                icon: iconViewModelFactory.createViewModel(for: product.id)
+                icon: AnyImageViewModel(iconViewModelFactory.createViewModel(for: product.id))
             )
         }
     }
