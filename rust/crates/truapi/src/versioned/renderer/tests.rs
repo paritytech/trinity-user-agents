@@ -97,3 +97,35 @@ fn a_pocket_card_back_render_request_reaches_a_v1_product_as_v1() {
 	);
 	assert_eq!(sent.into_latest(), latest);
 }
+
+fn failure(context: v02::RenderContext) -> v02::HostRendererFailureSubscribeItem {
+	v02::HostRendererFailureSubscribeItem {
+		context,
+		node: 2,
+		material: Some([7; 32]),
+		reason: v01::MaterialFailure::NotFound,
+	}
+}
+
+/// A product that speaks v0.1 still hears which card node fell back, and
+/// reading the report back gives the same report.
+#[test]
+fn a_card_failure_reaches_a_v1_product_as_v1() {
+	let latest = failure(v02::RenderContext::PocketCard { card_id: "loyalty".into() });
+	let sent = HostRendererFailureSubscribeItem::from_latest(latest.clone(), 1);
+
+	assert_eq!(sent.version(), 1);
+	assert_eq!(sent.into_latest(), latest);
+}
+
+/// v0.1 has no footer context, and only a product that spoke v0.2 docks a
+/// footer, so a footer's failure stays v0.2.
+#[test]
+fn a_footer_failure_stays_v2() {
+	let latest = failure(v02::RenderContext::ChatRoomFooter {
+		room_id: "room".into(),
+		message_type: "register".into(),
+	});
+
+	assert_eq!(HostRendererFailureSubscribeItem::from_latest(latest, 1).version(), 2);
+}

@@ -23,7 +23,7 @@ use futures::{
 use parity_scale_codec::Encode;
 use truapi::{
 	latest::{
-		ChatBotRegistrationStatus, ChatMessageContent, ChatRoomRegistrationStatus, GenericError,
+		ChatBotRegistrationStatus, ChatRoomRegistrationStatus, GenericError,
 		HostChatCreateRoomError, HostChatCreateRoomRequest, HostChatCreateRoomResponse,
 		HostChatListSubscribeItem, HostChatPostMessageError, HostChatPostMessageRequest,
 		HostChatPostMessageResponse, HostChatRegisterBotError, HostChatRegisterBotRequest,
@@ -101,7 +101,7 @@ impl CliChatHost {
 			"kind": "message",
 			"messageId": message_id,
 			"roomId": request.room_id,
-			"variant": variant_name(&request.payload),
+			"variant": <&str>::from(&request.payload),
 			// The payload as the host received it. A summary would let a
 			// difference between what a product sent and what a host stored
 			// hide behind the summary.
@@ -120,19 +120,6 @@ impl CliChatHost {
 			// rather than what the product typed.
 			"icon": icon,
 		}));
-	}
-}
-
-/// The variant name a transcript reader matches on.
-fn variant_name(content: &ChatMessageContent) -> &'static str {
-	match content {
-		ChatMessageContent::Text { .. } => "Text",
-		ChatMessageContent::RichText(_) => "RichText",
-		ChatMessageContent::Actions(_) => "Actions",
-		ChatMessageContent::File(_) => "File",
-		ChatMessageContent::Reaction(_) => "Reaction",
-		ChatMessageContent::ReactionRemoved(_) => "ReactionRemoved",
-		ChatMessageContent::Custom(_) => "Custom",
 	}
 }
 

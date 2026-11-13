@@ -79,10 +79,14 @@ public enum DSTabBarStyle {
     static let dimBlurIntensity: Double = 0.3
     /// `dimBlurIntensity` on iOS 26 and later, lighter under Liquid Glass.
     static let dimBlurIntensityGlass: Double = 0.15
-
-    /// Horizontal radius of the bar's wash ellipse as a fraction of the bar's width. Its vertical radius is the bar
-    /// height.
-    static let barWashRadiusFraction: CGFloat = 0.45
+    /// Opacity of the black layer over the Liquid Glass on iOS 26 and later, which takes 15% off its brightness.
+    static let glassDimming: Double = 0.15
+    /// Opacity of the theme's main surface tinting the Liquid Glass on iOS 26 and later.
+    static let glassTintOpacity: Double = 0.15
+    /// Strength of the frost under the Liquid Glass on iOS 26 and later, in dark themes.
+    static let glassFrostIntensity: Double = 0.15
+    /// `glassFrostIntensity` for light themes.
+    static let glassFrostIntensityLight: Double = 0.2
 
     /// Blur the bar row reaches as the centre panel opens fully. The slot items and selection pill take it.
     static let openItemBlurRadius: CGFloat = 3

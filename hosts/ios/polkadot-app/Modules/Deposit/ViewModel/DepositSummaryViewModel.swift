@@ -4,7 +4,7 @@ import PolkadotUI
 
 struct DepositSummaryViewModel {
     let asset: String
-    let assetIcon: ImageViewModelProtocol?
+    let assetIcon: AnyImageViewModel?
     let network: String
     let minimumAmount: String?
     let address: String

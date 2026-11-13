@@ -2067,7 +2067,7 @@ where
 {
     {
         let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
-        let host = host;
+        let host = host.clone();
         dispatcher.on_subscription(wire_table::RENDERER_ACTION_SUBSCRIBE, move |request_id: String, request: versioned::renderer::HostRendererActionSubscribeRequest| {
             let host = host.clone();
             Box::pin(async move {
@@ -2083,6 +2083,35 @@ where
                     move |item: Result<versioned::renderer::HostRendererActionSubscribeItem, truapi::CallError<versioned::renderer::HostRendererActionSubscribeError>>| {
                         item.map(|item| {
                             <versioned::renderer::HostRendererActionSubscribeItem as truapi::versioned::FromLatest>::from_latest(
+                                truapi::versioned::IntoLatest::into_latest(item),
+                                target_version,
+                            )
+                        })
+                        .map_err(|error| downgrade_call_error(error, target_version))
+                    },
+                );
+                Ok(subscription_stream(stream))
+            })
+        });
+    }
+    {
+        let execution_allowed = dispatcher.allows_execution(ExecutableKind::Worker);
+        let host = host;
+        dispatcher.on_subscription(wire_table::RENDERER_FAILURE_SUBSCRIBE, move |request_id: String, request: versioned::renderer::HostRendererFailureSubscribeRequest| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_request_id(request_id);
+                if !execution_allowed {
+                    let error: truapi::CallError<versioned::renderer::HostRendererFailureSubscribeError> = truapi::CallError::Denied;
+                    return Err(subscription_interrupt(error));
+                }
+                let stream = host.failure_subscribe(&cx, request).await;
+                let stream = futures::StreamExt::map(
+                    stream,
+                    move |item: Result<versioned::renderer::HostRendererFailureSubscribeItem, truapi::CallError<versioned::renderer::HostRendererFailureSubscribeError>>| {
+                        item.map(|item| {
+                            <versioned::renderer::HostRendererFailureSubscribeItem as truapi::versioned::FromLatest>::from_latest(
                                 truapi::versioned::IntoLatest::into_latest(item),
                                 target_version,
                             )

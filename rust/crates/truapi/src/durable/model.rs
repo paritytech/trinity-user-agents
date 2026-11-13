@@ -71,8 +71,10 @@ impl GroupId {
 	}
 }
 
-/// Where a transaction stands, with the evidence for it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Where a transaction stands, with the evidence for it. Its `&'static str`
+/// form is the `status` column value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "SCREAMING_SNAKE_CASE")]
 pub enum DurableTxStatus {
 	/// Waiting for its policy to build an attempt. Live, but nothing on chain
 	/// can decide it.

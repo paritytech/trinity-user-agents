@@ -37,7 +37,7 @@ struct DSTabBarCenterGlyph: View {
     var body: some View {
         DSTabBarScanFrameShape()
             .stroke(
-                .fgSecondary,
+                .fgPrimary,
                 style: StrokeStyle(
                     lineWidth: DSTabBarScanFrameShape.strokeWidth * glyphSize / DSTabBarScanFrameShape.gridSide,
                     lineCap: .round,

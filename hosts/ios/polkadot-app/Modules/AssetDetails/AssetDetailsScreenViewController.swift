@@ -44,6 +44,18 @@ final class AssetDetailsScreenViewController: UIViewController {
         setupTitle()
         setupHosting()
         pullDown.install()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(reduceTransparencyDidChange),
+            name: UIAccessibility.reduceTransparencyStatusDidChangeNotification,
+            object: nil
+        )
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+
+        applyBarBackground()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -172,6 +184,27 @@ private extension AssetDetailsScreenViewController {
         }
         hosting.didMove(toParent: self)
     }
+
+    /// On iOS 26 with Reduce Transparency, the scroll edge effect that backs the bar is hidden, so the bar draws
+    /// its own opaque background there.
+    func applyBarBackground() {
+        guard #unavailable(iOS 27), UIAccessibility.isReduceTransparencyEnabled else {
+            navigationItem.standardAppearance = nil
+            navigationItem.scrollEdgeAppearance = nil
+            return
+        }
+
+        let appearance = (navigationController?.navigationBar.standardAppearance ?? UINavigationBarAppearance()).copy()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = .bgSurfaceMain
+        appearance.shadowColor = nil
+        navigationItem.standardAppearance = appearance
+        navigationItem.scrollEdgeAppearance = appearance
+    }
+
+    @objc func reduceTransparencyDidChange() {
+        applyBarBackground()
+    }
 }
 
 /// The state the flight changes, which the screen's SwiftUI root draws from.
@@ -188,6 +221,7 @@ private struct AssetDetailsScreenRoot: View {
     let state: AssetDetailsScreenState
 
     @State private var overscroll = DSOverscroll()
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     var body: some View {
         ScrollView {
@@ -203,6 +237,7 @@ private struct AssetDetailsScreenRoot: View {
             .padding(.top, 16)
         }
         .modifier(OverscrollReader(overscroll: overscroll))
+        .modifier(OpaqueTopEdgeHidden(reduceTransparency: reduceTransparency))
     }
 }
 
@@ -219,6 +254,22 @@ private struct OverscrollReader: ViewModifier {
                 } action: { _, newValue in
                     overscroll.distance = newValue
                 }
+        } else {
+            content
+        }
+    }
+}
+
+/// On iOS 26 with Reduce Transparency, the top scroll edge effect is drawn opaque and its height follows the
+/// content, so it covers the top of the card. It is hidden there.
+private struct OpaqueTopEdgeHidden: ViewModifier {
+    let reduceTransparency: Bool
+
+    func body(content: Content) -> some View {
+        if #available(iOS 27, *) {
+            content
+        } else if #available(iOS 26, *) {
+            content.scrollEdgeEffectHidden(reduceTransparency, for: .top)
         } else {
             content
         }
