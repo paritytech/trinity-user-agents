@@ -33,6 +33,8 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
         var connectionIds: [ObjectIdentifier: UInt32] = [:]
         /// Sockets that reached `didOpen`; their later transport death is a blip, not a failed dial.
         var openedConnectionIds: Set<UInt32> = []
+        /// The chain each connection dials; failures count per chain, as the pool rotates its nodes.
+        var chainIds: [UInt32: ChainModel.Id] = [:]
         var nextConnectionId: UInt32 = 1
         /// Grows per chain so a reconnect after a dead node lands on the next one.
         var nodeAttempts: [ChainModel.Id: Int] = [:]
@@ -43,6 +45,7 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
 
     fileprivate struct ClosedSocket {
         let connectionId: UInt32
+        let chainId: ChainModel.Id?
         let wasOpened: Bool
         let handler: TrUAPIChainEventHandling?
     }
@@ -79,7 +82,7 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
     }
 
     public func connect(genesisHash: Data) -> UInt32? {
-        guard let socket = makeSocket(for: genesisHash) else {
+        guard let (socket, chainId) = makeSocket(for: genesisHash) else {
             logger.info("[truapi.chain] chain \(genesisHash.toHex()) has no host-managed connection; unsupported")
             return nil
         }
@@ -92,6 +95,7 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
             state.nextConnectionId += 1
             state.sockets[connectionId] = socket
             state.connectionIds[ObjectIdentifier(socket)] = connectionId
+            state.chainIds[connectionId] = chainId
             return connectionId
         }
 
@@ -120,6 +124,7 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
             state.sockets.removeAll()
             state.connectionIds.removeAll()
             state.openedConnectionIds.removeAll()
+            state.chainIds.removeAll()
             return sockets
         }
 
@@ -132,17 +137,18 @@ public final class TrUAPIV2SpecConnectionPool: TrUAPIChainConnecting, @unchecked
 
 extension TrUAPIV2SpecConnectionPool: ChainSocketDelegate {
     public func chainSocketDidOpen(_ socket: ChainSocketProtocol) {
-        let connectionId = state.withLockUnchecked { state -> UInt32? in
+        let opened = state.withLockUnchecked { state -> (UInt32, ChainModel.Id?)? in
             guard let connectionId = state.connectionIds[ObjectIdentifier(socket)] else { return nil }
 
             state.openedConnectionIds.insert(connectionId)
-            return connectionId
+            return (connectionId, state.chainIds[connectionId])
         }
 
-        guard let connectionId else { return }
+        guard let (connectionId, chainId) = opened else { return }
 
         logger.info("[truapi.chain] chain connection \(connectionId) open on \(socket.url)")
-        issueDiagnostic.recordRecovery(for: socket.url.absoluteString)
+        // Any node of the chain coming up clears the chain's run of failed dials.
+        if let chainId { issueDiagnostic.recordRecovery(for: chainId) }
     }
 
     public func chainSocket(_ socket: ChainSocketProtocol, didReceive text: String) {
@@ -158,16 +164,21 @@ extension TrUAPIV2SpecConnectionPool: ChainSocketDelegate {
         let closed = state.withLockUnchecked { state -> ClosedSocket? in
             guard let connectionId = state.connectionIds[ObjectIdentifier(socket)] else { return nil }
 
-            let wasOpened = state.openedConnectionIds.contains(connectionId)
+            let closed = ClosedSocket(
+                connectionId: connectionId,
+                chainId: state.chainIds[connectionId],
+                wasOpened: state.openedConnectionIds.contains(connectionId),
+                handler: state.eventHandler
+            )
             _ = state.removeSocket(for: connectionId)
-            return ClosedSocket(connectionId: connectionId, wasOpened: wasOpened, handler: state.eventHandler)
+            return closed
         }
 
         guard let closed else { return }
 
         let connectionId = closed.connectionId
         logger.info("[truapi.chain] \(Self.closeLine(connectionId: connectionId, url: socket.url, reason: reason))")
-        reportFailure(of: socket.url, reason: reason, wasOpened: closed.wasOpened)
+        reportFailure(of: closed, reason: reason)
         closed.handler?.chainDidClose(connectionId: connectionId)
     }
 }
@@ -212,15 +223,18 @@ extension TrUAPIV2SpecConnectionPool {
 private extension TrUAPIV2SpecConnectionPool {
     /// A dial that never connected is a failure to the product; a close the peer or the pool asked for is
     /// not, and neither is a transport that dies after the socket opened: one network blip kills every open
-    /// socket at once and says nothing about the node.
-    func reportFailure(of url: URL, reason: ChainSocketCloseReason, wasOpened: Bool) {
+    /// socket at once and says nothing about the node. Failures count against the chain, not the node: each
+    /// reconnect dials the chain's next node, so a chain whose nodes all refuse fails on a new node each time.
+    func reportFailure(of closed: ClosedSocket, reason: ChainSocketCloseReason) {
+        guard let chainId = closed.chainId else { return }
+
         switch reason {
         case let .transport(error):
-            guard !wasOpened else { return }
+            guard !closed.wasOpened else { return }
 
-            issueDiagnostic.recordFailure(for: url.absoluteString, error: error, counters: [:])
+            issueDiagnostic.recordFailure(for: chainId, error: error, counters: [:])
         case .connectTimeout:
-            issueDiagnostic.recordFailure(for: url.absoluteString, error: nil, counters: [:])
+            issueDiagnostic.recordFailure(for: chainId, error: nil, counters: [:])
         case .peerClosed,
              .livenessTimeout,
              .pathLost,
@@ -229,11 +243,11 @@ private extension TrUAPIV2SpecConnectionPool {
         }
     }
 
-    func makeSocket(for genesisHash: Data) -> ChainSocketProtocol? {
+    func makeSocket(for genesisHash: Data) -> (ChainSocketProtocol, ChainModel.Id)? {
         guard let chain = chainRegistry.getChainByGenesis(for: genesisHash.toHex()) else { return nil }
 
         let attempt = state.withLockUnchecked { $0.takeNodeAttempt(for: chain.chainId) }
-        return chainRegistry.makeChainSocket(for: chain.chainId, attempt: attempt)
+        return chainRegistry.makeChainSocket(for: chain.chainId, attempt: attempt).map { ($0, chain.chainId) }
     }
 
     // Date reads are async, so each event runs after the previous one to keep background before foreground.
@@ -293,6 +307,7 @@ private extension TrUAPIV2SpecConnectionPool.State {
     mutating func removeSocket(for connectionId: UInt32) -> ChainSocketProtocol? {
         guard let socket = sockets.removeValue(forKey: connectionId) else { return nil }
         openedConnectionIds.remove(connectionId)
+        chainIds.removeValue(forKey: connectionId)
         connectionIds.removeValue(forKey: ObjectIdentifier(socket))
         return socket
     }

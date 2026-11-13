@@ -2,7 +2,7 @@ import Foundation
 import ChainRegistry
 
 final class MockChainSocket: ChainSocketProtocol, @unchecked Sendable {
-    let url = URL(string: "wss://node.example")!
+    let url: URL
     weak var delegate: ChainSocketDelegate?
 
     private(set) var openCallCount = 0
@@ -14,6 +14,10 @@ final class MockChainSocket: ChainSocketProtocol, @unchecked Sendable {
     var onOpen: ((MockChainSocket) -> Void)?
     /// Off, `open()` leaves the dial pending, as a node that never answers does.
     var completesOpen = true
+
+    init(url: URL = URL(string: "wss://node.example")!) {
+        self.url = url
+    }
 
     func open() {
         openCallCount += 1
