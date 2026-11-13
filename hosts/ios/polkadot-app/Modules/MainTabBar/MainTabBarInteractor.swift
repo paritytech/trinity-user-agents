@@ -29,6 +29,7 @@ final class MainTabBarInteractor {
     private var tabBarLabelsSubscription: Task<Void, Never>?
     private var paymentsSetupSubscription: Task<Void, Never>?
     private var fundingSubscription: Task<Void, Never>?
+    private var restoredBalanceSubscription: Task<Void, Never>?
 
     init(
         servicesLease: DashboardServicesLease<ServiceCoordinator>,
@@ -67,6 +68,7 @@ final class MainTabBarInteractor {
         tabBarLabelsSubscription?.cancel()
         paymentsSetupSubscription?.cancel()
         fundingSubscription?.cancel()
+        restoredBalanceSubscription?.cancel()
     }
 }
 
@@ -81,6 +83,7 @@ extension MainTabBarInteractor: MainTabBarInteractorInputProtocol {
         subscribeToTabBarLabels()
         subscribeToPaymentsSetup()
         subscribeToFunding()
+        subscribeToRestoredBalance()
     }
 
     func openProviderFrame(_ request: FundingFrameRequest) {
@@ -123,6 +126,19 @@ private extension MainTabBarInteractor {
                 }
             } catch {
                 logger.error("Payments setup stream failed: \(error)")
+            }
+        }
+    }
+
+    func subscribeToRestoredBalance() {
+        let backupSyncService = servicesLease.coordinator.coinageBackupSyncService
+        restoredBalanceSubscription = Task { [weak self, backupSyncService, logger] in
+            do {
+                for try await isWaiting in backupSyncService.showsRecoveredBalanceStream {
+                    await self?.presenter?.didReceiveRestoredBalanceWaiting(isWaiting)
+                }
+            } catch {
+                logger.error("Restored balance stream failed: \(error)")
             }
         }
     }

@@ -12,9 +12,6 @@ protocol FundingTokenPresenterProtocol: AnyObject {
 @MainActor
 protocol FundingTokenInteractorInputProtocol: AnyObject {
     func setup()
-    /// Has the core hand the session to the latest ask's best quote once
-    /// every provider answered.
-    func startWhenQuoted() async throws
 }
 
 @MainActor

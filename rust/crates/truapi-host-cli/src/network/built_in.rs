@@ -38,18 +38,18 @@ impl BuiltInStack {
 }
 
 const PASEO_NEXT_V2_STACK: BuiltInStack = BuiltInStack {
-	link: include_str!("../../stacks/paseo-next-v2.link"),
-	bundle: include_bytes!("../../stacks/paseo-next-v2.json"),
+	link: include_str!("../../../../../stacks/paseo-next-v2.link"),
+	bundle: include_bytes!("../../../../../stacks/paseo-next-v2.json"),
 };
 
 const PREVIEWNET_STACK: BuiltInStack = BuiltInStack {
-	link: include_str!("../../stacks/previewnet.link"),
-	bundle: include_bytes!("../../stacks/previewnet.json"),
+	link: include_str!("../../../../../stacks/previewnet.link"),
+	bundle: include_bytes!("../../../../../stacks/previewnet.json"),
 };
 
 const PCF_DEVNET_STACK: BuiltInStack = BuiltInStack {
-	link: include_str!("../../stacks/pcf-devnet.link"),
-	bundle: include_bytes!("../../stacks/pcf-devnet.json"),
+	link: include_str!("../../../../../stacks/pcf-devnet.link"),
+	bundle: include_bytes!("../../../../../stacks/pcf-devnet.json"),
 };
 
 /// Real Polkadot's descriptor, signed by PCF. Not a network the CLI runs on:
@@ -57,8 +57,8 @@ const PCF_DEVNET_STACK: BuiltInStack = BuiltInStack {
 /// from Polkadot itself. Only the bundled copy is read;
 /// `scripts/update-stacks.sh` refreshes it with the built-ins.
 const POLKADOT_REFERENCE_STACK: BuiltInStack = BuiltInStack {
-	link: include_str!("../../stacks/polkadot.link"),
-	bundle: include_bytes!("../../stacks/polkadot.json"),
+	link: include_str!("../../../../../stacks/polkadot.link"),
+	bundle: include_bytes!("../../../../../stacks/polkadot.json"),
 };
 
 /// The bundled copy of real Polkadot's descriptor, opened once per process.

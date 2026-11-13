@@ -19,15 +19,13 @@ struct CoinageBalanceBreakdownViewModel {
 
 protocol AssetDetailsViewModelProtocol: Observation.Observable {
     var balanceCardModel: AssetDetailsBalanceCard.ViewModel? { get set }
-    var showsBackupNotification: Bool { get set }
+    var showsRestoredBalanceHint: Bool { get set }
     /// This installation's on-chain registration has not landed in the expected time (D4).
     var isUpdating: Bool { get set }
 
     var onAddMoney: (() -> Void)? { get set }
     var onSendMoney: (() -> Void)? { get set }
-    var onBackupSync: (() -> Void)? { get set }
-    var onBackupCancel: (() -> Void)? { get set }
-    var onBackupWhyUpdate: (() -> Void)? { get set }
+    var onOpenBackupSettings: (() -> Void)? { get set }
     /// Shows every funding session, in flight and ended.
     var onHistory: (() -> Void)? { get set }
 
@@ -44,14 +42,12 @@ protocol AssetDetailsViewModelProtocol: Observation.Observable {
 @Observable
 class AssetDetailsViewModel: AssetDetailsViewModelProtocol {
     var balanceCardModel: AssetDetailsBalanceCard.ViewModel?
-    var showsBackupNotification: Bool = false
+    var showsRestoredBalanceHint: Bool = false
     var isUpdating: Bool = false
 
     var onAddMoney: (() -> Void)?
     var onSendMoney: (() -> Void)?
-    var onBackupSync: (() -> Void)?
-    var onBackupCancel: (() -> Void)?
-    var onBackupWhyUpdate: (() -> Void)?
+    var onOpenBackupSettings: (() -> Void)?
     var onHistory: (() -> Void)?
 
     var isTopUpInProgress: Bool = false

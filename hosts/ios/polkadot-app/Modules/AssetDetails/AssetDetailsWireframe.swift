@@ -7,8 +7,15 @@ import ChainRegistry
 final class AssetDetailsWireframe: AssetDetailsWireframeProtocol {
     let context: WalletFlowContextProtocol
 
-    init(context: WalletFlowContextProtocol) {
+    private let moduleNavigator: ModuleNavigating
+
+    init(context: WalletFlowContextProtocol, moduleNavigator: ModuleNavigating = ModuleNavigator()) {
         self.context = context
+        self.moduleNavigator = moduleNavigator
+    }
+
+    func showBackupSettings() {
+        moduleNavigator.openBackupSettings()
     }
 
     func showTransfer(from view: ControllerBackedProtocol?, chainAsset: ChainAsset) {

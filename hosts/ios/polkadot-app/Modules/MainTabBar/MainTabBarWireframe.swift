@@ -79,6 +79,27 @@ final class MainTabBarWireframe: MainTabBarWireframeProtocol {
         presentedSettings = settings
         view?.controller.topmostPresented.present(settings, animated: true)
     }
+
+    func showBackupSettings(from view: MainTabBarViewProtocol?) {
+        guard
+            let presenter = view?.controller.topmostPresented,
+            let backup = BackupViewFactory.createView(serviceCoordinator: serviceCoordinator)
+        else {
+            return
+        }
+
+        if let settings = presentedSettings, settings.presentingViewController != nil {
+            settings.pushViewController(backup.controller, animated: true)
+            return
+        }
+
+        guard let settings = tabFactory.makeSettingsNavigation() else {
+            return
+        }
+        presentedSettings = settings
+        settings.pushViewController(backup.controller, animated: false)
+        presenter.present(settings, animated: true)
+    }
 }
 
 extension MainTabBarWireframe {

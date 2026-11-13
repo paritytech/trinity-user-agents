@@ -47,16 +47,8 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
             presenter?.onAddMoney()
         }
 
-        viewModel.onBackupSync = { [weak presenter] in
-            presenter?.onBackupSync()
-        }
-
-        viewModel.onBackupCancel = { [weak presenter] in
-            presenter?.onBackupCancel()
-        }
-
-        viewModel.onBackupWhyUpdate = { [weak presenter] in
-            presenter?.onBackupWhyUpdate()
+        viewModel.onOpenBackupSettings = { [weak presenter] in
+            presenter?.onOpenBackupSettings()
         }
 
         viewModel.onTopUp = { [weak presenter] in
@@ -132,20 +124,14 @@ final class AssetDetailsViewBinding: AssetDetailsViewProtocol {
         viewModel.isUpdating = isRecoveryInProgress
     }
 
-    func didShowBackupNotification() {
+    func didReceive(showsRestoredBalanceHint: Bool) {
         guard animatesBackupNotificationUpdates else {
-            viewModel.showsBackupNotification = true
+            viewModel.showsRestoredBalanceHint = showsRestoredBalanceHint
             return
         }
 
         withAnimation(.easeInOut) {
-            viewModel.showsBackupNotification = true
-        }
-    }
-
-    func didHideBackupNotification() {
-        withAnimation(.easeInOut) {
-            viewModel.showsBackupNotification = false
+            viewModel.showsRestoredBalanceHint = showsRestoredBalanceHint
         }
     }
 

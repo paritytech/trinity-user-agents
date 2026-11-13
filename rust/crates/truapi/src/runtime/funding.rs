@@ -65,10 +65,10 @@ use futures::{
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{
 	FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDirection,
-	FundingFailure, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate, GenericError,
-	HostFundingReportError, HostFundingStatusSubscribeItem, HostPaymentStatusSubscribeError,
-	HostPaymentStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError,
-	HostPaymentTopUpStatusSubscribeItem,
+	FundingFailure, FundingFrameOutcome, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate,
+	GenericError, HostFundingReportError, HostFundingStatusSubscribeItem,
+	HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem,
+	HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem,
 };
 
 use super::{funding_quotes::WorkerHold, services::RuntimeServices};
@@ -422,11 +422,38 @@ pub struct FundingRegistry {
 	/// The services the registry belongs to, for worker references and
 	/// following top-ups and payments. Empty in a registry built on its own.
 	services: Weak<RuntimeServices>,
-	/// The provider frames open, by session, with the provider showing each
-	/// and the frame's number, so a frame that replaced another outlives it.
-	frames: Mutex<HashMap<String, (u64, ProductContext)>>,
-	/// The number the next tracked frame takes.
+	/// Each session's provider frames, the one on screen and the one held
+	/// until the host opens it, under one lock so a frame moves from held to
+	/// open, or is closed, in one step.
+	frames: Mutex<HashMap<String, SessionFrames>>,
+	/// The number the next provider frame takes, so a frame that replaced
+	/// another outlives it.
 	next_frame: AtomicU64,
+}
+
+/// A session's provider frames, each with its number and the provider
+/// showing it.
+#[derive(Default)]
+struct SessionFrames {
+	/// The frame on screen.
+	open: Option<(u64, ProductContext)>,
+	/// The frame held until the host opens it, with its waiting call.
+	waiting: Option<(u64, ProductContext, oneshot::Sender<FrameGate>)>,
+}
+
+impl SessionFrames {
+	fn is_empty(&self) -> bool {
+		self.open.is_none() && self.waiting.is_none()
+	}
+}
+
+/// What a held provider frame does once the host decides.
+#[derive(Debug)]
+enum FrameGate {
+	/// Present it now.
+	Present,
+	/// Present nothing, and answer the provider this.
+	Answer(FundingFrameOutcome),
 }
 
 impl FundingRegistry {
@@ -781,25 +808,152 @@ impl FundingRegistry {
 		}
 	}
 
-	/// Track the frame `provider` shows for session `intent` until the
-	/// returned guard drops, so the core can close it once the payment moved.
-	/// One that already moved is closed as soon as the session next changes.
-	pub fn track_frame(&self, intent: &str, provider: ProductContext) -> FrameTrack<'_> {
+	/// Hold the frame `provider` asks to show for session `intent` until
+	/// the host opens it with [`Self::open_frame`]. The host hears of it
+	/// through [`FundingPlatform::provider_frame_requested`] and opens it at
+	/// once while the user looks at the session, or once they tap a notice.
+	/// A frame already waiting answers `Dismissed`, as this one replaces it.
+	/// The returned ticket tracks the frame until it drops, so the core can
+	/// close it once the payment moved.
+	pub fn request_frame(&self, intent: &str, provider: ProductContext) -> FrameTicket<'_> {
 		let frame = self.next_frame.fetch_add(1, Ordering::Relaxed);
-		lock(&self.frames).insert(intent.to_string(), (frame, provider));
-		FrameTrack { registry: self, intent: intent.to_string(), frame }
+		let (sender, receiver) = oneshot::channel();
+		let replaced = self.lock_frames().entry(intent.to_string()).or_default().waiting.replace((
+			frame,
+			provider.clone(),
+			sender,
+		));
+		if let Some((_, _, replaced)) = replaced {
+			let _ = replaced.send(FrameGate::Answer(FundingFrameOutcome::Dismissed));
+		}
+		// The payment may have moved before the frame was held, when
+		// `close_moved_frame` found nothing to drop.
+		if self.frame_done(intent) {
+			self.take_waiting(intent, Some(frame), FrameGate::Answer(FundingFrameOutcome::Closed));
+		} else if let Some(platform) = self.platform().filter(|_| self.holds_waiting(intent, frame))
+		{
+			platform.provider_frame_requested(&provider, intent.to_string());
+			// A payment that moved while the host was told dropped the frame:
+			// the host reads that nothing waits and takes its notice down.
+			if !self.holds_waiting(intent, frame) {
+				self.retell(intent);
+			}
+		}
+		FrameTicket { registry: self, intent: intent.to_string(), frame, receiver: Some(receiver) }
 	}
 
-	/// Close session `intent`'s provider frame through `platform` if one is
-	/// open and its payment moved, once.
+	/// Close session `intent`'s provider frames through `platform` once its
+	/// payment moved: a held one answers `Closed`, an open one is closed.
 	fn close_moved_frame(&self, platform: &dyn FundingPlatform, intent: &str) {
 		if !self.frame_done(intent) {
 			return;
 		}
-		let Some((_, provider)) = lock(&self.frames).remove(intent) else {
+		let Some(frames) = self.lock_frames().remove(intent) else {
 			return;
 		};
-		platform.close_provider_frame(&provider, intent.to_string());
+		if let Some((_, _, waiting)) = frames.waiting {
+			let _ = waiting.send(FrameGate::Answer(FundingFrameOutcome::Closed));
+		}
+		if let Some((_, provider)) = frames.open {
+			platform.close_provider_frame(&provider, intent.to_string());
+		}
+	}
+
+	/// The host opens session `intent`'s held provider frame. Returns
+	/// whether one was waiting; a worker that stopped waiting has nothing
+	/// left to show.
+	pub fn open_frame(&self, intent: &str) -> bool {
+		self.take_waiting(intent, None, FrameGate::Present)
+	}
+
+	/// Whether session `intent` holds a provider frame until the host opens
+	/// it, so the host can show its notice again after redrawing.
+	pub fn frame_waiting(&self, intent: &str) -> bool {
+		self.lock_frames().get(intent).is_some_and(|frames| {
+			frames.waiting.as_ref().is_some_and(|(_, _, waiting)| !waiting.is_canceled())
+		})
+	}
+
+	/// Whether session `intent` has a provider frame on screen.
+	pub fn frame_open(&self, intent: &str) -> bool {
+		self.lock_frames().get(intent).is_some_and(|frames| frames.open.is_some())
+	}
+
+	/// Close session `intent`'s open provider frame, so one the host opened
+	/// but the worker has not presented yet shows nothing. Returns whether
+	/// one was open.
+	pub fn close_open_frame(&self, intent: &str) -> bool {
+		let mut frames = self.lock_frames();
+		let Some(session) = frames.get_mut(intent) else {
+			return false;
+		};
+		let closed = session.open.take().is_some();
+		if session.is_empty() {
+			frames.remove(intent);
+		}
+		closed
+	}
+
+	/// Whether frame number `frame` of session `intent` is still held.
+	fn holds_waiting(&self, intent: &str, frame: u64) -> bool {
+		self.lock_frames().get(intent).is_some_and(|frames| {
+			frames.waiting.as_ref().is_some_and(|(number, _, _)| *number == frame)
+		})
+	}
+
+	/// Whether frame number `frame` of session `intent` is the open one.
+	fn holds_open(&self, intent: &str, frame: u64) -> bool {
+		self.lock_frames()
+			.get(intent)
+			.is_some_and(|frames| frames.open.as_ref().is_some_and(|(number, _)| *number == frame))
+	}
+
+	/// Drop session `intent`'s held frame, answering its provider `outcome`.
+	/// Returns whether one was waiting.
+	pub fn drop_waiting_frame(&self, intent: &str, outcome: FundingFrameOutcome) -> bool {
+		self.take_waiting(intent, None, FrameGate::Answer(outcome))
+	}
+
+	/// Answer session `intent`'s held frame with `gate`, only frame number
+	/// `frame` when given. One presented becomes the session's open frame in
+	/// the same step. Returns whether the waiting call took the answer.
+	fn take_waiting(&self, intent: &str, frame: Option<u64>, gate: FrameGate) -> bool {
+		let answered = {
+			let mut frames = self.lock_frames();
+			let Some(session) = frames.get_mut(intent) else {
+				return false;
+			};
+			let Some((number, provider, waiting)) = session
+				.waiting
+				.take_if(|(number, _, _)| frame.is_none_or(|frame| frame == *number))
+			else {
+				return false;
+			};
+			let present = matches!(gate, FrameGate::Present);
+			let answered = waiting.send(gate).is_ok();
+			if answered && present {
+				session.open = Some((number, provider));
+			}
+			if session.is_empty() {
+				frames.remove(intent);
+			}
+			answered
+		};
+		self.retell(intent);
+		answered
+	}
+
+	/// Tell the host session `intent` changed though its record did not: its
+	/// held provider frame was opened or dropped. The status says nothing of
+	/// a held frame, so the host reads `funding_frame_waiting` on hearing it.
+	fn retell(&self, intent: &str) {
+		{
+			let held = self.lock_held();
+			if let Some(session) = held.sessions.get(intent) {
+				self.tell_host(&held, session);
+			}
+		}
+		self.announce();
 	}
 
 	/// The sessions whose overlay is up.
@@ -1704,6 +1858,10 @@ impl FundingRegistry {
 		lock(&self.resolving)
 	}
 
+	fn lock_frames(&self) -> MutexGuard<'_, HashMap<String, SessionFrames>> {
+		lock(&self.frames)
+	}
+
 	fn lock_held(&self) -> MutexGuard<'_, Held> {
 		lock(&self.held)
 	}
@@ -1717,18 +1875,57 @@ impl FundingRegistry {
 	}
 }
 
-/// A provider frame the registry tracks, until it drops.
-pub struct FrameTrack<'a> {
+/// A provider frame the registry tracks from the worker's request until
+/// it drops: held, then on screen once the host opens it.
+pub struct FrameTicket<'a> {
 	registry: &'a FundingRegistry,
 	intent: String,
 	frame: u64,
+	receiver: Option<oneshot::Receiver<FrameGate>>,
 }
 
-impl Drop for FrameTrack<'_> {
+impl FrameTicket<'_> {
+	/// Wait for the host to open the frame. `None` means present it now;
+	/// otherwise the provider gets the outcome and nothing goes on screen.
+	pub async fn opened(&mut self) -> Option<FundingFrameOutcome> {
+		let receiver = self.receiver.take()?;
+		match receiver.await {
+			// The payment may have moved, or the worker closed the frame,
+			// between the host opening it and the worker running again.
+			Ok(FrameGate::Present)
+				if self.registry.frame_done(&self.intent) ||
+					!self.registry.holds_open(&self.intent, self.frame) =>
+			{
+				Some(FundingFrameOutcome::Closed)
+			},
+			Ok(FrameGate::Present) => None,
+			Ok(FrameGate::Answer(outcome)) => Some(outcome),
+			// The registry went away: nothing to show.
+			Err(_) => Some(FundingFrameOutcome::Closed),
+		}
+	}
+}
+
+impl Drop for FrameTicket<'_> {
 	fn drop(&mut self) {
-		let mut frames = lock(&self.registry.frames);
-		if frames.get(&self.intent).is_some_and(|(frame, _)| *frame == self.frame) {
-			frames.remove(&self.intent);
+		let dropped_waiting = {
+			let mut frames = self.registry.lock_frames();
+			let Some(session) = frames.get_mut(&self.intent) else {
+				return;
+			};
+			if session.open.as_ref().is_some_and(|(frame, _)| *frame == self.frame) {
+				session.open = None;
+			}
+			let dropped_waiting =
+				session.waiting.take_if(|(frame, _, _)| *frame == self.frame).is_some();
+			if session.is_empty() {
+				frames.remove(&self.intent);
+			}
+			dropped_waiting
+		};
+		// A worker that stopped waiting leaves no notice behind.
+		if dropped_waiting {
+			self.registry.retell(&self.intent);
 		}
 	}
 }

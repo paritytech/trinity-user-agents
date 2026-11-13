@@ -232,3 +232,23 @@ fn test_refresh_expired_error() {
 	let published = expired(11);
 	assert!(refresh(&sign_copy(10, "g1"), Fetched::Document(&published)).is_err());
 }
+
+/// A product sees the same network, TLD and chains from the CLI as from an
+/// app bundling the same signed copy: the descriptor's `network`, not the
+/// CLI's product namespace. The CLI serves no Relay, so it names none.
+#[test]
+fn the_core_stack_reports_what_an_app_bundling_it_reports() {
+	for network in Network::value_variants() {
+		let built_in = network.built_in_stack();
+		let bundled = truapi::platform::Stack::bundled(built_in.link.trim(), built_in.bundle, true)
+			.expect("the bundled copy starts an app");
+		let expected = truapi::platform::Stack::new(
+			bundled.network().to_string(),
+			bundled.tld().to_string(),
+			truapi::platform::StackChains { relay: None, ..bundled.chains().clone() },
+			true,
+		);
+
+		assert_eq!(network.bundled_stack(ChainBackend::Rpc).core_stack(), expected, "{network:?}");
+	}
+}

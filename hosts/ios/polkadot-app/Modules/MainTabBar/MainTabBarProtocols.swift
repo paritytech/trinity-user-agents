@@ -13,6 +13,7 @@ protocol MainTabBarViewProtocol: ControllerBackedProtocol, AppWidgetManaging {
     func showSPATabs(_ viewModels: [SPATabChipViewModel])
     func showChainStatus(_ rows: [ChainConnectionStatusViewModel])
     func showProductGamePill(_ viewModel: ProductGamePillViewModel?)
+    func showSettingsAttention(_ isVisible: Bool)
 }
 
 @MainActor
@@ -21,6 +22,7 @@ protocol MainTabBarPresenterProtocol: AnyObject {
     func configureViews()
     func didRequestConnectionStatus()
     func didRequestSettings()
+    func didRequestBackupSettings()
     func didFindChat(_ model: ChatOpenModel)
 }
 
@@ -46,6 +48,7 @@ protocol MainTabBarInteractorOutputProtocol: AnyObject {
     func didReceivePaymentsSetupWaiting(_ isWaiting: Bool)
     func didReceive(fundingService: FundingServiceProtocol)
     func didReceive(fundingEvent: FundingEvent)
+    func didReceiveRestoredBalanceWaiting(_ isWaiting: Bool)
 }
 
 @MainActor
@@ -68,6 +71,7 @@ protocol MainTabBarWireframeProtocol: AnyObject {
         onDismiss: @escaping () -> Void
     )
     func showProviderNotWorking(_ providerId: ProductId)
+    func showBackupSettings(from view: MainTabBarViewProtocol?)
 }
 
 enum TabBarItem: String, CaseIterable {

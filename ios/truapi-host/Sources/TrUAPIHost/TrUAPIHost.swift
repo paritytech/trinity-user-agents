@@ -151,10 +151,6 @@ public protocol HostBridge: AnyObject, Sendable {
     /// return promptly.
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool
 
-    /// Enumerate the chains this host serves: its environment plus one entry
-    /// per chain role. Invoked on the dispatcher thread; must return promptly.
-    func supportedChains() throws -> HostChainSet
-
     /// The chains this host builds as V5 general transactions, each with its
     /// transaction extension pipeline; every other chain is built as V4. The
     /// core builds its own extrinsics the same way. Defaults to none.
@@ -366,10 +362,19 @@ public protocol FundingHostBridge: AnyObject, Sendable {
         amount: U128?
     ) async throws -> FundingPresentOutcome
 
+    /// Provider `providerId` asks to show a screen for session `intent`. The
+    /// core holds it until the host calls
+    /// ``TrUAPIHostRuntime/openProviderFrame(intent:)``: at once while the
+    /// user looks at the session, otherwise once the user taps a notice that
+    /// the provider wants to show something. Called inline.
+    func providerFrameRequested(providerId: ProductId, intent: String)
+
     /// Show `target` for provider `providerId`'s session `intent` in a frame
-    /// the host owns, and report how it closed. A page is a checked https
-    /// URL: show its origin, and answer `.returned` when it reaches its
-    /// return URL. The core closes the frame itself, through
+    /// the host owns, and report how it closed. Called only once the host
+    /// opened the request ``providerFrameRequested(providerId:intent:)``
+    /// announced. A page is a checked https URL: show its origin, and answer
+    /// `.returned` when it reaches its return URL. The core closes the frame
+    /// itself, through
     /// ``closeProviderFrame(providerId:intent:)``, once the payment moved.
     func presentProviderFrame(
         providerId: ProductId,
@@ -495,7 +500,6 @@ public extension HostBridge {
             languageTag: Locale.current.language.languageCode?.identifier ?? "en"
         )
     }
-    func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         ExtensionVersionMap(chains: [])
     }
@@ -677,6 +681,10 @@ private final class FundingCallbackAdapter: NativeFundingCallbacks, @unchecked S
                 amount: amount
             )
         }
+    }
+
+    func providerFrameRequested(providerId: ProductId, intent: String) {
+        bridge.providerFrameRequested(providerId: providerId, intent: intent)
     }
 
     func presentProviderFrame(
@@ -972,12 +980,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
         }
     }
 
-    func supportedChains() throws -> HostChainSet {
-        try withHostRejection {
-            try bridge.supportedChains()
-        }
-    }
-
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         try await withHostRejection {
             try await bridge.transactionExtensionVersions()
@@ -1188,6 +1190,20 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.fundingSession(intent: intent)
     }
 
+    /// Show the screen session `intent`'s provider asked for through
+    /// ``FundingHostBridge/providerFrameRequested(providerId:intent:)``.
+    /// Answers whether one was waiting.
+    @discardableResult
+    public func openProviderFrame(intent: String) -> Bool {
+        inner.openProviderFrame(intent: intent)
+    }
+
+    /// Whether session `intent`'s provider waits for its screen to be opened,
+    /// so the notice can be shown again after redrawing.
+    public func fundingFrameWaiting(intent: String) -> Bool {
+        inner.fundingFrameWaiting(intent: intent)
+    }
+
     /// The progress the host draws for session `intent`.
     public func fundingProgress(intent: String) -> FundingProgress? {
         inner.fundingProgress(intent: intent)
@@ -1209,11 +1225,13 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         inner.fundingEntries()
     }
 
-    /// Offer the providers the remote configuration names, in order. Call it
-    /// on every remote config refresh: a call listing what the last one did
+    /// Offer the providers the remote configuration names, in order, each
+    /// without a TLD (`fundtest-provider`): the core reads it on the network
+    /// it is connected to, and skips a name that carries one. Call it on
+    /// every remote config refresh: a call listing what the last one did
     /// changes nothing.
     public func setFundingProviderConfig(publishedNames: [String]) throws {
-        try inner.setFundingProviderConfig(publishedNames: publishedNames, bundled: [])
+        try inner.setFundingProviderConfig(publishedNames: publishedNames)
     }
 
     /// Ask every provider routing the selected rail to price `amount` for
@@ -1507,16 +1525,15 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         try inner.activateLocalSession(secret: secret, liteUsername: liteUsername)
     }
 
-    /// Answer one decrypted SSO remote message from the wallet-managed
-    /// statement-store session. `message` is one SCALE-encoded
-    /// `RemoteMessage` exactly as decrypted. `.response` carries the
-    /// SCALE-encoded reply to post back over the same session;
-    /// `.disconnected` means the peer ended the session (perform native
-    /// teardown); `.ignored` means the message was not a request.
-    /// Confirmation-gated requests await `confirmUserAction`, so this can
-    /// take arbitrarily long — call from a `Task`, never the main thread.
-    public func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome {
-        try await inner.handleSsoRequest(message: message)
+    /// Bind one peer to the wallet matching the transport's public keys.
+    public func openSsoService(
+        ownStatementAccountId: Data,
+        ownEncryptionPublicKey: Data
+    ) throws -> SsoAccountHolderService {
+        try inner.openSsoService(
+            ownStatementAccountId: ownStatementAccountId,
+            ownEncryptionPublicKey: ownEncryptionPublicKey
+        )
     }
 
     /// Build the SCALE-encoded `Disconnected` message to post over a

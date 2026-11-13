@@ -71,14 +71,6 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
         subscribeToRecoveredBalance()
     }
 
-    func triggerSync() {
-        coinageBackupSyncService.triggerRecovery()
-    }
-
-    func cancelBackupNotification() {
-        coinageBackupSyncService.acknowledgeRecovery()
-    }
-
     func openFunding(_ direction: FundingDirection) {
         fundingTask?.cancel()
         fundingTask = Task { [weak presenter, fundingOpener] in

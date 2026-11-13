@@ -22,6 +22,8 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
         var holdsSelection = false
         var heldSelection: CheckedContinuation<Void, Never>?
         var quoteList: FundingQuoteList?
+        var waitingFrames: Set<String> = []
+        var openedFrames: [String] = []
     }
 
     /// What the screens asked of the core's start when quoted.
@@ -57,6 +59,20 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
     var autoStarts: [AutoStart] { state.withLock { $0.autoStarts } }
     var selectedProviders: [ProductId] { state.withLock { $0.selectedProviders } }
     var acknowledged: [String] { state.withLock { $0.acknowledged } }
+    var openedFrames: [String] { state.withLock { $0.openedFrames } }
+
+    /// Holds a provider's screen for session `intent` until the app opens it,
+    /// or drops it when `waiting` is false.
+    func holdFrame(_ intent: String, waiting: Bool = true) {
+        state.withLock { state in
+            if waiting {
+                state.waitingFrames.insert(intent)
+            } else {
+                state.waitingFrames.remove(intent)
+            }
+        }
+    }
+
     /// The id of the latest quote request, which counts them from 1.
     var lastRequestId: UInt64 { UInt64(asks.count) }
 
@@ -168,6 +184,17 @@ final class MockFundingRuntime: FundingRuntime, Sendable {
     }
 
     func openFunding(direction _: FundingDirection, amount _: U128?) async throws -> String? { nil }
+
+    func openProviderFrame(intent: String) -> Bool {
+        state.withLock { state in
+            state.openedFrames.append(intent)
+            return state.waitingFrames.remove(intent) != nil
+        }
+    }
+
+    func fundingFrameWaiting(intent: String) -> Bool {
+        state.withLock { $0.waitingFrames.contains(intent) }
+    }
 
     func acknowledgeFundingSession(intent: String) async throws -> Bool {
         state.withLock { $0.acknowledged.append(intent) }

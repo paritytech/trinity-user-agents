@@ -46,6 +46,10 @@ extension MainTabBarPresenter: MainTabBarPresenterProtocol {
         wireframe.showSettings(from: view)
     }
 
+    func didRequestBackupSettings() {
+        wireframe.showBackupSettings(from: view)
+    }
+
     func didFindChat(_ model: ChatOpenModel) {
         wireframe.openChat(model)
     }
@@ -80,6 +84,10 @@ extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
 
     func didReceivePaymentsSetupWaiting(_ isWaiting: Bool) {
         wireframe.showPaymentsSetupNotice(isVisible: isWaiting)
+    }
+
+    func didReceiveRestoredBalanceWaiting(_ isWaiting: Bool) {
+        view?.showSettingsAttention(isWaiting)
     }
 
     func didReceiveWidget(
