@@ -12,6 +12,7 @@ public enum DSMenuListItemPosition: Hashable {
 public enum DSMenuListItemStyle: Hashable {
     case `default`
     case attention
+    case attentionDot
 }
 
 public struct DSMenuListItem: View, Identifiable {
@@ -125,12 +126,17 @@ public struct DSMenuListItem: View, Identifiable {
 
     private var rightSlotContent: some View {
         HStack(spacing: DSSpacings.small) {
-            if style == .attention {
+            switch style {
+            case .default:
+                EmptyView()
+            case .attention:
                 Image(.iconAlertCircle)
                     .resizable()
                     .scaledToFit()
                     .frame(width: 20, height: 20)
                     .foregroundStyle(Color.fgWarning)
+            case .attentionDot:
+                DSAttentionDot()
             }
             if let rightSlot {
                 DSMenuListItemRightSlot(rightSlot)
@@ -141,7 +147,8 @@ public struct DSMenuListItem: View, Identifiable {
     private var descriptionColor: Color {
         switch style {
         case .default: Color.fgSecondary
-        case .attention: Color.fgWarning
+        case .attention,
+             .attentionDot: Color.fgWarning
         }
     }
 

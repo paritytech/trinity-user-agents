@@ -11,7 +11,6 @@ import type {
   ChainProvider,
   CoreStorage,
   ExtrinsicVersionHost,
-  HostChainSet,
   Permissions,
   ProductStorage,
   RequiredHostCallbacks,
@@ -28,8 +27,8 @@ export interface HeadlessHostOptions {
   auth: Required<AuthPresenter>;
   /** Backs the product's `localStorage`. */
   productStorage: ProductStorage;
-  /** The chains `chain.connect` can reach. */
-  supportedChains: HostChainSet;
+  /** Genesis hashes of the chains `chain.connect` can reach. */
+  servedChains: string[];
   /**
    * The user's answer to reviews: `getAccount` asks to disclose the product
    * subtree, `signRaw` to sign. A CLI asks at its prompt.
@@ -85,7 +84,7 @@ export function createHeadlessHostCallbacks(
   host: HeadlessHostOptions,
 ): RequiredHostCallbacks {
   const supportedGenesis = new Set(
-    host.supportedChains.chains.map((chain) => chain.genesisHash.toLowerCase()),
+    host.servedChains.map((genesisHash) => genesisHash.toLowerCase()),
   );
   let nextOperationId = 0;
 
@@ -103,9 +102,6 @@ export function createHeadlessHostCallbacks(
             request.value.genesisHash.toLowerCase(),
           ),
         };
-      },
-      async supportedChains() {
-        return host.supportedChains;
       },
     },
     navigation: {

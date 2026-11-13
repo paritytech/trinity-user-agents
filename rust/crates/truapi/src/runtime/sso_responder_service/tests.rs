@@ -98,22 +98,16 @@ fn signing_fixture(platform: Arc<StubPlatform>) -> (Arc<RuntimeServices>, Arc<Si
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		// No dotNS Asset Hub, so activation looks up no username.
-		[0; 32],
-		NETWORK_SUFFIX.to_string(),
+		crate::test_support::test_stack(NETWORK_SUFFIX, [0; 32], [0xbb; 32], None),
 	)
 	.expect("signing host config is valid");
 	let services = RuntimeServices::new(
 		platform.clone(),
 		config.host.host_info.clone(),
-		config.people_chain_genesis_hash,
-		config.bulletin_chain_genesis_hash,
-		config.asset_hub_chain_genesis_hash,
+		config.stack.clone(),
 		Spawner::for_test(),
 	);
-	let signing_host = SigningHost::new(services.clone(), config.network_suffix);
+	let signing_host = SigningHost::new(services.clone());
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	(services, signing_host)

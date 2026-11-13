@@ -44,7 +44,7 @@ impl LocalActivation for SigningHost {
 			let Some(identity) = lookup_session_identity(
 				&services.dotns_reads,
 				&services.chain,
-				services.asset_hub_chain_genesis_hash().unwrap_or_default(),
+				services.asset_hub_chain_genesis_hash(),
 				&session,
 			)
 			.await
