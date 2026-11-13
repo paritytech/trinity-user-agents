@@ -35,5 +35,4 @@ class FundingProviderBrandingTest {
 
         assertEquals(FundingProviderBrand(provider, "coinflow.dot", iconUrl = null), branding.brand(provider))
     }
-
 }

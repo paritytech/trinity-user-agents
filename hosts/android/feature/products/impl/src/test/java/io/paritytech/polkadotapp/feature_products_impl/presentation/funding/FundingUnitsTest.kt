@@ -17,8 +17,6 @@ class FundingUnitsTest {
         assertEquals(BigDecimal("50.199999"), cash.decimal("50199999"))
     }
 
-
-
     @Test
     fun `the stated decimals count, and a code ISO 4217 knows reads as money`() {
         assertEquals(FundingAssetUnit("EUR", 2, isFiat = true), FundingAssetUnit.of("eur", 2))
