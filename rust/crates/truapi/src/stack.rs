@@ -14,6 +14,7 @@ mod storage;
 
 pub use storage::StackStorage;
 
+use parity_scale_codec::{Decode, Encode};
 use trinity_stack::{Chain, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
@@ -76,9 +77,21 @@ pub struct StackIdentity {
 	pub generation: String,
 }
 
+/// One run of a stack's chains, from one wipe to the next: the descriptor's
+/// `generation` and the genesis hashes.
+///
+/// A wipe changes both. The hashes are compared as well, so a wipe is noticed
+/// even when the operator left `generation` as it was. What the core stored
+/// about the chains in another run is stale.
+#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+pub struct StackRun {
+	generation: String,
+	chains: StackChains,
+}
+
 /// The genesis hash of each chain role a stack names. People and Bulletin are
 /// required: the core runs SSO and its own preimage submission over them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct StackChains {
 	/// The relay chain.
 	pub relay: Option<[u8; 32]>,
@@ -231,10 +244,14 @@ impl Stack {
 		&self.identity.id
 	}
 
-	/// The descriptor's `generation`. Chain data cached under another
-	/// generation is stale. See [`StackIdentity::generation`].
+	/// The descriptor's `generation`. See [`StackIdentity::generation`].
 	pub fn generation(&self) -> &str {
 		&self.identity.generation
+	}
+
+	/// The run the stack's chains are in.
+	pub fn run(&self) -> StackRun {
+		StackRun { generation: self.identity.generation.clone(), chains: self.chains.clone() }
 	}
 
 	/// The core's storage for this stack over the host's `storage`.

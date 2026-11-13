@@ -24,6 +24,7 @@ use super::{
 		CreateTransactionAuthorityRequest, ProductAuthority, SignPayloadAuthorityRequest,
 		SignRawAuthorityRequest, StatementStoreAllowanceKey,
 	},
+	chain_run::{ChainRun, StoredRun},
 	connected_session_ui_info,
 	host_grants::{HostGrantGuard, HostGrantStore},
 	product_consent::ProductConsent,
@@ -65,6 +66,8 @@ pub struct SigningHost {
 	grants: HostGrantStore,
 	/// Durable RFC-0024 registry, scoped by the active wallet root.
 	ring_vrf_registry: Arc<RingVrfRegistryStore>,
+	/// Tells when the registry was filled in an earlier run of the chains.
+	chain_run: ChainRun,
 	sso_responder: Arc<SsoResponderService>,
 	/// Keep preimage submissions in the core instead of the Bulletin chain,
 	/// also implied by unchecked allowance grants.
@@ -108,11 +111,35 @@ impl SigningHost {
 			),
 			wallet,
 			ring_vrf_registry,
+			chain_run: ChainRun::default(),
 			#[cfg(feature = "test-host")]
 			submit_preimages_locally: core::sync::atomic::AtomicBool::new(false),
 			#[cfg(not(target_arch = "wasm32"))]
 			renewal_loop_started: std::sync::atomic::AtomicBool::new(false),
 		})
+	}
+
+	/// Drops the ring-VRF registry of the wallet rooted at `root_public_key`
+	/// when it was filled in an earlier run of the stack's chains, then
+	/// records the run they are in.
+	///
+	/// The run is not recorded while the registry is left, so the next
+	/// activation drops it again.
+	async fn enter_chain_run(&self, root_public_key: [u8; 32]) {
+		let (storage, stack) = (self.services.storage(), self.services.stack());
+		let entered = match self.chain_run.stored(&storage, stack).await {
+			None | Some(StoredRun::Current) => false,
+			Some(StoredRun::Unrecorded) => true,
+			Some(StoredRun::Earlier) => self
+				.ring_vrf_registry
+				.clear(root_public_key)
+				.await
+				.inspect_err(|error| tracing::warn!(?error, "ring-VRF registry clear failed"))
+				.is_ok(),
+		};
+		if entered {
+			self.chain_run.record(&storage, stack).await;
+		}
 	}
 
 	/// Keep preimage submissions in the core instead of the Bulletin chain.

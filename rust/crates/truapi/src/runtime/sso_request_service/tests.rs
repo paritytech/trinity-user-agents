@@ -2,7 +2,7 @@ use super::*;
 use crate::{
 	platform::{AuthState, CoreStorage, ProductId, StackStorageKey},
 	runtime::{ProductAuthority, ProductRuntimeHost, allowances},
-	test_support::{StubPlatform, sso_session_info, test_storage_key},
+	test_support::{StubPlatform, paseo_test_stack, sso_session_info, test_storage_key},
 };
 use futures::{FutureExt, executor::block_on};
 use parity_scale_codec::Encode;
@@ -59,6 +59,12 @@ impl CoreStorage for CleanupStorage {
 	}
 }
 
+/// The record of the chains' run, which the first installed session leaves
+/// and no session change removes.
+fn run_record() -> (Vec<u8>, Vec<u8>) {
+	(test_storage_key(CoreStorageKey::ChainRun).encode(), paseo_test_stack().run().encode())
+}
+
 #[test]
 fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 	for cancel in [false, true] {
@@ -100,20 +106,20 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 		block_on(repeated);
 		assert_eq!(
 			storage.values.lock().unwrap().clone(),
-			BTreeMap::from([(
-				test_storage_key(CoreStorageKey::AutoSigningKeys).encode(),
-				blob.clone()
-			)])
+			BTreeMap::from([
+				(test_storage_key(CoreStorageKey::AutoSigningKeys).encode(), blob.clone()),
+				run_record(),
+			])
 		);
 		block_on(host.activate_external_session(&blob)).unwrap();
 		assert_eq!(
 			(host.session_state.current(), storage.values.lock().unwrap().clone()),
 			(
 				Some(session.clone()),
-				BTreeMap::from([(
-					test_storage_key(CoreStorageKey::AutoSigningKeys).encode(),
-					blob.clone()
-				)])
+				BTreeMap::from([
+					(test_storage_key(CoreStorageKey::AutoSigningKeys).encode(), blob.clone()),
+					run_record(),
+				])
 			)
 		);
 
@@ -121,7 +127,7 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 		block_on(host.activate_external_session(&blob)).unwrap();
 		assert_eq!(
 			(host.session_state.current(), storage.values.lock().unwrap().clone()),
-			(Some(session), BTreeMap::new())
+			(Some(session), BTreeMap::from([run_record()]))
 		);
 	}
 }
@@ -195,10 +201,15 @@ fn login_store_notifications_follow_the_persisted_value() {
 			(
 				Ok(!changed),
 				(!changed).then_some(session),
-				BTreeMap::from([(
-					test_storage_key(CoreStorageKey::AuthSession).encode(),
-					encode_persisted_session(&stored)
-				)]),
+				// A login that is not installed leaves the run unrecorded.
+				BTreeMap::from_iter(
+					[(
+						test_storage_key(CoreStorageKey::AuthSession).encode(),
+						encode_persisted_session(&stored),
+					)]
+					.into_iter()
+					.chain((!changed).then(run_record)),
+				),
 			),
 		);
 	}

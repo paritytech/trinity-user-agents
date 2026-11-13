@@ -419,6 +419,22 @@ pub fn test_stack(
 		.expect("test stack is valid")
 }
 
+/// Whether `platform` holds no core value but the record of the chains' run.
+///
+/// A session leaves that record behind when it ends. It names no secret, so
+/// a check that nothing of a session is left stored allows it.
+pub fn only_the_chain_run_is_stored(platform: &StubPlatform) -> bool {
+	let stored = platform.local_storage.lock().expect("local storage mutex poisoned");
+	let run = core_storage_test_key(CoreStorageKey::ChainRun);
+	stored.keys().all(|key| *key == run)
+}
+
+/// The run of a [`test_stack`] over People `[0; 32]`, Bulletin `[0xbb; 32]`
+/// and `asset_hub`: what a cached manifest must name to be read on it.
+pub fn test_run(asset_hub: Option<[u8; 32]>) -> crate::platform::StackRun {
+	test_stack("paseo", [0; 32], [0xbb; 32], asset_hub).run()
+}
+
 /// The stack most runtime tests run on: [`test_stack`] on `paseo` with People
 /// `[0; 32]`, Bulletin `[0xbb; 32]` and Asset Hub `[0xcc; 32]`.
 pub fn paseo_test_stack() -> crate::platform::Stack {

@@ -13,9 +13,12 @@ fn stack_arg(source: &'static str) -> Option<StackArg> {
 #[test]
 fn test_network_with_stack_error() {
 	for source in ["--stack", STACK_ENV] {
-		let Err(error) =
-			NetworkSource::new(ChainBackend::Rpc, Some(Network::Previewnet), stack_arg(source))
-		else {
+		let Err(error) = NetworkSource::new(
+			ChainBackend::Rpc,
+			Some(Network::Previewnet),
+			stack_arg(source),
+			None,
+		) else {
 			panic!("--network accepted with {source}");
 		};
 		assert!(error.to_string().contains(source));
@@ -27,11 +30,12 @@ fn test_network_with_stack_error() {
 /// starts rather than on every connect.
 #[test]
 fn test_light_client_with_stack_error() {
-	let Err(error) = NetworkSource::new(ChainBackend::LightClient, None, stack_arg(STACK_ENV))
+	let Err(error) =
+		NetworkSource::new(ChainBackend::LightClient, None, stack_arg(STACK_ENV), None)
 	else {
 		panic!("light client accepted with a stack");
 	};
 	assert!(error.to_string().contains(STACK_ENV));
-	assert!(NetworkSource::new(ChainBackend::Rpc, None, stack_arg(STACK_ENV)).is_ok());
-	assert!(NetworkSource::new(ChainBackend::LightClient, None, None).is_ok());
+	assert!(NetworkSource::new(ChainBackend::Rpc, None, stack_arg(STACK_ENV), None).is_ok());
+	assert!(NetworkSource::new(ChainBackend::LightClient, None, None, None).is_ok());
 }

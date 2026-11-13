@@ -843,6 +843,7 @@ fn slot_key(slot: &CoreStorageKey) -> String {
 			format!("core:worker-manifest:{product_label}")
 		},
 		CoreStorageKey::FundingSupport => "core:funding-support".to_string(),
+		CoreStorageKey::ChainRun => "core:chain-run".to_string(),
 		CoreStorageKey::AppManifest { product_label } => {
 			format!("core:app-manifest:{product_label}")
 		},

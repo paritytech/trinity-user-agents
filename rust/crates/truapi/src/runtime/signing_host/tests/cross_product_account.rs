@@ -24,6 +24,7 @@ use truapi::versioned::signing::{
 /// Seed `owner`'s manifest cache, so the grant resolves without a chain.
 fn cache_grant(platform: &StubPlatform, owner: &str, trusted: &str) {
 	let entry = CachedManifest {
+		run: crate::test_support::test_run(None),
 		fetched_at_secs: current_unix_secs(),
 		json: Some(format!(r#"{{"$v":1,"trustedProducts":{trusted}}}"#)),
 	};

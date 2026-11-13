@@ -479,7 +479,14 @@ for raw bytes signed inside the `<Bytes>` watermark.
   stack that first reads the slot: the read falls back to
   `read_unscoped_core_storage`, writes the stack's copy and then clears the
   other. A clear removes both, the unscoped one first, so a kill between the
-  two cannot bring a cleared value back.
+  two cannot bring a cleared value back. A wipe keeps a stack's id and replaces its
+  chains. The core tells one run of the chains from the next by `StackRun`:
+  the descriptor's `generation` and the genesis hashes. A cached manifest
+  records its run and is not read under another one. The usernames in a
+  session, its allowance keys and the ring-VRF registry carry no run, so the
+  `ChainRun` slot records the one they were read in: when it differs, they are
+  dropped before a session is installed, and only then is the new run
+  recorded. The session and the stored permissions are kept.
 - `Navigation`: open URLs in the system browser.
 - `Notifications`: deliver and cancel push notifications.
 - `Permissions`: prompt for device and remote authorizations.

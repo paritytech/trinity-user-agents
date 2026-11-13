@@ -810,6 +810,17 @@ impl PairedSessionOwner for PairingHost {
 		self.grants.persistence_under(barrier).drain_cleanup().await
 	}
 
+	async fn forget_chain_data(&self, barrier: &GrantBarrier, session: &SessionInfo) -> bool {
+		let allowances = self.grants.persistence_under(barrier).forget_allowances(session).await;
+		let registry = self
+			.ring_vrf_registry
+			.clear(session.public_key)
+			.await
+			.inspect_err(|error| tracing::warn!(?error, "ring-VRF registry clear failed"))
+			.is_ok();
+		allowances && registry
+	}
+
 	async fn prepare_session(
 		&self,
 		barrier: &GrantBarrier,

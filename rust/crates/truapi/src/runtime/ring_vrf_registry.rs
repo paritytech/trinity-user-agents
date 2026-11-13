@@ -291,6 +291,23 @@ impl RingVrfRegistryStore {
 		update.persist().await
 	}
 
+	/// Forgets everything registered under `root_public_key`.
+	///
+	/// The registry names rings on the People chain, so it does not outlive
+	/// the run of the chains it was filled in.
+	pub async fn clear(&self, root_public_key: [u8; 32]) -> Result<(), RingVrfError> {
+		let _guard = self.storage_guard.lock().await;
+		self.storage()
+			.clear(CoreStorageKey::RingVrfRegistry { root_public_key })
+			.await
+			.map_err(storage_error)?;
+		self.cache
+			.lock()
+			.expect("ring-VRF registry cache mutex poisoned")
+			.remove(&root_public_key);
+		Ok(())
+	}
+
 	async fn snapshot(&self, root_public_key: [u8; 32]) -> Result<RegistrySnapshot, RingVrfError> {
 		if let Some(snapshot) = self
 			.cache

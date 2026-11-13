@@ -67,6 +67,14 @@ device key and the permissions survive the update. The first stack to read a
 slot takes its value. `createHeadlessHostCallbacks` treats a host without the
 two as holding nothing.
 
+After a wipe a stack has the same id and new chains. The core sees that by the
+`generation` and the genesis hashes, and drops what it read from the old
+chains: cached manifests, the usernames in the session, allowance keys and the
+ring-VRF registry. The session and stored permissions are kept. A host that
+keeps the session blob itself gets the session back without usernames until
+they resolve on the new chains, and should store what the core then reports:
+the core ignores the usernames in that blob only until it next starts.
+
 ## Bundler requirements
 
 The worker imports the WASM glue by a literal specifier, so every bundler
