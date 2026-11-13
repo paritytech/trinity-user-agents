@@ -173,7 +173,7 @@ extension SPARustRuntime: SPARuntimeProtocol {
 extension SPARustRuntime {
     /// Sends `host.page.visible` for the first main-frame commit of this session and ignores every later one,
     /// so a reload or an in-page navigation does not send it again.
-    func pageDidCommit(monotonicMilliseconds: Int, now: Date) {
+    func pageDidCommit(monotonicMilliseconds: Int) {
         guard !pageVisibleRecorded, !disposed, let createdAtMilliseconds = webViewCreatedAtMilliseconds else { return }
 
         pageVisibleRecorded = true
@@ -183,8 +183,7 @@ extension SPARustRuntime {
             truapiHostVersion: truapiHostVersion(),
             monotonicMilliseconds: monotonicMilliseconds,
             webViewMilliseconds: monotonicMilliseconds - createdAtMilliseconds,
-            openTap: openTap,
-            now: now
+            openTap: openTap
         ))
     }
 }
@@ -240,8 +239,7 @@ private extension SPARustRuntime {
 
         reporter.onMainFrameCommit = { [weak self] in
             let committedAtMilliseconds = HostEventClock.monotonicMilliseconds()
-            let now = Date()
-            Task { await self?.pageDidCommit(monotonicMilliseconds: committedAtMilliseconds, now: now) }
+            Task { await self?.pageDidCommit(monotonicMilliseconds: committedAtMilliseconds) }
         }
     }
 }

@@ -88,14 +88,14 @@ public struct HostEvent: Sendable, Equatable {
     }
 
     /// The event for a product WebView; `hostSessionID` is the id its page reads from `__trinityHostTelemetry`.
-    /// When a tap opened the page, `tap_ms` is the host's share of the open: the tap to this WebView.
+    /// When a tap opened the page, `tap_ms` is the host's share of the open: the tap to this WebView, on the
+    /// monotonic clock `monotonicMilliseconds` is read from.
     public static func webViewCreated(
         hostSessionID: UUID,
         origin: HostEventOrigin,
         truapiHostVersion: String,
         monotonicMilliseconds: Int,
-        openTap: HostOpenTap? = nil,
-        now: Date = Date()
+        openTap: HostOpenTap? = nil
     ) -> HostEvent {
         var tags = [
             "truapi.host_version": truapiHostVersion,
@@ -105,7 +105,7 @@ public struct HostEvent: Sendable, Equatable {
 
         if let openTap {
             tags["open.source"] = openTap.source.rawValue
-            extras["tap_ms"] = .integer(max(0, now.epochMilliseconds - openTap.openedAtEpochMilliseconds))
+            extras["tap_ms"] = .integer(openTap.milliseconds(until: monotonicMilliseconds))
         }
 
         return make(
@@ -141,15 +141,15 @@ public struct HostEvent: Sendable, Equatable {
     }
 
     /// The event for the first visible commit of a session's main page. `webview_ms` is the WebView's creation to
-    /// that commit; `tap_ms` is the tap to it, and only a session a tap opened has one.
+    /// that commit; `tap_ms` is the tap to it, and only a session a tap opened has one. Both are read on the
+    /// monotonic clock `monotonicMilliseconds` is read from.
     public static func pageVisible(
         hostSessionID: UUID,
         origin: HostEventOrigin,
         truapiHostVersion: String,
         monotonicMilliseconds: Int,
         webViewMilliseconds: Int,
-        openTap: HostOpenTap? = nil,
-        now: Date = Date()
+        openTap: HostOpenTap? = nil
     ) -> HostEvent {
         var tags = [
             "truapi.host_version": truapiHostVersion,
@@ -159,7 +159,7 @@ public struct HostEvent: Sendable, Equatable {
 
         if let openTap {
             tags["open.source"] = openTap.source.rawValue
-            extras["tap_ms"] = .integer(max(0, now.epochMilliseconds - openTap.openedAtEpochMilliseconds))
+            extras["tap_ms"] = .integer(openTap.milliseconds(until: monotonicMilliseconds))
         }
 
         return make(

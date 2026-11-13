@@ -7,27 +7,53 @@ public struct HostOpenTap: Sendable, Equatable {
         case deeplink
     }
 
+    /// The tap's wall clock, which the page reads to measure on its own clock.
     public let openedAtEpochMilliseconds: Int
+    /// The tap on `HostEventClock`, which the host measures `tap_ms` from, so a wall clock correction between the
+    /// tap and the page cannot shorten or lengthen the open.
+    public let openedAtMonotonicMilliseconds: Int
     public let source: Source
     /// Minted at the tap; the session that takes this tap adopts it as its host session id.
     public let sessionID: UUID
 
-    public init(source: Source, openedAt: Date = Date(), sessionID: UUID = UUID()) {
+    public init(
+        source: Source,
+        openedAt: Date = Date(),
+        openedAtMonotonicMilliseconds: Int = HostEventClock.monotonicMilliseconds(),
+        sessionID: UUID = UUID()
+    ) {
         self.source = source
         self.sessionID = sessionID
+        self.openedAtMonotonicMilliseconds = openedAtMonotonicMilliseconds
         openedAtEpochMilliseconds = openedAt.epochMilliseconds
     }
 
-    private init(source: Source, openedAtEpochMilliseconds: Int, sessionID: UUID) {
+    private init(
+        source: Source,
+        openedAtEpochMilliseconds: Int,
+        openedAtMonotonicMilliseconds: Int,
+        sessionID: UUID
+    ) {
         self.source = source
         self.openedAtEpochMilliseconds = openedAtEpochMilliseconds
+        self.openedAtMonotonicMilliseconds = openedAtMonotonicMilliseconds
         self.sessionID = sessionID
+    }
+
+    /// The host's share of the open from the tap to `monotonicMilliseconds`, read on the same clock as the tap.
+    func milliseconds(until monotonicMilliseconds: Int) -> Int {
+        monotonicMilliseconds - openedAtMonotonicMilliseconds
     }
 
     /// The same tap, joined to the session of a page it showed again rather than built, so its events and that
     /// page's events share one host session id.
     public func showing(sessionID: UUID) -> HostOpenTap {
-        HostOpenTap(source: source, openedAtEpochMilliseconds: openedAtEpochMilliseconds, sessionID: sessionID)
+        HostOpenTap(
+            source: source,
+            openedAtEpochMilliseconds: openedAtEpochMilliseconds,
+            openedAtMonotonicMilliseconds: openedAtMonotonicMilliseconds,
+            sessionID: sessionID
+        )
     }
 }
 

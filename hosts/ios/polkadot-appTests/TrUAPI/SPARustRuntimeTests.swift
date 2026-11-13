@@ -147,8 +147,8 @@ struct SPARustRuntimeTests {
         _ = try await runtime.start(with: engine)
         engine.commitMainFrame()
         try await hostEventRecorder.waitForEvents(count: 2)
-        await runtime.pageDidCommit(monotonicMilliseconds: HostEventClock.monotonicMilliseconds(), now: Date())
-        await runtime.pageDidCommit(monotonicMilliseconds: HostEventClock.monotonicMilliseconds(), now: Date())
+        await runtime.pageDidCommit(monotonicMilliseconds: HostEventClock.monotonicMilliseconds())
+        await runtime.pageDidCommit(monotonicMilliseconds: HostEventClock.monotonicMilliseconds())
 
         let events = hostEventRecorder.events
         #expect(events.map(\.name) == ["host.webview.created", "host.page.visible"])
@@ -157,6 +157,35 @@ struct SPARustRuntimeTests {
         #expect(visible.tags["open.source"] == "pocket_card")
         #expect(visible.extras["webview_ms"] != nil)
         #expect(visible.extras["tap_ms"] != nil)
+
+        await runtime.dispose()
+    }
+
+    /// Each span is the later reading minus the earlier one on the clock `event.monotonic_ms` is read from, so
+    /// a test with the subtraction reversed reads -1000 and -700 here and fails.
+    @Test func pageVisibleMeasuresFromTheTapAndFromTheWebView() async throws {
+        let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
+        let tap = HostOpenTap(
+            source: .pocketCard,
+            openedAtMonotonicMilliseconds: HostEventClock.monotonicMilliseconds() - 1_000
+        )
+        let hostEventRecorder = RecordingHostEventRecorder()
+        let runtime = makeRuntime(configuration: configuration, hostEventRecorder: hostEventRecorder, openTap: tap)
+
+        _ = try await runtime.start(with: MockJSEngine())
+        let created = try #require(hostEventRecorder.events.first)
+        guard case let .integer(createdAt) = try #require(created.extras["event.monotonic_ms"]) else {
+            Issue.record("event.monotonic_ms is not an integer")
+            return
+        }
+        await runtime.pageDidCommit(monotonicMilliseconds: createdAt + 700)
+
+        let visible = try #require(hostEventRecorder.events.last)
+        #expect(visible.name == "host.page.visible")
+        #expect(created.extras["tap_ms"] == .integer(createdAt - tap.openedAtMonotonicMilliseconds))
+        #expect(visible.extras["webview_ms"] == .integer(700))
+        #expect(visible.extras["tap_ms"] == .integer(createdAt + 700 - tap.openedAtMonotonicMilliseconds))
+        #expect(createdAt - tap.openedAtMonotonicMilliseconds >= 1_000)
 
         await runtime.dispose()
     }

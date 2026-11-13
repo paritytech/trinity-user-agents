@@ -62,15 +62,14 @@ struct HostEventTests {
             appBuild: nil,
             appVariant: "debug"
         )
-        let tap = HostOpenTap(source: .pocketCard, openedAt: Date(timeIntervalSince1970: 1_793_900_000.123))
+        let tap = HostOpenTap(source: .pocketCard, openedAtMonotonicMilliseconds: 1_000)
 
         let event = try HostEvent.webViewCreated(
             hostSessionID: #require(UUID(uuidString: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3")),
             origin: origin,
             truapiHostVersion: "0.9.0",
-            monotonicMilliseconds: 84,
-            openTap: tap,
-            now: Date(timeIntervalSince1970: 1_793_900_001.623)
+            monotonicMilliseconds: 2_500,
+            openTap: tap
         )
 
         #expect(event.tags["open.source"] == "pocket_card")
@@ -132,21 +131,21 @@ struct HostEventTests {
 
         #expect(joined.source == tap.source)
         #expect(joined.openedAtEpochMilliseconds == tap.openedAtEpochMilliseconds)
+        #expect(joined.openedAtMonotonicMilliseconds == tap.openedAtMonotonicMilliseconds)
         #expect(event.tags["host.session_id"] == "7ab1a66b-a1bb-41af-899f-d74d1d1f64c7")
         #expect(event.tags["open.reused"] == "true")
     }
 
     @Test func pageVisibleAfterATapMeasuresTheWebViewAndTheTap() throws {
-        let tap = HostOpenTap(source: .pocketCard, openedAt: Date(timeIntervalSince1970: 1_793_900_000.123))
+        let tap = HostOpenTap(source: .pocketCard, openedAtMonotonicMilliseconds: 100)
 
         let event = try HostEvent.pageVisible(
             hostSessionID: #require(UUID(uuidString: "d93fe846-8f3c-4cfa-a440-402b6f7b43d3")),
             origin: testOrigin,
             truapiHostVersion: "0.9.0",
-            monotonicMilliseconds: 900,
+            monotonicMilliseconds: 1_600,
             webViewMilliseconds: 400,
-            openTap: tap,
-            now: Date(timeIntervalSince1970: 1_793_900_001.623)
+            openTap: tap
         )
 
         #expect(event.name == "host.page.visible")
@@ -170,20 +169,25 @@ struct HostEventTests {
         #expect(event.extras["tap_ms"] == nil)
     }
 
-    @Test func pageVisibleClampsATapClockedAfterItsCommit() {
-        let tap = HostOpenTap(source: .pocketCard, openedAt: Date(timeIntervalSince1970: 1_793_900_002))
+    /// The wall clock moved back between the tap and the commit, as a network time correction does. `tap_ms` is
+    /// read on the monotonic clock, so the open still measures what it took rather than a clamped zero.
+    @Test func aWallClockCorrectionDoesNotChangeTheTapMeasurement() {
+        let tap = HostOpenTap(
+            source: .pocketCard,
+            openedAt: Date().addingTimeInterval(3_600),
+            openedAtMonotonicMilliseconds: 100
+        )
 
         let event = HostEvent.pageVisible(
             hostSessionID: UUID(),
             origin: testOrigin,
             truapiHostVersion: "0.9.0",
-            monotonicMilliseconds: 900,
+            monotonicMilliseconds: 1_600,
             webViewMilliseconds: 400,
-            openTap: tap,
-            now: Date(timeIntervalSince1970: 1_793_900_001)
+            openTap: tap
         )
 
-        #expect(event.extras["tap_ms"] == .integer(0))
+        #expect(event.extras["tap_ms"] == .integer(1_500))
     }
 
     @Test func aNoopRecorderNeverBuildsTheEvent() {
