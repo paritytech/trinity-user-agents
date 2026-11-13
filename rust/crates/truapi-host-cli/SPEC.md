@@ -291,7 +291,7 @@ Commands:
 | `attest` | Attest a given mnemonic's identity, wait for its ring membership, and print it as JSON. |
 | `network-check` | Resolve the network and print its routing as JSON, without contacting a chain. |
 | `stack` | Create, publish, check and bundle Trinity stack descriptors (section 6.7). |
-| `materials` | Plan a card face's materials as a phone would (section 6.8). |
+| `materials` | Resolve a card face's materials as a phone would (section 6.8). |
 
 ### 4.1 Global logging option
 
@@ -597,23 +597,23 @@ Fetches refuse redirects, time out after ten seconds and read at most 1 MiB.
 ### 6.8 Top-level `materials`
 
 ```sh
-truapi-host materials plan <face.json> [--materials <dir>] [--metal] [--out <dir>] [--base-path <dir>]
+truapi-host materials resolve <face.json> [--materials <dir>] [--metal] [--out <dir>] [--base-path <dir>]
 ```
 
-`materials plan` reads a card face as the generated client writes a renderer
-tree and prints the plan a phone draws its `Materials` nodes from, built by the
-same core: one `plan:` block each time the plan changes, with one line per node
+`materials resolve` reads a card face as the generated client writes a renderer
+tree and prints what its `Materials` nodes resolve to, with the same core a
+phone uses: one `materials:` block each time that changes, with one line per node
 (`node <n>: loading`, `node <n>: ready, 1 layer`, `node <n>: ready, <k> layers`
 or `node <n>: plain, <reason>`). It exits once no node is loading. A material Bulletin does not
 answer within 30 seconds draws plain as `NotFound`.
 
 | Option | Behavior |
 | --- | --- |
-| `--materials <dir>` | Keeps each file in `<dir>` first, as a fetch from Bulletin would, printing `kept <file> 0x<id>` or `refused <file>: <reason>`. A face naming only kept materials plans without Bulletin. |
+| `--materials <dir>` | Keeps each file in `<dir>` first, as a fetch from Bulletin would, printing `kept <file> 0x<id>` or `refused <file>: <reason>`. A face naming only kept materials resolves without Bulletin. |
 | `--metal` | Builds Metal shaders, as iOS draws, instead of GLSL ES 3.00, as Android does. |
 | `--out <dir>` | Writes each ready layer's shaders as `node<n>-layer<k>.vert` and `.frag` (or `.vertex.metal` and `.fragment.metal`), and what feeds them (uniform blocks, uniforms, textures) as `node<n>-layer<k>.txt`. |
 
-The face is planned on a Pocket card, the only surface that draws materials in
+The face is resolved on a Pocket card, the only surface that draws materials in
 this release, with shaders that filter 32-bit float images themselves. Kept
 materials live in their own core database under
 `<base-path>/v2/<network>/materials`, apart from every signing host's, so a
