@@ -1960,7 +1960,7 @@ struct ManifestLookup {
 fn signing_manifest_lookup_rpc(asset_hub: Option<[u8; 32]>) -> ManifestLookup {
 	use truapi::{api::LocalStorage, versioned::local_storage::HostLocalStorageReadRequest};
 
-	// The stub serves no dotNS either way, so end the follow rather than
+	// The stub serves no dotNS either way, so end its responses rather than
 	// wait out `dotns_lookup::OPERATION_TIMEOUT` for the same refusal.
 	let platform = Arc::new(StubPlatform { chain_responses_end: true, ..StubPlatform::default() });
 	let runtime = SigningHostRuntime::new(

@@ -1,11 +1,10 @@
 use super::*;
 use crate::test_support::{ScriptedProvider, extract_id, notification_sender, wait_for_sent};
-use futures::stream;
+use core::time::Duration;
+use futures::pin_mut;
 use parity_scale_codec::Encode;
 use parking_lot::{Condvar, Mutex as ParkingMutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
-
-mod call_batch;
 
 /// A stop the node acknowledges.
 const STOPPED: &str = r#""result":null"#;
@@ -45,82 +44,6 @@ fn stop(runtime: &ChainRuntime, genesis: &[u8], operation_id: &str) -> Result<()
 			operation_id: operation_id.to_owned(),
 		},
 	))
-}
-
-#[test]
-fn chain_head_best_hash_prefers_best_block_after_initialization() {
-	let mut follow = stream::iter(vec![
-		RemoteChainHeadFollowItem::Initialized {
-			finalized_block_hashes: vec![vec![0x01]],
-			finalized_block_runtime: None,
-		},
-		RemoteChainHeadFollowItem::BestBlockChanged { best_block_hash: vec![0x02] },
-	])
-	.boxed();
-
-	let hash = futures::executor::block_on(wait_for_chain_head_best_hash(
-		&mut follow,
-		"test chain",
-		Duration::from_secs(10),
-		Duration::from_secs(2),
-	))
-	.expect("best hash should resolve");
-
-	assert_eq!(hash, vec![0x02]);
-}
-
-#[test]
-fn chain_head_best_hash_timeout_falls_back_to_finalized_not_new_block() {
-	let mut follow = stream::iter(vec![
-		RemoteChainHeadFollowItem::Initialized {
-			finalized_block_hashes: vec![vec![0x01]],
-			finalized_block_runtime: None,
-		},
-		RemoteChainHeadFollowItem::NewBlock {
-			block_hash: vec![0x03],
-			parent_block_hash: vec![0x01],
-			new_runtime: None,
-		},
-	])
-	.chain(stream::pending())
-	.boxed();
-
-	let hash = futures::executor::block_on(wait_for_chain_head_best_hash(
-		&mut follow,
-		"test chain",
-		Duration::from_secs(10),
-		Duration::from_millis(1),
-	))
-	.expect("best hash should fall back to finalized hash");
-
-	assert_eq!(hash, vec![0x01]);
-}
-
-#[test]
-fn chain_head_best_hash_errors_on_stop_before_best_block() {
-	let mut follow = stream::iter(vec![
-		RemoteChainHeadFollowItem::Initialized {
-			finalized_block_hashes: vec![vec![0x01]],
-			finalized_block_runtime: None,
-		},
-		RemoteChainHeadFollowItem::NewBlock {
-			block_hash: vec![0x03],
-			parent_block_hash: vec![0x01],
-			new_runtime: None,
-		},
-		RemoteChainHeadFollowItem::Stop,
-	])
-	.boxed();
-
-	let err = futures::executor::block_on(wait_for_chain_head_best_hash(
-		&mut follow,
-		"test chain",
-		Duration::from_secs(10),
-		Duration::from_secs(2),
-	))
-	.expect_err("follow stop should be terminal before best block");
-
-	assert_eq!(err, "test chain follow stopped before best block");
 }
 
 #[derive(Default)]
@@ -2616,10 +2539,10 @@ fn a_follow_holding_a_slot_says_how_long_it_has_been_open_and_when_it_was_last_u
 /// The host sink cuts a detail at [`crate::logging::HOST_SINK_DETAIL_MAX_CHARS`]
 /// before a host sees it, so the line has to carry four follows inside that. A
 /// leaked follow is one whose receiver went without an unfollow, so that is the
-/// shape the line is sized for, and a dotNS follow is named by a label carrying
-/// a product id, which is the longest name a follow brings.
+/// shape the line is sized for, and a core follow is named by its own label,
+/// which can carry a product id, the longest name a follow brings.
 #[test]
-fn a_budget_line_names_four_dropped_dotns_follows_inside_the_detail_a_host_receives() {
+fn a_budget_line_names_four_dropped_core_follows_inside_the_detail_a_host_receives() {
 	let opened = SystemTime::now();
 	let products = [
 		"notes-worker-demo.paseo",

@@ -27,7 +27,7 @@ use crate::{
 		namehash_under,
 	},
 	platform::is_dns_label,
-	runtime::{DotnsLookup, DotnsLookupKind},
+	runtime::DotnsLookup,
 	unix_time::current_unix_secs,
 };
 
@@ -269,9 +269,7 @@ impl PublicProfilesService {
 
 	async fn read_record(&self, username: &str) -> Result<ProfileRecord, PublicProfileError> {
 		let genesis = self.genesis.ok_or(PublicProfileError::AssetHubNotConfigured)?;
-		let mut lookup =
-			DotnsLookup::pinned_to_best_block(&self.chain, genesis, DotnsLookupKind::PublicProfile)
-				.await?;
+		let mut lookup = DotnsLookup::at_finalized_head(&self.chain, genesis).await?;
 		Self::read_record_from(&mut lookup, username).await
 	}
 

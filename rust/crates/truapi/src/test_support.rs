@@ -49,7 +49,10 @@ use truapi::{
 };
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 
+mod legacy_asset_hub;
 mod scripted_chain;
+
+pub use legacy_asset_hub::{legacy_asset_hub_frames, view_output};
 
 pub use scripted_chain::{
 	FollowRefusal, ScriptedChainHead, ScriptedProvider, extract_id, later_notification_sender,

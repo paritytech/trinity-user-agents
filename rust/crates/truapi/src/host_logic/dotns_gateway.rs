@@ -342,9 +342,9 @@ pub enum DotnsError {
 	#[error("{0}")]
 	#[from(String)]
 	Storage(String),
-	/// The chain follow the lookup reads through gave no best block to pin.
+	/// Asset Hub could not be reached, or named no finalized block to read at.
 	#[error("{0}")]
-	Follow(String),
+	Chain(String),
 	/// The controller's protocol registry could not be read.
 	#[error("DotnsPopController.protocolRegistry()")]
 	ProtocolRegistry(#[source] DotnsCallError),

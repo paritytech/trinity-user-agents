@@ -169,7 +169,9 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 			(
 				None,
 				ManifestSource::LookupFailed {
-					reason: "Asset Hub follow stopped before initialization".to_string(),
+					reason: "legacy_connection: remote_chain_connect: Host { reason: \"fixture \
+					         serves no chain\" }"
+						.to_string(),
 				},
 			),
 			(None, ManifestSource::TimedOut),
@@ -178,9 +180,9 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 }
 
 /// Lookups for one product that start while none has finished share one
-/// lookup, so a burst of them holds one Asset Hub follow, not one each.
+/// read of Asset Hub, not one each.
 #[test]
-fn concurrent_lookups_for_one_product_open_one_follow() {
+fn concurrent_lookups_for_one_product_read_asset_hub_once() {
 	let platform = std::sync::Arc::new(crate::test_support::StubPlatform::default());
 	let services = RuntimeServices::new(
 		platform.clone(),
@@ -200,7 +202,7 @@ fn concurrent_lookups_for_one_product_open_one_follow() {
 	));
 
 	assert_eq!(
-		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chainHead_v1_follow"),
+		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chain_getFinalizedHead"),
 		1
 	);
 }

@@ -1,196 +1,107 @@
-//! Pinned-block dotNS transport shared by the core's dotNS readers.
+//! dotNS transport shared by the core's dotNS readers.
 //!
-//! Every dotNS read runs over one `chainHead_v1` follow pinned to a best block,
-//! so a sequence of storage reads and contract views sees one consistent state.
-//! No chain metadata is needed.
+//! A lookup reads Asset Hub over the core's legacy JSON-RPC connection at one
+//! finalized block, so a sequence of storage reads and contract views sees one
+//! consistent state. It opens no `chainHead_v1_follow`: a node allows only a
+//! few of those per connection, and how many dotNS reads run at once must not
+//! decide whether the core or a product can follow a chain. No chain metadata
+//! is needed.
 
-use core::sync::atomic::{AtomicU64, Ordering};
-#[cfg(not(target_arch = "wasm32"))]
-use std::time::Duration;
-#[cfg(target_arch = "wasm32")]
-use web_time::Duration;
+use core::{future::Future, time::Duration};
 
-use futures::stream::BoxStream;
-use truapi::latest::{
-	OperationStartedResult, RemoteChainHeadCallRequest, RemoteChainHeadFollowItem,
-	RemoteChainHeadFollowRequest, RemoteChainHeadStorageRequest, StorageQueryItem,
-	StorageQueryType,
-};
-
-use crate::chain_runtime::{
-	ChainHeadStorageValue, ChainHeadStorageValueLookup, ChainRuntime,
-	wait_for_chain_head_best_hash, wait_for_chain_head_storage_value,
-};
+use futures::{FutureExt, future::join_all, pin_mut};
+use subxt::utils::H256;
 use tracing::{debug, info};
 
 use crate::{
 	chain::{EvmContractError, RuntimeApiCaller},
+	chain_runtime::{ChainRuntime, LegacyConnection},
 	evm_contract::read_batch,
 	host_logic::dotns_gateway::{DotnsError, DotnsTransport},
-	platform::ProductId,
-	time::RealTimer,
+	time::{RealTimer, Timer},
 };
 
-/// Budget for one step of a lookup: opening the follow, one storage read, one
+/// Budget for one step of a lookup: finding the block, one storage read, one
 /// contract view. A step that stalls this long is not going to answer.
 #[cfg(not(test))]
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(test)]
 const OPERATION_TIMEOUT: Duration = Duration::from_millis(100);
-/// Budget for the best-block hash the follow opens on.
-const BEST_BLOCK_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Monotonic salt for follow ids, so concurrent lookups do not collide.
-static DOTNS_LOOKUP_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-/// What a dotNS lookup is resolving, as it reads in that lookup's follow id.
-///
-/// A named kind rather than free text, because the follow id reaches a host's
-/// log through the events that name the follows holding a connection's budget.
-/// It has to say what is being read without saying whose account is reading.
-/// [`DOTNS_LOOKUP_COUNTER`] already tells concurrent lookups apart, so a kind
-/// needs no identifier of its own to be unique.
-#[derive(derive_more::Display)]
-pub enum DotnsLookupKind<'a> {
-	/// The usernames on an account. Carries nothing: an account id here would
-	/// put a user identifier in every log line that names this follow.
-	#[display("identity")]
-	Identity,
-	/// A product's root manifest, named by the product it belongs to.
-	#[display("manifest:{_0}")]
-	Manifest(&'a ProductId),
-	/// A product's Worker manifest, named by the product it belongs to.
-	#[display("executable:{_0}")]
-	WorkerManifest(&'a ProductId),
-	/// A product's App manifest, named by the product it belongs to.
-	#[display("app-executable:{_0}")]
-	AppManifest(&'a ProductId),
-	/// A person's public profile, without a user identifier in the follow id.
-	#[display("public-profile")]
-	PublicProfile,
+/// One block context for a sequence of dotNS reads, over the core's legacy
+/// connection to Asset Hub.
+pub struct DotnsLookup {
+	legacy: LegacyConnection,
+	at: H256,
 }
 
-/// One pinned-block context for a sequence of dotNS reads. It owns the
-/// `chainHead_v1` follow every read and view runs over.
-pub struct DotnsLookup<'a> {
-	chain: &'a ChainRuntime,
-	follow: BoxStream<'static, RemoteChainHeadFollowItem>,
-	genesis_hash: Vec<u8>,
-	follow_id: String,
-	hash: Vec<u8>,
-}
-
-impl<'a> DotnsLookup<'a> {
-	/// Opens a follow on Asset Hub and pins it to the current best block.
-	///
-	/// `kind` names what this lookup resolves and appears in its follow id, so
-	/// it is a named kind rather than free text. See [`DotnsLookupKind`].
-	pub async fn pinned_to_best_block(
-		chain: &'a ChainRuntime,
+impl DotnsLookup {
+	/// Reads Asset Hub at its latest finalized block, like the core's other
+	/// one-off state reads.
+	pub async fn at_finalized_head(
+		chain: &ChainRuntime,
 		asset_hub_chain_genesis_hash: [u8; 32],
-		kind: DotnsLookupKind<'_>,
 	) -> Result<Self, DotnsError> {
-		let genesis_hash = asset_hub_chain_genesis_hash.to_vec();
-		let lookup_id = DOTNS_LOOKUP_COUNTER.fetch_add(1, Ordering::Relaxed);
-		let follow_id = format!("truapi:dotns:{lookup_id}:{kind}");
-		let mut follow = chain.remote_chain_head_follow_items(
-			follow_id.clone(),
-			RemoteChainHeadFollowRequest { genesis_hash: genesis_hash.clone(), with_runtime: true },
-		);
+		let opened = async {
+			let legacy = chain
+				.legacy_connection(&asset_hub_chain_genesis_hash)
+				.await
+				.map_err(|failure| failure.to_string())?;
+			let at = legacy
+				.methods
+				.chain_get_finalized_head()
+				.await
+				.map_err(|error| error.to_string())?;
+			Ok::<_, String>(Self { legacy, at })
+		};
 		// This path does network I/O, can stall for `OPERATION_TIMEOUT`, and
 		// fails closed into a refusal a caller cannot tell from "you were not
 		// granted this", so say what it did.
-		debug!(
-			target: "truapi::dotns",
-			%follow_id,
-			genesis = %hex::encode(&genesis_hash),
-			"opening the Asset Hub follow for a dotNS lookup"
-		);
-		let hash = wait_for_chain_head_best_hash(
-			&mut follow,
-			"Asset Hub",
-			OPERATION_TIMEOUT,
-			BEST_BLOCK_TIMEOUT,
-		)
-		.await
-		.inspect_err(|reason| {
-			info!(
-				target: "truapi::dotns",
-				%follow_id, %reason,
-				"the Asset Hub follow never initialized; every grant behind \
-				 this lookup is refused"
-			);
-		})
-		.map_err(DotnsError::Follow)?;
-		Ok(Self { chain, follow, genesis_hash, follow_id, hash })
+		let lookup = within(opened, "finding the finalized Asset Hub block")
+			.await
+			.and_then(core::convert::identity)
+			.inspect_err(|reason| {
+				info!(
+					target: "truapi::dotns",
+					%reason,
+					"no finalized Asset Hub block to read dotNS at; every grant \
+					 behind this lookup is refused"
+				);
+			})
+			.map_err(DotnsError::Chain)?;
+		debug!(target: "truapi::dotns", at = ?lookup.at, "reading dotNS at the finalized Asset Hub block");
+		Ok(lookup)
+	}
+}
+
+/// Runs `step`, or names it as timed out after [`OPERATION_TIMEOUT`].
+async fn within<T>(step: impl Future<Output = T>, name: &str) -> Result<T, String> {
+	let step = step.fuse();
+	let timeout = RealTimer.sleep(OPERATION_TIMEOUT).fuse();
+	pin_mut!(step, timeout);
+	futures::select! {
+		output = step => Ok(output),
+		() = timeout => Err(format!("{name} timed out")),
 	}
 }
 
 #[async_trait::async_trait]
-impl DotnsTransport for DotnsLookup<'_> {
-	/// Reads one storage value at the pinned block. `Ok(None)` when absent.
+impl DotnsTransport for DotnsLookup {
+	/// Reads one storage value at the lookup's block. `Ok(None)` when absent.
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
-		let response = self
-			.chain
-			.remote_chain_head_storage(RemoteChainHeadStorageRequest {
-				genesis_hash: self.genesis_hash.clone(),
-				follow_subscription_id: self.follow_id.clone(),
-				hash: self.hash.clone(),
-				items: vec![StorageQueryItem {
-					key: key.clone(),
-					query_type: StorageQueryType::Value,
-				}],
-				child_trie: None,
-			})
-			.await
-			.map_err(|failure| DotnsError::Storage(failure.reason()))?;
-		let operation_id = started_operation_id(response.operation)?;
-		let value = wait_for_chain_head_storage_value(
-			&mut self.follow,
-			ChainHeadStorageValueLookup {
-				chain: self.chain,
-				genesis_hash: &self.genesis_hash,
-				follow_subscription_id: &self.follow_id,
-				operation_id: &operation_id,
-				key: &key,
-				label: "Asset Hub",
-				timeout: OPERATION_TIMEOUT,
-			},
-		)
-		.await?;
-		// `Missing` is a real answer and `Inaccessible` is a failure, but both
-		// end in the same refusal upstream. Distinguish them here or the two
-		// are indistinguishable after the fact.
-		match value {
-			ChainHeadStorageValue::Found(value) => {
-				debug!(
-					target: "truapi::dotns",
-					follow_id = %self.follow_id,
-					bytes = value.len(),
-					"dotNS storage read found a value"
-				);
-				Ok(Some(value))
-			},
-			ChainHeadStorageValue::Missing => {
-				debug!(
-					target: "truapi::dotns",
-					follow_id = %self.follow_id,
-					"dotNS storage read: no such entry"
-				);
-				Ok(None)
-			},
-			ChainHeadStorageValue::Inaccessible => {
-				info!(
-					target: "truapi::dotns",
-					follow_id = %self.follow_id,
-					"dotNS storage was inaccessible, which is not the same as absent"
-				);
-				Err(DotnsError::Storage("Asset Hub storage was inaccessible".to_string()))
-			},
-		}
+		let read = self.legacy.methods.state_get_storage(&key, Some(self.at));
+		let value = within(read, "an Asset Hub storage read")
+			.await?
+			.map_err(|error| DotnsError::Storage(error.to_string()))?;
+		debug!(
+			target: "truapi::dotns",
+			bytes = value.as_ref().map(Vec::len),
+			"dotNS storage read returned"
+		);
+		Ok(value)
 	}
 
-	/// Dry-runs a contract view via `ReviveApi_call` at the pinned block and
+	/// Dry-runs a contract view via `ReviveApi_call` at the lookup's block and
 	/// returns its data.
 	///
 	/// Views originate from the synthetic always-mapped account. They work
@@ -212,7 +123,6 @@ impl DotnsTransport for DotnsLookup<'_> {
 			.inspect(|result| {
 				debug!(
 					target: "truapi::dotns",
-					follow_id = %self.follow_id,
 					dest = %hex::encode(dest),
 					outcome = match result {
 						Ok(data) => format!("{} bytes", data.len()),
@@ -226,7 +136,7 @@ impl DotnsTransport for DotnsLookup<'_> {
 }
 
 #[async_trait::async_trait]
-impl RuntimeApiCaller for DotnsLookup<'_> {
+impl RuntimeApiCaller for DotnsLookup {
 	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
 		self.call_batch(function, vec![input.to_vec()])
 			.await
@@ -234,46 +144,20 @@ impl RuntimeApiCaller for DotnsLookup<'_> {
 			.expect("one requested call has one result")
 	}
 
+	/// Sends every call at once, all at the lookup's block.
 	async fn call_batch(
 		&mut self,
 		function: &str,
 		inputs: Vec<Vec<u8>>,
 	) -> Vec<Result<Vec<u8>, subxt::Error>> {
-		let calls = inputs
-			.into_iter()
-			.map(|input| RemoteChainHeadCallRequest {
-				genesis_hash: self.genesis_hash.clone(),
-				follow_subscription_id: self.follow_id.clone(),
-				hash: self.hash.clone(),
-				function: function.to_string(),
-				call_parameters: input,
-			})
-			.collect();
-		let outputs = self
-			.chain
-			.chain_head_call_batch(
-				&mut self.follow,
-				calls,
-				"Asset Hub",
-				OPERATION_TIMEOUT,
-				&RealTimer,
-			)
-			.await;
-		let mut results = Vec::with_capacity(outputs.len());
-		for output in outputs {
-			results.push(output.map_err(subxt::Error::other_str));
-		}
-		results
-	}
-}
-
-/// Unwraps a started operation id. `LimitReached` maps to an error.
-fn started_operation_id(operation: OperationStartedResult) -> Result<String, String> {
-	match operation {
-		OperationStartedResult::Started { operation_id } => Ok(operation_id),
-		OperationStartedResult::LimitReached => {
-			Err("Asset Hub operation limit reached".to_string())
-		},
+		let (methods, at) = (&self.legacy.methods, self.at);
+		join_all(inputs.iter().map(|input| async move {
+			within(methods.state_call(function, Some(input), Some(at)), "an Asset Hub runtime call")
+				.await
+				.map_err(subxt::Error::other_str)?
+				.map_err(Into::into)
+		}))
+		.await
 	}
 }
 

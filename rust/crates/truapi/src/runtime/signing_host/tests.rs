@@ -415,12 +415,12 @@ fn a_failed_lookup_is_named_in_the_refusal() {
 		lines,
 		vec![
 			"truapi.tracing.warn truapi::runtime::product_manifest: root manifest lookup \
-			 failed {target=peopl.dot, reason=Asset Hub follow initialization timed out}"
+			 failed {target=peopl.dot, reason=finding the finalized Asset Hub block timed out}"
 				.to_string(),
 			refusal_line(
 				"because=manifest unavailable, entry=dim2, caller=dim2.dot, \
-				 owner=peopl.dot, source=dotNS lookup failed: Asset Hub follow \
-				 initialization timed out, scopes=None"
+				 owner=peopl.dot, source=dotNS lookup failed: finding the finalized \
+				 Asset Hub block timed out, scopes=None"
 			),
 		]
 	);
@@ -790,7 +790,13 @@ fn third_product_context(
 	Result<v01::HostAccountCreateProofResponse, RingVrfError>,
 	Result<v01::ContextualAlias, RingVrfError>,
 ) {
-	let platform = Arc::new(StubPlatform::default());
+	// Every manifest this needs is cached, so the only chain reads are the
+	// background username lookups activation starts. A refused connection ends
+	// them at once rather than leaving reads open while the runtime drops.
+	let platform = Arc::new(StubPlatform {
+		chain_connect_error: Some("fixture serves no chain"),
+		..StubPlatform::default()
+	});
 	cache_grant(&platform, "peopl.dot", owner_grants);
 	match context_grants {
 		Some(grants) => cache_grant(&platform, "dim2.dot", grants),

@@ -46,9 +46,8 @@ const PREIMAGE_CACHE_MAX_BYTES: usize = 16 * 1024 * 1024;
 /// Store catches up.
 const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 
-/// dotNS reads running now. A read opens its own Asset Hub follow and holds it
-/// until it settles, so callers asking for the same thing while one runs wait
-/// for its answer, and a burst of them holds one follow slot, not one each.
+/// dotNS reads running now. Callers asking for the same thing while one runs
+/// wait for its answer, so a burst of them reads Asset Hub once, not once each.
 #[derive(Clone)]
 pub struct DotnsReads {
 	/// Root manifest reads, by product label.
