@@ -1,7 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol
 
 import io.mockk.coEvery
-import io.mockk.coVerify
 import io.mockk.mockk
 import io.paritytech.polkadotapp.bandersnatch_crypto.BandersnatchEntropy
 import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
@@ -21,13 +20,11 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.accountsProtocol.r
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verifyNoInteractions
 import uniffi.truapi.ProductId
-import uniffi.truapi.ProductIdException
 
 private val PEOPLE_RING = ringOf("pop:polkadot.network/people")
 private val OTHER_RING = ringOf("pop:polkadot.network/people-lite")
@@ -57,24 +54,25 @@ class RealRingVrfKeySourceTest {
         membersRingLocator = membersRingLocator,
     )
 
+    // A fork runs on its own TLD, so its personhood keys are reserved under it and Polkadot's are not.
     @Test
-    fun `an unsupported configured network aborts before deriving a key or looking up a member`() {
+    fun `a fork's reserved personhood keys are under its own TLD`() = runBlocking<Unit> {
         val tldProvider: DotNsTldProvider = mockk {
             coEvery { getTld() } returns Result.success(DotNsTld.parse("test")!!)
         }
         val registry: RingVrfKeyRegistry = mockk {
-            coEvery { declaredRings(PERSONHOOD_HANDLE) } returns emptyList()
+            coEvery { declaredRings(any()) } returns emptyList()
         }
-        val entropyDeriver: RingVrfEntropyDeriver = mockk()
-        val memberLocator: MembersRingLocator = mockk()
-        val source = RealRingVrfKeySource(registry, ReservedRingVrfKeys(mockk(), tldProvider), entropyDeriver, memberLocator)
-
-        assertThrows(ProductIdException::class.java) {
-            runBlocking { source.resolveMember(PERSONHOOD_HANDLE, PEOPLE_RING) }
+        val memberLocator: MembersRingLocator = mockk {
+            coEvery { locateRing(PEOPLE_RING) } returns Result.success(
+                LocatedRing("people", RingCollectionId.paddedString("pop:polkadot.network/people"), metaId = 42L)
+            )
         }
+        val source = RealRingVrfKeySource(registry, ReservedRingVrfKeys(mockk(), tldProvider), mockk(), memberLocator)
+        val forkPersonhood = ProductAccountId(ProductId.parse("peopl.test").getOrThrow(), DerivationIndex32.fromUInt(0u))
 
-        coVerify(exactly = 0) { entropyDeriver.deriveRingVrfEntropy(any()) }
-        coVerify(exactly = 0) { memberLocator.locateRing(any()) }
+        assertTrue(source.resolveMember(forkPersonhood, PEOPLE_RING).getOrThrow() is MemberSource.Account)
+        assertEquals(RingVrfKeyError.KeyNotRegistered, source.resolveMember(PERSONHOOD_HANDLE, PEOPLE_RING).exceptionOrNull())
     }
 
     @Test

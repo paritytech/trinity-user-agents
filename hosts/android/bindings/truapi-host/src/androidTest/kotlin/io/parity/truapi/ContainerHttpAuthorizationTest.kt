@@ -67,7 +67,7 @@ class ContainerHttpAuthorizationTest {
         )
 
         TrUAPIHostRuntime(bridge, config).use { runtime ->
-            runtime.openProductExecution(bridge, ProductExecutionConfig(ProductId.parse("http-policy.paseo").getOrThrow(), kind)).use { execution ->
+            runtime.openProductExecution(bridge, ProductExecutionConfig(ProductId.parse("http-policy.testnet").getOrThrow(), kind)).use { execution ->
                 val endpoint = execution.startWsBridge()
                 BridgeProxy(endpoint.port.toInt()).use { proxy ->
                     MockWebServer().use { server ->

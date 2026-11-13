@@ -15,13 +15,10 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatExt
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.IntegrationType
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertThrows
 import org.junit.Test
 import uniffi.truapi.ProductId
-import uniffi.truapi.ProductIdException
 
 class ProductExternalExtensionProviderTest {
     private val tld = requireNotNull(DotNsTld.parse("paseo"))
@@ -50,8 +47,9 @@ class ProductExternalExtensionProviderTest {
         assertEquals(listOf(playground to ProductChatExtensionOrigin.InstalledByUser), extensions.map { it.product to it.origin })
     }
 
+    // A fork runs on its own TLD, so the host places that network's game product, not Polkadot's.
     @Test
-    fun `an unsupported configured network is not silently omitted from host chats`() {
+    fun `a fork places its own network's game product in host chats`() = runTest {
         val context: Context = mockk(relaxed = true)
         val tldProvider: DotNsTldProvider = mockk {
             every { currentTldOrNull() } returns DotNsTld.parse("test")!!
@@ -61,11 +59,11 @@ class ProductExternalExtensionProviderTest {
             ProductBotFactory(context, mockk(), mockk(), mockk(), mockk<ProductRoomFooterStorage> { every { read(any()) } returns emptyMap() }),
             HostPlacedProducts(context, tldProvider),
         )
-        every { integrationRepository.observeProductsByType(IntegrationType.Chat) } returns flowOf(listOf(playground))
+        every { integrationRepository.observeProductsByType(IntegrationType.Chat) } returns flowOf(emptyList())
 
-        assertThrows(ProductIdException::class.java) {
-            runBlocking { provider.observeExtensions().first() }
-        }
+        val placed = provider.observeExtensions().first().map { (it as ProductChatExtension).product.id }
+
+        assertEquals(listOf(ProductId.parse("dim2.test").getOrThrow()), placed)
     }
 
     // Unioned rather than written to the product tables, as Pocket does with its pinned card:

@@ -31,8 +31,6 @@ import io.paritytech.polkadotapp.common.presentation.camera.CameraQrReader
 import io.paritytech.polkadotapp.common.presentation.camera.RealCameraQrReader
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
 import io.paritytech.polkadotapp.common.presentation.clipboard.RealClipboardService
-import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
-import io.paritytech.polkadotapp.common.presentation.deeplink.RootDeeplinkHandler
 import io.paritytech.polkadotapp.common.presentation.formatters.number.NumberFormatterFactory
 import io.paritytech.polkadotapp.common.presentation.formatters.number.NumberFormatters
 import io.paritytech.polkadotapp.common.presentation.formatters.number.RealNumberFormatterFactory
@@ -148,9 +146,6 @@ internal interface CommonModule {
     @Binds
     @Singleton
     fun bindAppThemeSelector(impl: RealAppThemeSelector): AppThemeSelector
-
-    @Binds
-    fun bindDeepLinkHandler(impl: RootDeeplinkHandler): DeepLinkHandler
 
     @Binds
     @Singleton

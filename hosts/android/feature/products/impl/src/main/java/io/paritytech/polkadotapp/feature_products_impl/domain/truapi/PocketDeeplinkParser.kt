@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import uniffi.truapi.NavigateDecision
 import uniffi.truapi.ProductId
 import uniffi.truapi.parseNavigate
@@ -26,9 +27,10 @@ sealed interface PocketDeeplink {
 /**
  * Classifies through the core's `parse_navigate`, so every host reads a Pocket deeplink the same
  * way. Kept behind this adapter, like the host bridges, so a bindgen rename does not ripple.
+ * A card of a product the network on [tld] does not serve reads as no Pocket link.
  */
 class PocketDeeplinkParser @Inject constructor() {
-    fun parse(url: String): PocketDeeplink? = when (val decision = parseNavigate(url)) {
+    fun parse(url: String, tld: DotNsTld): PocketDeeplink? = when (val decision = parseNavigate(url, tld.value)) {
         is NavigateDecision.Pocket -> PocketDeeplink.Card(
             productId = decision.identifier,
             action = when (decision.action) {

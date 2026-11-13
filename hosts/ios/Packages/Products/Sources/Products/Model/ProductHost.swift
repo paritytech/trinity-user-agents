@@ -2,7 +2,10 @@ import Foundation
 import TrUAPIHost
 
 public struct ProductHost: Sendable {
-    public static let shareHosts: Set<String> = Set(productShareHosts())
+    /// Share domains of Polkadot's TLD and the network's own, `tld`.
+    public static func shareHosts(tld: String) -> Set<String> {
+        Set(productShareHosts(networkSuffix: tld))
+    }
 
     private let identifier: ProductId
 

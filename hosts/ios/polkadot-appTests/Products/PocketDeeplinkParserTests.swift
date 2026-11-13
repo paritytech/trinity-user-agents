@@ -7,7 +7,7 @@ import struct TrUAPIHost.ProductId
 /// Classification goes through the core's own `parse_navigate`, so every host
 /// reads a Pocket link the same way rather than parsing the string itself.
 struct PocketDeeplinkParserTests {
-    let parser = PocketDeeplinkParser()
+    let parser = PocketDeeplinkParser(tldProvider: StubDotNsTldProvider(tld: "paseo"))
 
     private func classify(_ link: String) -> PocketLinkClassification {
         parser.classify(URL(string: link)!)
@@ -100,5 +100,24 @@ struct PocketDeeplinkParserTests {
     @Test
     func doesNotClaimAWebUrl() {
         #expect(classify("https://pocket/add?product=game.dot&card=loyalty") == .notOurs)
+    }
+
+    /// The network serves its own TLD and Polkadot's, so a card of another
+    /// network's product is a Pocket link the core refuses.
+    @Test
+    func readsACardOfAnotherNetworksProductAsMalformed() {
+        guard case .pocket = classify("polkadotapp://pocket/add?product=game.paseo&card=loyalty") else {
+            Issue.record("expected the network's own product to be read")
+            return
+        }
+        #expect(classify("polkadotapp://pocket/add?product=game.testnet&card=loyalty") == .malformed)
+    }
+
+    /// Which products are the network's is unknown until its TLD is, so no link
+    /// is claimed before then.
+    @Test
+    func claimsNoLinkBeforeTheNetworksTldIsKnown() {
+        let parser = PocketDeeplinkParser(tldProvider: StubDotNsTldProvider(tld: nil))
+        #expect(parser.classify(URL(string: "polkadotapp://pocket")!) == .notOurs)
     }
 }

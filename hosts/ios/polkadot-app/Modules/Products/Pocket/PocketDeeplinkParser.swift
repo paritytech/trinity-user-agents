@@ -41,15 +41,22 @@ enum PocketLinkClassification: Equatable {
 
 /// Classifies through the core's `parse_navigate`, so every host reads a Pocket
 /// link the same way. Kept behind this adapter, like the host bridges, so a
-/// bindgen rename does not ripple through the app.
+/// bindgen rename does not ripple through the app. A card of a product the
+/// network does not serve is malformed, and no link is ours before the
+/// network's TLD is known.
 struct PocketDeeplinkParser {
     /// The host every Pocket link names.
     static let host = "pocket"
 
     private let deeplinkMatcher: AppDeeplinkMatching
+    private let tldProvider: DotNsTldProviding
 
-    init(deeplinkMatcher: AppDeeplinkMatching = AppDeeplinkMatcher()) {
+    init(
+        deeplinkMatcher: AppDeeplinkMatching = AppDeeplinkMatcher(),
+        tldProvider: DotNsTldProviding = DotNsTldProviderFacade.shared
+    ) {
         self.deeplinkMatcher = deeplinkMatcher
+        self.tldProvider = tldProvider
     }
 
     func classify(_ url: URL) -> PocketLinkClassification {
@@ -62,11 +69,11 @@ struct PocketDeeplinkParser {
         }
 
         components.scheme = appDeeplinkScheme()
-        guard let link = components.string else {
+        guard let link = components.string, let tld = tldProvider.currentTld() else {
             return .notOurs
         }
 
-        switch parseNavigate(input: link) {
+        switch parseNavigate(input: link, networkSuffix: tld) {
         case let .pocket(identifier, action, cardId, pageQuery, canonicalUrl):
             let linkAction: PocketLinkAction =
                 switch action {
