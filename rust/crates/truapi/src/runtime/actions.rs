@@ -52,6 +52,12 @@ impl<Item: Send + 'static> ActionChannel<Item> {
 		Self::new("renderer is closed for this product connection")
 	}
 
+	/// One connection's stream of `Materials` nodes that fell back. Separate
+	/// from the renderer's, whose items count as the user's taps.
+	pub fn renderer_failures() -> Self {
+		Self::new("renderer failures are closed for this product connection")
+	}
+
 	/// Open the product's subscription and drain buffered items first.
 	pub fn subscribe<E: Send + 'static>(&self) -> Subscription<Item, CallError<E>> {
 		let (sender, receiver) = mpsc::unbounded();

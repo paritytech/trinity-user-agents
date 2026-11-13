@@ -21,6 +21,7 @@ mod config;
 mod errors;
 mod events;
 mod executor;
+mod materials;
 mod platform;
 mod pocket;
 mod renderer;
@@ -46,6 +47,7 @@ pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionCo
 pub use errors::{
 	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
 };
+pub use materials::{NativeMaterialPlan, NativeMaterialPlanObserver};
 pub use pocket::NativePocketObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{

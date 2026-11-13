@@ -1015,8 +1015,15 @@ pub use host_rpc_client::HostRpcClient;
 pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage};
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]
+pub use materials::{
+	MaterialPlan, MaterialShader, NodePlan, PlanFailure, PlanStream, PlannedLayer, ShaderLanguage,
+	Stage, Texture, TextureRole, Uniform, UniformKind, UniformRole,
+};
+#[cfg(feature = "runtime")]
+#[cfg(not(target_arch = "wasm32"))]
 pub use native::{
-	NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
+	NativeMaterialPlan, NativeMaterialPlanObserver, NativeRendererObserver, NativeSubscription,
+	WsBridgeEndpoint, WsBridgeStartError,
 };
 #[cfg(feature = "runtime")]
 #[cfg(not(target_arch = "wasm32"))]

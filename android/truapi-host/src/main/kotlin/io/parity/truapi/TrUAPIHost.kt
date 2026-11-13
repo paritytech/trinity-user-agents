@@ -32,9 +32,17 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 import uniffi.truapi.ChatMessageContent
+import uniffi.truapi.RenderContext
+import uniffi.truapi.NativeMaterialPlanObserver
+import uniffi.truapi.NativeMaterialPlan
+import uniffi.truapi.MaterialPlan
+import uniffi.truapi.MaterialFailure
 import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomFooter
 import uniffi.truapi.HostChatActionSubscribeItem
@@ -1184,6 +1192,16 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     suspend fun loadImage(reference: ImageReference): LoadedImage = inner.loadImage(reference)
 
     /**
+     * The plan of [tree], a saved face or a preview, in [context]: for each
+     * `Materials` node, whether it loads, draws its layers or draws plain.
+     * Unless [floatFilterable], the shaders filter 32-bit float images
+     * themselves. To plan a new tree for the same body, start its plan before
+     * closing the old one.
+     */
+    fun materialPlan(tree: RendererNode, context: RenderContext, floatFilterable: Boolean): MaterialPlans =
+        MaterialPlans { observer -> inner.observeMaterialPlan(tree, context, floatFilterable, observer) }
+
+    /**
      * The Pocket collection, pinned cards first, now and after every change. A
      * read that fails ends the flow with [HostRejection]; collect it again to
      * retry.
@@ -1330,6 +1348,48 @@ private fun <T> observedFlow(subscribe: ProducerScope<T>.() -> NativeSubscriptio
         }
     }.conflate()
 
+/**
+ * The plans of one tree, now and after each change, and the reports the app
+ * makes against them. Close it to stop.
+ */
+class MaterialPlans internal constructor(
+    subscribe: (NativeMaterialPlanObserver) -> NativeMaterialPlan,
+) : AutoCloseable {
+    private val latest = MutableStateFlow<MaterialPlan?>(null)
+    private var closed = false
+
+    /** The newest plan, `null` until the first. */
+    val plans: StateFlow<MaterialPlan?> = latest.asStateFlow()
+
+    private val handle: NativeMaterialPlan =
+        subscribe(
+            object : NativeMaterialPlanObserver {
+                // Declared infallible by the core, so a throw here would abort the process.
+                override fun onPlan(plan: MaterialPlan) {
+                    runCatching { latest.value = plan }
+                }
+            },
+        )
+
+    /**
+     * Draws node [node] plain for the rest of this plan: its shader did not
+     * compile ([MaterialFailure.UNSUPPORTED]), or an image argument could not
+     * be used (`checkMaterialImage`'s reason, or [MaterialFailure.NOT_FOUND]).
+     */
+    @Synchronized
+    fun report(node: UInt, material: ByteArray?, reason: MaterialFailure) {
+        if (!closed) handle.report(node, material, reason)
+    }
+
+    @Synchronized
+    override fun close() {
+        if (closed) return
+        closed = true
+        handle.cancel()
+        handle.close()
+    }
+}
+
 /** A render the product declined or could not encode. */
 class RendererStreamException(
     /** Why the product ended the render. */
@@ -1420,6 +1480,14 @@ class TrUAPIProductExecution internal constructor(
     fun publishRendererAction(item: HostRendererActionSubscribeItem) {
         inner.publishRendererAction(item)
     }
+
+    /**
+     * The plan of [tree], a body this execution's product rendered in
+     * [context], as [TrUAPIHostRuntime.materialPlan]. A node that falls back is
+     * also reported to the product.
+     */
+    fun materialPlan(tree: RendererNode, context: RenderContext, floatFilterable: Boolean): MaterialPlans =
+        MaterialPlans { observer -> inner.observeMaterialPlan(tree, context, floatFilterable, observer) }
 
     /** Read the active session's X25519 chat identity private key, if any. */
     @Throws(HostRejection::class)

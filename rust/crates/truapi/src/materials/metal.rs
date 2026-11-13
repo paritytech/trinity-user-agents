@@ -20,6 +20,10 @@ use super::{
 	shader::{FRAGMENT_MAIN, Stage, Texture, Uniform, VERTEX_MAIN},
 };
 
+/// The Metal language version the shaders are written for: the oldest the iOS
+/// app supports (iOS 17, Metal 3.1).
+const METAL_VERSION: (u8, u8) = (3, 1);
+
 /// The vertex function an app looks up in the Metal library.
 pub const VERTEX_FUNCTION: &str = "material_vertex";
 
@@ -228,6 +232,7 @@ fn translate(
 		.validate(&module)
 		.map_err(|error| unsupported("validate", &error))?;
 	let options = msl::Options {
+		lang_version: METAL_VERSION,
 		per_entry_point_map: BTreeMap::from([(
 			function.to_string(),
 			msl::EntryPointResources { resources, ..Default::default() },

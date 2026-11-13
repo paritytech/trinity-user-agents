@@ -7949,6 +7949,28 @@ fn a_worker_scans_only_shortly_after_the_user_taps_its_card() {
 	assert_eq!(scan(&host), Ok(v01::ScanOutcome::Dismissed));
 }
 
+/// A product connection that ends leaves the failures reported after it for
+/// the execution's next connection, as it leaves the user's taps.
+#[test]
+fn a_detached_connection_leaves_later_failures_for_the_next_one() {
+	let host = scanner_host_for(ExecutableKind::Worker, None);
+	let failures = &host.connection.renderer_failures;
+	let _first = failures.subscribe::<truapi::latest::GenericError>();
+	let failure = truapi::latest::HostRendererFailureSubscribeItem {
+		context: truapi::latest::RenderContext::PocketCard { card_id: "card".into() },
+		node: 0,
+		material: None,
+		reason: truapi::latest::MaterialFailure::NotFound,
+	};
+
+	host.connection.detach_renderer();
+	failures.publish(failure.clone().into()).unwrap();
+	let mut second = failures.subscribe::<truapi::latest::GenericError>();
+
+	let delivered = crate::test_support::next(&mut second).expect("a failure").unwrap();
+	assert_eq!(delivered.into_latest(), failure);
+}
+
 #[test]
 fn each_host_answer_reaches_the_product_as_its_own_result() {
 	// `Unsupported` tells a product to use its own camera code, a dismissal is

@@ -12,7 +12,7 @@ use super::{
 };
 
 /// The shader language an app compiles.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, uniffi::Enum)]
 pub enum ShaderLanguage {
 	/// GLSL ES 3.00, for OpenGL ES 3.0.
 	GlslEs,
@@ -21,7 +21,7 @@ pub enum ShaderLanguage {
 }
 
 /// A material's shaders and how to feed them.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct MaterialShader {
 	/// The vertex shader: a full-screen quad from one `vec2 position` attribute
 	/// in clip space, drawn without culling. The fragment shader works out
@@ -48,7 +48,7 @@ pub struct MaterialShader {
 }
 
 /// One uniform.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Uniform {
 	/// Its name, by which OpenGL ES sets it.
 	pub name: String,
@@ -63,7 +63,7 @@ pub struct Uniform {
 }
 
 /// A uniform's type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum UniformKind {
 	/// `float`
 	Float,
@@ -80,7 +80,7 @@ pub enum UniformKind {
 }
 
 /// A shader stage.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum Stage {
 	/// The vertex stage.
 	Vertex,
@@ -89,7 +89,7 @@ pub enum Stage {
 }
 
 /// What fills a uniform.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum UniformRole {
 	/// `sl_time`.
 	Time,
@@ -102,17 +102,17 @@ pub enum UniformRole {
 	/// `sl_rotation`.
 	Rotation,
 	/// The layer's argument at this index, counting image arguments.
-	Argument(usize),
+	Argument(u32),
 	/// How the texture in this slot is read: 1 when it holds 32-bit floats the
 	/// GPU cannot filter, else 0.
-	SamplingMode(usize),
+	SamplingMode(u32),
 	/// 1 when drawing into a bottom-up target, -1 into a top-down one. It
 	/// mirrors the quad, which also turns which way it faces (see `vertex`).
 	TargetFlip,
 }
 
 /// One texture slot.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Texture {
 	/// The sampler's name in the shader, by which OpenGL ES binds it.
 	pub name: String,
@@ -121,7 +121,7 @@ pub struct Texture {
 }
 
 /// What fills a texture slot, and so how to sample it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
 pub enum TextureRole {
 	/// The node's children: linear, clamped edges.
 	Base,
@@ -132,7 +132,7 @@ pub enum TextureRole {
 	Noise,
 	/// The layer's argument at this index: linear with clamped edges for an
 	/// image, nearest and repeated for the noise image.
-	Argument(usize),
+	Argument(u32),
 }
 
 /// The shaders for a material of `params` and `body`. Without
@@ -248,7 +248,7 @@ fn uniforms(params: &[Param], textures: &[Texture], fallback: bool) -> (Vec<Unif
 		("sl_orientation".to_string(), UniformKind::Vec3, UniformRole::Orientation),
 		("sl_rotation".to_string(), UniformKind::Mat3, UniformRole::Rotation),
 	];
-	fragment.extend(params.iter().enumerate().filter_map(|(index, param)| {
+	fragment.extend((0u32..).zip(params).filter_map(|(index, param)| {
 		Some((format!("p_{}", param.name), uniform_kind(param.kind)?, UniformRole::Argument(index)))
 	}));
 	if fallback {
@@ -257,11 +257,11 @@ fn uniforms(params: &[Param], textures: &[Texture], fallback: bool) -> (Vec<Unif
 		fragment.extend(
 			textures
 				.iter()
-				.enumerate()
-				.filter(|(_, texture)| {
+				.zip(0u32..)
+				.filter(|(texture, _)| {
 					matches!(texture.role, TextureRole::Input | TextureRole::Argument(_))
 				})
-				.map(|(slot, texture)| {
+				.map(|(texture, slot)| {
 					(mode_uniform(&texture.name), UniformKind::Int, UniformRole::SamplingMode(slot))
 				}),
 		);
@@ -301,9 +301,8 @@ fn textures(params: &[Param]) -> Vec<Texture> {
 		texture("r_noise", TextureRole::Noise),
 	];
 	textures.extend(
-		params
-			.iter()
-			.enumerate()
+		(0u32..)
+			.zip(params)
 			.filter(|(_, param)| uniform_kind(param.kind).is_none())
 			.map(|(index, param)| {
 				texture(&format!("sp_{}", param.name), TextureRole::Argument(index))
