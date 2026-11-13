@@ -227,11 +227,11 @@ fn a_renderer_action_reaches_the_product_that_rendered_it() {
 	assert!(admin.product_runtime().connection().recently_tapped());
 }
 
-struct Plans(std::sync::Mutex<Vec<crate::MaterialPlan>>);
+struct Updates(std::sync::Mutex<Vec<crate::ResolvedMaterials>>);
 
-impl crate::NativeMaterialPlanObserver for Plans {
-	fn on_plan(&self, plan: crate::MaterialPlan) {
-		self.0.lock().unwrap().push(plan);
+impl crate::NativeMaterialsObserver for Updates {
+	fn on_resolved(&self, materials: crate::ResolvedMaterials) {
+		self.0.lock().unwrap().push(materials);
 	}
 }
 
@@ -243,7 +243,7 @@ fn materials_host() -> Arc<NativeTrUApiHostRuntime> {
 }
 
 /// A material node that falls back in a body a product rendered is the
-/// product's to hear about: the plan on its execution reports it through the
+/// product's to hear about: the resolution on its execution reports it through the
 /// product's failure stream. A report is not one of the user's taps.
 #[test]
 fn a_material_node_that_falls_back_reaches_the_product_that_rendered_it() {
@@ -271,8 +271,8 @@ fn a_material_node_that_falls_back_reaches_the_product_that_rendered_it() {
 		children: Vec::new(),
 	};
 
-	let plans = Box::new(Plans(std::sync::Mutex::new(Vec::new())));
-	let _plan = execution.observe_material_plan(tree, context.clone(), true, plans);
+	let updates = Box::new(Updates(std::sync::Mutex::new(Vec::new())));
+	let _resolution = execution.resolve_materials(tree, context.clone(), true, updates);
 	let delivered = crate::test_support::next(&mut failures)
 		.expect("a failure report")
 		.expect("a failure item")

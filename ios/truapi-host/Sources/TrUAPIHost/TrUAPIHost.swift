@@ -1188,14 +1188,14 @@ public final class TrUAPIHostRuntime: @unchecked Sendable {
         }
     }
 
-    /// The plan of `tree`, a saved face or a preview, in `context`: for each
+    /// The materials of `tree`, a saved face or a preview, in `context`: for each
     /// `Materials` node, whether it loads, draws its layers or draws plain.
     /// Unless `floatFilterable`, the shaders filter 32-bit float images
-    /// themselves. To plan a new tree for the same body, start its plan before
-    /// cancelling the old one.
-    public func materialPlan(tree: RendererNode, context: RenderContext, floatFilterable: Bool) -> MaterialPlans {
-        MaterialPlans { observer in
-            inner.observeMaterialPlan(tree: tree, context: context, floatFilterable: floatFilterable, observer: observer)
+    /// themselves. To resolve a new tree for the same body, start its resolution
+    /// before cancelling the old one.
+    public func resolveMaterials(tree: RendererNode, context: RenderContext, floatFilterable: Bool) -> MaterialsResolution {
+        MaterialsResolution { observer in
+            inner.resolveMaterials(tree: tree, context: context, floatFilterable: floatFilterable, observer: observer)
         }
     }
 
@@ -1413,12 +1413,12 @@ public final class TrUAPIProductExecution: TrUAPIProductExecutionProtocol, @unch
         try inner.publishRendererAction(item: item)
     }
 
-    /// The plan of `tree`, a body this execution's product rendered in
-    /// `context`, as ``TrUAPIHostRuntime/materialPlan(tree:context:floatFilterable:)``.
+    /// The materials of `tree`, a body this execution's product rendered in
+    /// `context`, as ``TrUAPIHostRuntime/resolveMaterials(tree:context:floatFilterable:)``.
     /// A node that falls back is also reported to the product.
-    public func materialPlan(tree: RendererNode, context: RenderContext, floatFilterable: Bool) -> MaterialPlans {
-        MaterialPlans { observer in
-            inner.observeMaterialPlan(tree: tree, context: context, floatFilterable: floatFilterable, observer: observer)
+    public func resolveMaterials(tree: RendererNode, context: RenderContext, floatFilterable: Bool) -> MaterialsResolution {
+        MaterialsResolution { observer in
+            inner.resolveMaterials(tree: tree, context: context, floatFilterable: floatFilterable, observer: observer)
         }
     }
 
@@ -1563,51 +1563,51 @@ private final class RendererStreamObserver: NativeRendererObserver, @unchecked S
     }
 }
 
-/// The plans of one tree, now and after each change, and the reports the app
-/// makes against them. Cancel it, or let it go, to stop.
-public final class MaterialPlans: @unchecked Sendable {
-    /// Each plan replaces the last, so only the newest is kept. The plan is
+/// The resolved materials of one tree, now and after each change, and the
+/// reports the app makes against them. Cancel it, or let it go, to stop.
+public final class MaterialsResolution: @unchecked Sendable {
+    /// Each update replaces the last, so only the newest is kept. The tree is
     /// followed until this stream ends or is dropped.
-    public let plans: AsyncStream<MaterialPlan>
-    private let handle: NativeMaterialPlan
-    private let continuation: AsyncStream<MaterialPlan>.Continuation
+    public let resolved: AsyncStream<ResolvedMaterials>
+    private let handle: NativeMaterialsResolution
+    private let continuation: AsyncStream<ResolvedMaterials>.Continuation
 
-    fileprivate init(_ subscribe: (NativeMaterialPlanObserver) -> NativeMaterialPlan) {
-        let (plans, continuation) = AsyncStream.makeStream(
-            of: MaterialPlan.self,
+    fileprivate init(_ subscribe: (NativeMaterialsObserver) -> NativeMaterialsResolution) {
+        let (resolved, continuation) = AsyncStream.makeStream(
+            of: ResolvedMaterials.self,
             bufferingPolicy: .bufferingNewest(1)
         )
-        let handle = subscribe(MaterialPlanStreamObserver(continuation: continuation))
+        let handle = subscribe(MaterialsStreamObserver(continuation: continuation))
         continuation.onTermination = { @Sendable _ in
             handle.cancel()
         }
-        self.plans = plans
+        self.resolved = resolved
         self.handle = handle
         self.continuation = continuation
     }
 
-    /// Draws node `node` plain for the rest of this plan: its shader did not
+    /// Draws node `node` plain for the rest of this resolution: its shader did not
     /// compile (`.unsupported`), or an image argument could not be used
     /// (`checkMaterialImage`'s reason, or `.notFound`).
     public func report(node: UInt32, material: Bytes32?, reason: MaterialFailure) {
         handle.report(node: node, material: material, reason: reason)
     }
 
-    /// Stops following the plan and ends `plans`.
+    /// Stops following the tree and ends `resolved`.
     public func cancel() {
         continuation.finish()
     }
 }
 
-private final class MaterialPlanStreamObserver: NativeMaterialPlanObserver, @unchecked Sendable {
-    private let continuation: AsyncStream<MaterialPlan>.Continuation
+private final class MaterialsStreamObserver: NativeMaterialsObserver, @unchecked Sendable {
+    private let continuation: AsyncStream<ResolvedMaterials>.Continuation
 
-    init(continuation: AsyncStream<MaterialPlan>.Continuation) {
+    init(continuation: AsyncStream<ResolvedMaterials>.Continuation) {
         self.continuation = continuation
     }
 
-    func onPlan(plan: MaterialPlan) {
-        continuation.yield(plan)
+    func onResolved(materials: ResolvedMaterials) {
+        continuation.yield(materials)
     }
 }
 
