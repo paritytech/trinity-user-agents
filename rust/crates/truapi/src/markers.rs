@@ -37,8 +37,10 @@ pub enum MarkerClass {
 ///
 /// The core raises most markers without a level, so this is assigned here
 /// rather than read from the event, and it is what lets a core error be
-/// alerted on separately from a core warning.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// alerted on separately from a core warning. Its `&'static str` form is the
+/// lowercase name the generated marker table uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum Severity {
 	/// Routine progress. Useful as context around a failure, not on its own.
@@ -147,9 +149,6 @@ markers! {
 
 	/// The host was asked whether it supports a feature. Detail names it.
 	NATIVE_FEATURE_SUPPORTED = "truapi.native.callback.feature_supported" => Local;
-
-	/// The host was asked which chains it supports.
-	NATIVE_SUPPORTED_CHAINS = "truapi.native.callback.supported_chains" => Local;
 
 	/// The host was asked for a chain's transaction extension versions.
 	NATIVE_TRANSACTION_EXTENSION_VERSIONS = "truapi.native.callback.transaction_extension_versions" => Local;

@@ -153,11 +153,6 @@ pub trait HostCallbacks: Send + Sync {
 		request: latest::HostFeatureSupportedRequest,
 	) -> Result<bool, HostRejection>;
 
-	/// Enumerate the chains this host serves (RFC 0026): its environment plus
-	/// one entry per chain role. Invoked on the dispatcher thread; must return
-	/// promptly.
-	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection>;
-
 	/// The chains the host builds as V5 general transactions, each with its
 	/// transaction extension pipeline. A chain not listed is built as V4.
 	async fn transaction_extension_versions(
@@ -496,10 +491,18 @@ pub trait NativeFundingCallbacks: Send + Sync {
 		amount: Option<u128>,
 	) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
 
+	/// Provider `provider_id` asked to show a screen for session `intent`.
+	/// The core holds it until the host calls `open_provider_frame(intent)`:
+	/// at once while the user looks at the session, otherwise once the user
+	/// taps a notice that the provider wants to show something.
+	fn provider_frame_requested(&self, provider_id: ProductId, intent: String);
+
 	/// Show `target` for provider `provider_id`'s session `intent` in a frame
-	/// the host owns, and report how it closed. A page is a checked https
-	/// URL: answer `Returned` when it reaches its return URL. The core closes
-	/// the frame through `close_provider_frame` once the session's payment moved.
+	/// the host owns, and report how it closed. Called only once the host
+	/// opened the request `provider_frame_requested` announced. A page is a
+	/// checked https URL: answer `Returned` when it reaches its return URL.
+	/// The core closes the frame through `close_provider_frame` once the
+	/// session's payment moved.
 	async fn present_provider_frame(
 		&self,
 		provider_id: ProductId,

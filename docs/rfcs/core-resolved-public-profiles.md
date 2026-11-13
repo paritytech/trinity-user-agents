@@ -152,9 +152,12 @@ CREATE INDEX public_profiles_access_order ON public_profiles(access_order);
 `public_record` is the SCALE-encoded `ProfileRecord`, including unknown entries. A
 name without a record is cached too, as an empty one.
 
-- Reads and writes advance access order transactionally, independently of the clock.
+- Cache reads use the reader pool. `PublicProfilesService` deduplicates touches in
+  memory and persists them in access order with the next profile write or one
+  second after the first pending touch. Failed batches remain pending for retry.
 - Only successful lookups replace full records and renew freshness.
-- Writes evict the least recently used rows over 1,000; stale rows remain available until eviction.
+- Writes apply pending touches before evicting rows over 1,000; stale rows remain
+  available until eviction. A crash can lose unflushed recency, not cached records.
 - Undecodable rows count as missing.
 
 ### The host

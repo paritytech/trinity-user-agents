@@ -12,31 +12,21 @@ import {
   createHeadlessHostCallbacks,
 } from "@parity/truapi-host/node";
 import { wasmIsBuilt } from "../../dist/testing/require-wasm.js";
+import { bundledStack } from "./support/stack.mjs";
 import { openPorts, portsBackTo } from "./support/threads.mjs";
-
-const PEOPLE =
-  "0x4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48";
-const BULLETIN =
-  "0x8cfe6717dc4becfda2e13c488a1e2061ff2dfee96e7d031157f72d36716c0a22";
-const ASSET_HUB =
-  "0x4349b00e54897e21196fd331015fc5be0f14e118beb0375ed2bb1793737bb57a";
 
 const hostConfig = {
   host: { name: "node entry test", platform: "Cli" },
-  people: { genesisHash: PEOPLE },
-  bulletin: { genesisHash: BULLETIN },
-  assetHub: { genesisHash: ASSET_HUB },
+  stack: bundledStack("paseo-next-v2"),
   pairing: { deeplinkScheme: "polkadotapp" },
 };
 
-const supportedChains = {
-  network: "paseo",
-  chains: [
-    { identifier: "People", genesisHash: PEOPLE },
-    { identifier: "Bulletin", genesisHash: BULLETIN },
-    { identifier: "AssetHub", genesisHash: ASSET_HUB },
-  ],
-};
+// The People, Bulletin and Asset Hub chains of the paseo-next-v2 stack.
+const servedChains = [
+  "0x4a2b5b737de1da59e209b0000a876ec2fa20035dc34fd292a848da32d255ad48",
+  "0x8cfe6717dc4becfda2e13c488a1e2061ff2dfee96e7d031157f72d36716c0a22",
+  "0x4349b00e54897e21196fd331015fc5be0f14e118beb0375ed2bb1793737bb57a",
+];
 
 /** A chain connection that accepts requests and never answers. */
 const silentChain = {
@@ -102,7 +92,7 @@ test(
           },
         },
         productStorage,
-        supportedChains,
+        servedChains,
         userConfirmation: {
           confirmUserAction: async () => false,
           confirmPermission: async () => "Deny",

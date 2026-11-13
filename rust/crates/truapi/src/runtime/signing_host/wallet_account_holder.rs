@@ -63,10 +63,6 @@ pub struct WalletAccountHolder {
 	/// enables, so a shipping host has no way to set it.
 	#[cfg(feature = "test-host")]
 	resource_controls: crate::runtime::test_resource_controls::TestResourceControls,
-	/// The dotNS TLD of the network this wallet serves, from
-	/// [`crate::platform::SigningHostConfig::network_suffix`]. Every reserved
-	/// RFC-0022 derivation (`peopl.<suffix>` account and ring-VRF keys) ends in it.
-	network_suffix: String,
 	consent: Arc<ProductConsent>,
 	lifecycle: Mutex<WalletState>,
 	session_state: Arc<SessionState>,
@@ -175,7 +171,6 @@ impl WalletAccountHolder {
 	/// product's ring-VRF keys.
 	pub fn new(
 		services: Arc<RuntimeServices>,
-		network_suffix: String,
 		consent: Arc<ProductConsent>,
 		ring_resolver: Arc<dyn RingResolver>,
 		ring_vrf_registry: Arc<RingVrfRegistryStore>,
@@ -187,7 +182,6 @@ impl WalletAccountHolder {
 			renewal: allowance_renewal::RenewalState::default(),
 			#[cfg(feature = "test-host")]
 			resource_controls: Default::default(),
-			network_suffix,
 			consent,
 			lifecycle: Mutex::new(WalletState::default()),
 			session_state: SessionState::new(),
@@ -232,7 +226,7 @@ impl WalletAccountHolder {
 		secret: Vec<u8>,
 		lite_username: Option<String>,
 	) -> Result<PreparedWalletActivation, AuthorityError> {
-		let keys = WalletKeys::new(secret, self.network_suffix.clone());
+		let keys = WalletKeys::new(secret, self.services.stack().tld().to_string());
 		let public_key = keys.root_public_key()?;
 		let identity_account_id = keys.identity_keypair()?.public.to_bytes();
 		let identity_chat_private_key = derive_identity_chat_private_key(&keys.entropy);

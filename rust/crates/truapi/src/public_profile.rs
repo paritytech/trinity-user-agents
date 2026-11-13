@@ -1,6 +1,6 @@
-//! Public profile metadata resolved from dotNS through [`PublicProfiles`].
+//! Public profile metadata resolved from dotNS through [`PublicProfilesService`].
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg_attr(target_arch = "wasm32", path = "public_profile/dao/browser.rs")]
 mod dao;
 mod record;
 
@@ -11,29 +11,29 @@ use alloy_sol_types::SolCall;
 use futures::stream;
 use tracing::{instrument, warn};
 
-pub use record::ProfileAvatar;
 #[cfg(test)]
 use record::ProfileEntry;
-use record::ProfileRecord;
+pub use record::{ProfileAvatar, ProfileRecord};
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::{store::DbError, unix_time::current_unix_secs};
+use crate::store::DbError;
 
 use crate::{
-	Subscription,
+	Spawner, Subscription,
+	chain_runtime::ChainRuntime,
 	dotns_views::{decode_view, network_tld_from_view, protocol_registry, read_view, tld_node},
 	host_logic::dotns_gateway::{
 		ContentResolver, DotnsError, DotnsTransport, ProtocolRegistry, is_dotted_lite_username,
 		namehash_under,
 	},
 	platform::is_dns_label,
-	runtime::{DotnsLookup, DotnsLookupKind, services::RuntimeServices},
+	runtime::{DotnsLookup, DotnsLookupKind},
+	unix_time::current_unix_secs,
 };
 
 /// Text record a username publishes its profile at.
-const PROFILE_RECORD_KEY: &str = "profile";
+pub const PROFILE_RECORD_KEY: &str = "profile";
 /// How long a resolved record is served before the chain is read again.
-#[cfg(not(target_arch = "wasm32"))]
 const RECORD_TTL_SECS: u64 = 60 * 60;
 
 /// Controls profile metadata freshness and the initial stream value.
@@ -65,7 +65,7 @@ pub enum PublicProfileError {
 	/// Not a username the core resolves.
 	#[error("not a dotNS username")]
 	InvalidUsername,
-	/// The host configured no Asset Hub chain.
+	/// The stack has no Asset Hub chain.
 	#[error("no Asset Hub configured")]
 	AssetHubNotConfigured,
 	/// The chain was out of reach, or the lookup failed.
@@ -81,18 +81,21 @@ pub enum PublicProfileError {
 
 /// The node and contracts that hold a username's public profile.
 #[derive(Debug, PartialEq)]
-struct ProfileRecordLocation {
+pub struct ProfileRecordLocation {
 	/// Username namehash under the deployment's TLD.
-	node: [u8; 32],
+	pub node: [u8; 32],
 	/// Forward registry that determines the node's owner and delegates.
-	registry: [u8; 20],
+	pub registry: [u8; 20],
 	/// Content resolver registered by the deployment.
-	resolver: [u8; 20],
+	pub resolver: [u8; 20],
 }
 
 impl ProfileRecordLocation {
 	/// Finds the profile's content resolver without changing the node's resolver.
-	async fn resolve<T: DotnsTransport + ?Sized>(
+	///
+	/// Returns `None` when dotNS is not deployed. Invalid usernames and lookup failures
+	/// return errors.
+	pub async fn resolve<T: DotnsTransport + ?Sized>(
 		transport: &mut T,
 		username: &str,
 	) -> Result<Option<Self>, PublicProfileError> {
@@ -128,7 +131,9 @@ impl ProfileRecordLocation {
 	}
 
 	/// Reads the raw text so a writer can reject malformed records without losing them.
-	async fn read<T: DotnsTransport + ?Sized>(
+	///
+	/// An empty record is `None`. Lookup failures return errors.
+	pub async fn read<T: DotnsTransport + ?Sized>(
 		&self,
 		transport: &mut T,
 	) -> Result<Option<String>, DotnsError> {
@@ -146,17 +151,37 @@ impl ProfileRecordLocation {
 	}
 }
 
-/// Resolves public profile records through the host's shared services.
+/// Resolves public profile records and batches native cache accesses.
 ///
 /// Native hosts persist records in the core database. Browser reads are uncached.
-pub struct PublicProfiles {
-	services: Arc<RuntimeServices>,
+pub struct PublicProfilesService {
+	chain: ChainRuntime,
+	genesis: Option<[u8; 32]>,
+	cache: dao::Cache,
 }
 
-impl PublicProfiles {
-	/// Uses the host's shared chain and native storage.
-	pub fn new(services: Arc<RuntimeServices>) -> Self {
-		Self { services }
+/// A stored record with a freshness deadline independent of its retention.
+pub struct CachedRecord {
+	/// Full record, including entries the current core does not understand.
+	pub record: ProfileRecord,
+	expires_at: u64,
+}
+
+impl CachedRecord {
+	/// Whether the record is fresh at Unix time `now`, in seconds.
+	///
+	/// A backward clock correction does not extend the record's freshness.
+	pub fn is_fresh(&self, now: u64) -> bool {
+		self.expires_at > now && self.expires_at - now <= RECORD_TTL_SECS
+	}
+}
+
+impl PublicProfilesService {
+	/// Uses the host's shared chain and executor.
+	///
+	/// Native hosts must install the core database before resolving profiles.
+	pub fn new(chain: ChainRuntime, genesis: Option<[u8; 32]>, spawner: Spawner) -> Self {
+		Self { chain, genesis, cache: dao::Cache::new(spawner) }
 	}
 
 	/// Resolves public profiles with optional cached-first delivery.
@@ -164,9 +189,9 @@ impl PublicProfiles {
 	/// Options can force a lookup and suppress stale stored metadata. A resolved value
 	/// is emitted when no stored value was emitted or when the profile differs.
 	/// Dropping the stream cancels resolution. At most two profiles are emitted.
-	#[cfg(not(target_arch = "wasm32"))]
+	/// Browsers have no record cache and emit one resolved profile.
 	pub fn observe(
-		self,
+		self: Arc<Self>,
 		username: String,
 		options: PublicProfileResolutionOptions,
 	) -> Subscription<PublicProfile, PublicProfileError> {
@@ -180,7 +205,7 @@ impl PublicProfiles {
 		}
 
 		Subscription::new(stream::try_unfold(Some(Resolution::Stored), move |state| {
-			let profiles = Self::new(self.services.clone());
+			let profiles = self.clone();
 			let username = username.clone();
 			async move {
 				let Some(resolution) = state else { return Ok(None) };
@@ -208,92 +233,45 @@ impl PublicProfiles {
 		}))
 	}
 
-	/// Resolves one profile without native storage.
-	///
-	/// Browsers have no profile cache, so the options have no effect. Resolution
-	/// failures terminate the stream; dropping the stream cancels the lookup.
-	#[cfg(target_arch = "wasm32")]
-	pub fn observe(
-		self,
-		username: String,
-		_options: PublicProfileResolutionOptions,
-	) -> Subscription<PublicProfile, PublicProfileError> {
-		Subscription::new(stream::once(async move { self.resolve(&username, false).await }))
-	}
-
-	/// Resolves a profile using the native record cache.
+	/// Resolves a profile, reusing fresh native metadata when allowed.
 	///
 	/// Records are fresh for one hour; `force` bypasses that freshness policy.
-	/// Missing or malformed records are empty. Lookup and storage failures return errors.
-	#[cfg(not(target_arch = "wasm32"))]
+	/// Browsers always resolve through dotNS. Missing or malformed records are empty.
+	/// Lookup and storage failures return errors.
 	#[instrument(skip_all, fields(runtime.method = "public_profile.resolve"))]
 	pub async fn resolve(
-		&self,
+		self: &Arc<Self>,
 		username: &str,
 		force: bool,
 	) -> Result<PublicProfile, PublicProfileError> {
 		validate_username(username)?;
 		if !force {
-			let db = self.services.core_db()?;
-			let cached_username = username.to_owned();
 			let now = current_unix_secs();
-			let cached = db.write(move |tx| dao::fresh_record(tx, &cached_username, now)).await?;
-			if let Some(record) = cached {
-				return Ok(PublicProfile { avatar: record.avatar() });
+			if let Some(cached) =
+				self.stored_record(username).await?.filter(|cached| cached.is_fresh(now))
+			{
+				return Ok(PublicProfile { avatar: cached.record.avatar() });
 			}
 		}
 		self.refresh_profile(username).await
 	}
 
-	#[cfg(not(target_arch = "wasm32"))]
-	async fn stored_record(
-		&self,
+	async fn refresh_profile(
+		self: &Arc<Self>,
 		username: &str,
-	) -> Result<Option<dao::CachedRecord>, PublicProfileError> {
-		let db = self.services.core_db()?;
-		let username = username.to_owned();
-		Ok(db.write(move |tx| dao::stored_record(tx, &username)).await?)
-	}
-
-	#[cfg(not(target_arch = "wasm32"))]
-	async fn refresh_profile(&self, username: &str) -> Result<PublicProfile, PublicProfileError> {
-		let db = self.services.core_db()?;
+	) -> Result<PublicProfile, PublicProfileError> {
+		self.cache.check_storage()?;
 		let record = self.read_record(username).await?;
 		let profile = PublicProfile { avatar: record.avatar() };
-		let username = username.to_owned();
-		let expires_at = current_unix_secs() + RECORD_TTL_SECS;
-		db.write(move |tx| dao::store_record(tx, &username, &record, expires_at))
-			.await?;
+		self.store_record(username, record).await?;
 		Ok(profile)
 	}
 
-	/// Resolves a profile directly from the chain.
-	///
-	/// Missing or malformed records are empty. Invalid usernames and lookup failures
-	/// return errors. The refresh argument has no effect because browsers do not cache records.
-	#[cfg(target_arch = "wasm32")]
-	#[instrument(skip_all, fields(runtime.method = "public_profile.resolve"))]
-	pub async fn resolve(
-		&self,
-		username: &str,
-		_force: bool,
-	) -> Result<PublicProfile, PublicProfileError> {
-		validate_username(username)?;
-		let record = self.read_record(username).await?;
-		Ok(PublicProfile { avatar: record.avatar() })
-	}
-
 	async fn read_record(&self, username: &str) -> Result<ProfileRecord, PublicProfileError> {
-		let genesis = self
-			.services
-			.asset_hub_chain_genesis_hash()
-			.ok_or(PublicProfileError::AssetHubNotConfigured)?;
-		let mut lookup = DotnsLookup::pinned_to_best_block(
-			&self.services.chain,
-			genesis,
-			DotnsLookupKind::PublicProfile,
-		)
-		.await?;
+		let genesis = self.genesis.ok_or(PublicProfileError::AssetHubNotConfigured)?;
+		let mut lookup =
+			DotnsLookup::pinned_to_best_block(&self.chain, genesis, DotnsLookupKind::PublicProfile)
+				.await?;
 		Self::read_record_from(&mut lookup, username).await
 	}
 

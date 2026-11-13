@@ -118,7 +118,7 @@ struct TrUAPIWsBridgeTests {
             Issue.record("expected binary frame, got \(message)")
             return
         }
-        #expect(response.suffix(Self.hostInfoResponseTail.count) == Self.hostInfoResponseTail)
+        #expect(response.prefix(Self.hostInfoResponsePrefix.count) == Self.hostInfoResponsePrefix)
     }
 
     /// iOS reclaims a suspended app's listening socket while products keep
@@ -173,12 +173,7 @@ private extension TrUAPIWsBridgeTests {
     static func makeHostRuntimeConfig() throws -> HostRuntimeConfig {
         try HostRuntimeConfig(
             hostName: "truapi-host-tests",
-            peopleChainGenesisHash: Data(repeating: 0, count: 32),
-            bulletinChainGenesisHash: Data(repeating: 0, count: 32),
-            // Non-zero: all-zero is the "no Asset Hub" sentinel, and this
-            // fixture is not exercising that case.
-            assetHubChainGenesisHash: Data(repeating: 1, count: 32),
-            networkSuffix: "paseo",
+            stack: previewnetStack(),
             databaseDirectory: temporaryDatabaseDirectory()
         )
     }
@@ -201,14 +196,15 @@ private extension TrUAPIWsBridgeTests {
         return frame
     }
 
-    // Response tail: message_type=Response(0x01), then the payload,
-    // Result::Ok(0x00), V1(0x00), then HostInfo as platform(Ios = 0x02),
-    // name, version (empty, hostVersion is unset).
-    static var hostInfoResponseTail: Data {
-        var tail = Data([0x01, 0x00, 0x00, 0x02, 0x44]) // 0x44 is compact length 17
-        tail.append("truapi-host-tests".data(using: .utf8)!)
-        tail.append(contentsOf: [0x00])
-        return tail
+    // The platform and host identity precede the core's variable protocol version.
+    static var hostInfoResponsePrefix: Data {
+        var prefix = Data([0x0C])
+        prefix.append("p:1".data(using: .utf8)!)
+        prefix.append(hostInfoDiscriminant)
+        prefix.append(contentsOf: [0x01, 0x00, 0x00, 0x02, 0x44])
+        prefix.append("truapi-host-tests".data(using: .utf8)!)
+        prefix.append(contentsOf: [0x00])
+        return prefix
     }
 
     static func featureSupportedRequestFrame() -> Data {
@@ -247,6 +243,24 @@ final class StubCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
     func clear(key: Data) throws {
         lock.withLock { store[key] = nil }
     }
+}
+
+/// The previewnet stack host builds bundle, read from the repository's
+/// `stacks/`, so the core verifies a real descriptor against its link.
+///
+/// The tests run on a simulator, which reads the host file system, so the
+/// path comes from this file's location rather than a test bundle resource.
+func previewnetStack() throws -> BundledStack {
+    let stacks = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .appendingPathComponent("../../../stacks")
+        .standardizedFileURL
+    let link = try String(contentsOf: stacks.appendingPathComponent("previewnet.link"), encoding: .utf8)
+    return try BundledStack(
+        pointer: link.trimmingCharacters(in: .whitespacesAndNewlines),
+        descriptor: Data(contentsOf: stacks.appendingPathComponent("previewnet.json")),
+        allowsReservedValues: false
+    )
 }
 
 // Conforms to HostBridge rather than the generated HostCallbacks, so the
@@ -313,7 +327,6 @@ final class StubHostBridge: HostBridge, @unchecked Sendable {
         request _: RemotePermission
     ) async throws -> PermissionDecision { nextRemoteDecision() }
     func featureSupported(request _: HostFeatureSupportedRequest) async throws -> Bool { true }
-    func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
     func localStorageRead(key: String) throws -> Data? { try storage.read(key: key) }
     
     func localStorageWrite(key: String, value: Data) throws {
