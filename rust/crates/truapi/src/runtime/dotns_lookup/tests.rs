@@ -6,133 +6,154 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
 	Spawner,
-	chain::{ContractResult, ExecReturnValue, StorageDeposit, Weight},
-	test_support::ScriptedProvider,
+	chain::Weight,
+	test_support::{ScriptedProvider, legacy_asset_hub_frames, view_output},
 };
 
+fn hex_of(bytes: &[u8]) -> String {
+	format!("0x{}", hex::encode(bytes))
+}
+
+/// Every read of a lookup lands on the one best block it found, its views
+/// start together, and nothing it sends is a `chainHead_v1` method, so no
+/// number of lookups can take a follow from the connection.
 #[test]
-fn a_view_batch_starts_together_on_one_block_and_keeps_early_replies() {
-	let calls = Arc::new(Mutex::new(Vec::<Value>::new()));
-	let recorded_calls = calls.clone();
-	let block = format!("0x{}", hex::encode([0x22; 32]));
-	let pinned_block = block.clone();
+fn a_lookup_reads_one_best_block_without_a_follow() {
+	let sent = Arc::new(Mutex::new(Vec::<Value>::new()));
+	let recorded = sent.clone();
+	let best = hex_of(&[0x22; 32]);
+	let answered_at = best.clone();
 	let provider = Arc::new(ScriptedProvider::with_frames(move |request| {
 		let request: Value = serde_json::from_str(request).unwrap();
-		let event = |result: Value| {
-			json!({
-				"jsonrpc": "2.0",
-				"method": "chainHead_v1_followEvent",
-				"params": {"subscription": "batch-follow", "result": result},
-			})
-			.to_string()
+		let reply = |id: &Value, result: Value| {
+			json!({"jsonrpc": "2.0", "id": id, "result": result}).to_string()
 		};
+		let mut sent = recorded.lock().unwrap();
+		sent.push(request.clone());
 		match request["method"].as_str().unwrap() {
-			"chainHead_v1_follow" => vec![
-				json!({"jsonrpc": "2.0", "id": request["id"], "result": "batch-follow"})
-					.to_string(),
-				event(json!({
-					"event": "initialized",
-					"finalizedBlockHashes": [block],
-					"finalizedBlockRuntime": null,
-				})),
-				event(json!({"event": "bestBlockChanged", "bestBlockHash": block})),
-			],
-			"chainHead_v1_call" => {
-				let mut calls = recorded_calls.lock().unwrap();
-				calls.push(request);
+			"chain_getBlockHash" => vec![reply(&request["id"], json!(answered_at))],
+			"state_getStorage" => vec![reply(&request["id"], json!(hex_of(&[0x07])))],
+			"state_call" => {
+				let calls: Vec<&Value> =
+					sent.iter().filter(|request| request["method"] == "state_call").collect();
 				if calls.len() < 3 {
 					return vec![];
 				}
-				let mut frames = Vec::new();
-				for (index, call) in calls.iter().enumerate().rev() {
-					let operation_id = format!("view-{index}");
-					let output = ContractResult {
-						_weight_consumed: Weight { ref_time: 0, proof_size: 0 },
-						weight_required: Weight { ref_time: 0, proof_size: 0 },
-						storage_deposit: StorageDeposit::Charge(0),
-						max_storage_deposit: StorageDeposit::Charge(0),
-						_gas_consumed: 0,
-						result: Ok(ExecReturnValue {
-							flags: 0,
-							data: vec![u8::try_from(index).unwrap()],
-						}),
-					}
-					.encode();
-					frames.push(event(json!({
-						"event": "operationCallDone",
-						"operationId": operation_id,
-						"output": format!("0x{}", hex::encode(output)),
-					})));
-					frames.push(
-						json!({
-							"jsonrpc": "2.0",
-							"id": call["id"],
-							"result": {"result": "started", "operationId": operation_id},
-						})
-						.to_string(),
-					);
-				}
-				frames
-			},
-			"chainHead_v1_unfollow" => {
-				vec![json!({"jsonrpc": "2.0", "id": request["id"], "result": null}).to_string()]
+				calls
+					.iter()
+					.enumerate()
+					.rev()
+					.map(|(index, call)| {
+						let data = vec![u8::try_from(index).unwrap()];
+						reply(&call["id"], json!(hex_of(&view_output(data, false))))
+					})
+					.collect()
 			},
 			method => panic!("unexpected RPC method: {method}"),
 		}
 	}));
 	let chain = ChainRuntime::new(provider, Spawner::for_test());
 	futures::executor::block_on(async {
-		let mut lookup =
-			DotnsLookup::pinned_to_best_block(&chain, [0x11; 32], DotnsLookupKind::Identity)
-				.await
-				.unwrap();
+		let mut lookup = DotnsLookup::at_best_block(&chain, [0x11; 32]).await.unwrap();
+		let value = lookup.storage(vec![0xab]).await.unwrap();
 		let batch = lookup.views(&[0x44; 20], (0..3).map(|index| vec![index]).collect());
 		pin_mut!(batch);
 		let ready = batch.as_mut().now_or_never();
-		assert_eq!(calls.lock().unwrap().len(), 3, "all views start before any reply");
+		let started = sent.lock().unwrap().iter().filter(|r| r["method"] == "state_call").count();
+		assert_eq!(started, 3, "all views start before any reply");
 		let outcomes = match ready {
 			Some(outcomes) => outcomes,
 			None => batch.await,
 		};
-		let contexts: Vec<_> =
-			calls.lock().unwrap().iter().map(|call| call["params"].clone()).collect();
 
-		let expected_contexts: Vec<_> = (0u8..3)
+		let calls: Vec<Value> = sent
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|request| request["method"] == "state_call")
+			.map(|request| request["params"].clone())
+			.collect();
+		let expected_calls: Vec<Value> = (0u8..3)
 			.map(|index| {
 				let input =
 					([0xeeu8; 32], [0x44u8; 20], 0u128, None::<Weight>, None::<u128>, vec![index])
 						.encode();
-				json!([
-					"batch-follow",
-					pinned_block,
-					"ReviveApi_call",
-					format!("0x{}", hex::encode(input))
-				])
+				json!(["ReviveApi_call", hex_of(&input), best])
 			})
 			.collect();
-
+		let storage_params: Vec<Value> = sent
+			.lock()
+			.unwrap()
+			.iter()
+			.filter(|request| request["method"] == "state_getStorage")
+			.map(|request| request["params"].clone())
+			.collect();
 		assert_eq!(
-			(outcomes.into_iter().collect::<Result<Vec<_>, _>>().unwrap(), contexts),
-			(vec![vec![0], vec![1], vec![2]], expected_contexts)
+			(
+				value,
+				storage_params,
+				outcomes.into_iter().collect::<Result<Vec<_>, _>>().unwrap(),
+				calls
+			),
+			(
+				Some(vec![0x07]),
+				vec![json!([hex_of(&[0xab]), best])],
+				vec![vec![0], vec![1], vec![2]],
+				expected_calls
+			)
+		);
+		assert!(
+			sent.lock()
+				.unwrap()
+				.iter()
+				.all(|request| !request["method"].as_str().unwrap().starts_with("chainHead_")),
+			"a dotNS lookup sent a chainHead method"
 		);
 	});
 }
 
-/// An identity lookup names what it reads and nothing about whose account
-/// it reads, so the follow id built from it carries no user identifier
-/// into the logs that name a connection's follows.
+/// A burst of lookups for different names, more than a node's follow budget,
+/// all resolve over the one connection and send no `chainHead_v1` method.
 #[test]
-fn an_identity_lookup_is_named_without_an_account() {
-	assert_eq!(DotnsLookupKind::Identity.to_string(), "identity");
+fn a_burst_of_different_names_all_resolve() {
+	let provider = Arc::new(ScriptedProvider::with_frames(|request| {
+		legacy_asset_hub_frames(
+			request,
+			|key| Some(key.to_vec()),
+			|_, input| view_output(input.to_vec(), false),
+		)
+	}));
+	let chain = ChainRuntime::new(provider, Spawner::for_test());
+	let outcomes = futures::executor::block_on(futures::future::join_all((0u8..8).map(|name| {
+		let chain = &chain;
+		async move {
+			let mut lookup = DotnsLookup::at_best_block(chain, [0x11; 32]).await.unwrap();
+			let record = lookup.storage(vec![name]).await.unwrap();
+			let view = lookup.view(&[0x44; 20], vec![name]).await.unwrap();
+			(record, view)
+		}
+	})));
+	assert_eq!(outcomes, (0u8..8).map(|name| (Some(vec![name]), vec![name])).collect::<Vec<_>>());
 }
 
-/// A manifest lookup still names its product, which identifies what was
-/// opened rather than who opened it.
+/// A node that never names its best block fails the lookup after one step's
+/// budget instead of holding its caller.
 #[test]
-fn a_manifest_lookup_is_named_by_its_product() {
-	let product_id = ProductId::for_test("shop.paseo");
+fn a_lookup_with_no_best_block_fails_in_one_step() {
+	let provider = Arc::new(ScriptedProvider::with_frames(|request| {
+		let request: Value = serde_json::from_str(request).unwrap();
+		match request["method"].as_str().unwrap() {
+			"chain_getBlockHash" => vec![],
+			method => panic!("unexpected RPC method: {method}"),
+		}
+	}));
+	let chain = ChainRuntime::new(provider, Spawner::for_test());
+	let error = futures::executor::block_on(DotnsLookup::at_best_block(&chain, [0x11; 32]))
+		.err()
+		.expect("no best block, no lookup");
 	assert_eq!(
-		DotnsLookupKind::Manifest(&product_id).to_string(),
-		format!("manifest:{product_id}"),
+		error.to_string(),
+		"finding the best Asset Hub block timed out",
+		"{error:?}"
 	);
 }

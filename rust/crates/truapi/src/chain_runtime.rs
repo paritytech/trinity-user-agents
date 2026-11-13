@@ -22,7 +22,7 @@ use core::{
 	task::{Context, Poll},
 };
 #[cfg(not(target_arch = "wasm32"))]
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 use std::{
 	collections::{BTreeMap, HashMap, HashSet, VecDeque},
 	sync::{
@@ -31,15 +31,14 @@ use std::{
 	},
 };
 #[cfg(target_arch = "wasm32")]
-use web_time::{Duration, SystemTime};
+use web_time::SystemTime;
 
 use crate::platform::{ChainProvider, JsonRpcConnection, ProviderError};
 use derive_more::{Display, Error};
 use futures::{
 	FutureExt, Stream, StreamExt,
 	channel::mpsc,
-	future::{AbortHandle, Abortable, BoxFuture, Shared, join_all},
-	pin_mut,
+	future::{AbortHandle, Abortable, BoxFuture, Shared},
 	stream::BoxStream,
 };
 use parity_scale_codec::{Decode, Error as ScaleError, Input};
@@ -645,20 +644,6 @@ impl ChainRuntime {
 		.boxed()
 	}
 
-	/// [`Self::remote_chain_head_follow`] for host-internal callers that read
-	/// a follow themselves. They wait for the events one operation needs and
-	/// time out on their own, so a failure ends the stream rather than
-	/// becoming an item every one of them has to match.
-	pub fn remote_chain_head_follow_items(
-		&self,
-		follow_subscription_id: String,
-		request: RemoteChainHeadFollowRequest,
-	) -> BoxStream<'static, RemoteChainHeadFollowItem> {
-		self.remote_chain_head_follow(follow_subscription_id, request)
-			.scan((), |_, item| core::future::ready(item.ok()))
-			.boxed()
-	}
-
 	/// Fetch a block header.
 	#[instrument(skip_all, fields(runtime.method = "chain_runtime.header"))]
 	pub async fn remote_chain_head_header(
@@ -754,77 +739,6 @@ impl ChainRuntime {
 			.map_err(|err| rpc_failure(method, err).on_chain(&connection.genesis_hash))
 			.and_then(operation_started_result)?;
 		Ok(RemoteChainHeadCallResponse { operation })
-	}
-
-	/// Starts calls concurrently and returns their outcomes in request order.
-	///
-	/// Every request must belong to the supplied follow. The timeout starts
-	/// after all startup responses arrive and applies only to unfinished calls.
-	/// A stopped follow fails unfinished calls while retaining completed results.
-	pub async fn chain_head_call_batch(
-		&self,
-		follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
-		requests: Vec<RemoteChainHeadCallRequest>,
-		label: &'static str,
-		timeout: Duration,
-		timer: &dyn Timer,
-	) -> Vec<Result<Vec<u8>, String>> {
-		let operations =
-			join_all(requests.into_iter().map(|request| self.remote_chain_head_call(request)))
-				.await;
-		let mut results = vec![None; operations.len()];
-		let mut pending = HashMap::new();
-		for (index, response) in operations.into_iter().enumerate() {
-			match response.map(|response| response.operation) {
-				Ok(OperationStartedResult::Started { operation_id }) => {
-					pending.insert(operation_id, index);
-				},
-				Ok(OperationStartedResult::LimitReached) => {
-					results[index] = Some(Err(format!("{label} operation limit reached")));
-				},
-				Err(failure) => results[index] = Some(Err(failure.reason())),
-			}
-		}
-		let timeout = timer.sleep(timeout).fuse();
-		pin_mut!(timeout);
-		let failure = loop {
-			if pending.is_empty() {
-				break None;
-			}
-			let next = follow.next().fuse();
-			pin_mut!(next);
-			let item = futures::select! {
-				item = next => item,
-				() = timeout => break Some(format!("{label} runtime call timed out")),
-			};
-			let (operation_id, result) = match item {
-				Some(RemoteChainHeadFollowItem::OperationCallDone { operation_id, output }) => {
-					(operation_id, Ok(output))
-				},
-				Some(RemoteChainHeadFollowItem::OperationInaccessible { operation_id }) => {
-					(operation_id, Err(format!("{label} runtime call was inaccessible")))
-				},
-				Some(RemoteChainHeadFollowItem::OperationError { operation_id, error }) => {
-					(operation_id, Err(error))
-				},
-				Some(RemoteChainHeadFollowItem::Stop) | None => {
-					break Some(format!("{label} follow stopped during runtime call"));
-				},
-				_ => continue,
-			};
-			if let Some(index) = pending.remove(&operation_id) {
-				results[index] = Some(result);
-			}
-		};
-		if let Some(error) = failure {
-			for index in pending.into_values() {
-				results[index] = Some(Err(error.clone()));
-			}
-		}
-		results
-			.into_iter()
-			.map(|result| result.expect("every call has an outcome"))
-			.collect()
 	}
 
 	/// Release pinned blocks.
@@ -1419,8 +1333,8 @@ struct ChainConnection {
 	chain_config: OnceLock<SubstrateConfig>,
 	legacy_connection: Mutex<Option<LegacyConnection>>,
 	/// Whether this connection has already reported itself at the budget.
-	/// dotNS opens and drops a follow per lookup, so a connection sitting at
-	/// the budget would otherwise repeat the line on every lookup, into a
+	/// Products open and drop follows freely, so a connection sitting at the
+	/// budget would otherwise repeat the line on every refused follow, into a
 	/// device log the level filter cannot quiet.
 	budget_reported: AtomicBool,
 	/// Scope this connection was opened for, so a follow it loses is recorded
@@ -1981,17 +1895,11 @@ impl ChainConnection {
 
 	/// Name one follow holding a slot, for a line that leaves the device.
 	///
-	/// The core's own follow ids are its own words, so one is named by what it
-	/// says less the prefix every core follow shares, and the line's own budget
-	/// is what bounds its length. A product's follow id is built from the
-	/// request id it chose, which is arbitrary text off the wire, so only the
-	/// runtime it belongs to is named.
+	/// A product's follow id is built from the request id it chose, which is
+	/// arbitrary text off the wire, so only the runtime it belongs to is named.
 	/// Which products hold how many is the diagnostic; what a product called
 	/// its request is not, and is not ours to repeat.
 	fn occupant_name(local_follow_id: &str) -> String {
-		if let Some(core_follow) = local_follow_id.strip_prefix("truapi:") {
-			return core_follow.to_string();
-		}
 		match local_follow_id.split_once(':') {
 			Some((runtime, _)) => format!("{runtime}:product"),
 			None => "product".to_string(),
@@ -2444,154 +2352,6 @@ pub fn encode_hex(value: &[u8]) -> String {
 	format!("0x{}", hex::encode(value))
 }
 
-/// Wait for a usable best block hash from a `chainHead_v1_follow` stream.
-pub async fn wait_for_chain_head_best_hash(
-	follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
-	label: &'static str,
-	initialization_timeout: Duration,
-	best_hash_timeout: Duration,
-) -> Result<Vec<u8>, String> {
-	let timeout = futures_timer::Delay::new(initialization_timeout).fuse();
-	pin_mut!(timeout);
-	loop {
-		let next = follow.next().fuse();
-		pin_mut!(next);
-		futures::select! {
-			item = next => match item {
-				Some(RemoteChainHeadFollowItem::Initialized { finalized_block_hashes, .. }) => {
-					let fallback = finalized_block_hashes.last().cloned();
-					return wait_for_chain_head_best_hash_after_initialization(
-						follow,
-						label,
-						fallback,
-						best_hash_timeout,
-					)
-					.await;
-				}
-				Some(RemoteChainHeadFollowItem::BestBlockChanged { best_block_hash }) => {
-					return Ok(best_block_hash);
-				}
-				Some(RemoteChainHeadFollowItem::Stop) | None => {
-					return Err(format!("{label} follow stopped before initialization"));
-				}
-				_ => {}
-			},
-			() = timeout => return Err(format!("{label} follow initialization timed out")),
-		}
-	}
-}
-
-async fn wait_for_chain_head_best_hash_after_initialization(
-	follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
-	label: &'static str,
-	fallback: Option<Vec<u8>>,
-	timeout: Duration,
-) -> Result<Vec<u8>, String> {
-	let timeout = futures_timer::Delay::new(timeout).fuse();
-	pin_mut!(timeout);
-	loop {
-		let next = follow.next().fuse();
-		pin_mut!(next);
-		futures::select! {
-			item = next => match item {
-				Some(RemoteChainHeadFollowItem::BestBlockChanged { best_block_hash }) => {
-					return Ok(best_block_hash);
-				}
-				Some(RemoteChainHeadFollowItem::Stop) | None => {
-					return Err(format!("{label} follow stopped before best block"));
-				}
-				_ => {}
-			},
-			() = timeout => {
-				return fallback.clone().ok_or_else(|| {
-					format!("{label} follow best block timed out")
-				});
-			},
-		}
-	}
-}
-
-/// Context for one storage operation observed on a `chainHead_v1_follow` stream.
-pub struct ChainHeadStorageValueLookup<'a> {
-	pub chain: &'a ChainRuntime,
-	pub genesis_hash: &'a [u8],
-	pub follow_subscription_id: &'a str,
-	pub operation_id: &'a str,
-	pub key: &'a [u8],
-	pub label: &'static str,
-	pub timeout: Duration,
-}
-
-/// Result of one value query observed on a `chainHead_v1_follow` stream.
-pub enum ChainHeadStorageValue {
-	Found(Vec<u8>),
-	Missing,
-	Inaccessible,
-}
-
-/// Wait for one storage operation's value from a `chainHead_v1_follow` stream.
-pub async fn wait_for_chain_head_storage_value(
-	follow: &mut BoxStream<'static, RemoteChainHeadFollowItem>,
-	lookup: ChainHeadStorageValueLookup<'_>,
-) -> Result<ChainHeadStorageValue, String> {
-	let timeout = futures_timer::Delay::new(lookup.timeout).fuse();
-	pin_mut!(timeout);
-	let mut value = None;
-	loop {
-		let next = follow.next().fuse();
-		pin_mut!(next);
-		futures::select! {
-			item = next => match item {
-				Some(RemoteChainHeadFollowItem::OperationStorageItems { operation_id: item_operation_id, items })
-					if item_operation_id == lookup.operation_id =>
-				{
-					for item in items {
-						if item.key == lookup.key {
-							value = item.value;
-						}
-					}
-				}
-				Some(RemoteChainHeadFollowItem::OperationStorageDone { operation_id: item_operation_id })
-					if item_operation_id == lookup.operation_id =>
-				{
-					return Ok(match value {
-						Some(value) => ChainHeadStorageValue::Found(value),
-						None => ChainHeadStorageValue::Missing,
-					});
-				}
-				Some(RemoteChainHeadFollowItem::OperationWaitingForContinue { operation_id: item_operation_id })
-					if item_operation_id == lookup.operation_id =>
-				{
-					lookup
-						.chain
-						.remote_chain_head_continue(RemoteChainHeadContinueRequest {
-							genesis_hash: lookup.genesis_hash.to_vec(),
-							follow_subscription_id: lookup.follow_subscription_id.to_string(),
-							operation_id: lookup.operation_id.to_string(),
-						})
-						.await
-						.map_err(|failure| failure.reason())?;
-				}
-				Some(RemoteChainHeadFollowItem::OperationInaccessible { operation_id: item_operation_id })
-					if item_operation_id == lookup.operation_id =>
-				{
-					return Ok(ChainHeadStorageValue::Inaccessible);
-				}
-				Some(RemoteChainHeadFollowItem::OperationError { operation_id: item_operation_id, error })
-					if item_operation_id == lookup.operation_id =>
-				{
-					return Err(error);
-				}
-				Some(RemoteChainHeadFollowItem::Stop) | None => {
-					return Err(format!("{} follow stopped during storage lookup", lookup.label));
-				}
-				_ => {}
-			},
-			() = timeout => return Err(format!("{} storage lookup timed out", lookup.label)),
-		}
-	}
-}
-
 #[cfg(test)]
 fn decode_hex(value: &str) -> Result<Vec<u8>, String> {
 	hex::decode(value.strip_prefix("0x").unwrap_or(value)).map_err(|_| "invalid hex".to_string())
@@ -2616,13 +2376,5 @@ mod occupant_name_tests {
 			"a request id the product chose reached the line",
 		);
 		assert_eq!(ChainConnection::occupant_name("anything"), "product");
-	}
-
-	/// The core's own ids are its own words, and say which read holds the slot.
-	/// The prefix they all share says nothing one from another, and the line
-	/// they go into has room for four of them.
-	#[test]
-	fn a_core_follow_is_named_by_what_its_id_says() {
-		assert_eq!(ChainConnection::occupant_name("truapi:dotns:3:identity"), "dotns:3:identity");
 	}
 }

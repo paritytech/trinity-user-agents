@@ -7783,7 +7783,7 @@ fn a_manifest_refusal_tells_the_host_what_it_judged_by() {
 			.err(),
 		));
 	});
-	let reason = "Asset Hub follow stopped before initialization";
+	let reason = r#"legacy_connection: remote_chain_connect: Host { reason: "fixture serves no chain" }"#;
 	let lookup_failed = format!(
 		"truapi.tracing.warn truapi::runtime::product_manifest: root manifest lookup failed \
 		 {{target=peopl.dot, reason={reason}}}"
