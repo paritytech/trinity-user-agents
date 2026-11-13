@@ -16,8 +16,8 @@ use futures::{
 };
 use imagesize::ImageType;
 use truapi::latest::{
-	ImageRef, ImageSource, MaterialFailure, MaterialInstance, Parameter, RenderContext,
-	RendererNode,
+	HostRendererFailureSubscribeItem, ImageRef, ImageSource, MaterialFailure, MaterialInstance,
+	Parameter, RenderContext, RendererNode,
 };
 
 use super::{
@@ -50,6 +50,18 @@ pub struct PlanFailure {
 	pub material: Option<[u8; 32]>,
 	/// Why the node fell back.
 	pub reason: MaterialFailure,
+}
+
+impl PlanFailure {
+	/// The report of this fallback the product hears, for a body in `context`.
+	pub fn report(self, context: RenderContext) -> HostRendererFailureSubscribeItem {
+		HostRendererFailureSubscribeItem {
+			context,
+			node: self.node,
+			material: self.material,
+			reason: self.reason,
+		}
+	}
 }
 
 /// What to draw for each `Materials` node of a tree.

@@ -1760,6 +1760,62 @@ fn a_material_kept_by_hand_draws_without_bulletin() {
 	assert!(matches!(plan.nodes[..], [crate::NodePlan::Ready { .. }]), "{:?}", plan.nodes);
 }
 
+/// A Rust host that plans a body its product rendered reports what falls back
+/// to that product, as a native execution does. A report is not a tap.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_planned_body_reports_its_fallbacks_to_the_connection_that_rendered_it() {
+	use truapi::{
+		latest::{
+			HostRendererFailureSubscribeItem, MaterialFailure, MaterialInstance, MaterialsProps,
+			RenderContext, RendererNode,
+		},
+		versioned::IntoLatest,
+	};
+	let (signing, _platform) = test_signing_runtime();
+	signing.set_core_db(crate::store::open_memory_core_db());
+	signing.start_core_services();
+	signing.services.enable_materials();
+	let product = ProductContext::new_with_execution(
+		ProductId::for_test("cards.dot"),
+		crate::platform::ExecutableKind::Worker,
+	);
+	let runtime = signing.product_runtime(product, Arc::new(RecordingSink::default()));
+	let mut failures = futures::executor::block_on(truapi::api::Renderer::failure_subscribe(
+		runtime.admin.product_runtime().as_ref(),
+		&truapi::CallContext::with_request_id("failures-1".to_string()),
+		truapi::versioned::renderer::HostRendererFailureSubscribeRequest::V1,
+	));
+	let over_the_layer_limit = (0..17)
+		.map(|_| MaterialInstance { material: [7; 32], args: Vec::new() })
+		.collect();
+	let tree = RendererNode::Materials {
+		props: MaterialsProps { layers: over_the_layer_limit },
+		children: Vec::new(),
+	};
+	let context = RenderContext::PocketCard { card_id: "stamps".to_string() };
+
+	let _plans = runtime
+		.control()
+		.material_plan(&tree, &context, crate::ShaderLanguage::GlslEs, true)
+		.expect("an open connection plans");
+	let delivered = crate::test_support::next(&mut failures)
+		.expect("a failure report")
+		.expect("a failure item")
+		.into_latest();
+
+	assert_eq!(
+		delivered,
+		HostRendererFailureSubscribeItem {
+			context,
+			node: 0,
+			material: None,
+			reason: MaterialFailure::LimitExceeded,
+		}
+	);
+	assert!(!runtime.admin.product_runtime().connection().recently_tapped());
+}
+
 /// The runtime keeps one set of materials, so every renderer tree shares
 /// the fetches the start-up fetch began, and a second start begins none.
 #[cfg(not(target_arch = "wasm32"))]

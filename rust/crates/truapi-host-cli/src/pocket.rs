@@ -29,6 +29,10 @@ use truapi::{
 
 use crate::transcript::Transcript;
 
+mod faces;
+
+pub use faces::PocketFaces;
+
 /// Cards and list subscribers for one product.
 #[derive(Default)]
 struct ProductCards {
@@ -77,6 +81,12 @@ impl CliPocketHost {
 
 	fn lock(&self) -> std::sync::MutexGuard<'_, BTreeMap<ProductId, ProductCards>> {
 		self.products.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+	}
+
+	/// The ids of the cards `product` holds now.
+	pub fn cards(&self, product: &ProductContext) -> Vec<String> {
+		let mut products = self.lock();
+		self.entry(&mut products, product).cards.keys().cloned().collect()
 	}
 
 	/// This product's collection, seeded on first use so every product starts

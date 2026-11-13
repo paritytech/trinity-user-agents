@@ -1214,12 +1214,7 @@ impl NativeProductExecution {
 		let channel = self.renderer_failures.clone();
 		let reported = context.clone();
 		let failures = Box::new(move |failure: crate::PlanFailure| {
-			let item = latest::HostRendererFailureSubscribeItem {
-				context: reported.clone(),
-				node: failure.node,
-				material: failure.material,
-				reason: failure.reason,
-			};
+			let item = failure.report(reported.clone());
 			// A product that never subscribes fills the buffer, and later
 			// reports are dropped: the device log still has them.
 			let _ = channel.publish(item.into());

@@ -1149,13 +1149,7 @@ impl SigningHostRuntime {
 		float_filterable: bool,
 		failures: Box<dyn Fn(crate::PlanFailure) + Send + Sync>,
 	) -> crate::PlanStream {
-		let Some(materials) = self.services.materials() else {
-			tracing::warn!("no core database, so every material node draws plain");
-			return crate::PlanStream::plain(tree, context, failures);
-		};
-		let enabled = self.services.materials_enabled();
-		let settings = crate::materials::PlanSettings { enabled, language, float_filterable };
-		materials.plan(tree, context, settings, failures)
+		self.services.material_plan(tree, context, language, float_filterable, failures)
 	}
 
 	/// Build a product-facing runtime from this signing host.
@@ -1972,6 +1966,29 @@ impl ProductRuntimeControl {
 		self.connection()?.publish_renderer_action(
 			truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(item),
 		)
+	}
+
+	/// The plans for `tree`, a body this connection's product rendered in
+	/// `context`, its shaders in `language`, filtering 32-bit float images
+	/// themselves unless `float_filterable`. A node that falls back is logged
+	/// and reported to the product through `Renderer::failure_subscribe`, once.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn material_plan(
+		&self,
+		tree: &truapi::latest::RendererNode,
+		context: &truapi::latest::RenderContext,
+		language: crate::ShaderLanguage,
+		float_filterable: bool,
+	) -> Result<crate::PlanStream, ProductRuntimeError> {
+		let services = self.connection()?.services();
+		let connection = self.connection.clone();
+		let reported = context.clone();
+		let failures = Box::new(move |failure: crate::PlanFailure| {
+			// A product that never subscribes fills the buffer, and later
+			// reports are dropped: the device log still has them.
+			let _ = connection.publish_renderer_failure(failure.report(reported.clone()).into());
+		});
+		Ok(services.material_plan(tree, context, language, float_filterable, failures))
 	}
 
 	/// Ask this connection's product to draw one body, streaming replacement

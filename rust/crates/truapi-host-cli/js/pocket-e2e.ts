@@ -11,7 +11,10 @@ import type {
   ObservableLike,
   TrUApiClient,
 } from "../../../../js/packages/truapi/src/index.ts";
-import type { HostPocketListSubscribeItem } from "../../../../js/packages/truapi/src/generated/types.ts";
+import type {
+  HostPocketListSubscribeItem,
+  RendererNode,
+} from "../../../../js/packages/truapi/src/generated/types.ts";
 import type { DiagnosisRow } from "./diagnosis.ts";
 
 /** Cards the battery seeds the host with; see `scripts/battery.sh`. */
@@ -22,9 +25,10 @@ const WAIT_MS = 15_000;
 interface TranscriptLine {
   kind: string;
   cardId?: string;
+  nodes?: { state: string; reason?: string }[];
 }
 
-/** Removals as the host recorded them. */
+/** Lines as the host recorded them. */
 function transcript(path: string): TranscriptLine[] {
   if (!existsSync(path)) {
     return [];
@@ -217,5 +221,89 @@ export async function runPocketE2e(
         ),
   );
 
+  rows.push(await materialsCase(client, pocketLogPath, row));
+
   return rows;
+}
+
+/** One `Materials` node over the 16-layer limit, so no material is fetched. */
+const OVER_THE_LAYER_LIMIT: RendererNode = {
+  tag: "Materials",
+  value: {
+    props: {
+      layers: Array.from({ length: 17 }, () => ({
+        material: `0x${"07".repeat(32)}`,
+        args: [],
+      })),
+    },
+    children: [],
+  },
+};
+
+/**
+ * The host renders each card as a phone does when it comes on screen, plans
+ * the materials of the face the product draws, and tells the product what
+ * fell back. The transcript shows the plan was the host's own.
+ */
+async function materialsCase(
+  client: TrUApiClient,
+  pocketLogPath: string,
+  row: (
+    methodName: string,
+    status: DiagnosisRow["status"],
+    output: string,
+    startedAt: number,
+  ) => DiagnosisRow,
+): Promise<DiagnosisRow> {
+  const startedAt = performance.now();
+  const cardId = SEEDED_CARDS.privileged;
+  let registration: { unsubscribe(): void } | undefined;
+  try {
+    const supported = await client.system.featureSupported({
+      tag: "Materials",
+      value: { formatVersion: 1, features: [] },
+    });
+    const failure = firstMatch(
+      client.renderer.failureSubscribe(),
+      (item) =>
+        item.context.tag === "PocketCard" &&
+        item.context.value.cardId === cardId,
+      "the fallback report for the card",
+    );
+    registration = client.renderer.onRender((request, send) => {
+      if (
+        request.context.tag === "PocketCard" &&
+        request.context.value.cardId === cardId
+      ) {
+        send(OVER_THE_LAYER_LIMIT);
+      }
+    });
+    const reported = await failure;
+    const plan = await waitForTranscript(
+      pocketLogPath,
+      (line) =>
+        line.kind === "plan" &&
+        line.cardId === cardId &&
+        line.nodes?.[0]?.reason === "LimitExceeded",
+      "the card's plan",
+    );
+    const passed =
+      supported.isOk() &&
+      supported.value.supported &&
+      reported.node === 0 &&
+      reported.material === undefined &&
+      reported.reason === "LimitExceeded";
+    return row(
+      "materials",
+      passed ? "pass" : "fail",
+      passed
+        ? "the host planned the card's face and reported its fallback"
+        : `supported=${JSON.stringify(supported)} reported=${JSON.stringify(reported)} plan=${JSON.stringify(plan)}`,
+      startedAt,
+    );
+  } catch (error) {
+    return row("materials", "fail", String(error), startedAt);
+  } finally {
+    registration?.unsubscribe();
+  }
 }
