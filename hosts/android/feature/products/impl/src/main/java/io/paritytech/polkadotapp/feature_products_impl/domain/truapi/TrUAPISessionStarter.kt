@@ -2,6 +2,9 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.net.Uri
 import androidx.core.net.toUri
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadFailureTelemetry
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadStage
+import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpens
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
@@ -9,12 +12,13 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
 
 /**
@@ -31,6 +35,8 @@ class TrUAPISessionStarter @Inject constructor(
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
     private val visibleProducts: VisibleProducts,
     private val hostWebViewCreatedTelemetry: HostWebViewCreatedTelemetry,
+    private val pageOpens: HostPageOpens,
+    private val loadFailures: HostLoadFailureTelemetry,
 ) {
     fun start(
         provider: BrowserWebViewProvider,
@@ -42,7 +48,7 @@ class TrUAPISessionStarter @Inject constructor(
     ): ProductTrUAPIHostBridge {
         val bridge = hostBridgeFactory.create(scope)
         scope.launch {
-            attachAndLoad(bridge, provider, productUrl, hostApiNavigation, card, explicitProductId)
+            attachAndLoad(bridge, provider, productUrl, scope, hostApiNavigation, card, explicitProductId)
                 .logFailure("Failed to start TrUAPI host bridge for $productUrl")
         }
         return bridge
@@ -52,6 +58,7 @@ class TrUAPISessionStarter @Inject constructor(
         bridge: ProductTrUAPIHostBridge,
         provider: BrowserWebViewProvider,
         productUrl: String,
+        scope: CoroutineScope,
         navigation: NavigationPolicy,
         card: ExpandedCardFace?,
         explicitProductId: ProductId?,
@@ -67,28 +74,44 @@ class TrUAPISessionStarter @Inject constructor(
             }
         }
 
+        // The tap minted its id before this session existed; the page sees the same one.
+        val session = pageOpens.startSession(productId.value)
+        scope.coroutineContext[Job]?.invokeOnCompletion { pageOpens.sessionEnded(session) }
+        val hostSessionId = session.id
+        val open = session.open
         provider.addWebViewSetup { webView -> visibleProducts.track(productId, webView) }
-        val runtime = runtimeProvider.runtime().getOrElse { return Result.failure(it) }
+        val runtime = runtimeProvider.runtime().getOrElse { return failed(it, productId, hostSessionId) }
         // The bootstrap publishes the loopback port and its bearer token, so it goes to the
         // product's own origin only. A wildcard would hand the bridge endpoint to any page the
         // WebView is ever pointed at.
-        val hostSessionId = UUID.randomUUID().toString()
         val installBootstrap = runCatching {
             bootstrapInstaller.installerFor(
                 origins = setOf(productUrl.toUri().origin()),
                 hostSessionId = hostSessionId,
+                open = open,
             )
-        }.getOrElse { return Result.failure(it) }
+        }.getOrElse { return failed(it, productId, hostSessionId) }
 
         val kind = if (card != null) ExecutableKind.WIDGET else ExecutableKind.APP
         val webViewEventReported = AtomicBoolean(false)
+        val pageVisibleReported = AtomicBoolean(false)
+        val webViewCreatedAtMs = AtomicLong(NOT_CREATED)
         return bridge
             .attach(runtime, productId, chainDirectory.resolve(), navigation, kind, card = card) { bootstrap ->
                 val setup = installBootstrap(bootstrap)
                 provider.addWebViewSetup { webView ->
                     setup(webView)
                     if (webViewEventReported.compareAndSet(false, true)) {
-                        hostWebViewCreatedTelemetry.report(hostSessionId)
+                        webViewCreatedAtMs.set(hostWebViewCreatedTelemetry.webViewCreatedAtMs())
+                        hostWebViewCreatedTelemetry.report(session)
+                    }
+                }
+                // Once per session: not again on a reload or an in-page navigation.
+                provider.addOnPageCommitVisibleListener {
+                    val createdAtMs = webViewCreatedAtMs.get()
+                    if (createdAtMs != NOT_CREATED && pageVisibleReported.compareAndSet(false, true)) {
+                        pageOpens.pageShown(session)
+                        hostWebViewCreatedTelemetry.reportVisible(session, createdAtMs)
                     }
                 }
             }
@@ -96,6 +119,16 @@ class TrUAPISessionStarter @Inject constructor(
                 provider.useTrUAPIPermissions(productId, execution)
                 provider.loadInitialContent()
             }
+            .onFailure { failed(it, productId, hostSessionId) }
+    }
+
+    private fun failed(cause: Throwable, productId: ProductId, hostSessionId: String): Result<Unit> {
+        loadFailures.report(HostLoadStage.PAGE, cause, productId.value, hostSessionId)
+        return Result.failure(cause)
+    }
+
+    private companion object {
+        const val NOT_CREATED = -1L
     }
 
     private fun Uri.origin(): String = buildString {

@@ -8,7 +8,7 @@
         <!-- Add data like request headers, user ip address and device name, see https://docs.sentry.io/platforms/android/data-management/data-collected/ for more info -->
         <meta-data android:name="io.sentry.send-default-pii" android:value="false" />
 
-        <!-- The options match the iOS host. SentryLogTree is the only source of Sentry logs. -->
+        <!-- The options match the iOS host. Sentry logs come from SentryLogTree and from host telemetry that is not a failure. -->
         <meta-data android:name="io.sentry.logs.enabled" android:value="true" />
         <!-- Breadcrumbs can carry log lines and URLs, so events carry none. -->
         <meta-data android:name="io.sentry.max-breadcrumbs" android:value="0" />

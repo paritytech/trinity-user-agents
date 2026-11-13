@@ -2,6 +2,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker
 
 import dagger.Lazy
 import io.parity.truapi.TrUAPIProductExecution
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadFailureTelemetry
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadStage
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.common.utils.flatMap
@@ -59,6 +61,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
     private val bootstrapInstaller: TrUAPIBootstrapInstaller,
     private val refCounter: Lazy<ProductWorkerRefCounter>,
     private val navigation: ChatWorkerNavigation,
+    private val loadFailures: HostLoadFailureTelemetry,
     dispatchers: CoroutineDispatchers,
 ) {
     private class RunningWorker(val scope: CoroutineScope) {
@@ -107,6 +110,7 @@ class TrUAPIWorkerSupervisor @Inject constructor(
                 .onFailure { cause ->
                     transitions.withLock {
                         if (workers[productId] === worker) {
+                            loadFailures.report(HostLoadStage.WORKER, cause, productId.value)
                             stop(productId)
                             executionStates.update { it + (productId to WorkerExecutionState.Failed(cause)) }
                         }

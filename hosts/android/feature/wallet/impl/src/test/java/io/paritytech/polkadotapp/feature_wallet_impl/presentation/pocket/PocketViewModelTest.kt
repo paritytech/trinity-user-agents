@@ -2,9 +2,11 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket
 
 import android.net.Uri
 import androidx.lifecycle.viewModelScope
+import io.mockk.Runs
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
 import io.mockk.mockkStatic
 import io.mockk.unmockkStatic
@@ -61,6 +63,9 @@ class PocketViewModelTest {
         every { observeProductCards() } returns emptyFlow()
         every { observeFace(any()) } returns emptyFlow()
         coEvery { warmUpProduct(any()) } returns Result.success(Unit)
+        every { cardTapped(any()) } just Runs
+        every { openReused(any()) } just Runs
+        every { openGivenUp(any()) } just Runs
         coEvery { faceShownOnOpen(any()) } returns true
     }
 
@@ -494,6 +499,83 @@ class PocketViewModelTest {
         val opened = viewModel.state.value as PocketScreenState.CardDetails
         assertEquals("product_card:game.dot:loyalty", opened.selectedCard.id)
         assertNull(cardOpenRequests.requested.value)
+    }
+
+    // The page times itself from the tap, so a card a link opens must not be taken for one: its
+    // handler already held the time the link was asked for.
+    @Test
+    fun `a tap holds the open for its product and a link opening the same card does not`() = runTest(testDispatcher) {
+        val tapped = productCard("loyalty")
+        val linked = productCard("coffee")
+        every { interactor.observeProductCards() } returns flowOf(listOf(tapped, linked))
+
+        val viewModel = createViewModel()
+        viewModel.selectCard(settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().first { it.key == tapped.key })
+        advanceUntilIdle()
+        viewModel.dismissCard()
+        cardOpenRequests.request(linked.key)
+        advanceUntilIdle()
+
+        verify(exactly = 1) { interactor.cardTapped(tapped.key) }
+        verify(exactly = 0) { interactor.cardTapped(linked.key) }
+    }
+
+    // The tap is held for the page a new session starts. Showing the held product again starts none,
+    // so the tap would wait for a later, unrelated session of the product and time it from here.
+    @Test
+    fun `a tap on a card whose product is already held drops the tap it holds`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
+
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        viewModel.selectCard(uiCard)
+        viewModel.hostExpandedProduct(uiCard)
+        verify(exactly = 0) { interactor.openReused(any()) }
+
+        viewModel.dismissCard()
+        viewModel.selectCard(uiCard)
+
+        verify(exactly = 1) { interactor.openReused(card.key) }
+        verify(exactly = 2) { interactor.cardTapped(card.key) }
+    }
+
+    // No page starts for a card dismissed before it settles, so its tap would stay held for the
+    // product's next session, which would time itself from a tap it never had.
+    @Test
+    fun `a card dismissed or left before it settles gives up the tap it holds`() = runTest(testDispatcher) {
+        val card = productCard("loyalty")
+        every { interactor.observeProductCards() } returns flowOf(listOf(card))
+
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().single()
+        viewModel.selectCard(uiCard)
+        viewModel.dismissCard()
+        verify(exactly = 1) { interactor.openGivenUp(card.key) }
+
+        viewModel.selectCard(uiCard)
+        tabSelection.onTapped(BottomTab.WALLET)
+        advanceUntilIdle()
+
+        verify(exactly = 2) { interactor.openGivenUp(card.key) }
+    }
+
+    // Both cards can be one product's, and the open is held by product: closing the open card for the
+    // link must leave the link's own open for the page it is about to start.
+    @Test
+    fun `a link closing the open card to show another does not give up the open it holds`() = runTest(testDispatcher) {
+        val open = productCard("loyalty")
+        val linked = productCard("coffee")
+        every { interactor.observeProductCards() } returns flowOf(listOf(open, linked))
+
+        val viewModel = createViewModel()
+        val uiCard = settledCards(viewModel).filterIsInstance<PocketCardUiModel.ProductCard>().first { it.key == open.key }
+        viewModel.selectCard(uiCard)
+        viewModel.hostExpandedProduct(uiCard)
+        cardOpenRequests.request(linked.key)
+        advanceUntilIdle()
+
+        verify(exactly = 0) { interactor.openGivenUp(any()) }
     }
 
     // A request outlives the screen that answers it, since it is held for a tab that may not exist

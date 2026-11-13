@@ -253,22 +253,34 @@ class PocketViewModel @Inject constructor(
         cardOpenRequests.consume(request)
         if (selectedCardId.value == card.id) {
             selectedPageQuery = request.pageQuery
-            if (shownProduct.value != null) expandedProduct.open(card.key.launchUrl(request.pageQuery))
+            if (shownProduct.value != null) openProduct(card, request.pageQuery)
             return
         }
 
         returnToList()
         removalCandidate.value = null
-        selectCard(card, request.pageQuery)
+        // A link, not a tap: its handler already held when it was asked for.
+        select(card, request.pageQuery)
     }
 
+    /** The user tapped [card]. */
     fun selectCard(card: PocketCardUiModel, pageQuery: String = "") {
+        if (collectiblesShown.value) return
+
+        // First, before anything moves, so the page can time its load from the tap itself.
+        if (card is PocketCardUiModel.ProductCard) interactor.cardTapped(card.key)
+        select(card, pageQuery)
+    }
+
+    private fun select(card: PocketCardUiModel, pageQuery: String) {
         if (collectiblesShown.value) return
 
         selectedCardId.value = card.id
         selectedPageQuery = pageQuery
         if (card is PocketCardUiModel.ProductCard) {
-            expandedProduct.showIfHeld(card.key.launchUrl(pageQuery))
+            val url = card.key.launchUrl(pageQuery)
+            if (expandedProduct.holds(url)) interactor.openReused(card.key)
+            expandedProduct.showIfHeld(url)
             warmUpProduct(card)
             lookUpOpeningFace(card)
         }
@@ -305,9 +317,22 @@ class PocketViewModel @Inject constructor(
     }
 
     fun dismissCard() {
+        giveUpUntakenOpen()
+        closeCard()
+    }
+
+    private fun closeCard() {
         expandedProduct.close()
         forgetOpeningFace()
         selectedCardId.value = null
+    }
+
+    // A card dismissed before it settles has started no page to take its tap, and left held, the
+    // product's next session would time itself from it.
+    private fun giveUpUntakenOpen() {
+        cards.value.filterIsInstance<PocketCardUiModel.ProductCard>()
+            .firstOrNull { it.id == selectedCardId.value }
+            ?.let { interactor.openGivenUp(it.key) }
     }
 
     fun hideCollectiblesSketchbook() {
@@ -331,7 +356,14 @@ class PocketViewModel @Inject constructor(
      * one is hosted.
      */
     fun hostExpandedProduct(card: PocketCardUiModel.ProductCard) {
-        if (card.id == selectedCardId.value) expandedProduct.open(card.key.launchUrl(selectedPageQuery))
+        if (card.id == selectedCardId.value) openProduct(card, selectedPageQuery)
+    }
+
+    /** A held product is shown again on its running session, which starts no page to take the held tap. */
+    private fun openProduct(card: PocketCardUiModel.ProductCard, pageQuery: String) {
+        val url = card.key.launchUrl(pageQuery)
+        if (expandedProduct.holds(url)) interactor.openReused(card.key)
+        expandedProduct.open(url)
     }
 
     /** A press or edit inside a face goes back to the product; a text edit carries the new value as UTF-8. */
@@ -389,11 +421,13 @@ class PocketViewModel @Inject constructor(
 
     private fun resetToList() {
         cardOpenRequests.clear()
+        giveUpUntakenOpen()
         returnToList()
     }
 
+    // Not dismissCard: a link to another card of the open card's product holds an open that is still to be taken.
     private fun returnToList() {
-        if (selectedCardId.value != null) dismissCard()
+        if (selectedCardId.value != null) closeCard()
         if (collectiblesShown.value) hideCollectiblesSketchbook()
     }
 

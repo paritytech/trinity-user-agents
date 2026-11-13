@@ -1,5 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.usecase
 
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadFailureTelemetry
+import io.paritytech.polkadotapp.common.data.telemetry.HostLoadStage
 import io.paritytech.polkadotapp.common.utils.combineResults
 import io.paritytech.polkadotapp.common.utils.flatten
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -35,6 +37,7 @@ internal class RealResolveProductUseCase @Inject constructor(
     private val manifestParser: ManifestParser,
     private val productRepository: ProductRepository,
     private val debugPocketCards: DebugPocketCards,
+    private val loadFailures: HostLoadFailureTelemetry,
 ) : ResolveProductUseCase {
     // Successful resolutions only, so a transient read failure stays retryable. Hit without the
     // lock, since the WebView's request-interception thread blocks on this for every request.
@@ -54,6 +57,7 @@ internal class RealResolveProductUseCase @Inject constructor(
                 // Payload-free variants cannot carry the cause, and this is the last place with it.
                 .mapErrorNotInstance<ResolvedProduct, ProductResolutionError> {
                     Timber.e(it, "Product resolution failed")
+                    loadFailures.report(HostLoadStage.RESOLVE, it, productId.value)
                     ProductResolutionError.Unknown
                 }
                 .onSuccess { cache[productId] = it }
