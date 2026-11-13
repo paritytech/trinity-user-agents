@@ -4,7 +4,7 @@ use truapi::latest::{ImageRef, ImageSource, MaterialFailure, Parameter};
 use super::*;
 use crate::host_internal::bulletin::{BulletinCid, preimage_key};
 
-/// Shaderlab's format vectors, from shaderlab-spa PR #97 at `4fb610d1`.
+/// Shaderlab's format vectors, from shaderlab-spa `main` at `66dd4552`.
 const VECTORS: &str = include_str!("../../../tests/fixtures/materials/material-format.v1.json");
 
 #[derive(Deserialize)]

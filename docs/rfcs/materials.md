@@ -38,12 +38,12 @@ have no shared definition, so the same material would look different in each ren
 
 ### Material
 
-A material is one UTF-8 text file in version 1 of the material format. The format is the
-[material format](https://github.com/paritytech/shaderlab-spa/blob/f8251d2bd546b8177a0b6e533552cb3c4e3b363a/docs/materials-platform/MATERIAL_FORMAT.md)
-with its
-[renderer inputs](https://github.com/paritytech/shaderlab-spa/blob/f8251d2bd546b8177a0b6e533552cb3c4e3b363a/docs/MATERIAL_SPEC.md),
-as of commit `f8251d2b`, including the versioning rules it proposes. Its
-[conformance vectors](https://github.com/paritytech/shaderlab-spa/tree/f8251d2bd546b8177a0b6e533552cb3c4e3b363a/tools/fixtures/conformance/core)
+A material is one UTF-8 text file in version 1 of the material format. The format is the one Shaderlab's
+[reference parser](https://github.com/paritytech/shaderlab-spa/blob/66dd4552edea41787c10469b3088781f6e8f4395/packages/material-core/src/format.ts)
+reads, with its
+[renderer inputs](https://github.com/paritytech/shaderlab-spa/blob/66dd4552edea41787c10469b3088781f6e8f4395/docs/MATERIAL_SPEC.md),
+as of commit `66dd4552` on Shaderlab's `main`, including its versioning rules. Its
+[conformance vectors](https://github.com/paritytech/shaderlab-spa/tree/66dd4552edea41787c10469b3088781f6e8f4395/tools/fixtures/conformance/core)
 are the test: a host that disagrees with a vector is wrong. A material's ID is the BLAKE2b-256 hash of its exact
 canonical text. The same 32 bytes are its Bulletin preimage key, shown as a CIDv1 with the raw codec in base32.
 
