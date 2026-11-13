@@ -4,6 +4,7 @@ import Foundation
 import Products
 import Testing
 import TrUAPIHost
+import UIKit
 import UIKitExt
 @testable import polkadot_app
 
@@ -49,9 +50,15 @@ struct ProductBotChatListTests {
     @Test
     func aProductPeerLoadsItsIconByDomain() {
         let iconFactory = RecordingProductIconViewModelFactory()
+        let publicProfileFactory = UnusedPublicProfileAvatarFactory()
+        let factory = ChatIconViewModelFactory(
+            productFactory: iconFactory,
+            publicProfileFactory: publicProfileFactory,
+            options: .init(forceFresh: false, skipStale: false)
+        )
 
-        #expect(Chat.PeerMetadata.Icon.product(domain: productId).imageViewModel(using: iconFactory) != nil)
-        #expect(Chat.PeerMetadata.Icon.bot.imageViewModel(using: iconFactory) == nil)
+        #expect(factory.createViewModel(from: .product(domain: productId)) != nil)
+        #expect(factory.createViewModel(from: .bot) == nil)
         #expect(iconFactory.requestedDomains == [productId])
     }
 }
@@ -100,7 +107,11 @@ private extension ProductBotChatListTests {
         let asset = try #require(chain.assets.first)
         let factory = ContactsListViewModelFactory(
             chatMessageDecoderFactory: FixedChatMessageDecoderFactory(decoders: [bot.messageDecoder]),
-            productIconViewModelFactory: RecordingProductIconViewModelFactory(),
+            iconViewModelFactory: ChatIconViewModelFactory(
+                productFactory: RecordingProductIconViewModelFactory(),
+                publicProfileFactory: UnusedPublicProfileAvatarFactory(),
+                options: .init(forceFresh: false, skipStale: false)
+            ),
             chain: chain,
             tokenFormatter: { info in
                 TransferAmountViewModelFactory(targetAssetInfo: info, formatterFactory: AssetBalanceFormatterFactory())
@@ -131,8 +142,35 @@ private struct FixedChatMessageDecoderFactory: ChatMessageDecoderMaking {
 private final class RecordingProductIconViewModelFactory: ProductIconViewModelMaking {
     private(set) var requestedDomains: [ProductId] = []
 
-    func createViewModel(for domain: ProductId) -> any ImageViewModelProtocol {
+    func createViewModel(for domain: ProductId) -> any IdentifiableImageViewModelProtocol {
         requestedDomains.append(domain)
-        return StaticImageViewModel(image: nil)
+        return EmptyProductIconViewModel(identifier: domain.rawValue)
     }
+}
+
+private struct UnusedPublicProfileAvatarFactory: PublicProfileAvatarViewModelMaking {
+    func createViewModel(
+        for _: String,
+        options _: PublicProfileResolutionOptions
+    ) -> AnyImageViewModel {
+        Issue.record("Product icons must not resolve public profiles")
+        return AnyImageViewModel(EmptyProductIconViewModel(identifier: "unused"))
+    }
+}
+
+private struct EmptyProductIconViewModel: IdentifiableImageViewModelProtocol {
+    let identifier: String
+
+    @MainActor
+    func loadImage(
+        on _: UIImageView,
+        settings _: ImageViewModelSettings,
+        animated _: Bool,
+        completion: ((Bool) -> Void)?
+    ) {
+        completion?(false)
+    }
+
+    @MainActor
+    func cancel(on _: UIImageView) {}
 }
