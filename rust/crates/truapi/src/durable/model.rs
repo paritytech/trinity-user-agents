@@ -176,6 +176,31 @@ pub enum HeadKind {
 	Best,
 }
 
+/// The blocks that can include an attempt, as the ledger keeps them: from
+/// the birth block up to, but not including, the death block. The birth
+/// block's hash matters only to the signature, which is complete before the
+/// engine sees the attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Window {
+	/// The birth block's number.
+	pub birth: u64,
+	/// How many blocks, from the birth block, can include the attempt.
+	pub period: u64,
+}
+
+impl Window {
+	/// The first block that can no longer include the attempt.
+	pub fn death(&self) -> u64 {
+		self.birth + self.period
+	}
+}
+
+impl From<&Mortality> for Window {
+	fn from(mortality: &Mortality) -> Self {
+		Self { birth: mortality.birth().number, period: mortality.period() }
+	}
+}
+
 /// One ledger row with a submitted attempt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DurableTxEntry {
@@ -187,8 +212,8 @@ pub struct DurableTxEntry {
 	pub group: Option<GroupId>,
 	/// Hash of the extrinsic of the current attempt.
 	pub tx_hash: H256,
-	/// The era it was signed with.
-	pub mortality: Mortality,
+	/// The window of the era it was signed with.
+	pub window: Window,
 	/// Where it stands.
 	pub status: DurableTxStatus,
 	/// Every block from birth through this one was searched and does not

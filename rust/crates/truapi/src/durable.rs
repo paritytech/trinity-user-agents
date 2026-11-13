@@ -32,7 +32,7 @@ pub use engine::{
 pub use model::{
 	DeferredDurableTx, DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState,
 	DurableTxStatus, GroupId, HeadKind, PolicyParams, SubmissionPlan, Verdict, VerdictFailureKind,
-	VerdictStatus,
+	VerdictStatus, Window,
 };
 pub use oracle::{CompletionOracle, DurableRegistry, PassScope, Unobservable};
 pub use policy::{PolicyError, Preparation, SubmissionPolicy};

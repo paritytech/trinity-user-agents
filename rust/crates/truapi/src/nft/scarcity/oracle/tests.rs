@@ -3,8 +3,7 @@ use subxt::utils::H256;
 
 use super::*;
 use crate::{
-	chain::Mortality,
-	durable::{DomainId, DurableTxStatus, SubmissionPlan},
+	durable::{DomainId, DurableTxStatus, SubmissionPlan, Window},
 	nft::{
 		ItemSlot, PurseId, TEST_INSTALLATION,
 		keys::ItemIndex,
@@ -88,7 +87,7 @@ fn transfer_entry(signed_state_nonce: Option<u64>) -> DurableTxEntry {
 		domain: DomainId::new("nft"),
 		group: None,
 		tx_hash: H256([0x01; 32]),
-		mortality: Mortality::new(FINALIZED, 64).unwrap(),
+		window: Window { birth: FINALIZED.number, period: 64 },
 		status: DurableTxStatus::Pending,
 		scanned_to: None,
 		plan: Some(SubmissionPlan { params: params.into() }),

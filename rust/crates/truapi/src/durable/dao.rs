@@ -10,16 +10,16 @@ use subxt::utils::H256;
 
 use super::model::{
 	DeferredDurableTx, DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState,
-	DurableTxStatus, GroupId, PolicyParams, SubmissionPlan,
+	DurableTxStatus, GroupId, PolicyParams, SubmissionPlan, Window,
 };
 use crate::{
-	chain::{HashAndNumber, MortalExtrinsic, Mortality},
+	chain::{HashAndNumber, MortalExtrinsic},
 	store::{Db, DbError},
 };
 
 const INSERT: &str = "INSERT INTO durable_tx
-    (domain, group_id, tx_hash, birth_number, birth_hash, period, status, policy_params)
-    VALUES (:domain, :group_id, :tx_hash, :birth_number, :birth_hash, :period, 'PENDING',
+    (domain, group_id, tx_hash, birth_number, period, status, policy_params)
+    VALUES (:domain, :group_id, :tx_hash, :birth_number, :period, 'PENDING',
      :policy_params)
     RETURNING id";
 
@@ -32,15 +32,14 @@ pub fn insert(
 	extrinsic: &MortalExtrinsic,
 	plan: Option<&SubmissionPlan>,
 ) -> Result<DurableTxId, DbError> {
-	let birth = extrinsic.mortality.birth();
+	let window = Window::from(&extrinsic.mortality);
 	let id = tx.prepare_cached(INSERT)?.query_row(
 		named_params! {
 			":domain": domain.as_str(),
 			":group_id": group.map(GroupId::as_str),
 			":tx_hash": extrinsic.extrinsic.hash().0,
-			":birth_number": birth.number,
-			":birth_hash": birth.hash.0,
-			":period": extrinsic.mortality.period(),
+			":birth_number": window.birth,
+			":period": window.period,
 			":policy_params": plan.map(|plan| &plan.params),
 		},
 		|row| row.get("id").map(DurableTxId),
@@ -74,7 +73,7 @@ pub fn defer(
 
 const START_ATTEMPT: &str = "UPDATE durable_tx
     SET status = 'PENDING', tx_hash = :tx_hash, birth_number = :birth_number,
-    birth_hash = :birth_hash, period = :period, success_number = NULL, success_hash = NULL,
+    period = :period, success_number = NULL, success_hash = NULL,
     scanned_number = NULL, attempts = attempts + 1,
     policy_params = COALESCE(:policy_params, policy_params)
     WHERE id = :id AND status = 'PENDING_SUBMISSION'";
@@ -87,12 +86,11 @@ pub fn start_attempt(
 	extrinsic: &MortalExtrinsic,
 	params: Option<&PolicyParams>,
 ) -> Result<bool, DbError> {
-	let birth = extrinsic.mortality.birth();
+	let window = Window::from(&extrinsic.mortality);
 	let changed = tx.prepare_cached(START_ATTEMPT)?.execute(named_params! {
 		":tx_hash": extrinsic.extrinsic.hash().0,
-		":birth_number": birth.number,
-		":birth_hash": birth.hash.0,
-		":period": extrinsic.mortality.period(),
+		":birth_number": window.birth,
+		":period": window.period,
 		":policy_params": params,
 		":id": id.0,
 	})?;
@@ -352,7 +350,7 @@ impl DurableTxEntry {
 			domain: domain_from_row(row)?,
 			group: group_from_row(row)?,
 			tx_hash: H256(row.get("tx_hash")?),
-			mortality: mortality_from_row(row)?,
+			window: Window { birth: row.get("birth_number")?, period: row.get("period")? },
 			status: status_from_row(row)?,
 			scanned_to: row.get("scanned_number")?,
 			plan: plan_from_row(row)?,
@@ -368,15 +366,6 @@ fn domain_from_row(row: &Row<'_>) -> rusqlite::Result<DomainId> {
 fn group_from_row(row: &Row<'_>) -> rusqlite::Result<Option<GroupId>> {
 	let name: Option<String> = row.get("group_id")?;
 	Ok(name.map(GroupId::new))
-}
-
-/// The era of the row's attempt, checked as [`Mortality::new`] checks it.
-fn mortality_from_row(row: &Row<'_>) -> rusqlite::Result<Mortality> {
-	let birth =
-		HashAndNumber { hash: H256(row.get("birth_hash")?), number: row.get("birth_number")? };
-	Mortality::new(birth, row.get("period")?).map_err(|error| {
-		rusqlite::Error::FromSqlConversionFailure(0, Type::Integer, Box::new(error))
-	})
 }
 
 /// The block the row's success was recorded at, when it has one.

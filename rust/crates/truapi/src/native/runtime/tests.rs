@@ -505,8 +505,8 @@ fn durable_work_left_by_a_previous_process_is_reported_at_startup() {
 	let previous = futures::executor::block_on(Db::open(core_db_config(dir.path()))).unwrap();
 	futures::executor::block_on(previous.write(|tx| {
 		tx.execute(
-			"INSERT INTO durable_tx (domain, tx_hash, birth_number, birth_hash, period, status)
-             VALUES ('nft', zeroblob(32), 0, zeroblob(32), 64, 'PENDING')",
+			"INSERT INTO durable_tx (domain, tx_hash, birth_number, period, status)
+             VALUES ('nft', zeroblob(32), 0, 64, 'PENDING')",
 			[],
 		)?;
 		Ok(())

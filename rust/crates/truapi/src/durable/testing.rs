@@ -30,7 +30,7 @@ use super::{
 	ladder::{PinnedView, SearchResult},
 	model::{
 		DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, HeadKind,
-		SubmissionPlan,
+		SubmissionPlan, Window,
 	},
 	oracle::{CompletionOracle, DurableRegistry, PassScope, Unobservable},
 };
@@ -87,7 +87,7 @@ pub fn entry(id: DurableTxId, birth: u64, period: u64) -> DurableTxEntry {
 		domain: DomainId::new("test"),
 		group: None,
 		tx_hash: H256::repeat_byte(u8::try_from(id.0).expect("test id fits in u8")),
-		mortality: Mortality::new(block(birth), period).unwrap(),
+		window: Window { birth, period },
 		status: DurableTxStatus::Pending,
 		scanned_to: None,
 		plan: None,
