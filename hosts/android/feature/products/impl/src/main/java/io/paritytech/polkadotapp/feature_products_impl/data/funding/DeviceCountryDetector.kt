@@ -1,7 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.data.funding
 
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
-
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
@@ -12,6 +10,7 @@ import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext

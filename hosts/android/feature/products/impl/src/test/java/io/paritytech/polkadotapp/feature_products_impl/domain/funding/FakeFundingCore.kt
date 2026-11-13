@@ -37,6 +37,7 @@ class FakeFundingCore : FundingCore {
     var nextRequestId = 1uL
     var providerTakes = true
     var cancelOutcome = CancelOutcome.REQUESTED
+    val waitingFrames = mutableSetOf<String>()
 
     override suspend fun start(): Result<Unit> = Result.success(Unit).also { calls += "start" }
 
@@ -87,6 +88,11 @@ class FakeFundingCore : FundingCore {
 
     override suspend fun acknowledge(intent: String): Result<Boolean> =
         Result.success(true).also { calls += "acknowledge $intent" }
+
+    override suspend fun openFrame(intent: String): Result<Boolean> =
+        Result.success(waitingFrames.remove(intent)).also { calls += "openFrame $intent" }
+
+    override suspend fun frameWaiting(intent: String): Result<Boolean> = Result.success(intent in waitingFrames)
 
     companion object {
         fun session(

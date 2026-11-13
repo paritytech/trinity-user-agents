@@ -73,8 +73,14 @@ interface FundingService {
     /** What the core asks of the app's screens. One consumer reads it; events wait until it does. */
     val events: Flow<FundingEvent>
 
-    /** Lets the provider show the screen [request] asked for, once its session is on screen or the user tapped the notice. */
-    fun openProviderFrame(request: FundingFrameRequest)
+    /**
+     * Lets the provider of session [entryId] show the screen it asked for, once the session is on screen or the user
+     * tapped the notice. The screen then comes as [FundingEvent.FrameOpened]; answers whether one was waiting.
+     */
+    suspend fun openProviderFrame(entryId: String): Boolean
+
+    /** Whether the provider of session [entryId] waits for its screen to be opened, so the notice can show again. */
+    suspend fun isFrameWaiting(entryId: String): Boolean
 
     /** Answers the provider's screen [request], once it is gone. */
     fun answerFrame(request: FundingFrameRequest, outcome: FundingFrameOutcome)
@@ -84,8 +90,14 @@ sealed interface FundingEvent {
     /** Show the funding screens for this new session. */
     data class PresentationRequested(val entry: FundingEntry) : FundingEvent
 
-    /** A provider wants to show one of its screens for a session, answered through [FundingService.answerFrame]. */
-    data class FrameRequested(val request: FundingFrameRequest) : FundingEvent
+    /**
+     * Provider [providerId] wants to show one of its screens for session [entryId]. The core holds it until the app
+     * opens it through [FundingService.openProviderFrame].
+     */
+    data class FrameRequested(val entryId: String, val providerId: ProductId) : FundingEvent
+
+    /** The core presents a provider's screen now, answered through [FundingService.answerFrame]. */
+    data class FrameOpened(val request: FundingFrameRequest) : FundingEvent
 
     /** The provider's screens for a session are done: take them down and show the session in their place. */
     data class FrameClosed(val entryId: String) : FundingEvent
@@ -94,7 +106,7 @@ sealed interface FundingEvent {
     data class ProviderNotWorking(val productId: ProductId) : FundingEvent
 }
 
-/** A provider's ask to show [target] for session [entryId]. */
+/** A provider's screen the core presents for session [entryId], showing [target]. */
 data class FundingFrameRequest(
     val id: String,
     val entryId: String,

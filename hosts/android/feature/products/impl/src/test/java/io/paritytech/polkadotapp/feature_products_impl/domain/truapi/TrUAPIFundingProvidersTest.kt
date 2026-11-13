@@ -22,11 +22,11 @@ class TrUAPIFundingProvidersTest {
 
         verify(exactly = 0) { runtime.setFundingProviderConfig(any()) }
 
-        configuredNames.emit(listOf("ramp.dot", "other.dot"))
-        configuredNames.emit(listOf("ramp.dot"))
+        configuredNames.emit(listOf("ramp", "other"))
+        configuredNames.emit(listOf("ramp"))
         runCurrent()
 
-        verify { runtime.setFundingProviderConfig(listOf("ramp.dot", "other.dot")) }
-        verify { runtime.setFundingProviderConfig(listOf("ramp.dot")) }
+        verify { runtime.setFundingProviderConfig(listOf("ramp", "other")) }
+        verify { runtime.setFundingProviderConfig(listOf("ramp")) }
     }
 }

@@ -55,4 +55,10 @@ interface FundingCore {
     suspend fun confirmCancel(intent: String, terms: CancelTerms?): Result<CancelConfirmation>
 
     suspend fun acknowledge(intent: String): Result<Boolean>
+
+    /** Lets the screen session [intent]'s provider asked for be presented; answers whether one was waiting. */
+    suspend fun openFrame(intent: String): Result<Boolean>
+
+    /** Whether session [intent]'s provider waits for its screen to be opened. */
+    suspend fun frameWaiting(intent: String): Result<Boolean>
 }
