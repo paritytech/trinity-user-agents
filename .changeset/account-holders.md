@@ -6,3 +6,5 @@ Product account operations on both host roles go through `HostAccounts` over an 
 
 - A paired host answers `NotAvailable` for an allocated resource whose grant it cannot keep, instead of failing the whole allocation.
 - A paired host keeps its Bulletin allowance key when a refresh fails, and replaces it once the phone issues a new one.
+- A signing host keeps the Bulletin allowance key it issued for the current wallet activation, and serves later requests for it from memory.
+- The VRF signing prompt waits for the user's answer on both roles. The call's deadline bounds only the exchange with the account holder that follows.
