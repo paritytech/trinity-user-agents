@@ -5,10 +5,13 @@ import {
   JAM_PEER_TRANSPORT_CLOSE,
   JAM_PEER_TRANSPORT_DIAL,
   JAM_PEER_TRANSPORT_EVENTS,
+  JAM_PEER_TRANSPORT_LISTEN,
   JAM_PEER_TRANSPORT_OPEN,
   JAM_PEER_TRANSPORT_RECV,
+  JAM_PEER_TRANSPORT_RECV_CHUNK,
   JAM_PEER_TRANSPORT_RESET,
   JAM_PEER_TRANSPORT_SEND,
+  JAM_PEER_TRANSPORT_SEND_CHUNK,
 } from "./generated/wire-table.js";
 import { decodeWireMessage, encodeWireMessage } from "./transport.js";
 
@@ -17,9 +20,10 @@ import { decodeWireMessage, encodeWireMessage } from "./transport.js";
 const GENESIS = "0x353963b9cedfe4ea22038081052a5c151b06b55a4a026a97522cd0320cabf49f" as const;
 const LOOPBACK_V4_MAPPED = "0x00000000000000000000ffff7f000001" as const;
 
-test("JamPeerTransport is namespace 111 with methods 0..6 in contract order", () => {
+test("JamPeerTransport is namespace 111 with methods 0..9 in contract order", () => {
   const ids = [JAM_PEER_TRANSPORT_DIAL, JAM_PEER_TRANSPORT_OPEN, JAM_PEER_TRANSPORT_SEND, JAM_PEER_TRANSPORT_RECV,
-    JAM_PEER_TRANSPORT_RESET, JAM_PEER_TRANSPORT_CLOSE, JAM_PEER_TRANSPORT_EVENTS];
+    JAM_PEER_TRANSPORT_RESET, JAM_PEER_TRANSPORT_CLOSE, JAM_PEER_TRANSPORT_EVENTS,
+    JAM_PEER_TRANSPORT_LISTEN, JAM_PEER_TRANSPORT_SEND_CHUNK, JAM_PEER_TRANSPORT_RECV_CHUNK];
   ids.forEach((id, method) => {
     expect(id.trait).toBe(111);
     expect(id.method).toBe(method);
@@ -81,6 +85,41 @@ test("send, recv and events payloads match the Rust SCALE bytes", () => {
   expect([...events]).toEqual([0, 12, 0, 1, 0, 0, 0, 1, 2, 0, 0, 0, 2, 1, 0, 0, 0, 3, 0, 0, 0, 0]);
   expect([...T.VersionedHostJamPeerTransportEventsRequest.enc({ tag: "V1", value: undefined })]).toEqual([0]);
   expect([...T.VersionedHostJamPeerTransportDialError.enc({ tag: "V1", value: "Unreachable" })]).toEqual([0, 3]);
+});
+
+test("listener and accepted-peer payloads retain their field order", () => {
+  const ed25519 = `0x${"11".repeat(32)}` as const;
+  const listen = { tag: "V1", value: { genesis: GENESIS, ip: LOOPBACK_V4_MAPPED, port: 43000, allowedPeers: [ed25519] } } as const;
+  const encoded = T.VersionedHostJamPeerTransportListenRequest.enc({
+    ...listen, value: { ...listen.value, allowedPeers: [...listen.value.allowedPeers] },
+  });
+  expect([...encoded]).toEqual([
+    0, ...S.hexToBytes(GENESIS), ...S.hexToBytes(LOOPBACK_V4_MAPPED), 0xf8, 0xa7,
+    4, ...S.hexToBytes(ed25519),
+  ]);
+  expect(T.VersionedHostJamPeerTransportListenRequest.dec(encoded)).toEqual(listen);
+  const accepted = { tag: "PeerAccepted", value: { conn: 7, ed25519, ip: LOOPBACK_V4_MAPPED, port: 43000 } } as const;
+  const event = T.JamPeerTransportEvent.enc(accepted);
+  expect([...event]).toEqual([
+    3, 7, 0, 0, 0, ...S.hexToBytes(ed25519), ...S.hexToBytes(LOOPBACK_V4_MAPPED), 0xf8, 0xa7,
+  ]);
+  expect(T.JamPeerTransportEvent.dec(event)).toEqual(accepted);
+});
+
+test("chunk payloads preserve total, offset and empty-message distinction", () => {
+  expect([...T.VersionedHostJamPeerTransportSendChunkRequest.enc({
+    tag: "V1", value: { stream: 7, total: 3, offset: 1, bytes: "0xaabb", fin: true },
+  })]).toEqual([0, 7, 0, 0, 0, 3, 0, 0, 0, 1, 0, 0, 0, 8, 0xaa, 0xbb, 1]);
+  expect([...T.VersionedHostJamPeerTransportRecvChunkRequest.enc({
+    tag: "V1", value: { stream: 7, maxBytes: 256 << 10 },
+  })]).toEqual([0, 7, 0, 0, 0, 0, 0, 4, 0]);
+  const empty = { tag: "V1", value: { total: 0, offset: 0, bytes: "0x", complete: true, fin: false, reset: false } } as const;
+  const encoded = T.VersionedHostJamPeerTransportRecvChunkResponse.enc(empty);
+  expect([...encoded]).toEqual([0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0]);
+  expect(T.VersionedHostJamPeerTransportRecvChunkResponse.dec(encoded)).toEqual(empty);
+  expect([...T.VersionedHostJamPeerTransportRecvChunkResponse.enc({
+    tag: "V1", value: { total: undefined, offset: 0, bytes: "0x", complete: false, fin: true, reset: false },
+  })]).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 1, 0]);
 });
 
 test("a NotGranted dial response decodes from a host frame", () => {
