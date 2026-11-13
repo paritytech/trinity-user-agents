@@ -4,33 +4,35 @@ description: Generate a well-structured commit message from staged changes.
 user_invocable: true
 ---
 
-# Commit Message Skill
+# Commit Message
 
-## Procedure
-
-1. Run `git diff --cached` to see staged changes
-2. Run `git log --oneline -10` to see recent commit style
-3. Analyze the nature of changes:
-   - **add** — wholly new feature or file
-   - **update** — enhancement to existing feature
-   - **fix** — bug fix
-   - **refactor** — code restructuring without behavior change
-   - **chore** — build, CI, dependency updates
-4. Draft a concise commit message (1-2 sentences) focusing on "why" not "what"
-5. Match the repository's existing commit message style
+Write the commit message, and the pull request title, as a conventional commit.
+The pull request title becomes the squashed commit on `main`, so the format and
+type rules in the repository's `.claude/skills/semver-pr-title/SKILL.md` apply,
+including when a change is breaking and needs `!`.
 
 ## Format
 
 ```
-<type>: <short description>
+<type>(<scope>)!: <subject>
 
-<optional body explaining why, not what>
+<body: why the change is needed, wrapped at 72 characters>
 ```
 
-## Rules
+- `type` is one of `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`,
+  `ci`, `chore`, `style`, `revert`. Use `ios` as the scope, for example
+  `fix(ios): ...`.
+- `!` only when the change breaks something for testers or products, as the
+  semver skill defines it.
+- The subject is imperative, lower case and under 72 characters, with no full stop.
+- The body says why, not which files changed. Omit it for an obvious change.
+- Close a GitHub issue with `Closes #N` in the pull request description.
+- Never add a `Co-Authored-By` trailer for an AI. The CLA check rejects it, and
+  the pull request has to be recreated.
 
-- Keep subject line under 72 characters
-- Use imperative mood ("add", "fix", "update", not "added", "fixed")
-- Focus on the motivation, not the mechanics
-- Don't list every file changed
-- Reference ticket numbers if present in the branch name (e.g., PANS-1234)
+## Procedure
+
+1. Read `git diff --cached`.
+2. Pick the type from what the change does for a user of the app, not from how
+   much code moved.
+3. Write the subject and, if the reason is not obvious, the body.
