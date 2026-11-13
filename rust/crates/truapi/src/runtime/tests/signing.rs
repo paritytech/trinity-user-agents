@@ -96,6 +96,7 @@ fn sign_vrf_forwards_cross_product_mobile_sso_request_and_response() {
 		)),
 		..Default::default()
 	});
+	cache_manifest(&platform, "other-product.dot", r#"{"myapp":["context"]}"#, 0);
 	let host =
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, session.clone());
@@ -152,6 +153,7 @@ fn sign_vrf_rejects_declined_pairing_host_confirmation_before_mobile_sso() {
 		)),
 		..Default::default()
 	});
+	cache_manifest(&platform, "other-product.dot", r#"{"myapp":["context"]}"#, 0);
 	let host =
 		ProductRuntimeHost::new(platform.clone(), runtime_config("myapp.dot"), Spawner::for_test());
 	install_pairing_session(&host, session);
