@@ -67,7 +67,8 @@ impl Stack {
 		let mut document = serde_json::to_value(&self.descriptor).expect("descriptor not JSON");
 		edit(&mut document);
 		let descriptor = Descriptor::from_json(document).expect("invalid edited descriptor");
-		Self::new(descriptor, self.chain_backend).expect("edited stack refused")
+		Self::new(self.stack_id.clone(), descriptor, self.chain_backend)
+			.expect("edited stack refused")
 	}
 
 	/// This stack with the chain of `role` edited as JSON.

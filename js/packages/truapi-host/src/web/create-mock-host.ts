@@ -1733,6 +1733,16 @@ export interface TestStackChain {
  * production bundle takes a {@link ProductRuntimeConfig.stack} only.
  */
 export interface TestStack {
+  /**
+   * The stack's id. Give two test stacks different ids to keep their stored
+   * state apart.
+   */
+  id: string;
+  /**
+   * Changes when the stack's chains restart, as after a wipe. The core then
+   * reads cached manifests again.
+   */
+  generation: string;
   /** The network `getChainInfo` reports. */
   network: string;
   /** The dotNS TLD a signing host derives its reserved identities under. */
@@ -1762,10 +1772,15 @@ export type MockRuntimeConfig = Omit<ProductRuntimeConfig, "stack"> & {
 
 /**
  * The stack a mock host runs by default: network `mock` under the `paseo`
- * TLD, over the {@link MOCK_GENESIS} chains.
+ * TLD, over the {@link MOCK_GENESIS} chains. Its `id` is `mock`, and so is
+ * the `id` of every stack built from it, such as `fromNetworks` and
+ * `liveChain` return. Two hosts that share one storage backend and must not
+ * share state need different ids.
  */
 export function mockTestStack(): TestStack {
   return {
+    id: "mock",
+    generation: "mock",
     network: "mock",
     tld: "paseo",
     people: { genesisHash: MOCK_GENESIS.people },

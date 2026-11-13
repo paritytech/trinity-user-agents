@@ -46,10 +46,10 @@ signing host's TLD from the descriptor. It refuses a pointer without a key and a
 descriptor without a People or Bulletin chain. Without an Asset Hub no product
 manifest resolves, so a cross-product grant that is not cached is refused.
 
-The test host has no descriptor, so it passes `testStack` instead: the network,
-the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it.
-`mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
-fixture builds it from `networks`.
+The test host has no descriptor, so it passes `testStack` instead: an `id` and
+a `generation`, the network, the TLD and each chain's genesis hash. Only the
+`wasm/testing` bundle reads it. `mockRuntimeConfig` fills it with the
+`MOCK_GENESIS` chains, and the Playwright fixture builds it from `networks`.
 
 ## Bundler requirements
 

@@ -51,9 +51,21 @@ const RESERVED_TLD: &str = "dot";
 /// and the genesis hash of each chain role the core uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stack {
+	identity: StackIdentity,
 	network: String,
 	tld: String,
 	chains: StackChains,
+}
+
+/// A stack's id and the generation of its chains.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StackIdentity {
+	/// `trinity_stack::Pointer::stack_id` of the stack's pointer. A fork has
+	/// the same genesis hashes as its source and a different id.
+	pub id: String,
+	/// The descriptor's `generation`, which changes whenever the stack
+	/// restarts its chains, as after a wipe.
+	pub generation: String,
 }
 
 /// The genesis hash of each chain role a stack names. People and Bulletin are
@@ -102,6 +114,13 @@ pub enum StackError {
 		/// The role with the all-zero hash.
 		chain: ChainIdentifier,
 	},
+	/// The stack's id or generation is empty. Stored state is told apart by
+	/// them.
+	#[display("stack {field} is empty")]
+	EmptyIdentity {
+		/// `id` or `generation`.
+		field: &'static str,
+	},
 	/// The TLD is not one the core serves dotNS names under.
 	#[display("stack tld {tld:?} is not one of {}", DOTNS_TLDS.join(", "))]
 	UnsupportedTld {
@@ -141,6 +160,7 @@ impl Stack {
 		if pointer.key().is_none() {
 			return Err(StackError::Unsigned);
 		}
+		let id = pointer.stack_id();
 		let descriptor = open(descriptor, &pointer).map_err(StackError::Descriptor)?.descriptor;
 		if !allows_reserved_values {
 			refuse_reserved_genesis(descriptor.chains.iter().map(Chain::genesis))?;
@@ -154,7 +174,8 @@ impl Stack {
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
-		Self::new(descriptor.network, descriptor.tld, chains, allows_reserved_values)
+		let identity = StackIdentity { id, generation: descriptor.generation };
+		Self::new(identity, descriptor.network, descriptor.tld, chains, allows_reserved_values)
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
@@ -163,11 +184,16 @@ impl Stack {
 	/// Applies the same TLD and reserved-value rules as [`Self::bundled`], and
 	/// refuses an all-zero Relay or Asset Hub genesis hash.
 	pub fn new(
+		identity: StackIdentity,
 		network: String,
 		tld: String,
 		chains: StackChains,
 		allows_reserved_values: bool,
 	) -> Result<Self, StackError> {
+		let fields = [("id", &identity.id), ("generation", &identity.generation)];
+		if let Some((field, _)) = fields.into_iter().find(|(_, value)| value.is_empty()) {
+			return Err(StackError::EmptyIdentity { field });
+		}
 		if !DOTNS_TLDS.contains(&tld.as_str()) {
 			return Err(StackError::UnsupportedTld { tld });
 		}
@@ -188,7 +214,18 @@ impl Stack {
 				[relay, asset_hub].into_iter().flatten().chain([people, bulletin]),
 			)?;
 		}
-		Ok(Self { network, tld, chains })
+		Ok(Self { identity, network, tld, chains })
+	}
+
+	/// The stack's identity. See [`StackIdentity::id`].
+	pub fn id(&self) -> &str {
+		&self.identity.id
+	}
+
+	/// The run of the stack's chains. What the core cached about the chains
+	/// under another generation is stale. See [`StackIdentity::generation`].
+	pub fn generation(&self) -> &str {
+		&self.identity.generation
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.

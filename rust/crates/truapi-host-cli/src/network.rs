@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use clap::ValueEnum;
 use trinity_stack::Descriptor;
-use truapi::platform::{ChainExtensionVersion, ExtensionVersionMap, StackChains, StackError};
+use truapi::platform::{
+	ChainExtensionVersion, ExtensionVersionMap, StackChains, StackError, StackIdentity,
+};
 
 use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
@@ -95,6 +97,7 @@ pub struct StackArg {
 /// read, so none of them fails.
 #[derive(Debug)]
 pub struct Stack {
+	stack_id: String,
 	descriptor: Descriptor,
 	chain_backend: ChainBackend,
 	chains: Roles<ChainEndpoint>,
@@ -156,6 +159,12 @@ impl Stack {
 		self.chain_backend
 	}
 
+	/// The identity of the pointer the descriptor was read from, and the
+	/// descriptor's `generation`.
+	pub fn identity(&self) -> StackIdentity {
+		StackIdentity { id: self.stack_id.clone(), generation: self.descriptor.generation.clone() }
+	}
+
 	/// The stack the core runs on: the descriptor's `network` and TLD, and the
 	/// People, Bulletin and Asset Hub chains the CLI serves. It serves no Relay.
 	///
@@ -170,6 +179,7 @@ impl Stack {
 			bulletin: genesis.bulletin,
 		};
 		truapi::platform::Stack::new(
+			self.identity(),
 			self.descriptor.network.clone(),
 			self.descriptor.tld.clone(),
 			chains,
