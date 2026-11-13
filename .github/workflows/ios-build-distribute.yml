@@ -357,22 +357,32 @@ jobs:
       # "Re-run failed jobs" keeps the build number the metadata job chose. When
       # an earlier attempt already uploaded that build, Apple refuses a second
       # upload, so the re-run skips the tests and the build and only finishes
-      # the distribution.
+      # the distribution. A first attempt never skips: a build with its number
+      # there belongs to another run, and the upload should fail loudly. When
+      # App Store Connect cannot answer, the job builds, as a first attempt does.
       - name: Look for this build in App Store Connect
         id: existing
+        if: github.run_attempt > 1
         working-directory: hosts/ios
         env:
           BUILD_NUMBER: ${{ needs.prepare_build_metadata.outputs.build_number }}
+          MARKETING_VERSION: ${{ needs.prepare_build_metadata.outputs.marketing_version }}
           IOS_BUNDLE_ID: ${{ env.IOS_BUNDLE_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_BASE64: ${{ secrets.ASC_KEY_BASE64 }}
         run: |
           set -euo pipefail
-          answer="$(bundle exec fastlane testflight_build_uploaded 2>&1 | grep -oE "TestFlight build ${BUILD_NUMBER} uploaded: (true|false)" | grep -oE "(true|false)$" || true)"
-          if [ -z "${answer}" ]; then
-            echo "::error::Could not tell whether build ${BUILD_NUMBER} is already in App Store Connect"
+          log="${RUNNER_TEMP}/testflight-build-uploaded.log"
+          bundle exec fastlane testflight_build_uploaded 2>&1 | tee "${log}" || true
+          if grep -q "Apple marked build ${BUILD_NUMBER} invalid" "${log}"; then
+            echo "::error::Apple marked build ${BUILD_NUMBER} invalid. Use \"Re-run all jobs\" so the run picks a new build number."
             exit 1
+          fi
+          answer="$(grep -oE "TestFlight build ${BUILD_NUMBER} uploaded: (true|false)" "${log}" | grep -oE "(true|false)$" || true)"
+          if [ -z "${answer}" ]; then
+            echo "::warning::Could not tell whether build ${BUILD_NUMBER} is already in App Store Connect, so this attempt builds it"
+            answer=false
           fi
           echo "uploaded=${answer}" >> "$GITHUB_OUTPUT"
           echo "Build ${BUILD_NUMBER} already uploaded: ${answer}"
@@ -417,16 +427,16 @@ jobs:
           google_service_info_release_base64: ${{ inputs.build_configuration == 'Safetynet' && secrets.GOOGLE_SERVICE_INFO_SAFETY_BASE64 || secrets.GOOGLE_SERVICE_INFO_RELEASE_BASE64 }}
           sentry_dsn: ${{ secrets.SENTRY_DSN_IOS }}
 
+      # Sets the changelog on every path, and hands the build to the external
+      # group only when this run distributes to one.
       - name: Finish distributing the uploaded build
-        if: >-
-          steps.existing.outputs.uploaded == 'true' &&
-          inputs.distribute_to_external_group
+        if: steps.existing.outputs.uploaded == 'true'
         working-directory: hosts/ios
         env:
           BUILD_NUMBER: ${{ needs.prepare_build_metadata.outputs.build_number }}
           MARKETING_VERSION: ${{ needs.prepare_build_metadata.outputs.marketing_version }}
           RELEASE_NOTES: ${{ needs.prepare_build_metadata.outputs.release_notes }}
-          EXTERNAL_GROUP_NAME: ${{ inputs.external_group_name }}
+          EXTERNAL_GROUP_NAME: ${{ inputs.distribute_to_external_group && inputs.external_group_name || '' }}
           IOS_BUNDLE_ID: ${{ env.IOS_BUNDLE_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}

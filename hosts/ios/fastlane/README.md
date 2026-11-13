@@ -121,9 +121,9 @@ build is retried without uploading again.
 [bundle exec] fastlane ios finish_testflight
 ```
 
-Wait for an uploaded build to finish processing, then set its changelog and hand it to the external group
+Wait for an uploaded build to finish processing, then set its changelog and, with EXTERNAL_GROUP_NAME, hand it to that group
 
-Reads BUILD_NUMBER, MARKETING_VERSION, RELEASE_NOTES and EXTERNAL_GROUP_NAME.
+Reads BUILD_NUMBER, MARKETING_VERSION, RELEASE_NOTES and optionally EXTERNAL_GROUP_NAME.
 
 Example usage: BUILD_NUMBER=42 MARKETING_VERSION=1.0 EXTERNAL_GROUP_NAME='Group' fastlane finish_testflight
 
@@ -133,11 +133,11 @@ Example usage: BUILD_NUMBER=42 MARKETING_VERSION=1.0 EXTERNAL_GROUP_NAME='Group'
 [bundle exec] fastlane ios testflight_build_uploaded
 ```
 
-Report whether a build number is already in App Store Connect, processed or not
+Report whether this build is already in App Store Connect, processed or not
 
-Prints 'TestFlight build <n> uploaded: true|false' for the workflow to read.
+Matches BUILD_NUMBER under MARKETING_VERSION and prints 'TestFlight build <n> uploaded: true|false' for the workflow to read.
 
-Example usage: BUILD_NUMBER=42 fastlane testflight_build_uploaded
+Example usage: BUILD_NUMBER=42 MARKETING_VERSION=1.0 fastlane testflight_build_uploaded
 
 ### ios load_asc_api_key
 
