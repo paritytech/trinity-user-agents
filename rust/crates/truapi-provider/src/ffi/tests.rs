@@ -459,6 +459,257 @@ fn a_genesis_hash_of_the_wrong_length_is_rejected() {
 	assert!(matches!(error, ChainProviderError::BadGenesis));
 }
 
+/// A loopback JSON-RPC node with `echo` and a three-tick `sub_ticks`
+/// subscription. The runtime it runs on is returned with it: the tests
+/// connect from a plain thread, as a foreign host does, so nothing
+/// ambient may stand in for the provider's own runtime.
+fn spawn_node() -> (String, tokio::runtime::Runtime, jsonrpsee::server::ServerHandle) {
+	use jsonrpsee::{
+		core::SubscriptionResult,
+		server::{RpcModule, Server},
+	};
+
+	let runtime = tokio::runtime::Runtime::new().expect("node runtime starts");
+	let (addr, handle) = runtime.block_on(async {
+		let server = Server::builder().build("127.0.0.1:0").await.expect("loopback node binds");
+		let addr = server.local_addr().expect("node has a local address");
+		let mut module = RpcModule::new(());
+		module
+			.register_method("echo", |params, (), _extensions| {
+				params.one::<String>().unwrap_or_default()
+			})
+			.expect("echo registers");
+		module
+			.register_subscription(
+				"sub_ticks",
+				"tick",
+				"unsub_ticks",
+				|_params, pending, _context, _extensions| async move {
+					let sink = pending.accept().await?;
+					for tick in 0..3u32 {
+						sink.send(serde_json::value::to_raw_value(&tick)?).await?;
+					}
+					SubscriptionResult::Ok(())
+				},
+			)
+			.expect("sub_ticks registers");
+		(addr, server.start(module))
+	});
+	(format!("ws://{addr}"), runtime, handle)
+}
+
+fn recv(messages: &Receiver<String>) -> serde_json::Value {
+	let message = messages.recv_timeout(Duration::from_secs(10)).expect("a message arrives");
+	serde_json::from_str(&message).expect("messages are JSON")
+}
+
+/// Any genesis outside the catalog: an RPC provider serves whatever hash it
+/// is given.
+const NODE_CHAIN: [u8; 32] = [7; 32];
+
+fn rpc_provider(url: String) -> Arc<ChainProvider> {
+	ChainProvider::with_rpc_nodes(vec![RpcNode { genesis_hash: NODE_CHAIN.to_vec(), url }])
+		.expect("a valid node")
+}
+
+#[test]
+fn an_rpc_node_answers_requests_without_an_ambient_runtime() {
+	let (url, _runtime, _node) = spawn_node();
+	let (listener, messages, _closed) = Collector::new();
+	let connection = rpc_provider(url).connect(NODE_CHAIN.to_vec(), listener).expect("connects");
+
+	connection.send(r#"{"jsonrpc":"2.0","id":1,"method":"echo","params":["hi"]}"#.into());
+
+	let answer = recv(&messages);
+	assert_eq!(answer["id"], 1);
+	assert_eq!(answer["result"], "hi");
+}
+
+#[test]
+fn an_rpc_node_delivers_subscription_notifications() {
+	let (url, _runtime, _node) = spawn_node();
+	let (listener, messages, _closed) = Collector::new();
+	let connection = rpc_provider(url).connect(NODE_CHAIN.to_vec(), listener).expect("connects");
+
+	connection.send(r#"{"jsonrpc":"2.0","id":1,"method":"sub_ticks","params":[]}"#.into());
+
+	let subscribed = recv(&messages);
+	let subscription = subscribed["result"].clone();
+	assert!(!subscription.is_null(), "{subscribed}");
+	let ticks: Vec<_> = (0..3)
+		.map(|_| {
+			let notification = recv(&messages);
+			assert_eq!(notification["method"], "tick");
+			assert_eq!(notification["params"]["subscription"], subscription);
+			notification["params"]["result"].clone()
+		})
+		.collect();
+	assert_eq!(ticks, [0, 1, 2]);
+}
+
+/// A host that rotates between nodes builds one provider per node, so
+/// those providers must not each need a runtime of their own.
+#[test]
+fn providers_for_several_nodes_share_the_runtime() {
+	let (first_url, _first_runtime, _first) = spawn_node();
+	let (second_url, _second_runtime, _second) = spawn_node();
+	let (first_listener, first_messages, _) = Collector::new();
+	let (second_listener, second_messages, _) = Collector::new();
+	let first = rpc_provider(first_url)
+		.connect(NODE_CHAIN.to_vec(), first_listener)
+		.expect("first connects");
+	let second = rpc_provider(second_url)
+		.connect(NODE_CHAIN.to_vec(), second_listener)
+		.expect("second connects");
+
+	second.send(r#"{"jsonrpc":"2.0","id":2,"method":"echo","params":["two"]}"#.into());
+	first.send(r#"{"jsonrpc":"2.0","id":1,"method":"echo","params":["one"]}"#.into());
+
+	assert_eq!(recv(&first_messages)["result"], "one");
+	assert_eq!(recv(&second_messages)["result"], "two");
+}
+
+#[test]
+fn disconnecting_an_rpc_connection_closes_it() {
+	let (url, _runtime, _node) = spawn_node();
+	let (listener, _messages, closed) = Collector::new();
+	let connection = rpc_provider(url).connect(NODE_CHAIN.to_vec(), listener).expect("connects");
+
+	connection.disconnect();
+
+	let reason = closed.recv_timeout(Duration::from_secs(10)).expect("on_closed fires");
+	assert!(matches!(reason, ChainCloseReason::StreamEnded));
+}
+
+/// The provider does not reconnect: a node going away has to reach the host
+/// as a close, or a host that replays its subscriptions on reconnect would
+/// wait forever on a dead socket.
+#[test]
+fn a_node_dropping_the_socket_closes_the_connection() {
+	let runtime = tokio::runtime::Runtime::new().expect("node runtime starts");
+	let tcp = runtime
+		.block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+		.expect("loopback node binds");
+	let url = format!("ws://{}", tcp.local_addr().expect("node has a local address"));
+	let (hang_up, hung_up) = tokio::sync::oneshot::channel::<()>();
+	runtime.spawn(async move {
+		let (stream, _) = tcp.accept().await.expect("the provider dials");
+		let socket = tokio_tungstenite::accept_async(stream).await.expect("handshake");
+		let _ = hung_up.await;
+		drop(socket);
+	});
+	let (listener, _messages, closed) = Collector::new();
+	let _connection = rpc_provider(url).connect(NODE_CHAIN.to_vec(), listener).expect("connects");
+
+	hang_up.send(()).expect("the node is waiting");
+
+	let reason = closed.recv_timeout(Duration::from_secs(10)).expect("on_closed fires");
+	assert!(matches!(reason, ChainCloseReason::StreamEnded));
+}
+
+#[test]
+fn an_unreachable_node_is_a_connect_error() {
+	// Bound and released, so nothing listens on the port.
+	let port = std::net::TcpListener::bind("127.0.0.1:0")
+		.and_then(|tcp| tcp.local_addr())
+		.expect("a free port")
+		.port();
+	let (listener, _messages, _closed) = Collector::new();
+
+	let error = rpc_provider(format!("ws://127.0.0.1:{port}"))
+		.connect(NODE_CHAIN.to_vec(), listener)
+		.err()
+		.expect("nothing answers on the port");
+
+	assert!(matches!(error, ChainProviderError::Connect { .. }), "{error}");
+}
+
+/// A node URL can carry an API key in its path or query, and the error
+/// reaches the host's logs.
+#[test]
+fn a_failed_handshake_names_the_node_without_its_path_or_query() {
+	// Bound and released, so nothing listens on the port.
+	let port = std::net::TcpListener::bind("127.0.0.1:0")
+		.and_then(|tcp| tcp.local_addr())
+		.expect("a free port")
+		.port();
+	let (listener, _messages, _closed) = Collector::new();
+
+	let error = rpc_provider(format!("ws://127.0.0.1:{port}/rpc/PATHKEY?apikey=SECRET"))
+		.connect(NODE_CHAIN.to_vec(), listener)
+		.err()
+		.expect("nothing answers on the port");
+
+	let ChainProviderError::Connect { reason } = error else {
+		panic!("expected a connect error, got {error:?}");
+	};
+	assert!(!reason.contains("SECRET"), "{reason}");
+	assert!(!reason.contains("PATHKEY"), "{reason}");
+	assert!(reason.contains(&format!("ws://127.0.0.1:{port}")), "{reason}");
+}
+
+#[test]
+fn a_malformed_node_url_is_rejected_without_echoing_it() {
+	let error = ChainProvider::with_rpc_nodes(vec![RpcNode {
+		genesis_hash: NODE_CHAIN.to_vec(),
+		url: "not a url ?key=SECRET".into(),
+	}])
+	.err()
+	.expect("a malformed url must be rejected");
+
+	let ChainProviderError::Connect { reason } = error else {
+		panic!("expected a connect error, got {error:?}");
+	};
+	assert!(!reason.contains("SECRET"), "{reason}");
+}
+
+#[test]
+fn a_node_with_a_genesis_hash_of_the_wrong_length_is_rejected() {
+	let error = ChainProvider::with_rpc_nodes(vec![RpcNode {
+		genesis_hash: vec![0; 31],
+		url: "ws://127.0.0.1:1".into(),
+	}])
+	.err()
+	.expect("a 31-byte genesis must be rejected");
+
+	assert!(matches!(error, ChainProviderError::BadGenesis), "{error}");
+}
+
+/// The core calls a host's `chain_connect` from its tokio threads. Connecting
+/// a remote node inline from there must come back as an error, not abort
+/// the process.
+#[test]
+fn connecting_a_node_from_an_async_runtime_is_refused_rather_than_aborting() {
+	let provider = rpc_provider("ws://127.0.0.1:1".into());
+	let core = tokio::runtime::Runtime::new().expect("core runtime starts");
+
+	let result = core.block_on(async {
+		let (listener, _messages, _closed) = Collector::new();
+		provider.connect(NODE_CHAIN.to_vec(), listener).map(|_| ())
+	});
+
+	let Err(ChainProviderError::Connect { reason }) = result else {
+		panic!("expected a refused connect, got {result:?}");
+	};
+	assert!(reason.contains("another thread"), "{reason}");
+}
+
+/// A host that chose RPC must never find itself syncing a chain on the light
+/// client because it asked for one it did not register.
+#[test]
+fn an_rpc_provider_refuses_a_catalog_chain_it_was_not_given() {
+	let provider = rpc_provider("ws://127.0.0.1:1".into());
+	let (listener, _messages, _closed) = Collector::new();
+
+	let error = provider
+		.connect(CATALOG_RELAY.to_vec(), listener)
+		.err()
+		.expect("an unregistered chain must be refused");
+
+	assert!(matches!(error, ChainProviderError::Connect { .. }), "{error}");
+	assert!(!provider.inner.is_connected(CATALOG_RELAY));
+}
+
 /// Foreign storage stand-in. The real one lives in Swift or Kotlin, so
 /// this exercises the same trait the bindings implement.
 /// Each call records its genesis hash, and the blob when it was a save.
