@@ -1,25 +1,19 @@
-import DesignSystem
 import SwiftUI
+import TrUAPIHost
 
 /// How a crypto network id from a provider's routes is shown. The ids are the
-/// lowercase names the core uses (`polkadot` is Asset Hub); an id this table
-/// does not know is shown capitalised. Polkadot, USDC and USDT take the app's
-/// own asset logos and colours; the other networks keep their brand colour,
-/// and an unknown one takes the design system's tertiary colour.
+/// lowercase names the core uses (`polkadot` is Asset Hub), and the core names
+/// them. The icons are getcash's, with the app's own Polkadot logo; an id
+/// without one shows its first letter.
 struct FundingNetwork: Identifiable, Hashable {
     let id: String
 
     var name: String {
-        Self.names[id] ?? id.capitalized
+        fundingNetworkName(id: id)
     }
 
-    var tint: Color {
-        Self.tints[id] ?? .fgTertiary
-    }
-
-    /// The app's logo for the network, when it has one.
     var logo: ImageResource? {
-        id == "polkadot" ? .iconDot : nil
+        Self.logos[id]
     }
 
     var monogram: String {
@@ -27,17 +21,13 @@ struct FundingNetwork: Identifiable, Hashable {
     }
 }
 
-/// How a token symbol is shown in the token list.
+/// How a token symbol is shown in the token list. A network's native token
+/// takes the network's icon; USDC, USDT and DOT take the app's own logos.
 struct FundingToken: Identifiable, Hashable {
     let symbol: String
 
     var id: String { symbol }
 
-    var tint: Color {
-        Self.tints[symbol.uppercased()] ?? .fgTertiary
-    }
-
-    /// The app's logo for the token, when it has one.
     var logo: ImageResource? {
         Self.logos[symbol.uppercased()]
     }
@@ -48,31 +38,24 @@ struct FundingToken: Identifiable, Hashable {
 }
 
 private extension FundingNetwork {
-    static let names: [String: String] = [
-        "polkadot": "Polkadot",
-        "bitcoin": "Bitcoin",
-        "ethereum": "Ethereum",
-        "tron": "Tron",
-        "solana": "Solana"
-    ]
-
-    static let tints: [String: Color] = [
-        "polkadot": Color(.assetDOT),
-        "bitcoin": Color(red: 0.97, green: 0.58, blue: 0.1),
-        "ethereum": Color(red: 0.38, green: 0.49, blue: 0.92),
-        "tron": Color(red: 0.92, green: 0.0, blue: 0.16),
-        "solana": Color(red: 0.6, green: 0.27, blue: 1.0)
+    static let logos: [String: ImageResource] = [
+        "polkadot": .iconDot,
+        "bitcoin": .iconBtc,
+        "ethereum": .iconEth,
+        "solana": .iconSol,
+        "tron": .iconTrx
     ]
 }
 
 private extension FundingToken {
-    static let tints: [String: Color] = [
-        "USDC": Color(.assetUSDC),
-        "USDT": Color(.assetUSDT)
-    ]
-
     static let logos: [String: ImageResource] = [
+        "DOT": .iconDot,
+        "BTC": .iconBtc,
+        "ETH": .iconEth,
+        "SOL": .iconSol,
+        "TRX": .iconTrx,
         "USDC": .iconUsdc,
-        "USDT": .iconUsdt
+        "USDT": .iconUsdt,
+        "DOTUSD": .iconDotusd
     ]
 }

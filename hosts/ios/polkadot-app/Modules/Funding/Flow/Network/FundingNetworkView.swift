@@ -37,7 +37,7 @@ struct FundingNetworkView: View {
         }
 
         return DisclosureListRow(title: network.name, subtitle: subtitle, isEnabled: minimum == nil) {
-            FundingAssetMark(logo: network.logo, letter: network.monogram, tint: network.tint)
+            FundingAssetMark(logo: network.logo, letter: network.monogram)
         } onTap: {
             presenter.chooseNetwork(network.id)
         }
@@ -45,10 +45,10 @@ struct FundingNetworkView: View {
     }
 }
 
+/// A network's or token's icon, or its first letter when it has none.
 struct FundingAssetMark: View {
     let logo: ImageResource?
     let letter: String
-    let tint: Color
     var size: DSLetterAvatar.Size = .s40
 
     var body: some View {
@@ -59,7 +59,7 @@ struct FundingAssetMark: View {
                 .frame(width: size.dimension, height: size.dimension)
                 .clipShape(Circle())
         } else {
-            DSLetterAvatar(letter: letter, background: tint, foreground: .white, size: size)
+            DSLetterAvatar(letter: letter, background: .fgTertiary, foreground: .white, size: size)
         }
     }
 }
