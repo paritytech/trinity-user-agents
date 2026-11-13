@@ -47,7 +47,7 @@ use crate::{
 	host_logic::funding::StartRecord,
 	platform::{
 		ExecutableKind, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-		ProductContext,
+		ProductContext, Stack,
 	},
 	runtime::{
 		ProductRuntimeHost,
@@ -447,6 +447,7 @@ impl ProductRuntimeHost {
 	fn balance_access_check(&self) -> BalanceAccessCheck {
 		BalanceAccessCheck {
 			platform: self.connection.platform.clone(),
+			stack: self.connection.services.stack().clone(),
 			status: self.connection.permission_status.clone(),
 			temporary: self.connection.temporary_permissions.clone(),
 			product: self.connection.product.clone(),
@@ -570,6 +571,7 @@ impl ProductRuntimeHost {
 /// each balance a host pushes.
 struct BalanceAccessCheck {
 	platform: Arc<dyn Platform>,
+	stack: Stack,
 	status: Option<Arc<dyn PermissionStatusHost>>,
 	temporary: Arc<TemporaryPermissions>,
 	product: ProductContext,
@@ -579,13 +581,17 @@ impl BalanceAccessCheck {
 	/// Whether the product holds balance access, without asking.
 	async fn holds(&self) -> bool {
 		matches!(
-			PermissionsService::new(self.platform.as_ref(), self.platform.as_ref(), &self.product)
-				.with_status_host(self.status.as_deref())
-				.with_temporary_permissions(self.temporary.clone())
-				.peek_remote(&latest::RemotePermissionRequest {
-					permission: latest::RemotePermission::BalanceAccess,
-				})
-				.await,
+			PermissionsService::new(
+				self.stack.storage(self.platform.as_ref()),
+				self.platform.as_ref(),
+				&self.product,
+			)
+			.with_status_host(self.status.as_deref())
+			.with_temporary_permissions(self.temporary.clone())
+			.peek_remote(&latest::RemotePermissionRequest {
+				permission: latest::RemotePermission::BalanceAccess,
+			})
+			.await,
 			Ok(PermissionAuthorizationStatus::Authorized)
 		)
 	}

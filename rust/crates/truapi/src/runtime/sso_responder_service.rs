@@ -760,7 +760,7 @@ async fn serve_statement(
 	let duplicate_exit = duplicate_request_exit(&incoming);
 	let mut unpublished = Vec::new();
 	let execution = execute_once(
-		services.platform.as_ref(),
+		&services.storage(),
 		&responder.replay_locks,
 		replay_scope,
 		request,

@@ -3,7 +3,7 @@ use crate::{
 	Spawner,
 	platform::HostInfo,
 	runtime::signing_host::ring_vrf::ChainRingResolver,
-	test_support::{StubPlatform, test_stack},
+	test_support::{StubPlatform, paseo_test_stack, test_stack},
 };
 use truapi::latest::DerivationIndex;
 
@@ -24,8 +24,8 @@ pub fn unlocked_wallet(
 		test_stack(network_suffix, [0; 32], [0; 32], None),
 		Spawner::for_test(),
 	);
-	let registry = RingVrfRegistryStore::new(services.platform.clone());
-	let consent = Arc::new(ProductConsent::new(services.platform.clone()));
+	let registry = RingVrfRegistryStore::new(services.platform.clone(), paseo_test_stack());
+	let consent = Arc::new(ProductConsent::new(services.platform.clone(), paseo_test_stack()));
 	let ring_resolver = ChainRingResolver::new(services.chain.clone());
 	let wallet = WalletAccountHolder::new(services, consent, ring_resolver, registry);
 	wallet.install(wallet.prepare_activation(vec![entropy; 32], None).unwrap());

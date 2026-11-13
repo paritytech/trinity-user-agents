@@ -114,7 +114,8 @@ impl PairingHost {
 			let owner: Weak<dyn PairedSessionOwner> = weak_self.clone();
 			let session = SsoRequestService::new(services.clone(), host_config, owner);
 			let session_state = session.session_state();
-			let ring_vrf_registry = RingVrfRegistryStore::new(services.platform.clone());
+			let ring_vrf_registry =
+				RingVrfRegistryStore::new(services.platform.clone(), services.stack().clone());
 			Self {
 				services: services.clone(),
 				platform: services.platform.clone(),
@@ -126,9 +127,10 @@ impl PairingHost {
 					services.spawner.clone(),
 				),
 				session,
-				consent: ProductConsent::new(services.platform.clone()),
+				consent: ProductConsent::new(services.platform.clone(), services.stack().clone()),
 				grants: HostGrantStore::new(
 					services.platform.clone(),
+					services.stack().clone(),
 					GrantKeeping::Paired,
 					session_state,
 				),

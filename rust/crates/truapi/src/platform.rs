@@ -31,7 +31,7 @@ pub use crate::{
 	product_id::{
 		PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError, REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
-	stack::{Stack, StackChains, StackError, StackIdentity},
+	stack::{Stack, StackChains, StackError, StackIdentity, StackStorage},
 };
 
 use truapi::{

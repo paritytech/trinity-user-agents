@@ -11,7 +11,9 @@
 
 use core::{future::Future, time::Duration};
 
-use crate::platform::{CoreStorageKey, PermissionAuthorizationStatus, Platform, ProductId};
+use crate::platform::{
+	CoreStorageKey, PermissionAuthorizationStatus, Platform, ProductId, StackStorage,
+};
 use parity_scale_codec::{Decode, Encode};
 use tracing::{info, instrument, warn};
 use truapi::v01;
@@ -211,8 +213,8 @@ pub struct CachedManifest {
 /// grant instead of resolving one.
 ///
 /// Write the bytes under [`CoreStorageKey::product_manifest`] for the product the
-/// manifest belongs to. The core reads that entry before it consults the Asset
-/// Hub, so a seeded manifest answers a grant on a host with no dotNS access at
+/// manifest belongs to, in the stack the host runs. The core reads that entry before it consults
+/// the Asset Hub, so a seeded manifest answers a grant on a host with no dotNS access at
 /// all — which is what makes a cross-product flow reachable locally, before
 /// either product is deployed.
 ///
@@ -381,11 +383,14 @@ async fn scope_grant(
 		return Err(Refusal { because: RefusedBecause::NotGranted, source, scopes });
 	}
 	if scope == Granted::Context && !caller_id.has_trusted_remote_permissions() {
-		let because = match stored_account_decision(platform, caller_id, target).await {
-			StoredDecision::Denied => RefusedBecause::UserDenied,
-			StoredDecision::Unreadable => RefusedBecause::DecisionUnreadable,
-			StoredDecision::Absent => return Ok(()),
-		};
+		let because =
+			match stored_account_decision(&services.stack().storage(platform), caller_id, target)
+				.await
+			{
+				StoredDecision::Denied => RefusedBecause::UserDenied,
+				StoredDecision::Unreadable => RefusedBecause::DecisionUnreadable,
+				StoredDecision::Absent => return Ok(()),
+			};
 		return Err(Refusal { because, source, scopes });
 	}
 	Ok(())
@@ -408,7 +413,7 @@ enum StoredDecision {
 /// refusal, and the prompt that would settle it belongs to the call the user
 /// actually made, not to a grant lookup.
 async fn stored_account_decision(
-	platform: &dyn Platform,
+	storage: &StackStorage<'_, dyn Platform + '_>,
 	caller_id: &ProductId,
 	target: &ProductId,
 ) -> StoredDecision {
@@ -430,7 +435,7 @@ async fn stored_account_decision(
 		CoreStorageKey::account_access_authorization(caller_id, target),
 	];
 	for key in candidates {
-		match authorization_status(platform, key).await {
+		match authorization_status(storage, key).await {
 			Ok(PermissionAuthorizationStatus::Denied) => return StoredDecision::Denied,
 			Ok(
 				PermissionAuthorizationStatus::NotDetermined |
@@ -677,7 +682,8 @@ async fn root_manifest(
 	platform: &dyn Platform,
 	target: &ProductId,
 ) -> (Option<String>, ManifestSource) {
-	let read = cached_dotns_json(platform, CoreStorageKey::product_manifest(target), || async {
+	let key = CoreStorageKey::product_manifest(target);
+	let read = cached_dotns_json(services, platform, key, || async {
 		let genesis_hash =
 			services.asset_hub_chain_genesis_hash().ok_or(ManifestSource::NoAssetHub)?;
 		let (chain, target) = (services.chain.clone(), target.clone());
@@ -716,7 +722,8 @@ pub async fn worker_manifest(
 	platform: &dyn Platform,
 	product_id: &ProductId,
 ) -> Result<Option<WorkerManifest>, String> {
-	let (json, _) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), || async {
+	let key = worker_manifest_cache_key(product_id);
+	let (json, _) = cached_dotns_json(services, platform, key, || async {
 		let genesis_hash = asset_hub(services)?;
 		let (chain, product) = (services.chain.clone(), product_id.clone());
 		services
@@ -780,11 +787,12 @@ pub async fn publishes_app(
 	product_id: &ProductId,
 	ceiling: Duration,
 ) -> Option<bool> {
-	let read = cached_dotns_json(platform, app_manifest_cache_key(product_id), || async {
-		fetch_app_manifest(&services.chain, asset_hub(services)?, product_id)
-			.await
-			.map_err(|error| error.reason())
-	});
+	let read =
+		cached_dotns_json(services, platform, app_manifest_cache_key(product_id), || async {
+			fetch_app_manifest(&services.chain, asset_hub(services)?, product_id)
+				.await
+				.map_err(|error| error.reason())
+		});
 	let (json, _) = with_ceiling(ceiling, read)
 		.await?
 		.inspect_err(|reason| warn!(%product_id, %reason, "app manifest lookup failed"))
@@ -814,6 +822,7 @@ pub enum DotnsRead {
 /// only that the chain could not be read, and holding that for a day would
 /// turn one blip into a day of withdrawn grants or missing providers.
 async fn cached_dotns_json<F, E>(
+	services: &RuntimeServices,
 	platform: &dyn Platform,
 	key: CoreStorageKey,
 	fetch: impl FnOnce() -> F,
@@ -821,6 +830,7 @@ async fn cached_dotns_json<F, E>(
 where
 	F: Future<Output = Result<Option<String>, E>>,
 {
+	let storage = services.stack().storage(platform);
 	let now = current_unix_secs();
 	// `fetched_at_secs <= now` is part of the freshness test, not an assumption.
 	// Without it a `saturating_sub` on a future stamp yields 0, which is below
@@ -828,7 +838,7 @@ where
 	// honoured forever. The TTL is documented as the revocation bound, so such
 	// an entry is one a publisher could never withdraw. Treating it as stale
 	// costs one lookup and cannot be worse than that.
-	if let Ok(Some(bytes)) = platform.read_core_storage(key.clone()).await &&
+	if let Ok(Some(bytes)) = storage.read(key.clone()).await &&
 		let Ok(cached) = CachedManifest::decode(&mut bytes.as_slice()) &&
 		cached.fetched_at_secs <= now &&
 		now - cached.fetched_at_secs < MANIFEST_TTL_SECS
@@ -837,12 +847,8 @@ where
 	}
 
 	let json = fetch().await?;
-	let _ = platform
-		.write_core_storage(
-			key,
-			CachedManifest { fetched_at_secs: now, json: json.clone() }.encode(),
-		)
-		.await;
+	let entry = CachedManifest { fetched_at_secs: now, json: json.clone() };
+	let _ = storage.write(key, entry.encode()).await;
 	Ok((json, DotnsRead::Fetched))
 }
 

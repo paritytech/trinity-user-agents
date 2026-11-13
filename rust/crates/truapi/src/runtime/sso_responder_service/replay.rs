@@ -4,7 +4,7 @@ use std::{
 	sync::{Arc, Mutex, Weak},
 };
 
-use crate::platform::{CoreStorage, CoreStorageKey};
+use crate::platform::{CoreStorage, CoreStorageKey, StackStorage};
 use futures::lock::Mutex as AsyncMutex;
 use parity_scale_codec::{Decode, Encode};
 
@@ -143,7 +143,7 @@ enum VersionedRequestLedger {
 /// acknowledgement failed runs when it is delivered again. A duplicate is
 /// acknowledged but not run.
 pub async fn execute_once<T, F, Fut>(
-	storage: &(impl CoreStorage + ?Sized),
+	storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
 	locks: &SsoReplayLocks,
 	scope: SsoReplayScope,
 	request: ReplayRequest<'_>,
@@ -179,11 +179,11 @@ where
 }
 
 async fn read_ledger(
-	storage: &(impl CoreStorage + ?Sized),
+	storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
 	scope: SsoReplayScope,
 ) -> Result<RequestLedger, String> {
 	let Some(blob) = storage
-		.read_core_storage(scope.storage_key())
+		.read(scope.storage_key())
 		.await
 		.map_err(|err| format!("SSO replay ledger read failed: {}", err.reason))?
 	else {
@@ -199,15 +199,12 @@ async fn read_ledger(
 }
 
 async fn write_ledger(
-	storage: &(impl CoreStorage + ?Sized),
+	storage: &StackStorage<'_, impl CoreStorage + ?Sized>,
 	scope: SsoReplayScope,
 	ledger: &RequestLedger,
 ) -> Result<(), String> {
 	storage
-		.write_core_storage(
-			scope.storage_key(),
-			VersionedRequestLedger::V1(ledger.clone()).encode(),
-		)
+		.write(scope.storage_key(), VersionedRequestLedger::V1(ledger.clone()).encode())
 		.await
 		.map_err(|err| format!("SSO replay ledger write failed: {}", err.reason))
 }
