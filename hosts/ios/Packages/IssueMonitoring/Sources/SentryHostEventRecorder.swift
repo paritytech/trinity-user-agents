@@ -7,15 +7,14 @@
     /// errors, such as the issues `HostEventIssueReporter` sends, stay Sentry events with their level, fingerprint
     /// and counters.
     ///
-    /// Every tag and extra becomes a typed log attribute, so `host.session_id`, `open.source`, `tap_ms` and the
-    /// rest stay searchable. The log's body and `event.name` are the event's name; `tag` is `host.telemetry`,
-    /// the same attribute the host's other log lines carry.
+    /// Every tag, extra and counter becomes a typed log attribute (`HostEvent.logAttributes`), so
+    /// `host.session_id`, `open.source`, `tap_ms` and the rest stay searchable. The log's body is the event's name.
     struct SentryHostEventRecorder: HostEventRecording {
         func record(_ event: @autoclosure () -> HostEvent) {
             let event = event()
 
             guard event.level != .info else {
-                SentrySDK.logger.info(event.name, attributes: event.sentryLogAttributes)
+                SentrySDK.logger.info(event.name, attributes: event.logAttributes.mapValues(\.sentryValue))
                 return
             }
 
@@ -33,18 +32,6 @@
             }
 
             SentrySDK.capture(event: sentryEvent)
-        }
-    }
-
-    extension HostEvent {
-        var sentryLogAttributes: [String: Any] {
-            var attributes: [String: Any] = tags
-            for (key, value) in extras {
-                attributes[key] = value.sentryValue
-            }
-            attributes["event.name"] = name
-            attributes["tag"] = "host.telemetry"
-            return attributes
         }
     }
 

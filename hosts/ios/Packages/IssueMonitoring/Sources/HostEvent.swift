@@ -171,3 +171,24 @@ public struct HostEvent: Sendable, Equatable {
         )
     }
 }
+
+extension HostEvent {
+    /// The event as one flat set of log attributes, where tags, extras and counters share a namespace.
+    ///
+    /// Tags keep their own keys, because they are what a query selects on. An extra whose key is already a tag
+    /// goes in as `extra.<key>` rather than replacing it, and each counter goes in as `counters.<key>`, the name
+    /// of the context it rides on as an event. `event.name` is the event's name and `tag` is `host.telemetry`,
+    /// the attribute the host's other log lines carry.
+    var logAttributes: [String: HostEventValue] {
+        var attributes = tags.mapValues(HostEventValue.string)
+        for (key, value) in extras {
+            attributes[tags[key] == nil ? key : "extra.\(key)"] = value
+        }
+        for (key, value) in counters {
+            attributes["counters.\(key)"] = .integer(value)
+        }
+        attributes["event.name"] = .string(name)
+        attributes["tag"] = .string("host.telemetry")
+        return attributes
+    }
+}

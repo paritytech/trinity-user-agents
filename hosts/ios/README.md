@@ -123,7 +123,9 @@ platform, OS version and TrUAPI host version used to correlate product diagnosti
 A page opened from a Pocket card tap or a Pocket link also gets `openedAtEpochMs` (the tap's wall-clock milliseconds) and
 `openSource` (`pocket_card` or `deeplink`); `host.webview.created` carries the session as its `host.session_id` attribute.
 Host events (`host.process.started`, `host.pocket.opened`, `host.webview.created`, `host.page.visible`) go to Sentry
-Logs as info-level structured logs with `tag` `host.telemetry`, not as error events, so they don't open issues. Issue
+Logs as info-level structured logs with `tag` `host.telemetry`, not as error events, so they don't open issues. Their
+tags, extras and counters share one set of attributes: a tag keeps its key, an extra under a tag's key arrives as
+`extra.<key>`, and a counter as `counters.<key>`. Issue
 reports (warning and error host events) stay Sentry events with their level, fingerprint and counters.
 
 With the Rust runtime enabled, the SSO coordinator binds its transport keys to one wallet activation and retains a separate account-holder service for each peer. Ordinary requests share one FIFO queue; cancellation reaches its peer's service immediately. Replies validate the same wallet activation before posting.
