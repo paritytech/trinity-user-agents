@@ -205,13 +205,15 @@ fn a_group_lists_its_own_domain_in_registration_order() {
 }
 
 #[test]
-fn domain_entries_list_every_row_of_the_domain() {
+fn undecided_entries_list_only_rows_awaiting_a_verdict() {
 	let (_dir, db) = open_db();
-	let ids = [register(&db, None, 1), register(&db, None, 2)];
+	let ids = [register(&db, None, 1), register(&db, None, 2), register(&db, None, 3)];
+	let decided = read(&db, move |conn| entry(conn, ids[1])).unwrap();
+	write_status(&db, decided, DurableTxStatus::FinalizedSuccess { at: None });
 
-	let listed = read(&db, |conn| domain_entries(conn, &domain()));
+	let listed = read(&db, |conn| undecided_entries(conn, &domain()));
 
-	assert_eq!(listed.iter().map(|entry| entry.id).collect::<Vec<_>>(), ids);
+	assert_eq!(listed.iter().map(|entry| entry.id).collect::<Vec<_>>(), [ids[0], ids[2]]);
 }
 
 #[test]
@@ -300,7 +302,7 @@ fn a_transaction_waiting_to_be_built_is_live_but_not_decidable() {
 	assert_eq!(next(&mut observe_live_plans(&db)), waiting);
 	assert_eq!(read(&db, waiting_plans), waiting);
 	assert_eq!(read(&db, live_domains), Vec::<DomainId>::new());
-	assert_eq!(read(&db, |conn| domain_entries(conn, &domain())), vec![]);
+	assert_eq!(read(&db, |conn| undecided_entries(conn, &domain())), vec![]);
 }
 
 #[test]
@@ -473,7 +475,7 @@ fn a_transaction_given_up_before_it_was_built_leaves_its_domain_readable() {
 	abandon_waiting(&db, never_built);
 	let live = register(&db, None, 1);
 
-	let listed = read(&db, |conn| domain_entries(conn, &domain()));
+	let listed = read(&db, |conn| undecided_entries(conn, &domain()));
 
 	assert_eq!(listed.iter().map(|entry| entry.id).collect::<Vec<_>>(), vec![live]);
 	assert_eq!(read(&db, move |conn| entry(conn, never_built)), None);

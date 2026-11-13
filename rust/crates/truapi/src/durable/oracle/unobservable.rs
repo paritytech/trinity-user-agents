@@ -2,7 +2,7 @@
 
 use subxt::utils::H256;
 
-use super::{CompletionOracle, LedgerView, PassScope};
+use super::{CompletionOracle, PassScope};
 use crate::{
 	chain::Heads,
 	chain_runtime::RuntimeFailure,
@@ -23,7 +23,6 @@ impl CompletionOracle for Unobservable {
 	async fn open_pass(
 		&self,
 		_transactions: &[DurableTxEntry],
-		_ledger: &LedgerView,
 		_heads: &Heads,
 	) -> Result<Box<dyn PassScope>, RuntimeFailure> {
 		Ok(Box::new(ProvesNothing))

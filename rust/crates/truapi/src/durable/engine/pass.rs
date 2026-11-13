@@ -17,15 +17,15 @@ use crate::{
 		dao,
 		ladder::{PinnedView, RecordedCanonicity, RuleOutcome, evaluate_ladder},
 		model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, Verdict},
-		oracle::{CompletionOracle, LedgerView},
+		oracle::CompletionOracle,
 		search::PinnedChain,
 	},
 	store::DbError,
 };
 
-/// Why one round of a domain decided nothing.
+/// Why a domain was left undecided for a pass.
 #[derive(Debug, thiserror::Error)]
-enum RoundError {
+enum DecideError {
 	#[error(transparent)]
 	Ledger(#[from] DbError),
 	#[error(transparent)]
@@ -90,8 +90,7 @@ impl DurableTxEngine {
 		}
 	}
 
-	/// Two rounds: a verdict written in the first is exactly the evidence a
-	/// predecessor's oracle may need in the second.
+	/// Decides `domain` once, logging why when it could not.
 	async fn decide_domain(
 		&self,
 		domain: &DomainId,
@@ -99,80 +98,58 @@ impl DurableTxEngine {
 		genesis: H256,
 		view: &PinnedChain<'_>,
 	) {
-		for _ in 0..2 {
-			match self.decide_round(domain, oracle, genesis, view).await {
-				Ok(0) => return,
-				Ok(_) => continue,
-				Err(error) => {
-					return warn!(domain = domain.as_str(), %error, "durable recovery round failed");
-				},
-			}
+		if let Err(error) = self.try_decide_domain(domain, oracle, genesis, view).await {
+			warn!(domain = domain.as_str(), %error, "durable recovery of a domain failed");
 		}
 	}
 
-	/// Decides every decidable transaction of `domain` once. Returns how
-	/// many verdicts it wrote.
-	async fn decide_round(
+	/// Asks `oracle` once about every decidable transaction of `domain` and
+	/// writes the verdicts the ladder reaches.
+	async fn try_decide_domain(
 		&self,
 		domain: &DomainId,
 		oracle: &dyn CompletionOracle,
 		genesis: H256,
 		view: &PinnedChain<'_>,
-	) -> Result<usize, RoundError> {
-		let (ledger, decidable) = self.decidable(domain).await?;
+	) -> Result<(), DecideError> {
+		let decidable = self.decidable(domain).await?;
 		if decidable.is_empty() {
-			return Ok(0);
+			return Ok(());
 		}
 		let (scope, canonical) = futures::future::join(
-			oracle.open_pass(&decidable, &ledger, &view.heads()),
+			oracle.open_pass(&decidable, &view.heads()),
 			self.recorded_canonicity(genesis, &decidable),
 		)
 		.await;
 		let scope = scope?;
 
-		let mut written = 0;
 		for tx in &decidable {
 			let recorded = canonical.get(&tx.id).copied().unwrap_or(RecordedCanonicity::Unknown);
-			let outcome = evaluate_ladder(tx, scope.as_ref(), view, recorded).await;
-			if let RuleOutcome::Decided(verdict) = outcome &&
-				self.write_if_changed(tx, verdict).await
+			if let RuleOutcome::Decided(verdict) =
+				evaluate_ladder(tx, scope.as_ref(), view, recorded).await
 			{
-				written += 1;
+				self.write_if_changed(tx, verdict).await;
 			}
 		}
-		Ok(written)
+		Ok(())
 	}
 
-	/// The domain's ledger, and the transactions in it that await a verdict
-	/// and no watch owns.
-	async fn decidable(
-		&self,
-		domain: &DomainId,
-	) -> Result<(LedgerView, Vec<DurableTxEntry>), DbError> {
+	/// The domain's transactions that await a verdict and no watch owns.
+	async fn decidable(&self, domain: &DomainId) -> Result<Vec<DurableTxEntry>, DbError> {
 		let domain = domain.clone();
-		let entries = self.db.read(move |conn| dao::domain_entries(conn, &domain)).await?;
-		let decidable = entries
-			.iter()
-			.filter(|entry| entry.status.awaits_verdict() && !self.ownership.is_owned(entry.id))
-			.cloned()
-			.collect();
-		Ok((LedgerView::new(entries), decidable))
+		let entries = self.db.read(move |conn| dao::undecided_entries(conn, &domain)).await?;
+		Ok(entries.into_iter().filter(|entry| !self.ownership.is_owned(entry.id)).collect())
 	}
 
-	/// Writes `verdict` unless it restates `tx`. Returns whether it wrote a
-	/// new status or success block; a cursor that only moved is not new
-	/// evidence for another round.
-	async fn write_if_changed(&self, tx: &DurableTxEntry, verdict: Verdict) -> bool {
+	/// Writes `verdict` unless it restates `tx`.
+	async fn write_if_changed(&self, tx: &DurableTxEntry, verdict: Verdict) {
 		let scan_moved = verdict.scanned_to.is_some_and(|scanned| Some(scanned) != tx.scanned_to);
-		let restated = DurableTxStatus::from(verdict.status) == tx.status;
-		if restated && !scan_moved {
-			return false;
+		if DurableTxStatus::from(verdict.status) == tx.status && !scan_moved {
+			return;
 		}
-		let wrote = write_verdict(self, tx, verdict).await.unwrap_or_else(|error| {
+		if let Err(error) = write_verdict(self, tx, verdict).await {
 			warn!(id = tx.id.0, %error, "durable verdict write failed");
-			false
-		});
-		wrote && !restated
+		}
 	}
 
 	/// Whether each recorded success block is still canonical. A failed read

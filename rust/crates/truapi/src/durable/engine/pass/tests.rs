@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use futures::executor::block_on;
 
 use super::*;
@@ -20,31 +22,33 @@ fn status(db: &Db, id: DurableTxId) -> DurableTxStatus {
 	block_on(db.read(move |conn| dao::status(conn, id))).unwrap().unwrap()
 }
 
-/// An oracle whose scope is computed from the ledger it is shown.
+/// An oracle that answers with a fixed scope and records the transactions
+/// of every call.
 struct ScriptedOracle<F> {
 	scope: F,
 	fails: bool,
+	shown: Mutex<Vec<Vec<DurableTxId>>>,
 }
 
 impl<F> ScriptedOracle<F>
 where
-	F: Fn(&LedgerView) -> Box<dyn PassScope> + Send + Sync,
+	F: Fn() -> Box<dyn PassScope> + Send + Sync,
 {
 	fn new(scope: F) -> Arc<Self> {
-		Arc::new(Self { scope, fails: false })
+		Arc::new(Self { scope, fails: false, shown: Mutex::default() })
 	}
 }
 
 fn says(
 	scope: ScriptedScope,
-) -> Arc<ScriptedOracle<impl Fn(&LedgerView) -> Box<dyn PassScope> + Send + Sync>> {
-	ScriptedOracle::new(move |_: &LedgerView| Box::new(scope) as Box<dyn PassScope>)
+) -> Arc<ScriptedOracle<impl Fn() -> Box<dyn PassScope> + Send + Sync>> {
+	ScriptedOracle::new(move || Box::new(scope) as Box<dyn PassScope>)
 }
 
 #[async_trait::async_trait]
 impl<F> CompletionOracle for ScriptedOracle<F>
 where
-	F: Fn(&LedgerView) -> Box<dyn PassScope> + Send + Sync,
+	F: Fn() -> Box<dyn PassScope> + Send + Sync,
 {
 	fn chain(&self) -> H256 {
 		GENESIS
@@ -52,14 +56,14 @@ where
 
 	async fn open_pass(
 		&self,
-		_transactions: &[DurableTxEntry],
-		ledger: &LedgerView,
+		transactions: &[DurableTxEntry],
 		_heads: &Heads,
 	) -> Result<Box<dyn PassScope>, RuntimeFailure> {
+		self.shown.lock().unwrap().push(transactions.iter().map(|tx| tx.id).collect());
 		if self.fails {
 			return Err(RuntimeFailure::host_failure("open_pass", "down"));
 		}
-		Ok((self.scope)(ledger))
+		Ok((self.scope)())
 	}
 }
 
@@ -135,38 +139,38 @@ impl PassScope for CompletedAtFinalized {
 	}
 }
 
-/// A domain may only be able to infer a transaction's completion from its
-/// successor's status, as coinage infers a minter from a finalized
-/// consumer. The second round sees what the first one wrote.
+/// Records are never deleted, so a long-lived domain holds many decided
+/// rows. A pass shows the oracle only the undecided ones, and asks it once:
+/// a second call at the same heads would give the same answers, even after
+/// the first answers changed the ledger.
 #[test]
-fn a_second_round_sees_what_the_first_wrote() {
-	const PREDECESSOR: DurableTxId = DurableTxId(1);
-	const SUCCESSOR: DurableTxId = DurableTxId(2);
+fn a_pass_asks_the_oracle_once_about_the_undecided_rows() {
+	const PROVEN: DurableTxId = DurableTxId(4);
+	const UNPROVEN: DurableTxId = DurableTxId(5);
 	let chain = FakeChain::new(150, 200);
-	// The predecessor's completion is only inferred from its successor's
-	// finalized status, as coinage infers a minter from its consumer.
-	let oracle = ScriptedOracle::new(|ledger: &LedgerView| {
-		let mut completed = vec![SUCCESSOR];
-		let successor = ledger.status_of(SUCCESSOR);
-		if matches!(successor, Some(DurableTxStatus::FinalizedSuccess { .. })) {
-			completed.push(PREDECESSOR);
-		}
-		Box::new(CompletedAtFinalized(completed)) as Box<dyn PassScope>
-	});
-	let (_dir, engine, _timer) =
-		engine_with(&chain, DurableRegistry::new().with_domain(test_domain(), oracle));
+	let oracle =
+		ScriptedOracle::new(|| Box::new(CompletedAtFinalized(vec![PROVEN])) as Box<dyn PassScope>);
+	let registry = DurableRegistry::new().with_domain(test_domain(), oracle.clone());
+	let (_dir, engine, _timer) = engine_with(&chain, registry);
+	for tag in 1..=3 {
+		let id = insert(&engine.db, &test_domain(), extrinsic(tag, 100, 64));
+		finalize(&engine.db, id);
+	}
 	assert_eq!(
 		[
-			insert(&engine.db, &test_domain(), extrinsic(1, 100, 64)),
-			insert(&engine.db, &test_domain(), extrinsic(2, 100, 64))
+			insert(&engine.db, &test_domain(), extrinsic(4, 100, 64)),
+			insert(&engine.db, &test_domain(), extrinsic(5, 100, 64))
 		],
-		[PREDECESSOR, SUCCESSOR]
+		[PROVEN, UNPROVEN]
 	);
 
 	block_on(engine.run_pass());
 
-	assert_eq!(status(&engine.db, PREDECESSOR), DurableTxStatus::FinalizedSuccess { at: None });
-	assert_eq!(status(&engine.db, SUCCESSOR), DurableTxStatus::FinalizedSuccess { at: None });
+	assert_eq!(*oracle.shown.lock().unwrap(), vec![vec![PROVEN, UNPROVEN]]);
+	assert_eq!(
+		[status(&engine.db, PROVEN), status(&engine.db, UNPROVEN)],
+		[DurableTxStatus::FinalizedSuccess { at: None }, DurableTxStatus::Pending]
+	);
 }
 
 #[test]
@@ -209,8 +213,9 @@ fn an_oracle_that_fails_to_open_leaves_its_domain_untouched() {
 	let tx = extrinsic(1, 100, 64);
 	chain.include(120, tx.extrinsic.hash(), DispatchOutcome::Succeeded);
 	let oracle = Arc::new(ScriptedOracle {
-		scope: |_: &LedgerView| Box::new(ScriptedScope::default()) as Box<dyn PassScope>,
+		scope: || Box::new(ScriptedScope::default()) as Box<dyn PassScope>,
 		fails: true,
+		shown: Mutex::default(),
 	});
 	let (_dir, engine, _timer) =
 		engine_with(&chain, DurableRegistry::new().with_domain(test_domain(), oracle));
@@ -342,6 +347,15 @@ fn a_later_pass_reads_only_the_blocks_finalized_since() {
 	block_on(engine.run_pass());
 
 	assert_eq!(chain.state().body_reads - reads_before, 3);
+}
+
+fn finalize(db: &Db, id: DurableTxId) {
+	block_on(db.write(move |tx| {
+		let observed = dao::entry(tx, id)?.unwrap();
+		dao::compare_and_set(tx, &observed, DurableTxStatus::FinalizedSuccess { at: None }, None)?;
+		Ok(())
+	}))
+	.unwrap();
 }
 
 fn record_success(db: &Db, id: DurableTxId, at: HashAndNumber) {

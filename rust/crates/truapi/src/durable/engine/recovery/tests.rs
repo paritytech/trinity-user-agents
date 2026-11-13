@@ -12,7 +12,7 @@ use crate::{
 	chain_runtime::RuntimeFailure,
 	durable::{
 		model::{DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxStatus, HeadKind},
-		oracle::{CompletionOracle, DurableRegistry, LedgerView, PassScope},
+		oracle::{CompletionOracle, DurableRegistry, PassScope},
 		policy::Preparation,
 		testing::{
 			FakeChain, GENESIS, ScheduledTxHarness, ScriptedPolicy, answer_all_with, block,
@@ -49,7 +49,6 @@ impl CompletionOracle for CountingOracle {
 	async fn open_pass(
 		&self,
 		_transactions: &[DurableTxEntry],
-		_ledger: &LedgerView,
 		_heads: &Heads,
 	) -> Result<Box<dyn PassScope>, RuntimeFailure> {
 		let opened = self.opened.fetch_add(1, Ordering::SeqCst) + 1;

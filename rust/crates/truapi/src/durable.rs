@@ -34,5 +34,5 @@ pub use model::{
 	GroupId, HeadKind, PolicyId, PolicyParams, ScheduledDurableTx, SubmissionPlan, Verdict,
 	VerdictFailureKind, VerdictStatus,
 };
-pub use oracle::{CompletionOracle, DurableRegistry, LedgerView, PassScope, Unobservable};
+pub use oracle::{CompletionOracle, DurableRegistry, PassScope, Unobservable};
 pub use policy::{PolicyError, Preparation, SubmissionPolicy};

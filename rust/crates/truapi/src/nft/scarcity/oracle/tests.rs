@@ -101,8 +101,7 @@ fn transfer_entry(signed_state_nonce: Option<u64>) -> DurableTxEntry {
 fn proven_at_both_heads(entry: DurableTxEntry, holds: DestinationHolds) -> (bool, bool) {
 	let oracle = ScarcityTransferOracle::new(Arc::new(holds), H256([0xab; 32]));
 	let heads = Heads { finalized: FINALIZED, best: BEST };
-	let view = LedgerView::new(vec![entry.clone()]);
-	let scope = block_on(oracle.open_pass(core::slice::from_ref(&entry), &view, &heads)).unwrap();
+	let scope = block_on(oracle.open_pass(core::slice::from_ref(&entry), &heads)).unwrap();
 	let at_finalized = scope.proven_completed(&entry, HeadKind::Finalized);
 	(at_finalized, scope.proven_completed(&entry, HeadKind::Best))
 }

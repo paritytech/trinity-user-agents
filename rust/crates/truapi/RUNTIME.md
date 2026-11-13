@@ -273,7 +273,8 @@ mortal extrinsics (`DurableRequest::presigned`, then `execute` or
 transaction); the engine broadcasts them once committed and follows each with
 a submission watch. Whatever no watch owns, including everything a previous
 process left live, is decided by recovery passes: the completion ladder over
-the shared chain capabilities and the domain's `CompletionOracle`. Every
+the shared chain capabilities and the domain's `CompletionOracle`, which a
+pass asks once per domain about its undecided rows. Every
 verdict is a compare-and-set against the status and attempt it was derived
 from, and rows are never deleted.
 

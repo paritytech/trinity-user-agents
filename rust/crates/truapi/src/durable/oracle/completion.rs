@@ -6,7 +6,7 @@ use subxt::utils::H256;
 use crate::{
 	chain::Heads,
 	chain_runtime::RuntimeFailure,
-	durable::model::{DurableTxEntry, DurableTxId, DurableTxStatus, HeadKind},
+	durable::model::{DurableTxEntry, HeadKind},
 };
 
 /// A domain's answer to the two questions the completion ladder asks of it.
@@ -22,10 +22,16 @@ pub trait CompletionOracle: Send + Sync {
 	/// Every chain read the pass needs, for every transaction in it, at
 	/// `heads`. The scope does not read the chain, so the reads are batched.
 	/// An error leaves the domain undecided until the next pass.
+	///
+	/// A pass calls this once per domain with the domain's undecided
+	/// transactions that no watch follows. An oracle whose answers depend on
+	/// other transactions of its domain resolves those dependencies among
+	/// `transactions` within this call; a dependency proven only later in the
+	/// pass, by the block search, or followed by a watch, counts on a later
+	/// pass.
 	async fn open_pass(
 		&self,
 		transactions: &[DurableTxEntry],
-		ledger: &LedgerView,
 		heads: &Heads,
 	) -> Result<Box<dyn PassScope>, RuntimeFailure>;
 }
@@ -42,28 +48,5 @@ pub trait PassScope: Send + Sync {
 	/// effect that is monotone and written by this transaction alone.
 	fn proven_not_completed(&self, _tx: &DurableTxEntry, _head: HeadKind) -> bool {
 		false
-	}
-}
-
-/// Every transaction of one domain as read at the start of a pass, so an
-/// oracle can infer one transaction's completion from another's status.
-pub struct LedgerView {
-	entries: Vec<DurableTxEntry>,
-}
-
-impl LedgerView {
-	/// A view of these entries.
-	pub fn new(entries: Vec<DurableTxEntry>) -> Self {
-		Self { entries }
-	}
-
-	/// Every entry of the domain, in registration order.
-	pub fn entries(&self) -> &[DurableTxEntry] {
-		&self.entries
-	}
-
-	/// The status of `id`, when it belongs to the domain.
-	pub fn status_of(&self, id: DurableTxId) -> Option<DurableTxStatus> {
-		self.entries.iter().find(|entry| entry.id == id).map(|entry| entry.status)
 	}
 }

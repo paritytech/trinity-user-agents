@@ -293,16 +293,16 @@ pub fn observe_group(
 	})
 }
 
-const DOMAIN_ENTRIES: &str =
-	concat!("SELECT * FROM durable_tx WHERE domain = :domain AND ", submitted!(), " ORDER BY id");
+const UNDECIDED_ENTRIES: &str = "SELECT * FROM durable_tx
+    WHERE domain = :domain AND status IN ('PENDING', 'PENDING_SUCCESS') ORDER BY id";
 
-/// Every row of one domain with a submitted attempt, in registration order.
-pub fn domain_entries(
+/// Every row of one domain awaiting a verdict, in registration order.
+pub fn undecided_entries(
 	conn: &Connection,
 	domain: &DomainId,
 ) -> Result<Vec<DurableTxEntry>, DbError> {
 	Ok(conn
-		.prepare_cached(DOMAIN_ENTRIES)?
+		.prepare_cached(UNDECIDED_ENTRIES)?
 		.query_map(named_params! { ":domain": domain.as_str() }, DurableTxEntry::from_row)?
 		.collect::<rusqlite::Result<_>>()?)
 }

@@ -153,7 +153,6 @@ pub trait CompletionOracle: Send + Sync {
     async fn open_pass(
         &self,
         transactions: &[DurableTxEntry],
-        ledger: &LedgerView,
         heads: &Heads,
     ) -> Result<Box<dyn PassScope>, RuntimeFailure>;
 }
@@ -170,7 +169,7 @@ pub trait PassScope: Send + Sync {
 }
 ```
 
-The oracle works on batches of transactions so that consumers can read efficiently in bulk, for example when the side effects are storage entries.
+The oracle works on batches of transactions so that consumers can read efficiently in bulk, for example when the side effects are storage entries. A recovery pass calls `open_pass` once per domain, with the domain's undecided transactions that no watch follows. An oracle whose answers depend on other transactions of its domain resolves those dependencies among the transactions it is given; one decided only later in the pass is taken into account on the next pass.
 
 `proven_completed` and `proven_not_completed` are separate methods because the oracle's answer has three possible values: completed, not completed, or unknown.
 

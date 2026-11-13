@@ -12,7 +12,7 @@ use super::{
 use crate::{
 	chain::{HashAndNumber, Heads, StorageWatchError},
 	chain_runtime::RuntimeFailure,
-	durable::{CompletionOracle, DurableTxEntry, DurableTxId, HeadKind, LedgerView, PassScope},
+	durable::{CompletionOracle, DurableTxEntry, DurableTxId, HeadKind, PassScope},
 	nft::ItemKey,
 };
 
@@ -64,7 +64,6 @@ impl CompletionOracle for ScarcityTransferOracle {
 	async fn open_pass(
 		&self,
 		transactions: &[DurableTxEntry],
-		_ledger: &LedgerView,
 		heads: &Heads,
 	) -> Result<Box<dyn PassScope>, RuntimeFailure> {
 		let transfers: Vec<_> = transactions.iter().filter_map(BuiltTransfer::of).collect();
