@@ -19,8 +19,11 @@ final class SPAViewController: UIViewController, ViewHolder {
 
     private(set) var statusBarTitle: String?
     var onStatusBarTitleChanged: (() -> Void)?
+    var onStatusStripThemeChanged: (() -> Void)?
 
     private var titleObservation: NSKeyValueObservation?
+    private var pageBackgroundTone: PageBackgroundTone?
+    private var pageBackgroundObservations: [NSKeyValueObservation] = []
     private var didSetupWebViewLayout = false
     private var loadFailure: ErrorContent?
     private var loadingStartedAt: Date?
@@ -69,6 +72,7 @@ final class SPAViewController: UIViewController, ViewHolder {
 
         setupNavigationBar()
         setupTitleObservation()
+        setupPageBackgroundObservation()
         setupJSEngine()
         setContentScrollView(rootView.webView.scrollView, for: .top)
     }
@@ -103,6 +107,7 @@ final class SPAViewController: UIViewController, ViewHolder {
 
     deinit {
         titleObservation?.invalidate()
+        pageBackgroundObservations.forEach { $0.invalidate() }
         pendingFailureTask?.cancel()
     }
 }
@@ -113,6 +118,15 @@ private extension SPAViewController {
     enum Constants {
         static let minimumLoadingDuration: TimeInterval = 0.5
     }
+
+    /// The computed backgrounds of the root element and the body, outermost first, taken on the next frame so a
+    /// restyle in progress has settled.
+    static let pageBackgroundScript = """
+    return await new Promise(resolve => requestAnimationFrame(() => resolve([
+        getComputedStyle(document.documentElement).backgroundColor,
+        document.body ? getComputedStyle(document.body).backgroundColor : 'rgba(0, 0, 0, 0)'
+    ])));
+    """
 
     func display(loadFailure content: ErrorContent) {
         rootView.activityIndicatorView.stopAnimating()
@@ -185,17 +199,61 @@ private extension SPAViewController {
         }
     }
 
+    /// The page's background is read again whenever it can have changed: a load finishes, a loaded page moves to
+    /// another address, or the app's theme changes and a page that follows it restyles without a reload.
+    func setupPageBackgroundObservation() {
+        let webView = rootView.webView
+        pageBackgroundObservations = [
+            webView.observe(\.isLoading, options: .new) { [weak self] webView, _ in
+                guard !webView.isLoading else { return }
+
+                MainActor.assumeIsolated { self?.readPageBackground() }
+            },
+            webView.observe(\.url, options: .new) { [weak self] webView, _ in
+                guard !webView.isLoading else { return }
+
+                MainActor.assumeIsolated { self?.readPageBackground() }
+            }
+        ]
+
+        registerForTraitChanges(
+            [DSThemeTrait.self, UITraitUserInterfaceStyle.self]
+        ) { (controller: SPAViewController, _) in
+            // The page restyles after the change reaches the web view. The tone read before that is stale, so
+            // the strip keeps the app's theme until the page is read again.
+            controller.setPageBackgroundTone(nil)
+            DispatchQueue.main.async { [weak controller] in
+                controller?.readPageBackground()
+            }
+        }
+    }
+
+    func readPageBackground() {
+        rootView.webView.callAsyncJavaScript(
+            Self.pageBackgroundScript,
+            in: nil,
+            in: .page
+        ) { [weak self] result in
+            // A read cut off by a navigation fails after the next page's read has answered.
+            guard let cssColors = (try? result.get()) as? [String] else { return }
+
+            self?.setPageBackgroundTone(PageBackgroundTone(cssColors: cssColors))
+        }
+    }
+
+    func setPageBackgroundTone(_ tone: PageBackgroundTone?) {
+        guard tone != pageBackgroundTone else { return }
+
+        pageBackgroundTone = tone
+        onStatusStripThemeChanged?()
+    }
+
     func setupWebViewLayout() {
         guard !didSetupWebViewLayout else { return }
         didSetupWebViewLayout = true
 
-        if configuration.isRootScreen {
-            rootView.setupRootLayout()
-        } else if configuration.isEdgeToEdge {
-            rootView.setupEdgeToEdgeLayout()
-        } else {
-            rootView.setupDefaultLayout()
-        }
+        // The Browse page does not read the safe area yet, so the host insets it.
+        rootView.setupWebViewLayout(pageReadsSafeArea: !configuration.isRootScreen)
     }
 
     // MARK: - Actions
@@ -276,6 +334,17 @@ extension SPAViewController: SPAViewProtocol {
 extension SPAViewController: NavigationBarHiding {
     /// The Browse tab's root shows no bar. The status strip carries the tab's name.
     var hidesNavigationBar: Bool { configuration.isRootScreen }
+}
+
+// MARK: - StatusStripThemeProviding
+
+extension SPAViewController: StatusStripThemeProviding {
+    /// A page draws under the status strip in its own colours. Where they clash with the app's theme the strip
+    /// takes a theme that reads on the page.
+    var statusStripTheme: ThemeSelection? {
+        let appThemeIsLight = UIColor.bgSurfaceMain.resolvedColor(with: traitCollection).isLight
+        return pageBackgroundTone?.statusStripTheme(appThemeIsLight: appThemeIsLight)
+    }
 }
 
 // MARK: - StatusBarTitleProviding

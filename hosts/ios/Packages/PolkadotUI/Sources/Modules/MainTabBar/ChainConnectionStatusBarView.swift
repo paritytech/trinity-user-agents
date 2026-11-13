@@ -1,3 +1,4 @@
+import DesignSystem
 import SwiftUI
 import UIKitExt
 
@@ -46,9 +47,7 @@ public struct ChainConnectionStatusBarView: View, Hashable {
     public var body: some View {
         HStack(spacing: Self.ringSpacing) {
             Spacer(minLength: 0)
-            ForEach(models) { viewModel in
-                ChainStatusRingView(viewModel: viewModel, diameter: Self.ringDiameter)
-            }
+            ChainStatusRings(models: models)
         }
         .safeAreaPadding(.horizontal, Self.horizontalPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -56,5 +55,20 @@ public struct ChainConnectionStatusBarView: View, Hashable {
         // Grows the view's intrinsic height upward into the unused status-bar
         // headroom. Deliberately not part of `preferredHeight`.
         .padding(.bottom, Self.bottomPadding)
+    }
+}
+
+/// The rings take no input from the theme, so SwiftUI would keep each one in the old theme's colours until its own
+/// status changes. Reading the theme here rebuilds them all when it changes.
+private struct ChainStatusRings: View {
+    @Environment(\.appTheme) private var appTheme
+
+    let models: [ChainConnectionStatusViewModel]
+
+    var body: some View {
+        ForEach(models) { viewModel in
+            ChainStatusRingView(viewModel: viewModel, diameter: ChainConnectionStatusBarView.ringDiameter)
+        }
+        .id(appTheme)
     }
 }

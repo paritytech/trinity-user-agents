@@ -31,8 +31,7 @@ final class WalletMainWireframe: WalletMainWireframeProtocol, AlertPresentable {
             title: String(localized: .Products.collectibles),
             isRootScreen: false,
             showMoreButton: false,
-            page: page,
-            isEdgeToEdge: true
+            page: page
         )
         guard let product = SPAViewFactory.createView(configuration: configuration, flowState: flowState) else {
             return

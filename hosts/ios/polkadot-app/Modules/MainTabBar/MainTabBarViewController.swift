@@ -538,14 +538,13 @@ extension MainTabBarViewController {
             self?.applyStatusStripTheme()
         }
 
-        let theme = provider?.statusStripTheme
-        let themedViews: [UIView] = [statusBarTitleButton, statusBarHost.view]
-        for themedView in themedViews {
-            if let theme {
-                themedView.traitOverrides.appTheme = theme
-            } else {
-                themedView.traitOverrides.remove(DSThemeTrait.self)
-            }
+        // The rings redraw for an override on their hosting controller, not for one on its view.
+        if let theme = provider?.statusStripTheme {
+            statusBarTitleButton.traitOverrides.appTheme = theme
+            statusBarHost.traitOverrides.appTheme = theme
+        } else {
+            statusBarTitleButton.traitOverrides.remove(DSThemeTrait.self)
+            statusBarHost.traitOverrides.remove(DSThemeTrait.self)
         }
     }
 
