@@ -157,10 +157,6 @@ private extension SPAViewController {
     }
 
     func setupNavigationBar() {
-        if configuration.isRootScreen {
-            setTitle(String(localized: .tabBrowse))
-        }
-
         if configuration.showMoreButton, configuration.presentation != .browserTab {
             setupMoreButton()
         }
@@ -275,9 +271,12 @@ extension SPAViewController: SPAViewProtocol {
     }
 }
 
-// MARK: - RootScreen
+// MARK: - NavigationBarHiding
 
-extension SPAViewController: RootScreen {}
+extension SPAViewController: NavigationBarHiding {
+    /// The Browse tab's root shows no bar. The status strip carries the tab's name.
+    var hidesNavigationBar: Bool { configuration.isRootScreen }
+}
 
 // MARK: - StatusBarTitleProviding
 
