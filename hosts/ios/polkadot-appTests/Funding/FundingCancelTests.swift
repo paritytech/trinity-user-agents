@@ -72,18 +72,9 @@ struct FundingCancelTests {
     }
 
     @Test
-    func aSecondCancelStaysReachableUntilMoneyMoves() {
-        #expect(FundingStatus.cancelRequested.canCancel(moneyMoved: false))
-        #expect(FundingStatus.cancelRequested.cancelTitle == String(localized: .Funding.cancelAnyway))
-    }
-
-    @Test
-    func onceMoneyMovedACancelWithTheProviderWaitsForItsAnswer() {
-        #expect(!FundingStatus.cancelRequested.canCancel(moneyMoved: true))
-        #expect(!FundingStatus.cancelOffered(fee: "1", refund: "1").canCancel(moneyMoved: true))
-        #expect(!FundingStatus.cancelling.canCancel(moneyMoved: true))
-        #expect(FundingStatus.cancelRefused(reason: "no").canCancel(moneyMoved: true))
-        #expect(FundingStatus.waitingForTransfer.canCancel(moneyMoved: false))
-        #expect(FundingStatus.waitingForTransfer.cancelTitle == String(localized: .Funding.depositCancel))
+    func aSecondCancelReadsDifferentlyFromTheFirst() {
+        #expect(FundingCancelAvailability.available.title == String(localized: .Funding.depositCancel))
+        #expect(FundingCancelAvailability.availableAgain.title == String(localized: .Funding.cancelAnyway))
+        #expect(FundingCancelAvailability.unavailable.title == nil)
     }
 }

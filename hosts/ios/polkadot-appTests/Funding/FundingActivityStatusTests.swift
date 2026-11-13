@@ -3,8 +3,8 @@ import Testing
 import TrUAPIHost
 @testable import polkadot_app
 
-/// How the CASH card lists a session: in flight with the status the core
-/// gives it, then from the host's record once it has ended.
+/// How the CASH card lists a session in flight: with the status the core
+/// gives it.
 struct FundingActivityStatusTests {
     @Test(arguments: [
         FundingStatus.waitingForPayment,
@@ -31,60 +31,12 @@ struct FundingActivityStatusTests {
     }
 
     @Test
-    func aFailedPayoutShowsWhatItsRefundReturned() throws {
-        let released = session(.out, stage: .released(debited: "50000000", settledAtMs: Self.openedAtMs))
-        let pending = try #require(FundingRecord(
-            session: released,
-            progress: progress(.payoutFailed(refunded: nil), payout: .failed(reason: "rejected"))
-        ))
-        let refunded = try #require(FundingRecord(
-            session: released,
-            progress: progress(
-                .payoutFailed(refunded: "49000000"),
-                payout: .failed(reason: "rejected"),
-                refunded: "49000000"
-            )
-        ))
-
-        #expect(FundingActivityItem(record: pending).status == .payoutFailed(refunded: nil))
-        #expect(FundingActivityItem(record: refunded).status == .payoutFailed(refunded: 49_000_000))
-    }
-
-    @Test
     func aCancelInProgressStaysInFlight() {
         #expect(FundingStatus.cancelRequested.isInFlight)
         #expect(FundingStatus.cancelOffered(fee: "1", refund: "1").isInFlight)
         #expect(FundingStatus.cancelRefused(reason: "no").isInFlight)
         #expect(FundingStatus.cancelling.isInFlight)
         #expect(!FundingStatus.cancelled(refunded: nil).isInFlight)
-    }
-
-    @Test
-    func aCancelledWithdrawalShowsWhatCameBack() throws {
-        let released = session(.out, stage: .released(debited: "50000000", settledAtMs: Self.openedAtMs))
-        let record = try #require(FundingRecord(
-            session: released,
-            progress: progress(.cancelled(refunded: "49000000"), refunded: "49000000")
-        ))
-
-        #expect(record.outcome == .cancelled)
-        #expect(FundingActivityItem(record: record).status == .cancelled(refunded: 49_000_000))
-    }
-
-    @Test
-    func aTopUpCancelledBeforeMoneyMovedIsCancelled() throws {
-        let failed = session(.in, stage: .failed(reason: .cancelled, settledAtMs: Self.openedAtMs))
-        let record = try #require(FundingRecord(session: failed, progress: progress(.failed(reason: .cancelled))))
-
-        #expect(FundingActivityItem(record: record).status == .cancelled(refunded: nil))
-    }
-
-    @Test
-    func aWithdrawalPaidOutIsSent() throws {
-        let released = session(.out, stage: .released(debited: "50000000", settledAtMs: Self.openedAtMs))
-        let record = try #require(FundingRecord(session: released, progress: progress(.sent, payout: .paidOut)))
-
-        #expect(FundingActivityItem(record: record).status == .sent)
     }
 }
 
@@ -122,11 +74,7 @@ private extension FundingActivityStatusTests {
         )
     }
 
-    func progress(
-        _ status: FundingStatus,
-        payout: FundingPayout? = nil,
-        refunded: U128? = nil
-    ) -> FundingProgress {
+    func progress(_ status: FundingStatus) -> FundingProgress {
         FundingProgress(
             steps: [FundingProgressStep(step: .started, reachedAtMs: Self.openedAtMs)],
             band: .awaitingPayment,
@@ -138,8 +86,8 @@ private extension FundingActivityStatusTests {
             deposit: nil,
             mismatch: nil,
             retrying: status == .retrying,
-            payout: payout,
-            refunded: refunded,
+            payout: nil,
+            refunded: nil,
             status: status,
             awaitsUserTransfer: false,
             longerAtMs: nil,

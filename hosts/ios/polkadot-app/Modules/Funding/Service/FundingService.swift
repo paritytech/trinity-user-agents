@@ -415,7 +415,7 @@ private extension FundingService {
             amount: presentation?.amount,
             session: session,
             progress: runtime.fundingProgress(intent: entryId),
-            summary: session == nil ? runtime.fundingHistory().first { $0.intent == entryId } : nil,
+            summary: session?.stage.isOpen == true ? nil : runtime.fundingSummary(intent: entryId),
             options: session?.providerId == nil ? runtime.fundingOptions(intent: entryId) : nil,
             quotes: quotes?.shown,
             isQuoting: quotes?.isAwaiting ?? false
@@ -434,7 +434,7 @@ private extension FundingService {
                 amount: item.session.amount,
                 session: item.session,
                 progress: item.progress,
-                summary: nil,
+                summary: item.session.stage.isOpen ? nil : runtime.fundingSummary(intent: item.session.intent),
                 options: nil,
                 quotes: nil,
                 isQuoting: false

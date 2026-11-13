@@ -68,6 +68,11 @@ struct FundingCash: Equatable {
         "\(figure(value)) \(symbol)"
     }
 
+    /// "$50.20 CASH" for `units`; nil when they are not a number.
+    func label(units: U128) -> String? {
+        decimal(units).map { label($0) }
+    }
+
     /// "+$50 CASH" for value moving in, "-$50 CASH" for value moving out.
     func signed(_ value: Decimal, direction: FundingDirection) -> String {
         let sign = direction == .in ? "+" : "-"

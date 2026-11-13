@@ -81,7 +81,7 @@ extension FundingEntry {
 
     /// The session once it has ended, as its ended screen draws it.
     var ended: FundingEndedSession? {
-        session.flatMap { FundingEndedSession(session: $0, progress: progress) }
+        summary.flatMap { FundingEndedSession(summary: $0, session: session, progress: progress) }
     }
 
     /// Whether the session got to `step`.
@@ -101,17 +101,14 @@ extension FundingEntry {
         return (fee, refund)
     }
 
-    /// Whether the user can cancel: the session is in flight, and either no
-    /// cancel is with the provider or no money moved yet, when a second cancel
-    /// ends the session. The core says when it is too late.
+    /// Whether the core lets the user cancel the started session now.
     var canRequestCancel: Bool {
-        guard hasStarted, let progress, progress.status.isInFlight else { return false }
-        return progress.status.canCancel(moneyMoved: progress.moneyMoved)
+        hasStarted && (progress?.cancel ?? .unavailable) != .unavailable
     }
 
-    /// The cancel action's title for the session's status.
+    /// The cancel action's title for what the core offers.
     var cancelTitle: String {
-        progress.map(\.status.cancelTitle) ?? String(localized: .Funding.depositCancel)
+        progress?.cancel.title ?? String(localized: .Funding.depositCancel)
     }
 }
 
