@@ -16,8 +16,12 @@ use truapi::v01;
 
 use super::ws_bridge::WsBridgeStartError;
 use crate::{
-	PairedSsoPeer, PairingProposal, host_internal::bulletin::preimage_key,
+	PairedSsoPeer, PairingProposal,
+	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
+	markers::{
+		MARKERS, MarkerClass, NATIVE_PUSH_NOTIFICATION, Severity, TRACING_ERROR, TRACING_WARN,
+	},
 };
 
 use super::{
@@ -3373,4 +3377,32 @@ mod bridge_lines {
 		assert_eq!(logs.len(), 1);
 		assert_eq!(logs[0].1.chars().count(), HOST_SINK_DETAIL_MAX_CHARS);
 	}
+}
+
+#[test]
+fn the_exported_map_holds_every_entry_and_nothing_else() {
+	let exported = core_markers();
+	assert_eq!(exported.len(), MARKERS.len(), "the exported map lost or gained an entry");
+	for marker in MARKERS {
+		assert_eq!(
+			exported.get(marker.target),
+			Some(&marker.class),
+			"{} did not survive the crossing",
+			marker.target
+		);
+	}
+}
+
+#[test]
+fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
+	let exported = core_markers();
+	assert_eq!(
+		exported.get(TRACING_ERROR.target),
+		Some(&MarkerClass::Export { severity: Severity::Error })
+	);
+	assert_eq!(
+		exported.get(TRACING_WARN.target),
+		Some(&MarkerClass::Export { severity: Severity::Warn })
+	);
+	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
 }

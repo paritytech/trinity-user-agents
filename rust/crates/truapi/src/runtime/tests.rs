@@ -2879,7 +2879,7 @@ fn funding_services_with(
 		host_config.stack.clone(),
 		spawner,
 	);
-	assert!(services.install_core_db(db.clone()));
+	assert!(services.install_core_db(db.clone()).is_some());
 	services
 }
 
