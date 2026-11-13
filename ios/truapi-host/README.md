@@ -223,23 +223,23 @@ card has one to show while its worker is down and at cold start.
 
 ## Materials
 
-With `HostRuntimeConfig.materialsEnabled`, the core plans the `Materials` nodes
-of any tree: for each, in order, whether it loads, draws its layers (each with
+With `HostRuntimeConfig.materialsEnabled`, the core resolves the `Materials`
+nodes of any tree: for each, in order, whether it loads, draws its layers (each with
 its Metal shaders and where each value and texture goes) or draws plain and
-why. Plan a saved face or a preview on the runtime, and a body a product
+why. Resolve a saved face or a preview on the runtime, and a body a product
 rendered on its execution, which also reports what falls back to the product.
 
 ```swift
-let plans = execution.materialPlan(tree: face, context: .pocketCard(cardId: "loyalty"), floatFilterable: false)
-for await plan in plans.plans { draw(plan) }
+let resolution = execution.resolveMaterials(tree: face, context: .pocketCard(cardId: "loyalty"), floatFilterable: false)
+for await materials in resolution.resolved { draw(materials) }
 
 // A shader that did not compile, or an image argument that could not be used.
-plans.report(node: 0, material: id, reason: .unsupported)
+resolution.report(node: 0, material: id, reason: .unsupported)
 let reason = checkMaterialImage(bytes: image)
-let noise = materialNoise(seed: plan.noiseSeed)
+let noise = materialNoise(seed: materials.noiseSeed)
 ```
 
-Start the plan of a new tree before cancelling the old one, so the materials
+Start resolving a new tree before cancelling the old one, so the materials
 they share keep their fetch.
 
 On the execution: `publishChatAction` delivers a user's action back to the

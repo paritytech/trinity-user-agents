@@ -18,7 +18,7 @@ use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, latest, v01, versioned::IntoLatest};
 
 use super::{
-	materials::{NativeMaterialPlan, NativeMaterialPlanObserver, observe_material_plan},
+	materials::{NativeMaterialsObserver, NativeMaterialsResolution, resolve_materials},
 	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
@@ -792,19 +792,19 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.load_image(reference).await
 	}
 
-	/// Follow the plan of `tree` in `context`, a saved face or a preview:
+	/// Follow the resolved materials of `tree` in `context`, a saved face or a preview:
 	/// `observer` gets it now and after each change, until cancelled. A node
 	/// that falls back is logged. Unless `float_filterable`, the shaders filter
 	/// 32-bit float images themselves.
-	pub fn observe_material_plan(
+	pub fn resolve_materials(
 		&self,
 		tree: truapi::latest::RendererNode,
 		context: truapi::latest::RenderContext,
 		float_filterable: bool,
-		observer: Box<dyn NativeMaterialPlanObserver>,
-	) -> Arc<NativeMaterialPlan> {
+		observer: Box<dyn NativeMaterialsObserver>,
+	) -> Arc<NativeMaterialsResolution> {
 		let failures = Box::new(|_| {});
-		observe_material_plan(
+		resolve_materials(
 			&self.runtime,
 			tree,
 			context,
@@ -1199,21 +1199,21 @@ impl NativeProductExecution {
 		Ok(observe_renderer(stream, observer, self.spawner.clone()))
 	}
 
-	/// Follow the plan of `tree`, a body this execution's product rendered in
+	/// Follow the resolved materials of `tree`, a body this execution's product rendered in
 	/// `context`: `observer` gets it now and after each change, until
 	/// cancelled. A node that falls back is logged and reported to the product
 	/// through `Renderer::failure_subscribe`. Unless `float_filterable`, the
 	/// shaders filter 32-bit float images themselves.
-	pub fn observe_material_plan(
+	pub fn resolve_materials(
 		&self,
 		tree: latest::RendererNode,
 		context: latest::RenderContext,
 		float_filterable: bool,
-		observer: Box<dyn NativeMaterialPlanObserver>,
-	) -> Arc<NativeMaterialPlan> {
+		observer: Box<dyn NativeMaterialsObserver>,
+	) -> Arc<NativeMaterialsResolution> {
 		let channel = self.renderer_failures.clone();
 		let reported = context.clone();
-		let failures = Box::new(move |failure: crate::PlanFailure| {
+		let failures = Box::new(move |failure: crate::NodeFallback| {
 			let item = latest::HostRendererFailureSubscribeItem {
 				context: reported.clone(),
 				node: failure.node,
@@ -1224,7 +1224,7 @@ impl NativeProductExecution {
 			// reports are dropped: the device log still has them.
 			let _ = channel.publish(item.into());
 		});
-		observe_material_plan(
+		resolve_materials(
 			&self.runtime,
 			tree,
 			context,

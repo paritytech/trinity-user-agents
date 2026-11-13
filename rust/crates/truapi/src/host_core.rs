@@ -1115,12 +1115,12 @@ impl SigningHostRuntime {
 		self.image_loader.load(reference).await
 	}
 
-	/// Keeps `text` on the device as a material and returns its ID, for plans
-	/// started afterwards to draw without Bulletin. Keep before anything plans
-	/// the material: a fetch already under way for it is not answered. Refused
-	/// with its reason when the core cannot read it, and as unsupported when
-	/// the host draws no materials or before the core services start over a
-	/// core database.
+	/// Keeps `text` on the device as a material and returns its ID, for
+	/// resolutions started afterwards to draw without Bulletin. Keep before
+	/// anything resolves the material: a fetch already under way for it is not
+	/// answered. Refused with its reason when the core cannot read it, and as
+	/// unsupported when the host draws no materials or before the core services
+	/// start over a core database.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub async fn keep_material(
 		&self,
@@ -1136,26 +1136,26 @@ impl SigningHostRuntime {
 		Ok(id)
 	}
 
-	/// The plans for `tree` in `context`, its shaders in `language`, filtering
-	/// 32-bit float images themselves unless `float_filterable`. Each node that
-	/// falls back reaches `failures` once. Until the core services start over
-	/// a core database, every node draws plain.
+	/// The resolved materials of `tree` in `context`, its shaders in
+	/// `language`, filtering 32-bit float images themselves unless
+	/// `float_filterable`. Each node that falls back reaches `failures` once. Until the core
+	/// services start over a core database, every node draws plain.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub fn material_plan(
+	pub fn resolve_materials(
 		&self,
 		tree: &truapi::latest::RendererNode,
 		context: &truapi::latest::RenderContext,
 		language: crate::ShaderLanguage,
 		float_filterable: bool,
-		failures: Box<dyn Fn(crate::PlanFailure) + Send + Sync>,
-	) -> crate::PlanStream {
+		failures: Box<dyn Fn(crate::NodeFallback) + Send + Sync>,
+	) -> crate::MaterialsResolution {
 		let Some(materials) = self.services.materials() else {
 			tracing::warn!("no core database, so every material node draws plain");
-			return crate::PlanStream::plain(tree, context, failures);
+			return crate::MaterialsResolution::plain(tree, context, failures);
 		};
 		let enabled = self.services.materials_enabled();
-		let settings = crate::materials::PlanSettings { enabled, language, float_filterable };
-		materials.plan(tree, context, settings, failures)
+		let settings = crate::materials::ResolveSettings { enabled, language, float_filterable };
+		materials.resolve(tree, context, settings, failures)
 	}
 
 	/// Build a product-facing runtime from this signing host.

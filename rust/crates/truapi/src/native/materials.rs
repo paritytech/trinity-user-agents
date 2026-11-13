@@ -1,4 +1,4 @@
-//! Material plans as a native host follows them.
+//! A tree's materials, resolved for a native host.
 
 use std::sync::Arc;
 
@@ -10,67 +10,69 @@ use super::{
 	renderer::{NativeSubscription, spawn_observation},
 };
 use crate::{
-	MaterialPlan, PlanFailure, ShaderLanguage, SigningHostRuntime, Spawner, materials::PlanReporter,
+	NodeFallback, ResolvedMaterials, ShaderLanguage, SigningHostRuntime, Spawner,
+	materials::FallbackReporter,
 };
 
-/// Observer implemented by a native host to follow the plan of one tree.
+/// Observer implemented by a native host to follow the resolved materials of one tree.
 #[uniffi::export(callback_interface)]
-pub trait NativeMaterialPlanObserver: Send + Sync {
-	/// Deliver the plan now and after each change.
-	fn on_plan(&self, plan: MaterialPlan);
+pub trait NativeMaterialsObserver: Send + Sync {
+	/// Deliver the materials now and after each change.
+	fn on_resolved(&self, materials: ResolvedMaterials);
 }
 
-/// The plans of one tree, followed until cancelled. To plan a new tree for
-/// the same body, start its plan before cancelling this one, so the
+/// One tree's resolution, followed until cancelled. To resolve a new tree
+/// for the same body, start its resolution before cancelling this one, so the
 /// materials they share keep their fetch.
 #[derive(uniffi::Object)]
-pub struct NativeMaterialPlan {
-	reporter: PlanReporter,
+pub struct NativeMaterialsResolution {
+	reporter: FallbackReporter,
 	subscription: Arc<NativeSubscription>,
 }
 
 #[uniffi::export]
-impl NativeMaterialPlan {
-	/// Draw node `node` plain for the rest of this plan, because its shader did
+impl NativeMaterialsResolution {
+	/// Draw node `node` plain for the rest of this resolution, because its shader did
 	/// not compile (`Unsupported`) or an image argument could not be used
 	/// (`check_material_image`'s reason, or `NotFound`).
 	pub fn report(&self, node: u32, material: Option<crate::Bytes32>, reason: MaterialFailure) {
-		self.reporter.report(PlanFailure { node, material, reason });
+		self.reporter.report(NodeFallback { node, material, reason });
 	}
 
-	/// Stop following the plan, and what it fetches.
+	/// Stop following the resolution, and what it fetches.
 	pub fn cancel(&self) {
 		self.subscription.cancel();
 	}
 }
 
-/// Follows the plan of `tree` in `context` for `observer`. Each node that
+/// Follows the resolved materials of `tree` in `context` for `observer`. Each node that
 /// falls back reaches `failures` once.
-pub fn observe_material_plan(
+pub fn resolve_materials(
 	runtime: &SigningHostRuntime,
 	tree: RendererNode,
 	context: RenderContext,
 	float_filterable: bool,
-	observer: Arc<dyn NativeMaterialPlanObserver>,
-	failures: Box<dyn Fn(PlanFailure) + Send + Sync>,
+	observer: Arc<dyn NativeMaterialsObserver>,
+	failures: Box<dyn Fn(NodeFallback) + Send + Sync>,
 	spawner: &Spawner,
-) -> Arc<NativeMaterialPlan> {
+) -> Arc<NativeMaterialsResolution> {
 	// Metal on iOS. Android draws with OpenGL ES, and so does any other host.
 	let language = match native_host_platform() {
 		HostPlatform::Ios => ShaderLanguage::Metal,
 		_ => ShaderLanguage::GlslEs,
 	};
-	let mut plans = runtime.material_plan(&tree, &context, language, float_filterable, failures);
-	let reporter = plans.reporter();
+	let mut resolution =
+		runtime.resolve_materials(&tree, &context, language, float_filterable, failures);
+	let reporter = resolution.reporter();
 	let subscription = spawn_observation(spawner, async move {
-		while let Some(plan) = plans.next().await {
-			observer.on_plan(plan);
+		while let Some(materials) = resolution.next().await {
+			observer.on_resolved(materials);
 		}
 	});
-	Arc::new(NativeMaterialPlan { reporter, subscription })
+	Arc::new(NativeMaterialsResolution { reporter, subscription })
 }
 
-/// The 1024 x 1024 noise image of `seed`, a plan's `noise_seed`, one byte a
+/// The 1024 x 1024 noise image of `seed`, the resolved materials' `noise_seed`, one byte a
 /// pixel, row after row. Make it once per body and upload it as a texture.
 #[uniffi::export]
 pub fn material_noise(seed: u32) -> Vec<u8> {
