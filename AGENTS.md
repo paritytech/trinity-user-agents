@@ -122,6 +122,7 @@ scripts/cli-runner-package.test.ts
 .github/consumers.json     maps each released package to the repos notified by a bump issue
 nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc JSON; CI, the
                            scripts and the Makefile all read it
+rust-toolchain.toml        pins every other cargo command in the repo to stable
 .github/registry-drift-exceptions.json
                            documents intentionally unpublished npm package versions
 ```
@@ -131,8 +132,11 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
 - `truapi` holds the canonical protocol definitions and, behind its default
   `runtime` feature, the host runtime. The protocol half builds without the
   runtime (`--no-default-features`), which is what codegen links and reads, so
-  protocol modules never depend on runtime modules. Syscall traits live in the
-  `platform` module, host-side runtime types in the runtime modules. The whole
+  protocol modules never depend on runtime modules. The feature gates only the
+  runtime block in `lib.rs`. Protocol types, their derives and their methods
+  do not depend on it (UniFFI derives are native-only); what they need lives on
+  the protocol side too. Syscall traits live in the `platform` module,
+  host-side runtime types in the runtime modules. The whole
   crate is one UniFFI namespace, `truapi`, so native bindings use protocol types
   directly. The published binaries keep their `truapi_server` names
   (`truapi_server.xcframework`, `dist/wasm/*/truapi_server*`).

@@ -33,19 +33,14 @@ default = ["runtime", "wasm-signing-host"]
 # Without it the crate is the protocol definitions alone, which is what
 # codegen reads and builds against.
 runtime = [
-    # `Size` is a SCALE `Compact`, which reads and writes as a plain JSON number
-    # only with codec's own serde support.
-    "parity-scale-codec/serde",
     "dep:truapi-provider",
     "dep:trinity-stack",
     "dep:futures-timer",
     "dep:scale-decode",
     "dep:frame-metadata",
     "dep:scale-info",
-    "dep:serde",
     "dep:serde_json",
     "dep:thiserror",
-    "dep:unicode-normalization",
     "dep:url",
     "dep:nanoid",
     "dep:blake2b_simd",
@@ -66,7 +61,6 @@ runtime = [
     "dep:tracing-subscriber",
     "dep:verifiable",
     "dep:truapi-verifiable",
-    "dep:uniffi",
     "dep:subxt",
     "dep:subxt-rpcs",
     "dep:js-sys",
@@ -103,7 +97,11 @@ async-trait = { workspace = true }
 derive_more = { workspace = true, features = ["debug", "display", "error", "from"] }
 futures = { workspace = true }
 hex = { workspace = true }
-parity-scale-codec = { workspace = true, features = ["derive"] }
+# `Size` is a SCALE `Compact`, which reads and writes as a plain JSON number
+# only with codec's own serde support.
+parity-scale-codec = { workspace = true, features = ["derive", "serde"] }
+serde = { workspace = true, features = ["derive"] }
+unicode-normalization = { workspace = true }
 
 truapi-provider = { path = "../truapi-provider", default-features = false, optional = true }
 trinity-stack = { path = "../trinity-stack", optional = true }
@@ -113,10 +111,8 @@ scale-decode = { workspace = true, features = ["derive"], optional = true }
 # wasm host perform, so these are not target-gated.
 frame-metadata = { workspace = true, features = ["std", "current", "decode"], optional = true }
 scale-info = { workspace = true, features = ["decode", "derive"], optional = true }
-serde = { workspace = true, features = ["derive"], optional = true }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true, optional = true }
-unicode-normalization = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 nanoid = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
@@ -141,6 +137,7 @@ tracing-subscriber = { workspace = true, features = ["registry", "std"], optiona
 imagesize = { workspace = true, features = ["gif", "jpeg", "png", "webp"], optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+uniffi = { workspace = true }
 # The browser core loads `truapi-verifiable` as a separate WASM module instead.
 verifiable = { git = "https://github.com/paritytech/verifiable.git", rev = "19b03deb89b8dea484b143afc8bbe048a74bc1ff", optional = true }
 truapi-verifiable = { path = "../truapi-verifiable", optional = true }
@@ -148,7 +145,6 @@ rand = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "macros", "io-util", "time"], optional = true }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"], optional = true }
-uniffi = { workspace = true, optional = true }
 subxt = { workspace = true, features = ["native"], optional = true }
 subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"], optional = true }
 rusqlite = { workspace = true, features = ["array", "bundled", "fallible_uint", "hooks"], optional = true }
@@ -174,6 +170,7 @@ web-sys = { workspace = true, features = ["console"], optional = true }
 [dev-dependencies]
 bip39 = { workspace = true }
 scale-info = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
 
 [[test]]
 name = "device_permission_revalidation"
