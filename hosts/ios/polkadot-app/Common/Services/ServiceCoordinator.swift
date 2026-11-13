@@ -246,6 +246,7 @@ extension ServiceCoordinator {
         let gameReminders = ProductGameReminderCenter.makeDefault()
         RootDependencyLocator.setDependency(gameReminders as ProductGameReminderScheduling)
         RootDependencyLocator.setDependency(gameReminders as ProductGamePillProviding)
+        Task { await ProductNotificationScheduler.shared.start() }
 
         let productFileProvider = CompositeProductFileProvider(
             dotNsContentStorage: DotNsContentStorage(),
