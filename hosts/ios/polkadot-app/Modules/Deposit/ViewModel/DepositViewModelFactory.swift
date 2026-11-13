@@ -3,6 +3,7 @@ import SubstrateSdk
 import Foundation_iOS
 import UIKit
 import ChainRegistry
+import PolkadotUI
 
 protocol DepositViewModelMaking {
     func makeAssetsViewModel(for depositAsset: ChainAsset) -> DepositAssetsViewModel
@@ -68,7 +69,7 @@ private extension DepositViewModelFactory {
 extension DepositViewModelFactory: DepositViewModelMaking {
     func makeAssetsViewModel(for depositAsset: ChainAsset) -> DepositAssetsViewModel {
         let style = styleProvider.provide(for: depositAsset)
-        let icon = style.logo.map { StaticImageViewModel(image: $0) }
+        let icon = style.logo.map { AnyImageViewModel(StaticImageViewModel(image: $0)) }
 
         return DepositAssetsViewModel(
             assetName: style.displayTitle,
@@ -84,7 +85,7 @@ extension DepositViewModelFactory: DepositViewModelMaking {
         assetOut: ChainAsset
     ) -> DepositSummaryViewModel {
         let style = styleProvider.provide(for: assetIn)
-        let icon = style.logo.map { StaticImageViewModel(image: $0) }
+        let icon = style.logo.map { AnyImageViewModel(StaticImageViewModel(image: $0)) }
 
         let assetInFormatter = getAssetFormatter(for: assetIn)
 

@@ -70,6 +70,7 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
         setupNavigationBar()
         setupTitleObservation()
         setupJSEngine()
+        setContentScrollView(rootView.webView.scrollView, for: .top)
     }
 
     override func viewWillAppear(_ animated: Bool) {
