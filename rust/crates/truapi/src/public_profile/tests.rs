@@ -262,7 +262,7 @@ fn services_with_platform(platform: Arc<StubPlatform>) -> Arc<RuntimeServices> {
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		crate::test_support::test_stack("paseo", [1; 32], [2; 32], Some([3; 32])),
+		crate::test_support::test_stack("paseo", [1; 32], [2; 32], [3; 32]),
 		Spawner::for_test(),
 	)
 }

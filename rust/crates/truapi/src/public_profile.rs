@@ -51,9 +51,6 @@ pub enum PublicProfileError {
 	/// Not a username the core resolves.
 	#[error("not a dotNS username")]
 	InvalidUsername,
-	/// The host configured no Asset Hub chain.
-	#[error("no Asset Hub configured")]
-	AssetHubNotConfigured,
 	/// The chain was out of reach, or the lookup failed.
 	#[error("dotNS lookup failed: {}", .0.reason())]
 	#[from(DotnsError)]
@@ -199,13 +196,9 @@ impl PublicProfiles {
 	}
 
 	async fn read_record(&self, username: &str) -> Result<ProfileRecord, PublicProfileError> {
-		let genesis = self
-			.services
-			.asset_hub_chain_genesis_hash()
-			.ok_or(PublicProfileError::AssetHubNotConfigured)?;
 		let mut lookup = DotnsLookup::pinned_to_best_block(
 			&self.services.chain,
-			genesis,
+			self.services.asset_hub_chain_genesis_hash(),
 			DotnsLookupKind::PublicProfile,
 		)
 		.await?;

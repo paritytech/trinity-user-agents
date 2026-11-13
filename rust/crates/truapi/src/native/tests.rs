@@ -523,10 +523,7 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		platform_type: None,
 		platform_version: None,
 		stack: native_bundled_stack(&crate::test_support::test_descriptor(
-			"paseo",
-			[0xa2; 32],
-			[0xbb; 32],
-			Some([0xcc; 32]),
+			"paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32],
 		)),
 		// Every runtime opens its own database; the directory is left for the
 		// OS to clean so the fixture can stay a plain value.
@@ -1804,10 +1801,7 @@ fn runtime_config_reports_the_platform_the_library_was_built_for() {
 fn each_descriptor_chain_reaches_its_own_role() {
 	let resolved = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
 		stack: native_bundled_stack(&crate::test_support::test_descriptor(
-			"paseo",
-			[0xa1; 32],
-			[0xb2; 32],
-			Some([0xc3; 32]),
+			"paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32],
 		)),
 		..native_host_runtime_config()
 	})
@@ -1817,7 +1811,7 @@ fn each_descriptor_chain_reaches_its_own_role() {
 		resolved.signing.stack.chains(),
 		&crate::platform::StackChains {
 			relay: Some([0x01; 32]),
-			asset_hub: Some([0xc3; 32]),
+			asset_hub: [0xc3; 32],
 			people: [0xa1; 32],
 			bulletin: [0xb2; 32],
 		},
@@ -1848,7 +1842,7 @@ fn runtime_config_refuses_a_stack_pointer_without_a_key() {
 fn runtime_config_passes_the_reserved_values_flag_through() {
 	// A testnet build must not run a stack on `dot`; a Polkadot build may.
 	let mut stack = native_bundled_stack(&crate::test_support::test_descriptor(
-		"dot", [0xa1; 32], [0xb2; 32], None,
+		"dot", [0xa1; 32], [0xb2; 32], [0xc3; 32],
 	));
 	let refused = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
 		stack: stack.clone(),

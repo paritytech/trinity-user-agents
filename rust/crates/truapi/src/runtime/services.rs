@@ -301,12 +301,11 @@ impl RuntimeServices {
 		&self.stack
 	}
 
-	/// The Asset Hub dotNS reads run against, when the stack has one.
+	/// The Asset Hub dotNS reads run against.
 	///
 	/// Fixed by construction, so the chain a grant is adjudicated against
-	/// cannot move under a running product. `None` fails every manifest lookup
-	/// closed: grants are refused rather than assumed.
-	pub fn asset_hub_chain_genesis_hash(&self) -> Option<[u8; 32]> {
+	/// cannot move under a running product.
+	pub fn asset_hub_chain_genesis_hash(&self) -> [u8; 32] {
 		self.stack.chains().asset_hub
 	}
 
