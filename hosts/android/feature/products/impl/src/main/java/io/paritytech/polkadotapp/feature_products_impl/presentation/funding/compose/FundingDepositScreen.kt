@@ -30,10 +30,12 @@ import io.paritytech.polkadotapp.design.components.surface.PolkadotSurface
 import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCancelUiState
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCryptoIcon
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDepositContent
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingDepositUiState
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingLiveProgressUi
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingCircleButton
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingCryptoIconImage
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingHeader
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingLiveLine
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components.FundingTimelineCard
@@ -49,6 +51,7 @@ private val INDICATOR_SIZE = 32.dp
 private val INDICATOR_STROKE = 2.dp
 private val LIVE_ICON_SIZE = 48.dp
 private val LIVE_GLYPH_SIZE = 24.dp
+private val COPY_ROW_ICON_SIZE = 20.dp
 
 /** Where to send the funds, as the provider reported it, while the session waits for them. */
 @Composable
@@ -201,6 +204,7 @@ private fun CryptoDeposit(content: FundingDepositContent.Crypto, onCopy: (String
                 value = content.address,
                 shown = content.address,
                 onCopy = onCopy,
+                icon = content.networkIcon.takeIf { it !is FundingCryptoIcon.Monogram },
             )
         }
     }
@@ -243,7 +247,13 @@ private fun ArrivesRow() {
 }
 
 @Composable
-private fun CopyRow(title: String, value: String, shown: String, onCopy: (String) -> Unit) {
+private fun CopyRow(
+    title: String,
+    value: String,
+    shown: String,
+    onCopy: (String) -> Unit,
+    icon: FundingCryptoIcon? = null,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -251,6 +261,7 @@ private fun CopyRow(title: String, value: String, shown: String, onCopy: (String
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(PolkadotTheme.spacings.small),
     ) {
+        icon?.let { FundingCryptoIconImage(icon = it, size = COPY_ROW_ICON_SIZE) }
         NovaText(
             modifier = Modifier.weight(1f),
             text = title,
