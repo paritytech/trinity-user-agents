@@ -4,7 +4,6 @@ import android.net.Uri
 import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.data.telemetry.HostOpenSource
-import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpen
 import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpens
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
@@ -41,7 +40,7 @@ internal class ProductSpaDeepLinkHandler @Inject constructor(
     context(scope: ComputationalScope)
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> {
         // Read before any hop: the product page's load is timed from here.
-        val open = HostPageOpen.now(HostOpenSource.DEEPLINK)
+        val open = pageOpens.ask(HostOpenSource.DEEPLINK)
         return withContext(coroutineDispatchers.io) {
             dotNsTldProvider.getTld().mapCatching { tld ->
                 accountRepository.awaitAccountsInitialized()

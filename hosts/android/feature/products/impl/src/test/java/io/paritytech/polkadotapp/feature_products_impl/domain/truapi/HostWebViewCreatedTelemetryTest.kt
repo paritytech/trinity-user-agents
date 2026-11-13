@@ -47,12 +47,45 @@ class HostWebViewCreatedTelemetryTest {
 
         reporter.report(
             "bootstrap-session-42",
-            HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, sessionId = "open-session"),
-            nowEpochMs = 1_840L,
+            HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, monotonicMs = 100L, sessionId = "open-session"),
         )
 
         assertEquals("pocket_card", captured?.tags?.get("open.source"))
-        assertEquals(840L, captured?.extras?.get("tap_ms"))
+        assertEquals(356L, captured?.extras?.get("tap_ms"))
+    }
+
+    @Test
+    fun `times the tap on the monotonic clock, so a wall clock change cannot make it negative`() {
+        var captured: HostEvent? = null
+        val reporter = reporter(capture = HostEventCapture { captured = it() })
+        // The wall clock was set back after the tap, so its epoch reading is after now's.
+        val tap = HostPageOpen(
+            HostOpenSource.POCKET_CARD,
+            epochMs = System.currentTimeMillis() + 3_600_000L,
+            monotonicMs = 400L,
+            sessionId = "open-session",
+        )
+
+        reporter.report("bootstrap-session-42", tap)
+        assertEquals(56L, captured?.extras?.get("tap_ms"))
+
+        reporter.reportVisible("bootstrap-session-42", webViewCreatedAtMs = 420L, open = tap)
+        assertEquals(56L, captured?.extras?.get("tap_ms"))
+        assertEquals(36L, captured?.extras?.get("webview_ms"))
+    }
+
+    @Test
+    fun `leaves the tap time out rather than sending a negative or clamped one`() {
+        var captured: HostEvent? = null
+        val reporter = reporter(capture = HostEventCapture { captured = it() })
+
+        reporter.report(
+            "bootstrap-session-42",
+            HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, monotonicMs = 900L, sessionId = "open-session"),
+        )
+
+        assertEquals("pocket_card", captured?.tags?.get("open.source"))
+        assertFalse(captured?.extras.orEmpty().containsKey("tap_ms"))
     }
 
     @Test
@@ -77,12 +110,11 @@ class HostWebViewCreatedTelemetryTest {
         reporter.reportVisible(
             "bootstrap-session-42",
             webViewCreatedAtMs = 100L,
-            open = HostPageOpen(HostOpenSource.DEEPLINK, epochMs = 1_000L, sessionId = "open-session"),
-            nowEpochMs = 2_100L,
+            open = HostPageOpen(HostOpenSource.DEEPLINK, epochMs = 1_000L, monotonicMs = 6L, sessionId = "open-session"),
         )
 
         assertEquals("deeplink", captured?.tags?.get("open.source"))
-        assertEquals(1_100L, captured?.extras?.get("tap_ms"))
+        assertEquals(450L, captured?.extras?.get("tap_ms"))
         assertEquals(356L, captured?.extras?.get("webview_ms"))
     }
 

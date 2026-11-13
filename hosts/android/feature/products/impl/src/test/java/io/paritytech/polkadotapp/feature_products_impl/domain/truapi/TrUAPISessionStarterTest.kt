@@ -53,7 +53,7 @@ class TrUAPISessionStarterTest {
     private val visibleOpen = slot<HostPageOpen?>()
     private val origin = HostEventOrigin("debug", "gp", "1.2.3", "android", "15", 123L)
     private val events = mutableListOf<HostEvent>()
-    private val pageOpens = HostPageOpens({ origin }, { events += it() })
+    private val pageOpens = HostPageOpens({ origin }, { events += it() }, { NOW_MS })
     private val visibleListeners = mutableListOf<() -> Unit>()
     private val visibleReports = mutableListOf<Triple<String, Long, HostPageOpen?>>()
     private val webViewSetups = mutableListOf<(WebView) -> Unit>()
@@ -88,13 +88,13 @@ class TrUAPISessionStarterTest {
 
         invokeTelemetrySetupTwice()
 
-        verify(exactly = 1) { telemetry.report(any(), any(), any()) }
+        verify(exactly = 1) { telemetry.report(any(), any()) }
         assertEquals(installerSessionId.captured, reportedSessionId.captured)
     }
 
     @Test
     fun `the tap that asked for the page is handed to its bootstrap once`() = runBlocking<Unit> {
-        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = System.currentTimeMillis(), sessionId = "open-session")
+        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, monotonicMs = NOW_MS, sessionId = "open-session")
         pageOpens.hold(PRODUCT_ID.value, tap)
 
         repeat(2) {
@@ -107,7 +107,7 @@ class TrUAPISessionStarterTest {
 
     @Test
     fun `the session adopts the id minted at the tap and shows it to the product`() = runBlocking<Unit> {
-        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = System.currentTimeMillis(), sessionId = "open-session")
+        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, monotonicMs = NOW_MS, sessionId = "open-session")
         pageOpens.hold(PRODUCT_ID.value, tap)
 
         startPage()
@@ -128,7 +128,7 @@ class TrUAPISessionStarterTest {
 
     @Test
     fun `the page is reported visible once, with the open that asked for it`() = runBlocking<Unit> {
-        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = System.currentTimeMillis(), sessionId = "open-session")
+        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, monotonicMs = NOW_MS, sessionId = "open-session")
         pageOpens.hold(PRODUCT_ID.value, tap)
         startPage()
         yield()
@@ -195,10 +195,10 @@ class TrUAPISessionStarterTest {
         coEvery { provider.loadInitialContent() } just Runs
         every { provider.addOnPageCommitVisibleListener(capture(visibleListeners)) } just Runs
         every { telemetry.webViewCreatedAtMs() } returns CREATED_AT_MS
-        every { telemetry.reportVisible(any(), any(), captureNullable(visibleOpen), any()) } answers {
+        every { telemetry.reportVisible(any(), any(), captureNullable(visibleOpen)) } answers {
             visibleReports += Triple(firstArg(), secondArg(), visibleOpen.captured)
         }
-        every { telemetry.report(capture(reportedSessionId), any(), any()) } just Runs
+        every { telemetry.report(capture(reportedSessionId), any()) } just Runs
         coEvery { bridge.attach(any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
             arg<suspend (String) -> Unit>(7)("endpoint-bootstrap")
             Result.success(execution)
@@ -213,6 +213,7 @@ class TrUAPISessionStarterTest {
 
     private companion object {
         const val CREATED_AT_MS = 77L
+        const val NOW_MS = 10_000L
         const val PRODUCT_URL = "https://product.paseo/app"
         val PRODUCT_ID = ProductId.parse("product.paseo").getOrThrow()
     }

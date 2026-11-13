@@ -3,7 +3,6 @@ package io.paritytech.polkadotapp.feature_wallet_impl.domain.interactor
 import android.net.Uri
 import io.paritytech.polkadotapp.chains.multiNetwork.chain.model.withAmount
 import io.paritytech.polkadotapp.common.data.telemetry.HostOpenSource
-import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpen
 import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpens
 import io.paritytech.polkadotapp.common.utils.filterResultSuccess
 import io.paritytech.polkadotapp.common.utils.logFailure
@@ -59,7 +58,7 @@ class PocketInteractor @Inject constructor(
     fun observeProductCards(): Flow<List<PocketCard>> = pocketCollection.observeCards()
 
     fun cardTapped(key: PocketCardKey) =
-        pageOpens.hold(key.productId.value, HostPageOpen.now(HostOpenSource.POCKET_CARD))
+        pageOpens.hold(key.productId.value, pageOpens.ask(HostOpenSource.POCKET_CARD))
 
     fun openReused(key: PocketCardKey) = pageOpens.reuse(key.productId.value)
 

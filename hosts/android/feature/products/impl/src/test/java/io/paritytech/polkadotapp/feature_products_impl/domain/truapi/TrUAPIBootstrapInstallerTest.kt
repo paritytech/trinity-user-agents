@@ -145,7 +145,7 @@ class TrUAPIBootstrapInstallerTest {
         val tapped = hostTelemetryScript(
             context = context,
             hostSessionId = "page-session",
-            open = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_793_880_000_000L, sessionId = "open-session"),
+            open = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_793_880_000_000L, monotonicMs = 5_000L, sessionId = "open-session"),
         )
         val untapped = hostTelemetryScript(context = context, hostSessionId = "page-session")
 

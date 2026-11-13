@@ -13,37 +13,39 @@ enum class HostOpenSource(val tag: String) {
 }
 
 /**
- * One ask to open a product page. [epochMs] is read where the user asked, before any hop.
- * [sessionId] is minted with it: the host session that takes this ask adopts it.
+ * One ask to open a product page, read where the user asked, before any hop. [monotonicMs] times the load,
+ * since a wall clock can jump; [epochMs] is only what the page is told. [sessionId] is minted with it: the
+ * host session that takes this ask adopts it.
  */
 data class HostPageOpen(
     val source: HostOpenSource,
     val epochMs: Long,
+    val monotonicMs: Long,
     val sessionId: String,
-) {
-    companion object {
-        fun now(source: HostOpenSource) =
-            HostPageOpen(source, System.currentTimeMillis(), UUID.randomUUID().toString())
-    }
-}
+)
 
 @Singleton
 class HostPageOpens @Inject constructor(
     private val originProvider: HostEventOriginProvider,
     private val capture: HostEventCapture,
+    private val clock: HostMonotonicTimeProvider,
 ) {
     private class Held(val productId: String, val open: HostPageOpen)
 
     private val held = AtomicReference<Held?>(null)
 
+    /** A new ask, read now. */
+    fun ask(source: HostOpenSource) =
+        HostPageOpen(source, System.currentTimeMillis(), clock.nowMillis(), UUID.randomUUID().toString())
+
     fun hold(productId: String, open: HostPageOpen) {
         held.getAndSet(Held(productId, open))?.let { report(it.open, reused = false) }
     }
 
-    fun take(productId: String, nowEpochMs: Long = System.currentTimeMillis()): HostPageOpen? {
+    fun take(productId: String): HostPageOpen? {
         val open = settle(productId) ?: return null
         report(open, reused = false)
-        return open.takeIf { nowEpochMs - it.epochMs in 0..MAX_AGE_MS }
+        return open.takeIf { clock.nowMillis() - it.monotonicMs in 0..MAX_AGE_MS }
     }
 
     fun reuse(productId: String) {

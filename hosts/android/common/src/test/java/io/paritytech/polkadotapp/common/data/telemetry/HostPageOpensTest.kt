@@ -8,9 +8,10 @@ import org.junit.Test
 class HostPageOpensTest {
     private val origin = HostEventOrigin("debug", "gp", "1.2.3", "android", "15", 123L)
     private val events = mutableListOf<HostEvent>()
-    private val opens = HostPageOpens({ origin }, { events += it() })
-    private val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, sessionId = "tap-session")
-    private val link = HostPageOpen(HostOpenSource.DEEPLINK, epochMs = 1_500L, sessionId = "link-session")
+    private var nowMs = 2_000L
+    private val opens = HostPageOpens({ origin }, { events += it() }, { nowMs })
+    private val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, monotonicMs = 1_000L, sessionId = "tap-session")
+    private val link = HostPageOpen(HostOpenSource.DEEPLINK, epochMs = 1_500L, monotonicMs = 1_500L, sessionId = "link-session")
 
     @Test
     fun `an open is not reported until something settles it`() {
@@ -23,7 +24,7 @@ class HostPageOpensTest {
     fun `a session taking an open reports it as a fresh open with the id minted at the tap`() {
         opens.hold("loyalty.dot", tap)
 
-        assertEquals(tap, opens.take("loyalty.dot", nowEpochMs = 2_000L))
+        assertEquals(tap, opens.take("loyalty.dot"))
 
         assertEquals(
             HostEvent(
@@ -52,7 +53,7 @@ class HostPageOpensTest {
 
         assertEquals("deeplink", events.single().tags["open.source"])
         assertEquals("true", events.single().tags["open.reused"])
-        assertNull(opens.take("loyalty.dot", nowEpochMs = 2_000L))
+        assertNull(opens.take("loyalty.dot"))
         assertEquals(1, events.size)
     }
 
@@ -63,7 +64,7 @@ class HostPageOpensTest {
         opens.giveUp("loyalty.dot")
 
         assertEquals("false", events.single().tags["open.reused"])
-        assertNull(opens.take("loyalty.dot", nowEpochMs = 2_000L))
+        assertNull(opens.take("loyalty.dot"))
         assertEquals(1, events.size)
     }
 
@@ -71,13 +72,13 @@ class HostPageOpensTest {
     fun `an open is settled only for the product it was held for`() {
         opens.hold("loyalty.dot", tap)
 
-        assertNull(opens.take("other.dot", nowEpochMs = 2_000L))
+        assertNull(opens.take("other.dot"))
         opens.reuse("other.dot")
         opens.giveUp("other.dot")
 
         assertEquals(emptyList<HostEvent>(), events)
-        assertEquals(tap, opens.take("loyalty.dot", nowEpochMs = 2_000L))
-        assertNull(opens.take("loyalty.dot", nowEpochMs = 2_000L))
+        assertEquals(tap, opens.take("loyalty.dot"))
+        assertNull(opens.take("loyalty.dot"))
     }
 
     @Test
@@ -87,28 +88,41 @@ class HostPageOpensTest {
 
         assertEquals("tap-session", events.single().tags["host.session_id"])
         assertEquals("false", events.single().tags["open.reused"])
-        assertEquals(link, opens.take("loyalty.dot", nowEpochMs = 2_000L))
+        assertEquals(link, opens.take("loyalty.dot"))
     }
 
     @Test
     fun `an open no session took in time is reported but not handed to the session`() {
         opens.hold("loyalty.dot", tap)
 
-        assertNull(opens.take("loyalty.dot", nowEpochMs = 1_000L + HostPageOpens.MAX_AGE_MS + 1))
+        nowMs = 1_000L + HostPageOpens.MAX_AGE_MS + 1
+        assertNull(opens.take("loyalty.dot"))
 
         assertEquals("tap-session", events.single().tags["host.session_id"])
     }
 
     @Test
-    fun `each open mints its own lowercase uuid v4 and reads the clock where it was asked for`() {
+    fun `an open's age is read on the monotonic clock, so a wall clock set back does not make it new`() {
+        // Asked an hour of wall time "in the future": the phone's clock was then set back.
+        opens.hold("loyalty.dot", tap.copy(epochMs = 3_600_000L))
+        nowMs = tap.monotonicMs + HostPageOpens.MAX_AGE_MS + 1
+
+        assertNull(opens.take("loyalty.dot"))
+    }
+
+    @Test
+    fun `each open mints its own lowercase uuid v4 and reads both clocks where it was asked for`() {
+        nowMs = 4_242L
         val before = System.currentTimeMillis()
-        val asks = List(2) { HostPageOpen.now(HostOpenSource.POCKET_CARD) }
+        val asks = List(2) { opens.ask(HostOpenSource.POCKET_CARD) }
         val after = System.currentTimeMillis()
 
         assertEquals(2, asks.map { it.sessionId }.toSet().size)
         asks.forEach {
             assertTrue(Regex("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}").matches(it.sessionId))
             assertTrue(it.epochMs in before..after)
+            assertEquals(4_242L, it.monotonicMs)
+            assertEquals(HostOpenSource.POCKET_CARD, it.source)
         }
     }
 }

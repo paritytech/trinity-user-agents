@@ -18,7 +18,7 @@ class HostWebViewCreatedTelemetry @Inject internal constructor(
     private val capture: HostEventCapture,
 ) {
     /** [open] is the tap or link that asked for the page, if any: its source is tagged and its age reported. */
-    fun report(sessionId: String, open: HostPageOpen? = null, nowEpochMs: Long = System.currentTimeMillis()) {
+    fun report(sessionId: String, open: HostPageOpen? = null) {
         runCatching {
             capture.capture {
                 originProvider.current().webViewCreated(
@@ -26,7 +26,6 @@ class HostWebViewCreatedTelemetry @Inject internal constructor(
                     hostVersion = truapiHostVersion(),
                     monotonicMs = timeProvider.nowMillis(),
                     open = open,
-                    nowEpochMs = nowEpochMs,
                 )
             }
         }.logFailure("Failed to capture native host WebView event")
@@ -40,15 +39,15 @@ class HostWebViewCreatedTelemetry @Inject internal constructor(
         sessionId: String,
         webViewCreatedAtMs: Long,
         open: HostPageOpen? = null,
-        nowEpochMs: Long = System.currentTimeMillis(),
     ) {
         runCatching {
             capture.capture {
+                val nowMs = timeProvider.nowMillis()
                 originProvider.current().pageVisible(
                     sessionId = sessionId,
-                    webViewMs = timeProvider.nowMillis() - webViewCreatedAtMs,
+                    webViewMs = nowMs - webViewCreatedAtMs,
                     open = open,
-                    nowEpochMs = nowEpochMs,
+                    monotonicMs = nowMs,
                 )
             }
         }.logFailure("Failed to capture native host page visible event")
@@ -65,13 +64,12 @@ private fun HostEventOrigin.webViewCreated(
     hostVersion: String,
     monotonicMs: Long,
     open: HostPageOpen?,
-    nowEpochMs: Long,
 ) = HostEvent(
     name = HostWebViewCreatedTelemetry.EVENT_NAME,
     tags = baseTags() + mapOf("truapi.host_version" to hostVersion, "host.session_id" to sessionId) +
         listOfNotNull(open?.let { "open.source" to it.source.tag }),
     extras = baseExtras() + mapOf("event.monotonic_ms" to monotonicMs) +
-        listOfNotNull(open?.let { "tap_ms" to nowEpochMs - it.epochMs }),
+        listOfNotNull(open?.tapMs(monotonicMs)),
     isFailure = false,
 )
 
@@ -79,12 +77,17 @@ private fun HostEventOrigin.pageVisible(
     sessionId: String,
     webViewMs: Long,
     open: HostPageOpen?,
-    nowEpochMs: Long,
+    monotonicMs: Long,
 ) = HostEvent(
     name = HostWebViewCreatedTelemetry.VISIBLE_EVENT_NAME,
     tags = baseTags() + mapOf("host.session_id" to sessionId) +
         listOfNotNull(open?.let { "open.source" to it.source.tag }),
     extras = baseExtras() + mapOf("webview_ms" to webViewMs) +
-        listOfNotNull(open?.let { "tap_ms" to nowEpochMs - it.epochMs }),
+        listOfNotNull(open?.tapMs(monotonicMs)),
     isFailure = false,
 )
+
+// Both readings are the monotonic clock, so a wall clock change cannot move the gap. A negative gap would be
+// a bug, and is left out rather than sent as a clamped zero that reads as the fastest possible open.
+private fun HostPageOpen.tapMs(monotonicMs: Long) =
+    (monotonicMs - this.monotonicMs).takeIf { it >= 0 }?.let { "tap_ms" to it }
