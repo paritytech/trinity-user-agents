@@ -54,7 +54,7 @@ fn keeps_auto_signing(authority: &SigningHostRole, product_id: &str) -> bool {
 fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
 	let platform =
 		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
-	let (services, authority) = signing_runtime_on_asset_hub(platform, None);
+	let (services, authority) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
 	let authority_session = authority.accounts().current_session().unwrap();
 	let revision = grant_revision(authority.accounts());
@@ -94,7 +94,7 @@ fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
 fn a_product_reset_leaves_another_products_kept_key_signing() {
 	let platform =
 		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
-	let (services, authority) = signing_runtime_on_asset_hub(platform, None);
+	let (services, authority) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
 	let products =
 		["myapp.dot", "other.dot"].map(|product| ProductContext::new(ProductId::for_test(product)));
@@ -137,7 +137,7 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
 		resource_allocation_confirmation_gate: std::sync::Mutex::new(Some(gate)),
 		..StubPlatform::default()
 	});
-	let (services, authority) = signing_runtime_on_asset_hub(platform.clone(), None);
+	let (services, authority) = signing_runtime_on_asset_hub(platform.clone(), crate::test_support::UNSERVED_GENESIS);
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
 	let runtime = product_runtime_for(services, authority.clone(), PRODUCT_ID);
 	let cx = CallContext::default();
@@ -338,7 +338,7 @@ fn submit_answered(
 			.collect(),
 		..Default::default()
 	});
-	let (services, signing_host) = signing_runtime_on_asset_hub(platform, None);
+	let (services, signing_host) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	remember(&signing_host, PRODUCT_ID, PERIOD);

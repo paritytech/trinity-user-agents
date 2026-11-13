@@ -132,7 +132,7 @@ pub const ENTROPY: [u8; 16] = [0xAB; 16];
 /// up no username on the scripted chain.
 pub fn signing_runtime_on_asset_hub(
 	platform: Arc<dyn Platform>,
-	asset_hub_chain_genesis_hash: Option<[u8; 32]>,
+	asset_hub_chain_genesis_hash: [u8; 32],
 ) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
 	let config = crate::platform::SigningHostConfig::new(
 		crate::platform::HostInfo {
@@ -157,7 +157,7 @@ pub fn signing_runtime_on_asset_hub(
 
 /// A signing host whose wallet is active under [`ENTROPY`].
 pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
-	let (_services, signing_host) = signing_runtime_on_asset_hub(platform, None);
+	let (_services, signing_host) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	signing_host
@@ -701,7 +701,7 @@ fn a_cache_entry_stamped_in_the_future_is_not_honoured() {
 #[test]
 fn a_cached_grant_stops_being_honoured_once_it_expires() {
 	// The lifetime is the revocation bound. Past it the entry is ignored,
-	// and with no Asset Hub to re-read from the grant is gone.
+	// and the stub serves no chain to re-read it from, so the grant is gone.
 	let platform = stub_platform();
 	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["storage"]}"#, MANIFEST_TTL_SECS + 1);
 	seed_owner_value(&platform, "wallet.dot");
@@ -7764,7 +7764,11 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
 /// to say why.
 #[test]
 fn a_manifest_refusal_tells_the_host_what_it_judged_by() {
-	let host = dim2_with_a_pairing_session(stub_platform(), None);
+	let platform = Arc::new(StubPlatform {
+		chain_connect_error: Some("fixture serves no chain"),
+		..StubPlatform::default()
+	});
+	let host = dim2_with_a_pairing_session(platform);
 	let cx = CallContext::default();
 	let mut refusals = None;
 	let lines = crate::logging::testing::host_sink_lines(|| {
@@ -7779,7 +7783,13 @@ fn a_manifest_refusal_tells_the_host_what_it_judged_by() {
 			.err(),
 		));
 	});
-	let line = manifest_refusal_line("manifest unavailable", "no Asset Hub");
+	let reason = "Asset Hub follow stopped before initialization";
+	let lookup_failed = format!(
+		"truapi.tracing.warn truapi::runtime::product_manifest: root manifest lookup failed \
+		 {{target=peopl.dot, reason={reason}}}"
+	);
+	let refusal =
+		manifest_refusal_line("manifest unavailable", &format!("dotNS lookup failed: {reason}"));
 	assert_eq!(
 		(refusals, lines),
 		(
@@ -7791,7 +7801,7 @@ fn a_manifest_refusal_tells_the_host_what_it_judged_by() {
 					v01::HostAccountRingVrfSignError::NotAllowlisted
 				))),
 			)),
-			vec![line.clone(), line],
+			vec![lookup_failed.clone(), refusal.clone(), lookup_failed, refusal],
 		)
 	);
 }
@@ -7804,7 +7814,7 @@ fn a_manifest_lookup_past_its_deadline_tells_the_host_it_timed_out() {
 	let proof_and_signature_lines = |cx: CallContext| {
 		let platform =
 			Arc::new(StubPlatform { chain_connect_pending: true, ..StubPlatform::default() });
-		let host = dim2_with_a_pairing_session(platform, Some([0xcc; 32]));
+		let host = dim2_with_a_pairing_session(platform);
 		crate::logging::testing::host_sink_lines(|| {
 			let _ = futures::executor::block_on(
 				host.create_account_proof(&cx, create_proof_request("peopl.dot")),
@@ -7833,7 +7843,7 @@ fn a_manifest_lookup_past_its_deadline_tells_the_host_it_timed_out() {
 fn a_refusal_past_the_key_check_is_warned_once() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "peopl.dot", r#"{"dim2":["context"]}"#, 0);
-	let host = dim2_with_a_pairing_session(platform, None);
+	let host = dim2_with_a_pairing_session(platform);
 	let HostAccountCreateProofRequest::V1(mut request) = create_proof_request("peopl.dot");
 	request.context.product_id = ProductId::for_test("dim2.paseo");
 	let lines = crate::logging::testing::host_sink_lines(|| {
@@ -7852,22 +7862,15 @@ fn a_refusal_past_the_key_check_is_warned_once() {
 	);
 }
 
-/// `dim2.dot` with a live pairing session, resolving manifests against
-/// `asset_hub`.
+/// `dim2.dot` with a live pairing session.
 fn dim2_with_a_pairing_session(
 	platform: Arc<StubPlatform>,
-	asset_hub: Option<[u8; 32]>,
 ) -> ProductRuntimeHost<RemoteAccountHolder> {
 	let (host_config, product) = runtime_config("dim2.dot");
 	let services = RuntimeServices::new(
 		platform,
 		host_config.host.host_info.clone(),
-		crate::test_support::test_stack(
-			"paseo",
-			host_config.stack.chains().people,
-			host_config.stack.chains().bulletin,
-			asset_hub,
-		),
+		host_config.stack.clone(),
 		Spawner::for_test(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);

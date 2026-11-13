@@ -703,7 +703,7 @@ impl SsoRequestService {
 			let selection = self.selection.lock().expect("session selection mutex poisoned");
 			(self.session_state.current()?, selection.session_epoch)
 		};
-		if current.has_username() || self.host_config.stack.chains().asset_hub.is_none() {
+		if current.has_username() {
 			return Some(authority_session(&current));
 		}
 

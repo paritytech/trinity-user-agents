@@ -124,10 +124,10 @@ impl RingResolver for StubRingResolver {
 #[test]
 fn the_signing_role_adjudicates_grants_against_the_asset_hub_it_installed() {
 	let (services, _authority) =
-		signing_runtime_on_asset_hub(Arc::new(StubPlatform::default()), Some([0xcc; 32]));
+		signing_runtime_on_asset_hub(Arc::new(StubPlatform::default()), [0xcc; 32]);
 	assert_eq!(
 		services.asset_hub_chain_genesis_hash(),
-		Some([0xcc; 32]),
+		[0xcc; 32],
 		"#660 must install the config's Asset Hub, or #655 resolves no manifest here"
 	);
 
@@ -160,11 +160,12 @@ fn signing_runtime() -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
 	signing_runtime_with_platform(platform)
 }
 
-/// No dotNS Asset Hub, so activation looks up no username on the scripted chain.
+/// Its Asset Hub is out of reach, so activation looks up no username on the
+/// scripted chain.
 fn signing_runtime_with_platform(
 	platform: Arc<dyn Platform>,
 ) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
-	signing_runtime_on_asset_hub(platform, None)
+	signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS)
 }
 
 fn product_runtime(
@@ -1506,8 +1507,8 @@ fn a_grant_is_refused_when_the_stored_decision_cannot_be_read() {
 ///
 /// Every other grant test here seeds the manifest cache, and `root_manifest`
 /// serves that before it consults the genesis hash, so the whole suite
-/// passes on a role with no Asset Hub, and deleting the production install
-/// would not turn any of it red. That is the blind spot #660 survived in.
+/// passes without ever dialling Asset Hub, and deleting the production
+/// install would not turn any of it red. That is the blind spot #660 survived in.
 /// This is the one case that takes the other branch: it asserts the dial
 /// itself, so removing the install breaks it rather than going unnoticed.
 ///
@@ -2597,7 +2598,7 @@ fn a_pgas_request_waits_on_the_asset_hub_connection() {
 		resource_allocation_confirmed: true,
 		..StubPlatform::default()
 	});
-	let (_services, authority) = signing_runtime_on_asset_hub(platform, Some([0xcc; 32]));
+	let (_services, authority) = signing_runtime_on_asset_hub(platform, [0xcc; 32]);
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation");
 	let session = authority.accounts().current_session().expect("connected");

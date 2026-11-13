@@ -27,7 +27,7 @@ pub fn unlocked_wallet(
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		test_stack(network_suffix, [0; 32], [0; 32], None),
+		test_stack(network_suffix, [0; 32], [0; 32], [0xcc; 32]),
 		Spawner::for_test(),
 	);
 	let registry = RingVrfRegistryStore::new(services.platform.clone());

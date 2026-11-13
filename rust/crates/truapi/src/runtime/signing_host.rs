@@ -129,12 +129,7 @@ impl SigningHost {
 				version: None,
 				platform: truapi::latest::HostPlatform::Unknown,
 			},
-			crate::test_support::test_stack(
-				TEST_NETWORK_SUFFIX,
-				[0; 32],
-				[0xbb; 32],
-				Some([0xcc; 32]),
-			),
+			crate::test_support::test_stack(TEST_NETWORK_SUFFIX, [0; 32], [0xbb; 32], [0xcc; 32]),
 			crate::Spawner::for_test(),
 		);
 		Self::with_ring_resolver(services, ring_resolver)
