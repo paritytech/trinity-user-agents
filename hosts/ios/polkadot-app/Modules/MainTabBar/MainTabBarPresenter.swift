@@ -65,16 +65,9 @@ extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
         case let .presentationRequested(entry):
             wireframe.presentFunding(entry)
         case let .frameRequested(request):
-            showWhenOnScreen(request, show: { [interactor] in interactor.openProviderFrame(request) }, dismissed: {})
-        case let .frameOpened(frame):
-            // The core presents a provider's screen without asking first, so
-            // one for a session the user is not looking at waits behind the
-            // notice, and is answered dismissed when the notice is closed.
-            showWhenOnScreen(
-                FundingFrameRequest(entryId: frame.entryId, providerId: frame.providerId),
-                show: { [wireframe] in wireframe.presentProviderFrame(frame) },
-                dismissed: { [interactor] in interactor.answer(frame: frame.id, with: .dismissed) }
-            )
+            openWhenOnScreen(request)
+        case let .presentFrame(frame):
+            wireframe.presentProviderFrame(frame)
         case let .frameClosed(entryId):
             wireframe.closeProviderFrames(entryId: entryId)
         case let .providerNotWorking(providerId):
@@ -135,17 +128,16 @@ extension MainTabBarPresenter: MainTabBarInteractorOutputProtocol {
 }
 
 private extension MainTabBarPresenter {
-    /// Shows a provider's screen at once while its session is on screen, and
-    /// otherwise after the user taps the notice about it.
-    func showWhenOnScreen(
-        _ request: FundingFrameRequest,
-        show: @escaping () -> Void,
-        dismissed: @escaping () -> Void
-    ) {
+    /// Opens the screen a provider asked for at once while its session is on
+    /// screen, and otherwise after the user taps the notice about it. A
+    /// closed notice leaves the screen waiting in the core.
+    func openWhenOnScreen(_ request: FundingFrameRequest) {
         if wireframe.isShowingFunding(entryId: request.entryId) {
-            show()
+            interactor.openProviderFrame(request)
         } else {
-            wireframe.showProviderFrameNotice(for: request, onShow: show, onDismiss: dismissed)
+            wireframe.showProviderFrameNotice(for: request) { [interactor] in
+                interactor.openProviderFrame(request)
+            }
         }
     }
 }

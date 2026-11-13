@@ -1,5 +1,4 @@
 import struct TrUAPIHost.ProductId
-import enum TrUAPIHost.FundingFrameOutcome
 import UIKit
 import PolkadotUI
 import UIKitExt
@@ -30,7 +29,6 @@ protocol MainTabBarInteractorInputProtocol: AnyObject {
     func setup()
     /// Lets the core present the provider's screen `request` asked for.
     func openProviderFrame(_ request: FundingFrameRequest)
-    func answer(frame: FundingFrame.ID, with outcome: FundingFrameOutcome)
 }
 
 @MainActor
@@ -65,11 +63,7 @@ protocol MainTabBarWireframeProtocol: AnyObject {
     func isShowingFunding(entryId: String) -> Bool
     func presentProviderFrame(_ frame: FundingFrame)
     func closeProviderFrames(entryId: String)
-    func showProviderFrameNotice(
-        for request: FundingFrameRequest,
-        onShow: @escaping () -> Void,
-        onDismiss: @escaping () -> Void
-    )
+    func showProviderFrameNotice(for request: FundingFrameRequest, onShow: @escaping () -> Void)
     func showProviderNotWorking(_ providerId: ProductId)
     func showBackupSettings(from view: MainTabBarViewProtocol?)
 }

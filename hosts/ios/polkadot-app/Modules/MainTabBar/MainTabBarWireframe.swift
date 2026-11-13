@@ -134,12 +134,8 @@ extension MainTabBarWireframe {
         funding?.closeFrames(entryId: entryId)
     }
 
-    func showProviderFrameNotice(
-        for request: FundingFrameRequest,
-        onShow: @escaping () -> Void,
-        onDismiss: @escaping () -> Void
-    ) {
-        funding?.showFrameNotice(for: request, onShow: onShow, onDismiss: onDismiss)
+    func showProviderFrameNotice(for request: FundingFrameRequest, onShow: @escaping () -> Void) {
+        funding?.showFrameNotice(for: request, onShow: onShow)
     }
 
     func showProviderNotWorking(_ providerId: ProductId) {

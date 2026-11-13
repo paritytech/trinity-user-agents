@@ -10,9 +10,8 @@ final class FundingScreens {
     private let frames: FundingFramePresenter
     private let notice: FundingFrameNoticePresenting
     private let environment: FundingOverlayEnvironment
-    /// The session whose provider's notice is on screen, and how to answer
-    /// the provider when the notice goes unanswered.
-    private var pendingNotice: (entryId: String, dismiss: () -> Void)?
+    /// The session whose provider's notice is on screen.
+    private var noticeEntryId: String?
 
     init(
         service: FundingServiceProtocol,
@@ -41,8 +40,8 @@ final class FundingScreens {
     /// Takes down the provider's screens for session `entryId`, or its notice,
     /// and shows the session in their place when a screen was up.
     func closeFrames(entryId: String) {
-        if pendingNotice?.entryId == entryId {
-            pendingNotice = nil
+        if noticeEntryId == entryId {
+            noticeEntryId = nil
             notice.hide()
         }
         frames.close(entryId: entryId) { [router] in
@@ -50,28 +49,20 @@ final class FundingScreens {
         }
     }
 
-    /// Tells the user the provider of `request` wants to show a screen. A
-    /// notice already up is replaced, and its provider answered as dismissed.
-    func showFrameNotice(
-        for request: FundingFrameRequest,
-        onShow: @escaping () -> Void,
-        onDismiss: @escaping () -> Void
-    ) {
+    /// Tells the user the provider of `request` wants to show a screen, in
+    /// place of any notice already up. The screen keeps waiting in the core
+    /// when the notice is closed.
+    func showFrameNotice(for request: FundingFrameRequest, onShow: @escaping () -> Void) {
         Task {
             let brand = await environment.branding.brand(for: request.providerId)
-            let replaced = pendingNotice
-            pendingNotice = (request.entryId, onDismiss)
-            replaced?.dismiss()
+            noticeEntryId = request.entryId
             notice.show(
                 brand: brand,
                 onShow: { [weak self] in
-                    self?.pendingNotice = nil
+                    self?.noticeEntryId = nil
                     onShow()
                 },
-                onDismiss: { [weak self] in
-                    self?.pendingNotice = nil
-                    onDismiss()
-                }
+                onDismiss: { [weak self] in self?.noticeEntryId = nil }
             )
         }
     }

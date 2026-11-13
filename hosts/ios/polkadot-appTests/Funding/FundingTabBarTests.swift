@@ -6,53 +6,40 @@ import TrUAPIHost
 private let provider = try! ProductId("provider.dot")
 
 /// The main tab bar shows what the core asks of the app's screens: a
-/// provider's screen at once while its session is on screen, and behind a
-/// notice otherwise.
+/// provider's screen opens at once while its session is on screen, and after
+/// a tap on a notice otherwise.
 @MainActor
 struct FundingTabBarTests {
     @Test
-    func aFrameForTheSessionOnScreenIsShownAtOnce() {
+    func anAskForTheSessionOnScreenOpensAtOnce() {
         let (presenter, wireframe, interactor) = makePresenter(showing: ["intent"])
 
-        presenter.didReceive(fundingEvent: .frameOpened(frame("intent")))
+        presenter.didReceive(fundingEvent: .frameRequested(request("intent")))
+
+        #expect(interactor.opened == [request("intent")])
+        #expect(wireframe.notices.isEmpty)
+    }
+
+    @Test
+    func anAskForASessionOffScreenOpensFromTheNotice() throws {
+        let (presenter, wireframe, interactor) = makePresenter(showing: [])
+
+        presenter.didReceive(fundingEvent: .frameRequested(request("intent")))
+        #expect(interactor.opened.isEmpty)
+
+        let show = try #require(wireframe.notices.first)
+        show()
+        #expect(interactor.opened == [request("intent")])
+    }
+
+    @Test
+    func anOpenedScreenIsShown() {
+        let (presenter, wireframe, _) = makePresenter(showing: [])
+
+        presenter.didReceive(fundingEvent: .presentFrame(frame("intent")))
 
         #expect(wireframe.presentedFrames == ["intent"])
         #expect(wireframe.notices.isEmpty)
-        #expect(interactor.answered.isEmpty)
-    }
-
-    @Test
-    func aFrameForASessionOffScreenWaitsForTheNotice() throws {
-        let (presenter, wireframe, _) = makePresenter(showing: [])
-
-        presenter.didReceive(fundingEvent: .frameOpened(frame("intent")))
-        #expect(wireframe.presentedFrames.isEmpty)
-
-        try #require(wireframe.notices.first).onShow()
-        #expect(wireframe.presentedFrames == ["intent"])
-    }
-
-    @Test
-    func closingTheNoticeAnswersTheFrameDismissed() throws {
-        let (presenter, wireframe, interactor) = makePresenter(showing: [])
-
-        presenter.didReceive(fundingEvent: .frameOpened(frame("intent")))
-        try #require(wireframe.notices.first).onDismiss()
-
-        #expect(wireframe.presentedFrames.isEmpty)
-        #expect(interactor.answered == [.dismissed])
-    }
-
-    @Test
-    func anAskedForFrameOpensThroughTheService() throws {
-        let (presenter, wireframe, interactor) = makePresenter(showing: [])
-        let request = FundingFrameRequest(entryId: "intent", providerId: provider)
-
-        presenter.didReceive(fundingEvent: .frameRequested(request))
-        #expect(interactor.opened.isEmpty)
-
-        try #require(wireframe.notices.first).onShow()
-        #expect(interactor.opened == [request])
     }
 
     @Test
@@ -80,6 +67,10 @@ struct FundingTabBarTests {
         return (presenter, wireframe, interactor)
     }
 
+    private func request(_ entryId: String) -> FundingFrameRequest {
+        FundingFrameRequest(entryId: entryId, providerId: provider)
+    }
+
     private func frame(_ entryId: String) -> FundingFrame {
         FundingFrame(
             id: UUID(),
@@ -93,29 +84,20 @@ struct FundingTabBarTests {
 
 private final class FundingInteractorSpy: MainTabBarInteractorInputProtocol {
     private(set) var opened: [FundingFrameRequest] = []
-    private(set) var answered: [FundingFrameOutcome] = []
 
     func setup() {}
 
     func openProviderFrame(_ request: FundingFrameRequest) {
         opened.append(request)
     }
-
-    func answer(frame _: FundingFrame.ID, with outcome: FundingFrameOutcome) {
-        answered.append(outcome)
-    }
 }
 
 @MainActor
 private final class FundingWireframeSpy: MainTabBarWireframeProtocol {
-    struct Notice {
-        let onShow: () -> Void
-        let onDismiss: () -> Void
-    }
-
     private let showing: Set<String>
     private(set) var presentedFrames: [String] = []
-    private(set) var notices: [Notice] = []
+    /// What each notice's Show does.
+    private(set) var notices: [() -> Void] = []
 
     init(showing: Set<String>) {
         self.showing = showing
@@ -129,12 +111,8 @@ private final class FundingWireframeSpy: MainTabBarWireframeProtocol {
         presentedFrames.append(frame.entryId)
     }
 
-    func showProviderFrameNotice(
-        for _: FundingFrameRequest,
-        onShow: @escaping () -> Void,
-        onDismiss: @escaping () -> Void
-    ) {
-        notices.append(Notice(onShow: onShow, onDismiss: onDismiss))
+    func showProviderFrameNotice(for _: FundingFrameRequest, onShow: @escaping () -> Void) {
+        notices.append(onShow)
     }
 
     func showPolkadotSignIn(with _: URL, view _: MainTabBarViewProtocol?) {}
@@ -147,4 +125,5 @@ private final class FundingWireframeSpy: MainTabBarWireframeProtocol {
     func presentFunding(_: FundingEntry) {}
     func closeProviderFrames(entryId _: String) {}
     func showProviderNotWorking(_: ProductId) {}
+    func showBackupSettings(from _: MainTabBarViewProtocol?) {}
 }

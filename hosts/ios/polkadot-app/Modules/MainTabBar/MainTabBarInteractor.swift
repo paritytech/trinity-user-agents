@@ -89,10 +89,6 @@ extension MainTabBarInteractor: MainTabBarInteractorInputProtocol {
     func openProviderFrame(_ request: FundingFrameRequest) {
         fundingService.withLock { $0 }?.openProviderFrame(request)
     }
-
-    func answer(frame: FundingFrame.ID, with outcome: FundingFrameOutcome) {
-        fundingService.withLock { $0 }?.answer(frame: frame, with: outcome)
-    }
 }
 
 private extension MainTabBarInteractor {
@@ -106,6 +102,11 @@ private extension MainTabBarInteractor {
             for await service in fundingServiceProvider.builtFundingService() {
                 self?.fundingService.withLock { $0 = service }
                 await self?.presenter?.didReceive(fundingService: service)
+                // Screens providers asked for before the tab bar was drawn
+                // get their notice again.
+                for request in service.waitingFrames() {
+                    await self?.presenter?.didReceive(fundingEvent: .frameRequested(request))
+                }
                 do {
                     for try await event in service.events {
                         await self?.presenter?.didReceive(fundingEvent: event)
