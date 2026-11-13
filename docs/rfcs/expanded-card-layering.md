@@ -76,77 +76,10 @@ the face.
 `set_face_shown(true)` sends touches over the face back to the face. Neither call moves the face or resizes the page. A
 card definition's `faceShown` sets whether the face starts covered, with `false` meaning covered. Covering applies to
 the card whichever side is up, and turning the card keeps it covered or uncovered. Gestures that move the card, such as
-pulling it down to close it, start only while the face is uncovered, so they never take a stroke the page draws over the
-face. A covered page is still never a trap: the host keeps a way to leave the card, such as its back navigation.
+pulling it down to close it, start only while the face is uncovered. A covered page is still never a trap: the host keeps a way to leave the card, such as its back navigation or tab bar.
 
 `UserMoving` means the user is moving the card, such as pulling it down to close it, and the request has no effect.
-`NotPresented` keeps its meaning. Trait id `23`, method `0`, and the request, response and error types are unchanged;
-only their documented meaning changes.
-
-```rust
-/// The card a Widget is shown under.
-///
-/// Only a Widget execution may call it.
-#[wire_trait(id = 23)]
-#[crate::service(required_execution = Widget)]
-#[async_trait::async_trait]
-pub trait ExpandedCard: Send + Sync {
-    /// Cover the face under the calling Widget, or uncover it.
-    ///
-    /// A covered face stays drawn where it is and touches over it go to the
-    /// Widget; an uncovered face takes its own touches. Neither state moves the
-    /// face or resizes the Widget. Succeeds when the face is already in that
-    /// state. Fails with `NotPresented` when the Widget is not shown under its
-    /// card, and `UserMoving` while the user moves or turns the card.
-    #[wire(id = 0)]
-    async fn set_face_shown(
-        &self,
-        _cx: &CallContext,
-        _request: HostExpandedCardSetFaceShownRequest,
-    ) -> Result<HostExpandedCardSetFaceShownResponse, CallError<HostExpandedCardSetFaceShownError>>
-    {
-        Err(CallError::unavailable())
-    }
-
-    /// Turn the card under the calling Widget so its back or its front is up.
-    ///
-    /// Succeeds when that side is already up. Fails with `NotPresented` when
-    /// the Widget is not shown under its card, `UserMoving` while the user moves
-    /// or turns the card, `NoBack` when the card has no back to show right now,
-    /// and `Unsupported` on a host that cannot turn cards.
-    #[wire(id = 1)]
-    async fn set_back_shown(
-        &self,
-        _cx: &CallContext,
-        _request: HostExpandedCardSetBackShownRequest,
-    ) -> Result<HostExpandedCardSetBackShownResponse, CallError<HostExpandedCardSetBackShownError>>
-    {
-        Err(CallError::unavailable())
-    }
-}
-
-/// Request to cover or uncover the face under the calling Widget.
-pub struct HostExpandedCardSetFaceShownRequest {
-    /// `false` covers the face so touches over it reach the Widget, `true`
-    /// gives those touches back to the face.
-    pub shown: bool,
-}
-
-/// Face cover change failure.
-pub enum HostExpandedCardSetFaceShownError {
-    /// The Widget is not shown under its card right now.
-    NotPresented,
-    /// The user is moving or turning the card; the request had no effect.
-    UserMoving,
-    /// Catch-all.
-    Unknown {
-        /// Human-readable reason.
-        reason: String,
-    },
-}
-```
-
-`HostExpandedCardSetBackShownError::UserMoving` takes the same meaning: the user is moving or turning the card.
+`NotPresented` keeps its meaning.
 
 ### Compatibility
 
