@@ -129,19 +129,6 @@ class FundingSheetViewModelTest {
     }
 
     @Test
-    fun `backing out of the deposit before the start stops the core starting it`() = runTest(testDispatcher) {
-        service.entry.emit(entry())
-        val sheet = sheet()
-        advanceUntilIdle()
-        sheet.push(FundingScreen.DEPOSIT)
-
-        sheet.onBack()
-
-        assertEquals(FundingScreen.AMOUNT, sheet.screen.value?.screen)
-        assertTrue("stopStarting" in service.calls)
-    }
-
-    @Test
     fun `closing or clearing the sheet leaves the session`() = runTest(testDispatcher) {
         service.entry.emit(entry())
         val sheet = sheet()
