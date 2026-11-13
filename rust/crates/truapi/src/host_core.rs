@@ -194,7 +194,10 @@ impl PairingHostRuntime {
 	/// For test hosts only, with the `test-host` feature enabled.
 	#[cfg(feature = "test-host")]
 	pub fn set_submit_preimages_locally(&self, local: bool) {
-		self.pairing_host.accounts().resource_controls().set_submit_preimages_locally(local);
+		self.pairing_host
+			.accounts()
+			.resource_controls()
+			.set_submit_preimages_locally(local);
 	}
 
 	/// Build a long-lived pairing-host runtime around a platform implementation.
@@ -682,7 +685,10 @@ impl SigningHostRuntime {
 	/// For test hosts only, with the `test-host` feature enabled.
 	#[cfg(feature = "test-host")]
 	pub fn set_submit_preimages_locally(&self, local: bool) {
-		self.signing_host.accounts().resource_controls().set_submit_preimages_locally(local);
+		self.signing_host
+			.accounts()
+			.resource_controls()
+			.set_submit_preimages_locally(local);
 	}
 
 	/// The product's hard-subtree public key, derived from the active session

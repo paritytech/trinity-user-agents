@@ -3,7 +3,6 @@
 use super::{WalletAccountHolder, WalletKeys, allowance::AllowanceAllocationError};
 use std::sync::Arc;
 
-use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::{
 	host_internal::{
 		extrinsic::{Sr25519Signer, build_signed_transaction, local_transaction_metadata},
@@ -13,6 +12,7 @@ use crate::{
 	host_logic::{
 		product_account::{SR25519_SIGNING_CONTEXT, personhood_product_id},
 		raw_signing::raw_payload_bytes,
+		session::{SessionInfo, SessionState},
 	},
 	platform::{PermissionAuthorizationStatus, ProductId},
 	runtime::{

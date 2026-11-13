@@ -26,9 +26,9 @@ use truapi::{
 use truapi::versioned::IntoLatest;
 
 use crate::runtime::{
-	AccountHolder, ProductRuntimeHost, account_get_authority_error, ring_vrf_alias_error, ring_vrf_list_error, ring_vrf_proof_error,
-	ring_vrf_register_error, ring_vrf_sign_error, validate_vrf_transcript, versioning::version,
-	vrf_call_error,
+	AccountHolder, ProductRuntimeHost, account_get_authority_error, ring_vrf_alias_error,
+	ring_vrf_list_error, ring_vrf_proof_error, ring_vrf_register_error, ring_vrf_sign_error,
+	validate_vrf_transcript, versioning::version, vrf_call_error,
 };
 
 #[async_trait::async_trait]
@@ -170,8 +170,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 					.accounts
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostAccountSignVrfError::NotConnected))?;
-				self.accounts.sign_vrf(&session, cx, request).await
-					.map_err(vrf_call_error)
+				self.accounts.sign_vrf(&session, cx, request).await.map_err(vrf_call_error)
 			})
 			.await
 	}

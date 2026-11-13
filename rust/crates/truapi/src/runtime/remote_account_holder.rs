@@ -14,7 +14,6 @@ use super::{
 	sso_remote::SsoRemoteResponseError,
 	sso_request_service::SsoRequestService,
 };
-use crate::host_logic::session::{SessionInfo, SessionState};
 use crate::{
 	Spawner,
 	host_internal::{
@@ -27,7 +26,10 @@ use crate::{
 		},
 		sso_wire::SsoRequest,
 	},
-	host_logic::entropy::derive_product_entropy_from_source,
+	host_logic::{
+		entropy::derive_product_entropy_from_source,
+		session::{SessionInfo, SessionState},
+	},
 	platform::ProductId,
 };
 use futures::{

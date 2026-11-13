@@ -35,8 +35,7 @@ impl TestResourceControls {
 	/// without performing them: the Bulletin allowance it hands out was never
 	/// authorized on chain, so a real `store` would always be refused.
 	pub fn submits_preimages_locally(&self) -> bool {
-		self.grants_allowances_unchecked() ||
-			self.submit_preimages_locally.load(Ordering::Relaxed)
+		self.grants_allowances_unchecked() || self.submit_preimages_locally.load(Ordering::Relaxed)
 	}
 
 	/// Replace refused resource tags; SmartContractAllowance covers every index.
