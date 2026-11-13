@@ -251,6 +251,36 @@ async fn a_fresh_profile_stream_completes_without_network_access() {
 }
 
 #[tokio::test]
+async fn cached_profiles_remain_available_without_asset_hub() {
+	use futures::StreamExt;
+
+	for fresh in [false, true] {
+		let record = avatar_record(1, crate::ImageFormat::Png);
+		let expected = PublicProfile { avatar: record.avatar() };
+		let (_directory, mut profiles, _db, platform) =
+			cached_profiles(Some(record.clone()), &record, fresh).await;
+		Arc::get_mut(&mut profiles).unwrap().genesis = None;
+		let mut stream = profiles.observe(
+			"alice.01".to_owned(),
+			PublicProfileResolutionOptions { force_fresh: false, skip_stale: false },
+		);
+
+		let initial = stream.next().await.unwrap().unwrap();
+		let terminal = stream.next().await;
+		assert_eq!(
+			(
+				initial,
+				matches!(terminal, Some(Err(PublicProfileError::AssetHubNotConfigured))),
+				terminal.is_none(),
+				stream.next().await.is_none(),
+				platform.chain_connects.lock().unwrap().clone(),
+			),
+			(expected, !fresh, fresh, true, vec![]),
+		);
+	}
+}
+
+#[tokio::test]
 async fn forcing_fresh_metadata_emits_the_cached_profile_before_looking_up_changes() {
 	use futures::StreamExt;
 

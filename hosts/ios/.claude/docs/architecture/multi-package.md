@@ -48,7 +48,7 @@ The project uses local SPM packages under `Packages/`, with `AppDependencies` as
 - **AssetHubSdk** — Asset Hub blockchain integration
 - **HydrationSdk** — Hydration DeFi integration
 - **Products** — Product account models and WebView JS bridge; the DotNs resolver reads its contracts through `Revive`
-- **TrUAPIHost** *(remote SPM dependency, not a local package)* — TrUAPI Rust core
+- **TrUAPIHost** *(path dependency on the enclosing trinity-user-agents tree)* — TrUAPI Rust core
   (xcframework + uniffi bindings), the `TrUAPIHostCore` wrapper (`TrUAPIHostCoreProtocol`
   seam), and the bundled truapi lockdown container behind `ContainerScriptBundle.load()`.
   The container TypeScript source and its esbuild live in the truapi repo, not here.

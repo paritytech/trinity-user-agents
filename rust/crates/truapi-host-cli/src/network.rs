@@ -2,10 +2,7 @@ use std::time::Duration;
 
 use clap::ValueEnum;
 use trinity_stack::Descriptor;
-use truapi::{
-	latest::ChainIdentifier,
-	platform::{ChainExtensionVersion, ExtensionVersionMap, HostChainEntry, HostChainSet},
-};
+use truapi::platform::{ChainExtensionVersion, ExtensionVersionMap, StackChains, StackError};
 
 use crate::{chain::ChainBackend, stack_descriptor::Roles};
 
@@ -113,10 +110,10 @@ pub struct ChainEndpoint {
 }
 
 impl Stack {
-	/// The product namespace: what `HostChainSet::network` reports and where
-	/// the CLI stores this network's state. The descriptor's `id` without a
-	/// trailing `-fork`, so a fork shares its source's state, except that the
-	/// `polkadot-fork` namespace is its full `id`.
+	/// The product namespace, where the CLI stores this network's state: the
+	/// descriptor's `id` without a trailing `-fork`, so a fork shares its
+	/// source's state, except that the `polkadot-fork` namespace is its full
+	/// `id`.
 	pub fn namespace(&self) -> &str {
 		namespace_of(&self.descriptor.id)
 	}
@@ -130,8 +127,8 @@ impl Stack {
 		&self.descriptor.tld
 	}
 
-	/// Each role's genesis hash: both the role's identity in
-	/// [`Stack::host_chain_set`] and its routing key. Asset Hub's is also the
+	/// Each role's genesis hash: the chain `feature_supported` and the core's
+	/// stack name for the role, and its routing key. Asset Hub's is also the
 	/// genesis the CLI's Asset Hub extrinsics sign in `CheckGenesis`.
 	pub fn genesis(&self) -> Roles<[u8; 32]> {
 		let Roles { people, asset_hub, bulletin } = &self.chains;
@@ -159,26 +156,25 @@ impl Stack {
 		self.chain_backend
 	}
 
-	/// The chain set this network serves, for `Features::supported_chains`.
-	pub fn host_chain_set(&self) -> HostChainSet {
+	/// The stack the core runs on: the descriptor's `network` and TLD, and the
+	/// People, Bulletin and Asset Hub chains the CLI serves. It serves no Relay.
+	///
+	/// Allows Polkadot's reserved values, which the CLI checks itself, so call
+	/// it only on a stack from [`NetworkSource::resolve_checked`].
+	pub fn core_stack(&self) -> Result<truapi::platform::Stack, StackError> {
 		let genesis = self.genesis();
-		HostChainSet {
-			network: self.namespace().to_owned(),
-			chains: vec![
-				HostChainEntry {
-					identifier: ChainIdentifier::People,
-					genesis_hash: genesis.people,
-				},
-				HostChainEntry {
-					identifier: ChainIdentifier::Bulletin,
-					genesis_hash: genesis.bulletin,
-				},
-				HostChainEntry {
-					identifier: ChainIdentifier::AssetHub,
-					genesis_hash: genesis.asset_hub,
-				},
-			],
-		}
+		let chains = StackChains {
+			relay: None,
+			asset_hub: Some(genesis.asset_hub),
+			people: genesis.people,
+			bulletin: genesis.bulletin,
+		};
+		truapi::platform::Stack::new(
+			self.descriptor.network.clone(),
+			self.descriptor.tld.clone(),
+			chains,
+			true,
+		)
 	}
 
 	/// The chains this network builds as V5 general transactions: People and

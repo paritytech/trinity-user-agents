@@ -31,13 +31,37 @@ impl ProfileRecord {
 		Self::decode_all(&mut bytes.as_slice()).ok()
 	}
 
+	/// Encodes the record as the resolver's base64 text.
+	///
+	/// Returns `None` when the record is larger than the 16 KiB [`Self::from_text`] decodes.
+	pub fn to_text(&self) -> Option<String> {
+		let bytes = self.encode();
+		(bytes.len() <= MAX_RECORD_BYTES).then(|| STANDARD.encode(bytes))
+	}
+
 	/// Returns the first decodable avatar.
 	///
 	/// Unknown or malformed entries are skipped. Returns `None` when no avatar decodes.
 	pub fn avatar(&self) -> Option<ProfileAvatar> {
+		self.shown_avatar().map(|(_, avatar)| avatar)
+	}
+
+	/// Makes `avatar` the one readers show.
+	///
+	/// Removes the avatar [`Self::avatar`] returns and puts the new one first. Every other entry
+	/// keeps its bytes and order.
+	pub fn set_avatar(&mut self, avatar: ProfileAvatar) {
+		if let Some((index, _)) = self.shown_avatar() {
+			self.entries.remove(index);
+		}
 		self.entries
-			.iter()
-			.find_map(|entry| entry.try_decode().map(|ProfileEntry::Avatar(avatar)| avatar))
+			.insert(0, WrapperKeepOpaque::from_value(ProfileEntry::Avatar(avatar)));
+	}
+
+	fn shown_avatar(&self) -> Option<(usize, ProfileAvatar)> {
+		self.entries.iter().enumerate().find_map(|(index, entry)| {
+			entry.try_decode().map(|ProfileEntry::Avatar(avatar)| (index, avatar))
+		})
 	}
 }
 

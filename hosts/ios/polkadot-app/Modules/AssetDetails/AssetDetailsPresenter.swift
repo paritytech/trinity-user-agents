@@ -85,18 +85,8 @@ final class AssetDetailsPresenter {
 }
 
 extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
-    func onBackupSync() {
-        interactor?.triggerSync()
-    }
-
-    func onBackupCancel() {
-        wireframe.showCancelBackupConfirmation(from: view) { [weak self] in
-            self?.interactor?.cancelBackupNotification()
-        }
-    }
-
-    func onBackupWhyUpdate() {
-        wireframe.showWhyBackupUpdate(from: view)
+    func onOpenBackupSettings() {
+        wireframe.showBackupSettings()
     }
 
     func setup() {
@@ -184,11 +174,7 @@ extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
     }
 
     func didReceive(showsRecoveredBalance: Bool) {
-        if showsRecoveredBalance {
-            view?.didShowBackupNotification()
-        } else {
-            view?.didHideBackupNotification()
-        }
+        view?.didReceive(showsRestoredBalanceHint: showsRecoveredBalance)
     }
 }
 
