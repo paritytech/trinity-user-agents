@@ -103,19 +103,17 @@ impl<'a> ProfileBackend for ChainProfileBackend<'a> {
 				latest::DerivationIndex::Index(0),
 			)],
 		};
-		let response = self
-			.product
-			.product_runtime()
-			.request(
-				&CallContext::default(),
-				HostRequestResourceAllocationRequest::from_latest(
-					request,
-					HostRequestResourceAllocationRequest::LATEST,
-				),
-			)
-			.await
-			.map_err(|error| anyhow!("smart contract allowance failed: {error:?}"))?
-			.into_latest();
+		let response = ResourceAllocation::request(
+			self.product.product_runtime().as_ref(),
+			&CallContext::default(),
+			HostRequestResourceAllocationRequest::from_latest(
+				request,
+				HostRequestResourceAllocationRequest::LATEST,
+			),
+		)
+		.await
+		.map_err(|error| anyhow!("smart contract allowance failed: {error:?}"))?
+		.into_latest();
 		ensure!(
 			response.outcomes == [latest::AllocationOutcome::Allocated],
 			"smart contract allowance was not allocated: {:?}",
@@ -133,19 +131,14 @@ impl<'a> ProfileBackend for ChainProfileBackend<'a> {
 	}
 
 	async fn upload(&mut self, bytes: Vec<u8>) -> Result<[u8; 32]> {
-		let key = self
-			.product
-			.product_runtime()
-			.submit(
-				&CallContext::default(),
-				RemotePreimageSubmitRequest::from_latest(
-					bytes,
-					RemotePreimageSubmitRequest::LATEST,
-				),
-			)
-			.await
-			.map_err(|error| anyhow!("avatar upload failed: {error:?}"))?
-			.into_latest();
+		let key = Preimage::submit(
+			self.product.product_runtime().as_ref(),
+			&CallContext::default(),
+			RemotePreimageSubmitRequest::from_latest(bytes, RemotePreimageSubmitRequest::LATEST),
+		)
+		.await
+		.map_err(|error| anyhow!("avatar upload failed: {error:?}"))?
+		.into_latest();
 		<[u8; 32]>::try_from(key).map_err(|key| anyhow!("upload returned a {}-byte key", key.len()))
 	}
 

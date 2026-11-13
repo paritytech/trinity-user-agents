@@ -118,13 +118,11 @@ fn a_worker_subname_is_the_namehash_of_its_full_name() {
 	);
 }
 
-/// The source each lookup with nothing cached reports, for a host with no
-/// Asset Hub, a chain that cannot be reached, and one that never answers.
+/// The source each lookup with nothing cached reports, for a chain that cannot
+/// be reached and one that never answers.
 #[test]
 fn an_uncached_lookup_reports_why_it_read_no_manifest() {
-	let lookup = |platform: crate::test_support::StubPlatform,
-	              asset_hub: Option<[u8; 32]>,
-	              ceiling: Duration| {
+	let lookup = |platform: crate::test_support::StubPlatform, ceiling: Duration| {
 		let platform = std::sync::Arc::new(platform);
 		let services = RuntimeServices::new(
 			platform.clone(),
@@ -134,7 +132,7 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 				version: None,
 				platform: truapi::latest::HostPlatform::Unknown,
 			},
-			crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], asset_hub),
+			crate::test_support::paseo_test_stack(),
 			crate::Spawner::for_test(),
 		);
 		futures::executor::block_on(root_manifest_within(
@@ -146,13 +144,11 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 	};
 	assert_eq!(
 		[
-			lookup(Default::default(), None, MANIFEST_RESOLUTION_CEILING),
 			lookup(
 				crate::test_support::StubPlatform {
 					chain_connect_error: Some("fixture serves no chain"),
 					..Default::default()
 				},
-				Some([0xcc; 32]),
 				MANIFEST_RESOLUTION_CEILING,
 			),
 			lookup(
@@ -160,12 +156,10 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 					chain_connect_pending: true,
 					..Default::default()
 				},
-				Some([0xcc; 32]),
 				Duration::from_millis(10),
 			),
 		],
 		[
-			(None, ManifestSource::NoAssetHub),
 			(
 				None,
 				ManifestSource::LookupFailed {

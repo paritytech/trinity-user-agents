@@ -275,9 +275,6 @@ pub enum ManifestSource {
 	/// Read from dotNS by this lookup.
 	#[display("dotNS")]
 	Fetched,
-	/// The host names no Asset Hub to resolve against.
-	#[display("no Asset Hub")]
-	NoAssetHub,
 	/// The dotNS lookup failed. Nothing was cached.
 	#[display("dotNS lookup failed: {reason}")]
 	LookupFailed { reason: String },
@@ -673,8 +670,7 @@ async fn root_manifest(
 	target: &ProductId,
 ) -> (Option<String>, ManifestSource) {
 	let read = cached_dotns_json(platform, CoreStorageKey::product_manifest(target), || async {
-		let genesis_hash =
-			services.asset_hub_chain_genesis_hash().ok_or(ManifestSource::NoAssetHub)?;
+		let genesis_hash = services.asset_hub_chain_genesis_hash();
 		let (chain, target) = (services.chain.clone(), target.clone());
 		services
 			.dotns_reads
@@ -712,7 +708,7 @@ pub async fn worker_manifest(
 	product_id: &ProductId,
 ) -> Result<Option<WorkerManifest>, String> {
 	let (json, _) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), || async {
-		let genesis_hash = asset_hub(services)?;
+		let genesis_hash = services.asset_hub_chain_genesis_hash();
 		let (chain, product) = (services.chain.clone(), product_id.clone());
 		services
 			.dotns_reads
@@ -776,7 +772,7 @@ pub async fn publishes_app(
 	ceiling: Duration,
 ) -> Option<bool> {
 	let read = cached_dotns_json(platform, app_manifest_cache_key(product_id), || async {
-		fetch_app_manifest(&services.chain, asset_hub(services)?, product_id)
+		fetch_app_manifest(&services.chain, services.asset_hub_chain_genesis_hash(), product_id)
 			.await
 			.map_err(|error| error.reason())
 	});
@@ -839,11 +835,4 @@ where
 		)
 		.await;
 	Ok((json, DotnsRead::Fetched))
-}
-
-/// The Asset Hub dotNS is read from, or why there is none.
-fn asset_hub(services: &RuntimeServices) -> Result<[u8; 32], String> {
-	services
-		.asset_hub_chain_genesis_hash()
-		.ok_or_else(|| "the host has no Asset Hub to read dotNS from".to_string())
 }

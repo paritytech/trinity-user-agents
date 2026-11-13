@@ -342,17 +342,24 @@ pub fn test_stack(
 	tld: &str,
 	people: [u8; 32],
 	bulletin: [u8; 32],
-	asset_hub: Option<[u8; 32]>,
+	asset_hub: [u8; 32],
 ) -> crate::platform::Stack {
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
 	crate::platform::Stack::new("paseo".to_string(), tld.to_string(), chains, true)
 		.expect("test stack is valid")
 }
 
+/// A genesis hash no [`StubPlatform`] serves: `connect` to it always fails.
+///
+/// A fixture whose tests script or count chain RPC names it as its Asset Hub,
+/// so the username lookup a session activation starts on another thread sends
+/// nothing to the stub's chain.
+pub const UNSERVED_GENESIS: [u8; 32] = [0xfe; 32];
+
 /// The stack most runtime tests run on: [`test_stack`] on `paseo` with People
 /// `[0; 32]`, Bulletin `[0xbb; 32]` and Asset Hub `[0xcc; 32]`.
 pub fn paseo_test_stack() -> crate::platform::Stack {
-	test_stack("paseo", [0; 32], [0xbb; 32], Some([0xcc; 32]))
+	test_stack("paseo", [0; 32], [0xbb; 32], [0xcc; 32])
 }
 
 /// The key [`sign_test_descriptor`] signs with.
@@ -365,14 +372,14 @@ pub fn test_descriptor(
 	tld: &str,
 	people: [u8; 32],
 	bulletin: [u8; 32],
-	asset_hub: Option<[u8; 32]>,
+	asset_hub: [u8; 32],
 ) -> serde_json::Value {
-	let mut chains = vec![
+	let chains = [
 		test_descriptor_chain("Relay", [0x01; 32], None),
+		test_descriptor_chain("AssetHub", asset_hub, Some(1000)),
 		test_descriptor_chain("People", people, Some(1004)),
 		test_descriptor_chain("Bulletin", bulletin, Some(1010)),
 	];
-	chains.extend(asset_hub.map(|genesis| test_descriptor_chain("AssetHub", genesis, Some(1000))));
 	serde_json::json!({
 		"$v": 1,
 		"sequence": 1,
@@ -1981,7 +1988,7 @@ impl ChainProvider for StubPlatform {
 		if let Some(reason) = failure {
 			return Err(ProviderError::Transport { reason: reason.to_string() });
 		}
-		if self.unreachable_genesis == Some(genesis_hash) {
+		if genesis_hash == UNSERVED_GENESIS || self.unreachable_genesis == Some(genesis_hash) {
 			return Err(ProviderError::Host { reason: "fixture serves no such chain".to_string() });
 		}
 		if self.chain_connect_pending {

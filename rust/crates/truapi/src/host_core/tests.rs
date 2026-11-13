@@ -15,10 +15,11 @@ use crate::{
 	},
 	test_support::{StubPlatform, runtime_config, wait_until},
 };
+use futures::FutureExt;
 use parity_scale_codec::Encode;
 use std::sync::atomic::Ordering;
 use truapi::{
-	api::Permissions,
+	CallContext,
 	latest::{RemotePermission, RemotePermissionRequest, RemotePermissionResponse},
 	versioned::permissions,
 };
@@ -45,7 +46,7 @@ fn activated_signing_runtime(platform: Arc<StubPlatform>) -> SigningHostRuntime 
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		crate::test_support::test_stack("testnet", [0; 32], [0xbb; 32], Some([0xcc; 32])),
+		crate::test_support::test_stack("testnet", [0; 32], [0xbb; 32], [0xcc; 32]),
 	)
 	.expect("signing host config is valid");
 	let runtime = SigningHostRuntime::new(platform, config, Spawner::for_test());
@@ -58,10 +59,7 @@ fn activated_signing_runtime(platform: Arc<StubPlatform>) -> SigningHostRuntime 
 /// once is asked again after the user resets its account access.
 #[test]
 fn a_settings_change_to_account_access_ends_allow_once() {
-	use crate::{
-		platform::{PermissionAuthorizationRequest, PermissionDecision},
-		runtime::ProductAuthority,
-	};
+	use crate::platform::{PermissionAuthorizationRequest, PermissionDecision};
 
 	let platform = Arc::new(StubPlatform {
 		permission_confirmation_decisions: std::sync::Mutex::new(
@@ -72,7 +70,7 @@ fn a_settings_change_to_account_access_ends_allow_once() {
 	let runtime = activated_signing_runtime(platform.clone());
 	let (requester, target) = (ProductId::for_test("myapp.dot"), ProductId::for_test("peopl.dot"));
 	let access = || {
-		futures::executor::block_on(runtime.signing_host.consent().account_access(
+		futures::executor::block_on(runtime.signing_host.accounts().consent().account_access(
 			&requester,
 			&target,
 			platform.as_ref(),
@@ -372,7 +370,7 @@ fn a_cached_subtree_answers_without_reaching_the_wallet() {
 	let runtime = PairingHostRuntime::new(platform.clone(), host_config, Spawner::for_test());
 	let session = crate::test_support::sso_session_info();
 	install_session_after_boot(&runtime, &platform, session.clone());
-	runtime.pairing_host.cache_product_subtree_for_test(
+	runtime.pairing_host.accounts().cache_product_subtree_for_test(
 		&session,
 		&crate::platform::ProductId::for_test("myapp.dot"),
 		[9; 32],
@@ -851,7 +849,7 @@ fn worker_connection_renders_and_receives_actions_without_a_session() {
 	);
 	let host = runtime.admin.product_runtime().clone();
 	assert!(
-		host.test_session_state().current().is_none(),
+		runtime.core.session_state().current().is_none(),
 		"the fixture must be signed out for this test to mean anything"
 	);
 
@@ -1654,7 +1652,7 @@ fn test_signing_runtime() -> (SigningHostRuntime, Arc<StubPlatform>) {
 	let config = SigningHostConfig::new(
 		host,
 		PlatformInfo::default(),
-		crate::test_support::test_stack("paseo", genesis.0, genesis.1, Some(genesis.2)),
+		crate::test_support::test_stack("paseo", genesis.0, genesis.1, genesis.2),
 	)
 	.expect("signing host config is valid");
 	let platform = Arc::new(StubPlatform::default());
@@ -1848,9 +1846,7 @@ fn disconnect_paired_host_propagates_submission_failure() {
 
 /// Signing-host config carrying `asset_hub`, otherwise the shape every
 /// other signing test here uses.
-fn signing_config_with_asset_hub(
-	asset_hub: Option<[u8; 32]>,
-) -> crate::platform::SigningHostConfig {
+fn signing_config_with_asset_hub(asset_hub: [u8; 32]) -> crate::platform::SigningHostConfig {
 	use crate::platform::{HostInfo, PlatformInfo, SigningHostConfig};
 
 	SigningHostConfig::new(
@@ -1873,12 +1869,12 @@ fn a_signing_host_runtime_carries_its_asset_hub_for_manifest_resolution() {
 	// consulted, which is why a seeded CLI looked healthy.
 	let runtime = SigningHostRuntime::new(
 		Arc::new(StubPlatform::default()),
-		signing_config_with_asset_hub(Some([0xcc; 32])),
+		signing_config_with_asset_hub([0xcc; 32]),
 		Spawner::for_test(),
 	);
 	assert_eq!(
 		runtime.services.asset_hub_chain_genesis_hash(),
-		Some([0xcc; 32]),
+		[0xcc; 32],
 		"the signing role resolves manifests against the Asset Hub it was configured with"
 	);
 }
@@ -1897,7 +1893,7 @@ fn a_pairing_host_runtime_carries_its_asset_hub_too() {
 			platform: truapi::latest::HostPlatform::Web,
 		},
 		PlatformInfo::default(),
-		crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], Some([0xdd; 32])),
+		crate::test_support::test_stack("paseo", [0; 32], [0xbb; 32], [0xdd; 32]),
 		"polkadotapp".to_string(),
 	)
 	.expect("pairing host config is valid");
@@ -1905,23 +1901,9 @@ fn a_pairing_host_runtime_carries_its_asset_hub_too() {
 		PairingHostRuntime::new(Arc::new(StubPlatform::default()), config, Spawner::for_test());
 	assert_eq!(
 		runtime.services.asset_hub_chain_genesis_hash(),
-		Some([0xdd; 32]),
+		[0xdd; 32],
 		"the pairing role resolves manifests against its configured Asset Hub"
 	);
-}
-
-#[test]
-fn an_all_zero_asset_hub_is_how_a_signing_host_says_it_has_none() {
-	// One spelling of "no Asset Hub", so grants fail closed without a
-	// second sentinel crossing the boundary.
-	let runtime = SigningHostRuntime::new(
-		Arc::new(StubPlatform::default()),
-		signing_config_with_asset_hub(None),
-		Spawner::for_test(),
-	);
-	// The hash is a constructor argument, so `None` here can only mean the
-	// configured zeros.
-	assert_eq!(runtime.services.asset_hub_chain_genesis_hash(), None);
 }
 
 #[test]
@@ -1937,12 +1919,12 @@ fn the_asset_hub_argument_reaches_the_asset_hub_slot() {
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		crate::test_support::test_stack("paseo", [0xaa; 32], [0xbb; 32], Some([0xcc; 32])),
+		crate::test_support::test_stack("paseo", [0xaa; 32], [0xbb; 32], [0xcc; 32]),
 		Spawner::for_test(),
 	);
 	assert_eq!(
 		services.asset_hub_chain_genesis_hash(),
-		Some([0xcc; 32]),
+		[0xcc; 32],
 		"the third hash is Asset Hub, not People ([0xaa; 32]) or Bulletin ([0xbb; 32])"
 	);
 }
@@ -1957,7 +1939,7 @@ struct ManifestLookup {
 
 /// A cross-product storage read for `owner`, uncached, on a signing-role
 /// product runtime configured with `asset_hub`.
-fn signing_manifest_lookup_rpc(asset_hub: Option<[u8; 32]>) -> ManifestLookup {
+fn signing_manifest_lookup_rpc(asset_hub: [u8; 32]) -> ManifestLookup {
 	use truapi::{api::LocalStorage, versioned::local_storage::HostLocalStorageReadRequest};
 
 	// The stub serves no dotNS either way, so end its responses rather than
@@ -1971,12 +1953,11 @@ fn signing_manifest_lookup_rpc(asset_hub: Option<[u8; 32]>) -> ManifestLookup {
 	let host = ProductRuntimeHost::from_services(
 		runtime.services.clone(),
 		ConnectionAdapters::from_services(&runtime.services),
-		runtime.signing_host.clone(),
+		runtime.signing_host.accounts().clone(),
 		runtime.signing_host.clone(),
 		ProductContext::new(ProductId::for_test("unknown.dot")),
 	);
-	// Nothing is cached for `wallet.dot`, so resolution reaches dotNS,
-	// the path the missing hash short-circuited.
+	// Nothing is cached for `wallet.dot`, so resolution reaches dotNS.
 	let read = futures::executor::block_on(LocalStorage::read(
 		&host,
 		&truapi::CallContext::default(),
@@ -1985,7 +1966,7 @@ fn signing_manifest_lookup_rpc(asset_hub: Option<[u8; 32]>) -> ManifestLookup {
 			key: "k".to_string(),
 		}),
 	));
-	assert!(read.is_err(), "the stub serves no dotNS registry, so the read is refused either way");
+	assert!(read.is_err(), "the stub serves no dotNS registry, so the read is refused");
 	ManifestLookup {
 		rpc: platform.sent_rpc.lock().expect("sent rpc mutex poisoned").clone(),
 		connects: platform.chain_connects.lock().expect("chain connect mutex poisoned").clone(),
@@ -1994,27 +1975,17 @@ fn signing_manifest_lookup_rpc(asset_hub: Option<[u8; 32]>) -> ManifestLookup {
 
 #[test]
 fn a_signing_host_takes_a_manifest_miss_to_the_chain() {
-	// The refusal is identical either way, so whether the core asked the
-	// chain is the only observable difference.
-	let configured = signing_manifest_lookup_rpc(Some([0xcc; 32]));
-	assert!(
-		!configured.rpc.is_empty(),
-		"a configured signing role resolves an uncached manifest over dotNS"
-	);
+	// The stub refuses the read whatever the core does, so the RPC it saw is
+	// what shows the core asked the chain.
+	let lookup = signing_manifest_lookup_rpc([0xcc; 32]);
+	assert!(!lookup.rpc.is_empty(), "a signing role resolves an uncached manifest over dotNS");
 
 	// A lookup wired to People or Bulletin also produces RPC and also
 	// refuses, so pin the chain actually dialled.
 	assert_eq!(
-		configured.connects,
+		lookup.connects,
 		vec![[0xcc; 32]],
 		"the manifest lookup dials Asset Hub, not People ([0xaa; 32]) or \
          Bulletin ([0xbb; 32])"
 	);
-
-	let unconfigured = signing_manifest_lookup_rpc(None);
-	assert!(
-		unconfigured.rpc.is_empty(),
-		"a signing role with no Asset Hub refuses without touching the chain"
-	);
-	assert!(unconfigured.connects.is_empty(), "and does not dial any chain at all");
 }

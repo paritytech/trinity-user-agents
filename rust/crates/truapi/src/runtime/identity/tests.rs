@@ -193,7 +193,7 @@ fn in_core_lookup_resolves_usernames_at_the_finalized_head() {
 	let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
 		&DotnsReads::new(Spawner::for_test()),
 		&chain,
-		Some([0xcc; 32]),
+		[0xcc; 32],
 		session,
 	));
 
@@ -229,7 +229,7 @@ fn root_key_resolves_when_identity_account_labels_are_unissued() {
 	let resolved = futures::executor::block_on(resolve_session_identity_with_chain(
 		&DotnsReads::new(Spawner::for_test()),
 		&chain,
-		Some([0xcc; 32]),
+		[0xcc; 32],
 		session,
 	));
 
@@ -257,12 +257,7 @@ fn overlapping_lookups_of_one_session_read_dotns_once() {
 		);
 		let session = session_without_usernames([0x11; 32], ACCOUNT);
 		futures::executor::block_on(futures::future::join_all((0..lookups).map(|_| {
-			lookup_session_identity(
-				&services.dotns_reads,
-				&services.chain,
-				Some([0xcc; 32]),
-				&session,
-			)
+			lookup_session_identity(&services.dotns_reads, &services.chain, [0xcc; 32], &session)
 		})));
 		crate::test_support::recorded_rpc_method_count(&platform.sent_rpc, "chain_getFinalizedHead")
 	};
