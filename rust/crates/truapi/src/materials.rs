@@ -219,7 +219,14 @@ impl Materials {
 	/// Keeps `text` as material `id` once the core can read it, as a fetch
 	/// does.
 	pub async fn keep(&self, id: [u8; 32], text: Vec<u8>) -> Result<Vec<u8>, MaterialFailure> {
-		read_material(&text)?;
+		if let Err(error) = read_material(&text) {
+			tracing::info!(
+				target: crate::markers::MATERIALS_NODE_PLAIN.target,
+				"material {} refused: {error}",
+				hex::encode(id)
+			);
+			return Err(error.into());
+		}
 		let row = text.clone();
 		let kept = self
 			.0

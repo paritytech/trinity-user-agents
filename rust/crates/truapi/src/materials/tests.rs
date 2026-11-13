@@ -182,6 +182,27 @@ fn the_lookup_stops_when_every_caller_is_gone() {
 	assert_eq!(next(&mut answers), Some(Ok(TEXT.to_vec())));
 }
 
+/// The product hears a broad reason, so the device log is where the format's
+/// own code goes, with the material it belongs to.
+#[test]
+fn a_refused_material_is_logged_with_its_format_code() {
+	let (_dir, db) = open_temporary_core_db();
+	let device = Device::over(db);
+	let newer = b"// @material 2\nvec4 material(vec2 uv) { return vec4(1.0); }\n";
+	let id = preimage_key(newer);
+
+	let lines = crate::logging::testing::host_sink_lines(|| {
+		let _ = block_on(device.materials.keep(id, newer.to_vec()));
+	});
+
+	assert!(
+		lines
+			.iter()
+			.any(|line| line.contains("unsupported-version") && line.contains(&hex::encode(id))),
+		"{lines:?}"
+	);
+}
+
 /// An ID is product input, so a product could name any blob on Bulletin.
 /// Only materials this core reads are kept: a broken one never fills the
 /// device, and one of a newer format is reported as unsupported.
