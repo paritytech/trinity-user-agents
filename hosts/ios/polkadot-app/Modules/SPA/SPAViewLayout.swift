@@ -73,6 +73,20 @@ final class SPAViewLayout: UIView {
         setupLoadProgressLayout()
         webView.scrollView.contentInsetAdjustmentBehavior = .never
     }
+
+    /// The web view fills the screen, under the bars and the Docklet. The scroll view takes no insets: the page
+    /// reads the safe area through `env(safe-area-inset-*)` and insets its own content, so its background reaches
+    /// every edge.
+    func setupEdgeToEdgeLayout() {
+        addSubview(webView)
+        webView.snp.makeConstraints { make in
+            make.edges.equalToSuperview()
+        }
+
+        setupActivityIndicatorLayout()
+        setupLoadProgressLayout()
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+    }
 }
 
 // MARK: - Private

@@ -186,6 +186,31 @@ Rules:
    past `ResumePolicy.expiryThreshold` it `expire()`s all of them, otherwise it
    `probe(timeout:)`s each and only silent ones close (`.livenessTimeout`).
 
+## Web View Layout
+
+`SPAViewController` lays out a pushed product's web view in `setupWebViewLayout()` (`polkadot-app/Modules/SPA/SPAViewController.swift`). The three layouts are in `SPAViewLayout.swift`.
+
+| Layout | Used when | Web view | Scroll view `contentInsetAdjustmentBehavior` |
+|---|---|---|---|
+| Root | `isRootScreen` | All edges of the container | `.scrollableAxes` |
+| Default | Otherwise | Top at the safe area, sides and bottom at the container | `.never` |
+| Edge to edge | `isEdgeToEdge` | All edges of the container | `.never` |
+
+`SPAConfiguration.isEdgeToEdge` defaults to `false`. Collectibles sets it in `WalletMainWireframe.showCollectibles(page:)`. `SPASimplifiedViewController`, used for sheets and full-screen products, does not read the flag.
+
+Collectibles (`polkadot-app/Modules/Wallet/WalletMain/CollectiblesViewController.swift`) moves its page's top edge with `setPageReachesScreenTop(_:)`. A resting page starts below the bars, under the book. An expanded page reaches the top of the screen. The switch runs inside the expand and collapse animations.
+
+### Safe area rule
+
+Every product page takes its safe-area insets through CSS `env(safe-area-inset-*)`. The host adds no native scroll inset for the Docklet.
+
+The Docklet's Clearance is part of the bottom safe area while the Docklet is Shown. A page that pads by `env(safe-area-inset-bottom)` clears the Docklet and follows it when it tucks or shows. A page that does not pad by it has its end covered by the Docklet while the Docklet is Shown.
+
+This covers:
+
+- Edge-to-edge pages, such as Collectibles.
+- The expanded Pocket card page (`polkadot-app/Modules/Products/Pocket/ExpandedCard/WidgetView.swift`). Its web view is full screen with `contentInsetAdjustmentBehavior = .never`. The card face reaches the page as `env(safe-area-inset-top)` through `pageController.additionalSafeAreaInsets.top` in `ExpandedPocketCardViewController.swift`.
+
 ## Seams
 
 | Seam                          | Where                                    | When to touch                        |

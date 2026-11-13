@@ -51,6 +51,9 @@ struct SPAConfiguration {
     let contentSource: SPAContentSource
     let presentation: SPAPresentation
     let browserTabId: UUID?
+    /// Whether a pushed product's web view fills the screen under the bars and the Docklet, leaving the page to
+    /// inset its own content by the safe area.
+    let isEdgeToEdge: Bool
 
     init(
         title: String?,
@@ -59,7 +62,8 @@ struct SPAConfiguration {
         page: ProductPage,
         contentSource: SPAContentSource = .dotNs,
         presentation: SPAPresentation = .pushed,
-        browserTabId: UUID? = nil
+        browserTabId: UUID? = nil,
+        isEdgeToEdge: Bool = false
     ) {
         self.title = title
         self.isRootScreen = isRootScreen
@@ -68,6 +72,7 @@ struct SPAConfiguration {
         self.contentSource = contentSource
         self.presentation = presentation
         self.browserTabId = browserTabId
+        self.isEdgeToEdge = isEdgeToEdge
     }
 }
 

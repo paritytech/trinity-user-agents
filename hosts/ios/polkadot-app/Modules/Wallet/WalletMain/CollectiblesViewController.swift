@@ -25,6 +25,9 @@ final class CollectiblesViewController: UIViewController {
     private var pendingClose: (() -> Void)?
     private var loadObservation: NSKeyValueObservation?
     private var loadTimeout: Task<Void, Never>?
+    private var pageTopBelowBars: Constraint?
+    private var pageTopAtScreenTop: Constraint?
+    var onStatusStripThemeChanged: (() -> Void)?
 
     init(product: SPAViewProtocol, origin: PocketOrigin? = nil) {
         self.product = product
@@ -64,12 +67,14 @@ final class CollectiblesViewController: UIViewController {
         super.viewDidAppear(animated)
 
         navigationController?.setSystemBackSwipesEnabled(false)
+        applyBarTheme()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
 
         navigationController?.setSystemBackSwipesEnabled(true)
+        navigationController?.traitOverrides.remove(DSThemeTrait.self)
     }
 
     override func viewDidLayoutSubviews() {
@@ -105,6 +110,12 @@ final class CollectiblesViewController: UIViewController {
 extension CollectiblesViewController: PocketItemScreen {
     var pocketItem: PocketItem {
         .collectibles
+    }
+}
+
+extension CollectiblesViewController: StatusStripThemeProviding {
+    var statusStripTheme: ThemeSelection? {
+        pageExpanded ? .berlinNight : nil
     }
 }
 
@@ -160,9 +171,11 @@ private extension CollectiblesViewController {
     func setupPage() {
         view.addSubview(pageView)
         pageView.snp.makeConstraints { make in
-            make.top.equalTo(view.safeAreaLayoutGuide)
+            pageTopBelowBars = make.top.equalTo(view.safeAreaLayoutGuide).constraint
+            pageTopAtScreenTop = make.top.equalToSuperview().constraint
             make.leading.trailing.bottom.equalToSuperview()
         }
+        pageTopAtScreenTop?.deactivate()
         pageView.alpha = 0
         pageView.clipsToBounds = true
         pageView.layer.cornerCurve = .continuous
@@ -215,6 +228,8 @@ private extension CollectiblesViewController {
     /// With Reduce Motion the book is not drawn, the page is shown at once, and only the skeleton fades away.
     func openWithoutMotion() {
         pageExpanded = true
+        setPageReachesScreenTop(true)
+        applyBarTheme()
         book.isHidden = true
         pageView.transform = .identity
         pageView.layer.cornerRadius = 0
@@ -278,11 +293,13 @@ private extension CollectiblesViewController {
 
     func expandPage() {
         pageExpanded = true
+        applyBarTheme()
         let expand = UIViewPropertyAnimator(
             duration: CollectiblesBookTiming.pageExpandDuration,
             curve: .easeOut
         ) { [self] in
             pageView.transform = .identity
+            setPageReachesScreenTop(true)
             pageView.layer.cornerRadius = 0
             skeleton.alpha = 0
         }
@@ -292,6 +309,30 @@ private extension CollectiblesViewController {
             apply(.pageExpanded)
         }
         expand.startAnimation()
+    }
+
+    /// The product draws a dark page under the bars whatever the app's theme is, so the navigation bar and the
+    /// status strip take the night theme while the page is expanded.
+    func applyBarTheme() {
+        if let statusStripTheme {
+            navigationController?.traitOverrides.appTheme = statusStripTheme
+        } else {
+            navigationController?.traitOverrides.remove(DSThemeTrait.self)
+        }
+        onStatusStripThemeChanged?()
+    }
+
+    /// An expanded page reaches the top of the screen, so the product draws under the bars. A resting page starts
+    /// below them, where the book sits.
+    func setPageReachesScreenTop(_ reachesTop: Bool) {
+        if reachesTop {
+            pageTopBelowBars?.deactivate()
+            pageTopAtScreenTop?.activate()
+        } else {
+            pageTopAtScreenTop?.deactivate()
+            pageTopBelowBars?.activate()
+        }
+        view.layoutIfNeeded()
     }
 
     /// The book sits at the top of the screen, inset as the Pocket's peek is, its art scaled to its width.
@@ -322,10 +363,12 @@ private extension CollectiblesViewController {
         }
 
         pageExpanded = false
+        applyBarTheme()
         let collapse = UIViewPropertyAnimator(
             duration: CollectiblesBookTiming.pageExpandDuration,
             curve: .easeIn
         ) { [self] in
+            setPageReachesScreenTop(false)
             layoutRestingPage()
         }
         collapse.addCompletion { _ in

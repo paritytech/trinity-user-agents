@@ -195,6 +195,8 @@ private extension SPAViewController {
 
         if configuration.isRootScreen {
             rootView.setupRootLayout()
+        } else if configuration.isEdgeToEdge {
+            rootView.setupEdgeToEdgeLayout()
         } else {
             rootView.setupDefaultLayout()
         }

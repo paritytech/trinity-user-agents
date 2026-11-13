@@ -388,6 +388,10 @@ Adopt it for a screen inside the tab container with SwiftUI content pinned to th
 
 A SwiftUI `ScrollView` in an adopting screen takes the inset on SwiftUI's animation, so the bottom pin in `applyDockletStateCommitted` sees no shift and leaves a list at its bottom where it is.
 
+### Product pages
+
+Product pages pad their content by `env(safe-area-inset-bottom)` so they clear a Shown Docklet. The rule is in [Web view layout](host-api-products.md#web-view-layout).
+
 ## Top Status Strip
 
 A fixed-height strip sits at the top of the container. It shows one ring per connection row. Each ring's accessibility label is the chain title and its state. No chain name is drawn. The strip has no tap handling, does not fold, and does not hide.
@@ -397,6 +401,14 @@ A fixed-height strip sits at the top of the container. It shows one ring per con
 - `installStatusBar()` runs before `installChromeController()`, so the bar stays above the strip. Mounted children insert at index 0, so they sit below it.
 
 A Presented product covers the container, so it draws its own strip with the same parts: the `StatusBarTitleButton` menu, built by the shared `SPAMenuElements.swift`, and the `ChainConnectionStatusBarView` rings.
+
+### Theme
+
+The strip takes its theme from the screen on top of the selected tab. `MainTabBarViewController.applyStatusStripTheme()` runs from `refreshStatusBarTitle()`. It reads `StatusStripThemeProviding` (`polkadot-app/Modules/MainTabBar/StatusBarTitleViewModel.swift`) on the top screen of the selected tab's navigation stack, or on the selected controller when it is not a navigation controller.
+
+- The provider's `statusStripTheme` is a `ThemeSelection?`. Nil means the app's theme. A theme is set as `traitOverrides.appTheme` on the strip title button and the chain rings host view. Nil removes the override.
+- The provider sets `onStatusStripThemeChanged`, and the strip re-applies when that fires.
+- `CollectiblesViewController` returns `.berlinNight` while its page is expanded. An expanded page is dark in every app theme and draws under the strip and the navigation bar. Its `applyBarTheme()` also sets the override on its navigation controller. `AppNavigationController` re-applies its bar style on `DSThemeTrait` changes, which re-tints the navigation bar, back button included. The override is removed on collapse and in `viewWillDisappear`.
 
 ## Mounting and Re-tap
 
