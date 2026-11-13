@@ -70,13 +70,13 @@ class App : Application(), Configuration.Provider {
                 .addObserver(debugShakeObserver)
         }
 
+        Coil.setImageLoader(imageLoader)
         remoteConfigService.init()
 
         with(ComputationalScope(ProcessLifecycleOwner.get().lifecycleScope)) {
             appInitializerPipeline.initialize()
         }
 
-        Coil.setImageLoader(imageLoader)
         ProcessLifecycleOwner.get().lifecycle.addObserver(appLifecycleObserver)
     }
 }

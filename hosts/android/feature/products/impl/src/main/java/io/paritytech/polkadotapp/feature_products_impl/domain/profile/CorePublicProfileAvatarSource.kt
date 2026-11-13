@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import uniffi.truapi.ImageReference
 import uniffi.truapi.PublicProfileResolutionOptions
 import javax.inject.Inject
 
@@ -26,8 +27,7 @@ class CorePublicProfileAvatarSource @Inject constructor(
             ).distinctUntilChangedBy { it.avatar }.map { profile ->
                 profile.avatar?.let { avatar ->
                     ImageRequest.Builder(context)
-                        .data(avatar)
-                        .diskCacheKey(avatar.cid)
+                        .data(ImageReference.Bulletin(avatar.cid, avatar.format))
                         .build()
                 }
             }

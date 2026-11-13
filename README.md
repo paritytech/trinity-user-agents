@@ -460,13 +460,14 @@ explicitly supply both resolution options.
 
 Android avatar views collect the profile stream for their composition's lifetime.
 Each distinct avatar becomes a Coil request whose data is the canonical
-`ProfileAvatar`; metadata resolution runs independently of image loading. Conversation
-entry forces freshness, while list and search loads use ordinary freshness. All
+`ImageReference.Bulletin`; metadata resolution runs independently of image loading.
+Conversation entry forces freshness, while list and search loads use ordinary freshness. All
 callers explicitly set `skipStale` to false. Coil reuses CID-keyed original bytes
 on disk and decoded variants in memory without an image freshness expiry. The
 displayed image remains visible during replacement, metadata errors or image errors; a profile
 without an avatar restores the letter tile. Changing the username or removing the
-view cancels observation and image loading.
+view cancels observation and image loading. The shared Coil loader is installed
+before startup initializers.
 
 iOS contacts, search results and chat views consume
 `resolvePublicProfile(username:options:)` as a finite `AsyncThrowingStream`.

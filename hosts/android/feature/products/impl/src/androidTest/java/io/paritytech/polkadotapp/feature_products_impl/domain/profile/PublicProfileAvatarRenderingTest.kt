@@ -29,6 +29,7 @@ import io.paritytech.polkadotapp.design.components.avatar.PublicProfileAvatar
 import io.paritytech.polkadotapp.design.configs.colors.AvatarColorScheme
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
+import io.paritytech.polkadotapp.feature_products_impl.domain.image.BulletinImageLoaderRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostRuntimeProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -64,7 +65,7 @@ class PublicProfileAvatarRenderingTest {
     private val bobAvatar = ProfileAvatar("bob-cid", ImageFormat.PNG)
     private val username = mutableStateOf("alice.01")
     private val shown = mutableStateOf(true)
-    private val failedImages = Channel<ProfileAvatar>(Channel.UNLIMITED)
+    private val failedImages = Channel<ImageReference.Bulletin>(Channel.UNLIMITED)
     private val placeholder = AvatarUiModel.Name("Alice", AvatarColorScheme.from("alice".encodeToByteArray()))
     private lateinit var imageLoader: ImageLoader
     private var contentShown = false
@@ -74,10 +75,10 @@ class PublicProfileAvatarRenderingTest {
         imageLoader = ImageLoader.Builder(context)
             .allowHardware(false)
             .diskCache(null)
-            .components { PublicProfileAvatarImageLoaderRegistrar(runtimeProvider).register(this) }
+            .components { BulletinImageLoaderRegistrar(runtimeProvider).register(this) }
             .eventListener(object : EventListener {
                 override fun onError(request: ImageRequest, result: ErrorResult) {
-                    (request.data as? ProfileAvatar)?.let { failedImages.trySend(it) }
+                    (request.data as? ImageReference.Bulletin)?.let { failedImages.trySend(it) }
                 }
             })
             .build()
@@ -169,13 +170,13 @@ class PublicProfileAvatarRenderingTest {
 
         replacement.release.completeExceptionally(IllegalStateException("image unavailable"))
 
-        var failure: ProfileAvatar? = null
+        var failure: ImageReference.Bulletin? = null
         compose.waitUntil(TIMEOUT_MILLIS) {
             failedImages.tryReceive().getOrNull()?.let { failure = it }
             failure != null
         }
         compose.waitForIdle()
-        assertEquals(nextAvatar, failure)
+        assertEquals(ImageReference.Bulletin(nextAvatar.cid, nextAvatar.format), failure)
         assertEquals(Color.Red, avatarColor())
     }
 

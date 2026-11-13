@@ -87,6 +87,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.sponsoring.RealStatementStoreSubmissionSponsoring
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.sponsoring.SponsorPreimageWithBulletin
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.sponsoring.SponsorReviveCallsWithPgas
+import io.paritytech.polkadotapp.feature_products_impl.domain.image.BulletinImageLoaderRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.ProductNotificationScheduler
 import io.paritytech.polkadotapp.feature_products_impl.domain.notifications.RealProductNotificationScheduler
 import io.paritytech.polkadotapp.feature_products_impl.domain.operation.ProductOperationService
@@ -134,7 +135,6 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.RealProductBotManagementInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.profile.CorePublicProfileAvatarSource
-import io.paritytech.polkadotapp.feature_products_impl.domain.profile.PublicProfileAvatarImageLoaderRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.runtime.PrefsProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.search.ProductChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.serialization.JsWidgetSerializer
@@ -260,7 +260,7 @@ internal interface ProductsModule {
 
     @Binds
     @IntoSet
-    fun bindPublicProfileAvatarImageLoaderRegistrar(impl: PublicProfileAvatarImageLoaderRegistrar): ImageLoaderComponentRegistrar
+    fun bindBulletinImageLoaderRegistrar(impl: BulletinImageLoaderRegistrar): ImageLoaderComponentRegistrar
 
     @Binds
     @Singleton

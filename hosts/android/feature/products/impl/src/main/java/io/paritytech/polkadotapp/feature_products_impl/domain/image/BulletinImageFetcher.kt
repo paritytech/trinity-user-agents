@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_products_impl.domain.profile
+package io.paritytech.polkadotapp.feature_products_impl.domain.image
 
 import coil.ComponentRegistry
 import coil.ImageLoader
@@ -19,12 +19,11 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostR
 import okio.Buffer
 import uniffi.truapi.ImageFormat
 import uniffi.truapi.ImageReference
-import uniffi.truapi.ProfileAvatar
 import javax.inject.Inject
 
 @OptIn(ExperimentalCoilApi::class)
-internal class PublicProfileAvatarFetcher(
-    private val avatar: ProfileAvatar,
+internal class BulletinImageFetcher(
+    private val reference: ImageReference.Bulletin,
     private val runtimeProvider: TrUAPIHostRuntimeProvider,
     private val options: Options,
     private val diskCache: DiskCache?,
@@ -32,20 +31,20 @@ internal class PublicProfileAvatarFetcher(
     override suspend fun fetch(): FetchResult? {
         if (options.diskCachePolicy.readEnabled) {
             runCancellableCatching { readCached() }
-                .logFailure("Cached avatar ${avatar.cid}")
+                .logFailure("Cached Bulletin image ${reference.cid}")
                 .getOrElse { return null }
                 ?.let { return it }
         }
 
         val image = runtimeProvider.runtime()
-            .flatMap { runtime -> runCancellableCatching { runtime.loadImage(ImageReference.Bulletin(avatar.cid, avatar.format)) } }
-            .logFailure("Avatar ${avatar.cid}")
+            .flatMap { runtime -> runCancellableCatching { runtime.loadImage(reference) } }
+            .logFailure("Bulletin image ${reference.cid}")
             .getOrNull()
             ?: return null
 
         if (options.diskCachePolicy.writeEnabled) {
             runCancellableCatching { writeCached(image.bytes, image.format) }
-                .logFailure("Caching avatar ${avatar.cid}")
+                .logFailure("Caching Bulletin image ${reference.cid}")
         }
 
         return SourceResult(
@@ -57,12 +56,12 @@ internal class PublicProfileAvatarFetcher(
 
     private fun readCached(): SourceResult? {
         val cache = diskCache ?: return null
-        val snapshot = cache.openSnapshot(avatar.cid) ?: return null
+        val snapshot = cache.openSnapshot(reference.cid) ?: return null
         try {
             val format = cache.fileSystem.read(snapshot.metadata) { ImageFormat.valueOf(readUtf8()) }
-            check(format == avatar.format) { "Cached image does not match declared format" }
+            check(reference.declaredFormat == null || format == reference.declaredFormat) { "Cached image does not match declared format" }
             return SourceResult(
-                source = ImageSource(snapshot.data, cache.fileSystem, avatar.cid, snapshot),
+                source = ImageSource(snapshot.data, cache.fileSystem, reference.cid, snapshot),
                 mimeType = format.mimeType(),
                 dataSource = DataSource.DISK,
             )
@@ -74,7 +73,7 @@ internal class PublicProfileAvatarFetcher(
 
     private fun writeCached(bytes: ByteArray, format: ImageFormat) {
         val cache = diskCache ?: return
-        val editor = cache.openEditor(avatar.cid) ?: return
+        val editor = cache.openEditor(reference.cid) ?: return
         try {
             cache.fileSystem.write(editor.metadata) { writeUtf8(format.name) }
             cache.fileSystem.write(editor.data) { write(bytes) }
@@ -92,21 +91,21 @@ internal class PublicProfileAvatarFetcher(
         ImageFormat.WEBP -> "image/webp"
     }
 
-    class Factory(private val runtimeProvider: TrUAPIHostRuntimeProvider) : Fetcher.Factory<ProfileAvatar> {
-        override fun create(data: ProfileAvatar, options: Options, imageLoader: ImageLoader): Fetcher =
-            PublicProfileAvatarFetcher(data, runtimeProvider, options, imageLoader.diskCache)
+    class Factory(private val runtimeProvider: TrUAPIHostRuntimeProvider) : Fetcher.Factory<ImageReference.Bulletin> {
+        override fun create(data: ImageReference.Bulletin, options: Options, imageLoader: ImageLoader): Fetcher =
+            BulletinImageFetcher(data, runtimeProvider, options, imageLoader.diskCache)
     }
 }
 
-internal class PublicProfileAvatarImageLoaderRegistrar @Inject constructor(
+internal class BulletinImageLoaderRegistrar @Inject constructor(
     private val runtimeProvider: TrUAPIHostRuntimeProvider,
 ) : ImageLoaderComponentRegistrar {
     override fun register(builder: ComponentRegistry.Builder) {
-        builder.add(PublicProfileAvatarKeyer())
-        builder.add(PublicProfileAvatarFetcher.Factory(runtimeProvider))
+        builder.add(BulletinImageKeyer())
+        builder.add(BulletinImageFetcher.Factory(runtimeProvider))
     }
 }
 
-private class PublicProfileAvatarKeyer : Keyer<ProfileAvatar> {
-    override fun key(data: ProfileAvatar, options: Options): String = "${data.cid}:${data.format}"
+private class BulletinImageKeyer : Keyer<ImageReference.Bulletin> {
+    override fun key(data: ImageReference.Bulletin, options: Options): String = "${data.cid}:${data.declaredFormat}"
 }
