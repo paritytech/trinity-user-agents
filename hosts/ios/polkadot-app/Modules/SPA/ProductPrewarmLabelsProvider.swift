@@ -4,27 +4,16 @@ protocol ProductPrewarmLabelsProviding {
     func labels() async -> [String]
 }
 
-struct ProductPrewarmLabelsProvider {
-    let flowStateProvider: SPAFlowStateProviding
-}
+struct ProductPrewarmLabelsProvider {}
 
 extension ProductPrewarmLabelsProvider: ProductPrewarmLabelsProviding {
     func labels() async -> [String] {
+        // Funding providers are dotNS products the core lists, so only the
+        // static products are prewarmed here.
         #if FEATURE_PRODUCTS
-            let staticProducts = [AppConfig.DotNs.dotNsBrowse]
+            return [AppConfig.DotNs.dotNsBrowse]
         #else
-            let staticProducts: [String] = []
+            return []
         #endif
-
-        let fundingProvider = FundingDomainProvider(
-            hostProvider: flowStateProvider.flowState().hostProvider
-        )
-
-        let fundingPages = await [
-            try? fundingProvider.fundingPage(),
-            try? fundingProvider.offrampPage()
-        ]
-
-        return staticProducts + fundingPages.compactMap { $0?.host.name }
     }
 }

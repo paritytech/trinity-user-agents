@@ -34,20 +34,4 @@ struct FundingConfigTests {
         #expect(FundingConfig.providers(in: ["onrampUrl": "getcash.dot"], logger: nil).isEmpty)
         #expect(FundingConfig.providers(in: ["providers": "ramp"], logger: nil).isEmpty)
     }
-
-    @Test("Reads the destinations next to the providers list")
-    func readsDestinationsBesideProviders() {
-        let json: [String: Any] = [
-            "onrampUrl": "getcash.dot",
-            "offrampUrl": "",
-            "providers": ["ramp"],
-            "other": 42
-        ]
-
-        #expect(FundingConfig.string("onrampUrl", in: json) == "getcash.dot")
-        #expect(FundingConfig.string("offrampUrl", in: json) == nil)
-        #expect(FundingConfig.string("providers", in: json) == nil)
-        #expect(FundingConfig.string("other", in: json) == nil)
-        #expect(FundingConfig.string("onrampUrl", in: nil) == nil)
-    }
 }

@@ -42,6 +42,7 @@ final class AssetDetailsScreenViewController: UIViewController {
 
         view.backgroundColor = .bgSurfaceMain
         setupTitle()
+        setupHistoryButton()
         setupHosting()
         pullDown.install()
         NotificationCenter.default.addObserver(
@@ -173,6 +174,15 @@ private extension AssetDetailsScreenViewController {
         titleLabel.accessibilityLabel = title
         titleLabel.sizeToFit()
         navigationItem.titleView = titleLabel
+    }
+
+    func setupHistoryButton() {
+        let item = UIBarButtonItem(
+            image: UIImage(systemName: "clock.arrow.circlepath"),
+            primaryAction: UIAction { [weak self] _ in self?.viewModel.onHistory?() }
+        )
+        item.accessibilityLabel = String(localized: .Funding.historyOpen)
+        navigationItem.rightBarButtonItem = item
     }
 
     func setupHosting() {

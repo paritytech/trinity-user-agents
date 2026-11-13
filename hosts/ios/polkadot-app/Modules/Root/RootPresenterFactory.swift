@@ -61,7 +61,7 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
         let chainRegistryClosure = { ChainRegistryFacade.sharedRegistry }
 
         let productPrewarmer = ProductContentPrewarmer(
-            labelsProvider: ProductPrewarmLabelsProvider(flowStateProvider: flowStateProvider),
+            labelsProvider: ProductPrewarmLabelsProvider(),
             chainRegistryClosure: chainRegistryClosure,
             flowStateProvider: flowStateProvider,
             activity: ApplicationActivity()

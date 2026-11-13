@@ -11,6 +11,12 @@ import SubstrateSdk
 import KeyDerivation
 import Keystore_iOS
 
+/// Runtime configuration error raised while assembling the shared host config.
+enum TrUAPIRuntimeConfigError: Error {
+    /// The runtime was built without its funding service.
+    case fundingServiceMissing
+}
+
 /// Vends the process-wide ``TrUAPIHostRuntime``. Product executions open off
 /// the single shared runtime, so its authentication and core services are
 /// shared across every SPA and chat product.
@@ -43,6 +49,7 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
     private let confirmationRouterFacade: ProductRoutersFacadeProtocol
     private let backedUpInstallation = TrUAPIBackedUpInstallation()
     private let tldProvider: DotNsTldProviding
+    private let fundingServiceSlot = FundingServiceSlot()
     private let remoteConfig: RemoteConfigObserving?
     private let appliedConfig: () -> RemoteAppConfig?
     private let logger: LoggerProtocol
@@ -105,16 +112,13 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 
     /// Serve top-ups, payments and balance to the core from `paymentsSupport`. Approvals and
     /// privacy warnings are presented like the core's own host-level prompts.
-    func attach(paymentsSupport: PaymentsSupport, hostProvider: ProductHostProviding) {
+    func attach(paymentsSupport: PaymentsSupport) {
         backedUpInstallation.attach(paymentsSupport.coinageService.backedUpInstallationProvider)
         let productsRouter = confirmationRouterFacade.productsRouter
         let bridge = RustPaymentsBridge(
             payments: ProductPayments(
                 support: paymentsSupport,
-                approvalRequester: PaymentApprovalRequesterFactory.create(
-                    router: productsRouter,
-                    fundingProvider: FundingDomainProvider(hostProvider: hostProvider)
-                ),
+                approvalRequester: PaymentApprovalRequesterFactory.create(router: productsRouter),
                 privacyConfirmer: PaymentPrivacyConfirmer(router: productsRouter),
                 recyclingStrategy: CoinageRecyclingStrategyStore.shared
             ),
@@ -181,8 +185,14 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
             visibility: ProductVisibility(application: UIApplication.shared)
         ))
         paymentsBridge?.install(on: runtime)
-        // Also before any execution opens: the core offers only the providers
-        // the host lists, the ones `funding_config` names.
+        // Also before any execution opens, so a product's Funding request
+        // never answers unsupported. The core offers only the providers the
+        // host lists: the ones `funding_config` names.
+        let fundingService = FundingService(runtime: runtime, logger: logger)
+        runtime.setFunding(AppFundingHostBridge(handler: fundingService))
+        bridge.onWorkerCrashing { [weak fundingService] productId in
+            fundingService?.workerCrashing(productId: productId)
+        }
         listFundingProviders(on: runtime)
         contactsChangeNotifier = ContactsChangeNotifier(
             dataProviderFactory: ChatContactDataProviderFactory(),
@@ -197,7 +207,22 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         try runtime.activateLocalSession(secret: secret, liteUsername: settingsManager.string(for: .username))
 
         cachedRuntime = runtime
+        fundingServiceSlot.fill(fundingService)
         return runtime
+    }
+}
+
+extension TrUAPIHostRuntimeProvider: FundingServiceProviding {
+    func fundingService() throws -> FundingServiceProtocol {
+        _ = try sharedRuntime()
+        guard let service = fundingServiceSlot.service else {
+            throw TrUAPIRuntimeConfigError.fundingServiceMissing
+        }
+        return service
+    }
+
+    func builtFundingService() -> AsyncStream<FundingServiceProtocol> {
+        fundingServiceSlot.built()
     }
 }
 

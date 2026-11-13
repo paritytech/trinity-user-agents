@@ -56,8 +56,6 @@ private extension BackgroundTaskBootstrapperTests {
         dotNsResolver: "resolver.example.com",
         dotNsNameRegistry: nil,
         coinageInstanceId: 1,
-        fundingUrl: nil,
-        offrampUrl: nil,
         accountDataStoreContract: nil,
         paymentAsset: nil,
         appSharingUrl: nil

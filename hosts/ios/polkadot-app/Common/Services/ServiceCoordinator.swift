@@ -19,6 +19,7 @@ import UniqueDevice
 import ChainRegistry
 import StructuredConcurrency
 import DesignSystem
+import TrUAPIHost
 
 protocol ServiceCoordinatorProtocol: DashboardServicesCoordinating {
     var depositService: DepositServiceProtocol { get }
@@ -235,6 +236,7 @@ extension ServiceCoordinator {
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
+        RootDependencyLocator.setDependency(truapiRuntimeProvider as FundingServiceProviding)
         RootDependencyLocator.setDependency(
             PublicProfileAvatarViewModelFactory(runtimeProvider: truapiRuntimeProvider)
                 as PublicProfileAvatarViewModelMaking
@@ -323,7 +325,21 @@ extension ServiceCoordinator {
         let audioSessionManager = AudioSessionManager()
 
         let paymentsSupport = PaymentsSupport(coinageService: coinageServices.coinageService)
-        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport, hostProvider: spaFlowState.hostProvider)
+        truapiRuntimeProvider.attach(paymentsSupport: paymentsSupport)
+
+        // The core resumes funding when it starts; start it now, with payments
+        // attached, if the core says a provider was still working on a session
+        // when the app last ran.
+        if let directory = try? TrUAPIHostRuntimeProvider.coreDatabaseDirectory(),
+           fundingResumePending(databaseDirectory: directory) {
+            Task.detached {
+                do {
+                    _ = try truapiRuntimeProvider.sharedRuntime()
+                } catch {
+                    logger.error("[funding] starting the core to resume funding failed: \(error)")
+                }
+            }
+        }
 
         let truApiDependencies = TruApiDependenciesLocator()
         truApiDependencies.setDependency(allowanceSupport)

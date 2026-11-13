@@ -11,8 +11,8 @@ import AsyncExtensions
 import AsyncAlgorithms
 import ChainRegistry
 import BackgroundExecution
-import Products
 import UIKitExt
+import TrUAPIHost
 
 final class AssetDetailsInteractor: AnyProviderAutoCleaning {
     weak var presenter: AssetDetailsInteractorOutputProtocol?
@@ -29,8 +29,10 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
     private var recoveryStateTask: Task<Void, Error>?
     private var recoveredBalanceTask: Task<Void, Error>?
 
-    private let fundingDomainProvider: FundingDomainProviding
-    private var topUpProductTask: Task<Void, Never>?
+    private let fundingOpener: FundingOpening
+    /// The one funding session being opened: the card opens top-ups only,
+    /// and a second tap replaces the first.
+    private var fundingTask: Task<Void, Never>?
 
     #if TESTNET_FEATURE
         var backgroundExecutor: BackgroundExecuting?
@@ -43,13 +45,13 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
         chainAsset: ChainAsset,
         coinageService: CoinageServicing,
         coinageBackupSyncService: any CoinageBackupSyncServicing,
-        fundingDomainProvider: FundingDomainProviding
+        fundingOpener: FundingOpening
     ) {
         self.priceLocalSubscriptionFactory = priceLocalSubscriptionFactory
         self.chainAsset = chainAsset
         self.coinageService = coinageService
         self.coinageBackupSyncService = coinageBackupSyncService
-        self.fundingDomainProvider = fundingDomainProvider
+        self.fundingOpener = fundingOpener
     }
 
     deinit {
@@ -57,7 +59,7 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
         recoveryStateTask?.cancel()
         recoveredBalanceTask?.cancel()
         priceSubscriptionTask?.cancel()
-        topUpProductTask?.cancel()
+        fundingTask?.cancel()
     }
 }
 
@@ -69,14 +71,14 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
         subscribeToRecoveredBalance()
     }
 
-    func openTopUpProduct() {
-        topUpProductTask?.cancel()
-        topUpProductTask = Task { [weak presenter, fundingDomainProvider] in
+    func openFunding(_ direction: FundingDirection) {
+        fundingTask?.cancel()
+        fundingTask = Task { [weak presenter, fundingOpener] in
             do {
-                let page = try await RampAction.topUp.resolvePage(using: fundingDomainProvider)
-                await presenter?.didResolveTopUpProduct(.success(page))
+                let session = try await fundingOpener.openFunding(direction: direction)
+                await presenter?.didCompleteFunding(direction, result: .success(session))
             } catch {
-                await presenter?.didResolveTopUpProduct(.failure(error))
+                await presenter?.didCompleteFunding(direction, result: .failure(error))
             }
         }
     }
