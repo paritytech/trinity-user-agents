@@ -15,7 +15,7 @@ use super::NftPurseOwner;
 /// grant that is merely undetermined does not change the answer, because the OS
 /// resolves its own gate when the capability is used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, Display)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 #[cfg_attr(test, derive(strum::VariantArray))]
 #[cfg_attr(feature = "mock", derive(strum::IntoStaticStr))]
 pub enum HostDevicePermissionRequest {
@@ -58,7 +58,7 @@ pub enum HostDevicePermissionRequest {
 /// are also triggered implicitly by the corresponding business calls when not
 /// yet granted.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 #[cfg_attr(feature = "mock", derive(strum::IntoStaticStr))]
 pub enum RemotePermission {
 	/// Outbound HTTP/WebSocket access to a set of domains. External navigation
@@ -108,7 +108,7 @@ pub enum RemotePermission {
 /// remote-permission request (RFC 0002).
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
 #[display("{permission}")]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct RemotePermissionRequest {
 	/// Permission requested by the product.
 	pub permission: RemotePermission,

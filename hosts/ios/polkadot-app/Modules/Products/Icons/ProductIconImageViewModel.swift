@@ -15,7 +15,9 @@ final class ProductIconImageViewModel {
     }
 }
 
-extension ProductIconImageViewModel: ImageViewModelProtocol {
+extension ProductIconImageViewModel: IdentifiableImageViewModelProtocol {
+    var identifier: String { provider.cacheKey }
+
     @MainActor
     func loadImage(
         on imageView: UIImageView,

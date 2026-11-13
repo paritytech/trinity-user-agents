@@ -3,15 +3,21 @@ import UIKit
 
 internal import SnapKit
 
-/// UIKit host for ``DSSearchAvatar`` in search result rows.
+/// UIKit host for ``DSAsyncAvatar`` in search result rows.
 public final class DSSearchAvatarView: UIView {
     public var viewModel: AvatarViewModel {
         get { model.viewModel }
         set { model.viewModel = newValue }
     }
 
+    /// An optional image loaded over the contact's placeholder.
+    public var icon: AnyImageViewModel? {
+        get { model.icon }
+        set { model.icon = newValue }
+    }
+
     override public var intrinsicContentSize: CGSize {
-        CGSize(width: DSSearchAvatar.dimension, height: DSSearchAvatar.dimension)
+        CGSize(width: DSLetterAvatar.Size.s40.dimension, height: DSLetterAvatar.Size.s40.dimension)
     }
 
     private let model: Model
@@ -53,6 +59,7 @@ private extension DSSearchAvatarView {
     @Observable
     final class Model {
         var viewModel: AvatarViewModel
+        var icon: AnyImageViewModel?
 
         init(viewModel: AvatarViewModel) {
             self.viewModel = viewModel
@@ -63,7 +70,7 @@ private extension DSSearchAvatarView {
         let model: Model
 
         var body: some View {
-            DSSearchAvatar(viewModel: model.viewModel)
+            DSAsyncAvatar(placeholder: model.viewModel, icon: model.icon, size: .s40)
         }
     }
 }

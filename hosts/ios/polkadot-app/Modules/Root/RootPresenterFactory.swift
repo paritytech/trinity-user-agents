@@ -4,6 +4,7 @@ import Operation_iOS
 import KeyDerivation
 import SubstrateSdk
 import ChainRegistry
+import FoundationExt
 
 enum RootPresenterFactory: RootPresenterFactoryProtocol {
     static func createPresenter(
@@ -60,9 +61,10 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
         let chainRegistryClosure = { ChainRegistryFacade.sharedRegistry }
 
         let productPrewarmer = ProductContentPrewarmer(
-            makeLabels: { Self.productLabels },
+            labelsProvider: ProductPrewarmLabelsProvider(),
             chainRegistryClosure: chainRegistryClosure,
-            flowStateProvider: flowStateProvider
+            flowStateProvider: flowStateProvider,
+            activity: ApplicationActivity()
         )
 
         let interactor = RootInteractor(
@@ -96,13 +98,5 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
         window.rootViewController = initViewController
 
         return presenter
-    }
-
-    private static var productLabels: [String] {
-        #if FEATURE_PRODUCTS
-            return [AppConfig.DotNs.dotNsBrowse]
-        #else
-            return []
-        #endif
     }
 }

@@ -191,13 +191,13 @@ pub fn compare_and_set(
 ) -> Result<bool, DbError> {
 	let success = status.success_block();
 	let changed = tx.prepare_cached(COMPARE_AND_SET)?.execute(named_params! {
-		":status": status_name(status),
+		":status": <&str>::from(status),
 		":success_number": success.map(|block| block.number),
 		":success_hash": success.map(|block| block.hash.0),
 		":failure_kind": failure_kind(status),
 		":scanned_number": scanned_to,
 		":id": observed.id.0,
-		":expected": status_name(observed.status),
+		":expected": <&str>::from(observed.status),
 		":expected_hash": observed.tx_hash.0,
 	})?;
 	Ok(changed == 1)
@@ -455,17 +455,6 @@ fn pending_success_from_row(row: &Row<'_>) -> rusqlite::Result<DurableTxStatus> 
 
 fn invalid_status(message: String) -> rusqlite::Error {
 	rusqlite::Error::FromSqlConversionFailure(0, Type::Text, message.into())
-}
-
-/// The `status` column's value for `status`.
-fn status_name(status: DurableTxStatus) -> &'static str {
-	match status {
-		DurableTxStatus::PendingSubmission => "PENDING_SUBMISSION",
-		DurableTxStatus::Pending => "PENDING",
-		DurableTxStatus::PendingSuccess { .. } => "PENDING_SUCCESS",
-		DurableTxStatus::FinalizedSuccess { .. } => "FINALIZED_SUCCESS",
-		DurableTxStatus::Failure(_) => "FAILURE",
-	}
 }
 
 /// The `failure_kind` column's value for `status`.
