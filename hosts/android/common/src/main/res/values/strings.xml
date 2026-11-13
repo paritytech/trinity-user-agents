@@ -1079,6 +1079,7 @@
     <string name="funding_activity_payment_failed">Payment failed</string>
     <string name="funding_activity_completed">Completed</string>
     <string name="funding_history_title">History</string>
+    <string name="funding_open_history">Open history</string>
     <string name="funding_history_empty">Nothing here yet. Your top-ups and withdrawals will appear here.</string>
     <string name="funding_new_top_up">New top-up</string>
     <string name="funding_send_money_out">Send money out</string>

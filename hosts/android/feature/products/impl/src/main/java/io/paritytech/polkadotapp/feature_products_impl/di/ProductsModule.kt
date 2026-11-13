@@ -18,7 +18,6 @@ import io.paritytech.polkadotapp.common.utils.isEnabled
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtensionProvider
 import io.paritytech.polkadotapp.feature_chats_api.domain.search.ChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsServingHostResolver
-import io.paritytech.polkadotapp.feature_products_api.domain.FundingDomainProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.ProductAccountIdProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.ProductRequestAccountResolver
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.AccountsProtocol
@@ -26,6 +25,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Me
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
 import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.DeriveEntropyUseCase
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.HostFunding
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFaceOnOpen
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketFaceSource
@@ -39,7 +39,6 @@ import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.Prod
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHost
 import io.paritytech.polkadotapp.feature_products_impl.data.bundled.AssetBundledProductFiles
 import io.paritytech.polkadotapp.feature_products_impl.data.config.FundingProvidersConfig
-import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigFundingDomainProvider
 import io.paritytech.polkadotapp.feature_products_impl.data.config.RemoteConfigFundingProvidersConfig
 import io.paritytech.polkadotapp.feature_products_impl.data.funding.DeviceCountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.data.pocket.CorePocketCardRepository
@@ -86,9 +85,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.Ex
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.RealExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.CountryDetector
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingCore
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProductsWarmUp
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
-import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingProductsWarmUp
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.RealFundingService
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.AllowanceKeyStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.allowance.RealAllowanceKeyStorage
@@ -103,15 +101,12 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.origin.ProductAcco
 import io.paritytech.polkadotapp.feature_products_impl.domain.origin.RealProductAccountOrigins
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.RealRequestPaymentUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.paymentRequest.RequestPaymentUseCase
-import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.AutoAllowProductPermissionRequester
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionGuard
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.ProductPermissionRequester
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.RealProductPermissionGuard
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.RealProductPermissionRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.RealProductPermissionRequester
-import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.RealWhitelistedProductsProvider
-import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.WhitelistedProductsProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.AccountAccessPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.BalanceAccessPermissionHandler
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.handlers.DeviceCapabilityPermissionHandler
@@ -153,6 +148,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealE
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealTopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIFundingCore
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIHostFunding
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -163,6 +159,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RealWorkerB
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerBootFactory
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketScanContentParser
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSessionPresenter
+import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.FundingResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.ProductWorkerInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.TopUpResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -312,6 +310,10 @@ internal interface ProductsModule {
     fun bindTopUpResumeInitializer(impl: TopUpResumeInitializer): AppInitializer
 
     @Binds
+    @IntoSet
+    fun bindFundingResumeInitializer(impl: FundingResumeInitializer): AppInitializer
+
+    @Binds
     fun bindProductAccountOrigins(impl: RealProductAccountOrigins): ProductAccountOrigins
 
     @Binds
@@ -404,7 +406,14 @@ internal interface ProductsModule {
     fun bindExploreProductsService(impl: RealExploreProductsService): ExploreProductsService
 
     @Binds
-    fun bindFundingProductsWarmUp(impl: RealFundingProductsWarmUp): FundingProductsWarmUp
+    @Singleton
+    fun bindPermissionRequester(impl: RealProductPermissionRequester): ProductPermissionRequester
+
+    @Binds
+    fun bindHostFunding(impl: TrUAPIHostFunding): HostFunding
+
+    @Binds
+    fun bindFundingSessionScreens(impl: FundingSessionPresenter): FundingSessionScreens
 
     @Binds
     fun bindFundingProvidersConfig(impl: RemoteConfigFundingProvidersConfig): FundingProvidersConfig
@@ -430,13 +439,6 @@ internal interface ProductsModule {
 
     @Binds
     fun bindProductRequestAccountResolver(impl: RealProductRequestAccountResolver): ProductRequestAccountResolver
-
-    @Binds
-    @Singleton
-    fun bindFundingDomainProvider(impl: RemoteConfigFundingDomainProvider): FundingDomainProvider
-
-    @Binds
-    fun bindWhitelistedProductsProvider(impl: RealWhitelistedProductsProvider): WhitelistedProductsProvider
 
     @Binds
     fun bindDeriveEntropyUseCase(impl: RealDeriveEntropyUseCase): DeriveEntropyUseCase
@@ -492,26 +494,14 @@ internal interface ProductsModule {
             )
 
         @Provides
-        @Singleton
-        fun providePermissionRequester(
-            real: RealProductPermissionRequester,
-            whitelistedProductsProvider: WhitelistedProductsProvider,
-        ): ProductPermissionRequester {
-            return AutoAllowProductPermissionRequester(whitelistedProductsProvider, real)
-        }
-
-        @Provides
         @IntoSet
         fun providePocketScanContentParser(handler: PocketDeepLinkHandler): ScanContentParser =
             PocketScanContentParser(handler)
 
         @Provides
         @Singleton
-        fun provideProductDeepLinkGate(fundingDomainProvider: FundingDomainProvider): ProductDeepLinkGate =
-            ProductDeepLinkGate(
-                arbitraryProductsEnabled = FeatureOption.ARBITRARY_PRODUCTS.isEnabled,
-                fundingDomainProvider = fundingDomainProvider,
-            )
+        fun provideProductDeepLinkGate(): ProductDeepLinkGate =
+            ProductDeepLinkGate(arbitraryProductsEnabled = FeatureOption.ARBITRARY_PRODUCTS.isEnabled)
 
         @Provides
         @IntoSet

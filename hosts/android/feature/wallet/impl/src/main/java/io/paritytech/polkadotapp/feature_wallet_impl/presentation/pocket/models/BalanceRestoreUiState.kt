@@ -6,6 +6,8 @@ data class DigitalDollarCardDetailsUiState(
 
 sealed interface BalanceRestoreUiState {
     data object NotDetermined : BalanceRestoreUiState
+
+    /** The Get and Send actions; Get only in builds that can fund. */
     data object SendCash : BalanceRestoreUiState
     data class Restore(val inProgress: Boolean) : BalanceRestoreUiState
 }

@@ -9,6 +9,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingEve
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlowInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFrameRequest
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingService
+import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingSessionScreens
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.WorkerCrashNotice
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.frame.FundingFrames
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -38,7 +39,7 @@ class FundingSessionPresenter @Inject constructor(
     private val contextManager: ContextManager,
     private val workerCrashNotice: WorkerCrashNotice,
     dispatchers: CoroutineDispatchers,
-) {
+) : FundingSessionScreens {
     // Outlives the screen that asks for a new session, which closes before the sheet for it opens.
     private val scope = CoroutineScope(SupervisorJob() + dispatchers.main)
 
@@ -46,7 +47,7 @@ class FundingSessionPresenter @Inject constructor(
      * Serves the service's events until the caller stops collecting; events wait while nothing does. A provider's
      * screen still waiting from before the app's screens were recreated is asked for again, as when it first asked.
      */
-    suspend fun present() {
+    override suspend fun present() {
         coroutineScope {
             launch { askWaitingFramesAgain() }
             service.events.collect(::on)
@@ -57,7 +58,7 @@ class FundingSessionPresenter @Inject constructor(
      * A session the core still holds reopens where it stands, with the provider's screen over it while one is open or
      * waits to be; one it has ended opens its detail from the history.
      */
-    suspend fun show(intent: String) {
+    override suspend fun show(intent: String) {
         val entry = service.entryState(intent).firstOrNull()
         if (entry == null || entry.hasEnded) {
             router.openFundingEnded(intent)

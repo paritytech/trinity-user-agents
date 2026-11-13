@@ -39,11 +39,16 @@ import io.paritytech.polkadotapp.common.presentation.loading.onLoaded
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.LocalPaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.paymentAsset.PaymentAssetBrand
 import io.paritytech.polkadotapp.common.presentation.statusBar.reportsScrollToStatusBar
+import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonShape
+import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.default.PolkadotButton
+import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
+import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
 import io.paritytech.polkadotapp.design.components.icon.NovaIcon
 import io.paritytech.polkadotapp.design.components.icon.NovaIcons
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowDownwards
 import io.paritytech.polkadotapp.design.components.icon.vectors.ArrowUpwards
+import io.paritytech.polkadotapp.design.components.icon.vectors.Clock
 import io.paritytech.polkadotapp.design.components.navigationbar.LocalAppNavigationBarInsets
 import io.paritytech.polkadotapp.design.components.spacer.VerticalSpacer
 import io.paritytech.polkadotapp.design.components.text.NovaText
@@ -85,6 +90,8 @@ fun DigitalDollarCardDetails(
     val viewModel = hiltViewModel<DigitalDollarCardDetailsViewModel>()
     val loadingState by viewModel.coinageState.collectAsStateWithLifecycle()
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val fundingActivity by viewModel.fundingActivity.collectAsStateWithLifecycle()
+    val fundingSheet by viewModel.fundingSheet.collectAsStateWithLifecycle()
 
     BackHandler { onBack() }
 
@@ -95,6 +102,7 @@ fun DigitalDollarCardDetails(
         coinageLoadingState = loadingState,
         state = state,
         onSendClick = viewModel::onSendClick,
+        onHistoryClick = viewModel::onHistoryClick,
         onGetCashClick = viewModel::onGetCashClick,
         onAutoFundClick = viewModel::onAutoFundClick,
         onCoinTapped = viewModel::onCoinTapped,
@@ -106,6 +114,16 @@ fun DigitalDollarCardDetails(
         onBackupUpdateClick = viewModel::onBackupUpdateClick,
         onBackupCloseClick = viewModel::onBackupCloseClick
     )
+
+    FundingActivitySheet(
+        sheet = fundingSheet,
+        state = fundingActivity,
+        onHistory = viewModel::onHistoryClick,
+        onBack = viewModel::onSheetBack,
+        onStartNew = viewModel::onNewTopUpClick,
+        onRowClick = viewModel::onFundingRowClick,
+        onDismiss = viewModel::onSheetDismiss,
+    )
 }
 
 @Composable
@@ -116,6 +134,7 @@ private fun DigitalDollarCardDetailsContent(
     coinageLoadingState: LoadingState<CoinageUiState>,
     state: DigitalDollarCardDetailsUiState,
     onSendClick: () -> Unit,
+    onHistoryClick: () -> Unit,
     onGetCashClick: () -> Unit,
     onAutoFundClick: () -> Unit,
     onCoinTapped: (String?) -> Unit,
@@ -141,6 +160,20 @@ private fun DigitalDollarCardDetailsContent(
             .padding(PolkadotTheme.spacings.mediumIncreased)
             .windowInsetsPadding(LocalAppNavigationBarInsets.current)
     ) {
+        // Where iOS has its navigation bar's history item: the top end, above the card.
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            PolkadotIconButton(
+                icon = NovaIcons.Clock,
+                onClick = onHistoryClick,
+                style = PolkadotButtonStyle.ghost(),
+                size = PolkadotIconButtonSize.medium(),
+                shape = PolkadotButtonShape.pill,
+                contentDescription = stringResource(RCommon.string.funding_open_history),
+            )
+        }
+
+        VerticalSpacer { small }
+
         DigitalDollarCard(
             modifier = Modifier
                 .offset { IntOffset(0, closeDrag.offsetPx.roundToInt()) }
@@ -348,6 +381,7 @@ private fun DigitalDollarCardDetailsPreview() {
                     balanceRestore = BalanceRestoreUiState.SendCash
                 ),
                 onSendClick = {},
+                onHistoryClick = {},
                 onGetCashClick = {},
                 onAutoFundClick = {},
                 onCoinTapped = {},

@@ -58,7 +58,7 @@ enum class FeatureOption {
     PRODUCT_SETTINGS,
     PERSONHOOD,
     COLLECTIBLES,
-    ARBITRARY_PRODUCTS
+    ARBITRARY_PRODUCTS,
 }
 
 val FeatureOption.isEnabled

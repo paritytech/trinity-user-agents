@@ -8,6 +8,7 @@ import io.mockk.mockk
 import io.mockk.mockkObject
 import io.mockk.slot
 import io.mockk.unmockkObject
+import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_products_impl.domain.pocket.FakePinnedPocketCards
@@ -62,6 +63,15 @@ class TrUAPIHostRuntimeProviderTest {
 
     // The Pocket is read from the runtime, so a runtime that waits on the chain for the network's
     // name shows no cards offline. The name an earlier run read is the one this build's network has.
+    // Products open through the runtime this hands out, so the core must already have the funding callbacks: a product
+    // asking for funding before them would be told the host does not support it.
+    @Test
+    fun `installs the funding callbacks before handing the runtime out`() = runTest {
+        provider().runtime().getOrThrow()
+
+        verify(exactly = 1) { nativeRuntime.setFundingCallbacks(any()) }
+    }
+
     @Test
     fun `boots offline on the network name an earlier run saved`() = runTest {
         provider(
@@ -128,6 +138,7 @@ class TrUAPIHostRuntimeProviderTest {
         appLifecycleObserver = mockk { every { subscribe() } returns emptyFlow() },
         networkStateService = mockk { every { defaultNetwork } returns MutableStateFlow(null) },
         contactsBridge = mockk { every { contactRemovals() } returns emptyFlow() },
+        fundingBridge = mockk(relaxed = true),
         fundingProviders = mockk(relaxed = true),
         paymentPlatforms = mockk(relaxed = true),
         scannerBridge = mockk(),

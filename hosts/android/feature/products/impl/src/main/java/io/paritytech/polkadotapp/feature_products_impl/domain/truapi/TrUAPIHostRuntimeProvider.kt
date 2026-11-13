@@ -55,6 +55,7 @@ import uniffi.truapi.ProductId
 import uniffi.truapi.RemotePermission
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.WorkerTransition
+import java.io.File
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -78,6 +79,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
     private val appLifecycleObserver: AppLifecycleObserver,
     private val networkStateService: NetworkStateService,
     private val contactsBridge: AppContactsHostBridge,
+    private val fundingBridge: AppFundingHostBridge,
     private val fundingProviders: TrUAPIFundingProviders,
     private val paymentPlatforms: TrUAPIPaymentPlatforms,
     private val scannerBridge: TrUAPIProductScans,
@@ -133,9 +135,10 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
 
     private fun wire(runtime: TrUAPIHostRuntime) {
         // Before any product execution opens, so a product never sees the
-        // window where the host lists no contacts or answers payments Unsupported.
+        // window where the host lists no contacts or answers payments or funding unsupported.
         runtime.setContacts(contactsBridge)
         paymentPlatforms.install(runtime)
+        runtime.setFunding(fundingBridge)
         fundingProviders.install(runtime, scope)
         runtime.setScanner(scannerBridge)
         observeContactRemovals(runtime)
@@ -168,7 +171,7 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
             stack = TrUAPIStack.of(environment).bundled(context),
             localSessionSecret = localSession?.secret,
             localSessionLiteUsername = localSession?.liteUsername,
-            databaseDirectory = context.noBackupFilesDir.resolve(DATABASE_DIRECTORY).apply { mkdirs() }.absolutePath,
+            databaseDirectory = truapiDatabaseDirectory(context).apply { mkdirs() }.absolutePath,
             pinnedPocketCards = pinnedPocketCards.cards(tld),
         )
     }
@@ -317,15 +320,14 @@ class TrUAPIHostRuntimeProvider @Inject constructor(
          * `getTldRetrying` polls until it succeeds, so the boot needs its own bound.
          */
         const val TLD_RESOLVE_TIMEOUT_MS = 30_000L
-
-        /**
-         * Core database directory, under `noBackupFilesDir`: a durable-transaction
-         * ledger restored onto another device would act on transactions that
-         * already settled.
-         */
-        const val DATABASE_DIRECTORY = "truapi"
     }
 }
+
+/**
+ * Where the core keeps its database, and the funding resume marker with it: under `noBackupFilesDir`, as a
+ * durable-transaction ledger restored onto another device would act on transactions that already settled.
+ */
+internal fun truapiDatabaseDirectory(context: Context): File = context.noBackupFilesDir.resolve("truapi")
 
 private object HostLevelStorage : HostStorage {
     override suspend fun read(key: String): ByteArray? = null
