@@ -4,10 +4,10 @@ use truapi::latest::RenderContext;
 
 use super::*;
 
-/// Shaderlab's noise vectors, from shaderlab-spa at `f8251d2b`.
+/// Shaderlab's noise vectors, from shaderlab-spa `main` at `66dd4552`.
 const NOISE: &str = include_str!("../../../tests/fixtures/materials/noise.v1.json");
 
-/// Shaderlab's seed vectors, from shaderlab-spa PR #97 at `4fb610d1`.
+/// Shaderlab's seed vectors, from shaderlab-spa `main` at `66dd4552`.
 const SEEDS: &str = include_str!("../../../tests/fixtures/materials/body-seed.v1.json");
 
 #[derive(Deserialize)]
