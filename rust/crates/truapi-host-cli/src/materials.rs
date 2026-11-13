@@ -1,5 +1,5 @@
-//! `truapi-host materials`: the plan a phone draws a card face's materials from, built by the
-//! same core, so a material can be checked end to end without a phone.
+//! `truapi-host materials`: a card face's materials, resolved by the same core a phone uses,
+//! so a material can be checked end to end without a phone.
 
 use std::{
 	fs,
@@ -10,8 +10,8 @@ use anyhow::{Context, Result, bail};
 use clap::Subcommand;
 use futures::StreamExt;
 use truapi::{
-	MaterialPlan, MaterialShader, NodePlan, ShaderLanguage, SigningHostConfig, SigningHostRuntime,
-	Spawner, latest::RenderContext,
+	MaterialShader, NodeMaterials, ResolvedMaterials, ShaderLanguage, SigningHostConfig,
+	SigningHostRuntime, Spawner, latest::RenderContext,
 };
 
 use crate::{
@@ -22,11 +22,11 @@ use crate::{
 /// The `materials` subcommands.
 #[derive(Subcommand)]
 pub enum MaterialsCommand {
-	/// Print the plan for each `Materials` node of a card face, until none is still loading.
-	Plan {
+	/// Print what each `Materials` node of a card face resolves to, until none is still loading.
+	Resolve {
 		/// The face as JSON, as the generated client writes a renderer tree.
 		face: PathBuf,
-		/// A directory of material files to keep first, so the plan needs no Bulletin. What is
+		/// A directory of material files to keep first, so resolving needs no Bulletin. What is
 		/// kept stays for later runs, as it does on a phone.
 		#[arg(long)]
 		materials: Option<PathBuf>,
@@ -44,7 +44,7 @@ pub enum MaterialsCommand {
 
 /// Run a `materials` command on `network`.
 pub async fn run(command: MaterialsCommand, network: &Stack) -> Result<()> {
-	let MaterialsCommand::Plan { face, materials, metal, out, base_path } = command;
+	let MaterialsCommand::Resolve { face, materials, metal, out, base_path } = command;
 	let json = fs::read_to_string(&face).with_context(|| format!("reading {}", face.display()))?;
 	let face = truapi::native::parse_renderer_node_json(json).context("reading the face")?;
 	let state = crate::state_base_path(base_path).join(network.namespace()).join("materials");
@@ -54,17 +54,17 @@ pub async fn run(command: MaterialsCommand, network: &Stack) -> Result<()> {
 	}
 	let language = if metal { ShaderLanguage::Metal } else { ShaderLanguage::GlslEs };
 	let card = RenderContext::PocketCard { card_id: "cli".to_string() };
-	let mut plans = runtime.material_plan(&face, &card, language, false, Box::new(|_| {}));
-	while let Some(plan) = plans.next().await {
-		print_plan(&plan);
-		if !plan.nodes.contains(&NodePlan::Loading) {
+	let mut resolution = runtime.resolve_materials(&face, &card, language, false, Box::new(|_| {}));
+	while let Some(materials) = resolution.next().await {
+		print_materials(&materials);
+		if !materials.nodes.contains(&NodeMaterials::Loading) {
 			if let Some(out) = out {
-				write_shaders(&plan, &out, language)?;
+				write_shaders(&materials, &out, language)?;
 			}
 			return Ok(());
 		}
 	}
-	bail!("the plan ended while a node was still loading")
+	bail!("resolving ended while a node was still loading")
 }
 
 /// A runtime that draws materials, kept in their own database under `state`, apart from any
@@ -111,21 +111,27 @@ async fn keep_all(runtime: &SigningHostRuntime, directory: &Path) -> Result<()> 
 	Ok(())
 }
 
-fn print_plan(plan: &MaterialPlan) {
-	println!("plan:");
-	for (index, node) in plan.nodes.iter().enumerate() {
+fn print_materials(materials: &ResolvedMaterials) {
+	println!("materials:");
+	for (index, node) in materials.nodes.iter().enumerate() {
 		match node {
-			NodePlan::Loading => println!("node {index}: loading"),
-			NodePlan::Ready { layers } if layers.len() == 1 => {
+			NodeMaterials::Loading => println!("node {index}: loading"),
+			NodeMaterials::Ready { layers } if layers.len() == 1 => {
 				println!("node {index}: ready, 1 layer")
 			},
-			NodePlan::Ready { layers } => println!("node {index}: ready, {} layers", layers.len()),
-			NodePlan::Plain { reason } => println!("node {index}: plain, {reason:?}"),
+			NodeMaterials::Ready { layers } => {
+				println!("node {index}: ready, {} layers", layers.len())
+			},
+			NodeMaterials::Plain { reason } => println!("node {index}: plain, {reason:?}"),
 		}
 	}
 }
 
-fn write_shaders(plan: &MaterialPlan, out: &Path, language: ShaderLanguage) -> Result<()> {
+fn write_shaders(
+	materials: &ResolvedMaterials,
+	out: &Path,
+	language: ShaderLanguage,
+) -> Result<()> {
 	fs::create_dir_all(out).with_context(|| format!("creating {}", out.display()))?;
 	let (vertex, fragment) = match language {
 		ShaderLanguage::Metal => ("vertex.metal", "fragment.metal"),
@@ -134,8 +140,8 @@ fn write_shaders(plan: &MaterialPlan, out: &Path, language: ShaderLanguage) -> R
 	let write = |path: PathBuf, contents: &str| {
 		fs::write(&path, contents).with_context(|| format!("writing {}", path.display()))
 	};
-	for (index, node) in plan.nodes.iter().enumerate() {
-		let NodePlan::Ready { layers } = node else { continue };
+	for (index, node) in materials.nodes.iter().enumerate() {
+		let NodeMaterials::Ready { layers } = node else { continue };
 		for (number, layer) in layers.iter().enumerate() {
 			let name = format!("node{index}-layer{number}");
 			let shader = &layer.shader;

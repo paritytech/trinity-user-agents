@@ -39,9 +39,9 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
 import uniffi.truapi.ChatMessageContent
 import uniffi.truapi.RenderContext
-import uniffi.truapi.NativeMaterialPlanObserver
-import uniffi.truapi.NativeMaterialPlan
-import uniffi.truapi.MaterialPlan
+import uniffi.truapi.NativeMaterialsObserver
+import uniffi.truapi.NativeMaterialsResolution
+import uniffi.truapi.ResolvedMaterials
 import uniffi.truapi.MaterialFailure
 import uniffi.truapi.ChatRoom
 import uniffi.truapi.ChatRoomFooter
@@ -1192,14 +1192,14 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     suspend fun loadImage(reference: ImageReference): LoadedImage = inner.loadImage(reference)
 
     /**
-     * The plan of [tree], a saved face or a preview, in [context]: for each
+     * The materials of [tree], a saved face or a preview, in [context]: for each
      * `Materials` node, whether it loads, draws its layers or draws plain.
      * Unless [floatFilterable], the shaders filter 32-bit float images
-     * themselves. To plan a new tree for the same body, start its plan before
-     * closing the old one.
+     * themselves. To resolve a new tree for the same body, start its resolution
+     * before closing the old one.
      */
-    fun materialPlan(tree: RendererNode, context: RenderContext, floatFilterable: Boolean): MaterialPlans =
-        MaterialPlans { observer -> inner.observeMaterialPlan(tree, context, floatFilterable, observer) }
+    fun resolveMaterials(tree: RendererNode, context: RenderContext, floatFilterable: Boolean): MaterialsResolution =
+        MaterialsResolution { observer -> inner.resolveMaterials(tree, context, floatFilterable, observer) }
 
     /**
      * The Pocket collection, pinned cards first, now and after every change. A
@@ -1349,30 +1349,30 @@ private fun <T> observedFlow(subscribe: ProducerScope<T>.() -> NativeSubscriptio
     }.conflate()
 
 /**
- * The plans of one tree, now and after each change, and the reports the app
- * makes against them. Close it to stop.
+ * The resolved materials of one tree, now and after each change, and the
+ * reports the app makes against them. Close it to stop.
  */
-class MaterialPlans internal constructor(
-    subscribe: (NativeMaterialPlanObserver) -> NativeMaterialPlan,
+class MaterialsResolution internal constructor(
+    subscribe: (NativeMaterialsObserver) -> NativeMaterialsResolution,
 ) : AutoCloseable {
-    private val latest = MutableStateFlow<MaterialPlan?>(null)
+    private val latest = MutableStateFlow<ResolvedMaterials?>(null)
     private var closed = false
 
-    /** The newest plan, `null` until the first. */
-    val plans: StateFlow<MaterialPlan?> = latest.asStateFlow()
+    /** The newest materials, `null` until the first. */
+    val resolved: StateFlow<ResolvedMaterials?> = latest.asStateFlow()
 
-    private val handle: NativeMaterialPlan =
+    private val handle: NativeMaterialsResolution =
         subscribe(
-            object : NativeMaterialPlanObserver {
+            object : NativeMaterialsObserver {
                 // Declared infallible by the core, so a throw here would abort the process.
-                override fun onPlan(plan: MaterialPlan) {
-                    runCatching { latest.value = plan }
+                override fun onResolved(materials: ResolvedMaterials) {
+                    runCatching { latest.value = materials }
                 }
             },
         )
 
     /**
-     * Draws node [node] plain for the rest of this plan: its shader did not
+     * Draws node [node] plain for the rest of this resolution: its shader did not
      * compile ([MaterialFailure.UNSUPPORTED]), or an image argument could not
      * be used (`checkMaterialImage`'s reason, or [MaterialFailure.NOT_FOUND]).
      */
@@ -1482,12 +1482,12 @@ class TrUAPIProductExecution internal constructor(
     }
 
     /**
-     * The plan of [tree], a body this execution's product rendered in
-     * [context], as [TrUAPIHostRuntime.materialPlan]. A node that falls back is
+     * The materials of [tree], a body this execution's product rendered in
+     * [context], as [TrUAPIHostRuntime.resolveMaterials]. A node that falls back is
      * also reported to the product.
      */
-    fun materialPlan(tree: RendererNode, context: RenderContext, floatFilterable: Boolean): MaterialPlans =
-        MaterialPlans { observer -> inner.observeMaterialPlan(tree, context, floatFilterable, observer) }
+    fun resolveMaterials(tree: RendererNode, context: RenderContext, floatFilterable: Boolean): MaterialsResolution =
+        MaterialsResolution { observer -> inner.resolveMaterials(tree, context, floatFilterable, observer) }
 
     /** Read the active session's X25519 chat identity private key, if any. */
     @Throws(HostRejection::class)

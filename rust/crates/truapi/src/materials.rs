@@ -33,9 +33,9 @@ use truapi::latest::{MaterialFailure, MaterialsProps, RendererNode};
 use self::format::read_material;
 pub use self::{
 	noise::noise_image,
-	plan::{
-		MaterialPlan, NodePlan, PlanFailure, PlanReporter, PlanSettings, PlanStream, PlannedLayer,
-		check_material_image,
+	resolve::{
+		FallbackReporter, MaterialsResolution, NodeFallback, NodeMaterials, ReadyLayer,
+		ResolveSettings, ResolvedMaterials, check_material_image,
 	},
 	shader::{
 		MaterialShader, ShaderLanguage, Stage, Texture, TextureRole, Uniform, UniformKind,
@@ -79,7 +79,7 @@ struct Shared {
 	timer: Arc<dyn Timer>,
 	spawner: Spawner,
 	fetches: Mutex<HashMap<[u8; 32], Fetch>>,
-	shaders: Mutex<plan::ShaderCache>,
+	shaders: Mutex<resolve::ShaderCache>,
 }
 
 /// One fetch in flight, and the callers it answers.
@@ -165,7 +165,7 @@ impl Materials {
 	}
 
 	async fn fetch(self, id: [u8; 32], own: AbortHandle) {
-		let answer = self.resolve(id, &own).await;
+		let answer = self.read_or_fetch(id, &own).await;
 		let mut fetches = self.0.fetches.lock();
 		// Every caller left as the answer came, so the entry may be a newer fetch's.
 		if own.is_aborted() {
@@ -182,7 +182,11 @@ impl Materials {
 		}
 	}
 
-	async fn resolve(&self, id: [u8; 32], own: &AbortHandle) -> Result<Vec<u8>, MaterialFailure> {
+	async fn read_or_fetch(
+		&self,
+		id: [u8; 32],
+		own: &AbortHandle,
+	) -> Result<Vec<u8>, MaterialFailure> {
 		match self.kept(id).await {
 			Ok(Some(text)) => return Ok(text),
 			Ok(None) => {},
@@ -378,7 +382,7 @@ mod glsl;
 mod limits;
 mod metal;
 mod noise;
-mod plan;
+mod resolve;
 mod shader;
 
 #[cfg(test)]

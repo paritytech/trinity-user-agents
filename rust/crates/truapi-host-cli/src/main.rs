@@ -350,7 +350,7 @@ enum Command {
 		#[command(subcommand)]
 		command: stack::StackCommand,
 	},
-	/// Plan card faces' materials as a phone would, to check materials without one.
+	/// Resolve card faces' materials as a phone would, to check materials without one.
 	Materials {
 		#[command(subcommand)]
 		command: materials::MaterialsCommand,
@@ -548,7 +548,7 @@ fn command_base_path(command: &Command) -> PathBuf {
 		Command::PairingHost(args) => args.base_path.clone(),
 		Command::Dev(args) => args.base_path.clone(),
 		Command::SigningHost(args) => args.base_path.clone(),
-		Command::Materials { command: materials::MaterialsCommand::Plan { base_path, .. } } => {
+		Command::Materials { command: materials::MaterialsCommand::Resolve { base_path, .. } } => {
 			base_path.clone()
 		},
 		_ => None,
@@ -5162,7 +5162,7 @@ test -s "$TRUAPI_DEV_COMMAND_TEST_READY_PATH"
 			vec!["truapi-host", "pairing-host", "--base-path", "custom-state"],
 			vec!["truapi-host", "signing-host", "--base-path", "custom-state"],
 			vec!["truapi-host", "dev", "--base-path", "custom-state"],
-			vec!["truapi-host", "materials", "plan", "face.json", "--base-path", "custom-state"],
+			vec!["truapi-host", "materials", "resolve", "face.json", "--base-path", "custom-state"],
 		] {
 			let cli = Cli::try_parse_from(arguments).expect("host command should parse");
 

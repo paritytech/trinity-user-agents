@@ -260,13 +260,13 @@ Shaderlab's own compile step writes, for OpenGL ES, and naga's Metal
 translation of it, with where each uniform and texture goes.
 
 A host that draws materials (`materials_enabled` in its startup config) asks
-the core for the plan of a tree: for each `Materials` node, depth first,
+the core to resolve a tree's materials: for each `Materials` node, depth first,
 whether it is loading, ready with its built layers, or drawn plain and why.
-The plan follows the shared fetch, checks the tree's limits and each layer's
+The resolution follows the shared fetch, checks the tree's limits and each layer's
 arguments, builds the shaders for the platform (Metal on iOS, GLSL ES
 elsewhere), and changes as materials arrive or fail and as the app reports a
 shader it could not compile or an image it could not use. A node that falls
-back is logged on the device, and when the plan runs on a product's execution,
+back is logged on the device, and when the resolution runs on a product's execution,
 reported to that product through `Renderer::failure_subscribe`, once. The
 capability answer to the materials question is yes only with materials on, for
 the format version and features the core reads.

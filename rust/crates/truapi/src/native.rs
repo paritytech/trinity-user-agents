@@ -47,7 +47,7 @@ pub use config::{HostRuntimeConfig, NativeRuntimeConfigError, ProductExecutionCo
 pub use errors::{
 	HostRejection, NativeChatFieldError, NativeCoreDatabaseError, NativeRendererError,
 };
-pub use materials::{NativeMaterialPlan, NativeMaterialPlanObserver};
+pub use materials::{NativeMaterialsObserver, NativeMaterialsResolution};
 pub use pocket::NativePocketObserver;
 pub use renderer::{NativeRendererObserver, NativeSubscription};
 pub use runtime::{

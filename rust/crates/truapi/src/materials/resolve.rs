@@ -1,4 +1,4 @@
-//! The plan an app draws a tree's materials from: for each `Materials` node,
+//! A tree's materials, resolved for an app to draw: for each `Materials` node,
 //! depth first, whether it is still loading, ready with its built layers, or
 //! drawn plain and why.
 
@@ -32,7 +32,7 @@ use super::{
 /// How an app draws: whether materials are on, its shader language, and
 /// whether its GPU filters 32-bit float images.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PlanSettings {
+pub struct ResolveSettings {
 	/// Whether the app draws materials at all.
 	pub enabled: bool,
 	/// The language the app compiles.
@@ -43,7 +43,7 @@ pub struct PlanSettings {
 
 /// A node that fell back.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
-pub struct PlanFailure {
+pub struct NodeFallback {
 	/// The node's place among the tree's `Materials` nodes, depth first.
 	pub node: u32,
 	/// The material that failed, when the failure belongs to one.
@@ -66,22 +66,22 @@ impl PlanFailure {
 
 /// What to draw for each `Materials` node of a tree.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
-pub struct MaterialPlan {
+pub struct ResolvedMaterials {
 	/// One per `Materials` node, depth first.
-	pub nodes: Vec<NodePlan>,
+	pub nodes: Vec<NodeMaterials>,
 	/// The seed of the body's noise image.
 	pub noise_seed: u32,
 }
 
 /// What to draw for one `Materials` node.
 #[derive(Debug, Clone, PartialEq, uniffi::Enum)]
-pub enum NodePlan {
+pub enum NodeMaterials {
 	/// Its materials are loading: draw its last look, or its children plain.
 	Loading,
 	/// Draw its layers, in order, over its children.
 	Ready {
 		/// The layers, in drawing order.
-		layers: Vec<PlannedLayer>,
+		layers: Vec<ReadyLayer>,
 	},
 	/// Draw its children plain.
 	Plain {
@@ -92,7 +92,7 @@ pub enum NodePlan {
 
 /// One layer ready to draw.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
-pub struct PlannedLayer {
+pub struct ReadyLayer {
 	/// The material's ID.
 	pub material: [u8; 32],
 	/// Its shaders and how to feed them.
@@ -101,86 +101,86 @@ pub struct PlannedLayer {
 	pub args: Vec<Parameter>,
 }
 
-/// The plans of a tree, a new one whenever a node changes. Open until
+/// A tree's resolved materials, again whenever a node changes. Open until
 /// dropped, which stops what it fetches.
-pub struct PlanStream {
-	plans: UnboundedReceiver<MaterialPlan>,
-	reports: UnboundedSender<PlanFailure>,
+pub struct MaterialsResolution {
+	updates: UnboundedReceiver<ResolvedMaterials>,
+	reports: UnboundedSender<NodeFallback>,
 	abort: AbortHandle,
 }
 
-impl PlanStream {
-	/// One plan with every node of `tree` drawn plain, for a host that keeps
+impl MaterialsResolution {
+	/// One update with every node of `tree` drawn plain, for a host that keeps
 	/// no materials. Each node reaches `failures`.
 	pub fn plain(
 		tree: &RendererNode,
 		context: &RenderContext,
-		failures: Box<dyn Fn(PlanFailure) + Send + Sync>,
+		failures: Box<dyn Fn(NodeFallback) + Send + Sync>,
 	) -> Self {
 		let reason = MaterialFailure::Unsupported;
 		let count = materials_nodes(tree).len();
 		for node in (0u32..).take(count) {
-			tell(&failures, PlanFailure { node, material: None, reason });
+			tell(&failures, NodeFallback { node, material: None, reason });
 		}
-		let plan = MaterialPlan {
-			nodes: vec![NodePlan::Plain { reason }; count],
+		let resolved = ResolvedMaterials {
+			nodes: vec![NodeMaterials::Plain { reason }; count],
 			noise_seed: noise_seed(context),
 		};
-		let (sender, plans) = unbounded();
-		let _ = sender.unbounded_send(plan);
+		let (sender, updates) = unbounded();
+		let _ = sender.unbounded_send(resolved);
 		let (reports, _) = unbounded();
-		Self { plans, reports, abort: AbortHandle::new_pair().0 }
+		Self { updates, reports, abort: AbortHandle::new_pair().0 }
 	}
 
-	/// A handle that reports for this plan while the stream is read elsewhere.
-	pub fn reporter(&self) -> PlanReporter {
-		PlanReporter(self.reports.clone())
+	/// A handle that reports for this resolution while the stream is read elsewhere.
+	pub fn reporter(&self) -> FallbackReporter {
+		FallbackReporter(self.reports.clone())
 	}
 }
 
-/// Reports for one plan, kept apart from its stream.
-pub struct PlanReporter(UnboundedSender<PlanFailure>);
+/// Reports for one resolution, kept apart from its stream.
+pub struct FallbackReporter(UnboundedSender<NodeFallback>);
 
-impl PlanReporter {
-	/// Makes a node plain for the rest of its plan, as the app reports it. A
+impl FallbackReporter {
+	/// Makes a node plain for the rest of its resolution, as the app reports it. A
 	/// node out of range is ignored.
-	pub fn report(&self, failure: PlanFailure) {
+	pub fn report(&self, failure: NodeFallback) {
 		let _ = self.0.unbounded_send(failure);
 	}
 }
 
-impl Stream for PlanStream {
-	type Item = MaterialPlan;
+impl Stream for MaterialsResolution {
+	type Item = ResolvedMaterials;
 
 	fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-		self.plans.poll_next_unpin(cx)
+		self.updates.poll_next_unpin(cx)
 	}
 }
 
-impl Drop for PlanStream {
+impl Drop for MaterialsResolution {
 	fn drop(&mut self) {
 		self.abort.abort();
 	}
 }
 
 impl Materials {
-	/// The plans for `tree` in `context`. Each node that falls back reaches
+	/// The resolved materials of `tree` in `context`. Each node that falls back reaches
 	/// `failures` once, with its first reason.
-	pub fn plan(
+	pub fn resolve(
 		&self,
 		tree: &RendererNode,
 		context: &RenderContext,
-		settings: PlanSettings,
-		failures: Box<dyn Fn(PlanFailure) + Send + Sync>,
-	) -> PlanStream {
-		let (sender, plans) = unbounded();
+		settings: ResolveSettings,
+		failures: Box<dyn Fn(NodeFallback) + Send + Sync>,
+	) -> MaterialsResolution {
+		let (sender, updates) = unbounded();
 		let (reports, received) = unbounded();
 		let (abort, registration) = AbortHandle::new_pair();
-		let planner = Planner::new(self.clone(), tree, context, settings, failures);
+		let resolver = Resolver::new(self.clone(), tree, context, settings, failures);
 		self.0
 			.spawner
-			.spawn(Abortable::new(planner.run(sender, received), registration).map(drop));
-		PlanStream { plans, reports, abort }
+			.spawn(Abortable::new(resolver.run(sender, received), registration).map(drop));
+		MaterialsResolution { updates, reports, abort }
 	}
 }
 
@@ -203,8 +203,8 @@ pub fn check_material_image(bytes: &[u8]) -> Option<MaterialFailure> {
 /// Pixels a side of an image argument, at most.
 const MAX_IMAGE_SIDE: usize = 2048;
 
-/// One `Materials` node as the plan follows it.
-struct PlannedNode {
+/// One `Materials` node as the resolver follows it.
+struct TrackedNode {
 	layers: Vec<MaterialInstance>,
 	/// A failure no material can undo: a limit, the surface, an inline image,
 	/// or the app's report.
@@ -212,28 +212,28 @@ struct PlannedNode {
 	reported: bool,
 }
 
-/// What a plan knows and has told so far.
-struct Planner {
+/// What a resolver knows and has told so far.
+struct Resolver {
 	materials: Materials,
-	settings: PlanSettings,
-	failures: Box<dyn Fn(PlanFailure) + Send + Sync>,
+	settings: ResolveSettings,
+	failures: Box<dyn Fn(NodeFallback) + Send + Sync>,
 	noise_seed: u32,
-	nodes: Vec<PlannedNode>,
+	nodes: Vec<TrackedNode>,
 	texts: HashMap<[u8; 32], Result<Material, MaterialFailure>>,
 }
 
 enum Event {
 	Text([u8; 32], Result<Vec<u8>, MaterialFailure>),
-	Report(PlanFailure),
+	Report(NodeFallback),
 }
 
-impl Planner {
+impl Resolver {
 	fn new(
 		materials: Materials,
 		tree: &RendererNode,
 		context: &RenderContext,
-		settings: PlanSettings,
-		failures: Box<dyn Fn(PlanFailure) + Send + Sync>,
+		settings: ResolveSettings,
+		failures: Box<dyn Fn(NodeFallback) + Send + Sync>,
 	) -> Self {
 		let drawn_here = settings.enabled &&
 			matches!(
@@ -251,7 +251,7 @@ impl Planner {
 				} else {
 					inline_image_failure(&props.layers)
 				};
-				PlannedNode { layers: props.layers.clone(), settled, reported: false }
+				TrackedNode { layers: props.layers.clone(), settled, reported: false }
 			})
 			.collect();
 		Self {
@@ -266,8 +266,8 @@ impl Planner {
 
 	async fn run(
 		mut self,
-		plans: UnboundedSender<MaterialPlan>,
-		reports: UnboundedReceiver<PlanFailure>,
+		updates: UnboundedSender<ResolvedMaterials>,
+		reports: UnboundedReceiver<NodeFallback>,
 	) {
 		let mut missing = Vec::new();
 		for id in self.wanted() {
@@ -276,8 +276,8 @@ impl Planner {
 				_ => missing.push(id),
 			}
 		}
-		let mut last = self.plan();
-		if plans.unbounded_send(last.clone()).is_err() {
+		let mut last = self.current();
+		if updates.unbounded_send(last.clone()).is_err() {
 			return;
 		}
 		let texts = select_all(
@@ -288,16 +288,16 @@ impl Planner {
 		let mut events = select(texts, reports.map(Event::Report));
 		while let Some(event) = events.next().await {
 			self.apply(event);
-			// Answers already waiting arrive in the same plan.
+			// Answers already waiting arrive in the same update.
 			while let Some(Some(event)) = events.next().now_or_never() {
 				self.apply(event);
 			}
-			let plan = self.plan();
-			if plan != last {
-				if plans.unbounded_send(plan.clone()).is_err() {
+			let resolved = self.current();
+			if resolved != last {
+				if updates.unbounded_send(resolved.clone()).is_err() {
 					return;
 				}
-				last = plan;
+				last = resolved;
 			}
 		}
 	}
@@ -332,43 +332,50 @@ impl Planner {
 		}
 	}
 
-	/// The plan as it stands. Nodes plain for the first time are logged and
+	/// The materials as they stand. Nodes plain for the first time are logged and
 	/// told to `failures`.
-	fn plan(&mut self) -> MaterialPlan {
-		let mut plans = Vec::with_capacity(self.nodes.len());
+	fn current(&mut self) -> ResolvedMaterials {
+		let mut nodes = Vec::with_capacity(self.nodes.len());
 		for index in 0..self.nodes.len() {
-			let plan = self.node_plan(index);
+			let resolved = self.node_materials(index);
 			let node = &mut self.nodes[index];
-			if let (NodePlan::Plain { reason }, false) = (&plan.0, node.reported) {
+			if let (NodeMaterials::Plain { reason }, false) = (&resolved.0, node.reported) {
 				node.reported = true;
-				let failure = PlanFailure { node: index as u32, material: plan.1, reason: *reason };
+				let failure =
+					NodeFallback { node: index as u32, material: resolved.1, reason: *reason };
 				tell(&self.failures, failure);
 			}
-			plans.push(plan.0);
+			nodes.push(resolved.0);
 		}
-		MaterialPlan { nodes: plans, noise_seed: self.noise_seed }
+		ResolvedMaterials { nodes, noise_seed: self.noise_seed }
 	}
 
-	/// A node's plan, and the material its failure belongs to.
-	fn node_plan(&self, index: usize) -> (NodePlan, Option<[u8; 32]>) {
+	/// A node's materials, and the material its failure belongs to.
+	fn node_materials(&self, index: usize) -> (NodeMaterials, Option<[u8; 32]>) {
 		let node = &self.nodes[index];
 		if let Some((material, reason)) = node.settled {
-			return (NodePlan::Plain { reason }, material);
+			return (NodeMaterials::Plain { reason }, material);
 		}
 		let mut layers = Vec::with_capacity(node.layers.len());
 		let mut loading = false;
 		for layer in &node.layers {
 			match self.layer(layer) {
-				Some(Ok(planned)) => layers.push(planned),
-				Some(Err(reason)) => return (NodePlan::Plain { reason }, Some(layer.material)),
+				Some(Ok(ready)) => layers.push(ready),
+				Some(Err(reason)) => {
+					return (NodeMaterials::Plain { reason }, Some(layer.material));
+				},
 				None => loading = true,
 			}
 		}
-		if loading { (NodePlan::Loading, None) } else { (NodePlan::Ready { layers }, None) }
+		if loading {
+			(NodeMaterials::Loading, None)
+		} else {
+			(NodeMaterials::Ready { layers }, None)
+		}
 	}
 
 	/// A layer built, its failure, or `None` while its material loads.
-	fn layer(&self, layer: &MaterialInstance) -> Option<Result<PlannedLayer, MaterialFailure>> {
+	fn layer(&self, layer: &MaterialInstance) -> Option<Result<ReadyLayer, MaterialFailure>> {
 		let material = match self.texts.get(&layer.material)? {
 			Ok(material) => material,
 			Err(failure) => return Some(Err(*failure)),
@@ -376,16 +383,16 @@ impl Planner {
 		if !material.arguments_match(&layer.args) {
 			return Some(Err(MaterialFailure::InvalidStack));
 		}
-		let PlanSettings { language, float_filterable, .. } = self.settings;
+		let ResolveSettings { language, float_filterable, .. } = self.settings;
 		let key = (layer.material, language, float_filterable);
 		let kept = self.materials.0.shaders.lock().get(&key);
-		// Built outside the lock: a translation would hold up every other plan.
+		// Built outside the lock: a translation would hold up every other resolution.
 		let shader = kept.unwrap_or_else(|| {
 			let built = material.shader(language, float_filterable);
 			self.materials.0.shaders.lock().insert(key, built.clone());
 			built
 		});
-		Some(shader.map(|shader| PlannedLayer {
+		Some(shader.map(|shader| ReadyLayer {
 			material: layer.material,
 			shader,
 			args: layer.args.clone(),
@@ -417,7 +424,7 @@ const SHADER_CACHE_CAPACITY: usize = 64;
 type ShaderKey = ([u8; 32], ShaderLanguage, bool);
 
 /// Logs a node drawn plain on the device and tells `failures`.
-fn tell(failures: &dyn Fn(PlanFailure), failure: PlanFailure) {
+fn tell(failures: &dyn Fn(NodeFallback), failure: NodeFallback) {
 	tracing::info!(
 		target: crate::markers::MATERIALS_NODE_PLAIN.target,
 		"node {} draws plain: {:?}, material {:?}",
