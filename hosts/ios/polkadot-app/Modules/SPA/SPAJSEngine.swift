@@ -1,4 +1,5 @@
 import Foundation
+import os
 import FoundationExt
 import Products
 import SDKLogger
@@ -22,10 +23,16 @@ final class SPAJSEngine: NSObject, @unchecked Sendable {
     private let logger: LoggerProtocol
     private let scriptHandlers: [JSEngineScriptHandling]
     private let navigationDecisionHandler: SPANavigationDecisionHandling?
+    private let mainFrameCommitHandler = OSAllocatedUnfairLock<(@Sendable () -> Void)?>(initialState: nil)
 
     var onNavigationIntercepted: ((URL) -> Void)?
     var onDeeplinkRequested: ((URL) -> Void)?
-    var onMainFrameCommit: (@Sendable () -> Void)?
+
+    /// Set from the runtime's actor and read by WebKit on the main thread, so it sits behind a lock.
+    var onMainFrameCommit: (@Sendable () -> Void)? {
+        get { mainFrameCommitHandler.withLock { $0 } }
+        set { mainFrameCommitHandler.withLock { $0 = newValue } }
+    }
 
     init(
         webView: WKWebView,
