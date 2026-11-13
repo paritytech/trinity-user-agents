@@ -8,6 +8,7 @@ object FeatureFlags {
     fun isEnabled(feature: FeatureOption): Boolean {
         return when (feature) {
             FeatureOption.SHORT_WORKER_BACKOFF -> BuildConfig.DEBUG
+            FeatureOption.CHAIN_CONNECTIONS_THROUGH_PROVIDER -> true
 
             FeatureOption.DEBUG_MENU -> BuildConfig.DEBUG_TOOLS_ENABLED
             // Safetynet reports the same native host telemetry as the other non-release builds.
@@ -33,6 +34,10 @@ object FeatureFlags {
 
 enum class FeatureOption {
     SHORT_WORKER_BACKOFF,
+
+    // Chain connections behind SocketService reach nodes through truapi-provider instead of
+    // nv-websocket-client. Hop sessions keep nv-websocket-client either way.
+    CHAIN_CONNECTIONS_THROUGH_PROVIDER,
     SAMPLE_BOT,
     DEBUG_MENU,
     HOST_TELEMETRY,
