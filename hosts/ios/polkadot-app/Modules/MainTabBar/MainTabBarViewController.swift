@@ -32,6 +32,7 @@ final class MainTabBarViewController: UIViewController {
     private var statusTitleCenterY: Constraint?
 
     private let statusBarTitleButton = StatusBarTitleButton()
+    private let statusStripContainer = StatusStripContainerView()
 
     lazy var container = TabBarContainer(hostController: self)
 
@@ -132,6 +133,7 @@ final class MainTabBarViewController: UIViewController {
                 return
             }
             applyWidgetLayout(for: chromeContext(for: container.selectedController))
+            bindScrollEdgeInteraction()
         }
 
         chromeController.onBottomClearanceInvalidated = { [weak self] in
@@ -176,9 +178,15 @@ private extension MainTabBarViewController {
     func installStatusBar() {
         additionalSafeAreaInsets.top = ChainConnectionStatusBarView.preferredHeight
 
+        view.addSubview(statusStripContainer)
+        statusStripContainer.snp.makeConstraints { make in
+            make.leading.trailing.top.equalToSuperview()
+            make.bottom.equalTo(view.safeAreaLayoutGuide.snp.top)
+        }
+
         addChild(statusBarHost)
         statusBarHost.view.backgroundColor = .clear
-        view.addSubview(statusBarHost.view)
+        statusStripContainer.addSubview(statusBarHost.view)
         statusBarHost.view.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
             make.bottom.equalTo(view.safeAreaLayoutGuide.snp.top)
@@ -191,7 +199,7 @@ private extension MainTabBarViewController {
             chainStatusAnchorWidth = make.width.equalTo(1).constraint
         }
 
-        view.addSubview(statusBarTitleButton)
+        statusStripContainer.addSubview(statusBarTitleButton)
         statusBarTitleButton.snp.makeConstraints { make in
             statusTitleLeading = make.leading.equalTo(statusBarHost.view)
                 .offset(ChainConnectionStatusBarView.horizontalPadding).constraint
@@ -468,6 +476,10 @@ extension MainTabBarViewController: TopmostChildProviding {
 }
 
 extension MainTabBarViewController {
+    func bindScrollEdgeInteraction() {
+        statusStripContainer.bindScrollEdge(toContentOf: container.selectedController)
+    }
+
     func refreshChrome() {
         applyChrome(chromeContext(for: container.selectedController))
         applyChips()

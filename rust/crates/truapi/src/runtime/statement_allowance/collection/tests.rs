@@ -55,8 +55,8 @@ fn each_collection_names_its_own_pgas_claim_constant() {
 
 #[test]
 fn each_collection_names_its_own_variant_and_slot_view() {
-	assert_eq!(PersonhoodCollection::People.metadata_variant(), "People");
-	assert_eq!(PersonhoodCollection::LitePeople.metadata_variant(), "LitePeople");
+	assert_eq!(PersonhoodCollection::People.to_string(), "People");
+	assert_eq!(PersonhoodCollection::LitePeople.to_string(), "LitePeople");
 	assert_eq!(
 		PersonhoodCollection::People.slots_per_period_view(),
 		"get_stmt_store_slots_per_period",

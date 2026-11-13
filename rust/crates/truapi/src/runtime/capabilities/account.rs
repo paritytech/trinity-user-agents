@@ -247,6 +247,9 @@ impl Account for ProductRuntimeHost {
 					.accounts
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostAccountSignVrfError::NotConnected))?;
+				if !self.may_use_product_account(&request.account.dot_ns_identifier, cx).await {
+					return Err(CallError::Domain(latest::HostAccountSignVrfError::Rejected));
+				}
 				let cx = remote_authority_context(cx);
 				remote_authority_call(&cx, self.accounts.sign_vrf(&session, &cx, request))
 					.await

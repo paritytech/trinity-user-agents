@@ -8,7 +8,7 @@ use crate::v01::PaymentTopUpSource;
 
 /// Request to top up the product payment balance.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostPaymentTopUpRequest {
 	/// Optional purse selector. `None` means MAIN_PURSE.
 	pub into: Option<u32>,
@@ -22,13 +22,13 @@ pub struct HostPaymentTopUpRequest {
 	/// The funding session this top-up credits, when a funding provider's
 	/// worker starts it for one it serves. Only such a top-up can be named in
 	/// that session's reports. A repeat under the same id must ask the same.
-	#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi(default))]
+	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
 	pub funding: Option<String>,
 }
 
 /// Request to initiate a payment to another account.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct HostPaymentRequest {
 	/// Optional purse selector. `None` means MAIN_PURSE.
 	pub from: Option<u32>,
@@ -43,7 +43,7 @@ pub struct HostPaymentRequest {
 	/// provider's worker requests it for one it serves. Only such a payment
 	/// can be named in that session's reports. A repeat under the same id must
 	/// ask the same.
-	#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), uniffi(default))]
+	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
 	pub funding: Option<String>,
 }
 
@@ -53,7 +53,7 @@ pub struct HostPaymentRequest {
 ///
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
 pub enum HostPaymentTopUpError {
 	/// The source key is malformed, or the source was not found.
 	#[display("invalid top-up source")]
@@ -85,7 +85,7 @@ pub enum HostPaymentTopUpError {
 ///
 /// [RFC 0006]: https://github.com/paritytech/triangle-js-sdks/pull/94
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Error))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
 pub enum HostPaymentError {
 	/// User rejected the payment request.
 	#[display("the payment was declined")]
