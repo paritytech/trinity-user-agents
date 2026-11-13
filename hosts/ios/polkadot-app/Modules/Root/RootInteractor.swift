@@ -8,6 +8,7 @@ import ChainRegistry
 import SubstrateSdkExt
 import Products
 import StructuredConcurrency
+import Kingfisher
 
 final class RootInteractor {
     private enum SetupWaitOutcome {
@@ -261,6 +262,8 @@ extension RootInteractor: RootInteractorInputProtocol {
     }
 
     func setup() {
+        KingfisherManager.shared.cache.diskStorage.config.sizeLimit = 100 * 1_024 * 1_024
+
         initializer.start()
 
         paymentAssetBranding.start()

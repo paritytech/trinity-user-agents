@@ -10,6 +10,9 @@ public struct CollectiblesCardView: View {
 
     public var body: some View {
         Image(.imageCollectibles)
+            .resizable()
+            .scaledToFit()
+            .fixedSize(horizontal: false, vertical: true)
             .saturation(isColoured ? 1 : 0)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .clipped()

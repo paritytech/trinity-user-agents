@@ -627,7 +627,7 @@ fn a_cache_entry_stamped_in_the_future_is_not_honoured() {
 #[test]
 fn a_cached_grant_stops_being_honoured_once_it_expires() {
 	// The lifetime is the revocation bound. Past it the entry is ignored,
-	// and with no Asset Hub to re-read from the grant is gone.
+	// and the stub serves no chain to re-read it from, so the grant is gone.
 	let platform = stub_platform();
 	cache_manifest(&platform, "wallet.dot", r#"{"unknown":["storage"]}"#, MANIFEST_TTL_SECS + 1);
 	seed_owner_value(&platform, "wallet.dot");
@@ -2879,7 +2879,7 @@ fn funding_services_with(
 		host_config.stack.clone(),
 		spawner,
 	);
-	assert!(services.install_core_db(db.clone()));
+	assert!(services.install_core_db(db.clone()).is_some());
 	services
 }
 
@@ -7717,7 +7717,11 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
 /// say why.
 #[test]
 fn a_frontend_refusal_tells_the_host_what_it_judged_by() {
-	let host = dim2_with_a_pairing_session(stub_platform(), None);
+	let platform = Arc::new(StubPlatform {
+		chain_connect_error: Some("fixture serves no chain"),
+		..StubPlatform::default()
+	});
+	let host = dim2_with_a_pairing_session(platform);
 	let cx = CallContext::default();
 	let mut refusals = None;
 	let lines = crate::logging::testing::host_sink_lines(|| {
@@ -7732,7 +7736,13 @@ fn a_frontend_refusal_tells_the_host_what_it_judged_by() {
 			.err(),
 		));
 	});
-	let line = frontend_refusal_line("manifest unavailable", "no Asset Hub");
+	let reason = "Asset Hub follow stopped before initialization";
+	let lookup_failed = format!(
+		"truapi.tracing.warn truapi::runtime::product_manifest: root manifest lookup failed \
+		 {{target=peopl.dot, reason={reason}}}"
+	);
+	let refusal =
+		frontend_refusal_line("manifest unavailable", &format!("dotNS lookup failed: {reason}"));
 	assert_eq!(
 		(refusals, lines),
 		(
@@ -7744,7 +7754,7 @@ fn a_frontend_refusal_tells_the_host_what_it_judged_by() {
 					v01::HostAccountRingVrfSignError::NotAllowlisted
 				))),
 			)),
-			vec![line.clone(), line],
+			vec![lookup_failed.clone(), refusal.clone(), lookup_failed, refusal],
 		)
 	);
 }
@@ -7757,7 +7767,7 @@ fn a_frontend_lookup_past_its_deadline_tells_the_host_it_timed_out() {
 	let proof_and_signature_lines = |cx: CallContext| {
 		let platform =
 			Arc::new(StubPlatform { chain_connect_pending: true, ..StubPlatform::default() });
-		let host = dim2_with_a_pairing_session(platform, Some([0xcc; 32]));
+		let host = dim2_with_a_pairing_session(platform);
 		crate::logging::testing::host_sink_lines(|| {
 			let _ = futures::executor::block_on(
 				host.create_account_proof(&cx, create_proof_request("peopl.dot")),
@@ -7787,7 +7797,7 @@ fn a_frontend_lookup_past_its_deadline_tells_the_host_it_timed_out() {
 fn a_refusal_past_the_frontend_is_warned_once() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "peopl.dot", r#"{"dim2":["context"]}"#, 0);
-	let host = dim2_with_a_pairing_session(platform, None);
+	let host = dim2_with_a_pairing_session(platform);
 	let HostAccountCreateProofRequest::V1(mut request) = create_proof_request("peopl.dot");
 	request.context.product_id = ProductId::for_test("dim2.paseo");
 	let lines = crate::logging::testing::host_sink_lines(|| {
@@ -7806,22 +7816,13 @@ fn a_refusal_past_the_frontend_is_warned_once() {
 	);
 }
 
-/// `dim2.dot` with a live pairing session, resolving manifests against
-/// `asset_hub`.
-fn dim2_with_a_pairing_session(
-	platform: Arc<StubPlatform>,
-	asset_hub: Option<[u8; 32]>,
-) -> ProductRuntimeHost {
+/// `dim2.dot` with a live pairing session.
+fn dim2_with_a_pairing_session(platform: Arc<StubPlatform>) -> ProductRuntimeHost {
 	let (host_config, product) = runtime_config("dim2.dot");
 	let services = RuntimeServices::new(
 		platform,
 		host_config.host.host_info.clone(),
-		crate::test_support::test_stack(
-			"paseo",
-			host_config.stack.chains().people,
-			host_config.stack.chains().bulletin,
-			asset_hub,
-		),
+		host_config.stack.clone(),
 		Spawner::for_test(),
 	);
 	let pairing_host = PairingHost::new(services.clone(), host_config);
