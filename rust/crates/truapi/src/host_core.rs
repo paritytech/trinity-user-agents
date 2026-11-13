@@ -1224,7 +1224,7 @@ impl SigningHostRuntime {
 		self.services.install_durable_work_observer(observer)
 	}
 
-	/// Runs durable recovery until no transaction is live, building scheduled
+	/// Runs durable recovery until no transaction is live, building deferred
 	/// transactions meanwhile.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub async fn run_durable_recovery(&self) -> Result<(), crate::durable::RecoveryError> {

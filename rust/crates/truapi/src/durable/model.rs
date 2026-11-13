@@ -130,9 +130,10 @@ impl From<VerdictFailureKind> for DurableTxFailureKind {
 	}
 }
 
-/// What a verdict decides about a submitted attempt. A verdict never
-/// schedules a transaction or abandons one: only the submission executor
-/// does.
+/// What a verdict decides about a submitted attempt. It is never waiting
+/// to be built or abandoned: a failure the policy retries becomes waiting
+/// to be built when it is written, and only the submission executor
+/// abandons a transaction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VerdictStatus {
 	/// No evidence either way yet.
@@ -198,7 +199,7 @@ pub struct DurableTxEntry {
 
 /// A transaction waiting for its policy to build an attempt.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ScheduledDurableTx {
+pub struct DeferredDurableTx {
 	/// Ledger id.
 	pub id: DurableTxId,
 	/// The domain that registered it.

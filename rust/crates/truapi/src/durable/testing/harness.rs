@@ -1,4 +1,4 @@
-//! [`ScheduledTxHarness`]: an engine whose transactions scripted policies
+//! [`DeferredTxHarness`]: an engine whose transactions scripted policies
 //! build, and what a test steers and reads it with.
 
 use core::time::Duration;
@@ -22,7 +22,7 @@ use crate::{
 	time::ManualTimer,
 };
 
-/// The domain a test schedules into unless it needs a second one.
+/// The domain a test defers into unless it needs a second one.
 pub fn test_domain() -> DomainId {
 	DomainId::new("test")
 }
@@ -35,7 +35,7 @@ pub fn other_domain() -> DomainId {
 /// An engine serving [`test_domain`] and [`other_domain`], which nothing on
 /// chain decides, built by one scripted policy, with a [`ManualTimer`] and scripted
 /// finalized heads.
-pub struct ScheduledTxHarness {
+pub struct DeferredTxHarness {
 	_dir: TempDir,
 	chain: Arc<FakeChain>,
 	db: Db,
@@ -45,7 +45,7 @@ pub struct ScheduledTxHarness {
 	policy: Arc<ScriptedPolicy>,
 }
 
-impl ScheduledTxHarness {
+impl DeferredTxHarness {
 	/// A harness whose domains are both built by `policy`.
 	pub fn with_policy(policy: ScriptedPolicy) -> Self {
 		let chain = FakeChain::new(130, 140);
@@ -88,21 +88,21 @@ impl ScheduledTxHarness {
 		&self.policy
 	}
 
-	/// Schedules one transaction of the test domain, in no group.
-	pub fn schedule_one(&self) -> DurableTxId {
-		self.schedule_repeated(1)[0]
+	/// Defers one transaction of the test domain, in no group.
+	pub fn defer_one(&self) -> DurableTxId {
+		self.defer_repeated(1)[0]
 	}
 
-	/// Schedules `count` transactions of the test domain, in no group, in one
+	/// Defers `count` transactions of the test domain, in no group, in one
 	/// write.
-	pub fn schedule_repeated(&self, count: usize) -> Vec<DurableTxId> {
+	pub fn defer_repeated(&self, count: usize) -> Vec<DurableTxId> {
 		let plans = vec![test_plan(vec![]); count];
-		let request = DurableRequest::scheduled(test_domain(), None, plans).unwrap();
-		self.schedule(request)
+		let request = DurableRequest::deferred(test_domain(), None, plans).unwrap();
+		self.defer(request)
 	}
 
 	/// Registers `request` and returns its ids.
-	pub fn schedule(&self, request: DurableRequest) -> Vec<DurableTxId> {
+	pub fn defer(&self, request: DurableRequest) -> Vec<DurableTxId> {
 		block_on(self.engine.execute(request)).unwrap()
 	}
 
@@ -115,7 +115,7 @@ impl ScheduledTxHarness {
 	/// A row of `domain` waiting to be built through `plan`, written as a
 	/// previous process would have left it.
 	pub fn leave_waiting(&self, domain: DomainId, plan: SubmissionPlan) -> DurableTxId {
-		let write = self.db.write(move |tx| dao::schedule(tx, &domain, None, &plan));
+		let write = self.db.write(move |tx| dao::defer(tx, &domain, None, &plan));
 		block_on(write).unwrap()
 	}
 

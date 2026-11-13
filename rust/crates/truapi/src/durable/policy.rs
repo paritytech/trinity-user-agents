@@ -1,10 +1,10 @@
-//! [`SubmissionPolicy`]: how a domain builds the transactions it scheduled,
+//! [`SubmissionPolicy`]: how a domain builds the transactions it deferred,
 //! and whether a failed attempt is built again.
 
 use std::collections::HashMap;
 
 use super::model::{
-	DurableTxEntry, DurableTxId, PolicyParams, ScheduledDurableTx, VerdictFailureKind,
+	DeferredDurableTx, DurableTxEntry, DurableTxId, PolicyParams, VerdictFailureKind,
 };
 use crate::chain::MortalExtrinsic;
 
@@ -27,11 +27,11 @@ pub trait SubmissionPolicy: Send + Sync {
 	/// the batch is asked again later.
 	async fn prepare(
 		&self,
-		batch: &[ScheduledDurableTx],
+		batch: &[DeferredDurableTx],
 	) -> Result<HashMap<DurableTxId, Preparation>, PolicyError>;
 }
 
-/// A policy's answer for one scheduled transaction.
+/// A policy's answer for one deferred transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Preparation {
 	/// Signed and ready to submit.

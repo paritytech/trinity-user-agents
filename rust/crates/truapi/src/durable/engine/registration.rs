@@ -43,7 +43,7 @@ pub struct DurableSubmission {
 }
 
 /// Works out, inside the registration write, the params of each transaction
-/// a request schedules, or refuses the registration.
+/// a request defers, or refuses the registration.
 type PlanInWrite<E> =
 	Box<dyn FnOnce(&rusqlite::Transaction<'_>) -> Result<Vec<PolicyParams>, E> + Send>;
 
@@ -52,7 +52,7 @@ enum RequestedTransactions<E> {
 	/// Signed already: recorded as pending and broadcast once committed.
 	Presigned(Vec<DurableSubmission>),
 	/// Built later, each through its plan.
-	Scheduled(Vec<SubmissionPlan>),
+	Deferred(Vec<SubmissionPlan>),
 	/// Built later, with params worked out in the write.
 	PlannedInWrite(PlanInWrite<E>),
 }
@@ -84,16 +84,16 @@ impl<E> RequestedTransactions<E> {
 	fn is_empty(&self) -> bool {
 		match self {
 			Self::Presigned(submissions) => submissions.is_empty(),
-			Self::Scheduled(plans) => plans.is_empty(),
+			Self::Deferred(plans) => plans.is_empty(),
 			Self::PlannedInWrite(_) => false,
 		}
 	}
 
-	/// The presigned submissions, in order. Empty for a schedule.
+	/// The presigned submissions, in order. Empty for a deferred request.
 	fn presigned(&self) -> &[DurableSubmission] {
 		match self {
 			Self::Presigned(submissions) => submissions,
-			Self::Scheduled(_) | Self::PlannedInWrite(_) => &[],
+			Self::Deferred(_) | Self::PlannedInWrite(_) => &[],
 		}
 	}
 
@@ -103,7 +103,7 @@ impl<E> RequestedTransactions<E> {
 			Self::Presigned(submissions) => {
 				submissions.iter().any(|submission| submission.plan.is_some())
 			},
-			Self::Scheduled(_) | Self::PlannedInWrite(_) => true,
+			Self::Deferred(_) | Self::PlannedInWrite(_) => true,
 		}
 	}
 }
@@ -121,19 +121,19 @@ impl<E> DurableRequest<E> {
 
 	/// One transaction per plan in `plans`, recorded as waiting and built
 	/// through its plan once committed.
-	pub fn scheduled(
+	pub fn deferred(
 		domain: DomainId,
 		group: Option<GroupId>,
 		plans: Vec<SubmissionPlan>,
 	) -> Result<Self, EmptyRequest> {
-		Self::new(domain, group, RequestedTransactions::Scheduled(plans))
+		Self::new(domain, group, RequestedTransactions::Deferred(plans))
 	}
 
 	/// One transaction per params `plan` works out inside the registration
 	/// write, each recorded as waiting and built once committed.
 	/// An `Err` from `plan` refuses the registration as
 	/// [`RegistrationError::Hook`].
-	pub fn scheduled_in(
+	pub fn deferred_in(
 		domain: DomainId,
 		group: Option<GroupId>,
 		plan: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<Vec<PolicyParams>, E> + Send + 'static,
@@ -163,13 +163,13 @@ impl<E> DurableRequest<E> {
 			RequestedTransactions::Presigned(submissions) => {
 				return insert_presigned(tx, &domain, group.as_ref(), &submissions).map(Ok);
 			},
-			RequestedTransactions::Scheduled(plans) => plans,
+			RequestedTransactions::Deferred(plans) => plans,
 			RequestedTransactions::PlannedInWrite(plan) => match plan(tx) {
 				Ok(params) => params.into_iter().map(|params| SubmissionPlan { params }).collect(),
 				Err(refusal) => return Ok(Err(refusal)),
 			},
 		};
-		schedule_all(tx, &domain, group.as_ref(), &plans).map(Ok)
+		defer_all(tx, &domain, group.as_ref(), &plans).map(Ok)
 	}
 }
 
@@ -189,13 +189,13 @@ fn insert_presigned(
 }
 
 /// Records each plan as a waiting row, in order.
-fn schedule_all(
+fn defer_all(
 	tx: &rusqlite::Transaction<'_>,
 	domain: &DomainId,
 	group: Option<&GroupId>,
 	plans: &[SubmissionPlan],
 ) -> Result<Vec<DurableTxId>, DbError> {
-	plans.iter().map(|plan| dao::schedule(tx, domain, group, plan)).collect()
+	plans.iter().map(|plan| dao::defer(tx, domain, group, plan)).collect()
 }
 
 impl DurableTxEngine {

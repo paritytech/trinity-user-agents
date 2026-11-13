@@ -79,11 +79,11 @@ fn held_nft() -> ScarcityNft {
 	}
 }
 
-/// A scheduled transfer of the first key of purse 0 to [`DESTINATION`], as
+/// A deferred transfer of the first key of purse 0 to [`DESTINATION`], as
 /// the ledger registers it.
 struct RegisteredTransfer {
 	source: ItemKey,
-	scheduled: ScheduledDurableTx,
+	deferred: DeferredDurableTx,
 }
 
 fn registered_transfer(attempts: u32) -> RegisteredTransfer {
@@ -101,20 +101,20 @@ fn registered_transfer_until(attempts: u32, give_up_after: u64) -> RegisteredTra
 		submitted_attempt: None,
 		give_up_after,
 	};
-	scheduled_transfer(params, attempts)
+	deferred_transfer(params, attempts)
 }
 
 /// [`registered_transfer`] after one attempt that moved [`INSTANCE`].
 fn retried_transfer() -> RegisteredTransfer {
 	let mut registered = registered_transfer(1);
-	let mut params = TransferParams::try_from(&registered.scheduled.plan.params).unwrap();
+	let mut params = TransferParams::try_from(&registered.deferred.plan.params).unwrap();
 	let state_nonce = held_nft().state_nonce;
 	params.submitted_attempt = Some(TransferAttempt { instance: INSTANCE, state_nonce });
-	registered.scheduled.plan.params = params.into();
+	registered.deferred.plan.params = params.into();
 	registered
 }
 
-/// A scheduled import of [`imported_test_key`] 0 to [`DESTINATION`], as the
+/// A deferred import of [`imported_test_key`] 0 to [`DESTINATION`], as the
 /// ledger registers it, that stops waiting at unix time `give_up_after`.
 fn registered_import_until(give_up_after: u64) -> RegisteredTransfer {
 	let params = TransferParams {
@@ -124,16 +124,16 @@ fn registered_import_until(give_up_after: u64) -> RegisteredTransfer {
 		submitted_attempt: None,
 		give_up_after,
 	};
-	scheduled_transfer(params, 0)
+	deferred_transfer(params, 0)
 }
 
-fn scheduled_transfer(params: TransferParams, attempts: u32) -> RegisteredTransfer {
+fn deferred_transfer(params: TransferParams, attempts: u32) -> RegisteredTransfer {
 	let source = params.source;
 	let plan = SubmissionPlan { params: params.into() };
 	let id = DurableTxId(1);
-	let scheduled =
-		ScheduledDurableTx { id, domain: DomainId::new("nft"), group: None, plan, attempts };
-	RegisteredTransfer { source, scheduled }
+	let deferred =
+		DeferredDurableTx { id, domain: DomainId::new("nft"), group: None, plan, attempts };
+	RegisteredTransfer { source, deferred }
 }
 
 fn policy(chain: ScriptedScarcity) -> ScarcityTransferPolicy {
@@ -167,9 +167,9 @@ fn prepare_import(
 	chain: ScriptedScarcity,
 	encrypted: Arc<dyn EncryptedStorage>,
 ) -> Option<Preparation> {
-	let batch = [registered.scheduled.clone()];
+	let batch = [registered.deferred.clone()];
 	let policy = policy_importing_from(chain, encrypted);
-	block_on(policy.prepare(&batch)).unwrap().remove(&registered.scheduled.id)
+	block_on(policy.prepare(&batch)).unwrap().remove(&registered.deferred.id)
 }
 
 fn holding(registered: &RegisteredTransfer, nft: ScarcityNft) -> ScriptedScarcity {
@@ -178,9 +178,9 @@ fn holding(registered: &RegisteredTransfer, nft: ScarcityNft) -> ScriptedScarcit
 }
 
 fn prepare_one(registered: &RegisteredTransfer, chain: ScriptedScarcity) -> Option<Preparation> {
-	let batch = [registered.scheduled.clone()];
+	let batch = [registered.deferred.clone()];
 	let mut prepared = block_on(policy(chain).prepare(&batch)).unwrap();
-	prepared.remove(&registered.scheduled.id)
+	prepared.remove(&registered.deferred.id)
 }
 
 /// An item is available once the best block holds it, so a transfer is judged
@@ -346,10 +346,10 @@ fn without_a_session_a_transfer_waits_until_its_limit() {
 		})
 	};
 	let prepare = |registered: &RegisteredTransfer| {
-		let batch = core::slice::from_ref(&registered.scheduled);
+		let batch = core::slice::from_ref(&registered.deferred);
 		block_on(signed_out(registered).prepare(batch))
 			.unwrap()
-			.remove(&registered.scheduled.id)
+			.remove(&registered.deferred.id)
 	};
 
 	assert_eq!(prepare(&waiting), None);
@@ -372,7 +372,7 @@ fn an_import_waits_for_its_key_to_fill_and_records_the_instance_it_signed() {
 	let Some(Preparation::Ready { params: Some(params), .. }) = filled else {
 		panic!("built without params: {filled:?}")
 	};
-	let registered = TransferParams::try_from(&import.scheduled.plan.params).unwrap();
+	let registered = TransferParams::try_from(&import.deferred.plan.params).unwrap();
 	let state_nonce = held_nft().state_nonce;
 	let submitted_attempt = Some(TransferAttempt { instance: INSTANCE, state_nonce });
 	let expected = TransferParams { submitted_attempt, ..registered };

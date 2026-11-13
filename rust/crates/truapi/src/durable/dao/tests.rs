@@ -248,13 +248,13 @@ fn next<T>(stream: &mut BoxStream<'static, Result<T, DbError>>) -> T {
 	block_on(stream.next()).unwrap().unwrap()
 }
 
-fn schedule_in(db: &Db, domain: DomainId, group: Option<GroupId>) -> DurableTxId {
+fn defer_in(db: &Db, domain: DomainId, group: Option<GroupId>) -> DurableTxId {
 	let plan = test_plan(vec![1]);
-	let write = db.write(move |tx| schedule(tx, &domain, group.as_ref(), &plan));
+	let write = db.write(move |tx| defer(tx, &domain, group.as_ref(), &plan));
 	block_on(write).unwrap()
 }
 
-fn pending_rows(db: &Db) -> Vec<ScheduledDurableTx> {
+fn pending_rows(db: &Db) -> Vec<DeferredDurableTx> {
 	next(&mut observe_pending_submissions(db))
 }
 
@@ -271,13 +271,13 @@ fn insert_rebuildable(db: &Db, params: u8) -> DurableTxId {
 }
 
 #[test]
-fn a_scheduled_row_waits_for_its_policy_with_no_attempt() {
+fn a_deferred_row_waits_for_its_policy_with_no_attempt() {
 	let (_dir, db) = open_db();
-	let id = schedule_in(&db, domain(), Some(GroupId::new("payment")));
+	let id = defer_in(&db, domain(), Some(GroupId::new("payment")));
 
 	assert_eq!(
 		pending_rows(&db),
-		vec![ScheduledDurableTx {
+		vec![DeferredDurableTx {
 			id,
 			domain: domain(),
 			group: Some(GroupId::new("payment")),
@@ -294,7 +294,7 @@ fn a_scheduled_row_waits_for_its_policy_with_no_attempt() {
 #[test]
 fn a_transaction_waiting_to_be_built_is_live_but_not_decidable() {
 	let (_dir, db) = open_db();
-	schedule_in(&db, domain(), None);
+	defer_in(&db, domain(), None);
 
 	assert_eq!(next(&mut observe_live_transaction_domains(&db)), vec![domain()]);
 	assert_eq!(read(&db, waiting_domains), vec![domain()]);
@@ -305,7 +305,7 @@ fn a_transaction_waiting_to_be_built_is_live_but_not_decidable() {
 #[test]
 fn starting_an_attempt_gives_a_waiting_row_its_extrinsic() {
 	let (_dir, db) = open_db();
-	let id = schedule_in(&db, domain(), None);
+	let id = defer_in(&db, domain(), None);
 
 	assert!(start_attempt_tagged(&db, id, 9));
 	assert_eq!(
@@ -329,7 +329,7 @@ fn starting_an_attempt_gives_a_waiting_row_its_extrinsic() {
 #[test]
 fn an_attempt_can_replace_the_rows_params() {
 	let (_dir, db) = open_db();
-	let id = schedule_in(&db, domain(), None);
+	let id = defer_in(&db, domain(), None);
 	let replaced = PolicyParams(vec![2]);
 
 	let started = block_on(
@@ -347,7 +347,7 @@ fn an_attempt_can_replace_the_rows_params() {
 #[test]
 fn an_attempt_starts_only_on_a_row_still_waiting() {
 	let (_dir, db) = open_db();
-	let waiting = schedule_in(&db, domain(), None);
+	let waiting = defer_in(&db, domain(), None);
 	let submitted = register(&db, None, 1);
 	start_attempt_tagged(&db, waiting, 9);
 
@@ -364,7 +364,7 @@ fn an_attempt_starts_only_on_a_row_still_waiting() {
 #[test]
 fn every_attempt_a_row_is_built_into_is_counted() {
 	let (_dir, db) = open_db();
-	let id = schedule_in(&db, domain(), None);
+	let id = defer_in(&db, domain(), None);
 	for tag in [9, 10] {
 		start_attempt_tagged(&db, id, tag);
 		let attempt = read(&db, move |conn| entry(conn, id)).unwrap();
@@ -381,7 +381,7 @@ fn every_attempt_a_row_is_built_into_is_counted() {
 #[test]
 fn a_rebuilt_attempt_starts_with_nothing_searched() {
 	let (_dir, db) = open_db();
-	let id = schedule_in(&db, domain(), None);
+	let id = defer_in(&db, domain(), None);
 	start_attempt_tagged(&db, id, 9);
 	let first = read(&db, move |conn| entry(conn, id)).unwrap();
 	write_scanned(&db, first, DurableTxStatus::Pending, Some(120));
@@ -397,7 +397,7 @@ fn a_rebuilt_attempt_starts_with_nothing_searched() {
 #[test]
 fn only_a_row_still_waiting_can_be_abandoned() {
 	let (_dir, db) = open_db();
-	let waiting = schedule_in(&db, domain(), None);
+	let waiting = defer_in(&db, domain(), None);
 	let submitted = register(&db, None, 1);
 
 	assert!(abandon_waiting(&db, waiting));
@@ -421,7 +421,7 @@ fn a_verdict_can_send_a_submitted_row_back_to_its_policy() {
 	assert!(write_status(&db, observed, DurableTxStatus::PendingSubmission));
 	assert_eq!(
 		pending_rows(&db),
-		vec![ScheduledDurableTx {
+		vec![DeferredDurableTx {
 			id,
 			domain: domain(),
 			group: None,
@@ -454,14 +454,14 @@ fn a_row_keeps_the_plan_it_was_registered_with() {
 #[test]
 fn a_bucket_lists_only_its_domain_and_group() {
 	let (_dir, db) = open_db();
-	let grouped = schedule_in(&db, domain(), Some(GroupId::new("g1")));
-	let ungrouped = schedule_in(&db, domain(), None);
-	schedule_in(&db, DomainId::new("other"), Some(GroupId::new("g1")));
-	schedule_in(&db, domain(), Some(GroupId::new("g2")));
+	let grouped = defer_in(&db, domain(), Some(GroupId::new("g1")));
+	let ungrouped = defer_in(&db, domain(), None);
+	defer_in(&db, DomainId::new("other"), Some(GroupId::new("g1")));
+	defer_in(&db, domain(), Some(GroupId::new("g2")));
 	let bucket = |group: Option<GroupId>| {
 		read(&db, move |conn| bucket_submissions(conn, &domain(), group.as_ref()))
 			.iter()
-			.map(|scheduled| scheduled.id)
+			.map(|deferred| deferred.id)
 			.collect::<Vec<_>>()
 	};
 
@@ -474,7 +474,7 @@ fn a_bucket_lists_only_its_domain_and_group() {
 #[test]
 fn a_transaction_given_up_before_it_was_built_leaves_its_domain_readable() {
 	let (_dir, db) = open_db();
-	let never_built = schedule_in(&db, domain(), None);
+	let never_built = defer_in(&db, domain(), None);
 	abandon_waiting(&db, never_built);
 	let live = register(&db, None, 1);
 
@@ -491,7 +491,7 @@ fn a_row_handed_back_between_two_reads_is_reported_again() {
 	let (_dir, db) = open_db();
 	let mut waiting = observe_pending_submissions(&db);
 	assert_eq!(next(&mut waiting), vec![]);
-	let id = schedule_in(&db, domain(), None);
+	let id = defer_in(&db, domain(), None);
 	assert_eq!(next(&mut waiting).len(), 1);
 
 	start_attempt_tagged(&db, id, 9);

@@ -198,7 +198,7 @@ impl NftLedger {
 			+ 'static,
 	{
 		let deriver = self.keys.clone();
-		DurableRequest::scheduled_in(nft_domain(), Some(group), move |tx| {
+		DurableRequest::deferred_in(nft_domain(), Some(group), move |tx| {
 			plan(tx, DestinationKeys { installation, deriver: deriver.as_ref() })
 		})
 	}
@@ -258,7 +258,7 @@ impl NftLedger {
 	) -> Result<StartedReturn, RegistrationError<StartOperationError>> {
 		let group = request.operation.group().clone();
 		let import = request.import.clone();
-		let planned = DurableRequest::scheduled_in(nft_domain(), Some(group), move |tx| {
+		let planned = DurableRequest::deferred_in(nft_domain(), Some(group), move |tx| {
 			plan_returns(tx, &request)
 		});
 		self.durable

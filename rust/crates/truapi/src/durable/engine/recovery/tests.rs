@@ -15,7 +15,7 @@ use crate::{
 		oracle::{CompletionOracle, DurableRegistry, PassScope},
 		policy::Preparation,
 		testing::{
-			FakeChain, GENESIS, ScheduledTxHarness, ScriptedPolicy, ServesTestDomains,
+			DeferredTxHarness, FakeChain, GENESIS, ScriptedPolicy, ServesTestDomains,
 			answer_all_with, block, engine_with, extrinsic, insert,
 		},
 	},
@@ -289,7 +289,7 @@ fn rows_of_an_unregistered_domain_waiting_to_be_built_do_not_keep_recovery_runni
 	);
 	let orphan = DomainId::new("orphan");
 	let plan = crate::durable::testing::test_plan(vec![1]);
-	block_on(engine.db.write(move |tx| dao::schedule(tx, &orphan, None, &plan))).unwrap();
+	block_on(engine.db.write(move |tx| dao::defer(tx, &orphan, None, &plan))).unwrap();
 
 	let running = run_in_background(&engine);
 
@@ -321,11 +321,11 @@ fn giving_up_once_set(give_up: Arc<AtomicBool>) -> ScriptedPolicy {
 	})
 }
 
-/// The app was killed before a scheduled transaction was built. Recovery
+/// The app was killed before a deferred transaction was built. Recovery
 /// is all that runs on the next launch, so it must build it.
 #[test]
 fn recovery_builds_what_a_previous_process_left_waiting() {
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::answering_nothing());
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::answering_nothing());
 	let id = harness.leave_waiting_from_previous_process();
 
 	let _running = run_in_background(harness.engine());
@@ -340,7 +340,7 @@ fn recovery_builds_what_a_previous_process_left_waiting() {
 #[test]
 fn recovery_runs_until_waiting_transactions_are_decided() {
 	let give_up = Arc::new(AtomicBool::new(false));
-	let mut harness = ScheduledTxHarness::with_policy(giving_up_once_set(give_up.clone()));
+	let mut harness = DeferredTxHarness::with_policy(giving_up_once_set(give_up.clone()));
 	let id = harness.leave_waiting_from_previous_process();
 	let running = run_in_background(harness.engine());
 	wait_until(|| harness.policy().batches().len() == 1, "the row is asked about");
@@ -364,7 +364,7 @@ fn recovery_runs_until_waiting_transactions_are_decided() {
 /// it to resubscribe, however long another row waits to be built.
 #[test]
 fn a_lost_chain_fails_recovery_while_a_row_waits_to_be_built() {
-	let mut harness = ScheduledTxHarness::with_policy(ScriptedPolicy::answering_nothing());
+	let mut harness = DeferredTxHarness::with_policy(ScriptedPolicy::answering_nothing());
 	harness.insert_unwatched(extrinsic(1, 100, 64), None);
 	harness.leave_waiting_from_previous_process();
 	let running = run_in_background(harness.engine());

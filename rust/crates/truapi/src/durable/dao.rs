@@ -9,8 +9,8 @@ use rusqlite::{
 use subxt::utils::H256;
 
 use super::model::{
-	DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState, DurableTxStatus,
-	GroupId, PolicyParams, ScheduledDurableTx, SubmissionPlan,
+	DeferredDurableTx, DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState,
+	DurableTxStatus, GroupId, PolicyParams, SubmissionPlan,
 };
 use crate::{
 	chain::{HashAndNumber, MortalExtrinsic, Mortality},
@@ -48,20 +48,20 @@ pub fn insert(
 	Ok(id)
 }
 
-const SCHEDULE: &str = "INSERT INTO durable_tx
+const DEFER: &str = "INSERT INTO durable_tx
     (domain, group_id, status, policy_params)
     VALUES (:domain, :group_id, 'PENDING_SUBMISSION', :policy_params)
     RETURNING id";
 
 /// Records a transaction built later through `plan`, as a
 /// `PendingSubmission` row with no attempt.
-pub fn schedule(
+pub fn defer(
 	tx: &Transaction<'_>,
 	domain: &DomainId,
 	group: Option<&GroupId>,
 	plan: &SubmissionPlan,
 ) -> Result<DurableTxId, DbError> {
-	let id = tx.prepare_cached(SCHEDULE)?.query_row(
+	let id = tx.prepare_cached(DEFER)?.query_row(
 		named_params! {
 			":domain": domain.as_str(),
 			":group_id": group.map(GroupId::as_str),
@@ -129,8 +129,8 @@ const PENDING_SUBMISSIONS: &str = "SELECT id, domain, group_id, policy_params, a
 /// commit that changes them.
 pub fn observe_pending_submissions(
 	db: &Db,
-) -> BoxStream<'static, Result<Vec<ScheduledDurableTx>, DbError>> {
-	db.observe(PENDING_SUBMISSIONS, |stmt| stmt.query_map([], ScheduledDurableTx::from_row))
+) -> BoxStream<'static, Result<Vec<DeferredDurableTx>, DbError>> {
+	db.observe(PENDING_SUBMISSIONS, |stmt| stmt.query_map([], DeferredDurableTx::from_row))
 }
 
 const WAITING_DOMAINS: &str = "SELECT DISTINCT domain FROM durable_tx
@@ -158,13 +158,13 @@ pub fn bucket_submissions(
 	conn: &Connection,
 	domain: &DomainId,
 	group: Option<&GroupId>,
-) -> Result<Vec<ScheduledDurableTx>, DbError> {
+) -> Result<Vec<DeferredDurableTx>, DbError> {
 	let mut stmt = conn.prepare_cached(BUCKET_SUBMISSIONS)?;
 	let params = named_params! {
 		":domain": domain.as_str(),
 		":group_id": group.map(GroupId::as_str),
 	};
-	let rows = stmt.query_map(params, ScheduledDurableTx::from_row)?;
+	let rows = stmt.query_map(params, DeferredDurableTx::from_row)?;
 	Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
@@ -376,7 +376,7 @@ fn success_from_row(row: &Row<'_>) -> rusqlite::Result<Option<HashAndNumber>> {
 		.map(|(number, hash)| HashAndNumber { hash: H256(hash), number }))
 }
 
-impl ScheduledDurableTx {
+impl DeferredDurableTx {
 	fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
 		Ok(Self {
 			id: DurableTxId(row.get("id")?),

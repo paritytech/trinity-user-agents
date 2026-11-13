@@ -27,7 +27,7 @@ use super::DurableTxEngine;
 use crate::{
 	durable::{
 		dao,
-		model::{DomainId, GroupId, ScheduledDurableTx},
+		model::{DeferredDurableTx, DomainId, GroupId},
 	},
 	store::DbError,
 };
@@ -52,9 +52,9 @@ pub struct SubmissionBucket {
 	group: Option<GroupId>,
 }
 
-impl From<&ScheduledDurableTx> for SubmissionBucket {
-	fn from(scheduled: &ScheduledDurableTx) -> Self {
-		Self { domain: scheduled.domain.clone(), group: scheduled.group.clone() }
+impl From<&DeferredDurableTx> for SubmissionBucket {
+	fn from(deferred: &DeferredDurableTx) -> Self {
+		Self { domain: deferred.domain.clone(), group: deferred.group.clone() }
 	}
 }
 
@@ -70,7 +70,7 @@ impl SubmissionExecutor {
 
 impl DurableTxEngine {
 	/// Builds every transaction waiting for its policy, now and whenever more
-	/// are scheduled or handed back, until the engine is dropped. Calling it
+	/// are deferred or handed back, until the engine is dropped. Calling it
 	/// again while it runs does nothing.
 	pub fn ensure_submissions_started(self: &Arc<Self>) {
 		let mut builder = self.executor.builder.lock();
@@ -109,7 +109,7 @@ impl Drop for Worker {
 /// What the builder reacts to, one at a time.
 enum BuilderEvent {
 	/// The waiting rows changed.
-	Waiting(Result<Vec<ScheduledDurableTx>, DbError>),
+	Waiting(Result<Vec<DeferredDurableTx>, DbError>),
 	/// The worker of this bucket found it empty and returned.
 	Finished(SubmissionBucket),
 }
@@ -135,7 +135,7 @@ impl Builder {
 	/// waiting rows can no longer be observed or the engine is dropped. On
 	/// the former it frees its slot, so the next
 	/// [`DurableTxEngine::ensure_submissions_started`] starts a new builder.
-	async fn run(mut self, waiting: BoxStream<'static, Result<Vec<ScheduledDurableTx>, DbError>>) {
+	async fn run(mut self, waiting: BoxStream<'static, Result<Vec<DeferredDurableTx>, DbError>>) {
 		let mut waiting = waiting.fuse();
 		loop {
 			let event = futures::select! {
@@ -161,7 +161,7 @@ impl Builder {
 	/// Starts a worker for every waiting bucket that has none, unless its
 	/// domain is not registered. A finished
 	/// worker's bucket is started again when the latest rows still wait in
-	/// it: those rows may have been scheduled after the worker's last read.
+	/// it: those rows may have been deferred after the worker's last read.
 	fn handle(&mut self, engine: &Arc<DurableTxEngine>, event: BuilderEvent) {
 		match event {
 			BuilderEvent::Waiting(Ok(rows)) => {

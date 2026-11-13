@@ -19,8 +19,8 @@ use super::{
 };
 use crate::{
 	durable::{
-		DurableRegistry, DurableTxEngine, DurableTxEntry, DurableTxId, PolicyError, PolicyParams,
-		Preparation, ScheduledDurableTx, SubmissionPolicy, Unobservable, VerdictFailureKind,
+		DeferredDurableTx, DurableRegistry, DurableTxEngine, DurableTxEntry, DurableTxId,
+		PolicyError, PolicyParams, Preparation, SubmissionPolicy, Unobservable, VerdictFailureKind,
 		engine_on,
 	},
 	encrypted_storage::MemoryEncryptedStorage,
@@ -78,7 +78,7 @@ impl SubmissionPolicy for NeverBuilds {
 
 	async fn prepare(
 		&self,
-		_: &[ScheduledDurableTx],
+		_: &[DeferredDurableTx],
 	) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
 		Ok(HashMap::new())
 	}

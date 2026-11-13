@@ -19,7 +19,7 @@ use crate::{
 	durable::{
 		dao,
 		engine::DurableTxEngine,
-		model::{DurableTxId, ScheduledDurableTx},
+		model::{DeferredDurableTx, DurableTxId},
 		policy::{Preparation, SubmissionPolicy},
 	},
 	store::{Db, DbError},
@@ -122,7 +122,7 @@ impl BucketRun {
 	}
 
 	/// Builds the waiting `rows` that no watch owns.
-	async fn decide_rows(&self, rows: Vec<ScheduledDurableTx>) -> RoundOutcome {
+	async fn decide_rows(&self, rows: Vec<DeferredDurableTx>) -> RoundOutcome {
 		let Some(engine) = self.engine.upgrade() else {
 			return RoundOutcome::NoProgress;
 		};
@@ -139,7 +139,7 @@ impl BucketRun {
 	}
 
 	/// The bucket's waiting rows, or `None` when the ledger cannot be read.
-	async fn readable_rows(&self) -> Option<Vec<ScheduledDurableTx>> {
+	async fn readable_rows(&self) -> Option<Vec<DeferredDurableTx>> {
 		match self.read_bucket_rows().await {
 			Ok(rows) => Some(rows),
 			Err(error) => {
@@ -150,7 +150,7 @@ impl BucketRun {
 	}
 
 	/// Builds `rows` with the bucket's policy after their cooldown.
-	async fn prepare_and_apply(&self, rows: Vec<ScheduledDurableTx>) -> RoundOutcome {
+	async fn prepare_and_apply(&self, rows: Vec<DeferredDurableTx>) -> RoundOutcome {
 		let resolved = &self.resolved;
 		self.cool_down(&rows).await;
 		let prepared = resolved.policy.prepare(&rows).await;
@@ -168,7 +168,7 @@ impl BucketRun {
 	async fn apply_all(
 		&self,
 		genesis: H256,
-		rows: Vec<ScheduledDurableTx>,
+		rows: Vec<DeferredDurableTx>,
 		mut answers: HashMap<DurableTxId, Preparation>,
 	) -> RoundOutcome {
 		let mut outcome = RoundOutcome::NoProgress;
@@ -202,12 +202,12 @@ impl BucketRun {
 	}
 
 	/// Waits out the cooldown of the most rebuilt row of `rows`.
-	async fn cool_down(&self, rows: &[ScheduledDurableTx]) {
+	async fn cool_down(&self, rows: &[DeferredDurableTx]) {
 		let attempts = rows.iter().map(|row| row.attempts).max().unwrap_or(0);
 		self.timer.sleep(cooldown(attempts)).await;
 	}
 
-	async fn read_bucket_rows(&self) -> Result<Vec<ScheduledDurableTx>, DbError> {
+	async fn read_bucket_rows(&self) -> Result<Vec<DeferredDurableTx>, DbError> {
 		let bucket = self.bucket.clone();
 		self.db
 			.read(move |conn| dao::bucket_submissions(conn, &bucket.domain, bucket.group.as_ref()))
@@ -218,8 +218,8 @@ impl BucketRun {
 /// `rows` without those a watch still owns.
 fn without_followed(
 	engine: &DurableTxEngine,
-	rows: Vec<ScheduledDurableTx>,
-) -> Vec<ScheduledDurableTx> {
+	rows: Vec<DeferredDurableTx>,
+) -> Vec<DeferredDurableTx> {
 	rows.into_iter().filter(|row| !engine.ownership.is_owned(row.id)).collect()
 }
 

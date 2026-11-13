@@ -19,9 +19,9 @@ fn wait_for_batch(policy: &ScriptedPolicy, batch: Vec<DurableTxId>, what: &str) 
 }
 
 /// `count` transactions of `domain` in `group`.
-fn scheduled_in(domain: DomainId, group: &str, count: usize) -> DurableRequest {
+fn deferred_in(domain: DomainId, group: &str, count: usize) -> DurableRequest {
 	let plan = SubmissionPlan { params: PolicyParams::default() };
-	DurableRequest::scheduled(domain, Some(GroupId::new(group)), vec![plan; count]).unwrap()
+	DurableRequest::deferred(domain, Some(GroupId::new(group)), vec![plan; count]).unwrap()
 }
 
 /// A script whose first build waits until the returned sender fires, and
@@ -48,12 +48,12 @@ fn first_build_gated() -> (oneshot::Sender<()>, PrepareScript) {
 /// groups: one domain's fee payer or nonce sequence is not another's.
 #[test]
 fn each_domain_and_group_is_built_in_its_own_batch() {
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::answering_nothing());
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::answering_nothing());
 	let policy = harness.policy();
 
-	let together = harness.schedule(scheduled_in(test_domain(), "g1", 2));
-	let other_group = harness.schedule(scheduled_in(test_domain(), "g2", 1));
-	let other_domain = harness.schedule(scheduled_in(other_domain(), "g1", 1));
+	let together = harness.defer(deferred_in(test_domain(), "g1", 2));
+	let other_group = harness.defer(deferred_in(test_domain(), "g2", 1));
+	let other_domain = harness.defer(deferred_in(other_domain(), "g1", 1));
 
 	wait_for_batch(policy, together, "the shared batch");
 	wait_for_batch(policy, other_group, "the other group alone");
@@ -73,26 +73,26 @@ fn a_batch_stuck_in_its_policy_does_not_hold_up_another_group() {
 		let built = extrinsic_for_index(builds.fetch_add(1, Ordering::SeqCst));
 		Box::pin(ready(answer_all_with(ids, Preparation::Ready { extrinsic: built, params: None })))
 	});
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::from_script(stuck_on_first_row));
-	let blocked = harness.schedule(scheduled_in(test_domain(), "g1", 1))[0];
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::from_script(stuck_on_first_row));
+	let blocked = harness.defer(deferred_in(test_domain(), "g1", 1))[0];
 	assert_eq!(blocked, first_row);
 
-	let free = harness.schedule(scheduled_in(test_domain(), "g2", 1))[0];
+	let free = harness.defer(deferred_in(test_domain(), "g2", 1))[0];
 
 	harness.wait_for(free, DurableTxStatus::Pending);
 	assert_eq!(harness.status(blocked), DurableTxStatus::PendingSubmission);
 }
 
-/// A row scheduled while its bucket is mid-build must not be lost when that
+/// A row deferred while its bucket is mid-build must not be lost when that
 /// build ends: it is built in the next round.
 #[test]
-fn a_transaction_scheduled_during_a_build_is_built_in_the_next_round() {
+fn a_transaction_deferred_during_a_build_is_built_in_the_next_round() {
 	let (release, script) = first_build_gated();
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::from_script(script));
-	let first = harness.schedule_one();
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::from_script(script));
+	let first = harness.defer_one();
 	wait_until(|| harness.policy().batches().len() == 1, "the first build starts");
 
-	let second = harness.schedule_one();
+	let second = harness.defer_one();
 	release.send(()).unwrap();
 
 	harness.wait_for(second, DurableTxStatus::Pending);

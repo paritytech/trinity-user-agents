@@ -3,7 +3,7 @@
 mod harness;
 mod policy;
 
-pub use harness::{ScheduledTxHarness, other_domain, test_domain};
+pub use harness::{DeferredTxHarness, other_domain, test_domain};
 pub use policy::{
 	PrepareAnswer, PrepareScript, RetryQuestion, ScriptedPolicy, answer_all_with,
 	extrinsic_for_index, first_builds, insert_retryable, test_plan, without_plan,
@@ -376,7 +376,7 @@ impl TxSubmitter for FakeChain {
 	}
 }
 
-/// Registers domains whose scheduled transactions a test never builds.
+/// Registers domains whose deferred transactions a test never builds.
 pub trait ServesTestDomains {
 	/// `self` with `domain` on the chain with genesis `chain`, decided by
 	/// `oracle`, with a policy that never answers.

@@ -15,7 +15,7 @@ use crate::durable::{
 /// failure the policy retries, which hands it back to the policy. The test
 /// writes the verdict in place of the watch, so it also lets go of the
 /// transaction as the watch would.
-fn hand_back_first_attempt(harness: &ScheduledTxHarness, id: DurableTxId) {
+fn hand_back_first_attempt(harness: &DeferredTxHarness, id: DurableTxId) {
 	harness.wait_for(id, DurableTxStatus::Pending);
 	wait_until(|| harness.timer().sleeps() == 1, "the first attempt's watch waits");
 	harness.engine().ownership.release(id);
@@ -41,8 +41,8 @@ fn a_policy_that_cannot_answer_is_asked_again_after_a_growing_backoff() {
 				Preparation::Ready { extrinsic: extrinsic_for_index(0), params: None },
 			),
 		});
-	let harness = ScheduledTxHarness::with_policy(unavailable_twice);
-	let id = harness.schedule_one();
+	let harness = DeferredTxHarness::with_policy(unavailable_twice);
+	let id = harness.defer_one();
 	wait_until(|| harness.timer().sleeps() == 1, "the bucket backs off");
 
 	harness.timer().advance(INITIAL_BACKOFF);
@@ -59,8 +59,8 @@ fn a_policy_that_cannot_answer_is_asked_again_after_a_growing_backoff() {
 /// spends have not arrived. Waiting is not failing.
 #[test]
 fn a_transaction_the_policy_never_answers_keeps_waiting() {
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::answering_nothing());
-	let id = harness.schedule_one();
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::answering_nothing());
+	let id = harness.defer_one();
 
 	for round in 1..=3 {
 		wait_until(|| harness.timer().sleeps() == round, "the bucket backs off");
@@ -75,8 +75,8 @@ fn a_transaction_the_policy_never_answers_keeps_waiting() {
 /// cooldown, so a policy whose builds keep failing cannot spin.
 #[test]
 fn a_transaction_handed_back_is_built_again_after_a_cooldown() {
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::building_everything());
-	let id = harness.schedule_one();
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::building_everything());
+	let id = harness.defer_one();
 	hand_back_first_attempt(&harness, id);
 	wait_until(|| harness.timer().sleeps() == 2, "the rebuild cools down");
 
@@ -100,9 +100,9 @@ fn a_round_that_decides_one_row_runs_the_next_without_backing_off() {
 			.map(|id| (*id, Preparation::Ready { extrinsic: extrinsic_for_index(0), params: None }))
 			.collect())
 	});
-	let harness = ScheduledTxHarness::with_policy(builds_first_row_only);
+	let harness = DeferredTxHarness::with_policy(builds_first_row_only);
 
-	let ids = harness.schedule_repeated(2);
+	let ids = harness.defer_repeated(2);
 
 	assert_eq!(ids, vec![DurableTxId(1), DurableTxId(2)]);
 	let asked_again = || harness.policy().batches().contains(&vec![ids[1]]);

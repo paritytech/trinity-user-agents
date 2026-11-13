@@ -280,7 +280,7 @@ from, and rows are never deleted.
 
 Each domain is registered in the `DurableRegistry` with the genesis hash of
 its chain, its `CompletionOracle` and its one `SubmissionPolicy`. A domain can
-also schedule transactions it cannot sign yet (`DurableRequest::scheduled`),
+also defer transactions it cannot sign yet (`DurableRequest::deferred`),
 each with a `SubmissionPlan`: the `PolicyParams` its domain's policy builds it
 from. They wait as `PENDING_SUBMISSION` rows until the
 submission executor builds them: one task per domain and group asks the

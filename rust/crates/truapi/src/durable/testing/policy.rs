@@ -14,8 +14,8 @@ use crate::{
 	durable::{
 		engine::DurableSubmission,
 		model::{
-			DomainId, DurableTxEntry, DurableTxId, PolicyParams, ScheduledDurableTx,
-			SubmissionPlan, VerdictFailureKind,
+			DeferredDurableTx, DomainId, DurableTxEntry, DurableTxId, PolicyParams, SubmissionPlan,
+			VerdictFailureKind,
 		},
 		policy::{PolicyError, Preparation, SubmissionPolicy},
 	},
@@ -137,8 +137,8 @@ impl SubmissionPolicy for ScriptedPolicy {
 		self.retry_answer == RetryAnswer::Retry
 	}
 
-	async fn prepare(&self, batch: &[ScheduledDurableTx]) -> PrepareAnswer {
-		let ids: Vec<DurableTxId> = batch.iter().map(|scheduled| scheduled.id).collect();
+	async fn prepare(&self, batch: &[DeferredDurableTx]) -> PrepareAnswer {
+		let ids: Vec<DurableTxId> = batch.iter().map(|deferred| deferred.id).collect();
 		self.batches.lock().push(ids.clone());
 		(self.script)(&ids).await
 	}

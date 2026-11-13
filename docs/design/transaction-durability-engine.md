@@ -13,18 +13,18 @@ The transaction durability engine is a general-purpose component that takes over
 1. **Low-latency, best-effort submission**: the engine submits a received transaction with `submit_and_watch` and tracks its status through the subscription whenever possible. In the best case, this is enough to follow the transaction all the way to finalization.
 2. **Guaranteed recovery**: if something goes wrong in (1), the engine hands tracking over to a recovery layer. This layer combines transaction-specific knowledge, mortality and block search to determine the transaction's status with certainty.
 
-On top of that, the engine offers higher-level features such as transaction grouping, retries and scheduled transactions. The sections below cover the main concepts of the design, the individual features, and how they can be useful.
+On top of that, the engine offers higher-level features such as transaction grouping, retries and deferred transactions. The sections below cover the main concepts of the design, the individual features, and how they can be useful.
 
 ### Transactions
 
-The engine does not construct or sign transactions itself. It accepts either a presigned transaction or a scheduled one, which a consumer-provided submission policy builds later:
+The engine does not construct or sign transactions itself. It accepts either a presigned transaction or a deferred one, which a consumer-provided submission policy builds later:
 
 ```rust
 enum RequestedTransactions {
     /// Signed already: recorded as pending and broadcast once committed.
     Presigned(Vec<DurableSubmission>),
     /// Built later, each through its plan.
-    Scheduled(Vec<SubmissionPlan>),
+    Deferred(Vec<SubmissionPlan>),
 }
 
 pub struct DurableSubmission {
@@ -40,7 +40,7 @@ pub struct SubmissionPlan {
 }
 ```
 
-Use `Presigned` when the consumer can build the transaction before registering it with the engine. Use `Scheduled` when building it is costly and has to happen asynchronously, through a `SubmissionPolicy`. The same policy handles both scheduled submission and retries; see [Submission policies](#submission-policies).
+Use `Presigned` when the consumer can build the transaction before registering it with the engine. Use `Deferred` when building it is costly and has to happen asynchronously, through a `SubmissionPolicy`. The same policy handles both deferred submission and retries; see [Submission policies](#submission-policies).
 
 The engine accepts only **mortal** transactions. Mortality is what lets it declare a transaction failed: if its inclusion cannot be observed on chain within the mortality window, it never can be.
 
@@ -79,7 +79,7 @@ The diagram below shows the main transitions:
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> PendingSubmission: scheduled
+    [*] --> PendingSubmission: deferred
     [*] --> Pending: presigned
     PendingSubmission --> Pending: policy built an attempt
     PendingSubmission --> Failure: policy gave up
@@ -171,7 +171,7 @@ The oracle works on batches of transactions so that consumers can read efficient
 
 ### Submission policies
 
-A submission policy is the mechanism for both scheduled submission and retries: it tells the engine exactly how to build a transaction whenever the engine needs to build or rebuild one:
+A submission policy is the mechanism for both deferred submission and retries: it tells the engine exactly how to build a transaction whenever the engine needs to build or rebuild one:
 
 ```rust
 pub trait SubmissionPolicy: Send + Sync {
@@ -184,7 +184,7 @@ pub trait SubmissionPolicy: Send + Sync {
 
     async fn prepare(
         &self,
-        batch: &[ScheduledDurableTx],
+        batch: &[DeferredDurableTx],
     ) -> Result<HashMap<DurableTxId, Preparation>, PolicyError>;
 }
 
@@ -208,7 +208,7 @@ The engine offers consumers two ways to organize transactions.
 
 A domain, identified by a `DomainId`, separates features from each other, so one generic engine can serve transactions from completely unrelated features. For example, Coinage has its own domain and NFTs have another.
 
-The engine is created from a `DurableRegistry` with one entry per domain: its name, the genesis hash of the chain it lives on, its completion oracle and its one submission policy. Every plan of a domain is built by that policy, so a row stores only its params. A domain that needs several kinds of transaction branches on a field of its params, or uses separate groups or domains. A domain that never schedules or retries registers a policy that never builds.
+The engine is created from a `DurableRegistry` with one entry per domain: its name, the genesis hash of the chain it lives on, its completion oracle and its one submission policy. Every plan of a domain is built by that policy, so a row stores only its params. A domain that needs several kinds of transaction branches on a field of its params, or uses separate groups or domains. A domain that never defers or retries registers a policy that never builds.
 
 #### Groups
 
