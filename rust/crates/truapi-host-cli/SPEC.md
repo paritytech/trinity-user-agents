@@ -2069,9 +2069,9 @@ the host's chain set, the same set `Chain/get_chain_info` answers from, so it
 returns `true` for the network's People, Bulletin and Asset Hub genesis hashes and
 `false` for anything else. A materials question returns `false` here: only a
 signing host serving Pocket (`--execution-kind worker` with
-`TRUAPI_POCKET_CARDS`) answers `true`, because it plans every face its Worker
-renders as a phone does. The core answers it. Success means the method is wired, not that every feature
-is present.
+`TRUAPI_POCKET_CARDS`) answers `true`, because it resolves the materials of
+every face its Worker renders as a phone does. The core answers it. Success
+means the method is wired, not that every feature is present.
 
 ### 15.2 Platform-specific semantics
 

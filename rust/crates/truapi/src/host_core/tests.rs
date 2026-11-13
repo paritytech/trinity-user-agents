@@ -1764,11 +1764,11 @@ fn a_material_kept_by_hand_draws_without_bulletin() {
 	);
 }
 
-/// A Rust host that plans a body its product rendered reports what falls back
+/// A Rust host that resolves a body its product rendered reports what falls back
 /// to that product, as a native execution does. A report is not a tap.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn a_planned_body_reports_its_fallbacks_to_the_connection_that_rendered_it() {
+fn a_resolved_body_reports_its_fallbacks_to_the_connection_that_rendered_it() {
 	use truapi::{
 		latest::{
 			HostRendererFailureSubscribeItem, MaterialFailure, MaterialInstance, MaterialsProps,
@@ -1799,10 +1799,10 @@ fn a_planned_body_reports_its_fallbacks_to_the_connection_that_rendered_it() {
 	};
 	let context = RenderContext::PocketCard { card_id: "stamps".to_string() };
 
-	let _plans = runtime
+	let _resolution = runtime
 		.control()
-		.material_plan(&tree, &context, crate::ShaderLanguage::GlslEs, true)
-		.expect("an open connection plans");
+		.resolve_materials(&tree, &context, crate::ShaderLanguage::GlslEs, true)
+		.expect("an open connection resolves");
 	let delivered = crate::test_support::next(&mut failures)
 		.expect("a failure report")
 		.expect("a failure item")

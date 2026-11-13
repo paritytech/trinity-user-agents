@@ -52,7 +52,7 @@ pub struct NodeFallback {
 	pub reason: MaterialFailure,
 }
 
-impl PlanFailure {
+impl NodeFallback {
 	/// The report of this fallback the product hears, for a body in `context`.
 	pub fn report(self, context: RenderContext) -> HostRendererFailureSubscribeItem {
 		HostRendererFailureSubscribeItem {

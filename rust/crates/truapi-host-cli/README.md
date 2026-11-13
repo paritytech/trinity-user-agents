@@ -778,9 +778,9 @@ Scripts under `js/scripts/` include:
   `TRUAPI_POCKET_CARDS` (`loyalty,humanity:privileged`), so one card is
   removable and one privileged, and records every removal the host is asked for
   in `TRUAPI_POCKET_LOG`. As the product connects, the host opens a render
-  stream for each card, as a phone does when a card comes on screen, plans the
+  stream for each card, as a phone does when a card comes on screen, resolves the
   materials of every face the product draws, reports each fallback through
-  `Renderer::failure_subscribe`, and records each plan in the same transcript.
+  `Renderer::failure_subscribe`, and records each result in the same transcript.
   The cases read that transcript, so a pass means the host and the product agree
   rather than resting on the product's word.
 

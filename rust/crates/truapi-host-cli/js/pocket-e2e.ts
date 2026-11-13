@@ -241,9 +241,9 @@ const OVER_THE_LAYER_LIMIT: RendererNode = {
 };
 
 /**
- * The host renders each card as a phone does when it comes on screen, plans
+ * The host renders each card as a phone does when it comes on screen, resolves
  * the materials of the face the product draws, and tells the product what
- * fell back. The transcript shows the plan was the host's own.
+ * fell back. The transcript shows the resolution was the host's own.
  */
 async function materialsCase(
   client: TrUApiClient,
@@ -279,13 +279,13 @@ async function materialsCase(
       }
     });
     const reported = await failure;
-    const plan = await waitForTranscript(
+    const resolved = await waitForTranscript(
       pocketLogPath,
       (line) =>
-        line.kind === "plan" &&
+        line.kind === "materials" &&
         line.cardId === cardId &&
         line.nodes?.[0]?.reason === "LimitExceeded",
-      "the card's plan",
+      "the card's materials",
     );
     const passed =
       supported.isOk() &&
@@ -297,8 +297,8 @@ async function materialsCase(
       "materials",
       passed ? "pass" : "fail",
       passed
-        ? "the host planned the card's face and reported its fallback"
-        : `supported=${JSON.stringify(supported)} reported=${JSON.stringify(reported)} plan=${JSON.stringify(plan)}`,
+        ? "the host resolved the card's materials and reported its fallback"
+        : `supported=${JSON.stringify(supported)} reported=${JSON.stringify(reported)} resolved=${JSON.stringify(resolved)}`,
       startedAt,
     );
   } catch (error) {

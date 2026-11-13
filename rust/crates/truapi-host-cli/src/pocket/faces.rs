@@ -1,13 +1,14 @@
 //! Pocket faces as a phone draws them: each card's render stream opens as a Worker connection
-//! opens, and every face the product sends is planned, its plan recorded in the transcript.
+//! opens, and the materials of every face the product sends are resolved and recorded in the
+//! transcript.
 
 use std::sync::Arc;
 
 use futures::StreamExt;
 use tokio::sync::watch;
 use truapi::{
-	FrameSink, MaterialPlan, NodePlan, PlanStream, ProductRuntime, ProductRuntimeControl,
-	ShaderLanguage,
+	FrameSink, MaterialsResolution, NodeMaterials, ProductRuntime, ProductRuntimeControl,
+	ResolvedMaterials, ShaderLanguage,
 	latest::{ProductRendererRenderRequest, RenderContext},
 	platform::ProductContext,
 };
@@ -43,8 +44,8 @@ impl ProductRuntimeFactory for PocketFaces {
 	}
 }
 
-/// Plans each face of `card_id` until its render stream ends. A new face's plan starts before
-/// the last one is dropped, so the materials they share keep their fetch.
+/// Resolves the materials of each face of `card_id` until its render stream ends. A new face's
+/// resolution starts before the last one is dropped, so the materials they share keep their fetch.
 async fn follow(control: ProductRuntimeControl, card_id: String, pocket: Arc<CliPocketHost>) {
 	let context = RenderContext::PocketCard { card_id: card_id.clone() };
 	let request = ProductRendererRenderRequest { context: context.clone(), payload: Vec::new() };
@@ -55,48 +56,48 @@ async fn follow(control: ProductRuntimeControl, card_id: String, pocket: Arc<Cli
 			return;
 		},
 	};
-	let mut plans: Option<PlanStream> = None;
+	let mut resolution: Option<MaterialsResolution> = None;
 	loop {
 		tokio::select! {
 			face = faces.next() => {
 				let Some(Ok(face)) = face else {
 					return;
 				};
-				match control.material_plan(&face, &context, ShaderLanguage::GlslEs, false) {
-					Ok(plan) => plans = Some(plan),
+				match control.resolve_materials(&face, &context, ShaderLanguage::GlslEs, false) {
+					Ok(resolving) => resolution = Some(resolving),
 					Err(error) => {
-						tracing::warn!(%error, card_id, "the face was not planned");
+						tracing::warn!(%error, card_id, "the face's materials were not resolved");
 						return;
 					},
 				}
 			},
-			Some(plan) = next_plan(&mut plans) => pocket.record_plan(&card_id, &plan),
+			Some(materials) = next_update(&mut resolution) => pocket.record_materials(&card_id, &materials),
 		}
 	}
 }
 
-async fn next_plan(plans: &mut Option<PlanStream>) -> Option<MaterialPlan> {
-	match plans {
-		Some(plans) => plans.next().await,
+async fn next_update(resolution: &mut Option<MaterialsResolution>) -> Option<ResolvedMaterials> {
+	match resolution {
+		Some(resolution) => resolution.next().await,
 		None => std::future::pending().await,
 	}
 }
 
 impl CliPocketHost {
-	fn record_plan(&self, card_id: &str, plan: &MaterialPlan) {
-		let nodes: Vec<_> = plan
+	fn record_materials(&self, card_id: &str, materials: &ResolvedMaterials) {
+		let nodes: Vec<_> = materials
 			.nodes
 			.iter()
 			.map(|node| match node {
-				NodePlan::Loading => serde_json::json!({ "state": "loading" }),
-				NodePlan::Ready { .. } => serde_json::json!({ "state": "ready" }),
-				NodePlan::Plain { reason } => {
+				NodeMaterials::Loading => serde_json::json!({ "state": "loading" }),
+				NodeMaterials::Ready { .. } => serde_json::json!({ "state": "ready" }),
+				NodeMaterials::Plain { reason } => {
 					serde_json::json!({ "state": "plain", "reason": format!("{reason:?}") })
 				},
 			})
 			.collect();
 		self.transcript.record(serde_json::json!({
-			"kind": "plan",
+			"kind": "materials",
 			"cardId": card_id,
 			"nodes": nodes,
 		}));
