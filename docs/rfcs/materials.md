@@ -155,7 +155,8 @@ last output if it had one, and draws it plain otherwise.
 For each node that falls back, the host reports why on `Renderer::failure_subscribe`, once per node per tree, and logs
 it on the device with the format's own code where there is one. A product that never subscribes sees no change. Reports
 made before the product subscribes are buffered, as actions are. Stepping down for performance is not a failure, and is
-not reported.
+not reported. The request carries nothing and the error is `GenericError`, each in the versioned envelope every method
+has.
 
 ```rust
 /// Product-rendered bodies, the actions triggered inside them, and the
@@ -168,7 +169,8 @@ pub trait Renderer: Send + Sync {
     async fn failure_subscribe(
         &self,
         _cx: &CallContext,
-    ) -> Subscription<HostRendererFailureSubscribeItem, CallError<GenericError>> {
+        _request: HostRendererFailureSubscribeRequest,
+    ) -> Subscription<HostRendererFailureSubscribeItem, CallError<HostRendererFailureSubscribeError>> {
         Subscription::interrupted(CallError::unavailable())
     }
 }
