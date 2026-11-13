@@ -7,7 +7,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPISessi
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import uniffi.truapi.DevServerProduct
+import uniffi.truapi.ProductSource
 import javax.inject.Inject
 
 /**
@@ -26,18 +26,14 @@ class TrUAPIProductTabSessionFactory @Inject constructor(
         url: String,
         scope: CoroutineScope,
         onDeeplink: (Uri) -> Unit,
-        devServer: DevServerProduct?,
+        source: ProductSource?,
     ): BrowserWebViewProvider {
-        // A dev server page loads from the address that reaches the developer's machine but runs under
-        // the id the core gave it, so neither can be read off the other.
-        val devServerProductId = devServer?.productId
         val provider = browserWebViewProviderFactory.create(
             url,
             NavigationPolicy.InlineNavigation(onDeeplinkNavigation = onDeeplink),
             allowIframes = true,
             scope,
-            fixedProductId = devServerProductId,
-            firstPartyOrigin = devServer?.origin,
+            source = source,
         )
 
         val hostApiNavigation = NavigationPolicy.HostApiNavigation(
@@ -46,7 +42,7 @@ class TrUAPIProductTabSessionFactory @Inject constructor(
             dotNsTldProvider = dotNsTldProvider,
         )
 
-        sessionStarter.start(provider, url, scope, hostApiNavigation, explicitProductId = devServerProductId)
+        sessionStarter.start(provider, url, scope, hostApiNavigation, explicitProductId = source?.fixedProductId)
         return provider
     }
 }

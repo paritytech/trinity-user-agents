@@ -44,6 +44,7 @@ class TrUAPIWorkerSupervisorTest {
     private val workerScopes = mutableListOf<CoroutineScope>()
     private val policyScopes = mutableListOf<CoroutineScope>()
     private var includesChat = true
+    private val configs = mutableListOf<ChatWebViewConfig>()
 
     @Before
     fun parseScriptUrls() {
@@ -53,6 +54,12 @@ class TrUAPIWorkerSupervisorTest {
             every { host } returns "worker.paseo"
             every { port } returns -1
             every { path } returns "/worker.js"
+        }
+        every { Uri.parse(BUNDLED_SCRIPT_URL) } returns mockk {
+            every { scheme } returns "https"
+            every { host } returns "worker.worker.paseo"
+            every { port } returns -1
+            every { path } returns "/index.js"
         }
     }
 
@@ -136,7 +143,10 @@ class TrUAPIWorkerSupervisorTest {
             )
         },
         webViewProviderFactory = object : ChatWebViewProvider.Factory {
-            override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider().also { workerScopes += scope }
+            override fun create(config: ChatWebViewConfig, scope: CoroutineScope) = provider().also {
+                workerScopes += scope
+                configs += config
+            }
         },
         bootstrapInstaller = bootstrapInstaller,
         refCounter = { mockk(relaxed = true) },
@@ -169,5 +179,6 @@ class TrUAPIWorkerSupervisorTest {
     private companion object {
         val PRODUCT = ProductId.parse("worker.paseo").getOrThrow()
         const val SCRIPT_URL = "https://worker.paseo/worker.js"
+        const val BUNDLED_SCRIPT_URL = "https://worker.worker.paseo/index.js"
     }
 }
