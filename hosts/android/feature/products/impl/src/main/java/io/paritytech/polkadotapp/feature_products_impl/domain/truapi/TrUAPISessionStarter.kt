@@ -103,14 +103,15 @@ class TrUAPISessionStarter @Inject constructor(
                     setup(webView)
                     if (webViewEventReported.compareAndSet(false, true)) {
                         webViewCreatedAtMs.set(hostWebViewCreatedTelemetry.webViewCreatedAtMs())
-                        hostWebViewCreatedTelemetry.report(hostSessionId, open)
+                        hostWebViewCreatedTelemetry.report(session)
                     }
                 }
                 // Once per session: not again on a reload or an in-page navigation.
                 provider.addOnPageCommitVisibleListener {
                     val createdAtMs = webViewCreatedAtMs.get()
                     if (createdAtMs != NOT_CREATED && pageVisibleReported.compareAndSet(false, true)) {
-                        hostWebViewCreatedTelemetry.reportVisible(hostSessionId, createdAtMs, open)
+                        pageOpens.pageShown(session)
+                        hostWebViewCreatedTelemetry.reportVisible(session, createdAtMs)
                     }
                 }
             }

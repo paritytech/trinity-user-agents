@@ -19,6 +19,7 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostLoadFailureTelemetry
 import io.paritytech.polkadotapp.common.data.telemetry.HostOpenSource
 import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpen
 import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpens
+import io.paritytech.polkadotapp.common.data.telemetry.HostPageSession
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
@@ -51,8 +52,7 @@ class TrUAPISessionStarterTest {
     private val installerSessionId = slot<String>()
     private val installerOpen = slot<HostPageOpen?>()
     private val installerOpens = mutableListOf<HostPageOpen?>()
-    private val reportedSessionId = slot<String>()
-    private val visibleOpen = slot<HostPageOpen?>()
+    private val reportedSession = slot<HostPageSession>()
     private val origin = HostEventOrigin("debug", "gp", "1.2.3", "android", "15", 123L)
     private val events = mutableListOf<HostEvent>()
     private val pageOpens = HostPageOpens({ origin }, { events += it() }, { NOW_MS })
@@ -90,8 +90,8 @@ class TrUAPISessionStarterTest {
 
         invokeTelemetrySetupTwice()
 
-        verify(exactly = 1) { telemetry.report(any(), any()) }
-        assertEquals(installerSessionId.captured, reportedSessionId.captured)
+        verify(exactly = 1) { telemetry.report(any()) }
+        assertEquals(installerSessionId.captured, reportedSession.captured.id)
     }
 
     @Test
@@ -117,7 +117,7 @@ class TrUAPISessionStarterTest {
         invokeTelemetrySetupTwice()
 
         assertEquals(tap.sessionId, installerSessionId.captured)
-        assertEquals(tap.sessionId, reportedSessionId.captured)
+        assertEquals(tap.sessionId, reportedSession.captured.id)
     }
 
     @Test
@@ -197,6 +197,45 @@ class TrUAPISessionStarterTest {
     }
 
     @Test
+    fun `a page that ended before it was shown is retried under the same id, timed from the same tap`() = runBlocking<Unit> {
+        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, monotonicMs = NOW_MS, sessionId = "open-session")
+        pageOpens.hold(PRODUCT_ID.value, tap)
+        val firstScope = CoroutineScope(coroutineContext + Job())
+        firstScope.startPage()
+        yield()
+        firstScope.cancel()
+        yield()
+
+        startPage()
+        yield()
+        invokeTelemetrySetupTwice()
+
+        assertEquals(listOf(tap, tap), installerOpens)
+        assertEquals("open-session", installerSessionId.captured)
+        assertEquals(HostPageSession(PRODUCT_ID.value, "open-session", tap, isRetry = true), reportedSession.captured)
+        // The open was reported once, by the session that first took it.
+        assertEquals(1, events.count { it.name == "host.pocket.opened" })
+    }
+
+    @Test
+    fun `a page that was shown leaves nothing for the next session to retry`() = runBlocking<Unit> {
+        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, monotonicMs = NOW_MS, sessionId = "open-session")
+        pageOpens.hold(PRODUCT_ID.value, tap)
+        val firstScope = CoroutineScope(coroutineContext + Job())
+        firstScope.startPage()
+        yield()
+        invokeTelemetrySetupTwice()
+        visibleListeners.single()()
+        firstScope.cancel()
+        yield()
+
+        startPage()
+        yield()
+
+        assertEquals(listOf(tap, null), installerOpens)
+    }
+
+    @Test
     fun `a page that fails to start reports a page load failure under its session`() = runBlocking<Unit> {
         coEvery { runtimeProvider.runtime() } returns Result.failure(IllegalStateException("no runtime"))
 
@@ -241,10 +280,11 @@ class TrUAPISessionStarterTest {
         coEvery { provider.loadInitialContent() } just Runs
         every { provider.addOnPageCommitVisibleListener(capture(visibleListeners)) } just Runs
         every { telemetry.webViewCreatedAtMs() } returns CREATED_AT_MS
-        every { telemetry.reportVisible(any(), any(), captureNullable(visibleOpen)) } answers {
-            visibleReports += Triple(firstArg(), secondArg(), visibleOpen.captured)
+        every { telemetry.reportVisible(any(), any()) } answers {
+            val session = firstArg<HostPageSession>()
+            visibleReports += Triple(session.id, secondArg(), session.open)
         }
-        every { telemetry.report(capture(reportedSessionId), any()) } just Runs
+        every { telemetry.report(capture(reportedSession)) } just Runs
         coEvery { bridge.attach(any(), any(), any(), any(), any(), any(), any(), any()) } coAnswers {
             arg<suspend (String) -> Unit>(7)("endpoint-bootstrap")
             Result.success(execution)

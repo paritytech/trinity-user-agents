@@ -25,7 +25,7 @@ class HostPageOpensTest {
     fun `a session taking an open reports it as a fresh open and adopts the id minted at the tap`() {
         opens.hold("loyalty.dot", tap)
 
-        assertEquals(HostPageSession("loyalty.dot", "tap-session", tap), opens.startSession("loyalty.dot"))
+        assertEquals(HostPageSession("loyalty.dot", "tap-session", tap, isRetry = false), opens.startSession("loyalty.dot"))
 
         assertEquals(
             HostEvent(
@@ -156,8 +156,77 @@ class HostPageOpensTest {
 
         val session = opens.startSession("loyalty.dot")
 
-        assertEquals(HostPageSession("loyalty.dot", "tap-session", open = null), session)
+        assertEquals(HostPageSession("loyalty.dot", "tap-session", open = null, isRetry = false), session)
         assertEquals("tap-session", events.single().tags["host.session_id"])
+    }
+
+    @Test
+    fun `a session that ended before its page was shown leaves its open for the next session to retry`() {
+        opens.hold("loyalty.dot", tap)
+        val first = opens.startSession("loyalty.dot")
+        opens.sessionEnded(first)
+
+        val retry = opens.startSession("loyalty.dot")
+
+        assertEquals(HostPageSession("loyalty.dot", "tap-session", tap, isRetry = true), retry)
+        // The open itself was reported once, by the session that took it.
+        assertEquals(1, events.size)
+        // Only once: a third session has nothing to retry while the second runs.
+        assertNull(opens.startSession("loyalty.dot").open)
+    }
+
+    @Test
+    fun `a retry that also ends unshown leaves the open for the next one`() {
+        opens.hold("loyalty.dot", tap)
+        opens.sessionEnded(opens.startSession("loyalty.dot"))
+        opens.sessionEnded(opens.startSession("loyalty.dot"))
+
+        assertEquals(tap, opens.startSession("loyalty.dot").open)
+    }
+
+    @Test
+    fun `a session whose page was shown leaves nothing to retry`() {
+        opens.hold("loyalty.dot", tap)
+        val first = opens.startSession("loyalty.dot")
+        opens.pageShown(first)
+        opens.sessionEnded(first)
+
+        val next = opens.startSession("loyalty.dot")
+
+        assertNull(next.open)
+        assertNotEquals("tap-session", next.id)
+    }
+
+    @Test
+    fun `a new ask wins over an open left to retry`() {
+        opens.hold("loyalty.dot", tap)
+        opens.sessionEnded(opens.startSession("loyalty.dot"))
+
+        opens.hold("loyalty.dot", link)
+
+        assertEquals(HostPageSession("loyalty.dot", "link-session", link, isRetry = false), opens.startSession("loyalty.dot"))
+        assertNull(opens.startSession("loyalty.dot").open)
+    }
+
+    @Test
+    fun `an open left to retry is dropped once it is too old to time from`() {
+        opens.hold("loyalty.dot", tap)
+        opens.sessionEnded(opens.startSession("loyalty.dot"))
+        nowMs = tap.monotonicMs + HostPageOpens.MAX_AGE_MS + 1
+
+        val next = opens.startSession("loyalty.dot")
+
+        assertNull(next.open)
+        assertNotEquals("tap-session", next.id)
+    }
+
+    @Test
+    fun `an open left to retry belongs to its own product only`() {
+        opens.hold("loyalty.dot", tap)
+        opens.sessionEnded(opens.startSession("loyalty.dot"))
+
+        assertNull(opens.startSession("other.dot").open)
+        assertEquals(tap, opens.startSession("loyalty.dot").open)
     }
 
     @Test

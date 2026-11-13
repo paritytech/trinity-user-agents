@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostOpenSource
 import io.paritytech.polkadotapp.common.data.telemetry.HostPageOpen
+import io.paritytech.polkadotapp.common.data.telemetry.HostPageSession
 import io.paritytech.polkadotapp.test_shared.any
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -30,7 +31,7 @@ class HostWebViewCreatedTelemetryTest {
         var captured: HostEvent? = null
         val reporter = reporter(capture = HostEventCapture { captured = it() })
 
-        reporter.report("bootstrap-session-42")
+        reporter.report(session("bootstrap-session-42"))
 
         assertEquals(HostWebViewCreatedTelemetry.EVENT_NAME, captured?.name)
         assertEquals("bootstrap-session-42", captured?.tags?.get("host.session_id"))
@@ -46,8 +47,10 @@ class HostWebViewCreatedTelemetryTest {
         val reporter = reporter(capture = HostEventCapture { captured = it() })
 
         reporter.report(
-            "bootstrap-session-42",
-            HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, monotonicMs = 100L, sessionId = "open-session"),
+            session(
+                "bootstrap-session-42",
+                HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, monotonicMs = 100L, sessionId = "open-session"),
+            ),
         )
 
         assertEquals("pocket_card", captured?.tags?.get("open.source"))
@@ -66,10 +69,10 @@ class HostWebViewCreatedTelemetryTest {
             sessionId = "open-session",
         )
 
-        reporter.report("bootstrap-session-42", tap)
+        reporter.report(session("bootstrap-session-42", tap))
         assertEquals(56L, captured?.extras?.get("tap_ms"))
 
-        reporter.reportVisible("bootstrap-session-42", webViewCreatedAtMs = 420L, open = tap)
+        reporter.reportVisible(session("bootstrap-session-42", tap), webViewCreatedAtMs = 420L)
         assertEquals(56L, captured?.extras?.get("tap_ms"))
         assertEquals(36L, captured?.extras?.get("webview_ms"))
     }
@@ -80,8 +83,10 @@ class HostWebViewCreatedTelemetryTest {
         val reporter = reporter(capture = HostEventCapture { captured = it() })
 
         reporter.report(
-            "bootstrap-session-42",
-            HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, monotonicMs = 900L, sessionId = "open-session"),
+            session(
+                "bootstrap-session-42",
+                HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, monotonicMs = 900L, sessionId = "open-session"),
+            ),
         )
 
         assertEquals("pocket_card", captured?.tags?.get("open.source"))
@@ -93,7 +98,7 @@ class HostWebViewCreatedTelemetryTest {
         var captured: HostEvent? = null
         val reporter = reporter(capture = HostEventCapture { captured = it() })
 
-        reporter.reportVisible("bootstrap-session-42", webViewCreatedAtMs = 100L)
+        reporter.reportVisible(session("bootstrap-session-42"), webViewCreatedAtMs = 100L)
 
         assertEquals("host.page.visible", captured?.name)
         assertEquals("bootstrap-session-42", captured?.tags?.get("host.session_id"))
@@ -108,14 +113,31 @@ class HostWebViewCreatedTelemetryTest {
         val reporter = reporter(capture = HostEventCapture { captured = it() })
 
         reporter.reportVisible(
-            "bootstrap-session-42",
+            session(
+                "bootstrap-session-42",
+                HostPageOpen(HostOpenSource.DEEPLINK, epochMs = 1_000L, monotonicMs = 6L, sessionId = "open-session"),
+            ),
             webViewCreatedAtMs = 100L,
-            open = HostPageOpen(HostOpenSource.DEEPLINK, epochMs = 1_000L, monotonicMs = 6L, sessionId = "open-session"),
         )
 
         assertEquals("deeplink", captured?.tags?.get("open.source"))
         assertEquals(450L, captured?.extras?.get("tap_ms"))
         assertEquals(356L, captured?.extras?.get("webview_ms"))
+    }
+
+    @Test
+    fun `tags a retried load on both events, and only a retried one`() {
+        val captured = mutableListOf<HostEvent>()
+        val reporter = reporter(capture = HostEventCapture { captured += it() })
+        val tap = HostPageOpen(HostOpenSource.POCKET_CARD, epochMs = 1_000L, monotonicMs = 100L, sessionId = "tap-session")
+
+        reporter.report(session("tap-session", tap, isRetry = true))
+        reporter.reportVisible(session("tap-session", tap, isRetry = true), webViewCreatedAtMs = 400L)
+        reporter.report(session("tap-session", tap))
+
+        assertEquals(listOf("true", "true", null), captured.map { it.tags["open.retry"] })
+        assertEquals(listOf("tap-session", "tap-session", "tap-session"), captured.map { it.tags["host.session_id"] })
+        assertEquals(356L, captured[1].extras["tap_ms"])
     }
 
     @Test
@@ -134,7 +156,7 @@ class HostWebViewCreatedTelemetryTest {
             capture = HostEventCapture { },
         )
 
-        reporter.report("release-session")
+        reporter.report(session("release-session"))
 
         assertFalse(originRead)
         assertFalse(timeRead)
@@ -146,10 +168,13 @@ class HostWebViewCreatedTelemetryTest {
         doThrow(IllegalStateException("Sentry unavailable")).`when`(capture).capture(any())
         val reporter = reporter(capture)
 
-        reporter.report("session")
+        reporter.report(session("session"))
 
         verifyCaptureAttempted(capture)
     }
+
+    private fun session(id: String, open: HostPageOpen? = null, isRetry: Boolean = false) =
+        HostPageSession(productId = "product.paseo", id = id, open = open, isRetry = isRetry)
 
     private fun reporter(capture: HostEventCapture) = HostWebViewCreatedTelemetry(
         originProvider = HostEventOriginProvider { origin },

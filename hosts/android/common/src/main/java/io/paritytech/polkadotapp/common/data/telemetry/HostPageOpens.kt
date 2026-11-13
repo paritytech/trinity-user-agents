@@ -25,11 +25,16 @@ data class HostPageOpen(
     val sessionId: String,
 )
 
-/** The host session of one product page: [id] is what the page reads; [open] is the ask its load is timed from. */
+/**
+ * The host session of one product page: [id] is what the page reads; [open] is the ask its load is timed from.
+ * [isRetry] marks a session that picked an ask back up after the session that first took it ended before its
+ * page was shown.
+ */
 data class HostPageSession(
     val productId: String,
     val id: String,
     val open: HostPageOpen?,
+    val isRetry: Boolean,
 )
 
 @Singleton
@@ -45,6 +50,10 @@ class HostPageOpens @Inject constructor(
     // The last session started per product, so an ask that shows its page again is reported under its id.
     private val live = ConcurrentHashMap<String, HostPageSession>()
 
+    // Asks whose session ended before its page was shown, for the product's next session to pick up.
+    private val unfinished = ConcurrentHashMap<String, HostPageOpen>()
+    private val shown = ConcurrentHashMap.newKeySet<HostPageSession>()
+
     /** A new ask, read now. */
     fun ask(source: HostOpenSource) =
         HostPageOpen(source, System.currentTimeMillis(), clock.nowMillis(), UUID.randomUUID().toString())
@@ -54,25 +63,38 @@ class HostPageOpens @Inject constructor(
     }
 
     /**
-     * Starts the host session of a page of [productId]: it takes the ask held for the product and adopts its id,
-     * or has none and mints its own. An ask too old to time the load from still gives the session its id, so its
-     * open event can be joined to the page.
+     * Starts the host session of a page of [productId]: it takes the ask held for the product and adopts its id.
+     * With none held, it picks back up an ask whose session ended before its page was shown, as a retry of that
+     * load, with the same id and tap; else it has no ask and mints its own id. An ask too old to time the load
+     * from still gives the session its id, so its open event can be joined to the page.
      */
     fun startSession(productId: String): HostPageSession {
         val open = settle(productId)
         val session = if (open != null) {
+            unfinished.remove(productId)
             report(open, open.sessionId, reused = false)
-            HostPageSession(productId, open.sessionId, open.takeIf(::isRecent))
+            HostPageSession(productId, open.sessionId, open.takeIf(::isRecent), isRetry = false)
         } else {
-            HostPageSession(productId, UUID.randomUUID().toString(), open = null)
+            unfinished.remove(productId)?.takeIf(::isRecent)
+                ?.let { HostPageSession(productId, it.sessionId, it, isRetry = true) }
+                ?: HostPageSession(productId, UUID.randomUUID().toString(), open = null, isRetry = false)
         }
         live[productId] = session
         return session
     }
 
-    /** The session is gone, so a later ask for its product no longer shows its page. */
+    /** The session's page is shown, so its ask is done: no later session of the product retries it. */
+    fun pageShown(session: HostPageSession) {
+        shown += session
+    }
+
+    /**
+     * The session is gone, so a later ask for its product no longer shows its page. An ask it took and never
+     * showed a page for is left for the product's next session to retry.
+     */
     fun sessionEnded(session: HostPageSession) {
         live.remove(session.productId, session)
+        if (!shown.remove(session) && session.open != null) unfinished[session.productId] = session.open
     }
 
     /**
