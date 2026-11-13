@@ -1885,8 +1885,9 @@ fn build_signing_runtime(
 		network.tld().to_string(),
 	)
 	.context("invalid signing host config")?;
-	// It draws nothing, but plans every face as a phone does, so products can test materials here.
-	config.materials_enabled = true;
+	// It draws nothing, but with a Pocket host it plans every face its Worker renders, as a phone
+	// does.
+	config.materials_enabled = pocket.is_some();
 	let status_host = platform.clone() as Arc<dyn PermissionStatusHost>;
 	let runtime = Arc::new(SigningHostRuntime::with_chat_platform(
 		platform.clone(),

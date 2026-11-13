@@ -1795,10 +1795,10 @@ fn a_planned_body_reports_its_fallbacks_to_the_connection_that_rendered_it() {
 	};
 	let context = RenderContext::PocketCard { card_id: "stamps".to_string() };
 
-	let _plans =
-		runtime
-			.control()
-			.material_plan(&tree, &context, crate::ShaderLanguage::GlslEs, true);
+	let _plans = runtime
+		.control()
+		.material_plan(&tree, &context, crate::ShaderLanguage::GlslEs, true)
+		.expect("an open connection plans");
 	let delivered = crate::test_support::next(&mut failures)
 		.expect("a failure report")
 		.expect("a failure item")

@@ -28,7 +28,7 @@ interface TranscriptLine {
   nodes?: { state: string; reason?: string }[];
 }
 
-/** Removals as the host recorded them. */
+/** Lines as the host recorded them. */
 function transcript(path: string): TranscriptLine[] {
   if (!existsSync(path)) {
     return [];
@@ -257,25 +257,27 @@ async function materialsCase(
 ): Promise<DiagnosisRow> {
   const startedAt = performance.now();
   const cardId = SEEDED_CARDS.privileged;
-  const supported = await client.system.featureSupported({
-    tag: "Materials",
-    value: { formatVersion: 1, features: [] },
-  });
-  const failure = firstMatch(
-    client.renderer.failureSubscribe(),
-    (item) =>
-      item.context.tag === "PocketCard" && item.context.value.cardId === cardId,
-    "the fallback report for the card",
-  );
-  const registration = client.renderer.onRender((request, send) => {
-    if (
-      request.context.tag === "PocketCard" &&
-      request.context.value.cardId === cardId
-    ) {
-      send(OVER_THE_LAYER_LIMIT);
-    }
-  });
+  let registration: { unsubscribe(): void } | undefined;
   try {
+    const supported = await client.system.featureSupported({
+      tag: "Materials",
+      value: { formatVersion: 1, features: [] },
+    });
+    const failure = firstMatch(
+      client.renderer.failureSubscribe(),
+      (item) =>
+        item.context.tag === "PocketCard" &&
+        item.context.value.cardId === cardId,
+      "the fallback report for the card",
+    );
+    registration = client.renderer.onRender((request, send) => {
+      if (
+        request.context.tag === "PocketCard" &&
+        request.context.value.cardId === cardId
+      ) {
+        send(OVER_THE_LAYER_LIMIT);
+      }
+    });
     const reported = await failure;
     const plan = await waitForTranscript(
       pocketLogPath,
@@ -302,6 +304,6 @@ async function materialsCase(
   } catch (error) {
     return row("materials", "fail", String(error), startedAt);
   } finally {
-    registration.unsubscribe();
+    registration?.unsubscribe();
   }
 }

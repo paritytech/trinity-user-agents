@@ -60,7 +60,10 @@ async fn follow(control: ProductRuntimeControl, card_id: String, pocket: Arc<Cli
 				let Some(Ok(face)) = face else {
 					return;
 				};
-				plans = Some(control.material_plan(&face, &context, ShaderLanguage::GlslEs, false));
+				let Ok(plan) = control.material_plan(&face, &context, ShaderLanguage::GlslEs, false) else {
+					return;
+				};
+				plans = Some(plan);
 			},
 			Some(plan) = next_plan(&mut plans) => pocket.record_plan(&card_id, &plan),
 		}

@@ -1979,27 +1979,16 @@ impl ProductRuntimeControl {
 		context: &truapi::latest::RenderContext,
 		language: crate::ShaderLanguage,
 		float_filterable: bool,
-	) -> crate::PlanStream {
+	) -> Result<crate::PlanStream, ProductRuntimeError> {
+		let services = self.connection()?.services();
 		let connection = self.connection.clone();
 		let reported = context.clone();
 		let failures = Box::new(move |failure: crate::PlanFailure| {
-			let item = truapi::latest::HostRendererFailureSubscribeItem {
-				context: reported.clone(),
-				node: failure.node,
-				material: failure.material,
-				reason: failure.reason,
-			};
 			// A product that never subscribes fills the buffer, and later
 			// reports are dropped: the device log still has them.
-			let _ = connection.publish_renderer_failure(item.into());
+			let _ = connection.publish_renderer_failure(failure.report(reported.clone()).into());
 		});
-		self.connection.services().material_plan(
-			tree,
-			context,
-			language,
-			float_filterable,
-			failures,
-		)
+		Ok(services.material_plan(tree, context, language, float_filterable, failures))
 	}
 
 	/// Ask this connection's product to draw one body, streaming replacement
