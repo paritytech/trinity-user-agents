@@ -78,6 +78,105 @@ export interface BundledStack {
    * `false`.
    */
   allowsReservedValues?: boolean;
+  /**
+   * The record the core last passed to {@link StackCallbacks.storeStackRecord}.
+   * The core starts from the descriptor in it when that is newer than
+   * `descriptor`.
+   */
+  stored?: Uint8Array;
+}
+
+/** A fetch of the stack's descriptor for the host to make. */
+export interface StackFetchRequest {
+  /** The descriptor's URL. Send a `GET` and do not follow redirects. */
+  url: string;
+  /** The `ETag` to send as `If-None-Match`, when the core holds one. */
+  ifNoneMatch?: string;
+  /**
+   * The largest body to read. Stop reading and throw once a body passes it.
+   */
+  maxBytes: number;
+}
+
+/**
+ * What a fetch of the stack's descriptor got. Anything but these two is a
+ * failed fetch, which the callback throws: a transport error, a timeout, a
+ * redirect, another status or a body larger than `maxBytes`.
+ */
+export type StackFetchResponse =
+  /** `200 OK`: the body as served and the response's `ETag`. */
+  | { status: "document"; bytes: Uint8Array; etag?: string }
+  /** `304 Not Modified`. */
+  | { status: "notModified" };
+
+/** The stack the core runs, and what the host shows and does about it. */
+export interface StackStatus {
+  /**
+   * The verified descriptor the core runs, as plain descriptor JSON. The
+   * host's own features read their chains and services from it.
+   */
+  descriptor: string;
+  /**
+   * The descriptor's `generation`, which changes when the stack restarts its
+   * chains. Key cached chain data by it, such as a light client's database:
+   * data kept under another generation is for chains that are gone.
+   */
+  generation: string;
+  /**
+   * Past `validUntil` when the core last looked, at start and after each
+   * fetch: show the stack as stale and keep running on it.
+   */
+  stale: boolean;
+  /**
+   * Past `expiresAt` when the core last looked, at start and after each
+   * fetch: the stack has shut down.
+   */
+  expired: boolean;
+  /**
+   * The core handed `storeStackRecord` a newer copy that changes a chain, the
+   * network, the TLD or the generation. It runs that copy from its next
+   * start, so build the runtime again to follow it.
+   */
+  restartRequired: boolean;
+  /** The last finished fetch. Not set before the first one. */
+  lastRefresh?: {
+    /**
+     * `current`: the published descriptor is the copy the core holds.
+     * `unreachable` and `refused`: the core keeps the copy it holds.
+     */
+    outcome: "current" | "unreachable" | "refused";
+    /**
+     * Why a fetch was `unreachable`, or the rule a `refused` descriptor
+     * breaks.
+     */
+    reason?: string;
+  };
+}
+
+/**
+ * Raw callbacks a host passes to the wasm runtime, next to the generated
+ * ones, to keep the stack's descriptor current. Without
+ * `fetchStackDescriptor` the core stays on the copy it started from.
+ */
+export interface StackCallbacks {
+  /**
+   * Fetch the stack's descriptor over HTTP. Throw or reject when the server
+   * gave no usable answer: the core keeps its copy and reports
+   * `unreachable`. The core gives up after 30 seconds.
+   */
+  fetchStackDescriptor?(
+    request: StackFetchRequest,
+  ): StackFetchResponse | Promise<StackFetchResponse>;
+  /** The stack's status when the runtime starts, and on each change. */
+  stackChanged?(status: StackStatus): void;
+  /**
+   * Keep `record` and pass it back as {@link BundledStack.stored} at the next
+   * start. Each call replaces the record before it. Throw or reject when the
+   * record could not be kept. The core gives up after 30 seconds. Without
+   * this callback, or while it fails, the core never sets `restartRequired`:
+   * the next start could not read the newer copy.
+   */
+  storeStackRecord?(record: Uint8Array): void | Promise<void>;
 }
 
 /** Configuration for one product runtime hosted by the wasm core. */

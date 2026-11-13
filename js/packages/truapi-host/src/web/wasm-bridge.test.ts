@@ -4,6 +4,12 @@ import { readFileSync } from "node:fs";
 
 import { CoreStorageKey } from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
+import type {
+  StackCallbacks,
+  StackFetchRequest,
+  StackFetchResponse,
+  StackStatus,
+} from "../runtime.js";
 import { bundledTestStack } from "../test-support.js";
 import { wasmIsBuilt } from "../testing/require-wasm.js";
 
@@ -145,6 +151,76 @@ suite("real WASM core ↔ createMockHost bridge", () => {
           },
         ),
     ).toThrow("runtimeConfig.stack: stack pointer has no key");
+  });
+
+  it("refreshes the stack through the host's fetch and reports each change", async () => {
+    // The published descriptor moves when a stack restarts its chains. The
+    // core has no HTTP client, so a web host follows it only if the request,
+    // the answer, the status and the record all cross the bridge intact.
+    const { initSync, WasmPairingHostRuntime } = await import(glueUrl.href);
+    const { createWasmRawCallbacks } =
+      await import("../generated/host-callbacks-adapter.js");
+    initSync({ module: readFileSync(wasmUrl) });
+    const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
+    const requests: StackFetchRequest[] = [];
+    const statuses: StackStatus[] = [];
+    const records: Uint8Array[] = [];
+    const answers: StackFetchResponse[] = [
+      { status: "document", bytes: hostConfig.stack.descriptor, etag: '"v1"' },
+    ];
+    let online = false;
+    const stackCallbacks: StackCallbacks = {
+      fetchStackDescriptor: async (request) => {
+        requests.push(request);
+        const answer = online ? answers.shift() : undefined;
+        if (!answer) throw new Error("offline");
+        return answer;
+      },
+      stackChanged: (status) => statuses.push(status),
+      storeStackRecord: (record) => void records.push(record),
+    };
+    const settled = () => new Promise((resolve) => setTimeout(resolve, 200));
+
+    const runtime = new WasmPairingHostRuntime(
+      {
+        ...createWasmRawCallbacks(createMockHost().callbacks),
+        requestWorkerTransition: () => {},
+        ...stackCallbacks,
+      },
+      hostConfig,
+    );
+    await settled();
+    online = true;
+    runtime.refreshStack();
+    await settled();
+
+    const pointer = new URL(hostConfig.stack.pointer);
+    expect(requests).toEqual([
+      { url: pointer.searchParams.get("url"), maxBytes: 1024 * 1024 },
+      { url: pointer.searchParams.get("url"), maxBytes: 1024 * 1024 },
+    ]);
+    expect(statuses.map((status) => status.lastRefresh)).toEqual([
+      undefined,
+      { outcome: "unreachable", reason: "offline" },
+      { outcome: "current" },
+    ]);
+    expect(runtime.stackStatus()).toEqual(statuses[2]);
+    const descriptor = JSON.parse(statuses[2].descriptor);
+    expect([descriptor.id, statuses[2].generation]).toEqual([
+      "previewnet",
+      descriptor.generation,
+    ]);
+    expect(records).toHaveLength(1);
+
+    // The record is what the next start reads, so it has to be accepted back.
+    const restarted = new WasmPairingHostRuntime(
+      {
+        ...createWasmRawCallbacks(createMockHost().callbacks),
+        requestWorkerTransition: () => {},
+      },
+      { ...hostConfig, stack: { ...hostConfig.stack, stored: records[0] } },
+    );
+    expect(restarted.stackStatus().descriptor).toBe(statuses[2].descriptor);
   });
 
   it("isolates one real-core boot from the next through reset()", async () => {
