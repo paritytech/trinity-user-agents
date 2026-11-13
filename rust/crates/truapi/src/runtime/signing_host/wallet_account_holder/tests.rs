@@ -1,11 +1,17 @@
 use super::*;
 use crate::{
 	Spawner,
-	platform::HostInfo,
-	runtime::signing_host::ring_vrf::ChainRingResolver,
-	test_support::{StubPlatform, test_stack},
+	platform::{HostInfo, ProductContext},
+	runtime::{
+		authority::{AccountCaller, AccountInvocation},
+		signing_host::ring_vrf::ChainRingResolver,
+	},
+	test_support::{StubPlatform, ring_location_fixture, test_stack},
 };
-use truapi::latest::DerivationIndex;
+use truapi::{
+	CallContext,
+	latest::{DerivationIndex, HostAccountRingVrfSignRequest},
+};
 
 /// An unlocked wallet over `platform`, activated from `entropy` repeated.
 pub fn unlocked_wallet(
@@ -62,4 +68,42 @@ fn reserved_identities_follow_the_network_and_collection_order() {
 		let identity = derive_identity_keypair(&[7; 32], suffix).unwrap();
 		assert_eq!(session.identity_account_id, Some(identity.public.to_bytes()));
 	}
+}
+
+/// A registry entry whose key this wallet does not derive is refused, so the
+/// wallet never signs under a public key it does not hold.
+#[test]
+fn direct_signing_rejects_registry_public_key_mismatched_with_wallet() {
+	let wallet = wallet("dot");
+	let session = wallet.current_session().unwrap();
+	let product = ProductContext::new(ProductId::for_test("myapp.dot"));
+	let handle = ProductAccountId {
+		dot_ns_identifier: product.product_id.clone(),
+		derivation_index: DerivationIndex::Index(8),
+	};
+	futures::executor::block_on(wallet.ring_vrf_registry.register(
+		session.public_key,
+		handle.clone(),
+		ring_location_fixture(),
+		[0xFF; 32],
+	))
+	.expect("synthetic registry entry persists");
+
+	let error = futures::executor::block_on(wallet.ring_vrf_sign(
+		AccountInvocation {
+			call: &CallContext::default(),
+			session: &session,
+			caller: AccountCaller::Local { product: &product },
+		},
+		HostAccountRingVrfSignRequest {
+			key_handle: handle,
+			message: b"reject mismatched registry state".to_vec(),
+		},
+	))
+	.unwrap_err();
+
+	assert!(matches!(
+		error,
+		RingVrfError::Unknown { reason } if reason.contains("does not match the active wallet")
+	));
 }

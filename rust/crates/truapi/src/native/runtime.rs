@@ -16,7 +16,7 @@ use crate::{
 };
 use futures::StreamExt;
 use parity_scale_codec::Encode;
-use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
+use truapi::{Bytes32, v01, versioned::IntoLatest};
 
 use super::{
 	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},

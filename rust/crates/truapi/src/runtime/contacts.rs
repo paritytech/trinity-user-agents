@@ -59,12 +59,7 @@ pub struct ContactHandles {
 impl ContactHandles {
 	/// Derive the handle key from the session's root entropy source.
 	pub fn from_root_entropy_source(root_entropy_source: &[u8; 32]) -> Self {
-		Self::from_handle_key(handle_key_from_root_source(root_entropy_source))
-	}
-
-	/// Take the handle key an authority already derived.
-	pub fn from_handle_key(handle_key: [u8; 32]) -> Self {
-		Self { handle_key }
+		Self { handle_key: handle_key_from_root_source(root_entropy_source) }
 	}
 
 	/// The handle this user knows `account` by.
@@ -72,9 +67,12 @@ impl ContactHandles {
 		contact_handle(&self.handle_key, account)
 	}
 
-	/// The key handles are minted under, which a host needs to look them up.
-	pub fn handle_key(&self) -> [u8; 32] {
-		self.handle_key
+	/// The host lookup for the accounts `handles` name.
+	///
+	/// It carries the key the handles are minted under, which the host needs
+	/// to look them up.
+	pub fn lookup(&self, handles: Vec<[u8; 32]>) -> crate::platform::HostContactLookup {
+		crate::platform::HostContactLookup { handle_key: self.handle_key, handles }
 	}
 
 	/// Whether `account` is the one `handle` names.

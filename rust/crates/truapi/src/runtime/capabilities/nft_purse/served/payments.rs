@@ -7,10 +7,10 @@ use truapi::{CallError, Subscription, latest};
 use super::host_failure;
 use crate::{
 	nft_purse::{PaymentListen, PaymentListenError},
-	runtime::ProductRuntimeHost,
+	runtime::{AccountHolder, ProductRuntimeHost},
 };
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// The channel of the caller's receive key, then the first cheque sent to
 	/// it. A listen that did not start emits no channel.
 	pub async fn listen_one_time_nft_payment(
