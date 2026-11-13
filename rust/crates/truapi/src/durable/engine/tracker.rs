@@ -19,7 +19,6 @@ use crate::{
 	durable::{
 		dao,
 		model::{DurableTxId, DurableTxStatus, Verdict, VerdictFailureKind, VerdictStatus},
-		ownership::OwnershipClaim,
 	},
 };
 
@@ -30,20 +29,20 @@ const SILENCE_TIMEOUT: Duration = Duration::from_secs(30);
 /// One attempt of a transaction, as a watch follows it.
 #[derive(Clone, Copy)]
 pub struct Attempt {
-	claim: OwnershipClaim,
+	id: DurableTxId,
 	genesis: H256,
 	tx_hash: H256,
 }
 
 impl Attempt {
-	/// The attempt `extrinsic` makes at the transaction `claim` owns, on the
-	/// chain with `genesis`.
-	pub fn new(claim: OwnershipClaim, genesis: H256, extrinsic: &MortalExtrinsic) -> Self {
-		Self { claim, genesis, tx_hash: extrinsic.extrinsic.hash() }
+	/// The attempt `extrinsic` makes at transaction `id`, already owned, on
+	/// the chain with `genesis`.
+	pub fn new(id: DurableTxId, genesis: H256, extrinsic: &MortalExtrinsic) -> Self {
+		Self { id, genesis, tx_hash: extrinsic.extrinsic.hash() }
 	}
 
 	fn id(&self) -> DurableTxId {
-		self.claim.id()
+		self.id
 	}
 }
 
@@ -73,7 +72,7 @@ impl DurableTxEngine {
 	/// Releases the attempt and, unless the watch decided it, hands the
 	/// transaction to recovery: a running loop, or else the host.
 	async fn finish_watch(&self, attempt: Attempt) {
-		self.ownership.release(attempt.claim);
+		self.ownership.release(attempt.id);
 		if self.needs_recovery(attempt.id()).await && !self.recovery_wakes.wake() {
 			self.host_wakes.wake();
 		}

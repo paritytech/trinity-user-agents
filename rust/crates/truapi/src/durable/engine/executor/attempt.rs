@@ -47,13 +47,13 @@ pub async fn start_built_attempt(
 	extrinsic: MortalExtrinsic,
 	params: Option<PolicyParams>,
 ) -> LedgerChange {
-	let claim = engine.ownership.acquire(id);
+	engine.ownership.acquire(id);
 	let recorded = record_attempt(engine, id, &extrinsic, params).await;
 	if recorded == LedgerChange::Unchanged {
-		engine.ownership.release(claim);
+		engine.ownership.release(id);
 		return recorded;
 	}
-	let attempt = Attempt::new(claim, genesis, &extrinsic);
+	let attempt = Attempt::new(id, genesis, &extrinsic);
 	spawn_watch(engine, attempt, extrinsic.extrinsic);
 	recorded
 }

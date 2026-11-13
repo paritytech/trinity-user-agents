@@ -115,7 +115,8 @@ impl BucketRun {
 	}
 
 	/// Asks the policy about every waiting row once and applies its answers.
-	/// An empty bucket needs no backoff: its task leaves next.
+	/// An empty bucket needs no backoff: its task leaves next. A row still
+	/// owned by a watch is left for a later round.
 	async fn decide_round(&self) -> RoundOutcome {
 		let Some(rows) = self.readable_rows().await else {
 			return RoundOutcome::NoProgress;
@@ -126,6 +127,12 @@ impl BucketRun {
 		let Some(engine) = self.engine.upgrade() else {
 			return RoundOutcome::NoProgress;
 		};
+		// A row whose previous attempt is still followed waits for that
+		// follower to stop, so a transaction never has two.
+		let rows = without_followed(&engine, rows);
+		if rows.is_empty() {
+			return RoundOutcome::NoProgress;
+		}
 		let Some(resolved) = resolve_policy(&engine, &self.bucket) else {
 			return abandon_unbuildable(&engine, &self.bucket, &rows).await;
 		};
@@ -240,6 +247,14 @@ impl BucketRun {
 			})
 			.await
 	}
+}
+
+/// `rows` without those a watch still owns.
+fn without_followed(
+	engine: &DurableTxEngine,
+	rows: Vec<ScheduledDurableTx>,
+) -> Vec<ScheduledDurableTx> {
+	rows.into_iter().filter(|row| !engine.ownership.is_owned(row.id)).collect()
 }
 
 /// The policy and chain that build `bucket`, when both are still registered.

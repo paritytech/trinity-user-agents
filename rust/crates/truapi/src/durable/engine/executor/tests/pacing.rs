@@ -12,10 +12,13 @@ use crate::durable::{
 };
 
 /// Waits for the first attempt of row `id` to start, then fails it with a
-/// failure the policy retries, which hands it back to the policy.
+/// failure the policy retries, which hands it back to the policy. The test
+/// writes the verdict in place of the watch, so it also lets go of the
+/// transaction as the watch would.
 fn hand_back_first_attempt(harness: &ScheduledTxHarness, id: DurableTxId) {
 	harness.wait_for(id, DurableTxStatus::Pending);
 	wait_until(|| harness.timer().sleeps() == 1, "the first attempt's watch waits");
+	harness.engine().ownership.release(id);
 	let expired = VerdictStatus::Failure(VerdictFailureKind::Expired).into();
 	block_on(write_verdict(harness.engine(), &harness.entry(id), expired)).unwrap();
 }

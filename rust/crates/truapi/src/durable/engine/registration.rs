@@ -17,7 +17,7 @@ use crate::{
 	durable::{
 		dao,
 		model::{DomainId, DurableTxId, GroupId, PolicyId, PolicyParams, SubmissionPlan},
-		ownership::{Ownership, OwnershipClaim},
+		ownership::Ownership,
 	},
 	store::DbError,
 };
@@ -303,22 +303,22 @@ impl DurableTxEngine {
 		let submissions = request.transactions.presigned().to_vec();
 		let recorded = self.record(request, on_register).await?;
 		let (ids, value, claims) = recorded.map_err(RegistrationError::Hook)?;
-		for (claim, DurableSubmission { extrinsic, .. }) in claims.into_iter().zip(submissions) {
-			spawn_watch(&self, Attempt::new(claim, genesis, &extrinsic), extrinsic.extrinsic);
+		for (id, DurableSubmission { extrinsic, .. }) in claims.into_iter().zip(submissions) {
+			spawn_watch(&self, Attempt::new(id, genesis, &extrinsic), extrinsic.extrinsic);
 		}
 		Ok((ids, value))
 	}
 
 	/// Writes the rows and the hook's rows in one transaction, taking
 	/// ownership of each attempt inside it so a recovery pass never reaches
-	/// a committed row before its watch. Returns the claims, one per
-	/// presigned row in order, or the hook's refusal. A rolled-back write
+	/// a committed row before its watch. Returns the claimed ids, the
+	/// presigned rows in order, or the hook's refusal. A rolled-back write
 	/// gives the claims up again.
 	async fn record<T, E, F>(
 		&self,
 		request: DurableRequest<E>,
 		on_register: F,
-	) -> Result<Result<(Vec<DurableTxId>, T, Vec<OwnershipClaim>), E>, DbError>
+	) -> Result<Result<(Vec<DurableTxId>, T, Vec<DurableTxId>), E>, DbError>
 	where
 		F: FnOnce(&rusqlite::Transaction<'_>, &[DurableTxId]) -> Result<T, E> + Send + 'static,
 		T: Send + 'static,
@@ -338,7 +338,7 @@ impl DurableTxEngine {
 		let written = self.db.write_unless_refused(write_rows_and_hook).await;
 		let claims = core::mem::take(&mut *taken.lock());
 		if !matches!(written, Ok(Ok(_))) {
-			claims.iter().for_each(|claim| self.ownership.release(*claim));
+			claims.iter().for_each(|id| self.ownership.release(*id));
 		}
 		written.map(|recorded| recorded.map(|(ids, value)| (ids, value, claims)))
 	}
@@ -350,8 +350,10 @@ fn claim_presigned(
 	ownership: &Ownership,
 	ids: &[DurableTxId],
 	presigned: usize,
-) -> Vec<OwnershipClaim> {
-	ids.iter().take(presigned).map(|id| ownership.acquire(*id)).collect()
+) -> Vec<DurableTxId> {
+	let claimed: Vec<DurableTxId> = ids.iter().take(presigned).copied().collect();
+	claimed.iter().for_each(|id| ownership.acquire(*id));
+	claimed
 }
 
 #[cfg(test)]
