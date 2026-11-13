@@ -456,6 +456,22 @@ WASM resolves once without caching. A lookup requires the stack's Asset Hub.
 
 Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
 
+iOS contacts, search results and chat views consume
+`resolvePublicProfile(username:options:)` as a finite `AsyncThrowingStream`.
+Only avatar changes trigger image requests.
+The public-profile factory returns `AnyImageViewModel`, which shared image views
+use to retain requests while the image identity and processing settings match.
+`ChatIconViewModelFactory` selects product icons or public-profile avatars for chats and contact lists.
+New chat headers explicitly request forced
+freshness; cells and search explicitly use the ordinary policy. All app callers
+explicitly set `skipStale` to false. A cancelled header
+observation retains its forced intent until an observation completes or fails.
+[The CID image loader](hosts/ios/polkadot-app/Common/ImageViewModel/CID/CIDImageLoader.swift)
+uses Kingfisher's cache without a freshness expiry, including on cache hits,
+with a 100 MiB disk budget configured during root setup, before onboarding. It keeps
+the current image while loading; avatar views cancel metadata observation and image work
+when their view is reused or released.
+
 The [CLI](rust/crates/truapi-host-cli/README.md#interactive-terminal-ui) resolves
 avatar metadata with `/profile [username]`. `/profile upload <image>` publishes an
 avatar as the identity's Humanity product, calling the core's TrUAPI resource
@@ -756,7 +772,7 @@ the labels that build it: `ci:ios-simulator`, `ci:ios-device` and
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
-- `test`, the unit test suite
+- `test`, the [unit test suite](hosts/ios/polkadot-appTests/)
 - `preview`, an installable simulator `.app` attached to the run, stamped with
   the commit it came from in `TrUAPICommit`
 
