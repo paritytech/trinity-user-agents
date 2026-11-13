@@ -140,11 +140,11 @@ written and tested once.
 - **Params** (`CoinageSubmissionParams`) are SCALE and persisted with the row, so a shape change needs
   a versioned decoder. A transfer carries `buildUntil` + `retryFailures`; a claim carries `retryUntil`
   and the peer's key, which only the payment message holds. The transfer window is
-  `CoinageConstants.claimRetryWindow` (6h) — the same one the recipient's claim gets, so neither side
-  gives up while the other still tries.
+  `CoinageConstants.chatPaymentRetryWindow` (6h). The claim's is `claimRetryWindow`, `nil` (no window).
 - **Bounding**: `retryableFailure` lets an `.expired` attempt be rebuilt however late, but a
   `.dispatchFailed` or `.rejected` one only while the window is open — nothing else stops a failure
-  that always repeats from being rebuilt for ever.
+  that always repeats from being rebuilt for ever. A chat payment's claim has no window, so its
+  failures are rebuilt indefinitely by design (Android parity).
 - **Building** is shared with the first attempt through the extracted declarers
   (`SplitExtrinsicBuilder`, `UnloadExtrinsicBuilder`, `ClaimExtrinsicBuilder` over
   `CoinageExtrinsicParts`), which go through `DurableTxServicing.buildExtrinsics` — one build path, not
