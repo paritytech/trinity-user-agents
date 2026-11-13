@@ -17,7 +17,7 @@
 
 use std::{
 	collections::HashMap,
-	path::{Path, PathBuf},
+	path::PathBuf,
 	process::ExitStatus,
 	sync::{Arc, Mutex, MutexGuard, PoisonError, Weak},
 };
@@ -166,7 +166,7 @@ async fn serve(
 	let Launch { runtime, product_id, launch, launches } = launched;
 	let ran = async {
 		let script = script_of(&product_id, source, &transcript).await?;
-		run(runtime.clone(), &product_id, &script, ui).await
+		run(runtime.clone(), &product_id, script, ui).await
 	};
 	let exited = match ran.await {
 		Ok(status) => serde_json::json!(status.code()),
@@ -187,40 +187,42 @@ async fn serve(
 	}
 }
 
-/// The script `source` names for `product_id`'s worker: the local one, or
-/// the published one once fetched, which the transcript records.
+/// The script `source` names for `product_id`'s worker, and the archive it
+/// is unpacked in when it is published: the local one, or the published one
+/// once fetched, which the transcript records.
 async fn script_of(
 	product_id: &ProductId,
 	source: WorkerSource,
 	transcript: &Transcript,
-) -> anyhow::Result<PathBuf> {
+) -> anyhow::Result<(PathBuf, Option<PathBuf>)> {
 	match source {
-		WorkerSource::Script(script) => Ok(script),
+		WorkerSource::Script(script) => Ok((script, None)),
 		WorkerSource::Published { workers, cache } => {
-			let script = workers.script(product_id, &cache).await?;
+			let worker = workers.unpack(product_id, &cache).await?;
 			transcript.record(serde_json::json!({
 				"kind": "worker",
 				"provider": product_id.as_str(),
-				"published": script.display().to_string(),
+				"published": worker.script.display().to_string(),
 			}));
-			Ok(script)
+			Ok((worker.script, Some(worker.archive)))
 		},
 	}
 }
 
 /// Serve `product_id` as a Worker on a frame socket of its own and run
-/// `script` against it. Dropping the future kills the script.
+/// `script` against it, sandboxed to `archive` when it is published.
+/// Dropping the future kills the script.
 async fn run(
 	runtime: Arc<SigningHostRuntime>,
 	product_id: &ProductId,
-	script: &Path,
+	(script, archive): (PathBuf, Option<PathBuf>),
 	ui: Option<UiHandle>,
 ) -> anyhow::Result<ExitStatus> {
 	let product = frame_server::ProductSelection::new(product_id.clone(), ExecutableKind::Worker);
 	let frames = frame_server::bind(None).await?;
 	let frame_url = frames.endpoint().to_string();
 	tokio::select! {
-		status = script_runner::run_worker(&frame_url, product_id, script, ui) => status,
+		status = script_runner::run_worker(&frame_url, product_id, &script, ui, archive.as_deref()) => status,
 		served = frame_server::accept_loop(runtime, product, frames) => {
 			Err(served.err().unwrap_or_else(|| anyhow::anyhow!("the worker's frame server stopped")))
 		},

@@ -49,6 +49,7 @@ js-sys = "0.3"
 jsonrpsee = "0.26"
 jsonrpsee-client-transport = "0.26"
 jsonrpsee-core = "0.26"
+landlock = "0.4"
 libc = "0.2"
 libsecp256k1 = { version = "0.7", default-features = false, features = ["lazy-static-context"] }
 log = "0.4"

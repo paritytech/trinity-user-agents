@@ -43,6 +43,7 @@ mod terminal_ui;
 mod transcript;
 mod update;
 mod worker_host;
+mod worker_sandbox;
 
 use std::{
 	collections::HashMap,
@@ -546,8 +547,19 @@ fn script_project_directory(base_path: Option<PathBuf>) -> PathBuf {
 	base_path.unwrap_or_else(default_base_path).join("scripts")
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+	// A worker launch re-enters the binary to confine itself before anything
+	// else runs, and becomes the worker.
+	if let Some(arguments) = worker_sandbox::requested() {
+		worker_sandbox::enter(arguments);
+	}
+	tokio::runtime::Builder::new_multi_thread()
+		.enable_all()
+		.build()?
+		.block_on(run())
+}
+
+async fn run() -> Result<()> {
 	let matches = Cli::command().get_matches();
 	let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
 	let debugger = cli

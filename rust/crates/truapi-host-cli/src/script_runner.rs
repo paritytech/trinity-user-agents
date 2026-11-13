@@ -25,6 +25,7 @@ use truapi::platform::ProductId;
 use crate::{
 	script_project,
 	terminal_ui::{self, SystemEvent, UiHandle},
+	worker_sandbox,
 };
 
 /// Host topology serving the product script. Its `&'static str` form is the
@@ -171,14 +172,30 @@ pub async fn run_captured(
 /// Run `script` as `product_id`'s worker until it exits, killing it if the
 /// returned future is dropped first. Its output goes to the terminal UI when
 /// there is one, and to this process's own output otherwise.
+///
+/// A worker published on dotNS, unpacked in `archive`, runs in the worker
+/// sandbox with an environment of its own; see [`confined_command`].
 pub async fn run_worker(
 	frame_url: &str,
 	product_id: &ProductId,
 	script: &Path,
 	ui: Option<UiHandle>,
+	archive: Option<&Path>,
 ) -> Result<ExitStatus> {
-	script_project::prepare(script, ui.clone()).await?;
-	let mut command = command(frame_url, product_id, script, ScriptHostRole::SigningHost)?;
+	// The scratch directory lives as long as the worker.
+	let (mut command, _scratch) = match archive {
+		Some(archive) => {
+			let launcher =
+				std::env::current_exe().context("locate truapi-host to sandbox the worker")?;
+			let worker = ConfinedWorker { frame_url, product_id, script, archive };
+			let (command, scratch) = confined_command(&launcher, &runner_path(), worker)?;
+			(command, Some(scratch))
+		},
+		None => {
+			script_project::prepare(script, ui.clone()).await?;
+			(command(frame_url, product_id, script, ScriptHostRole::SigningHost)?, None)
+		},
+	};
 	// A worker runs until the host stops it, even once its module has
 	// evaluated with nothing left to wait on.
 	command.env("TRUAPI_SCRIPT_EXECUTION", "worker");
@@ -192,6 +209,211 @@ pub async fn run_worker(
 			.await
 			.context("failed to spawn `bun` for the worker script (is bun installed?)"),
 	}
+}
+
+/// A published worker to run: its `script`, inside the `archive` it is
+/// unpacked in, served as `product_id` on `frame_url`.
+struct ConfinedWorker<'a> {
+	frame_url: &'a str,
+	product_id: &'a ProductId,
+	script: &'a Path,
+	archive: &'a Path,
+}
+
+/// The command running a published worker under `runner`, and the scratch
+/// directory it may write, which must outlive it.
+///
+/// The worker gets no project install, and an environment holding only what
+/// the runner reads. Unless [`worker_sandbox::UNSANDBOXED_ENV`] opts out,
+/// `launcher`, the `truapi-host` binary, confines the worker to the runner,
+/// its dependencies, the archive, the scratch directory and the frame socket.
+fn confined_command(
+	launcher: &Path,
+	runner: &Path,
+	worker: ConfinedWorker<'_>,
+) -> Result<(Command, tempfile::TempDir)> {
+	let ConfinedWorker { frame_url, product_id, script, archive } = worker;
+	let runner = runner
+		.canonicalize()
+		.with_context(|| format!("host-script runner not found at {}", runner.display()))?;
+	let archive = archive
+		.canonicalize()
+		.with_context(|| format!("worker archive not found: {}", archive.display()))?;
+	let script = script
+		.canonicalize()
+		.with_context(|| format!("script not found: {}", script.display()))?;
+	anyhow::ensure!(script.starts_with(&archive), "the worker's script is outside its archive");
+	let scratch = tempfile::Builder::new()
+		.prefix("truapi-worker-")
+		.tempdir()
+		.context("create the worker's scratch directory")?;
+	let scratch_path = scratch.path().canonicalize()?;
+	let bun = bun_executable()?;
+	let dependencies = RunnerDependencies::of(&runner);
+	// Only the checkout runner resolves packages from Bun's install cache,
+	// which the sandbox keeps read-only, so nothing new is installed.
+	let install = if dependencies.install_cache.is_some() { "fallback" } else { "disable" };
+	let arguments = [
+		OsString::from(EMPTY_BUN_CONFIG),
+		"--no-env-file".into(),
+		"--no-macros".into(),
+		format!("--install={install}").into(),
+		"run".into(),
+		runner.clone().into_os_string(),
+	];
+	let mut command = if worker_sandbox::unsandboxed() {
+		tracing::warn!(
+			%product_id,
+			"{}=1: running the published worker WITHOUT the sandbox",
+			worker_sandbox::UNSANDBOXED_ENV
+		);
+		let mut command = Command::new(&bun);
+		command.args(arguments);
+		command
+	} else {
+		let mut read = dependencies.read.clone();
+		if let Some(cache) = &dependencies.install_cache {
+			read.push(cache.clone());
+			// Bun lists its own directory before it resolves from the cache.
+			read.extend(bun.parent().map(Path::to_path_buf));
+		}
+		read.push(archive.clone());
+		let policy = worker_sandbox::Policy {
+			program: bun,
+			read,
+			scratch: scratch_path.clone(),
+			socket: frame_socket(frame_url)?,
+		};
+		let mut command = Command::new(launcher);
+		command.arg(worker_sandbox::SUBCOMMAND).args(policy.arguments(arguments));
+		command
+	};
+	command
+		.current_dir(runner.parent().context("the runner has no parent directory")?)
+		.env_clear()
+		.env("TRUAPI_FRAME_URL", frame_url)
+		.env("TRUAPI_PRODUCT_ID", product_id.as_str())
+		.env("TRUAPI_SCRIPT", &script)
+		.env("TRUAPI_SCRIPT_CWD", &archive)
+		.env("TRUAPI_CLI_HOST_ROLE", <&str>::from(ScriptHostRole::SigningHost))
+		.env("TMPDIR", &scratch_path)
+		// Bun caches transpiled modules under the home directory unless told not to.
+		.env("BUN_RUNTIME_TRANSPILER_CACHE_PATH", "0");
+	if let Some(cache) = &dependencies.install_cache {
+		command.env("BUN_INSTALL_CACHE_DIR", cache);
+	}
+	Ok((command, scratch))
+}
+
+/// The canonical path of the `bun` on `PATH`.
+fn bun_executable() -> Result<PathBuf> {
+	let path = std::env::var_os("PATH").unwrap_or_default();
+	std::env::split_paths(&path)
+		.map(|directory| directory.join("bun"))
+		.find(|candidate| candidate.is_file())
+		.context("bun is not on PATH")?
+		.canonicalize()
+		.context("resolve bun")
+}
+
+/// The Unix socket a `ws+unix:` frame endpoint names, with its directory
+/// resolved.
+fn frame_socket(frame_url: &str) -> Result<PathBuf> {
+	let socket = Path::new(frame_url.strip_prefix("ws+unix:").with_context(|| {
+		format!("a sandboxed worker needs a Unix frame socket, not {frame_url}")
+	})?);
+	let directory = socket.parent().context("the frame socket has no directory")?;
+	let name = socket.file_name().context("the frame socket has no name")?;
+	Ok(directory.canonicalize().context("resolve the frame socket")?.join(name))
+}
+
+/// What a runner reads besides the worker.
+struct RunnerDependencies {
+	/// Trees the runner reads.
+	read: Vec<PathBuf>,
+	/// Bun's install cache, which the checkout runner resolves the packages
+	/// its checkout has not installed from.
+	install_cache: Option<PathBuf>,
+}
+
+impl RunnerDependencies {
+	/// What the canonical `runner` reads: its own directory, which holds
+	/// the packaged runner whole, and, for the checkout runner, the
+	/// checkout's TypeScript packages, its `node_modules` with every tree a
+	/// dependency links to, and Bun's install cache.
+	fn of(runner: &Path) -> Self {
+		let mut roots: Vec<PathBuf> = runner.parent().map(Path::to_path_buf).into_iter().collect();
+		let mut install_cache = None;
+		let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+		let checkout = manifest.join("js/runner.ts").canonicalize().ok();
+		if checkout.as_deref() == Some(runner) &&
+			let Ok(repository) = manifest.join("../../..").canonicalize()
+		{
+			let node_modules = repository.join("node_modules");
+			roots.push(repository.join("js"));
+			roots.extend(linked_trees(&node_modules));
+			roots.push(node_modules);
+			install_cache = bun_install_cache();
+		}
+		let mut read: Vec<PathBuf> = Vec::new();
+		roots.sort();
+		for root in roots {
+			if !read.iter().any(|tree| root.starts_with(tree)) {
+				read.push(root);
+			}
+		}
+		Self { read, install_cache }
+	}
+}
+
+/// The install cache Bun resolves packages from, when it exists:
+/// `BUN_INSTALL_CACHE_DIR`, or `install/cache` under `BUN_INSTALL` or
+/// `~/.bun`.
+fn bun_install_cache() -> Option<PathBuf> {
+	let cache = std::env::var_os("BUN_INSTALL_CACHE_DIR").map(PathBuf::from).or_else(|| {
+		std::env::var_os("BUN_INSTALL")
+			.map(PathBuf::from)
+			.or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".bun")))
+			.map(|install| install.join("install/cache"))
+	})?;
+	cache.canonicalize().ok().filter(|cache| cache.is_dir())
+}
+
+/// The trees the packages in `node_modules` link to: the `node_modules` a
+/// linked package sits in, so its own dependencies resolve, or the package
+/// itself.
+fn linked_trees(node_modules: &Path) -> Vec<PathBuf> {
+	let entries = |directory: &Path| {
+		fs::read_dir(directory)
+			.into_iter()
+			.flatten()
+			.flatten()
+			.map(|entry| entry.path())
+			.collect::<Vec<_>>()
+	};
+	let mut packages = Vec::new();
+	for entry in entries(node_modules) {
+		if entry.file_name().is_some_and(|name| name.to_string_lossy().starts_with('@')) &&
+			!entry.is_symlink()
+		{
+			packages.extend(entries(&entry));
+		} else {
+			packages.push(entry);
+		}
+	}
+	packages
+		.into_iter()
+		.filter(|package| package.is_symlink())
+		.filter_map(|package| package.canonicalize().ok())
+		.map(|target| {
+			target
+				.ancestors()
+				.skip(1)
+				.take(2)
+				.find(|parent| parent.file_name().is_some_and(|name| name == "node_modules"))
+				.map_or_else(|| target.clone(), Path::to_path_buf)
+		})
+		.collect()
 }
 
 /// Stream a child process into the terminal UI and stop it on cancellation.

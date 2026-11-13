@@ -91,6 +91,11 @@ jobs:
       - name: Test launcher isolation from product configuration
         run: cargo test -p truapi-host-cli --bin truapi-host caller_configuration_cannot_execute_before_the_sandbox -- --include-ignored
 
+      # Runs a fixture worker under the Landlock sandbox the host puts
+      # published funding workers in.
+      - name: Test the published-worker sandbox
+        run: cargo test -p truapi-host-cli --bin truapi-host a_published_worker_reads_only_its_archive -- --include-ignored
+
   headless-install:
     name: Headless source install
     timeout-minutes: 30

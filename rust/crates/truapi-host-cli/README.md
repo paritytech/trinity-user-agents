@@ -876,8 +876,29 @@ Scripts under `js/scripts/` include:
   block against its CID, and unpacks it under the session's state directory
   in `published-workers/<cid>/`. The entry script then runs as a local worker
   script does, until the host stops it; an archive already unpacked is not
-  fetched again. The script runs under `bun` with the host-script runner's
-  network gates, not in a web view, so offer only providers you trust.
+  fetched again.
+
+  A published worker runs under `bun` in an operating-system sandbox, so it
+  gets no more than an app's worker: the host binary relaunches itself,
+  confines that process and executes `bun` in its place. The worker reads
+  only the runner, the runner's dependencies and its own archive; writes only
+  a scratch directory it gets as `TMPDIR`, removed when it exits; executes no
+  program but `bun`; and connects only to its frame socket and to TCP ports
+  80 and 443, where the runner's network gates decide which origins it
+  reaches. Its environment holds only the runner's variables, so it sees no
+  `HOME`, no credentials and no other configuration, and its archive gets no
+  `bun install`. On macOS the sandbox is `sandbox-exec` with a profile
+  generated per launch, which also denies UDP and lets name resolution
+  through the system resolver alone. On Linux it is Landlock, applied as far
+  as the kernel supports it: files from 5.13, TCP ports from 6.7, abstract
+  Unix sockets and signals from 6.12, and other Unix sockets from Landlock
+  ABI 9; UDP is not confined. Neither sandbox can name the hosts a worker reaches, only the
+  ports. Where the worker cannot be sandboxed, a kernel without Landlock or
+  another platform, the host refuses to run it.
+  `TRUAPI_FUNDING_UNSANDBOXED=1` runs published workers without the sandbox,
+  still with the cleared environment, and logs a warning at every launch.
+  Local worker scripts from `TRUAPI_FUNDING_PROVIDERS` run unsandboxed with
+  the host's environment.
 
   The CLI accepts and logs Game reminders on every execution kind, without
   holding or firing them. The core serves Game to the game product (`dim2`)

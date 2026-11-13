@@ -54,6 +54,15 @@ pub struct PublishedWorker {
 	pub entrypoint: String,
 }
 
+/// A published worker unpacked under the state directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnpackedWorker {
+	/// The directory the archive is unpacked in.
+	pub archive: PathBuf,
+	/// The entry script inside it.
+	pub script: PathBuf,
+}
+
 /// Fetches the published workers of one stack.
 pub struct PublishedWorkers {
 	chains: Arc<CliChainProvider>,
@@ -80,16 +89,17 @@ impl PublishedWorkers {
 		})
 	}
 
-	/// The script `product_id`'s published worker runs, fetched into `cache`
-	/// unless it already holds it.
-	pub async fn script(&self, product_id: &ProductId, cache: &Path) -> Result<PathBuf> {
+	/// `product_id`'s published worker, fetched into `cache` unless it
+	/// already holds it.
+	pub async fn unpack(&self, product_id: &ProductId, cache: &Path) -> Result<UnpackedWorker> {
 		let worker = self.resolve(product_id).await?;
 		let directory = cache.join(worker.archive.to_base32());
 		if !directory.is_dir() {
 			let car = self.fetch(&worker.archive).await?;
 			store(&directory, &car)?;
 		}
-		entry_script(&directory, &worker.entrypoint)
+		let script = entry_script(&directory, &worker.entrypoint)?;
+		Ok(UnpackedWorker { archive: directory, script })
 	}
 
 	/// Read `worker.<product>.<tld>`'s contenthash and manifest on dotNS.
