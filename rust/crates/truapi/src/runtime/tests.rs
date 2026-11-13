@@ -125,6 +125,72 @@ fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
 		.expect("test subtree derives an account")
 }
 
+/// Root entropy the signing-host fixtures activate their wallet with.
+pub const ENTROPY: [u8; 16] = [0xAB; 16];
+
+/// A locked signing host on `.dot`. With no dotNS Asset Hub, activation looks
+/// up no username on the scripted chain.
+pub fn signing_runtime_on_asset_hub(
+	platform: Arc<dyn Platform>,
+	asset_hub_chain_genesis_hash: Option<[u8; 32]>,
+) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
+	let config = crate::platform::SigningHostConfig::new(
+		crate::platform::HostInfo {
+			name: "Polkadot Mobile".to_string(),
+			icon: None,
+			version: None,
+			platform: truapi::latest::HostPlatform::Ios,
+		},
+		crate::platform::PlatformInfo::default(),
+		crate::test_support::test_stack("dot", [0; 32], [0xbb; 32], asset_hub_chain_genesis_hash),
+	)
+	.expect("signing host config is valid");
+	let services = RuntimeServices::new(
+		platform.clone(),
+		config.host.host_info.clone(),
+		config.stack.clone(),
+		Spawner::for_test(),
+	);
+	let signing_host = SigningHostRole::new(services.clone());
+	(services, signing_host)
+}
+
+/// A signing host whose wallet is active under [`ENTROPY`].
+pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
+	let (_services, signing_host) = signing_runtime_on_asset_hub(platform, None);
+	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
+		.expect("activation succeeds");
+	signing_host
+}
+
+pub fn product_runtime_for(
+	services: Arc<RuntimeServices>,
+	authority: Arc<SigningHostRole>,
+	product_id: &str,
+) -> ProductRuntimeHost<signing_host::WalletAccountHolder> {
+	ProductRuntimeHost::from_services(
+		services.clone(),
+		crate::host_core::ConnectionAdapters::from_services(&services),
+		authority.accounts().clone(),
+		authority,
+		ProductContext::new(ProductId::for_test(product_id)),
+	)
+}
+
+/// Allocate an AutoSigning grant for the runtime's own product.
+pub fn grant_auto_signing(runtime: &ProductRuntimeHost<signing_host::WalletAccountHolder>) {
+	let allocation = futures::executor::block_on(ResourceAllocation::request(
+		runtime,
+		&CallContext::default(),
+		HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
+			resources: vec![v01::AllocatableResource::AutoSigning],
+		}),
+	))
+	.expect("approved AutoSigning allocation succeeds");
+	let HostRequestResourceAllocationResponse::V1(allocation) = allocation;
+	assert_eq!(allocation.outcomes, vec![v01::AllocationOutcome::Allocated]);
+}
+
 pub fn install_pairing_session(
 	host: &ProductRuntimeHost<RemoteAccountHolder>,
 	session: SessionInfo,
@@ -7571,142 +7637,6 @@ fn feature_supported_encodes_response_to_known_bytes() {
 mod nft_purse;
 mod signing;
 
-#[test]
-fn the_pairing_authority_refuses_a_foreign_ring_vrf_key_without_a_grant() {
-	let (host_config, product) = runtime_config("dim2.dot");
-	let platform: Arc<dyn Platform> = stub_platform();
-	let services = RuntimeServices::new(
-		platform.clone(),
-		host_config.host.host_info.clone(),
-		host_config.stack.clone(),
-		Spawner::for_test(),
-	);
-	let pairing_host = PairingHost::new(services.clone(), host_config);
-	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-	let host = ProductRuntimeHost::from_services(
-		services,
-		adapters,
-		pairing_host.accounts().clone(),
-		pairing_host.session().clone(),
-		product,
-	);
-	install_pairing_session(&host, session_info());
-	let session = pairing_host
-		.accounts()
-		.current_session()
-		.expect("the pairing host has an active session");
-
-	let proof = futures::executor::block_on(pairing_host.accounts().create_proof(
-		&session,
-		&CallContext::default(),
-		&ProductContext::new(ProductId::for_test("dim2.dot")),
-		v01::HostAccountCreateProofRequest {
-			key_handle: v01::ProductAccountId {
-				dot_ns_identifier: ProductId::for_test("peopl.dot"),
-				derivation_index: v01::DerivationIndex::Index(0),
-			},
-			context: v01::ProductProofContext {
-				product_id: ProductId::for_test("dim2.dot"),
-				suffix: v01::DerivationIndex::Index(0),
-			},
-			ring_location: ring_location_fixture(),
-			message: b"prove me".to_vec(),
-		},
-	));
-	assert_eq!(
-		proof.err(),
-		Some(RingVrfError::NotAllowlisted),
-		"the pairing authority must refuse a foreign key that no manifest granted"
-	);
-
-	let signed = futures::executor::block_on(pairing_host.accounts().ring_vrf_sign(
-		&session,
-		&CallContext::default(),
-		&ProductContext::new(ProductId::for_test("dim2.dot")),
-		v01::HostAccountRingVrfSignRequest {
-			key_handle: v01::ProductAccountId {
-				dot_ns_identifier: ProductId::for_test("peopl.dot"),
-				derivation_index: v01::DerivationIndex::Index(0),
-			},
-			message: b"sign me".to_vec(),
-		},
-	));
-	assert_eq!(
-		signed.err(),
-		Some(RingVrfError::NotAllowlisted),
-		"and the same on the signing method, which arrives through the same door"
-	);
-}
-
-/// A pairing host's `HostAccounts` holds a grantee's proof context to the same
-/// rule as a signing host: a third product's context needs that product's own
-/// `context` grant.
-///
-/// Driven at the pairing host's `HostAccounts`. The admitted case is
-/// asserted as "not refused by the gate", since the stub has no AutoSigning key
-/// or ring to finish the proof with; what it pins is that the context guard
-/// let it through.
-#[test]
-fn the_pairing_authority_admits_a_context_only_its_product_granted() {
-	let prove_in = |context_grants: &str| {
-		let (host_config, product) = runtime_config("dim2next.dot");
-		let platform = stub_platform();
-		cache_manifest(&platform, "peopl.dot", r#"{"dim2next":["context"]}"#, 0);
-		cache_manifest(&platform, "dim2.dot", context_grants, 0);
-		let platform: Arc<dyn Platform> = platform;
-		let services = RuntimeServices::new(
-			platform.clone(),
-			host_config.host.host_info.clone(),
-			host_config.stack.clone(),
-			Spawner::for_test(),
-		);
-		let pairing_host = PairingHost::new(services.clone(), host_config);
-		let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-		let host = ProductRuntimeHost::from_services(
-			services,
-			adapters,
-			pairing_host.accounts().clone(),
-			pairing_host.session().clone(),
-			product,
-		);
-		install_pairing_session(&host, session_info());
-		let session = pairing_host
-			.accounts()
-			.current_session()
-			.expect("the pairing host has an active session");
-		let mut cx = CallContext::default();
-		cx.set_timeout(Duration::from_millis(200));
-		futures::executor::block_on(pairing_host.accounts().create_proof(
-			&session,
-			&cx,
-			&ProductContext::new(ProductId::for_test("dim2next.dot")),
-			v01::HostAccountCreateProofRequest {
-				key_handle: v01::ProductAccountId {
-					dot_ns_identifier: ProductId::for_test("peopl.dot"),
-					derivation_index: v01::DerivationIndex::Index(0),
-				},
-				context: v01::ProductProofContext {
-					product_id: ProductId::for_test("dim2.dot"),
-					suffix: v01::DerivationIndex::Index(0),
-				},
-				ring_location: ring_location_fixture(),
-				message: b"prove me".to_vec(),
-			},
-		))
-	};
-
-	assert_ne!(
-		prove_in(r#"{"dim2next":["context"]}"#).err(),
-		Some(RingVrfError::NotAllowlisted),
-		"the context product's grant admits its context"
-	);
-	assert_eq!(
-		prove_in(r#"{"other":["context"]}"#).err(),
-		Some(RingVrfError::NotAllowlisted),
-		"a grant to another product admits nothing"
-	);
-}
-
 /// The grant lookup obeys the caller's deadline.
 ///
 /// It can reach dotNS on the Asset Hub, which is several sequential chain
@@ -7719,21 +7649,11 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 #[test]
 fn a_grant_lookup_obeys_the_callers_deadline() {
 	let (host_config, product) = runtime_config("dim2.dot");
-	let platform: Arc<dyn Platform> = stub_platform();
-	let services = RuntimeServices::new(
-		platform.clone(),
-		host_config.host.host_info.clone(),
-		host_config.stack.clone(),
-		Spawner::for_test(),
-	);
-	let pairing_host = PairingHost::new(services.clone(), host_config);
-	let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
-	let host = ProductRuntimeHost::from_services(
-		services,
-		adapters,
-		pairing_host.accounts().clone(),
-		pairing_host.session().clone(),
+	let (host, _pairing_host) = ProductRuntimeHost::new_pairing_for_tests(
+		stub_platform(),
+		host_config,
 		product,
+		Spawner::for_test(),
 	);
 	install_pairing_session(&host, session_info());
 
@@ -7768,13 +7688,13 @@ fn a_grant_lookup_obeys_the_callers_deadline() {
 	);
 }
 
-/// A proof or signature the runtime frontend refuses reaches the host log.
+/// A proof or signature the host accounts refuse reaches the host log.
 ///
-/// A local product call meets the manifest check here first, and a call it
-/// refuses never reaches the authority, so the authority cannot be the one to
-/// say why.
+/// A local product call meets the manifest check there first, and a call it
+/// refuses never reaches the account holder, so the holder cannot be the one
+/// to say why.
 #[test]
-fn a_frontend_refusal_tells_the_host_what_it_judged_by() {
+fn a_manifest_refusal_tells_the_host_what_it_judged_by() {
 	let host = dim2_with_a_pairing_session(stub_platform(), None);
 	let cx = CallContext::default();
 	let mut refusals = None;
@@ -7790,7 +7710,7 @@ fn a_frontend_refusal_tells_the_host_what_it_judged_by() {
 			.err(),
 		));
 	});
-	let line = frontend_refusal_line("manifest unavailable", "no Asset Hub");
+	let line = manifest_refusal_line("manifest unavailable", "no Asset Hub");
 	assert_eq!(
 		(refusals, lines),
 		(
@@ -7807,11 +7727,11 @@ fn a_frontend_refusal_tells_the_host_what_it_judged_by() {
 	);
 }
 
-/// A frontend lookup cut short by the deadline of the call is a refusal the
+/// A manifest lookup cut short by the deadline of the call is a refusal the
 /// host hears about. One the product withdrew is not, since nobody waits for
 /// its answer.
 #[test]
-fn a_frontend_lookup_past_its_deadline_tells_the_host_it_timed_out() {
+fn a_manifest_lookup_past_its_deadline_tells_the_host_it_timed_out() {
 	let proof_and_signature_lines = |cx: CallContext| {
 		let platform =
 			Arc::new(StubPlatform { chain_connect_pending: true, ..StubPlatform::default() });
@@ -7832,17 +7752,16 @@ fn a_frontend_lookup_past_its_deadline_tells_the_host_it_timed_out() {
 	let gave_up = "truapi.tracing.warn truapi::runtime::product_manifest: manifest resolution \
 	               gave up {ceiling_secs=0}"
 		.to_string();
-	let refusal = frontend_refusal_line("manifest unavailable", "dotNS lookup timed out");
+	let refusal = manifest_refusal_line("manifest unavailable", "dotNS lookup timed out");
 	assert_eq!(
 		(proof_and_signature_lines(timed_out), proof_and_signature_lines(withdrawn)),
 		(vec![gave_up.clone(), refusal.clone(), gave_up, refusal], Vec::new())
 	);
 }
 
-/// A call the frontend admits and the authority refuses is warned once, by
-/// the authority.
+/// A call the key check admits and the context check refuses is warned once.
 #[test]
-fn a_refusal_past_the_frontend_is_warned_once() {
+fn a_refusal_past_the_key_check_is_warned_once() {
 	let platform = stub_platform();
 	cache_manifest(&platform, "peopl.dot", r#"{"dim2":["context"]}"#, 0);
 	let host = dim2_with_a_pairing_session(platform, None);
@@ -7906,9 +7825,9 @@ fn ring_vrf_sign_request(product_id: &str) -> HostAccountRingVrfSignRequest {
 	})
 }
 
-/// The host log line of the frontend of `dim2.dot` refusing the key of
+/// The host log line of the host accounts of `dim2.dot` refusing the key of
 /// `peopl.dot` with no manifest read.
-fn frontend_refusal_line(because: &str, source: &str) -> String {
+fn manifest_refusal_line(because: &str, source: &str) -> String {
 	format!(
 		"truapi.tracing.warn truapi::runtime::product_manifest: ring-VRF access refused \
 		 {{because={because}, entry=dim2, caller=dim2.dot, owner=peopl.dot, source={source}, \

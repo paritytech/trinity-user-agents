@@ -8,87 +8,31 @@ use truapi::{
 	api::{ResourceAllocation, StatementStore},
 	v01,
 	versioned::{
-		resource_allocation::{
-			HostRequestResourceAllocationRequest, HostRequestResourceAllocationResponse,
-		},
+		resource_allocation::HostRequestResourceAllocationRequest,
 		statement_store::{RemoteStatementStoreSubmitError, RemoteStatementStoreSubmitRequest},
 	},
 };
 
 use super::grant_revision;
 use crate::{
-	Spawner,
 	host_logic::{
 		product_account::derive_root_keypair_from_entropy, statement_store::SUBMIT_STATEMENT_METHOD,
 	},
-	platform::{HostInfo, Platform, ProductContext, ProductId},
+	platform::{ProductContext, ProductId},
 	runtime::{
-		HostSession, LocalActivation, ProductRuntimeHost, RuntimeServices, SigningHostRole,
+		HostSession, LocalActivation, SigningHostRole,
 		allowances::AllowanceResource,
 		authority::{Allowance, AuthorityError, StatementStoreAllowanceKey},
-		signing_host::WalletAccountHolder,
 		statement_allowance::slot,
+		tests::{
+			ENTROPY, active_signing_host, grant_auto_signing, product_runtime_for,
+			signing_runtime_on_asset_hub,
+		},
 	},
-	test_support::{StubPlatform, test_stack},
+	test_support::StubPlatform,
 };
 
-const ENTROPY: [u8; 16] = [0xAB; 16];
 const PRODUCT_ID: &str = "myapp.dot";
-
-/// A locked signing host on `.dot` with no dotNS Asset Hub, so activation
-/// looks up no username on the scripted chain.
-fn signing_runtime_with_platform(
-	platform: Arc<dyn Platform>,
-) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
-	let services = RuntimeServices::new(
-		platform,
-		HostInfo {
-			name: "Polkadot Mobile".to_string(),
-			icon: None,
-			version: None,
-			platform: truapi::latest::HostPlatform::Ios,
-		},
-		test_stack("dot", [0; 32], [0xbb; 32], None),
-		Spawner::for_test(),
-	);
-	let signing_host = SigningHostRole::new(services.clone());
-	(services, signing_host)
-}
-
-fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
-	let (_services, signing_host) = signing_runtime_with_platform(platform);
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-	signing_host
-}
-
-fn product_runtime_for(
-	services: Arc<RuntimeServices>,
-	authority: Arc<SigningHostRole>,
-	product_id: &str,
-) -> ProductRuntimeHost<WalletAccountHolder> {
-	ProductRuntimeHost::from_services(
-		services.clone(),
-		crate::host_core::ConnectionAdapters::from_services(&services),
-		authority.accounts().clone(),
-		authority,
-		ProductContext::new(ProductId::for_test(product_id)),
-	)
-}
-
-/// Allocate an AutoSigning grant for the runtime's own product.
-fn grant_auto_signing(runtime: &ProductRuntimeHost<WalletAccountHolder>) {
-	let allocation = futures::executor::block_on(ResourceAllocation::request(
-		runtime,
-		&CallContext::default(),
-		HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
-			resources: vec![v01::AllocatableResource::AutoSigning],
-		}),
-	))
-	.expect("approved AutoSigning allocation succeeds");
-	let HostRequestResourceAllocationResponse::V1(allocation) = allocation;
-	assert_eq!(allocation.outcomes, vec![v01::AllocationOutcome::Allocated]);
-}
 
 /// Whether this host keeps an AutoSigning key for `product_id` in this activation.
 fn keeps_auto_signing(authority: &SigningHostRole, product_id: &str) -> bool {
@@ -109,7 +53,7 @@ fn keeps_auto_signing(authority: &SigningHostRole, product_id: &str) -> bool {
 fn product_clear_revokes_only_current_activation_grant_and_fences_stale_work() {
 	let platform =
 		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
-	let (services, authority) = signing_runtime_with_platform(platform);
+	let (services, authority) = signing_runtime_on_asset_hub(platform, None);
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
 	let authority_session = authority.accounts().current_session().unwrap();
 	let revision = grant_revision(authority.accounts());
@@ -151,7 +95,7 @@ fn product_reset_during_allocation_review_cannot_restore_native_grants() {
 		resource_allocation_confirmation_gate: std::sync::Mutex::new(Some(gate)),
 		..StubPlatform::default()
 	});
-	let (services, authority) = signing_runtime_with_platform(platform.clone());
+	let (services, authority) = signing_runtime_on_asset_hub(platform.clone(), None);
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec())).unwrap();
 	let runtime = product_runtime_for(services, authority.clone(), PRODUCT_ID);
 	let cx = CallContext::default();
@@ -352,7 +296,7 @@ fn submit_answered(
 			.collect(),
 		..Default::default()
 	});
-	let (services, signing_host) = signing_runtime_with_platform(platform);
+	let (services, signing_host) = signing_runtime_on_asset_hub(platform, None);
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	remember(&signing_host, PRODUCT_ID, PERIOD);

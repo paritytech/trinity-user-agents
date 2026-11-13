@@ -12,20 +12,6 @@ use truapi::versioned::{
 	signing::{HostSignRawWithLegacyAccountRequest, HostSignRawWithLegacyAccountResponse},
 };
 
-/// Allocate an AutoSigning grant for the runtime's own product.
-pub fn grant_auto_signing(runtime: &ProductRuntimeHost<WalletAccountHolder>) {
-	let allocation = futures::executor::block_on(ResourceAllocation::request(
-		runtime,
-		&CallContext::default(),
-		HostRequestResourceAllocationRequest::V1(v01::HostRequestResourceAllocationRequest {
-			resources: vec![v01::AllocatableResource::AutoSigning],
-		}),
-	))
-	.expect("approved AutoSigning allocation succeeds");
-	let HostRequestResourceAllocationResponse::V1(allocation) = allocation;
-	assert_eq!(allocation.outcomes, vec![v01::AllocationOutcome::Allocated]);
-}
-
 /// A platform that approves the allocation and declines every signing prompt,
 /// so any call that succeeds did so without asking.
 fn granting_platform() -> Arc<StubPlatform> {
@@ -243,49 +229,6 @@ fn a_relayed_vrf_signature_cannot_reuse_a_local_auto_signing_grant() {
 		(response.payload.map(|_| ()), platform.sign_vrf_reviews.lock().unwrap().len()),
 		(Err(v01::HostAccountSignVrfError::Rejected), 1),
 	);
-}
-
-/// A kept AutoSigning key checks its ring through the resolver the host was
-/// built with, the one its wallet reads, so the two can never read a ring from
-/// different sources.
-#[test]
-fn a_kept_key_registers_through_the_hosts_ring_resolver() {
-	let platform =
-		Arc::new(StubPlatform { resource_allocation_confirmed: true, ..StubPlatform::default() });
-	let (services, activation) =
-		signing_runtime_with_ring_resolver(platform, full_person_ring_resolver());
-	futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-	grant_auto_signing(&product_runtime(services, activation.clone()));
-	let session = activation.accounts().current_session().expect("an active wallet");
-	let cx = CallContext::default();
-	let product_id = ProductId::for_test("myapp.dot");
-	let product = ProductContext::new(product_id.clone());
-
-	let registered = futures::executor::block_on(async {
-		futures::select! {
-			result = activation.accounts().register_ring_vrf_key(
-				&session,
-				&cx,
-				&product,
-				HostAccountRegisterRingVrfKeyRequest {
-					index: v01::DerivationIndex::Index(0),
-					ring: full_person_ring_location(),
-				},
-			).fuse() => result,
-			() = futures_timer::Delay::new(std::time::Duration::from_secs(30)).fuse() => {
-				panic!("the registration waited on a chain read")
-			}
-		}
-	});
-
-	let entropy =
-		derive_ring_vrf_entropy(&ENTROPY, &product_id, &v01::DerivationIndex::Index(0)).unwrap();
-	let member = futures::executor::block_on(crate::runtime::vrf::load())
-		.expect("verifiable is linked")
-		.member(&entropy)
-		.unwrap();
-	assert_eq!(registered, Ok(member));
 }
 
 /// A signing host on which `myapp.dot` keeps its AutoSigning key, registered in

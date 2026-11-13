@@ -59,13 +59,6 @@ fn chain_with_allocated_slot() -> Arc<StubPlatform> {
 	})
 }
 
-fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
-	let (_services, signing_host) = signing_runtime_with_platform(platform);
-	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
-		.expect("activation succeeds");
-	signing_host
-}
-
 /// Bounded so a regression waiting on an unanswered chain read fails instead
 /// of hanging.
 fn allowance_key(signing_host: &SigningHostRole) -> StatementStoreAllowanceKey {

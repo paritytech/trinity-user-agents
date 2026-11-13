@@ -25,7 +25,6 @@ use super::{
 	ring_vrf::{MemberCandidate, ResolvedRing, RingResolver},
 };
 use crate::{
-	Spawner,
 	host_internal::{
 		extrinsic::tests::split_v4,
 		sso_messages::{ProductRequest, RemoteMessage, RemoteMessageData, RingVrfError},
@@ -39,11 +38,14 @@ use crate::{
 		},
 		sso::pairing::derive_x25519_keypair_from_entropy,
 	},
-	platform::{
-		CoreStorageKey, HostInfo, Platform, PlatformInfo, ProductContext, ProductId,
-		SigningHostConfig,
+	platform::{CoreStorageKey, Platform, ProductContext, ProductId},
+	runtime::{
+		sso_service::Dispatch,
+		tests::{
+			ENTROPY, active_signing_host, grant_auto_signing, product_runtime_for,
+			signing_runtime_on_asset_hub,
+		},
 	},
-	runtime::sso_service::Dispatch,
 	test_support::StubPlatform,
 };
 use truapi::{
@@ -63,8 +65,6 @@ use truapi::{
 		signing::{HostSignRawError, HostSignRawRequest, HostSignRawResponse},
 	},
 };
-
-const ENTROPY: [u8; 16] = [0xAB; 16];
 
 #[derive(Clone)]
 struct StubRingResolver {
@@ -167,55 +167,11 @@ fn signing_runtime_with_platform(
 	signing_runtime_on_asset_hub(platform, None)
 }
 
-fn signing_runtime_on_asset_hub(
-	platform: Arc<dyn Platform>,
-	asset_hub_chain_genesis_hash: Option<[u8; 32]>,
-) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
-	let config = SigningHostConfig::new(
-		HostInfo {
-			name: "Polkadot Mobile".to_string(),
-			icon: None,
-			version: None,
-			platform: truapi::latest::HostPlatform::Ios,
-		},
-		PlatformInfo::default(),
-		crate::test_support::test_stack(
-			TEST_NETWORK_SUFFIX,
-			[0; 32],
-			[0xbb; 32],
-			asset_hub_chain_genesis_hash,
-		),
-	)
-	.expect("signing host config is valid");
-	let services = RuntimeServices::new(
-		platform.clone(),
-		config.host.host_info.clone(),
-		config.stack.clone(),
-		Spawner::for_test(),
-	);
-	let signing_host = SigningHostRole::new(services.clone());
-	(services, signing_host)
-}
-
 fn product_runtime(
 	services: Arc<RuntimeServices>,
 	authority: Arc<SigningHostRole>,
 ) -> ProductRuntimeHost<WalletAccountHolder> {
 	product_runtime_for(services, authority, "myapp.dot")
-}
-
-fn product_runtime_for(
-	services: Arc<RuntimeServices>,
-	authority: Arc<SigningHostRole>,
-	product_id: &str,
-) -> ProductRuntimeHost<WalletAccountHolder> {
-	ProductRuntimeHost::from_services(
-		services.clone(),
-		crate::host_core::ConnectionAdapters::from_services(&services),
-		authority.accounts().clone(),
-		authority,
-		ProductContext::new(ProductId::for_test(product_id)),
-	)
 }
 
 /// A connection of `product_id` to `authority`, which the host's account calls act for.
@@ -1367,7 +1323,7 @@ fn a_refusal_covers_every_executable_of_the_refused_product() {
 /// `all` is a superset, so it satisfies `context` at the runtime seam and
 /// not only in the manifest parser.
 #[test]
-fn a_grant_of_all_satisfies_context_at_the_authority() {
+fn a_grant_of_all_satisfies_context_at_the_runtime_seam() {
 	let granted = DOORS
 		.map(|door| (door, foreign_proof_through(door, Some(r#"{"dim2":["all"]}"#)).map(|_| ())));
 	assert_eq!(granted, DOORS.map(|door| (door, Ok(()))), "`all` must satisfy `context`");
@@ -1486,11 +1442,7 @@ fn with_the_owners_kept_key(trusted_products: &str) -> (Arc<SigningHostRole>, Au
 		signing_runtime_with_ring_resolver(platform, full_person_ring_resolver());
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
-	auto_signing::grant_auto_signing(&product_runtime_for(
-		services,
-		authority.clone(),
-		"peopl.dot",
-	));
+	grant_auto_signing(&product_runtime_for(services, authority.clone(), "peopl.dot"));
 	let session = authority.accounts().current_session().expect("active session");
 	register_full_person_key(&authority, &session, &full_person_ring_location());
 	(authority, session)
