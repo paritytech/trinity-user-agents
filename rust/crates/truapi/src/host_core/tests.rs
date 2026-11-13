@@ -1729,20 +1729,25 @@ fn a_material_kept_by_hand_draws_without_bulletin() {
 	use truapi::latest::{MaterialFailure, MaterialInstance, MaterialsProps, RendererNode};
 	let text = b"// @material 1\nvec4 material(vec2 uv) {\n  return texture(r_input, uv);\n}\n";
 	let no_entry_point = b"// @material 1\nfloat shade(vec2 uv) {\n  return 1.0;\n}\n";
-	let (runtime, _platform) = test_signing_runtime();
-	runtime.services.enable_materials();
-	let keep = |text: &[u8]| futures::executor::block_on(runtime.keep_material(text.to_vec()));
-	assert_eq!(
-		keep(text),
-		Err(MaterialFailure::Unsupported),
-		"nothing is kept before the database"
-	);
+	let keep = |runtime: &SigningHostRuntime, text: &[u8]| {
+		futures::executor::block_on(runtime.keep_material(text.to_vec()))
+	};
+	let (without_database, _platform) = test_signing_runtime();
+	without_database.services.enable_materials();
+	assert_eq!(keep(&without_database, text), Err(MaterialFailure::Unsupported));
 
+	let (runtime, _platform) = test_signing_runtime();
 	runtime.set_core_db(crate::store::open_memory_core_db());
 	runtime.start_core_services();
-	let id = keep(text).expect("a material is kept");
+	assert_eq!(
+		keep(&runtime, text),
+		Err(MaterialFailure::Unsupported),
+		"a host that draws no materials keeps none"
+	);
+	runtime.services.enable_materials();
+	let id = keep(&runtime, text).expect("a material is kept");
 	assert_eq!(id, crate::host_internal::bulletin::preimage_key(text));
-	assert_eq!(keep(no_entry_point), Err(MaterialFailure::InvalidMaterial));
+	assert_eq!(keep(&runtime, no_entry_point), Err(MaterialFailure::InvalidMaterial));
 
 	let face = RendererNode::Materials {
 		props: MaterialsProps { layers: vec![MaterialInstance { material: id, args: Vec::new() }] },

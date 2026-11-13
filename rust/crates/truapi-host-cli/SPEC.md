@@ -603,8 +603,8 @@ truapi-host materials plan <face.json> [--materials <dir>] [--metal] [--out <dir
 `materials plan` reads a card face as the generated client writes a renderer
 tree and prints the plan a phone draws its `Materials` nodes from, built by the
 same core: one `plan:` block each time the plan changes, with one line per node
-(`node <n>: loading`, `node <n>: ready, <k> layers` or `node <n>: plain,
-<reason>`). It exits once no node is loading. A material Bulletin does not
+(`node <n>: loading`, `node <n>: ready, 1 layer`, `node <n>: ready, <k> layers`
+or `node <n>: plain, <reason>`). It exits once no node is loading. A material Bulletin does not
 answer within 30 seconds draws plain as `NotFound`.
 
 | Option | Behavior |
