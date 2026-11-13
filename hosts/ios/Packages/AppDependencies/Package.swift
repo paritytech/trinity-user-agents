@@ -1,30 +1,11 @@
 // swift-tools-version: 6.0
-import Foundation
 import PackageDescription
-
-// This app is built two ways: vendored into the host monorepo, where the shared
-// core sits in the same tree, and checked out on its own, where the core is a
-// published dependency. Detect which by looking for the core's crates, the same
-// marker the Android host checks for.
-//
-// The path is derived from #filePath rather than the working directory, which is
-// not guaranteed to be the package root while the manifest is evaluated.
-let corePath = "../../../.."
-let coreIsInTree: Bool = {
-    var root = URL(fileURLWithPath: #filePath)
-    for _ in 0 ..< 5 {
-        root.deleteLastPathComponent()
-    }
-    return FileManager.default.fileExists(
-        atPath: root.appendingPathComponent("rust/crates/truapi").path
-    )
-}()
 
 let dependencyConfigs: [DependencyConfig] = [
     .init(
         name: "extrinsic-service-ios",
         url: "https://github.com/novasamatech/extrinsic-service-ios",
-        version: .exact("1.20.0"),
+        version: .exact("1.21.0"),
         products: ["ExtrinsicService"]
     ),
     .init(
@@ -75,7 +56,7 @@ let dependencyConfigs: [DependencyConfig] = [
     .init(
         name: "substrate-sdk-ios",
         url: "https://github.com/novasamatech/substrate-sdk-ios",
-        version: .exact("5.17.0"),
+        version: .exact("5.18.0"),
         products: [
             "SubstrateSdk",
             "SubstrateMetadataHash"
@@ -143,8 +124,8 @@ let dependencyConfigs: [DependencyConfig] = [
     ),
     .init(
         name: "trinity-user-agents",
-        url: coreIsInTree ? corePath : "https://github.com/paritytech/trinity-user-agents",
-        version: coreIsInTree ? .local : .exact("0.16.0"),
+        url: "../../../..",
+        version: .local,
         products: ["TrUAPIHost"]
     ),
     .init(

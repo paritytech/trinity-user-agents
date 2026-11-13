@@ -32,19 +32,18 @@ use futures::{
 use parity_scale_codec::{Decode, Encode};
 use thiserror::Error;
 use tracing::{instrument, warn};
-use truapi::{CallContext, CancellationReason, latest, v01};
+use truapi::{CallContext, CancellationReason, latest, v01, versioned::FromLatest};
 
 use crate::{
 	Spawner,
 	frame::ProtocolMessage,
-	host_internal::sso_messages::{RemoteMessage, SsoRequestOutcome},
 	host_logic::worker::WorkerLedger,
 	runtime::{
-		ActionChannel, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT, DevicePairingObserver,
-		FundingProviderLink, HostSession, LocalActivation, PairedSsoPeer, PairingHostRole,
-		ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit, ResumePairingError,
-		RuntimeServices, SigningHostRole, SigningHostSsoService, SsoResponderService,
-		sso_service::Dispatch,
+		ActionChannel, AuthorityError, DEFAULT_REMOTE_AUTHORITY_RESPONSE_TIMEOUT,
+		DevicePairingObserver, FundingProviderLink, HostSession, LocalActivation, PairedSsoPeer,
+		PairingHostRole, ProductAuthority, ProductConnection, ProductRuntimeHost, ResponderExit,
+		ResumePairingError, RuntimeServices, SigningHostRole, SsoAccountHolderService,
+		SsoResponderService,
 	},
 	subscription::HostInitiatedSubscriptionManager,
 	transport::Transport,
@@ -242,9 +241,7 @@ impl PairingHostRuntime {
 		let services = RuntimeServices::with_chat_platform(
 			platform,
 			config.host.host_info.clone(),
-			config.people_chain_genesis_hash,
-			config.bulletin_chain_genesis_hash,
-			config.asset_hub_chain_genesis_hash,
+			config.stack.clone(),
 			spawner.clone(),
 			chat_platform,
 		);
@@ -765,10 +762,8 @@ impl SigningHostRuntime {
 		let platform: Arc<dyn Platform> = platform;
 		let services = RuntimeServices::with_chat_platform(
 			platform,
-			config.host.host_info.clone(),
-			config.people_chain_genesis_hash,
-			config.bulletin_chain_genesis_hash,
-			config.asset_hub_chain_genesis_hash,
+			config.host.host_info,
+			config.stack,
 			spawner,
 			chat_platform,
 		);
@@ -780,20 +775,19 @@ impl SigningHostRuntime {
 			// indistinguishable from an ungranted read. Only as visible as the
 			// host's log level, which defaults to `ERROR`.
 			warn!(
-				"no Asset Hub configured: no product manifest will resolve, so \
+				"the stack has no Asset Hub: no product manifest will resolve, so \
                  every cross-product grant not already cached is refused"
 			);
 		}
-		let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
-		let sso_responder = SsoResponderService::new(services.clone(), signing_host.clone());
+		let signing_host = SigningHostRole::new(services.clone());
 		Self {
 			image_loader: crate::image_loader::ImageLoader::new(
 				services.clone(),
 				Arc::new(crate::time::RealTimer),
 			),
 			services,
+			sso_responder: signing_host.sso_responder(),
 			signing_host,
-			sso_responder,
 		}
 	}
 
@@ -874,6 +868,18 @@ impl SigningHostRuntime {
 		self.services.funding().get(intent)
 	}
 
+	/// Show the screen funding session `intent`'s provider asked for. Answers
+	/// whether one was waiting.
+	pub fn open_provider_frame(&self, intent: &str) -> bool {
+		self.services.funding().open_frame(intent)
+	}
+
+	/// Whether funding session `intent`'s provider waits for its screen to be
+	/// opened.
+	pub fn funding_frame_waiting(&self, intent: &str) -> bool {
+		self.services.funding().frame_waiting(intent)
+	}
+
 	/// Funding session `intent`'s progress now, while the core holds it in
 	/// full.
 	pub fn funding_progress(
@@ -908,19 +914,20 @@ impl SigningHostRuntime {
 		self.services.funding().entries(crate::current_unix_millis())
 	}
 
-	/// Offer the funding providers the remote configuration names, then the
-	/// `bundled` ones it does not.
+	/// Offer the funding providers the remote configuration names, each
+	/// without a TLD (`fundtest-provider`, not `fundtest-provider.paseo`):
+	/// the core reads it on the network it is connected to.
 	///
-	/// Names that are not product ids are skipped and logged. A call listing
+	/// Names that are not product ids, or that name a TLD, are skipped and
+	/// logged. A call listing
 	/// what the last one listed changes nothing, so the host calls it on
 	/// every configuration refresh.
 	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.set_funding_provider_config"))]
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
 	) -> Result<(), v01::GenericError> {
-		Ok(self.services.set_funding_provider_config(published_names, bundled)?)
+		Ok(self.services.set_funding_provider_config(published_names)?)
 	}
 
 	/// Record that the host told the user how ended session `intent` went.
@@ -1536,19 +1543,14 @@ impl SigningHostRuntime {
 		self.sso_responder.disconnect_paired_host(peer).await.map_err(Into::into)
 	}
 
-	/// Answer one SSO request using this signing host.
-	#[instrument(skip_all, fields(runtime.method = "signing_host_runtime.answer_sso_request"))]
-	pub async fn answer_sso_request(&self, message: RemoteMessage) -> SsoRequestOutcome {
-		let service = SigningHostSsoService::new(self.signing_host.clone());
-		match service.answer(message).await {
-			Dispatch::Response(answer) => {
-				SsoRequestOutcome::Response { message: answer.message.encode() }
-			},
-			Dispatch::Disconnected => SsoRequestOutcome::Disconnected,
-			Dispatch::NotARequest(_) | Dispatch::Withdraw(_) | Dispatch::Withdrawn => {
-				SsoRequestOutcome::Ignored
-			},
-		}
+	/// Bind an external SSO transport to the wallet matching both of its keys.
+	pub fn open_sso_service(
+		&self,
+		own_statement_account_id: [u8; 32],
+		own_encryption_public_key: [u8; 32],
+	) -> Result<SsoAccountHolderService, AuthorityError> {
+		self.sso_responder
+			.open_service(own_statement_account_id, own_encryption_public_key)
 	}
 }
 
@@ -2021,6 +2023,10 @@ pub struct ProductRuntimeControl {
 	disposed: Arc<AtomicBool>,
 }
 
+/// A context v0.1 can express goes out as V1 so a v0.1 product decodes it, and
+/// only a footer context, which a product docks through a v0.2 call, goes out as V2.
+const RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES: u8 = 1;
+
 impl ProductRuntimeControl {
 	fn connection(&self) -> Result<&ProductConnection, ProductRuntimeError> {
 		if self.disposed.load(Ordering::Acquire) {
@@ -2044,11 +2050,9 @@ impl ProductRuntimeControl {
 	/// subscribes.
 	pub fn publish_renderer_action(
 		&self,
-		item: v01::HostRendererActionSubscribeItem,
+		item: truapi::latest::HostRendererActionSubscribeItem,
 	) -> Result<(), ProductRuntimeError> {
-		self.connection()?.publish_renderer_action(
-			truapi::versioned::renderer::HostRendererActionSubscribeItem::V1(item),
-		)
+		self.connection()?.publish_renderer_action(item.into())
 	}
 
 	/// Ask this connection's product to draw one body, streaming replacement
@@ -2060,14 +2064,17 @@ impl ProductRuntimeControl {
 	/// [`WorkerLedger::install_worker_controller`].
 	pub fn render(
 		&self,
-		request: v01::ProductRendererRenderRequest,
+		request: truapi::latest::ProductRendererRenderRequest,
 	) -> Result<
 		truapi::Subscription<v01::RendererNode, truapi::CallError<v01::GenericError>>,
 		ProductRuntimeError,
 	> {
 		self.connection()?.renderer_access()?;
 		let reference = self.connection.hold_worker();
-		let request = truapi::versioned::renderer::ProductRendererRenderRequest::V1(request);
+		let request = truapi::versioned::renderer::ProductRendererRenderRequest::from_latest(
+			request,
+			RENDER_REQUEST_VERSION_EVERY_PRODUCT_DECODES,
+		);
 		let transport: Arc<dyn Transport> = self.transport.clone();
 		let stream = crate::generated::dispatcher::renderer_render(
 			&self.host_subscriptions,
@@ -2082,9 +2089,10 @@ impl ProductRuntimeControl {
 			(stream, Some(reference)),
 			|(mut stream, reference)| async move {
 				match stream.next().await? {
-					Ok(truapi::versioned::renderer::ProductRendererRenderItem::V1(node)) => {
-						Some((Ok(node), (stream, reference)))
-					},
+					Ok(
+						truapi::versioned::renderer::ProductRendererRenderItem::V1(node) |
+						truapi::versioned::renderer::ProductRendererRenderItem::V2(node),
+					) => Some((Ok(node), (stream, reference))),
 					Err(interrupt) => Some((
 						Err(crate::interrupt::interrupt_into_latest(interrupt)),
 						(stream, None),

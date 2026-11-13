@@ -7,6 +7,9 @@ import TrUAPIHost
 protocol FundingCoreEventHandling: AnyObject, Sendable {
     func presentFunding(intent: String, direction: FundingDirection, amount: U128?) async -> FundingPresentOutcome
 
+    /// Provider `providerId` asks to show a screen for session `intent`.
+    func providerFrameRequested(intent: String, providerId: ProductId)
+
     func presentProviderFrame(
         providerId: ProductId,
         intent: String,
@@ -39,6 +42,10 @@ final class AppFundingHostBridge: FundingHostBridge, Sendable {
         amount: U128?
     ) async throws -> FundingPresentOutcome {
         await handler.presentFunding(intent: intent, direction: direction, amount: amount)
+    }
+
+    func providerFrameRequested(providerId: ProductId, intent: String) {
+        handler.providerFrameRequested(intent: intent, providerId: providerId)
     }
 
     func presentProviderFrame(

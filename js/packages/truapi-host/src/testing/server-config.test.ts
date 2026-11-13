@@ -2,6 +2,7 @@ import { asProductId } from "@parity/truapi";
 import { describe, expect, it } from "bun:test";
 import { deepLinkUrl, hostPageUrl, productUrlFor } from "./host-page-url.js";
 import { createTestHostServer } from "./server.js";
+import { mockTestStack } from "../web/create-mock-host.js";
 
 describe("createTestHostServer host configuration", () => {
   it("returns a URL carrying the configuration it was given", async () => {
@@ -44,13 +45,14 @@ describe("createTestHostServer host configuration", () => {
     const url = new URL(server.url);
     expect(JSON.parse(url.searchParams.get("mock")!)).toMatchObject({
       chainProxies: [{ rpcUrl: "wss://hub.invalid" }],
-      supportedChains: {
-        network: "paseo",
-        chains: [{ identifier: "AssetHub", genesisHash }],
-      },
+      servedChains: [genesisHash],
     });
     expect(JSON.parse(url.searchParams.get("runtimeConfig")!)).toEqual({
-      assetHub: { genesisHash },
+      testStack: {
+        ...mockTestStack(),
+        network: "paseo",
+        assetHub: { genesisHash },
+      },
     });
     await server.close();
   });
@@ -72,7 +74,7 @@ describe("createTestHostServer host configuration", () => {
       JSON.parse(new URL(server.url).searchParams.get("mock")!),
     ).toMatchObject({
       chainProxies: [],
-      supportedChains: { network: "paseo" },
+      servedChains: [`0x${"aa".repeat(32)}`],
     });
     await server.close();
   });

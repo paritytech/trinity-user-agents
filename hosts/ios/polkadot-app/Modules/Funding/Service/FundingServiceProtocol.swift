@@ -69,6 +69,10 @@ protocol FundingServiceProtocol: AnyObject, Sendable {
     /// is looking at its session or tapped the notice about it.
     func openProviderFrame(_ request: FundingFrameRequest)
 
+    /// The screens providers asked for that the app has not opened, so their
+    /// notices can be shown again after the screens were drawn anew.
+    func waitingFrames() -> [FundingFrameRequest]
+
     /// Answers the provider's screen `frame`, once it is gone.
     func answer(frame: FundingFrame.ID, with outcome: FundingFrameOutcome)
 }
@@ -81,11 +85,12 @@ enum FundingEvent: Sendable {
     /// answers with ``FundingServiceProtocol/openProviderFrame(_:)`` at once
     /// when that session is on screen, or after the user tapped a notice.
     case frameRequested(FundingFrameRequest)
-    /// The core presents a provider's screen now; answered with
+    /// Show the provider's screen the app opened; answered with
     /// ``FundingServiceProtocol/answer(frame:with:)``.
-    case frameOpened(FundingFrame)
-    /// The provider's screen for a session is done: take it down and show the
-    /// session in its place.
+    case presentFrame(FundingFrame)
+    /// The provider's screen for a session is done, or the core dropped the
+    /// one it asked for: take it down, or its notice, and show the session in
+    /// its place.
     case frameClosed(entryId: String)
     /// A provider's worker keeps crashing while the core restarts it.
     case providerNotWorking(ProductId)

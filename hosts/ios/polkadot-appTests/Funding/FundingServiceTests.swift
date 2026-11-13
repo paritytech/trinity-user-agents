@@ -219,7 +219,7 @@ struct FundingServiceTests {
             )
         }
         let opened = try await firstEvent(of: service)
-        guard case let .frameOpened(frame) = opened else {
+        guard case let .presentFrame(frame) = opened else {
             Issue.record("expected the frame, got \(opened)")
             return
         }
@@ -241,7 +241,7 @@ struct FundingServiceTests {
                 target: .app(route: "/kyc")
             )
         }
-        guard case let .frameOpened(frame) = try await firstEvent(of: service) else {
+        guard case let .presentFrame(frame) = try await firstEvent(of: service) else {
             Issue.record("expected the frame")
             return
         }
@@ -289,6 +289,39 @@ struct FundingServiceTests {
 
         #expect(entries.map(\.id) == ["ended", intent])
         #expect(entries.map(\.phase) == [.ended, .running])
+    }
+}
+
+/// The screens a provider asks for wait in the core until the app opens them.
+extension FundingServiceTests {
+    @Test
+    func openingAProvidersScreenAsksTheCore() async throws {
+        let runtime = MockFundingRuntime()
+        let service = makeService(runtime)
+        runtime.holdFrame(intent)
+
+        service.openProviderFrame(FundingFrameRequest(entryId: intent, providerId: provider("ramp")))
+        try await waitUntil { runtime.openedFrames == [intent] }
+
+        #expect(!runtime.fundingFrameWaiting(intent: intent))
+    }
+
+    @Test
+    func aScreenTheCoreDroppedTakesItsNoticeDown() async throws {
+        let runtime = MockFundingRuntime()
+        let service = makeService(runtime)
+        runtime.holdFrame(intent)
+        service.providerFrameRequested(intent: intent, providerId: provider("ramp"))
+        _ = try await firstEvent(of: service)
+
+        runtime.holdFrame(intent, waiting: false)
+        service.fundingChanged(intent: intent, kind: .session)
+
+        guard case let .frameClosed(entryId) = try await firstEvent(of: service) else {
+            Issue.record("expected the notice to go")
+            return
+        }
+        #expect(entryId == intent)
     }
 }
 

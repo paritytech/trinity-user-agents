@@ -148,9 +148,6 @@ markers! {
 	/// The host was asked whether it supports a feature. Detail names it.
 	NATIVE_FEATURE_SUPPORTED = "truapi.native.callback.feature_supported" => Local;
 
-	/// The host was asked which chains it supports.
-	NATIVE_SUPPORTED_CHAINS = "truapi.native.callback.supported_chains" => Local;
-
 	/// The host was asked for a chain's transaction extension versions.
 	NATIVE_TRANSACTION_EXTENSION_VERSIONS = "truapi.native.callback.transaction_extension_versions" => Local;
 

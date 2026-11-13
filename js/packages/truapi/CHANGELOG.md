@@ -1,5 +1,113 @@
 # @parity/truapi
 
+## 0.31.0
+
+### Major Changes
+
+- a0db061: A product can dock one of its own cards in the footer of a room it created by setting the footer to `Card`
+  with a `ChatCustomMessage`, and replaces or clears it by setting another footer. The host draws the card through the
+  product's renderer with a new `ChatRoomFooter` render context, and a press inside it reaches the product's
+  `rendererActionSubscribe` with that context.
+
+  A TypeScript caller of `setRoomFooter` passes the footer as a tagged value, for example `{ tag: "TextInput" }`. The
+  plain strings `"TextInput"` and `"Empty"` stay accepted and go out as those tagged values, so a published worker keeps
+  working. Decoded footers are always tagged.
+
+  The exported `RenderContext` and `ChatRoomFooter` types are the v0.2 ones, with the `ChatRoomFooter` render context
+  and the `Card` footer, and the v0.1 ones are exported as `V01RenderContext` and `V01ChatRoomFooter`.
+
+  A host serving chat reads `footer` in `setChatRoomFooter` as a tagged value, and native hosts handle the `Card` case
+  of `ChatRoomFooter`.
+
+- 939ef4b: The core holds the funding rules and state both native apps share, as facts each host presents its own way.
+
+  Breaking for native hosts:
+  - `NativeFundingCallbacks` loses `funding_session_changed`, `funding_in_progress_changed`, `funding_options_changed`,
+    `funding_quotes_changed` and `provider_has_app`, and gains `funding_changed(intent, kind)`, after which the host
+    reads `funding_session`, `funding_progress`, `funding_options`, `funding_quotes`, `funding_entries`,
+    `funding_summary` and `funding_session_open` back.
+  - `get_funding_quote(intent, amount)` replaces `get_funding_quote(intent, ask)`: the core builds the ask from the last
+    `select_funding_options` and returns `None` while there is nothing to price.
+  - `NativePaymentCallbacks::payment_status`, `NativeTopUpCallbacks::top_up_status` and
+    `NativeBalanceCallbacks::balance` become `follow_payment`, `follow_top_up` and `follow_balance`; `notify_balance`
+    takes no purse.
+  - `FundingProviderEntry` gains `root_manifest`, and `has_app` becomes `app: FundingProviderApp`.
+  - Native hosts list providers with `set_funding_provider_config` only; `set_funding_providers` stays on the Rust
+    runtime.
+
+  The rest:
+  - `FundingOptions` carries the routed `rails`, the resolved `asset`, the crypto `tokens` and the `detected_country`,
+    and each `FundingCandidate` its `brand`. `FundingQuoteList` carries the `amount` it prices, the shared `refusal`,
+    the amount `issue` and whether it is `complete`; `funding_quotes` answers only the current request's list.
+  - `FundingProgress` carries `cancel` and `awaits_user_transfer`; `FundingSessionSummary.ended` holds how a session
+    ended, its steps and where a pending payout waits. `funding_amount_issue(intent, amount, spendable)` reads the
+    session's limits and quotes itself; `funding_status_in_flight` and `funding_network_name` share the rules. A cancel
+    that moved no money is left out of `funding_history`.
+  - `start_funding_when_quoted` starts on the best quote once every provider answered; `funding_available` says whether
+    any provider is offered.
+  - The core follows payment, top-up and balance streams: pending after 250 ms, the last 512 final statuses kept, an
+    engine that stops early ending the stream with the abandoned status.
+  - An App route is checked against the provider's `app` subname on dotNS. A Worker manifest needs an `entrypoint`, an
+    `appVersion` and a surface; a brand needs a name, a description and an icon.
+  - `product_source`, `bundled_products`, `bundled_funding_providers` and `archive_file` decide where a product is
+    served from and which file answers a request; the `funding_page_*` functions hold the provider page rules, and
+    `funding_resume_pending` says at launch whether funding should resume.
+
+- be0f333: The identity account is the personhood product's account 0, `//product//peopl.<tld>/index_bytes(0)`
+  (RFC-0028), and owns the person's lite and membership usernames. The `uid.<tld>` reserved product is retired. The same
+  seed therefore derives a different identity account than before: local activation, pairing attestation, the SSO
+  statement key, username lookup and the CLI's `attest`, `register-name` and `identity-check` all use the new account,
+  and a name reserved under `uid.<tld>` does not resolve for it. Hosts that derive the main account natively (iOS,
+  Android) move with it.
+
+### Minor Changes
+
+- d504e3b: The signing-host CLI resolves public avatar metadata with `/profile` and `/profile <username>`.
+  `/profile upload <image>` publishes the active identity's avatar through its Humanity product's TrUAPI allowance and
+  preimage calls, with the normal permission and confirmation flow.
+- 7679e5f: Adds `ImageSource::Inline`, an image carried in the renderer tree itself, so a product can draw a picture it
+  makes at run time. It is PNG, JPEG or WebP and at most 64 KiB, and in JSON its bytes are a `0x` hex string. A host
+  built before this release cannot draw a tree that uses it.
+- 5ba5669: Adds the back of a Pocket card. `RenderContext` gains `PocketCardBack`, the context a product draws a card's
+  back on and receives presses on it under. A product built before this release cannot decode it, so a product declares
+  `back` only once it is on this release. `expandedCard.setBackShown` lets the widget under an opened card turn it to
+  its back or its front, and a host that cannot turn cards answers `Unsupported`, as every host does in this release.
+
+### Patch Changes
+
+- 9646fa5: truapi-host ships refreshed stack descriptors for previewnet (sequence 1794171056). truapi-provider and
+  truapi-host ship refreshed light-client chain specs.
+- bc8f528: `truapi-host register-name` reads the label's reservation queue on `DotnsPopController` before signing. It
+  stops when another account holds the first active reservation, naming that account. On dotNS 1.1.0 and later, when
+  more expired or emptied reservations stand in front of the claim than one gateway call clears, it first clears them
+  with `DotnsPopController.expireReservation(label)`, signed by the account. It claims PGAS into the account first when
+  the account holds less than one claim's worth, or when the dry-run fails because the account cannot fund the storage
+  deposit. Without that, the gateway call reverts and the command ends in an `AccountAlias` timeout.
+- 1038b44: dotNS reads for the same thing that overlap share one read and one Asset Hub follow: root and Worker manifest
+  lookups of one product, and username lookups of one session, such as a host activating the same session twice in a
+  row. A burst of them no longer fills a connection's follow budget. Nothing is kept once a read settles, so a failed
+  read is retried by the next caller.
+- 95ee87f: The follow budget marker names every follow holding a slot, each with how long it has been open, when it last
+  saw an event, how many calls it has taken and when it last took one, and saying `dropped` where its receiver has gone.
+  Nothing is cut when the line fits the room the host sink forwards. When it does not, the longest entries share what is
+  left and lose the end of their names, marked, while every follow keeps its activity, so the line reaches a host whole
+  and still says which follows are stale or gone.
+- 0d63024: truapi-provider bundles the `paseo` network: the Paseo relay with Asset Hub Paseo, People Paseo and Bulletin
+  Paseo. A host starts any of them on the light client from its genesis hash alone, or registers all four with
+  `addNetwork("paseo")`. The statement store runs on People Paseo. The Paseo relay is shared with `paseo-next-v2`, and a
+  lookup by the relay's genesis hash still resolves to `paseo-next-v2`; each parachain resolves to its own network.
+  truapi-host compiles the catalog in, so it ships the new specs too.
+- 52a7335: A paired signing host keeps serving when its connection to the People chain drops. It retries an
+  acknowledgement, a pairing answer or a disconnect notice for about 15 seconds. If an acknowledgement still fails, it
+  ends the session and answers the request once it reconnects. It retries a response until the People chain takes it,
+  because the request has already run. A response the People chain refuses is published again when the request is
+  delivered again, without running the request a second time. A light client that finds no peer to take a statement
+  counts as an unreachable People chain.
+
+  `truapi-host signing-host exec '/pair <link>'` restarts the responder after a failure and exits only when the paired
+  host disconnects. It waits 1 second before the first restart, doubling up to 30 seconds. A session it cannot serve at
+  all, such as one without an active local session, ends `/pair` with an error instead of restarting.
+
 ## 0.30.0
 
 ### Major Changes

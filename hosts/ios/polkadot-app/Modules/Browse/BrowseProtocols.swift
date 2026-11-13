@@ -11,6 +11,8 @@ protocol BrowseViewProtocol: ControllerBackedProtocol {
 @MainActor
 protocol BrowsePresenterProtocol: AnyObject {
     func setup()
+    func didAppear()
+    func didDisappear()
 }
 
 protocol BrowseInteractorInputProtocol: AnyObject {
