@@ -43,7 +43,6 @@ pub enum HostChatCreateRoomError {
 
 /// What a room shows below its messages.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChatRoomFooter {
 	/// The text field the user types messages into.
 	TextInput,
@@ -222,7 +221,7 @@ pub struct ChatCustomMessage {
 }
 
 /// Content of a chat message -- one of several types.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, strum::IntoStaticStr)]
 #[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
 pub enum ChatMessageContent {
 	/// Plain text message.

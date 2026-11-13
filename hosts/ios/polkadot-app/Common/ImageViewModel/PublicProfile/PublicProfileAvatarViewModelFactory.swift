@@ -2,8 +2,7 @@ import PolkadotUI
 import TrUAPIHost
 
 protocol PublicProfileAvatarViewModelMaking {
-    func createViewModel(for username: String, options: PublicProfileResolutionOptions)
-        -> any IdentifiableImageViewModelProtocol
+    func createViewModel(for username: String, options: PublicProfileResolutionOptions) -> AnyImageViewModel
 }
 
 final class PublicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking {
@@ -18,12 +17,14 @@ final class PublicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMak
     func createViewModel(
         for username: String,
         options: PublicProfileResolutionOptions
-    ) -> any IdentifiableImageViewModelProtocol {
-        PublicProfileAvatarViewModel(
-            username: username,
-            options: options,
-            runtimeProvider: runtimeProvider,
-            imageLoader: imageLoader
+    ) -> AnyImageViewModel {
+        AnyImageViewModel(
+            PublicProfileAvatarViewModel(
+                username: username,
+                options: options,
+                runtimeProvider: runtimeProvider,
+                imageLoader: imageLoader
+            )
         )
     }
 }

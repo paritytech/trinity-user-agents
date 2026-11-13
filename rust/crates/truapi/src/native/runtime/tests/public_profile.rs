@@ -27,9 +27,10 @@ impl NativePublicProfileObserver for Observer {
 }
 
 fn profile_runtime(platform: Arc<StubPlatform>, db: Db) -> Arc<NativeTrUApiHostRuntime> {
-	let mut config = native_host_runtime_config();
-	config.asset_hub_chain_genesis_hash = vec![3; 32];
-	let config = NativeResolvedHostRuntimeConfig::try_from(config).unwrap();
+	let mut config =
+		NativeResolvedHostRuntimeConfig::try_from(native_host_runtime_config()).unwrap();
+	config.signing.stack =
+		crate::test_support::test_stack("paseo", [1; 32], [2; 32], Some([3; 32]));
 	let core = SigningHostRuntime::new(platform, config.signing, Spawner::for_test());
 	assert!(core.set_core_db(db));
 	let mut host = native_host_runtime_no_session();

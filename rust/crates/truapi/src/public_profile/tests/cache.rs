@@ -92,9 +92,11 @@ async fn refreshing_an_unchanged_avatar_renews_only_the_profile_cache() {
 		db.write(move |tx| dao::store_record(tx, "alice.01", &stored, now + expires_in))
 			.await
 			.unwrap();
-		assert!(services.install_core_db(db.clone()));
+		assert!(services.install_core_db(db.clone()).is_some());
 
-		let profiles: Vec<_> = PublicProfiles::new(services)
+		let profiles: Vec<_> = services
+			.public_profiles
+			.clone()
 			.observe(
 				"alice.01".to_owned(),
 				PublicProfileResolutionOptions { force_fresh: force, skip_stale: false },
@@ -105,7 +107,8 @@ async fn refreshing_an_unchanged_avatar_renews_only_the_profile_cache() {
 		let (cached, expires_at) = db
 			.write(move |tx| {
 				let cached = dao::stored_record(tx, "alice.01")?
-					.map(|cached| (cached.is_fresh(now), cached.record));
+					.filter(|cached| cached.is_fresh(now))
+					.map(|cached| cached.record);
 				let expires_at: u64 = tx.query_row(
 					"SELECT expires_at FROM public_profiles WHERE username = 'alice.01'",
 					[],
@@ -118,7 +121,7 @@ async fn refreshing_an_unchanged_avatar_renews_only_the_profile_cache() {
 
 		assert_eq!(
 			(profiles, cached, platform.chain_connects.lock().unwrap().clone()),
-			(vec![PublicProfile { avatar: record.avatar() }], Some((true, record)), vec![[3; 32]])
+			(vec![PublicProfile { avatar: record.avatar() }], Some(record), vec![[3; 32]])
 		);
 		assert!(
 			(now + RECORD_TTL_SECS..=current_unix_secs() + RECORD_TTL_SECS).contains(&expires_at)
@@ -126,11 +129,12 @@ async fn refreshing_an_unchanged_avatar_renews_only_the_profile_cache() {
 	}
 }
 
-async fn cached_profiles(
+/// A native profile service with configured storage and a deterministic chain response.
+pub async fn cached_profiles(
 	stored: Option<ProfileRecord>,
 	resolved: &ProfileRecord,
 	fresh: bool,
-) -> (tempfile::TempDir, PublicProfiles, crate::store::Db, Arc<StubPlatform>) {
+) -> (tempfile::TempDir, Arc<PublicProfilesService>, crate::store::Db, Arc<StubPlatform>) {
 	let platform = Arc::new(StubPlatform {
 		rpc_responder: Some(profile_responder(resolved)),
 		..Default::default()
@@ -144,17 +148,47 @@ async fn cached_profiles(
 			.await
 			.unwrap();
 	}
-	assert!(services.install_core_db(db.clone()));
-	(directory, PublicProfiles::new(services), db, platform)
+	assert!(services.install_core_db(db.clone()).is_some());
+	(directory, services.public_profiles.clone(), db, platform)
 }
 
-fn avatar_record(cid: u8, format: crate::ImageFormat) -> ProfileRecord {
+/// Distinct avatar records for cache and stream assertions.
+pub fn avatar_record(cid: u8, format: crate::ImageFormat) -> ProfileRecord {
 	ProfileRecord {
 		entries: vec![WrapperKeepOpaque::from_value(ProfileEntry::Avatar(ProfileAvatar {
 			cid: [cid; 32].into(),
 			format,
 		}))],
 	}
+}
+
+#[tokio::test]
+async fn cached_profiles_do_not_wait_for_the_database_writer() {
+	let record = avatar_record(1, crate::ImageFormat::Png);
+	let expected = PublicProfile { avatar: record.avatar() };
+	let (_directory, profiles, db, _platform) =
+		cached_profiles(Some(record.clone()), &record, true).await;
+	let (entered, started) = futures::channel::oneshot::channel();
+	let (release, blocked) = std::sync::mpsc::channel();
+	let writer = tokio::spawn(async move {
+		db.write(move |_| {
+			entered.send(()).unwrap();
+			blocked.recv().unwrap();
+			Ok(())
+		})
+		.await
+		.unwrap();
+	});
+	started.await.unwrap();
+	let mut profiles = profiles.observe(
+		"alice.01".to_owned(),
+		PublicProfileResolutionOptions { force_fresh: false, skip_stale: false },
+	);
+	let cached = tokio::time::timeout(core::time::Duration::from_secs(1), profiles.next()).await;
+	release.send(()).unwrap();
+	writer.await.unwrap();
+
+	assert_eq!(cached.expect("cached reads use the reader pool").unwrap().unwrap(), expected);
 }
 
 #[tokio::test]
@@ -224,6 +258,36 @@ async fn a_fresh_profile_stream_completes_without_network_access() {
 				(vec![expected], vec![])
 			);
 		}
+	}
+}
+
+#[tokio::test]
+async fn cached_profiles_remain_available_without_asset_hub() {
+	use futures::StreamExt;
+
+	for fresh in [false, true] {
+		let record = avatar_record(1, crate::ImageFormat::Png);
+		let expected = PublicProfile { avatar: record.avatar() };
+		let (_directory, mut profiles, _db, platform) =
+			cached_profiles(Some(record.clone()), &record, fresh).await;
+		Arc::get_mut(&mut profiles).unwrap().genesis = None;
+		let mut stream = profiles.observe(
+			"alice.01".to_owned(),
+			PublicProfileResolutionOptions { force_fresh: false, skip_stale: false },
+		);
+
+		let initial = stream.next().await.unwrap().unwrap();
+		let terminal = stream.next().await;
+		assert_eq!(
+			(
+				initial,
+				matches!(terminal, Some(Err(PublicProfileError::AssetHubNotConfigured))),
+				terminal.is_none(),
+				stream.next().await.is_none(),
+				platform.chain_connects.lock().unwrap().clone(),
+			),
+			(expected, !fresh, fresh, true, vec![]),
+		);
 	}
 }
 
@@ -402,10 +466,10 @@ async fn a_failed_refresh_preserves_cached_metadata_and_respects_stale_delivery(
 		let platform =
 			Arc::new(StubPlatform { chain_connect_error: Some("offline"), ..Default::default() });
 		let services = services_with_platform(platform.clone());
-		assert!(services.install_core_db(db.clone()));
+		assert!(services.install_core_db(db.clone()).is_some());
 
 		drop(profiles);
-		let mut stream = PublicProfiles::new(services).observe(
+		let mut stream = services.public_profiles.clone().observe(
 			"alice.01".to_owned(),
 			PublicProfileResolutionOptions { force_fresh, skip_stale },
 		);
@@ -469,7 +533,7 @@ async fn dropping_after_the_cached_profile_does_not_start_a_lookup() {
 async fn invalid_profile_streams_fail_before_accessing_storage() {
 	use futures::StreamExt;
 
-	let mut stream = PublicProfiles::new(profile_services()).observe(
+	let mut stream = profile_services().public_profiles.clone().observe(
 		"alice.1".to_owned(),
 		PublicProfileResolutionOptions { force_fresh: false, skip_stale: false },
 	);

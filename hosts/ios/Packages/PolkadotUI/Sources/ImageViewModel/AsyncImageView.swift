@@ -2,12 +2,12 @@ import SwiftUI
 import UIKit
 
 public struct AsyncImageView {
-    let viewModel: any ImageViewModelProtocol
+    let viewModel: AnyImageViewModel
     let settings: ImageViewModelSettings
     let animated: Bool
 
     public init(
-        viewModel: any ImageViewModelProtocol,
+        viewModel: AnyImageViewModel,
         settings: ImageViewModelSettings = .originalImage,
         animated: Bool = true
     ) {
@@ -38,21 +38,17 @@ extension AsyncImageView: UIViewRepresentable {
     /// Owns the image request for the lifetime of its UIKit view.
     @MainActor
     public final class Coordinator {
-        private var viewModel: (any ImageViewModelProtocol)?
+        private var viewModel: AnyImageViewModel?
         private var settings: ImageViewModelSettings?
 
         func load(
-            _ next: any ImageViewModelProtocol,
+            _ next: AnyImageViewModel,
             on imageView: UIImageView,
             settings: ImageViewModelSettings,
             animated: Bool
         ) {
-            if let current = viewModel as? any IdentifiableImageViewModelProtocol,
-               let next = next as? any IdentifiableImageViewModelProtocol,
-               current.identifier == next.identifier, self.settings == settings { return }
-            if let viewModel, viewModel as AnyObject !== next as AnyObject || self.settings != settings {
-                viewModel.cancel(on: imageView)
-            }
+            if viewModel == next, self.settings == settings { return }
+            viewModel?.cancel(on: imageView)
             viewModel = next
             self.settings = settings
             next.loadImage(on: imageView, settings: settings, animated: animated, completion: nil)

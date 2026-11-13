@@ -151,10 +151,6 @@ public protocol HostBridge: AnyObject, Sendable {
     /// return promptly.
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool
 
-    /// Enumerate the chains this host serves: its environment plus one entry
-    /// per chain role. Invoked on the dispatcher thread; must return promptly.
-    func supportedChains() throws -> HostChainSet
-
     /// The chains this host builds as V5 general transactions, each with its
     /// transaction extension pipeline; every other chain is built as V4. The
     /// core builds its own extrinsics the same way. Defaults to none.
@@ -434,7 +430,6 @@ public extension HostBridge {
             languageTag: Locale.current.language.languageCode?.identifier ?? "en"
         )
     }
-    func supportedChains() throws -> HostChainSet { HostChainSet(network: "", chains: []) }
     func transactionExtensionVersions() async throws -> ExtensionVersionMap {
         ExtensionVersionMap(chains: [])
     }
@@ -856,12 +851,6 @@ private final class HostCallbackAdapter: HostCallbacks, @unchecked Sendable {
     func featureSupported(request: HostFeatureSupportedRequest) async throws -> Bool {
         try await withHostRejection {
             try await bridge.featureSupported(request: request)
-        }
-    }
-
-    func supportedChains() throws -> HostChainSet {
-        try withHostRejection {
-            try bridge.supportedChains()
         }
     }
 

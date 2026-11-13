@@ -11,7 +11,7 @@ public final class DSSearchAvatarView: UIView {
     }
 
     /// An optional image loaded over the contact's placeholder.
-    public var icon: (any ImageViewModelProtocol)? {
+    public var icon: AnyImageViewModel? {
         get { model.icon }
         set { model.icon = newValue }
     }
@@ -59,7 +59,7 @@ private extension DSSearchAvatarView {
     @Observable
     final class Model {
         var viewModel: AvatarViewModel
-        var icon: (any ImageViewModelProtocol)?
+        var icon: AnyImageViewModel?
 
         init(viewModel: AvatarViewModel) {
             self.viewModel = viewModel

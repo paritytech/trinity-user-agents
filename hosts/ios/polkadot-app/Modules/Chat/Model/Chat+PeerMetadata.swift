@@ -12,6 +12,7 @@ extension Chat {
         case incomingRequest
         case outgoingRequest
         case blockedUser
+        case productCard(messageType: String, payload: Data)
         case empty
 
         var isInputField: Bool {

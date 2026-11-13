@@ -1,11 +1,15 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use cache::{avatar_record, cached_profiles};
+
+#[cfg(not(target_arch = "wasm32"))]
+use futures::StreamExt;
+
 use alloy_primitives::Address;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
-#[cfg(not(target_arch = "wasm32"))]
-use futures::StreamExt;
 use parity_scale_codec::Encode;
 
 use super::*;
@@ -19,7 +23,9 @@ use crate::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::{Spawner, platform::HostInfo, test_support::StubPlatform};
+use crate::{
+	Spawner, platform::HostInfo, runtime::services::RuntimeServices, test_support::StubPlatform,
+};
 
 struct ProfileContracts {
 	deployed: bool,
@@ -113,7 +119,12 @@ async fn a_default_reverse_resolver_does_not_hide_the_public_profile() {
 		ProfileRecord { entries: vec![subxt::utils::WrapperKeepOpaque::from_encoded(vec![7, 8])] };
 	let mut transport = ProfileContracts::new(Ok(STANDARD.encode(record.encode())));
 
-	assert_eq!(PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap(), record);
+	assert_eq!(
+		PublicProfilesService::read_record_from(&mut transport, "alice.01")
+			.await
+			.unwrap(),
+		record
+	);
 }
 
 #[tokio::test]
@@ -157,7 +168,9 @@ async fn an_absent_gateway_or_record_has_an_empty_profile() {
 			ProfileContracts { deployed, ..ProfileContracts::new(Ok(String::new())) };
 
 		assert_eq!(
-			PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap(),
+			PublicProfilesService::read_record_from(&mut transport, "alice.01")
+				.await
+				.unwrap(),
 			ProfileRecord::default()
 		);
 	}
@@ -215,7 +228,9 @@ async fn a_profile_failure_retains_the_contract_error_source() {
 	let mut transport = ProfileContracts::new(Err(EvmContractError::Reverted {
 		detail: "profile unavailable".into(),
 	}));
-	let error = PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap_err();
+	let error = PublicProfilesService::read_record_from(&mut transport, "alice.01")
+		.await
+		.unwrap_err();
 	let source = core::error::Error::source(&error).expect("dotNS error is retained");
 
 	assert!(matches!(
@@ -228,7 +243,7 @@ async fn a_profile_failure_retains_the_contract_error_source() {
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn a_profile_failure_retains_the_database_error_source() {
-	let mut profiles = PublicProfiles::new(profile_services()).observe(
+	let mut profiles = profile_services().public_profiles.clone().observe(
 		"alice.01".to_owned(),
 		PublicProfileResolutionOptions { force_fresh: false, skip_stale: false },
 	);
@@ -267,9 +282,7 @@ fn services_with_platform(platform: Arc<StubPlatform>) -> Arc<RuntimeServices> {
 			version: None,
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
-		[1; 32],
-		[2; 32],
-		[3; 32],
+		crate::test_support::test_stack("paseo", [1; 32], [2; 32], Some([3; 32])),
 		Spawner::for_test(),
 	)
 }

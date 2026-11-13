@@ -32,12 +32,12 @@ final class ChatViewModelFactory {
         let productRepository: AnyDataProviderRepository<Product>
         let productNameCache: ProductNameCaching
         let flowState: SPAFlowState
-        let publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking
+        let iconViewModelFactory: ChatIconViewModelFactory
     }
 
     private static let replyPreviewMaxLength = 50
 
-    private let publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking
+    private let iconViewModelFactory: ChatIconViewModelFactory
     private var headerIcon: (icon: Chat.PeerMetadata.Icon, viewModel: AnyImageViewModel?)?
 
     let initialMessageId = UUID().uuidString
@@ -70,7 +70,7 @@ final class ChatViewModelFactory {
         productRepository = dependencies.productRepository
         productNameCache = dependencies.productNameCache
         flowState = dependencies.flowState
-        publicProfileAvatarViewModelFactory = dependencies.publicProfileAvatarViewModelFactory
+        iconViewModelFactory = dependencies.iconViewModelFactory
         self.logger = logger
         customDecodersById = dependencies.customDecoders.reduce(into: [:]) {
             $0[$1.identifier.rawValue] = $1
@@ -188,11 +188,7 @@ private extension ChatViewModelFactory {
             return headerIcon.viewModel
         }
 
-        let viewModel = icon.imageViewModel(
-            using: flowState.iconViewModelFactory,
-            publicProfileFactory: publicProfileAvatarViewModelFactory,
-            options: .init(forceFresh: true, skipStale: false)
-        )
+        let viewModel = iconViewModelFactory.createViewModel(from: icon)
         headerIcon = (icon, viewModel)
         return viewModel
     }

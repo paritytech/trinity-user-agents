@@ -51,7 +51,7 @@ enum ChatViewFactory {
         let chainRegistry = ChainRegistryFacade.sharedRegistry
         guard
             let publicProfileAvatarViewModelFactory: PublicProfileAvatarViewModelMaking =
-                RootDependencyLocator.getDependency(),
+            RootDependencyLocator.getDependency(),
             let chain = chainRegistry.getChain(for: AppConfig.Assets.mainAsset.chainId),
             let asset = chain.chainAsset(for: AppConfig.Assets.mainAsset.assetId),
             let uploadAttachmentStore = AttachmentStore.uploads(),
@@ -98,7 +98,11 @@ enum ChatViewFactory {
                 productRepository: ProductRepositoryFactory().createRepository(),
                 productNameCache: ProductNameCache(),
                 flowState: flowState.flowState,
-                publicProfileAvatarViewModelFactory: publicProfileAvatarViewModelFactory
+                iconViewModelFactory: ChatIconViewModelFactory(
+                    productFactory: flowState.flowState.iconViewModelFactory,
+                    publicProfileFactory: publicProfileAvatarViewModelFactory,
+                    options: .init(forceFresh: true, skipStale: false)
+                )
             )
         )
 
