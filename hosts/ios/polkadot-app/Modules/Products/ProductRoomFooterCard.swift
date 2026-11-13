@@ -32,7 +32,7 @@ struct ProductRoomFooterCardConfiguration: @preconcurrency ChatInputViewConfigur
                 resolveImage: resolveImage
             )
             .padding(.horizontal, 16)
-            .padding(.top, 12)
+            .padding(.top, DSSpacings.extraMedium)
             .padding(.bottom, DSSpacings.small)
             .background(
                 LinearGradient(

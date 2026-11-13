@@ -69,18 +69,14 @@ public final class ChatInputHostView: UIView {
     }
 
     public var contentHeight: CGFloat {
-        guard let currentContentView else {
+        guard let currentContentView, bounds.width > 0 else {
             return 0
         }
-        let height = currentContentView.systemLayoutSizeFitting(
+        return currentContentView.systemLayoutSizeFitting(
             CGSize(width: bounds.width, height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         ).height
-        if currentConfiguration?.safeAreaFillColor != nil {
-            return height + safeAreaInsets.bottom
-        }
-        return height
     }
 
     public var contentView: UIView? {
