@@ -204,18 +204,18 @@ sealed interface FundingProviderPrice {
 data class FundingNetworkRow(
     val id: String,
     val name: String,
-    val monogram: String,
+    val icon: FundingCryptoIcon,
     val minimum: String?,
 )
 
 data class FundingTokenRow(
     val symbol: String,
-    val monogram: String,
+    val icon: FundingCryptoIcon,
 )
 
 data class FundingTokensUiState(
     val networkName: String?,
-    val networkMonogram: String?,
+    val networkIcon: FundingCryptoIcon?,
     val rows: ImmutableList<FundingTokenRow>,
 )
 
@@ -290,6 +290,7 @@ sealed interface FundingDepositContent {
         val exact: Boolean,
         val address: String,
         val networkName: String,
+        val networkIcon: FundingCryptoIcon,
     ) : FundingDepositContent
 
     data class Bank(

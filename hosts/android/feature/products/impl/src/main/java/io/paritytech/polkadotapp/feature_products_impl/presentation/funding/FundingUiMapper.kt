@@ -23,6 +23,7 @@ import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingQuoteUnavailable
 import uniffi.truapi.FundingRail
 import uniffi.truapi.ProductId
+import uniffi.truapi.fundingNetworkName
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.math.RoundingMode
@@ -274,21 +275,19 @@ private fun Map<ProductId, FundingProviderBrand>.brandOf(providerId: ProductId) 
 
 /** A network stays closed to amounts below the least the core says it takes. */
 fun FundingFlowState.toNetworkRows(): ImmutableList<FundingNetworkRow> = networks.map { id ->
-    val name = fundingNetworkName(id)
     FundingNetworkRow(
         id = id,
-        name = name,
-        monogram = monogramOf(name),
+        name = fundingNetworkName(id),
+        icon = fundingNetworkIcon(id),
         minimum = minimum(id)?.takeIf { it > amount }?.let(format::label),
     )
 }.toImmutableList()
 
 fun FundingFlowState.toTokensUiState(): FundingTokensUiState {
-    val selected = network?.let(::fundingNetworkName)
     return FundingTokensUiState(
-        networkName = selected,
-        networkMonogram = selected?.let(::monogramOf),
-        rows = tokens.map { FundingTokenRow(it.symbol, it.monogram) }.toImmutableList(),
+        networkName = network?.let(::fundingNetworkName),
+        networkIcon = network?.let(::fundingNetworkIcon),
+        rows = tokens.map { FundingTokenRow(it.symbol, fundingTokenIcon(it.symbol)) }.toImmutableList(),
     )
 }
 
@@ -304,6 +303,7 @@ fun FundingFlowState.toDepositUiState(
             exact = deposit.exact,
             address = deposit.address,
             networkName = fundingNetworkName(deposit.network),
+            networkIcon = fundingNetworkIcon(deposit.network),
         )
 
         is FundingDeposit.Bank -> FundingDepositContent.Bank(

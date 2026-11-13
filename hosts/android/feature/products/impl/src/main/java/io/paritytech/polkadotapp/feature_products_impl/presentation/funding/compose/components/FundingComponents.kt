@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.funding.compose.components
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,8 +13,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonStyle
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
@@ -28,6 +31,7 @@ import io.paritytech.polkadotapp.design.components.text.NovaText
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_products_api.presentation.funding.failedText
 import io.paritytech.polkadotapp.feature_products_api.presentation.funding.text
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingCryptoIcon
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingSummaryProblem
 import io.paritytech.polkadotapp.common.R as RCommon
 
@@ -138,30 +142,45 @@ fun FundingCard(
     }
 }
 
-/** A round monogram standing in for a network or token logo. */
+/** A crypto network's or token's round logo, or its first letter when it has none. */
 @Composable
-fun FundingMonogram(
-    text: String,
+fun FundingCryptoIconImage(
+    icon: FundingCryptoIcon,
     modifier: Modifier = Modifier,
+    size: Dp = CRYPTO_ICON_SIZE,
 ) {
-    PolkadotSurface(
-        modifier = modifier.size(MONOGRAM_SIZE),
-        shape = PolkadotTheme.shapes.full,
-        color = PolkadotTheme.colors.bg.surface.nested,
-        contentAlignment = Alignment.Center,
-    ) {
-        NovaText(
-            text = text,
-            style = PolkadotTheme.typography.title.small,
-            color = PolkadotTheme.colors.fg.primary,
+    when (icon) {
+        is FundingCryptoIcon.Vector -> Image(
+            modifier = modifier.size(size),
+            imageVector = icon.image,
+            contentDescription = null,
         )
+
+        is FundingCryptoIcon.Drawable -> Image(
+            modifier = modifier.size(size),
+            painter = painterResource(icon.id),
+            contentDescription = null,
+        )
+
+        is FundingCryptoIcon.Monogram -> PolkadotSurface(
+            modifier = modifier.size(size),
+            shape = PolkadotTheme.shapes.full,
+            color = PolkadotTheme.colors.bg.surface.nested,
+            contentAlignment = Alignment.Center,
+        ) {
+            NovaText(
+                text = icon.text,
+                style = PolkadotTheme.typography.title.small,
+                color = PolkadotTheme.colors.fg.primary,
+            )
+        }
     }
 }
 
 private val CIRCLE_BUTTON_SIZE = 40.dp
 private val CHEVRON_SIZE = 16.dp
 private val CARD_DIVIDER = 2.dp
-private val MONOGRAM_SIZE = 40.dp
+private val CRYPTO_ICON_SIZE = 40.dp
 
 /** What stands in the way, in the user's words. */
 @Composable

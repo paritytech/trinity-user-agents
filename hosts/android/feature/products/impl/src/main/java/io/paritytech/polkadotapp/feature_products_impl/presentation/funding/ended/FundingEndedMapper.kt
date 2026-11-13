@@ -8,7 +8,6 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.Fund
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimeline.milestone
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingTimelineUi
-import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.fundingNetworkName
 import kotlinx.collections.immutable.toImmutableList
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingEndedOutcome
@@ -17,6 +16,7 @@ import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingSessionSummary
 import uniffi.truapi.FundingStage
 import uniffi.truapi.U128
+import uniffi.truapi.fundingNetworkName
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
 
