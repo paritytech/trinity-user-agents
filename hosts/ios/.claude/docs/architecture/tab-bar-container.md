@@ -162,7 +162,7 @@ The chrome takes the width from `DSTabBarStyle.rowWidth(inAvailableWidth:)` of i
 
 **Keyboard.** The lift lives in `barModel.keyboardLift` and moves with the panel in one transaction.
 
-**Search field and list.** The scan panel's field (`DSSearchRowView`), and its scan button share the field material, `DSTabBarFieldMaterialView`. The field switches its icon position between the Scan state and the Search state (`setSearchFocused`). The results list is shared with the full-screen Search Contact screen. Colours are DesignSystem theme tokens that follow all five themes. `DSTabBarFieldMaterialView` and `DSSearchRowView` re-apply their resolved colours when `DSThemeTrait` changes. `DSTabBarStyle.Palette` keeps only the values with no plain token: the glass stroke, the selection fill, the grabber, the glass wash, the open fill and the dim wash. Search type uses DS typography tokens, so the bar has no type style of its own. `DSSearchAvatar` shows the contact's image, otherwise `DSLetterAvatar` at `.s40`. The shared `DSAvatar` stays untouched.
+**Search field and list.** The scan panel's field (`DSSearchRowView`), and its scan button share the field material, `DSTabBarFieldMaterialView`. The field switches its icon position between the Scan state and the Search state (`setSearchFocused`). The results list is shared with the full-screen Search Contact screen. Colours are DesignSystem theme tokens that follow all five themes. `DSTabBarFieldMaterialView` and `DSSearchRowView` re-apply their resolved colours when `DSThemeTrait` changes. `DSTabBarStyle.Palette` keeps only the values with no plain token: the glass stroke, the selection fill, the grabber, the glass wash, the open fill and the dim wash. Search type uses DS typography tokens, so the bar has no type style of its own. `DSAsyncAvatar` loads the contact's image over its placeholder at `.s40`.
 
 ## Closing and Capture
 
@@ -364,7 +364,7 @@ A Presented product covers the container, so it draws its own strip with the sam
 
 ## Mounting and Re-tap
 
-`TabBarContainer` mounts one child at a time, full bleed into the container's view. A tab switch cross-fades. The outgoing view is removed when the fade completes. Non-animated mounts skip the fade.
+`TabBarContainer` mounts one child at a time, full bleed into the container's view.
 
 A tap on the selected tab is a re-tap. `TabBarReselectionPolicy.action(for:)` checks these cases in order:
 
@@ -384,7 +384,7 @@ Opening a product with Browse:
 
 1. `SPABrowserCoordinator.findOrCreateTab(for:)` matches on `dotDomain`. An existing tab with another page is navigated in place.
 2. `SPAControllerPool` vends one `SPAViewController` per tab id.
-3. `container.mountSPA(_:for:)` sets the selection to `.spa(id)` and cross-fades the controller in.
+3. `container.mountSPA(_:for:)` sets the selection to `.spa(id)` and shows the controller at once.
 4. `applyChrome(.spa(controller))` sets `isTabRoot: false` and a derived state of `tucked`. The bar tucks and contributes no clearance.
 
 `presentProduct(page:)` is the one-shot path for funding products. In both builds it presents a page sheet. The product never enters the tab store, so closing it leaves no chip.

@@ -4,6 +4,7 @@
     import NovaCrypto
     import os
     import Products
+    import TrUAPIHost
     import UIKit
     import WebKit
 
@@ -189,7 +190,7 @@
         }
 
         func resolveHost(_ product: String) async throws -> ProductHost {
-            guard let label = ProductHost.name(fromDotDomain: product) else {
+            guard let id = try? ProductId(product), let label = productIdName(productId: id) else {
                 throw HostPlaygroundE2EError("unparseable product \(product)")
             }
 
@@ -233,7 +234,7 @@
         }
 
         func openProduct(_ host: ProductHost) async throws -> WKWebView {
-            let domain = host.toDotDomain()
+            let domain = host.toDotDomain().rawValue
             let deadline = ContinuousClock.now + Timing.productOpenTimeout
             var lastOpen: ContinuousClock.Instant?
 

@@ -12,7 +12,7 @@ use truapi::{CallError, Subscription, latest::ProductRendererRenderItem};
 use crate::{Spawner, interrupt::interrupt_reason};
 
 /// Observer implemented by a native host to receive renderer tree replacements.
-#[uniffi::export(callback_interface)]
+#[uniffi::export(foreign)]
 pub trait NativeRendererObserver: Send + Sync {
 	/// Deliver a complete replacement tree.
 	fn on_update(&self, node: ProductRendererRenderItem);
@@ -48,16 +48,20 @@ impl Drop for NativeSubscription {
 	}
 }
 
-/// Runs `observation` until it ends or the returned subscription is cancelled.
-pub fn spawn_observation(
-	spawner: &Spawner,
-	observation: impl Future<Output = ()> + Send + 'static,
-) -> Arc<NativeSubscription> {
-	let (abort, registration) = AbortHandle::new_pair();
-	spawner.spawn(async move {
-		let _ = Abortable::new(observation, registration).await;
-	});
-	Arc::new(NativeSubscription { abort: Mutex::new(Some(abort)) })
+impl Spawner {
+	/// Runs `observation` until it ends or the returned subscription is cancelled.
+	///
+	/// Cancelling or dropping the subscription aborts this future without stopping other tasks.
+	pub fn spawn_observation(
+		&self,
+		observation: impl Future<Output = ()> + Send + 'static,
+	) -> Arc<NativeSubscription> {
+		let (abort, registration) = AbortHandle::new_pair();
+		self.spawn(async move {
+			let _ = Abortable::new(observation, registration).await;
+		});
+		Arc::new(NativeSubscription { abort: Mutex::new(Some(abort)) })
+	}
 }
 
 pub fn observe_renderer(
@@ -65,7 +69,7 @@ pub fn observe_renderer(
 	observer: Arc<dyn NativeRendererObserver>,
 	spawner: Spawner,
 ) -> Arc<NativeSubscription> {
-	spawn_observation(&spawner, async move {
+	spawner.spawn_observation(async move {
 		while let Some(item) = stream.next().await {
 			match item {
 				Ok(node) => observer.on_update(node),

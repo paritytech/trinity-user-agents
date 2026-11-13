@@ -7,7 +7,10 @@ use core::{future::Future, ops::ControlFlow, time::Duration};
 use std::sync::Arc;
 
 use futures::FutureExt;
+use parity_scale_codec::{Decode, Encode};
 use tracing::{debug, instrument, warn};
+
+pub use policy::check as check_image;
 
 use crate::{
 	host_internal::bulletin::{BitswapError, BulletinCid, bitswap_get},
@@ -24,16 +27,20 @@ const MISS_PAUSE: Duration = Duration::from_secs(6);
 const FAILURE_PAUSE: Duration = Duration::from_secs(1);
 
 /// An image format the core passes on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ImageFormat {
 	/// PNG.
+	#[codec(index = 0)]
 	Png,
 	/// JPEG.
+	#[codec(index = 1)]
 	Jpeg,
 	/// GIF.
+	#[codec(index = 3)]
 	Gif,
 	/// WebP.
+	#[codec(index = 2)]
 	Webp,
 }
 
@@ -92,7 +99,7 @@ pub enum ImageError {
 		/// Which check failed.
 		reason: String,
 	},
-	/// Bulletin did not return the bytes.
+	/// Bulletin did not return the image bytes.
 	#[error("image unavailable: {reason}")]
 	Unavailable {
 		/// What failed.
@@ -113,7 +120,10 @@ impl ImageLoader {
 		Self { services, timer }
 	}
 
-	/// The image `reference` names. Dropping the future stops the load.
+	/// Loads the image named by `reference`.
+	///
+	/// Dropping the future stops the load. Unsupported CIDs, unavailable bytes and image
+	/// policy failures return errors.
 	#[instrument(skip_all, fields(runtime.method = "image_loader.load"))]
 	pub async fn load(&self, reference: ImageReference) -> Result<LoadedImage, ImageError> {
 		let ImageReference::Bulletin { cid, declared_format } = reference;

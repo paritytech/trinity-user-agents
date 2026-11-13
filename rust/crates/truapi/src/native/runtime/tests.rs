@@ -1,3 +1,5 @@
+mod public_profile;
+
 use super::*;
 use crate::{
 	PairedSsoPeer,
@@ -203,8 +205,8 @@ fn a_renderer_action_reaches_the_product_that_rendered_it() {
 		truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
 	));
 
-	let published = v01::HostRendererActionSubscribeItem {
-		context: v01::RenderContext::ChatMessage {
+	let published = truapi::latest::HostRendererActionSubscribeItem {
+		context: truapi::latest::RenderContext::ChatMessage {
 			room_id: "support".to_string(),
 			message_id: "message-1".to_string(),
 			message_type: "vote".to_string(),
@@ -221,8 +223,8 @@ fn a_renderer_action_reaches_the_product_that_rendered_it() {
 		core::task::Poll::Ready(Some(item)) => item,
 		other => panic!("a published renderer action must be ready, got {other:?}"),
 	};
-	let delivered = delivered.expect("expected a renderer action item").into_latest();
-	assert_eq!(delivered, published);
+	let delivered = delivered.expect("expected a renderer action item");
+	assert_eq!(truapi::versioned::IntoLatest::into_latest(delivered), published);
 	// The scanner checks taps on a connection, while hosts publish them here.
 	assert!(admin.product_runtime().connection().recently_tapped());
 }

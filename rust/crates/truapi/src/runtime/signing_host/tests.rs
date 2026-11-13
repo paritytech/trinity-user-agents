@@ -14,7 +14,7 @@ use std::sync::Arc;
 use super::{
 	super::{
 		AccountHolder, HostSession, ProductAuthority, ProductRuntimeHost, RuntimeServices,
-		SigningHostRole,
+		SigningHostRole, SsoAccountHolderService,
 		authority::{
 			AuthorityError, AuthoritySession, CreateTransactionAuthorityRequest,
 			SignPayloadAuthorityRequest, SignRawAuthorityRequest, StatementStoreAllowanceKey,
@@ -30,9 +30,12 @@ use crate::{
 		sso_messages::{ProductRequest, RingVrfError},
 		transaction::{extrinsic_payload_extensions, extrinsic_payload_preimage},
 	},
-	host_logic::product_account::{
-		SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_product_keypair,
-		derive_ring_vrf_entropy, derive_root_keypair_from_entropy, index_bytes,
+	host_logic::{
+		product_account::{
+			SR25519_SIGNING_CONTEXT, derive_identity_keypair, derive_product_keypair,
+			derive_ring_vrf_entropy, derive_root_keypair_from_entropy, index_bytes,
+		},
+		sso::pairing::derive_x25519_keypair_from_entropy,
 	},
 	platform::{
 		CoreStorageKey, HostInfo, Platform, PlatformInfo, ProductContext, ProductId,
@@ -112,7 +115,7 @@ impl RingResolver for StubRingResolver {
 #[test]
 fn the_signing_role_adjudicates_grants_against_the_asset_hub_it_installed() {
 	let (services, _authority) =
-		signing_runtime_on_asset_hub(Arc::new(StubPlatform::default()), [0xcc; 32]);
+		signing_runtime_on_asset_hub(Arc::new(StubPlatform::default()), Some([0xcc; 32]));
 	assert_eq!(
 		services.asset_hub_chain_genesis_hash(),
 		Some([0xcc; 32]),
@@ -152,12 +155,12 @@ fn signing_runtime() -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
 fn signing_runtime_with_platform(
 	platform: Arc<dyn Platform>,
 ) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
-	signing_runtime_on_asset_hub(platform, [0; 32])
+	signing_runtime_on_asset_hub(platform, None)
 }
 
 fn signing_runtime_on_asset_hub(
 	platform: Arc<dyn Platform>,
-	asset_hub_chain_genesis_hash: [u8; 32],
+	asset_hub_chain_genesis_hash: Option<[u8; 32]>,
 ) -> (Arc<RuntimeServices>, Arc<SigningHostRole>) {
 	let config = SigningHostConfig::new(
 		HostInfo {
@@ -167,21 +170,21 @@ fn signing_runtime_on_asset_hub(
 			platform: truapi::latest::HostPlatform::Ios,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		asset_hub_chain_genesis_hash,
-		TEST_NETWORK_SUFFIX.to_string(),
+		crate::test_support::test_stack(
+			TEST_NETWORK_SUFFIX,
+			[0; 32],
+			[0xbb; 32],
+			asset_hub_chain_genesis_hash,
+		),
 	)
 	.expect("signing host config is valid");
 	let services = RuntimeServices::new(
 		platform.clone(),
 		config.host.host_info.clone(),
-		config.people_chain_genesis_hash,
-		config.bulletin_chain_genesis_hash,
-		config.asset_hub_chain_genesis_hash,
+		config.stack.clone(),
 		Spawner::for_test(),
 	);
-	let signing_host = SigningHostRole::new(services.clone(), config.network_suffix);
+	let signing_host = SigningHostRole::new(services.clone());
 	(services, signing_host)
 }
 
@@ -210,6 +213,16 @@ fn product_runtime_for(
 		authority,
 		ProductContext::new(ProductId::for_test(product_id)),
 	)
+}
+
+/// The service a paired host reaches, bound to `authority`'s wallet from `ENTROPY`.
+fn sso_service(authority: &SigningHostRole) -> SsoAccountHolderService {
+	let statement = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
+	let (_, encryption) = derive_x25519_keypair_from_entropy(&ENTROPY, b"sso");
+	authority
+		.sso_responder()
+		.open_service(statement.public.to_bytes(), encryption)
+		.unwrap()
 }
 
 /// Whether this host keeps an AutoSigning key for `product_id` in this activation.
@@ -2549,7 +2562,7 @@ fn a_pgas_request_waits_on_the_asset_hub_connection() {
 
 	let platform =
 		Arc::new(StubPlatform { chain_connect_pending: true, ..StubPlatform::default() });
-	let (_services, authority) = signing_runtime_with_platform(platform);
+	let (_services, authority) = signing_runtime_on_asset_hub(platform, Some([0xcc; 32]));
 	futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation");
 	let session = authority.current_session().expect("connected");

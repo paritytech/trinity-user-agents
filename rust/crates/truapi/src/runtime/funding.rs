@@ -65,10 +65,10 @@ use futures::{
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{
 	FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDirection,
-	FundingFailure, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate, GenericError,
-	HostFundingReportError, HostFundingStatusSubscribeItem, HostPaymentStatusSubscribeError,
-	HostPaymentStatusSubscribeItem, HostPaymentTopUpStatusSubscribeError,
-	HostPaymentTopUpStatusSubscribeItem,
+	FundingFailure, FundingFrameOutcome, FundingQuoteAnswer, FundingQuoteAsk, FundingUpdate,
+	GenericError, HostFundingReportError, HostFundingStatusSubscribeItem,
+	HostPaymentStatusSubscribeError, HostPaymentStatusSubscribeItem,
+	HostPaymentTopUpStatusSubscribeError, HostPaymentTopUpStatusSubscribeItem,
 };
 
 use super::{funding_quotes::WorkerHold, services::RuntimeServices};
@@ -124,11 +124,18 @@ struct PackedSession {
 	summary: FundingSessionSummary,
 	/// Whether the host told the user how the session ended.
 	acknowledged: bool,
+	/// Whether money moved for the session, which its summary does not
+	/// store.
+	money_moved: bool,
 }
 
 impl From<&FundingSession> for PackedSession {
 	fn from(session: &FundingSession) -> Self {
-		Self { summary: session.summary(), acknowledged: session.acknowledged }
+		Self {
+			summary: session.summary(),
+			acknowledged: session.acknowledged,
+			money_moved: session.money_moved(),
+		}
 	}
 }
 
@@ -215,9 +222,8 @@ struct Reconciler {
 /// Session changes the host has not been told of yet, in commit order.
 #[derive(Default)]
 struct Announcements {
-	/// Each change with the record the session had when it was queued, or
-	/// `None` for one compacted before then.
-	pending: VecDeque<(String, HostFundingStatusSubscribeItem, Option<Box<FundingSession>>)>,
+	/// Each change, with the status a product is told.
+	pending: VecDeque<(String, HostFundingStatusSubscribeItem)>,
 	/// Whether a caller is delivering them.
 	delivering: bool,
 	/// The [`FundingRegistry::is_in_progress`] the host was last told.
@@ -226,26 +232,18 @@ struct Announcements {
 
 /// One change the host is told of.
 enum Announcement {
-	Session(String, HostFundingStatusSubscribeItem, Option<Box<FundingSession>>),
+	Session(String, HostFundingStatusSubscribeItem),
 	InProgress(bool),
 }
 
-/// What a host draws its funding screens from, pushed by the core so the
-/// host never reads it back. Native hosts get it through their funding
+/// What changed in what a host draws its funding screens from, which it
+/// reads back from the core. Native hosts get it through their funding
 /// callbacks; a host without one gets only
 /// [`FundingPlatform::funding_session_changed`].
 pub trait FundingFeed: Send + Sync {
-	/// A session changed: its status, the session as the core now holds it
-	/// and the progress the host draws. Every session the host has to hear
-	/// of comes through here once more when funding resumes. `session` and
-	/// `progress` are `None` once the core keeps only the session's summary.
-	fn funding_session_changed(
-		&self,
-		intent: String,
-		status: HostFundingStatusSubscribeItem,
-		session: Option<FundingSession>,
-		progress: Option<crate::host_logic::funding::FundingProgress>,
-	);
+	/// Session `intent` changed. Every session the host has to hear of comes
+	/// through here once more when funding resumes.
+	fn funding_session_changed(&self, intent: String);
 
 	/// Whether a provider still works on any session: once funding resumes,
 	/// and again whenever it changes. A host that remembers it starts
@@ -253,14 +251,13 @@ pub trait FundingFeed: Send + Sync {
 	/// checkpoint without waiting for a product.
 	fn funding_in_progress_changed(&self, in_progress: bool);
 
-	/// What session `intent`'s overlay offers: before the overlay shows,
-	/// after each selection the host reports while it is up, and after each
-	/// quote list, which can teach the core new limits.
-	fn funding_options_changed(
-		&self,
-		intent: String,
-		options: crate::host_logic::funding_providers::FundingOptions,
-	);
+	/// What session `intent`'s overlay offers changed: before the overlay
+	/// shows, after each selection the host reports while it is up, and
+	/// after each quote list, which can teach the core new limits.
+	fn funding_options_changed(&self, intent: String);
+
+	/// The host's configuration changed the funding providers it offers.
+	fn funding_providers_changed(&self) {}
 }
 
 /// What commits change, behind one lock: a commit replaces it and tells the
@@ -425,6 +422,38 @@ pub struct FundingRegistry {
 	/// The services the registry belongs to, for worker references and
 	/// following top-ups and payments. Empty in a registry built on its own.
 	services: Weak<RuntimeServices>,
+	/// Each session's provider frames, the one on screen and the one held
+	/// until the host opens it, under one lock so a frame moves from held to
+	/// open, or is closed, in one step.
+	frames: Mutex<HashMap<String, SessionFrames>>,
+	/// The number the next provider frame takes, so a frame that replaced
+	/// another outlives it.
+	next_frame: AtomicU64,
+}
+
+/// A session's provider frames, each with its number and the provider
+/// showing it.
+#[derive(Default)]
+struct SessionFrames {
+	/// The frame on screen.
+	open: Option<(u64, ProductContext)>,
+	/// The frame held until the host opens it, with its waiting call.
+	waiting: Option<(u64, ProductContext, oneshot::Sender<FrameGate>)>,
+}
+
+impl SessionFrames {
+	fn is_empty(&self) -> bool {
+		self.open.is_none() && self.waiting.is_none()
+	}
+}
+
+/// What a held provider frame does once the host decides.
+#[derive(Debug)]
+enum FrameGate {
+	/// Present it now.
+	Present,
+	/// Present nothing, and answer the provider this.
+	Answer(FundingFrameOutcome),
 }
 
 impl FundingRegistry {
@@ -449,6 +478,21 @@ impl FundingRegistry {
 	/// The host's funding feed, when one is installed.
 	pub fn feed(&self) -> Option<Arc<dyn FundingFeed>> {
 		self.feed.get().cloned()
+	}
+
+	/// Every session the host has heard of that the registry holds in full,
+	/// with its progress at `now_ms`, newest opened first.
+	pub fn entries(&self, now_ms: u64) -> Vec<crate::host_logic::funding::FundingBookEntry> {
+		let mut entries: Vec<crate::host_logic::funding::FundingBookEntry> = self
+			.announced()
+			.into_iter()
+			.map(|session| crate::host_logic::funding::FundingBookEntry {
+				progress: session.progress(now_ms),
+				session,
+			})
+			.collect();
+		entries.sort_by_key(|entry| core::cmp::Reverse(entry.session.opened_at_ms));
+		entries
 	}
 
 	/// Install the core database the sessions are stored in. Set-once;
@@ -742,6 +786,176 @@ impl FundingRegistry {
 		}
 	}
 
+	/// Every session held in full whose overlay is no longer up: those the
+	/// host has heard of.
+	pub fn announced(&self) -> Vec<FundingSession> {
+		let held = self.lock_held();
+		held.sessions
+			.values()
+			.filter(|session| !held.presenting.contains_key(&session.intent))
+			.cloned()
+			.collect()
+	}
+
+	/// Whether session `intent`'s payment moved, so its provider's frame is
+	/// done: it ended, held in full or compacted, or reached a milestone past
+	/// Started. `false` for a session the core does not hold.
+	pub fn frame_done(&self, intent: &str) -> bool {
+		let held = self.lock_held();
+		match held.sessions.get(intent) {
+			Some(session) => session.frame_done(),
+			None => held.pack.contains_key(intent),
+		}
+	}
+
+	/// Hold the frame `provider` asks to show for session `intent` until
+	/// the host opens it with [`Self::open_frame`]. The host hears of it
+	/// through [`FundingPlatform::provider_frame_requested`] and opens it at
+	/// once while the user looks at the session, or once they tap a notice.
+	/// A frame already waiting answers `Dismissed`, as this one replaces it.
+	/// The returned ticket tracks the frame until it drops, so the core can
+	/// close it once the payment moved.
+	pub fn request_frame(&self, intent: &str, provider: ProductContext) -> FrameTicket<'_> {
+		let frame = self.next_frame.fetch_add(1, Ordering::Relaxed);
+		let (sender, receiver) = oneshot::channel();
+		let replaced = self.lock_frames().entry(intent.to_string()).or_default().waiting.replace((
+			frame,
+			provider.clone(),
+			sender,
+		));
+		if let Some((_, _, replaced)) = replaced {
+			let _ = replaced.send(FrameGate::Answer(FundingFrameOutcome::Dismissed));
+		}
+		// The payment may have moved before the frame was held, when
+		// `close_moved_frame` found nothing to drop.
+		if self.frame_done(intent) {
+			self.take_waiting(intent, Some(frame), FrameGate::Answer(FundingFrameOutcome::Closed));
+		} else if let Some(platform) = self.platform().filter(|_| self.holds_waiting(intent, frame))
+		{
+			platform.provider_frame_requested(&provider, intent.to_string());
+			// A payment that moved while the host was told dropped the frame:
+			// the host reads that nothing waits and takes its notice down.
+			if !self.holds_waiting(intent, frame) {
+				self.retell(intent);
+			}
+		}
+		FrameTicket { registry: self, intent: intent.to_string(), frame, receiver: Some(receiver) }
+	}
+
+	/// Close session `intent`'s provider frames through `platform` once its
+	/// payment moved: a held one answers `Closed`, an open one is closed.
+	fn close_moved_frame(&self, platform: &dyn FundingPlatform, intent: &str) {
+		if !self.frame_done(intent) {
+			return;
+		}
+		let Some(frames) = self.lock_frames().remove(intent) else {
+			return;
+		};
+		if let Some((_, _, waiting)) = frames.waiting {
+			let _ = waiting.send(FrameGate::Answer(FundingFrameOutcome::Closed));
+		}
+		if let Some((_, provider)) = frames.open {
+			platform.close_provider_frame(&provider, intent.to_string());
+		}
+	}
+
+	/// The host opens session `intent`'s held provider frame. Returns
+	/// whether one was waiting; a worker that stopped waiting has nothing
+	/// left to show.
+	pub fn open_frame(&self, intent: &str) -> bool {
+		self.take_waiting(intent, None, FrameGate::Present)
+	}
+
+	/// Whether session `intent` holds a provider frame until the host opens
+	/// it, so the host can show its notice again after redrawing.
+	pub fn frame_waiting(&self, intent: &str) -> bool {
+		self.lock_frames().get(intent).is_some_and(|frames| {
+			frames.waiting.as_ref().is_some_and(|(_, _, waiting)| !waiting.is_canceled())
+		})
+	}
+
+	/// Whether session `intent` has a provider frame on screen.
+	pub fn frame_open(&self, intent: &str) -> bool {
+		self.lock_frames().get(intent).is_some_and(|frames| frames.open.is_some())
+	}
+
+	/// Close session `intent`'s open provider frame, so one the host opened
+	/// but the worker has not presented yet shows nothing. Returns whether
+	/// one was open.
+	pub fn close_open_frame(&self, intent: &str) -> bool {
+		let mut frames = self.lock_frames();
+		let Some(session) = frames.get_mut(intent) else {
+			return false;
+		};
+		let closed = session.open.take().is_some();
+		if session.is_empty() {
+			frames.remove(intent);
+		}
+		closed
+	}
+
+	/// Whether frame number `frame` of session `intent` is still held.
+	fn holds_waiting(&self, intent: &str, frame: u64) -> bool {
+		self.lock_frames().get(intent).is_some_and(|frames| {
+			frames.waiting.as_ref().is_some_and(|(number, _, _)| *number == frame)
+		})
+	}
+
+	/// Whether frame number `frame` of session `intent` is the open one.
+	fn holds_open(&self, intent: &str, frame: u64) -> bool {
+		self.lock_frames()
+			.get(intent)
+			.is_some_and(|frames| frames.open.as_ref().is_some_and(|(number, _)| *number == frame))
+	}
+
+	/// Drop session `intent`'s held frame, answering its provider `outcome`.
+	/// Returns whether one was waiting.
+	pub fn drop_waiting_frame(&self, intent: &str, outcome: FundingFrameOutcome) -> bool {
+		self.take_waiting(intent, None, FrameGate::Answer(outcome))
+	}
+
+	/// Answer session `intent`'s held frame with `gate`, only frame number
+	/// `frame` when given. One presented becomes the session's open frame in
+	/// the same step. Returns whether the waiting call took the answer.
+	fn take_waiting(&self, intent: &str, frame: Option<u64>, gate: FrameGate) -> bool {
+		let answered = {
+			let mut frames = self.lock_frames();
+			let Some(session) = frames.get_mut(intent) else {
+				return false;
+			};
+			let Some((number, provider, waiting)) = session
+				.waiting
+				.take_if(|(number, _, _)| frame.is_none_or(|frame| frame == *number))
+			else {
+				return false;
+			};
+			let present = matches!(gate, FrameGate::Present);
+			let answered = waiting.send(gate).is_ok();
+			if answered && present {
+				session.open = Some((number, provider));
+			}
+			if session.is_empty() {
+				frames.remove(intent);
+			}
+			answered
+		};
+		self.retell(intent);
+		answered
+	}
+
+	/// Tell the host session `intent` changed though its record did not: its
+	/// held provider frame was opened or dropped. The status says nothing of
+	/// a held frame, so the host reads `funding_frame_waiting` on hearing it.
+	fn retell(&self, intent: &str) {
+		{
+			let held = self.lock_held();
+			if let Some(session) = held.sessions.get(intent) {
+				self.tell_host(&held, session);
+			}
+		}
+		self.announce();
+	}
+
 	/// The sessions whose overlay is up.
 	pub fn presenting(&self) -> Vec<String> {
 		self.lock_held().presenting.keys().cloned().collect()
@@ -769,7 +983,8 @@ impl FundingRegistry {
 	}
 
 	/// Every ended session, held in full or compacted into the pack, as
-	/// summaries newest first, each once: what the host shows as history.
+	/// summaries newest first, each once: what the host shows as history. A
+	/// cancel that moved nothing is left out.
 	pub fn history(&self) -> Vec<FundingSessionSummary> {
 		let mut history: Vec<_> = {
 			let held = self.lock_held();
@@ -783,10 +998,22 @@ impl FundingRegistry {
 				.values()
 				.filter(|packed| !held.sessions.contains_key(&packed.summary.intent))
 				.map(|packed| packed.summary.clone());
-			recorded.chain(compacted).collect()
+			recorded
+				.chain(compacted)
+				.filter(|summary| !summary.cancelled_unmoved())
+				.collect()
 		};
 		history.sort_by_key(|summary| core::cmp::Reverse(summary.settled_at_ms()));
 		history
+	}
+
+	/// Ended session `intent`'s summary, held in full or compacted.
+	pub fn summary(&self, intent: &str) -> Option<FundingSessionSummary> {
+		let held = self.lock_held();
+		match held.sessions.get(intent) {
+			Some(session) => session.is_terminal().then(|| session.summary()),
+			None => held.pack.get(intent).map(|packed| packed.summary.clone()),
+		}
 	}
 
 	/// Who opened session `intent`, held in full or in the pack: `None` when
@@ -1053,6 +1280,13 @@ impl FundingRegistry {
 			for session in draft.sessions.values_mut() {
 				if session.expire_if_due(now_ms) {
 					changed.push(session.intent.clone());
+				}
+				// Nothing to tell the user about a cancel that moved nothing.
+				if session.is_terminal() &&
+					!session.acknowledged &&
+					session.summary().cancelled_unmoved()
+				{
+					session.acknowledged = true;
 				}
 				if session.lapse_cancel_offer(now_ms) {
 					changed.push(session.intent.clone());
@@ -1543,23 +1777,22 @@ impl FundingRegistry {
 	/// it has not told the user how it went.
 	fn tell_host_packed(&self, packed: &PackedSession) {
 		if self.platform.get().is_some() {
-			self.lock_announcements().pending.push_back((
-				packed.summary.intent.clone(),
-				packed.summary.wire_item(),
-				None,
-			));
+			self.lock_announcements()
+				.pending
+				.push_back((packed.summary.intent.clone(), packed.summary.wire_item()));
 		}
 	}
 
 	/// Queue `session`'s current stage for the host, which hears of a session
-	/// once the user starts it.
+	/// once it started: the user started it, or a provider took it while its
+	/// overlay is still up, as the core's start on the best quote does.
 	fn tell_host(&self, held: &Held, session: &FundingSession) {
-		if self.platform.get().is_some() && !held.presenting.contains_key(&session.intent) {
-			self.lock_announcements().pending.push_back((
-				session.intent.clone(),
-				session.wire_item(),
-				Some(Box::new(session.clone())),
-			));
+		let started =
+			!held.presenting.contains_key(&session.intent) || session.provider_id.is_some();
+		if self.platform.get().is_some() && started {
+			self.lock_announcements()
+				.pending
+				.push_back((session.intent.clone(), session.wire_item()));
 		}
 	}
 
@@ -1583,9 +1816,7 @@ impl FundingRegistry {
 			let next = {
 				let mut announcements = self.lock_announcements();
 				let next = match announcements.pending.pop_front() {
-					Some((intent, item, queued)) => {
-						Some(Announcement::Session(intent, item, queued))
-					},
+					Some((intent, item)) => Some(Announcement::Session(intent, item)),
 					None if announcements.in_progress != Some(in_progress) => {
 						announcements.in_progress = Some(in_progress);
 						Some(Announcement::InProgress(in_progress))
@@ -1597,15 +1828,11 @@ impl FundingRegistry {
 			};
 			let feed = self.feed();
 			match next {
-				Some(Announcement::Session(intent, item, queued)) => {
-					platform.funding_session_changed(intent.clone(), item.clone());
+				Some(Announcement::Session(intent, item)) => {
+					self.close_moved_frame(platform.as_ref(), &intent);
+					platform.funding_session_changed(intent.clone(), item);
 					if let Some(feed) = feed {
-						// The record the session has now, or the one it was
-						// queued with once it is compacted.
-						let session = self.get(&intent).or(queued.map(|queued| *queued));
-						let progress =
-							session.as_ref().map(|session| session.progress(current_unix_millis()));
-						feed.funding_session_changed(intent, item, session, progress);
+						feed.funding_session_changed(intent);
 					}
 				},
 				Some(Announcement::InProgress(in_progress)) => {
@@ -1634,6 +1861,10 @@ impl FundingRegistry {
 		lock(&self.resolving)
 	}
 
+	fn lock_frames(&self) -> MutexGuard<'_, HashMap<String, SessionFrames>> {
+		lock(&self.frames)
+	}
+
 	fn lock_held(&self) -> MutexGuard<'_, Held> {
 		lock(&self.held)
 	}
@@ -1644,6 +1875,61 @@ impl FundingRegistry {
 
 	fn lock_holding(&self) -> MutexGuard<'_, HashMap<String, WorkerHold>> {
 		lock(&self.holding)
+	}
+}
+
+/// A provider frame the registry tracks from the worker's request until
+/// it drops: held, then on screen once the host opens it.
+pub struct FrameTicket<'a> {
+	registry: &'a FundingRegistry,
+	intent: String,
+	frame: u64,
+	receiver: Option<oneshot::Receiver<FrameGate>>,
+}
+
+impl FrameTicket<'_> {
+	/// Wait for the host to open the frame. `None` means present it now;
+	/// otherwise the provider gets the outcome and nothing goes on screen.
+	pub async fn opened(&mut self) -> Option<FundingFrameOutcome> {
+		let receiver = self.receiver.take()?;
+		match receiver.await {
+			// The payment may have moved, or the worker closed the frame,
+			// between the host opening it and the worker running again.
+			Ok(FrameGate::Present)
+				if self.registry.frame_done(&self.intent) ||
+					!self.registry.holds_open(&self.intent, self.frame) =>
+			{
+				Some(FundingFrameOutcome::Closed)
+			},
+			Ok(FrameGate::Present) => None,
+			Ok(FrameGate::Answer(outcome)) => Some(outcome),
+			// The registry went away: nothing to show.
+			Err(_) => Some(FundingFrameOutcome::Closed),
+		}
+	}
+}
+
+impl Drop for FrameTicket<'_> {
+	fn drop(&mut self) {
+		let dropped_waiting = {
+			let mut frames = self.registry.lock_frames();
+			let Some(session) = frames.get_mut(&self.intent) else {
+				return;
+			};
+			if session.open.as_ref().is_some_and(|(frame, _)| *frame == self.frame) {
+				session.open = None;
+			}
+			let dropped_waiting =
+				session.waiting.take_if(|(frame, _, _)| *frame == self.frame).is_some();
+			if session.is_empty() {
+				frames.remove(&self.intent);
+			}
+			dropped_waiting
+		};
+		// A worker that stopped waiting leaves no notice behind.
+		if dropped_waiting {
+			self.registry.retell(&self.intent);
+		}
 	}
 }
 

@@ -232,6 +232,18 @@ impl DotnsTransport for PlainRpc {
 	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
 		EvmContractCaller::read(self, dest, &input).await
 	}
+
+	async fn views(
+		&mut self,
+		dest: &[u8; 20],
+		inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		futures::future::join_all(inputs.into_iter().map(|input| {
+			let mut rpc = PlainRpc(self.0.clone());
+			async move { EvmContractCaller::read(&mut rpc, dest, &input).await }
+		}))
+		.await
+	}
 }
 
 #[async_trait::async_trait]
@@ -246,6 +258,18 @@ impl RuntimeApiCaller for PlainRpc {
 			.as_str()
 			.ok_or_else(|| subxt::Error::other_str("state_call output is not a string"))?;
 		hex::decode(output.trim_start_matches("0x")).map_err(subxt::Error::other)
+	}
+
+	async fn call_batch(
+		&mut self,
+		function: &str,
+		inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, subxt::Error>> {
+		futures::future::join_all(inputs.into_iter().map(|input| {
+			let mut rpc = PlainRpc(self.0.clone());
+			async move { rpc.call(function, &input).await }
+		}))
+		.await
 	}
 }
 

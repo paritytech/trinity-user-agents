@@ -267,3 +267,28 @@ fn amount_limits_span_every_provider() {
 		)
 	);
 }
+
+// The host applies every refresh; the list puts the configured providers in
+// order, each once, on the network the core is connected to, and leaves out
+// names that are no product or that pin a network with their own TLD.
+#[test]
+fn the_provider_config_lists_each_published_name_once() {
+	let names = ["ramp", "bank", " ramp ", "ramp.dot", "not a product!"].map(str::to_string);
+	let (entries, invalid) = provider_config(&names, "paseo");
+	assert_eq!(
+		(
+			entries
+				.iter()
+				.map(|entry| (entry.product_id.as_str().to_string(), entry.origin))
+				.collect::<Vec<_>>(),
+			invalid,
+		),
+		(
+			vec![
+				("ramp.paseo".to_string(), FundingProviderOrigin::Published),
+				("bank.paseo".to_string(), FundingProviderOrigin::Published),
+			],
+			vec!["ramp.dot".to_string(), "not a product!".to_string()],
+		)
+	);
+}

@@ -43,7 +43,6 @@ import timber.log.Timber
 import uniffi.truapi.AuthState
 import uniffi.truapi.ExpandedCardFaceOutcome
 import uniffi.truapi.ExtensionVersionMap
-import uniffi.truapi.HostChainSet
 import uniffi.truapi.HostDevicePermissionRequest
 import uniffi.truapi.HostFeatureSupportedRequest
 import uniffi.truapi.HostNavigateToException
@@ -240,8 +239,6 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             }
 
         override fun currentTheme(): HostThemeSubscribeItem = cachedTheme.get()
-
-        override fun supportedChains(): HostChainSet = cachedChains.get().advertised
 
         override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
             extensionVersions.resolve().getOrElse { throw it }

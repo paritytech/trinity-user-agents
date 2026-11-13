@@ -19,6 +19,7 @@ mod capabilities;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
+pub use dotns_lookup::{DotnsLookup, DotnsLookupKind};
 mod funding;
 mod funding_providers;
 mod funding_quotes;
@@ -32,12 +33,14 @@ mod product_accounts;
 mod product_consent;
 pub mod product_manifest;
 mod product_subtree;
+mod remote_account_holder;
 mod renderer;
 mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
 mod single_flight;
+mod sso_account_holder_service;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
 mod sso_request_service;
@@ -70,6 +73,7 @@ pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
 pub use funding::{FundingFeed, FundingProviderLink};
 pub use host_session::HostSession;
+pub use remote_account_holder::RemoteAccountHolder;
 
 /// The host's contact picker plus the key its handles are minted under:
 /// everything one `contacts.pick` call needs from the connection.
@@ -82,7 +86,8 @@ pub use pairing_host::PairingHost as PairingHostRole;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-pub use signing_host::{LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService};
+pub use signing_host::{LocalActivation, SigningHost as SigningHostRole};
+pub use sso_account_holder_service::SsoAccountHolderService;
 pub use sso_responder_service::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
 	PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
@@ -97,8 +102,8 @@ use crate::platform::{
 	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview, LegacySigningAccount,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
 	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
-	normalize_chat_identifier, validate_chat_icon, validate_chat_message_content,
-	validate_chat_name,
+	normalize_chat_identifier, validate_chat_custom_message, validate_chat_icon,
+	validate_chat_message_content, validate_chat_name,
 };
 pub use signing_host::StatementRenewalTarget;
 #[cfg(not(target_arch = "wasm32"))]
@@ -780,9 +785,7 @@ impl ProductRuntimeHost {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			crate::platform::PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			crate::test_support::paseo_test_stack(),
 			"polkadotapp".to_string(),
 		)
 		.expect("compat runtime config is valid")
@@ -824,9 +827,7 @@ impl ProductRuntimeHost {
 		let services = RuntimeServices::new(
 			platform.clone(),
 			host_config.host.host_info.clone(),
-			host_config.people_chain_genesis_hash,
-			host_config.bulletin_chain_genesis_hash,
-			host_config.asset_hub_chain_genesis_hash,
+			host_config.stack.clone(),
 			spawner.clone(),
 		);
 		let pairing_host = PairingHost::new(services.clone(), host_config);
@@ -1598,6 +1599,12 @@ impl Chat for ProductRuntimeHost {
 				};
 				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
 					.map_err(|error| failure(error.to_string()))?;
+				if let latest::ChatRoomFooter::Card(card) = request.footer {
+					request.footer = latest::ChatRoomFooter::Card(
+						validate_chat_custom_message(card)
+							.map_err(|error| failure(error.to_string()))?,
+					);
+				}
 
 				// Checked here rather than by each host, so every host answers a room
 				// the product never created the same way.
@@ -1704,13 +1711,36 @@ impl FundingProvider for ProductRuntimeHost {
 				}
 				let target = crate::host_logic::funding::checked_frame_target(target)
 					.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
-				if matches!(target, latest::FundingFrameTarget::App { .. }) &&
-					!platform.provider_has_app(&self.connection.product).await
-				{
-					return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+				let services = &self.connection.services;
+				let provider = &self.connection.product;
+				if matches!(target, latest::FundingFrameTarget::App { .. }) {
+					use crate::host_logic::funding_providers::FundingProviderApp;
+					let has_app = match services.funding_providers().app(&provider.product_id) {
+						FundingProviderApp::Shipped => true,
+						FundingProviderApp::Absent => false,
+						FundingProviderApp::Unknown => {
+							crate::runtime::product_manifest::publishes_app(
+								services,
+								services.platform.as_ref(),
+								&provider.product_id,
+								APP_LOOKUP_CEILING,
+							)
+							.await
+							.unwrap_or(false)
+						},
+					};
+					if !has_app {
+						return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+					}
+				}
+				// The worker never puts a screen in front of the user on its own:
+				// the host opens it, at once or from a notice the user taps.
+				let mut frame = services.funding().request_frame(&intent, provider.clone());
+				if let Some(outcome) = frame.opened().await {
+					return Ok(latest::HostFundingPresentFrameResponse { outcome });
 				}
 				let outcome = platform
-					.present_provider_frame(&self.connection.product, intent, target)
+					.present_provider_frame(provider, intent, target)
 					.await
 					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
 				Ok(latest::HostFundingPresentFrameResponse { outcome })
@@ -1730,7 +1760,15 @@ impl FundingProvider for ProductRuntimeHost {
 				if !self.serves(&intent) {
 					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
 				}
-				platform.close_provider_frame(&self.connection.product, intent);
+				// Closes the screen on show, one the host opened but the worker
+				// has not presented yet, and one still waiting; a call that only
+				// dropped a waiting screen leaves the host nothing to close.
+				let funding = self.connection.services.funding();
+				let dropped =
+					funding.drop_waiting_frame(&intent, latest::FundingFrameOutcome::Closed);
+				if funding.close_open_frame(&intent) || !dropped {
+					platform.close_provider_frame(&self.connection.product, intent);
+				}
 				Ok(())
 			})
 			.await
@@ -1935,6 +1973,10 @@ fn bulletin_allowance_error_reason(err: AuthorityError) -> String {
 		other => other.to_string(),
 	}
 }
+
+/// How long the core waits for dotNS to say whether a provider ships an App
+/// before showing it as having none.
+const APP_LOOKUP_CEILING: core::time::Duration = core::time::Duration::from_secs(10);
 
 #[cfg(test)]
 mod tests;

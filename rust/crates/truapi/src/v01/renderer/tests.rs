@@ -110,7 +110,7 @@ fn tree_round_trips_through_scale() {
 	assert_eq!(decoded, node);
 }
 
-#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn tree_round_trips_through_uniffi() {
 	let node = renderer_node();
