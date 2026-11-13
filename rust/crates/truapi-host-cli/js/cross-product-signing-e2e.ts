@@ -49,10 +49,8 @@ import { asProductId, type ProductId } from "../../../../js/packages/truapi/src/
 // happen is the refusal.
 //
 // dim2.paseo and stash.paseo are both blessed, which skips the confirmation
-// but never the owner's grant. The granted phase also signs a VRF and requires
-// it to raise no prompt in the approvals transcript the script exports, as a
-// blessed product signing a game's draw tickets with the game's account does
-// (paritytech/platform-bugs#205).
+// but never the owner's grant, so the granted phase also requires its VRF to
+// raise no prompt (paritytech/platform-bugs#205).
 
 export {};
 
@@ -114,7 +112,7 @@ function statement() {
   return { expiry, topics: [`0x${bytes.toHex()}` as `0x${string}`] };
 }
 
-/// "pop:airdrop", the transcript a game's prize draw ticket is signed under.
+/// "pop:airdrop".
 const POP_AIRDROP = "0x706f703a61697264726f70";
 const VRF_PROMPT = "sign VRF transcript";
 
@@ -129,11 +127,11 @@ function signVrfWith(account: typeof OWNER_HANDLE) {
 /// Every surface paritytech/platform-issues#20 names, plus `signVrf`, each
 /// naming `account`.
 ///
-/// `refusal` differs on two surfaces whose error enums carry no
-/// `PermissionDenied`. The statement-store surface answers `UnknownAccount`
-/// both for an account this caller may not use and for one that does not
-/// exist, which is the same indistinguishability the others get from
-/// `PermissionDenied`. `signVrf` answers `Rejected`.
+/// `refusal` differs on the statement-store surface: its error enum carries no
+/// `PermissionDenied`, and answers `UnknownAccount` both for an account this
+/// caller may not use and for one that does not exist, which is the same
+/// indistinguishability the other three get from `PermissionDenied`. `signVrf`
+/// has none either and answers `Rejected`.
 const SURFACES: {
   name: string;
   refusal: string;

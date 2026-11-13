@@ -146,9 +146,8 @@ fn a_blessed_product_signs_with_another_products_account_only_when_granted() {
 	}
 }
 
-/// A game's draw tickets are VRF signatures with the game's account, signed by
-/// whichever blessed product registered the player, so they follow the same
-/// rule as its payloads rather than prompting once per ticket.
+/// A game's draw tickets are VRF signatures with the game's account, so a
+/// blessed product registering the player is not asked once per ticket.
 #[test]
 fn a_blessed_product_signs_a_vrf_with_another_products_account_only_when_granted() {
 	for (trusted, expected) in [
