@@ -50,6 +50,7 @@ private func makeRuntime(
     configuration: SPAConfiguration,
     contentLoader: ProductContentLoading = StubProductContentLoader(),
     hostEventRecorder: HostEventRecording = NoopHostEventRecorder(),
+    hostSessionID: UUID? = nil,
     openTap: HostOpenTap? = nil
 ) -> SPARustRuntime {
     SPARustRuntime(
@@ -59,6 +60,7 @@ private func makeRuntime(
         schemeHandlerProxy: SchemeHandlerProxy(),
         logger: Logger.shared,
         hostEventRecorder: hostEventRecorder,
+        hostSessionID: hostSessionID ?? openTap?.sessionID ?? UUID(),
         openTap: openTap
     )
 }
@@ -119,6 +121,41 @@ struct SPARustRuntimeTests {
         #expect(webViewEvent.tags["host.session_id"] == tap.sessionID.uuidString.lowercased())
 
         await runtime.dispose()
+    }
+
+    /// A retry builds a second runtime for the same view with no tap. It reports under the tap's id, which the
+    /// Pocket event and the held card already carry, and is not timed from the tap.
+    @Test func aRetryKeepsTheTapsSessionAndIsNotTimedFromIt() async throws {
+        let configuration = try makeConfiguration(contentSource: .directURL(#require(URL(string: "http://localhost:3000"))))
+        let tap = HostOpenTap(source: .pocketCard)
+        var session = SPARustRuntimeFactory.HostSession(openTap: tap)
+        let hostEventRecorder = RecordingHostEventRecorder()
+
+        for _ in 0 ..< 2 {
+            let runtime = makeRuntime(
+                configuration: configuration,
+                hostEventRecorder: hostEventRecorder,
+                hostSessionID: session.id,
+                openTap: session.takeTap()
+            )
+            _ = try await runtime.start(with: MockJSEngine())
+            await runtime.dispose()
+        }
+
+        let events = hostEventRecorder.events
+        #expect(events.map(\.name) == ["host.webview.created", "host.webview.created"])
+        #expect(events.allSatisfy { $0.tags["host.session_id"] == tap.sessionID.uuidString.lowercased() })
+        #expect(events.map { $0.extras["tap_ms"] != nil } == [true, false])
+    }
+
+    /// A view nothing tapped mints one id and keeps it for its retries too.
+    @Test func aViewWithoutATapKeepsOneIdAcrossRetries() {
+        var session = SPARustRuntimeFactory.HostSession(openTap: nil)
+        let id = session.id
+        let tap = session.takeTap()
+
+        #expect(tap == nil)
+        #expect(session.id == id)
     }
 
     @Test func aSessionWithoutATapMintsItsOwnId() async throws {

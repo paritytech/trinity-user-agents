@@ -40,6 +40,7 @@ actor SPARustRuntime {
         schemeHandlerProxy: SchemeHandlerProxy,
         logger: LoggerProtocol,
         hostEventRecorder: HostEventRecording,
+        hostSessionID: UUID,
         openTap: HostOpenTap? = nil
     ) {
         self.executionModel = executionModel
@@ -49,8 +50,8 @@ actor SPARustRuntime {
         self.logger = logger
         self.hostEventRecorder = hostEventRecorder
         self.openTap = openTap
-        // A session a tap opened keeps the id minted at the tap, so the tap and the page share one.
-        hostSessionId = openTap?.sessionID ?? UUID()
+        // The view's id, the tap's when a tap opened it, so the tap, a retry and the page share one.
+        hostSessionId = hostSessionID
     }
 
     deinit {
