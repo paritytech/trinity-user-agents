@@ -50,11 +50,11 @@ fun HostEventOrigin.productNotificationTapped(productId: String) = HostEvent(
     isFailure = false,
 )
 
-fun HostEventOrigin.pocketOpened(open: HostPageOpen, reused: Boolean) = HostEvent(
+fun HostEventOrigin.pocketOpened(open: HostPageOpen, sessionId: String, reused: Boolean) = HostEvent(
     name = "host.pocket.opened",
     tags = baseTags() + mapOf(
         "open.source" to open.source.tag,
-        "host.session_id" to open.sessionId,
+        "host.session_id" to sessionId,
         "open.reused" to reused.toString(),
     ),
     extras = baseExtras(),

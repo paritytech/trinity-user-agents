@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.common.data.telemetry
 
 import io.paritytech.polkadotapp.common.utils.logFailure
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -24,6 +25,13 @@ data class HostPageOpen(
     val sessionId: String,
 )
 
+/** The host session of one product page: [id] is what the page reads; [open] is the ask its load is timed from. */
+data class HostPageSession(
+    val productId: String,
+    val id: String,
+    val open: HostPageOpen?,
+)
+
 @Singleton
 class HostPageOpens @Inject constructor(
     private val originProvider: HostEventOriginProvider,
@@ -34,36 +42,62 @@ class HostPageOpens @Inject constructor(
 
     private val held = AtomicReference<Held?>(null)
 
+    // The last session started per product, so an ask that shows its page again is reported under its id.
+    private val live = ConcurrentHashMap<String, HostPageSession>()
+
     /** A new ask, read now. */
     fun ask(source: HostOpenSource) =
         HostPageOpen(source, System.currentTimeMillis(), clock.nowMillis(), UUID.randomUUID().toString())
 
     fun hold(productId: String, open: HostPageOpen) {
-        held.getAndSet(Held(productId, open))?.let { report(it.open, reused = false) }
+        held.getAndSet(Held(productId, open))?.let { report(it.open, it.open.sessionId, reused = false) }
     }
 
-    fun take(productId: String): HostPageOpen? {
-        val open = settle(productId) ?: return null
-        report(open, reused = false)
-        return open.takeIf { clock.nowMillis() - it.monotonicMs in 0..MAX_AGE_MS }
+    /**
+     * Starts the host session of a page of [productId]: it takes the ask held for the product and adopts its id,
+     * or has none and mints its own. An ask too old to time the load from still gives the session its id, so its
+     * open event can be joined to the page.
+     */
+    fun startSession(productId: String): HostPageSession {
+        val open = settle(productId)
+        val session = if (open != null) {
+            report(open, open.sessionId, reused = false)
+            HostPageSession(productId, open.sessionId, open.takeIf(::isRecent))
+        } else {
+            HostPageSession(productId, UUID.randomUUID().toString(), open = null)
+        }
+        live[productId] = session
+        return session
     }
 
+    /** The session is gone, so a later ask for its product no longer shows its page. */
+    fun sessionEnded(session: HostPageSession) {
+        live.remove(session.productId, session)
+    }
+
+    /**
+     * The product's page is already running, so the held ask shows it again and starts no session. It is reported
+     * under that page's session id, which is the one the page and its own events carry.
+     */
     fun reuse(productId: String) {
-        settle(productId)?.let { report(it, reused = true) }
+        val open = settle(productId) ?: return
+        report(open, live[productId]?.id ?: open.sessionId, reused = true)
     }
 
     fun giveUp(productId: String) {
-        settle(productId)?.let { report(it, reused = false) }
+        settle(productId)?.let { report(it, it.sessionId, reused = false) }
     }
+
+    private fun isRecent(open: HostPageOpen) = clock.nowMillis() - open.monotonicMs in 0..MAX_AGE_MS
 
     private fun settle(productId: String): HostPageOpen? {
         val current = held.get()?.takeIf { it.productId == productId } ?: return null
         return current.open.takeIf { held.compareAndSet(current, null) }
     }
 
-    private fun report(open: HostPageOpen, reused: Boolean) {
+    private fun report(open: HostPageOpen, sessionId: String, reused: Boolean) {
         runCatching {
-            capture.capture { originProvider.current().pocketOpened(open, reused) }
+            capture.capture { originProvider.current().pocketOpened(open, sessionId, reused) }
         }.logFailure("Failed to capture native host Pocket open event")
     }
 

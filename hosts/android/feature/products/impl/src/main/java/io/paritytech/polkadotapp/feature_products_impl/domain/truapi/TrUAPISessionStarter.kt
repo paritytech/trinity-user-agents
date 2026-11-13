@@ -12,11 +12,11 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.ExpandedCardFace
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import timber.log.Timber
 import uniffi.truapi.ExecutableKind
 import uniffi.truapi.ProductId
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import javax.inject.Inject
@@ -48,7 +48,7 @@ class TrUAPISessionStarter @Inject constructor(
     ): ProductTrUAPIHostBridge {
         val bridge = hostBridgeFactory.create(scope)
         scope.launch {
-            attachAndLoad(bridge, provider, productUrl, hostApiNavigation, card, explicitProductId)
+            attachAndLoad(bridge, provider, productUrl, scope, hostApiNavigation, card, explicitProductId)
                 .logFailure("Failed to start TrUAPI host bridge for $productUrl")
         }
         return bridge
@@ -58,6 +58,7 @@ class TrUAPISessionStarter @Inject constructor(
         bridge: ProductTrUAPIHostBridge,
         provider: BrowserWebViewProvider,
         productUrl: String,
+        scope: CoroutineScope,
         navigation: NavigationPolicy,
         card: ExpandedCardFace?,
         explicitProductId: ProductId?,
@@ -73,9 +74,11 @@ class TrUAPISessionStarter @Inject constructor(
             }
         }
 
-        val open = pageOpens.take(productId.value)
         // The tap minted its id before this session existed; the page sees the same one.
-        val hostSessionId = open?.sessionId ?: UUID.randomUUID().toString()
+        val session = pageOpens.startSession(productId.value)
+        scope.coroutineContext[Job]?.invokeOnCompletion { pageOpens.sessionEnded(session) }
+        val hostSessionId = session.id
+        val open = session.open
         provider.addWebViewSetup { webView -> visibleProducts.track(productId, webView) }
         val runtime = runtimeProvider.runtime().getOrElse { return failed(it, productId, hostSessionId) }
         // The bootstrap publishes the loopback port and its bearer token, so it goes to the

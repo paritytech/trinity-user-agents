@@ -23,6 +23,8 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.navigation.NavigationPolicy
 import io.paritytech.polkadotapp.feature_products_impl.domain.webView.BrowserWebViewProvider
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import org.junit.After
@@ -148,6 +150,50 @@ class TrUAPISessionStarterTest {
         visibleListeners.single()()
 
         assertEquals(listOf(null), visibleReports.map { it.third })
+    }
+
+    @Test
+    fun `an open too old to time from still gives the page its id, without a time to load from`() = runBlocking<Unit> {
+        val staleTap = HostPageOpen(
+            HostOpenSource.POCKET_CARD,
+            epochMs = 1_000L,
+            monotonicMs = NOW_MS - HostPageOpens.MAX_AGE_MS - 1,
+            sessionId = "open-session",
+        )
+        pageOpens.hold(PRODUCT_ID.value, staleTap)
+
+        startPage()
+        yield()
+
+        assertEquals("open-session", installerSessionId.captured)
+        assertEquals(listOf(null), installerOpens)
+        assertEquals("open-session", events.single { it.name == "host.pocket.opened" }.tags["host.session_id"])
+    }
+
+    @Test
+    fun `an open that shows the running page again is reported under the session id the page reads`() = runBlocking<Unit> {
+        startPage()
+        yield()
+
+        pageOpens.hold(PRODUCT_ID.value, HostPageOpen(HostOpenSource.POCKET_CARD, 1_000L, NOW_MS, "reuse-tap"))
+        pageOpens.reuse(PRODUCT_ID.value)
+
+        assertEquals("true", events.single { it.name == "host.pocket.opened" }.tags["open.reused"])
+        assertEquals(installerSessionId.captured, events.single { it.name == "host.pocket.opened" }.tags["host.session_id"])
+    }
+
+    @Test
+    fun `a page whose scope ended is no longer the one a reused open is reported under`() = runBlocking<Unit> {
+        val pageScope = CoroutineScope(coroutineContext + Job())
+        pageScope.startPage()
+        yield()
+        pageScope.cancel()
+        yield()
+
+        pageOpens.hold(PRODUCT_ID.value, HostPageOpen(HostOpenSource.POCKET_CARD, 1_000L, NOW_MS, "reuse-tap"))
+        pageOpens.reuse(PRODUCT_ID.value)
+
+        assertEquals("reuse-tap", events.single { it.name == "host.pocket.opened" }.tags["host.session_id"])
     }
 
     @Test

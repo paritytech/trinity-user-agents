@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.common.data.telemetry
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,10 +22,10 @@ class HostPageOpensTest {
     }
 
     @Test
-    fun `a session taking an open reports it as a fresh open with the id minted at the tap`() {
+    fun `a session taking an open reports it as a fresh open and adopts the id minted at the tap`() {
         opens.hold("loyalty.dot", tap)
 
-        assertEquals(tap, opens.take("loyalty.dot"))
+        assertEquals(HostPageSession("loyalty.dot", "tap-session", tap), opens.startSession("loyalty.dot"))
 
         assertEquals(
             HostEvent(
@@ -46,14 +47,70 @@ class HostPageOpensTest {
     }
 
     @Test
-    fun `an open for a page that is already open is reported as reused and never taken`() {
+    fun `a session nothing asked for mints its own id and reports nothing`() {
+        val session = opens.startSession("loyalty.dot")
+
+        assertNull(session.open)
+        assertTrue(session.id.isNotEmpty())
+        assertNotEquals(session.id, opens.startSession("loyalty.dot").id)
+        assertEquals(emptyList<HostEvent>(), events)
+    }
+
+    @Test
+    fun `an open that shows a running page again is reported as reused under that page's session id`() {
+        opens.hold("loyalty.dot", tap)
+        val page = opens.startSession("loyalty.dot")
+        events.clear()
+
+        opens.hold("loyalty.dot", link)
+        opens.reuse("loyalty.dot")
+
+        val reused = events.single()
+        assertEquals("deeplink", reused.tags["open.source"])
+        assertEquals("true", reused.tags["open.reused"])
+        assertEquals(page.id, reused.tags["host.session_id"])
+    }
+
+    @Test
+    fun `a reused open is reported under the id of the session the page minted when nothing asked for it`() {
+        val page = opens.startSession("loyalty.dot")
+
+        opens.hold("loyalty.dot", tap)
+        opens.reuse("loyalty.dot")
+
+        assertEquals(page.id, events.single().tags["host.session_id"])
+    }
+
+    @Test
+    fun `a reused open is reported under the latest session of its own product`() {
+        opens.startSession("other.dot")
+        val older = opens.startSession("loyalty.dot")
+        val latest = opens.startSession("loyalty.dot")
+        opens.sessionEnded(older)
+
+        opens.hold("loyalty.dot", tap)
+        opens.reuse("loyalty.dot")
+
+        assertEquals(latest.id, events.single().tags["host.session_id"])
+    }
+
+    @Test
+    fun `a reused open keeps its own id once the page's session has ended`() {
+        opens.sessionEnded(opens.startSession("loyalty.dot"))
+
+        opens.hold("loyalty.dot", link)
+        opens.reuse("loyalty.dot")
+
+        assertEquals("link-session", events.single().tags["host.session_id"])
+    }
+
+    @Test
+    fun `a reused open is never taken by a later session`() {
         opens.hold("loyalty.dot", link)
 
         opens.reuse("loyalty.dot")
 
-        assertEquals("deeplink", events.single().tags["open.source"])
-        assertEquals("true", events.single().tags["open.reused"])
-        assertNull(opens.take("loyalty.dot"))
+        assertNull(opens.startSession("loyalty.dot").open)
         assertEquals(1, events.size)
     }
 
@@ -64,7 +121,8 @@ class HostPageOpensTest {
         opens.giveUp("loyalty.dot")
 
         assertEquals("false", events.single().tags["open.reused"])
-        assertNull(opens.take("loyalty.dot"))
+        assertEquals("tap-session", events.single().tags["host.session_id"])
+        assertNull(opens.startSession("loyalty.dot").open)
         assertEquals(1, events.size)
     }
 
@@ -72,13 +130,13 @@ class HostPageOpensTest {
     fun `an open is settled only for the product it was held for`() {
         opens.hold("loyalty.dot", tap)
 
-        assertNull(opens.take("other.dot"))
+        assertNull(opens.startSession("other.dot").open)
         opens.reuse("other.dot")
         opens.giveUp("other.dot")
 
         assertEquals(emptyList<HostEvent>(), events)
-        assertEquals(tap, opens.take("loyalty.dot"))
-        assertNull(opens.take("loyalty.dot"))
+        assertEquals(tap, opens.startSession("loyalty.dot").open)
+        assertNull(opens.startSession("loyalty.dot").open)
     }
 
     @Test
@@ -88,16 +146,17 @@ class HostPageOpensTest {
 
         assertEquals("tap-session", events.single().tags["host.session_id"])
         assertEquals("false", events.single().tags["open.reused"])
-        assertEquals(link, opens.take("loyalty.dot"))
+        assertEquals(link, opens.startSession("loyalty.dot").open)
     }
 
     @Test
-    fun `an open no session took in time is reported but not handed to the session`() {
+    fun `an open no session took in time still gives the session its id, but no time to load from`() {
         opens.hold("loyalty.dot", tap)
-
         nowMs = 1_000L + HostPageOpens.MAX_AGE_MS + 1
-        assertNull(opens.take("loyalty.dot"))
 
+        val session = opens.startSession("loyalty.dot")
+
+        assertEquals(HostPageSession("loyalty.dot", "tap-session", open = null), session)
         assertEquals("tap-session", events.single().tags["host.session_id"])
     }
 
@@ -107,7 +166,7 @@ class HostPageOpensTest {
         opens.hold("loyalty.dot", tap.copy(epochMs = 3_600_000L))
         nowMs = tap.monotonicMs + HostPageOpens.MAX_AGE_MS + 1
 
-        assertNull(opens.take("loyalty.dot"))
+        assertNull(opens.startSession("loyalty.dot").open)
     }
 
     @Test
