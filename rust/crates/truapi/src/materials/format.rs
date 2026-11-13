@@ -100,15 +100,9 @@ impl ParamKind {
 		})
 	}
 
-	fn is_sampler(self) -> bool {
-		matches!(
-			self,
-			Self::SamplerFloat | Self::SamplerVec2 | Self::SamplerVec3 | Self::SamplerVec4
-		)
-	}
-
 	/// Whether `default` is a value of this number type: a number for `float`,
-	/// an array of as many numbers as components for a vector.
+	/// an array of as many numbers as components for a vector. A sampler takes
+	/// no default, not even `null`.
 	fn accepts_default(self, default: &Value) -> bool {
 		let components = match self {
 			Self::Float => return gpu_float(default),
@@ -221,7 +215,11 @@ pub fn read_material(bytes: &[u8]) -> Result<Material, FormatError> {
 		return Err(FormatError::InvalidSource);
 	}
 	let canonical: String = core::iter::once(HEADER.to_string())
-		.chain(controls.iter().map(|control| format!("{CONTROL}{}", control_json(control))))
+		.chain(
+			controls
+				.iter()
+				.map(|control| format!("{CONTROL}{}", object_json(control, &PARAM_KEYS))),
+		)
 		.chain([canonical_body.clone()])
 		.collect::<Vec<_>>()
 		.join("\n");
@@ -314,14 +312,9 @@ fn range_allowed(control: &Map<String, Value>, kind: ParamKind) -> bool {
 	kind == ParamKind::Float && range.is_some_and(|(min, max)| min < max)
 }
 
-/// Samplers take no default, not even `null`. Numbers must also be finite as
-/// the GPU's 32-bit floats.
+/// Numbers must also be finite as the GPU's 32-bit floats.
 fn default_allowed(control: &Map<String, Value>, kind: ParamKind) -> bool {
-	match control.get("default") {
-		None => true,
-		Some(_) if kind.is_sampler() => false,
-		Some(default) => kind.accepts_default(default),
-	}
+	control.get("default").is_none_or(|default| kind.accepts_default(default))
 }
 
 /// Editor hints: version 1, known keys, short non-blank texts, and a positive
@@ -357,13 +350,13 @@ fn gpu_float(value: &Value) -> bool {
 	finite(Some(value)).is_some_and(|value| (value as f32).is_finite())
 }
 
-/// The parameter line's JSON as `JSON.stringify` writes it, keys in the
-/// format's order.
-fn control_json(control: &Map<String, Value>) -> String {
-	let fields: Vec<String> = PARAM_KEYS
+/// `object` as `JSON.stringify` writes it, with its keys in `keys`' order,
+/// which the format fixes for a parameter line and its `presentation`.
+fn object_json(object: &Map<String, Value>, keys: &[&str]) -> String {
+	let fields: Vec<String> = keys
 		.iter()
 		.filter_map(|key| {
-			let value = match (*key, control.get(*key)?) {
+			let value = match (*key, object.get(*key)?) {
 				("presentation", Value::Object(presentation)) => {
 					object_json(presentation, &PRESENTATION_KEYS)
 				},
@@ -375,30 +368,15 @@ fn control_json(control: &Map<String, Value>) -> String {
 	format!("{{{}}}", fields.join(","))
 }
 
-fn object_json(object: &Map<String, Value>, keys: &[&str]) -> String {
-	let fields: Vec<String> = keys
-		.iter()
-		.filter_map(|key| Some(format!("\"{key}\":{}", value_json(object.get(*key)?))))
-		.collect();
-	format!("{{{}}}", fields.join(","))
-}
-
-/// Other objects keep serde's sorted key order, which differs from
-/// JavaScript's only for an object `label`, a value no real material uses.
+/// Any other object can only be a `label`, which no real material spells as
+/// an object, so serde writes it.
 fn value_json(value: &Value) -> String {
 	match value {
 		Value::Number(number) => number.as_f64().map_or_else(|| number.to_string(), js_number),
 		Value::Array(values) => {
 			format!("[{}]", values.iter().map(value_json).collect::<Vec<_>>().join(","))
 		},
-		Value::Object(object) => {
-			let fields: Vec<String> = object
-				.iter()
-				.map(|(key, value)| format!("{}:{}", Value::String(key.clone()), value_json(value)))
-				.collect();
-			format!("{{{}}}", fields.join(","))
-		},
-		Value::Null | Value::Bool(_) | Value::String(_) => value.to_string(),
+		Value::Null | Value::Bool(_) | Value::String(_) | Value::Object(_) => value.to_string(),
 	}
 }
 
