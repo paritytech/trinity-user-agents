@@ -1,9 +1,10 @@
 import Foundation
 
 /// The parts of the `funding_config` remote object the iOS host reads:
-/// `{ "providers": ["ramp.dot", …] }`, the dotNS names of the funding
-/// providers the overlay offers. The core offers only the providers the host
-/// lists, so a build with none configured offers none.
+/// `{ "providers": ["ramp", …] }`, the dotNS names of the funding providers
+/// the overlay offers, without a TLD: the core reads each on the network it
+/// is connected to. The core offers only the providers the host lists, so a
+/// build with none configured offers none.
 enum FundingConfig {
     enum Key {
         static let providers = "providers"
@@ -11,8 +12,8 @@ enum FundingConfig {
 
     /// The configured provider names, in the published order. An entry that
     /// is not text is skipped and logged, so one typo does not take the other
-    /// providers down with it; the core drops repeats and names that are not
-    /// product ids.
+    /// providers down with it; the core drops repeats, names that are not
+    /// product ids and names that carry a TLD.
     static func providers(in json: [String: Any]?, logger: LoggerProtocol?) -> [String] {
         guard let names = json?[Key.providers] as? [Any] else { return [] }
 
