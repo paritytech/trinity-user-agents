@@ -82,7 +82,7 @@ use truapi::{
 
 use crate::{
 	accounts::{ResolveSignerConfig, ResolvedSigner},
-	chain::ChainBackend,
+	chain::{ChainAccess, ChainBackend},
 	network::{Network, NetworkSource, STACK_ENV, Stack, StackArg},
 	platform::{ApprovalPolicy, CliPlatform, CliStoragePaths},
 	sessions::{
@@ -128,8 +128,8 @@ struct Cli {
 	#[arg(long, global = true, env = "TRUAPI_DEBUGGER_URL", value_name = "URL")]
 	debugger: Option<String>,
 	/// How the hosts reach the chains: `rpc` dials the network's RPC nodes, and
-	/// `light-client` syncs them with the embedded light client (`paseo-next-v2`
-	/// and `previewnet` only, without `--stack`).
+	/// `light-client` syncs them with the embedded light client, from the light
+	/// specs the stack's descriptor names.
 	#[arg(long, global = true, value_enum, default_value = "rpc", env = "TRUAPI_CHAIN_BACKEND")]
 	chain_backend: ChainBackend,
 	/// Built-in network to run against; paseo-next-v2 when neither this nor
@@ -594,7 +594,14 @@ async fn main() -> Result<()> {
 		None => normalized(std::env::var(STACK_ENV).ok())
 			.map(|value| StackArg { value, source: STACK_ENV }),
 	};
-	let source = NetworkSource::new(cli.chain_backend, cli.network, stack)?;
+	// Outside any `--base-path`: a light spec is the same for every session.
+	let chain_access = match cli.chain_backend {
+		ChainBackend::Rpc => ChainAccess::Rpc,
+		ChainBackend::LightClient => {
+			ChainAccess::LightClient { spec_directory: default_base_path().join("light-specs") }
+		},
+	};
+	let source = NetworkSource::new(chain_access, cli.network, stack)?;
 
 	// A background check runs alongside the command rather than delaying it, and
 	// reports through `tracing`, which the terminal UI renders in its transcript

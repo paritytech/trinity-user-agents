@@ -1,22 +1,30 @@
 //! The checks that make a descriptor a [`Stack`] the CLI can run on.
 
+use std::{path::PathBuf, sync::Arc};
+
 use anyhow::{Context, Result, ensure};
-use trinity_stack::Descriptor;
+use trinity_stack::{Descriptor, Pointer};
 use truapi::platform::DOTNS_TLDS;
 
 use super::{ChainEndpoint, POLKADOT_NAMESPACE, Stack, namespace_of};
 use crate::{
-	chain::ChainBackend,
+	chain::{ChainAccess, StackLightClient},
 	stack_descriptor::{ROLE_NAMES, Roles},
 };
 
 impl Stack {
-	/// `descriptor` connected to over `chain_backend`. Fails when People,
+	/// The stack `pointer` names, read from `descriptor` and connected to over
+	/// `chain_access`. Fails when People,
 	/// Asset Hub or Bulletin is missing, when two of them share a genesis hash,
 	/// when the TLD is not one the core serves, when the namespace is not a
-	/// lowercase label or is the `polkadot` one, and when the stack has
-	/// no `dub` service or no `dotns.popController`.
-	pub fn new(descriptor: Descriptor, chain_backend: ChainBackend) -> Result<Self> {
+	/// lowercase label or is the `polkadot` one, when the stack has
+	/// no `dub` service or no `dotns.popController`, and on the light client
+	/// as [`light_client`] does.
+	pub fn new(
+		pointer: &Pointer,
+		descriptor: Descriptor,
+		chain_access: &ChainAccess,
+	) -> Result<Self> {
 		let id = &descriptor.id;
 		ensure!(
 			id != POLKADOT_NAMESPACE,
@@ -56,8 +64,39 @@ impl Stack {
 				"the {id} stack has no dotns.popController, which the CLI resolves usernames through"
 			)
 		})?;
-		Ok(Self { descriptor, chain_backend, chains, identity_backend, pop_controller })
+		let light_client = match chain_access {
+			ChainAccess::Rpc => None,
+			ChainAccess::LightClient { spec_directory } => {
+				Some(Arc::new(light_client(pointer, &descriptor, &chains, spec_directory.clone())?))
+			},
+		};
+		Ok(Self { light_client, descriptor, chains, identity_backend, pop_controller })
 	}
+}
+
+/// The light client of the stack `pointer` names, keeping its specs in
+/// `spec_directory`. Fails when two chains of `descriptor` share a genesis
+/// hash, or when it names no light spec for a routed chain or its relay.
+pub fn light_client(
+	pointer: &Pointer,
+	descriptor: &Descriptor,
+	routed: &Roles<ChainEndpoint>,
+	spec_directory: PathBuf,
+) -> Result<StackLightClient> {
+	let light = StackLightClient::new(&pointer.stack_id(), descriptor, spec_directory)?;
+	let run = light.chains(routed);
+	let named = light.provider().light_specs();
+	for chain in &descriptor.chains {
+		let genesis = chain.genesis();
+		ensure!(
+			!run.contains(&genesis) || named.iter().any(|spec| spec.genesis_hash == genesis),
+			"--chain-backend light-client cannot run {}: its descriptor names no lightSpec for {}; \
+			 use --chain-backend rpc",
+			descriptor.id,
+			chain.role
+		);
+	}
+	Ok(light)
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@ use super::{
 	super::{Network, STACK_ENV, StackArg},
 	*,
 };
+use crate::chain::ChainBackend;
 
 /// A stack from `source`.
 fn stack_arg(source: &'static str) -> Option<StackArg> {
@@ -14,7 +15,7 @@ fn stack_arg(source: &'static str) -> Option<StackArg> {
 fn test_network_with_stack_error() {
 	for source in ["--stack", STACK_ENV] {
 		let Err(error) =
-			NetworkSource::new(ChainBackend::Rpc, Some(Network::Previewnet), stack_arg(source))
+			NetworkSource::new(ChainAccess::Rpc, Some(Network::Previewnet), stack_arg(source))
 		else {
 			panic!("--network accepted with {source}");
 		};
@@ -22,16 +23,12 @@ fn test_network_with_stack_error() {
 	}
 }
 
-/// The light client has chain specs only for the networks truapi-provider
-/// bundles, so a stack, whatever its namespace, fails before the command
-/// starts rather than on every connect.
+/// The light client takes its chain specs from the stack's descriptor, so a
+/// stack runs on either backend.
 #[test]
-fn test_light_client_with_stack_error() {
-	let Err(error) = NetworkSource::new(ChainBackend::LightClient, None, stack_arg(STACK_ENV))
-	else {
-		panic!("light client accepted with a stack");
-	};
-	assert!(error.to_string().contains(STACK_ENV));
-	assert!(NetworkSource::new(ChainBackend::Rpc, None, stack_arg(STACK_ENV)).is_ok());
-	assert!(NetworkSource::new(ChainBackend::LightClient, None, None).is_ok());
+fn test_stack_on_either_backend() {
+	for chain_backend in [ChainBackend::Rpc, ChainBackend::LightClient] {
+		let chain_access = super::super::testing::test_access(chain_backend);
+		assert!(NetworkSource::new(chain_access, None, stack_arg(STACK_ENV)).is_ok());
+	}
 }

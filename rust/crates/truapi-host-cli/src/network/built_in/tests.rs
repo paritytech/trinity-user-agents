@@ -1,6 +1,7 @@
 use clap::ValueEnum;
 
 use super::{super::testing::edit_descriptor, *};
+use crate::chain::ChainBackend;
 
 /// A bundled copy that no longer opens with its pointer would leave the
 /// built-in network, or the check that tells a Polkadot fork from Polkadot,
@@ -91,7 +92,7 @@ fn sign_edited(edit: impl FnOnce(&mut serde_json::Value)) -> Vec<u8> {
 }
 
 fn refresh(bundled: &[u8], fetched: Fetched) -> Result<StackRefresh> {
-	refresh_stack("test", &test_pointer(), bundled, fetched, NOW, ChainBackend::Rpc)
+	refresh_stack("test", &test_pointer(), bundled, fetched, NOW, &ChainAccess::Rpc)
 }
 
 const NOW: i64 = 1_800_000_000;

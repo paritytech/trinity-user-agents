@@ -1115,7 +1115,8 @@ that reports a genesis other than the one it is routed as is an error; for a bui
 it reports that the stack restarted from genesis and which descriptor is in use, after
 fetching the published descriptor once more when it could not be fetched before. A
 `NetworkSuffix` other than the `tld` is an error. An endpoint that does not answer
-within 3 seconds is logged and left to fail on first use.
+within 3 seconds is logged and left to fail on first use. On the light client the
+light specs are checked instead, and the `NetworkSuffix` is not.
 A fork of Polkadot may keep Polkadot's genesis hashes and use the `dot` TLD. Any endpoint
 with one of Polkadot's genesis hashes, from a built-in or a stack, is compared with real
 Polkadot, whose signed descriptor the binary ships as a reference, with every node the
@@ -1170,9 +1171,10 @@ the CLI creates and cleans up a unique temporary Unix socket.
 `--chain-backend light-client` (or `TRUAPI_CHAIN_BACKEND=light-client`) syncs the
 chains with the embedded light client instead of dialing the network's RPC nodes,
 for when public nodes refuse the host, such as a rate-limited CI runner. Every
-command uses the selected backend. The light client is slower than RPC,
-supports only `paseo-next-v2` and `previewnet`, never a `--stack`, and drops PGAS
-claims, so `pgas-check --submit` refuses to run on it (SPEC.md §14.3).
+command uses the selected backend. The light client takes its chain specs from
+the stack's descriptor, so it runs every built-in network and any `--stack`. It
+is slower than RPC and drops PGAS claims, so `pgas-check --submit` refuses to
+run on it (SPEC.md §14.3).
 
 ## Serving a dev server (one process, no terminal)
 

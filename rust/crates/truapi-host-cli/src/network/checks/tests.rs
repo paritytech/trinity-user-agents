@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use clap::ValueEnum;
+use crate::chain::ChainBackend;
 
 use super::{
 	super::{
@@ -133,47 +133,48 @@ async fn test_polkadot_fork_check_wiring() {
 	});
 	let error = verify_chains(&polkadot_people, None).await.expect_err("fork unproven");
 	assert!(error.to_string().contains("cannot tell ws://127.0.0.1:"));
+}
 
-	let light_client = Network::PaseoNextV2.bundled_stack(ChainBackend::LightClient);
-	verify_chains(&light_client, None)
+/// A spec that is not the one the descriptor names, or one too large to read,
+/// is a wrong answer, which makes the CLI fetch the descriptor again, while
+/// one that cannot be fetched only leaves its chain unavailable.
+#[tokio::test]
+async fn test_light_spec_wrong_or_unreachable() {
+	let (server, _) = crate::network::serve_light_specs().await;
+	let (relay, people) = (format!("{server}/relay.json"), format!("{server}/people.json"));
+	let bundled = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
+	let directory = tempfile::tempdir().expect("temporary directory");
+
+	let swapped = bundled.with_light_specs_at(&people, &relay, directory.path());
+	let error = verify_chains(&swapped, None)
 		.await
-		.expect("light-client checks failed")
-		.expect("light-client endpoint checks failed");
-}
+		.expect("no chain has one of Polkadot's genesis hashes")
+		.expect_err("each chain is served the other's spec");
+	assert!(error.to_string().contains(&trinity_stack::Error::SpecDigest.to_string()), "{error}");
 
-/// A built-in stack that restarted from genesis after this build has chains
-/// the light client's bundled specs cannot sync.
-#[test]
-fn test_light_client_after_restart_error() {
-	let restarted = Network::PaseoNextV2.bundled_stack(ChainBackend::LightClient).with_chain_edit(
-		"People",
-		|chain| {
-			chain["genesisHash"] = format!("0x{}", "5a".repeat(32)).into();
-		},
+	// Its own directory: People's spec is fetched and kept here, and the next
+	// case needs it missing.
+	let large = format!("{server}/large.json");
+	let oversized_directory = tempfile::tempdir().expect("temporary directory");
+	let oversized = bundled.with_light_specs_at(&large, &people, oversized_directory.path());
+	let error = verify_chains(&oversized, None)
+		.await
+		.expect("no chain has one of Polkadot's genesis hashes")
+		.expect_err("the relay's spec is larger than the CLI reads");
+	assert!(error.to_string().contains("--chain-backend rpc"), "{error}");
+
+	let moved = format!("{server}/moved.json");
+	let missing = bundled.with_light_specs_at(&relay, &moved, directory.path());
+	verify_chains(&missing, None)
+		.await
+		.expect("no chain has one of Polkadot's genesis hashes")
+		.expect("a spec the server does not have is unreachable, not wrong");
+	let light = missing.light_client().expect("the stack runs on the light client");
+	let people = missing.genesis().people;
+	assert_eq!(
+		[light.provider().relay_of(people).expect("People has a relay"), people]
+			.map(|genesis| light.provider().has_light_spec(genesis)),
+		[true, false],
+		"the relay's spec is loaded and People's is still missing"
 	);
-	let error = refuse_light_client(&restarted).unwrap_err();
-	assert!(error.to_string().contains("--chain-backend rpc"));
-}
-
-#[test]
-fn test_light_client_unknown_network_error() {
-	let pcf_devnet = Network::PcfDevnet.bundled_stack(ChainBackend::LightClient);
-	let error = refuse_light_client(&pcf_devnet).unwrap_err();
-	assert!(error.to_string().contains("no chain specs for pcf-devnet"));
-}
-
-/// The light client finds each chain in `truapi-provider`'s bundled catalog
-/// by the bundled descriptor's genesis hash, so a network reset applied to
-/// only one of the two copies leaves it unable to connect.
-#[test]
-fn test_light_client_catalog_match() {
-	let bundled: Vec<_> = Network::value_variants()
-		.iter()
-		.map(|network| network.bundled_stack(ChainBackend::LightClient))
-		.filter(|stack| truapi_provider::known_networks().any(|known| known == stack.namespace()))
-		.collect();
-	assert!(!bundled.is_empty());
-	for stack in bundled {
-		refuse_light_client(&stack).expect("light-client catalog differs");
-	}
 }

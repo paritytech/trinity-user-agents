@@ -1,14 +1,16 @@
 use super::{
 	super::{
 		ChainEndpoint, Network,
-		testing::{edit_chain, edit_stack},
+		testing::{edit_chain, edit_stack, test_access, test_pointer},
 	},
 	*,
 };
+use crate::chain::ChainBackend;
 
 /// `descriptor` as a stack, for a descriptor `Stack::new` may reject.
 fn read_stack(descriptor: Descriptor) -> Result<Stack> {
-	Stack::new(descriptor, ChainBackend::Rpc)
+	let pointer = test_pointer();
+	Stack::new(&pointer, descriptor, &ChainAccess::Rpc)
 }
 
 /// A descriptor carries everything a network needs: the routes and genesis of
@@ -120,4 +122,32 @@ fn test_stack_missing_dub_or_pop_controller_error() {
 	});
 	let error = read_stack(without_pop_controller).unwrap_err();
 	assert!(error.to_string().contains("no dotns.popController"));
+}
+
+/// Every built-in network runs on the light client, whether or not
+/// `truapi-provider` bundles its specs: the descriptor names them.
+#[test]
+fn test_built_in_networks_name_their_light_specs() {
+	use clap::ValueEnum as _;
+
+	for network in Network::value_variants() {
+		assert!(network.bundled_stack(ChainBackend::LightClient).light_client().is_some());
+	}
+}
+
+/// A stack with no light spec for a chain the light client runs fails before
+/// the command starts, naming the chain, rather than on every connect.
+#[test]
+fn test_light_client_without_a_light_spec_error() {
+	let pointer = test_pointer();
+	let descriptor = edit_chain("Bulletin", |chain| {
+		chain.as_object_mut().expect("a chain is an object").remove("lightSpec");
+	});
+
+	let error = Stack::new(&pointer, descriptor.clone(), &test_access(ChainBackend::LightClient))
+		.unwrap_err()
+		.to_string();
+
+	assert!(error.contains("Bulletin") && error.contains("--chain-backend rpc"), "{error}");
+	Stack::new(&pointer, descriptor, &ChainAccess::Rpc).expect("RPC needs no light spec");
 }
