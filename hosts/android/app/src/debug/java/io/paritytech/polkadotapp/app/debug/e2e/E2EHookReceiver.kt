@@ -63,7 +63,11 @@ class E2EHookReceiver : BroadcastReceiver() {
 
     private suspend fun handle(hooks: Hooks, intent: Intent) {
         if (intent.getBooleanExtra(EXTRA_SEED_IDENTITY, false)) {
-            seedIdentity(hooks, username = intent.stringExtra(EXTRA_USERNAME) ?: DEFAULT_USERNAME)
+            seedIdentity(
+                hooks,
+                username = intent.stringExtra(EXTRA_USERNAME) ?: DEFAULT_USERNAME,
+                mnemonic = intent.stringExtra(EXTRA_MNEMONIC)
+            )
         }
 
         val productId = intent.stringExtra(EXTRA_PRODUCT_ID)?.let { ProductId.parse(it).getOrNull() }
@@ -93,15 +97,16 @@ class E2EHookReceiver : BroadcastReceiver() {
             )
     }
 
-    private suspend fun seedIdentity(hooks: Hooks, username: String) {
+    private suspend fun seedIdentity(hooks: Hooks, username: String, mnemonic: String?) {
         runCatching {
-            if (!hooks.accountRepository().areAccountsInitialized()) {
-                hooks.manualMnemonicInteractor().createAccounts(E2E_ENTROPY).getOrThrow()
-            }
+            seedAccounts(hooks.manualMnemonicInteractor(), hooks.accountRepository().areAccountsInitialized(), mnemonic).getOrThrow()
             hooks.localUsernameStorage().saveValue(Username.fromFullValue(username))
         }.fold(
             onSuccess = { log(E2EAcks.SEED_IDENTITY_DONE) },
-            onFailure = { logError("seed_identity", it) }
+            onFailure = { error ->
+                // The message of a failed restore can quote the words of the phrase.
+                if (mnemonic == null) logError("seed_identity", error) else logError("seed_identity", error::class.java.simpleName)
+            }
         )
     }
 
@@ -124,6 +129,7 @@ class E2EHookReceiver : BroadcastReceiver() {
     private companion object {
         const val EXTRA_SEED_IDENTITY = "seed_identity"
         const val EXTRA_USERNAME = "username"
+        const val EXTRA_MNEMONIC = "mnemonic"
         const val EXTRA_PRODUCT_ID = "product_id"
         const val EXTRA_PRODUCT_NAME = "product_name"
         const val EXTRA_WORKER_URL = "worker_url"
@@ -132,8 +138,18 @@ class E2EHookReceiver : BroadcastReceiver() {
 
         const val DEFAULT_USERNAME = "truapi-e2e"
 
-        val E2E_ENTROPY = ByteArray(16) { 0x42 }
-
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     }
+}
+
+private val E2E_ENTROPY = ByteArray(16) { 0x42 }
+
+internal suspend fun seedAccounts(
+    interactor: ManualMnemonicInteractor,
+    accountsInitialized: Boolean,
+    mnemonic: String?
+): Result<Unit> = when {
+    accountsInitialized -> Result.success(Unit)
+    mnemonic != null -> interactor.restoreAccountWithEnteredMnemonic(mnemonic)
+    else -> interactor.createAccounts(E2E_ENTROPY)
 }
