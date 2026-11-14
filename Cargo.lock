@@ -6070,7 +6070,6 @@ name = "truapi-provider"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "blake2b_simd",
  "derive_more 2.1.1",
  "futures",
  "futures-timer",
@@ -6086,6 +6085,7 @@ dependencies = [
  "rand 0.8.7",
  "send_wrapper",
  "serde_json",
+ "sha2 0.10.9",
  "smoldot 4.0.0",
  "smoldot-light 2.1.0",
  "thiserror 1.0.69",
@@ -6094,6 +6094,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
+ "trinity-stack",
  "uniffi",
  "url",
  "wasm-bindgen",

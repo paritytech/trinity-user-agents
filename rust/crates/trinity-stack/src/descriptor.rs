@@ -197,6 +197,9 @@ pub struct ForkSource {
 	pub key: Option<String>,
 }
 
+/// The relay chain's `role`.
+const RELAY_ROLE: &str = "Relay";
+
 impl Descriptor {
 	/// Reads a descriptor from a parsed I-JSON document: drops service entries of unknown kinds,
 	/// then checks every format rule on what remains.
@@ -220,6 +223,12 @@ impl Descriptor {
 	/// The chain with this role.
 	pub fn chain(&self, role: &str) -> Option<&Chain> {
 		self.chains.iter().find(|chain| chain.role == role)
+	}
+
+	/// The relay chain, which every other chain is a parachain of. A valid descriptor has exactly
+	/// one.
+	pub fn relay(&self) -> Option<&Chain> {
+		self.chain(RELAY_ROLE)
 	}
 
 	/// The service of this kind, when the stack has one.
@@ -290,7 +299,7 @@ impl Descriptor {
 			if !roles.insert(chain.role.as_str()) {
 				return Err(Error::DuplicateChainRole(chain.role.clone()));
 			}
-			match (chain.role == "Relay", chain.para_id) {
+			match (chain.role == RELAY_ROLE, chain.para_id) {
 				(true, Some(_)) => return Err(Error::ParaId("set on the relay".into())),
 				(false, None) => return Err(Error::ParaId(format!("missing on {}", chain.role))),
 				(false, Some(para_id)) if !para_ids.insert(para_id) => {
@@ -313,7 +322,7 @@ impl Descriptor {
 				format::hex_bytes::<32>("forkedAt.hash", &block.hash)?;
 			}
 		}
-		let relays = self.chains.iter().filter(|chain| chain.role == "Relay").count();
+		let relays = self.chains.iter().filter(|chain| chain.role == RELAY_ROLE).count();
 		if relays != 1 {
 			return Err(Error::RelayCount(relays));
 		}
@@ -414,8 +423,13 @@ impl Chain {
 	/// The genesis hash as bytes. Decodes hex that validation already checked, so it panics only
 	/// on a chain that skipped [`Descriptor::from_json`] and deserialisation.
 	pub fn genesis(&self) -> [u8; 32] {
+		self.try_genesis().expect("invalid genesisHash in a descriptor")
+	}
+
+	/// The genesis hash as bytes, for a chain that may have skipped validation. Fails when it is
+	/// not 32 bytes of lowercase 0x-prefixed hex.
+	pub fn try_genesis(&self) -> Result<[u8; 32], Error> {
 		format::hex_bytes("genesisHash", &self.genesis_hash)
-			.expect("invalid genesisHash in a descriptor")
 	}
 }
 

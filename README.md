@@ -264,8 +264,16 @@ Statement submissions and allowance operations reuse the core's People-chain RPC
 client. Statement subscriptions each open their own connection.
 
 A host that serves chain traffic itself embeds the `truapi-provider` crate: an
-embedded smoldot light client plus a bundled chain-spec catalog, addressed by
-genesis hash, so the host ships no chain specs and never refreshes them. The light
+embedded smoldot light client addressed by genesis hash. A provider built for a
+Trinity stack runs the chains of the stack's descriptor: the provider lists
+where each chain's `lightSpec` is published, the host fetches it and hands the
+bytes over, and the provider checks them
+against the descriptor's `sha256` and the chain's genesis hash, wires each
+parachain to the relay and runs the statement-store protocol where the
+descriptor sets `statementStore`. A chain whose spec has not arrived is unknown
+until the host adds it, and the rest of the stack runs. The crate also bundles
+a chain-spec catalog for `paseo-next-v2` and `previewnet`, which a stack's
+provider never consults. The light
 client holds at most 32 connections at once and refuses a `connect` past that, so a
 consumer that leaks them fails instead of growing; closing one hands its slot back.
 The limit covers only light-client connections; connections to a remote node are

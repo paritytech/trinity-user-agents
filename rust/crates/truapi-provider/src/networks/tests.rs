@@ -52,7 +52,7 @@ fn every_catalog_genesis_hash_matches_its_bundled_spec() {
 			("bulletin", &network.bulletin),
 			("people", &network.people),
 		] {
-			let derived = genesis_hash_of_spec(chain.spec);
+			let derived = crate::test_stack::genesis(chain.spec);
 			assert_eq!(
 				format!("0x{}", hex::encode(derived)),
 				chain.genesis_hex,
@@ -63,38 +63,6 @@ fn every_catalog_genesis_hash_matches_its_bundled_spec() {
 			);
 		}
 	}
-}
-
-/// Hash of the genesis block a light chain spec describes.
-///
-/// A light spec carries only the genesis state root, which is enough: the
-/// genesis block has no parent, number zero, no extrinsics and no digest,
-/// so its header is fully determined by that root.
-fn genesis_hash_of_spec(spec: &str) -> [u8; 32] {
-	/// Merkle value of an empty trie, the genesis block's extrinsics root.
-	const EMPTY_TRIE_ROOT: &str =
-		"03170a2e7597b7b7e3d84c05391d139a62b157e78786d8c082f29dcf4c111314";
-
-	let spec: serde_json::Value = serde_json::from_str(spec).expect("bundled spec is JSON");
-	let state_root = spec["genesis"]["stateRootHash"]
-		.as_str()
-		.expect("bundled spec carries a genesis state root");
-	let state_root =
-		hex::decode(state_root.trim_start_matches("0x")).expect("the state root is hex");
-
-	let mut header = Vec::with_capacity(98);
-	header.extend_from_slice(&[0u8; 32]); // parent hash
-	header.push(0); // block number, SCALE compact 0
-	header.extend_from_slice(&state_root);
-	header.extend_from_slice(&hex::decode(EMPTY_TRIE_ROOT).expect("the constant is hex"));
-	header.push(0); // digest, an empty vector
-
-	blake2b_simd::Params::new()
-		.hash_length(32)
-		.hash(&header)
-		.as_bytes()
-		.try_into()
-		.expect("a 32-byte hash")
 }
 
 #[test]
