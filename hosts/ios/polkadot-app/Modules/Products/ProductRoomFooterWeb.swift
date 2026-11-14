@@ -223,6 +223,11 @@ struct ProductRoomFooterWebConfiguration: @preconcurrency ChatInputViewConfigura
         .bgSurfaceMain
     }
 
+    /// The slider that replaces a docked card, or another page, fades in once the page shows.
+    var animatesReplacement: Bool {
+        true
+    }
+
     @MainActor
     func makeContentView(for handler: ChatInputHandling?) -> UIView {
         let view = makeView()
@@ -234,5 +239,14 @@ struct ProductRoomFooterWebConfiguration: @preconcurrency ChatInputViewConfigura
         guard let other = configuration as? ProductRoomFooterWebConfiguration else { return false }
 
         return roomId == other.roomId && path == other.path && height == other.height
+    }
+
+    @MainActor
+    func whenContentReady(_ view: UIView, _ ready: @escaping () -> Void) {
+        guard let view = view as? ProductRoomFooterWebView else {
+            ready()
+            return
+        }
+        view.whenRevealed(ready)
     }
 }

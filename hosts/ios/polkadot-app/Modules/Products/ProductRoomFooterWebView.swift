@@ -40,6 +40,9 @@ final class ProductRoomFooterWebView: UIView {
     private var overlayTimeout: Task<Void, Never>?
     private var revealFallback: Task<Void, Never>?
     private var lastActionAt: Date?
+    private var isRevealed = false
+    private var revealWaiters: [() -> Void] = []
+    private var shrinkCover: UIView?
 
     private(set) var isOverlaying = false
 
@@ -116,6 +119,15 @@ final class ProductRoomFooterWebView: UIView {
         makeDragWin()
     }
 
+    /// Runs `action` once the page shows: at once if it already does.
+    func whenRevealed(_ action: @escaping () -> Void) {
+        if isRevealed {
+            action()
+        } else {
+            revealWaiters.append(action)
+        }
+    }
+
     /// Tells the page something, through `window.productFooter.receive` when it defines one.
     func send(_ event: ProductFooterHostEvent) {
         webView.evaluateJavaScript(event.script) { [logger] _, error in
@@ -154,6 +166,9 @@ final class ProductRoomFooterWebView: UIView {
         overlayTimeout?.cancel()
         overlayTimeout = nil
         guard isOn, let window else {
+            if isOverlaying, window != nil {
+                coverShrink()
+            }
             isOverlaying = false
             webViewTopConstraint.constant = 0
             return
@@ -223,11 +238,42 @@ private extension ProductRoomFooterWebView {
         addGestureRecognizer(dragWinner)
     }
 
+    /// A webview that shrinks shows nothing until the page paints at its new size, which is a
+    /// blank frame in the slot when the overlay ends. A still of the page as it was covers the
+    /// webview until then.
+    func coverShrink() {
+        shrinkCover?.removeFromSuperview()
+        guard let cover = webView.snapshotView(afterScreenUpdates: false) else { return }
+        cover.frame = webView.frame
+        cover.isUserInteractionEnabled = false
+        insertSubview(cover, aboveSubview: webView)
+        shrinkCover = cover
+
+        let uncover = { [weak self, weak cover] in
+            guard let self, let cover, cover === shrinkCover else { return }
+            cover.removeFromSuperview()
+            shrinkCover = nil
+        }
+        // Two animation frames of the page, then one of the screen, so its new size is on screen.
+        webView.callAsyncJavaScript(
+            "await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))",
+            in: nil,
+            in: .page
+        ) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { uncover() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { uncover() }
+    }
+
     func reveal() {
         revealFallback?.cancel()
         revealFallback = nil
-        guard webView.alpha < 1 else { return }
+        guard !isRevealed else { return }
+        isRevealed = true
         UIView.animate(withDuration: 0.15) { self.webView.alpha = 1 }
+        let waiters = revealWaiters
+        revealWaiters = []
+        waiters.forEach { $0() }
     }
 
     /// A drag that starts in the footer is the page's: the back swipe and any pan of the

@@ -1,5 +1,6 @@
 import DesignSystem
 import Foundation
+import Observation
 import PolkadotUI
 import Products
 import SwiftUI
@@ -22,6 +23,11 @@ struct ProductRoomFooterCardConfiguration: @preconcurrency ChatInputViewConfigur
     /// shows under the app's game pill or the home indicator.
     var safeAreaFillColor: UIColor? {
         .bgSurfaceMain
+    }
+
+    /// A card that replaces the product's slider, or another card, fades in once it has drawn.
+    var animatesReplacement: Bool {
+        true
     }
 
     @MainActor
@@ -52,5 +58,29 @@ struct ProductRoomFooterCardConfiguration: @preconcurrency ChatInputViewConfigur
         guard let other = configuration as? ProductRoomFooterCardConfiguration else { return false }
 
         return roomId == other.roomId && messageType == other.messageType && payload == other.payload
+    }
+
+    /// Ready once the product has drawn the card, so the slot never shows the spinner in between.
+    @MainActor
+    func whenContentReady(_: UIView, _ ready: @escaping () -> Void) {
+        Self.whenNodeArrives(nodeProvider, ready)
+    }
+}
+
+@MainActor
+private extension ProductRoomFooterCardConfiguration {
+    static func whenNodeArrives(_ provider: any WidgetNodeProviding, _ ready: @escaping () -> Void) {
+        guard provider.node == nil else {
+            ready()
+            return
+        }
+        _ = withObservationTracking {
+            provider.node
+        } onChange: { [weak provider] in
+            Task { @MainActor in
+                guard let provider else { return }
+                whenNodeArrives(provider, ready)
+            }
+        }
     }
 }
