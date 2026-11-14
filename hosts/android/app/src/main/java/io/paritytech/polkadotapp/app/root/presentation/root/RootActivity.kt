@@ -38,6 +38,7 @@ import io.paritytech.polkadotapp.app.root.presentation.debug.reportIssue.DebugSc
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.DevResetOverlay
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.IdBar
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.PaymentsSetupNotice
+import io.paritytech.polkadotapp.app.root.presentation.root.compose.ProductUpdateNotice
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.RootNavBarHost
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.StatusBarRow
 import io.paritytech.polkadotapp.app.root.presentation.root.compose.chatoverlay.ChatExtensionOverlayHost
@@ -152,6 +153,7 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
 
         setupChatExtensionOverlay()
         setupPaymentsSetupNotice()
+        setupProductUpdateNotice()
         setupChainHealthBar()
     }
 
@@ -368,6 +370,22 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
                     modifier = Modifier.fillMaxSize(),
                     isVisible = isVisible,
                     onDismissClick = viewModel::dismissPaymentsSetupNotice,
+                )
+            }
+        }
+        addContentView(composeView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    }
+
+    private fun setupProductUpdateNotice() {
+        val composeView = ComposeView(this).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+            setContent {
+                val pendingUpdate by viewModel.productUpdateNotice.collectAsStateWithLifecycle()
+                ProductUpdateNotice(
+                    modifier = Modifier.fillMaxSize(),
+                    pendingUpdate = pendingUpdate,
+                    onUpdateClick = viewModel::onProductUpdateClick,
+                    onDismissClick = viewModel::dismissProductUpdateNotice,
                 )
             }
         }

@@ -25,6 +25,7 @@ import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.Ac
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.MembersRingLocator
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.DevServerAddresses
 import io.paritytech.polkadotapp.feature_products_api.domain.browser.ProductSessionController
+import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductUpdateNotices
 import io.paritytech.polkadotapp.feature_products_api.domain.deriveEntropy.DeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardFaceOnOpen
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCollection
@@ -76,6 +77,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.bot.menu.RealProdu
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductMessageRenderObserver
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.DevServers
 import io.paritytech.polkadotapp.feature_products_impl.domain.browser.RealProductSessionController
+import io.paritytech.polkadotapp.feature_products_impl.domain.product.update.RealProductUpdateNotices
 import io.paritytech.polkadotapp.feature_products_impl.domain.deriveEntropy.RealDeriveEntropyUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.RealExploreProductsService
@@ -153,6 +155,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RealWorkerB
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerBootFactory
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketDeepLinkHandler
 import io.paritytech.polkadotapp.feature_products_impl.presentation.deeplink.PocketScanContentParser
+import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.ProductUpdatesInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.ProductWorkerInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.initialization.TopUpResumeInitializer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
@@ -181,6 +184,9 @@ internal interface ProductsModule {
     @Binds
     @Singleton
     fun bindProductSessionController(impl: RealProductSessionController): ProductSessionController
+
+    @Binds
+    fun bindProductUpdateNotices(impl: RealProductUpdateNotices): ProductUpdateNotices
 
     @Binds
     fun bindDevServerAddresses(impl: DevServers): DevServerAddresses
@@ -297,6 +303,10 @@ internal interface ProductsModule {
     @Binds
     @IntoSet
     fun bindTopUpResumeInitializer(impl: TopUpResumeInitializer): AppInitializer
+
+    @Binds
+    @IntoSet
+    fun bindProductUpdatesInitializer(impl: ProductUpdatesInitializer): AppInitializer
 
     @Binds
     fun bindProductAccountOrigins(impl: RealProductAccountOrigins): ProductAccountOrigins

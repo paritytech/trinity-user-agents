@@ -16,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.lifecycle.compose.LifecycleStartEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.statusBar.StatusBarTitle
 import io.paritytech.polkadotapp.common.presentation.tabbar.ShowTabBarTucked
@@ -59,6 +60,12 @@ fun SpaBrowserScreen(viewModel: SpaBrowserViewModel) {
                 onCloseAppClick = viewModel::onCloseAppClick,
             )
         }
+    }
+
+    LifecycleStartEffect(Unit) {
+        viewModel.onScreenStarted()
+
+        onStopOrDispose { }
     }
 
     SpaBrowserScreenInternal(

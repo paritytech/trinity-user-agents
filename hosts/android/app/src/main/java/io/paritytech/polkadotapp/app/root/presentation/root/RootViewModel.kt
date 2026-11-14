@@ -28,6 +28,7 @@ import io.paritytech.polkadotapp.feature_coinage_api.domain.deposit.AutoConvertD
 import io.paritytech.polkadotapp.feature_coinage_api.domain.externalPayment.ExternalPaymentWorkerStarter
 import io.paritytech.polkadotapp.feature_coinage_api.domain.service.CoinageServiceStarter
 import io.paritytech.polkadotapp.feature_connection_status_api.presentation.mixin.ChainHealthMixin
+import io.paritytech.polkadotapp.feature_products_api.domain.product.ProductUpdateNotices
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProductsWarmUp
 import io.paritytech.polkadotapp.feature_settings_impl.domain.interactors.SyncPriceCurrencyChange
@@ -64,6 +65,7 @@ class RootViewModel @Inject constructor(
     private val exploreProductsService: ExploreProductsService,
     private val fundingProductsWarmUp: FundingProductsWarmUp,
     private val jwtAuthWarmUpService: JwtAuthWarmUpService,
+    private val productUpdateNotices: ProductUpdateNotices,
     navigationHolder: NavigationHolder,
     appThemeSelector: AppThemeSelector,
     chatBotStateController: ChatBotStateController,
@@ -103,6 +105,8 @@ class RootViewModel @Inject constructor(
     ) { pending, onboarded, dismissed ->
         pending && onboarded && !dismissed
     }.stateInBackground(initialValue = false)
+
+    override val productUpdateNotice = productUpdateNotices.observeNotice().stateInBackground(initialValue = null)
 
     private val servicesScope = ComputationalScope(viewModelScope + coroutineDispatchers.computation)
 
@@ -164,6 +168,18 @@ class RootViewModel @Inject constructor(
 
     override fun dismissPaymentsSetupNotice() {
         paymentsSetupNoticeDismissed.value = true
+    }
+
+    override fun onProductUpdateClick() {
+        val pendingUpdate = productUpdateNotice.value ?: return
+
+        launch { productUpdateNotices.update(pendingUpdate) }
+    }
+
+    override fun dismissProductUpdateNotice() {
+        val pendingUpdate = productUpdateNotice.value ?: return
+
+        productUpdateNotices.dismiss(pendingUpdate)
     }
 
     private suspend fun checkDevReset() {

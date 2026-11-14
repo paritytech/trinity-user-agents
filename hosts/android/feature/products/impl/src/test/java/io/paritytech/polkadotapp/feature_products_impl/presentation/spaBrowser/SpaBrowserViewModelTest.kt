@@ -105,6 +105,7 @@ class SpaBrowserViewModelTest {
     private fun viewModel() = SpaBrowserViewModel(
         productSessionController = productSessionController,
         interactor = mockk(),
+        productUpdater = mockk(),
         router = router,
         savedStateHandle = SavedStateHandle(),
     )
