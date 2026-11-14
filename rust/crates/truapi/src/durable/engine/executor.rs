@@ -1,5 +1,6 @@
 //! The submission executor: builds every transaction waiting for its policy,
-//! with one worker per domain, started and stopped by one builder task.
+//! with one worker per domain, started by one builder task that runs as long
+//! as the engine.
 
 mod attempt;
 mod backoff;
@@ -20,8 +21,7 @@ use futures::{
 	future::{AbortHandle, AbortRegistration, Abortable, FutureExt},
 	stream::{BoxStream, StreamExt},
 };
-use parking_lot::Mutex;
-use tracing::warn;
+use tracing::{error, warn};
 
 use super::DurableTxEngine;
 use crate::{
@@ -33,35 +33,32 @@ use crate::{
 };
 use domain_run::DomainRun;
 
-/// The executor's builder task. Held in memory only: after a restart every
-/// waiting row is simply built again.
-#[derive(Default)]
-pub struct SubmissionExecutor {
-	builder: Mutex<Option<AbortHandle>>,
-}
+/// The executor's builder task, which runs as long as the engine. Held in
+/// memory only: after a restart every waiting row is simply built again.
+pub struct SubmissionExecutor(AbortHandle);
 
 impl SubmissionExecutor {
-	/// Stops the builder and with it every worker, leaving the rows they
-	/// worked on waiting.
-	pub fn abort_all(&self) {
-		if let Some(builder) = self.builder.lock().take() {
-			builder.abort();
-		}
+	/// An executor whose builder [`DurableTxEngine::start_builder`] starts
+	/// with the returned registration.
+	pub fn new() -> (Self, AbortRegistration) {
+		let (builder, registration) = AbortHandle::new_pair();
+		(Self(builder), registration)
+	}
+}
+
+/// Stops the builder and with it every worker, leaving the rows they worked
+/// on waiting.
+impl Drop for SubmissionExecutor {
+	fn drop(&mut self) {
+		self.0.abort();
 	}
 }
 
 impl DurableTxEngine {
 	/// Builds every transaction waiting for its policy, now and whenever more
-	/// are deferred or handed back, until the engine is dropped. Calling it
-	/// again while it runs does nothing.
-	pub fn ensure_submissions_started(self: &Arc<Self>) {
-		let mut builder = self.executor.builder.lock();
-		if builder.is_some() {
-			return;
-		}
-		let (abort, registration) = AbortHandle::new_pair();
-		*builder = Some(abort);
-		drop(builder);
+	/// are deferred or handed back, until the engine is dropped. Called once,
+	/// by the constructor.
+	pub fn start_builder(self: &Arc<Self>, registration: AbortRegistration) {
 		let waiting = dao::observe_pending_submissions(&self.db);
 		let task = Builder::new(Arc::downgrade(self)).run(waiting);
 		self.spawn_abortable(task, registration);
@@ -114,16 +111,18 @@ impl Builder {
 	}
 
 	/// Handles every change of `waiting` and every finished worker until the
-	/// waiting rows can no longer be observed or the engine is dropped. On
-	/// the former it frees its slot, so the next
-	/// [`DurableTxEngine::ensure_submissions_started`] starts a new builder.
+	/// engine is dropped. The waiting rows stay observable while the
+	/// database is open, which is as long as the engine lives.
 	async fn run(mut self, waiting: BoxStream<'static, Result<Vec<DeferredDurableTx>, DbError>>) {
 		let mut waiting = waiting.fuse();
 		loop {
 			let event = futures::select! {
 				read = waiting.next() => match read {
 					Some(read) => BuilderEvent::Waiting(read),
-					None => break,
+					None => {
+						error!("durable submissions can no longer be observed");
+						return;
+					},
 				},
 				domain = self.finished_rx.select_next_some() => BuilderEvent::Finished(domain),
 			};
@@ -131,12 +130,6 @@ impl Builder {
 				return;
 			};
 			self.handle(&engine, event);
-		}
-		// Workers stop before the slot frees, so a builder started next never
-		// runs beside them.
-		self.workers.clear();
-		if let Some(engine) = self.engine.upgrade() {
-			engine.executor.builder.lock().take();
 		}
 	}
 

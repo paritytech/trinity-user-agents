@@ -1576,7 +1576,6 @@ fn start_durable_engine(
 		return None;
 	}
 	forward_durable_work(services, &engine);
-	engine.ensure_submissions_started();
 	Some(engine)
 }
 

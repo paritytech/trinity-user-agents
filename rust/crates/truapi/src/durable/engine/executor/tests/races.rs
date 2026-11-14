@@ -152,10 +152,11 @@ fn a_rebuild_into_the_failed_attempts_bytes_is_broadcast_again() {
 #[test]
 fn a_waiting_row_still_owned_by_a_watch_is_built_only_once_released() {
 	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::building_everything());
+	// Owned before it is written, so no worker ever sees it unowned. A fresh
+	// ledger gives its first row id 1.
+	harness.engine().ownership.acquire(DurableTxId(1));
 	let id = harness.leave_waiting_from_previous_process();
-	harness.engine().ownership.acquire(id);
-
-	harness.engine().ensure_submissions_started();
+	assert_eq!(id, DurableTxId(1));
 
 	wait_until(|| harness.timer().sleeps() == 1, "the worker backs off");
 	assert_eq!(harness.policy().batches(), Vec::<Vec<DurableTxId>>::new());

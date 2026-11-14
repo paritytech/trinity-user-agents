@@ -96,7 +96,6 @@ impl DurableTxEngine {
 	/// pending transactions. Failing or being dropped leaves every pending
 	/// transaction in the ledger for the next run.
 	pub async fn run_until_settled(self: &Arc<Self>) -> Result<(), RecoveryError> {
-		self.ensure_submissions_started();
 		let wakes = self.recovery_wakes.subscribe();
 		let built = self.built_triggers().await;
 		let mut lost = LostChains::default();

@@ -77,13 +77,15 @@ pub struct DurableTxEngine {
 	host_wakes: WakeSignal,
 	pass_lock: futures::lock::Mutex<()>,
 	reporter: Mutex<Option<AbortHandle>>,
-	executor: Arc<SubmissionExecutor>,
+	/// Held for its builder, which stops when the engine is dropped.
+	_executor: SubmissionExecutor,
 }
 
 impl DurableTxEngine {
 	/// An engine over `deps`.
 	pub fn new(deps: DurableDeps) -> Arc<Self> {
-		Arc::new(Self {
+		let (executor, builder) = SubmissionExecutor::new();
+		let engine = Arc::new(Self {
 			db: deps.db,
 			registry: Arc::new(deps.registry),
 			heads: deps.heads,
@@ -97,8 +99,10 @@ impl DurableTxEngine {
 			host_wakes: WakeSignal::default(),
 			pass_lock: futures::lock::Mutex::new(()),
 			reporter: Mutex::new(None),
-			executor: Arc::default(),
-		})
+			_executor: executor,
+		});
+		engine.start_builder(builder);
+		engine
 	}
 
 	/// The status of `id`, or `None` when no such transaction exists.

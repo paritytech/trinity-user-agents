@@ -96,16 +96,6 @@ impl<E> RequestedTransactions<E> {
 			Self::Deferred(_) | Self::PlannedInWrite(_) => &[],
 		}
 	}
-
-	/// Whether the domain's policy builds or rebuilds any of them.
-	fn uses_submission_policy(&self) -> bool {
-		match self {
-			Self::Presigned(submissions) => {
-				submissions.iter().any(|submission| submission.plan.is_some())
-			},
-			Self::Deferred(_) | Self::PlannedInWrite(_) => true,
-		}
-	}
 }
 
 impl<E> DurableRequest<E> {
@@ -225,9 +215,6 @@ impl DurableTxEngine {
 		E: Send + 'static,
 	{
 		let genesis = self.registered_chain(&request.domain)?;
-		if request.transactions.uses_submission_policy() {
-			self.ensure_submissions_started();
-		}
 		// Detached from the caller: once queued, the write commits on the
 		// database thread even if this future is dropped (a cancelled FFI
 		// call, a select), and this task holds the only copy of the signed

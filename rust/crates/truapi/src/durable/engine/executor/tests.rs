@@ -11,15 +11,12 @@ use futures::{StreamExt, executor::block_on};
 
 use super::*;
 use crate::{
-	Spawner,
 	durable::{
 		model::{DurableTxFailureKind, DurableTxId, DurableTxStatus, PolicyParams, SubmissionPlan},
-		oracle::{DurableRegistry, Unobservable},
 		policy::{PolicyError, Preparation},
 		testing::{
-			DeferredTxHarness, FakeChain, PrepareAnswer, ScriptedPolicy, ServesTestDomains,
-			answer_all_with, engine_with_spawner, extrinsic, extrinsic_for_index, first_builds,
-			other_domain, test_domain, test_plan,
+			DeferredTxHarness, PrepareAnswer, ScriptedPolicy, answer_all_with, extrinsic,
+			extrinsic_for_index, first_builds, other_domain, test_domain, test_plan,
 		},
 	},
 	store::Db,
@@ -66,33 +63,11 @@ fn rows_of_an_unregistered_domain_keep_waiting() {
 	let mut live = harness.engine().live_work();
 	assert!(!block_on(live.next()).unwrap().unwrap());
 
-	harness.engine().ensure_submissions_started();
 	let built = harness.defer_one();
 
 	harness.wait_for(built, DurableTxStatus::Pending);
 	assert_eq!(harness.status(unknown_domain), DurableTxStatus::PendingSubmission);
 	assert_eq!(harness.policy().batches(), vec![vec![built]]);
-}
-
-/// Recovery and registration both start the executor. A second builder
-/// would start every worker twice as often.
-#[test]
-fn starting_the_executor_twice_runs_one_builder() {
-	let chain = FakeChain::new(130, 140);
-	let spawned = Arc::new(AtomicUsize::new(0));
-	let counter = spawned.clone();
-	let inner = Spawner::for_test();
-	let spawner = Spawner::with_test_scheduler(move |task| {
-		counter.fetch_add(1, Ordering::SeqCst);
-		inner.spawn(task)
-	});
-	let registry = DurableRegistry::new().serving(test_domain(), Arc::new(Unobservable));
-	let (_dir, engine, _timer) = engine_with_spawner(&chain, registry, spawner);
-
-	engine.ensure_submissions_started();
-	engine.ensure_submissions_started();
-
-	assert_eq!(spawned.load(Ordering::SeqCst), 1);
 }
 
 /// The runtime is torn down while a policy is still building. The row keeps
@@ -110,23 +85,4 @@ fn dropping_the_engine_mid_build_leaves_the_transaction_waiting() {
 	let released = || Arc::strong_count(&policy) == 1;
 	wait_until(released, "the build is abandoned with the engine");
 	assert_eq!(waiting_ids(&db), vec![id]);
-}
-
-/// The waiting rows stop being observable, for example when subscribing
-/// fails on a transient read error, while the engine lives on. Recovery
-/// calls `ensure_submissions_started` again, and it must start a new builder
-/// rather than see the ended one as running.
-#[test]
-fn a_builder_whose_waiting_rows_end_is_started_again() {
-	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::building_everything());
-	harness.engine().executor.abort_all();
-	let (stale, _registration) = AbortHandle::new_pair();
-	*harness.engine().executor.builder.lock() = Some(stale);
-
-	let ended = futures::stream::empty().boxed();
-	block_on(Builder::new(Arc::downgrade(harness.engine())).run(ended));
-	harness.engine().ensure_submissions_started();
-
-	let id = harness.defer_one();
-	harness.wait_for(id, DurableTxStatus::Pending);
 }

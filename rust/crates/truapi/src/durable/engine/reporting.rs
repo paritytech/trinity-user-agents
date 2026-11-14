@@ -52,7 +52,6 @@ impl Drop for DurableTxEngine {
 		if let Some(reporter) = self.reporter.get_mut().take() {
 			reporter.abort();
 		}
-		self.executor.abort_all();
 	}
 }
 
