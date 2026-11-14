@@ -1,5 +1,6 @@
 ---
 title: "Host-custodied Validator capability"
+owner: "@replghost"
 status: draft
 ---
 
