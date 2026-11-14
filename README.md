@@ -341,14 +341,18 @@ them once the rows commit, watches each one, and decides whatever it no longer
 watches from the chain. Signed bytes are never stored, so a transaction left
 live by a previous process is decided by recovery rather than sent again.
 
-A domain can also schedule a transaction before it can be signed. A submission
-policy the domain registers builds it later, and builds it again when a proven
-failure is one it accepts to retry; a presigned transaction may name such a
+Each domain registers the chain it lives on, its completion oracle and one
+submission policy. A domain can also defer a transaction before it can be
+signed. Its policy builds it later, and builds it again when a proven failure
+is one it accepts to retry; a presigned transaction may carry a plan for that
 policy too.
 
 The host keeps recovery alive. `durableWorkChanged(pending: true)` asks it to
 run a background task that awaits `runDurableRecovery()`, which returns once
 nothing is live: a WorkManager worker on Android, a `BGProcessingTask` on iOS.
+Transactions of a domain or policy the core did not register on this start
+are left as they are and do not count as live, so they resume once it is
+registered again.
 
 ### NFT purses
 
@@ -366,7 +370,7 @@ or handoff spends. The same grant covers both.
 
 `rebalancePurse` and `transferItem` register an operation under an idempotency
 key the product chooses and return; `observeOperationStatus` follows it by that
-key until it is `Cleared` or `Incomplete`. Each transfer is a scheduled durable
+key until it is `Cleared` or `Incomplete`. Each transfer is a deferred durable
 transaction: a fee-less `Scarcity::transfer` signed by the item key when it is
 submitted, and proven landed when its instance is at the destination. What
 each transfer spends is recorded in `nft_consumption`, whether the key is one

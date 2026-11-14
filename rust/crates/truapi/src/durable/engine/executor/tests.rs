@@ -7,42 +7,35 @@ use std::sync::{
 	atomic::{AtomicU8, AtomicUsize, Ordering},
 };
 
-use futures::executor::block_on;
+use futures::{StreamExt, executor::block_on};
 
 use super::*;
 use crate::{
-	Spawner,
 	durable::{
-		model::{
-			DurableTxFailureKind, DurableTxId, DurableTxStatus, PolicyId, PolicyParams,
-			SubmissionPlan,
-		},
-		oracle::{DurableRegistry, Unobservable},
+		model::{DurableTxFailureKind, DurableTxId, DurableTxStatus, PolicyParams, SubmissionPlan},
 		policy::{PolicyError, Preparation},
 		testing::{
-			FakeChain, GENESIS, PrepareAnswer, ScheduledTxHarness, ScriptedPolicy, answer_all_with,
-			engine_with_spawner, extrinsic, extrinsic_for_index, first_builds, other_domain,
-			test_domain, test_plan, test_policy_id,
+			DeferredTxHarness, PrepareAnswer, ScriptedPolicy, answer_all_with, extrinsic,
+			extrinsic_for_index, first_builds, other_domain, test_domain, test_plan,
 		},
 	},
 	store::Db,
 	test_support::wait_until,
 };
 
-/// The rows of the test domain waiting for the test policy, read straight
-/// from the ledger.
+/// The rows of the test domain waiting to be built, read straight from the
+/// ledger.
 fn waiting_ids(db: &Db) -> Vec<DurableTxId> {
-	let read =
-		db.read(|conn| dao::bucket_submissions(conn, &test_domain(), &test_policy_id(), None));
+	let read = db.read(|conn| dao::domain_submissions(conn, &test_domain()));
 	let rows = block_on(read).unwrap();
-	rows.iter().map(|scheduled| scheduled.id).collect()
+	rows.iter().map(|deferred| deferred.id).collect()
 }
 
 #[test]
-fn a_scheduled_transaction_is_built_broadcast_and_watched() {
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::building_everything());
+fn a_deferred_transaction_is_built_broadcast_and_watched() {
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::building_everything());
 
-	let id = harness.schedule_one();
+	let id = harness.defer_one();
 
 	harness.wait_for(id, DurableTxStatus::Pending);
 	wait_until(|| harness.broadcast() == first_builds(1), "the built extrinsic is broadcast");
@@ -51,52 +44,30 @@ fn a_scheduled_transaction_is_built_broadcast_and_watched() {
 
 #[test]
 fn a_policy_that_gives_up_fails_the_transaction_without_broadcasting() {
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::giving_up());
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::giving_up());
 
-	let id = harness.schedule_one();
+	let id = harness.defer_one();
 
 	harness.wait_for(id, DurableTxStatus::Failure(DurableTxFailureKind::Abandoned));
 	assert_eq!(harness.broadcast(), vec![]);
 }
 
-/// An app update dropped the policy, or the domain, that rows from an earlier
-/// run name. Nothing can build them, so they fail rather than wait forever.
+/// The domain that rows from an earlier run name is not registered on this
+/// start, perhaps only for now. Nothing builds them, and they keep waiting
+/// rather than reach a final status; they are not counted as live work
+/// either, or the host would keep recovery running for nothing.
 #[test]
-fn rows_nothing_can_build_are_abandoned() {
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::building_everything());
-	let removed_policy =
-		SubmissionPlan { policy: PolicyId::new("removed"), params: PolicyParams::default() };
-	let unknown_policy = harness.leave_waiting(test_domain(), removed_policy);
+fn rows_of_an_unregistered_domain_keep_waiting() {
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::building_everything());
 	let unknown_domain = harness.leave_waiting(DomainId::new("removed"), test_plan(vec![]));
+	let mut live = harness.engine().live_work();
+	assert!(!block_on(live.next()).unwrap().unwrap());
 
-	harness.engine().ensure_submissions_started();
+	let built = harness.defer_one();
 
-	let abandoned = DurableTxStatus::Failure(DurableTxFailureKind::Abandoned);
-	harness.wait_for(unknown_policy, abandoned);
-	harness.wait_for(unknown_domain, abandoned);
-	assert_eq!(harness.policy().batches(), Vec::<Vec<DurableTxId>>::new());
-}
-
-/// Recovery and registration both start the executor. A second collector
-/// would launch every bucket twice as often.
-#[test]
-fn starting_the_executor_twice_runs_one_collector() {
-	let chain = FakeChain::new(130, 140);
-	let spawned = Arc::new(AtomicUsize::new(0));
-	let counter = spawned.clone();
-	let inner = Spawner::for_test();
-	let spawner = Spawner::with_test_scheduler(move |task| {
-		counter.fetch_add(1, Ordering::SeqCst);
-		inner.spawn(task)
-	});
-	let registry =
-		DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS)));
-	let (_dir, engine, _timer) = engine_with_spawner(&chain, registry, spawner);
-
-	engine.ensure_submissions_started();
-	engine.ensure_submissions_started();
-
-	assert_eq!(spawned.load(Ordering::SeqCst), 1);
+	harness.wait_for(built, DurableTxStatus::Pending);
+	assert_eq!(harness.status(unknown_domain), DurableTxStatus::PendingSubmission);
+	assert_eq!(harness.policy().batches(), vec![vec![built]]);
 }
 
 /// The runtime is torn down while a policy is still building. The row keeps
@@ -104,14 +75,14 @@ fn starting_the_executor_twice_runs_one_collector() {
 /// engine, and with it the database, alive.
 #[test]
 fn dropping_the_engine_mid_build_leaves_the_transaction_waiting() {
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::never_answering());
-	let id = harness.schedule_one();
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::never_answering());
+	let id = harness.defer_one();
 	wait_until(|| harness.policy().batches().len() == 1, "the build starts");
 	let db = harness.db().clone();
 
-	let (_dir, policies) = harness.drop_engine();
+	let (_dir, policy) = harness.drop_engine();
 
-	let released = || Arc::strong_count(&policies[0]) == 1;
+	let released = || Arc::strong_count(&policy) == 1;
 	wait_until(released, "the build is abandoned with the engine");
 	assert_eq!(waiting_ids(&db), vec![id]);
 }

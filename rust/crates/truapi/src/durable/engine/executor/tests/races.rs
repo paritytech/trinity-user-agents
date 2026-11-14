@@ -19,7 +19,7 @@ type RaceWrite = fn(&rusqlite::Transaction<'_>, DurableTxId) -> Result<bool, DbE
 
 /// A harness whose policy, asked about a row, first changes it with `race`
 /// and then answers `preparation` for it.
-fn racing_harness(preparation: Preparation, race: RaceWrite) -> ScheduledTxHarness {
+fn racing_harness(preparation: Preparation, race: RaceWrite) -> DeferredTxHarness {
 	let db_slot: Arc<Mutex<Option<Db>>> = Arc::default();
 	let racing_db = db_slot.clone();
 	let script: PrepareScript = Box::new(move |ids| {
@@ -31,7 +31,7 @@ fn racing_harness(preparation: Preparation, race: RaceWrite) -> ScheduledTxHarne
 			answer
 		})
 	});
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::from_script(script));
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::from_script(script));
 	*db_slot.lock() = Some(harness.db().clone());
 	harness
 }
@@ -39,19 +39,19 @@ fn racing_harness(preparation: Preparation, race: RaceWrite) -> ScheduledTxHarne
 /// Registers `extrinsic`, rebuilt through `plan`, and returns its id and
 /// the sender of its watch's events.
 fn register_watched(
-	harness: &ScheduledTxHarness,
+	harness: &DeferredTxHarness,
 	extrinsic: MortalExtrinsic,
 	plan: Option<SubmissionPlan>,
 ) -> (DurableTxId, mpsc::UnboundedSender<WatchEvent>) {
 	let events = harness.chain().script_watch();
 	let submission = DurableSubmission { extrinsic, plan };
 	let request = DurableRequest::presigned(test_domain(), None, vec![submission]).unwrap();
-	(harness.schedule(request)[0], events)
+	(harness.defer(request)[0], events)
 }
 
 /// Finalizes `extrinsic` in block 125 with a failed dispatch.
 fn fail_on_chain(
-	harness: &ScheduledTxHarness,
+	harness: &DeferredTxHarness,
 	events: &mpsc::UnboundedSender<WatchEvent>,
 	extrinsic: &MortalExtrinsic,
 ) {
@@ -72,9 +72,9 @@ fn a_build_for_a_row_that_changed_meanwhile_starts_no_attempt() {
 	let ready_now = Preparation::Ready { extrinsic: extrinsic_for_index(0), params: None };
 	let harness = racing_harness(ready_now, dao::abandon_submission);
 
-	let id = harness.schedule_one();
+	let id = harness.defer_one();
 
-	wait_until(|| harness.timer().sleeps() == 1, "the bucket backs off");
+	wait_until(|| harness.timer().sleeps() == 1, "the worker backs off");
 	assert_eq!(harness.status(id), DurableTxStatus::Failure(DurableTxFailureKind::Abandoned));
 	assert_eq!(harness.broadcast(), vec![]);
 	assert!(!harness.engine().ownership.is_owned(id));
@@ -88,9 +88,9 @@ fn giving_up_on_a_row_that_changed_meanwhile_fails_nothing() {
 		|tx, id| dao::start_attempt(tx, id, &extrinsic(100, 100, 64), None);
 	let harness = racing_harness(Preparation::GiveUp, started_elsewhere);
 
-	let id = harness.schedule_one();
+	let id = harness.defer_one();
 
-	wait_until(|| harness.timer().sleeps() == 1, "the bucket backs off");
+	wait_until(|| harness.timer().sleeps() == 1, "the worker backs off");
 	assert_eq!(harness.status(id), DurableTxStatus::Pending);
 }
 
@@ -99,7 +99,7 @@ fn giving_up_on_a_row_that_changed_meanwhile_fails_nothing() {
 /// builds and broadcasts new bytes instead of failing the transaction.
 #[test]
 fn a_failure_the_watch_proves_goes_back_to_the_policy_and_is_rebuilt() {
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::building_everything());
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::building_everything());
 	let presigned = extrinsic(1, 100, 64);
 	let (id, events) = register_watched(&harness, presigned.clone(), Some(test_plan(vec![])));
 
@@ -113,7 +113,7 @@ fn a_failure_the_watch_proves_goes_back_to_the_policy_and_is_rebuilt() {
 
 #[test]
 fn a_watched_failure_without_a_policy_is_never_rebuilt() {
-	let harness = ScheduledTxHarness::with_policy(ScriptedPolicy::building_everything());
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::building_everything());
 	let presigned = extrinsic(1, 100, 64);
 	let (id, events) = register_watched(&harness, presigned.clone(), None);
 
@@ -135,7 +135,7 @@ fn a_rebuild_into_the_failed_attempts_bytes_is_broadcast_again() {
 	let same_bytes = Preparation::Ready { extrinsic: presigned.clone(), params: None };
 	let rebuilding_the_same =
 		ScriptedPolicy::answering_with(move |ids| answer_all_with(ids, same_bytes.clone()));
-	let harness = ScheduledTxHarness::with_policy(rebuilding_the_same);
+	let harness = DeferredTxHarness::with_policy(rebuilding_the_same);
 	let (id, events) = register_watched(&harness, presigned.clone(), Some(test_plan(vec![])));
 
 	fail_on_chain(&harness, &events, &presigned);
@@ -144,4 +144,75 @@ fn a_rebuild_into_the_failed_attempts_bytes_is_broadcast_again() {
 	wait_until(|| harness.broadcast() == twice, "the rebuilt bytes are broadcast");
 	assert_eq!(harness.status(id), DurableTxStatus::Pending);
 	assert!(harness.engine().ownership.is_owned(id));
+}
+
+/// A watch writes the failure that sends its transaction back to the policy
+/// before it lets the transaction go. A build in that gap would start a
+/// second watch beside the first, so the row waits for a later round.
+#[test]
+fn a_waiting_row_still_owned_by_a_watch_is_built_only_once_released() {
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::building_everything());
+	// Owned before it is written, so no worker ever sees it unowned. A fresh
+	// ledger gives its first row id 1.
+	harness.engine().ownership.acquire(DurableTxId(1));
+	let id = harness.leave_waiting_from_previous_process();
+	assert_eq!(id, DurableTxId(1));
+
+	wait_until(|| harness.timer().sleeps() == 1, "the worker backs off");
+	assert_eq!(harness.policy().batches(), Vec::<Vec<DurableTxId>>::new());
+
+	harness.engine().ownership.release(id);
+	harness.timer().advance(core::time::Duration::from_secs(3600));
+
+	harness.wait_for(id, DurableTxStatus::Pending);
+	assert_eq!(harness.policy().batches(), vec![vec![id]]);
+}
+
+/// A worker returns once a round finds its domain has no waiting row. A transaction
+/// deferred just then must still get a worker, from the builder, rather
+/// than wait with nobody to build it.
+#[test]
+fn a_transaction_deferred_as_its_worker_returns_is_still_built() {
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::building_everything());
+
+	for _ in 0..30 {
+		let id = harness.defer_one();
+		harness.wait_for(id, DurableTxStatus::Pending);
+	}
+
+	assert_eq!(harness.policy().batches().len(), 30);
+}
+
+/// Two workers for one domain would build its rows twice, broadcasting two
+/// attempts of one transaction. Rows deferred while workers drain and the
+/// builder restarts them must still meet one worker at a time.
+#[test]
+fn a_domain_never_has_two_workers_building_at_once() {
+	let in_flight = Arc::new(AtomicUsize::new(0));
+	let most_in_flight = Arc::new(AtomicUsize::new(0));
+	let builds = Arc::new(AtomicU8::new(0));
+	let (counting, most) = (in_flight.clone(), most_in_flight.clone());
+	let script: PrepareScript = Box::new(move |ids| {
+		let now = counting.fetch_add(1, Ordering::SeqCst) + 1;
+		most.fetch_max(now, Ordering::SeqCst);
+		let answers = ids.iter().map(|id| {
+			let index = builds.fetch_add(1, Ordering::SeqCst);
+			(*id, Preparation::Ready { extrinsic: extrinsic_for_index(index), params: None })
+		});
+		let answer = Ok(answers.collect());
+		let counting = counting.clone();
+		Box::pin(async move {
+			std::thread::sleep(core::time::Duration::from_millis(2));
+			counting.fetch_sub(1, Ordering::SeqCst);
+			answer
+		})
+	});
+	let harness = DeferredTxHarness::with_policy(ScriptedPolicy::from_script(script));
+
+	let ids: Vec<DurableTxId> = (0..30).map(|_| harness.defer_one()).collect();
+
+	for id in ids {
+		harness.wait_for(id, DurableTxStatus::Pending);
+	}
+	assert_eq!(most_in_flight.load(Ordering::SeqCst), 1);
 }

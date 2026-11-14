@@ -17,13 +17,13 @@ rust/crates/
                          `EvmContractCaller` with signer-bound prepared transactions;
                          on native targets, its `durable` module follows presigned
                          transactions to a verdict over the core database and builds
-                         scheduled ones through their submission policies, and its
+                         deferred ones through their domain's submission policy, and its
                          `encrypted_storage` module holds the host store encrypted at
                          rest that keeps NFT receive key secrets; its `nft`
                          (purse records, item keys, and the tracker of what they hold on
                          Asset Hub) and `nft_purse` (the NFT purses RFC over them)
                          modules keep NFT purses in the same database, transfer items
-                         as scheduled durable transactions, and receive cheques over
+                         as deferred durable transactions, and receive cheques over
                          the statement store; its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
                          from Bulletin by CID and checks them

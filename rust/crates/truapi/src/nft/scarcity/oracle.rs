@@ -3,8 +3,6 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use subxt::utils::H256;
-
 use super::{
 	chain::{ScarcityChain, ScarcityNft},
 	policy::{TransferAttempt, TransferParams},
@@ -12,7 +10,7 @@ use super::{
 use crate::{
 	chain::{HashAndNumber, Heads, StorageWatchError},
 	chain_runtime::RuntimeFailure,
-	durable::{CompletionOracle, DurableTxEntry, DurableTxId, HeadKind, LedgerView, PassScope},
+	durable::{CompletionOracle, DurableTxEntry, DurableTxId, HeadKind, PassScope},
 	nft::ItemKey,
 };
 
@@ -29,13 +27,12 @@ const OPEN_PASS: &str = "scarcity_transfer_oracle";
 /// instance may have landed and moved on: the engine's block search decides.
 pub struct ScarcityTransferOracle {
 	chain: Arc<dyn ScarcityChain>,
-	genesis: H256,
 }
 
 impl ScarcityTransferOracle {
-	/// An oracle reading `chain`, the chain with `genesis`.
-	pub fn new(chain: Arc<dyn ScarcityChain>, genesis: H256) -> Self {
-		Self { chain, genesis }
+	/// An oracle reading `chain`.
+	pub fn new(chain: Arc<dyn ScarcityChain>) -> Self {
+		Self { chain }
 	}
 
 	/// Whether each of `transfers` landed by `at`.
@@ -57,14 +54,9 @@ impl ScarcityTransferOracle {
 
 #[async_trait::async_trait]
 impl CompletionOracle for ScarcityTransferOracle {
-	fn chain(&self) -> H256 {
-		self.genesis
-	}
-
 	async fn open_pass(
 		&self,
 		transactions: &[DurableTxEntry],
-		_ledger: &LedgerView,
 		heads: &Heads,
 	) -> Result<Box<dyn PassScope>, RuntimeFailure> {
 		let transfers: Vec<_> = transactions.iter().filter_map(BuiltTransfer::of).collect();

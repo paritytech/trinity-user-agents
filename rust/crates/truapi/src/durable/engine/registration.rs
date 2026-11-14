@@ -16,8 +16,8 @@ use crate::{
 	chain::MortalExtrinsic,
 	durable::{
 		dao,
-		model::{DomainId, DurableTxId, GroupId, PolicyId, PolicyParams, SubmissionPlan},
-		ownership::{Ownership, OwnershipClaim},
+		model::{DomainId, DurableTxId, GroupId, PolicyParams, SubmissionPlan},
+		ownership::Ownership,
 	},
 	store::DbError,
 };
@@ -43,7 +43,7 @@ pub struct DurableSubmission {
 }
 
 /// Works out, inside the registration write, the params of each transaction
-/// a request schedules, or refuses the registration.
+/// a request defers, or refuses the registration.
 type PlanInWrite<E> =
 	Box<dyn FnOnce(&rusqlite::Transaction<'_>) -> Result<Vec<PolicyParams>, E> + Send>;
 
@@ -52,14 +52,9 @@ enum RequestedTransactions<E> {
 	/// Signed already: recorded as pending and broadcast once committed.
 	Presigned(Vec<DurableSubmission>),
 	/// Built later, each through its plan.
-	Scheduled(Vec<SubmissionPlan>),
-	/// Built later by `policy`, with params worked out in the write.
-	PlannedInWrite {
-		/// The policy that builds every one of them.
-		policy: PolicyId,
-		/// Their params, one transaction each.
-		plan: PlanInWrite<E>,
-	},
+	Deferred(Vec<SubmissionPlan>),
+	/// Built later, with params worked out in the write.
+	PlannedInWrite(PlanInWrite<E>),
 }
 
 /// A request named no transaction.
@@ -71,14 +66,10 @@ pub struct EmptyRequest;
 /// `E` is what the caller's hook refuses with.
 #[derive(Debug, thiserror::Error)]
 pub enum RegistrationError<E = DbError> {
-	/// No oracle is registered for the domain, so nothing could decide its
+	/// The domain is not registered, so nothing could decide or build its
 	/// transactions.
-	#[error("no durable domain {}: register an oracle for it first", .0.as_str())]
+	#[error("no durable domain {}: register it first", .0.as_str())]
 	UnknownDomain(DomainId),
-	/// The request names a submission policy the registry does not have, so
-	/// nothing could build or rebuild its transaction.
-	#[error("no submission policy {}: register it first", .0.as_str())]
-	UnknownPolicy(PolicyId),
 	/// The write failed.
 	#[error(transparent)]
 	Db(#[from] DbError),
@@ -93,29 +84,16 @@ impl<E> RequestedTransactions<E> {
 	fn is_empty(&self) -> bool {
 		match self {
 			Self::Presigned(submissions) => submissions.is_empty(),
-			Self::Scheduled(plans) => plans.is_empty(),
-			Self::PlannedInWrite { .. } => false,
+			Self::Deferred(plans) => plans.is_empty(),
+			Self::PlannedInWrite(_) => false,
 		}
 	}
 
-	/// The presigned submissions, in order. Empty for a schedule.
+	/// The presigned submissions, in order. Empty for a deferred request.
 	fn presigned(&self) -> &[DurableSubmission] {
 		match self {
 			Self::Presigned(submissions) => submissions,
-			Self::Scheduled(_) | Self::PlannedInWrite { .. } => &[],
-		}
-	}
-
-	/// Every policy named to build or rebuild a transaction.
-	fn named_policies(&self) -> Vec<&PolicyId> {
-		match self {
-			Self::Presigned(submissions) => submissions
-				.iter()
-				.filter_map(|submission| submission.plan.as_ref())
-				.map(|plan| &plan.policy)
-				.collect(),
-			Self::Scheduled(plans) => plans.iter().map(|plan| &plan.policy).collect(),
-			Self::PlannedInWrite { policy, .. } => vec![policy],
+			Self::Deferred(_) | Self::PlannedInWrite(_) => &[],
 		}
 	}
 }
@@ -133,26 +111,24 @@ impl<E> DurableRequest<E> {
 
 	/// One transaction per plan in `plans`, recorded as waiting and built
 	/// through its plan once committed.
-	pub fn scheduled(
+	pub fn deferred(
 		domain: DomainId,
 		group: Option<GroupId>,
 		plans: Vec<SubmissionPlan>,
 	) -> Result<Self, EmptyRequest> {
-		Self::new(domain, group, RequestedTransactions::Scheduled(plans))
+		Self::new(domain, group, RequestedTransactions::Deferred(plans))
 	}
 
 	/// One transaction per params `plan` works out inside the registration
-	/// write, each recorded as waiting and built by `policy` once committed.
+	/// write, each recorded as waiting and built once committed.
 	/// An `Err` from `plan` refuses the registration as
 	/// [`RegistrationError::Hook`].
-	pub fn scheduled_in(
+	pub fn deferred_in(
 		domain: DomainId,
 		group: Option<GroupId>,
-		policy: PolicyId,
 		plan: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<Vec<PolicyParams>, E> + Send + 'static,
 	) -> Self {
-		let plan = Box::new(plan);
-		Self { domain, group, transactions: RequestedTransactions::PlannedInWrite { policy, plan } }
+		Self { domain, group, transactions: RequestedTransactions::PlannedInWrite(Box::new(plan)) }
 	}
 
 	fn new(
@@ -166,11 +142,6 @@ impl<E> DurableRequest<E> {
 		Ok(Self { domain, group, transactions })
 	}
 
-	/// Whether anything in the request is built or rebuilt by a policy.
-	fn uses_submission_policy(&self) -> bool {
-		!self.transactions.named_policies().is_empty()
-	}
-
 	/// Records every transaction as a row, in order, or returns the plan's
 	/// refusal.
 	fn insert_all(
@@ -182,13 +153,13 @@ impl<E> DurableRequest<E> {
 			RequestedTransactions::Presigned(submissions) => {
 				return insert_presigned(tx, &domain, group.as_ref(), &submissions).map(Ok);
 			},
-			RequestedTransactions::Scheduled(plans) => plans,
-			RequestedTransactions::PlannedInWrite { policy, plan } => match plan(tx) {
-				Ok(params) => plans_of(&policy, params),
+			RequestedTransactions::Deferred(plans) => plans,
+			RequestedTransactions::PlannedInWrite(plan) => match plan(tx) {
+				Ok(params) => params.into_iter().map(|params| SubmissionPlan { params }).collect(),
 				Err(refusal) => return Ok(Err(refusal)),
 			},
 		};
-		schedule_all(tx, &domain, group.as_ref(), &plans).map(Ok)
+		defer_all(tx, &domain, group.as_ref(), &plans).map(Ok)
 	}
 }
 
@@ -208,21 +179,13 @@ fn insert_presigned(
 }
 
 /// Records each plan as a waiting row, in order.
-fn schedule_all(
+fn defer_all(
 	tx: &rusqlite::Transaction<'_>,
 	domain: &DomainId,
 	group: Option<&GroupId>,
 	plans: &[SubmissionPlan],
 ) -> Result<Vec<DurableTxId>, DbError> {
-	plans.iter().map(|plan| dao::schedule(tx, domain, group, plan)).collect()
-}
-
-/// One plan of `policy` per params.
-fn plans_of(policy: &PolicyId, params: Vec<PolicyParams>) -> Vec<SubmissionPlan> {
-	params
-		.into_iter()
-		.map(|params| SubmissionPlan { policy: policy.clone(), params })
-		.collect()
+	plans.iter().map(|plan| dao::defer(tx, domain, group, plan)).collect()
 }
 
 impl DurableTxEngine {
@@ -252,10 +215,6 @@ impl DurableTxEngine {
 		E: Send + 'static,
 	{
 		let genesis = self.registered_chain(&request.domain)?;
-		self.check_policies_registered(&request)?;
-		if request.uses_submission_policy() {
-			self.ensure_submissions_started();
-		}
 		// Detached from the caller: once queued, the write commits on the
 		// database thread even if this future is dropped (a cancelled FFI
 		// call, a select), and this task holds the only copy of the signed
@@ -274,20 +233,6 @@ impl DurableTxEngine {
 			.ok_or_else(|| RegistrationError::UnknownDomain(domain.clone()))
 	}
 
-	/// Refuses a request naming a policy that is not registered, which
-	/// nothing could ever build.
-	fn check_policies_registered<E>(
-		&self,
-		request: &DurableRequest<E>,
-	) -> Result<(), RegistrationError<E>> {
-		let named = request.transactions.named_policies();
-		let unknown = named.into_iter().find(|id| self.registry.submission_policy(id).is_none());
-		match unknown {
-			Some(policy) => Err(RegistrationError::UnknownPolicy(policy.clone())),
-			None => Ok(()),
-		}
-	}
-
 	/// Records the rows, then broadcasts what was committed.
 	async fn register<T, E, F>(
 		self: Arc<Self>,
@@ -303,22 +248,22 @@ impl DurableTxEngine {
 		let submissions = request.transactions.presigned().to_vec();
 		let recorded = self.record(request, on_register).await?;
 		let (ids, value, claims) = recorded.map_err(RegistrationError::Hook)?;
-		for (claim, DurableSubmission { extrinsic, .. }) in claims.into_iter().zip(submissions) {
-			spawn_watch(&self, Attempt::new(claim, genesis, &extrinsic), extrinsic.extrinsic);
+		for (id, DurableSubmission { extrinsic, .. }) in claims.into_iter().zip(submissions) {
+			spawn_watch(&self, Attempt::new(id, genesis, &extrinsic), extrinsic.extrinsic);
 		}
 		Ok((ids, value))
 	}
 
 	/// Writes the rows and the hook's rows in one transaction, taking
 	/// ownership of each attempt inside it so a recovery pass never reaches
-	/// a committed row before its watch. Returns the claims, one per
-	/// presigned row in order, or the hook's refusal. A rolled-back write
+	/// a committed row before its watch. Returns the claimed ids, the
+	/// presigned rows in order, or the hook's refusal. A rolled-back write
 	/// gives the claims up again.
 	async fn record<T, E, F>(
 		&self,
 		request: DurableRequest<E>,
 		on_register: F,
-	) -> Result<Result<(Vec<DurableTxId>, T, Vec<OwnershipClaim>), E>, DbError>
+	) -> Result<Result<(Vec<DurableTxId>, T, Vec<DurableTxId>), E>, DbError>
 	where
 		F: FnOnce(&rusqlite::Transaction<'_>, &[DurableTxId]) -> Result<T, E> + Send + 'static,
 		T: Send + 'static,
@@ -338,7 +283,7 @@ impl DurableTxEngine {
 		let written = self.db.write_unless_refused(write_rows_and_hook).await;
 		let claims = core::mem::take(&mut *taken.lock());
 		if !matches!(written, Ok(Ok(_))) {
-			claims.iter().for_each(|claim| self.ownership.release(*claim));
+			claims.iter().for_each(|id| self.ownership.release(*id));
 		}
 		written.map(|recorded| recorded.map(|(ids, value)| (ids, value, claims)))
 	}
@@ -350,8 +295,10 @@ fn claim_presigned(
 	ownership: &Ownership,
 	ids: &[DurableTxId],
 	presigned: usize,
-) -> Vec<OwnershipClaim> {
-	ids.iter().take(presigned).map(|id| ownership.acquire(*id)).collect()
+) -> Vec<DurableTxId> {
+	let claimed: Vec<DurableTxId> = ids.iter().take(presigned).copied().collect();
+	claimed.iter().for_each(|id| ownership.acquire(*id));
+	claimed
 }
 
 #[cfg(test)]

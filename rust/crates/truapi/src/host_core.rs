@@ -1222,7 +1222,7 @@ impl SigningHostRuntime {
 		self.services.install_durable_work_observer(observer)
 	}
 
-	/// Runs durable recovery until no transaction is live, building scheduled
+	/// Runs durable recovery until no transaction is live, building deferred
 	/// transactions meanwhile.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub async fn run_durable_recovery(&self) -> Result<(), crate::durable::RecoveryError> {
@@ -1576,7 +1576,6 @@ fn start_durable_engine(
 		return None;
 	}
 	forward_durable_work(services, &engine);
-	engine.ensure_submissions_started();
 	Some(engine)
 }
 
@@ -1608,7 +1607,7 @@ fn durable_engine(
 	})
 }
 
-/// The domains and policies the durable engine serves: NFT transfers, on the
+/// The domains the durable engine serves: NFT transfers, on the
 /// Asset Hub that runs the Scarcity pallet. They need encrypted storage, which
 /// keeps the secrets of imported item keys.
 #[cfg(not(target_arch = "wasm32"))]

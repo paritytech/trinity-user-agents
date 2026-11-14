@@ -3,10 +3,10 @@
 mod harness;
 mod policy;
 
-pub use harness::{ScheduledTxHarness, other_domain, test_domain};
+pub use harness::{DeferredTxHarness, other_domain, test_domain};
 pub use policy::{
 	PrepareAnswer, PrepareScript, RetryQuestion, ScriptedPolicy, answer_all_with,
-	extrinsic_for_index, first_builds, insert_retryable, test_plan, test_policy_id, without_plan,
+	extrinsic_for_index, first_builds, insert_retryable, test_plan, without_plan,
 };
 
 use std::{
@@ -30,9 +30,9 @@ use super::{
 	ladder::{PinnedView, SearchResult},
 	model::{
 		DomainId, DurableTxEntry, DurableTxId, DurableTxState, DurableTxStatus, HeadKind,
-		SubmissionPlan,
+		SubmissionPlan, Window,
 	},
-	oracle::{DurableRegistry, PassScope, Unobservable},
+	oracle::{CompletionOracle, DurableRegistry, PassScope, Unobservable},
 };
 use crate::{
 	chain::{
@@ -87,7 +87,7 @@ pub fn entry(id: DurableTxId, birth: u64, period: u64) -> DurableTxEntry {
 		domain: DomainId::new("test"),
 		group: None,
 		tx_hash: H256::repeat_byte(u8::try_from(id.0).expect("test id fits in u8")),
-		mortality: Mortality::new(block(birth), period).unwrap(),
+		window: Window { birth, period },
 		status: DurableTxStatus::Pending,
 		scanned_to: None,
 		plan: None,
@@ -376,12 +376,32 @@ impl TxSubmitter for FakeChain {
 	}
 }
 
+/// Registers domains whose deferred transactions a test never builds.
+pub trait ServesTestDomains {
+	/// `self` with `domain` on the chain with genesis `chain`, decided by
+	/// `oracle`, with a policy that never answers.
+	fn serving_on(self, domain: DomainId, chain: H256, oracle: Arc<dyn CompletionOracle>) -> Self;
+
+	/// [`Self::serving_on`] the fixtures' chain, [`GENESIS`].
+	fn serving(self, domain: DomainId, oracle: Arc<dyn CompletionOracle>) -> Self;
+}
+
+impl ServesTestDomains for DurableRegistry {
+	fn serving_on(self, domain: DomainId, chain: H256, oracle: Arc<dyn CompletionOracle>) -> Self {
+		self.with_domain(domain, chain, oracle, Arc::new(ScriptedPolicy::never_answering()))
+	}
+
+	fn serving(self, domain: DomainId, oracle: Arc<dyn CompletionOracle>) -> Self {
+		self.serving_on(domain, GENESIS, oracle)
+	}
+}
+
 /// An engine over `chain` serving the `test` domain, decided by the search
 /// alone, with time under the test's control.
 pub fn test_engine(chain: &Arc<FakeChain>) -> (TempDir, Arc<DurableTxEngine>, Arc<ManualTimer>) {
 	engine_with(
 		chain,
-		DurableRegistry::new().with_domain(DomainId::new("test"), Arc::new(Unobservable(GENESIS))),
+		DurableRegistry::new().serving(DomainId::new("test"), Arc::new(Unobservable)),
 	)
 }
 

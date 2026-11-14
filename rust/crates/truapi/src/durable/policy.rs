@@ -1,10 +1,10 @@
-//! [`SubmissionPolicy`]: how a domain builds the transactions it scheduled,
+//! [`SubmissionPolicy`]: how a domain builds the transactions it deferred,
 //! and whether a failed attempt is built again.
 
 use std::collections::HashMap;
 
 use super::model::{
-	DurableTxEntry, DurableTxId, PolicyId, PolicyParams, ScheduledDurableTx, VerdictFailureKind,
+	DeferredDurableTx, DurableTxEntry, DurableTxId, PolicyParams, VerdictFailureKind,
 };
 use crate::chain::MortalExtrinsic;
 
@@ -12,9 +12,6 @@ use crate::chain::MortalExtrinsic;
 /// decides which proven failures are worth another attempt.
 #[async_trait::async_trait]
 pub trait SubmissionPolicy: Send + Sync {
-	/// The name rows store to find this policy again after a restart.
-	fn id(&self) -> PolicyId;
-
 	/// Whether `entry`, which failed for `failure`, goes back to
 	/// [`Self::prepare`] instead of failing for good. Asked while its verdict
 	/// is written, so it decides from what it is given and never waits.
@@ -25,16 +22,19 @@ pub trait SubmissionPolicy: Send + Sync {
 		failure: VerdictFailureKind,
 	) -> bool;
 
-	/// What to do with each transaction of `batch`, which share a domain, a
-	/// policy and a group. A transaction missing from the answer keeps
+	/// What to do with each transaction of `batch`: the domain's waiting
+	/// transactions the engine wants built now, of any group. A batch is never
+	/// all of them, as it leaves out those still followed or cooling down, so
+	/// decide each transaction from itself, the ledger and the chain, never
+	/// from what the batch holds. A transaction missing from the answer keeps
 	/// waiting. An error is never a verdict: the batch is asked again later.
 	async fn prepare(
 		&self,
-		batch: &[ScheduledDurableTx],
+		batch: &[DeferredDurableTx],
 	) -> Result<HashMap<DurableTxId, Preparation>, PolicyError>;
 }
 
-/// A policy's answer for one scheduled transaction.
+/// A policy's answer for one deferred transaction.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Preparation {
 	/// Signed and ready to submit.

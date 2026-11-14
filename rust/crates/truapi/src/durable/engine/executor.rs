@@ -1,9 +1,11 @@
 //! The submission executor: builds every transaction waiting for its policy,
-//! with one task per domain, policy and group.
+//! with one worker per domain, started by one builder task that runs as long
+//! as the engine.
 
 mod attempt;
 mod backoff;
-mod bucket;
+mod domain_run;
+mod schedule;
 
 #[cfg(test)]
 mod tests;
@@ -15,105 +17,51 @@ use std::{
 };
 
 use futures::{
+	channel::mpsc::{self, UnboundedReceiver, UnboundedSender},
 	future::{AbortHandle, AbortRegistration, Abortable, FutureExt},
 	stream::{BoxStream, StreamExt},
 };
-use parking_lot::Mutex;
-use tracing::warn;
+use tracing::{error, warn};
 
 use super::DurableTxEngine;
 use crate::{
 	durable::{
 		dao,
-		model::{DomainId, GroupId, PolicyId, ScheduledDurableTx},
+		model::{DeferredDurableTx, DomainId},
 	},
 	store::DbError,
 };
-use bucket::BucketRun;
+use domain_run::DomainRun;
 
-/// The executor's running tasks. Held in memory only: after a restart every
-/// waiting row is simply built again.
-#[derive(Default)]
-pub struct SubmissionExecutor {
-	collector: Mutex<Option<AbortHandle>>,
-	/// The running bucket tasks. A bucket in the map is being worked on.
-	buckets: Mutex<HashMap<SubmissionBucket, AbortHandle>>,
-}
+/// The executor's builder task, which runs as long as the engine. Held in
+/// memory only: after a restart every waiting row is simply built again.
+pub struct SubmissionExecutor(AbortHandle);
 
-/// The rows one task builds together: one domain's, of one policy and group.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, derive_more::Display)]
-#[display(
-    "domain {} policy {} group {:?}",
-    domain.as_str(),
-    policy.as_str(),
-    group.as_ref().map(GroupId::as_str)
-)]
-pub struct SubmissionBucket {
-	domain: DomainId,
-	policy: PolicyId,
-	group: Option<GroupId>,
-}
-
-impl From<&ScheduledDurableTx> for SubmissionBucket {
-	fn from(scheduled: &ScheduledDurableTx) -> Self {
-		Self {
-			domain: scheduled.domain.clone(),
-			policy: scheduled.plan.policy.clone(),
-			group: scheduled.group.clone(),
-		}
+impl SubmissionExecutor {
+	/// An executor whose builder [`DurableTxEngine::start_builder`] starts
+	/// with the returned registration.
+	pub fn new() -> (Self, AbortRegistration) {
+		let (builder, registration) = AbortHandle::new_pair();
+		(Self(builder), registration)
 	}
 }
 
-impl SubmissionExecutor {
-	/// Stops every task, leaving the rows they worked on waiting.
-	pub fn abort_all(&self) {
-		if let Some(collector) = self.collector.lock().take() {
-			collector.abort();
-		}
-		for (_, bucket) in self.buckets.lock().drain() {
-			bucket.abort();
-		}
+/// Stops the builder and with it every worker, leaving the rows they worked
+/// on waiting.
+impl Drop for SubmissionExecutor {
+	fn drop(&mut self) {
+		self.0.abort();
 	}
 }
 
 impl DurableTxEngine {
 	/// Builds every transaction waiting for its policy, now and whenever more
-	/// are scheduled or handed back, until the engine is dropped. Calling it
-	/// again while it runs does nothing.
-	pub fn ensure_submissions_started(self: &Arc<Self>) {
-		let mut collector = self.executor.collector.lock();
-		if collector.is_some() {
-			return;
-		}
-		let (abort, registration) = AbortHandle::new_pair();
-		*collector = Some(abort);
-		drop(collector);
+	/// are deferred or handed back, until the engine is dropped. Called once,
+	/// by the constructor.
+	pub fn start_builder(self: &Arc<Self>, registration: AbortRegistration) {
 		let waiting = dao::observe_pending_submissions(&self.db);
-		let task = launch_on_pending_change(Arc::downgrade(self), waiting);
+		let task = Builder::new(Arc::downgrade(self)).run(waiting);
 		self.spawn_abortable(task, registration);
-	}
-
-	/// Starts a task for every bucket of `waiting` that has none.
-	fn launch_buckets(self: &Arc<Self>, waiting: &[ScheduledDurableTx]) {
-		let buckets: HashSet<SubmissionBucket> =
-			waiting.iter().map(SubmissionBucket::from).collect();
-		for bucket in buckets {
-			self.launch_if_idle(bucket);
-		}
-	}
-
-	/// Starts a task for `bucket` unless one runs. Registered before it is
-	/// spawned, so a task that drains at once cannot leave a stale entry.
-	fn launch_if_idle(self: &Arc<Self>, bucket: SubmissionBucket) {
-		let mut buckets = self.executor.buckets.lock();
-		if buckets.contains_key(&bucket) {
-			return;
-		}
-		let (abort, registration) = AbortHandle::new_pair();
-		buckets.insert(bucket.clone(), abort.clone());
-		drop(buckets);
-		let run = BucketRun::new(self, bucket, abort).run_until_drained();
-		self.spawn_abortable(run, registration);
 	}
 
 	/// Spawns `task`, stopped by the handle paired with `registration`.
@@ -127,23 +75,97 @@ impl DurableTxEngine {
 	}
 }
 
-/// Launches buckets on every change of the waiting rows. Every emission
-/// launches every idle bucket it names, because a bucket may have ended
-/// since the last one.
-async fn launch_on_pending_change(
+/// A running worker. Dropping it stops the worker, so stopping the builder,
+/// which owns every worker, stops them all.
+struct Worker(AbortHandle);
+
+impl Drop for Worker {
+	fn drop(&mut self) {
+		self.0.abort();
+	}
+}
+
+/// What the builder reacts to, one at a time.
+enum BuilderEvent {
+	/// The waiting rows changed.
+	Waiting(Result<Vec<DeferredDurableTx>, DbError>),
+	/// The worker of this domain found no waiting row and returned.
+	Finished(DomainId),
+}
+
+/// The only task that starts and stops workers, so a domain never has two
+/// and a domain with waiting rows always has one.
+struct Builder {
 	engine: Weak<DurableTxEngine>,
-	mut waiting: BoxStream<'static, Result<Vec<ScheduledDurableTx>, DbError>>,
-) {
-	while let Some(read) = waiting.next().await {
-		let Some(engine) = engine.upgrade() else {
-			return;
-		};
-		match read {
-			Ok(rows) => engine.launch_buckets(&rows),
-			Err(error) => warn!(%error, "durable submissions could not be read"),
+	workers: HashMap<DomainId, Worker>,
+	/// The domains of the latest waiting rows.
+	waiting: HashSet<DomainId>,
+	finished_tx: UnboundedSender<DomainId>,
+	finished_rx: UnboundedReceiver<DomainId>,
+}
+
+impl Builder {
+	fn new(engine: Weak<DurableTxEngine>) -> Self {
+		let (finished_tx, finished_rx) = mpsc::unbounded();
+		Self { engine, workers: HashMap::new(), waiting: HashSet::new(), finished_tx, finished_rx }
+	}
+
+	/// Handles every change of `waiting` and every finished worker until the
+	/// engine is dropped. The waiting rows stay observable while the
+	/// database is open, which is as long as the engine lives.
+	async fn run(mut self, waiting: BoxStream<'static, Result<Vec<DeferredDurableTx>, DbError>>) {
+		let mut waiting = waiting.fuse();
+		loop {
+			let event = futures::select! {
+				read = waiting.next() => match read {
+					Some(read) => BuilderEvent::Waiting(read),
+					None => {
+						error!("durable submissions can no longer be observed");
+						return;
+					},
+				},
+				domain = self.finished_rx.select_next_some() => BuilderEvent::Finished(domain),
+			};
+			let Some(engine) = self.engine.upgrade() else {
+				return;
+			};
+			self.handle(&engine, event);
 		}
 	}
-	if let Some(engine) = engine.upgrade() {
-		engine.executor.collector.lock().take();
+
+	/// Starts a worker for every domain with waiting rows that has none,
+	/// unless the domain is not registered. A finished worker's domain is
+	/// started again when the latest rows still wait in it: those rows may
+	/// have been deferred after the worker's last read.
+	fn handle(&mut self, engine: &Arc<DurableTxEngine>, event: BuilderEvent) {
+		match event {
+			BuilderEvent::Waiting(Ok(rows)) => {
+				self.waiting = rows.iter().map(|row| row.domain.clone()).collect();
+				for domain in self.waiting.clone() {
+					self.start_if_idle(engine, domain);
+				}
+			},
+			BuilderEvent::Waiting(Err(error)) => {
+				warn!(%error, "durable submissions could not be read")
+			},
+			BuilderEvent::Finished(domain) => {
+				self.workers.remove(&domain);
+				if self.waiting.contains(&domain) {
+					self.start_if_idle(engine, domain);
+				}
+			},
+		}
+	}
+
+	fn start_if_idle(&mut self, engine: &Arc<DurableTxEngine>, domain: DomainId) {
+		if self.workers.contains_key(&domain) {
+			return;
+		}
+		let Some(run) = DomainRun::new(engine, domain.clone(), self.finished_tx.clone()) else {
+			return;
+		};
+		let (abort, registration) = AbortHandle::new_pair();
+		self.workers.insert(domain, Worker(abort));
+		engine.spawn_abortable(run.run_until_drained(), registration);
 	}
 }

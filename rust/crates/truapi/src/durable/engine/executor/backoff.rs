@@ -1,12 +1,16 @@
-//! How long a bucket waits: between rounds that decide nothing, and before
-//! building a row again.
+//! How long a worker waits: after a failed read, before asking its policy
+//! again about a row it did not answer, and before building a row again.
 
 use core::time::Duration;
 
-/// The wait after the first round that decided nothing.
+/// The wait after the first failed read.
 pub const INITIAL_BACKOFF: Duration = Duration::from_secs(2);
-/// The longest wait between rounds that decide nothing.
+/// The longest wait between failed reads.
 pub const MAX_BACKOFF: Duration = Duration::from_secs(120);
+/// How long a row the policy did not answer waits before it is asked about
+/// again, unless a change in its domain comes first.
+pub const ASK_AGAIN: Duration = Duration::from_secs(30);
+
 /// The wait before building a row again after its first attempt.
 pub const REBUILD_COOLDOWN: Duration = Duration::from_secs(5);
 /// The longest wait before building a row again.
@@ -15,7 +19,7 @@ pub const MAX_REBUILD_COOLDOWN: Duration = Duration::from_secs(600);
 /// the multiplication cannot overflow.
 const MAX_DOUBLINGS: u32 = 10;
 
-/// The wait after `rounds` rounds in a row that decided nothing.
+/// The wait after `rounds` failed reads in a row.
 pub fn backoff(rounds: u32) -> Duration {
 	let doublings = rounds.saturating_sub(1);
 	exponential(INITIAL_BACKOFF, MAX_BACKOFF, doublings)

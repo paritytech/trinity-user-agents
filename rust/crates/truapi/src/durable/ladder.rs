@@ -77,7 +77,7 @@ pub async fn evaluate_ladder(
 	}
 	// One block past the era's death, as on Android, so a terminal verdict
 	// never rests on the death block itself.
-	let window_closed = heads.finalized.number > tx.mortality.death();
+	let window_closed = heads.finalized.number > tx.window.death();
 	if let Some(outcome) = oracle_rules(tx, scope, &heads, window_closed) {
 		return outcome;
 	}
@@ -113,8 +113,8 @@ async fn search_rule(
 	view: &dyn PinnedView,
 	window_closed: bool,
 ) -> RuleOutcome {
-	let from = tx.scanned_to.map_or(tx.mortality.birth().number, |scanned| scanned + 1);
-	let to = tx.mortality.death().min(view.heads().finalized.number);
+	let from = tx.scanned_to.map_or(tx.window.birth, |scanned| scanned + 1);
+	let to = tx.window.death().min(view.heads().finalized.number);
 	if from > to {
 		return absent(tx, None, window_closed);
 	}
@@ -141,7 +141,7 @@ fn searched(tx: &DurableTxEntry, result: SearchResult, window_closed: bool) -> R
 /// only once a closed window was read through its death.
 fn absent(tx: &DurableTxEntry, read_advanced_to: Option<u64>, window_closed: bool) -> RuleOutcome {
 	let scanned_to = read_advanced_to.or(tx.scanned_to);
-	let read_to_death = scanned_to.is_some_and(|scanned| scanned >= tx.mortality.death());
+	let read_to_death = scanned_to.is_some_and(|scanned| scanned >= tx.window.death());
 	if window_closed && read_to_death {
 		return decided(VerdictStatus::Failure(VerdictFailureKind::Expired));
 	}

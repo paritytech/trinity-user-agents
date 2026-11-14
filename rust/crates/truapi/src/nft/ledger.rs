@@ -25,12 +25,9 @@ use super::{
 	returns::{
 		ReturnRequest, StartedReturn, plan_returns, read_return_items, validated_return_items,
 	},
-	scarcity::TRANSFER_POLICY,
 };
 use crate::{
-	durable::{
-		DurableRequest, DurableTxEngine, GroupId, PolicyId, PolicyParams, RegistrationError,
-	},
+	durable::{DurableRequest, DurableTxEngine, GroupId, PolicyParams, RegistrationError},
 	installation::{InstallationId, InstallationIdProvider},
 	store::{Db, DbError},
 };
@@ -201,8 +198,7 @@ impl NftLedger {
 			+ 'static,
 	{
 		let deriver = self.keys.clone();
-		let policy = PolicyId::new(TRANSFER_POLICY);
-		DurableRequest::scheduled_in(nft_domain(), Some(group), policy, move |tx| {
+		DurableRequest::deferred_in(nft_domain(), Some(group), move |tx| {
 			plan(tx, DestinationKeys { installation, deriver: deriver.as_ref() })
 		})
 	}
@@ -262,8 +258,7 @@ impl NftLedger {
 	) -> Result<StartedReturn, RegistrationError<StartOperationError>> {
 		let group = request.operation.group().clone();
 		let import = request.import.clone();
-		let policy = PolicyId::new(TRANSFER_POLICY);
-		let planned = DurableRequest::scheduled_in(nft_domain(), Some(group), policy, move |tx| {
+		let planned = DurableRequest::deferred_in(nft_domain(), Some(group), move |tx| {
 			plan_returns(tx, &request)
 		});
 		self.durable

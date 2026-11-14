@@ -15,13 +15,13 @@ use super::{
 	ledger::{NftLedger, NftLedgerDeps},
 	operation::nft_domain,
 	purse::PurseId,
-	scarcity::{TRANSFER_POLICY, TransferParams},
+	scarcity::TransferParams,
 };
 use crate::{
 	durable::{
-		DurableRegistry, DurableTxEngine, DurableTxEntry, DurableTxId, PolicyError, PolicyId,
-		PolicyParams, Preparation, ScheduledDurableTx, SubmissionPolicy, Unobservable,
-		VerdictFailureKind, engine_on,
+		DeferredDurableTx, DurableRegistry, DurableTxEngine, DurableTxEntry, DurableTxId,
+		PolicyError, PolicyParams, Preparation, SubmissionPolicy, Unobservable, VerdictFailureKind,
+		engine_on,
 	},
 	encrypted_storage::MemoryEncryptedStorage,
 	host_internal::extrinsic::Sr25519Signer,
@@ -58,10 +58,12 @@ pub fn test_ledger_deps(db: Db) -> NftLedgerDeps {
 /// An engine over `db` that serves the NFT domain, whose transfers stay waiting
 /// to be built.
 pub fn unbuilt_transfers_engine(db: Db) -> Arc<DurableTxEngine> {
-	let oracle = Arc::new(Unobservable(subxt::utils::H256::zero()));
-	let registry = DurableRegistry::new()
-		.with_domain(nft_domain(), oracle)
-		.with_policy(Arc::new(NeverBuilds));
+	let registry = DurableRegistry::new().with_domain(
+		nft_domain(),
+		subxt::utils::H256::zero(),
+		Arc::new(Unobservable),
+		Arc::new(NeverBuilds),
+	);
 	engine_on(db, registry)
 }
 
@@ -70,17 +72,13 @@ struct NeverBuilds;
 
 #[async_trait::async_trait]
 impl SubmissionPolicy for NeverBuilds {
-	fn id(&self) -> PolicyId {
-		PolicyId::new(TRANSFER_POLICY)
-	}
-
 	fn can_retry(&self, _: &DurableTxEntry, _: &PolicyParams, _: VerdictFailureKind) -> bool {
 		false
 	}
 
 	async fn prepare(
 		&self,
-		_: &[ScheduledDurableTx],
+		_: &[DeferredDurableTx],
 	) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
 		Ok(HashMap::new())
 	}

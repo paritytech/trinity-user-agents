@@ -3,7 +3,7 @@ use futures::executor::block_on;
 use super::*;
 use crate::durable::{
 	model::DurableTxId,
-	oracle::{CompletionOracle, LedgerView, Unobservable},
+	oracle::{CompletionOracle, Unobservable},
 	testing::{FakeView, ScriptedScope, block, entry},
 };
 
@@ -353,10 +353,7 @@ fn an_unobservable_domain_is_still_decided_by_the_search() {
 			DEATH + 1,
 			SearchResult::Found { block: block(110), outcome: Some(DispatchOutcome::Succeeded) },
 		);
-		let scope = Unobservable(H256::zero())
-			.open_pass(&[], &LedgerView::new(vec![]), &view.heads())
-			.await
-			.unwrap();
+		let scope = Unobservable.open_pass(&[], &view.heads()).await.unwrap();
 
 		let outcome =
 			evaluate_ladder(&tx(), scope.as_ref(), &view, RecordedCanonicity::Unknown).await;

@@ -64,4 +64,8 @@ impl Timer for ManualTimer {
 			let _ = woken.await;
 		})
 	}
+
+	fn now(&self) -> Duration {
+		self.state.lock().now
+	}
 }

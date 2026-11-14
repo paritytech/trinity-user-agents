@@ -183,7 +183,6 @@ fn live_engine(
 		timer: Arc::new(RealTimer),
 		spawner: tokio_spawner(),
 	});
-	engine.ensure_submissions_started();
 	let settling = engine.clone();
 	tokio::spawn(async move {
 		while settling.run_until_settled().await.is_ok() {

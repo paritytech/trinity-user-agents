@@ -1,4 +1,4 @@
-//! [`ScheduledTxHarness`]: an engine whose transactions scripted policies
+//! [`DeferredTxHarness`]: an engine whose transactions scripted policies
 //! build, and what a test steers and reads it with.
 
 use core::time::Duration;
@@ -14,16 +14,15 @@ use crate::{
 	durable::{
 		dao,
 		engine::{DurableDeps, DurableRequest, DurableTxEngine},
-		model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, PolicyId, SubmissionPlan},
+		model::{DomainId, DurableTxEntry, DurableTxId, DurableTxStatus, SubmissionPlan},
 		oracle::{DurableRegistry, Unobservable},
-		policy::SubmissionPolicy,
 	},
 	store::Db,
 	test_support::wait_until,
 	time::ManualTimer,
 };
 
-/// The domain a test schedules into unless it needs a second one.
+/// The domain a test defers into unless it needs a second one.
 pub fn test_domain() -> DomainId {
 	DomainId::new("test")
 }
@@ -34,37 +33,34 @@ pub fn other_domain() -> DomainId {
 }
 
 /// An engine serving [`test_domain`] and [`other_domain`], which nothing on
-/// chain decides, with scripted policies, a [`ManualTimer`] and scripted
+/// chain decides, built by one scripted policy, with a [`ManualTimer`] and scripted
 /// finalized heads.
-pub struct ScheduledTxHarness {
+pub struct DeferredTxHarness {
 	_dir: TempDir,
 	chain: Arc<FakeChain>,
 	db: Db,
 	engine: Arc<DurableTxEngine>,
 	timer: Arc<ManualTimer>,
 	heads: mpsc::UnboundedSender<Result<HeadEvent, RuntimeFailure>>,
-	policies: Vec<Arc<ScriptedPolicy>>,
+	policy: Arc<ScriptedPolicy>,
 }
 
-impl ScheduledTxHarness {
-	/// A harness registering `policy`.
+impl DeferredTxHarness {
+	/// A harness whose domains are both built by `policy`.
 	pub fn with_policy(policy: ScriptedPolicy) -> Self {
-		Self::with_policies(vec![policy])
-	}
-
-	/// A harness registering every policy of `policies`. With none, rows
-	/// naming the test policy name one that is not registered.
-	pub fn with_policies(policies: Vec<ScriptedPolicy>) -> Self {
 		let chain = FakeChain::new(130, 140);
 		let heads = chain.script_heads();
-		let policies: Vec<Arc<ScriptedPolicy>> = policies.into_iter().map(Arc::new).collect();
-		let registry = policies
-			.iter()
-			.fold(served_domains(), |registry, policy| registry.with_policy(policy.clone()));
+		let policy = Arc::new(policy);
+		let registry = [test_domain(), other_domain()].into_iter().fold(
+			DurableRegistry::new(),
+			|registry, domain| {
+				registry.with_domain(domain, GENESIS, Arc::new(Unobservable), policy.clone())
+			},
+		);
 		let (dir, db) = open_db();
 		let timer = Arc::new(ManualTimer::default());
 		let engine = engine_over(&chain, db.clone(), registry, timer.clone());
-		Self { _dir: dir, chain, db, engine, timer, heads, policies }
+		Self { _dir: dir, chain, db, engine, timer, heads, policy }
 	}
 
 	/// The engine's ledger.
@@ -87,39 +83,30 @@ impl ScheduledTxHarness {
 		&self.timer
 	}
 
-	/// The first policy registered.
+	/// The policy that builds both domains.
 	pub fn policy(&self) -> &Arc<ScriptedPolicy> {
-		&self.policies[0]
+		&self.policy
 	}
 
-	/// The registered policy with the id `id`.
-	pub fn policy_named(&self, id: &PolicyId) -> &Arc<ScriptedPolicy> {
-		let named = self.policies.iter().find(|policy| policy.id() == *id);
-		named.unwrap_or_else(|| {
-			panic!("no policy {id:?} is registered, expected one of the harness's")
-		})
+	/// Defers one transaction of the test domain, in no group.
+	pub fn defer_one(&self) -> DurableTxId {
+		self.defer_repeated(1)[0]
 	}
 
-	/// Schedules one transaction of the test domain, in no group, for the
-	/// test policy.
-	pub fn schedule_one(&self) -> DurableTxId {
-		self.schedule_repeated(1)[0]
-	}
-
-	/// Schedules `count` transactions of the test domain, in no group, for
-	/// the test policy, in one write.
-	pub fn schedule_repeated(&self, count: usize) -> Vec<DurableTxId> {
+	/// Defers `count` transactions of the test domain, in no group, in one
+	/// write.
+	pub fn defer_repeated(&self, count: usize) -> Vec<DurableTxId> {
 		let plans = vec![test_plan(vec![]); count];
-		let request = DurableRequest::scheduled(test_domain(), None, plans).unwrap();
-		self.schedule(request)
+		let request = DurableRequest::deferred(test_domain(), None, plans).unwrap();
+		self.defer(request)
 	}
 
 	/// Registers `request` and returns its ids.
-	pub fn schedule(&self, request: DurableRequest) -> Vec<DurableTxId> {
+	pub fn defer(&self, request: DurableRequest) -> Vec<DurableTxId> {
 		block_on(self.engine.execute(request)).unwrap()
 	}
 
-	/// A test-domain row waiting for the test policy, written as a previous
+	/// A test-domain row waiting to be built, written as a previous
 	/// process would have left it: no executor hears of it.
 	pub fn leave_waiting_from_previous_process(&self) -> DurableTxId {
 		self.leave_waiting(test_domain(), test_plan(vec![]))
@@ -128,7 +115,7 @@ impl ScheduledTxHarness {
 	/// A row of `domain` waiting to be built through `plan`, written as a
 	/// previous process would have left it.
 	pub fn leave_waiting(&self, domain: DomainId, plan: SubmissionPlan) -> DurableTxId {
-		let write = self.db.write(move |tx| dao::schedule(tx, &domain, None, &plan));
+		let write = self.db.write(move |tx| dao::defer(tx, &domain, None, &plan));
 		block_on(write).unwrap()
 	}
 
@@ -179,10 +166,10 @@ impl ScheduledTxHarness {
 		std::thread::sleep(Duration::from_millis(50));
 	}
 
-	/// Drops the engine, keeping its database directory and the policies so
-	/// a test can check what outlives it.
-	pub fn drop_engine(self) -> (TempDir, Vec<Arc<ScriptedPolicy>>) {
-		(self._dir, self.policies)
+	/// Drops the engine, keeping its database directory and the policy so a
+	/// test can check what outlives it.
+	pub fn drop_engine(self) -> (TempDir, Arc<ScriptedPolicy>) {
+		(self._dir, self.policy)
 	}
 }
 
@@ -203,13 +190,4 @@ fn engine_over(
 		timer,
 		spawner: crate::Spawner::for_test(),
 	})
-}
-
-/// A registry serving both harness domains.
-fn served_domains() -> DurableRegistry {
-	[test_domain(), other_domain()]
-		.into_iter()
-		.fold(DurableRegistry::new(), |registry, domain| {
-			registry.with_domain(domain, Arc::new(Unobservable(GENESIS)))
-		})
 }
