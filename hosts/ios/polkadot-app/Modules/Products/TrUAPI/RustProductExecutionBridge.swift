@@ -68,6 +68,15 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
     }
 
     func navigateTo(url: String) async throws {
+        if case .notificationSettings = parseNavigate(input: url) {
+            do {
+                try await dependencies.navigationRouter.openNotificationSettings()
+            } catch {
+                dependencies.logger.error("[truapi] notification settings did not open: \(error)")
+                throw HostNavigateToError.Unknown(reason: "notification settings did not open: \(error)")
+            }
+            return
+        }
         if let destination = dependencies.hostProvider.page(navigationDestination: url) {
             try await dependencies.navigationRouter.navigateTo(destination: destination)
         } else if let parsed = URL(string: url) {

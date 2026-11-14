@@ -830,6 +830,11 @@ pub trait ProductStorage: Send + Sync {
 /// Open URLs in the system browser. Input is already trimmed, categorized,
 /// and (where needed) normalized by the core; the host implementation only
 /// needs to hand the URL to the OS URL handler.
+///
+/// The core hands over `polkadotapp://settings/notifications` when a product
+/// asks for the notification settings of the host application. A host that
+/// has such a page opens it, and a host that has none answers
+/// `HostNavigateToError::Unknown`.
 #[async_trait::async_trait]
 pub trait Navigation: Send + Sync {
 	/// Open the given URL in the system browser.

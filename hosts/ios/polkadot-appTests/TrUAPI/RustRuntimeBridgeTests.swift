@@ -143,6 +143,38 @@ struct RustRuntimeBridgeTests {
         #expect(router.openedURL == URL(string: link))
     }
 
+    /// A player who refused notifications can only turn them back on in the
+    /// system settings, so the link has to reach them rather than the app-link
+    /// path, which knows no settings route.
+    @Test func navigateToOpensTheNotificationSettings() async throws {
+        let router = MockNavigationRouter()
+        let bridge = makeBridge(
+            hostProvider: ProductHostFactory(tldProvider: StubDotNsTldProvider(tld: "dot")),
+            router: router
+        )
+
+        try await bridge.navigateTo(url: "polkadotapp://settings/notifications")
+
+        #expect(router.openedNotificationSettings)
+        #expect(router.openedURL == nil)
+        #expect(router.navigatedPage == nil)
+    }
+
+    /// The core answers the product with what the host throws, so a settings
+    /// page that did not open has to come back as a navigation error.
+    @Test func navigateToReportsNotificationSettingsThatDidNotOpen() async {
+        let router = MockNavigationRouter()
+        router.errorToThrow = ProductNativeApiError.navigationForbidden
+        let bridge = makeBridge(
+            hostProvider: ProductHostFactory(tldProvider: StubDotNsTldProvider(tld: "dot")),
+            router: router
+        )
+
+        await #expect(throws: HostNavigateToError.self) {
+            try await bridge.navigateTo(url: "polkadotapp://settings/notifications")
+        }
+    }
+
     // MARK: devicePermission
 
     /// `devicePermission(.camera)` routes to

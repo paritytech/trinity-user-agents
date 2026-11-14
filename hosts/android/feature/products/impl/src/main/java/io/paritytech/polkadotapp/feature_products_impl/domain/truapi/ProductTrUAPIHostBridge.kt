@@ -1,10 +1,12 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
+import android.content.Context
 import android.util.Log
 import androidx.core.net.toUri
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
+import dagger.hilt.android.qualifiers.ApplicationContext
 import io.parity.truapi.ChatHostBridge
 import io.parity.truapi.GameHostBridge
 import io.parity.truapi.HostBridge
@@ -19,6 +21,7 @@ import io.paritytech.polkadotapp.common.data.storage.preferences.encrypted.Encry
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.network.NetworkStateService
+import io.paritytech.polkadotapp.common.utils.openAppNotificationSettings
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
 import io.paritytech.polkadotapp.feature_products_api.domain.game.ProductGameReminder
@@ -50,6 +53,7 @@ import uniffi.truapi.HostPushNotificationRequest
 import uniffi.truapi.HostRejection
 import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.MarkerClass
+import uniffi.truapi.NavigateDecision
 import uniffi.truapi.NftPurseOwner
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ExecutableKind
@@ -59,6 +63,7 @@ import uniffi.truapi.Severity
 import uniffi.truapi.ThemeName
 import uniffi.truapi.UserConfirmationReview
 import uniffi.truapi.coreMarkers
+import uniffi.truapi.parseNavigate
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Instant
 import uniffi.truapi.PermissionDecision as TrUAPIPermissionDecision
@@ -87,6 +92,7 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
     private val dotNsTldProvider: DotNsTldProvider,
     private val productGameReminder: ProductGameReminder,
     private val extensionVersions: TrUAPIExtensionVersions,
+    @param:ApplicationContext private val context: Context,
     @Assisted private val scope: CoroutineScope,
 ) {
     @AssistedFactory
@@ -142,12 +148,22 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
         }
 
         /**
-         * Classified and dispatched by the same rule as the native `navigateTo`
-         * handler, so a link cannot resolve differently depending on the
-         * runtime toggle. Opening every URL externally would push in-app dotNS
-         * navigation into the system browser, where those names do not resolve.
+         * dotNS and external links are classified and dispatched by the same
+         * rule as the native `navigateTo` handler, so they cannot resolve
+         * differently depending on the runtime toggle. The notification
+         * settings link is served here only. Opening every URL externally would
+         * push in-app dotNS navigation into the system browser, where those
+         * names do not resolve.
          */
         override suspend fun navigateTo(url: String) {
+            if (parseNavigate(url) is NavigateDecision.NotificationSettings) {
+                runCatching { context.openAppNotificationSettings() }
+                    .getOrElse {
+                        Timber.w(it, "truapi.navigate: notification settings did not open")
+                        throw HostNavigateToException.Unknown(it.message.orEmpty())
+                    }
+                return
+            }
             val destination = url.toUri()
             val tld = dotNsTldProvider.getTld().getOrElse {
                 throw HostNavigateToException.Unknown(it.message.orEmpty())

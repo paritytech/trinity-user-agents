@@ -4162,6 +4162,37 @@ fn navigate_to_internal_targets_do_not_consume_open_url_permission() {
 }
 
 #[test]
+fn navigate_to_opens_notification_settings_without_an_open_url_grant() {
+	let platform = Arc::new(StubPlatform {
+		remote_permission_denied: true,
+		device_permission_decisions: Mutex::new([crate::platform::PermissionDecision::Deny].into()),
+		..Default::default()
+	});
+	let host = ProductRuntimeHost::new_compat(platform.clone(), Spawner::for_test());
+	let cx = CallContext::default();
+
+	let response = futures::executor::block_on(host.navigate_to(
+		&cx,
+		HostNavigateToRequest::V1(v01::HostNavigateToRequest {
+			url: "polkadotapp://settings/notifications".to_string(),
+		}),
+	));
+
+	assert_eq!(
+		(
+			response,
+			platform.navigations.lock().unwrap().clone(),
+			platform.device_permission_requests.lock().unwrap().clone(),
+		),
+		(
+			Ok(HostNavigateToResponse::V1),
+			vec!["polkadotapp://settings/notifications".to_string()],
+			vec![],
+		),
+	);
+}
+
+#[test]
 fn navigate_to_consumes_open_url_allow_once_at_handoff() {
 	futures::executor::block_on(async {
 		for url in [

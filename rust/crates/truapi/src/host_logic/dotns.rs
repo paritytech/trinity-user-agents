@@ -25,6 +25,12 @@ const HTTPS_SCHEME: &str = "https";
 /// so no product can take it.
 const POCKET_HOST: &str = "pocket";
 
+/// The host that names the settings deeplinks of the app.
+const SETTINGS_HOST: &str = "settings";
+
+/// The settings path that names the notification settings of the operating system.
+const NOTIFICATION_SETTINGS_PATH: &str = "notifications";
+
 /// What a `polkadotapp://pocket/<action>` deeplink asks the host to do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
@@ -87,6 +93,16 @@ pub enum NavigateDecision {
 	/// so the host opens the collection rather than a card.
 	PocketCollection {
 		/// Normalized `polkadotapp://` form of the deeplink, which is what
+		/// `navigate_to` hands the host.
+		canonical_url: String,
+	},
+	/// The notification settings the operating system keeps for the host application.
+	///
+	/// It opens no product and reaches no internet host. A product names it as
+	/// `polkadotapp://settings/notifications`, for example after the operating
+	/// system refused the notification permission.
+	NotificationSettings {
+		/// Normalized `polkadotapp://settings/notifications` form, which is what
 		/// `navigate_to` hands the host.
 		canonical_url: String,
 	},
@@ -153,7 +169,8 @@ fn join_url(scheme: &str, host: &str, path: &str) -> String {
 }
 
 /// Classify a URL the way the host navigation handler does: try the Pocket
-/// deeplink first, then dotNS, then `localhost`, then normalize as external.
+/// deeplink first, then the notification settings link, then dotNS, then
+/// `localhost`, then normalize as external.
 pub fn parse_navigate(input: &str) -> NavigateDecision {
 	let trimmed = input.trim();
 	if trimmed.is_empty() {
@@ -161,6 +178,10 @@ pub fn parse_navigate(input: &str) -> NavigateDecision {
 	}
 
 	if let Some(decision) = classify_pocket(trimmed) {
+		return decision;
+	}
+
+	if let Some(decision) = classify_notification_settings(trimmed) {
 		return decision;
 	}
 
@@ -193,6 +214,15 @@ fn parse_with_explicit_https(input: &str) -> Option<Url> {
 	Url::parse(&format!("{HTTPS_SCHEME}://{input}")).ok()
 }
 
+/// Parse an [`APP_SCHEME`] link whose host is `host`.
+///
+/// The host is compared in its [`normalize_host`] form. `None` when the input
+/// does not parse, names another scheme, or names another host.
+fn app_link(input: &str, host: &str) -> Option<Url> {
+	let url = Url::parse(input).ok().filter(|url| url.scheme() == APP_SCHEME)?;
+	(normalize_host(url.host_str()?) == host).then_some(url)
+}
+
 /// Recognize the host's own Pocket deeplink, `polkadotapp://pocket` with an
 /// optional action. Only the app's scheme names it: under a web scheme `pocket`
 /// is an ordinary host name, so a host whose build answers to another flavor
@@ -200,10 +230,7 @@ fn parse_with_explicit_https(input: &str) -> Option<Url> {
 /// the other `polkadotapp:` links, which need an `OpenUrl` grant: the Pocket is
 /// the host's own surface. `None` sends the input on to the other branches.
 fn classify_pocket(input: &str) -> Option<NavigateDecision> {
-	let url = Url::parse(input).ok().filter(|url| url.scheme() == APP_SCHEME)?;
-	if normalize_host(url.host_str()?) != POCKET_HOST {
-		return None;
-	}
+	let url = app_link(input, POCKET_HOST)?;
 	let target: Vec<&str> = url
 		.path_segments()
 		.into_iter()
@@ -299,6 +326,25 @@ fn classify_pocket(input: &str) -> Option<NavigateDecision> {
 		action,
 		card_id,
 		page_query,
+	})
+}
+
+/// Recognize the notification settings link of the host,
+/// `polkadotapp://settings/notifications`. Only the app scheme names it, and
+/// its query and fragment are ignored. `None` sends the input on, so every
+/// other `polkadotapp://settings` link stays an external app link.
+fn classify_notification_settings(input: &str) -> Option<NavigateDecision> {
+	let url = app_link(input, SETTINGS_HOST)?;
+	let target: Vec<&str> = url
+		.path_segments()
+		.into_iter()
+		.flatten()
+		.filter(|segment| !segment.is_empty())
+		.collect();
+	(target.as_slice() == [NOTIFICATION_SETTINGS_PATH]).then(|| {
+		NavigateDecision::NotificationSettings {
+			canonical_url: format!("{APP_SCHEME}://{SETTINGS_HOST}/{NOTIFICATION_SETTINGS_PATH}"),
+		}
 	})
 }
 
