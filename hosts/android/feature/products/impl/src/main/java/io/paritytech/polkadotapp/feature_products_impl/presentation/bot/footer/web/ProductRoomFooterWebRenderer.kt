@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer.web
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatInputSlotRenderer
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductRoomFooter
@@ -57,6 +59,9 @@ class ProductRoomFooterWebRenderer(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
+                // The slot is the composer area: the chat's own background, so messages scrolled under it stay hidden.
+                // The webview is transparent and only its overlay, drawn above this box, lets the chat show through.
+                .background(PolkadotTheme.colors.bg.surface.main)
                 .navigationBarsPadding()
                 .imePadding()
         ) {
