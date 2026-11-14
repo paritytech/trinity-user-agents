@@ -25,13 +25,19 @@ Invariants:
 
 ## Opening
 
-`ProductContentLoader` is cache first. Requesting an executable kind that the product does not
-publish fails with `ProductResolutionError.missingExecutable`.
+`ProductContentLoader` is cache first. A surface asks for an `ExecutableKindStrategy`, which
+`ResolvedProduct.servedKind(for:)` resolves against the manifest: `.fixed(kind)` serves only that
+kind, and `.withAppFallback(kind)` serves the app when the product does not publish `kind`. A
+strategy that resolves to nothing the product publishes fails with
+`ProductResolutionError.missingExecutable`. The served kind depends only on the manifest, so a
+declared executable that fails to download is an error, not a fallback.
 
-- **`open(_:kind:policy:onPhase:)`**, for an SPA or widget: with a cached manifest and an applied
-  archive, serves it at once and schedules a background refresh. Otherwise fetches the manifest and
-  stages the archive under `policy`, then adopts the manifest and applies the release. SPAs pass
-  `.untilCancelled`; the prewarmer passes `.attempts(3)`.
+- **`open(_:strategy:policy:onPhase:)`**, for an SPA or widget: with a cached manifest and an
+  applied archive of the served kind, serves it at once and schedules a background refresh.
+  Otherwise fetches the manifest and stages the served kind's archive under `policy`, then adopts
+  the manifest and applies the release. The returned content's `kind` is the served kind. SPAs
+  pass `.fixed(.app)` and `.untilCancelled`; the prewarmer passes `.fixed(.app)` and
+  `.attempts(3)`.
 - **`openWorker(_:policy:)`**, for chat bots and workers: with a cached manifest, returns it and
   schedules a refresh. Otherwise fetches the manifest under `policy`. Either way it stages a missing
   worker archive under `policy`, best effort: a failed download is logged, and the worker resolves

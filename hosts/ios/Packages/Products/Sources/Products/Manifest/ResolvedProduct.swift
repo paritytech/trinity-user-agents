@@ -65,4 +65,21 @@ public struct ResolvedProduct: Hashable, Sendable {
         guard let identifier else { throw ProductResolutionError.missingExecutable(id, kind) }
         return identifier
     }
+
+    public func servedKind(for strategy: ExecutableKindStrategy) throws -> ExecutableKind {
+        let kind =
+            switch strategy {
+            case let .fixed(kind): kind
+            case let .withAppFallback(kind): publishes(kind) ? kind : .app
+            }
+
+        _ = try contentId(for: kind)
+        return kind
+    }
+}
+
+private extension ResolvedProduct {
+    func publishes(_ kind: ExecutableKind) -> Bool {
+        (try? contentId(for: kind)) != nil
+    }
 }

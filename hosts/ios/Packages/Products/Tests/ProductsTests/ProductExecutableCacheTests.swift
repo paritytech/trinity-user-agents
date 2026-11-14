@@ -10,6 +10,7 @@ final class ProductExecutableCacheTests {
     private static let appHash = Data(repeating: 0xA1, count: 34)
     private static let updatedAppHash = Data(repeating: 0xA2, count: 34)
     private static let workerHash = Data(repeating: 0xB1, count: 34)
+    private static let widgetHash = Data(repeating: 0xC1, count: 34)
     private static let updatedWorkerHash = Data(repeating: 0xB2, count: 34)
 
     private let manifestsDirectory = FileManager.default.temporaryDirectory
@@ -22,7 +23,7 @@ final class ProductExecutableCacheTests {
 
     deinit {
         try? FileManager.default.removeItem(at: manifestsDirectory)
-        [baseName, appName, workerName].forEach { contentHashCache.removeContentHash(name: $0.rawValue) }
+        [baseName, appName, widgetName, workerName].forEach { contentHashCache.removeContentHash(name: $0.rawValue) }
     }
 
     @Test func savedManifestResolvesWithoutTheChain() async throws {
@@ -70,7 +71,7 @@ final class ProductExecutableCacheTests {
     @Test func openingTheAppDownloadsOnlyTheAppArchive() async throws {
         publishManifestProduct()
 
-        let opened = try await makeLoader().open(baseName, kind: .app, policy: .attempts(1))
+        let opened = try await makeLoader().open(baseName, strategy: .fixed(.app), policy: .attempts(1))
 
         #expect(try opened.contentId == appName)
         #expect(storage.contentExists(contentHash: Self.appHash.toHex()))
@@ -79,10 +80,10 @@ final class ProductExecutableCacheTests {
 
     @Test func openedAppOpensAgainWithoutTheChainOrTheGateway() async throws {
         publishManifestProduct()
-        let opened = try await makeLoader().open(baseName, kind: .app, policy: .attempts(1))
+        let opened = try await makeLoader().open(baseName, strategy: .fixed(.app), policy: .attempts(1))
         contracts.failAllReads(with: Unreachable())
 
-        let cached = try await makeLoader().open(baseName, kind: .app, policy: .attempts(1))
+        let cached = try await makeLoader().open(baseName, strategy: .fixed(.app), policy: .attempts(1))
 
         #expect(cached == opened)
         #expect(fetcher.fetchCount == 1)
@@ -92,14 +93,69 @@ final class ProductExecutableCacheTests {
         publishManifestProduct()
 
         await #expect(throws: ProductResolutionError.self) {
-            try await self.makeLoader().open(self.baseName, kind: .widget, policy: .attempts(1))
+            try await self.makeLoader().open(self.baseName, strategy: .fixed(.widget), policy: .attempts(1))
         }
         #expect(fetcher.fetchCount == 0)
     }
 
+    @Test func fallbackStrategyOpensAPublishedWidgetAndDownloadsOnlyItsArchive() async throws {
+        publishManifestProduct()
+        publishWidget()
+
+        let opened = try await makeLoader().open(baseName, strategy: .withAppFallback(.widget), policy: .attempts(1))
+
+        #expect(opened.kind == .widget)
+        #expect(try opened.contentId == widgetName)
+        #expect(!storage.contentExists(contentHash: Self.appHash.toHex()))
+    }
+
+    @Test func fallbackStrategyOpensTheAppWhenNoWidgetIsPublished() async throws {
+        publishManifestProduct()
+
+        let opened = try await makeLoader().open(baseName, strategy: .withAppFallback(.widget), policy: .attempts(1))
+
+        #expect(opened.kind == .app)
+        #expect(try opened.contentId == appName)
+    }
+
+    @Test func fallbackStrategyServesTheCachedAppWithoutTheChain() async throws {
+        publishManifestProduct()
+        let opened = try await makeLoader().open(baseName, strategy: .fixed(.app), policy: .attempts(1))
+        contracts.failAllReads(with: Unreachable())
+
+        let cached = try await makeLoader().open(baseName, strategy: .withAppFallback(.widget), policy: .attempts(1))
+
+        #expect(cached == opened)
+        #expect(fetcher.fetchCount == 1)
+    }
+
+    @Test func fallbackStrategyServesTheCachedWidgetWithoutTheChain() async throws {
+        publishManifestProduct()
+        publishWidget()
+        let opened = try await makeLoader().open(baseName, strategy: .withAppFallback(.widget), policy: .attempts(1))
+        contracts.failAllReads(with: Unreachable())
+
+        let cached = try await makeLoader().open(baseName, strategy: .withAppFallback(.widget), policy: .attempts(1))
+
+        #expect(cached == opened)
+        #expect(cached.kind == .widget)
+        #expect(fetcher.fetchCount == 1)
+    }
+
+    @Test func fallbackStrategyFailsWhenAPublishedWidgetCannotBeDownloaded() async throws {
+        publishManifestProduct()
+        publishWidget()
+        let loader = makeLoader(carFetcher: StubCarFetcher(failures: [URLError(.badURL)]))
+
+        await #expect(throws: URLError.self) {
+            try await loader.open(self.baseName, strategy: .withAppFallback(.widget), policy: .attempts(1))
+        }
+        #expect(!storage.contentExists(contentHash: Self.appHash.toHex()))
+    }
+
     @Test func archiveMissingFromDiskIsNotServedFromTheCache() async throws {
         publishManifestProduct()
-        _ = try await makeLoader().open(baseName, kind: .app, policy: .attempts(1))
+        _ = try await makeLoader().open(baseName, strategy: .fixed(.app), policy: .attempts(1))
 
         try storage.deleteAll()
 
@@ -109,21 +165,21 @@ final class ProductExecutableCacheTests {
     @Test func stagedAppArchiveIsNotServedUntilApplied() async throws {
         publishManifestProduct()
         let loader = makeLoader()
-        let opened = try await loader.open(baseName, kind: .app, policy: .attempts(1))
+        let opened = try await loader.open(baseName, strategy: .fixed(.app), policy: .attempts(1))
 
         contracts.set(contentHash: Self.updatedAppHash, name: appName.rawValue)
         let update = try #require(await loader.refresh(baseName).first)
 
-        #expect(try await loader.open(baseName, kind: .app, policy: .attempts(1)) == opened)
+        #expect(try await loader.open(baseName, strategy: .fixed(.app), policy: .attempts(1)) == opened)
 
         await loader.apply(update)
 
-        #expect(try await loader.open(baseName, kind: .app, policy: .attempts(1)).archive == update.archive)
+        #expect(try await loader.open(baseName, strategy: .fixed(.app), policy: .attempts(1)).archive == update.archive)
     }
 
     @Test func republishedWorkerUpdatesOnlyTheWorker() async throws {
         publishManifestProduct()
-        _ = try await makeLoader().open(baseName, kind: .app, policy: .attempts(1))
+        _ = try await makeLoader().open(baseName, strategy: .fixed(.app), policy: .attempts(1))
         _ = try await makeLoader().openWorker(baseName, policy: .attempts(1))
 
         contracts.set(contentHash: Self.updatedWorkerHash, name: workerName.rawValue)
@@ -134,7 +190,7 @@ final class ProductExecutableCacheTests {
     @Test func refreshDoesNotDownloadExecutablesNeverOpened() async throws {
         publishManifestProduct()
         let loader = makeLoader()
-        _ = try await loader.open(baseName, kind: .app, policy: .attempts(1))
+        _ = try await loader.open(baseName, strategy: .fixed(.app), policy: .attempts(1))
 
         contracts.set(contentHash: Self.updatedWorkerHash, name: workerName.rawValue)
 
@@ -146,7 +202,7 @@ final class ProductExecutableCacheTests {
     @Test func manifestChangeIsSavedWithoutAnUpdate() async throws {
         publishManifestProduct()
         let loader = makeLoader()
-        _ = try await loader.open(baseName, kind: .app, policy: .attempts(1))
+        _ = try await loader.open(baseName, strategy: .fixed(.app), policy: .attempts(1))
 
         publishManifestProduct(displayName: "Renamed shop")
 
@@ -281,6 +337,7 @@ final class ProductExecutableCacheTests {
 
 private extension ProductExecutableCacheTests {
     var appName: ProductId { try! productIdExecutable(productId: baseName, kind: .app) }
+    var widgetName: ProductId { try! productIdExecutable(productId: baseName, kind: .widget) }
     var workerName: ProductId { try! productIdExecutable(productId: baseName, kind: .worker) }
     var workerRecordKey: ProductManifest.RecordKey {
         ProductManifest.RecordKey(name: workerName, key: ProductManifestRecords.executableKey)
@@ -300,6 +357,15 @@ private extension ProductExecutableCacheTests {
         publishWorker(entrypoint: "worker.js")
         contracts.set(contentHash: Self.appHash, name: appName.rawValue)
         contracts.set(contentHash: Self.workerHash, name: workerName.rawValue)
+    }
+
+    func publishWidget() {
+        contracts.set(
+            text: #"{"$v":1,"kind":"widget","appVersion":[1,0,0],"dimensions":{"height":[2],"width":1}}"#,
+            name: widgetName.rawValue,
+            key: ProductManifestRecords.executableKey
+        )
+        contracts.set(contentHash: Self.widgetHash, name: widgetName.rawValue)
     }
 
     func publishWorker(entrypoint: String, servesChat: Bool = true) {
