@@ -1,0 +1,324 @@
+import Foundation
+import PolkadotUI
+import Products
+import struct TrUAPIHost.ProductId
+import func TrUAPIHost.productContentScheme
+import UIKit
+import WebKit
+
+// MARK: - View
+
+/// A transparent webview where the composer would be, showing the product's own page.
+///
+/// The page reports through the `productFooter` message handler: an action goes
+/// to the product as a press in the room footer, a haptic plays, `overlay` lets
+/// the page draw over the chat above it for a moment, and `ready` reveals it.
+@MainActor
+final class ProductRoomFooterWebView: UIView {
+    typealias ActionHandler = @MainActor (_ actionId: String, _ payload: String?) async -> Bool
+
+    private enum Constants {
+        static let overlayLimit: Duration = .seconds(6)
+        static let revealDelay: Duration = .seconds(2)
+    }
+
+    let pageURL: URL
+    private let productId: ProductId
+    private let onAction: ActionHandler
+    private let logger: LoggerProtocol
+    private let webView: WKWebView
+    private let dragWinner = UIPanGestureRecognizer()
+    private var heightConstraint: NSLayoutConstraint!
+    private var webViewTopConstraint: NSLayoutConstraint!
+    private var overlayTimeout: Task<Void, Never>?
+    private var revealFallback: Task<Void, Never>?
+    private var lastActionAt: Date?
+
+    private(set) var isOverlaying = false
+
+    init(
+        pageURL: URL,
+        productId: ProductId,
+        height: UInt32,
+        schemeHandler: any WKURLSchemeHandler,
+        onAction: @escaping ActionHandler,
+        logger: LoggerProtocol
+    ) {
+        self.pageURL = pageURL
+        self.productId = productId
+        self.onAction = onAction
+        self.logger = logger
+
+        let configuration = WKWebViewConfiguration()
+        configuration.applicationNameForUserAgent = ProductUserAgent.applicationName
+        configuration.setURLSchemeHandler(schemeHandler, forURLScheme: productContentScheme())
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        configuration.allowsInlineMediaPlayback = true
+        configuration.suppressesIncrementalRendering = true
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: Self.noSelectionScript,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        webView = WKWebView(frame: .zero, configuration: configuration)
+
+        super.init(frame: .zero)
+
+        // The webview copied its configuration; the content controller is the one it kept.
+        webView.configuration.userContentController.add(
+            WeakScriptMessageHandler(self),
+            contentWorld: .page,
+            name: ProductFooterMessage.handlerName
+        )
+        setupViews(height: ProductRoomFooterWebPage.height(height))
+        webView.load(URLRequest(url: pageURL))
+        revealFallback = Task { [weak self] in
+            try? await Task.sleep(for: Constants.revealDelay)
+            self?.reveal()
+        }
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else {
+            setOverlay(false)
+            return
+        }
+        makeDragWin()
+    }
+
+    /// Tells the page something, through `window.productFooter.receive` when it defines one.
+    func send(_ event: ProductFooterHostEvent) {
+        webView.evaluateJavaScript(event.script) { [logger] _, error in
+            if let error { logger.debug("[truapi.product] web footer did not take \(event.json): \(error)") }
+        }
+    }
+
+    func handle(_ message: ProductFooterMessage) {
+        switch message {
+        case let .action(actionId, payload):
+            // One confirm per slide: a page that posts twice in a burst sends once.
+            if let lastActionAt, Date().timeIntervalSince(lastActionAt) < 0.5 { return }
+            lastActionAt = Date()
+            Task { [weak self, onAction] in
+                let delivered = await onAction(actionId, payload)
+                self?.send(delivered ? .state("confirmed") : .reset)
+            }
+        case let .haptic(style):
+            Self.playHaptic(style)
+        case let .overlay(isOn):
+            setOverlay(isOn)
+        case let .ready(height):
+            if let height = ProductRoomFooterWebPage.height(reported: height) {
+                heightConstraint.constant = height
+            }
+            reveal()
+        }
+    }
+
+    /// Lets the transparent webview draw over the chat above the footer, up to the top safe area.
+    ///
+    /// Only the drawing grows: a touch above the footer lands outside this view's bounds, so the
+    /// chat keeps it, and the page cannot take touches there.
+    func setOverlay(_ isOn: Bool) {
+        overlayTimeout?.cancel()
+        overlayTimeout = nil
+        guard isOn, let window else {
+            isOverlaying = false
+            webViewTopConstraint.constant = 0
+            return
+        }
+        let top = convert(bounds, to: window).minY
+        webViewTopConstraint.constant = -max(0, top - window.safeAreaInsets.top)
+        isOverlaying = true
+        overlayTimeout = Task { [weak self] in
+            try? await Task.sleep(for: Constants.overlayLimit)
+            guard !Task.isCancelled else { return }
+            self?.setOverlay(false)
+        }
+    }
+}
+
+private extension ProductRoomFooterWebView {
+    static let noSelectionScript = """
+    (function () {
+      var style = document.createElement('style');
+      style.textContent = 'html,body{-webkit-user-select:none;-webkit-touch-callout:none;' +
+        'background:transparent!important;}';
+      (document.head || document.documentElement).appendChild(style);
+    })();
+    """
+
+    func setupViews(height: CGFloat) {
+        backgroundColor = .clear
+        clipsToBounds = false
+
+        webView.isOpaque = false
+        webView.backgroundColor = .clear
+        webView.underPageBackgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        webView.scrollView.isScrollEnabled = false
+        webView.scrollView.bounces = false
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.allowsLinkPreview = false
+        webView.allowsBackForwardNavigationGestures = false
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+        webView.alpha = 0
+        #if DEBUG
+            webView.isInspectable = true
+        #endif
+
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(webView)
+        heightConstraint = heightAnchor.constraint(equalToConstant: height)
+        webViewTopConstraint = webView.topAnchor.constraint(equalTo: topAnchor)
+        NSLayoutConstraint.activate([
+            heightConstraint,
+            webViewTopConstraint,
+            webView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+
+        // Watches touches that start in the footer without taking them from the page.
+        dragWinner.cancelsTouchesInView = false
+        dragWinner.delaysTouchesBegan = false
+        dragWinner.delaysTouchesEnded = false
+        dragWinner.delegate = self
+        addGestureRecognizer(dragWinner)
+    }
+
+    func reveal() {
+        revealFallback?.cancel()
+        revealFallback = nil
+        guard webView.alpha < 1 else { return }
+        UIView.animate(withDuration: 0.15) { self.webView.alpha = 1 }
+    }
+
+    /// A drag that starts in the footer is the page's: the back swipe and any pan of the
+    /// screens around it wait for this one to fail, which it never does while the finger is down.
+    func makeDragWin() {
+        var competing: [UIGestureRecognizer] = []
+        var ancestor = superview
+        while let view = ancestor {
+            competing += (view.gestureRecognizers ?? []).filter { $0 is UIPanGestureRecognizer }
+            ancestor = view.superview
+        }
+        var responder: UIResponder? = self
+        while let next = responder?.next {
+            if let navigation = next as? UINavigationController,
+               let pop = navigation.interactivePopGestureRecognizer {
+                competing.append(pop)
+            }
+            responder = next
+        }
+        for recognizer in competing where recognizer !== dragWinner {
+            recognizer.require(toFail: dragWinner)
+        }
+    }
+
+    static func playHaptic(_ style: String) {
+        switch style {
+        case "warning":
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+        case "error":
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+        case "selection":
+            UISelectionFeedbackGenerator().selectionChanged()
+        case "light":
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        case "medium":
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        case "heavy":
+            UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+        case "soft":
+            UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        case "rigid":
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        default:
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        }
+    }
+
+    func receive(_ message: WKScriptMessage) {
+        // Only the footer page itself speaks for the product: not a frame inside it, not another origin.
+        guard message.frameInfo.isMainFrame,
+              message.frameInfo.securityOrigin.protocol.lowercased() == productContentScheme().lowercased(),
+              message.frameInfo.securityOrigin.host.lowercased() == productId.rawValue.lowercased() else {
+            logger.warning("[truapi.product] web footer dropped a message from outside the product page")
+            return
+        }
+        guard let parsed = ProductFooterMessage(body: message.body) else {
+            logger.debug("[truapi.product] web footer dropped an unreadable message")
+            return
+        }
+        handle(parsed)
+    }
+}
+
+extension ProductRoomFooterWebView: UIGestureRecognizerDelegate {
+    func gestureRecognizer(
+        _: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith _: UIGestureRecognizer
+    ) -> Bool {
+        true
+    }
+}
+
+extension ProductRoomFooterWebView: WKNavigationDelegate {
+    func webView(
+        _: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.cancel)
+            return
+        }
+        let allowed = ProductRoomFooterWebPage.isProductOrigin(url, productId: productId) ||
+            url.absoluteString == "about:blank"
+        if !allowed {
+            logger.warning("[truapi.product] web footer refused to leave the product origin for \(url.absoluteString)")
+        }
+        decisionHandler(allowed ? .allow : .cancel)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        webView.load(URLRequest(url: pageURL))
+    }
+
+    func webView(_: WKWebView, didFinish _: WKNavigation!) {
+        reveal()
+    }
+}
+
+extension ProductRoomFooterWebView: WKUIDelegate {
+    func webView(
+        _: WKWebView,
+        createWebViewWith _: WKWebViewConfiguration,
+        for _: WKNavigationAction,
+        windowFeatures _: WKWindowFeatures
+    ) -> WKWebView? {
+        nil
+    }
+}
+
+/// The content controller keeps its handlers strongly; this keeps the view out of that cycle.
+private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    private weak var target: ProductRoomFooterWebView?
+
+    init(_ target: ProductRoomFooterWebView) {
+        self.target = target
+    }
+
+    @MainActor
+    func userContentController(_: WKUserContentController, didReceive message: WKScriptMessage) {
+        target?.receive(message)
+    }
+}

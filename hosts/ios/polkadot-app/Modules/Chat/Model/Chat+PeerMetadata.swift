@@ -13,6 +13,7 @@ extension Chat {
         case outgoingRequest
         case blockedUser
         case productCard(messageType: String, payload: Data)
+        case productWeb(path: String, height: UInt32)
         case empty
 
         var isInputField: Bool {

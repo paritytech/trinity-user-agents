@@ -21,6 +21,9 @@ extension ChatViewModelFactory {
             guard case let .chatExtension(_, roomId?) = metadata.chatId else { return nil }
             return productMessageDecoder?
                 .makeRoomFooterCard(roomId: roomId, messageType: messageType, payload: payload)
+        case let .productWeb(path, height):
+            guard case let .chatExtension(_, roomId?) = metadata.chatId else { return nil }
+            return productMessageDecoder?.makeRoomFooterWeb(roomId: roomId, path: path, height: height)
         case .empty:
             clearRoomFooterCard(of: metadata.chatId)
             return nil

@@ -105,7 +105,7 @@ pub mod latest {
 		VrfSignature, X25519PublicKey,
 	};
 
-	pub use crate::v02::{ChatRoomFooter, RenderContext};
+	pub use crate::v02::{ChatRoomFooter, ChatRoomWebFooter, RenderContext};
 
 	/// Latest payload type of a versioned envelope.
 	pub type LatestOf<T> = <T as Versioned>::Latest;

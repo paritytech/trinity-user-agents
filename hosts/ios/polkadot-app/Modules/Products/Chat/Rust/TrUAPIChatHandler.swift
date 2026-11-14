@@ -150,13 +150,15 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
         }
     }
 
-    /// A press inside the card the product docked in the footer of `roomId`.
+    /// A press inside the card the product docked in the footer of `roomId`, or from the page of a
+    /// web footer, which has no message type. Answers whether the press reached the product.
+    @discardableResult
     func dispatchRoomFooterEvent(
         roomId: String,
         messageType: String,
         actionId: String,
         payload: String?
-    ) async {
+    ) async -> Bool {
         do {
             try checkNotDisposed()
             try publishRendererAction(
@@ -165,11 +167,13 @@ actor TrUAPIChatHandler: ChatRuntimeProtocol {
                 payload: payload
             )
             logger.debug("Rust chat runtime dispatched footer event \(actionId) in room \(roomId) to \(productId)")
+            return true
         } catch is CancellationError {
             logger.debug("Rust chat runtime disposed before footer event \(actionId)")
         } catch {
             logger.error("Rust chat runtime failed to dispatch footer event \(actionId): \(error)")
         }
+        return false
     }
 
     @MainActor

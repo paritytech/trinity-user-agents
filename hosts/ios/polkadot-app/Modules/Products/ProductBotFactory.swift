@@ -18,6 +18,7 @@ final class ProductBotFactory {
     private let workers: @Sendable () -> (any TrUAPIWorkerManaging)?
     private let workerManager: ProductWorkerManaging
     private let productImages: ProductImageSources
+    private let contentLoader: ProductContentLoading?
     private let logger: LoggerProtocol
 
     init(
@@ -26,6 +27,7 @@ final class ProductBotFactory {
         workers: @Sendable @escaping () -> (any TrUAPIWorkerManaging)?,
         workerManager: ProductWorkerManaging,
         productImages: ProductImageSources,
+        contentLoader: ProductContentLoading? = nil,
         settingsManager: SettingsManagerProtocol = SettingsManager.shared,
         logger: LoggerProtocol = Logger.shared
     ) {
@@ -35,6 +37,7 @@ final class ProductBotFactory {
         self.workers = workers
         self.workerManager = workerManager
         self.productImages = productImages
+        self.contentLoader = contentLoader
         self.logger = logger
     }
 
@@ -52,10 +55,15 @@ final class ProductBotFactory {
                 workers: workers,
                 logger: logger
             )
+            // A web footer is served from the product's own App content, as its pages are.
+            let webFooterContent = contentLoader.map {
+                ProductRoomFooterWebContent(productId: product.id, contentLoader: $0, logger: logger)
+            }
             return ProductBot(
                 product: product,
                 description: description,
                 runtime: runtime,
+                webFooterContent: webFooterContent,
                 resolveImage: resolveImage,
                 logger: logger
             )
