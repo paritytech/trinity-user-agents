@@ -18,8 +18,10 @@ struct ProductRoomFooterCardConfiguration: @preconcurrency ChatInputViewConfigur
         false
     }
 
+    /// The strip below the slot, down to the screen edge, takes the chat's colour, so no chat
+    /// shows under the app's game pill or the home indicator.
     var safeAreaFillColor: UIColor? {
-        UIColor.bgSurfaceMain
+        .bgSurfaceMain
     }
 
     @MainActor

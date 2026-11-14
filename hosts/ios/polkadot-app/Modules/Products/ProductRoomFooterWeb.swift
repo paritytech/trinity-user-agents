@@ -1,3 +1,4 @@
+import DesignSystem
 import Foundation
 import PolkadotUI
 import Products
@@ -214,6 +215,12 @@ struct ProductRoomFooterWebConfiguration: @preconcurrency ChatInputViewConfigura
 
     var activateOnAppear: Bool {
         false
+    }
+
+    /// The strip below the slot, down to the screen edge, takes the chat's colour, so no chat
+    /// shows under the app's game pill or the home indicator.
+    var safeAreaFillColor: UIColor? {
+        .bgSurfaceMain
     }
 
     @MainActor
