@@ -29,6 +29,11 @@ final class CallAudioSessionManager {
     private var routeObservationTask: Task<Void, Never>?
     private var sessionPendingPermission: AVAudioSession?
 
+    private var mediaOwner: UUID?
+    private var mediaMicrophone = false
+    private var mediaOwnsActivation = false
+    private var mediaSystemActive = false
+    private var legacyConfigured = false
     var routeState: CallAudioRouteState { routeStateSubject.value }
 
     init(
@@ -46,6 +51,62 @@ final class CallAudioSessionManager {
     }
 
     deinit {
+        stopRouteObservation()
+    }
+}
+
+extension CallAudioSessionManager {
+    enum MediaAudioError: Error { case busy }
+
+    /// Media and the legacy call UI lease the same singleton; neither may
+    /// reconfigure audio underneath the other.
+    func acquireMedia(owner: UUID, microphone: Bool, speaker: Bool) throws {
+        audioSession.lockForConfiguration()
+        defer { audioSession.unlockForConfiguration() }
+        guard !legacyConfigured, mediaOwner == nil || mediaOwner == owner else { throw MediaAudioError.busy }
+        var options: AVAudioSession.CategoryOptions = microphone ? [.allowBluetoothHFP] : []
+        if microphone && speaker { options.insert(.defaultToSpeaker) }
+        try systemAudioSession.setCategory(microphone ? .playAndRecord : .playback,
+            mode: microphone ? .voiceChat : .default, options: options)
+        try systemAudioSession.setPreferredSampleRate(48_000)
+        try systemAudioSession.setPreferredIOBufferDuration(0.01)
+        if mediaOwner == nil, !audioSession.isActive {
+            try audioSession.setActive(true)
+            mediaOwnsActivation = true
+        }
+        mediaOwner = owner
+        mediaMicrophone = microphone
+        audioSession.isAudioEnabled = true
+        startRouteObservation()
+    }
+
+    func activateMedia(owner: UUID, active: Bool) {
+        audioSession.lockForConfiguration()
+        defer { audioSession.unlockForConfiguration() }
+        guard mediaOwner == owner else { return }
+        if active {
+            guard !mediaMicrophone || AVAudioApplication.shared.recordPermission == .granted else { return }
+            if !mediaSystemActive {
+                audioSession.audioSessionDidActivate(systemAudioSession)
+                mediaSystemActive = true
+            }
+        } else if mediaSystemActive {
+            audioSession.audioSessionDidDeactivate(systemAudioSession)
+            mediaSystemActive = false
+        }
+        audioSession.isAudioEnabled = active
+    }
+
+    func releaseMedia(owner: UUID) {
+        audioSession.lockForConfiguration()
+        defer { audioSession.unlockForConfiguration() }
+        guard mediaOwner == owner else { return }
+        audioSession.isAudioEnabled = false
+        if mediaSystemActive { audioSession.audioSessionDidDeactivate(systemAudioSession) }
+        if mediaOwnsActivation { try? audioSession.setActive(false) }
+        mediaSystemActive = false; mediaOwnsActivation = false
+        mediaOwner = nil
+        mediaMicrophone = false
         stopRouteObservation()
     }
 }
@@ -227,13 +288,19 @@ extension CallAudioSessionManager: CallAudioSessionManaging {
             audioSession.unlockForConfiguration()
         }
 
+        guard mediaOwner == nil else { throw MediaAudioError.busy }
         try setupAudioSessionConfig(for: callType)
         try setupInitialLoudspeakerBehavior(for: callType)
 
+        legacyConfigured = true
         startRouteObservation()
     }
 
     func setEnabled(_ isEnabled: Bool, for session: AVAudioSession) {
+        audioSession.lockForConfiguration()
+        defer { audioSession.unlockForConfiguration() }
+        guard mediaOwner == nil else { return }
+        if !isEnabled { legacyConfigured = false }
         if isEnabled {
             // Starting WebRTC audio I/O without record permission can crash the app.
             guard recordPermissionProvider.recordPermission == .granted else {

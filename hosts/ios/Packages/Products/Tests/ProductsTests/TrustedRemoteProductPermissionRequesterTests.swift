@@ -45,10 +45,11 @@ struct TrustedRemoteProductPermissionRequesterTests {
 
     /// The whole point of the narrower wrapper: trust for outbound access is not
     /// trust for the camera, another product's account, or the user's identity.
-    @Test("A trusted product still prompts for everything that is not remote access")
+    @Test("A trusted product still prompts outside remote access and notifications")
     func trustedProductStillPromptsForTheRest() async {
         for permission: ProductPermission in [
             .deviceCapability(.camera),
+            .deviceCapability(.microphone),
             .accountAccess(targetProductId: "other.dot"),
             .balanceAccess,
             .userIdentityAccess,

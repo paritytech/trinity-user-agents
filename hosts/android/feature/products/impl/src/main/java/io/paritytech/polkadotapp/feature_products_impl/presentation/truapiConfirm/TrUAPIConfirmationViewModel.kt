@@ -32,6 +32,8 @@ class TrUAPIConfirmationViewModel @Inject constructor(
 
     override fun onApproveClicked() = decide { context.approve() }
 
+    override fun onApproveAutomaticallyClicked() = decide { context.approveAutomatically() }
+
     override fun onRejectClicked() = decide { context.reject() }
 
     private fun decide(answer: () -> Unit) = launchUnit {

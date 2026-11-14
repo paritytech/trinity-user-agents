@@ -107,70 +107,93 @@ struct ProductNetworkAccessTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func allowOnceAuthorizesOneWebRtcConnection() async throws {
+    func genericNetworkGrantsNeverExposeRawPeerConnections() async throws {
         let product = try await NetworkTestProduct.open(
-            bridge: StubHostBridge(remoteDecisions: [.allowOnce, .deny])
+            bridge: StubHostBridge(remoteDecisions: [.allowAlways])
         )
         defer { product.close() }
 
-        let decisions = try await withNetworkTestTimeout("WebRTC permission") {
-            try await product.webView.callAsyncJavaScript("""
-                const first = new RTCPeerConnection({ iceServers: [] });
-                const second = new RTCPeerConnection({ iceServers: [] });
-                try {
-                  const offers = [await first.createOffer(), await first.createOffer()];
-                  let secondDecision = 'allowed';
-                  try { await second.createOffer(); } catch { secondDecision = 'denied'; }
-                  return [...offers.map(offer => offer.type), secondDecision];
-                } finally {
-                  first.close();
-                  second.close();
-                }
-                """, arguments: [:], in: nil, contentWorld: .page) as? [String]
+        for freshDocument in [false, true] {
+            if freshDocument {
+                try await product.runtime.setPermissionAuthorizationStatus(
+                    productId: "network.paseo",
+                    request: .remote(RemotePermissionRequest(permission: .remote(domains: ["127.0.0.1"]))),
+                    status: .authorized
+                )
+                try await product.navigationDelegate.load(
+                    product.webView, url: product.server.url(host: "localhost", path: "/product")
+                )
+            }
+            let constructed = try await withNetworkTestTimeout("raw WebRTC denial") {
+                try await product.webView.callAsyncJavaScript("""
+                    const constructed = [];
+                    for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'mozRTCPeerConnection']) {
+                      try {
+                        const peer = new window[name]({ iceServers: [] });
+                        constructed.push(name);
+                        peer.close();
+                      } catch {}
+                    }
+                    return constructed;
+                    """, arguments: [:], in: nil, contentWorld: .page) as? [String]
+            }
+            #expect(constructed == [])
         }
-
-        #expect(decisions == ["offer", "offer", "denied"])
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func allowOnceReachesStubbedMediaCaptureOnlyOnce() async throws {
-        let bridge = StubHostBridge(deviceDecisions: [.allowOnce, .allowOnce, .deny])
+    func productCaptureNeverConsumesNativeMediaConsent() async throws {
+        let bridge = StubHostBridge(deviceDecisions: [.allowAlways, .allowAlways])
         let product = try await NetworkTestProduct.open(bridge: bridge, initialScripts: ["""
-            window.__testMediaCalls = [];
-            Object.defineProperty(Object.getPrototypeOf(navigator.mediaDevices), 'getUserMedia', {
-              configurable: true,
-              writable: true,
-              value: async function(constraints) {
-                window.__testMediaCalls.push({ audio: !!constraints.audio, video: !!constraints.video });
-                return { getTracks: () => [] };
-              }
-            });
+            window.__testMediaCalls = 0;
+            for (const name of ['getUserMedia', 'getDisplayMedia']) {
+              Object.defineProperty(Object.getPrototypeOf(navigator.mediaDevices), name, {
+                configurable: true,
+                writable: true,
+                value: async function() {
+                  window.__testMediaCalls++;
+                  return { getTracks: () => [] };
+                }
+              });
+            }
             """])
         defer { product.close() }
 
-        let result = try await withNetworkTestTimeout("media permission") {
-            try await product.webView.callAsyncJavaScript("""
-                if (typeof navigator.mediaDevices?.getUserMedia !== 'function') {
-                  throw new Error('Media capture API is not exposed');
+        for freshDocument in [false, true] {
+            if freshDocument {
+                for device in [HostDevicePermissionRequest.camera, .microphone] {
+                    try await product.runtime.setPermissionAuthorizationStatus(
+                        productId: "network.paseo",
+                        request: .device(device), status: .authorized
+                    )
                 }
-                const decisions = [];
-                for (let attempt = 0; attempt < 2; attempt++) {
-                  try {
-                    await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
-                    decisions.push('allowed');
-                  } catch (error) {
-                    if (!(error instanceof DOMException) || error.name !== 'NotAllowedError') throw error;
-                    decisions.push('denied');
-                  }
-                }
-                return JSON.stringify({ decisions, captures: window.__testMediaCalls });
-                """, arguments: [:], in: nil, contentWorld: .page) as? String
+                try await product.navigationDelegate.load(
+                    product.webView, url: product.server.url(host: "localhost", path: "/product")
+                )
+            }
+            let result = try await withNetworkTestTimeout("raw capture denial") {
+                try await product.webView.callAsyncJavaScript("""
+                    let streams = 0;
+                    const attempts = [
+                      () => navigator.mediaDevices.getUserMedia({ audio: true }),
+                      () => navigator.mediaDevices.getUserMedia({ video: true }),
+                      () => navigator.mediaDevices.getDisplayMedia({ video: true }),
+                    ];
+                    for (const acquire of attempts) {
+                      try {
+                        const stream = await acquire();
+                        if (stream) {
+                          streams++;
+                          for (const track of stream.getTracks()) track.stop();
+                        }
+                      } catch {}
+                    }
+                    return [streams, window.__testMediaCalls];
+                    """, arguments: [:], in: nil, contentWorld: .page) as? [Int]
+            }
+            #expect(result == [0, 0])
+            #expect(bridge.requestedDevicePermissions.isEmpty)
         }
-
-        #expect(result == """
-            {"decisions":["allowed","denied"],"captures":[{"audio":true,"video":true}]}
-            """)
-        #expect(bridge.requestedDevicePermissions == [.camera, .microphone, .camera])
     }
 
     @Test(.timeLimit(.minutes(1)))

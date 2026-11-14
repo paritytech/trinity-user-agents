@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotMa
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import uniffi.truapi.PermissionDecision
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -18,18 +19,24 @@ import javax.inject.Singleton
  * open for as long as the user takes.
  */
 class TrUAPIConfirmationContext(val confirmation: TrUAPIConfirmation.Prompt) {
-    private val decision = CompletableDeferred<Boolean>()
+    private val decision = CompletableDeferred<PermissionDecision>()
 
     fun approve() {
-        decision.complete(true)
+        decision.complete(PermissionDecision.ALLOW_ONCE)
+    }
+
+    fun approveAutomatically() {
+        if (confirmation is TrUAPIConfirmation.PreimageSubmit) {
+            decision.complete(PermissionDecision.ALLOW_ALWAYS)
+        }
     }
 
     /** Also the answer for a dismissed sheet, so an abandoned prompt fails closed. */
     fun reject() {
-        decision.complete(false)
+        decision.complete(PermissionDecision.DENY)
     }
 
-    suspend fun await(): Boolean = decision.await()
+    suspend fun await(): PermissionDecision = decision.await()
 }
 
 /**
@@ -73,7 +80,7 @@ class TrUAPIConfirmationLauncher @Inject constructor(
     // first caller. Released even if the sheet is dismissed: onCleared rejects.
     private val oneAtATime = Mutex()
 
-    suspend fun awaitDecision(confirmation: TrUAPIConfirmation): Boolean = oneAtATime.withLock {
+    suspend fun awaitDecision(confirmation: TrUAPIConfirmation): PermissionDecision = oneAtATime.withLock {
         when (confirmation) {
             is TrUAPIConfirmation.Signing -> awaitSigningDecision(confirmation)
             is TrUAPIConfirmation.Prompt -> awaitPromptDecision(confirmation)
@@ -82,22 +89,36 @@ class TrUAPIConfirmationLauncher @Inject constructor(
 
     // The app's own signing sheet, so a core-initiated signature is reviewed the
     // same way a native one is, decoded call and all.
-    private suspend fun awaitSigningDecision(confirmation: TrUAPIConfirmation.Signing): Boolean {
+    private suspend fun awaitSigningDecision(confirmation: TrUAPIConfirmation.Signing): PermissionDecision {
         val context = TrUAPISigningContext(
             requesterName = confirmation.requesterProductId,
             signingRequestBody = confirmation.request,
             signingAccount = confirmation.request.signingAccount(),
         )
-        signingContextHolder.set(context)
-        productsRouter.openSignTransaction()
-        return context.await()
+        try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+                signingContextHolder.set(context)
+                productsRouter.openSignTransaction()
+            }
+            return if (context.await()) PermissionDecision.ALLOW_ONCE else PermissionDecision.DENY
+        } finally {
+            context.onAbandoned()
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable + kotlinx.coroutines.Dispatchers.Main.immediate) {
+                signingContextHolder.clear(context)
+            }
+        }
     }
 
-    private suspend fun awaitPromptDecision(confirmation: TrUAPIConfirmation.Prompt): Boolean {
+    private suspend fun awaitPromptDecision(confirmation: TrUAPIConfirmation.Prompt): PermissionDecision {
         val context = TrUAPIConfirmationContext(confirmation)
         holder.set(context)
-        productsRouter.openTrUAPIConfirmation()
-        return context.await()
+        return try {
+            productsRouter.openTrUAPIConfirmation()
+            context.await()
+        } finally {
+            context.reject()
+            holder.clear(context)
+        }
     }
 }
 

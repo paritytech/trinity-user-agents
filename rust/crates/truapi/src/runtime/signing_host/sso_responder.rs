@@ -1960,7 +1960,7 @@ mod tests {
                 )
                 .unwrap();
                 let Some(SsoSessionStatement::RemoteMessages(mut responses)) =
-                    decode_sso_session_statement(&pairing, &response_statement, message_id)
+                    decode_sso_session_statement(&pairing, &response_statement, message_id, Some(message_id))
                         .unwrap()
                 else {
                     panic!("expected encrypted Chat answer");
@@ -2056,7 +2056,7 @@ mod tests {
             )
             .unwrap();
             let Some(SsoSessionStatement::RemoteMessages(mut responses)) =
-                decode_sso_session_statement(&pairing, &response_statement, "top-up-1").unwrap()
+                decode_sso_session_statement(&pairing, &response_statement, "top-up-1", Some("top-up-1")).unwrap()
             else {
                 panic!("expected encrypted top-up answer");
             };

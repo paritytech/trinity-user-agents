@@ -84,6 +84,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import timber.log.Timber
+import uniffi.truapi.hasTrustedRemotePermissions
 import javax.inject.Inject
 import kotlin.time.ExperimentalTime
 import kotlin.time.Instant
@@ -299,7 +300,16 @@ class HostApiInteractor @Inject constructor(
         capability: DeviceCapabilityType,
     ): Result<PermissionDecision> = runCatching {
         val permission = ProductPermission.DeviceCapability(capability)
-        val decision = permissionRequester.prompt(callingProductId, permission)
+        // The core has already checked stored refusals. Trust removes only the
+        // product prompt; the host's OS authorization below is still required.
+        val decision = if (
+            capability == DeviceCapabilityType.Notifications &&
+            hasTrustedRemotePermissions(callingProductId.value)
+        ) {
+            PermissionDecision.AllowAlways
+        } else {
+            permissionRequester.prompt(callingProductId, permission)
+        }
         if (decision != PermissionDecision.Deny &&
             !deviceCapabilityPermissionHandler.requestOsPermissionIfNeeded(capability)
         ) {

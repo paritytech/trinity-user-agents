@@ -4,6 +4,7 @@
 //! public proc-macro entry points to be defined at the crate root.
 
 mod service;
+mod sso_response_indices;
 mod sso_service;
 mod versioned_type;
 mod wire;
@@ -15,7 +16,7 @@ use proc_macro::TokenStream;
 /// The metadata is preserved in rustdoc JSON for `truapi-codegen`.
 #[proc_macro_attribute]
 pub fn service(args: TokenStream, item: TokenStream) -> TokenStream {
-	service::expand(args, item)
+    service::expand(args, item)
 }
 
 /// Mark a TrUAPI trait method with its wire-protocol discriminant id.
@@ -39,7 +40,7 @@ pub fn service(args: TokenStream, item: TokenStream) -> TokenStream {
 /// extracts from rustdoc JSON to build the wire table and versioned clients.
 #[proc_macro_attribute]
 pub fn wire(args: TokenStream, item: TokenStream) -> TokenStream {
-	wire::expand(args, item)
+    wire::expand(args, item)
 }
 
 /// Mark a TrUAPI service trait with its wire-protocol trait discriminant.
@@ -55,7 +56,7 @@ pub fn wire(args: TokenStream, item: TokenStream) -> TokenStream {
 /// `truapi-codegen` extracts from rustdoc JSON.
 #[proc_macro_attribute]
 pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
-	wire::expand_trait(args, item)
+    wire::expand_trait(args, item)
 }
 
 /// Generate versioned message envelopes.
@@ -84,7 +85,7 @@ pub fn wire_trait(args: TokenStream, item: TokenStream) -> TokenStream {
 /// within the `truapi` crate.
 #[proc_macro]
 pub fn versioned_type(item: TokenStream) -> TokenStream {
-	versioned_type::expand(item)
+    versioned_type::expand(item)
 }
 
 /// Define SSO handlers in a dedicated inherent implementation.
@@ -107,5 +108,14 @@ pub fn versioned_type(item: TokenStream) -> TokenStream {
 /// types in `crate::runtime::sso_service`. It only works inside `truapi`.
 #[proc_macro_attribute]
 pub fn sso_service(args: TokenStream, item: TokenStream) -> TokenStream {
-	sso_service::expand(args, item)
+    sso_service::expand(args, item)
+}
+
+/// Classify SSO `Response<P>` prefixes using the enum's SCALE discriminants.
+///
+/// This keeps pre-payload correlation in sync with the wire catalog instead
+/// of maintaining a second list of response tags.
+#[proc_macro_attribute]
+pub fn sso_response_indices(args: TokenStream, item: TokenStream) -> TokenStream {
+    sso_response_indices::expand(args, item)
 }

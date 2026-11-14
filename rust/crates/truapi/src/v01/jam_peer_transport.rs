@@ -9,6 +9,10 @@ pub const JAM_PEER_TRANSPORT_MAX_STREAMS_PER_CONNECTION: u32 = 16;
 pub const JAM_PEER_TRANSPORT_MAX_MESSAGE_BYTES: u32 = 1 << 20;
 /// Bytes the host buffers per connection before applying back-pressure.
 pub const JAM_PEER_TRANSPORT_MAX_BUFFERED_BYTES_PER_CONNECTION: u32 = 4 << 20;
+/// Largest fragment carried by `sendChunk` or `recvChunk`.
+pub const JAM_PEER_TRANSPORT_MAX_CHUNK_BYTES: u32 = 256 << 10;
+/// Largest logical JAMNP-S message available through the streaming API.
+pub const JAM_PEER_TRANSPORT_MAX_LOGICAL_MESSAGE_BYTES: u32 = 64 << 20;
 
 /// Failure to dial a JAM peer.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
@@ -50,6 +54,41 @@ pub struct HostJamPeerTransportDialResponse {
     pub conn: u32,
 }
 
+/// Failure to establish an execution-scoped JAM peer listener.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostJamPeerTransportListenError {
+    /// The genesis grant or separate trusted execution-only consent is absent.
+    NotGranted,
+    /// The host does not support listeners, or the immutable policy is refused.
+    Refused,
+    /// The listener or peer admission resource limit is exhausted.
+    Limit,
+    /// The requested local endpoint could not be bound.
+    Unreachable,
+}
+
+/// Establish one immutable listener before this execution opens any connection.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostJamPeerTransportListenRequest {
+    /// Genesis covered by `RemotePermission::JamPeers` and the listener consent.
+    pub genesis: [u8; 32],
+    /// Loopback bind address, IPv6 or IPv4-mapped IPv6.
+    pub ip: [u8; 16],
+    /// Requested local UDP port.
+    pub port: u16,
+    /// Only these mutually authenticated TLS Ed25519 identities may connect.
+    pub allowed_peers: Vec<[u8; 32]>,
+}
+
+/// The bound execution-scoped listener endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostJamPeerTransportListenResponse {
+    /// Bound address, IPv6 or IPv4-mapped IPv6.
+    pub ip: [u8; 16],
+    /// Bound local UDP port.
+    pub port: u16,
+}
+
 /// Failure to open a stream.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub enum HostJamPeerTransportOpenError {
@@ -64,7 +103,7 @@ pub enum HostJamPeerTransportOpenError {
 /// Open a bidirectional stream and send its kind byte.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostJamPeerTransportOpenRequest {
-    /// Connection returned by `dial`.
+    /// Connection returned by `dial` or reported by `PeerAccepted`.
     pub conn: u32,
     /// JAMNP-S stream kind (UP 0, CE 128, ...).
     pub kind: u8,
@@ -95,7 +134,8 @@ pub struct HostJamPeerTransportSendRequest {
     pub stream: u32,
     /// Message bytes without length prefix.
     pub message: Vec<u8>,
-    /// Finish the send side after this message.
+    /// Finish the send side after this message. With an empty message, send
+    /// only FIN; empty nonterminal messages retain their zero-length prefix.
     pub fin: bool,
 }
 
@@ -124,6 +164,71 @@ pub struct HostJamPeerTransportRecvResponse {
     /// The peer finished its send side; no further messages will arrive.
     pub fin: bool,
     /// The peer reset the stream; buffered data may be incomplete.
+    pub reset: bool,
+}
+
+/// Failure to queue a fragment of a single JAMNP-S message.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostJamPeerTransportSendChunkError {
+    /// The stream is closed, finished or unknown.
+    Closed,
+    /// The fragment exceeds 256 KiB or the logical message exceeds 64 MiB.
+    TooLarge,
+    /// Connection credit is exhausted; retry the same fragment unchanged.
+    Limit,
+    /// Incorrect offset, changed total, empty nonfinal fragment or premature FIN.
+    /// The stream is reset and cannot be reused.
+    InvalidChunk,
+}
+
+/// Queue one bounded fragment. Only offset zero emits a length prefix.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostJamPeerTransportSendChunkRequest {
+    /// Execution-owned stream.
+    pub stream: u32,
+    /// Exact logical message length, at most 64 MiB.
+    pub total: u32,
+    /// Exact next byte offset, beginning at zero.
+    pub offset: u32,
+    /// At most 256 KiB. Empty is allowed only for a zero-length message.
+    pub bytes: Vec<u8>,
+    /// Finish only after the final fragment. A zero-length message still frames.
+    pub fin: bool,
+}
+
+/// Failure to poll a bounded fragment.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub enum HostJamPeerTransportRecvChunkError {
+    /// The stream is unknown or already fully consumed.
+    Closed,
+    /// `max_bytes` must be between one and 256 KiB inclusive.
+    InvalidMaxBytes,
+}
+
+/// Poll a fragment without allocating the complete logical message.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostJamPeerTransportRecvChunkRequest {
+    /// Execution-owned stream.
+    pub stream: u32,
+    /// Maximum fragment bytes, between one and 256 KiB inclusive.
+    pub max_bytes: u32,
+}
+
+/// A bounded message fragment, or no arrival yet.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+pub struct HostJamPeerTransportRecvChunkResponse {
+    /// Declared length, checked before allocation; `None` means no fragment.
+    /// `Some(0)` with `complete` represents an actual framed empty message.
+    pub total: Option<u32>,
+    /// Offset within this logical message (zero when there is no fragment).
+    pub offset: u32,
+    /// At most the requested maximum; never includes the JAMNP-S length prefix.
+    pub bytes: Vec<u8>,
+    /// This fragment ends the logical message; false when none is available.
+    pub complete: bool,
+    /// Clean peer FIN, reported only after all complete messages are drained.
+    pub fin: bool,
+    /// Peer reset or malformed/truncated framing; discard an incomplete message.
     pub reset: bool,
 }
 
@@ -175,7 +280,7 @@ pub enum JamPeerTransportEvent {
         /// Stream that finished.
         stream: u32,
     },
-    /// The peer opened a stream to us on a dialed connection.
+    /// The peer opened a stream on an outgoing or accepted connection.
     Accepted {
         /// Connection the stream arrived on.
         conn: u32,
@@ -183,6 +288,18 @@ pub enum JamPeerTransportEvent {
         stream: u32,
         /// Stream kind byte the peer sent.
         kind: u8,
+    },
+    /// A mutually authenticated peer connected to the execution's listener.
+    /// This precedes every stream event for the connection.
+    PeerAccepted {
+        /// Execution-local connection id.
+        conn: u32,
+        /// Peer identity authenticated by TLS, not inferred from its endpoint.
+        ed25519: [u8; 32],
+        /// Remote address, IPv6 or IPv4-mapped IPv6.
+        ip: [u8; 16],
+        /// Remote UDP port.
+        port: u16,
     },
 }
 

@@ -85,6 +85,7 @@ dependencies {
     implementation(project(":design"))
     implementation(project(":database"))
     implementation(project(":chains"))
+    implementation(project(":tools:media-connection:impl"))
     implementation(project(":feature:chats:api"))
     implementation(project(":feature:account:api"))
     implementation(project(":feature:settings:api"))

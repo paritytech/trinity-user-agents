@@ -21,6 +21,21 @@ struct ProductWorkerSourceTests {
         #expect(ProductWorkerSource.published(for: resolved, serving: .chat) != nil)
     }
 
+    @Test(arguments: [
+        [ProductExecutable.Worker.Modality](),
+        [.pocket([])],
+    ])
+    func doesNotServeChatWithoutADeclaredChatModality(
+        modalities: [ProductExecutable.Worker.Modality]
+    ) {
+        let publishedWorker = worker(modalities: modalities)
+        let resolved = product(worker: publishedWorker)
+
+        #expect(!publishedWorker.serves(.chat))
+        #expect(ProductWorkerSource.published(for: resolved, serving: .chat) == nil)
+        #expect(ProductWorkerSource.installedByHand(for: resolved, entryPath: { _ in "bot.js" }) == nil)
+    }
+
     /// The fallback is for a product that published no worker at all, which is
     /// what a script installed through debug settings stands in for.
     @Test func fallsBackOnlyWhenNoWorkerIsPublished() throws {

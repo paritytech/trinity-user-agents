@@ -6,6 +6,8 @@ type PostToMain = (msg: WorkerToMain) => void;
 export interface SubscriptionListeners {
   sendItem: (value: unknown) => void;
   sendError: (error: string) => void;
+  /** Private backend data and failures must never reach diagnostic logs. */
+  privateMedia?: boolean;
 }
 
 function reportDispatchFailure(
@@ -32,7 +34,14 @@ export function dispatchSubscriptionItem(
   } catch (err) {
     listeners.delete(subId);
     postToMain({ kind: "subscriptionStop", subId });
-    reportDispatchFailure(postToMain, `subscription ${subId}`, err);
+    reportDispatchFailure(
+      postToMain,
+      `subscription ${subId}`,
+      listener.privateMedia ? new Error("media backend failure") : err,
+    );
+  }
+  if (listener.privateMedia) {
+    postToMain({ kind: "mediaSubscriptionAck", subId });
   }
 }
 
@@ -44,12 +53,20 @@ export function dispatchSubscriptionError(
 ): void {
   const listener = listeners.get(subId);
   if (!listener) return;
+  if (listener.privateMedia) {
+    listeners.delete(subId);
+    postToMain({ kind: "subscriptionStop", subId });
+  }
   try {
     listener.sendError(error);
   } catch (err) {
     listeners.delete(subId);
     postToMain({ kind: "subscriptionStop", subId });
-    reportDispatchFailure(postToMain, `subscription ${subId} error`, err);
+    reportDispatchFailure(
+      postToMain,
+      `subscription ${subId} error`,
+      listener.privateMedia ? new Error("media backend failure") : err,
+    );
   }
 }
 

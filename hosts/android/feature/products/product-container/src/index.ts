@@ -7,7 +7,6 @@ type PausableJsonRpcProvider = ReturnType<typeof createWsJsonRpcProvider>;
 import { createNativeTransport } from './native-transport';
 
 type WireDerivationIndex = { tag: 'Index'; value: number } | { tag: 'Raw'; value: Uint8Array };
-import { WebRtcManager } from './webrtc-manager';
 
 // =============================================================================
 // Isolation: Capture private refs BEFORE locking down globals.
@@ -16,9 +15,6 @@ import { WebRtcManager } from './webrtc-manager';
 
 // Captured before sandbox lockdown freezes window.WebSocket below.
 const CapturedWebSocket = globalThis.WebSocket;
-
-// Captured before the permission-gated replacement is installed below.
-const CapturedRTCPeerConnection = window.RTCPeerConnection;
 
 // =============================================================================
 // Isolation: Lock down globals so product scripts cannot access platform APIs.
@@ -106,19 +102,35 @@ const { callNative, subscribeNative } = createNativeTransport((message) => {
   (window as any).Android.call('__container__', json);
 });
 
-if (CapturedRTCPeerConnection) {
-  const webRtcManager = new WebRtcManager(
-    CapturedRTCPeerConnection,
-    () => callNative('allowWebRtcAccess', {}).then((allowed: unknown) => allowed === true),
-  );
-  freezeValue(window, 'RTCPeerConnection', webRtcManager.connectionClass);
-} else {
-  freezeAndDelete(window, 'RTCPeerConnection');
+// Native Media is the only RTC/capture authority, including on legacy pages.
+for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'mozRTCPeerConnection', 'RTCDataChannel', 'MediaStreamTrackProcessor', 'MediaStreamTrackGenerator']) {
+  freezeAndDelete(window, name);
+}
+for (const name of ['getUserMedia', 'webkitGetUserMedia', 'mozGetUserMedia']) {
+  freezeAndDelete(navigator, name);
+  freezeAndDelete(Object.getPrototypeOf(navigator), name);
+}
+if (navigator.mediaDevices) {
+  for (const name of ['getUserMedia', 'getDisplayMedia', 'enumerateDevices']) {
+    freezeAndDelete(navigator.mediaDevices, name);
+    freezeAndDelete(Object.getPrototypeOf(navigator.mediaDevices), name);
+  }
+}
+for (const name of ['requestFullscreen', 'webkitRequestFullscreen', 'webkitRequestFullScreen']) {
+  freezeAndDelete(Element.prototype, name);
+}
+for (const name of ['webkitEnterFullscreen', 'webkitEnterFullScreen']) {
+  freezeAndDelete(HTMLVideoElement.prototype, name);
 }
 
 const { port1, port2 } = new MessageChannel();
 
-(window as any).__HOST_API_PORT__ = port1;
+// Native TrUAPI owns the canonical generated transport when installed. Keep
+// the legacy JSON bridge alive for its unrelated host helpers, never for Media.
+if (!("__truapi_localhost" in window)) {
+  const legacyHost = window as Window & { __HOST_API_PORT__?: MessagePort };
+  legacyHost.__HOST_API_PORT__ = port1;
+}
 
 const subscribers = new Set<(message: Uint8Array) => void>();
 

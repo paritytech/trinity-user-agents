@@ -25,7 +25,17 @@ struct RustRuntimeEnvironment {
     struct ExecutionModel {
         let execution: TrUAPIProductExecutionProtocol
         let chainConnections: TrUAPIChainConnecting
+        let media: NativeMediaBackend
         let osPermissionAsker: OSPermissionAsking
+        let bridge: RustProductExecutionBridge
+
+        @MainActor
+        func close() {
+            bridge.detach()
+            execution.stopWsBridge()
+            execution.close()
+            chainConnections.closeAll()
+        }
 
         /// Start the localhost ws-bridge and return the bootstrap script to
         /// inject. Called from the runtime's `start`; opening the execution
@@ -44,6 +54,7 @@ struct RustRuntimeEnvironment {
     /// in the runtime's `start` via ``ExecutionModel/startBridge()``. The
     /// execution retains the bridge (callback retainer) and the bridge retains
     /// the pool, so holding `ExecutionModel` pins the whole chain.
+    @MainActor
     func makeSPAExecution(productId: ProductId, routers: ProductRoutersFacadeProtocol) throws -> ExecutionModel {
         try makeExecution(productId: productId, routers: routers, kind: .app)
     }
@@ -53,10 +64,11 @@ struct RustRuntimeEnvironment {
     /// every modality is served from this one: both bridges are handed over
     /// here rather than attached afterwards, because the worker may list its
     /// cards or post a chat message as soon as it connects.
+    @MainActor
     func makeWorkerExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
-        chatMessaging: any ProductChatMessaging,
+        chatMessaging: (any ProductChatMessaging)?,
         pocket: any PocketHostBridge
     ) throws -> ExecutionModel {
         try makeExecution(
@@ -70,6 +82,7 @@ struct RustRuntimeEnvironment {
 }
 
 private extension RustRuntimeEnvironment {
+    @MainActor
     func makeExecution(
         productId: ProductId,
         routers: ProductRoutersFacadeProtocol,
@@ -100,7 +113,8 @@ private extension RustRuntimeEnvironment {
             configuration: ProductExecutionConfig(productId: productId, executionKind: kind),
             chat: chatBridge,
             pocket: pocket,
-            game: gameReminders == nil ? nil : bridge
+            game: gameReminders == nil ? nil : bridge,
+            media: bridge.media
         )
 
         bridge.attach(execution)
@@ -108,7 +122,9 @@ private extension RustRuntimeEnvironment {
         return ExecutionModel(
             execution: execution,
             chainConnections: chainConnections,
-            osPermissionAsker: osPermissionAsker
+            media: bridge.media,
+            osPermissionAsker: osPermissionAsker,
+            bridge: bridge
         )
     }
 

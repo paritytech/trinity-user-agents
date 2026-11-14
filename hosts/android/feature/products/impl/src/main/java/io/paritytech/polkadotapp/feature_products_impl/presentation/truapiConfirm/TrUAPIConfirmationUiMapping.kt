@@ -34,6 +34,7 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
 
     is TrUAPIConfirmation.ChatAuthority -> build(
         RCommon.string.truapi_confirm_title_chat_authority,
+        detailRes(RCommon.string.truapi_confirm_label_request, RCommon.string.truapi_confirm_chat_authority_details),
     )
 
     is TrUAPIConfirmation.ProfileDisclosure -> build(
@@ -48,6 +49,15 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
     is TrUAPIConfirmation.PreimageSubmit -> build(
         RCommon.string.truapi_confirm_title_preimage_submit,
         detail(RCommon.string.truapi_confirm_label_payload_size, "$sizeBytes"),
+        detail(RCommon.string.truapi_confirm_label_root_account, rootPublicKey),
+        detail(RCommon.string.truapi_confirm_label_bulletin_network, genesisHash),
+        TrUAPIConfirmationDetail(
+            RCommon.string.truapi_confirm_label_automatic_uploads,
+            DetailValue.FormattedResource(
+                RCommon.string.truapi_confirm_automatic_upload_policy,
+                listOf(automaticMaxBytes.toString(), automaticMaxUploads.toString(), automaticWindowSeconds.toString()),
+            ),
+        ),
     )
 
     is TrUAPIConfirmation.MainPurseChatPayment -> build(
@@ -68,6 +78,11 @@ fun TrUAPIConfirmation.Prompt.toUiState(): TrUAPIConfirmationUiState = when (thi
     is TrUAPIConfirmation.ProductSubtree -> build(
         RCommon.string.truapi_confirm_title_product_subtree,
     )
+    is TrUAPIConfirmation.Calling -> build(
+        RCommon.string.truapi_confirm_title_calling,
+        detail(RCommon.string.truapi_confirm_label_chain, network),
+        detail(RCommon.string.truapi_confirm_label_signer, account),
+    )
 }
 
 private fun TrUAPIConfirmation.Prompt.build(
@@ -77,6 +92,7 @@ private fun TrUAPIConfirmation.Prompt.build(
     titleRes = titleRes,
     productId = requesterProductId,
     details = details.toList().toImmutableList(),
+    allowsAutomaticUploads = this is TrUAPIConfirmation.PreimageSubmit,
 )
 
 private fun detail(labelRes: Int, value: String) =

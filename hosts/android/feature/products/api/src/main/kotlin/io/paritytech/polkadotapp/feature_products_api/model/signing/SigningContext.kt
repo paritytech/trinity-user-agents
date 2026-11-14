@@ -8,6 +8,9 @@ interface SigningContext {
     /** The account this request signs with, resolved before the signing screen is shown. */
     val signingAccount: SigningAccount
 
+    /** False when approval resumes a core-owned signing operation. */
+    val signsOnApproval: Boolean get() = true
+
     /**
      * Delivers what the waiting caller needs on approval. The native path signs
      * with [sign] and hands back the signature. The TrUAPI core holds the key

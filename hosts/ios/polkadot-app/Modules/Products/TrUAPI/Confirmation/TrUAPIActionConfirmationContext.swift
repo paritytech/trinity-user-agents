@@ -1,8 +1,8 @@
 import Foundation
 import Products
+import TrUAPIHost
 
 enum TrUAPIActionConfirmationRequest: Equatable, Sendable {
-    case preimageSubmit(productId: ProductId, size: UInt64)
     case productSubtree(productId: ProductId)
 }
 
@@ -26,6 +26,30 @@ final class TrUAPIActionConfirmationContext {
 
     func deliver(_ approved: Bool) {
         continuation?.resume(returning: approved)
+        continuation = nil
+    }
+}
+
+/// Unlike action confirmation, upload consent preserves the selected lifetime.
+@MainActor
+final class TrUAPIPreimageConfirmationContext {
+    nonisolated let review: PreimageSubmitReview
+    private var continuation: CheckedContinuation<TrUAPIPermissionDecision, Never>?
+
+    init(review: PreimageSubmitReview) {
+        self.review = review
+    }
+
+    deinit {
+        continuation?.resume(returning: .deny)
+    }
+
+    func setContinuation(_ continuation: CheckedContinuation<TrUAPIPermissionDecision, Never>) {
+        self.continuation = continuation
+    }
+
+    func deliver(_ decision: TrUAPIPermissionDecision) {
+        continuation?.resume(returning: decision)
         continuation = nil
     }
 }

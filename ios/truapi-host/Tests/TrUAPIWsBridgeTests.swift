@@ -186,8 +186,9 @@ final class StubStorage: HostStorageBackend, @unchecked Sendable {
 }
 
 final class StubCoreStorage: HostCoreStorageBackend, @unchecked Sendable {
-    private let lock = NSLock()
+    let storageIdentifier = UUID().uuidString
     private var store: [Data: Data] = [:]
+    private let lock = NSLock()
 
     func keys() throws -> [Data] {
         lock.withLock { Array(store.keys) }

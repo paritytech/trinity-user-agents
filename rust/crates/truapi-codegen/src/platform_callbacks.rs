@@ -20,6 +20,13 @@ pub(crate) fn is_scale_vector_result(ty: &TypeRef) -> bool {
     )
 }
 
+/// Validator custody transports the complete SCALE Result, including close
+/// failures. Older callbacks retain their established JS-rejection convention.
+pub(crate) fn uses_scale_result(inner: &PlatformInner) -> bool {
+    matches!(inner, PlatformInner::Result {
+		err: TypeRef::Named { name, args }, ..
+	} if name == "HostValidatorError" && args.is_empty())
+}
 /// Traits the platform surface actually composes: the super trait's
 /// constituents when one exists, otherwise every collected trait.
 pub fn composed_traits(definition: &PlatformDefinition) -> Vec<&PlatformTrait> {

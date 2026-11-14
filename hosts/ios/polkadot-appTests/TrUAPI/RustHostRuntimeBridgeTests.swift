@@ -28,7 +28,7 @@ private func makeHostBridge(
     )
     return RustHostRuntimeBridge(
         chainRegistry: chainRegistry,
-        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults()),
+        coreStorage: TrUAPILocalStorage.createCoreLocalStorage(defaults: makeHostDefaults(), storageDomain: UUID().uuidString),
         chainConnections: chainConnections,
         confirmationPresenter: confirmationPresenter,
         chatFiles: UnavailableNativeChatFiles(),

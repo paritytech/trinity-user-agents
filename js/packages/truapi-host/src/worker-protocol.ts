@@ -30,6 +30,7 @@
 // safe choice.
 
 import type { OptionalCapabilities } from "./generated/worker-callbacks.js";
+import type { ProductContext } from "./generated/host-callbacks.js";
 import type {
   LogLevel,
   NativeChatContactsSnapshot,
@@ -111,7 +112,8 @@ export type MainToWorker =
   | {
       kind: "createCore";
       coreId: number;
-      product: unknown;
+      product: Pick<ProductContext, "productId"> &
+        Partial<Pick<ProductContext, "executionKind">>;
       capabilities?: OptionalCapabilities;
     }
   | { kind: "disposeCore"; coreId: number }
@@ -197,6 +199,12 @@ export type MainToWorker =
       request: Uint8Array;
       status: PermissionAuthorizationStatus;
     }
+  | {
+      kind: "refreshPermissionAuthorization";
+      productId: string;
+      requestId: number;
+      request: Uint8Array;
+    }
   | { kind: "getSessionChatIdentityKey"; requestId: number }
   | { kind: "getDeviceStatementKey"; requestId: number }
   | { kind: "getDeviceEncryptionKey"; requestId: number }
@@ -254,7 +262,7 @@ export type WorkerToMain =
        */
       schema?: string;
     }
-  | { kind: "coreReady"; coreId: number }
+  | { kind: "coreReady"; coreId: number; trustedRemotePermissions: boolean }
   | { kind: "coreError"; coreId: number; error: string }
   | { kind: "fatalError"; error: string }
   | { kind: "frameError"; coreId: number; error: string }
@@ -356,6 +364,17 @@ export type WorkerToMain =
       error: string;
     }
   | {
+      kind: "refreshPermissionAuthorizationResponse";
+      requestId: number;
+      ok: true;
+    }
+  | {
+      kind: "refreshPermissionAuthorizationResponse";
+      requestId: number;
+      ok: false;
+      error: string;
+    }
+  | {
       kind: "sessionChatIdentityKeyResponse";
       requestId: number;
       ok: true;
@@ -439,9 +458,11 @@ export type WorkerToMain =
       subId: number;
       coreId?: number;
       name: SubscriptionName;
-      payload: Uint8Array | string | null;
+      args: readonly unknown[];
     }
   | { kind: "subscriptionStop"; subId: number }
+  /** A trusted Media item reached the worker; bounds in-flight private data. */
+  | { kind: "mediaSubscriptionAck"; subId: number }
   | { kind: "chainConnectStart"; connId: number; genesisHash: string }
   | {
       kind: "hopConnectStart";

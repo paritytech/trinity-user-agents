@@ -31,12 +31,17 @@ class PrefsHostStorage(private val prefs: SharedPreferences) : HostStorage {
  * decisions. Uses `commit()` because a write the core believes succeeded must
  * not be lost on process death; failures surface as the declared [HostRejection].
  */
-class PrefsHostCoreStorage(private val prefs: SharedPreferences) : HostCoreStorage {
-    override suspend fun keys(): List<ByteArray> = prefs.all.keys.map { key ->
-        decodeOrNull(key) ?: error("Invalid core storage key")
+class PrefsHostCoreStorage(
+    private val prefs: SharedPreferences,
+    override val storageIdentifier: String,
+) : HostCoreStorage {
+    override suspend fun read(key: ByteArray): ByteArray? {
+        val stored = prefs.getString(bytesToHex(key), null) ?: return null
+        return decodeOrNull(stored) ?: throw HostRejection.Rejected("corrupt core storage value")
     }
-    override suspend fun read(key: ByteArray): ByteArray? =
-        decodeOrNull(prefs.getString(bytesToHex(key), null))
+    override suspend fun keys(): List<ByteArray> = prefs.all.keys.map { key ->
+        decodeOrNull(key) ?: throw HostRejection.Rejected("corrupt core storage key")
+    }
     override suspend fun write(key: ByteArray, value: ByteArray) {
         if (!prefs.edit().putString(bytesToHex(key), bytesToHex(value)).commit()) {
             throw HostRejection.Rejected("failed to persist core storage key")

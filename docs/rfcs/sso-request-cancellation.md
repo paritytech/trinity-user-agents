@@ -52,6 +52,16 @@ and reads the next message only after the current one is answered.
 - **Peers without it.** The Rust responder, iOS and Android were each checked: an undecodable `Cancel` is logged, the
   session continues, and the target is served as before. Sent alone, it costs no other message.
 
+## Response correlation
+
+The pairing host authenticates and decrypts each statement before reading its message headers. A response with a
+readable `responding_to` for another request is ignored before decoding its payload, so a truncated late response cannot
+fail the current call. Response discriminants come from the existing SCALE enum, including explicitly indexed
+extensions; there is no second hand-maintained tag list.
+
+Malformed current-response payloads and unreadable headers remain errors. Statement acknowledgements still use their own
+request id, and matching replies and disconnects retain wire order.
+
 ## Trade-offs
 
 - A cancel is fire-and-forget, and pairing negotiates no capabilities. `Cancelled` tells a product it stopped waiting,

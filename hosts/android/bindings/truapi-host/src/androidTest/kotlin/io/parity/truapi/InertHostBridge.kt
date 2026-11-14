@@ -18,6 +18,7 @@ class InertHostBridge(
     )
     override val coreStorage = PrefsHostCoreStorage(
         context.getSharedPreferences("truapi_inert_bridge_core", Context.MODE_PRIVATE),
+        java.io.File(context.applicationInfo.dataDir, "shared_prefs/truapi_inert_bridge_core.xml").canonicalPath,
     )
 
     override fun permissionAuthorizationsChanged(productId: String) = Unit
@@ -37,8 +38,6 @@ class InertHostBridge(
     override suspend fun featureSupported(request: HostFeatureSupportedRequest) = false
 
     override fun durableWorkChanged(pending: Boolean) = onDurableWork(pending)
-
-    override fun permissionAuthorizationsChanged(productId: String) = Unit
 }
 
 /** A runtime config whose core database lives in [databaseDirectory]. */
