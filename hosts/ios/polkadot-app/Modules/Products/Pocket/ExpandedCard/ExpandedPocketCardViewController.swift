@@ -75,6 +75,12 @@ final class ExpandedPocketCardViewController: UIViewController, ViewHolder {
         presenter.didBecomeVisible()
     }
 
+    override func viewSafeAreaInsetsDidChange() {
+        super.viewSafeAreaInsetsDidChange()
+
+        widgetView.scrollIndicatorInsets = view.safeAreaInsets
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
 

@@ -16,6 +16,12 @@ final class WidgetView: UIView {
     var onScroll: ((CGFloat) -> Void)?
     var onRetry: (() -> Void)?
 
+    /// Set by the screen, since the safe area the page sees includes the face the indicator runs beside.
+    var scrollIndicatorInsets: UIEdgeInsets {
+        get { webView.scrollView.verticalScrollIndicatorInsets }
+        set { webView.scrollView.verticalScrollIndicatorInsets = newValue }
+    }
+
     private let loadingView = PolkadotLogoLoadingView()
     private let loadProgressView: UIProgressView = {
         let progressView = UIProgressView(progressViewStyle: .bar)
@@ -109,6 +115,7 @@ private extension WidgetView {
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.scrollView.automaticallyAdjustsScrollIndicatorInsets = false
 
         #if DEBUG || E2E_TEST
             webView.isInspectable = true
