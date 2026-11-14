@@ -110,8 +110,8 @@ terminate the stream without discarding an earlier value. WASM emits one uncache
 lookup result and ignores both options. Profile resolution never reads Bulletin.
 
 Native bindings deliver profiles, completion and errors through an observer;
-cancelling or dropping its subscription stops resolution. Android uses the one-shot
-`resolve_public_profile(username, force)`, where `force` bypasses freshness.
+cancelling or dropping its subscription stops resolution. Both native apps
+collect profiles independently of image loading.
 
 The host looks up the returned CID in its image cache. Only a cache miss calls the
 shared [image loader](image-loader.md):
@@ -183,8 +183,11 @@ dotNS has no text-change events; updates appear on the next observation.
 iOS forces once per new conversation, retaining that intent across cancellation
 until completion or error. Rerenders, later size changes and retained-screen
 reappearance do not start another forced refresh. Contacts, search and chat lists
-use normal freshness. All app callers set `skip_stale: false`. Android uses the
-one-shot API for chat-entry refresh.
+use normal freshness. All app callers set `skip_stale: false`.
+
+Android's composition-owned collector forces on conversation entry and updates
+Coil for each avatar without awaiting image loading. Username changes or leaving
+the composition cancel collection and image work.
 
 ```text
 Native avatar adapter            Core + SQLite                    dotNS
