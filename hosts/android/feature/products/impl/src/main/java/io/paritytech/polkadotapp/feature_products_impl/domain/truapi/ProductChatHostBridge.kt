@@ -50,6 +50,7 @@ class ProductChatHostBridge(
             ChatRoomFooter.TextInput -> ProductRoomFooter.TextInput
             ChatRoomFooter.Empty -> ProductRoomFooter.Empty
             is ChatRoomFooter.Card -> ProductRoomFooter.Card(footer.v1.messageType, footer.v1.payload.toDataByteArray())
+            is ChatRoomFooter.Web -> ProductRoomFooter.Web(footer.v1.path, footer.v1.height.coerceAtMost(Int.MAX_VALUE.toUInt()).toInt())
         }
         chatMessaging.setRoomFooter(ProductChatIdParameter(roomId), roomFooter).orReject()
     }

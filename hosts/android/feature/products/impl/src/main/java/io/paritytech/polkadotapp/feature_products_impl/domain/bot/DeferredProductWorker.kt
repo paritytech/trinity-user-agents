@@ -61,6 +61,9 @@ class DeferredProductWorker : ProductWorker {
         delegate.value?.getOrNull()?.dispatchRoomFooterEvent(roomId, messageType, actionId, eventType)
     }
 
+    override fun dispatchRoomFooterPageAction(roomId: ProductChatIdParameter, actionId: String, payload: String?): Boolean =
+        delegate.value?.getOrNull()?.dispatchRoomFooterPageAction(roomId, actionId, payload) ?: false
+
     // UI events only originate from already-rendered widgets, so the worker is attached by then.
     override fun dispatchEvent(event: JsUiEvent) {
         delegate.value?.getOrNull()?.dispatchEvent(event)

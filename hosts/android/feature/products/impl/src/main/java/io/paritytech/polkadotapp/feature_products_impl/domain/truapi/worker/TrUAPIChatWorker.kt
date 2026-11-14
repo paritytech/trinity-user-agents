@@ -142,6 +142,20 @@ class TrUAPIChatWorker(
         execution.publishRendererAction(RenderContext.ChatRoomFooter(roomId = roomId.value, messageType = messageType), actionId, eventType)
     }
 
+    /** A press from the page of the web footer in [roomId]: a footer press with no message type, as the core routes it. */
+    override fun dispatchRoomFooterPageAction(roomId: ProductChatIdParameter, actionId: String, payload: String?): Boolean {
+        val execution = workers.currentExecution(productId)
+        if (execution == null) {
+            Timber.w("TrUAPI web footer press for %s/%s dropped: no running execution", productId.value, roomId.value)
+            return false
+        }
+        val context = RenderContext.ChatRoomFooter(roomId = roomId.value, messageType = "")
+        val item = HostRendererActionSubscribeItem(context, actionId, payload?.toByteArray(Charsets.UTF_8) ?: ByteArray(0))
+        return runCatching { execution.publishRendererAction(item) }
+            .logFailure("truapi.renderer.action '$actionId' from the web footer of ${productId.value}")
+            .isSuccess
+    }
+
     private fun TrUAPIProductExecution.publishRendererAction(context: RenderContext, actionId: String, eventType: JsUiEvent.Type) {
         runCatching {
             publishRendererAction(HostRendererActionSubscribeItem(context, actionId, eventType.toActionPayload()))
