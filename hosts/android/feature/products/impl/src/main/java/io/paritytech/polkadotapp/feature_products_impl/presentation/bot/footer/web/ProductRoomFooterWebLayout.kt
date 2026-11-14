@@ -164,6 +164,10 @@ class ProductRoomFooterWebLayout(
             builtInZoomControls = false
             displayZoomControls = false
             mediaPlaybackRequiresUserGesture = true
+            // The slot's height is the product's, so the page lays its text out for that height. The system font
+            // scale would otherwise grow the text past it (two lines at 2.0x no longer fit the pill), and iOS does
+            // not scale the page either. Screen readers still read the page's label.
+            textZoom = 100
         }
         // Parents that would take the drag for a scroll or a swipe never get to intercept one that starts here.
         setOnTouchListener { view, event ->
