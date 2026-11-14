@@ -20,6 +20,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatInputSlotRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.LocalChatInputSlotReady
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductRoomFooter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
@@ -34,10 +35,16 @@ class ProductRoomFooterWebRenderer(
 ) : CustomChatInputSlotRenderer {
     private val pageUrl: String? = ProductRoomFooterWebPage.url(footer.path, productId.value)
 
+    // The page is ready when it is revealed: it has its size and has drawn.
+    override val reportsReady: Boolean = true
+
     @Composable
     override fun drawInputSlot() {
         if (pageUrl != null) {
             WebFooter(pageUrl)
+        } else {
+            val onReady = LocalChatInputSlotReady.current
+            LaunchedEffect(Unit) { onReady() }
         }
     }
 
@@ -51,6 +58,7 @@ class ProductRoomFooterWebRenderer(
         )
         var heightDp by remember(footer) { mutableIntStateOf(ProductRoomFooterWebPage.height(footer.height)) }
         var layout by remember { mutableStateOf<ProductRoomFooterWebLayout?>(null) }
+        val onReady = LocalChatInputSlotReady.current
 
         LaunchedEffect(viewModel) {
             viewModel.hostEvents.collect { event -> layout?.send(event) }
@@ -79,6 +87,7 @@ class ProductRoomFooterWebRenderer(
                             content = viewModel.content,
                             onAction = viewModel::onPageAction,
                             onHeight = { heightDp = it },
+                            onRevealed = { onReady() },
                         ).also { layout = it }
                     },
                     onRelease = { released ->

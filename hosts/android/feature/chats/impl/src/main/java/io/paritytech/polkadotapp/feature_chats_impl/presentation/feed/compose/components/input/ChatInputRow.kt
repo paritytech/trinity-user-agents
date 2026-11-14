@@ -94,7 +94,7 @@ internal fun ChatInputRow(
             modifier = measuredModifier
                 .background(PolkadotTheme.colors.bg.surface.main)
                 .padding(bottom = overlayBottom)
-        ) { inputState.renderer.drawInputSlot() }
+        ) { ChatInputExtensionSlot(renderer = inputState.renderer) }
         return
     }
     PolkadotSurface(

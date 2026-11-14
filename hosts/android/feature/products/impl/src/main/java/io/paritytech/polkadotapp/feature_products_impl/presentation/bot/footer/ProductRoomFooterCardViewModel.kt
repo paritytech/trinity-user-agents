@@ -22,7 +22,8 @@ import kotlinx.coroutines.flow.onEach
 /**
  * Renders the card a product docked in the input slot of one room.
  *
- * Holds one render at a time: showing another card stops the render of the one before.
+ * Holds one render at a time: showing another card stops the render of the one before, and the card before stays
+ * shown until the next one is drawn.
  */
 @HiltViewModel(assistedFactory = ProductRoomFooterCardViewModel.Factory::class)
 class ProductRoomFooterCardViewModel @AssistedInject constructor(
@@ -41,7 +42,7 @@ class ProductRoomFooterCardViewModel @AssistedInject constructor(
         if (card == shownCard) return
         shownCard = card
         rendering?.cancel()
-        _state.value = LoadingState.Loading
+        if (_state.value !is LoadingState.Loaded) _state.value = LoadingState.Loading
         rendering = worker.renderRoomFooter(room, card.messageType, card.payload)
             .onEach { result ->
                 result
