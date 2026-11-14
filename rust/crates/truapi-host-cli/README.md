@@ -799,7 +799,7 @@ Scripts under `js/scripts/` include:
   make e2e-chat-cli                     # chat phase only
   scripts/battery.sh --pocket-host      # Pocket phase only
   make e2e-pocket-cli                   # Pocket phase only
-  scripts/battery.sh --funding-host     # funding phase only, on a test-host build
+  scripts/battery.sh --funding-host     # funding phase only
   make e2e-funding-cli                  # funding phase only
   scripts/battery.sh --release          # release binary
   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
@@ -816,13 +816,89 @@ Scripts under `js/scripts/` include:
   in `TRUAPI_POCKET_LOG`. The cases read that transcript, so a pass means the
   host and the product agree rather than resting on the product's word.
 
-  The funding phase builds the host with `--features test-host` and installs
-  a scripted funding overlay: each request the product makes is answered with
-  the next outcome from `TRUAPI_FUNDING_OUTCOMES`
-  (`deliver:900,release:500,fail,dismiss`), and a started session is settled
-  through the core's test hook with no chain behind it. Every overlay request
-  and session change is recorded in `TRUAPI_FUNDING_LOG`, which the cases read.
-  The live on-ramp on Paseo Next is `truapi-host funding-check`.
+  The funding phase runs the signing host's funding overlay as a host app
+  would. `TRUAPI_FUNDING_PROVIDERS` names the providers the host offers,
+  comma-separated, each with a Worker manifest the CLI ships for it, and each
+  a product id optionally followed by `=` and the path of its worker script
+  (`fundtest.dot=./worker.ts,other.dot`). The host acts as the provider's
+  host: when the core asks for a provider's worker, it launches that script
+  as its own process on a frame socket of its own, served as a Worker
+  execution of the provider, and kills it when the core lets the worker go.
+  A provider without a script has no worker on this host. The phase runs the
+  product script (`funding-battery.ts`, an App) and the provider
+  `fundtest.dot` with `funding-worker.ts` as its worker, which serves
+  sessions through `onQuote`, `onAssign`, `onCancel` and `onSettleCancel` by
+  their direction and amount and records what it did in
+  `TRUAPI_FUNDING_WORKER_LOG`. The overlay takes the core's default rail,
+  and for crypto its first token and network, and lists the providers serving
+  the session and the quotes of those routing that rail. The cases check that no worker runs until the
+  overlay asks the provider for a quote, and that once its sessions end the
+  host stops it and a new worker process is started for the next session.
+  The auto-accepting user picks the first quote and accepts cancel offers,
+  including one the worker makes on a withdrawal only once it is released,
+  which it then refunds; a paid-out withdrawal's payout is reported through
+  retries and its references. The script acts as the user
+  through the host's stdin, a pipe in `TRUAPI_FUNDING_USER`: with `--script`,
+  a stdin that is not a terminal takes `/funding cancel <intent>` and
+  `/approval manual|automatic`, so a case cancels a session or has the overlay
+  closed. A provider's screen is a link the host prints: the provider's App on
+  dotNS at the route it asked for (`https://dot.li/<product><route>`), or the
+  page's own URL. It stays open until the provider calls `closeFrame`, or the
+  user types `/funding close <intent>` (answered `Dismissed`) or
+  `/funding returned <intent> <url>` (answered `Returned`); under
+  `--auto-accept` it finishes at once, a page at its return URL. A worker
+  that exits on its own is reported to the core, which starts it again while
+  a session still holds it. The provider reports progress and starts top-ups and payment
+  requests, which ledger engines complete in full and record in
+  `TRUAPI_FUNDING_LEDGER`, and the core settles each session from them. The
+  phase runs the host twice on the same storage, so the restarted host starts
+  the provider's worker for the inbound session still open, which is assigned
+  it again and finishes it from the state it kept in its own storage. The
+  device detects the country `TRUAPI_FUNDING_COUNTRY` names, if any. Every
+  overlay request, screen, cancel, answer, session change and worker launch,
+  stop or exit is recorded in
+  `TRUAPI_FUNDING_LOG`, which the cases read. CI runs this phase on every
+  change to the core, the CLI or the client, with a fixed development signer
+  in `HOST_CLI_SIGNER_MNEMONIC` so the host needs no account provisioned on
+  chain.
+
+  The signing host also offers funding providers published on dotNS, as the
+  apps do from their remote configuration: `TRUAPI_FUNDING_PROVIDER_NAMES`
+  lists them comma-separated, each by its name without a TLD
+  (`TRUAPI_FUNDING_PROVIDER_NAMES=fundtest-provider` offers
+  `fundtest-provider.paseo` on Paseo Next v2). The core reads each one's
+  Worker manifest from dotNS, and a name that carries a TLD is skipped. Both
+  variables can be set together. When the core asks for a published
+  provider's worker, the host reads the `worker.<name>.<tld>` subname's
+  contenthash and the `entrypoint` of its `executable` manifest, fetches the
+  archive from the stack's `ipfs-gateway` as a CAR (a directory, or an
+  uploaded CAR file of one, the two shapes the iOS app loads), checks every
+  block against its CID, and unpacks it under the session's state directory
+  in `published-workers/<cid>/`. The entry script then runs as a local worker
+  script does, until the host stops it; an archive already unpacked is not
+  fetched again.
+
+  A published worker runs under `bun` in an operating-system sandbox, so it
+  gets no more than an app's worker: the host binary relaunches itself,
+  confines that process and executes `bun` in its place. The worker reads
+  only the runner, the runner's dependencies and its own archive; writes only
+  a scratch directory it gets as `TMPDIR`, removed when it exits; executes no
+  program but `bun`; and connects only to its frame socket and to TCP ports
+  80 and 443, where the runner's network gates decide which origins it
+  reaches. Its environment holds only the runner's variables, so it sees no
+  `HOME`, no credentials and no other configuration, and its archive gets no
+  `bun install`. On macOS the sandbox is `sandbox-exec` with a profile
+  generated per launch, which also denies UDP and lets name resolution
+  through the system resolver alone. On Linux it is Landlock, applied as far
+  as the kernel supports it: files from 5.13, TCP ports from 6.7, abstract
+  Unix sockets and signals from 6.12, and other Unix sockets from Landlock
+  ABI 9; UDP is not confined. Neither sandbox can name the hosts a worker reaches, only the
+  ports. Where the worker cannot be sandboxed, a kernel without Landlock or
+  another platform, the host refuses to run it.
+  `TRUAPI_FUNDING_UNSANDBOXED=1` runs published workers without the sandbox,
+  still with the cleared environment, and logs a warning at every launch.
+  Local worker scripts from `TRUAPI_FUNDING_PROVIDERS` run unsandboxed with
+  the host's environment.
 
   The CLI accepts and logs Game reminders on every execution kind, without
   holding or firing them. The core serves Game to the game product (`dim2`)

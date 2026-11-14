@@ -21,7 +21,6 @@ mod cleartext_storage;
 mod contacts;
 mod dotns_read;
 mod frame_server;
-#[cfg(feature = "test-host")]
 mod funding_host;
 mod game;
 mod installation;
@@ -30,6 +29,7 @@ mod platform;
 mod pocket;
 mod product_config;
 mod profile;
+mod published_worker;
 mod qr_scanner;
 mod register_name;
 mod scanner;
@@ -42,6 +42,8 @@ mod stack_descriptor;
 mod terminal_ui;
 mod transcript;
 mod update;
+mod worker_host;
+mod worker_sandbox;
 
 use std::{
 	collections::HashMap,
@@ -90,8 +92,8 @@ use crate::{
 		SessionClearTarget, SessionProfile,
 	},
 	signing_shell::{
-		ApprovalCommand, DeviceCommand, HELP_TEXT, PAIRING_HELP_TEXT, PairCommand, ProductCommand,
-		ProfileCommand, ScriptCommand, SessionCommand, ShellCommand, parse_command,
+		ApprovalCommand, DeviceCommand, FundingCommand, HELP_TEXT, PAIRING_HELP_TEXT, PairCommand,
+		ProductCommand, ProfileCommand, ScriptCommand, SessionCommand, ShellCommand, parse_command,
 	},
 	terminal_ui::{
 		ActiveTerminalUi, ActivityState, DriveResult, PairingImageInput, SystemEvent, TerminalUi,
@@ -545,8 +547,19 @@ fn script_project_directory(base_path: Option<PathBuf>) -> PathBuf {
 	base_path.unwrap_or_else(default_base_path).join("scripts")
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+	// A worker launch re-enters the binary to confine itself before anything
+	// else runs, and becomes the worker.
+	if let Some(arguments) = worker_sandbox::requested() {
+		worker_sandbox::enter(arguments);
+	}
+	tokio::runtime::Builder::new_multi_thread()
+		.enable_all()
+		.build()?
+		.block_on(run())
+}
+
+async fn run() -> Result<()> {
 	let matches = Cli::command().get_matches();
 	let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
 	let debugger = cli
@@ -1444,6 +1457,9 @@ async fn run_signing_host(
 		tap_for_debugger(session.runtime_factory.clone(), debugger.map(|d| d.sink));
 
 	if let Some(script) = args.script {
+		if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+			read_script_user_commands(session.runtime_factory.clone());
+		}
 		let product_id = product.current();
 		let script_product_id = product_id.clone();
 		let script_frame_url = frame_url.clone();
@@ -1760,7 +1776,9 @@ async fn start_signing_host(
 		pocket.clone(),
 	)?;
 	apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
+	funding_host::offer_providers(&runtime, platform.as_ref(), network.tld()).await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
+	runtime_factory.set_platform(platform.clone());
 	let last_script = profile
 		.as_ref()
 		.map(|profile| catalog.last_script(profile))
@@ -1849,7 +1867,7 @@ fn build_signing_runtime(
 		network,
 		Some(CliStoragePaths::new(storage_path, product_storage_dir)),
 		approval,
-		ui,
+		ui.clone(),
 	);
 	let config = SigningHostConfig::new(
 		host_info("Headless Signing Host"),
@@ -1865,14 +1883,14 @@ fn build_signing_runtime(
 		chat.map(|chat| chat as Arc<dyn ChatPlatform>),
 	));
 	runtime.set_permission_status_host(status_host);
+	// Before funding, which loads its sessions from it.
+	runtime.set_core_db(core_db);
 	if let Some(pocket) = pocket {
 		runtime.set_pocket_platform(pocket);
 	}
-	#[cfg(feature = "test-host")]
-	funding_host::CliFundingHost::install_from_env(&runtime);
+	funding_host::CliFundingHost::install(&runtime, network, platform.clone(), ui)?;
 	runtime.set_game_platform(Arc::new(game::CliGameHost));
 	runtime.set_scanner_platform(Arc::new(scanner::CliScannerHost));
-	runtime.set_core_db(core_db);
 	runtime.set_installation_provider(installation);
 	runtime.set_encrypted_storage(cleartext_storage);
 	runtime.start_core_services();
@@ -2729,6 +2747,111 @@ async fn renew_pairing_allowances(
 }
 
 /// Renew tracked statement-store allowances now, reporting each target.
+/// Take the user's commands from a stdin that is not a terminal while a
+/// script runs, so a battery can act as the user: `/funding` acts on a
+/// session and `/approval` changes how confirmations are answered. A prompt
+/// still has no terminal to ask on, so under manual approval it is refused.
+/// Each command acts on the session current when it arrives, as the host may
+/// switch to another one, such as one provisioned after the script started.
+fn read_script_user_commands(sessions: Arc<frame_server::SwitchableSigningRuntime>) {
+	tokio::spawn(async move {
+		use tokio::io::AsyncBufReadExt;
+		let mut lines = tokio::io::BufReader::new(tokio::io::stdin()).lines();
+		while let Ok(Some(line)) = lines.next_line().await {
+			if line.trim().is_empty() {
+				continue;
+			}
+			let runtime = sessions.current();
+			let platform = sessions.current_platform();
+			let set_approval = |policy: ApprovalPolicy| {
+				if let Some(platform) = &platform {
+					platform.set_approval_policy(policy);
+				}
+			};
+			let done = match parse_command(&line) {
+				Ok(ShellCommand::Funding(command)) => run_funding(&runtime, command).await,
+				Ok(ShellCommand::Approval(ApprovalCommand::Manual)) => {
+					set_approval(ApprovalPolicy::Prompt);
+					Ok("Approval mode set to manual".to_string())
+				},
+				Ok(ShellCommand::Approval(ApprovalCommand::Automatic)) => {
+					set_approval(approval_policy(true));
+					Ok("Approval mode set to automatic".to_string())
+				},
+				Ok(_) => {
+					Err(anyhow::anyhow!("{} is not available while a script runs", line.trim()))
+				},
+				Err(error) => Err(anyhow::anyhow!(error)),
+			};
+			match done {
+				Ok(done) => terminal_ui::output_success(done, None),
+				Err(error) => terminal_ui::output_warning(error.to_string(), None),
+			}
+		}
+	});
+}
+
+/// Act on a funding session as the user, and say what that did.
+async fn run_funding(runtime: &SigningHostRuntime, command: FundingCommand) -> Result<String> {
+	match command {
+		FundingCommand::Cancel(intent) => {
+			let outcome = funding_host::cancel(runtime, &intent)
+				.await
+				.map_err(|reason| anyhow::anyhow!("cancelling {intent} failed: {reason}"))?;
+			Ok(format!("Cancel of {intent}: {outcome}"))
+		},
+		FundingCommand::Sessions => {
+			let lines: Vec<String> = funding_host::sessions(runtime)
+				.into_iter()
+				.map(|(intent, status)| format!("{intent} {status}"))
+				.collect();
+			Ok(if lines.is_empty() { "No funding sessions".to_string() } else { lines.join("\n") })
+		},
+		FundingCommand::Close(intent) => Ok(
+			if funding_host::answer_frame(&intent, truapi::latest::FundingFrameOutcome::Dismissed) {
+				format!("Closed the provider's screen for {intent}")
+			} else {
+				format!("No provider screen is open for {intent}")
+			},
+		),
+		FundingCommand::Returned(intent, url) => Ok(
+			if funding_host::answer_frame(
+				&intent,
+				truapi::latest::FundingFrameOutcome::Returned { url },
+			) {
+				format!("Answered the provider's screen for {intent}")
+			} else {
+				format!("No provider screen is open for {intent}")
+			},
+		),
+		FundingCommand::History => {
+			let lines: Vec<String> = runtime
+				.funding_history()
+				.into_iter()
+				.map(|summary| {
+					format!(
+						"{} {:?} {} {:?}",
+						summary.intent,
+						summary.direction,
+						funding_amount(summary.amount),
+						summary.stage
+					)
+				})
+				.collect();
+			Ok(if lines.is_empty() {
+				"No ended funding sessions".to_string()
+			} else {
+				lines.join("\n")
+			})
+		},
+	}
+}
+
+/// A session's amount, or that the user picks it on the provider's screens.
+fn funding_amount(amount: Option<u128>) -> String {
+	amount.map_or_else(|| "amount open".to_string(), |amount| amount.to_string())
+}
+
 async fn run_renew(session: &mut SigningHostSession) -> Result<()> {
 	use truapi::statement_allowance::renewal::TargetRenewalStatus;
 
@@ -3209,8 +3332,12 @@ async fn activate_session(session: &mut SigningHostSession, name: String) -> Res
 		promotion.commit();
 	}
 
+	// Each runtime the host builds offers its funding providers, so one
+	// provisioned or imported after startup serves them as the first did.
+	funding_host::offer_providers(&runtime, platform.as_ref(), session.network.tld()).await?;
 	session.responders.stop_all();
 	session.runtime_factory.replace(runtime.clone());
+	session.runtime_factory.set_platform(platform.clone());
 	session.runtime = runtime;
 	session.platform = platform;
 	session.cached_user_id = signer.lite_username.clone();
@@ -3300,8 +3427,12 @@ async fn import_mnemonic_session(
 	session.catalog.set_current(&session_name)?;
 	let available_sessions = session.catalog.list()?;
 
+	// Each runtime the host builds offers its funding providers, so one
+	// provisioned or imported after startup serves them as the first did.
+	funding_host::offer_providers(&runtime, platform.as_ref(), session.network.tld()).await?;
 	session.responders.stop_all();
 	session.runtime_factory.replace(runtime.clone());
+	session.runtime_factory.set_platform(platform.clone());
 	session.runtime = runtime;
 	session.platform = platform;
 	session.cached_user_id = username.clone();
@@ -3434,7 +3565,8 @@ async fn pairing_interactive_loop(
 			ShellCommand::Approval(_) |
 			ShellCommand::Session(_) |
 			ShellCommand::Profile(_) |
-			ShellCommand::Renew => {
+			ShellCommand::Renew |
+			ShellCommand::Funding(_) => {
 				ui.error("command is only available on the signing host");
 			},
 		}
@@ -3846,6 +3978,10 @@ async fn execute_interactive_operation(
 			import_mnemonic_session(session, &mnemonic).await?;
 		},
 		ShellCommand::Renew => run_renew(session).await?,
+		ShellCommand::Funding(command) => {
+			let done = run_funding(&session.runtime, command).await?;
+			ui.success(done, None);
+		},
 		ShellCommand::Profile(command) => run_profile_command(session, command).await?,
 		ShellCommand::Login => bail!("/login is only available on the pairing host"),
 		ShellCommand::Logout => bail!("/logout is only available on the pairing host"),
@@ -3987,6 +4123,10 @@ async fn execute_non_interactive_command(
 			return Ok(Some(target));
 		},
 		ShellCommand::Renew => run_renew(session).await?,
+		ShellCommand::Funding(command) => {
+			let done = run_funding(&session.runtime, command).await?;
+			terminal_ui::output_success(done, None);
+		},
 		ShellCommand::Profile(command) => run_profile_command(session, command).await?,
 	}
 	Ok(None)

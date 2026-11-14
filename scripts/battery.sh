@@ -11,7 +11,7 @@
 #   scripts/battery.sh --signing-host     # direct phase only
 #   scripts/battery.sh --pairing-host     # paired phase only
 #   scripts/battery.sh --pocket-host      # Pocket phase only
-#   scripts/battery.sh --funding-host     # funding phase only, on a test-host build
+#   scripts/battery.sh --funding-host     # funding phase only
 #   scripts/battery.sh --release          # build and run the release binary
 #   scripts/battery.sh -- --network foo   # arguments after `--` go to every host process
 #
@@ -48,6 +48,8 @@ SCRIPT="rust/crates/truapi-host-cli/js/scripts/battery.ts"
 CHAT_SCRIPT="rust/crates/truapi-host-cli/js/scripts/chat-battery.ts"
 POCKET_SCRIPT="rust/crates/truapi-host-cli/js/scripts/pocket-battery.ts"
 FUNDING_SCRIPT="rust/crates/truapi-host-cli/js/scripts/funding-battery.ts"
+FUNDING_WORKER_SCRIPT="rust/crates/truapi-host-cli/js/scripts/funding-worker.ts"
+FUNDING_PROVIDER_ID="fundtest.dot"
 PRODUCT_ID="truapi-playground.dot"
 REPORTS="explorer/diagnosis-reports/spa"
 LOG_DIR="target/battery"
@@ -138,11 +140,6 @@ fi
 
 # The paired phase runs two hosts at once, so build once up front instead of
 # letting concurrent `cargo run` invocations queue on the build lock.
-# The funding phase settles sessions through the core's test hooks, which
-# only a test-host build carries.
-if [ "$RUN_FUNDING" = 1 ]; then
-  CARGO_ARGS+=(--features test-host)
-fi
 cargo build ${CARGO_ARGS[@]+"${CARGO_ARGS[@]}"} -p truapi-host-cli
 HOST="target/$PROFILE_DIR/truapi-host"
 mkdir -p "$LOG_DIR"
@@ -253,22 +250,48 @@ pocket_phase() {
 
 funding_phase() {
   local log="$LOG_DIR/funding-host-cli.log"
-  echo "battery: funding phase (host transcript $LOG_DIR/funding-host-transcript.jsonl)"
+  echo "battery: funding phase (host transcripts $LOG_DIR/funding-host-transcript*.jsonl)"
   # Overlay requests and session changes as the host saw them. The cases read
   # it so a pass cannot rest on the product's word alone.
   export TRUAPI_FUNDING_LOG="$ROOT/$LOG_DIR/funding-host-transcript.jsonl"
-  # One outcome per request the cases make, in order; see funding-e2e.ts.
-  export TRUAPI_FUNDING_OUTCOMES="deliver:900,release:500,fail,dismiss"
+  # The overlay offers one provider, whose worker the host launches from its
+  # own script when the core asks for it.
+  export TRUAPI_FUNDING_PROVIDERS="$FUNDING_PROVIDER_ID=$ROOT/$FUNDING_WORKER_SCRIPT"
+  # What the worker was asked and did, across every process the host runs it in.
+  export TRUAPI_FUNDING_WORKER_LOG="$ROOT/$LOG_DIR/funding-worker-journal.jsonl"
+  # The ledger top-up and payment engines' record, kept across the restart.
+  export TRUAPI_FUNDING_LEDGER="$ROOT/$LOG_DIR/funding-host-ledger.jsonl"
+  export TRUAPI_FUNDING_STATE="$ROOT/$LOG_DIR/funding-battery-state.json"
+  rm -f "$TRUAPI_FUNDING_LOG" "$TRUAPI_FUNDING_WORKER_LOG" "$TRUAPI_FUNDING_LEDGER" "$TRUAPI_FUNDING_STATE"
+  # Run the product, then once more on the same storage, as a restarted host.
+  local rc=0
+  funding_run start "$log" || rc=$?
+  [ "$rc" = 0 ] || return "$rc"
+  export TRUAPI_FUNDING_LOG="$ROOT/$LOG_DIR/funding-host-transcript-resumed.jsonl"
   rm -f "$TRUAPI_FUNDING_LOG"
-  "$HOST" signing-host \
+  funding_run resume "$LOG_DIR/funding-host-cli-resumed.log"
+}
+
+funding_run() {
+  local stage="$1" log="$2"
+  # The script types the user's commands into this pipe, which is the host's
+  # stdin. It stays open for writing here, so the host does not read the end
+  # of its input between two commands.
+  export TRUAPI_FUNDING_USER="$ROOT/$LOG_DIR/funding-user.fifo"
+  rm -f "$TRUAPI_FUNDING_USER"
+  mkfifo "$TRUAPI_FUNDING_USER"
+  exec 7<>"$TRUAPI_FUNDING_USER"
+  TRUAPI_FUNDING_STAGE="$stage" "$HOST" signing-host \
     --product-id "$PRODUCT_ID" \
     --script "$FUNDING_SCRIPT" \
     --auto-accept \
-    ${HOST_ARGS[@]+"${HOST_ARGS[@]}"} > >(tee "$log") 2>&1 &
+    ${HOST_ARGS[@]+"${HOST_ARGS[@]}"} < "$TRUAPI_FUNDING_USER" > >(tee "$log") 2>&1 &
   local host_pid=$! rc=0
-  start_watchdog "$host_pid" "funding phase"
+  start_watchdog "$host_pid" "funding phase ($stage)"
   wait "$host_pid" || rc=$?
   stop_watchdog
+  exec 7>&-
+  rm -f "$TRUAPI_FUNDING_USER"
   return "$rc"
 }
 

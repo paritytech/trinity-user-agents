@@ -268,3 +268,87 @@ fn editor_command_accepts_quoted_arguments_without_a_shell() -> Result<()> {
 	assert_eq!(arguments, ["--wait", "profile one"]);
 	Ok(())
 }
+
+/// The `truapi-host` binary of the profile this test binary was built in,
+/// which confines the worker. Cargo builds it for the crate's integration
+/// tests.
+fn launcher() -> Result<PathBuf> {
+	let test = std::env::current_exe()?;
+	test.ancestors()
+		.skip(1)
+		.map(|directory| directory.join("truapi-host"))
+		.find(|binary| binary.is_file())
+		.with_context(|| format!("build truapi-host first: none above {}", test.display()))
+}
+
+#[tokio::test]
+#[ignore = "requires Bun and the truapi-host binary; run with --include-ignored"]
+async fn a_published_worker_reads_only_its_archive_spawns_nothing_and_sees_no_home() -> Result<()> {
+	let secret = tempfile::tempdir()?;
+	let secret_file = secret.path().join("secret.txt");
+	fs::write(&secret_file, "not for workers")?;
+	let runner = tempfile::tempdir()?;
+	fs::write(runner.path().join("runner.js"), "await import(process.env.TRUAPI_SCRIPT);\n")?;
+	let archive = tempfile::tempdir()?;
+	let script = archive.path().join("index.js");
+	fs::write(
+		&script,
+		format!(
+			r#"import fs from "node:fs";
+import {{ spawnSync }} from "node:child_process";
+const attempt = (action) => {{
+  try {{
+    action();
+    return "allowed";
+  }} catch {{
+    return "refused";
+  }}
+}};
+console.log(JSON.stringify({{
+  ownArchive: attempt(() => fs.readFileSync(new URL("./index.js", import.meta.url))),
+  scratch: attempt(() => fs.writeFileSync(`${{process.env.TMPDIR}}/note`, "x")),
+  outsideFile: attempt(() => fs.readFileSync({secret:?})),
+  childProcess: attempt(() => {{
+    const result = spawnSync("/bin/sh", ["-c", "exit 0"]);
+    if (result.error || result.status !== 0) throw result.error ?? new Error("failed");
+  }}),
+  bunSpawn: attempt(() => {{
+    if (Bun.spawnSync(["/bin/sh", "-c", "exit 0"]).exitCode !== 0) throw new Error("failed");
+  }}),
+  home: process.env.HOME === undefined ? "refused" : "allowed",
+}}));
+"#,
+			secret = secret_file.to_string_lossy(),
+		),
+	)?;
+	assert!(std::env::var_os("HOME").is_some(), "the test needs a HOME to hide");
+	let frames = tempfile::tempdir()?;
+	let frame_url = format!("ws+unix:{}", frames.path().join("frames.sock").display());
+	let product_id: ProductId = "fundtest.dot".parse()?;
+	let worker = ConfinedWorker {
+		frame_url: &frame_url,
+		product_id: &product_id,
+		script: &script,
+		archive: archive.path(),
+	};
+	let (mut command, _scratch) =
+		confined_command(&launcher()?, &runner.path().join("runner.js"), worker)?;
+	let output = command.stdin(Stdio::null()).output().await?;
+	let stdout = String::from_utf8_lossy(&output.stdout);
+	let stderr = String::from_utf8_lossy(&output.stderr);
+	assert!(output.status.success(), "{stdout}\n{stderr}");
+	let outcome: serde_json::Value = serde_json::from_str(stdout.trim())
+		.with_context(|| format!("worker output: {stdout}\n{stderr}"))?;
+	assert_eq!(
+		outcome,
+		serde_json::json!({
+			"ownArchive": "allowed",
+			"scratch": "allowed",
+			"outsideFile": "refused",
+			"childProcess": "refused",
+			"bunSpawn": "refused",
+			"home": "refused",
+		})
+	);
+	Ok(())
+}

@@ -279,6 +279,11 @@ impl CliPlatform {
 		})
 	}
 
+	/// The chain connections this platform serves the core over.
+	pub fn chains(&self) -> Arc<CliChainProvider> {
+		Arc::clone(&self.chain)
+	}
+
 	/// Return the policy used by future confirmation requests.
 	pub fn approval_policy(&self) -> ApprovalPolicy {
 		*self.approval.lock().expect("approval policy mutex poisoned")

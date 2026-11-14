@@ -156,6 +156,22 @@ impl ScriptCommand {
 	}
 }
 
+/// What the user does to or asks about funding sessions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FundingCommand {
+	/// Cancel the session with this intent.
+	Cancel(String),
+	/// List the sessions the core pushed this run, with their latest status.
+	Sessions,
+	/// List every ended session, as history keeps it.
+	History,
+	/// Close the provider's screen open for this session, as the user would.
+	Close(String),
+	/// Answer the provider's screen open for this session with the URL its
+	/// page returned to.
+	Returned(String, String),
+}
+
 /// A command accepted by the signing-host command bar or `exec` mode.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ShellCommand {
@@ -188,6 +204,8 @@ pub enum ShellCommand {
 	Session(SessionCommand),
 	/// Renew tracked statement-store allowances for the current period.
 	Renew,
+	/// Act on a funding session as the user.
+	Funding(FundingCommand),
 	/// Shut down the signing host.
 	Quit,
 }
@@ -368,6 +386,30 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, CommandParseError> {
 			Ok(ShellCommand::Session(SessionCommand::Switch(first.to_string())))
 		},
 		"/renew" => no_argument(name, argument, ShellCommand::Renew),
+		"/funding" => match argument.trim().split_once(char::is_whitespace) {
+			Some(("cancel", intent)) if !intent.trim().is_empty() => {
+				Ok(ShellCommand::Funding(FundingCommand::Cancel(intent.trim().to_string())))
+			},
+			None if argument.trim() == "sessions" => {
+				Ok(ShellCommand::Funding(FundingCommand::Sessions))
+			},
+			None if argument.trim() == "history" => {
+				Ok(ShellCommand::Funding(FundingCommand::History))
+			},
+			Some(("close", intent)) if !intent.trim().is_empty() => {
+				Ok(ShellCommand::Funding(FundingCommand::Close(intent.trim().to_string())))
+			},
+			Some(("returned", rest)) => match rest.trim().split_once(char::is_whitespace) {
+				Some((intent, url)) if !url.trim().is_empty() => Ok(ShellCommand::Funding(
+					FundingCommand::Returned(intent.to_string(), url.trim().to_string()),
+				)),
+				_ => Err("usage: /funding returned <intent> <url>".into()),
+			},
+			_ => Err(
+				"usage: /funding cancel <intent> | close <intent> | returned <intent> <url> | sessions | history"
+					.into(),
+			),
+		},
 		"/quit" => no_argument(name, argument, ShellCommand::Quit),
 		_ => Err(format!("unknown command `{name}`; use /help to list commands").into()),
 	}
@@ -413,6 +455,7 @@ const SIGNING_COMMANDS: &[(&str, &str)] = &[
 	("/product", "show or switch the active product"),
 	("/session", "show, switch, or clear sessions"),
 	("/renew", "renew statement-store allowances now"),
+	("/funding", "list funding sessions and history, or cancel one"),
 	("/profile", "read a public profile or upload your avatar"),
 	("/help", "show commands and keyboard shortcuts"),
 	("/clear", "clear the visible transcript"),
@@ -913,6 +956,11 @@ pub const HELP_TEXT: &str = "\
 /session --clear <name> permanently clear one session
 /session --clear-all    permanently clear all sessions for this network
 /renew                  renew statement-store allowances now
+/funding cancel <intent> cancel a funding session
+/funding close <intent>  close the provider screen open for a session
+/funding returned <intent> <url> answer it with the URL its page returned to
+/funding sessions       list funding sessions the core holds
+/funding history        list ended funding sessions
 /help                   show this help
 /clear                  clear the visible transcript
 /copy                   copy the transcript to the clipboard

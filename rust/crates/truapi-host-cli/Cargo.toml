@@ -13,6 +13,10 @@ path = "src/main.rs"
 [target.'cfg(unix)'.dependencies]
 rustix = { workspace = true, features = ["process"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Confines the published funding workers. See src/worker_sandbox.rs.
+landlock = { workspace = true }
+
 [lints.rust]
 missing_docs = "warn"
 unsafe_code = "forbid"
