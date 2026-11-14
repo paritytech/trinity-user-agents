@@ -1,3 +1,4 @@
+import DesignSystem
 import Foundation
 import PolkadotUI
 import Products
@@ -8,7 +9,12 @@ import WebKit
 
 // MARK: - View
 
-/// A transparent webview where the composer would be, showing the product's own page.
+/// A webview where the composer would be, showing the product's own page.
+///
+/// The page draws on a transparent background over a backdrop in the chat's own colour, which
+/// fills the slot and the strip below it down to the screen edge, so the chat scrolling under
+/// the footer stays hidden, as it does under the composer. Only the part of the webview that
+/// `overlay` stretches above the slot is see-through.
 ///
 /// The page reports through the `productFooter` message handler: an action goes
 /// to the product as a press in the room footer, a haptic plays, `overlay` lets
@@ -27,6 +33,7 @@ final class ProductRoomFooterWebView: UIView {
     private let onAction: ActionHandler
     private let logger: LoggerProtocol
     private let webView: WKWebView
+    private let backdrop = UIView()
     private let dragWinner = UIPanGestureRecognizer()
     private var heightConstraint: NSLayoutConstraint!
     private var webViewTopConstraint: NSLayoutConstraint!
@@ -35,6 +42,9 @@ final class ProductRoomFooterWebView: UIView {
     private var lastActionAt: Date?
 
     private(set) var isOverlaying = false
+
+    /// The chat around the slot, told when the page changes the slot's height so its bottom inset follows.
+    weak var inputHandler: ChatInputHandling?
 
     init(
         pageURL: URL,
@@ -83,8 +93,22 @@ final class ProductRoomFooterWebView: UIView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // The slot ends at the bottom safe area; the backdrop also covers the home indicator
+        // strip below it. A frame, not a constraint, so the slot's fitted height stays its own.
+        let below = window?.safeAreaInsets.bottom ?? 0
+        backdrop.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height + below)
+    }
+
+    override func safeAreaInsetsDidChange() {
+        super.safeAreaInsetsDidChange()
+        setNeedsLayout()
+    }
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        setNeedsLayout()
         guard window != nil else {
             setOverlay(false)
             return
@@ -114,8 +138,9 @@ final class ProductRoomFooterWebView: UIView {
         case let .overlay(isOn):
             setOverlay(isOn)
         case let .ready(height):
-            if let height = ProductRoomFooterWebPage.height(reported: height) {
+            if let height = ProductRoomFooterWebPage.height(reported: height), height != heightConstraint.constant {
                 heightConstraint.constant = height
+                inputHandler?.chatInputDidChange()
             }
             reveal()
         }
@@ -157,6 +182,10 @@ private extension ProductRoomFooterWebView {
     func setupViews(height: CGFloat) {
         backgroundColor = .clear
         clipsToBounds = false
+
+        backdrop.backgroundColor = .bgSurfaceMain
+        backdrop.isUserInteractionEnabled = false
+        addSubview(backdrop)
 
         webView.isOpaque = false
         webView.backgroundColor = .clear

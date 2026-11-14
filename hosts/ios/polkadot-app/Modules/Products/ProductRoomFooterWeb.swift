@@ -217,8 +217,10 @@ struct ProductRoomFooterWebConfiguration: @preconcurrency ChatInputViewConfigura
     }
 
     @MainActor
-    func makeContentView(for _: ChatInputHandling?) -> UIView {
-        makeView()
+    func makeContentView(for handler: ChatInputHandling?) -> UIView {
+        let view = makeView()
+        (view as? ProductRoomFooterWebView)?.inputHandler = handler
+        return view
     }
 
     func equalsTo(configuration: any ChatInputViewConfigurationProtocol) -> Bool {
