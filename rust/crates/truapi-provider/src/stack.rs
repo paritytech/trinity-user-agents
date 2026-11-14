@@ -17,6 +17,7 @@ use crate::{ChainSource, ProviderError, config::ResolvedChain};
 
 /// Where a chain's light spec is published.
 #[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(all(feature = "uniffi", not(target_arch = "wasm32")), derive(uniffi::Record))]
 pub struct LightSpecSource {
 	/// The chain's genesis hash.
 	pub genesis_hash: [u8; 32],
@@ -160,6 +161,11 @@ impl LightStack {
 	/// The descriptor's `generation`.
 	pub fn generation(&self) -> &str {
 		&self.generation
+	}
+
+	/// The header of the databases this stack's provider stores.
+	pub fn database_header(&self) -> crate::storage::Header<'_> {
+		crate::storage::Header { stack: &self.id, generation: &self.generation }
 	}
 
 	/// The relay `genesis_hash` syncs through. The relay itself, and a chain

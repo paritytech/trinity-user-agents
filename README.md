@@ -307,7 +307,11 @@ every artifact resumes from stored finalized state instead, including the relay 
 parachain syncs through. The provider owns when a blob is read and written; the
 host owns where the bytes live. The crate stores nothing itself: a host implements
 `StorageClient` over storage it already owns, on web and native alike, so it keeps
-control of quota and of whether the bytes are backed up or encrypted.
+control of quota and of whether the bytes are backed up or encrypted. A blob is
+stored per stack and genesis hash, because a fork shares its source's genesis
+hashes. A stack's provider starts each blob with a line naming the stack and its
+`generation` and reads back only its own, so a store that ignores the stack
+still cannot mix two stacks, and a stack that restarted its chains starts fresh.
 
 ### Building extrinsics
 

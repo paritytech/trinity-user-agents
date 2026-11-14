@@ -416,6 +416,22 @@ impl EmbeddedChainProvider {
 		self.stack.as_ref().map(|stack| stack.light_specs()).unwrap_or_default()
 	}
 
+	/// Read what this provider stored for `genesis_hash`. What another stack
+	/// or generation stored reads as nothing, and so does what any stack
+	/// stored on a provider without one.
+	async fn load_stored(
+		&self,
+		store: &dyn crate::storage::StorageClient,
+		genesis_hash: [u8; 32],
+	) -> Result<Option<String>, ProviderError> {
+		let Some(stack) = &self.stack else {
+			let stored = store.load(genesis_hash, None).await?;
+			return Ok(stored.filter(|stored| !crate::storage::carries_header(stored)));
+		};
+		let stored = store.load(genesis_hash, Some(stack.id().to_owned())).await?;
+		Ok(stored.and_then(|stored| stack.database_header().unseal(stored)))
+	}
+
 	/// Put a seed back after a connect that never reached `add_chain`.
 	///
 	/// The blob is taken out of the map before connecting, so without this a
@@ -465,7 +481,7 @@ impl EmbeddedChainProvider {
 			!self.is_connected(relay) &&
 			!self.has_database(relay) &&
 			let Some(store) = self.storage.clone() &&
-			let Some(blob) = store.load(relay).await?
+			let Some(blob) = self.load_stored(&*store, relay).await?
 		{
 			lock(&self.seeded_databases).entry(relay).or_insert(blob);
 		}
@@ -483,7 +499,7 @@ impl EmbeddedChainProvider {
 			return Ok(true);
 		}
 		let store = self.storage()?;
-		let Some(blob) = store.load(genesis_hash).await? else {
+		let Some(blob) = self.load_stored(&*store, genesis_hash).await? else {
 			return Ok(false);
 		};
 		lock(&self.seeded_databases).entry(genesis_hash).or_insert(blob);
@@ -549,8 +565,7 @@ impl EmbeddedChainProvider {
 			match known {
 				Some(known) => Some(known),
 				None => Some(
-					store
-						.load(genesis_hash)
+					self.load_stored(&*store, genesis_hash)
 						.await?
 						.is_some_and(|stored| crate::storage::carries_runtime_code(&stored)),
 				),
@@ -566,7 +581,13 @@ impl EmbeddedChainProvider {
 		// The blob is not kept in `seeded_databases`: a chain only consumes one
 		// on its first add, and this chain is live, so nothing could read it
 		// back before the process ends.
-		store.save(genesis_hash, blob).await?;
+		match &self.stack {
+			Some(stack) => {
+				let sealed = stack.database_header().seal(&blob);
+				store.save(genesis_hash, sealed, Some(stack.id().to_owned())).await?;
+			},
+			None => store.save(genesis_hash, blob, None).await?,
+		}
 		lock(&self.stored_quality).insert(genesis_hash, has_code);
 		Ok(true)
 	}
