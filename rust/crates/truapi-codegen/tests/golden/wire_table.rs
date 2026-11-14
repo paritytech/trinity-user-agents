@@ -42,7 +42,7 @@ pub enum WireKind {
 /// `TRUAPI_WIRE_SCHEMA_HASH`. A host stamps it on each debug envelope so
 /// the debugger refuses to decode a frame whose contract differs from
 /// its own, even when the coarse handshake codec version is unchanged.
-pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "1ddad8b65de84b98";
+pub const TRUAPI_WIRE_SCHEMA_HASH: &str = "902ebc97af296f8b";
 
 /// Wire discriminants for `system_handshake`.
 pub const SYSTEM_HANDSHAKE: MethodIds = MethodIds {
@@ -524,6 +524,12 @@ pub const RENDERER_ACTION_SUBSCRIBE: MethodIds = MethodIds {
     method_id: 1,
 };
 
+/// Wire discriminants for `renderer_failure_subscribe`.
+pub const RENDERER_FAILURE_SUBSCRIBE: MethodIds = MethodIds {
+    trait_id: 17,
+    method_id: 2,
+};
+
 /// Wire discriminants for `pocket_list_subscribe`.
 pub const POCKET_LIST_SUBSCRIBE: MethodIds = MethodIds {
     trait_id: 18,
@@ -582,6 +588,54 @@ pub const FUNDING_STATUS_SUBSCRIBE: MethodIds = MethodIds {
 pub const EXPANDED_CARD_SET_FACE_SHOWN: MethodIds = MethodIds {
     trait_id: 23,
     method_id: 0,
+};
+
+/// Wire discriminants for `expanded_card_set_back_shown`.
+pub const EXPANDED_CARD_SET_BACK_SHOWN: MethodIds = MethodIds {
+    trait_id: 23,
+    method_id: 1,
+};
+
+/// Wire discriminants for `funding_provider_quote`.
+pub const FUNDING_PROVIDER_QUOTE: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 0,
+};
+
+/// Wire discriminants for `funding_provider_assign`.
+pub const FUNDING_PROVIDER_ASSIGN: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 1,
+};
+
+/// Wire discriminants for `funding_provider_cancel`.
+pub const FUNDING_PROVIDER_CANCEL: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 2,
+};
+
+/// Wire discriminants for `funding_provider_settle_cancel`.
+pub const FUNDING_PROVIDER_SETTLE_CANCEL: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 3,
+};
+
+/// Wire discriminants for `funding_provider_report`.
+pub const FUNDING_PROVIDER_REPORT: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 4,
+};
+
+/// Wire discriminants for `funding_provider_present_frame`.
+pub const FUNDING_PROVIDER_PRESENT_FRAME: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 5,
+};
+
+/// Wire discriminants for `funding_provider_close_frame`.
+pub const FUNDING_PROVIDER_CLOSE_FRAME: MethodIds = MethodIds {
+    trait_id: 24,
+    method_id: 6,
 };
 
 /// Wire discriminants for `scanner_scan`.
@@ -1005,6 +1059,10 @@ pub const WIRE_TABLE: &[WireEntry] = &[
         kind: WireKind::Subscription(RENDERER_ACTION_SUBSCRIBE),
     },
     WireEntry {
+        method: "renderer_failure_subscribe",
+        kind: WireKind::Subscription(RENDERER_FAILURE_SUBSCRIBE),
+    },
+    WireEntry {
         method: "pocket_list_subscribe",
         kind: WireKind::Subscription(POCKET_LIST_SUBSCRIBE),
     },
@@ -1043,6 +1101,38 @@ pub const WIRE_TABLE: &[WireEntry] = &[
     WireEntry {
         method: "expanded_card_set_face_shown",
         kind: WireKind::Request(EXPANDED_CARD_SET_FACE_SHOWN),
+    },
+    WireEntry {
+        method: "expanded_card_set_back_shown",
+        kind: WireKind::Request(EXPANDED_CARD_SET_BACK_SHOWN),
+    },
+    WireEntry {
+        method: "funding_provider_quote",
+        kind: WireKind::Subscription(FUNDING_PROVIDER_QUOTE),
+    },
+    WireEntry {
+        method: "funding_provider_assign",
+        kind: WireKind::Subscription(FUNDING_PROVIDER_ASSIGN),
+    },
+    WireEntry {
+        method: "funding_provider_cancel",
+        kind: WireKind::Subscription(FUNDING_PROVIDER_CANCEL),
+    },
+    WireEntry {
+        method: "funding_provider_settle_cancel",
+        kind: WireKind::Subscription(FUNDING_PROVIDER_SETTLE_CANCEL),
+    },
+    WireEntry {
+        method: "funding_provider_report",
+        kind: WireKind::Request(FUNDING_PROVIDER_REPORT),
+    },
+    WireEntry {
+        method: "funding_provider_present_frame",
+        kind: WireKind::Request(FUNDING_PROVIDER_PRESENT_FRAME),
+    },
+    WireEntry {
+        method: "funding_provider_close_frame",
+        kind: WireKind::Request(FUNDING_PROVIDER_CLOSE_FRAME),
     },
     WireEntry {
         method: "scanner_scan",

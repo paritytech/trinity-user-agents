@@ -1,13 +1,16 @@
 use std::path::PathBuf;
 
-use crate::platform::{
-	HostInfo, PlatformInfo, ProductContext, ProductExecutionKind, ProductId,
-	RuntimeConfigValidationError, SigningHostConfig,
+use crate::{
+	platform::{
+		ExecutableKind, HostInfo, PlatformInfo, ProductContext, ProductId,
+		RuntimeConfigValidationError, SigningHostConfig, Stack,
+	},
+	pocket_cards::PinnedPocketCard,
 };
 use truapi::latest::HostPlatform;
 
 /// Process-owned native host configuration shared by every product execution.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct HostRuntimeConfig {
 	/// Host name shown by the wallet during SSO pairing.
 	pub host_name: String,
@@ -23,28 +26,18 @@ pub struct HostRuntimeConfig {
 	/// Optional platform/browser version shown by the wallet during SSO pairing.
 	#[uniffi(default)]
 	pub platform_version: Option<String>,
-	/// People-chain genesis hash. Must be exactly 32 bytes.
-	pub people_chain_genesis_hash: Vec<u8>,
-	/// Bulletin-chain genesis hash. Must be exactly 32 bytes.
-	pub bulletin_chain_genesis_hash: Vec<u8>,
-	/// Asset Hub genesis hash, where the dotNS contracts are deployed. Must be
-	/// exactly 32 bytes.
-	///
-	/// Product manifests are read from dotNS, so this is what makes a
-	/// `trustedProducts` grant resolvable. 32 zero bytes says this host has no
-	/// Asset Hub; grants already in the manifest cache stay honoured until they
-	/// expire.
-	pub asset_hub_chain_genesis_hash: Vec<u8>,
-	/// The network's dotNS TLD without the leading dot (`dot`, `paseo`,
-	/// `testnet`). The wallet's reserved identities are derived under it:
-	/// `uid.<suffix>` for the identity account, `peopl.<suffix>` for the person
-	/// ring-VRF keys. Read it from the network the host is configured for, the
-	/// way the host's own onboarding does; a wrong value derives a different
-	/// person from the same seed.
-	pub network_suffix: String,
+	/// The stack the host build runs. Every chain the core uses, the network
+	/// `get_chain_info` reports and the TLD the wallet's identities derive
+	/// under come from it.
+	pub stack: BundledStack,
 	/// Existing, writable directory for core-owned databases, kept out of
 	/// device backups. The runtime opens its database there at startup.
 	pub database_directory: String,
+	/// Cards the host pins in the Pocket: listed first, removable by nobody.
+	/// A card pinned on an earlier start and missing here stays only if the
+	/// user added it.
+	#[uniffi(default)]
+	pub pinned_pocket_cards: Vec<PinnedPocketCard>,
 	/// Optional local signing-host secret material (raw BIP-39 entropy).
 	#[uniffi(default)]
 	pub local_session_secret: Option<Vec<u8>>,
@@ -53,13 +46,28 @@ pub struct HostRuntimeConfig {
 	pub local_session_lite_username: Option<String>,
 }
 
+/// The stack a host build ships: its pointer, its signed descriptor, and
+/// whether the build lets it use Polkadot's reserved values.
+#[derive(Clone, uniffi::Record)]
+pub struct BundledStack {
+	/// The stack's link, `polkadotapp://stack?key=0x…&url=…`. It must carry a
+	/// key.
+	pub pointer: String,
+	/// The bundled descriptor's bytes, as served: a signed envelope that
+	/// verifies under the pointer's key.
+	pub descriptor: Vec<u8>,
+	/// Whether this build may run a stack that uses Polkadot's genesis hashes
+	/// or the `dot` TLD. Only a Polkadot or Polkadot-fork build sets it.
+	pub allows_reserved_values: bool,
+}
+
 /// Trusted identity attached by a native host to one executable connection.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct ProductExecutionConfig {
 	/// Canonical product identifier used for policy, storage, and derivation.
 	pub product_id: ProductId,
 	/// Trusted executable kind selected before product code starts.
-	pub execution_kind: ProductExecutionKind,
+	pub execution_kind: ExecutableKind,
 }
 
 /// [`HostRuntimeConfig`] once validated, in the shape the runtime is built from.
@@ -73,6 +81,8 @@ pub struct NativeResolvedHostRuntimeConfig {
 	pub local_session_lite_username: Option<String>,
 	/// Directory the core database lives in.
 	pub database_directory: PathBuf,
+	/// Cards the host pins in the Pocket.
+	pub pinned_pocket_cards: Vec<PinnedPocketCard>,
 }
 
 /// Why a native runtime or product configuration was refused.
@@ -110,13 +120,6 @@ impl From<RuntimeConfigValidationError> for NativeRuntimeConfigError {
 	}
 }
 
-/// A 32-byte genesis hash handed over as bytes, or the error naming `field`.
-pub fn genesis_hash(field: &str, bytes: &[u8]) -> Result<[u8; 32], NativeRuntimeConfigError> {
-	bytes.try_into().map_err(|_| NativeRuntimeConfigError::Invalid {
-		reason: format!("{field} must be exactly 32 bytes, got {}", bytes.len()),
-	})
-}
-
 /// The platform products see in `System::host_info`. The native library ships
 /// only inside iOS and Android apps, so the target decides it.
 pub fn native_host_platform() -> HostPlatform {
@@ -133,12 +136,9 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 	type Error = NativeRuntimeConfigError;
 
 	fn try_from(config: HostRuntimeConfig) -> Result<Self, Self::Error> {
-		let people_chain_genesis_hash =
-			genesis_hash("people_chain_genesis_hash", &config.people_chain_genesis_hash)?;
-		let bulletin_chain_genesis_hash =
-			genesis_hash("bulletin_chain_genesis_hash", &config.bulletin_chain_genesis_hash)?;
-		let asset_hub_chain_genesis_hash =
-			genesis_hash("asset_hub_chain_genesis_hash", &config.asset_hub_chain_genesis_hash)?;
+		let BundledStack { pointer, descriptor, allows_reserved_values } = config.stack;
+		let stack = Stack::bundled(&pointer, &descriptor, allows_reserved_values)
+			.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })?;
 		let signing = SigningHostConfig::new(
 			HostInfo {
 				name: config.host_name,
@@ -147,16 +147,19 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 				platform: native_host_platform(),
 			},
 			PlatformInfo { kind: config.platform_type, version: config.platform_version },
-			people_chain_genesis_hash,
-			bulletin_chain_genesis_hash,
-			asset_hub_chain_genesis_hash,
-			config.network_suffix,
+			stack,
 		)?;
 		Ok(Self {
 			signing,
 			local_session_secret: config.local_session_secret,
 			local_session_lite_username: config.local_session_lite_username,
 			database_directory: PathBuf::from(config.database_directory),
+			pinned_pocket_cards: config
+				.pinned_pocket_cards
+				.into_iter()
+				.map(PinnedPocketCard::screened)
+				.collect::<Result<_, _>>()
+				.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })?,
 		})
 	}
 }

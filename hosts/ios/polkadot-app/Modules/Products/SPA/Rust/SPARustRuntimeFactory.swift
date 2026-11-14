@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import IssueMonitoring
 import Products
@@ -37,8 +38,7 @@ extension SPARustRuntimeFactory: SPARuntimeFactoryProtocol {
 
         let executionModel = try environment.rust.makeSPAExecution(
             productId: productId,
-            routers: environment.routers,
-            cardFace: environment.configuration.cardFace
+            routers: environment.routers
         )
 
         return SPARustRuntime(

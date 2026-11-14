@@ -40,7 +40,7 @@ pub fn is_cached_operation(operation_id: &str) -> bool {
 /// One runtime call, identified so that every block with the same runtime code
 /// shares its output. A chain-head client keys its own metadata cache by the
 /// same code hash.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct RuntimeCall {
 	genesis_hash: Vec<u8>,
 	code_hash: Vec<u8>,
@@ -68,7 +68,6 @@ impl RuntimeCall {
 }
 
 /// What [`RuntimeCallCache::claim`] decided for a caller.
-#[derive(Debug, PartialEq, Eq)]
 pub enum Claim {
 	/// The output is known and was sent to the caller under `operation_id`.
 	Answered { operation_id: String },

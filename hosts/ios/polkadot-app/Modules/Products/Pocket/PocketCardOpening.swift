@@ -5,49 +5,48 @@ import UIKit
 /// Opens the card's product, at the page the card names, on a screen the card
 /// itself heads.
 ///
-/// The protocol names the widget as what an expanded card runs, so that is the
-/// executable served here. The origin stays the product's base domain, so the
-/// card sees the same grants and storage its worker does.
+/// An expanded card runs the product's app, the one executable every product
+/// publishes. The origin stays the product's base domain, so the card sees the
+/// same grants and storage its worker does.
 @MainActor
 struct PocketCardOpening {
     let flowState: SPAFlowState
     let navigator: ModuleNavigating
     let pocket: ProductPocketService
 
-    func open(_ card: PocketCardViewModel, origin: PocketCardOrigin?, pageQuery: String = "") {
+    func open(_ card: PocketCardViewModel, pageQuery: String = "") {
         guard
             let url = card.key.launchUrl(pageQuery: pageQuery),
             let page = flowState.hostProvider.page(url: url)
         else { return }
 
-        // A second screen would take the open card's page and leave it blank.
-        guard !pocket.cardHosts.isOnDisplay(card.key) else {
-            let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
-            pocket.cardHosts.reload(card.key, at: pageQuery) { view in
-                if let widgetURL { view.navigate(to: widgetURL) } else { view.navigate(to: page) }
+        navigator.openWallet { wallet, wasOnScreen in
+            // A second screen would take the open card's page and leave it blank.
+            guard !pocket.cardHosts.isOnDisplay(card.key) else {
+                let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
+                pocket.cardHosts.reload(card.key, at: pageQuery) { view in
+                    if let widgetURL { view.navigate(to: widgetURL) } else { view.navigate(to: page) }
+                }
+                return
             }
-            return
-        }
 
-        guard let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: { surface in
-            makeView(for: card, page: page, pageQuery: pageQuery, surface: surface)
-        }) else { return }
+            guard let product = pocket.cardHosts.product(for: card.key, pageQuery: pageQuery, make: { _ in
+                makeView(for: card, page: page, pageQuery: pageQuery)
+            }) else { return }
 
-        let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
-        if origin == nil {
-            navigator.presentFullScreen(screen)
-        } else {
-            // The card flies between the Pocket and its screen, so the Pocket stays in the window under it.
-            navigator.presentOverFullScreen(screen, animatedBy: screen)
-        }
-        product.surface.claim(screen)
+            let origin = wallet.viewControllers.first as? PocketOrigin
+            let screen = PocketCardScreenViewController(card: card, product: product.view, origin: origin)
+            PocketNavigation.show(screen, on: wallet, animated: wasOnScreen) {
+                product.surface.claim(screen)
+            }
 
-        Task { [weak screen] in
-            let shown = await PocketCardFaceOnOpen.faceShown(
-                for: card.key,
-                cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
-            )
-            screen?.applyOpeningFace(shown: shown)
+            Task { [weak screen] in
+                let shown = await PocketCardFaceOnOpen.faceShown(
+                    for: card.key,
+                    cards: PublishedPocketCards.makeDefault(products: flowState.productResolver)
+                )
+                screen?.applyOpeningFace(shown: shown)
+            }
         }
     }
 
@@ -62,7 +61,7 @@ struct PocketCardOpening {
                 return
             }
 
-            open(card, origin: nil, pageQuery: link.pageQuery)
+            open(card, pageQuery: link.pageQuery)
         }
     }
 }
@@ -71,8 +70,7 @@ private extension PocketCardOpening {
     func makeView(
         for card: PocketCardViewModel,
         page: ProductPage,
-        pageQuery: String,
-        surface: PocketCardSurface
+        pageQuery: String
     ) -> SPAViewProtocol? {
         let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
         let configuration = SPAConfiguration(
@@ -80,14 +78,11 @@ private extension PocketCardOpening {
             isRootScreen: false,
             showMoreButton: false,
             page: page,
-            contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs,
-            cardFace: surface
+            contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs
         )
 
-        // The native runtime cannot load a page by its address.
-        return widgetURL == nil
-            ? SPAViewFactory.createView(configuration: configuration, flowState: flowState)
-            : SPAViewFactory.createRustView(configuration: configuration, flowState: flowState)
+        // A page loaded by its address goes to the Rust runtime on its own.
+        return SPAViewFactory.createView(configuration: configuration, flowState: flowState)
     }
 
     func debugWidgetURL(for key: PocketCardKey, pageQuery: String) -> URL? {

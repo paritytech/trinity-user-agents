@@ -5,6 +5,7 @@ import SubstrateSdk
 final class MockMembershipDepsResolver: MembershipDepsResolving {
     var deps: MembershipDeps?
     var isValidRing = true
+    var membersPalletIndex: UInt8? = 50
     private(set) var recordedGenesisHash: ChainId?
     private(set) var recordedPalletIndex: UInt8?
     private(set) var recordedValidationGenesisHash: ChainId?
@@ -20,5 +21,9 @@ final class MockMembershipDepsResolver: MembershipDepsResolving {
         recordedValidationGenesisHash = genesisHash
         recordedValidationPalletIndex = palletIndex
         return isValidRing
+    }
+
+    func membersPalletIndex(genesisHash _: ChainId) async throws -> UInt8? {
+        membersPalletIndex
     }
 }

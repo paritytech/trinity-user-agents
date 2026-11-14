@@ -1,9 +1,12 @@
 package io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -16,10 +19,12 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.paritytech.polkadotapp.common.presentation.loading.LoadingState
+import io.paritytech.polkadotapp.common.presentation.tabbar.LocalTabBarHiddenFraction
 import io.paritytech.polkadotapp.design.components.button.common.PolkadotButtonShape
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButton
 import io.paritytech.polkadotapp.design.components.button.icon.PolkadotIconButtonSize
@@ -31,7 +36,6 @@ import io.paritytech.polkadotapp.design.theme.PolkadotTheme
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.ChatTestTags
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.ChatListViewModel
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatListContent
-import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatListHeader
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.ChatListLoading
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.IdleSearchEntry
 import io.paritytech.polkadotapp.feature_chats_impl.presentation.list.compose.components.SearchRevealContainer
@@ -66,37 +70,39 @@ private fun ChatListScreenInternal(
     val density = LocalDensity.current
     var newChatButtonHeight by remember { mutableStateOf(0.dp) }
     val newChatButtonBottomOffset = PolkadotTheme.spacings.mediumIncreased
+    val barInsets = LocalAppNavigationBarInsets.current
+    val navigationBars = WindowInsets.navigationBars
+    val barHiddenFraction = LocalTabBarHiddenFraction.current.collectAsStateWithLifecycle()
 
     PolkadotSurface {
         Box(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                ChatListHeader(isLoading = loadingState is LoadingState.Loading)
+            when (loadingState) {
+                is LoadingState.Loaded -> SearchRevealContainer(
+                    state = revealState,
+                    header = { IdleSearchEntry(onClick = onSearchBarClick) },
+                    content = {
+                        ChatListContent(
+                            state = loadingState.data,
+                            onChatClick = onChatClick,
+                            onNewRequestsClick = onNewRequestsClick,
+                            bottomClearance = newChatButtonHeight + newChatButtonBottomOffset,
+                        )
+                    },
+                )
 
-                when (loadingState) {
-                    is LoadingState.Loaded -> SearchRevealContainer(
-                        state = revealState,
-                        header = { IdleSearchEntry(onClick = onSearchBarClick) },
-                        content = {
-                            ChatListContent(
-                                state = loadingState.data,
-                                onChatClick = onChatClick,
-                                onNewRequestsClick = onNewRequestsClick,
-                                bottomClearance = newChatButtonHeight + newChatButtonBottomOffset,
-                            )
-                        },
-                    )
-
-                    else -> ChatListLoading()
+                else -> Box(modifier = Modifier.statusBarsPadding()) {
+                    ChatListLoading()
                 }
             }
 
             NewChatButton(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .windowInsetsPadding(LocalAppNavigationBarInsets.current)
+                    .windowInsetsPadding(barInsets)
                     .padding(end = PolkadotTheme.spacings.large, bottom = newChatButtonBottomOffset)
+                    .offset {
+                        IntOffset(0, newChatButtonOffsetYPx(barInsets.getBottom(this), navigationBars.getBottom(this), barHiddenFraction.value))
+                    }
                     .onSizeChanged { newChatButtonHeight = with(density) { it.height.toDp() } }
                     .testTag(ChatTestTags.NEW_CHAT_BUTTON),
                 onClick = onAddContactClick,

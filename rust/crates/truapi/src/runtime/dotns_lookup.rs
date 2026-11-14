@@ -4,10 +4,7 @@
 //! so a sequence of storage reads and contract views sees one consistent state.
 //! No chain metadata is needed.
 
-use core::{
-	fmt,
-	sync::atomic::{AtomicU64, Ordering},
-};
+use core::sync::atomic::{AtomicU64, Ordering};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Duration;
 #[cfg(target_arch = "wasm32")]
@@ -22,17 +19,16 @@ use truapi::latest::{
 
 use crate::chain_runtime::{
 	ChainHeadStorageValue, ChainHeadStorageValueLookup, ChainRuntime,
-	wait_for_chain_head_best_hash, wait_for_chain_head_call_output,
-	wait_for_chain_head_storage_value,
+	wait_for_chain_head_best_hash, wait_for_chain_head_storage_value,
 };
 use tracing::{debug, info};
 
 use crate::{
-	host_logic::dotns_gateway::{
-		DotnsError, DotnsTransport, DotnsViewError, VIEW_CALL_ORIGIN, encode_revive_call,
-		view_output,
-	},
+	chain::{EvmContractError, RuntimeApiCaller},
+	evm_contract::read_batch,
+	host_logic::dotns_gateway::{DotnsError, DotnsTransport},
 	platform::ProductId,
+	time::RealTimer,
 };
 
 /// Budget for one step of a lookup: opening the follow, one storage read, one
@@ -54,21 +50,24 @@ static DOTNS_LOOKUP_COUNTER: AtomicU64 = AtomicU64::new(1);
 /// It has to say what is being read without saying whose account is reading.
 /// [`DOTNS_LOOKUP_COUNTER`] already tells concurrent lookups apart, so a kind
 /// needs no identifier of its own to be unique.
+#[derive(derive_more::Display)]
 pub enum DotnsLookupKind<'a> {
 	/// The usernames on an account. Carries nothing: an account id here would
 	/// put a user identifier in every log line that names this follow.
+	#[display("identity")]
 	Identity,
 	/// A product's root manifest, named by the product it belongs to.
+	#[display("manifest:{_0}")]
 	Manifest(&'a ProductId),
-}
-
-impl fmt::Display for DotnsLookupKind<'_> {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			Self::Identity => f.write_str("identity"),
-			Self::Manifest(product_id) => write!(f, "manifest:{product_id}"),
-		}
-	}
+	/// A product's Worker manifest, named by the product it belongs to.
+	#[display("executable:{_0}")]
+	WorkerManifest(&'a ProductId),
+	/// A product's App manifest, named by the product it belongs to.
+	#[display("app-executable:{_0}")]
+	AppManifest(&'a ProductId),
+	/// A person's public profile, without a user identifier in the follow id.
+	#[display("public-profile")]
+	PublicProfile,
 }
 
 /// One pinned-block context for a sequence of dotNS reads. It owns the
@@ -90,7 +89,7 @@ impl<'a> DotnsLookup<'a> {
 		chain: &'a ChainRuntime,
 		asset_hub_chain_genesis_hash: [u8; 32],
 		kind: DotnsLookupKind<'_>,
-	) -> Result<Self, DotnsViewError> {
+	) -> Result<Self, DotnsError> {
 		let genesis_hash = asset_hub_chain_genesis_hash.to_vec();
 		let lookup_id = DOTNS_LOOKUP_COUNTER.fetch_add(1, Ordering::Relaxed);
 		let follow_id = format!("truapi:dotns:{lookup_id}:{kind}");
@@ -121,7 +120,8 @@ impl<'a> DotnsLookup<'a> {
 				"the Asset Hub follow never initialized; every grant behind \
 				 this lookup is refused"
 			);
-		})?;
+		})
+		.map_err(DotnsError::Follow)?;
 		Ok(Self { chain, follow, genesis_hash, follow_id, hash })
 	}
 }
@@ -195,38 +195,75 @@ impl DotnsTransport for DotnsLookup<'_> {
 	///
 	/// Views originate from the synthetic always-mapped account. They work
 	/// regardless of the queried account's revive mapping.
-	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, DotnsViewError> {
-		let response = self
-			.chain
-			.remote_chain_head_call(RemoteChainHeadCallRequest {
+	async fn view(&mut self, dest: &[u8; 20], input: Vec<u8>) -> Result<Vec<u8>, EvmContractError> {
+		self.views(dest, vec![input])
+			.await
+			.pop()
+			.expect("one requested view has one result")
+	}
+
+	async fn views(
+		&mut self,
+		dest: &[u8; 20],
+		inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		read_batch(self, dest, inputs)
+			.await
+			.inspect(|result| {
+				debug!(
+					target: "truapi::dotns",
+					follow_id = %self.follow_id,
+					dest = %hex::encode(dest),
+					outcome = match result {
+						Ok(data) => format!("{} bytes", data.len()),
+						Err(reason) => format!("failed: {reason}"),
+					},
+					"dotNS contract view returned"
+				);
+			})
+			.collect()
+	}
+}
+
+#[async_trait::async_trait]
+impl RuntimeApiCaller for DotnsLookup<'_> {
+	async fn call(&mut self, function: &str, input: &[u8]) -> Result<Vec<u8>, subxt::Error> {
+		self.call_batch(function, vec![input.to_vec()])
+			.await
+			.pop()
+			.expect("one requested call has one result")
+	}
+
+	async fn call_batch(
+		&mut self,
+		function: &str,
+		inputs: Vec<Vec<u8>>,
+	) -> Vec<Result<Vec<u8>, subxt::Error>> {
+		let calls = inputs
+			.into_iter()
+			.map(|input| RemoteChainHeadCallRequest {
 				genesis_hash: self.genesis_hash.clone(),
 				follow_subscription_id: self.follow_id.clone(),
 				hash: self.hash.clone(),
-				function: "ReviveApi_call".to_string(),
-				call_parameters: encode_revive_call(&VIEW_CALL_ORIGIN, dest, &input),
+				function: function.to_string(),
+				call_parameters: input,
 			})
-			.await
-			.map_err(|failure| DotnsViewError::Failed(failure.reason()))?;
-		let operation_id = started_operation_id(response.operation)?;
-		let output = wait_for_chain_head_call_output(
-			&mut self.follow,
-			&operation_id,
-			"Asset Hub",
-			OPERATION_TIMEOUT,
-		)
-		.await?;
-		let result = view_output(&output);
-		debug!(
-			target: "truapi::dotns",
-			follow_id = %self.follow_id,
-			dest = %hex::encode(dest),
-			outcome = match &result {
-				Ok(data) => format!("{} bytes", data.len()),
-				Err(reason) => format!("failed: {reason}"),
-			},
-			"dotNS contract view returned"
-		);
-		result
+			.collect();
+		let outputs = self
+			.chain
+			.chain_head_call_batch(
+				&mut self.follow,
+				calls,
+				"Asset Hub",
+				OPERATION_TIMEOUT,
+				&RealTimer,
+			)
+			.await;
+		let mut results = Vec::with_capacity(outputs.len());
+		for output in outputs {
+			results.push(output.map_err(subxt::Error::other_str));
+		}
+		results
 	}
 }
 
@@ -241,25 +278,4 @@ fn started_operation_id(operation: OperationStartedResult) -> Result<String, Str
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	/// An identity lookup names what it reads and nothing about whose account
-	/// it reads, so the follow id built from it carries no user identifier
-	/// into the logs that name a connection's follows.
-	#[test]
-	fn an_identity_lookup_is_named_without_an_account() {
-		assert_eq!(DotnsLookupKind::Identity.to_string(), "identity");
-	}
-
-	/// A manifest lookup still names its product, which identifies what was
-	/// opened rather than who opened it.
-	#[test]
-	fn a_manifest_lookup_is_named_by_its_product() {
-		let product_id = ProductId::for_test("shop.paseo");
-		assert_eq!(
-			DotnsLookupKind::Manifest(&product_id).to_string(),
-			format!("manifest:{product_id}"),
-		);
-	}
-}
+mod tests;

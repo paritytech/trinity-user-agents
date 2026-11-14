@@ -57,13 +57,13 @@ class RealIssueReportApi @Inject constructor(
         }
 
         runCancellableCatching {
-            val description = report.description + "\n\n" + """
-                ## App information
-
-                - App ID: `${BuildConfig.APPLICATION_ID}`
-                - App version: `${BuildConfig.VERSION_NAME}`
-                - Build: `${BuildConfig.VERSION_CODE}`
-            """.trimIndent()
+            val appInformation = listOfNotNull(
+                "- App ID: `${BuildConfig.APPLICATION_ID}`",
+                "- App version: `${BuildConfig.VERSION_NAME}`",
+                report.gitHubUsername?.let { "- GitHub username: @${it.value}" },
+                "- Build: `${BuildConfig.VERSION_CODE}`",
+            ).joinToString("\n")
+            val description = report.description + "\n\n## App information\n\n" + appInformation
             val body = MultipartBody.Builder().setType(MultipartBody.FORM)
                 .addFormDataPart("title", "Android app issue")
                 .addFormDataPart("body", description)

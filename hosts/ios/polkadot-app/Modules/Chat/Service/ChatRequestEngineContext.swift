@@ -51,7 +51,10 @@ actor ChatRequestEngineContext {
             chatId: .person(pendingRequest.remoteContact.accountId),
             peerMetadata: Chat.PeerMetadata(
                 name: pendingRequest.remoteContact.username,
-                icon: .image(pendingRequest.remoteContact.imageData),
+                icon: .person(
+                    username: pendingRequest.remoteContact.username,
+                    imageData: pendingRequest.remoteContact.imageData
+                ),
                 input: .outgoingRequest,
                 moreActions: []
             ),

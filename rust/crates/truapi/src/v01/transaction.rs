@@ -6,7 +6,7 @@ use super::ProductAccountId;
 
 /// A signed extension for a transaction payload.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct TxPayloadExtension {
 	/// Extension name (e.g., `"CheckSpecVersion"`).
 	pub id: String,
@@ -22,7 +22,7 @@ pub struct TxPayloadExtension {
 /// The signer is a [`ProductAccountId`]; the host resolves the
 /// corresponding key pair through its account management layer.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ProductAccountTxPayload {
 	/// Product account that will sign the transaction.
 	pub signer: ProductAccountId,
@@ -51,7 +51,7 @@ pub struct ProductAccountTxPayload {
 /// Identical to [`ProductAccountTxPayload`] except the signer is a raw
 /// 32-byte account identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct LegacyAccountTxPayload {
 	/// Raw 32-byte public key of the legacy account.
 	pub signer: [u8; 32],
@@ -85,9 +85,8 @@ pub enum HostCreateTransactionError {
 		/// Human-readable failure reason.
 		reason: String,
 	},
-	/// A declared contact handle names nobody this host has a contact for, or
-	/// does not appear in the call it was declared for, or a handle appears in
-	/// the call without being declared. One refusal for all three, because
-	/// telling them apart would say whether a handle is current.
+	/// A contact handle is unknown, missing from the call, or used without
+	/// being declared. One error for all three, so it does not reveal whether
+	/// a handle is current.
 	UnknownContact,
 }

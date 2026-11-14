@@ -67,7 +67,7 @@ final class MockChatRequestStoreService: ChatRequestStoreServicing, @unchecked S
         _ requestId: String,
         remoteIncoming _: ChatRequest.ValidatedRemoteModel?,
         acceptorDevice _: Chat.PeerDevice?,
-        peerDevice _: Chat.PeerDevice?
+        peerAcceptance _: ChatRequest.PeerAcceptance?
     ) async throws {
         record(.acceptOutgoing(requestId: requestId))
     }

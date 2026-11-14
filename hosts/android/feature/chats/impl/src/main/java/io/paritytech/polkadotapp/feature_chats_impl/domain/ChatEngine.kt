@@ -16,6 +16,7 @@ import io.paritytech.polkadotapp.feature_account_api.data.repository.getAccountB
 import io.paritytech.polkadotapp.feature_chats_api.domain.ChatMessageSender
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionInputSlot
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRequest
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomResult
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
@@ -161,13 +162,15 @@ class ChatEngine @Inject constructor(
     }
 
     private fun ChatExtension.observeChatUserInputState(chatId: ChatId): Flow<ChatUserInputState> {
-        return observeUserInputAllowed(chatId).map { isInputAllowed ->
-            if (isInputAllowed) {
-                ChatUserInputState.SendMessage(
+        return observeInputSlot(chatId).map { slot ->
+            when (slot) {
+                ChatExtensionInputSlot.TextInput -> ChatUserInputState.SendMessage(
                     paymentState = ChatUserInputState.SendMessage.Payment.NotAvailable,
                     attachmentsSupported = false
                 )
-            } else ChatUserInputState.Nothing
+                ChatExtensionInputSlot.Hidden -> ChatUserInputState.Nothing
+                is ChatExtensionInputSlot.Card -> ChatUserInputState.ExtensionCard(slot.renderer)
+            }
         }
     }
 

@@ -1,8 +1,7 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 import Testing
-import UIKit
-import UIKitExt
 @testable import polkadot_app
 
 /// A web view and a page load are what a card costs to open, so a card opened
@@ -78,26 +77,6 @@ struct PocketCardHostsTests {
         #expect(first?.surface !== second?.surface)
     }
 
-    /// A card already open is what the user asked for. Opening it again would
-    /// build a second screen that takes its page, and closing that one would
-    /// leave the card under it blank.
-    @Test
-    func knowsWhetherACardIsOpenOnScreen() async throws {
-        let hosts = PocketCardHosts()
-        let product = try #require(hosts.product(for: loyalty) { _ in StubSPAView() })
-        let screen = PocketCardScreenViewController(card: loyaltyCard, product: product.view)
-        let beforeOpening = hosts.isOnDisplay(loyalty)
-
-        let window = try await presentCard(screen)
-        product.surface.claim(screen)
-        let whileOpen = [hosts.isOnDisplay(loyalty), hosts.isOnDisplay(trophy)]
-        await closeCard(screen)
-
-        #expect([beforeOpening, hosts.isOnDisplay(loyalty)] == [false, false])
-        #expect(whileOpen == [true, false])
-        withExtendedLifetime(window) {}
-    }
-
     /// A card the collection no longer holds has no next tap, so the product
     /// behind it is given up rather than kept warm.
     @Test
@@ -142,8 +121,8 @@ struct PocketCardHostsTests {
 
 // MARK: - Fixtures
 
-private let loyalty = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "loyalty"))
-private let trophy = PocketCardKey(productId: "game.paseo", cardId: PocketCardId(value: "trophy"))
+private let loyalty = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
+private let trophy = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "trophy"))
 
 @MainActor
 private final class CountingFactory {

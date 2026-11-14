@@ -10,22 +10,14 @@ import simd
 /// device's own tilt back in turns the studio the other way, and a coin catches the light as you
 /// tilt it, the way a real one does.
 ///
-/// A sideways movement rolls the studio about the axis you are looking down; leaning the phone back
-/// pitches it. That first part is a deliberate choice, not physics, and it is the fix for a light
-/// that responded to one direction of tilt and not the other.
+/// The turn is the one rotation that carries the neutral reading onto the current one, scaled into
+/// the travel and reversed. Gravity cannot see a turn about the vertical, so this is the part of
+/// the phone's movement it can see, and it is the same movement mirrored for a tilt either way.
 ///
-/// Turning the studio the way the phone really turned puts a sideways movement about the screen's
-/// long axis, which slides the reflection horizontally. This studio is a room: bright above, dark
-/// below, and nearly even from side to side. Measured across the whole face of a coin, forty
-/// degrees of that turn changes what it reflects by 0.31 one way and by 0.10 the other — a dead
-/// side, and correcting the sense of the turn only moved the dead side to the other hand. Rolling
-/// the room about the view axis changes it by 0.18 either way, symmetric by construction: a roll
-/// about the axis the coin faces cannot care which way it went.
-///
-/// It is also what the eye expects. The head does not roll with the phone, so relative to the
-/// screen the room is what rolls, and a coin's highlight sweeping around its face is the thing that
-/// reads as catching the light. Exactly right for a phone held up to look at, a simplification for
-/// one flat on a table, and the only movement this environment has the contrast to show.
+/// It replaces a pair of angles, sideways and lean, each measured against the whole of gravity.
+/// With the phone leaned back, dipping either edge also shrank the lean, so a sideways tilt came
+/// with a pitch forward that was the same whichever way the edge dipped. On the dim side of the
+/// room that pitch was all that showed, and tilting right read as tilting down.
 ///
 /// Device motion needs no permission prompt: `CMMotionManager` reads the accelerometer and gyro
 /// directly. Only `CMMotionActivityManager`, which classifies walking and driving, requires
@@ -82,11 +74,9 @@ final class CoinageTilt {
     /// coming back leaves the light off square at a position that has not changed.
     static let dwell: TimeInterval = 0.4
 
-    /// Chases the device rather than tracking it exactly: raw attitude is noisy enough to make a
-    /// specular highlight shimmer while the phone is held still.
-    static let smoothing: Double = 8
-
-    private static let epsilon: Double = 0.0008
+    /// Under this the studio is as good as still: the reference wallet idles at 0.002 tilt units
+    /// for the same reason, since a field redrawn for hand tremor is a field that never sleeps.
+    private static let epsilon: Double = 0.002
 
     private let motion: DeviceMotionObservable
     private var subscription: DeviceMotionToken?
@@ -125,14 +115,17 @@ final class CoinageTilt {
         onMove = nil
     }
 
-    /// Eases toward the latest turn. Returns whether the studio is still catching up, so a field at
-    /// rest under a still hand goes back to sleep.
+    /// Takes the latest turn outright. Returns whether it moved, so a field at rest under a still
+    /// hand goes back to sleep.
+    ///
+    /// It used to chase the reading with a time constant of forty milliseconds, to hide sensor
+    /// noise. Measured on the phone, the whole path from sensor to pixel is under thirty, and
+    /// gravity from the fused attitude is steady enough that nothing shimmers without the chase.
     @discardableResult
-    func advance(by seconds: CGFloat) -> Bool {
+    func advance(by _: CGFloat) -> Bool {
         guard !isSettled else { return false }
 
-        let blend = min(Double(seconds) * Self.smoothing, 1)
-        turn += (target - turn) * blend
+        turn = target
 
         return true
     }
@@ -239,16 +232,6 @@ extension CoinageTilt {
             self.down = down / max(length(down), 1e-9)
         }
 
-        /// How far the right edge has dipped, and how far the screen has leaned back from vertical.
-        ///
-        /// Each against everything left over rather than against one other component. Anything of
-        /// the form `atan2(x, y)` between two components that both shrink is a bearing, and a
-        /// bearing is ill-conditioned wherever the phone is leaned well back — the way it is held
-        /// to look at something. A five degree roll once read as five degrees upright, twenty-seven
-        /// leaned back and a hundred and seventy past flat.
-        var sideways: Double { atan2(down.x, hypot(down.y, down.z)) }
-        var lean: Double { atan2(-down.z, hypot(down.x, down.y)) }
-
         /// How far the phone turned between two readings, whatever axis it turned about. Used to
         /// tell a phone being moved from one being held still, where the axis does not matter.
         ///
@@ -258,12 +241,17 @@ extension CoinageTilt {
             atan2(length(cross(down, other.down)), dot(down, other.down))
         }
 
-        /// Where the studio sits with the phone here, against this reading as square.
+        /// Where the studio sits with the phone here, against this reading as square: the room
+        /// turned back by however far down has moved, about the axis it moved about.
         func turn(to other: Pose) -> Turn {
-            CoinageTilt.studioTurn(
-                lean: CoinageTilt.scaled(other.lean - lean),
-                sideways: CoinageTilt.scaled(other.sideways - sideways)
-            )
+            let axis = cross(down, other.down)
+            let sine = length(axis)
+
+            guard sine > 1e-9 else { return Turn() }
+
+            let angle = atan2(sine, dot(down, other.down))
+
+            return -(axis / sine) * CoinageTilt.scaled(angle)
         }
 
         /// Eases toward another reading, staying a direction rather than shrinking toward the

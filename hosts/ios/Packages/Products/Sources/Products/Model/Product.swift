@@ -1,6 +1,6 @@
 import Foundation
 
-public typealias ProductId = String
+import struct TrUAPIHost.ProductId
 
 public struct Product: Identifiable {
     public let id: ProductId

@@ -3,7 +3,7 @@
 # Run `make help` for the list of targets.
 
 .DEFAULT_GOAL := help
-.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-sim-build ios-sim-run ios-build ios-run ios-chat-run ios-chat-host-playground-run ios-chat-all android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-trusted-device-permission e2e-chain-head-failure-cause e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run e2e-funding-cli
+.PHONY: help setup build codegen test check fmt fmt-check check-generated clean playground wasm wasm-crypto-test uniffi uniffi-kotlin android-check provider-android-check ios-sim-build ios-sim-run android-jni android-publish-local dotli-link dev dev-cli dev-bootstrap debugger dev-link-check e2e-dotli e2e-cli-diagnosis e2e-cli-backends e2e-signing-cli e2e-pairing-cli e2e-chat-cli e2e-pocket-cli e2e-cross-product e2e-preimage-submit-prompt e2e-trusted-device-permission e2e-chain-head-failure-cause e2e-follow-after-transport-cut e2e-tx-during-outage e2e-cli-update e2e-host-playground-android e2e-host-playground-ios headless install cli-runner cli-dist matrix explorer xcframework android-chat-playground-run e2e-funding-cli
 
 CARGO ?= cargo
 # The dated nightly CI runs; see nightly-toolchain.
@@ -142,7 +142,7 @@ wasm: check-generated ## Rebuild the truapi runtime and truapi-provider WASM bun
 	cd $(PROVIDER_WASM_PKG) && npm run build
 
 wasm-crypto-test: ## Run crypto/vector tests on wasm32 via wasm-pack/node.
-	wasm-pack test --node rust/crates/truapi --test wasm_crypto_vectors --no-default-features --features runtime
+	wasm-pack test --node rust/crates/truapi --test wasm_crypto_vectors --no-default-features --features mock
 
 dotli-link: ## Link dotli to this checkout's local @parity/truapi packages.
 	cd $(DOTLI) && TRUAPI_REPO="$(CURDIR)" bun run link:truapi
@@ -170,26 +170,6 @@ uniffi: check-generated ## Generate Swift bindings from the truapi cdylib into t
 		--library $(UNIFFI_CDYLIB) \
 		--language swift \
 		--out-dir $(UNIFFI_SWIFT_TMP)
-
-IOS_HOST ?= ../polkadot-app-ios-v2
-IOS_DERIVED_DATA ?= $(IOS_HOST)/build/DerivedData
-IOS_CONFIGURATION ?= Debug
-IOS_SWIFT_FLAGS ?= -DNIGHTLY -DW3S -DIOS_PASEO_E2E -DTRUAPI_RUNTIME_DEFAULT
-IOS_SIMULATOR_DEVICE ?=
-IOS_XCODE_DESTINATION ?= generic/platform=iOS Simulator
-IOS_BUNDLE ?= io.parity.polkadotapp.develop
-IOS_GOOGLE_SERVICE_PLIST ?= $(IOS_HOST)/polkadot-app/GoogleService/GoogleService-Info-Release.plist
-IOS_PRODUCT_HOST ?= truapi-playground.dot
-IOS_PRODUCT_URL ?= http://localhost:3100
-IOS_CHAT_PRODUCT_DIR ?= playground
-IOS_CHAT_PRODUCT_HOST ?= truapi-playground.dot
-IOS_CHAT_PRODUCT_NAME ?= TrUAPI Playground
-IOS_CHAT_PRODUCT_URL ?= http://127.0.0.1:3100
-IOS_HOST_PLAYGROUND_DIR ?= ../host-playground
-IOS_HOST_PLAYGROUND_HOST ?= host-playground.dot
-IOS_HOST_PLAYGROUND_NAME ?= Host Playground
-IOS_HOST_PLAYGROUND_URL ?= http://127.0.0.1:3101
-IOS_APP := $(abspath $(IOS_DERIVED_DATA)/Build/Products/$(IOS_CONFIGURATION)-iphonesimulator/polkadot-app.app)
 
 ios-bootstrap: ## Generate everything hosts/ios needs before Xcode can load its package graph (SIM_ONLY=1 for simulator slices only).
 	./scripts/codegen.sh
@@ -235,66 +215,6 @@ ios-sim-build: ## Build the vendored iOS app for the simulator with the dev conf
 ios-sim-run: ios-sim-build ## Build the vendored iOS app, then install and launch it on a simulator (IOS_SIM_DEVICE=<udid>, default the booted one).
 	xcrun simctl install $(IOS_SIM_DEVICE) "$(IOS_SIM_APP)"
 	xcrun simctl launch $(IOS_SIM_DEVICE) io.parity.polkadotapp.develop
-
-ios-build: ## Rebuild the local Rust package and the TestFlight-configured iOS simulator app.
-	@test -d "$(IOS_HOST)/.git" || { \
-		echo "Missing iOS checkout at $(IOS_HOST); set IOS_HOST to polkadot-app-ios-v2"; \
-		exit 1; \
-	}
-	./ios/truapi-host/scripts/rebuild.sh
-	cd $(IOS_HOST) && \
-		TRUAPI_LOCAL_PATH="$(CURDIR)" \
-		TRUAPI_USE_LOCAL_BINARY=1 \
-		RUN_IN_CI=true xcodebuild \
-		-project polkadot-app.xcodeproj \
-		-scheme polkadot-app \
-		-configuration $(IOS_CONFIGURATION) \
-		-destination '$(IOS_XCODE_DESTINATION)' \
-		-derivedDataPath $(abspath $(IOS_DERIVED_DATA)) \
-		ARCHS=arm64 \
-		ONLY_ACTIVE_ARCH=YES \
-		BASE_SWIFT_FLAGS='$(IOS_SWIFT_FLAGS)' \
-		clean build
-	cp "$(IOS_GOOGLE_SERVICE_PLIST)" "$(IOS_APP)/GoogleService-Info.plist"
-	codesign --force --sign - --preserve-metadata=entitlements "$(IOS_APP)"
-
-ios-run: ios-build ## Build and launch the local TrUAPI playground in an iPhone simulator.
-	TRUAPI_IOS_E2E_DEVICE="$(IOS_SIMULATOR_DEVICE)" \
-	TRUAPI_IOS_E2E_APP="$(IOS_APP)" \
-	TRUAPI_IOS_E2E_BUNDLE="$(IOS_BUNDLE)" \
-	TRUAPI_IOS_E2E_PRODUCT_HOST="$(IOS_PRODUCT_HOST)" \
-	TRUAPI_IOS_E2E_PRODUCT_URL="$(IOS_PRODUCT_URL)" \
-	node scripts/launch-ios-playground.mjs
-
-ios-chat-run: ios-build ## Run the TrUAPI Playground Chat diagnosis in an iPhone simulator.
-	TRUAPI_IOS_E2E_DEVICE="$(IOS_SIMULATOR_DEVICE)" \
-	TRUAPI_IOS_E2E_APP="$(IOS_APP)" \
-	TRUAPI_IOS_E2E_BUNDLE="$(IOS_BUNDLE)" \
-	TRUAPI_IOS_E2E_CHAT_PRODUCT_DIR="$(IOS_CHAT_PRODUCT_DIR)" \
-	TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST="$(IOS_CHAT_PRODUCT_HOST)" \
-	TRUAPI_IOS_E2E_CHAT_PRODUCT_NAME="$(IOS_CHAT_PRODUCT_NAME)" \
-	TRUAPI_IOS_E2E_CHAT_PRODUCT_URL="$(IOS_CHAT_PRODUCT_URL)" \
-	node scripts/launch-ios-chat-playground.mjs
-
-ios-chat-host-playground-run: ios-build ## Verify Host Playground Chat through the workspace-linked TrUAPI client.
-	TRUAPI_IOS_E2E_DEVICE="$(IOS_SIMULATOR_DEVICE)" \
-	TRUAPI_IOS_E2E_APP="$(IOS_APP)" \
-	TRUAPI_IOS_E2E_BUNDLE="$(IOS_BUNDLE)" \
-	TRUAPI_IOS_E2E_CHAT_PRODUCT_DIR="$(abspath $(IOS_HOST_PLAYGROUND_DIR))" \
-	TRUAPI_IOS_E2E_CHAT_PRODUCT_HOST="$(IOS_HOST_PLAYGROUND_HOST)" \
-	TRUAPI_IOS_E2E_CHAT_PRODUCT_NAME="$(IOS_HOST_PLAYGROUND_NAME)" \
-	TRUAPI_IOS_E2E_CHAT_PRODUCT_URL="$(IOS_HOST_PLAYGROUND_URL)" \
-	TRUAPI_IOS_E2E_CHAT_ROOM_ID="host-playground-room" \
-	TRUAPI_IOS_E2E_CHAT_MESSAGE="!flip" \
-	TRUAPI_IOS_E2E_CHAT_EXPECTED_REPLY="Flipping the coin!" \
-	TRUAPI_IOS_E2E_CHAT_DIAGNOSIS="0" \
-	TRUAPI_IOS_E2E_CHAT_EXPECTED_STARTUP_MESSAGE="" \
-	TRUAPI_IOS_E2E_CHAT_EXPECT_CUSTOM_RENDERER="1" \
-	TRUAPI_IOS_E2E_CHAT_SCREENSHOT="artifacts/host-playground-coin-flip-chat.png" \
-	TRUAPI_IOS_E2E_CHAT_TRUAPI_DIR="$(abspath js/packages/truapi)" \
-	node scripts/launch-ios-chat-playground.mjs
-
-ios-chat-all: ios-chat-run ios-chat-host-playground-run ## Run both local iOS Chat playground integrations.
 
 TRUAPI_ANDROID_E2E_APK ?= hosts/android/app/build/outputs/apk/vanilla/debug/app-vanilla-debug.apk
 
@@ -506,6 +426,9 @@ e2e-cli-diagnosis: cli-runner ## Full playground diagnosis in a plain browser ta
 	cargo build --release -p truapi-host-cli
 	cd $(PLAYGROUND) && TRUAPI_HOST_BIN="$(abspath target/release/truapi-host)" bun tests/e2e/cli-diagnosis.ts
 
+e2e-cli-backends: cli-runner ## Run the CLI on both chain backends, rpc and light-client, and compare them. SESSION=<name> picks the signing session.
+	bun scripts/cli-backends-e2e.ts $(if $(SESSION),--session $(SESSION))
+
 e2e-signing-cli: ## Run the generated battery against the direct signing-host CLI.
 	scripts/battery.sh --signing-host
 
@@ -535,6 +458,12 @@ e2e-trusted-device-permission: ## Send a notification as a trusted product on th
 
 e2e-chain-head-failure-cause: ## Cut the chain connection under a chain-head call on the signing-host CLI; both failures must name their cause.
 	scripts/chain-head-failure-cause-e2e.sh
+
+e2e-follow-after-transport-cut: ## Cut the chain connection under a chain-head read on the signing-host CLI; the follow must end and a fresh one must work.
+	scripts/follow-after-transport-cut-e2e.sh
+
+e2e-tx-during-outage: ## Drop the chain connection while the signing-host CLI builds transactions; each must be built once it returns. OUTAGE_MODE=close|header|metadata.
+	scripts/tx-during-outage-e2e.sh
 
 e2e-cli-update: cli-dist ## Install the packaged truapi-host from a fake release and self-update it, with no network.
 	node scripts/e2e-cli-update.mjs

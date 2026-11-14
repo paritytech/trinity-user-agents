@@ -34,6 +34,8 @@ The generated bindings, the container bundle and the xcframework are all **gitig
 A consumer pins the plain semver tag, not the `@parity/ios-host@<version>` one,
 which SwiftPM cannot see:
 
+Product identifiers use `ProductId`, an immutable Swift value initialized through the Rust parser. Construct one with `try ProductId("chat.dot")`; use `rawValue` only at string serialization and display boundaries. `Codable` preserves the string wire format.
+
 ```swift
 .package(url: "https://github.com/paritytech/trinity-user-agents", exact: "0.12.0")
 ```
@@ -71,7 +73,7 @@ Run `rebuild.sh` after changing anything host-visible — the `NativeTrUApiHostR
 
 For local iteration without publishing, set `TRUAPI_USE_LOCAL_BINARY=1` so the root `Package.swift` builds against `Binaries/` directly.
 
-The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, push, permissions, auth state, scoped + core storage, chain JSON-RPC, confirmations, preimage, theme, feature support, and the served chain set. UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter. Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly added one does not break the build. Storage arrives as the `storage` and `coreStorage` sub-objects, which the adapter flattens.
+The embedding app implements `HostBridge` (defined in `TrUAPIHost.swift`): navigation, push, permissions, auth state, scoped + core storage, chain JSON-RPC, confirmations, preimage, theme, and feature support. UI-decision callbacks are `async` and awaited by the Rust core. `HostCallbackAdapter` translates it to the UniFFI-generated `HostCallbacks` protocol; `TrUAPIHostRuntime` and each product execution retain their own adapter. Conform to `HostBridge` rather than to the generated protocol: its extension defaults the optional callbacks, so a newly added one does not break the build. Storage arrives as the `storage` and `coreStorage` sub-objects, which the adapter flattens.
 
 ## Integrating in an iOS app
 
@@ -92,20 +94,23 @@ manifest PR to keep `main` current. SPM pins the resolved revision in the app's
 `Package.resolved`; update it with File > Packages > Update in Xcode or
 `xcodebuild -resolvePackageDependencies` after the tag is published.
 
-`HostRuntimeConfig.networkSuffix` is required. Supply the bare TLD (`dot`,
-`paseo`, or `testnet`) from the same network configuration used by onboarding
-and the People/Bulletin genesis hashes. It must match the People chain's
-`NetworkSuffix.NetworkSuffix`. Include this configuration update in the
-embedding app's package upgrade.
+`HostRuntimeConfig.stack` is required. It is the Trinity stack the build runs,
+as a `BundledStack`:
 
-`HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub
-genesis hash from the same network configuration, as 32 bytes. Product manifests
-are read from the dotNS contracts deployed there, so it is what makes a
-`trustedProducts` grant resolvable: without a usable value no manifest resolves,
-so every cross-product grant not already cached is refused, and the refusal is
-indistinguishable from the other product having granted nothing. Pass 32 zero
-bytes only to declare deliberately that this host has no Asset Hub. Include this
-configuration update in the embedding app's package upgrade.
+- `pointer` is the stack's link, `polkadotapp://stack?key=0x…&url=…`. It must
+  carry a key.
+- `descriptor` is the signed descriptor the build bundles, byte for byte as
+  served. The core verifies it under the pointer's key.
+- `allowsReservedValues` is true only in a Polkadot or Polkadot-fork build.
+  Without it the core refuses a stack that uses Polkadot's genesis hashes or the
+  `dot` TLD.
+
+The core takes every chain it uses from the descriptor, and answers products'
+chain info queries from its `chains` and `network`. The descriptor's TLD is the
+one the wallet's reserved identities derive under. An invalid stack makes
+`TrUAPIHostRuntime(bridge:runtimeConfig:)` throw
+`NativeRuntimeConfigError.Invalid(reason:)`. Include this configuration update
+in the embedding app's package upgrade.
 
 Run the package tests in their UIKit host on an iOS simulator (the xcframework has no macOS slice). The helper installs pinned XcodeGen under `.agent/tools`, generates the project, and selects an available simulator:
 
@@ -117,7 +122,7 @@ Run the package tests in their UIKit host on an iOS simulator (the xcframework h
 ## Chat
 
 A host serving the Chat modality implements `ChatHostBridge` and opens the
-execution with `ProductExecutionKind.chat`. Hosts without it pass nothing and
+execution with `ExecutableKind.worker`. Hosts without it pass nothing and
 Chat calls answer unsupported.
 
 ```swift
@@ -161,10 +166,7 @@ let runtime = try TrUAPIHostRuntime(
     bridge: bridge,
     runtimeConfig: HostRuntimeConfig(
         hostName: "My Chat Host",
-        peopleChainGenesisHash: peopleChainGenesisHash,   // exactly 32 bytes
-        bulletinChainGenesisHash: bulletinChainGenesisHash,
-        assetHubChainGenesisHash: assetHubChainGenesisHash,
-        networkSuffix: "dot"
+        stack: bundledStack
     )
 )
 // Chat needs an active session; without one every Chat call answers denied.
@@ -172,7 +174,7 @@ try runtime.activateLocalSession(secret: secret)
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "chat.dot", executionKind: .chat),
+    configuration: ProductExecutionConfig(productId: try ProductId("chat.dot"), executionKind: .chat),
     chat: MyChatBridge(store: store)
 )
 let endpoint = try execution.startWsBridge()
@@ -195,44 +197,29 @@ untrusted: they may name a message in another room, or one that never existed.
 
 ## Pocket
 
-A host with a Pocket surface owns the card collection and implements
-`PocketHostBridge`, passed as `pocket:` to `openProductExecution`. Pocket is
-reachable only from a Worker execution with an active session, so a product
-on a signed-out host is denied before the bridge is consulted. Hosts without
-the bridge pass nothing and Pocket calls answer unsupported.
+The core keeps the Pocket collection in its database: the cards in the Pocket
+and the newest face of each. Products reach it only from a Worker execution
+with an active session. The host lists the cards it pins in
+`HostRuntimeConfig.pinnedPocketCards` and reads and edits the collection on the
+runtime.
 
 ```swift
-final class MyPocketBridge: PocketHostBridge, @unchecked Sendable {
-    private let store: PocketStore
-
-    init(store: PocketStore) { self.store = store }
-
-    // `privileged` marks a card this host pinned, which the product sees and
-    // cannot remove.
-    func listCards() throws -> [PocketCard] { store.cards() }
-
-    // Decide and remove together so a card cannot be pinned in between.
-    func removeCard(cardId: String) throws -> NativePocketRemoval {
-        store.removeIfRemovable(cardId)
-    }
-}
-
-let execution = try runtime.openProductExecution(
-    bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "game.dot", executionKind: .worker),
-    pocket: MyPocketBridge(store: pocketStore)
+let config = HostRuntimeConfig(
+    // ...
+    pinnedPocketCards: [PinnedPocketCard(productId: try ProductId("peopl.paseo"), cardId: "humanity", title: "Humanity")]
 )
 
-// Pocket needs an active session too: without `activateLocalSession` every
-// Pocket call answers denied, whatever this bridge holds.
+// Every card, pinned first, now and after each change.
+for try await cards in runtime.pocketCards() { show(cards) }
 
-// Republish after the host's own collection changes.
-execution.notifyPocketCardsChanged(cards: pocketStore.cards())
+// A card the user approved, with the face they approved it by.
+try await runtime.addPocketCard(productId: "game.dot", cardId: "loyalty", title: "Loyalty", face: face)
+let removal = try await runtime.removePocketCard(productId: "game.dot", cardId: "loyalty")
+let kept = try await runtime.pocketCardFace(productId: "game.dot", cardId: "loyalty")
 ```
 
-A card's face does not cross this bridge. The host keeps each card's newest
-face itself: that is what the card shows while the worker is down, and at cold
-start before the worker answers.
+The core keeps the newest face of a card from every Pocket card render, so a
+card has one to show while its worker is down and at cold start.
 
 On the execution: `publishChatAction` delivers a user's action back to the
 product, buffering up to 64 before it subscribes; `notifyChatRoomsChanged`
@@ -340,7 +327,7 @@ final class MyGameBridge: GameHostBridge, @unchecked Sendable {
 
 let execution = try runtime.openProductExecution(
     bridge: bridge,
-    configuration: ProductExecutionConfig(productId: "dim2.dot", executionKind: .worker),
+    configuration: ProductExecutionConfig(productId: try ProductId("dim2.dot"), executionKind: .worker),
     game: MyGameBridge(reminders: reminderStore)
 )
 ```
@@ -365,10 +352,10 @@ runtime.setTopUp(wallet)
 runtime.setPayments(wallet)
 runtime.setBalance(wallet)
 
-// Later, from the wallet's own status and balance streams:
+// While the core follows an id or the balance:
 runtime.notifyTopUpStatus(productId: productId, id: id, status: .claiming)
 runtime.notifyPaymentStatus(productId: productId, id: id, status: .completed)
-runtime.notifyBalance(purse: nil, available: "1500000000")
+runtime.notifyBalance(available: "1500000000")
 ```
 
 The core checks the session, the source keys, a positive amount and the
@@ -377,10 +364,12 @@ payment the balance cannot cover throws `HostPaymentError.InsufficientBalance`,
 which the core turns into `Rejected` for a product without balance access. The
 balance is what a payment can spend now, as a decimal string of CASH units.
 
-`topUpStatus` and `paymentStatus` answer the current status of an id inline,
-or `nil` when the host holds none. Every later status goes through
-`notifyTopUpStatus` and `notifyPaymentStatus`, ending with a terminal one; the
-core relays each to the products following that id.
+The core decides which ids to follow. It calls `followTopUp`,
+`followPayment` and `followBalance`, and the host follows its engine's stream,
+pushing what it reports through `notifyTopUpStatus`, `notifyPaymentStatus` and
+`notifyBalance` until the call returns. The core keeps the latest status per
+id, relays it to the products following that id and cancels the call once it
+has a final status.
 
 ## Architecture
 
@@ -423,22 +412,26 @@ The container enforces product consent, while native media delegates resolve OS 
 
 ## SSO session handling
 
-`TrUAPIHostRuntime` exposes two methods for wallet-owned SSO sessions. Meaningful request answering requires `activateLocalSession` to have been called first; `prepareDisconnectRequest` needs no session.
+An externally owned SSO transport calls `openSsoService` for each peer with its own statement-account and encryption public keys. Rust verifies both against the active wallet and binds the returned service to that activation. Locking or reactivating the wallet invalidates the binding, including reactivation with the same secret.
 
 ```swift
-func handleSsoRequest(message: Data) async throws -> SsoRequestOutcome
-func prepareDisconnectRequest() -> Data
+let service = try runtime.openSsoService(
+    ownStatementAccountId: statementAccountId,
+    ownEncryptionPublicKey: encryptionPublicKey
+)
 ```
 
-`handleSsoRequest(message:)` takes one SCALE-encoded `RemoteMessage` exactly as decrypted from the statement-store session and routes it through the Rust core. The returned `SsoRequestOutcome` is the generated UniFFI enum (no Swift mirror):
+Retain one generated service per authenticated peer. Before queueing each decrypted SCALE message, call `service.handleSsoControl(message:)`: a non-nil outcome handles the message immediately, allowing Cancel to reach a running request. Queue only nil results, in arrival order, for `service.handleSsoRequest(message:)`. Both calls use the same service and withdrawal state. Malformed messages throw.
 
-- `.response(message:)` — SCALE-encoded reply; post it back over the same session.
+The generated `SsoRequestOutcome` distinguishes these results:
+
+- `.response(message:)`: SCALE-encoded reply to post over the same authenticated transport, including not-connected errors after wallet replacement.
 - `.disconnected`: the peer ended the session; tear down its transport and records.
 - `.ignored`: nothing to post.
 
-Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`, so `handleSsoRequest` can take arbitrarily long. Always call it from a `Task`, never the main thread.
+Confirmation-gated requests suspend on `confirmUserAction` or `confirmPermission`. Release each service with its peer transport. An invalid binding cannot be reused after wallet activation; recreate the coordinator and verify its transport keys again.
 
-`prepareDisconnectRequest()` returns the SCALE-encoded `Disconnected` message to post when the wallet is ending the session. Posting and record cleanup (host entry, device record, device-removed broadcast) stay with the wallet.
+`runtime.prepareDisconnectRequest()` builds the SCALE-encoded `Disconnected` message without requiring an active wallet. Posting and record cleanup stay with the host.
 
 ## Statement-store allowance renewal
 
@@ -617,23 +610,23 @@ final class MyBridge: HostBridge, @unchecked Sendable {
 }
 
 let bridge = MyBridge()
+let descriptorURL = Bundle.main.url(forResource: "trinity-stack", withExtension: "json")!
 let runtimeConfig = HostRuntimeConfig(
     hostName: "My Host",
     hostIcon: "https://host.example/icon.png",
-    peopleChainGenesisHash: Data(repeating: 0, count: 32),
-    bulletinChainGenesisHash: Data(repeating: 0, count: 32),
-    // Stand-in for a real Asset Hub genesis hash. Non-zero on purpose:
-    // all-zero is the "no Asset Hub" sentinel and refuses every cross-product
-    // `trustedProducts` grant.
-    assetHubChainGenesisHash: Data(repeating: 1, count: 32),
-    networkSuffix: "dot"
+    stack: BundledStack(
+        // The link the bundled descriptor was published under.
+        pointer: "polkadotapp://stack?key=0x…&url=…",
+        descriptor: try Data(contentsOf: descriptorURL),
+        allowsReservedValues: false
+    )
 )
 let runtime = try TrUAPIHostRuntime(bridge: bridge, runtimeConfig: runtimeConfig)
 try runtime.activateLocalSession(secret: entropyBytes, liteUsername: nil)
 let execution = try runtime.openProductExecution(
     bridge: bridge,
     configuration: ProductExecutionConfig(
-        productId: "my-product.dot",
+        productId: try ProductId("my-product.dot"),
         executionKind: .app
     )
 )

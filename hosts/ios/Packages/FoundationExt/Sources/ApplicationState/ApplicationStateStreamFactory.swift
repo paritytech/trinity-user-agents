@@ -12,12 +12,16 @@ public final class ApplicationStateStreamFactory: @unchecked Sendable {
         case didEnterBackground
     }
 
-    public init() {}
+    private let notificationCenter: NotificationCenter
+
+    public init(notificationCenter: NotificationCenter = .default) {
+        self.notificationCenter = notificationCenter
+    }
 
     /// Creates a new `AsyncStream<Void>` that yields each time the specified event occurs.
     public func stream(for event: Event) -> AsyncStream<Void> {
-        AsyncStream { continuation in
-            let observer = NotificationCenter.default.addObserver(
+        AsyncStream { [notificationCenter] continuation in
+            let observer = notificationCenter.addObserver(
                 forName: event.notificationName,
                 object: nil,
                 queue: nil
@@ -26,7 +30,7 @@ public final class ApplicationStateStreamFactory: @unchecked Sendable {
             }
 
             continuation.onTermination = { _ in
-                NotificationCenter.default.removeObserver(observer)
+                notificationCenter.removeObserver(observer)
             }
         }
     }

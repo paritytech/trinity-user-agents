@@ -1,7 +1,3 @@
-#![allow(
-	clippy::double_must_use,
-	reason = "async-trait generates must_use futures for async trait methods"
-)]
 // The pairing-flow future nests the chain, SSO and identity futures deeply
 // enough that proving the tree's auto traits exceeds the default limit.
 #![recursion_limit = "256"]
@@ -13,7 +9,7 @@
 //! [`versioned`].
 //! Async API traits use the `async_trait` macro so their concise `async fn` methods
 //! still guarantee `Send` futures. Implementations must annotate their impl
-//! blocks with `#[truapi::async_trait]`.
+//! blocks with `#[async_trait::async_trait]`.
 //!
 //! The runtime: hosts instantiate a role runtime around a `platform::Platform`
 //! implementation, then create product-scoped `ProductRuntime` endpoints that
@@ -44,86 +40,72 @@ use std::sync::{Arc, Mutex};
 use futures::Stream;
 use parity_scale_codec::{Decode, Encode};
 
-pub use async_trait::async_trait;
-
 pub mod api;
 mod dotns_name;
+pub mod markers;
 mod product_id;
+pub use product_id::{ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 pub mod v01;
 pub mod v02;
 pub mod versioned;
 
 /// A 32-byte value, passed as plain bytes on FFI surfaces. Version-neutral:
-/// the FFI conversion below applies to `[u8; 32]` fields in every protocol
-/// version.
+/// the FFI conversion in `uniffi_types` applies to `[u8; 32]` fields in every
+/// protocol version.
 pub type Bytes32 = [u8; 32];
 
-#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 uniffi::setup_scaffolding!();
 
-#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-uniffi::custom_type!(Bytes32, Vec<u8>, {
-	remote,
-	lower: |bytes| bytes.to_vec(),
-	try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
-});
+#[cfg(not(target_arch = "wasm32"))]
+mod uniffi_types;
 
 /// A 64-byte value, such as an sr25519 secret key, passed as plain bytes on
 /// FFI surfaces. Named only because `uniffi::custom_type!` takes an ident, not
 /// an array type.
 pub type Bytes64 = [u8; 64];
 
-#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-uniffi::custom_type!(Bytes64, Vec<u8>, {
-	remote,
-	lower: |bytes| bytes.to_vec(),
-	try_lift: |bytes| Ok(bytes.as_slice().try_into()?),
-});
-
-// Swift and Kotlin have no 128-bit integer, so amounts cross FFI surfaces as
-// decimal strings.
-#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
-uniffi::custom_type!(u128, String, {
-	remote,
-	lower: |amount| amount.to_string(),
-	try_lift: |amount| Ok(amount.parse()?),
-});
-
 /// Latest-version protocol payload types, unwrapped from their versioned
 /// envelopes. Runtime code should use these instead of per-version modules.
 pub mod latest {
 	use crate::versioned::{self, Versioned};
 
-	pub use crate::product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
-
 	pub use crate::v01::{
 		AllocatableResource, AllocationOutcome, Arrangement, Background, BlendingMode, BorderStyle,
 		BoxProps, ButtonProps, ButtonVariant, ChainIdentifier, ChatAction, ChatActionLayout,
 		ChatActions, ChatBotRegistrationStatus, ChatCustomMessage, ChatFile, ChatMedia,
-		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomFooter,
-		ChatRoomParticipation, ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps,
-		ContactHandle, ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex,
-		Dimensions, Effect, EffectProps, FundingDirection, FundingFailure, GenericError,
-		HorizontalAlignment, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
-		HostAccountGetError, HostAccountListRingVrfKeysRequest,
-		HostAccountRegisterRingVrfKeyRequest, HostAccountRingVrfSignRequest,
-		HostAccountSignVrfError, HostAccountSignVrfRequest, HostPlatform, HostSignPayloadData,
-		HostWorkerBeginOperationRequest, HostWorkerOperationError, ImageFit, ImageProps,
-		ImageSource, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque, NftPurseChequeDestination,
-		NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem, NftPurseClearingReference,
-		NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage, NftPurseItemKey, NftPurseOwner,
-		NftPursePaymentTransmissionChannel, NftPursePurse, NftPurseReceiveKey, NftPurseStatus,
-		OperationStartedResult, PaymentTopUpSource, PocketCard, ProductAccount, ProductAccountId,
-		ProductProofContext, RawPayload, RegisteredRingVrfKey, RemoteChainTransactionStopRequest,
-		RemotePermission, RemoteStatementStoreCreateProofError,
-		RemoteStatementStoreCreateProofRequest, RemoteStatementStoreCreateProofResponse,
-		RemoteStatementStoreSubscribeItem, RemoteStatementStoreSubscribeRequest, RenderContext,
-		RendererNode, ResourceAllocationError, RingLocation, RingLocationJunction,
-		RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType, ScanOutcome, Shape,
-		SignedStatement, Size, Statement, StatementProof, StatementTopic, StorageQueryItem,
-		StorageQueryType, StorageResultItem, TextFieldProps, TextProps, ThemeName, ThemeVariant,
-		TxPayloadExtension, TypographyStyle, VerticalAlignment, VrfSignature, X25519PublicKey,
+		ChatMessageContent, ChatReaction, ChatRichText, ChatRoom, ChatRoomParticipation,
+		ChatRoomRegistrationStatus, CodeFormat, ColorToken, ColumnProps, ContactHandle,
+		ContactPickOutcome, ContentAlignment, ContextualAlias, DerivationIndex, Dimensions,
+		FUNDING_DEPOSIT_URI_MAX_BYTES, FUNDING_DETAIL_MAX_BYTES, FUNDING_DETAIL_MAX_CHARS,
+		FundingAssignment, FundingCancelAnswer, FundingCancelDecision, FundingDeposit,
+		FundingDetail, FundingDirection, FundingFact, FundingFailure, FundingFrameOutcome,
+		FundingFrameTarget, FundingInboundUpdate, FundingOutboundUpdate, FundingPayout,
+		FundingQuote, FundingQuoteAnswer, FundingQuoteAsk, FundingQuoteRefusal, FundingRail,
+		FundingReceived, FundingUpdate, GenericError, HorizontalAlignment,
+		HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountGetError,
+		HostAccountListRingVrfKeysRequest, HostAccountRegisterRingVrfKeyRequest,
+		HostAccountRingVrfSignRequest, HostAccountSignVrfError, HostAccountSignVrfRequest,
+		HostPlatform, HostSignPayloadData, HostWorkerBeginOperationRequest,
+		HostWorkerOperationError, ImageFit, ImageProps, ImageRef, ImageSource, MaterialFailure,
+		MaterialInstance, MaterialsProps, Modifier, NFT_PURSE_MAX_NAME_BYTES, NftPurseCheque,
+		NftPurseChequeDestination, NftPurseChequeId, NftPurseChequeRecipient, NftPurseClearedItem,
+		NftPurseClearingReference, NftPurseId, NftPurseIdempotencyKey, NftPurseInfoPage,
+		NftPurseItemKey, NftPurseOwner, NftPursePaymentTransmissionChannel, NftPursePurse,
+		NftPurseReceiveKey, NftPurseStatus, OperationStartedResult, Parameter, PaymentTopUpSource,
+		PocketCard, ProductAccount, ProductAccountId, ProductProofContext, RawPayload,
+		RegisteredRingVrfKey, RemoteChainTransactionStopRequest, RemotePermission,
+		RemoteStatementStoreCreateProofError, RemoteStatementStoreCreateProofRequest,
+		RemoteStatementStoreCreateProofResponse, RemoteStatementStoreSubscribeItem,
+		RemoteStatementStoreSubscribeRequest, RendererNode, ResourceAllocationError, RingLocation,
+		RingLocationJunction, RingVrfKeyDisclosure, RowProps, RuntimeApi, RuntimeSpec, RuntimeType,
+		ScanOutcome, Shape, SignedStatement, Size, Statement, StatementProof, StatementTopic,
+		StorageQueryItem, StorageQueryType, StorageResultItem, TextFieldProps, TextProps,
+		ThemeName, ThemeVariant, TxPayloadExtension, TypographyStyle, VerticalAlignment,
+		VrfSignature, X25519PublicKey,
 	};
+
+	pub use crate::v02::{ChatRoomFooter, RenderContext};
 
 	/// Latest payload type of a versioned envelope.
 	pub type LatestOf<T> = <T as Versioned>::Latest;
@@ -152,6 +134,9 @@ pub mod latest {
 	pub type HostGetUserIdResponse = LatestOf<versioned::account::HostGetUserIdResponse>;
 	/// Transaction creation failure.
 	pub type HostCreateTransactionError = LatestOf<versioned::signing::HostCreateTransactionError>;
+	/// Transaction creation failure for a legacy account.
+	pub type HostCreateTransactionWithLegacyAccountError =
+		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountError>;
 	/// Transaction created for a legacy account.
 	pub type HostCreateTransactionWithLegacyAccountResponse =
 		LatestOf<versioned::signing::HostCreateTransactionWithLegacyAccountResponse>;
@@ -229,6 +214,9 @@ pub mod latest {
 	/// Action triggered inside a product-rendered body, delivered to the worker.
 	pub type HostRendererActionSubscribeItem =
 		LatestOf<versioned::renderer::HostRendererActionSubscribeItem>;
+	/// A `Materials` node that fell back, delivered to the worker.
+	pub type HostRendererFailureSubscribeItem =
+		LatestOf<versioned::renderer::HostRendererFailureSubscribeItem>;
 	/// Host-to-product render request for one body.
 	pub type ProductRendererRenderRequest =
 		LatestOf<versioned::renderer::ProductRendererRenderRequest>;
@@ -309,6 +297,7 @@ pub mod latest {
 	/// Failure watching a funding session.
 	pub type HostFundingStatusSubscribeError =
 		LatestOf<versioned::funding::HostFundingStatusSubscribeError>;
+
 	/// Payment balance subscription request.
 	pub type HostPaymentBalanceSubscribeRequest =
 		LatestOf<versioned::payment::HostPaymentBalanceSubscribeRequest>;
@@ -318,6 +307,26 @@ pub mod latest {
 	/// Payment balance subscription failure.
 	pub type HostPaymentBalanceSubscribeError =
 		LatestOf<versioned::payment::HostPaymentBalanceSubscribeError>;
+	/// A provider's progress report.
+	pub type HostFundingReportRequest =
+		LatestOf<versioned::funding_provider::HostFundingReportRequest>;
+	/// Failure reporting progress.
+	pub type HostFundingReportError = LatestOf<versioned::funding_provider::HostFundingReportError>;
+	/// Request to show a provider screen.
+	pub type HostFundingPresentFrameRequest =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameRequest>;
+	/// How a provider screen closed.
+	pub type HostFundingPresentFrameResponse =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameResponse>;
+	/// Failure showing a provider screen.
+	pub type HostFundingPresentFrameError =
+		LatestOf<versioned::funding_provider::HostFundingPresentFrameError>;
+	/// Request to close a provider screen.
+	pub type HostFundingCloseFrameRequest =
+		LatestOf<versioned::funding_provider::HostFundingCloseFrameRequest>;
+	/// Failure closing a provider screen.
+	pub type HostFundingCloseFrameError =
+		LatestOf<versioned::funding_provider::HostFundingCloseFrameError>;
 	/// Payment request.
 	pub type HostPaymentRequest = LatestOf<versioned::payment::HostPaymentRequest>;
 	/// Payment request failure.
@@ -470,6 +479,12 @@ pub mod latest {
 	/// Face visibility change failure.
 	pub type HostExpandedCardSetFaceShownError =
 		LatestOf<versioned::expanded_card::HostExpandedCardSetFaceShownError>;
+	/// Request to turn the card above the calling Widget to one side.
+	pub type HostExpandedCardSetBackShownRequest =
+		LatestOf<versioned::expanded_card::HostExpandedCardSetBackShownRequest>;
+	/// Card turn failure.
+	pub type HostExpandedCardSetBackShownError =
+		LatestOf<versioned::expanded_card::HostExpandedCardSetBackShownError>;
 	/// Push notification scheduling request.
 	pub type HostPushNotificationRequest =
 		LatestOf<versioned::notifications::HostPushNotificationRequest>;
@@ -816,215 +831,140 @@ impl<Item, Interrupt> Subscription<Item, Interrupt> {
 	}
 }
 
-#[cfg(feature = "runtime")]
-pub mod background_task;
-#[cfg(feature = "runtime")]
-pub mod bootstrap;
-#[cfg(feature = "runtime")]
-pub mod chain;
-#[cfg(feature = "runtime")]
-mod chain_runtime;
-#[cfg(feature = "runtime")]
-mod dispatcher;
-#[cfg(feature = "runtime")]
-mod dotns_views;
-#[cfg(feature = "runtime")]
-mod dynamic_vrf;
-#[cfg(feature = "runtime")]
-pub mod frame;
-#[cfg(feature = "runtime")]
-mod host_core;
-#[cfg(feature = "runtime")]
-mod host_internal;
-#[cfg(feature = "runtime")]
-pub mod host_logic;
-#[cfg(feature = "runtime")]
-mod host_rpc_client;
-#[cfg(feature = "runtime")]
-mod interrupt;
-#[cfg(feature = "runtime")]
-pub mod logging;
-#[cfg(feature = "runtime")]
-pub mod platform;
-#[cfg(feature = "runtime")]
-mod protocol_error;
-#[cfg(feature = "runtime")]
-mod runtime;
-#[cfg(feature = "runtime")]
-mod session_usernames;
-#[cfg(feature = "runtime")]
-mod stream_extensions;
-#[cfg(feature = "runtime")]
-pub mod subscription;
-#[cfg(feature = "runtime")]
-pub mod time;
-#[cfg(feature = "runtime")]
-pub mod transport;
-#[cfg(feature = "runtime")]
-mod truapi_core;
+cfg_select! {
+	feature = "runtime" => {
+		pub mod background_task;
+		pub mod bootstrap;
+		pub mod chain;
+		mod chain_runtime;
+		mod dispatcher;
+		mod dotns_views;
+		mod dynamic_vrf;
+		mod evm_contract;
+		pub mod frame;
+		mod host_core;
+		mod host_internal;
+		pub mod host_logic;
+		mod host_rpc_client;
+		mod interrupt;
+		pub mod logging;
+		pub mod platform;
+		mod protocol_error;
+		mod public_profile;
+		mod runtime;
+		mod session_usernames;
+		mod spawner;
+		mod stack;
+		mod stream_extensions;
+		pub mod subscription;
+		pub mod time;
+		pub mod transport;
+		mod truapi_core;
 
-#[cfg(feature = "runtime")]
-#[cfg(test)]
-mod test_support;
-#[cfg(feature = "runtime")]
-mod unix_time;
+		#[cfg(test)]
+		mod test_support;
+		mod unix_time;
+		mod wake;
 
-// Dispatch must keep serving deprecated APIs while clients migrate.
-#[cfg(feature = "runtime")]
-#[allow(deprecated)]
-pub mod generated;
+		// Dispatch must keep serving deprecated APIs while clients migrate.
+		#[allow(deprecated)]
+		pub mod generated;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod native;
+		#[cfg(not(target_arch = "wasm32"))]
+		pub mod native;
 
-#[cfg(feature = "runtime")]
-#[cfg(target_arch = "wasm32")]
-pub mod wasm;
+		#[cfg(target_arch = "wasm32")]
+		pub mod wasm;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod native_debug;
+		#[cfg(not(target_arch = "wasm32"))]
+		pub mod native_debug;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod store;
+		#[cfg(not(target_arch = "wasm32"))]
+		pub mod store;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-#[macro_use]
-pub mod durable;
+		#[cfg(not(target_arch = "wasm32"))]
+		#[macro_use]
+		pub mod durable;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod encrypted_storage;
+		#[cfg(not(target_arch = "wasm32"))]
+		pub mod encrypted_storage;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod installation;
+		mod image_loader;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-mod nft;
+		#[cfg(not(target_arch = "wasm32"))]
+		pub mod installation;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-mod nft_purse;
+		#[cfg(not(target_arch = "wasm32"))]
+		mod nft;
 
-#[cfg(feature = "runtime")]
-pub use truapi_core::TrUApiCore;
+		#[cfg(not(target_arch = "wasm32"))]
+		mod nft_purse;
 
-#[cfg(feature = "runtime")]
-pub use host_core::{
-	ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
-	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
-};
-#[cfg(feature = "runtime")]
-pub use host_internal::{
-	bulletin::{preimage_cid, preimage_key},
-	extrinsic::Sr25519Signer,
-};
-#[cfg(feature = "runtime")]
-pub use host_logic::session::{
-	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
-};
-#[cfg(feature = "runtime")]
-pub use host_logic::worker::{WorkerLedger, WorkerTransition};
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub use native::{
-	NativeRendererObserver, NativeRendererSubscription, WsBridgeEndpoint, WsBridgeStartError,
-};
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub use native_debug::{DebugSinkError, WsDebugSink};
-#[cfg(feature = "runtime")]
-pub use platform::{
-	CoreStorageKeyDescription, CoreStorageKeyDescriptionError, HostIdentity, PairingHostConfig,
-	PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform, ProductContext,
-	SigningHostConfig, describe_core_storage_key,
-};
-#[cfg(feature = "runtime")]
-pub use runtime::StatementRenewalTarget;
-#[cfg(feature = "runtime")]
-pub use runtime::contacts::contact_handle;
-#[cfg(feature = "runtime")]
-pub use runtime::login_failure::reports_exhausted_period;
-#[cfg(feature = "runtime")]
-pub use runtime::product_manifest::encode_cached_root_manifest;
-#[cfg(feature = "runtime")]
-pub use runtime::statement_allowance;
-#[cfg(feature = "runtime")]
-pub use runtime::{
-	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit,
-};
-#[cfg(feature = "runtime")]
-pub use unix_time::current_unix_millis;
+		#[cfg(not(target_arch = "wasm32"))]
+		mod pocket_cards;
 
-#[cfg(feature = "runtime")]
-#[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
-pub use wasm::WasmSigningHostRuntime;
-#[cfg(feature = "runtime")]
-#[cfg(target_arch = "wasm32")]
-pub use wasm::{
-	WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
-	derive_product_account_public_key, describe_core_storage_key_for_wasm,
-	has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
-	wire_schema_hash,
-};
+		pub use spawner::Spawner;
 
-#[cfg(test)]
-mod tests {
-	use super::*;
+		pub use truapi_core::TrUApiCore;
 
-	#[test]
-	fn mapping_domain_errors_preserves_framework_outcomes() {
-		let errors = [
-			CallError::Domain(7),
-			CallError::Denied,
-			CallError::Unsupported,
-			CallError::MalformedFrame { reason: "invalid payload".into() },
-			CallError::HostFailure { reason: "host disconnected".into() },
-			CallError::Cancelled,
-		];
-		assert_eq!(
-			errors.map(|error| error.map_domain(|domain| domain.to_string())),
-			[
-				CallError::Domain("7".to_string()),
-				CallError::Denied,
-				CallError::Unsupported,
-				CallError::MalformedFrame { reason: "invalid payload".into() },
-				CallError::HostFailure { reason: "host disconnected".into() },
-				CallError::Cancelled,
-			],
-		);
-	}
+		pub use host_core::{
+			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin,
+			PairingHostRuntime, ProductRuntime, ProductRuntimeControl, ProductRuntimeError,
+			SigningHostRuntime,
+		};
+		pub use host_internal::{
+			bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get, preimage_key},
+			extrinsic::Sr25519Signer,
+		};
+		pub use host_logic::{
+			session::{
+				ExternalPairedSession, SsoSessionInfo, decode_persisted_session,
+				encode_external_paired_session,
+			},
+			worker::{WorkerLedger, WorkerTransition},
+		};
+		pub use host_rpc_client::HostRpcClient;
+		pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
+		#[cfg(not(target_arch = "wasm32"))]
+		pub use native::{
+			NativePublicProfileObserver, NativeRendererObserver, NativeSubscription,
+			WsBridgeEndpoint, WsBridgeStartError,
+		};
+		#[cfg(not(target_arch = "wasm32"))]
+		pub use native_debug::{DebugSinkError, WsDebugSink};
+		pub use platform::{
+			CoreStorageKeyDescription, CoreStorageKeyDescriptionError, CoreStorageKeyOwner,
+			HostIdentity, PairingHostConfig, PermissionAuthorizationRequest,
+			PermissionAuthorizationStatus, Platform, ProductContext, SigningHostConfig,
+			describe_core_storage_key,
+		};
+		pub use public_profile::{
+			PROFILE_RECORD_KEY, ProfileAvatar, ProfileRecord, ProfileRecordLocation, PublicProfile,
+			PublicProfileError, PublicProfileResolutionOptions,
+		};
+		pub use runtime::{
+			AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
+			PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
+			ResumePairingError, StatementRenewalTarget,
+			contacts::contact_handle,
+			login_failure::reports_exhausted_period,
+			product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key},
+			statement_allowance,
+		};
+		pub use unix_time::current_unix_millis;
 
-	#[test]
-	fn call_context_timeout_can_be_set_and_replaced() {
-		let default = Duration::from_secs(180);
-		let explicit = Duration::from_millis(25);
-
-		let mut cx = CallContext::with_request_id("request-1".to_string());
-		assert_eq!(cx.timeout(), None);
-		cx.set_timeout(default);
-		assert_eq!(cx.timeout(), Some(default));
-
-		cx.set_timeout(explicit);
-		assert_eq!(cx.timeout(), Some(explicit));
-	}
-
-	#[test]
-	fn cancellation_token_clones_share_cancellation() {
-		let token = CancellationToken::default();
-		let cloned = token.clone();
-		let wait = cloned.cancelled();
-
-		token.cancel();
-
-		let reason = futures::executor::block_on(wait);
-		assert_eq!(reason, CancellationReason::Cancelled);
-		assert!(cloned.is_cancelled());
-	}
+		#[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
+		pub use wasm::WasmSigningHostRuntime;
+		#[cfg(target_arch = "wasm32")]
+		pub use wasm::{
+			WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
+			derive_product_account_public_key, describe_core_storage_key_for_wasm,
+			has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
+			wire_schema_hash,
+		};
+	},
+	_ => {},
 }
+
+#[cfg(test)]
+mod tests;

@@ -16,7 +16,7 @@ use crate::{
 /// Chat room, bot, and message APIs.
 #[wire_trait(id = 4)]
 #[crate::service(required_execution = Worker)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Chat: Send + Sync {
 	/// Create a chat room.
 	///
@@ -131,7 +131,8 @@ pub trait Chat: Send + Sync {
 
 	/// Set what a room the product created shows below its messages. A room
 	/// keeps the footer until the product sets another, and a new room shows
-	/// the text input.
+	/// the text input. A `Card` is drawn through the product's renderer with a
+	/// `ChatRoomFooter` context.
 	///
 	/// ```ts
 	/// const created = await truapi.chat.createRoom({
@@ -142,9 +143,14 @@ pub trait Chat: Send + Sync {
 	/// assert(created.isOk(), "createRoom failed:", created);
 	/// const result = await truapi.chat.setRoomFooter({
 	///   roomId: "test-room",
-	///   footer: "Empty",
+	///   footer: { tag: "Empty" },
 	/// });
 	/// assert(result.isOk(), "setRoomFooter failed:", result);
+	/// const docked = await truapi.chat.setRoomFooter({
+	///   roomId: "test-room",
+	///   footer: { tag: "Card", value: { messageType: "register", payload: "0x01" } },
+	/// });
+	/// assert(docked.isOk(), "setRoomFooter with a card failed:", docked);
 	/// ```
 	#[wire(id = 6)]
 	async fn set_room_footer(

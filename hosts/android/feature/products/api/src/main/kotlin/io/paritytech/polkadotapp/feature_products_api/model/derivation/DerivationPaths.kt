@@ -1,7 +1,7 @@
 package io.paritytech.polkadotapp.feature_products_api.model.derivation
 
 import io.paritytech.polkadotapp.feature_account_api.domain.derivation.DerivationIndex32
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 private const val PRODUCT_NAMESPACE = "product"
 

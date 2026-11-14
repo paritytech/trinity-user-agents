@@ -3,10 +3,13 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 import android.content.Context
 import io.paritytech.polkadotapp.common.utils.childScope
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionInputSlot
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomRequest
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.DefaultRoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ExternalExtension
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.NewMessagesRoomFilter
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.RoomMetadata
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatPreviewDelegate
@@ -20,6 +23,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_api.model.productRoomId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
 import io.paritytech.polkadotapp.feature_products_api.model.toChatId
+import io.paritytech.polkadotapp.feature_products_impl.data.storage.ProductRoomFooterStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageContent
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.message.ProductsMessageRenderer
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
@@ -30,6 +34,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.productIco
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
+import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer.ProductRoomFooterCardRenderer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.menu.ProductChatMenuRenderer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -44,8 +49,10 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onEach
-import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
@@ -68,6 +75,7 @@ class ProductChatExtension(
     private val workerRefCounter: ProductWorkerRefCounter,
     imageResolver: ProductImageResolver,
     resolveProduct: ResolveProductUseCase,
+    private val roomFooterStorage: ProductRoomFooterStorage,
     val origin: ProductChatExtensionOrigin = ProductChatExtensionOrigin.InstalledByUser,
 ) : ExternalExtension() {
     override val id = product.id.toChatExtensionId()
@@ -86,12 +94,21 @@ class ProductChatExtension(
     // Strong ref to the messaging target bound weakly onto the shared worker; held for our lifetime.
     private var chatMessaging: ProductChatMessaging? = null
 
-    // Rooms the product asked to show nothing below the messages. Absent means the text input, the default.
-    private val roomsWithoutInput = MutableStateFlow(emptySet<ProductChatIdParameter>())
+    // Absent means the text input, the default.
+    private val roomFooters = MutableStateFlow(roomFooterStorage.read(product.id))
+    private val roomFootersLock = Mutex()
 
-    override fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> {
-        val room = chatId.productRoomId(id) ?: return flowOf(true)
-        return roomsWithoutInput.map { room !in it }.distinctUntilChanged()
+    override fun observeInputSlot(chatId: ChatId): Flow<ChatExtensionInputSlot> {
+        val room = chatId.productRoomId(id) ?: return flowOf(ChatExtensionInputSlot.TextInput)
+        return roomFooters.map { footers ->
+            when (val footer = footers[room] ?: ProductRoomFooter.TextInput) {
+                ProductRoomFooter.TextInput -> ChatExtensionInputSlot.TextInput
+                ProductRoomFooter.Empty -> ChatExtensionInputSlot.Hidden
+                is ProductRoomFooter.Card -> ChatExtensionInputSlot.Card(
+                    ProductRoomFooterCardRenderer(room, footer, runningWorker, messageRenderer.imageResolver)
+                )
+            }
+        }.distinctUntilChanged()
     }
 
     override fun customMessageRenderers(): List<CustomChatMessageRenderer<*>> {
@@ -175,6 +192,10 @@ class ProductChatExtension(
             val chatId = request.chatIdParameter.toChatId(id)
             val roomRequest = CreateRoomRequest(chatId, request.name, request.icon?.value)
             val response = extensionContext.createRoom(roomRequest)
+            // A product registers its room on every start, and a later version may rename it or change its icon.
+            if (response.status == CreateRoomStatus.Exists) {
+                extensionContext.updateRoomMetadata(chatId, RoomMetadata(request.name, request.icon?.value))
+            }
             return Result.success(CreateProductRoomResult(response.status))
         }
 
@@ -184,9 +205,12 @@ class ProductChatExtension(
             return Result.success(chatMessage.id)
         }
 
-        override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, showsTextInput: Boolean): Result<Unit> {
-            roomsWithoutInput.update { rooms ->
-                if (showsTextInput) rooms - chatIdParameter else rooms + chatIdParameter
+        override suspend fun setRoomFooter(chatIdParameter: ProductChatIdParameter, footer: ProductRoomFooter): Result<Unit> {
+            roomFootersLock.withLock {
+                val footers = roomFooters.updateAndGet { rooms ->
+                    if (footer == ProductRoomFooter.TextInput) rooms - chatIdParameter else rooms + (chatIdParameter to footer)
+                }
+                roomFooterStorage.write(product.id, footers)
             }
             return Result.success(Unit)
         }

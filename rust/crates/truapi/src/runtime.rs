@@ -19,7 +19,12 @@ mod capabilities;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
+pub use dotns_lookup::{DotnsLookup, DotnsLookupKind};
 mod funding;
+mod funding_providers;
+mod funding_quotes;
+mod host_accounts;
+mod host_grants;
 mod host_session;
 mod identity;
 pub mod login_failure;
@@ -29,11 +34,14 @@ mod product_accounts;
 mod product_consent;
 pub mod product_manifest;
 mod product_subtree;
+mod remote_account_holder;
 mod renderer;
 mod ring_vrf_registry;
 /// Role-neutral runtime services shared by product-facing runtimes.
 pub mod services;
 mod signing_host;
+mod single_flight;
+mod sso_account_holder_service;
 /// SSO remote request/response messaging over the statement store.
 pub mod sso_remote;
 mod sso_request_service;
@@ -60,28 +68,32 @@ use std::{
 };
 
 pub use actions::ActionChannel;
-use authority::{AccountCaller, AuthorityCancelError, AuthoritySession};
-pub use authority::{AuthorityError, BulletinAllowanceKey, ProductAuthority};
+use authority::AuthorityCancelError;
+pub use authority::{AccountHolder, AuthorityError, AuthoritySession, BulletinAllowanceKey};
 pub use chat::chat_platform_for;
 pub use contacts::ContactResolutionError;
+pub use funding::{FundingFeed, FundingProviderLink};
 pub use host_session::HostSession;
+pub use remote_account_holder::RemoteAccountHolder;
 
 /// The host's contact picker plus the key its handles are minted under:
 /// everything one `contacts.pick` call needs from the connection.
 type ContactsPicker =
 	(Arc<dyn crate::platform::ContactsPlatform>, crate::runtime::contacts::ContactHandles);
 use futures::{FutureExt, StreamExt, pin_mut};
+pub use host_accounts::HostAccounts;
 #[cfg(test)]
 use pairing_host::PairingHost;
 pub use pairing_host::PairingHost as PairingHostRole;
-use payment_id::host_funding_intent;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
-pub use signing_host::{LocalActivation, SigningHost as SigningHostRole, SigningHostSsoService};
+pub use signing_host::{LocalActivation, SigningHost as SigningHostRole};
+pub use sso_account_holder_service::SsoAccountHolderService;
 pub use sso_responder_service::{
 	AnnouncedPairing, DevicePairingObserver, MAX_PAIRING_METADATA_CHARS, PairedSsoPeer,
-	PairingProposal, PairingProposalMetadata, ResponderExit, SsoResponderService,
+	PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
+	SsoResponderService,
 };
 use versioning::version;
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
@@ -89,10 +101,10 @@ pub use vrf::ring_vrf_member;
 // `TrackedStatementRenewalTarget` is only read back by the native renewal
 // reporting, so re-exporting it on wasm leaves an unused import.
 use crate::platform::{
-	ChatFieldError, CrossProductSignatureKind, IdentityDisclosureReview,
-	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision, Platform,
-	ProductContext, ProductId, ProductStorageKey, SessionUiInfo, UserConfirmationReview,
-	normalize_chat_identifier, validate_chat_icon, validate_chat_message_content,
+	ChatFieldError, IdentityDisclosureReview, PermissionAuthorizationRequest,
+	PermissionAuthorizationStatus, PermissionDecision, Platform, ProductContext, ProductId,
+	ProductStorageKey, SessionUiInfo, UserConfirmationReview, normalize_chat_identifier,
+	validate_chat_custom_message, validate_chat_icon, validate_chat_message_content,
 	validate_chat_name,
 };
 pub use signing_host::StatementRenewalTarget;
@@ -101,7 +113,7 @@ pub use signing_host::TrackedStatementRenewalTarget;
 use tracing::{instrument, warn};
 use truapi::{
 	CallContext, CallError, CancellationReason, Subscription,
-	api::{Chat, Contacts, Funding, Pocket, Renderer},
+	api::{Chat, Contacts, Funding, FundingProvider, Pocket, Renderer},
 	latest, v01,
 	versioned::{
 		IntoLatest,
@@ -120,6 +132,12 @@ use truapi::{
 			HostFundingStatusSubscribeError, HostFundingStatusSubscribeItem,
 			HostFundingStatusSubscribeRequest,
 		},
+		funding_provider::{
+			HostFundingCloseFrameError, HostFundingCloseFrameRequest,
+			HostFundingCloseFrameResponse, HostFundingPresentFrameError,
+			HostFundingPresentFrameRequest, HostFundingPresentFrameResponse,
+			HostFundingReportError, HostFundingReportRequest, HostFundingReportResponse,
+		},
 		pocket::{
 			HostPocketListSubscribeError, HostPocketListSubscribeItem,
 			HostPocketListSubscribeRequest, HostPocketRemoveCardError, HostPocketRemoveCardRequest,
@@ -135,7 +153,7 @@ use truapi::{
 use web_time::Instant;
 
 #[cfg(test)]
-use crate::subscription::Spawner;
+use crate::Spawner;
 use crate::{
 	chain_runtime::{RuntimeFailure, RuntimeFailureKind},
 	host_internal::{
@@ -145,9 +163,7 @@ use crate::{
 		sso_messages::RingVrfError,
 	},
 	host_logic::{
-		product_account::{
-			derivation_index_bytes, derive_product_public_key, public_key_from_address,
-		},
+		product_account::public_key_from_address,
 		session::{SessionInfo, SessionState},
 		x25519_seal::X25519PrivateKey,
 	},
@@ -188,13 +204,13 @@ const LEGACY_PRODUCT_ACCOUNT_MISMATCH_REASON: &str =
 	"Account can't be derived from product account id";
 const LEGACY_ACCOUNT_UNAVAILABLE_REASON: &str = "Account is not available in the active session";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone)]
 enum LegacySigner {
-	Product,
+	Product(latest::ProductAccountId),
 	Identity([u8; 32]),
 }
 
-#[derive(Debug, PartialEq, Eq, derive_more::From)]
+#[derive(derive_more::From)]
 enum LegacySignerError {
 	Unavailable,
 	ProductDerivation(AuthorityError),
@@ -317,10 +333,64 @@ fn authority_cancellation_error(cx: &CallContext, reason: CancellationReason) ->
 }
 
 /// Product adapter for the generated TrUAPI dispatcher.
-pub struct ProductRuntimeHost {
+pub struct ProductRuntimeHost<H: AccountHolder> {
 	connection: Arc<ProductConnection>,
-	accounts: ProductAccounts,
+	accounts: ProductAccounts<H>,
 	host_session: Arc<dyn HostSession>,
+}
+
+/// One product connection's runtime as host administration reaches it,
+/// whatever account holder serves the connection.
+#[async_trait::async_trait]
+pub trait ProductRuntimeAdmin: truapi::api::TrUApi {
+	/// Shared connection state used by product control handles.
+	fn connection(&self) -> &Arc<ProductConnection>;
+
+	/// Store `status` for one of this product's permissions. A changed answer about
+	/// another product's accounts also ends this product's Allow once answers.
+	async fn set_permission_authorization_status(
+		&self,
+		request: PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), latest::GenericError>;
+
+	/// `product_id`'s hard-subtree public key, or `None` while signed out.
+	///
+	/// A resolution still running after `timeout` is dropped.
+	async fn product_subtree_public_key(
+		&self,
+		product_id: &ProductId,
+		timeout: Duration,
+	) -> Result<Option<[u8; 32]>, AuthorityError>;
+}
+
+#[async_trait::async_trait]
+impl<H: AccountHolder> ProductRuntimeAdmin for ProductRuntimeHost<H> {
+	fn connection(&self) -> &Arc<ProductConnection> {
+		ProductRuntimeHost::connection(self)
+	}
+
+	async fn set_permission_authorization_status(
+		&self,
+		request: PermissionAuthorizationRequest,
+		status: PermissionAuthorizationStatus,
+	) -> Result<(), latest::GenericError> {
+		let account_access =
+			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
+		self.connection.set_permission_authorization_status(request, status).await?;
+		if account_access {
+			self.accounts.consent().forget_allowed_once_for(self.connection.product_id());
+		}
+		Ok(())
+	}
+
+	async fn product_subtree_public_key(
+		&self,
+		product_id: &ProductId,
+		timeout: Duration,
+	) -> Result<Option<[u8; 32]>, AuthorityError> {
+		self.accounts.product_subtree_public_key_within(product_id, timeout).await
+	}
 }
 
 /// Per-connection adapters, permissions, channels and open operation demand.
@@ -369,7 +439,7 @@ impl ProductConnection {
 	}
 
 	/// Role-neutral services shared with the owning host runtime.
-	pub fn services(&self) -> &Arc<RuntimeServices> {
+	pub(crate) fn services(&self) -> &Arc<RuntimeServices> {
 		&self.services
 	}
 
@@ -380,7 +450,7 @@ impl ProductConnection {
 	}
 
 	/// Trusted executable kind attached to this product connection.
-	pub fn execution_kind(&self) -> crate::platform::ProductExecutionKind {
+	pub fn execution_kind(&self) -> crate::platform::ExecutableKind {
 		self.product.execution_kind
 	}
 
@@ -575,6 +645,11 @@ impl ProductConnection {
 		self.services.worker_ledger.release(&self.product.product_id);
 	}
 
+	/// Hold this connection's product worker until the hold is dropped.
+	pub(crate) fn hold_worker(&self) -> funding_quotes::WorkerHold {
+		funding_quotes::WorkerHold::acquire(&self.services, &self.product.product_id)
+	}
+
 	/// Begin off-dispatch so cancellation cannot strand an unreported host operation.
 	async fn begin_operation_with_host(
 		&self,
@@ -583,12 +658,12 @@ impl ProductConnection {
 		let (tx, rx) = futures::channel::oneshot::channel();
 		let platform = self.platform.clone();
 		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
+		self.services.spawner.spawn(async move {
 			let begun = platform.begin_operation(&product, label).await;
 			if let Err(Ok(response)) = tx.send(begun) {
 				let _ = platform.end_operation(&product, response.id).await;
 			}
-		}));
+		});
 		rx.await.unwrap_or_else(|_| {
 			Err(latest::HostWorkerOperationError::Unknown {
 				reason: "the host did not answer".to_string(),
@@ -617,11 +692,11 @@ impl ProductConnection {
 		}
 		let platform = self.platform.clone();
 		let product = self.product.clone();
-		(self.services.spawner)(Box::pin(async move {
+		self.services.spawner.spawn(async move {
 			for id in open {
 				let _ = platform.end_operation(&product, id).await;
 			}
-		}));
+		});
 	}
 
 	/// Release one open operation's demand; unknown ids leave demand unchanged.
@@ -646,28 +721,41 @@ impl ProductConnection {
 	}
 
 	fn pocket_platform<E>(&self) -> Result<Arc<dyn crate::platform::PocketPlatform>, CallError<E>> {
-		if self.product.execution_kind != crate::platform::ProductExecutionKind::Worker ||
+		if self.product.execution_kind != crate::platform::ExecutableKind::Worker ||
 			self.session_state.current().is_none()
 		{
 			return Err(CallError::Denied);
 		}
 		self.pocket_platform.clone().ok_or(CallError::Unsupported)
 	}
+
+	/// Funding provider access policy for this connection: a provider serves
+	/// sessions only from a Worker execution with an active session, and only
+	/// where the host has a funding surface.
+	fn funding_provider_access<E>(
+		&self,
+	) -> Result<Arc<dyn crate::platform::FundingPlatform>, CallError<E>> {
+		if self.product.execution_kind != crate::platform::ExecutableKind::Worker ||
+			self.session_state.current().is_none()
+		{
+			return Err(CallError::Denied);
+		}
+		self.services.funding().platform().ok_or(CallError::Unsupported)
+	}
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// Build a product-scoped dispatcher target from a long-lived host runtime
 	/// and the adapters scoped to this product connection.
 	pub fn from_services(
 		services: Arc<RuntimeServices>,
 		adapters: crate::host_core::ConnectionAdapters,
-		authority: Arc<dyn ProductAuthority>,
+		accounts: Arc<HostAccounts<H>>,
 		host_session: Arc<dyn HostSession>,
 		product: ProductContext,
 	) -> Self {
 		let core_instance = services.next_core_instance();
 		let chain = services.chain.for_product(core_instance);
-		let accounts = ProductAccounts::new(authority, product.clone());
 		let connection = Arc::new(ProductConnection {
 			services,
 			platform: adapters.platform,
@@ -685,139 +773,13 @@ impl ProductRuntimeHost {
 			expanded_card: adapters.expanded_card,
 			open_operations: Mutex::new(HashSet::new()),
 		});
+		let accounts = ProductAccounts::new(accounts, connection.clone());
 		Self { connection, accounts, host_session }
 	}
 
 	/// Shared connection state used by product control handles.
 	pub fn connection(&self) -> &Arc<ProductConnection> {
 		&self.connection
-	}
-
-	/// Store `status` for one of this product's permissions. A changed answer about
-	/// another product's accounts also ends this product's Allow once answers.
-	pub async fn set_permission_authorization_status(
-		&self,
-		request: PermissionAuthorizationRequest,
-		status: PermissionAuthorizationStatus,
-	) -> Result<(), latest::GenericError> {
-		let account_access =
-			matches!(request, PermissionAuthorizationRequest::AccountAccess { .. });
-		self.connection.set_permission_authorization_status(request, status).await?;
-		if account_access {
-			self.accounts.consent().forget_allowed_once_for(self.connection.product_id());
-		}
-		Ok(())
-	}
-
-	/// Test constructor building a standalone pairing-host runtime.
-	#[cfg(test)]
-	pub fn new<P>(
-		platform: Arc<P>,
-		config: (crate::platform::PairingHostConfig, ProductContext),
-		spawner: Spawner,
-	) -> Self
-	where
-		P: Platform + 'static,
-	{
-		let (host_config, product) = config;
-		let platform: Arc<dyn Platform> = platform;
-		Self::new_pairing_for_tests(platform, host_config, product, spawner).0
-	}
-
-	/// Compatibility constructor used only by tests that do not exercise
-	/// product-scoped behavior.
-	#[cfg(test)]
-	fn new_compat(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
-		Self::new_compat_with_pairing(platform, spawner).0
-	}
-
-	#[cfg(test)]
-	fn compat_host_config() -> crate::platform::PairingHostConfig {
-		crate::platform::PairingHostConfig::new(
-			crate::platform::HostInfo {
-				name: "Polkadot Web".to_string(),
-				icon: Some("https://example.invalid/dotli.png".to_string()),
-				version: None,
-				platform: truapi::latest::HostPlatform::Web,
-			},
-			crate::platform::PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
-			"polkadotapp".to_string(),
-		)
-		.expect("compat runtime config is valid")
-	}
-
-	/// Compat host used by preimage tests.
-	#[cfg(test)]
-	fn new_compat_with_bulletin(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
-		Self::new_pairing_for_tests(
-			platform,
-			Self::compat_host_config(),
-			ProductContext::new(ProductId::for_test("unknown.dot")),
-			spawner,
-		)
-		.0
-	}
-
-	#[cfg(test)]
-	fn new_compat_with_pairing(
-		platform: Arc<dyn Platform>,
-		spawner: Spawner,
-	) -> (Self, Arc<PairingHost>) {
-		let host_config = Self::compat_host_config();
-		Self::new_pairing_for_tests(
-			platform,
-			host_config,
-			ProductContext::new(ProductId::for_test("unknown.dot")),
-			spawner,
-		)
-	}
-
-	#[cfg(test)]
-	fn new_pairing_for_tests(
-		platform: Arc<dyn Platform>,
-		host_config: crate::platform::PairingHostConfig,
-		product: ProductContext,
-		spawner: Spawner,
-	) -> (Self, Arc<PairingHost>) {
-		let services = RuntimeServices::new(
-			platform.clone(),
-			host_config.host.host_info.clone(),
-			host_config.people_chain_genesis_hash,
-			host_config.bulletin_chain_genesis_hash,
-			host_config.asset_hub_chain_genesis_hash,
-			spawner.clone(),
-		);
-		let pairing_host = PairingHost::new(services.clone(), host_config);
-		let core_instance = services.next_core_instance();
-		let chain = services.chain.for_product(core_instance);
-		let chat = Arc::new(ActionChannel::chat());
-		let renderer = Arc::new(ActionChannel::renderer());
-		let connection = Arc::new(ProductConnection {
-			services,
-			platform,
-			chat_platform: None,
-			permission_status: None,
-			temporary_permissions: Arc::default(),
-			session_state: pairing_host.session().session_state(),
-			product,
-			core_instance,
-			chain,
-			chat,
-			renderer,
-			pocket_platform: None,
-			game_platform: None,
-			expanded_card: None,
-			open_operations: Mutex::new(HashSet::new()),
-		});
-		let host = Self {
-			accounts: ProductAccounts::new(pairing_host.clone(), connection.product.clone()),
-			connection,
-			host_session: pairing_host.session().clone(),
-		};
-		(host, pairing_host)
 	}
 
 	/// Test-only access to the shared session-state holder.
@@ -842,34 +804,6 @@ impl ProductRuntimeHost {
 	#[instrument(skip_all, fields(runtime.method = "account.disconnect"))]
 	pub async fn disconnect(&self) {
 		self.host_session.disconnect().await;
-	}
-
-	/// Confirm with the user unless this host's product may skip the review.
-	async fn confirm(
-		&self,
-		cx: &CallContext,
-		review: UserConfirmationReview,
-	) -> Result<(), AuthorityError> {
-		let caller = AccountCaller::Local { product: &self.connection.product };
-		self.accounts
-			.consent()
-			.review(cx, caller, self.connection.platform.as_ref(), review)
-			.await
-	}
-
-	/// Confirm a signature with one of `owner`'s accounts, once per kind for this
-	/// execution when another product owns it.
-	async fn confirm_signature(
-		&self,
-		cx: &CallContext,
-		kind: CrossProductSignatureKind,
-		owner: &ProductId,
-		review: UserConfirmationReview,
-	) -> Result<(), AuthorityError> {
-		self.accounts
-			.consent()
-			.review_signature(cx, &self.connection, kind, owner, review)
-			.await
 	}
 
 	/// Whether this product may use `owner`'s accounts.
@@ -907,35 +841,21 @@ impl ProductRuntimeHost {
 		}
 	}
 
-	async fn product_account_public_key(
-		&self,
-		cx: &CallContext,
-		session: &AuthoritySession,
-		owner: &ProductId,
-		derivation_index: &latest::DerivationIndex,
-	) -> Result<[u8; 32], AuthorityError> {
-		let cx = remote_authority_context(cx);
-		let subtree = remote_authority_call(
-			&cx,
-			self.accounts.product_subtree_public_key(session, &cx, owner),
-		)
-		.await?;
-		derive_product_public_key(subtree, derivation_index_bytes(derivation_index))
-			.map_err(|err| AuthorityError::Unknown { reason: err.to_string() })
-	}
-
 	async fn legacy_slot_zero_public_key(
 		&self,
 		cx: &CallContext,
 		session: &AuthoritySession,
 	) -> Result<[u8; 32], AuthorityError> {
-		self.product_account_public_key(
-			cx,
-			session,
-			self.connection.product_id(),
-			&v01::DerivationIndex::Index(0),
-		)
-		.await
+		self.accounts
+			.product_account_public_key(
+				cx,
+				session,
+				&latest::ProductAccountId {
+					dot_ns_identifier: self.connection.product_id().clone(),
+					derivation_index: latest::DerivationIndex::Index(0),
+				},
+			)
+			.await
 	}
 
 	async fn classify_legacy_address_signer(
@@ -961,7 +881,10 @@ impl ProductRuntimeHost {
 		}
 		let product_public_key = self.legacy_slot_zero_public_key(cx, session).await?;
 		if requested_key == product_public_key {
-			return Ok(LegacySigner::Product);
+			return Ok(LegacySigner::Product(latest::ProductAccountId {
+				dot_ns_identifier: self.connection.product_id().clone(),
+				derivation_index: latest::DerivationIndex::Index(0),
+			}));
 		}
 		Err(LegacySignerError::Unavailable)
 	}
@@ -1003,10 +926,7 @@ impl ProductRuntimeHost {
 			.collect();
 		if !misses.is_empty() {
 			let generation = cache.generation();
-			let lookup = crate::platform::HostContactLookup {
-				handle_key: handles.handle_key(),
-				handles: misses,
-			};
+			let lookup = handles.lookup(misses);
 			let matches = platform
 				.contacts(&lookup)
 				.await
@@ -1049,16 +969,15 @@ impl ProductRuntimeHost {
 			.accounts
 			.current_session()
 			.ok_or(CallError::Domain(latest::HostContactsPickError::NotConnected))?;
-		let handle_key =
-			self.accounts.contacts_handle_key(&session).map_err(|error| match error {
-				AuthorityError::Disconnected => {
-					CallError::Domain(latest::HostContactsPickError::NotConnected)
-				},
-				other => CallError::Domain(latest::HostContactsPickError::Unknown {
-					reason: other.to_string(),
-				}),
-			})?;
-		Ok((platform, crate::runtime::contacts::ContactHandles::from_handle_key(handle_key)))
+		let handles = self.accounts.contact_handles(&session).map_err(|error| match error {
+			AuthorityError::Disconnected => {
+				CallError::Domain(latest::HostContactsPickError::NotConnected)
+			},
+			other => CallError::Domain(latest::HostContactsPickError::Unknown {
+				reason: other.to_string(),
+			}),
+		})?;
+		Ok((platform, handles))
 	}
 }
 
@@ -1235,6 +1154,7 @@ fn validate_vrf_transcript(request: &latest::HostAccountSignVrfRequest) -> Resul
 fn vrf_call_error(err: AuthorityError) -> CallError<latest::HostAccountSignVrfError> {
 	CallError::Domain(err.into())
 }
+
 fn account_get_authority_error(err: AuthorityError) -> CallError<latest::HostAccountGetError> {
 	let error = match err {
 		AuthorityError::Disconnected => latest::HostAccountGetError::NotConnected,
@@ -1246,6 +1166,7 @@ fn account_get_authority_error(err: AuthorityError) -> CallError<latest::HostAcc
 			latest::HostAccountGetError::Unknown { reason: err.to_string() }
 		},
 		AuthorityError::Unavailable { reason } |
+		AuthorityError::ChainUnavailable { reason } |
 		AuthorityError::NotSupported { reason } |
 		AuthorityError::Unknown { reason } => latest::HostAccountGetError::Unknown { reason },
 	};
@@ -1334,6 +1255,7 @@ fn signing_call_error(err: AuthorityError) -> CallError<latest::HostSignPayloadE
 			latest::HostSignPayloadError::Unknown { reason: err.to_string() }
 		},
 		AuthorityError::Unavailable { reason } |
+		AuthorityError::ChainUnavailable { reason } |
 		AuthorityError::NotSupported { reason } |
 		AuthorityError::Unknown { reason } => latest::HostSignPayloadError::Unknown { reason },
 	})
@@ -1355,14 +1277,25 @@ fn transaction_call_error(err: AuthorityError) -> CallError<latest::HostCreateTr
 		AuthorityError::NotSupported { reason } => {
 			latest::HostCreateTransactionError::NotSupported { reason }
 		},
+		AuthorityError::ChainUnavailable { reason } => {
+			latest::HostCreateTransactionError::ChainUnavailable { reason }
+		},
 		AuthorityError::Unavailable { reason } | AuthorityError::Unknown { reason } => {
 			latest::HostCreateTransactionError::Unknown { reason }
 		},
 	})
 }
 
-#[crate::platform::async_trait]
-impl Contacts for ProductRuntimeHost {
+/// [`transaction_call_error`] for the legacy-account method, which stays on
+/// v0.1 and so reports `ChainUnavailable` as `Unknown`.
+fn legacy_transaction_call_error(
+	err: AuthorityError,
+) -> CallError<latest::HostCreateTransactionWithLegacyAccountError> {
+	transaction_call_error(err).map_domain(latest::HostCreateTransactionError::into_v01)
+}
+
+#[async_trait::async_trait]
+impl<H: AccountHolder> Contacts for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "contacts.pick"))]
 	async fn pick(
 		&self,
@@ -1420,8 +1353,8 @@ impl Contacts for ProductRuntimeHost {
 	}
 }
 
-#[crate::platform::async_trait]
-impl Chat for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> Chat for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "chat.create_room"))]
 	async fn create_room(
 		&self,
@@ -1543,6 +1476,12 @@ impl Chat for ProductRuntimeHost {
 				};
 				request.room_id = normalize_chat_identifier("roomId", &request.room_id)
 					.map_err(|error| failure(error.to_string()))?;
+				if let latest::ChatRoomFooter::Card(card) = request.footer {
+					request.footer = latest::ChatRoomFooter::Card(
+						validate_chat_custom_message(card)
+							.map_err(|error| failure(error.to_string()))?,
+					);
+				}
 
 				// Checked here rather than by each host, so every host answers a room
 				// the product never created the same way.
@@ -1587,8 +1526,8 @@ impl Chat for ProductRuntimeHost {
 	}
 }
 
-#[crate::platform::async_trait]
-impl Renderer for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> Renderer for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "renderer.action_subscribe"))]
 	async fn action_subscribe(
 		&self,
@@ -1612,8 +1551,109 @@ impl Renderer for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
-impl Funding for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> FundingProvider for ProductRuntimeHost<H> {
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.report"))]
+	async fn report(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingReportRequest,
+	) -> Result<HostFundingReportResponse, CallError<HostFundingReportError>> {
+		version(request)
+			.exec(|latest::HostFundingReportRequest { intent, update }| async move {
+				self.connection.funding_provider_access()?;
+				let reported = self
+					.connection
+					.services
+					.funding()
+					.report(crate::current_unix_millis(), &self.connection.product, &intent, update)
+					.await?;
+				reported.map_err(CallError::Domain)
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.present_frame"))]
+	async fn present_frame(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingPresentFrameRequest,
+	) -> Result<HostFundingPresentFrameResponse, CallError<HostFundingPresentFrameError>> {
+		version(request)
+			.exec(|latest::HostFundingPresentFrameRequest { intent, target }| async move {
+				let domain = CallError::Domain;
+				let platform = self.connection.funding_provider_access()?;
+				if !self.serves(&intent) {
+					return Err(domain(latest::HostFundingPresentFrameError::NotFound));
+				}
+				let target = crate::host_logic::funding::checked_frame_target(target)
+					.ok_or_else(|| domain(latest::HostFundingPresentFrameError::InvalidUrl))?;
+				let services = &self.connection.services;
+				let provider = &self.connection.product;
+				if matches!(target, latest::FundingFrameTarget::App { .. }) {
+					use crate::host_logic::funding_providers::FundingProviderApp;
+					let has_app = match services.funding_providers().app(&provider.product_id) {
+						FundingProviderApp::Shipped => true,
+						FundingProviderApp::Absent => false,
+						FundingProviderApp::Unknown => {
+							crate::runtime::product_manifest::publishes_app(
+								services,
+								services.platform.as_ref(),
+								&provider.product_id,
+								APP_LOOKUP_CEILING,
+							)
+							.await
+							.unwrap_or(false)
+						},
+					};
+					if !has_app {
+						return Err(domain(latest::HostFundingPresentFrameError::NoApp));
+					}
+				}
+				// The worker never puts a screen in front of the user on its own:
+				// the host opens it, at once or from a notice the user taps.
+				let mut frame = services.funding().request_frame(&intent, provider.clone());
+				if let Some(outcome) = frame.opened().await {
+					return Ok(latest::HostFundingPresentFrameResponse { outcome });
+				}
+				let outcome = platform
+					.present_provider_frame(provider, intent, target)
+					.await
+					.map_err(|error| CallError::HostFailure { reason: error.reason })?;
+				Ok(latest::HostFundingPresentFrameResponse { outcome })
+			})
+			.await
+	}
+
+	#[instrument(skip_all, fields(runtime.method = "funding_provider.close_frame"))]
+	async fn close_frame(
+		&self,
+		_cx: &CallContext,
+		request: HostFundingCloseFrameRequest,
+	) -> Result<HostFundingCloseFrameResponse, CallError<HostFundingCloseFrameError>> {
+		version(request)
+			.exec(|latest::HostFundingCloseFrameRequest { intent }| async move {
+				let platform = self.connection.funding_provider_access()?;
+				if !self.serves(&intent) {
+					return Err(CallError::Domain(latest::HostFundingCloseFrameError::NotFound));
+				}
+				// Closes the screen on show, one the host opened but the worker
+				// has not presented yet, and one still waiting; a call that only
+				// dropped a waiting screen leaves the host nothing to close.
+				let funding = self.connection.services.funding();
+				let dropped =
+					funding.drop_waiting_frame(&intent, latest::FundingFrameOutcome::Closed);
+				if funding.close_open_frame(&intent) || !dropped {
+					platform.close_provider_frame(&self.connection.product, intent);
+				}
+				Ok(())
+			})
+			.await
+	}
+}
+
+#[async_trait::async_trait]
+impl<H: AccountHolder> Funding for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "funding.request"))]
 	async fn request(
 		&self,
@@ -1621,7 +1661,7 @@ impl Funding for ProductRuntimeHost {
 		request: HostFundingRequest,
 	) -> Result<HostFundingResponse, CallError<HostFundingError>> {
 		version(request)
-			.exec(|latest::HostFundingRequest { id, direction, amount }| async move {
+			.exec(|latest::HostFundingRequest { direction, amount }| async move {
 				// A capability the host does not serve is a framework answer; a
 				// missing session is one the product handles.
 				if self.connection.services.funding().platform().is_none() {
@@ -1630,37 +1670,22 @@ impl Funding for ProductRuntimeHost {
 				if self.accounts.current_session().is_none() {
 					return Err(CallError::Domain(latest::HostFundingError::NotConnected));
 				}
-				self.connection
+				let intent = funding::new_funding_intent();
+				// The overlay finishes on its own; the product watches the
+				// outcome by the intent, so nothing waits for it here.
+				let _overlay = self
+					.connection
 					.services
-					.open_funding(
-						Some(&self.connection.product),
-						host_funding_intent(&self.connection.product, id),
-						direction,
-						amount,
-					)
+					.show_funding(Some(&self.connection.product), intent.clone(), direction, amount)
 					.await
 					.map_err(|error| match error {
 						funding::OpenFundingError::Unsupported => CallError::Unsupported,
-						funding::OpenFundingError::Dismissed => {
-							CallError::Domain(latest::HostFundingError::Rejected)
-						},
 						funding::OpenFundingError::InvalidAmount => {
 							CallError::Domain(latest::HostFundingError::InvalidAmount)
 						},
-						funding::OpenFundingError::AlreadyExists => {
-							CallError::Domain(latest::HostFundingError::AlreadyExists)
-						},
-						funding::OpenFundingError::Stopped => {
-							CallError::HostFailure { reason: error.to_string() }
-						},
-						funding::OpenFundingError::Present(error) => {
-							CallError::HostFailure { reason: error.reason }
-						},
-						funding::OpenFundingError::Session(error) => {
-							CallError::HostFailure { reason: error.to_string() }
-						},
+						error => CallError::HostFailure { reason: error.to_string() },
 					})?;
-				Ok(())
+				Ok(latest::HostFundingResponse { intent })
 			})
 			.await
 	}
@@ -1672,7 +1697,7 @@ impl Funding for ProductRuntimeHost {
 		request: HostFundingStatusSubscribeRequest,
 	) -> Subscription<HostFundingStatusSubscribeItem, CallError<HostFundingStatusSubscribeError>> {
 		version(request)
-			.exec(|latest::HostFundingStatusSubscribeRequest { id }| async move {
+			.exec(|latest::HostFundingStatusSubscribeRequest { intent }| async move {
 				let registry = self.connection.services.funding();
 				if registry.platform().is_none() {
 					return Subscription::interrupted(CallError::Unsupported);
@@ -1680,8 +1705,7 @@ impl Funding for ProductRuntimeHost {
 				if let Err(error) = self.require_session() {
 					return Subscription::interrupted(error);
 				}
-				let intent = host_funding_intent(&self.connection.product, id);
-				if let Err(error) = registry.load(&self.connection.services).await {
+				if let Err(error) = registry.load().await {
 					return Subscription::interrupted(CallError::HostFailure {
 						reason: error.to_string(),
 					});
@@ -1701,8 +1725,8 @@ impl Funding for ProductRuntimeHost {
 	}
 }
 
-#[truapi::async_trait]
-impl Pocket for ProductRuntimeHost {
+#[async_trait::async_trait]
+impl<H: AccountHolder> Pocket for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "pocket.list_subscribe"))]
 	async fn list_subscribe(
 		&self,
@@ -1792,13 +1816,21 @@ fn chat_create_room_field_error(
 	CallError::Domain(latest::HostChatCreateRoomError::Unknown { reason: error.to_string() })
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// Cache a just-submitted preimage under its key for immediate lookups.
 	fn prime_preimage_cache(&self, key: &[u8], value: Vec<u8>) {
 		if let Ok(key_bytes) = <[u8; 32]>::try_from(key) {
 			debug_assert_eq!(key_bytes, preimage_key(&value));
 			self.connection.services.cache_preimage(key_bytes, value);
 		}
+	}
+
+	/// Whether this connection's product serves funding session `intent`.
+	fn serves(&self, intent: &str) -> bool {
+		self.connection
+			.services
+			.funding()
+			.is_serving(&self.connection.product.product_id, intent)
 	}
 }
 
@@ -1818,6 +1850,96 @@ fn bulletin_allowance_error_reason(err: AuthorityError) -> String {
 		other => other.to_string(),
 	}
 }
+
+#[cfg(test)]
+impl ProductRuntimeHost<RemoteAccountHolder> {
+	/// Test constructor building a standalone pairing-host runtime.
+	fn new<P>(
+		platform: Arc<P>,
+		config: (crate::platform::PairingHostConfig, ProductContext),
+		spawner: Spawner,
+	) -> Self
+	where
+		P: Platform + 'static,
+	{
+		let (host_config, product) = config;
+		let platform: Arc<dyn Platform> = platform;
+		Self::new_pairing_for_tests(platform, host_config, product, spawner).0
+	}
+
+	/// Compatibility constructor used only by tests that do not exercise
+	/// product-scoped behavior.
+	fn new_compat(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
+		Self::new_compat_with_pairing(platform, spawner).0
+	}
+
+	fn compat_host_config() -> crate::platform::PairingHostConfig {
+		crate::platform::PairingHostConfig::new(
+			crate::platform::HostInfo {
+				name: "Polkadot Web".to_string(),
+				icon: Some("https://example.invalid/dotli.png".to_string()),
+				version: None,
+				platform: truapi::latest::HostPlatform::Web,
+			},
+			crate::platform::PlatformInfo::default(),
+			crate::test_support::paseo_test_stack(),
+			"polkadotapp".to_string(),
+		)
+		.expect("compat runtime config is valid")
+	}
+
+	/// Compat host used by preimage tests.
+	fn new_compat_with_bulletin(platform: Arc<dyn Platform>, spawner: Spawner) -> Self {
+		Self::new_pairing_for_tests(
+			platform,
+			Self::compat_host_config(),
+			ProductContext::new(ProductId::for_test("unknown.dot")),
+			spawner,
+		)
+		.0
+	}
+
+	fn new_compat_with_pairing(
+		platform: Arc<dyn Platform>,
+		spawner: Spawner,
+	) -> (Self, Arc<PairingHost>) {
+		let host_config = Self::compat_host_config();
+		Self::new_pairing_for_tests(
+			platform,
+			host_config,
+			ProductContext::new(ProductId::for_test("unknown.dot")),
+			spawner,
+		)
+	}
+
+	fn new_pairing_for_tests(
+		platform: Arc<dyn Platform>,
+		host_config: crate::platform::PairingHostConfig,
+		product: ProductContext,
+		spawner: Spawner,
+	) -> (Self, Arc<PairingHost>) {
+		let services = RuntimeServices::new(
+			platform.clone(),
+			host_config.host.host_info.clone(),
+			host_config.stack.clone(),
+			spawner.clone(),
+		);
+		let pairing = PairingHost::new(services.clone(), host_config);
+		let adapters = crate::host_core::ConnectionAdapters::from_services(&services);
+		let host = Self::from_services(
+			services,
+			adapters,
+			pairing.accounts().clone(),
+			pairing.session().clone(),
+			product,
+		);
+		(host, pairing)
+	}
+}
+
+/// How long the core waits for dotNS to say whether a provider ships an App
+/// before showing it as having none.
+const APP_LOOKUP_CEILING: core::time::Duration = core::time::Duration::from_secs(10);
 
 #[cfg(test)]
 mod tests;

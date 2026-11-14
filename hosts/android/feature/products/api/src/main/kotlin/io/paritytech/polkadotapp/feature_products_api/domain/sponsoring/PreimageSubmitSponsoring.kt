@@ -2,7 +2,7 @@ package io.paritytech.polkadotapp.feature_products_api.domain.sponsoring
 
 import io.paritytech.polkadotapp.common.utils.InformationSize
 import io.paritytech.polkadotapp.feature_products_api.domain.accountsProtocol.SlotAccountKey
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import uniffi.truapi.ProductId
 
 /**
  * Sponsoring hook invoked before storing a preimage on the Bullet-In chain. Ensures

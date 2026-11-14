@@ -1,6 +1,7 @@
 package io.paritytech.polkadotapp.database.model
 
 import androidx.room.Entity
+import uniffi.truapi.ProductId
 
 /**
  * RFC-0024 ring VRF key registry. One row per declared ring, so registering an already-known index
@@ -13,7 +14,7 @@ import androidx.room.Entity
     primaryKeys = ["ownerProductId", "derivationIndex", "ringLocation"]
 )
 class RingVrfKeyRegistrationLocal(
-    val ownerProductId: String,
+    val ownerProductId: ProductId,
     val derivationIndex: ByteArray,
     val ringLocation: ByteArray,
     val publicKey: ByteArray,

@@ -2,7 +2,7 @@
 
 Labels answer what a reviewer or a planner asks before opening something: what does it touch, which product needs it, is anything blocking it, who acts next, and how big is it. Each family answers one of those questions, and its prefix says which. Names are `family:value`.
 
-Most labels are applied for you. On a pull request, the author or reviewer changes the `status:` when it stops waiting on review and adds a `needs:` label when something blocks it, and the author adds a `ci:` label to get an app built. On an issue, whoever files it sets the product, and the area is filled in when a pull request that closes it merges.
+Most labels are applied for you. On a pull request, the `status:` follows the reviews, the author or reviewer sets `status:blocked` and adds a `needs:` label when something blocks it, and the author adds a `ci:` label to get an app built. On an issue, whoever files it sets the product, and the area is filled in when a pull request that closes it merges.
 
 Every label is defined in [`.github/labels.yml`](../.github/labels.yml). Change that file to add, rename or retire one; a pull request that does so lists exactly what it will change, and the merge applies it.
 
@@ -20,7 +20,7 @@ An issue's type (Bug, Feature, Task), its status (Triage, Backlog, In progress),
 
 | Family | Answers | Set by |
 | --- | --- | --- |
-| `status:` (waiting-on-review, waiting-on-author, ready-to-merge, blocked) | Who acts next? | `waiting-on-review` automatically, the rest by the author or reviewer |
+| `status:` (waiting-on-review, waiting-on-author, ready-to-merge, blocked) | Who acts next? | Automatically from the reviews, except `blocked` |
 | `needs:` (decision, spec, UI) | What is blocking it? | The author or reviewer |
 | `size:` (XS to XXL) | How much is there to read? | Automatically, from the lines changed |
 | `ci:` (ios-simulator, ios-device, android-device, android-emulator-tests, host-playground-e2e, no-changeset) | Which builds and checks run? | The author |
@@ -69,16 +69,16 @@ Which product an issue is for: `spa:humanity`, `spa:jollity`, `spa:scarcity` or 
 
 ## status
 
-One at a time on a pull request, named for who has to act next.
+One at a time on a pull request, named for who has to act next. All but `status:blocked` follow GitHub's review decision, checked on every push and every approval, change request or dismissal.
 
 | Label | Means |
 | --- | --- |
-| `status:waiting-on-review` | Ready for a reviewer. Set automatically whenever a pull request that is not a draft has no status, and removed when it goes back to draft. |
-| `status:waiting-on-author` | The author has changes to make. A reviewer sets it when they request changes. |
-| `status:ready-to-merge` | Approved, and waiting only to be queued. |
-| `status:blocked` | Cannot move until something else lands. Say what in a comment. |
+| `status:waiting-on-review` | Ready for a reviewer. Set while a pull request is neither approved nor has changes requested. |
+| `status:waiting-on-author` | The author has changes to make. Set when a reviewer requests changes. |
+| `status:ready-to-merge` | Approved, and waiting only to be queued. Set when it is approved, and moved back if a push dismisses the approval. |
+| `status:blocked` | Cannot move until something else lands. Say what in a comment. Set and cleared by hand, and while it is on the status is not changed automatically. |
 
-A draft carries no status, and converting a pull request back to draft removes `status:waiting-on-review`.
+A draft carries no status, and converting a pull request back to draft removes it. A comment review leaves the status as it is, so a reviewer can still set `status:waiting-on-author` by hand. A review on a pull request from a fork cannot change labels, so its status catches up on the next push.
 
 ## size
 

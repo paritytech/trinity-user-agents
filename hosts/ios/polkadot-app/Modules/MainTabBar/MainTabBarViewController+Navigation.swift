@@ -96,5 +96,8 @@ extension MainTabBarViewController: AppNavigationControllerTransitionObserving {
             stack: navigationController.viewControllers,
             showing: viewController
         ))
+        if navigationController === container.selectedController {
+            bindScrollEdgeInteraction()
+        }
     }
 }

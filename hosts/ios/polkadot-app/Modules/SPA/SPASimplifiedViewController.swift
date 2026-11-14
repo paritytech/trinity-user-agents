@@ -2,6 +2,8 @@ import DesignSystem
 import FoundationExt
 import PolkadotUI
 import Products
+import func TrUAPIHost.productContentScheme
+import SwiftUI
 import UIKit
 import UIKitExt
 import WebKit
@@ -19,6 +21,7 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
 
     private var titleObservation: NSKeyValueObservation?
     private var didSetupWebViewLayout = false
+    private lazy var chainStatusHost = UIHostingController(rootView: ChainConnectionStatusBarView(models: []))
     private var loadFailure: ErrorContent?
     private var loadingStartedAt: Date?
     private var pendingFailureTask: Task<Void, Never>?
@@ -56,7 +59,7 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
 
         webViewConfiguration.setURLSchemeHandler(
             schemeHandlerProxy,
-            forURLScheme: ProductScriptSchemeHandler.scheme
+            forURLScheme: productContentScheme()
         )
         view = SPASimplifiedViewLayout(webViewConfiguration: webViewConfiguration)
     }
@@ -67,12 +70,21 @@ final class SPASimplifiedViewController: UIViewController, ViewHolder {
         setupNavigationBar()
         setupTitleObservation()
         setupJSEngine()
+        setContentScrollView(rootView.webView.scrollView, for: .top)
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
 
         setupWebViewLayout()
+    }
+
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+
+        guard isEnteringScreen else { return }
+
+        presenter.didBecomeVisible()
     }
 
     override func updateContentUnavailableConfiguration(
@@ -113,7 +125,8 @@ private extension SPASimplifiedViewController {
     func setupJSEngine() {
         let navigationHandler: SPANavigationDecisionHandling =
             switch configuration.contentSource {
-            case .dotNs:
+            case .dotNs,
+                 .bundled:
                 DotNsNavigationDecisionHandler(
                     baseHost: configuration.page.host,
                     hostProvider: hostProvider
@@ -180,13 +193,40 @@ private extension SPASimplifiedViewController {
         guard !didSetupWebViewLayout else { return }
         didSetupWebViewLayout = true
 
-        if configuration.presentation != .pushed {
+        if configuration.presentation == .fullScreen {
+            setupFullScreenLayout()
+        } else if configuration.presentation != .pushed {
             rootView.setupBrowserTabLayout()
         } else if configuration.isRootScreen {
             rootView.setupRootLayout()
         } else {
             rootView.setupDefaultLayout()
         }
+    }
+
+    func setupFullScreenLayout() {
+        addChild(chainStatusHost)
+        chainStatusHost.view.backgroundColor = .clear
+        rootView.setupFullScreenLayout(chainStatusView: chainStatusHost.view)
+        chainStatusHost.didMove(toParent: self)
+
+        refreshStatusStrip()
+    }
+
+    func refreshStatusStrip() {
+        rootView.statusBarTitleButton.bind(viewModel: StatusBarTitleViewModel(
+            title: navigationItem.title ?? configuration.page.host.name,
+            showsLogo: true,
+            menu: makeStatusBarMenu()
+        ))
+    }
+
+    func makeStatusBarMenu() -> UIMenu {
+        UIMenu(children: [
+            UIDeferredMenuElement.uncached { [weak self] completion in
+                completion(self?.presenter.makeMenuElements() ?? [])
+            }
+        ])
     }
 
     // MARK: - Actions
@@ -200,6 +240,7 @@ private extension SPASimplifiedViewController {
 
 extension SPASimplifiedViewController: SPAViewProtocol {
     var pageScrollView: UIScrollView { rootView.webView.scrollView }
+    var pageWebView: WKWebView { rootView.webView }
 
     func navigate(to url: URL) {
         rootView.webView.load(URLRequest(url: url))
@@ -210,11 +251,22 @@ extension SPASimplifiedViewController: SPAViewProtocol {
             return
         }
 
-        navigate(to: page.applied(to: currentURL))
+        let target = page.applied(to: currentURL)
+        guard target != currentURL else {
+            return
+        }
+
+        navigate(to: target)
     }
 
     func updateTitle(_ title: String) {
         navigationItem.title = title
+        refreshStatusStrip()
+    }
+
+    func showChainStatus(_ rows: [ChainConnectionStatusViewModel]) {
+        chainStatusHost.rootView = ChainConnectionStatusBarView(models: rows)
+        rootView.setChainStatusWidth(ChainConnectionStatusBarView.ringsWidth(count: rows.count))
     }
 
     func reload() {

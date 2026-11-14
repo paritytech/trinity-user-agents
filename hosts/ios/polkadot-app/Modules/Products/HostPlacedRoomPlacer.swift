@@ -49,10 +49,10 @@ private extension HostPlacedRoomPlacer {
 
     /// A failure costs the placeholder, not the room: the product's own `createRoom` still runs.
     func place(_ hostPlaced: HostPlacedProduct, tld: String) async {
-        let extensionId = hostPlaced.productId(tld)
-        let chatId = Chat.Id.chatExtension(extensionId, roomId: hostPlaced.roomId)
-
         do {
+            let extensionId = try hostPlaced.productId(tld).rawValue
+            let chatId = Chat.Id.chatExtension(extensionId, roomId: hostPlaced.roomId)
+
             let existing = try await chatRepository
                 .fetchOperation(by: { chatId.rawRepresentation }, options: RepositoryFetchOptions())
                 .asyncExecute()
@@ -71,7 +71,7 @@ private extension HostPlacedRoomPlacer {
 
             try await chatRepository.saveOperation({ [chat] }, { [] }).asyncExecute()
         } catch {
-            logger.error("Failed to place the room for \(extensionId): \(error)")
+            logger.error("Failed to place the room for \(hostPlaced.fallbackName): \(error)")
         }
     }
 }

@@ -2,6 +2,7 @@ import Foundation
 import Products
 import UIKit
 import UIKitExt
+import WebKit
 @testable import polkadot_app
 
 /// A product web view that loads nothing, for the screens and coordinators that
@@ -14,6 +15,7 @@ final class StubSPAView: SPAViewProtocol {
     private(set) var navigatedPages: [ProductPage] = []
     let controller = UIViewController()
     let pageScrollView = UIScrollView()
+    lazy var pageWebView = WKWebView()
     var isSetup: Bool { true }
 
     func navigate(to _: URL) {}

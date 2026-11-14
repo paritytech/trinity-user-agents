@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import Products
 
@@ -33,10 +34,10 @@ final class PocketPrewarmer {
         }
     }
 
-    /// The widget, because that is what a pressed card opens.
+    /// The app, because that is what a pressed card opens.
     private func warm(_ productId: ProductId) async {
         do {
-            try await warmer.warm(productId, serving: .widget)
+            try await warmer.warm(productId, serving: .app)
             warmed.insert(productId)
             logger.debug("[pocket] warmed \(productId)'s archive")
         } catch {

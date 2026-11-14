@@ -128,7 +128,7 @@ private extension DeviceSyncChatAcceptedApplier {
             requestId: requestId,
             incomingRequest: nil,
             acceptorDevice: nil,
-            peerDevice: peerDevice
+            peerAcceptance: peerDevice.map { ChatRequest.PeerAcceptance(device: $0, message: nil) }
         )
 
         try await storageFacade.createRepository(

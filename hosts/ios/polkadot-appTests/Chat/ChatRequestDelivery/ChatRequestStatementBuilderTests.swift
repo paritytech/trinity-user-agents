@@ -11,7 +11,7 @@ struct ChatRequestStatementBuilderTests {
 
     @Test func storedCopiesAreLookedUpOnTheRequestChannel() throws {
         let builder = makeBuilder()
-        let input = makeInput()
+        let input = try makeInput()
 
         let statement = try Statement(scaleDecoder: ScaleDecoder(data: builder.makeUnsignedStatement(for: input)
                 .signed(by: StubStatementSigner(accountId: Data(repeating: 1, count: 32)))
@@ -28,7 +28,7 @@ struct ChatRequestStatementBuilderTests {
 
     @Test func encodedSizeCoversPayloadAndThreeTopics() throws {
         let builder = makeBuilder()
-        let input = makeInput()
+        let input = try makeInput()
 
         let payload = try Statement(scaleDecoder: ScaleDecoder(data: builder.makeUnsignedStatement(for: input)
                 .signed(by: StubStatementSigner(accountId: Data(repeating: 1, count: 32)))
@@ -59,8 +59,8 @@ private extension ChatRequestStatementBuilderTests {
         )
     }
 
-    func makeInput() -> OutgoingChatRequestInput {
-        OutgoingChatRequestInput(
+    func makeInput() throws -> OutgoingChatRequestInput {
+        try OutgoingChatRequestInput(
             message: Chat.RequestMessage(
                 messageId: "request",
                 timestamp: 1,

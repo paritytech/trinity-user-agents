@@ -1,11 +1,12 @@
 package io.paritytech.polkadotapp.database.model
 
 import androidx.room.Entity
+import uniffi.truapi.ProductId
 import java.math.BigInteger
 
 @Entity(tableName = "product_top_ups", primaryKeys = ["productId", "topUpId"])
 class ProductTopUpLocal(
-    val productId: String,
+    val productId: ProductId,
     val topUpId: String,
     val amountPlanks: BigInteger,
     val startedAtMillis: Long,

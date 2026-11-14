@@ -2,8 +2,16 @@ import UIKit
 import PolkadotUI
 import SwiftUI
 
-final class SettingsViewController: UIHostingController<SettingsViewLayout>, RootScreen {
+final class SettingsViewController: UIHostingController<SettingsViewLayout>, RootScreen, NavigationBarHiding {
     let presenter: SettingsPresenterProtocol
+
+    var hidesNavigationBar: Bool {
+        #if FEATURE_PRODUCTS
+            false
+        #else
+            true
+        #endif
+    }
 
     init(presenter: SettingsPresenterProtocol) {
         self.presenter = presenter

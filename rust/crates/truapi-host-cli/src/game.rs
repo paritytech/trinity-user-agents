@@ -5,13 +5,13 @@
 
 use truapi::{
 	latest::GenericError,
-	platform::{GamePlatform, ProductContext, async_trait},
+	platform::{GamePlatform, ProductContext},
 };
 
 /// A Game host that accepts every reminder and cancel.
 pub struct CliGameHost;
 
-#[async_trait]
+#[async_trait::async_trait]
 impl GamePlatform for CliGameHost {
 	async fn schedule_game_reminder(
 		&self,

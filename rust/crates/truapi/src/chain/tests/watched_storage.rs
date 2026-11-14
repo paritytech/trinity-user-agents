@@ -73,7 +73,9 @@ fn announce_head(
 	subscription: &str,
 	number: u64,
 ) {
-	let header = node.lock().unwrap().headers[number as usize].clone();
+	let header = node.lock().unwrap().headers
+		[usize::try_from(number).expect("block number fits in usize")]
+	.clone();
 	notification_sender(provider)
 		.unbounded_send(head_notification(subscription, &header))
 		.unwrap();

@@ -10,7 +10,7 @@ use crate::{
 
 /// Host theme subscription.
 #[wire_trait(id = 15)]
-#[crate::async_trait]
+#[async_trait::async_trait]
 pub trait Theme: Send + Sync {
 	/// Subscribe to host theme changes.
 	///

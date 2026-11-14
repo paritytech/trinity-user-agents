@@ -234,6 +234,10 @@ extension ServiceCoordinator {
             logger: logger
         )
         RootDependencyLocator.setDependency(truapiRuntimeProvider as TrUAPIHostRuntimeProviding)
+        RootDependencyLocator.setDependency(
+            PublicProfileAvatarViewModelFactory(runtimeProvider: truapiRuntimeProvider)
+                as PublicProfileAvatarViewModelMaking
+        )
         CoreDurableRecoveryTask.shared.attach(
             truapiRuntimeProvider,
             executor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry)
@@ -254,7 +258,7 @@ extension ServiceCoordinator {
         // would let any chat service failing take every live card face with it,
         // silently.
         var pocket: ProductPocketService?
-        if let service = ProductPocketService.make() {
+        if let service = ProductPocketService.make(runtimeProvider: truapiRuntimeProvider) {
             RootDependencyLocator.setDependency(service)
             service.start(
                 runtimeProvider: truapiRuntimeProvider,
@@ -335,6 +339,12 @@ extension ServiceCoordinator {
         // Registered so the SPA screen, opened outside this assembly, resolves the
         // same facade.
         RootDependencyLocator.setDependency(productWorkerFacade)
+        registerProductUpdates(
+            contentLoader: spaFlowState.contentLoader,
+            workerReloader: ProductWorkerReloader(truapiWorkers: { [pocket] in pocket?.workers }),
+            iconFactory: spaFlowState.iconViewModelFactory,
+            logger: logger
+        )
 
         let callCoordinator = RealCallCoordinator(
             presentationManager: ChatChatCallPresentationManager(logger: logger),
@@ -385,6 +395,7 @@ extension ServiceCoordinator {
             chainRegistry: ChainRegistryFacade.sharedRegistry,
             logger: logger
         )
+        RootDependencyLocator.setDependency(chainStatusProvider as ChainStatusProviding)
 
         return ServiceCoordinator(
             chatCoordinator: chatCoordinator,
@@ -478,7 +489,7 @@ private extension ServiceCoordinator {
                 logger: Logger.shared
             ),
             notificationAllocator: notificationAllocator,
-            signingFallback: signingFallback,
+            signingFallback: ForegroundConsentSigningFallback(base: signingFallback, activity: ApplicationActivity()),
             backgroundExecutor: ConnectionRetainingExecutor(provider: ChainRegistryFacade.sharedRegistry),
             issueReporter: IssueReportingFacade.shared
         )

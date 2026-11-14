@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import IssueMonitoring
 import UIKit
@@ -50,7 +51,7 @@ struct GameReminderEvent: Equatable {
     }
 
     let step: Step
-    let productId: String
+    let productId: ProductId
     /// Nil when the alarm's stored start is no longer available.
     let startsAt: Date?
     let occurredAt: Date
@@ -61,7 +62,7 @@ struct GameReminderEvent: Equatable {
 
     init(
         step: Step,
-        productId: String,
+        productId: ProductId,
         startsAt: Date?,
         occurredAt: Date = Date(),
         delivery: Delivery? = nil,
@@ -84,7 +85,7 @@ struct GameReminderEvent: Equatable {
     func hostEvent(origin: HostEventOrigin, monotonicMilliseconds: Int) -> HostEvent {
         var tags = [
             "host.os_version": origin.osVersion,
-            "reminder.product_id": productId
+            "reminder.product_id": productId.rawValue
         ]
         tags["reminder.delivery"] = delivery?.rawValue
         tags["reminder.skip_reason"] = skipReason?.rawValue

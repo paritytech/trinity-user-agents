@@ -7,13 +7,13 @@ enum ChatKeyPathsError: Error, Equatable {
 }
 
 enum ChatKeyPaths {
-    static func statement(tld: String, peerAccountId: AccountId) -> String {
-        perChatPath(tld: tld, role: "peer-statement", peerAccountId: peerAccountId)
+    static func statement(tld: String, peerAccountId: AccountId) throws -> String {
+        try perChatPath(tld: tld, role: "peer-statement", peerAccountId: peerAccountId)
     }
 
     /// Shared by all chats: promotion only needs an unexpired authorization, so per-chat accounts just add claims.
-    static func hop(tld: String) -> String {
-        ProductDerivationPath.builtInRoot(BuiltInProduct.chat(for: tld)) + "//hop"
+    static func hop(tld: String) throws -> String {
+        try ProductDerivationPath.productRoot(productId: BuiltInProduct.chat(for: tld)) + "//hop"
     }
 
     static func request(requestId: String, period: UInt32) throws -> String {
@@ -34,8 +34,8 @@ enum ChatKeyPaths {
 
 private extension ChatKeyPaths {
     // The 0x prefix makes the junction parser take the peer id as raw chain code, not as a number or string.
-    static func perChatPath(tld: String, role: String, peerAccountId: AccountId) -> String {
-        ProductDerivationPath.builtInRoot(BuiltInProduct.chat(for: tld)) +
+    static func perChatPath(tld: String, role: String, peerAccountId: AccountId) throws -> String {
+        try ProductDerivationPath.productRoot(productId: BuiltInProduct.chat(for: tld)) +
             "//\(role)//" + peerAccountId.toHex(includePrefix: true)
     }
 

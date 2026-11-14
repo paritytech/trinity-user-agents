@@ -1,10 +1,16 @@
 package io.paritytech.polkadotapp.feature_products_impl.domain.bot
 
 import android.content.Context
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionContext
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.ChatExtensionInputSlot
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomResult
+import io.paritytech.polkadotapp.feature_chats_api.domain.extension.CreateRoomStatus
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatPreview
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomPreviewData
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatId
@@ -13,15 +19,18 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.model.ChatMessageOrigi
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Order
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.ProductChatIdParameter
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.RoomParticipation
 import io.paritytech.polkadotapp.feature_products_api.model.toChatExtensionId
+import io.paritytech.polkadotapp.feature_products_impl.data.storage.ProductRoomFooterStorage
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.CreateProductRoomRequest
+import io.paritytech.polkadotapp.feature_products_impl.domain.bot.model.ProductChatIcon
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.productIconUri
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerRefCounter
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.ProductWorkerReference
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.RecordingWorker
 import io.paritytech.polkadotapp.feature_products_impl.domain.worker.WorkerModalityApi
+import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer.ProductRoomFooterCardRenderer
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.menu.ProductChatMenuRenderer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.cancel
@@ -31,23 +40,28 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 
 private const val ROOM = "truapi-playground"
 
 class ProductChatExtensionTest {
-    private val product = Product(ProductId.fromStoredValue("truapi-playground.dot"), "TrUAPI Playground", icon = null)
+    private val product = Product(ProductId.parse("truapi-playground.dot").getOrThrow(), "TrUAPI Playground", icon = null)
     private val extensionId = product.id.toChatExtensionId()
+    private val footerStorage = InMemoryRoomFooterStorage()
 
     private fun placedByHost(refCounter: ProductWorkerRefCounter) =
-        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), ProductChatExtensionOrigin.PlacedByHost)
+        ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), footerStorage, ProductChatExtensionOrigin.PlacedByHost)
 
     private class FakeRefCounter(
         private val booted: ProductWorker? = null,
@@ -107,7 +121,7 @@ class ProductChatExtensionTest {
         )
 
         withChatHost(incoming = flowOf(message)) {
-            ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker), mockk(), mockk()).startGlobalWork()
+            ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker), mockk(), mockk(), footerStorage).startGlobalWork()
         }
 
         assertEquals(listOf<Pair<ProductChatIdParameter?, String>>(ProductChatIdParameter(ROOM) to "hello"), worker.delivered)
@@ -116,7 +130,7 @@ class ProductChatExtensionTest {
     @Test
     fun `a boot failure does not take the chat host down with it`() = runTest {
         val refCounter = FakeRefCounter(bootFailure = IllegalStateException("core runtime unavailable"))
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), footerStorage)
         val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         try {
@@ -133,7 +147,7 @@ class ProductChatExtensionTest {
     fun `disposing stops the inbound collector instead of leaking it`() = runTest {
         val worker = RecordingWorker()
         val incoming = MutableSharedFlow<ChatMessage>(extraBufferCapacity = 4)
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker), mockk(), mockk())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(worker), mockk(), mockk(), footerStorage)
         val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
 
         try {
@@ -162,17 +176,101 @@ class ProductChatExtensionTest {
     @Test
     fun `an empty footer hides the input of that room alone`() = runTest {
         val refCounter = FakeRefCounter(RecordingWorker())
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), footerStorage)
 
         withChatHost { extension.startGlobalWork() }
         val messaging = requireNotNull(refCounter.chatSurface)
 
-        assertEquals(true, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, ROOM)).first())
+        assertEquals(ChatExtensionInputSlot.TextInput, extension.observeInputSlot(ChatId.forExtensionRoom(extensionId, ROOM)).first())
 
-        messaging.setRoomFooter(ProductChatIdParameter(ROOM), showsTextInput = false)
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), ProductRoomFooter.Empty)
 
-        assertEquals(false, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, ROOM)).first())
-        assertEquals(true, extension.observeUserInputAllowed(ChatId.forExtensionRoom(extensionId, "other")).first())
+        assertEquals(ChatExtensionInputSlot.Hidden, extension.observeInputSlot(ChatId.forExtensionRoom(extensionId, ROOM)).first())
+        assertEquals(ChatExtensionInputSlot.TextInput, extension.observeInputSlot(ChatId.forExtensionRoom(extensionId, "other")).first())
+    }
+
+    @Test
+    fun `a docked card takes the place of the input until the text input is asked back`() = runTest {
+        val refCounter = FakeRefCounter(RecordingWorker())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), footerStorage)
+        withChatHost { extension.startGlobalWork() }
+        val messaging = requireNotNull(refCounter.chatSurface)
+        val room = ChatId.forExtensionRoom(extensionId, ROOM)
+
+        val card = ProductRoomFooter.Card("register", byteArrayOf(1).toDataByteArray())
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), card)
+        val slotWithCard = extension.observeInputSlot(room).first()
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), ProductRoomFooter.TextInput)
+
+        assertEquals(
+            listOf(card, ChatExtensionInputSlot.TextInput),
+            listOf(slotWithCard.dockedCard(), extension.observeInputSlot(room).first()),
+        )
+    }
+
+    @Test
+    fun `a docked card reaches the input slot of its room and leaves it on an empty footer`() = runTest {
+        // Given
+        val refCounter = FakeRefCounter(RecordingWorker())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), footerStorage)
+        withChatHost { extension.startGlobalWork() }
+        val messaging = requireNotNull(refCounter.chatSurface)
+        val room = ChatId.forExtensionRoom(extensionId, ROOM)
+        val card = ProductRoomFooter.Card("register", byteArrayOf(1).toDataByteArray())
+
+        // When
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), card)
+        val slotWithCard = extension.observeInputSlot(room).first()
+        val otherRoomSlot = extension.observeInputSlot(ChatId.forExtensionRoom(extensionId, "other")).first()
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), ProductRoomFooter.Empty)
+
+        // Then
+        assertEquals(
+            listOf(card, ChatExtensionInputSlot.TextInput, ChatExtensionInputSlot.Hidden),
+            listOf(slotWithCard.dockedCard(), otherRoomSlot, extension.observeInputSlot(room).first()),
+        )
+    }
+
+    @Test
+    fun `a card replaced in the same room reaches the input slot as a new renderer`() = runTest {
+        // Given
+        val refCounter = FakeRefCounter(RecordingWorker())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), footerStorage)
+        withChatHost { extension.startGlobalWork() }
+        val messaging = requireNotNull(refCounter.chatSurface)
+        val room = ChatId.forExtensionRoom(extensionId, ROOM)
+        val first = ProductRoomFooter.Card("register", byteArrayOf(1).toDataByteArray())
+        val second = ProductRoomFooter.Card("confirm", byteArrayOf(2).toDataByteArray())
+
+        val slots = mutableListOf<ChatExtensionInputSlot>()
+        val collector = launch { extension.observeInputSlot(room).toList(slots) }
+        runCurrent()
+
+        // When
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), first)
+        runCurrent()
+        messaging.setRoomFooter(ProductChatIdParameter(ROOM), second)
+        runCurrent()
+        collector.cancel()
+
+        // Then
+        assertEquals(listOf(null, first, second), slots.map { it.dockedCard() })
+    }
+
+    @Test
+    fun `a docked card outlives the extension that docked it`() = runTest {
+        // Given
+        val refCounter = FakeRefCounter(RecordingWorker())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), footerStorage)
+        withChatHost { extension.startGlobalWork() }
+        val card = ProductRoomFooter.Card("register", byteArrayOf(1).toDataByteArray())
+        requireNotNull(refCounter.chatSurface).setRoomFooter(ProductChatIdParameter(ROOM), card)
+
+        // When
+        val restarted = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(RecordingWorker()), mockk(), mockk(), footerStorage)
+
+        // Then
+        assertEquals(card, restarted.observeInputSlot(ChatId.forExtensionRoom(extensionId, ROOM)).first().dockedCard())
     }
 
     @Test
@@ -181,7 +279,7 @@ class ProductChatExtensionTest {
         val ownRooms = flowOf(listOf(ChatId.forExtension(extensionId), ChatId.forExtensionRoom(extensionId, ROOM)))
 
         withChatHost(ownRooms) {
-            ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk()).startGlobalWork()
+            ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), footerStorage).startGlobalWork()
         }
 
         val rooms = requireNotNull(refCounter.chatSurface).subscribeChatRooms().first()
@@ -209,16 +307,71 @@ class ProductChatExtensionTest {
 
     @Test
     fun `an ordinary product's chat competes on recency and can be removed`() = runTest {
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(RecordingWorker()), mockk(), mockk())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(RecordingWorker()), mockk(), mockk(), footerStorage)
 
         assertEquals(null to true, extension.pinnedAndRemovable(ChatId.forExtensionRoom(extensionId, ROOM)))
+    }
+
+    private suspend fun TestScope.registerRoom(status: CreateRoomStatus, icon: String): ChatExtensionContext {
+        val refCounter = FakeRefCounter(RecordingWorker())
+        val hostScope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val context = chatExtensionContext(hostScope, emptyFlow())
+        val chatId = ChatId.forExtensionRoom(extensionId, ROOM)
+        coEvery { context.createRoom(any()) } returns CreateRoomResult(chatId, status)
+
+        try {
+            with(context) { ProductChatExtension(mockk<Context>(relaxed = true), product, refCounter, mockk(), mockk(), footerStorage).startGlobalWork() }
+            advanceUntilIdle()
+            val roomIcon = ProductChatIcon.fromString(icon).getOrThrow()
+            requireNotNull(refCounter.chatSurface).createRoom(CreateProductRoomRequest(ProductChatIdParameter(ROOM), "Polkadot", roomIcon))
+        } finally {
+            hostScope.cancel()
+        }
+
+        return context
+    }
+
+    // A product registers its room on every start, so a later version that renames it or changes its icon must
+    // reach everyone who already has the room, as it does on iOS.
+    @Test
+    fun `registering a room again gives it the product's latest name and icon`() = runTest {
+        val icon = "data:image/png;base64,iVBORw0KGgo="
+
+        val context = registerRoom(CreateRoomStatus.Exists, icon)
+
+        coVerify {
+            context.updateRoomMetadata(
+                ChatId.forExtensionRoom(extensionId, ROOM),
+                withArg { assertEquals("Polkadot" to icon, it.name to it.icon) },
+            )
+        }
+    }
+
+    @Test
+    fun `registering a new room describes it once`() = runTest {
+        val context = registerRoom(CreateRoomStatus.New, "data:image/png;base64,iVBORw0KGgo=")
+
+        coVerify(exactly = 0) { context.updateRoomMetadata(any(), any()) }
     }
 
     // Until the worker registers an icon for its room, the chat shows the one the manifest declares.
     @Test
     fun `a product's chat defaults to its manifest icon`() {
-        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(RecordingWorker()), mockk(), mockk())
+        val extension = ProductChatExtension(mockk<Context>(relaxed = true), product, FakeRefCounter(RecordingWorker()), mockk(), mockk(), footerStorage)
 
         assertEquals(product.id.productIconUri(), extension.defaultRoomMetadata.icon)
+    }
+}
+
+private fun ChatExtensionInputSlot.dockedCard(): ProductRoomFooter.Card? =
+    ((this as? ChatExtensionInputSlot.Card)?.renderer as? ProductRoomFooterCardRenderer)?.card
+
+private class InMemoryRoomFooterStorage : ProductRoomFooterStorage {
+    private val footers = mutableMapOf<ProductId, Map<ProductChatIdParameter, ProductRoomFooter>>()
+
+    override fun read(productId: ProductId) = footers[productId].orEmpty()
+
+    override fun write(productId: ProductId, footers: Map<ProductChatIdParameter, ProductRoomFooter>) {
+        this.footers[productId] = footers
     }
 }

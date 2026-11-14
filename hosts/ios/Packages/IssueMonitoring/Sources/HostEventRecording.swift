@@ -1,6 +1,6 @@
 import Foundation
 
-/// Records native host lifecycle events.
+/// Records native host events, both the lifecycle ones and the issues a flow reports.
 ///
 /// The event is an autoclosure so a recorder that drops events, as every build
 /// without reporting support uses, never builds one.
