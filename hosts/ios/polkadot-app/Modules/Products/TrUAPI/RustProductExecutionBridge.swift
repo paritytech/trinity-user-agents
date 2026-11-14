@@ -156,7 +156,8 @@ class RustProductExecutionBridge: HostBridge, @unchecked Sendable {
         request: RemotePermission
     ) async throws -> TrUAPIPermissionDecision {
         // Calling consent belongs to the core's account-scoped Media flow,
-        // never an empty legacy permission batch.
+        // never an empty legacy permission batch. This host has no protected
+        // validator custody.
         guard let domainRequest = request.toDomainRequest() else { return .deny }
         return try await dependencies.permissionGuard.requestPermissionsDecision(
             productId: dependencies.productId,
@@ -372,6 +373,7 @@ extension RemotePermission {
         case .statementSubmit: .statementSubmit
         case let .jamPeers(genesis): .jamPeers(genesis: genesis.toHex(includePrefix: true))
         case .calling: nil
+        case .validator: nil
         }
     }
 }

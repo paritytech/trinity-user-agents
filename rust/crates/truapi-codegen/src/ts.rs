@@ -1394,9 +1394,9 @@ fn generate_decode_table(api: &ApiDefinition, target_version: u32) -> Result<Str
                     let error_codec = leg_error_codec_expr(err, &wrappers, &ctx)?;
                     lines.push(format!("    0: {request_decoder},"));
                     lines.push(format!(
-                        "    1: (payload) => S.Result({response_codec}, {error_codec}).dec(payload),"
-                    ));
-				},
+						"    1: (payload) => S.Result({response_codec}, {error_codec}).dec(payload),"
+					));
+                }
                 (MethodKind::Subscription, ReturnType::Subscription { item, interrupt }) => {
                     let item_codec = leg_codec_expr(item, &wrappers)?;
                     let error_codec = leg_error_codec_expr(interrupt, &wrappers, &ctx)?;
@@ -1914,10 +1914,10 @@ fn emit_method(
             .unwrap();
             if ok_is_wrapper {
                 writeln!(
-                    out,
-                    "        return result.success ? {{ success: true, value: result.value.value }} : result;"
-                )
-                .unwrap();
+					out,
+					"        return result.success ? {{ success: true, value: result.value.value }} : result;"
+				)
+				.unwrap();
             } else {
                 writeln!(out, "        return result;").unwrap();
             }
@@ -2390,18 +2390,29 @@ fn type_codec_expr_mode_qualified(
             if is_unit_only_enum(ty) {
                 unit_enum_codec_expr(variants)
             } else {
+                let has_explicit_discriminants =
+                    variants.iter().enumerate().any(|(position, variant)| {
+                        variant.codec_index.map_or(position, usize::from) != position
+                    });
                 let variants = variants
                     .iter()
-                    .map(|variant| {
-                        Ok(format!(
-                            "{}: {}",
-                            variant.name,
-                            variant_codec_expr_mode(&variant.fields, qualified, ctx, mode)?
-                        ))
+                    .enumerate()
+                    .map(|(position, variant)| {
+                        let codec = variant_codec_expr_mode(&variant.fields, qualified, ctx, mode)?;
+                        Ok(if has_explicit_discriminants {
+                            let index = variant.codec_index.map_or(position, usize::from);
+                            format!("{}: [{index}, {codec}] as const", variant.name)
+                        } else {
+                            format!("{}: {codec}", variant.name)
+                        })
                     })
                     .collect::<Result<Vec<_>>>()?
                     .join(", ");
-                Ok(format!("S.TaggedUnion({{{variants}}})"))
+                if has_explicit_discriminants {
+                    Ok(format!("S.indexedTaggedUnion({{{variants}}})"))
+                } else {
+                    Ok(format!("S.TaggedUnion({{{variants}}})"))
+                }
             }
 		},
     }
@@ -3231,6 +3242,42 @@ mod tests {
     }
 
     #[test]
+    fn payload_enum_codec_preserves_explicit_discriminant_gaps() {
+        let ty = TypeDef {
+            name: "Permission".to_string(),
+            module_path: Vec::new(),
+            generic_params: Vec::new(),
+            docs: None,
+            kind: TypeDefKind::Enum(vec![
+                VariantDef {
+                    name: "Ordinary".to_string(),
+                    fields: VariantFields::Unit,
+                    docs: None,
+                    codec_index: None,
+                },
+                VariantDef {
+                    name: "Validator".to_string(),
+                    fields: VariantFields::Unnamed(vec![TypeRef::Primitive("u8".to_string())]),
+                    docs: None,
+                    codec_index: Some(6),
+                },
+            ]),
+        };
+        let codec = type_codec_expr_mode_qualified(
+            &ty,
+            &ty.name,
+            &CodecContext::default(),
+            NameMode::Public,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            codec,
+            "S.indexedTaggedUnion({Ordinary: [0, S._void] as const, Validator: [6, S.u8] as const})",
+        );
+    }
+
+    #[test]
     fn schema_hash_moves_when_an_enum_variant_is_reordered() {
         // Variant position is the SCALE discriminant, so a reorder silently
         // renumbers every variant on the wire.
@@ -3832,8 +3879,8 @@ mod tests {
         // straight through each leg's own versioned wrapper — no envelope.
         assert!(source.contains("T.VersionedFeatureSupportedRequest.dec(payload)"));
         assert!(source.contains(
-            "S.Result(T.VersionedFeatureSupportedResponse, T.VersionedFeatureSupportedError).dec(payload)"
-        ));
+			"S.Result(T.VersionedFeatureSupportedResponse, T.VersionedFeatureSupportedError).dec(payload)"
+		));
         assert!(source.contains("T.VersionedStreamItem.dec(payload)"));
         // message_type 2 (Interrupt) on a subscription with no domain error
         // still decodes a framework-level `CallError<GenericError>`, in the
@@ -4251,8 +4298,8 @@ mod tests {
         assert!(source.contains(r#"{ tag: "V1"; value: V01ExampleError }"#));
         assert!(source.contains(r#"{ tag: "V2"; value: ExampleError }"#));
         assert!(source.contains(
-            "S.indexedTaggedUnion({V1: [0, V01ExampleError] as const, V2: [1, ExampleError] as const})"
-        ));
+			"S.indexedTaggedUnion({V1: [0, V01ExampleError] as const, V2: [1, ExampleError] as const})"
+		));
     }
 
     #[test]

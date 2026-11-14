@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
 import { hexToBytes, str, Vector } from "@parity/truapi/scale";
+import * as S from "scale-ts";
 
 import {
   HostChatCreateRoomRequest,
@@ -11,6 +12,11 @@ import {
   HostPushNotificationRequest,
   HostPushNotificationResponse,
   HostThemeSubscribeItem,
+  HostValidatorCloseRequest,
+  HostValidatorError,
+  HostValidatorOpenRequest,
+  HostValidatorOpenResponse,
+  ValidatorAuthority,
   RemotePermissionRequest,
   ReceivingWatch,
   ReceivingReceiptKind,
@@ -187,6 +193,65 @@ it("preserves confirmed versus pending display in the receipt wire payload", () 
     displayed: true,
     displayPending: false,
   });
+});
+
+it("preserves the Validator permission's reserved wire gap", () => {
+  const request = {
+    permission: {
+      tag: "Validator" as const,
+      value: { genesis: GENESIS, account: GENESIS, execution: "7" },
+    },
+  };
+  const bytes = RemotePermissionRequest.enc(request);
+  expect(bytes).toEqual(
+    Uint8Array.from([112, ...Array(64).fill(0x11), 4, 0x37]),
+  );
+  expect(RemotePermissionRequest.dec(bytes)).toEqual(request);
+});
+
+it("preserves custody refusals including close across the callback boundary", async () => {
+  const refuse = async () => ({
+    success: false as const,
+    value: { tag: "Poisoned" as const },
+  });
+  const raw = createWasmRawCallbacks({
+    ...makeHostCallbacks(),
+    validator: {
+      validatorOpen: refuse,
+      validatorCommit: refuse,
+      validatorSign: refuse,
+      validatorVrfOutput: refuse,
+      validatorTicketProve: refuse,
+      validatorEntropySource: refuse,
+      validatorSeal: refuse,
+      validatorFullSign: refuse,
+      validatorAuditProve: refuse,
+      validatorClose: refuse,
+      validatorRevoke: () => {},
+    },
+  });
+  const authority = ValidatorAuthority.enc({
+    productId: "validator.paseo",
+    account: GENESIS,
+    executionId: "7",
+  });
+  const opened = await raw.validatorOpen!(
+    authority,
+    HostValidatorOpenRequest.enc({
+      tag: "Acquire",
+      value: { genesis: GENESIS },
+    }),
+  );
+  expect(
+    S.Result(HostValidatorOpenResponse, HostValidatorError).dec(opened),
+  ).toEqual(await refuse());
+  const closed = await raw.validatorClose!(
+    authority,
+    HostValidatorCloseRequest.enc({ handle: "owner" }),
+  );
+  expect(S.Result(S._void, HostValidatorError).dec(closed)).toEqual(
+    await refuse(),
+  );
 });
 
 const defaultTheme = (variant: ThemeVariant): HostThemeSubscribeItemValue => ({
@@ -548,7 +613,10 @@ describe("createWasmRawCallbacks", () => {
                   review.value.resources[0]?.tag === "StatementStoreAllowance"
                 );
               case "PreimageSubmit":
-                calls.push(["confirmUserAction:PreimageSubmit", review.value.size]);
+                calls.push([
+                  "confirmUserAction:PreimageSubmit",
+                  review.value.size,
+                ]);
                 return review.value.size === 42n;
               default:
                 return false;

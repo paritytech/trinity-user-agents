@@ -1077,6 +1077,7 @@ struct WasmPlatformAdapters {
     #[cfg(feature = "wasm-signing-host")]
     native_wallet: Option<Arc<dyn CoinageWalletHost>>,
     media_platform: Option<Arc<dyn MediaPlatform>>,
+    validator_platform: Option<Arc<dyn crate::platform::ValidatorPlatform>>,
     game_platform: Option<Arc<dyn GamePlatform>>,
 	scanner_platform: Option<Arc<dyn ScannerPlatform>>,
 }
@@ -1093,6 +1094,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     #[cfg(feature = "wasm-signing-host")]
     let has_native_wallet = bridge.has_coinage_wallet();
     let has_media = bridge.has_media();
+    let has_validator = bridge.has_validator();
     let has_game = bridge.has_game();
 	let has_scanner = bridge.has_scanner();
     let platform = Arc::new(WasmPlatform::new(bridge));
@@ -1107,6 +1109,8 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
     #[cfg(feature = "wasm-signing-host")]
     let native_wallet = has_native_wallet.then(|| platform.clone() as Arc<dyn CoinageWalletHost>);
     let media = has_media.then(|| platform.clone() as Arc<dyn MediaPlatform>);
+    let validator =
+        has_validator.then(|| platform.clone() as Arc<dyn crate::platform::ValidatorPlatform>);
     let game = has_game.then(|| platform.clone() as Arc<dyn GamePlatform>);
 	let scanner = has_scanner.then(|| platform.clone() as Arc<dyn ScannerPlatform>);
     WasmPlatformAdapters {
@@ -1121,6 +1125,7 @@ fn wasm_platform(bridge: Arc<JsBridge>) -> WasmPlatformAdapters {
         #[cfg(feature = "wasm-signing-host")]
         native_wallet,
         media_platform: media,
+        validator_platform: validator,
         game_platform: game,
 		scanner_platform: scanner,
     }
@@ -1141,6 +1146,7 @@ fn connection_adapters_from_js(
         pocket_platform,
         profile_platform,
         media_platform,
+        validator_platform,
         game_platform,
         scanner_platform,
         ..
@@ -1155,6 +1161,7 @@ fn connection_adapters_from_js(
         pocket_platform,
         profile_platform,
         media_platform,
+        validator_platform,
         game_platform,
         scanner_platform,
         expanded_card: None,
@@ -1319,6 +1326,7 @@ impl WasmPairingHostRuntime {
             pocket_platform,
             profile_platform,
             media_platform,
+            validator_platform,
             game_platform,
             scanner_platform,
             ..
@@ -1345,6 +1353,9 @@ impl WasmPairingHostRuntime {
         }
         if let Some(media_platform) = media_platform {
             runtime.set_media_platform(media_platform);
+        }
+        if let Some(validator_platform) = validator_platform {
+            runtime.set_validator_platform(validator_platform);
         }
         if let Some(game_platform) = game_platform {
             runtime.set_game_platform(game_platform);
@@ -1767,6 +1778,7 @@ impl WasmSigningHostRuntime {
             identity_backend_host,
             native_wallet,
             media_platform,
+            validator_platform,
             game_platform,
 			scanner_platform,
         } = wasm_platform(bridge);
@@ -1796,6 +1808,9 @@ impl WasmSigningHostRuntime {
         }
         if let Some(media_platform) = media_platform {
             runtime.set_media_platform(media_platform);
+        }
+        if let Some(validator_platform) = validator_platform {
+            runtime.set_validator_platform(validator_platform);
         }
         if let Some(game_platform) = game_platform {
             runtime.set_game_platform(game_platform);
@@ -2207,6 +2222,7 @@ impl WasmProductRuntime {
             pocket_platform,
             profile_platform,
             media_platform,
+            validator_platform,
             game_platform,
             scanner_platform,
             ..
@@ -2227,6 +2243,9 @@ impl WasmProductRuntime {
         }
         if let Some(profile_platform) = profile_platform {
             pairing.set_profile_platform(profile_platform);
+        }
+        if let Some(validator_platform) = validator_platform {
+            pairing.set_validator_platform(validator_platform);
         }
         if let Some(game_platform) = game_platform {
             pairing.set_game_platform(game_platform);

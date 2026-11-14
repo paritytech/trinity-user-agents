@@ -263,8 +263,15 @@ impl Permissions for ProductRuntimeHost {
         _cx: &CallContext,
         request: RemotePermissionRequest,
     ) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
-		let version = request.version();
-		let inner = request.into_latest();
+        let version = request.version();
+        let inner = request.into_latest();
+        // Only trusted custody acquisition may choose a validator permission scope.
+        if matches!(inner.permission, latest::RemotePermission::Validator { .. }) {
+            return Ok(RemotePermissionResponse::from_latest(
+                latest::RemotePermissionResponse { granted: false },
+                version,
+            ));
+        }
         let service = self.permissions_service();
         match service.authorize_remote(inner).await {
 			Ok(decision) => Ok(RemotePermissionResponse::from_latest(
@@ -342,6 +349,13 @@ impl Permissions for ProductRuntimeHost {
         let version = request.version();
         let inner = request.into_latest();
         let product_id = self.product_id();
+        // Only trusted custody acquisition may choose a validator permission scope.
+        if matches!(inner.permission, latest::RemotePermission::Validator { .. }) {
+            return Ok(RemotePermissionResponse::from_latest(
+                latest::RemotePermissionResponse { granted: false },
+                version,
+            ));
+        }
         let service = self.permissions_service();
         let decision = if matches!(inner.permission, latest::RemotePermission::Calling) {
             let (session, identity) = crate::runtime::media_identity::resolve_identity(

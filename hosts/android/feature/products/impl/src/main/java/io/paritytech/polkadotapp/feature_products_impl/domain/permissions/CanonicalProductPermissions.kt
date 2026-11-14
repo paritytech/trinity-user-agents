@@ -77,6 +77,7 @@ internal fun PermissionAuthorizationRequest.legacyPermission(): ProductPermissio
         RemotePermission.StatementSubmit -> ProductPermission.RemotePermission.StatementSubmitAccess
         RemotePermission.PreimageSubmit -> ProductPermission.RemotePermission.PreimageSubmitAccess
         is RemotePermission.JamPeers -> ProductPermission.RemotePermission.JamPeersAccess(remote.genesis.toHexString(withPrefix = true))
+        is RemotePermission.Validator -> null
     }
     is PermissionAuthorizationRequest.CrossProductSignature -> null
 }

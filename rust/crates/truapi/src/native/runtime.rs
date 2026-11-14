@@ -32,23 +32,25 @@ use crate::{
 	subscription::Spawner,
 };
 
-use super::callbacks::{
-    HostCallbacks, NativeChatCallbacks, NativeCoinageCallbacks, NativeContactsCallbacks,
-    NativeGameCallbacks, NativePocketCallbacks, NativeScannerCallbacks,
-};
-use super::media::{MediaCallbackPlatform, NativeMediaCallbacks};
-use super::config::{
-    HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
-    ProductExecutionConfig,
-};
-use super::errors::{HostRejection, NativeCoreDatabaseError};
-use super::events::NativeEventBus;
-use super::executor::shared_native_executor;
 #[cfg(doc)]
 use super::parse_pairing_deeplink;
-use super::platform::{
-    CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
-    NativeCoinageCallbackPlatform, PocketCallbackPlatform, ScannerCallbackPlatform,
+use super::{
+    callbacks::{
+        HostCallbacks, NativeChatCallbacks, NativeCoinageCallbacks, NativeContactsCallbacks,
+        NativeGameCallbacks, NativePocketCallbacks, NativeScannerCallbacks,
+    },
+    config::{
+        HostRuntimeConfig, NativeResolvedHostRuntimeConfig, NativeRuntimeConfigError,
+        ProductExecutionConfig,
+    },
+    errors::{HostRejection, NativeCoreDatabaseError},
+    events::NativeEventBus,
+    executor::shared_native_executor,
+    media::{MediaCallbackPlatform, NativeMediaCallbacks},
+    platform::{
+        CallbackPlatform, ChatCallbackPlatform, ContactsCallbackPlatform, GameCallbackPlatform,
+        NativeCoinageCallbackPlatform, PocketCallbackPlatform, ScannerCallbackPlatform,
+    },
 };
 #[cfg(doc)]
 use crate::WorkerTransition;
@@ -540,8 +542,10 @@ impl NativeTrUApiHostRuntime {
         &self,
         product_id: String,
     ) -> Result<Vec<PermissionAuthorizationEntry>, HostRejection> {
-        use crate::host_internal::permissions::{authorization_key, stored_authorization_status};
-        use crate::host_internal::product_manifest::bare_product_label;
+        use crate::host_internal::{
+            permissions::{authorization_key, stored_authorization_status},
+            product_manifest::bare_product_label,
+        };
         let product = permission_product(product_id)?;
         let admin = self.runtime.product_admin(product.clone());
         let scope = admin.product_runtime().permissions_service().scope();
@@ -1126,6 +1130,7 @@ impl NativeProductExecution {
             // `Unsupported` there.
             profile_platform: None,
             media_platform: self.media.clone(),
+            validator_platform: None,
             expanded_card: Some(self.expanded_card.clone()),
             game_platform: self.game.clone(),
             scanner_platform: None,
@@ -1441,15 +1446,19 @@ mod tests {
     use truapi::v01;
     #[test]
     fn native_wallet_dependency_survives_failure_and_product_replacement() {
-        use crate::native::NativeCoinageCallbackResult;
-        use crate::platform::{
-            NativeCoinageFailure, NativeCoinageOperation, NativeCoinageRequest,
-            NativeCoinageResponse, NativeCoinageTopUpOutcome,
+        use crate::{
+            native::NativeCoinageCallbackResult,
+            platform::{
+                NativeCoinageFailure, NativeCoinageOperation, NativeCoinageRequest,
+                NativeCoinageResponse, NativeCoinageTopUpOutcome,
+            },
         };
         use parking_lot::Mutex;
         use std::sync::atomic::AtomicU8;
-        use truapi::api::Payment;
-        use truapi::versioned::payment::{HostPaymentTopUpError, HostPaymentTopUpRequest};
+        use truapi::{
+            api::Payment,
+            versioned::payment::{HostPaymentTopUpError, HostPaymentTopUpRequest},
+        };
 
         struct Wallet {
             state: AtomicU8,

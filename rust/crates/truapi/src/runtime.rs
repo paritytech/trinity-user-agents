@@ -54,6 +54,7 @@ pub mod statement_allowance;
 /// `StatementStore` surface: proofs plus submit and subscribe flows.
 pub mod statement_store;
 mod statement_store_rpc;
+mod validator;
 mod vrf;
 
 use core::{future::Future, time::Duration};
@@ -82,32 +83,36 @@ pub use pairing_host::PairingHost as PairingHostRole;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
 pub use signing_host::{
-	AnnouncedPairing, DevicePairingObserver, LocalActivation, MAX_PAIRING_METADATA_CHARS,
-	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
-	SigningHost as SigningHostRole, SigningHostSsoService, disconnect_paired_host,
-    establish_pairing, notify_pairing_allowance_allocation, notify_pairing_failed,
-    respond_to_pairing, resume_pairing,
+    AnnouncedPairing, DevicePairingObserver, LocalActivation, LocalIdentity, LocalIdentityContext,
+    MAX_PAIRING_METADATA_CHARS, PairedSsoPeer, PairingProposal, PairingProposalMetadata,
+    ResponderExit, SigningHost as SigningHostRole, SigningHostSsoService, WalletAllowanceSnapshot,
+    disconnect_paired_host, establish_pairing, notify_pairing_allowance_allocation,
+    notify_pairing_failed, respond_to_pairing, resume_pairing,
 };
-pub use signing_host::{LocalIdentity, LocalIdentityContext, WalletAllowanceSnapshot};
 #[cfg(any(test, not(target_arch = "wasm32")))]
 use tracing::Instrument;
 #[cfg(any(test, not(target_arch = "wasm32")))]
 use truapi::versioned::jam_peer_transport::HostJamPeerTransportDialError;
-use truapi::api::Profile;
-use truapi::versioned::contacts::{
-    HostContactsPickError, HostContactsPickManyError, HostContactsPickManyRequest,
-    HostContactsPickManyResponse, HostContactsPickRequest, HostContactsPickResponse,
-    HostContactsPlaceLabelsError, HostContactsPlaceLabelsRequest, HostContactsPlaceLabelsResponse,
-};
-use truapi::versioned::profile::{
-    HostProfileDiscloseError, HostProfileDiscloseRequest, HostProfileDiscloseResponse,
-    HostProfileOwnStatusError, HostProfileOwnStatusRequest, HostProfileOwnStatusResponse,
-    HostProfilePlaceContactAvatarsError, HostProfilePlaceContactAvatarsRequest,
-    HostProfilePlaceContactAvatarsResponse, HostProfilePresentContactError,
-    HostProfilePresentContactRequest, HostProfilePresentContactResponse, HostProfilePresentError,
-    HostProfilePresentOwnError, HostProfilePresentOwnRequest, HostProfilePresentOwnResponse,
-    HostProfilePresentRequest, HostProfilePresentResponse, HostProfileRetractError,
-    HostProfileRetractRequest, HostProfileRetractResponse,
+use truapi::{
+    api::Profile,
+    versioned::{
+        contacts::{
+            HostContactsPickError, HostContactsPickManyError, HostContactsPickManyRequest,
+            HostContactsPickManyResponse, HostContactsPickRequest, HostContactsPickResponse,
+            HostContactsPlaceLabelsError, HostContactsPlaceLabelsRequest,
+            HostContactsPlaceLabelsResponse,
+        },
+        profile::{
+            HostProfileDiscloseError, HostProfileDiscloseRequest, HostProfileDiscloseResponse,
+            HostProfileOwnStatusError, HostProfileOwnStatusRequest, HostProfileOwnStatusResponse,
+            HostProfilePlaceContactAvatarsError, HostProfilePlaceContactAvatarsRequest,
+            HostProfilePlaceContactAvatarsResponse, HostProfilePresentContactError,
+            HostProfilePresentContactRequest, HostProfilePresentContactResponse,
+            HostProfilePresentError, HostProfilePresentOwnError, HostProfilePresentOwnRequest,
+            HostProfilePresentOwnResponse, HostProfilePresentRequest, HostProfilePresentResponse,
+            HostProfileRetractError, HostProfileRetractRequest, HostProfileRetractResponse,
+        },
+    },
 };
 #[cfg(all(target_arch = "wasm32", feature = "test-host"))]
 pub use vrf::ring_vrf_member;
@@ -359,6 +364,9 @@ pub struct ProductRuntimeHost {
     media_platform: Option<Arc<dyn crate::platform::MediaPlatform>>,
     media: std::sync::OnceLock<Arc<media::MediaService>>,
     media_closed: std::sync::atomic::AtomicBool,
+    validator_platform: Option<Arc<dyn crate::platform::ValidatorPlatform>>,
+    validator_state: futures::lock::Mutex<validator::ValidatorState>,
+    validator_revoked: Arc<std::sync::atomic::AtomicBool>,
     game_platform: Option<Arc<dyn crate::platform::GamePlatform>>,
     scanner_platform: Option<Arc<dyn crate::platform::ScannerPlatform>>,
     /// Control of the card face above this connection's Widget, when the host draws one.
@@ -379,6 +387,13 @@ impl Drop for ProductRuntimeHost {
         self.release_open_operations();
         self.release_contact_avatars();
         self.release_contact_labels();
+        self.services
+            .validator_owners
+            .lock()
+            .remove(&(self.product.product_id.clone(), self.execution_id()));
+        if let Some(platform) = &self.validator_platform {
+            platform.validator_revoke(self.execution_id());
+        }
     }
 }
 
@@ -406,6 +421,9 @@ impl ProductRuntimeHost {
             renderer: adapters.renderer,
             pocket_platform: adapters.pocket_platform,
             profile_platform: adapters.profile_platform,
+            validator_platform: adapters.validator_platform,
+            validator_state: futures::lock::Mutex::new(validator::ValidatorState::default()),
+            validator_revoked: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             expanded_card: adapters.expanded_card,
             game_platform: adapters.game_platform,
             scanner_platform: adapters.scanner_platform,
@@ -558,6 +576,9 @@ impl ProductRuntimeHost {
             renderer,
             pocket_platform: None,
             profile_platform: None,
+            validator_platform: None,
+            validator_state: futures::lock::Mutex::new(validator::ValidatorState::default()),
+            validator_revoked: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             expanded_card: None,
             game_platform: None,
             scanner_platform: None,
@@ -787,7 +808,12 @@ impl ProductRuntimeHost {
         if status != PermissionAuthorizationStatus::Authorized {
             // Stop live resources before waiting for a pending decision or
             // unavailable storage. Persistence failure must not keep them alive.
-            self.services.notify_media_permission_revoked(&product_id, &request);
+            self.services
+                .notify_media_permission_revoked(&product_id, &request);
+            if let PermissionAuthorizationRequest::Remote(remote) = &request {
+                self.services
+                    .revoke_validator_permission(&self.product.product_id, &remote.permission);
+            }
         }
         let _guard = self.services.media_permission_gate.lock().await;
         let service = self.permissions_service();
@@ -803,6 +829,13 @@ impl ProductRuntimeHost {
         };
         if contacts_changed {
             self.services.invalidate_contacts();
+        }
+        // An acquire may have registered while persistence was pending.
+        if status != PermissionAuthorizationStatus::Authorized
+            && let PermissionAuthorizationRequest::Remote(remote) = &request
+        {
+            self.services
+                .revoke_validator_permission(&self.product.product_id, &remote.permission);
         }
         result?;
         if status != PermissionAuthorizationStatus::Authorized {
@@ -2186,8 +2219,10 @@ impl Profile for ProductRuntimeHost {
         if self.product.execution_kind != crate::platform::ProductExecutionKind::App {
             return Err(CallError::Denied);
         }
-        use truapi::latest::ProfileAudience;
-        use truapi::versioned::{FromLatest, IntoLatest, Versioned};
+        use truapi::{
+            latest::ProfileAudience,
+            versioned::{FromLatest, IntoLatest, Versioned},
+        };
         let version = request.version();
         let domain =
             |error| CallError::Domain(HostProfileDiscloseError::from_latest(error, version));
@@ -2336,8 +2371,10 @@ impl Profile for ProductRuntimeHost {
         request: HostProfilePresentContactRequest,
     ) -> Result<HostProfilePresentContactResponse, CallError<HostProfilePresentContactError>> {
         let platform = self.profile_platform()?;
-        use truapi::latest::ProfileContact;
-        use truapi::versioned::{FromLatest, IntoLatest, Versioned};
+        use truapi::{
+            latest::ProfileContact,
+            versioned::{FromLatest, IntoLatest, Versioned},
+        };
         let version = request.version();
         let domain =
             |error| CallError::Domain(HostProfilePresentContactError::from_latest(error, version));

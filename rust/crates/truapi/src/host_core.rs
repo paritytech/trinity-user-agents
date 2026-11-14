@@ -339,6 +339,14 @@ impl PairingHostRuntime {
         self.services.install_media_platform(platform)
     }
 
+    /// Install protected validator custody before creating product connections.
+    pub fn set_validator_platform(
+        &self,
+        platform: Arc<dyn crate::platform::ValidatorPlatform>,
+    ) -> bool {
+        self.services.install_validator_platform(platform)
+    }
+
     /// Build a product-facing runtime from this pairing host.
     #[instrument(skip_all, fields(runtime.method = "pairing_host_runtime.product_runtime"))]
     pub fn product_runtime(
@@ -852,6 +860,14 @@ impl SigningHostRuntime {
         self.services
             .contact_avatars
             .contacts_changed(&self.services.spawner);
+    }
+
+    /// Install protected validator custody before creating product connections.
+    pub fn set_validator_platform(
+        &self,
+        platform: Arc<dyn crate::platform::ValidatorPlatform>,
+    ) -> bool {
+        self.services.install_validator_platform(platform)
     }
 
     /// Install the host's [`DevicePairingObserver`], told whenever a device
@@ -1470,6 +1486,8 @@ pub struct ConnectionAdapters {
     pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
     pub profile_platform: Option<Arc<dyn ProfilePlatform>>,
     pub media_platform: Option<Arc<dyn MediaPlatform>>,
+    /// Protected validator custody, when supplied by the host.
+    pub validator_platform: Option<Arc<dyn crate::platform::ValidatorPlatform>>,
     pub game_platform: Option<Arc<dyn GamePlatform>>,
     pub scanner_platform: Option<Arc<dyn ScannerPlatform>>,
     /// Control of the card face above this connection's Widget, when the host draws one.
@@ -1490,6 +1508,7 @@ impl ConnectionAdapters {
             pocket_platform: services.pocket_platform(),
             profile_platform: services.profile_platform(),
             media_platform: services.media_platform(),
+            validator_platform: services.validator_platform(),
             expanded_card: None,
             game_platform: services.game_platform(),
             scanner_platform: services.scanner_platform(),

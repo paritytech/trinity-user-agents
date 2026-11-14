@@ -798,23 +798,30 @@ fn core_key(key: &CoreStorageKey) -> String {
             root_public_key,
             genesis_hash,
             product_id,
-        } => format!(
-            "core:profile-references-received:{}:{}:{product_id}",
-            hex_key(root_public_key),
-            hex_key(genesis_hash)
-        ),
+        } => {
+            format!(
+                "core:profile-references-received:{}:{}:{product_id}",
+                hex_key(root_public_key),
+                hex_key(genesis_hash)
+            )
+        }
         CoreStorageKey::ProfilePersonalReferencesReceived {
             root_public_key,
             genesis_hash,
+        } => {
+            format!(
+                "core:profile-personal-references-received:{}:{}",
+                hex_key(root_public_key),
+                hex_key(genesis_hash)
+            )
+        }
+        CoreStorageKey::HostChannelPeers {
+            root_public_key,
+            genesis_hash,
         } => format!(
-            "core:profile-personal-references-received:{}:{}",
+            "core:host-channel-peers:{}:{}",
             hex_key(root_public_key),
             hex_key(genesis_hash)
-        ),
-		CoreStorageKey::HostChannelPeers { root_public_key, genesis_hash } => format!(
-			"core:host-channel-peers:{}:{}",
-			hex_key(root_public_key),
-			hex_key(genesis_hash)
         ),
         CoreStorageKey::NativeChatFileChunk {
             root_public_key,
@@ -836,11 +843,13 @@ fn core_key(key: &CoreStorageKey) -> String {
             product_id,
             root_public_key,
             genesis_hash,
-        } => format!(
-            "core:automatic-preimage-uploads:{}:{}:{product_id}",
-            hex_key(root_public_key),
-            hex_key(genesis_hash)
-        ),
+        } => {
+            format!(
+                "core:automatic-preimage-uploads:{}:{}:{product_id}",
+                hex_key(root_public_key),
+                hex_key(genesis_hash)
+            )
+        }
         CoreStorageKey::AllowanceKeys { session_id } => {
             format!("core:allowance-keys:{session_id}")
 		},
@@ -1090,6 +1099,7 @@ fn remote_permission_key(permission: &latest::RemotePermission) -> &'static str 
         Permission::StatementSubmit => "StatementSubmit",
         Permission::JamPeers { .. } => "JamPeers",
         Permission::Calling => "Calling",
+        Permission::Validator { .. } => "Validator",
     }
 }
 

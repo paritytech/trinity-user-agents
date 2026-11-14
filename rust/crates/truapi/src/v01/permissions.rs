@@ -111,6 +111,20 @@ pub enum RemotePermission {
     /// to enumerate or name capture sources. Revocation ends affected sessions.
     #[display("media calling")]
     Calling,
+    /// Experimental host-custodied validator signing.
+    /// Scope is one trusted account and execution; artifacts need host consent.
+    /// Index 112 matches trait 112 and the TrUAPI 0.30 line, clear of the
+    /// positional variants (JamPeers 5, Calling 6).
+    #[display("run this validator during this session")]
+    #[codec(index = 112)]
+    Validator {
+        /// Enrolled chain genesis.
+        genesis: [u8; 32],
+        /// Trusted runtime account.
+        account: [u8; 32],
+        /// Trusted execution id, not a guest-selected namespace.
+        execution: String,
+    },
 }
 
 /// remote-permission request (RFC 0002).

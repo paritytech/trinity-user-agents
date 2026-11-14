@@ -13,18 +13,19 @@ use anyhow::{Result, bail};
 use indoc::{formatdoc, writedoc};
 
 use crate::{
-	platform::{
-		PlatformDefinition, PlatformInner, PlatformMethod, PlatformParam, PlatformReturn,
-		PlatformTrait,
-	},
-	platform_callbacks::{
-    callback_namespace, collect_local_bridge_payload_types, composed_traits,
-        is_scale_vector_result, optional_trait_names, platform_trait_names, raw_callback_adapter_name, raw_callback_name,
-		raw_callback_type_name, raw_callback_wire_name, stream_item, to_camel_case,
-    trait_object_return_name,
-	},
-	rustdoc::{FieldDef, TypeDef, TypeDefKind, TypeRef, VariantDef, VariantFields},
-	ts::ts_string_literal,
+    platform::{
+        PlatformDefinition, PlatformInner, PlatformMethod, PlatformParam, PlatformReturn,
+        PlatformTrait,
+    },
+    platform_callbacks::{
+        callback_namespace, collect_local_bridge_payload_types, composed_traits,
+        is_scale_vector_result, optional_trait_names, platform_trait_names,
+        raw_callback_adapter_name, raw_callback_name, raw_callback_type_name,
+        raw_callback_wire_name, stream_item, to_camel_case, trait_object_return_name,
+        uses_scale_result,
+    },
+    rustdoc::{FieldDef, TypeDef, TypeDefKind, TypeRef, VariantDef, VariantFields},
+    ts::ts_string_literal,
 };
 
 /// Write the typed host-callbacks TS file and its WASM adapter/worker bridge.
@@ -228,7 +229,12 @@ fn emit_wasm_adapter(
                         &mut adapter_local_codec_types,
                     );
                     collect_extra_named(ok, codec_types, &local, &mut extra_types);
-				},
+                    if uses_scale_result(&method.return_shape.inner)
+                        && let PlatformInner::Result { err, .. } = &method.return_shape.inner
+                    {
+                        collect_codec_imports(err, codec_types, &mut imports);
+                    }
+                }
                 PlatformInner::Stream(item) => {
                     support_imports.insert("driveResultStream".to_string());
                     extra_types.insert("GenericError".to_string());
@@ -268,7 +274,8 @@ fn emit_wasm_adapter(
             matches!(ty, TypeRef::Vec(_))
                 && encoded_codec_expr(ty, codec_types, local_codec_types).is_some()
         };
-        method.params.iter().any(|p| vector_codec(&p.type_ref))
+        uses_scale_result(&method.return_shape.inner)
+            || method.params.iter().any(|p| vector_codec(&p.type_ref))
             || match &method.return_shape.inner {
                 PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => vector_codec(ok),
                 PlatformInner::Stream(item) => vector_codec(stream_item(item)),
@@ -346,7 +353,9 @@ fn emit_wasm_adapter(
         .iter()
         .any(|trait_def| trait_def.name == "NativeChatFilesHost")
     {
-        out.push_str("  const nativeChatFiles = callbacks.nativeChatFiles ?? unavailableNativeChatFilesHost;\n");
+        out.push_str(
+			"  const nativeChatFiles = callbacks.nativeChatFiles ?? unavailableNativeChatFilesHost;\n",
+		);
     }
     out.push_str("  return {\n");
     for trait_def in &traits {
@@ -594,10 +603,10 @@ fn emit_worker_callbacks(
     out.push_str("  };\n");
     for (namespace, _) in &optional_groups {
         writeln!(
-            out,
-            "  if (capabilities.{namespace}) Object.assign(callbacks, {namespace}RawCallbacks(bridge));"
-        )
-        .unwrap();
+			out,
+			"  if (capabilities.{namespace}) Object.assign(callbacks, {namespace}RawCallbacks(bridge));"
+		)
+		.unwrap();
     }
     writedoc!(
         out,
@@ -974,6 +983,7 @@ fn raw_member(
                 .collect::<Vec<_>>()
                 .join(", ");
             let ok = match inner {
+                inner if uses_scale_result(inner) => "Uint8Array".to_string(),
                 PlatformInner::Result { ok, .. } | PlatformInner::Plain(ok) => {
                     raw_ok_ts(ok, codec_types, local_codec_types)
 				},
@@ -1325,6 +1335,16 @@ fn adapter_unary_impl(
         .collect::<Vec<_>>()
         .join(", ");
     let call = format!("{host_method}({args})");
+    if uses_scale_result(&method.return_shape.inner)
+        && let PlatformInner::Result { err, .. } = &method.return_shape.inner
+    {
+        let codec = format!(
+            "S.Result({}, {})",
+            local_codec_expr(ok)?,
+            local_codec_expr(err)?
+        );
+        return Ok(format!("async ({params}) => {codec}.enc(await {call})"));
+    }
     let body = if is_scale_vector_result(ok) {
         format!("{}ResultCodec.enc(await {call})", raw_callback_name(method))
     } else if let Some(codec) = encoded_codec_expr(ok, codec_types, local_codec_types) {
@@ -1790,9 +1810,13 @@ fn collect_named_types(definition: &PlatformDefinition) -> BTreeSet<String> {
                 collect_from_type(&param.type_ref, &mut out);
             }
             match &method.return_shape.inner {
-                // Err type is not part of the TS signature (errors throw),
-                // so don't import its name.
-                PlatformInner::Result { ok, .. } => collect_from_type(ok, &mut out),
+                // Validator returns domain errors as SCALE values; other callbacks throw.
+                PlatformInner::Result { ok, err } => {
+                    collect_from_type(ok, &mut out);
+                    if uses_scale_result(&method.return_shape.inner) {
+                        collect_from_type(err, &mut out);
+                    }
+                }
                 PlatformInner::Stream(inner) => collect_from_type(inner, &mut out),
                 PlatformInner::Plain(inner) => collect_from_type(inner, &mut out),
                 // A trait object returns its bare trait name in the TS
@@ -1838,6 +1862,19 @@ fn collect_from_type(ty: &TypeRef, out: &mut BTreeSet<String>) {
 fn format_return(ret: &PlatformReturn) -> Result<String> {
     let inner = match &ret.inner {
         PlatformInner::Unit => "void".to_string(),
+        PlatformInner::Result { ok, err } if uses_scale_result(&ret.inner) => {
+            let ok = if matches!(ok, TypeRef::Unit)
+                || matches!(ok, TypeRef::Tuple(items) if items.is_empty())
+            {
+                "undefined".to_string()
+            } else {
+                ts_type(ok)?
+            };
+            format!(
+                "{{ success: true; value: {ok} }} | {{ success: false; value: {} }}",
+                ts_type(err)?,
+            )
+        }
         PlatformInner::Result { ok, .. } => ts_type(ok)?,
         PlatformInner::Stream(item) => format!("AsyncIterable<{}>", ts_type(item)?),
         PlatformInner::TraitObject(name) => name.clone(),

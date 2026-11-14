@@ -70,6 +70,7 @@ const TRAIT_MODULE_MAP: &[(&str, &str)] = &[
     ("StatementStore", "statement_store"),
     ("System", "system"),
     ("Theme", "theme"),
+    ("Validator", "validator"),
 ];
 
 /// Returns the versioned-module name for a trait, falling back to a

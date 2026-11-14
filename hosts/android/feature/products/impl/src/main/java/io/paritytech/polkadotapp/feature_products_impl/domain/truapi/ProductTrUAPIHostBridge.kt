@@ -271,8 +271,10 @@ class ProductTrUAPIHostBridge @AssistedInject constructor(
             // Calling consent is scoped by the core's typed network/account review.
             if (request == RemotePermission.Calling || request == RemotePermission.WebRtc)
                 return TrUAPIPermissionDecision.DENY
+            // This host has no protected validator custody.
+            val domainRequest = request.toDomain() ?: return TrUAPIPermissionDecision.DENY
             return hostApiInteractor
-                .requestRemotePermissionDecision(callingProductId, request.toDomain())
+                .requestRemotePermissionDecision(callingProductId, domainRequest)
                 .getOrElse { throw it }
                 .toNative()
         }
@@ -503,7 +505,7 @@ private fun HostDevicePermissionRequest.toCapability(): DeviceCapabilityType = w
     HostDevicePermissionRequest.BIOMETRICS -> DeviceCapabilityType.Biometrics
 }
 
-private fun RemotePermission.toDomain(): RemotePermissionRequest = when (this) {
+private fun RemotePermission.toDomain(): RemotePermissionRequest? = when (this) {
     is RemotePermission.Remote -> RemotePermissionRequest.Remote(domains)
     RemotePermission.WebRtc -> RemotePermissionRequest.WebRtc
     RemotePermission.ChainSubmit -> RemotePermissionRequest.ChainSubmit
@@ -511,6 +513,7 @@ private fun RemotePermission.toDomain(): RemotePermissionRequest = when (this) {
     RemotePermission.StatementSubmit -> RemotePermissionRequest.StatementSubmit
     is RemotePermission.JamPeers -> RemotePermissionRequest.JamPeers(genesis.toHexString(withPrefix = true))
     RemotePermission.Calling -> error("Calling requires a scoped core review")
+    is RemotePermission.Validator -> null
 }
 
 private fun PermissionDecision.toNative(): TrUAPIPermissionDecision = when (this) {

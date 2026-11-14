@@ -37,21 +37,24 @@
 //! Automatic upload consent uses its separate bounded, account-scoped policy;
 //! generic permission slots cannot grant or administer it.
 
-use std::collections::HashMap;
-use std::sync::{Arc, Weak};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Weak},
+};
 
 use parity_scale_codec::{Decode, Encode};
 use rand_core::{OsRng, RngCore};
 
-use crate::host_internal::product_manifest::bare_product_label;
-use crate::platform::CrossProductSignatureKind;
-use crate::platform::{
-    BLESSED_REMOTE_DOMAINS, CallingReview, ChatAuthorityReview, CoreStorage, CoreStorageKey,
-    DevicePermissionStatus, IdentityDisclosureReview, PermissionAuthorizationRequest,
-    PermissionAuthorizationStatus, PermissionDecision, PermissionStatusHost, Permissions,
-    ProductContext, ProfileDisclosureReview, UserConfirmation, UserConfirmationReview,
-    has_trusted_remote_permissions, is_valid_remote_domain_pattern, normalize_remote_domain,
-    remote_domain_candidates,
+use crate::{
+    host_internal::product_manifest::bare_product_label,
+    platform::{
+        BLESSED_REMOTE_DOMAINS, CallingReview, ChatAuthorityReview, CoreStorage, CoreStorageKey,
+        CrossProductSignatureKind, DevicePermissionStatus, IdentityDisclosureReview,
+        PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
+        PermissionStatusHost, Permissions, ProductContext, ProfileDisclosureReview,
+        UserConfirmation, UserConfirmationReview, has_trusted_remote_permissions,
+        is_valid_remote_domain_pattern, normalize_remote_domain, remote_domain_candidates,
+    },
 };
 use truapi::latest::{
     GenericError, HostDevicePermissionRequest, RemotePermission, RemotePermissionRequest,
@@ -393,7 +396,8 @@ pub struct PermissionsService<'a, S: CoreStorage + ?Sized, P: Permissions + ?Siz
     /// Live OS permission state, when the host serves that capability. Absent
     /// leaves the stored decision governing on its own.
     status: Option<&'a dyn PermissionStatusHost>,
-    /// Whether the product receives the canonical trusted permission defaults.
+    /// Whether the product receives the canonical trusted permission defaults
+    /// (never Validator custody).
     trusted_product: bool,
     /// One-use grants remain local to the execution that requested them.
     temporary_permissions: Arc<TemporaryPermissions>,
@@ -493,7 +497,9 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         }
         let Some(domains) = requested_domains(request) else {
             let key = CoreStorageKey::remote_permission_authorization(self.product_id(), request);
-            return self.cached_remote_authorization(&key, false).await;
+            return self
+                .cached_remote_authorization(&key, &request.permission, false)
+                .await;
         };
         match self.resolve_domains(domains).await?.0 {
             BundleResolution::Authorized => Ok(PermissionAuthorizationStatus::Authorized),
@@ -569,7 +575,7 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         let mut fallback = if blessed || self.trusted_product {
             PermissionAuthorizationStatus::Authorized
         } else {
-            self.default_remote_status()
+            PermissionAuthorizationStatus::NotDetermined
         };
         for candidate in remote_domain_candidates(domain) {
             let key = CoreStorageKey::remote_domain_authorization(self.product_id(), &candidate);
@@ -620,16 +626,24 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
     async fn cached_remote_authorization(
         &self,
         key: &CoreStorageKey,
+        permission: &RemotePermission,
         consume: bool,
     ) -> Result<PermissionAuthorizationStatus, GenericError> {
         match self.cached_authorization(key, consume).await? {
-            PermissionAuthorizationStatus::NotDetermined => Ok(self.default_remote_status()),
+            PermissionAuthorizationStatus::NotDetermined => {
+                Ok(self.default_remote_status(permission))
+            }
             decided => Ok(decided),
         }
     }
 
-    fn default_remote_status(&self) -> PermissionAuthorizationStatus {
-        if self.trusted_product {
+    /// Trusted products hold remote permissions by default, except validator
+    /// custody, which always needs the user's own decision.
+    fn default_remote_status(
+        &self,
+        permission: &RemotePermission,
+    ) -> PermissionAuthorizationStatus {
+        if self.trusted_product && !matches!(permission, RemotePermission::Validator { .. }) {
             PermissionAuthorizationStatus::Authorized
         } else {
             PermissionAuthorizationStatus::NotDetermined
@@ -1341,8 +1355,11 @@ impl<'a, S: CoreStorage + ?Sized, P: Permissions + ?Sized> PermissionsService<'a
         let revision = scope.revision();
         let Some(domains) = requested_domains(&request).map(<[String]>::to_vec) else {
             let key = CoreStorageKey::remote_permission_authorization(self.product_id(), &request);
-            match self.cached_remote_authorization(&key, consume).await? {
-				PermissionAuthorizationStatus::NotDetermined => {},
+            match self
+                .cached_remote_authorization(&key, &request.permission, consume)
+                .await?
+            {
+                PermissionAuthorizationStatus::NotDetermined => {}
                 decided => return Ok(decided),
             }
             // See `check_or_prompt_device`: persist only a genuine user decision;
@@ -2751,6 +2768,55 @@ mod tests {
     }
 
     #[test]
+    fn first_party_remote_trust_never_grants_validator_custody() {
+        for (allowed, expected) in [
+            (false, PermissionAuthorizationStatus::Denied),
+            (true, PermissionAuthorizationStatus::Authorized),
+        ] {
+            let storage = MemStorage::default();
+            let prompt = ScriptedPrompt::new(vec![], vec![allowed]);
+            let service = trusted_service(&storage, &prompt);
+            let request = remote(RemotePermission::Validator {
+                genesis: [1; 32],
+                account: [2; 32],
+                execution: "7".into(),
+            });
+            assert_eq!(
+                futures::executor::block_on(service.peek_remote(&request)).unwrap(),
+                PermissionAuthorizationStatus::NotDetermined,
+            );
+            assert_eq!(
+                futures::executor::block_on(service.check_or_prompt_remote(request.clone()))
+                    .unwrap(),
+                expected,
+            );
+            assert_eq!(prompt.remote_calls.load(Ordering::SeqCst), 1);
+            for distinct in [
+                remote(RemotePermission::Validator {
+                    genesis: [3; 32],
+                    account: [2; 32],
+                    execution: "7".into(),
+                }),
+                remote(RemotePermission::Validator {
+                    genesis: [1; 32],
+                    account: [3; 32],
+                    execution: "7".into(),
+                }),
+                remote(RemotePermission::Validator {
+                    genesis: [1; 32],
+                    account: [2; 32],
+                    execution: "8".into(),
+                }),
+            ] {
+                assert_eq!(
+                    futures::executor::block_on(service.peek_remote(&distinct)).unwrap(),
+                    PermissionAuthorizationStatus::NotDetermined,
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_trusted_product_is_authorized_for_any_domain() {
         let storage = MemStorage::default();
         let prompt = ScriptedPrompt::new(vec![], vec![]);
@@ -3264,7 +3330,7 @@ mod tests {
         assert_eq!(
             platform.chat_authority_reviews.lock().as_slice(),
             &[ChatAuthorityReview {
-                product_id: "chat.paseo".to_string(),
+                product_id: "chat.paseo".to_string()
             }]
         );
         assert_eq!(platform.identity_disclosure_calls.load(Ordering::SeqCst), 0);
@@ -3363,7 +3429,7 @@ mod tests {
                     CallingReview {
                         product_id: "peopl.dot".to_string(),
                         network,
-                        account,
+                        account
                     },
                     CallingReview {
                         product_id: "peopl.dot".to_string(),
