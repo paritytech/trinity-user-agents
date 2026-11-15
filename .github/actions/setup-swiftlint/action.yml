@@ -3,7 +3,8 @@ description: >-
   Puts one SwiftLint release first on PATH for the rest of the job, so the
   app's "Run Swiftlint" build phase lints with the same version on every
   runner fleet and the warning baseline holds on all of them. On Linux it
-  installs the same release's static binary.
+  installs the same release's Linux binary, which loads SourceKit from the
+  runner's Swift toolchain.
 
 # The build phase runs whatever swiftlint it finds and only installs from
 # Homebrew when there is none. GitHub's images have none, so they install the
@@ -51,10 +52,22 @@ runs:
         echo "${SHA256}  ${dir}/${ASSET}" | shasum -a 256 -c -
         unzip -q -o "${dir}/${ASSET}" -d "$dir"
         rm "${dir}/${ASSET}"
-        # The Linux archive carries a dynamic and a static build. The static
-        # one needs no Swift runtime on the runner.
-        if [ -f "${dir}/swiftlint-static" ]; then
-          mv "${dir}/swiftlint-static" "${dir}/swiftlint"
+        # The Linux archive carries a static build too, which cannot load
+        # SourceKit and so skips every rule that needs it. The dynamic build
+        # loads it from the runner's Swift toolchain.
+        if [ "$RUNNER_OS" = Linux ]; then
+          rm -f "${dir}/swiftlint-static"
+          swift_bin="$(command -v swift || true)"
+          if [ -z "$swift_bin" ]; then
+            echo "::error::No Swift toolchain on PATH to load SourceKit from"
+            exit 1
+          fi
+          lib="$(dirname "$(dirname "$(readlink -f "$swift_bin")")")/lib"
+          if [ ! -f "${lib}/libsourcekitdInProc.so" ]; then
+            echo "::error::No libsourcekitdInProc.so in ${lib}"
+            exit 1
+          fi
+          echo "LINUX_SOURCEKIT_LIB_PATH=${lib}" >> "$GITHUB_ENV"
         fi
         actual="$("${dir}/swiftlint" version)"
         if [ "$actual" != "$VERSION" ]; then

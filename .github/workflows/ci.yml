@@ -500,7 +500,9 @@ jobs:
   # rule together, such as a file's length, and the merge queue does not build
   # the app. This lints the change and its base on ubuntu and fails on any
   # violation the change adds, in the queue on the combined result and on a
-  # pull request as an early signal.
+  # pull request as an early signal. It compares against the base rather than
+  # the committed baseline, so a violation already on main fails neither this
+  # job nor the pull requests that do not touch it.
   ios-lint:
     name: iOS SwiftLint
     needs: changes
@@ -519,8 +521,8 @@ jobs:
         uses: ./.github/actions/setup-swiftlint
 
       # On a pull request the checkout is the merge commit, so HEAD^1 is the
-      # base. In the merge queue the base is the main commit the group was
-      # built on.
+      # base. In the merge queue the base is the commit this entry was built
+      # on, which already holds every entry queued ahead of it.
       - name: Lint the change and its base
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -534,12 +536,31 @@ jobs:
             base="$(git rev-parse HEAD^1)"
           fi
           git worktree add --detach "${RUNNER_TEMP}/base" "$base"
-          (cd "${RUNNER_TEMP}/base/hosts/ios" && swiftlint lint --quiet --reporter json > "${RUNNER_TEMP}/base.json")
-          (cd hosts/ios && swiftlint lint --quiet --reporter json > "${RUNNER_TEMP}/head.json")
+
+          # Exit 2 means an error severity violation, which the comparison
+          # reports like any other. A skipped SourceKit rule would make this
+          # job disagree with the app build, so it fails instead.
+          lint() {
+            local status=0
+            (cd "$1" && swiftlint lint --quiet --reporter json) > "$2" 2> "$2.log" || status=$?
+            cat "$2.log" >&2
+            if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
+              echo "::error::SwiftLint exited with ${status}"
+              exit 1
+            fi
+            if grep -q "requires SourceKit" "$2.log"; then
+              echo "::error::SwiftLint skipped rules that need SourceKit"
+              exit 1
+            fi
+          }
+          lint "${RUNNER_TEMP}/base/hosts/ios" "${RUNNER_TEMP}/base.json"
+          lint hosts/ios "${RUNNER_TEMP}/head.json"
+
+          git diff -M --name-status --diff-filter=R "$base" HEAD -- hosts/ios > "${RUNNER_TEMP}/renames.tsv"
           python3 scripts/swiftlint-diff.py \
             --base "${RUNNER_TEMP}/base.json" --base-root "${RUNNER_TEMP}/base/hosts/ios" \
             --head "${RUNNER_TEMP}/head.json" --head-root hosts/ios \
-            --annotate-prefix hosts/ios
+            --renames "${RUNNER_TEMP}/renames.tsv" --tree hosts/ios
 
   # The app tree vendored at hosts/android consumes the core in this repository
   # rather than a published package, so a core change that breaks it fails here
