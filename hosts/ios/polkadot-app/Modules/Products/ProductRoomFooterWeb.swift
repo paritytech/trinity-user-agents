@@ -191,7 +191,7 @@ final class ProductRoomFooterWebContent {
                     entryRelativePath: ProductBundle.indexHTML,
                     productFileProvider: DotNsFileProvider(contentURL: content.archive.localURL)
                 )
-                await proxy.setHandler(handler)
+                proxy.setHandler(handler)
                 logger
                     .debug(
                         "[truapi.product] web footer of \(productId.rawValue) serves \(content.archive.localURL.path)"
