@@ -1,5 +1,7 @@
 //! Fixtures shared by the coinage layer's tests.
 
+pub mod planning;
+
 use core::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 

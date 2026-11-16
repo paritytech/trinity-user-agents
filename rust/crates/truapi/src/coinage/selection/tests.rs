@@ -4,10 +4,13 @@ use futures::executor::block_on;
 use super::*;
 use crate::{
 	coinage::{
-		ChainConfig, PrivacyPolicy,
+		ChainConfig, PrivacyPolicy, RecycleAge,
 		ledger::{AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, allocate, mint_installation, observe, snapshot},
 		params::validate,
-		testing::{chain_config, chain_params, instance_record, people_metadata},
+		testing::{
+			TestWallet, chain_config, chain_params, instance_record, people_metadata,
+			planning::{aged_coin, in_ring},
+		},
 	},
 	installation::InstallationId,
 	store::{Db, open_memory_core_db},
@@ -180,4 +183,161 @@ fn outputs_sum_to_the_request_on_generated_purses() {
 			}
 		}
 	}
+}
+
+fn exponents(raw: &[u8]) -> Vec<Exponent> {
+	raw.iter().map(|exponent| Exponent::new(*exponent).unwrap()).collect()
+}
+
+fn spend(inputs: Vec<Asset>, splits: Vec<(Asset, Vec<Exponent>)>, outputs: &[u8]) -> Selection {
+	Selection { purse: PurseId::MAIN, inputs, splits, outputs: exponents(outputs), depends_on: Vec::new() }
+}
+
+#[test]
+fn a_single_larger_coin_is_split_into_the_payment_and_its_change() {
+	let db = wallet();
+	let eight = coin(&db, 3);
+	let selection = select_on(&db, request(Want::Amount(5)), &chain_params()).unwrap();
+	assert_eq!(selection, spend(vec![eight], vec![(eight, exponents(&[0, 0, 1, 2]))], &[2, 0]));
+}
+
+#[test]
+fn coins_that_fit_are_spent_whole_and_one_coin_is_split_for_the_rest() {
+	let db = wallet();
+	let eight = coin(&db, 3);
+	let four = coin(&db, 2);
+	coin(&db, 2);
+	let selection = select_on(&db, request(Want::Amount(9)), &chain_params()).unwrap();
+	assert_eq!(selection, spend(vec![four, eight], vec![(four, exponents(&[0, 0, 1]))], &[3, 0]));
+}
+
+#[test]
+fn a_split_coin_delivers_the_amount_and_keeps_the_rest_as_change() {
+	let db = wallet();
+	let four = coin(&db, 2);
+	let selection = select_on(&db, request(Want::Amount(3)), &chain_params()).unwrap();
+	assert_eq!(selection, spend(vec![four], vec![(four, exponents(&[0, 0, 1]))], &[1, 0]), "3 delivered, 1 kept");
+}
+
+#[test]
+fn coins_are_spent_whole_and_one_entry_is_unloaded_for_the_rest() {
+	let db = wallet();
+	let four = coin(&db, 2);
+	let first = entry(&db, 1, 0);
+	entry(&db, 1, 1);
+	let selection = select_on(&db, request(Want::Amount(5)), &chain_params()).unwrap();
+	assert_eq!(selection, spend(vec![four, first], Vec::new(), &[2, 0]), "one unload, one token, change of 1");
+}
+
+#[test]
+fn one_entry_of_a_shared_ring_is_unloaded_for_the_rest() {
+	let db = wallet();
+	let four = coin(&db, 2);
+	let first = entry(&db, 1, 0);
+	entry(&db, 1, 0);
+	let selection = select_on(&db, request(Want::Amount(5)), &chain_params()).unwrap();
+	assert_eq!(selection, spend(vec![four, first], Vec::new(), &[2, 0]));
+}
+
+#[test]
+fn the_first_entry_is_unloaded_when_either_alone_covers_the_rest() {
+	let db = wallet();
+	let four = coin(&db, 2);
+	let first = entry(&db, 1, 1);
+	entry(&db, 1, 0);
+	let selection = select_on(&db, request(Want::Amount(5)), &chain_params()).unwrap();
+	assert_eq!(selection.inputs, [four, first], "the tie is broken by the asset, not by the ring");
+}
+
+#[test]
+fn a_coin_past_the_age_cutoff_is_ignored_and_the_rest_comes_from_an_entry() {
+	let db = wallet();
+	hold(&db, AssetKind::Coin, 2, aged_coin(2, 14));
+	let two = coin(&db, 1);
+	let four = entry(&db, 2, 0);
+	let selection = select_on(&db, request(Want::Amount(6)), &chain_params()).unwrap();
+	assert_eq!(selection, spend(vec![two, four], Vec::new(), &[1, 2]));
+}
+
+#[test]
+fn a_coin_past_the_age_cutoff_does_not_count_towards_the_funds() {
+	let db = wallet();
+	hold(&db, AssetKind::Coin, 2, aged_coin(2, 14));
+	coin(&db, 1);
+	assert_eq!(select_on(&db, request(Want::Amount(6)), &chain_params()), Err(SelectError::InsufficientFunds { available: 2 }));
+}
+
+#[test]
+fn only_as_many_entries_of_a_ring_are_unloaded_as_cover_the_amount() {
+	let db = wallet();
+	let first = entry(&db, 1, 0);
+	entry(&db, 1, 0);
+	let selection = select_on(&db, request(Want::Amount(1)), &chain_params()).unwrap();
+	assert_eq!(selection, spend(vec![first], Vec::new(), &[0]));
+}
+
+#[test]
+fn the_largest_entries_are_unloaded_first() {
+	let db = wallet();
+	entry(&db, 1, 0);
+	let four = entry(&db, 2, 1);
+	let eight = entry(&db, 3, 2);
+	let selection = select_on(&db, request(Want::Amount(9)), &chain_params()).unwrap();
+	assert_eq!(selection, spend(vec![eight, four], Vec::new(), &[3, 0]));
+}
+
+#[test]
+fn an_amount_far_above_the_purse_fails_as_insufficient_before_any_strategy() {
+	let db = wallet();
+	coin(&db, 2);
+	assert_eq!(
+		select_on(&db, request(Want::Amount(u64::MAX)), &chain_params()),
+		Err(SelectError::InsufficientFunds { available: 4 })
+	);
+}
+
+#[test]
+fn a_plain_spend_takes_only_what_is_spendable_outright() {
+	let policy = PrivacyPolicy { recycle_at: RecycleAge::Age(5), max_unavailable_share: 100, ..PrivacyPolicy::fastest() };
+	let wallet = TestWallet::new(policy);
+	let spendable = wallet.hold(PurseId::MAIN, AssetKind::Coin, 0, aged_coin(0, 0));
+	wallet.hold(PurseId::MAIN, AssetKind::Coin, 1, aged_coin(1, 5));
+	wallet.hold(PurseId::MAIN, AssetKind::Coin, 2, aged_coin(2, 14));
+	let select_now = |want| select(&wallet.view(), request(want), NOW, &chain_params());
+	assert_eq!(select_now(Want::Amount(3)), Err(SelectError::InsufficientFunds { available: 1 }));
+	assert_eq!(select_now(Want::Amount(1)).unwrap().inputs, [spendable]);
+}
+
+#[test]
+fn a_coin_past_the_age_cutoff_is_never_selectable_even_with_held_back_value() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	wallet.hold(PurseId::MAIN, AssetKind::Coin, 3, aged_coin(3, 14));
+	for held_back in [false, true] {
+		let request = SelectRequest { held_back, ..request(Want::Amount(8)) };
+		assert_eq!(
+			select(&wallet.view(), request, NOW, &chain_params()),
+			Err(SelectError::InsufficientFunds { available: 0 }),
+			"held back: {held_back}"
+		);
+	}
+}
+
+#[test]
+fn held_back_value_adds_entries_still_gaining_privacy() {
+	let wallet = TestWallet::new(PrivacyPolicy::balanced());
+	let ready = wallet.hold(PurseId::MAIN, AssetKind::Entry, 3, in_ring(0, 767));
+	let gaining = wallet.hold(PurseId::MAIN, AssetKind::Entry, 2, in_ring(1, 20));
+	let plain = request(Want::Amount(12));
+	assert_eq!(select(&wallet.view(), plain, NOW, &chain_params()), Err(SelectError::InsufficientFunds { available: 8 }));
+	let held_back = SelectRequest { held_back: true, ..plain };
+	assert_eq!(select(&wallet.view(), held_back, NOW, &chain_params()).unwrap().inputs, [ready, gaining]);
+}
+
+#[test]
+fn entries_already_private_are_unloaded_before_larger_ones_still_gaining_privacy() {
+	let wallet = TestWallet::new(PrivacyPolicy::balanced());
+	wallet.hold(PurseId::MAIN, AssetKind::Entry, 3, in_ring(1, 20));
+	let ready = wallet.hold(PurseId::MAIN, AssetKind::Entry, 2, in_ring(0, 767));
+	let held_back = SelectRequest { held_back: true, ..request(Want::Amount(4)) };
+	assert_eq!(select(&wallet.view(), held_back, NOW, &chain_params()).unwrap().inputs, [ready]);
 }
