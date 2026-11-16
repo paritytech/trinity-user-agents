@@ -24,7 +24,10 @@ rust/crates/
                          Asset Hub) and `nft_purse` (the NFT purses RFC over them)
                          modules keep NFT purses in the same database, transfer items
                          as scheduled durable transactions, and receive cheques over
-                         the statement store; its `public_profile` domain resolves and caches
+                         the statement store; its `native_funding` module is the core's
+                         own funding provider for top-ups on the stack's network, which
+                         converts a deposit on a seed-derived session key with XCM and
+                         credits it through the host's top-up; its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
                          from Bulletin by CID and checks them
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
