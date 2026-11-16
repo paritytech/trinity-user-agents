@@ -852,6 +852,7 @@ fn slot_key(slot: &CoreStorageKey) -> String {
 		CoreStorageKey::LastProcessedPairingStatement => {
 			"core:last-processed-pairing-statement".to_string()
 		},
+		CoreStorageKey::UnscopedEntriesOwner => "core:unscoped-entries-owner".to_string(),
 	}
 }
 

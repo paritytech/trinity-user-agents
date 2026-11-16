@@ -391,6 +391,15 @@ impl PlatformCoreStorage for MemoryCoreStorage {
 		Ok(self.0.lock().expect("storage mutex poisoned").get(&slot.encode()).cloned())
 	}
 
+	async fn write_unscoped_core_storage(
+		&self,
+		slot: CoreStorageKey,
+		value: Vec<u8>,
+	) -> Result<(), v01::GenericError> {
+		self.store_unscoped(slot, value);
+		Ok(())
+	}
+
 	async fn clear_unscoped_core_storage(
 		&self,
 		slot: CoreStorageKey,

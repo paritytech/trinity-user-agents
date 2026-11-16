@@ -82,6 +82,7 @@ export interface RawCallbacks {
   readUnscopedCoreStorage(
     slot: Uint8Array,
   ): Promise<Uint8Array | null | undefined>;
+  writeUnscopedCoreStorage(slot: Uint8Array, value: Uint8Array): Promise<void>;
   clearUnscopedCoreStorage(slot: Uint8Array): Promise<void>;
   transactionExtensionVersions(): Promise<Uint8Array>;
   featureSupported(request: Uint8Array): Promise<Uint8Array>;
@@ -207,6 +208,11 @@ export function createWasmRawCallbacks(
     readUnscopedCoreStorage: async (slot) =>
       await callbacks.coreStorage.readUnscopedCoreStorage(
         CoreStorageKey.dec(slot),
+      ),
+    writeUnscopedCoreStorage: async (slot, value) =>
+      await callbacks.coreStorage.writeUnscopedCoreStorage(
+        CoreStorageKey.dec(slot),
+        value,
       ),
     clearUnscopedCoreStorage: async (slot) =>
       await callbacks.coreStorage.clearUnscopedCoreStorage(

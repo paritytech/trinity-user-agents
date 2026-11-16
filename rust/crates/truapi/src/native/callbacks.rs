@@ -106,8 +106,9 @@ pub trait HostCallbacks: Send + Sync {
 	/// stack id.
 	async fn core_storage_read(&self, key: Vec<u8>) -> Result<Option<Vec<u8>>, HostRejection>;
 
-	/// Persist a core-owned host-private storage slot. `key` is a
-	/// SCALE-encoded [`StackStorageKey`](crate::platform::StackStorageKey).
+	/// Persist a core-owned host-private storage slot. `key` is encoded as
+	/// for [`Self::core_storage_read`]; the one slot the core writes alone is
+	/// [`CoreStorageKey::UnscopedEntriesOwner`].
 	async fn core_storage_write(&self, key: Vec<u8>, value: Vec<u8>) -> Result<(), HostRejection>;
 
 	/// Clear a core-owned host-private storage slot. `key` is encoded as for

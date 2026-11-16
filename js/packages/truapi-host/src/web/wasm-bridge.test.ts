@@ -3,8 +3,8 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 
 import {
+  CoreStorageKey,
   StackStorageKey,
-  type CoreStorageKey,
 } from "../generated/host-callbacks.js";
 import { createMockHost, mockRuntimeConfig } from "./create-mock-host.js";
 import { bundledTestStack } from "../test-support.js";
@@ -88,6 +88,15 @@ suite("real WASM core ↔ createMockHost bridge", () => {
         productLabel: "caller",
       },
     ]);
+    // A host sweeping a product's state also finds what it stored under the
+    // slot alone, before keys included a stack.
+    expect(
+      keys.map((slot) => describeCoreStorageKey(CoreStorageKey.enc(slot))),
+    ).toEqual([
+      { kind: "ProductManifest", productLabel: "peopl" },
+      { kind: "AutoSigningKey", productId: "peopl.dot" },
+      { kind: "PermissionAuthorization", productLabel: "caller" },
+    ]);
   });
 
   it("the core invokes createMockHost callbacks across the JS↔SCALE↔WASM boundary", async () => {
@@ -120,7 +129,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     // it per-core outside the generated adapter, so the harness does too.
     runtime.productRuntime({ productId }, { emitFrame: () => {} });
     // The real core reads its auth session on startup, which crosses the bridge
-    // into the mock's readCoreStorage with a SCALE-decoded CoreStorageKey.
+    // into the mock's readCoreStorage with a SCALE-decoded StackStorageKey.
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     expect(invoked.some((c) => c.startsWith("readCoreStorage:"))).toBe(true);

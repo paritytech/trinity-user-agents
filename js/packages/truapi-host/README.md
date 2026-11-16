@@ -50,21 +50,20 @@ a `generation`, the network, the TLD and each chain's genesis hash. Only the
 `wasm/testing` bundle reads it. `mockRuntimeConfig` fills it with the
 `MOCK_GENESIS` chains, and the Playwright fixture builds it from `networks`.
 
-The core keeps what it stores apart per stack. Every `coreStorage` callback
-takes a `StackStorageKey`, `{ stack, slot }`: the slot and the identity of the
-stack it belongs to, which is the key in the stack's pointer, or a test
-stack's `id`. Store each value under the whole key. A fork and its source then
-share nothing, although their genesis hashes are equal. A host that keeps a
-slot under a fixed key of its own, such as a session shared between origins,
-has to put `stack` in that key as well.
+The `coreStorage` callbacks take a `StackStorageKey`. Store each value under
+the whole key, such as `encodeCoreStorageKey(key)`. A host that keeps a slot
+under a fixed key of its own, such as a session shared between origins, has to
+put `stack` in that key as well.
 
 A host that stored core state before keys had a stack implements
-`readUnscopedCoreStorage(slot)` and `clearUnscopedCoreStorage(slot)`: return
-and remove the value it stored for that `CoreStorageKey`. On a miss the core
-reads it, writes it under the stack's key and clears it, so the session, the
-device key and the permissions survive the update. The first stack to read a
-slot takes its value. `createHeadlessHostCallbacks` treats a host without the
-two as holding nothing.
+`readUnscopedCoreStorage`, `writeUnscopedCoreStorage` and
+`clearUnscopedCoreStorage`. They take the slot alone, and the key the host
+stored a slot under before is `CoreStorageKey.enc(slot)`. The first stack to
+run after the update takes those values and records that through
+`writeUnscopedCoreStorage`; other stacks never see them.
+`describeCoreStorageKey` also describes such a key, without a `stack`, so a
+sweep of a product's state finds both. `createHeadlessHostCallbacks` treats a
+host without the three as holding nothing.
 
 ## Bundler requirements
 

@@ -97,6 +97,8 @@ export function createHeadlessHostCallbacks(
       // A host that kept nothing under a slot alone has no value to hand over.
       readUnscopedCoreStorage: async (slot) =>
         host.coreStorage.readUnscopedCoreStorage?.(slot),
+      writeUnscopedCoreStorage: async (slot, value) =>
+        host.coreStorage.writeUnscopedCoreStorage?.(slot, value),
       clearUnscopedCoreStorage: async (slot) =>
         host.coreStorage.clearUnscopedCoreStorage?.(slot),
     },

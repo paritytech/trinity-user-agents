@@ -14,12 +14,15 @@ mod storage;
 
 pub use storage::StackStorage;
 
+use std::sync::Arc;
+
+use futures::lock::Mutex;
 use trinity_stack::{Chain, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
-use crate::{dotns_name::DOTNS_TLDS, platform::CoreStorage};
+use crate::dotns_name::DOTNS_TLDS;
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -57,13 +60,28 @@ const RESERVED_TLD: &str = "dot";
 
 /// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
 /// and the genesis hash of each chain role the core uses.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Two stacks are equal when they name the same stack and chains. What a run
+/// learned about the host's storage is not part of that.
+#[derive(Debug, Clone)]
 pub struct Stack {
 	identity: StackIdentity,
 	network: String,
 	tld: String,
 	chains: StackChains,
+	/// Whether this stack holds the values the host stored under a slot
+	/// alone, once [`StackStorage`] has asked. Clones share it.
+	holds_unscoped: Arc<Mutex<Option<bool>>>,
 }
+
+impl PartialEq for Stack {
+	fn eq(&self, other: &Self) -> bool {
+		(&self.identity, &self.network, &self.tld, &self.chains)
+			== (&other.identity, &other.network, &other.tld, &other.chains)
+	}
+}
+
+impl Eq for Stack {}
 
 /// A stack's id and the generation of its chains.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,7 +234,7 @@ impl Stack {
 			}
 			refuse_reserved_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
 		}
-		Ok(Self { identity, network, tld, chains })
+		Ok(Self { identity, network, tld, chains, holds_unscoped: Arc::default() })
 	}
 
 	/// The stack's id. Every storage key includes it. See
@@ -229,11 +247,6 @@ impl Stack {
 	/// generation is stale. See [`StackIdentity::generation`].
 	pub fn generation(&self) -> &str {
 		&self.identity.generation
-	}
-
-	/// The core's storage for this stack over the host's `storage`.
-	pub fn storage<'a, S: CoreStorage + ?Sized>(&'a self, storage: &'a S) -> StackStorage<'a, S> {
-		StackStorage::new(storage, &self.identity.id)
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.

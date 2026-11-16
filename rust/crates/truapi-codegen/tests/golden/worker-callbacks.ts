@@ -22,6 +22,7 @@ export const CALLBACK_NAMES = [
   "writeCoreStorage",
   "clearCoreStorage",
   "readUnscopedCoreStorage",
+  "writeUnscopedCoreStorage",
   "clearUnscopedCoreStorage",
   "transactionExtensionVersions",
   "featureSupported",
@@ -79,6 +80,7 @@ function rawCallbacks(
     | "writeCoreStorage"
     | "clearCoreStorage"
     | "readUnscopedCoreStorage"
+    | "writeUnscopedCoreStorage"
     | "clearUnscopedCoreStorage"
     | "transactionExtensionVersions"
     | "featureSupported"
@@ -115,6 +117,11 @@ function rawCallbacks(
       bridge.callbackRequest("readUnscopedCoreStorage", [slot]) as ReturnType<
         Required<RawCallbacks>["readUnscopedCoreStorage"]
       >,
+    writeUnscopedCoreStorage: (slot, value) =>
+      bridge.callbackRequest("writeUnscopedCoreStorage", [
+        slot,
+        value,
+      ]) as ReturnType<Required<RawCallbacks>["writeUnscopedCoreStorage"]>,
     clearUnscopedCoreStorage: (slot) =>
       bridge.callbackRequest("clearUnscopedCoreStorage", [slot]) as ReturnType<
         Required<RawCallbacks>["clearUnscopedCoreStorage"]

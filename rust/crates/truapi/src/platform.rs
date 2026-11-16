@@ -1204,6 +1204,13 @@ pub enum CoreStorageKey {
 		/// Bare label of the product whose App manifest was cached.
 		product_label: String,
 	},
+	/// Id of the stack that holds the values a host stored under a slot alone,
+	/// before keys included a stack id.
+	///
+	/// Kept under the slot alone itself, so every stack the host runs reads the
+	/// same entry. See [`StackStorage`].
+	#[codec(index = 17)]
+	UnscopedEntriesOwner,
 }
 
 /// The key a host stores core-owned state under: a [`CoreStorageKey`] slot
@@ -1259,15 +1266,17 @@ impl From<PermissionAuthorizationRequest> for StoredPermissionRequest {
 	}
 }
 
-/// Stable metadata describing one strictly decoded [`StackStorageKey`].
+/// Stable metadata describing one strictly decoded core storage key: a
+/// [`StackStorageKey`], or a [`CoreStorageKey`] slot alone.
 ///
 /// `kind` is the Rust variant name of the slot and is part of the host
 /// embedding contract. `owner` distinguishes full product identities from
 /// shared manifest labels.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreStorageKeyDescription {
-	/// Identity of the stack the slot belongs to.
-	pub stack: String,
+	/// Identity of the stack the slot belongs to. `None` for a slot alone,
+	/// which a host stored before keys included a stack id.
+	pub stack: Option<String>,
 	/// Stable storage-key variant name.
 	pub kind: &'static str,
 	/// Product or manifest label that owns this slot.
@@ -1283,7 +1292,7 @@ pub enum CoreStorageKeyOwner {
 	ProductLabel(String),
 }
 
-/// Failure to decode exactly one [`StackStorageKey`].
+/// Failure to decode exactly one core storage key.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 pub enum CoreStorageKeyDescriptionError {
 	/// The bytes are not a valid SCALE-encoded key.
@@ -1294,17 +1303,19 @@ pub enum CoreStorageKeyDescriptionError {
 	TrailingBytes,
 }
 
-/// Strictly decode one SCALE-encoded [`StackStorageKey`] and return stable
+/// Strictly decode one SCALE-encoded core storage key and return stable
 /// metadata suitable for choosing host-private storage policy.
+///
+/// The key is a [`StackStorageKey`], or a [`CoreStorageKey`] alone as a host
+/// stored it before keys included a stack id. Bytes that decode as a
+/// [`StackStorageKey`] are one; the errors are those of that decoding.
 pub fn describe_core_storage_key(
 	encoded: &[u8],
 ) -> Result<CoreStorageKeyDescription, CoreStorageKeyDescriptionError> {
-	let mut input = encoded;
-	let StackStorageKey { stack, slot } = StackStorageKey::decode(&mut input)
-		.map_err(|_| CoreStorageKeyDescriptionError::InvalidEncoding)?;
-	if !input.is_empty() {
-		return Err(CoreStorageKeyDescriptionError::TrailingBytes);
-	}
+	let (stack, slot) = match decode_exactly::<StackStorageKey>(encoded) {
+		Ok(StackStorageKey { stack, slot }) => (Some(stack), slot),
+		Err(error) => (None, decode_exactly::<CoreStorageKey>(encoded).map_err(|_| error)?),
+	};
 	let (kind, owner) = match slot {
 		CoreStorageKey::AuthSession => ("AuthSession", None),
 		CoreStorageKey::PairingDeviceIdentity => ("PairingDeviceIdentity", None),
@@ -1339,8 +1350,19 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::AppManifest { product_label } => {
 			("AppManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
+		CoreStorageKey::UnscopedEntriesOwner => ("UnscopedEntriesOwner", None),
 	};
 	Ok(CoreStorageKeyDescription { stack, kind, owner })
+}
+
+fn decode_exactly<T: Decode>(encoded: &[u8]) -> Result<T, CoreStorageKeyDescriptionError> {
+	let mut input = encoded;
+	let decoded =
+		T::decode(&mut input).map_err(|_| CoreStorageKeyDescriptionError::InvalidEncoding)?;
+	if !input.is_empty() {
+		return Err(CoreStorageKeyDescriptionError::TrailingBytes);
+	}
+	Ok(decoded)
 }
 
 impl CoreStorageKey {
@@ -1546,7 +1568,9 @@ mod tests;
 /// Host-private persistence for core-owned state.
 ///
 /// Every key includes the id of the stack it belongs to, and the core only
-/// uses keys of the stack it runs. Stacks therefore do not share entries.
+/// uses keys of the stack it runs. Stacks therefore do not share entries. The
+/// `unscoped` methods reach the entries a host stored before keys included a
+/// stack id.
 ///
 /// Clearing product-indexed slots is the host's job. The core drops the ones
 /// it is holding when a session ends, but a product it never opened this run
@@ -1582,13 +1606,26 @@ pub trait CoreStorage: Send + Sync {
 	///
 	/// A host that stored core state before keys included a stack id serves
 	/// those entries here, by the key it stored them under: the SCALE-encoded
-	/// slot. The core moves each one under the stack it runs the first time it
-	/// reads the slot. A host with no such entries has none to return.
+	/// slot. Only one stack reads them, see [`StackStorage`]. A host with no
+	/// such entries has none to return.
 	async fn read_unscoped_core_storage(
 		&self,
 		_slot: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, GenericError> {
 		Ok(None)
+	}
+
+	/// Write `value` under `slot` alone, with no stack id.
+	///
+	/// The core writes only [`CoreStorageKey::UnscopedEntriesOwner`] here. A
+	/// host that serves [`Self::read_unscoped_core_storage`] has to keep it, or
+	/// no stack reads the entries.
+	async fn write_unscoped_core_storage(
+		&self,
+		_slot: CoreStorageKey,
+		_value: Vec<u8>,
+	) -> Result<(), GenericError> {
+		Ok(())
 	}
 
 	/// Clear the value the host holds under `slot` alone, with no stack id.

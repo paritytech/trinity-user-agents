@@ -63,7 +63,9 @@ pub struct PlatformMethod {
 /// Method parameter (name + type).
 #[derive(Debug, PartialEq, Eq)]
 pub struct PlatformParam {
-	/// Parameter name as written in the trait method signature.
+	/// Parameter name as written in the trait method signature, less the
+	/// leading `_` a default body puts on a parameter it does not use. Every
+	/// generated implementation uses it.
 	pub name: String,
 	/// Parameter type expressed as a [`TypeRef`]. References are resolved to
 	/// the referent; [`Self::borrowed`] records that the signature borrowed it.
@@ -480,7 +482,7 @@ fn extract_method(item: &Item, names: &NameContext) -> Result<Option<PlatformMet
 				format!("Method `{name}` input `{param_name}` has an unsupported type")
 			})?;
 			params.push(PlatformParam {
-				name: param_name,
+				name: param_name.trim_start_matches('_').to_string(),
 				type_ref,
 				borrowed: ty.get("borrowed_ref").is_some(),
 			});
