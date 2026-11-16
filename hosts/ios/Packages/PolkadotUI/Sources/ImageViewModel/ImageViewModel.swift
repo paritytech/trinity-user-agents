@@ -1,6 +1,6 @@
 import UIKit
 
-public struct ImageViewModelSettings {
+public struct ImageViewModelSettings: Equatable {
     public let targetSize: CGSize?
     public let cornerRadius: CGFloat?
     public let tintColor: UIColor?
