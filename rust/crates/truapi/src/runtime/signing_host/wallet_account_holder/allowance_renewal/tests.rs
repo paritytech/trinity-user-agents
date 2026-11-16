@@ -674,3 +674,24 @@ fn a_renewal_target_does_not_name_its_account_in_full() {
 
 	assert_eq!(written, r#"Account { account_id: abababab, label: "pairing peer" }"#);
 }
+
+/// A host that switched networks still holds the other network's entries. They
+/// are not the unresolvable targets a warning is for: one would be raised on
+/// every tick for as long as the host stays on this network.
+#[test]
+fn another_networks_target_is_skipped_without_a_warning() {
+	let keys = WalletKeys::new(vec![7; 32], "paseo".to_string());
+	let target = |product: &str| StatementRenewalTarget::ProductStatementAllowance {
+		product_id: ProductId::for_test(product),
+	};
+	let mut labels = Vec::new();
+
+	let warnings = crate::logging::testing::host_sink_lines(|| {
+		labels = resolve_targets(&keys, &[target("app.paseo"), target("app.testnet")])
+			.into_iter()
+			.map(|resolved| resolved.label)
+			.collect();
+	});
+
+	assert_eq!((labels, warnings), (vec!["product:app.paseo".to_string()], Vec::<String>::new()));
+}

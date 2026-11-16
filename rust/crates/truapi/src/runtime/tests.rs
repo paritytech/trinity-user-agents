@@ -4847,8 +4847,8 @@ fn a_call_naming_a_product_the_stack_does_not_serve_is_malformed() {
 			product: Some(ProductId::for_test(product)),
 			key: "k".to_string(),
 		});
-		// The key handle and the context are checked separately, so each names
-		// the unserved product while the other names the caller.
+		// A request naming both is served only when both are, so one row names
+		// the unserved product as the key handle and one as the context.
 		let alias = |key_handle: &v01::ProductAccountId, context: &str| {
 			truapi::versioned::account::HostAccountGetAliasRequest::V1(
 				v01::HostAccountGetAliasRequest {

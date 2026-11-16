@@ -63,7 +63,8 @@ impl SsoAccountHolderService {
 	///
 	/// A request whose review names a product the stack does not serve is
 	/// refused before the user is asked, since the wallet would derive no key
-	/// for it afterwards.
+	/// for it afterwards. A signing request is also served when it is built,
+	/// for the wallet; this check covers every request the paired host relays.
 	async fn confirmed<'a, T, F>(
 		&self,
 		invocation: AccountInvocation<'a>,

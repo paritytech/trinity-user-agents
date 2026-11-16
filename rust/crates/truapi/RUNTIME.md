@@ -412,9 +412,9 @@ and `CoreStorageKey::product_manifest` keys its manifest cache entry.
 
 Parsing checks syntax only: a TLD is any DNS label, because a wire frame or a
 stored record is decoded with no stack in hand. The stack decides which names
-are products. `Stack::require_served` accepts a localhost id and a name under the
-reserved `dot` TLD or the stack's own TLD, and nothing else. It is asked where
-a product enters the runtime:
+are products. A stack runs a localhost id and a name under the reserved `dot`
+TLD or its own TLD, and nothing else (`stack::serves`). That is checked where a
+product enters the runtime:
 
 - `ProductContext::served_by` builds the product a host asks the core to run,
   for the wasm, native and CLI bridges alike.

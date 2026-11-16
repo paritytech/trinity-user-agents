@@ -251,8 +251,8 @@ impl Stack {
 		&self.tld
 	}
 
-	/// Fails unless this stack runs `product_id`: a localhost development id,
-	/// or a name under Polkadot's reserved TLD or the stack's own.
+	/// `serves` as a check against this stack's TLD: fails with the product and
+	/// the TLD.
 	pub fn require_served(&self, product_id: &ProductId) -> Result<(), UnservedProduct> {
 		require_served(&self.tld, product_id)
 	}

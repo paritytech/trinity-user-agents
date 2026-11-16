@@ -1141,8 +1141,9 @@ a local descriptor file, signed or not, which suits a local network: its `rpc` a
 People, Asset Hub and Bulletin chains (first `rpc` and `genesisHash` of each
 role), its `dub` service as the identity backend (the `dub` URL with `/api/v1`
 appended), its `tld` and its `dotns.popController` replace the network's. A
-stack that lacks one of those roles, gives two of them one genesis hash, has no
-`dub` service or no `dotns.popController`, is unreachable or is past `expiresAt` is an error for
+stack that lacks one of those roles, gives two of them one genesis hash, has a
+`tld` that is not a lowercase DNS label, has no `dub` service or no
+`dotns.popController`, is unreachable or is past `expiresAt` is an error for
 every command. The CLI's own username reads go through that `popController` without
 looking it up on chain; the signing host's core still discovers its controller on
 chain. `get_chain_info` reports the descriptor's `network`. The product

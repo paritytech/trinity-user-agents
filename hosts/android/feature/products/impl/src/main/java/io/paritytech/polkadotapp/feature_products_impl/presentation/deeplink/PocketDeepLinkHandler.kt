@@ -11,6 +11,7 @@ import io.paritytech.polkadotapp.common.utils.flatMap
 import io.paritytech.polkadotapp.common.utils.runCancellableCatching
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.awaitAccountsInitialized
+import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
@@ -68,7 +69,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
 
     context(scope: ComputationalScope)
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> = withContext(dispatchers.io) {
-        dotNsTldProvider.getTld().flatMap { tld ->
+        claimedTld().flatMap { tld ->
             when (val deeplink = parser.parse(data.toString(), tld)) {
                 null -> Result.success(malformed(data))
                 PocketDeeplink.Collection -> openCollection()
@@ -78,6 +79,11 @@ internal class PocketDeepLinkHandler @Inject constructor(
             }
         }
     }
+
+    // The TLD `canHandle` claimed the link under. Reading it again from the People chain would hold an
+    // offline cold start's link on the network.
+    private suspend fun claimedTld(): Result<DotNsTld> =
+        dotNsTldProvider.currentTldOrNull()?.let { Result.success(it) } ?: dotNsTldProvider.getTld()
 
     private suspend fun openCollection(): Result<DeeplinkProcessingOutcome> = runCancellableCatching {
         accountRepository.awaitAccountsInitialized()

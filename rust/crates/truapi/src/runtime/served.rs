@@ -1,9 +1,7 @@
 //! Proof that the stack runs every product a value names.
 //!
 //! [`serve`] checks a value against the stack's TLD and wraps it in [`Served`].
-//! The account calls of `HostAccounts` and the signing requests the core
-//! builds hold their products as `Served`, so no key or signature is reached
-//! for a product the stack does not run.
+//! `RUNTIME.md` lists where the core takes a product as `Served`.
 
 use truapi::latest::{
 	HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
@@ -20,7 +18,8 @@ use crate::{
 /// A value that names only products the stack runs.
 ///
 /// Only [`serve`] builds one, so a function that takes a `Served` value is
-/// reached only after the check. It derefs to the value.
+/// reached only after the check. It derefs to the value. It does not record
+/// which stack checked it: a value is served and used within one runtime.
 #[derive(Clone)]
 pub struct Served<T>(T);
 

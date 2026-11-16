@@ -204,6 +204,10 @@ impl SigningHostConfig {
 
 impl ProductContext {
 	/// A product context for an app.
+	///
+	/// It does not check the stack: host administration acts on a product of any
+	/// network, such as clearing its data. A product the host asks the core to
+	/// run is built with [`Self::served_by`].
 	pub fn new(product_id: ProductId) -> Self {
 		Self::new_with_execution(product_id, ExecutableKind::App)
 	}

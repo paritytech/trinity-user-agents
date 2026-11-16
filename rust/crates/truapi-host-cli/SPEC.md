@@ -1717,8 +1717,9 @@ compared because the Polkadot comparison below contacts the reference's nodes.
 A published copy that changes none of them makes no notice print (below).
 
 A descriptor that lacks one of the three roles, gives two of them the same
-genesis hash (the host routes each role by its genesis), has the id `polkadot`, or has no
-`dub` service or no `dotns.popController` is an error for every command. The
+genesis hash (the host routes each role by its genesis), has a `tld` that is not a
+lowercase DNS label, has the id `polkadot`, or has no `dub` service or no
+`dotns.popController` is an error for every command. The
 CLI's own username reads (`register-name`, `identity-check`, `attest`) go
 through that controller without looking it up on chain; the signing host's
 core still discovers its controller on chain.
