@@ -218,8 +218,8 @@ fn a_bundled_stack_is_identified_by_its_key_and_its_descriptors_generation() {
 	);
 }
 
-/// The core keys stored state by the id and drops chain caches by the
-/// generation, so a stack that names neither cannot be told from another.
+/// An empty id or generation names no stack and no run of its chains, so
+/// either is refused.
 #[test]
 fn a_stack_without_an_id_or_a_generation_is_refused() {
 	let chains = StackChains {

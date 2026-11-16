@@ -210,7 +210,7 @@ fn write_atomically(path: &Path, contents: &[u8]) -> Result<()> {
 }
 
 async fn verify(stack: &str, key: Option<&str>) -> Result<()> {
-	let (pointer, bytes) = read_stack(stack, key).await?;
+	let (pointer, bytes, _) = read_stack(stack, key).await?;
 	let bytes = bytes.as_slice();
 	let accepted =
 		accept(&pointer, None, Fetched::Document(bytes), unix_now() as i64).map_err(refused)?;

@@ -3,8 +3,7 @@
 //!
 //! The core takes all of its chain configuration from the stack.
 //! [`Stack::bundled`] checks the descriptor against the key in the stack's
-//! link. The [`Stack`] it returns holds the network, the dotNS TLD and each
-//! chain's genesis hash, and answers `get_chain_info`.
+//! link and returns the [`Stack`] the core runs on.
 //!
 //! [`Stack::storage`] is the only way the core reaches
 //! [`CoreStorage`](crate::platform::CoreStorage).
@@ -54,8 +53,9 @@ const RESERVED_GENESIS_HASHES: [[u8; 32]; 4] = [
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
 
-/// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
-/// and the genesis hash of each chain role the core uses.
+/// The stack a host runs: its [`StackIdentity`], the network `get_chain_info`
+/// reports, the dotNS TLD, and the genesis hash of each chain role the core
+/// uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stack {
 	identity: StackIdentity,
@@ -67,11 +67,16 @@ pub struct Stack {
 /// A stack's id and the generation of its chains.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StackIdentity {
-	/// `trinity_stack::Pointer::stack_id` of the stack's pointer. A fork has
-	/// the same genesis hashes as its source and a different id.
+	/// An opaque, non-empty string that tells this stack apart from others,
+	/// including a fork with its source's genesis hashes.
+	///
+	/// [`Stack::bundled`] takes `trinity_stack::Pointer::stack_id` of the
+	/// pointer, the key in hex. The CLI takes the same for a link or a URL, and
+	/// `file:` and the canonical path for a local descriptor file. A test host
+	/// passes any string.
 	pub id: String,
 	/// The descriptor's `generation`, which changes whenever the stack
-	/// restarts its chains, as after a wipe.
+	/// restarts its chains, as after a wipe. Must not be empty.
 	pub generation: String,
 }
 
@@ -119,8 +124,7 @@ pub enum StackError {
 		/// The role with the all-zero hash.
 		chain: ChainIdentifier,
 	},
-	/// The stack's id or generation is empty. Stored state is told apart by
-	/// them.
+	/// The stack's id or generation is empty.
 	#[display("stack {field} is empty")]
 	EmptyIdentity {
 		/// `id` or `generation`.
@@ -187,7 +191,8 @@ impl Stack {
 	/// bundled descriptor, such as the CLI's.
 	///
 	/// Applies the same TLD and reserved-value rules as [`Self::bundled`], and
-	/// refuses an all-zero Relay or Asset Hub genesis hash.
+	/// refuses an empty id or generation and an all-zero Relay or Asset Hub
+	/// genesis hash.
 	pub fn new(
 		identity: StackIdentity,
 		network: String,
@@ -223,8 +228,7 @@ impl Stack {
 		&self.identity.id
 	}
 
-	/// The run of the stack's chains. What the core cached about the chains
-	/// under another generation is stale. See [`StackIdentity::generation`].
+	/// The run of the stack's chains. See [`StackIdentity::generation`].
 	pub fn generation(&self) -> &str {
 		&self.identity.generation
 	}
