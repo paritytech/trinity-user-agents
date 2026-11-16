@@ -161,9 +161,11 @@ private extension OutgoingTransferState.Status {
         switch self {
         case .sending:
             String(localized: .transferStatusSending)
-        case .sent:
+        case .sent,
+             .sentFinalized:
             String(localized: .transferStatusSent)
-        case .claimed:
+        case .claimed,
+             .claimedFinalized:
             String(localized: .transferStatusFinished)
         case .failed:
             String(localized: .transferStatusError)

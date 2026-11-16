@@ -88,8 +88,6 @@ final class AssetDetailsScreenViewController: UIViewController {
     }
 }
 
-extension AssetDetailsScreenViewController: TabBarRootStandIn {}
-
 extension AssetDetailsScreenViewController: PocketFlightScreen {
     var pocketItem: PocketItem {
         .balance
