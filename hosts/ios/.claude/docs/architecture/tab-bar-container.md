@@ -382,14 +382,6 @@ A fixed-height strip sits at the top of the container. It shows one ring per con
 
 A Presented product covers the container, so it draws its own strip with the same parts: the `StatusBarTitleButton` menu, built by the shared `SPAMenuElements.swift`, and the `ChainConnectionStatusBarView` rings.
 
-### Theme
-
-`MainTabBarViewController.applyStatusStripTheme()` reads `StatusStripThemeProviding` on the top screen of the selected tab and sets its `statusStripTheme` as `traitOverrides.appTheme` on `StatusStripContainerView`. Nil keeps the app's theme. The rings' hosting controller takes its traits from that container, and `ChainStatusRings` carries `.id(appTheme)` so the rings rebuild on a change. Providers call `onStatusStripThemeChanged` to re-apply.
-
-- `CollectiblesViewController` returns `.berlinNight` while expanded, and `applyBarTheme()` sets the same override on its navigation controller.
-- `SPAViewController` reads the page's computed CSS background (root element, then body). The web view takes that colour, so the iOS 26 scroll edge effect under the strip tints towards the page. `PageBackgroundTone` names a theme only on a clash: `.berlinNight` for a dark page under a light app theme, `.berlinDay` for a light page under a dark one.
-- A document-start script, `PageBackgroundReporter`, registered as an `SPAJSEngine` script handler, watches the document with a `MutationObserver`, `prefers-color-scheme` and `transitionend`. It posts the root and body colours on the next frame whenever they change, so a page that applies the host theme after loading is followed. On an app theme change the strip re-evaluates its theme against the new app theme. A background painted only inside a container is not detected.
-
 ## Mounting and Re-tap
 
 `TabBarContainer` mounts one child at a time, full bleed into the container's view.

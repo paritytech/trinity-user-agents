@@ -523,24 +523,6 @@ extension MainTabBarViewController {
 
     func refreshStatusBarTitle() {
         statusBarTitleButton.bind(viewModel: makeStatusBarTitleViewModel())
-        applyStatusStripTheme()
-    }
-
-    /// The strip takes the theme the screen on top of the selected tab asks for, and follows it when it changes.
-    func applyStatusStripTheme() {
-        let selected = container.selectedController
-        let topScreen = (selected as? UINavigationController)?.topViewController ?? selected
-        let provider = topScreen as? StatusStripThemeProviding
-        provider?.onStatusStripThemeChanged = { [weak self] in
-            self?.applyStatusStripTheme()
-        }
-
-        // The rings' hosting controller takes its traits from its view's superview, so the container reaches them.
-        if let theme = provider?.statusStripTheme {
-            statusStripContainer.traitOverrides.appTheme = theme
-        } else {
-            statusStripContainer.traitOverrides.remove(DSThemeTrait.self)
-        }
     }
 
     func attachWidget(_ configuration: any HashableContentConfiguration, for id: AppWidgetID) {

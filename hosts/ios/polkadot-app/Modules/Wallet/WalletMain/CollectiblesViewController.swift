@@ -27,7 +27,6 @@ final class CollectiblesViewController: UIViewController {
     private var loadTimeout: Task<Void, Never>?
     private var pageTopBelowBars: Constraint?
     private var pageTopAtScreenTop: Constraint?
-    var onStatusStripThemeChanged: (() -> Void)?
 
     init(product: SPAViewProtocol, origin: PocketOrigin? = nil) {
         self.product = product
@@ -67,14 +66,12 @@ final class CollectiblesViewController: UIViewController {
         super.viewDidAppear(animated)
 
         navigationController?.setSystemBackSwipesEnabled(false)
-        applyBarTheme()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
 
         navigationController?.setSystemBackSwipesEnabled(true)
-        navigationController?.traitOverrides.remove(DSThemeTrait.self)
     }
 
     override func viewDidLayoutSubviews() {
@@ -110,12 +107,6 @@ final class CollectiblesViewController: UIViewController {
 extension CollectiblesViewController: PocketItemScreen {
     var pocketItem: PocketItem {
         .collectibles
-    }
-}
-
-extension CollectiblesViewController: StatusStripThemeProviding {
-    var statusStripTheme: ThemeSelection? {
-        pageExpanded ? .berlinNight : nil
     }
 }
 
@@ -229,7 +220,6 @@ private extension CollectiblesViewController {
     func openWithoutMotion() {
         pageExpanded = true
         setPageReachesScreenTop(true)
-        applyBarTheme()
         book.isHidden = true
         pageView.transform = .identity
         pageView.layer.cornerRadius = 0
@@ -293,7 +283,6 @@ private extension CollectiblesViewController {
 
     func expandPage() {
         pageExpanded = true
-        applyBarTheme()
         let expand = UIViewPropertyAnimator(
             duration: CollectiblesBookTiming.pageExpandDuration,
             curve: .easeOut
@@ -309,17 +298,6 @@ private extension CollectiblesViewController {
             apply(.pageExpanded)
         }
         expand.startAnimation()
-    }
-
-    /// The product draws a dark page under the bars whatever the app's theme is, so the navigation bar and the
-    /// status strip take the night theme while the page is expanded.
-    func applyBarTheme() {
-        if let statusStripTheme {
-            navigationController?.traitOverrides.appTheme = statusStripTheme
-        } else {
-            navigationController?.traitOverrides.remove(DSThemeTrait.self)
-        }
-        onStatusStripThemeChanged?()
     }
 
     /// An expanded page reaches the top of the screen, so the product draws under the bars. A resting page starts
@@ -363,7 +341,6 @@ private extension CollectiblesViewController {
         }
 
         pageExpanded = false
-        applyBarTheme()
         let collapse = UIViewPropertyAnimator(
             duration: CollectiblesBookTiming.pageExpandDuration,
             curve: .easeIn

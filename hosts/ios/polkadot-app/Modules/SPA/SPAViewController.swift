@@ -19,10 +19,8 @@ final class SPAViewController: UIViewController, ViewHolder {
 
     private(set) var statusBarTitle: String?
     var onStatusBarTitleChanged: (() -> Void)?
-    var onStatusStripThemeChanged: (() -> Void)?
 
     private var titleObservation: NSKeyValueObservation?
-    private var pageBackgroundTone: PageBackgroundTone?
     private var didSetupWebViewLayout = false
     private var loadFailure: ErrorContent?
     private var loadingStartedAt: Date?
@@ -71,7 +69,6 @@ final class SPAViewController: UIViewController, ViewHolder {
 
         setupNavigationBar()
         setupTitleObservation()
-        setupThemeChangeObservation()
         setupJSEngine()
         setContentScrollView(rootView.webView.scrollView, for: .top)
     }
@@ -144,7 +141,6 @@ private extension SPAViewController {
 
         let engine = SPAJSEngine(
             webView: rootView.webView,
-            scriptHandlers: [JSEngineLogger(logger: logger), makePageBackgroundReporter()],
             navigationDecisionHandler: navigationHandler,
             logger: logger
         )
@@ -187,39 +183,6 @@ private extension SPAViewController {
                 self?.presenter.didUpdateWebViewTitle(title)
             }
         }
-    }
-
-    /// The strip re-evaluates its theme against the new app theme. A page that restyles reports its new colours
-    /// itself through `PageBackgroundReporter`.
-    func setupThemeChangeObservation() {
-        registerForTraitChanges(
-            [DSThemeTrait.self, UITraitUserInterfaceStyle.self]
-        ) { (controller: SPAViewController, _) in
-            controller.onStatusStripThemeChanged?()
-        }
-    }
-
-    func makePageBackgroundReporter() -> PageBackgroundReporter {
-        PageBackgroundReporter { [weak self] cssColors in
-            MainActor.assumeIsolated {
-                self?.applyPageBackground(PageBackgroundTone.visibleColor(in: cssColors))
-            }
-        }
-    }
-
-    /// The status strip's scroll edge effect tints with the web view's background, so it takes the page colour.
-    func applyPageBackground(_ pageColor: UIColor?) {
-        let color = pageColor ?? .bgSurfaceMain
-        rootView.webView.backgroundColor = color
-        rootView.webView.underPageBackgroundColor = color
-        setPageBackgroundTone(pageColor.map(PageBackgroundTone.init(color:)))
-    }
-
-    func setPageBackgroundTone(_ tone: PageBackgroundTone?) {
-        guard tone != pageBackgroundTone else { return }
-
-        pageBackgroundTone = tone
-        onStatusStripThemeChanged?()
     }
 
     func setupWebViewLayout() {
@@ -308,17 +271,6 @@ extension SPAViewController: SPAViewProtocol {
 extension SPAViewController: NavigationBarHiding {
     /// The Browse tab's root shows no bar. The status strip carries the tab's name.
     var hidesNavigationBar: Bool { configuration.isRootScreen }
-}
-
-// MARK: - StatusStripThemeProviding
-
-extension SPAViewController: StatusStripThemeProviding {
-    /// A page draws under the status strip in its own colours. Where they clash with the app's theme the strip
-    /// takes a theme that reads on the page.
-    var statusStripTheme: ThemeSelection? {
-        let appThemeIsLight = UIColor.bgSurfaceMain.resolvedColor(with: traitCollection).isLight
-        return pageBackgroundTone?.statusStripTheme(appThemeIsLight: appThemeIsLight)
-    }
 }
 
 // MARK: - StatusBarTitleProviding
