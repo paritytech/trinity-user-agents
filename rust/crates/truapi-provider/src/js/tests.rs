@@ -4,9 +4,9 @@ use super::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
-/// A client whose `load` and `save` record what they were called with, so a
-/// test can prove the wasm boundary actually reaches the object the host
-/// passed. `load` answers `stored`, and a call without a stack records `-`.
+/// A client whose `load` and `save` record every argument they were called
+/// with, so a test can prove the wasm boundary actually reaches the object the
+/// host passed. `load` answers `stored`, and a call without a stack records `-`.
 fn recording_client(
 	calls: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
 	stored: String,
@@ -25,9 +25,12 @@ fn recording_client(
 	load.forget();
 
 	let save_calls = std::rc::Rc::clone(&calls);
-	let save = Closure::<dyn FnMut(String, String)>::new(move |genesis: String, blob: String| {
-		save_calls.borrow_mut().push(format!("save {genesis} {}", blob.len()));
-	});
+	let save = Closure::<dyn FnMut(String, String, JsValue)>::new(
+		move |genesis: String, blob: String, stack: JsValue| {
+			let stack = stack.as_string().unwrap_or_else(|| "-".to_owned());
+			save_calls.borrow_mut().push(format!("save {genesis} {blob} {stack}"));
+		},
+	);
 	js_sys::Reflect::set(&client, &JsValue::from_str("save"), save.as_ref()).expect("set save");
 	save.forget();
 
@@ -138,6 +141,36 @@ async fn the_host_client_is_called_with_the_genesis_hash() {
 		"the client returned a blob, so one is now in hand"
 	);
 	assert_eq!(calls.borrow().as_slice(), [format!("load {genesis} -")]);
+}
+
+/// A store keyed on the stack has to see it in the same place on both calls,
+/// after the blob on a save, or what one stack saves is loaded by another or
+/// never found again. Calling the bridge directly reaches a save, which the
+/// provider makes only for a chain that has finalized something.
+#[wasm_bindgen_test]
+async fn the_host_client_gets_every_argument_in_its_documented_place() {
+	use crate::storage::StorageClient as _;
+
+	let calls = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+	let client = HostStorageClient::new(recording_client(std::rc::Rc::clone(&calls), "b".into()))
+		.expect("the client has load and save");
+	let genesis = [0x44; 32];
+	let hex = hex0x(&genesis);
+
+	for stack in [Some("a-stack".to_owned()), None] {
+		client.save(genesis, "a-blob".to_owned(), stack.clone()).await.expect("saved");
+		client.load(genesis, stack).await.expect("loaded");
+	}
+
+	assert_eq!(
+		calls.borrow().as_slice(),
+		[
+			format!("save {hex} a-blob a-stack"),
+			format!("load {hex} a-stack"),
+			format!("save {hex} a-blob -"),
+			format!("load {hex} -"),
+		]
+	);
 }
 
 /// A store serving more than one stack tells their databases apart by the

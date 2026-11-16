@@ -271,8 +271,9 @@ where each chain's `lightSpec` is published, the host fetches it and hands the
 bytes over, and the provider checks them
 against the descriptor's `sha256` and the chain's genesis hash, wires each
 parachain to the relay and runs the statement-store protocol where the
-descriptor sets `statementStore`. A chain whose spec has not arrived is unknown
-until the host adds it, and the rest of the stack runs. The crate also bundles
+descriptor sets `statementStore`. A chain is unknown until the host adds its
+spec, and a parachain also until the relay's is added; the chains that have
+what they need run meanwhile. The crate also bundles
 a chain-spec catalog for `paseo-next-v2` and `previewnet`, which a stack's
 provider never consults. The light
 client holds at most 32 connections at once and refuses a `connect` past that, so a
@@ -310,9 +311,11 @@ host owns where the bytes live. The crate stores nothing itself: a host implemen
 `StorageClient` over storage it already owns, on web and native alike, so it keeps
 control of quota and of whether the bytes are backed up or encrypted. A blob is
 stored per stack and genesis hash, because a fork shares its source's genesis
-hashes. A stack's provider starts each blob with a line naming the stack and its
-`generation` and reads back only its own, so a store that ignores the stack
-still cannot mix two stacks, and a stack that restarted its chains starts fresh.
+hashes, so a store shared by two stacks must key on the stack as well. A
+stack's provider starts each blob with a line naming the stack and its
+`generation` and reads back only its own, so a stack that restarted its chains
+starts fresh. The provider never deletes a blob: the host deletes those of a
+stack or chain it no longer runs.
 
 ### Building extrinsics
 

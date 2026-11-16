@@ -9,16 +9,17 @@ use truapi::platform::DOTNS_TLDS;
 use super::{ChainEndpoint, POLKADOT_NAMESPACE, Stack, namespace_of};
 use crate::{
 	chain::{ChainAccess, StackLightClient},
-	stack_descriptor::{ROLE_NAMES, Roles},
+	stack_descriptor::ROLE_NAMES,
 };
 
 impl Stack {
 	/// The stack `descriptor` describes, connected to over `chain_access`.
-	/// Fails when People, Asset Hub or Bulletin is missing, when two of them
-	/// share a genesis hash, when the TLD is not one the core serves, when the
-	/// namespace is not a lowercase label or is the `polkadot` one, when the
-	/// stack has no `dub` service or no `dotns.popController`, and on the light
-	/// client as [`StackLightClient::new`] does.
+	/// Fails when People, Asset Hub or Bulletin is missing, when the TLD is not
+	/// one the core serves, when the namespace is not a lowercase label or is
+	/// the `polkadot` one, when the stack has no `dub` service or no
+	/// `dotns.popController`, and on the light client as
+	/// [`StackLightClient::new`] does. No two of its chains share a genesis
+	/// hash, which the descriptor's own rules refuse.
 	pub fn new(descriptor: Descriptor, chain_access: &ChainAccess) -> Result<Self> {
 		let id = &descriptor.id;
 		ensure!(
@@ -36,14 +37,6 @@ impl Stack {
 				.with_context(|| format!("the {id} stack has no {role} chain"))?;
 			anyhow::Ok(ChainEndpoint { genesis: chain.genesis(), ws: chain.rpc[0].clone() })
 		})?;
-		let Roles { people, asset_hub, bulletin } = &chains;
-		ensure!(
-			people.genesis != asset_hub.genesis &&
-				people.genesis != bulletin.genesis &&
-				asset_hub.genesis != bulletin.genesis,
-			"People, Asset Hub and Bulletin need distinct genesis hashes: the host routes each role \
-			 by its genesis"
-		);
 		ensure!(
 			DOTNS_TLDS.contains(&descriptor.tld.as_str()),
 			"the {id} stack's tld {} is not one the core serves ({})",

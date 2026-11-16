@@ -5,7 +5,7 @@ use crate::test_stack::{
 };
 
 fn statement_protocol(stack: &LightStack, genesis_hash: [u8; 32]) -> bool {
-	match stack.resolve(genesis_hash).expect("the chain has its spec").source {
+	match stack.source(genesis_hash).expect("the chain has its spec") {
 		ChainSource::LightClient { statement_protocol, .. } => statement_protocol,
 		#[cfg(feature = "ws")]
 		ChainSource::RpcNode { .. } => panic!("a stack only has light-client chains"),
@@ -157,13 +157,13 @@ fn a_descriptor_that_skipped_validation_is_refused() {
 	let refusals = [bad_hash, shared_hash, no_relay]
 		.map(|descriptor| LightStack::new(STACK_ID, &descriptor).map(|_| ()).unwrap_err());
 
-	let malformed = |reason: String| ProviderError::Stack { source: Error::Malformed(reason) };
 	assert_eq!(
 		refusals,
 		[
-			ProviderError::Stack { source: Error::InvalidHex { field: "genesisHash", bytes: 32 } },
-			malformed(format!("genesisHash {people} appears on more than one chain")),
-			ProviderError::Stack { source: Error::RelayCount(0) },
+			Error::InvalidHex { field: "genesisHash", bytes: 32 },
+			Error::DuplicateGenesisHash(people),
+			Error::RelayCount(0),
 		]
+		.map(|source| ProviderError::Stack { source })
 	);
 }
