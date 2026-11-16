@@ -720,7 +720,6 @@ struct Round {
 /// One provider frame, from the provider asking until it closes.
 #[derive(Debug)]
 struct TrackedFrame {
-	intent: String,
 	target: FrameTarget,
 	requested_ms: u64,
 	opened_ms: Option<u64>,
@@ -968,30 +967,20 @@ impl Telemetry {
 		facts
 	}
 
-	/// Frame number `frame` of session `intent` was asked for at `now_ms`.
-	pub fn frame_requested(&mut self, intent: &str, frame: u64, target: FrameTarget, now_ms: u64) {
-		self.frames.insert(
-			frame,
-			TrackedFrame {
-				intent: intent.to_string(),
-				target,
-				requested_ms: now_ms,
-				opened_ms: None,
-			},
-		);
+	/// Frame number `frame` was asked for at `now_ms`.
+	pub fn frame_requested(&mut self, frame: u64, target: FrameTarget, now_ms: u64) {
+		self.frames
+			.insert(frame, TrackedFrame { target, requested_ms: now_ms, opened_ms: None });
 	}
 
 	/// The host opened frame number `frame` at `now_ms`.
-	pub fn frame_opened(&mut self, frame: u64, now_ms: u64) -> Option<(String, FundingFact)> {
+	pub fn frame_opened(&mut self, frame: u64, now_ms: u64) -> Option<FundingFact> {
 		let tracked = self.frames.get_mut(&frame)?;
 		tracked.opened_ms = Some(now_ms);
-		Some((
-			tracked.intent.clone(),
-			FundingFact::FrameOpened {
-				target: tracked.target,
-				wait_ms: now_ms.saturating_sub(tracked.requested_ms),
-			},
-		))
+		Some(FundingFact::FrameOpened {
+			target: tracked.target,
+			wait_ms: now_ms.saturating_sub(tracked.requested_ms),
+		})
 	}
 
 	/// Frame number `frame` closed at `now_ms`, `shown` when it was on
@@ -1001,21 +990,18 @@ impl Telemetry {
 		frame: u64,
 		shown: Option<FrameClose>,
 		now_ms: u64,
-	) -> Option<(String, FundingFact)> {
+	) -> Option<FundingFact> {
 		let tracked = self.frames.remove(&frame)?;
 		let outcome = match (tracked.opened_ms, shown) {
 			(None, _) => FrameClose::DroppedUnopened,
 			(Some(_), Some(shown)) => shown,
 			(Some(_), None) => FrameClose::ClosedByCore,
 		};
-		Some((
-			tracked.intent,
-			FundingFact::FrameClosed {
-				target: tracked.target,
-				outcome,
-				open_ms: tracked.opened_ms.map(|opened| now_ms.saturating_sub(opened)),
-			},
-		))
+		Some(FundingFact::FrameClosed {
+			target: tracked.target,
+			outcome,
+			open_ms: tracked.opened_ms.map(|opened| now_ms.saturating_sub(opened)),
+		})
 	}
 }
 

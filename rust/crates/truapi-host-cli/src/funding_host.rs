@@ -186,6 +186,11 @@ impl FundingPlatform for CliFundingHost {
 		}));
 	}
 
+	// A development host: its transcript keeps every funding event.
+	fn funding_events_enabled(&self) -> bool {
+		true
+	}
+
 	fn funding_event(&self, event: FundingEvent) {
 		self.transcript.record(serde_json::json!({
 			"kind": "event",

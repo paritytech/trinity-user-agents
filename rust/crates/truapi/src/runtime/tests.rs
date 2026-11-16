@@ -2811,6 +2811,8 @@ struct RecordingFundingPlatform {
 	in_progress: Mutex<Vec<bool>>,
 	quote_lists: Mutex<Vec<(String, crate::platform::FundingQuoteList)>>,
 	withdrawn: Mutex<Vec<String>>,
+	/// Whether this host turned funding events on.
+	reports_events: bool,
 	/// The funding events the core reported, in order.
 	events: Mutex<Vec<crate::platform::FundingEvent>>,
 }
@@ -2829,7 +2831,17 @@ impl RecordingFundingPlatform {
 			in_progress: Mutex::new(Vec::new()),
 			quote_lists: Mutex::new(Vec::new()),
 			withdrawn: Mutex::new(Vec::new()),
+			reports_events: false,
 			events: Mutex::new(Vec::new()),
+		})
+	}
+
+	/// A host that starts the overlay at once and turned funding events on.
+	fn reporting_events() -> Arc<Self> {
+		Arc::new(Self {
+			reports_events: true,
+			..Arc::into_inner(Self::answering(crate::platform::FundingPresentOutcome::Started))
+				.expect("only reference")
 		})
 	}
 
@@ -2923,6 +2935,10 @@ impl crate::platform::FundingPlatform for RecordingFundingPlatform {
 				.push((intent, quotes)),
 			None => self.withdrawn.lock().expect("withdrawn mutex poisoned").push(intent),
 		}
+	}
+
+	fn funding_events_enabled(&self) -> bool {
+		self.reports_events
 	}
 
 	fn funding_event(&self, event: crate::platform::FundingEvent) {
@@ -12800,7 +12816,7 @@ fn assert_events_carry_none_of(events: &[crate::platform::FundingEvent], secrets
 #[test]
 fn a_funding_session_reports_each_fact_once_when_it_happens() {
 	let services = funding_services();
-	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	let host = RecordingFundingPlatform::reporting_events();
 	assert!(services.funding().install_platform(host.clone()));
 	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
 	let intent = futures::executor::block_on(services.open_funding(
@@ -12940,7 +12956,7 @@ fn a_funding_session_reports_each_fact_once_when_it_happens() {
 #[test]
 fn a_settled_quote_request_reports_its_counts_once() {
 	let services = funding_services();
-	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	let host = RecordingFundingPlatform::reporting_events();
 	assert!(services.funding().install_platform(host.clone()));
 	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
 	let intent = futures::executor::block_on(services.open_funding(
@@ -12980,7 +12996,7 @@ fn a_settled_quote_request_reports_its_counts_once() {
 #[test]
 fn an_expired_session_reports_an_expected_ending() {
 	let services = funding_services();
-	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	let host = RecordingFundingPlatform::reporting_events();
 	assert!(services.funding().install_platform(host.clone()));
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
@@ -13023,7 +13039,7 @@ fn an_expired_session_reports_an_expected_ending() {
 fn provider_frames_report_their_lifecycle() {
 	use crate::runtime::funding_telemetry::{FrameClose, FrameTarget};
 	let services = funding_services();
-	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	let host = RecordingFundingPlatform::reporting_events();
 	assert!(services.funding().install_platform(host.clone()));
 	let intent = futures::executor::block_on(services.open_funding(
 		None,
@@ -13071,4 +13087,49 @@ fn provider_frames_report_their_lifecycle() {
 			row("frame_closed", "app", Some("returned")),
 		]
 	);
+}
+
+// A host that has not turned funding events on gets none, and the core keeps
+// nothing for them, through a whole session and its provider's screen.
+#[test]
+fn funding_events_are_off_until_the_host_turns_them_on() {
+	use crate::runtime::funding_telemetry::FrameTarget;
+	let services = funding_services();
+	let host = RecordingFundingPlatform::answering(crate::platform::FundingPresentOutcome::Started);
+	assert!(services.funding().install_platform(host.clone()));
+	offer_provider(&services, "ramp.dot", RAMP_MANIFEST);
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(1_000),
+	))
+	.expect("opened")
+	.intent;
+	let quote_id = offer_test_quote(&services, &intent, "ramp.dot");
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&ProductId::for_test("ramp.dot"),
+			&quote_id,
+		))
+		.expect("selected")
+	);
+	let provider =
+		ProductContext::new_with_execution(ProductId::for_test("ramp.dot"), ExecutableKind::Worker);
+	drop(services.funding().request_frame(&intent, provider, FrameTarget::Page));
+	futures::executor::block_on(services.cancel_funding(&intent)).expect("cancel stored");
+	assert!(
+		futures::executor::block_on(services.settle_funding_for_test(
+			&intent,
+			crate::host_logic::funding::FundingStage::Delivered {
+				credited: 1_000,
+				settled_at_ms: crate::unix_time::current_unix_millis(),
+			},
+		))
+		.expect("settled")
+	);
+
+	assert_eq!(host.events(), Vec::new());
+	assert!(services.funding().telemetry().is_none(), "telemetry kept while off");
 }

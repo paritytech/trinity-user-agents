@@ -371,9 +371,9 @@ export type FundingAmountIssue =
  * Nothing in it identifies a session, a person or an amount: tags hold
  * closed values only, amounts and fees arrive as coarse buckets and a
  * country as a coarse region, and `session_ref` is a random id the core
- * draws for telemetry alone. A host maps it onto its own event recorder,
- * and only on builds that are not released: the core emits it whatever the
- * build, and the host decides whether it leaves the device.
+ * draws for telemetry alone. The core builds one only for a host that
+ * turned funding events on, which it does only in builds that are not
+ * released, and the host maps it onto its own event recorder.
  */
 export interface FundingEvent {
   /**
@@ -1282,9 +1282,9 @@ export const FundingAmountIssue: S.Codec<FundingAmountIssue> = S.lazy(
  * Nothing in it identifies a session, a person or an amount: tags hold
  * closed values only, amounts and fees arrive as coarse buckets and a
  * country as a coarse region, and `session_ref` is a random id the core
- * draws for telemetry alone. A host maps it onto its own event recorder,
- * and only on builds that are not released: the core emits it whatever the
- * build, and the host decides whether it leaves the device.
+ * draws for telemetry alone. The core builds one only for a host that
+ * turned funding events on, which it does only in builds that are not
+ * released, and the host maps it onto its own event recorder.
  */
 export const FundingEvent: S.Codec<FundingEvent> = S.lazy(
   (): S.Codec<FundingEvent> =>
@@ -2154,9 +2154,17 @@ export interface FundingPlatform {
   ): void;
 
   /**
-   * Observe a funding fact for telemetry. Every build gets these; a host
-   * sends them on only from builds that are not released, and never
-   * adds a session's intent to them.
+   * Whether the core reports funding facts through
+   * `Self::funding_event`. Read once, when the platform is installed.
+   * Off by default: the core then builds no event and keeps nothing for
+   * one. A host turns it on only in builds that are not released.
+   */
+  fundingEventsEnabled?(): boolean;
+
+  /**
+   * Observe a funding fact for telemetry, while
+   * `Self::funding_events_enabled` says so. The host never adds a
+   * session's intent to it.
    */
   fundingEvent?(event: FundingEvent): void;
 }

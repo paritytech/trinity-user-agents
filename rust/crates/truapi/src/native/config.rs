@@ -41,6 +41,11 @@ pub struct HostRuntimeConfig {
 	/// Optional local signing-host secret material (raw BIP-39 entropy).
 	#[uniffi(default)]
 	pub local_session_secret: Option<Vec<u8>>,
+	/// Whether the core reports funding facts through
+	/// `NativeFundingCallbacks::funding_event`. Off unless set; set it only
+	/// in builds that are not released.
+	#[uniffi(default)]
+	pub funding_events: bool,
 	/// Optional lite username attached to the local signing-host session.
 	#[uniffi(default)]
 	pub local_session_lite_username: Option<String>,
@@ -83,6 +88,8 @@ pub struct NativeResolvedHostRuntimeConfig {
 	pub database_directory: PathBuf,
 	/// Cards the host pins in the Pocket.
 	pub pinned_pocket_cards: Vec<PinnedPocketCard>,
+	/// Whether the core reports funding facts to the host.
+	pub funding_events: bool,
 }
 
 /// Why a native runtime or product configuration was refused.
@@ -154,6 +161,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 			local_session_secret: config.local_session_secret,
 			local_session_lite_username: config.local_session_lite_username,
 			database_directory: PathBuf::from(config.database_directory),
+			funding_events: config.funding_events,
 			pinned_pocket_cards: config
 				.pinned_pocket_cards
 				.into_iter()

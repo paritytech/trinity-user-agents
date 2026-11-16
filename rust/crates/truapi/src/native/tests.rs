@@ -534,6 +534,7 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
 		pinned_pocket_cards: Vec::new(),
 		local_session_secret: Some(vec![7; 32]),
+		funding_events: false,
 		local_session_lite_username: Some("alice".to_string()),
 	}
 }
@@ -3345,25 +3346,40 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 	}
 }
 
-// A native host receives the core's funding facts through its callbacks,
-// each with the same random reference and none naming the session.
-#[test]
-fn a_native_host_receives_funding_events() {
+/// Open one funding session on a native host whose configuration sets
+/// `funding_events` as given, and return its intent with the events its
+/// callbacks heard.
+fn native_funding_events(funding_events: bool) -> (String, Vec<crate::platform::FundingEvent>) {
 	let host = NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
-		native_host_runtime_config(),
+		HostRuntimeConfig { funding_events, ..native_host_runtime_config() },
 	)
 	.expect("host runtime config should be valid");
 	let funding = Arc::new(RecordingNativeFunding::default());
 	assert!(funding.host.set(Arc::downgrade(&host)).is_ok());
 	assert!(host.set_funding_callbacks(funding.clone()));
-
 	let intent =
 		futures::executor::block_on(host.open_funding(v01::FundingDirection::In, Some(1_000)))
 			.expect("opened")
 			.expect("started");
-
 	let events = funding.events.lock().expect("events mutex poisoned").clone();
+	(intent, events)
+}
+
+// A native host's configuration leaves funding events off unless it turns
+// them on.
+#[test]
+fn a_native_host_gets_no_funding_events_by_default() {
+	assert!(!native_host_runtime_config().funding_events);
+	assert_eq!(native_funding_events(false).1, Vec::new());
+}
+
+// A native host that turned funding events on receives the core's funding
+// facts through its callbacks, each with the same random reference and none
+// naming the session.
+#[test]
+fn a_native_host_receives_funding_events() {
+	let (intent, events) = native_funding_events(true);
 	let names: Vec<&str> = events.iter().map(|event| event.name.as_str()).collect();
 	assert_eq!(names, ["truapi.funding.overlay_opened", "truapi.funding.overlay_closed"]);
 	assert_eq!(events[0].session_ref, events[1].session_ref);

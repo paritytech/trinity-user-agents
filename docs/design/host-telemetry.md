@@ -161,6 +161,8 @@ Funding is the first area whose facts leave the core as structured events rather
 
 **The registry.** `rust/crates/truapi/src/funding_events.rs` lists every `truapi.funding.*` event with the tag and measure keys it may carry, and each entry's doc comment lists the closed set each key takes. `funding_events::check` refuses an event the table does not list, or one carrying a key its entry does not name, and the registry reports nothing it refuses. Facts are built from typed values in `runtime/funding_telemetry.rs`: closed enums and fixed buckets, never a string a provider, a product or a manifest wrote.
 
+**Off by default.** The core reports funding events only to a host that turned them on: `FundingPlatform::funding_events_enabled()` returning `true` (an optional `fundingEventsEnabled()` in the generated TypeScript), which natively is `HostRuntimeConfig.funding_events`. The core reads it once, when the platform is installed. Until then it builds no event, keeps no `session_ref` and holds nothing else for them, so a release build that never turns them on cannot send one, whatever its forwarding does.
+
 **The hook.** `FundingPlatform::funding_event(FundingEvent)` defaults to doing nothing; natively it is the required callback `NativeFundingCallbacks::funding_event`. A `FundingEvent` is a name, a level (`info` or `error`), a `session_ref`, a list of tags and a list of measures (counts, and durations in milliseconds). A host maps it onto its own recorder: tags to tags, measures and `session_ref` (as `funding.ref`) to extras, the level to its routing, and on `truapi.funding.ended` a fingerprint of the name with `funding.outcome` and `funding.reason`. Host UI events that the core never sees are the host's own, named `host.funding.*`.
 
 | Event | Fires when |
@@ -182,7 +184,7 @@ Every event also carries the session's direction, opener, first-party product or
 
 **Privacy.** No event carries a session's intent, a quote, transaction or reference id, an address, an exact amount, fee or limit, a provider's own text, or a URL. Amounts are CASH buckets (`<10` to `5k+`), fees basis-point buckets, and a country only its region: `eu`, `uk`, `us`, `other`, or `unset`. `session_ref` is drawn at random per session and kept in memory only, so it joins a session's events without leading back to the session; a session resumed after a restart draws a new one.
 
-**Forwarding.** The core emits these on every build. A host forwards them only from builds that are not released, which is the gate its Sentry recorder already applies on both mobile hosts, and there is no consent screen behind them. Shipping them from a release build needs consent and a policy decision first.
+**Forwarding.** A host turns funding events on only in builds that are not released, the same gate its Sentry recorder already applies on both mobile hosts, and there is no consent screen behind them. Turning them on in a release build needs consent and a policy decision first. The CLI host turns them on, as a development tool whose transcript keeps them.
 
 **Health.** Funding's own warnings are markers in the `markers!` table, `truapi.funding.*` with a class each, and none of their details names a session.
 
