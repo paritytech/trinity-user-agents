@@ -128,7 +128,8 @@ struct VrfSignature {
 enum HostAccountSignVrfError {
     /// No authenticated session (RFC-0009). The host must not auto-prompt login.
     NotConnected,
-    /// The user declined the signing confirmation.
+    /// The user declined the signing confirmation, or the account belongs to a
+    /// product that grants the caller no `context`.
     Rejected,
     Unknown { reason: String },
 }
@@ -170,19 +171,22 @@ Same rules as ordinary product-account signing (`sign_raw`):
 
 1. **No session** → `NotConnected` (RFC-0009); the host does not auto-prompt
    login.
-2. **`AutoSigning` covers the account** (granted for the account's product, and
+2. **Another product's account, and that product grants the caller no
+   `context`** ([granted scopes](granted-scopes.md)) → `Rejected`, with no
+   prompt. A `localhost` caller is exempt.
+3. **`AutoSigning` covers the account** (granted for the account's product, and
    the account is in that product's own subtree) → the host signs locally, no
    round trip.
-3. **Otherwise** → a per-call confirmation (`UserConfirmationReview::SignVrf`, a
+4. **A first-party caller** → the host signs without a prompt, on whichever
+   account step 2 admitted.
+5. **Otherwise** → a per-call confirmation (`UserConfirmationReview::SignVrf`, a
    new review variant); signs on approval, `Rejected` on decline.
 
-Cross-product signing is allowed: an account outside the caller's own product
-simply always takes path 3 (a prompt), never a silent local-sign, and there is
-no account-ownership error. The prompt-free path is therefore confined to a
-product's own subtree, so a product can never *silently* obtain a VRF bound to
-another identity — only with the user's explicit per-call consent, exactly as
-with `sign_raw`. That, plus per-product key separation (RFC-0022) and the
-consuming-runtime contract below, keeps the free-form transcript safe.
+A product therefore obtains a VRF bound to another product's identity only when
+that product granted it `context`, and then only with the user's per-call
+consent unless it is first-party, exactly as with `sign_raw`. That, plus
+per-product key separation (RFC-0022) and the consuming-runtime contract below,
+keeps the free-form transcript safe.
 
 ### Consuming-runtime contract
 
