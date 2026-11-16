@@ -12,6 +12,7 @@ pub mod chain;
 pub mod classification;
 pub mod denominations;
 pub mod layer;
+pub mod payments;
 pub mod ledger;
 pub mod maintenance;
 pub mod namespace;
