@@ -4,8 +4,12 @@ use futures::executor::block_on;
 use super::*;
 use crate::coinage::{
 	PrivacyPolicy,
+	classification::{Class, CoinClass, classify},
 	ledger::{AssetKind, CoinOnChain, EntryOnChain},
-	testing::{ENTROPY, NOW, TestWallet, chain_params, unbuilt_engine},
+	testing::{
+		ENTROPY, NOW, TestWallet, chain_params, unbuilt_engine,
+		planning::{allocated, present_tokens},
+	},
 };
 
 const DAY: u64 = 86_400;
@@ -72,4 +76,27 @@ fn the_host_may_wait_until_the_next_ring_reaches_its_rescue_margin() {
 	let due = run(&wallet);
 	assert!(due.started.is_empty());
 	assert_eq!(due.call_again_within, Some(Duration::from_secs(23 * DAY)));
+}
+
+fn in_use(wallet: &TestWallet, coin: &Asset) -> bool {
+	matches!(classify(coin, &wallet.view(), NOW, &chain_params()).class, Class::Coin(CoinClass::InUse(_)))
+}
+
+#[test]
+fn a_coin_never_read_is_never_recycled() {
+	let wallet = TestWallet::new(PrivacyPolicy::most_private());
+	let unread = allocated(&wallet.db, PurseId::MAIN, AssetKind::Coin, 2);
+	let due = run(&wallet);
+	assert_eq!((due.started.len(), due.cannot_tell), (0, vec![PurseId::MAIN]));
+	assert!(!in_use(&wallet, &unread));
+}
+
+#[test]
+fn a_short_token_supply_leaves_only_the_coins_at_the_age_cutoff_to_recycle() {
+	let wallet = TestWallet::new(PrivacyPolicy::most_private());
+	let at_cutoff = wallet.hold(PurseId::MAIN, AssetKind::Coin, 3, old_coin(3, 14));
+	let policy_due = wallet.hold(PurseId::MAIN, AssetKind::Coin, 3, old_coin(3, 5));
+	present_tokens(&wallet.db, 16, NOW, &chain_params());
+	assert_eq!(run(&wallet).started.len(), 1);
+	assert_eq!((in_use(&wallet, &at_cutoff), in_use(&wallet, &policy_due)), (true, false));
 }

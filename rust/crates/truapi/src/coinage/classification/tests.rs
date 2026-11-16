@@ -4,7 +4,7 @@ use super::*;
 use crate::{
 	coinage::{
 		Exponent,
-		ledger::{AssetKind, BlockRef, Facts, allocate, mark_disclosed, mint_installation, observe, snapshot},
+		ledger::{AssetKind, BlockRef, Facts, TokenId, allocate, mark_disclosed, mint_installation, observe, snapshot},
 		registration::{Admission, Rows},
 		testing::{chain_params, register_rows, set_status, unbuilt_engine},
 	},
@@ -233,4 +233,171 @@ fn an_entry_in_use_or_consumed_is_never_selectable() {
 	assert_eq!(state.selectability, Selectability::Never);
 	set_status(&wallet.db, record, "FINALIZED_SUCCESS", None);
 	assert!(matches!(wallet.state(&entry).class, Class::Entry { local: EntryLocal::Consumed, .. }));
+}
+
+impl Wallet {
+	/// An entry whose ring's root includes `included` members, its own key
+	/// first seen included at [`NOW`].
+	fn entry_in_ring(&self, exponent: u8, included: u32) -> Asset {
+		let entry = self.allocate(AssetKind::Entry, exponent);
+		self.observe(entry, in_ring(included, included, false, None), NOW);
+		entry
+	}
+
+	fn selectability_at(&self, asset: &Asset, now: u64) -> Selectability {
+		classify(asset, &block_on(self.db.read(snapshot)).unwrap(), now, &chain_params()).selectability
+	}
+
+	fn due(&self, now: u64) -> Vec<Asset> {
+		recycle_due(&block_on(self.db.read(snapshot)).unwrap(), PurseId::MAIN, now, &chain_params())
+	}
+}
+
+#[test]
+fn an_unreadable_token_allowance_does_not_stop_recycling() {
+	let wallet = Wallet::new(PrivacyPolicy::most_private());
+	let coin = wallet.coin(2, 5);
+	let period = tokens::period_of(NOW, &chain_params());
+	let reads = (0..20).map(|slot| (Subject::Token(TokenId { period, slot }), Read::Failed)).collect();
+	let facts = Facts { at: BlockRef { number: 1, hash: [1; 32] }, reads };
+	block_on(wallet.db.write(move |tx| observe(tx, &facts, NOW, 255))).unwrap();
+	assert_eq!(wallet.state(&coin).selectability, Selectability::HeldBack(HeldBack::RecycleDue));
+}
+
+#[test]
+fn the_age_cutoff_and_the_policy_give_different_verdicts() {
+	let wallet = Wallet::new(PrivacyPolicy::most_private());
+	let at_cutoff = wallet.coin(2, 14);
+	let policy_due = wallet.coin(2, 5);
+	assert_eq!(wallet.state(&at_cutoff).selectability, Selectability::Arriving(Arriving::AgeCutoff));
+	assert_eq!(wallet.state(&policy_due).selectability, Selectability::HeldBack(HeldBack::RecycleDue));
+}
+
+#[test]
+fn most_private_holds_back_every_settled_coin() {
+	let wallet = Wallet::new(PrivacyPolicy::most_private());
+	let young = wallet.coin(1, 1);
+	let old = wallet.coin(1, 9);
+	assert_eq!(wallet.due(NOW), [old, young]);
+}
+
+#[test]
+fn balanced_leaves_a_coin_below_its_age_threshold_alone() {
+	let wallet = Wallet::new(PrivacyPolicy::balanced());
+	let coin = wallet.coin(3, 3);
+	assert_eq!(wallet.state(&coin).selectability, Selectability::Now, "balanced recycles from age 14 / 3 = 4");
+}
+
+#[test]
+fn balanced_holds_back_a_coin_at_its_age_threshold() {
+	let wallet = Wallet::new(PrivacyPolicy::balanced());
+	let coin = wallet.coin(3, 4);
+	assert_eq!(wallet.state(&coin).selectability, Selectability::HeldBack(HeldBack::RecycleDue));
+}
+
+#[test]
+fn a_coin_larger_than_the_whole_recycling_budget_is_still_admitted() {
+	let wallet = Wallet::new(PrivacyPolicy::balanced());
+	let coin = wallet.coin(3, 4);
+	assert_eq!(wallet.due(NOW), [coin], "20 percent of 8 cents admits the whole coin");
+}
+
+#[test]
+fn an_empty_purse_has_nothing_to_recycle() {
+	let wallet = Wallet::new(PrivacyPolicy::most_private());
+	assert_eq!(wallet.due(NOW), []);
+}
+
+#[test]
+fn a_coin_never_read_is_never_held_back_under_any_preset() {
+	for policy in [PrivacyPolicy::fastest(), PrivacyPolicy::balanced(), PrivacyPolicy::most_private()] {
+		let wallet = Wallet::new(policy.clone());
+		let unread = wallet.allocate(AssetKind::Coin, 2);
+		assert_eq!(wallet.state(&unread).selectability, Selectability::Arriving(Arriving::NeverObserved), "{policy:?}");
+		assert_eq!(wallet.due(NOW), [], "{policy:?}");
+	}
+}
+
+#[test]
+fn most_private_holds_an_entry_below_ninety_percent_back_until_its_dwell_passes() {
+	let wallet = Wallet::new(PrivacyPolicy::most_private());
+	let entry = wallet.entry_in_ring(4, 690);
+	assert_eq!(wallet.selectability_at(&entry, NOW), Selectability::HeldBack(HeldBack::Dwell));
+}
+
+#[test]
+fn most_private_releases_an_entry_at_ninety_percent_of_the_ring() {
+	let wallet = Wallet::new(PrivacyPolicy::most_private());
+	let below = wallet.entry_in_ring(4, 690);
+	let at = wallet.entry_in_ring(4, 691);
+	assert_eq!(
+		(wallet.selectability_at(&below, NOW), wallet.selectability_at(&at, NOW)),
+		(Selectability::HeldBack(HeldBack::Dwell), Selectability::Now)
+	);
+}
+
+#[test]
+fn balanced_releases_an_entry_at_twenty_percent_of_the_ring() {
+	let wallet = Wallet::new(PrivacyPolicy::balanced());
+	let below = wallet.entry_in_ring(4, 153);
+	let at = wallet.entry_in_ring(4, 154);
+	assert_eq!(
+		(wallet.selectability_at(&below, NOW), wallet.selectability_at(&at, NOW)),
+		(Selectability::HeldBack(HeldBack::Dwell), Selectability::Now)
+	);
+}
+
+#[test]
+fn timed_readiness_needs_thirty_two_members_and_ten_full_minutes() {
+	for policy in [PrivacyPolicy::balanced(), PrivacyPolicy::most_private()] {
+		let wallet = Wallet::new(policy.clone());
+		let short = wallet.entry_in_ring(4, 31);
+		let enough = wallet.entry_in_ring(4, 32);
+		let verdicts = [
+			wallet.selectability_at(&short, NOW + 600),
+			wallet.selectability_at(&enough, NOW + 599),
+			wallet.selectability_at(&enough, NOW + 600),
+		];
+		let expected = [
+			Selectability::HeldBack(HeldBack::RingBelowThreshold),
+			Selectability::HeldBack(HeldBack::Dwell),
+			Selectability::Now,
+		];
+		assert_eq!(verdicts, expected, "{policy:?}");
+	}
+}
+
+#[test]
+fn a_full_ring_releases_an_entry_before_any_dwell() {
+	let wallet = Wallet::new(PrivacyPolicy::most_private());
+	let entry = wallet.entry_in_ring(4, chain_params().ring_size());
+	assert_eq!(wallet.selectability_at(&entry, NOW), Selectability::Now);
+}
+
+#[test]
+fn an_entry_finishing_its_dwell_frees_recycling_budget() {
+	let wallet = Wallet::new(PrivacyPolicy::balanced());
+	wallet.entry_in_ring(3, 40);
+	let coin = wallet.coin(1, 5);
+	assert_eq!(wallet.due(NOW), [], "8 of 10 cents are held back, above the 20 percent share");
+	assert_eq!(wallet.due(NOW + 600), [coin], "the entry is ready, nothing else is unavailable");
+}
+
+#[test]
+fn readiness_follows_the_clock_both_ways() {
+	let wallet = Wallet::new(PrivacyPolicy::balanced());
+	let entry = wallet.entry_in_ring(4, 40);
+	let verdicts = [NOW, NOW + 600, NOW, NOW + 600].map(|now| wallet.selectability_at(&entry, now));
+	let (held, ready) = (Selectability::HeldBack(HeldBack::Dwell), Selectability::Now);
+	assert_eq!(verdicts, [held, ready, held, ready]);
+}
+
+#[test]
+fn maturity_makes_an_entry_spendable_without_confirmation_under_both_presets() {
+	for policy in [PrivacyPolicy::balanced(), PrivacyPolicy::most_private()] {
+		let wallet = Wallet::new(policy.clone());
+		let entry = wallet.entry_in_ring(4, 32);
+		let verdicts = [wallet.selectability_at(&entry, NOW), wallet.selectability_at(&entry, NOW + 600)];
+		assert_eq!(verdicts, [Selectability::HeldBack(HeldBack::Dwell), Selectability::Now], "{policy:?}");
+	}
 }
