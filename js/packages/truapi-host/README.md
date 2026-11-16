@@ -38,18 +38,18 @@ the host build runs:
 - `pointer`: the stack's link, `polkadotapp://stack?key=0x…&url=…`.
 - `descriptor`: the bytes of the signed copy the build bundles. The core checks
   it against the pointer's key.
-- `reservedValues.allowed`: set only by a Polkadot or Polkadot-fork build.
-  Without it the core refuses Polkadot's genesis hashes and the `dot` TLD, and
-  any entry of the build's own `extraGenesisHashes` and `extraTlds`. An
-  `extraTlds` entry is one lowercase label without the leading dot. The core
-  refuses any other, and any field `reservedValues` does not have.
+- `reservedValues`: the build's `ReservedValuesPolicy`. Its doc in
+  [`src/runtime.ts`](src/runtime.ts) says what the core reserves and which
+  policies it refuses.
 
 The core takes every chain it uses, the network `getChainInfo` reports and the
-signing host's TLD from the descriptor. It refuses a pointer without a key and a
-descriptor without an Asset Hub, People or Bulletin chain.
+signing host's TLD from the descriptor. It refuses a pointer without a key, a
+descriptor without an Asset Hub, People or Bulletin chain, and a field `stack`
+does not have.
 
 The test host has no descriptor, so it passes `testStack` instead: the network,
-the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it.
+the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it,
+and refuses a field it does not have.
 `mockRuntimeConfig` fills it with the `MOCK_GENESIS` chains, and the Playwright
 fixture builds it from `networks`.
 

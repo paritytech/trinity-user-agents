@@ -101,11 +101,9 @@ as a `BundledStack`:
   carry a key.
 - `descriptor` is the signed descriptor the build bundles, byte for byte as
   served. The core verifies it under the pointer's key.
-- `reservedValues.allowed` is true only in a Polkadot or Polkadot-fork build.
-  Without it the core refuses a stack that uses Polkadot's genesis hashes or the
-  `dot` TLD, or an entry of the build's own `extraGenesisHashes` and
-  `extraTlds`. An `extraTlds` entry is one lowercase label without the leading
-  dot, and the core refuses any other.
+- `reservedValues` is the build's `ReservedValuesPolicy`. Its
+  [doc](../../rust/crates/truapi/src/stack.rs) says what the core reserves and
+  which policies it refuses.
 
 The core takes every chain it uses from the descriptor, and answers products'
 chain info queries from its `chains` and `network`. The descriptor's TLD is the
