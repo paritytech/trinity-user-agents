@@ -155,3 +155,5 @@ async fn an_import_refuses_a_secret_that_is_not_a_canonical_key() {
 	let refused = layer.import(op(1), PurseId::MAIN, vec![canonical, not_canonical]).await;
 	assert!(matches!(refused, Err(Error::InvalidSecret(1))));
 }
+
+mod use_cases;
