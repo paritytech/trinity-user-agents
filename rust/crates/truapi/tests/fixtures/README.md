@@ -78,6 +78,17 @@ curl -s -H 'Content-Type: application/json' \
 Read `MembersSubscriber.CurrentGeneration` first. The generation uses `Twox64Concat`; the
 collection and ring index use `Blake2_128Concat`.
 
+## Materials
+
+Shaderlab's conformance vectors for materials, copied verbatim. The material tests must agree
+with every case.
+
+| File | From `paritytech/shaderlab-spa` | Covers |
+|---|---|---|
+| `materials/material-format.v1.json` | `main` at `66dd4552` | format version 1: verdicts, error codes, IDs |
+| `materials/body-seed.v1.json` | `main` at `66dd4552` | the noise seed of a body's id |
+| `materials/noise.v1.json` | `main` at `66dd4552` | the noise image of a seed |
+
 ## Recapturing
 
 A re-captured fixture can change shape silently. Two tests exist to catch that rather than
