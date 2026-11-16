@@ -8,6 +8,11 @@ public enum ProductLoadPolicy: Equatable, Sendable {
     case attempts(Int)
 }
 
+public enum ExecutableKindStrategy: Equatable, Sendable {
+    case fixed(ExecutableKind)
+    case withAppFallback(ExecutableKind)
+}
+
 public enum ProductLoadPhase: Equatable, Sendable {
     case resolving
     case downloading(downloadedBytes: Int64, totalBytes: Int64?)
@@ -52,9 +57,10 @@ public struct ExecutableRelease: Equatable, Sendable {
 }
 
 public protocol ProductContentLoading: Sendable {
+    /// `content.kind` is the kind actually served.
     func open(
         _ productId: ProductId,
-        kind: ExecutableKind,
+        strategy: ExecutableKindStrategy,
         policy: ProductLoadPolicy,
         onPhase: @escaping ProductLoadPhaseHandler
     ) async throws -> ProductContent
@@ -70,7 +76,11 @@ public protocol ProductContentLoading: Sendable {
 }
 
 public extension ProductContentLoading {
-    func open(_ productId: ProductId, kind: ExecutableKind, policy: ProductLoadPolicy) async throws -> ProductContent {
-        try await open(productId, kind: kind, policy: policy, onPhase: { _ in })
+    func open(
+        _ productId: ProductId,
+        strategy: ExecutableKindStrategy,
+        policy: ProductLoadPolicy
+    ) async throws -> ProductContent {
+        try await open(productId, strategy: strategy, policy: policy, onPhase: { _ in })
     }
 }
