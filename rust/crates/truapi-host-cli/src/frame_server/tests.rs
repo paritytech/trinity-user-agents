@@ -510,13 +510,17 @@ mod cross_product_storage {
 			.duration_since(std::time::UNIX_EPOCH)
 			.expect("clock is after the epoch")
 			.as_secs();
-		let stack = crate::network::Network::default()
-			.bundled_stack(crate::chain::ChainBackend::Rpc)
-			.core_stack()
-			.expect("the bundled stack runs");
-		let applied = product_config::apply(platform, &stack, std::slice::from_ref(&config), now)
-			.await
-			.expect("the config applies");
+		let applied = product_config::apply(
+			platform,
+			&crate::network::Network::default()
+				.bundled_stack(ChainBackend::Rpc)
+				.core_stack()
+				.expect("the bundled stack is valid"),
+			std::slice::from_ref(&config),
+			now,
+		)
+		.await
+		.expect("the config applies");
 		applied.lines.join("\n")
 	}
 

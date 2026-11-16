@@ -853,6 +853,7 @@ fn slot_key(slot: &CoreStorageKey) -> String {
 		CoreStorageKey::LastProcessedPairingStatement => {
 			"core:last-processed-pairing-statement".to_string()
 		},
+		CoreStorageKey::UnscopedEntriesOwner => "core:unscoped-entries-owner".to_string(),
 	}
 }
 
@@ -994,9 +995,6 @@ impl Notifications for MockPlatform {
 	}
 }
 
-/// Identity of every [`mock_stack`].
-pub const MOCK_STACK_ID: &str = "mock";
-
 /// A stack for tests that need particular genesis hashes: network `mock`
 /// under the `paseo` TLD, without a relay.
 pub fn mock_stack(
@@ -1005,7 +1003,7 @@ pub fn mock_stack(
 	asset_hub: truapi::Bytes32,
 ) -> crate::platform::Stack {
 	let identity = crate::platform::StackIdentity {
-		id: MOCK_STACK_ID.to_string(),
+		id: "mock".to_string(),
 		generation: "mock".to_string(),
 	};
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };

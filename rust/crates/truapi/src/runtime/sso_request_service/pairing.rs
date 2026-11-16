@@ -125,9 +125,9 @@ impl<'a> SsoPairingFlow<'a> {
 
 		let prepare = async {
 			let (mut pairing_identity, reused_identity) =
-				read_or_create_pairing_device_identity(&self.host.storage()).await?;
+				read_or_create_pairing_device_identity(&self.host.services.storage()).await?;
 			let last_processed_statement =
-				read_last_processed_pairing_statement(&self.host.storage()).await?;
+				read_last_processed_pairing_statement(&self.host.services.storage()).await?;
 			// Pairing success statements are retained by statement-store. Reusing a
 			// previous pairing identity means reusing its topic, where the only
 			// retained response may be the last processed success. Rotate before
@@ -135,7 +135,7 @@ impl<'a> SsoPairingFlow<'a> {
 			if reused_identity {
 				debug!("regenerating stored pairing device identity");
 				pairing_identity =
-					create_fresh_pairing_device_identity(&self.host.storage()).await?;
+					create_fresh_pairing_device_identity(&self.host.services.storage()).await?;
 			}
 			let bootstrap =
 				create_pairing_bootstrap_from_identity(&self.host.host_config, pairing_identity)
@@ -241,7 +241,7 @@ impl<'a> SsoPairingFlow<'a> {
 			_ = deadline => return Err(pairing_deadline_reason()),
 			response_result = pairing_response => response_result?,
 		};
-		write_last_processed_pairing_statement(&self.host.storage(), &response.statement).await;
+		write_last_processed_pairing_statement(&self.host.services.storage(), &response.statement).await;
 		let sso = establish_sso_session_info(
 			bootstrap,
 			response.peer_statement_account_id,

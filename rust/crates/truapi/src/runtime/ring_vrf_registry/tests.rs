@@ -1,5 +1,5 @@
 use super::*;
-use crate::test_support::{StubPlatform, paseo_test_stack};
+use crate::test_support::{StubPlatform, paseo_test_stack, test_services, test_services_on};
 
 fn handle(owner: &str, index: u32) -> ProductAccountId {
 	ProductAccountId {
@@ -18,7 +18,7 @@ fn ring(byte: u8) -> RingLocation {
 #[test]
 fn registry_is_wallet_scoped_durable_and_registration_is_idempotent() {
 	let platform = Arc::new(StubPlatform::default());
-	let store = RingVrfRegistryStore::new(platform.clone(), paseo_test_stack());
+	let store = RingVrfRegistryStore::new(test_services(platform.clone()));
 	let first_root = [1; 32];
 	let second_root = [2; 32];
 	let key = handle("owner.dot", 7);
@@ -30,7 +30,7 @@ fn registry_is_wallet_scoped_durable_and_registration_is_idempotent() {
 	assert_eq!(entry.rings, vec![ring(1), ring(2)]);
 	assert!(futures::executor::block_on(store.entry(second_root, &key)).unwrap().is_none());
 
-	let reloaded = RingVrfRegistryStore::new(platform, paseo_test_stack());
+	let reloaded = RingVrfRegistryStore::new(test_services(platform));
 	assert_eq!(futures::executor::block_on(reloaded.entry(first_root, &key)).unwrap(), Some(entry));
 }
 
@@ -42,13 +42,13 @@ fn registry_is_wallet_scoped_durable_and_registration_is_idempotent() {
 fn a_registry_filled_in_another_run_of_the_chains_is_empty() {
 	let platform = Arc::new(StubPlatform::default());
 	let key = handle("owner.dot", 7);
-	let before = RingVrfRegistryStore::new(platform.clone(), paseo_test_stack());
+	let before = RingVrfRegistryStore::new(test_services(platform.clone()));
 	for root in [[1; 32], [2; 32]] {
 		futures::executor::block_on(before.register(root, key.clone(), ring(1), [9; 32])).unwrap();
 	}
 
 	let entries = |stack| {
-		let store = RingVrfRegistryStore::new(platform.clone(), stack);
+		let store = RingVrfRegistryStore::new(test_services_on(platform.clone(), stack));
 		[[1; 32], [2; 32]].map(|root| {
 			futures::executor::block_on(store.entry(root, &key)).unwrap().is_some()
 		})
@@ -60,7 +60,7 @@ fn a_registry_filled_in_another_run_of_the_chains_is_empty() {
 
 #[test]
 fn first_registrar_remains_selected_until_explicitly_changed() {
-	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()), paseo_test_stack());
+	let store = RingVrfRegistryStore::new(test_services(Arc::new(StubPlatform::default())));
 	let root = [1; 32];
 	let location = ring(1);
 	let first = handle("first.dot", 0);
@@ -87,7 +87,7 @@ fn first_registrar_remains_selected_until_explicitly_changed() {
 
 #[test]
 fn registration_rejects_a_conflicting_public_key_for_the_same_handle() {
-	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()), paseo_test_stack());
+	let store = RingVrfRegistryStore::new(test_services(Arc::new(StubPlatform::default())));
 	let root = [1; 32];
 	let key = handle("owner.dot", 7);
 	futures::executor::block_on(store.register(root, key.clone(), ring(1), [1; 32])).unwrap();
@@ -108,7 +108,7 @@ fn registration_rejects_a_conflicting_public_key_for_the_same_handle() {
 
 #[test]
 fn stale_owner_snapshot_preserves_a_local_registration() {
-	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()), paseo_test_stack());
+	let store = RingVrfRegistryStore::new(test_services(Arc::new(StubPlatform::default())));
 	let root = [1; 32];
 	let local = handle("owner.dot", 7);
 	let remote = RegisteredRingVrfKey {
@@ -143,7 +143,7 @@ fn stale_owner_snapshot_preserves_a_local_registration() {
 
 #[test]
 fn owner_snapshot_rejects_a_conflicting_local_registration() {
-	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()), paseo_test_stack());
+	let store = RingVrfRegistryStore::new(test_services(Arc::new(StubPlatform::default())));
 	let root = [1; 32];
 	let key = handle("owner.dot", 7);
 	futures::executor::block_on(store.register(root, key.clone(), ring(1), [1; 32])).unwrap();

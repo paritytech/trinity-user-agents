@@ -6,7 +6,7 @@ use crate::{
 		authority::{AccountCaller, AccountInvocation},
 		signing_host::ring_vrf::ChainRingResolver,
 	},
-	test_support::{StubPlatform, paseo_test_stack, ring_location_fixture, test_stack},
+	test_support::{StubPlatform, ring_location_fixture, test_stack},
 };
 use truapi::{
 	CallContext,
@@ -30,8 +30,8 @@ pub fn unlocked_wallet(
 		test_stack(network_suffix, [0; 32], [0; 32], [0xcc; 32]),
 		Spawner::for_test(),
 	);
-	let registry = RingVrfRegistryStore::new(services.platform.clone(), paseo_test_stack());
-	let consent = Arc::new(ProductConsent::new(services.platform.clone(), paseo_test_stack()));
+	let registry = RingVrfRegistryStore::new(services.clone());
+	let consent = Arc::new(ProductConsent::new(services.clone()));
 	let ring_resolver = ChainRingResolver::new(services.chain.clone());
 	let wallet = WalletAccountHolder::new(services, consent, ring_resolver, registry);
 	wallet.install(wallet.prepare_activation(vec![entropy; 32], None).unwrap());

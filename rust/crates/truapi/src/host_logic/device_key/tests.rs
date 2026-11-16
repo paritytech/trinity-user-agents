@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
 	platform::Platform,
-	test_support::{MemoryCoreStorage, StubPlatform, test_storage},
+	test_support::{MemoryCoreStorage, StubPlatform, paseo_test_stack, test_storage},
 };
 use std::sync::Arc;
 
@@ -31,8 +31,10 @@ fn a_secret_stored_with_no_stack_id_is_kept() {
 	let host = MemoryCoreStorage::default();
 	host.store_unscoped(CoreStorageKey::DeviceEncryptionKey, vec![7; 32]);
 
+	let stack = paseo_test_stack();
+
 	let secret =
-		futures::executor::block_on(read_or_create_device_encryption_secret(&test_storage(&host)));
+		futures::executor::block_on(read_or_create_device_encryption_secret(&stack.storage(&host)));
 
 	assert_eq!(secret, Ok([7; 32]));
 }

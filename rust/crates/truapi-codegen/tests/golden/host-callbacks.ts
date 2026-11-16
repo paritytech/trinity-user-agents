@@ -257,6 +257,14 @@ export type CoreStorageKey =
    */
   | { tag: "AppManifest"; value: { productLabel: string } }
   /**
+   * Id of the stack that holds the values a host stored under a slot alone,
+   * before keys included a stack id.
+   *
+   * Kept under the slot alone itself, so every stack the host runs reads the
+   * same entry. See `StackStorage`.
+   */
+  | { tag: "UnscopedEntriesOwner"; value?: undefined }
+  /**
    * The `StackRun` the usernames in the `AuthSession` slot were read in.
    * When the stack is in another run, or none is recorded, the core looks
    * the usernames up again before it installs the stored session.
@@ -1129,7 +1137,8 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         16,
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
-      SessionUsernamesRun: [17, S._void] as const,
+      UnscopedEntriesOwner: [17, S._void] as const,
+      SessionUsernamesRun: [18, S._void] as const,
     }),
 );
 
@@ -1932,7 +1941,9 @@ export interface CoreAdmin {
  * Host-private persistence for core-owned state.
  *
  * Every key includes the id of the stack it belongs to, and the core only
- * uses keys of the stack it runs. Stacks therefore do not share entries.
+ * uses keys of the stack it runs. Stacks therefore do not share entries. The
+ * `unscoped` methods reach the entries a host stored before keys included a
+ * stack id.
  *
  * Clearing product-indexed slots is the host's job. The core drops the ones
  * it is holding when a session ends, but a product it never opened this run
@@ -1967,12 +1978,24 @@ export interface CoreStorage {
    *
    * A host that stored core state before keys included a stack id serves
    * those entries here, by the key it stored them under: the SCALE-encoded
-   * slot. The core moves each one under the stack it runs the first time it
-   * reads the slot. A host with no such entries has none to return.
+   * slot. Only one stack reads them, see `StackStorage`. A host with no
+   * such entries has none to return.
    */
   readUnscopedCoreStorage?(
     slot: CoreStorageKey,
   ): Promise<Uint8Array | undefined>;
+
+  /**
+   * Write `value` under `slot` alone, with no stack id.
+   *
+   * The core writes only `CoreStorageKey::UnscopedEntriesOwner` here. A
+   * host that serves `Self::read_unscoped_core_storage` has to keep it, or
+   * no stack reads the entries.
+   */
+  writeUnscopedCoreStorage?(
+    slot: CoreStorageKey,
+    value: Uint8Array,
+  ): Promise<void>;
 
   /**
    * Clear the value the host holds under `slot` alone, with no stack id.

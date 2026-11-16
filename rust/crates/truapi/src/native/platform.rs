@@ -399,6 +399,17 @@ impl CoreStorage for CallbackPlatform {
 			.map_err(v01::GenericError::from)
 	}
 
+	async fn write_unscoped_core_storage(
+		&self,
+		slot: CoreStorageKey,
+		value: Vec<u8>,
+	) -> Result<(), v01::GenericError> {
+		self.callbacks
+			.core_storage_write(slot.encode(), value)
+			.await
+			.map_err(v01::GenericError::from)
+	}
+
 	async fn clear_unscoped_core_storage(
 		&self,
 		slot: CoreStorageKey,

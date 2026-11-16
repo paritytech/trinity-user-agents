@@ -173,9 +173,8 @@ after activation. A name the host passes is shown until a record answers.
 
 ### Stack
 
-Both host configs carry a `Stack`, the core's only chain configuration: the
-Relay, Asset Hub, People and Bulletin genesis hashes, the network
-`get_chain_info` reports, and the dotNS TLD.
+Both host configs carry a `Stack`, the core's only chain configuration. Its
+doc in `src/stack.rs` lists what it holds.
 
 A native or browser shell builds it with `Stack::bundled` from the stack's
 pointer, the signed descriptor its build bundles, and whether the build allows
@@ -426,17 +425,10 @@ for raw bytes signed inside the `<Bytes>` watermark.
 
 - `ProductStorage`: product-scoped key-value storage.
 - `CoreStorage`: typed core-owned storage slots such as auth session, pairing
-  identity, and permission authorization state. Every key is a
-  `StackStorageKey`: a `CoreStorageKey` slot together with the identity of the
-  stack it belongs to (`Stack::id`, the stack's key in hex). The core reaches
-  storage only through `Stack::storage`, which adds that identity, so a fork
-  and its source share nothing although their genesis hashes are equal. A
-  value a host holds under a slot alone, with no stack id, is moved under the
-  stack that first reads the slot: the read falls back to
-  `read_unscoped_core_storage`, writes the stack's copy and then clears the
-  other. A clear removes both, the unscoped one first, so a kill between the
-  two cannot bring a cleared value back. A wipe keeps a stack's id and replaces its
-  chains. The core tells one run of the chains from the next by `StackRun`:
+  identity, and permission authorization state, keyed by stack. The core
+  reaches it only through [`StackStorage`](src/stack/storage.rs), whose docs
+  say how keys name the stack and which stack reads the values a host stored
+  before they did. A wipe keeps a stack's id and replaces its chains. The core tells one run of the chains from the next by `StackRun`:
   the descriptor's `generation` and the genesis hashes. A cached manifest,
   allowance keys and a ring-VRF registry are stored with the run they were
   read in, and a value from another run, or one stored without a run, reads

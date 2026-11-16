@@ -94,12 +94,12 @@ describe("createHeadlessHostCallbacks", () => {
     ).rejects.toThrow(/headless host/);
   });
 
-  // The core asks for a value kept under a slot alone on every miss. A host
-  // that never kept one must answer "nothing", not throw, or every miss would
-  // read as a storage failure.
+  // The core asks every host for values kept under a slot alone. A host that
+  // never kept one must answer "nothing", not throw, or the first read would
+  // fail as a storage error.
   it("has nothing under a slot alone unless the host serves it", async () => {
     const slot = { tag: "AuthSession" } as const;
-    const cleared: string[] = [];
+    const touched: string[] = [];
     const serving = createHeadlessHostCallbacks({
       ...hostCallbacks,
       coreStorage: {
@@ -107,23 +107,28 @@ describe("createHeadlessHostCallbacks", () => {
         async readUnscopedCoreStorage() {
           return new Uint8Array([7]);
         },
+        async writeUnscopedCoreStorage(writtenSlot) {
+          touched.push(`write ${writtenSlot.tag}`);
+        },
         async clearUnscopedCoreStorage(clearedSlot) {
-          cleared.push(clearedSlot.tag);
+          touched.push(`clear ${clearedSlot.tag}`);
         },
       },
     }).coreStorage;
     const plain = createHeadlessHostCallbacks(hostCallbacks).coreStorage;
-    await serving.clearUnscopedCoreStorage(slot);
-    await plain.clearUnscopedCoreStorage(slot);
+    for (const storage of [serving, plain]) {
+      await storage.writeUnscopedCoreStorage(slot, new Uint8Array([1]));
+      await storage.clearUnscopedCoreStorage(slot);
+    }
 
     expect({
       plain: await plain.readUnscopedCoreStorage(slot),
       serving: await serving.readUnscopedCoreStorage(slot),
-      cleared,
+      touched,
     }).toEqual({
       plain: undefined,
       serving: new Uint8Array([7]),
-      cleared: ["AuthSession"],
+      touched: ["write AuthSession", "clear AuthSession"],
     });
   });
 

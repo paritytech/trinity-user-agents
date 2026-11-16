@@ -2,7 +2,7 @@ use truapi::latest::GenericError;
 
 use super::*;
 use crate::{
-	platform::{CoreStorageKey, ProductId, StackStorageKey},
+	platform::{CoreStorage, CoreStorageKey, ProductId, StackStorageKey},
 	test_support::{
 		MemoryCoreStorage, sign_test_descriptor, test_descriptor, test_descriptor_chain,
 		test_stack_link,
@@ -278,8 +278,8 @@ fn a_fork_and_its_source_share_no_stored_state() {
 	});
 }
 
-/// The core keys stored state by the id and drops chain caches by the
-/// generation, so a stack that names neither cannot be told from another.
+/// An empty id or generation names no stack and no run of its chains, so
+/// either is refused.
 #[test]
 fn a_stack_without_an_id_or_a_generation_is_refused() {
 	let chains = StackChains {
@@ -302,12 +302,13 @@ fn a_stack_without_an_id_or_a_generation_is_refused() {
 	);
 }
 
-/// [`MemoryCoreStorage`] whose writes or clears under a stack's key fail.
+/// [`MemoryCoreStorage`] whose clears under a stack's key fail, or that
+/// keeps nothing written under a slot alone.
 #[derive(Default)]
 struct FailingStorage {
 	memory: MemoryCoreStorage,
-	fail_writes: bool,
 	fail_clears: bool,
+	drop_unscoped_writes: bool,
 }
 
 #[async_trait::async_trait]
@@ -324,9 +325,6 @@ impl CoreStorage for FailingStorage {
 		key: StackStorageKey,
 		value: Vec<u8>,
 	) -> Result<(), GenericError> {
-		if self.fail_writes {
-			return Err(GenericError { reason: "write failed".to_string() });
-		}
 		self.memory.write_core_storage(key, value).await
 	}
 
@@ -342,6 +340,17 @@ impl CoreStorage for FailingStorage {
 		slot: CoreStorageKey,
 	) -> Result<Option<Vec<u8>>, GenericError> {
 		self.memory.read_unscoped_core_storage(slot).await
+	}
+
+	async fn write_unscoped_core_storage(
+		&self,
+		slot: CoreStorageKey,
+		value: Vec<u8>,
+	) -> Result<(), GenericError> {
+		if self.drop_unscoped_writes {
+			return Ok(());
+		}
+		self.memory.write_unscoped_core_storage(slot, value).await
 	}
 
 	async fn clear_unscoped_core_storage(&self, slot: CoreStorageKey) -> Result<(), GenericError> {
@@ -361,25 +370,118 @@ fn test_stack(id: &str) -> Stack {
 }
 
 /// A wallet that updates must keep its replay ledger, its device key and its
-/// session, all of which a host stored before keys included a stack id. The
-/// stack that reads a slot first takes the value, and the old entry is erased
-/// so a secret is not left behind and no other stack takes it too.
+/// session, all of which a host stored before keys included a stack id. They
+/// are one stack's: a fork run on the same host must not sign in with the
+/// source's session or find its grants, however late it first reads a slot,
+/// and the stack that took them still finds them after a restart.
 #[test]
-fn a_value_stored_with_no_stack_id_moves_to_the_stack_that_reads_it() {
+fn values_stored_with_no_stack_id_belong_to_the_first_stack_that_looks() {
 	let host = MemoryCoreStorage::default();
 	for slot in slots() {
 		host.store_unscoped(slot, b"stored before".to_vec());
 	}
-	let (first, second) = (test_stack("first"), test_stack("second"));
+	let stored = slots().map(|_| Some(b"stored before".to_vec()));
 
 	futures::executor::block_on(async {
-		let stored = slots().map(|_| Some(b"stored before".to_vec()));
+		let first = test_stack("first");
+		let session = first.storage(&host).read(CoreStorageKey::AuthSession).await;
+		assert_eq!(session, Ok(Some(b"stored before".to_vec())));
+
+		assert_eq!(read_slots(&test_stack("second").storage(&host)).await, [const { None }; 4]);
 		assert_eq!(read_slots(&first.storage(&host)).await, stored);
-		assert_eq!(read_slots(&first.storage(&host)).await, stored);
-		assert_eq!(read_slots(&second.storage(&host)).await, [const { None }; 4]);
-		for slot in slots() {
-			assert_eq!(host.read_unscoped_core_storage(slot).await, Ok(None));
+		assert_eq!(read_slots(&test_stack("first").storage(&host)).await, stored);
+	});
+}
+
+/// A host that cannot keep which stack took the values would let every stack
+/// take them, so none does.
+#[test]
+fn values_stored_with_no_stack_id_are_not_read_when_the_owner_cannot_be_kept() {
+	let host = FailingStorage { drop_unscoped_writes: true, ..Default::default() };
+	host.memory.store_unscoped(CoreStorageKey::AuthSession, b"session".to_vec());
+
+	futures::executor::block_on(async {
+		let read = test_stack("stack").storage(&host).read(CoreStorageKey::AuthSession).await;
+		assert_eq!(read, Ok(None));
+	});
+}
+
+/// [`MemoryCoreStorage`] that clears `slot` everywhere while the core reads
+/// it under the slot alone, as a sign-out running at the same moment would.
+struct ClearedWhileRead {
+	memory: MemoryCoreStorage,
+	stack: String,
+	slot: CoreStorageKey,
+}
+
+#[async_trait::async_trait]
+impl CoreStorage for ClearedWhileRead {
+	async fn read_core_storage(
+		&self,
+		key: StackStorageKey,
+	) -> Result<Option<Vec<u8>>, GenericError> {
+		self.memory.read_core_storage(key).await
+	}
+
+	async fn write_core_storage(
+		&self,
+		key: StackStorageKey,
+		value: Vec<u8>,
+	) -> Result<(), GenericError> {
+		self.memory.write_core_storage(key, value).await
+	}
+
+	async fn clear_core_storage(&self, key: StackStorageKey) -> Result<(), GenericError> {
+		self.memory.clear_core_storage(key).await
+	}
+
+	async fn read_unscoped_core_storage(
+		&self,
+		slot: CoreStorageKey,
+	) -> Result<Option<Vec<u8>>, GenericError> {
+		let value = self.memory.read_unscoped_core_storage(slot.clone()).await;
+		if slot == self.slot {
+			self.memory.clear_unscoped_core_storage(slot.clone()).await?;
+			let key = StackStorageKey { stack: self.stack.clone(), slot };
+			self.memory.clear_core_storage(key).await?;
 		}
+		value
+	}
+
+	async fn write_unscoped_core_storage(
+		&self,
+		slot: CoreStorageKey,
+		value: Vec<u8>,
+	) -> Result<(), GenericError> {
+		self.memory.write_unscoped_core_storage(slot, value).await
+	}
+
+	async fn clear_unscoped_core_storage(&self, slot: CoreStorageKey) -> Result<(), GenericError> {
+		self.memory.clear_unscoped_core_storage(slot).await
+	}
+}
+
+/// A read that wrote what it found under the stack's key could land after a
+/// sign-out cleared the slot and bring the session back. Reading must leave
+/// the host's entries as they are.
+#[test]
+fn a_slot_cleared_while_it_is_read_stays_cleared() {
+	let slot = CoreStorageKey::AuthSession;
+	let host = ClearedWhileRead {
+		memory: MemoryCoreStorage::default(),
+		stack: "stack".to_string(),
+		slot: slot.clone(),
+	};
+	host.memory.store_unscoped(slot.clone(), b"session".to_vec());
+	let stack = test_stack("stack");
+
+	futures::executor::block_on(async {
+		let read = stack.storage(&host).read(slot.clone()).await;
+		let key = StackStorageKey { stack: "stack".to_string(), slot };
+		assert_eq!(
+			(read, host.memory.read_core_storage(key).await),
+			(Ok(Some(b"session".to_vec())), Ok(None))
+		);
 	});
 }
 
@@ -399,7 +501,7 @@ fn a_cleared_slot_stays_cleared() {
 
 		let failing = FailingStorage { fail_clears: true, ..Default::default() };
 		failing.memory.store_unscoped(slot.clone(), b"session".to_vec());
-		let cleared = stack.storage(&failing).clear(slot.clone()).await;
+		let cleared = test_stack("stack").storage(&failing).clear(slot.clone()).await;
 		assert_eq!(
 			(cleared.is_err(), failing.read_unscoped_core_storage(slot).await),
 			(true, Ok(None))
@@ -407,29 +509,10 @@ fn a_cleared_slot_stays_cleared() {
 	});
 }
 
-/// When the host cannot write the stack's copy, the value is still the
-/// user's: it is returned, and it stays where it was for the next read to
-/// move.
+/// The stack's own value is the one the core has written since the update,
+/// so it wins over the one stored with no stack id.
 #[test]
-fn a_value_that_cannot_be_moved_is_still_read() {
-	let slot = CoreStorageKey::DeviceEncryptionKey;
-	let host = FailingStorage { fail_writes: true, ..Default::default() };
-	host.memory.store_unscoped(slot.clone(), b"device key".to_vec());
-	let stack = test_stack("stack");
-
-	futures::executor::block_on(async {
-		let read = stack.storage(&host).read(slot.clone()).await;
-		assert_eq!(
-			(read, host.read_unscoped_core_storage(slot).await),
-			(Ok(Some(b"device key".to_vec())), Ok(Some(b"device key".to_vec())))
-		);
-	});
-}
-
-/// A kill between writing the stack's copy and clearing the old entry leaves
-/// both. The stack's copy is the one the core has written to since.
-#[test]
-fn the_stacks_copy_is_read_before_one_stored_with_no_stack_id() {
+fn the_stacks_value_is_read_before_one_stored_with_no_stack_id() {
 	let slot = CoreStorageKey::AuthSession;
 	let host = MemoryCoreStorage::default();
 	host.store_unscoped(slot.clone(), b"older".to_vec());

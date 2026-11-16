@@ -550,7 +550,7 @@ fn core_storage_key_description_is_strict_and_product_scoped() {
 	assert_eq!(
 		describe_core_storage_key(&permission),
 		Ok(CoreStorageKeyDescription {
-			stack: TEST_STACK_ID.to_string(),
+			stack: Some(TEST_STACK_ID.to_string()),
 			kind: "PermissionAuthorization",
 			owner: Some(CoreStorageKeyOwner::Product(ProductId::for_test("product.dot"))),
 		})
@@ -593,21 +593,29 @@ fn core_storage_key_description_is_strict_and_product_scoped() {
 			"AppManifest",
 			Some(CoreStorageKeyOwner::ProductLabel("ramp".to_string())),
 		),
+		(CoreStorageKey::UnscopedEntriesOwner, "UnscopedEntriesOwner", None),
+		(CoreStorageKey::SessionUsernamesRun, "SessionUsernamesRun", None),
 	] {
-		let description = describe_core_storage_key(&stack_key(key)).expect("valid key");
+		// A host that sweeps a product's state by owner has to find what it
+		// stored under the slot alone, before keys included a stack id, too.
 		assert_eq!(
-			description,
-			CoreStorageKeyDescription { stack: TEST_STACK_ID.to_string(), kind, owner }
+			(
+				describe_core_storage_key(&stack_key(key.clone())),
+				describe_core_storage_key(&key.encode()),
+			),
+			(
+				Ok(CoreStorageKeyDescription {
+					stack: Some(TEST_STACK_ID.to_string()),
+					kind,
+					owner: owner.clone()
+				}),
+				Ok(CoreStorageKeyDescription { stack: None, kind, owner }),
+			)
 		);
 	}
 
 	assert_eq!(
 		describe_core_storage_key(&[]),
-		Err(CoreStorageKeyDescriptionError::InvalidEncoding)
-	);
-	// A slot with no stack is not a key: a host never stores one.
-	assert_eq!(
-		describe_core_storage_key(&CoreStorageKey::AuthSession.encode()),
 		Err(CoreStorageKeyDescriptionError::InvalidEncoding)
 	);
 	let mut trailing = stack_key(CoreStorageKey::AuthSession);
@@ -662,7 +670,7 @@ fn persisted_permission_and_manifest_scopes_keep_their_string_encoding() {
 		assert_eq!(
 			describe_core_storage_key(&stack_key(key)),
 			Ok(CoreStorageKeyDescription {
-				stack: TEST_STACK_ID.to_string(),
+				stack: Some(TEST_STACK_ID.to_string()),
 				kind,
 				owner: Some(owner)
 			})

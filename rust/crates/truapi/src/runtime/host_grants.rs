@@ -6,11 +6,11 @@ use super::{
 		Allowance, AuthorityError, AutoSigningKey, BulletinAllowanceKey, GrantKeeping,
 		StatementStoreAllowanceKey,
 	},
-	product_subtree,
+	RuntimeServices, product_subtree,
 };
 use crate::{
 	host_logic::session::{SessionInfo, SessionState},
-	platform::{CoreStorage, CoreStorageKey, ProductId, Stack, StackStorage},
+	platform::{CoreStorageKey, ProductId},
 };
 use futures::lock::OwnedMutexGuard;
 use parity_scale_codec::{Decode, Encode};
@@ -106,8 +106,7 @@ impl GrantState {
 /// [`AuthorityError::Disconnected`] once a reset, lock or session change has
 /// advanced it.
 pub struct HostGrantStore {
-	host_storage: Arc<dyn CoreStorage>,
-	stack: Stack,
+	services: Arc<RuntimeServices>,
 	keeping: GrantKeeping,
 	state: Mutex<GrantState>,
 	persistence: Arc<futures::lock::Mutex<()>>,
@@ -187,29 +186,23 @@ enum Barrier<'a> {
 }
 
 impl HostGrantStore {
-	/// Keep retained capabilities for `stack` in the host's storage, as
-	/// `keeping` says.
+	/// Keep retained capabilities in the storage of the stack `services`
+	/// runs, as `keeping` says.
 	///
 	/// Grants are only kept for the session `session_state` selects.
 	pub fn new(
-		storage: Arc<dyn CoreStorage>,
-		stack: Stack,
+		services: Arc<RuntimeServices>,
 		keeping: GrantKeeping,
 		session_state: Arc<SessionState>,
 	) -> Self {
 		Self {
-			host_storage: storage,
-			stack,
+			services,
 			keeping,
 			state: Mutex::new(GrantState::default()),
 			persistence: Arc::new(futures::lock::Mutex::new(())),
 			caches: Mutex::new(GrantCaches::default()),
 			session_state,
 		}
-	}
-
-	fn storage(&self) -> StackStorage<'_, dyn CoreStorage> {
-		self.stack.storage(self.host_storage.as_ref())
 	}
 
 	/// Lock the grant revision for a synchronous check or update.
@@ -303,7 +296,7 @@ impl HostGrantStore {
 			return None;
 		}
 		let public_key =
-			product_subtree::read_product_subtree(&self.storage(), session, product_id)
+			product_subtree::read_product_subtree(&self.services.storage(), session, product_id)
 				.await
 				.inspect_err(|error| warn!(reason = %error, "stored product subtree read failed"))
 				.ok()
@@ -341,7 +334,7 @@ impl HostGrantStore {
 			return false;
 		}
 		let persisted = match product_subtree::write_product_subtree(
-			&self.storage(),
+			&self.services.storage(),
 			session,
 			product_id,
 			public_key,
@@ -359,7 +352,7 @@ impl HostGrantStore {
 		}
 		if persisted {
 			let _ =
-				product_subtree::remove_product_subtree(&self.storage(), session, product_id).await;
+				product_subtree::remove_product_subtree(&self.services.storage(), session, product_id).await;
 		}
 		false
 	}
@@ -401,8 +394,8 @@ impl HostGrantStore {
 		}
 		if self.keeping == GrantKeeping::Paired {
 			allowances::write_allowance_key(
-				&self.storage(),
-				&self.stack.run(),
+				&self.services.storage(),
+				&self.services.stack().run(),
 				session,
 				product_id,
 				resource,
@@ -414,8 +407,8 @@ impl HostGrantStore {
 		{
 			if self.keeping == GrantKeeping::Paired {
 				let _ = allowances::remove_allowance_key(
-					&self.storage(),
-					&self.stack.run(),
+					&self.services.storage(),
+					&self.services.stack().run(),
 					session,
 					product_id,
 					resource,
@@ -495,8 +488,8 @@ impl HostGrantStore {
 		let allowance = {
 			let Some(secret) =
 				allowances::read_allowance_key(
-					&self.storage(),
-					&self.stack.run(),
+					&self.services.storage(),
+					&self.services.stack().run(),
 					session,
 					product_id,
 					resource,
@@ -557,7 +550,7 @@ impl HostGrantStore {
 		}
 		persistence.clear_legacy_auto_signing_key(product_id).await?;
 		let mut keys =
-			match self.storage().read(CoreStorageKey::AutoSigningKeys).await.map_err(|err| {
+			match self.services.storage().read(CoreStorageKey::AutoSigningKeys).await.map_err(|err| {
 				AuthorityError::Unknown {
 					reason: format!("failed to read AutoSigning capabilities: {}", err.reason),
 				}
@@ -580,7 +573,7 @@ impl HostGrantStore {
 		if !self.session_secret_allocation_is_current(session, grant_revision) {
 			return Err(AuthorityError::Disconnected);
 		}
-		self.storage()
+		self.services.storage()
 			.write(CoreStorageKey::AutoSigningKeys, keys.encode())
 			.await
 			.map_err(|err| AuthorityError::Unknown {
@@ -621,7 +614,7 @@ impl HostGrantStore {
 		}
 		let legacy_present = persistence.clear_legacy_auto_signing_key(product_id).await?;
 		let Some(mut blob) =
-			self.storage().read(CoreStorageKey::AutoSigningKeys).await.map_err(|err| {
+			self.services.storage().read(CoreStorageKey::AutoSigningKeys).await.map_err(|err| {
 				AuthorityError::Unknown {
 					reason: format!("failed to read AutoSigning capabilities: {}", err.reason),
 				}
@@ -822,7 +815,7 @@ impl HostGrantPersistence<'_> {
 				break;
 			};
 			attempted.push(key.clone());
-			match self.store.storage().clear(key.clone()).await {
+			match self.store.services.storage().clear(key.clone()).await {
 				Ok(()) => {
 					self.store.lifecycle().state.pending_deletions.retain(|pending| *pending != key)
 				},
@@ -853,7 +846,7 @@ impl HostGrantPersistence<'_> {
 		if let Some(previous) = previous.filter(|previous| *previous != session) {
 			self.store.caches().forget_allowances(Some(previous));
 			if let Err(reason) =
-				allowances::clear_session_allowance_keys(&self.store.storage(), previous).await
+				allowances::clear_session_allowance_keys(&self.store.services.storage(), previous).await
 			{
 				warn!(%reason, "allowance capability clear failed during session replacement");
 			}
@@ -871,8 +864,8 @@ impl HostGrantPersistence<'_> {
 		if let Some(session) = session &&
 			self.store.keeping == GrantKeeping::Paired &&
 			let Err(error) = allowances::clear_product_allowance_keys(
-				&self.store.storage(),
-				&self.store.stack.run(),
+				&self.store.services.storage(),
+				&self.store.services.stack().run(),
 				session,
 				product_id,
 			)
@@ -890,7 +883,7 @@ impl HostGrantPersistence<'_> {
 	pub async fn clear_auto_signing_keys(&self) -> Result<(), String> {
 		self.store.caches().auto_signing_keys.clear();
 		self.store
-			.storage()
+			.services.storage()
 			.clear(CoreStorageKey::AutoSigningKeys)
 			.await
 			.map_err(|err| err.reason)
@@ -899,7 +892,7 @@ impl HostGrantPersistence<'_> {
 	/// Erase signing authority for one product.
 	async fn clear_auto_signing_product(&self, product_id: &ProductId) -> Result<(), String> {
 		let aggregate_result =
-			match self.store.storage().read(CoreStorageKey::AutoSigningKeys).await {
+			match self.store.services.storage().read(CoreStorageKey::AutoSigningKeys).await {
 				Err(error) => Err(error.reason),
 				Ok(None) => Ok(()),
 				Ok(Some(mut blob)) => {
@@ -908,7 +901,7 @@ impl HostGrantPersistence<'_> {
 					match decoded {
 						Err(_) => self
 							.store
-							.storage()
+							.services.storage()
 							.clear(CoreStorageKey::AutoSigningKeys)
 							.await
 							.map_err(|error| error.reason),
@@ -919,13 +912,13 @@ impl HostGrantPersistence<'_> {
 								Ok(())
 							} else if keys.is_empty() {
 								self.store
-									.storage()
+									.services.storage()
 									.clear(CoreStorageKey::AutoSigningKeys)
 									.await
 									.map_err(|error| error.reason)
 							} else {
 								self.store
-									.storage()
+									.services.storage()
 									.write(CoreStorageKey::AutoSigningKeys, keys.encode())
 									.await
 									.map_err(|error| error.reason)
@@ -949,7 +942,7 @@ impl HostGrantPersistence<'_> {
 		let owner = AutoSigningOwner::from_session(session);
 		let Some(mut blob) = self
 			.store
-			.storage()
+			.services.storage()
 			.read(CoreStorageKey::AutoSigningKeys)
 			.await
 			.map_err(|err| err.reason)?
@@ -967,7 +960,7 @@ impl HostGrantPersistence<'_> {
 		}
 		self.store.caches().auto_signing_keys.clear();
 		self.store
-			.storage()
+			.services.storage()
 			.clear(CoreStorageKey::AutoSigningKeys)
 			.await
 			.map_err(|err| err.reason)
@@ -978,7 +971,7 @@ impl HostGrantPersistence<'_> {
 		product_id: &ProductId,
 	) -> Result<bool, AuthorityError> {
 		let storage_key = CoreStorageKey::AutoSigningKey { product_id: product_id.clone() };
-		let legacy = self.store.storage().read(storage_key.clone()).await.map_err(|err| {
+		let legacy = self.store.services.storage().read(storage_key.clone()).await.map_err(|err| {
 			AuthorityError::Unknown {
 				reason: format!("failed to inspect legacy AutoSigning key: {}", err.reason),
 			}
@@ -990,7 +983,7 @@ impl HostGrantPersistence<'_> {
 			false
 		};
 		if present {
-			self.store.storage().clear(storage_key).await.map_err(|err| {
+			self.store.services.storage().clear(storage_key).await.map_err(|err| {
 				AuthorityError::Unknown {
 					reason: format!("failed to clear legacy AutoSigning key: {}", err.reason),
 				}

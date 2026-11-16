@@ -1765,8 +1765,12 @@ async fn start_signing_host(
 		chat.clone(),
 		pocket.clone(),
 	)?;
-	let core_stack = network.core_stack().context("invalid stack")?;
-	apply_local_product_grants(platform.as_ref(), &core_stack, &args.product_config).await?;
+	apply_local_product_grants(
+		platform.as_ref(),
+		&network.core_stack().context("invalid stack")?,
+		&args.product_config,
+	)
+	.await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
 	let last_script = profile
 		.as_ref()

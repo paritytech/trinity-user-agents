@@ -1548,8 +1548,10 @@ Before the first resolved user, pairing state uses
   `current-user` file with no suffix names the user for a stack that has no
   file of its own yet.
 
-For the first bootstrap migration, in-memory bootstrap core and product values
-move into the resolved user's directory.
+For the first bootstrap migration, in-memory bootstrap product values and core
+values move into the resolved user's directory. The core values are the
+stack's own and those stored with no stack id; another stack's stay where it
+looks for them.
 
 When switching from one resolved user to another, only transient authentication
 keys move:
@@ -1648,10 +1650,15 @@ hex values are ignored with warnings.
 
 A key is a slot together with the identity of the stack it belongs to, so a
 fork and its source keep separate entries in one file. A write replaces only
-the writing stack's entries and leaves the rest as the file has them, so two
-hosts on a fork and its source can run at once. An entry keyed by a slot
-alone was written before keys had a stack id: the first stack to read the
-slot moves it under its own key.
+the writing stack's entries and leaves the rest as the file has them. Every
+read, change and write of the file holds an exclusive lock on
+`core-storage.json.lock` beside it, so two hosts on a fork and its source can
+run at once without losing each other's writes.
+
+An entry keyed by a slot alone was written before keys had a stack id. Those
+entries belong to the first stack that looks for one, which records its id
+under `UnscopedEntriesOwner` in the install's `device-storage.json`; other
+stacks never read them.
 
 Core state includes auth sessions, pairing bootstrap material, permission
 state, and other role-owned runtime data.

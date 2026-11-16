@@ -47,10 +47,10 @@ use crate::{
 	host_logic::funding::StartRecord,
 	platform::{
 		ExecutableKind, PermissionAuthorizationStatus, PermissionStatusHost, Platform,
-		ProductContext, Stack,
+		ProductContext,
 	},
 	runtime::{
-		AccountHolder, ProductRuntimeHost,
+		AccountHolder, ProductRuntimeHost, RuntimeServices,
 		funding::{Claim, FundsAsked, engine_holds},
 		payment_id::host_payment_id,
 		versioning::version,
@@ -447,7 +447,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 	fn balance_access_check(&self) -> BalanceAccessCheck {
 		BalanceAccessCheck {
 			platform: self.connection.platform.clone(),
-			stack: self.connection.services.stack().clone(),
+			services: self.connection.services.clone(),
 			status: self.connection.permission_status.clone(),
 			temporary: self.connection.temporary_permissions.clone(),
 			product: self.connection.product.clone(),
@@ -571,7 +571,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 /// each balance a host pushes.
 struct BalanceAccessCheck {
 	platform: Arc<dyn Platform>,
-	stack: Stack,
+	services: Arc<RuntimeServices>,
 	status: Option<Arc<dyn PermissionStatusHost>>,
 	temporary: Arc<TemporaryPermissions>,
 	product: ProductContext,
@@ -582,7 +582,7 @@ impl BalanceAccessCheck {
 	async fn holds(&self) -> bool {
 		matches!(
 			PermissionsService::new(
-				self.stack.storage(self.platform.as_ref()),
+				self.services.stack().storage(self.platform.as_ref()),
 				self.platform.as_ref(),
 				&self.product,
 			)
