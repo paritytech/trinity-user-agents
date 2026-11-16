@@ -18,6 +18,7 @@ pub fn noise_seed(context: &RenderContext) -> u32 {
 		RenderContext::PocketCard { card_id } | RenderContext::PocketCardBack { card_id } => {
 			card_id
 		},
+		RenderContext::ChatRoomFooter { room_id, .. } => room_id,
 	};
 	id.bytes()
 		.fold(0x811c_9dc5, |hash, byte| (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193))

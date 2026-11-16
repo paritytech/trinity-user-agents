@@ -259,7 +259,8 @@ the host can read, time and tilt are zero, orientation is zero and rotation is t
 
 The noise image is 1024 × 1024 bytes in row order, made of 32,768 chunks. Chunk `c` is the BLAKE2b-256 hash of the seed
 as a little-endian u32 followed by `c` as a little-endian u32. It is sampled nearest with repeat. The seed is the 32-bit
-FNV-1a hash of the UTF-8 id that names the body in its `RenderContext`: `card_id`, `message_id` or `candidate_id`.
+FNV-1a hash of the UTF-8 id that names the body in its `RenderContext`: `card_id`, `message_id`, `candidate_id`, or
+`room_id` for a room's footer.
 
 Images follow the format's rules: channels are normalised, with no colour-space conversion and no premultiplication.
 Each image is read as four channels: a greyscale image repeats its value in red, green and blue, and an image without
