@@ -127,6 +127,15 @@ fn parses_all_operational_commands() {
 		parse_command("/funding history"),
 		Ok(ShellCommand::Funding(FundingCommand::History))
 	);
+	assert_eq!(
+		parse_command(r#"/funding write fs_abc fundtest:action:fs_abc {"kind": "wallet-sent"}"#),
+		Ok(ShellCommand::Funding(FundingCommand::Write(
+			"fs_abc".to_string(),
+			"fundtest:action:fs_abc".to_string(),
+			r#"{"kind": "wallet-sent"}"#.to_string()
+		)))
+	);
+	assert!(parse_command("/funding write fs_abc key").is_err());
 	assert!(parse_command("/funding cancel").is_err());
 	assert!(parse_command("/funding").is_err());
 	assert_eq!(parse_command("/devices"), Ok(ShellCommand::Devices(DeviceCommand::List)));

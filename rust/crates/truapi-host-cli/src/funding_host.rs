@@ -16,7 +16,8 @@
 //! the host runs the worker each one publishes, fetched from dotNS.
 //!
 //! A product's funding request shows the overlay: the user takes the core's
-//! default rail and, for crypto, its first token and network, the core asks
+//! default rail and, for crypto, its first token and network, or the route
+//! `TRUAPI_FUNDING_SELECT` names, the core asks
 //! each provider routing that rail for a quote, and the user picks a quote or
 //! closes the overlay. Every question goes through the
 //! host's approval policy, as its other confirmations do: a prompt on a
@@ -26,7 +27,9 @@
 //! the same way.
 //!
 //! A provider screen cannot be drawn here: its route or URL is printed, and
-//! the user finishing it closes it, or returns to the page's return URL.
+//! the user finishing it closes it, or returns to the page's return URL. The
+//! user acts on a provider's App screen with `/funding write`, which writes
+//! the provider's storage as the screen would.
 //!
 //! With `TRUAPI_FUNDING_LEDGER` set, the host also serves top-ups and payment
 //! requests from a ledger file: every one completes in full once started, and
@@ -66,7 +69,7 @@ use truapi::{
 	platform::{
 		CoreStorage, FundingPlatform, FundingPresentOutcome, FundingPresentation, FundingQuoteList,
 		FundingQuoteRow, FundingQuoteState, PaymentPlatform, ProductContext, ProductId,
-		TopUpPlatform,
+		ProductStorage, ProductStorageKey, TopUpPlatform,
 	},
 };
 
@@ -177,6 +180,11 @@ pub struct CliFundingHost {
 	/// Bumped on every quote list the core pushes, so an overlay waiting on
 	/// its quotes reads the core's latest list again.
 	quotes_pushed: watch::Sender<u64>,
+	/// The route `TRUAPI_FUNDING_SELECT` picks in every overlay.
+	route: Option<ScriptedRoute>,
+	/// Whether provider screens wait for the provider or the user even under
+	/// `--auto-accept` (`TRUAPI_FUNDING_HOLD_SCREENS=1`).
+	hold_screens: bool,
 }
 
 impl CliFundingHost {
@@ -189,6 +197,9 @@ impl CliFundingHost {
 		user: Arc<CliPlatform>,
 		ui: Option<UiHandle>,
 	) -> anyhow::Result<()> {
+		let route = ScriptedRoute::from_env()?;
+		let hold_screens =
+			std::env::var("TRUAPI_FUNDING_HOLD_SCREENS").is_ok_and(|value| value == "1");
 		let mut workers = HashMap::new();
 		let published = published_providers(network.tld());
 		if !published.is_empty() {
@@ -235,6 +246,8 @@ impl CliFundingHost {
 			runtime: Arc::downgrade(runtime),
 			asked: Mutex::new(HashSet::new()),
 			quotes_pushed: watch::Sender::new(0),
+			route,
+			hold_screens,
 		});
 		runtime.set_funding_feed(host.clone());
 		runtime.set_funding_platform(host);
@@ -291,16 +304,23 @@ impl CliFundingHost {
 		self.asked.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 	}
 
-	/// What session `intent`'s overlay offers once the user takes its
-	/// defaults: the first rail the core routes and, for crypto, the first
-	/// token and then the first network it lists. The core answers a
-	/// selection with the options it leads to before `select_funding_options`
-	/// returns.
-	fn select_defaults(runtime: &SigningHostRuntime, intent: &str) -> Option<FundingOptions> {
+	/// The rail and what session `intent`'s overlay offers on it once the
+	/// user picks `route`, or else takes its defaults: the first rail the
+	/// core routes and, for crypto, the first token and then the first
+	/// network it lists. The core answers a selection with the options it
+	/// leads to before `select_funding_options` returns.
+	fn select_route(
+		runtime: &SigningHostRuntime,
+		intent: &str,
+		route: Option<&ScriptedRoute>,
+	) -> Option<(FundingRail, FundingOptions)> {
 		let offered = runtime.funding_options(intent)?;
-		let rail = default_rail(&offered);
+		let rail = route.map_or_else(|| default_rail(&offered), |route| route.rail);
+		let picked = |field: fn(&ScriptedRoute) -> Option<&String>| route.and_then(field).cloned();
 		let token = match rail {
-			FundingRail::Crypto => offered.tokens.first().cloned(),
+			FundingRail::Crypto => {
+				picked(|route| route.token.as_ref()).or_else(|| offered.tokens.first().cloned())
+			},
 			FundingRail::Card | FundingRail::Bank => None,
 		};
 		let select = |network: Option<String>| {
@@ -310,19 +330,23 @@ impl CliFundingHost {
 					rail,
 					asset: token.clone(),
 					network,
-					country: None,
-					currency: None,
+					country: picked(|route| route.country.as_ref()),
+					currency: picked(|route| route.currency.as_ref()),
 				},
 			);
 			runtime.funding_options(intent)
 		};
 		let options = select(None)?;
 		match rail {
-			FundingRail::Crypto => match options.networks.first() {
-				Some(network) => select(Some(network.network.clone())),
-				None => Some(options),
+			FundingRail::Crypto => {
+				let network = picked(|route| route.network.as_ref())
+					.or_else(|| options.networks.first().map(|network| network.network.clone()));
+				match network {
+					Some(network) => select(Some(network)).map(|options| (rail, options)),
+					None => Some((rail, options)),
+				}
 			},
-			FundingRail::Card | FundingRail::Bank => Some(options),
+			FundingRail::Card | FundingRail::Bank => Some((rail, options)),
 		}
 	}
 
@@ -357,17 +381,79 @@ impl CliFundingHost {
 	}
 }
 
+/// The route a run picks in the overlay instead of the defaults, from
+/// `TRUAPI_FUNDING_SELECT`: `crypto:<network>:<token>`, or
+/// `card|bank:<currency>[:<country>]`, as a user picks them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScriptedRoute {
+	rail: FundingRail,
+	network: Option<String>,
+	token: Option<String>,
+	currency: Option<String>,
+	country: Option<String>,
+}
+
+impl ScriptedRoute {
+	/// The route `TRUAPI_FUNDING_SELECT` names, if any. One it cannot read is
+	/// an error, so a run never quietly falls back to the defaults.
+	fn from_env() -> anyhow::Result<Option<Self>> {
+		match std::env::var("TRUAPI_FUNDING_SELECT") {
+			Ok(value) if !value.trim().is_empty() => Self::parse(value.trim()).map(Some),
+			_ => Ok(None),
+		}
+	}
+
+	fn parse(value: &str) -> anyhow::Result<Self> {
+		let mut parts = value.split(':').map(str::trim);
+		let rail = parts.next().unwrap_or_default();
+		let mut next = || parts.next().filter(|part| !part.is_empty()).map(str::to_string);
+		let route = match rail.to_ascii_lowercase().as_str() {
+			"crypto" => Self {
+				rail: FundingRail::Crypto,
+				network: next(),
+				token: next(),
+				currency: None,
+				country: None,
+			},
+			"card" | "bank" => Self {
+				rail: if rail.eq_ignore_ascii_case("card") {
+					FundingRail::Card
+				} else {
+					FundingRail::Bank
+				},
+				network: None,
+				token: None,
+				currency: next(),
+				country: next(),
+			},
+			_ => anyhow::bail!(
+				"TRUAPI_FUNDING_SELECT={value}: expected crypto:<network>:<token> or \
+				 card|bank:<currency>[:<country>]"
+			),
+		};
+		if next().is_some() {
+			anyhow::bail!("TRUAPI_FUNDING_SELECT={value}: too many parts");
+		}
+		Ok(route)
+	}
+}
+
 /// The rail a user who takes the defaults is on: the first the core routes,
 /// crypto first, or card when it routes none.
 fn default_rail(options: &FundingOptions) -> FundingRail {
 	options.rails.first().copied().unwrap_or(FundingRail::Card)
 }
 
-/// What `session`'s overlay asks to be quoted on `options`, the defaults the
-/// user took: the amount the product asked, or else the smallest one the
-/// selection takes. `None` when a crypto selection has no network to ask on.
-fn default_amount(options: &FundingOptions, session: &FundingPresentation) -> Option<u128> {
-	if default_rail(options) == FundingRail::Crypto && options.networks.is_empty() {
+/// What `session`'s overlay asks to be quoted on `options`, the selection
+/// the user made on `rail`: the amount the product asked, or else the
+/// smallest one the selection takes. `None` when a crypto selection has no
+/// network to ask on.
+fn quote_amount(
+	rail: FundingRail,
+	options: &FundingOptions,
+	session: &FundingPresentation,
+) -> Option<u128> {
+	if rail == FundingRail::Crypto && options.networks.is_empty() {
 		return None;
 	}
 	Some(session.amount.or(options.limits.min).unwrap_or(FUNDING_MIN_AMOUNT))
@@ -421,6 +507,34 @@ pub async fn cancel(runtime: &SigningHostRuntime, intent: &str) -> Result<String
 	Ok(outcome)
 }
 
+/// Write `value`, as UTF-8, under `key` of the storage of the provider
+/// serving session `intent`, as the provider's own screen would, and record
+/// it. The provider's worker hears it through `localStorage.subscribe`.
+pub async fn write_provider_storage(
+	runtime: &SigningHostRuntime,
+	storage: &dyn ProductStorage,
+	intent: &str,
+	key: String,
+	value: String,
+) -> Result<String, String> {
+	let provider = runtime
+		.funding_session(intent)
+		.ok_or_else(|| format!("no funding session {intent}"))?
+		.provider_id
+		.ok_or_else(|| format!("no provider serves {intent} yet"))?;
+	storage
+		.write(ProductStorageKey::new(provider.clone(), key.clone()).encode(), value.into_bytes())
+		.await
+		.map_err(|error| format!("{error:?}"))?;
+	Transcript::appending_from_env("TRUAPI_FUNDING_LOG", "funding").record(serde_json::json!({
+		"kind": "provider_storage",
+		"intent": intent,
+		"provider": provider.as_str(),
+		"key": key,
+	}));
+	Ok(format!("Wrote {key} for {intent} to {provider}'s storage"))
+}
+
 #[async_trait::async_trait]
 impl FundingPlatform for CliFundingHost {
 	/// Record the status the product is told, with the core's own status,
@@ -465,13 +579,14 @@ impl FundingPlatform for CliFundingHost {
 		let Some(runtime) = self.runtime.upgrade() else {
 			return Ok(FundingPresentOutcome::Dismissed);
 		};
-		let options = Self::select_defaults(&runtime, &session.intent);
+		let options = Self::select_route(&runtime, &session.intent, self.route.as_ref());
 		let candidates: Vec<ProductId> = options
 			.iter()
-			.flat_map(|options| &options.candidates)
+			.flat_map(|(_, options)| &options.candidates)
 			.map(|candidate| candidate.provider_id.clone())
 			.collect();
-		let rows = match options.and_then(|options| default_amount(&options, &session)) {
+		let rows = match options.and_then(|(rail, options)| quote_amount(rail, &options, &session))
+		{
 			Some(amount) => self.answered_quotes(&runtime, &session.intent, amount).await,
 			None => Vec::new(),
 		};
@@ -558,13 +673,14 @@ impl FundingPlatform for CliFundingHost {
 				.and_then(|runtime| runtime.funding_progress(&intent))
 				.is_some_and(|progress| progress.awaits_user_transfer),
 		}));
-		let outcome = if self.user.approval_policy() == ApprovalPolicy::AutoAccept {
-			finished
-		} else {
-			let (answer, answered) = futures::channel::oneshot::channel();
-			lock_frames().insert(intent.clone(), answer);
-			answered.await.unwrap_or(FundingFrameOutcome::Dismissed)
-		};
+		let outcome =
+			if self.user.approval_policy() == ApprovalPolicy::AutoAccept && !self.hold_screens {
+				finished
+			} else {
+				let (answer, answered) = futures::channel::oneshot::channel();
+				lock_frames().insert(intent.clone(), answer);
+				answered.await.unwrap_or(FundingFrameOutcome::Dismissed)
+			};
 		self.transcript.record(serde_json::json!({
 			"kind": "frame_answered",
 			"intent": intent,

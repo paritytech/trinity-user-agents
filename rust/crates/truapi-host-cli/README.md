@@ -831,7 +831,11 @@ Scripts under `js/scripts/` include:
   their direction and amount and records what it did in
   `TRUAPI_FUNDING_WORKER_LOG`. The overlay takes the core's default rail,
   and for crypto its first token and network, and lists the providers serving
-  the session and the quotes of those routing that rail. The cases check that no worker runs until the
+  the session and the quotes of those routing that rail.
+  `TRUAPI_FUNDING_SELECT` picks the route instead, as a user would:
+  `crypto:<network>:<token>` (`crypto:ethereum:USDC`) or
+  `card|bank:<currency>[:<country>]` (`card:EUR:DE`); a part left out takes
+  the default, and a value the host cannot read stops it at startup. The cases check that no worker runs until the
   overlay asks the provider for a quote, and that once its sessions end the
   host stops it and a new worker process is started for the next session.
   The auto-accepting user picks the first quote and accepts cancel offers,
@@ -846,7 +850,15 @@ Scripts under `js/scripts/` include:
   page's own URL. It stays open until the provider calls `closeFrame`, or the
   user types `/funding close <intent>` (answered `Dismissed`) or
   `/funding returned <intent> <url>` (answered `Returned`); under
-  `--auto-accept` it finishes at once, a page at its return URL. A worker
+  `--auto-accept` it finishes at once, a page at its return URL, unless
+  `TRUAPI_FUNDING_HOLD_SCREENS=1` keeps it open for the script user. The user
+  acts on a provider's App screen with
+  `/funding write <intent> <key> <value>`, which writes `value` as UTF-8
+  under `key` of the storage of the provider serving the session, as the
+  provider's own screen would; a worker's `localStorage.subscribe` hears
+  every later write and clear of its key, from any execution of the product
+  (`/funding write fs_1 fundtest:action:fs_1 {"kind":"wallet-sent"}` is Send
+  on fundtest's `/wallet`). A worker
   that exits on its own is reported to the core, which starts it again while
   a session still holds it. The provider reports progress and starts top-ups and payment
   requests, which ledger engines complete in full and record in

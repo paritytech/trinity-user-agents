@@ -2769,7 +2769,9 @@ fn read_script_user_commands(sessions: Arc<frame_server::SwitchableSigningRuntim
 				}
 			};
 			let done = match parse_command(&line) {
-				Ok(ShellCommand::Funding(command)) => run_funding(&runtime, command).await,
+				Ok(ShellCommand::Funding(command)) => {
+					run_funding(&runtime, platform.as_deref(), command).await
+				},
 				Ok(ShellCommand::Approval(ApprovalCommand::Manual)) => {
 					set_approval(ApprovalPolicy::Prompt);
 					Ok("Approval mode set to manual".to_string())
@@ -2791,8 +2793,13 @@ fn read_script_user_commands(sessions: Arc<frame_server::SwitchableSigningRuntim
 	});
 }
 
-/// Act on a funding session as the user, and say what that did.
-async fn run_funding(runtime: &SigningHostRuntime, command: FundingCommand) -> Result<String> {
+/// Act on a funding session as the user, and say what that did. `platform`
+/// holds the provider storage a `/funding write` writes to.
+async fn run_funding(
+	runtime: &SigningHostRuntime,
+	platform: Option<&CliPlatform>,
+	command: FundingCommand,
+) -> Result<String> {
 	match command {
 		FundingCommand::Cancel(intent) => {
 			let outcome = funding_host::cancel(runtime, &intent)
@@ -2824,6 +2831,13 @@ async fn run_funding(runtime: &SigningHostRuntime, command: FundingCommand) -> R
 				format!("No provider screen is open for {intent}")
 			},
 		),
+		FundingCommand::Write(intent, key, value) => {
+			let platform =
+				platform.ok_or_else(|| anyhow::anyhow!("no provider storage to write to"))?;
+			funding_host::write_provider_storage(runtime, platform, &intent, key, value)
+				.await
+				.map_err(|reason| anyhow::anyhow!("writing for {intent} failed: {reason}"))
+		},
 		FundingCommand::History => {
 			let lines: Vec<String> = runtime
 				.funding_history()
@@ -3979,7 +3993,7 @@ async fn execute_interactive_operation(
 		},
 		ShellCommand::Renew => run_renew(session).await?,
 		ShellCommand::Funding(command) => {
-			let done = run_funding(&session.runtime, command).await?;
+			let done = run_funding(&session.runtime, Some(&session.platform), command).await?;
 			ui.success(done, None);
 		},
 		ShellCommand::Profile(command) => run_profile_command(session, command).await?,
@@ -4124,7 +4138,7 @@ async fn execute_non_interactive_command(
 		},
 		ShellCommand::Renew => run_renew(session).await?,
 		ShellCommand::Funding(command) => {
-			let done = run_funding(&session.runtime, command).await?;
+			let done = run_funding(&session.runtime, Some(&session.platform), command).await?;
 			terminal_ui::output_success(done, None);
 		},
 		ShellCommand::Profile(command) => run_profile_command(session, command).await?,

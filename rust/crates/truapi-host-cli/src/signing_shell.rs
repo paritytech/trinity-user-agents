@@ -170,6 +170,9 @@ pub enum FundingCommand {
 	/// Answer the provider's screen open for this session with the URL its
 	/// page returned to.
 	Returned(String, String),
+	/// Write a value under a key of the storage of the provider serving this
+	/// session, as the provider's own screen would: intent, key, value.
+	Write(String, String, String),
 }
 
 /// A command accepted by the signing-host command bar or `exec` mode.
@@ -405,10 +408,24 @@ pub fn parse_command(input: &str) -> Result<ShellCommand, CommandParseError> {
 				)),
 				_ => Err("usage: /funding returned <intent> <url>".into()),
 			},
-			_ => Err(
-				"usage: /funding cancel <intent> | close <intent> | returned <intent> <url> | sessions | history"
-					.into(),
-			),
+			Some(("write", rest)) => {
+				let mut parts = rest.trim().splitn(3, char::is_whitespace);
+				match (parts.next(), parts.next(), parts.next().map(str::trim)) {
+					(Some(intent), Some(key), Some(value)) if !value.is_empty() => {
+						Ok(ShellCommand::Funding(FundingCommand::Write(
+							intent.to_string(),
+							key.to_string(),
+							value.to_string(),
+						)))
+					},
+					_ => Err("usage: /funding write <intent> <key> <value>".into()),
+				}
+			},
+			_ => {
+				Err("usage: /funding cancel <intent> | close <intent> | returned <intent> <url> | \
+				 write <intent> <key> <value> | sessions | history"
+					.into())
+			},
 		},
 		"/quit" => no_argument(name, argument, ShellCommand::Quit),
 		_ => Err(format!("unknown command `{name}`; use /help to list commands").into()),
@@ -959,6 +976,7 @@ pub const HELP_TEXT: &str = "\
 /funding cancel <intent> cancel a funding session
 /funding close <intent>  close the provider screen open for a session
 /funding returned <intent> <url> answer it with the URL its page returned to
+/funding write <intent> <key> <value> write to the session provider's storage, as its screen would
 /funding sessions       list funding sessions the core holds
 /funding history        list ended funding sessions
 /help                   show this help
