@@ -329,6 +329,8 @@ jobs:
         run: printf '%s' "${STEPS_VERSION_OUTPUTS_PACKAGES}" | node scripts/wait-for-npm-publish.mjs
 
       # Skip rather than loop over an empty list, which yields an empty tag.
+      # A trinity-stack release also tags the install-trinity-stack action,
+      # which installs the package version of the commit it is checked out at.
       - name: Create release tags
         if: steps.version.outputs.proceed == 'true' && steps.confirm.outputs.published != ''
         env:
@@ -337,14 +339,20 @@ jobs:
           STEPS_CONFIRM_OUTPUTS_PUBLISHED: ${{ steps.confirm.outputs.published }}
         run: |
           set -euo pipefail
-          while IFS='|' read -r _name _path _version tag; do
-            if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
-              echo "Tag ${tag} already exists; skipping create."
-              continue
+          while IFS='|' read -r name _path version tag; do
+            tags=("${tag}")
+            if [ "${name}" = "@parity/trinity-stack" ]; then
+              tags+=("trinity-stack-v${version}")
             fi
-            gh api --method POST "repos/${{ github.repository }}/git/refs" \
-              -f ref="refs/tags/${tag}" \
-              -f sha="${RELEASE_SHA}"
+            for tag in "${tags[@]}"; do
+              if git ls-remote --exit-code --tags origin "refs/tags/${tag}" >/dev/null 2>&1; then
+                echo "Tag ${tag} already exists; skipping create."
+                continue
+              fi
+              gh api --method POST "repos/${{ github.repository }}/git/refs" \
+                -f ref="refs/tags/${tag}" \
+                -f sha="${RELEASE_SHA}"
+            done
           done <<< "${STEPS_CONFIRM_OUTPUTS_PUBLISHED}"
 
       - name: Create GitHub Release

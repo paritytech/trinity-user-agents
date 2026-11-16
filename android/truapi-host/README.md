@@ -36,20 +36,22 @@ The package is public, so any authenticated GitHub identity can read it. In GitH
 
 The consuming app must declare `android.permission.INTERNET` — the localhost WebSocket bridge binds a `127.0.0.1` TCP socket, which requires it even for loopback.
 
-`HostRuntimeConfig.networkSuffix` is required. Supply the bare TLD (`dot`,
-`paseo`, or `testnet`) from the same network configuration used by onboarding
-and the People/Bulletin genesis hashes. It must match the People chain's
-`NetworkSuffix.NetworkSuffix`. Include this configuration update in the
-embedding app's package upgrade.
+`HostRuntimeConfig.stack` is required. It is the Trinity stack the build runs,
+as a `BundledStack`:
 
-`HostRuntimeConfig.assetHubChainGenesisHash` is required. Supply the Asset Hub
-genesis hash from the same network configuration, as 32 bytes. Product manifests
-are read from the dotNS contracts deployed there, so it is what makes a
-`trustedProducts` grant resolvable: without a usable value no manifest resolves,
-so every cross-product grant not already cached is refused, and the refusal is
-indistinguishable from the other product having granted nothing. Pass 32 zero
-bytes only to declare deliberately that this host has no Asset Hub. Include this
-configuration update in the embedding app's package upgrade.
+- `pointer` is the stack's link, `polkadotapp://stack?key=0x…&url=…`. It must
+  carry a key.
+- `descriptor` is the signed descriptor the build bundles, byte for byte as
+  served. The core verifies it under the pointer's key.
+- `allowsReservedValues` is true only in a Polkadot or Polkadot-fork build.
+  Without it the core refuses a stack that uses Polkadot's genesis hashes or the
+  `dot` TLD.
+
+The core takes every chain it uses from the descriptor, and answers products'
+chain info queries from its `chains` and `network`. The descriptor's TLD is the
+one the wallet's reserved identities derive under. An invalid stack makes the
+`TrUAPIHostRuntime` constructor throw `NativeRuntimeConfigException.Invalid`.
+Include this configuration update in the embedding app's package upgrade.
 
 ### Compatibility
 
@@ -82,7 +84,7 @@ Host callbacks and lifecycle APIs live in [`src/main/kotlin/io/parity/truapi/TrU
 - `ChatHostBridge` - native Chat storage and UI, implemented by hosts that serve the Chat modality and passed to `openProductExecution`. Hosts without it pass nothing and Chat calls answer unsupported.
 - Pocket - the core keeps the collection in its database: the cards in the Pocket and the newest face of each. The host lists the cards it pins in `HostRuntimeConfig.pinnedPocketCards`, follows the collection with `pocketCards()` (pinned first, after every change), and calls `addPocketCard`, `removePocketCard` (returning `PocketCardRemoval.REMOVED`, `ABSENT` or `PRIVILEGED`) and `pocketCardFace` on the runtime. The core keeps the newest face from every Pocket card render. Like Chat, Pocket is reachable only from a Worker execution with an active session, so without `activateLocalSession` every Pocket call answers `Denied`.
 - `GameHostBridge` - the host's game-reminder surface, implemented by hosts that can hold reminders and passed as `game` to `openProductExecution`. The host holds one reminder per product: a `scheduleReminder` replaces the reminder the same product already holds. The core asks for no per-product consent: the host asks the OS for what it needs, rings an alarm where the OS allows one and delivers a notification otherwise, may add the game to the user's calendar, keeps the reminder across app kill and reboot, and drops it once the game starts. A `scheduleReminder` that throws reaches the product as a host failure carrying its reason. Hosts without the bridge pass nothing and Game calls answer unsupported, as they do for every product but the game product, `dim2`.
-- `TopUpHostBridge`, `PaymentHostBridge`, `BalanceHostBridge` - the host's top-up, payment and balance engines, installed once on the runtime with `setTopUp`, `setPayments` and `setBalance` before any execution opens. The core checks the session, amounts, source keys and balance access, and hashes the product into every id it passes. It asks `topUpStatus` or `paymentStatus` once for an operation's current status and expects each later one through `notifyTopUpStatus` or `notifyPaymentStatus` until a terminal one; `notifyBalance` pushes each balance change. `requestPayment` answers `InsufficientBalance` whenever the balance is short, and the core turns that into `Rejected` for a product without balance access. A runtime without a bridge answers those calls unsupported.
+- `TopUpHostBridge`, `PaymentHostBridge`, `BalanceHostBridge` - the host's top-up, payment and balance engines, installed once on the runtime with `setTopUp`, `setPayments` and `setBalance` before any execution opens. The core checks the session, amounts, source keys and balance access, and hashes the product into every id it passes. It calls `followTopUp`, `followPayment` and `followBalance` for what it follows, and the host pushes what its engine reports through `notifyTopUpStatus`, `notifyPaymentStatus` and `notifyBalance` until the call returns or is cancelled. `requestPayment` answers `InsufficientBalance` whenever the balance is short, and the core turns that into `Rejected` for a product without balance access. A runtime without a bridge answers those calls unsupported.
 
 ## Chat
 
@@ -130,10 +132,7 @@ val runtime = TrUAPIHostRuntime(
     bridge = bridge,
     runtimeConfig = HostRuntimeConfig(
         hostName = "My Chat Host",
-        peopleChainGenesisHash = peopleChainGenesisHash,   // exactly 32 bytes
-        bulletinChainGenesisHash = bulletinChainGenesisHash,
-        assetHubChainGenesisHash = assetHubChainGenesisHash,
-        networkSuffix = "dot",
+        stack = bundledStack,
     ),
 )
 // Chat needs an active session; without one every Chat call answers `Denied`.
@@ -168,7 +167,7 @@ Two steps around them are the host's. `establishPairing` signs its answer with t
 
 The core prompts for nothing along the way, so asking the user is the host's too. `parsePairingDeeplink` returns the peer's `metadata` alongside it for that prompt: the host name, version, icon and platform the peer put in its QR, trimmed and stripped of the control characters and bidirectional overrides that would otherwise rewrite the prompt's own text around them, capped at 512 characters, and null where nothing renderable was sent. Safe to render is not verified: nothing signs that metadata, so a prompt built from it says what the peer calls itself, never who it is.
 
-The `NativeAnnouncedPairing` that `notifyPairingAllowanceAllocation` returns holds the responder statement secret its notice was signed with, and nothing consumes it, so `destroy()` it once the pairing settles, on the succeeding path as well as the failing one; wrapping the whole pairing in `use { }` covers both.
+The `NativeAnnouncedPairing` that `notifyPairingAllowanceAllocation` returns retains the wallet activation that sent the notice, so `destroy()` it once the pairing settles, on the succeeding path as well as the failing one; wrapping the whole pairing in `use { }` covers both.
 
 `devicePaired` on the runtime bridge reports a device that finished pairing with this signing host, carrying the `PairedSsoPeer` the pairing produced. The core has no chat of its own, so announcing the new device to the user's existing contacts is the host's to do. It fires at least once per pairing, so a device that pairs again reports again; a resumed pairing reports nothing, so the host keeps its own record of which devices it has already seen. It arrives on the thread answering the handshake, so marshal the work off rather than announcing it inline. Defaults to a no-op for a host that answers no pairing.
 
@@ -307,6 +306,7 @@ import io.parity.truapi.HostBridge
 import io.parity.truapi.HostCoreStorage
 import io.parity.truapi.HostStorage
 import io.parity.truapi.LocalhostBridgeBootstrap
+import uniffi.truapi.BundledStack
 import uniffi.truapi.HostRuntimeConfig
 import uniffi.truapi.ProductExecutionConfig
 import uniffi.truapi.ExecutableKind
@@ -419,13 +419,12 @@ val bridge = MyBridge(webView)
 val runtimeConfig = HostRuntimeConfig(
     hostName = "My Host",
     hostIcon = "https://host.example/icon.png",
-    peopleChainGenesisHash = ByteArray(32),
-    bulletinChainGenesisHash = ByteArray(32),
-    // Stand-in for a real Asset Hub genesis hash. Non-zero on purpose:
-    // all-zero is the "no Asset Hub" sentinel and refuses every cross-product
-    // `trustedProducts` grant.
-    assetHubChainGenesisHash = ByteArray(32) { 1.toByte() },
-    networkSuffix = "dot",
+    stack = BundledStack(
+        // The link the bundled descriptor was published under.
+        pointer = "polkadotapp://stack?key=0x…&url=…",
+        descriptor = webView.context.assets.open("trinity-stack.json").use { it.readBytes() },
+        allowsReservedValues = false,
+    ),
     // Optional: activate a local signing session from host-held BIP-39 entropy
     // (no SSO pairing). Omit for the QR pairing flow.
     localSessionSecret = null,

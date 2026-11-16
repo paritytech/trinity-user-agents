@@ -39,10 +39,38 @@ protocol ChatRuntimeProtocol: ProductRuntimeProtocol {
     @MainActor func attach(presentationView: ControllerBackedProtocol)
 }
 
+enum RuntimeProductResolution {
+    case dotNs(ProductContent)
+    /// Only a direct URL whose label resolves carries a product.
+    case unserved(ResolvedProduct?)
+
+    var product: ResolvedProduct? {
+        switch self {
+        case let .dotNs(content): content.resolved
+        case let .unserved(product): product
+        }
+    }
+
+    var content: ProductContent? {
+        switch self {
+        case let .dotNs(content): content
+        case .unserved: nil
+        }
+    }
+}
+
+struct SPARuntimeStart {
+    let url: URL
+    let resolution: RuntimeProductResolution
+}
+
 protocol SPARuntimeProtocol: ProductRuntimeProtocol {
-    func start(with engine: JSEngineProtocol) async throws -> URL
-    func useLatestBuild() async throws
-    func servedBuild() async -> DotNsResolvedContent?
+    func start(
+        with engine: JSEngineProtocol,
+        onPhase: @escaping ProductLoadPhaseHandler
+    ) async throws -> SPARuntimeStart
+    /// Stays on the served kind; returns the content served after the call.
+    func useLatestBuild() async throws -> ProductContent?
 }
 
 /// One scripts protocol per surface (see `ChatScriptsMaking` in the Products

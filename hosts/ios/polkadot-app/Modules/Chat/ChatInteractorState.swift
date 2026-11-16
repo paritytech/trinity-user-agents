@@ -111,22 +111,13 @@ private extension ChatInteractorState {
         newMessagesCount: Int
     ) -> MessageListModel {
         var messagesById = [Chat.MessageId: Int]()
-        var messagesBySection = [MessageListSection: [Chat.LocalMessage]]()
-        var orderedSections = [MessageListSection]()
-        var lastSection: MessageListSection?
+        var layout = MessageSectionLayout()
 
         for (offset, message) in messages.enumerated() {
             messagesById[message.messageId] = offset
 
             let date = Date(timeIntervalSince1970: TimeInterval(message.timestamp) / 1_000)
-            let section = makeSection(date: date)
-
-            if section != lastSection {
-                orderedSections.append(section)
-                lastSection = section
-            }
-
-            messagesBySection[section, default: []].append(message)
+            layout.append(message, day: calendar.startOfDay(for: date), section: makeSection(date: date))
         }
 
         let reactions = aggregateReactionsFromMessages(messages)
@@ -135,8 +126,9 @@ private extension ChatInteractorState {
         return MessageListModel(
             allMessages: messages,
             messagesById: messagesById,
-            orderedSections: orderedSections,
-            messagesBySection: messagesBySection,
+            orderedSections: layout.orderedSections,
+            messagesBySection: layout.messagesBySection,
+            outOfDayMessageIds: layout.outOfDayMessageIds,
             reactionsByMessageId: reactions,
             latestEditByMessageId: latestEdits,
             initiallyUnreadMessage: initiallyUnreadMessage,
@@ -256,6 +248,29 @@ private extension ChatInteractorState {
             default:
                 break
             }
+        }
+    }
+}
+
+/// Sections follow arrival order and open only when the day moves forward. A message from an earlier day
+/// folds into the current section, which keeps section identifiers unique for the diffable snapshot.
+private struct MessageSectionLayout {
+    private(set) var orderedSections: [MessageListSection] = []
+    private(set) var messagesBySection: [MessageListSection: [Chat.LocalMessage]] = [:]
+    private(set) var outOfDayMessageIds: Set<Chat.MessageId> = []
+    private var current: (section: MessageListSection, day: Date)?
+
+    mutating func append(_ message: Chat.LocalMessage, day: Date, section: MessageListSection) {
+        if let current, day <= current.day {
+            if day < current.day {
+                outOfDayMessageIds.insert(message.messageId)
+            }
+
+            messagesBySection[current.section, default: []].append(message)
+        } else {
+            orderedSections.append(section)
+            messagesBySection[section, default: []].append(message)
+            current = (section, day)
         }
     }
 }

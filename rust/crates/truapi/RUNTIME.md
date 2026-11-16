@@ -19,80 +19,38 @@ protocol API into a working host. It owns:
 
 ## Architecture
 
-Two ownership bands. A **per-product-connection** band (byte frames →
-dispatcher → role-neutral product runtime) is minted once per host↔product
-connection by the role handle and lives for that product's whole session; a
-**shared per-host** band owns role-neutral infrastructure (`RuntimeServices`)
-and the role object (`PairingHost` or `SigningHost`), which is itself the
-`ProductAuthority` and the `HostSession`. Pure `host_logic` is a no-I/O library
-both bands call, not a stage in the frame path; the host's `Platform` impl is
-the syscall floor.
+Each product connection has its own `ProductRuntime`, `ProductRuntimeHost` and `ProductConnection`, which hold that product's adapters, permissions, action streams and its own chain connection, and a `ProductAccounts` that gives it the shared `HostAccounts` bound to that product. Everything else is shared per host: `HostAccounts` with its `AccountHolder`, the `HostSession`, and `RuntimeServices`. `host_logic` is a pure library both call, and the host's `Platform` implementation performs all I/O.
 
 ```text
-   ┌───────────────────────────────────────────────────────┐
-   │ product      sandboxed iframe · native WebView        │
-   └───────────────────────────────────────────────────────┘
-                              │  ▲
-          SCALE frames        │  │  MessageChannel · loopback
-          both directions     ▼  │  WS
-   ┌───────────────────────────────────────────────────────┐
-   │ binding layer :  host shell / transport adapter       │
-   │ thin byte bridge  ·  no protocol logic                │
-   └───────────────────────────────────────────────────────┘
+Per product connection
+┌─────────────────────────────────────────────────────────────┐
+│ ProductRuntime: frames → Dispatcher                         │
+│ ProductRuntimeHost<H>: validation and protocol adapters     │
+│ ProductConnection: permissions, platform adapters, demand   │
+│ ProductAccounts<H>: HostAccounts bound to this product      │
+└────────────────────┬──────────────────────┬─────────────────┘
+                     │ account operations   │ login / identity
+Shared per host      ▼                      ▼
+┌──────────────────────────────┐  ┌────────────────────────────┐
+│ HostAccounts<H>              │  │ HostSession                │
+│ acquire, retain, use grants  │  │ SigningHost                │
+│ HostGrantStore + registry    │  │ or SsoRequestService       │
+└──────────────────┬───────────┘  └────────────────────────────┘
+                   │ AccountHolder
+         ┌─────────┴─────────────────────┐
+         ▼                               ▼
+ WalletAccountHolder              RemoteAccountHolder
+ wallet secrets and issuance      canonical calls ↔ SSO messages
+         ▲                               │
+         │                               ▼
+ SsoAccountHolderService           SsoRequestService
+ confirms peer requests           selected channel and transport
 
- ══ per host→product connection ( one per connected product ) ══
-   ┌───────────────────────────────────────────────────────┐
-   │ ProductRuntime           frame endpoint               │
-   │ decode each SCALE frame → dispatch one typed call     │
-   └───────────────────────────────────────────────────────┘
-                              │  typed method call
-                              ▼
-   ┌───────────────────────────────────────────────────────┐
-   │ ProductRuntimeHost       role-neutral                 │
-   │ validate · permission-gate · confirm                  │
-   └───────────────────────────────────────────────────────┘
-                              │  wallet-authority tail :
-                              │  sign · alias · entropy · alloc
-                              │  via  ProductAccounts, the role
-                              │  bound to this product
-                              ▼
-
- ══ shared per host app ( one per host, all connections ) ══════
-     the PairingHostRuntime | SigningHostRuntime handle owns both:
-   ┌─────────────────────────────┐   ┌────────────────────────┐
-   │ role  =  ProductAuthority   │   │ RuntimeServices        │
-   │          + HostSession      │   │ platform · chain · RPC │
-   │ PairingHost | SigningHost   │   │                        │
-   └─────────────────────────────┘   └────────────────────────┘
-              │
-              │  PairingHost only : encrypted SSO channel
-              ▼
-       ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
-       ╎ remote signing host   ( external wallet ) ╎
-       └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
-
-   both bands call host_logic for pure work, never traverse it :
-   ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
-   ╎ host_logic       pure library ( no I/O )              ╎
-   ╎ crypto · codecs · derivation · policy                 ╎
-   └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
-
- ══ host-owned floor · where every I/O above bottoms out ═══════
-   ┌───────────────────────────────────────────────────────┐
-   │ Platform impl  ( TS / Swift / Kotlin )                │
-   │ storage · prompts · chain RPC · navigation            │
-   └───────────────────────────────────────────────────────┘
+Shared RuntimeServices: platform, chain access and RPC clients
+Host Platform: storage, prompts, chain transport and navigation
 ```
 
-`ProductRuntimeHost` handles everything role-neutral (id normalization,
-permission gating, confirmation, soft product-key derivation), then delegates
-the wallet-authority tail (`sign_*`, `create_transaction`, `account_alias`,
-`create_proof`, `allocate_resources`, `derive_entropy`) through a
-`ProductAccounts` handle bound to its product, with an `AuthoritySession`
-snapshot the role revalidates before touching key material. Its
-per-connection state (adapters, permissions, action channels, open operations
-and its own chain connection) lives in a `ProductConnection`, and login, logout
-and connection state go through the role's `HostSession`.
+`HostAccounts` binds each call to the calling product and the current wallet activation, keeps the grants it was issued, and signs with delegated keys itself. It confirms signing, transaction, VRF and allocation requests with the user before the `AccountHolder` acts on them; allowances it allocates in the background need no confirmation. The `AccountHolder` owns wallet secrets and grant issuance and records ring-VRF registrations; `HostAccounts` records the provider the user selects, and `RingVrfRegistryStore` serializes both writes.
 
 `runtime.rs` owns the product runtime and shared helpers. The trait adapters
 are grouped by surface under `runtime/capabilities/`; cross-capability fixtures
@@ -213,14 +171,24 @@ a compile error, not a runtime `Unavailable`.
 A local session's usernames come from the dotNS contracts on Asset Hub, read
 after activation. A name the host passes is shown until a record answers.
 
-`SigningHostConfig.network_suffix` is the network's bare dotNS TLD (`dot`,
-`paseo`, or `testnet`). The shell supplies it alongside the chain genesis hashes
-from the same network configuration used by wallet onboarding. It must match
-the People chain's `NetworkSuffix.NetworkSuffix`: reserved identities derive
-under `peopl.<suffix>`, while the chain uses that suffix for
-proof contexts. Configuration keeps local activation and key derivation
-available offline. The core validates supported suffixes but does not
-automatically check that the configured suffix matches the chain.
+### Stack
+
+Both host configs carry a `Stack`, the core's only chain configuration: the
+Relay, Asset Hub, People and Bulletin genesis hashes, the network
+`get_chain_info` reports, and the dotNS TLD.
+
+A native or browser shell builds it with `Stack::bundled` from the stack's
+pointer, the signed descriptor its build bundles, and whether the build allows
+Polkadot's reserved values. A Rust host that resolves its chains itself, such as
+the CLI, uses `Stack::new`, and a test-host browser bundle passes
+`runtimeConfig.testStack`. Each constructor documents what it refuses.
+
+Reserved identities derive under `peopl.<tld>`, and the People
+chain scopes proof contexts with `NetworkSuffix.NetworkSuffix`, so the two have
+to be equal. Taking the TLD from the stack keeps local activation and key
+derivation working offline. The core does not check it against the chain, does
+not check genesis hashes against the live chains, and does not fetch newer
+copies.
 
 ### Core database
 
@@ -252,7 +220,9 @@ ID a renderer tree names. The core reads a material it lacks from Bulletin
 itself, with `bitswap_v1_get` over the Bulletin connection it holds for
 preimage submission, not through the host's preimage lookup. Only text that
 hashes to the ID and passes format version 1, as Shaderlab's reference parser
-reads it, is kept. A material a saved Pocket face draws is never
+reads it, is kept. A node that answers with bytes that do not hash to the ID
+ends the fetch, and the material falls back as `Integrity`. A material a saved
+Pocket face draws is never
 evicted, and the others share 4 MiB, oldest out first. At start-up the core
 fetches what the saved faces draw and the database lacks.
 
@@ -297,19 +267,8 @@ is live.
 
 ### The two roles
 
-Both implement the role-neutral **`ProductAuthority`** and **`HostSession`**
-traits; each owns its role-specific lifecycle, so no method exists on a role
-that can't mean it:
-
-- **`PairingHost`** (seedless): the user's keys live in an external wallet, so
-  signing/aliases/entropy relay over an encrypted SSO channel (statement store
-  on the People chain). The v2 wire protocol uses raw X25519 keys, HKDF-SHA256,
-  and ChaCha20-Poly1305. `PairingHost` keeps the paired session's account
-  material; [`SsoRequestService`](src/runtime/sso_request_service.rs) owns
-  pairing and login state, persisted auth-session reload, remote signing-host
-  liveness monitoring and the request channel, and reports session changes to
-  `PairingHost` through `PairedSessionOwner`.
-- **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
+- **`PairingHost`** (seedless): runs `HostAccounts<RemoteAccountHolder>`, which keeps the paired session's grants, and owns logout. `SsoRequestService` owns pairing and login state, persisted session reload and remote signing-host liveness, and carries account operations to the phone over the encrypted SSO channel (People-chain statement store; v2 wire protocol with raw X25519 keys, HKDF-SHA256 and ChaCha20-Poly1305). It reports session changes to the grant store `HostAccounts` keeps its grants in through `PairedSessionOwner`, holding back grant writes until each change and the cleanup it leaves are done. The paired host confirms a signing, transaction, VRF or allocation request before forwarding it, and the phone confirms it again.
+- **`SigningHost`** (wallet-local): runs `HostAccounts<WalletAccountHolder>`. `WalletAccountHolder` owns local entropy, derivation, grant issuance and renewal, and asks for account access before a product uses another product's ring-VRF keys; `SigningHost` routes activation, lock and product reset through `HostAccounts`. It signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
   from host-held secret material. Its public identity is the RFC-0028
   `peopl.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
@@ -326,7 +285,7 @@ that can't mean it:
   call.
 - `WalletAccountHolder`: owns the active wallet on a signing host. Only its `with_keys` reads the root entropy, after checking that the call's session is still the installed wallet activation, so a lock or a wallet switch fails signing, issuance and pairing answers that began under the previous wallet.
 - `ProductConsent`: one per runtime. It holds account-access decisions and review rules, and runs account-access prompts one at a time for local product calls and paired requests alike. A paired caller never skips a review. A signature with another product's account is confirmed once per kind and owning product for the rest of the product execution.
-- `HostGrantStore`: holds the keys and public subtrees a host keeps for its products, per wallet on a signing host and per pairing on a paired host. A signing host keeps them in memory for one wallet activation. A product reset revokes that product's grants and fails grant work that began before it, without ending the wallet session or other products' calls.
+- `HostGrantStore`: holds the keys and public subtrees issued to `HostAccounts`, per wallet on a signing host and per pairing on a paired host. A signing host keeps them in memory for one wallet activation. A product reset revokes that product's grants and fails grant work that began before it, without ending the wallet session.
 
 `host_logic` stays pure: the orchestrators above call into it for codecs,
 session/SSO crypto, key derivation, and permission policy, while all I/O
@@ -353,13 +312,9 @@ the page.
 
 ### Inter-host SSO
 
-`SsoRequestService::call(request)` sends typed requests to
-[`SigningHostSsoService`](src/runtime/signing_host/sso_service.rs). Handlers own
-consent and business logic; [`SsoResponderService`](src/runtime/sso_responder_service.rs)
-owns the transport loop: it answers pairing, serves the session and drops
-duplicate requests. Resource consent is bound to the request's signing session:
-account changes, disconnects, and reactivation invalidate pending approval before
-allocation or key return. Allocation failure details stay in local transcripts.
+On the signing host, [`SsoResponderService`](src/runtime/sso_responder_service.rs) owns the transport: it answers pairing, runs the serve loop, drops duplicate requests, and gives each peer its own [`SsoAccountHolderService`](src/runtime/sso_account_holder_service.rs). That service is bound to the wallet activation that authenticated the peer's channel and calls `WalletAccountHolder` directly; once that activation ends it answers only not-connected. A native wallet with its own transport opens the same per-peer service from the native runtime.
+
+On the paired host, `SsoRequestService::call(request)` sends typed requests to the peer's `SsoAccountHolderService`. That service confirms each signing, transaction, VRF and allocation request with the user before `WalletAccountHolder` acts on it, and approval is bound to the request's signing session, so account changes, disconnects and reactivation invalidate a pending one. Allocation failure details stay in local transcripts.
 Allocation requests use the canonical `truapi::latest::AllocatableResource` type.
 Signing uses canonical request and result types. Product-scoped VRF requests use
 `ProductRequest<P>` to attach the caller to a canonical payload. Both product and
@@ -505,26 +460,23 @@ for raw bytes signed inside the `<Bytes>` watermark.
   `set_funding_callbacks` (the overlay), `open_funding`,
   `set_funding_providers`, `get_funding_quote`, `select_funding_options`, `select_funding_provider`, `cancel_funding`,
   `confirm_funding_cancel` and `acknowledge_funding_session`. Each of these
-  reports something the user did or the host owns. The host reads back only
-  `funding_history`, whenever it shows history. Everything else it draws,
-  the core pushes through the callbacks, the
-  `FundingFeed` a Rust host installs with `set_funding_feed` before its
-  funding platform:
-  `funding_session_changed` carries a session's status, the session as the
-  core holds it (choice, cancel offer, amounts) and its progress;
-  `funding_options_changed` carries what the overlay offers;
-  `funding_in_progress_changed` comes once each time funding resumes and
-  again whenever it changes, so the host
-  keeps a launch marker that starts funding at its next launch. Amounts
+  reports something the user did or the host owns. The core tells the host
+  what changed with `funding_changed(intent, kind)` (`Session`, `Options`,
+  `Quotes` or `Providers`), and the host reads it back:
+  `funding_session`, `funding_progress`, `funding_options`, `funding_quotes`,
+  `funding_entries`, `funding_summary` and `funding_history`. A Rust host
+  installs a `FundingFeed` with `set_funding_feed` before its funding
+  platform and gets the same notices. Whenever whether a provider still works
+  on a session changes, and once each time funding resumes, the native
+  runtime writes a launch marker that `funding_resume_pending` reads at the
+  next launch. Amounts
   cross the FFI as decimal strings.
   Sessions are stored in the core database, one row each; a row the core
   cannot read is skipped and left in place.
   The core owns the funding history. A session is stored only once the user
   starts it in the overlay. When funding resumes, every session in flight
-  and every ended one the host has not acknowledged comes through
-  `funding_session_changed` again. An ended
-  session is handed to the host through `funding_session_changed` each time
-  funding resumes until the host calls `acknowledge_funding_session` once it
+  and every ended one the host has not acknowledged is announced again. An
+  ended session is announced each time funding resumes until the host calls `acknowledge_funding_session` once it
   has told the user how it ended. A released withdrawal whose
   provider still owes its payout outcome, or the refund of a failed payout,
   is kept and served whether or not the host acknowledged it, and is handed
@@ -552,20 +504,25 @@ for raw bytes signed inside the `<Bytes>` watermark.
   needs the core database: natively the configured `database_directory`,
   otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.
-  The host lists its providers with `set_funding_providers`, each with the
-  Worker manifest it ships for it. Before the overlay shows, the core sends
-  `funding_options_changed(intent, options)`: `candidates` are the
+  The host lists its providers by their published names with
+  `set_funding_provider_config`; a Rust host can instead hand
+  `set_funding_providers` the Worker manifest it ships for each. Before the
+  overlay shows, the core announces the session's options, which `funding_options(intent)` works out
+  as it is read: `candidates` are the
   providers serving that session's direction, with their routes, from what the
   `includes.funding` configuration of each provider's Worker manifest declares:
   dotNS's answer once the core has read it (cached for a day, re-checked in the
   background on every query), the shipped snapshot until then, so the list
   renders with no chain read. A provider whose manifest no longer serves
-  Funding drops out. A provider whose `origin` is `Bundled` ships inside
-  the host: its shipped manifest is what the core goes by, and dotNS is never
-  read for it.
-  `get_funding_quote(intent, ask)` prices an ask (rail, asset, amount,
-  country) with every funding provider, whatever its manifest says it serves,
-  since a provider can serve more or less than it last published: the core
+  Funding drops out. A provider a Rust host offers with `origin: Bundled`
+  ships inside it: its shipped manifest is what the core goes by, and dotNS
+  is never read for it.
+  `get_funding_quote(intent, amount)` prices `amount` on the rail, asset,
+  network and country the last `select_funding_options` named (card and bank
+  take the resolved fiat asset), returning `None` while there is nothing to
+  price; asking what the running request prices keeps it. It asks every
+  funding provider whose routes carry the rail, or that declares none (a
+  route its answers confirmed does not narrow one that declares none): the core
   calls each provider's worker with `quote`, holding the worker while it
   waits, and the worker answers priced from its own API. Every provider's
   worker is held from the moment the overlay opens until it closes, so it
@@ -611,16 +568,20 @@ for raw bytes signed inside the `<Bytes>` watermark.
   minimum a provider showed there, from manifest routes and recent answers,
   or `Unsupported` when every answer naming it refused it; a country nothing
   names is left out.
-  Natively the list arrives through `funding_quotes_changed` as a
-  `FundingQuoteList`: the `request_id` `get_funding_quote` returned, the
-  rows in the host's provider order, `best` (the least to pay inbound, the
-  most to receive outbound, the earliest row on a tie, among providers the
+  Natively `funding_changed` announces each list with `Quotes`, and
+  `funding_quotes` reads it as a `FundingQuoteList`, only ever the current
+  request's: the `request_id` `get_funding_quote` returned, whether it is
+  `complete` (no row pending), the rows in the host's provider order,
+  `best` (the least to pay inbound, the most to receive outbound, the earliest row on a tie, among providers the
   session can be handed to), which the host selects until the user picks
   another, and `refresh_at_ms`. The core asks every provider again each
   minute, each row keeping its answer until the provider answers again,
-  until the session is assigned, ends or leaves the overlay, or the host asks
-  for another ask; from then on no list of that request arrives, mid round
-  too, and the quotes still asked end with the workers they held. The
+  until the session is assigned, ends or leaves the overlay, the host asks
+  for another ask, or `select_funding_options` names another rail, asset,
+  network or country than the ask, which also clears the list
+  (`funding_quotes` answers `None`, announced with `Quotes`); from then on
+  no list of that request arrives, mid round too, and the quotes still
+  asked end with the workers they held. The
   options are sent again after each list, since a refusal can teach the core
   new limits. At most eight providers are asked at once, each with its own
   deadline. A session can be handed only a quote from the list its host was
@@ -628,6 +589,14 @@ for raw bytes signed inside the `<Bytes>` watermark.
   the ask's amount, moves nothing, charges more in fees than the user sends,
   has an unusable id or has expired shows as the provider being unable to
   serve the ask.
+  `start_funding_when_quoted(intent, request_id)` does that for the user
+  who continues before every row answered: once every row of that request
+  answered, the core selects `best` as `select_funding_provider` would, at
+  once when they already have. A new ask, `select_funding_options`,
+  `cancel_funding_auto_start` (the user leaving the quotes) or a list with
+  no usable quote disarms it. `funding_available` says whether the host
+  offers any provider, announced with `Providers` when
+  `set_funding_provider_config` changes the list.
   `select_funding_provider` hands a session to the provider the user chose,
   on the quote they chose it by, which must be one the core offered for the
   session, not yet expired and, when the session has an amount, pricing that
@@ -636,8 +605,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   receives it in `assign`, and the
   session keeps it with the rail and asset it priced. A session's offered
   quotes are dropped once it is assigned or ends.
-  A native host's `funding_session_changed` carries the session's
-  progress, so the host never reads it back: the milestones it draws, each with when it was reached: in, `Started`, `Received` (the
+  `funding_progress(intent)` gives the session's progress: the milestones it draws, each with when it was reached: in, `Started`, `Received` (the
   provider saw the payment) and `Added`; out, `Started`, `Received` (released
   to the provider) and `Sent` (paid out). A milestone the provider skipped
   takes the time of the first later one. `band` is the line under them, what
@@ -697,8 +665,14 @@ for raw bytes signed inside the `<Bytes>` watermark.
   assigned provider, only forward; `Details` may come at any point while the
   session is open), `presentFrame` asks the host to
   show one of its screens through `present_provider_frame` (an App route only
-  when `provider_has_app` says the provider ships one, otherwise `NoApp`), and
-  `closeFrame`
+  when the provider ships an App: a bundled entry's `app`, else an `app`
+  subname dotNS publishes, read within ten seconds; otherwise `NoApp`). The
+  core never shows it on its own: it holds the call, tells the host through
+  `provider_frame_requested`, and presents it once the host calls
+  `open_provider_frame`, at once while the user looks at the session or when
+  the user taps a notice. One waits per session: a newer call replaces it
+  (`Dismissed`), and `closeFrame`, the payment moving or the session ending
+  drops it (`Closed`). `closeFrame`
   closes it through `close_provider_frame` once the provider is done with it,
   such as a card payment the user made: the open `presentFrame` answers
   `Closed` and the host shows the session sheet in its place. The core holds the
@@ -743,12 +717,18 @@ for raw bytes signed inside the `<Bytes>` watermark.
 - `PaymentPlatform`: pay from the user's balance to an account once the user
   approves, and stream each payment's status by its caller-chosen id.
   Installed with `set_payment_platform`; native hosts use
-  `set_payment_callbacks` with `notify_payment_status`. The core requires a
-  session and hands the host each id hashed with the product. Without it,
+  `set_payment_callbacks`: the core asks the host to `follow_payment` an id
+  and the host pushes each engine status with `notify_payment_status`. The
+  core keeps the latest status per id, shows the pending one when the engine
+  has not answered within 250 ms, keeps the last 512 final statuses, and
+  ends a stream whose engine stopped early with the abandoned status. The
+  core requires a session and hands the host each id hashed with the product,
+  and offers only the main purse. Without it,
   `request` and `statusSubscribe` answer `Unsupported`.
 - `TopUpPlatform`: claim a top-up source's funds into the user's balance and
   stream each top-up's status. Installed with `set_top_up_platform`; native
-  hosts use `set_top_up_callbacks` with `notify_top_up_status`. The core
+  hosts use `set_top_up_callbacks`, following ids through `follow_top_up` and
+  `notify_top_up_status` by the same rules as payments. The core
   requires a session, checks the source keys, passes a `ProductAccount`
   source through for the host to derive, and hands the host each id hashed
   with the product. The host owns claiming, retries, partial claims and

@@ -51,7 +51,6 @@ import uniffi.truapi.HostThemeSubscribeItem
 import uniffi.truapi.ThemeName
 import uniffi.truapi.ThemeVariant
 import uniffi.truapi.AuthState
-import uniffi.truapi.HostChainSet
 import uniffi.truapi.PermissionAuthorizationRequest
 import uniffi.truapi.PermissionAuthorizationStatus
 import uniffi.truapi.PermissionDecision
@@ -65,6 +64,8 @@ import uniffi.truapi.RecoveryException
 import uniffi.truapi.ImageException
 import uniffi.truapi.ImageReference
 import uniffi.truapi.LoadedImage
+import uniffi.truapi.PublicProfile
+import uniffi.truapi.PublicProfileException
 import uniffi.truapi.ChatRoomRegistrationStatus
 import uniffi.truapi.NativeGameCallbacks
 import uniffi.truapi.NativePocketObserver
@@ -100,12 +101,13 @@ import uniffi.truapi.HostContactLookup
 import uniffi.truapi.HostContactMatches
 import uniffi.truapi.HostContactPick
 import uniffi.truapi.NativeContactsCallbacks
-import uniffi.truapi.HostPaymentBalanceSubscribeException
 import uniffi.truapi.HostPaymentException
 import uniffi.truapi.HostPaymentRequest
+import uniffi.truapi.HostPaymentStatusSubscribeException
 import uniffi.truapi.HostPaymentStatusSubscribeItem
 import uniffi.truapi.HostPaymentTopUpException
 import uniffi.truapi.HostPaymentTopUpRequest
+import uniffi.truapi.HostPaymentTopUpStatusSubscribeException
 import uniffi.truapi.HostPaymentTopUpStatusSubscribeItem
 import uniffi.truapi.HostScan
 import uniffi.truapi.HostScannerScanRequest
@@ -316,13 +318,6 @@ interface HostBridge {
      */
     @Throws(HostRejection::class)
     suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean
-
-    /**
-     * Enumerate the chains this host serves: its environment plus one entry
-     * per chain role.
-     */
-    @Throws(HostRejection::class)
-    fun supportedChains(): HostChainSet = HostChainSet(network = "", chains = emptyList())
 
     /**
      * The chains this host builds as V5 general transactions, each with its
@@ -652,9 +647,6 @@ private class HostCallbackAdapter(private val bridge: HostBridge) : HostCallback
     override suspend fun featureSupported(request: HostFeatureSupportedRequest): Boolean =
         withHostRejection { bridge.featureSupported(request) }
 
-    override fun supportedChains(): HostChainSet =
-        withHostRejection { bridge.supportedChains() }
-
     override suspend fun transactionExtensionVersions(): ExtensionVersionMap =
         withHostRejection { bridge.transactionExtensionVersions() }
 
@@ -822,8 +814,8 @@ private class GameCallbackAdapter(private val bridge: GameHostBridge) : NativeGa
  *
  * The core has already checked the session, the source keys and the amount,
  * and hashed the product into every id it passes, so ids never collide across
- * products. Report each status after the one [topUpStatus] answered with
- * [TrUAPIHostRuntime.notifyTopUpStatus]; a terminal one ends the stream.
+ * products. The core asks to follow a top-up with [followTopUp]; push what
+ * the engine reports with [TrUAPIHostRuntime.notifyTopUpStatus].
  */
 interface TopUpHostBridge {
     /**
@@ -834,11 +826,13 @@ interface TopUpHostBridge {
     suspend fun topUp(productId: ProductId, request: HostPaymentTopUpRequest)
 
     /**
-     * The current status of [productId]'s top-up [id], or `null` when the host
-     * holds no such top-up. Runs inline on the core's thread.
+     * Follow [productId]'s top-up [id] on the engine, pushing each status it
+     * reports with [TrUAPIHostRuntime.notifyTopUpStatus], and return when the
+     * engine's stream ends. Throw `TopUpNotFound` when the engine holds no such
+     * top-up. The core cancels the call once it has a final status.
      */
-    @Throws(HostRejection::class)
-    fun topUpStatus(productId: ProductId, id: ByteArray): HostPaymentTopUpStatusSubscribeItem?
+    @Throws(HostPaymentTopUpStatusSubscribeException::class)
+    suspend fun followTopUp(productId: ProductId, id: ByteArray)
 }
 
 /**
@@ -848,8 +842,9 @@ interface TopUpHostBridge {
  *
  * The core hashes the product into every id it passes. Answer
  * `InsufficientBalance` whenever the balance is short: the core turns it into
- * `Rejected` for a product without balance access. Report each status after
- * the one [paymentStatus] answered with [TrUAPIHostRuntime.notifyPaymentStatus].
+ * `Rejected` for a product without balance access. The core asks to follow a
+ * payment with [followPayment]; push what the engine reports with
+ * [TrUAPIHostRuntime.notifyPaymentStatus].
  */
 interface PaymentHostBridge {
     /**
@@ -861,27 +856,29 @@ interface PaymentHostBridge {
     suspend fun requestPayment(productId: ProductId, request: HostPaymentRequest)
 
     /**
-     * The current status of [productId]'s payment [id], or `null` when the host
-     * holds no such payment. Runs inline on the core's thread.
+     * Follow [productId]'s payment [id] on the engine, pushing each status it
+     * reports with [TrUAPIHostRuntime.notifyPaymentStatus], and return when the
+     * engine's stream ends. Throw `PaymentNotFound` when the engine holds no
+     * such payment. The core cancels the call once it has a final status.
      */
-    @Throws(HostRejection::class)
-    fun paymentStatus(productId: ProductId, id: ByteArray): HostPaymentStatusSubscribeItem?
+    @Throws(HostPaymentStatusSubscribeException::class)
+    suspend fun followPayment(productId: ProductId, id: ByteArray)
 }
 
 /**
  * Native balance view, which shares what a payment can spend with a product.
- * Install with [TrUAPIHostRuntime.setBalance], once, and report each change
- * with [TrUAPIHostRuntime.notifyBalance]. The core owns balance access, so do
- * not prompt for it here.
+ * Install with [TrUAPIHostRuntime.setBalance], once. The core owns balance
+ * access, so do not prompt for it here.
  */
 interface BalanceHostBridge {
     /**
-     * The user's balance in [purse] (`null` for the main purse), as a decimal
-     * string of CASH units: what a payment request can spend now. It is the same
-     * for every product; [productId] only names the one asking.
+     * Follow the user's spendable balance, pushing the current one and each
+     * change with [TrUAPIHostRuntime.notifyBalance], and return when the
+     * stream ends. The core cancels the call once no product follows the
+     * balance, and calls again when one does.
      */
-    @Throws(HostPaymentBalanceSubscribeException::class)
-    suspend fun balance(productId: ProductId, purse: UInt?): String
+    @Throws(HostRejection::class)
+    suspend fun followBalance()
 }
 
 private class TopUpCallbackAdapter(private val bridge: TopUpHostBridge) : NativeTopUpCallbacks {
@@ -896,8 +893,17 @@ private class TopUpCallbackAdapter(private val bridge: TopUpHostBridge) : Native
             throw HostPaymentTopUpException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
         }
 
-    override fun topUpStatus(productId: ProductId, id: ByteArray): HostPaymentTopUpStatusSubscribeItem? =
-        withHostRejection { bridge.topUpStatus(productId, id) }
+    override suspend fun followTopUp(productId: ProductId, id: ByteArray) =
+        try {
+            bridge.followTopUp(productId, id)
+        } catch (error: HostPaymentTopUpStatusSubscribeException) {
+            throw error
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            throw HostPaymentTopUpStatusSubscribeException.Unknown(hostRejectionReason(error))
+                .apply { initCause(error) }
+        }
 }
 
 private class PaymentCallbackAdapter(private val bridge: PaymentHostBridge) : NativePaymentCallbacks {
@@ -912,22 +918,21 @@ private class PaymentCallbackAdapter(private val bridge: PaymentHostBridge) : Na
             throw HostPaymentException.Unknown(hostRejectionReason(error)).apply { initCause(error) }
         }
 
-    override fun paymentStatus(productId: ProductId, id: ByteArray): HostPaymentStatusSubscribeItem? =
-        withHostRejection { bridge.paymentStatus(productId, id) }
-}
-
-private class BalanceCallbackAdapter(private val bridge: BalanceHostBridge) : NativeBalanceCallbacks {
-    override suspend fun balance(productId: ProductId, purse: UInt?): String =
+    override suspend fun followPayment(productId: ProductId, id: ByteArray) =
         try {
-            bridge.balance(productId, purse)
-        } catch (error: HostPaymentBalanceSubscribeException) {
+            bridge.followPayment(productId, id)
+        } catch (error: HostPaymentStatusSubscribeException) {
             throw error
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Throwable) {
-            throw HostPaymentBalanceSubscribeException.Unknown(hostRejectionReason(error))
+            throw HostPaymentStatusSubscribeException.Unknown(hostRejectionReason(error))
                 .apply { initCause(error) }
         }
+}
+
+private class BalanceCallbackAdapter(private val bridge: BalanceHostBridge) : NativeBalanceCallbacks {
+    override suspend fun followBalance() = withHostRejection { bridge.followBalance() }
 }
 
 /**
@@ -1041,11 +1046,11 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     }
 
     /**
-     * Report the new balance of [purse] (`null` for the main purse), a decimal
-     * string of CASH units, to the products following it.
+     * Push the user's spendable balance, a decimal string of CASH units, while
+     * the core follows it through [BalanceHostBridge.followBalance].
      */
-    fun notifyBalance(purse: UInt?, available: String) {
-        inner.notifyBalance(purse, available)
+    fun notifyBalance(available: String) {
+        inner.notifyBalance(available)
     }
 
     /**
@@ -1174,6 +1179,11 @@ class TrUAPIHostRuntime @Throws(NativeRuntimeConfigException::class) constructor
     /** Report the core database's SQLite version, schema version and file path. */
     @Throws(NativeCoreDatabaseException::class)
     suspend fun coreDatabaseStatus(): DbStatus = inner.coreDatabaseStatus()
+
+    /** Profile metadata without image bytes. [force] bypasses the core's one-hour cache. */
+    @Throws(PublicProfileException::class)
+    suspend fun resolvePublicProfile(username: String, force: Boolean): PublicProfile =
+        inner.resolvePublicProfile(username, force)
 
     /**
      * The image [reference] names, read from Bulletin by the core and checked against its CID and

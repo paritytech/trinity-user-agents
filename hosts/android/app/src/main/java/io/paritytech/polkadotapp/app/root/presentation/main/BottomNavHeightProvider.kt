@@ -15,8 +15,4 @@ class BottomNavHeightProvider @Inject constructor() {
     fun set(heightDp: Dp) {
         mutableHeightDp.value = heightDp
     }
-
-    fun clear() {
-        mutableHeightDp.value = 0.dp
-    }
 }

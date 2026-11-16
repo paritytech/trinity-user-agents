@@ -171,12 +171,10 @@ The product's `@parity/truapi` client talks to the shared Rust core
 loopback WebSocket. The core owns wire framing, dispatch, subscriptions, and
 orchestration; the Android side implements only native platform callbacks.
 
-The core is compiled from a checkout outside this repo, pinned by SHA as
-`truapi_ref` in `.github/actions/install/action.yaml`. `scripts/setup-truapi.py`
-puts that checkout in place and points `truapi.dir` at it. The pin and the
-Android `HostBridge` implementation move together: bumping one without checking
-the other is how a callback goes silently dead, because the generated interface
-defaults most members.
+The core is compiled from the enclosing `trinity-user-agents` tree, two levels up.
+The core and the Android `HostBridge` implementation move together: changing one
+without checking the other is how a callback goes silently dead, because the
+generated interface defaults most members.
 
 ### Runtime and executions
 
@@ -184,8 +182,8 @@ The core is one process-wide `TrUAPIHostRuntime` with a `TrUAPIProductExecution`
 per product connection, and the Android side mirrors that split:
 
 - `TrUAPIHostRuntimeProvider` (`@Singleton`) builds the runtime lazily on first
-  use from `HostRuntimeConfig` (host identity, People/Bulletin genesis hashes,
-  the local session) and keeps it for the process. Its runtime-level
+  use from `HostRuntimeConfig` (host identity, the Trinity stack the build
+  bundles, the local session) and keeps it for the process. Its runtime-level
   `HostBridge` serves only what the signing runtime asks for — core storage,
   auth state, signing-side chain access, and the confirmations SSO raises.
   Product-scoped calls have no product there and fail closed, as on iOS. It
@@ -235,15 +233,27 @@ it cannot describe. Every variant is covered by
 - **Dispatcher-thread callbacks** (chain, theme, storage, core log) run inline and **must return promptly** — no blocking work. Chain I/O goes through the non-blocking `WebSocketChainProvider`, one per bridge so each notifies the runtime or execution it dials for; theme is served from a cached value.
 - `devicePermissionStatus` and `currentLocale` are left on the shell defaults (not applicable / system locale) — wire them when a product needs them.
 
+### Stack
+
+The core takes every chain it uses, and the chain info it reports to products,
+from the Trinity stack descriptor in `HostRuntimeConfig.stack`. `TrUAPIStack`
+maps the build's `TestnetEnvironment` to a stack: `TESTNET` runs previewnet,
+`NIGHTLY` paseo-next-v2 and `PRODUCTION` Polkadot, the only one allowed
+Polkadot's reserved genesis hashes and `dot` TLD. Each stack ships as its link
+and its signed descriptor under the `stacks/` assets, which
+`:bindings:truapi-host` syncs at build time from `stacks/` in the core
+checkout, so the app holds no copy. `scripts/update-stacks.sh` refreshes the
+descriptors there. The core checks each descriptor against its link's key, so
+a copy it refuses fails the runtime boot.
+
 ### Chain agreement
 
-`supportedChains`, `featureSupported(Chain)` and `chainConnect` all answer from
-one `TrUAPIChains` snapshot — resolved at `attach` per execution, and once at
-boot for the runtime — through
-`TrUAPIChains.canDial`. Never answer any of them from the registry directly: the
-registry holds chains with no `wss` endpoints, so the host would advertise or
-promise a chain `chainConnect` then refuses. `TrUAPIChainAgreementTest` pins the
-invariant.
+`featureSupported(Chain)` and `chainConnect` both answer from one
+`TrUAPIChains` snapshot — resolved at `attach` per execution, and once at boot
+for the runtime — through `TrUAPIChains.canDial`. Never answer either from the
+registry directly: the registry holds chains with no `wss` endpoints, so the
+host would promise a chain `chainConnect` then refuses.
+`TrUAPIChainAgreementTest` pins the invariant.
 
 ### Storage
 

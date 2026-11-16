@@ -38,4 +38,16 @@ class MainInteractor @Inject constructor(
     fun markScannerTooltipShown() {
         tooltipStorage.markShown(OneShotTooltip.Scanner)
     }
+
+    fun shouldShowDockletTip(tip: DockletTip): Boolean = !tooltipStorage.wasShown(
+        when (tip) {
+            DockletTip.Tucked -> OneShotTooltip.DockletTucked
+            DockletTip.AutoHidden -> OneShotTooltip.DockletAutoHidden
+        },
+    )
+
+    fun markDockletTipShown(tip: DockletTip) {
+        tooltipStorage.markShown(OneShotTooltip.DockletTucked)
+        if (tip == DockletTip.AutoHidden) tooltipStorage.markShown(OneShotTooltip.DockletAutoHidden)
+    }
 }
