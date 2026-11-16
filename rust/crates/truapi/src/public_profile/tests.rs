@@ -1,6 +1,9 @@
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use cache::{avatar_record, cached_profiles};
+
 use alloy_primitives::Address;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -17,7 +20,9 @@ use crate::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use crate::{Spawner, platform::HostInfo, test_support::StubPlatform};
+use crate::{
+	Spawner, platform::HostInfo, runtime::services::RuntimeServices, test_support::StubPlatform,
+};
 
 struct ProfileContracts {
 	deployed: bool,
@@ -111,7 +116,12 @@ async fn a_default_reverse_resolver_does_not_hide_the_public_profile() {
 		ProfileRecord { entries: vec![subxt::utils::WrapperKeepOpaque::from_encoded(vec![7, 8])] };
 	let mut transport = ProfileContracts::new(Ok(STANDARD.encode(record.encode())));
 
-	assert_eq!(PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap(), record);
+	assert_eq!(
+		PublicProfilesService::read_record_from(&mut transport, "alice.01")
+			.await
+			.unwrap(),
+		record
+	);
 }
 
 #[tokio::test]
@@ -155,7 +165,9 @@ async fn an_absent_gateway_or_record_has_an_empty_profile() {
 			ProfileContracts { deployed, ..ProfileContracts::new(Ok(String::new())) };
 
 		assert_eq!(
-			PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap(),
+			PublicProfilesService::read_record_from(&mut transport, "alice.01")
+				.await
+				.unwrap(),
 			ProfileRecord::default()
 		);
 	}
@@ -213,7 +225,9 @@ async fn a_profile_failure_retains_the_contract_error_source() {
 	let mut transport = ProfileContracts::new(Err(EvmContractError::Reverted {
 		detail: "profile unavailable".into(),
 	}));
-	let error = PublicProfiles::read_record_from(&mut transport, "alice.01").await.unwrap_err();
+	let error = PublicProfilesService::read_record_from(&mut transport, "alice.01")
+		.await
+		.unwrap_err();
 	let source = core::error::Error::source(&error).expect("dotNS error is retained");
 
 	assert!(matches!(
@@ -226,7 +240,7 @@ async fn a_profile_failure_retains_the_contract_error_source() {
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn a_profile_failure_retains_the_database_error_source() {
-	let profiles = PublicProfiles::new(profile_services());
+	let profiles = profile_services().public_profiles.clone();
 	let error = profiles.resolve("alice.01", false).await.unwrap_err();
 	let source = core::error::Error::source(&error).expect("database error is retained");
 
@@ -274,13 +288,13 @@ async fn a_cached_record_survives_an_offline_chain_until_forced() {
 	let record = PublicProfile { avatar: None };
 	let now = current_unix_secs();
 	db.write(move |tx| {
-		dao::store_record(tx, "alice01", &ProfileRecord::default(), now, now + RECORD_TTL_SECS)
+		dao::store_record(tx, "alice01", &ProfileRecord::default(), now + RECORD_TTL_SECS)
 	})
 	.await
 	.unwrap();
 	let services = profile_services();
-	assert!(services.install_core_db(db));
-	let profiles = PublicProfiles::new(services);
+	assert!(services.install_core_db(db).is_some());
+	let profiles = services.public_profiles.clone();
 
 	let cached = profiles.resolve("alice01", false).await;
 	let forced = profiles.resolve("alice01", true).await;
@@ -316,12 +330,12 @@ async fn cached_metadata_never_loads_bulletin() {
 		let now = current_unix_secs();
 		let record = ProfileRecord { entries };
 		let expected = PublicProfile { avatar: record.avatar() };
-		db.write(move |tx| dao::store_record(tx, "alice.01", &record, now, now + RECORD_TTL_SECS))
+		db.write(move |tx| dao::store_record(tx, "alice.01", &record, now + RECORD_TTL_SECS))
 			.await
 			.unwrap();
-		assert!(services.install_core_db(db));
+		assert!(services.install_core_db(db).is_some());
 
-		let profile = PublicProfiles::new(services).resolve("alice.01", false).await.unwrap();
+		let profile = services.public_profiles.resolve("alice.01", false).await.unwrap();
 
 		assert_eq!((profile, platform.chain_connects.lock().unwrap().clone()), (expected, vec![]));
 	}
@@ -342,12 +356,12 @@ async fn expired_and_forced_profiles_only_read_asset_hub_and_do_not_cache_errors
 			))],
 		};
 		let stored = record.clone();
-		db.write(move |tx| dao::store_record(tx, "alice.01", &stored, now, now + expires_in))
+		db.write(move |tx| dao::store_record(tx, "alice.01", &stored, now + expires_in))
 			.await
 			.unwrap();
-		assert!(services.install_core_db(db.clone()));
+		assert!(services.install_core_db(db.clone()).is_some());
 
-		let result = PublicProfiles::new(services).resolve("alice.01", force).await;
+		let result = services.public_profiles.resolve("alice.01", force).await;
 		let stored: Vec<u8> = db
 			.read(|conn| {
 				Ok(conn.query_row(
@@ -373,7 +387,7 @@ async fn expired_and_forced_profiles_only_read_asset_hub_and_do_not_cache_errors
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn an_invalid_username_does_not_need_storage_or_a_chain() {
-	let profiles = PublicProfiles::new(profile_services());
+	let profiles = profile_services().public_profiles.clone();
 
 	assert!(matches!(
 		profiles.resolve("alice.1", false).await,

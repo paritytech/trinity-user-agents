@@ -44,7 +44,7 @@ pub mod api;
 mod dotns_name;
 pub mod markers;
 mod product_id;
-pub use product_id::{PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
+pub use product_id::{ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError};
 pub mod v01;
 pub mod v02;
 pub mod versioned;
@@ -54,10 +54,10 @@ pub mod versioned;
 /// version.
 pub type Bytes32 = [u8; 32];
 
-#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 uniffi::setup_scaffolding!();
 
-#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 uniffi::custom_type!(Bytes32, Vec<u8>, {
 	remote,
 	lower: |bytes| bytes.to_vec(),
@@ -69,7 +69,7 @@ uniffi::custom_type!(Bytes32, Vec<u8>, {
 /// an array type.
 pub type Bytes64 = [u8; 64];
 
-#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 uniffi::custom_type!(Bytes64, Vec<u8>, {
 	remote,
 	lower: |bytes| bytes.to_vec(),
@@ -78,7 +78,7 @@ uniffi::custom_type!(Bytes64, Vec<u8>, {
 
 // Swift and Kotlin have no 128-bit integer, so amounts cross FFI surfaces as
 // decimal strings.
-#[cfg(all(feature = "runtime", not(target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 uniffi::custom_type!(u128, String, {
 	remote,
 	lower: |amount| amount.to_string(),
@@ -847,192 +847,140 @@ impl<Item, Interrupt> Subscription<Item, Interrupt> {
 	}
 }
 
-#[cfg(feature = "runtime")]
-pub mod background_task;
-#[cfg(feature = "runtime")]
-pub mod bootstrap;
-#[cfg(feature = "runtime")]
-pub mod chain;
-#[cfg(feature = "runtime")]
-mod chain_runtime;
-#[cfg(feature = "runtime")]
-mod dispatcher;
-#[cfg(feature = "runtime")]
-mod dotns_views;
-#[cfg(feature = "runtime")]
-mod dynamic_vrf;
-#[cfg(feature = "runtime")]
-mod evm_contract;
-#[cfg(feature = "runtime")]
-pub mod frame;
-#[cfg(feature = "runtime")]
-mod host_core;
-#[cfg(feature = "runtime")]
-mod host_internal;
-#[cfg(feature = "runtime")]
-pub mod host_logic;
-#[cfg(feature = "runtime")]
-mod host_rpc_client;
-#[cfg(feature = "runtime")]
-mod interrupt;
-#[cfg(feature = "runtime")]
-pub mod logging;
+cfg_select! {
+	feature = "runtime" => {
+		pub mod background_task;
+		pub mod bootstrap;
+		pub mod chain;
+		mod chain_runtime;
+		mod dispatcher;
+		mod dotns_views;
+		mod dynamic_vrf;
+		mod evm_contract;
+		pub mod frame;
+		mod host_core;
+		mod host_internal;
+		pub mod host_logic;
+		mod host_rpc_client;
+		mod interrupt;
+		pub mod logging;
+		pub mod platform;
+		mod protocol_error;
+		mod public_profile;
+		mod runtime;
+		mod session_usernames;
+		mod spawner;
+		mod stack;
+		mod stream_extensions;
+		pub mod subscription;
+		pub mod time;
+		pub mod transport;
+		mod truapi_core;
 
-#[cfg(feature = "runtime")]
-pub mod platform;
-#[cfg(feature = "runtime")]
-mod protocol_error;
-#[cfg(feature = "runtime")]
-mod public_profile;
-#[cfg(feature = "runtime")]
-mod runtime;
-#[cfg(feature = "runtime")]
-mod session_usernames;
-#[cfg(feature = "runtime")]
-mod spawner;
-#[cfg(feature = "runtime")]
-mod stack;
-#[cfg(feature = "runtime")]
-mod stream_extensions;
-#[cfg(feature = "runtime")]
-pub mod subscription;
-#[cfg(feature = "runtime")]
-pub mod time;
-#[cfg(feature = "runtime")]
-pub mod transport;
-#[cfg(feature = "runtime")]
-mod truapi_core;
+		#[cfg(test)]
+		mod test_support;
+		mod unix_time;
+		mod wake;
 
-#[cfg(feature = "runtime")]
-#[cfg(test)]
-mod test_support;
-#[cfg(feature = "runtime")]
-mod unix_time;
-#[cfg(feature = "runtime")]
-mod wake;
+		// Dispatch must keep serving deprecated APIs while clients migrate.
+		#[allow(deprecated)]
+		pub mod generated;
 
-// Dispatch must keep serving deprecated APIs while clients migrate.
-#[cfg(feature = "runtime")]
-#[allow(deprecated)]
-pub mod generated;
+		#[cfg(not(target_arch = "wasm32"))]
+		pub mod native;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod native;
+		#[cfg(target_arch = "wasm32")]
+		pub mod wasm;
 
-#[cfg(feature = "runtime")]
-#[cfg(target_arch = "wasm32")]
-pub mod wasm;
+		#[cfg(not(target_arch = "wasm32"))]
+		pub mod native_debug;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod native_debug;
+		#[cfg(not(target_arch = "wasm32"))]
+		pub mod store;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod store;
+		#[cfg(not(target_arch = "wasm32"))]
+		#[macro_use]
+		pub mod durable;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-#[macro_use]
-pub mod durable;
+		#[cfg(not(target_arch = "wasm32"))]
+		pub mod encrypted_storage;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod encrypted_storage;
+		mod image_loader;
 
-#[cfg(feature = "runtime")]
-mod image_loader;
+		#[cfg(not(target_arch = "wasm32"))]
+		pub mod installation;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub mod installation;
+		#[cfg(not(target_arch = "wasm32"))]
+		mod nft;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-mod nft;
+		#[cfg(not(target_arch = "wasm32"))]
+		mod nft_purse;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-mod nft_purse;
+		#[cfg(not(target_arch = "wasm32"))]
+		mod pocket_cards;
 
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-mod pocket_cards;
+		pub use spawner::Spawner;
 
-#[cfg(feature = "runtime")]
-pub use spawner::Spawner;
+		pub use truapi_core::TrUApiCore;
 
-#[cfg(feature = "runtime")]
-pub use truapi_core::TrUApiCore;
+		pub use host_core::{
+			ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin,
+			PairingHostRuntime, ProductRuntime, ProductRuntimeControl, ProductRuntimeError,
+			SigningHostRuntime,
+		};
+		pub use host_internal::{
+			bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get, preimage_key},
+			extrinsic::Sr25519Signer,
+		};
+		pub use host_logic::{
+			session::{
+				ExternalPairedSession, SsoSessionInfo, decode_persisted_session,
+				encode_external_paired_session,
+			},
+			worker::{WorkerLedger, WorkerTransition},
+		};
+		pub use host_rpc_client::HostRpcClient;
+		pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
+		#[cfg(not(target_arch = "wasm32"))]
+		pub use native::{
+			NativePublicProfileObserver, NativeRendererObserver, NativeSubscription,
+			WsBridgeEndpoint, WsBridgeStartError,
+		};
+		#[cfg(not(target_arch = "wasm32"))]
+		pub use native_debug::{DebugSinkError, WsDebugSink};
+		pub use platform::{
+			CoreStorageKeyDescription, CoreStorageKeyDescriptionError, CoreStorageKeyOwner,
+			HostIdentity, PairingHostConfig, PermissionAuthorizationRequest,
+			PermissionAuthorizationStatus, Platform, ProductContext, SigningHostConfig,
+			describe_core_storage_key,
+		};
+		pub use public_profile::{
+			PROFILE_RECORD_KEY, ProfileAvatar, ProfileRecord, ProfileRecordLocation, PublicProfile,
+			PublicProfileError, PublicProfileResolutionOptions,
+		};
+		pub use runtime::{
+			AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
+			PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit,
+			ResumePairingError, StatementRenewalTarget,
+			contacts::contact_handle,
+			login_failure::reports_exhausted_period,
+			product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key},
+			statement_allowance,
+		};
+		pub use unix_time::current_unix_millis;
 
-#[cfg(feature = "runtime")]
-pub use host_core::{
-	ChannelId, DebugEvent, DebugSink, FrameDirection, FrameSink, HostAdmin, PairingHostRuntime,
-	ProductRuntime, ProductRuntimeControl, ProductRuntimeError, SigningHostRuntime,
-};
-#[cfg(feature = "runtime")]
-pub use host_internal::bulletin::{BitswapError, BulletinCid, BulletinCidError, bitswap_get};
-#[cfg(feature = "runtime")]
-pub use host_internal::{bulletin::preimage_key, extrinsic::Sr25519Signer};
-#[cfg(feature = "runtime")]
-pub use host_logic::session::{
-	ExternalPairedSession, SsoSessionInfo, decode_persisted_session, encode_external_paired_session,
-};
-#[cfg(feature = "runtime")]
-pub use host_logic::worker::{WorkerLedger, WorkerTransition};
-#[cfg(feature = "runtime")]
-pub use host_rpc_client::HostRpcClient;
-#[cfg(feature = "runtime")]
-pub use image_loader::{ImageError, ImageFormat, ImageReference, LoadedImage, check_image};
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub use native::{
-	NativeRendererObserver, NativeSubscription, WsBridgeEndpoint, WsBridgeStartError,
-};
-#[cfg(feature = "runtime")]
-#[cfg(not(target_arch = "wasm32"))]
-pub use native_debug::{DebugSinkError, WsDebugSink};
-#[cfg(feature = "runtime")]
-pub use platform::{
-	CoreStorageKeyDescription, CoreStorageKeyDescriptionError, CoreStorageKeyOwner, HostIdentity,
-	PairingHostConfig, PermissionAuthorizationRequest, PermissionAuthorizationStatus, Platform,
-	ProductContext, SigningHostConfig, describe_core_storage_key,
-};
-#[cfg(feature = "runtime")]
-pub use public_profile::{
-	PROFILE_RECORD_KEY, ProfileAvatar, ProfileRecord, ProfileRecordLocation, PublicProfile,
-	PublicProfileError,
-};
-#[cfg(feature = "runtime")]
-pub use runtime::StatementRenewalTarget;
-#[cfg(feature = "runtime")]
-pub use runtime::contacts::contact_handle;
-#[cfg(feature = "runtime")]
-pub use runtime::login_failure::reports_exhausted_period;
-#[cfg(feature = "runtime")]
-pub use runtime::product_manifest::{encode_cached_root_manifest, worker_manifest_cache_key};
-#[cfg(feature = "runtime")]
-pub use runtime::statement_allowance;
-#[cfg(feature = "runtime")]
-pub use runtime::{
-	AnnouncedPairing, DevicePairingObserver, FundingFeed, MAX_PAIRING_METADATA_CHARS,
-	PairedSsoPeer, PairingProposal, PairingProposalMetadata, ResponderExit, ResumePairingError,
-};
-#[cfg(feature = "runtime")]
-pub use unix_time::current_unix_millis;
-
-#[cfg(feature = "runtime")]
-#[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
-pub use wasm::WasmSigningHostRuntime;
-#[cfg(feature = "runtime")]
-#[cfg(target_arch = "wasm32")]
-pub use wasm::{
-	WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
-	derive_product_account_public_key, describe_core_storage_key_for_wasm,
-	has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
-	wire_schema_hash,
-};
+		#[cfg(all(target_arch = "wasm32", feature = "wasm-signing-host"))]
+		pub use wasm::WasmSigningHostRuntime;
+		#[cfg(target_arch = "wasm32")]
+		pub use wasm::{
+			WasmPairingHostRuntime, WasmProductRuntime, WasmRendererSubscription,
+			derive_product_account_public_key, describe_core_storage_key_for_wasm,
+			has_trusted_remote_permissions_for_wasm, product_account_address, set_log_level,
+			wire_schema_hash,
+		};
+	},
+	_ => {},
+}
 
 #[cfg(test)]
 mod tests;

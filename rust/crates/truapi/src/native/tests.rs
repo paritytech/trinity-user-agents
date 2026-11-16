@@ -16,8 +16,12 @@ use truapi::v01;
 
 use super::ws_bridge::WsBridgeStartError;
 use crate::{
-	PairedSsoPeer, PairingProposal, host_internal::bulletin::preimage_key,
+	PairedSsoPeer, PairingProposal,
+	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
+	markers::{
+		MARKERS, MarkerClass, NATIVE_PUSH_NOTIFICATION, Severity, TRACING_ERROR, TRACING_WARN,
+	},
 };
 
 use super::{
@@ -3238,6 +3242,8 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 
 	fn close_provider_frame(&self, _provider_id: ProductId, _intent: String) {}
 
+	fn provider_frame_requested(&self, _provider_id: ProductId, _intent: String) {}
+
 	async fn detected_country(&self) -> Option<String> {
 		None
 	}
@@ -3324,11 +3330,8 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	let funding = Arc::new(RecordingNativeFunding::default());
 	assert!(host.set_funding_callbacks(funding.clone()));
 	let configure = |names: &[&str]| {
-		host.set_funding_provider_config(
-			names.iter().map(|name| name.to_string()).collect(),
-			vec![],
-		)
-		.expect("configured");
+		host.set_funding_provider_config(names.iter().map(|name| name.to_string()).collect())
+			.expect("configured");
 		let changes = funding.changes.lock().expect("changes mutex poisoned");
 		let announced =
 			changes.iter().filter(|change| **change == (None, FundingChangeKind::Providers));
@@ -3338,10 +3341,10 @@ fn providers_change_is_announced_only_when_the_list_changes() {
 	assert_eq!(
 		(
 			host.funding_available(),
-			configure(&["ramp.dot"]),
-			configure(&["ramp.dot"]),
+			configure(&["ramp"]),
+			configure(&["ramp"]),
 			configure(&[]),
-			configure(&["ramp.dot"])
+			configure(&["ramp"])
 		),
 		(false, (1, true), (1, true), (2, false), (3, true))
 	);
@@ -3380,4 +3383,32 @@ mod bridge_lines {
 		assert_eq!(logs.len(), 1);
 		assert_eq!(logs[0].1.chars().count(), HOST_SINK_DETAIL_MAX_CHARS);
 	}
+}
+
+#[test]
+fn the_exported_map_holds_every_entry_and_nothing_else() {
+	let exported = core_markers();
+	assert_eq!(exported.len(), MARKERS.len(), "the exported map lost or gained an entry");
+	for marker in MARKERS {
+		assert_eq!(
+			exported.get(marker.target),
+			Some(&marker.class),
+			"{} did not survive the crossing",
+			marker.target
+		);
+	}
+}
+
+#[test]
+fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
+	let exported = core_markers();
+	assert_eq!(
+		exported.get(TRACING_ERROR.target),
+		Some(&MarkerClass::Export { severity: Severity::Error })
+	);
+	assert_eq!(
+		exported.get(TRACING_WARN.target),
+		Some(&MarkerClass::Export { severity: Severity::Warn })
+	);
+	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
 }

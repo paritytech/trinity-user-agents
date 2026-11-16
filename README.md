@@ -442,13 +442,35 @@ request, such as a light client's before its first Bitswap peer connects, for
 up to 30 seconds in all. The content key it returns is the CID, for keying a
 host's disk cache. JavaScript bindings are deferred.
 
-For avatars, `resolvePublicProfile(username, force)` resolves a
-[dotNS public profile](docs/rfcs/core-resolved-public-profiles.md#the-record). Native
-hosts cache records for one hour; `force` refreshes them. The returned avatar CID
-selects the host's image cache; only a miss needs `loadImage`. The Rust WASM
-resolver reads the chain on each call.
+`observe_public_profile(username, options)` streams
+[dotNS profile metadata](docs/rfcs/core-resolved-public-profiles.md#the-host-calls).
+Native hosts emit cached metadata, then refresh missing or expired records
+(one-hour TTL). Required options: `force_fresh` bypasses the TTL; `skip_stale`
+suppresses expired cached values (false in app callers). Streams emit up to two
+distinct profiles; cancellation or drop stops resolution. Invalid usernames
+return an error subscription. SQLite stores full records and keeps the
+1,000 most recently used. Cache reads use the reader pool; recency updates are
+batched with profile writes or after one second. Avatar CIDs key the image cache;
+only misses call `loadImage`.
+WASM resolves once without caching. A lookup requires the stack's Asset Hub.
 
 Android contacts and chat views resolve profile metadata first, then reuse Coil's CID-keyed disk cache without a freshness expiry. Chat headers keep the cached avatar visible during refresh.
+
+iOS contacts, search results and chat views consume
+`resolvePublicProfile(username:options:)` as a finite `AsyncThrowingStream`.
+Only avatar changes trigger image requests.
+The public-profile factory returns `AnyImageViewModel`, which shared image views
+use to retain requests while the image identity and processing settings match.
+`ChatIconViewModelFactory` selects product icons or public-profile avatars for chats and contact lists.
+New chat headers explicitly request forced
+freshness; cells and search explicitly use the ordinary policy. All app callers
+explicitly set `skipStale` to false. A cancelled header
+observation retains its forced intent until an observation completes or fails.
+[The CID image loader](hosts/ios/polkadot-app/Common/ImageViewModel/CID/CIDImageLoader.swift)
+uses Kingfisher's cache without a freshness expiry, including on cache hits,
+with a 100 MiB disk budget configured during root setup, before onboarding. It keeps
+the current image while loading; avatar views cancel metadata observation and image work
+when their view is reused or released.
 
 The [CLI](rust/crates/truapi-host-cli/README.md#interactive-terminal-ui) resolves
 avatar metadata with `/profile [username]`. `/profile upload <image>` publishes an
@@ -750,7 +772,7 @@ the labels that build it: `ci:ios-simulator`, `ci:ios-device` and
 
 - `build`, a DevCI compile, failing on any build warning the committed baseline
   does not already have
-- `test`, the unit test suite
+- `test`, the [unit test suite](hosts/ios/polkadot-appTests/)
 - `preview`, an installable simulator `.app` attached to the run, stamped with
   the commit it came from in `TrUAPICommit`
 

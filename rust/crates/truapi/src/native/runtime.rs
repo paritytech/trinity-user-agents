@@ -14,18 +14,20 @@ use crate::{
 		ProductContext, ProductId,
 	},
 };
+use futures::StreamExt;
 use parity_scale_codec::Encode;
 use truapi::{Bytes32, api::Permissions, v01, versioned::IntoLatest};
 
 use super::{
 	pocket::{NativePocketObserver, keeping_faces, observe_pocket_cards},
+	public_profile::NativePublicProfileObserver,
 	reject_undecodable_deeplink,
 	renderer::{NativeRendererObserver, NativeSubscription, observe_renderer},
 	ws_bridge::{BridgeLogger, SharedWsBridge, WsBridgeEndpoint, WsBridgeStartError},
 };
 use crate::{
 	ImageError, ImageReference, LoadedImage, PairedSsoPeer, PublicProfile, PublicProfileError,
-	ResponderExit, SigningHostRuntime, Spawner,
+	PublicProfileResolutionOptions, ResponderExit, SigningHostRuntime, Spawner,
 	durable::RecoveryError,
 	host_internal::{
 		permissions::TemporaryPermissions,
@@ -381,6 +383,18 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_amount_issue(&intent, amount, spendable)
 	}
 
+	/// Show the screen funding session `intent`'s provider asked for, after
+	/// `provider_frame_requested`. Answers whether one was waiting.
+	pub fn open_provider_frame(&self, intent: String) -> bool {
+		self.runtime.open_provider_frame(&intent)
+	}
+
+	/// Whether funding session `intent`'s provider waits for its screen to be
+	/// opened, so the host can show the notice again after redrawing.
+	pub fn funding_frame_waiting(&self, intent: String) -> bool {
+		self.runtime.funding_frame_waiting(&intent)
+	}
+
 	/// Funding session `intent`'s latest quote list, while its overlay is up.
 	pub fn funding_quotes(&self, intent: String) -> Option<crate::platform::FundingQuoteList> {
 		self.runtime.funding_quotes(&intent)
@@ -392,14 +406,13 @@ impl NativeTrUApiHostRuntime {
 		self.runtime.funding_entries()
 	}
 
-	/// Offer the funding providers the remote configuration names, then the
-	/// `bundled` ones; see [`SigningHostRuntime::set_funding_provider_config`].
+	/// Offer the funding providers the remote configuration names; see
+	/// [`SigningHostRuntime::set_funding_provider_config`].
 	pub fn set_funding_provider_config(
 		&self,
 		published_names: Vec<String>,
-		bundled: Vec<crate::host_logic::funding_providers::FundingProviderEntry>,
 	) -> Result<(), HostRejection> {
-		Ok(self.runtime.set_funding_provider_config(published_names, bundled)?)
+		Ok(self.runtime.set_funding_provider_config(published_names)?)
 	}
 
 	/// Every ended funding session, as summaries newest first. The host
@@ -897,6 +910,28 @@ impl NativeTrUApiHostRuntime {
 		force: bool,
 	) -> Result<PublicProfile, PublicProfileError> {
 		self.runtime.resolve_public_profile(&username, force).await
+	}
+
+	/// Observes public profile metadata until resolution completes or fails.
+	///
+	/// Options control forced lookups and stale stored values. Failures follow any
+	/// emitted value. Cancelling the subscription aborts resolution.
+	pub fn observe_public_profile(
+		&self,
+		username: String,
+		options: PublicProfileResolutionOptions,
+		observer: Arc<dyn NativePublicProfileObserver>,
+	) -> Arc<NativeSubscription> {
+		let mut stream = self.runtime.observe_public_profile(&username, options);
+		self.spawner.spawn_observation(async move {
+			while let Some(item) = stream.next().await {
+				match item {
+					Ok(profile) => observer.on_profile(profile),
+					Err(error) => return observer.on_error(error),
+				}
+			}
+			observer.on_complete();
+		})
 	}
 
 	/// The image `reference` names, read from Bulletin over the core's own connection and

@@ -16,7 +16,7 @@ fn profiles_extend_a_pocket_database_without_losing_cards() {
 
 	core_migrations().to_latest(&mut connection).unwrap();
 	connection
-		.execute("INSERT INTO public_profiles VALUES ('alice.01', X'00', 3600)", [])
+		.execute("INSERT INTO public_profiles (username, public_record, expires_at) VALUES ('alice.01', X'00', 3600)", [])
 		.unwrap();
 	let session: Vec<u8> = connection
 		.query_row("SELECT record FROM funding_session WHERE intent = 'kept'", [], |row| row.get(0))

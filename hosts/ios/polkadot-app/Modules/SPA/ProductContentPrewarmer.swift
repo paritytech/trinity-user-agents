@@ -2,6 +2,7 @@ import Foundation
 import Foundation_iOS
 import Products
 import ChainRegistry
+import FoundationExt
 
 @MainActor
 protocol ProductContentPrewarming {
@@ -10,22 +11,25 @@ protocol ProductContentPrewarming {
 
 @MainActor
 final class ProductContentPrewarmer {
-    private let makeLabels: () async -> [String]
+    private let labelsProvider: ProductPrewarmLabelsProviding
     private let chainRegistryClosure: ChainRegistryLazyClosure
     private let flowStateProvider: any SPAFlowStateProviding
+    private let activity: any ApplicationActivityProviding
     private let logger: LoggerProtocol
 
     private var prewarmTask: Task<Void, Never>?
 
     init(
-        makeLabels: @escaping () async -> [String],
+        labelsProvider: ProductPrewarmLabelsProviding,
         chainRegistryClosure: @escaping ChainRegistryLazyClosure,
         flowStateProvider: any SPAFlowStateProviding,
+        activity: any ApplicationActivityProviding,
         logger: LoggerProtocol = Logger.shared
     ) {
-        self.makeLabels = makeLabels
+        self.labelsProvider = labelsProvider
         self.chainRegistryClosure = chainRegistryClosure
         self.flowStateProvider = flowStateProvider
+        self.activity = activity
         self.logger = logger
     }
 }
@@ -36,7 +40,9 @@ extension ProductContentPrewarmer: ProductContentPrewarming {
 
         // Captured strongly: the root module is released as soon as the launch decision lands, and
         // the warm has to outlive it.
-        prewarmTask = Task {
+        prewarmTask = Task { [activity] in
+            // A background launch (BG task, VoIP) must not download product archives.
+            await activity.waitUntilInForeground()
             await warmContent()
             prewarmTask = nil
         }
@@ -49,7 +55,7 @@ private extension ProductContentPrewarmer {
 
         // Labels are resolved after the chain wait because they need the chain TLD and remote config.
         var seen = Set<String>()
-        let labels = await makeLabels().filter { !$0.isEmpty && seen.insert($0).inserted }
+        let labels = await labelsProvider.labels().filter { !$0.isEmpty && seen.insert($0).inserted }
 
         guard !labels.isEmpty else {
             logger.error("Product prewarm skipped: no labels")
