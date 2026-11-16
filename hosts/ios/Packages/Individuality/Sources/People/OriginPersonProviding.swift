@@ -69,9 +69,10 @@ public final class OriginPersonProvider {
             fullCollectionId: fullCollectionId,
             memberStatusChecker: checker,
             liteStatusWaiter: MembershipStatusWaiter(
-                connection: connection,
-                runtimeCodingService: runtimeCodingService,
-                statusChecker: checker
+                subscriber: ChainMembershipSubscriber(
+                    connection: connection,
+                    runtimeCodingService: runtimeCodingService
+                )
             ),
             noPersonStrategy: noPersonStrategy
         )

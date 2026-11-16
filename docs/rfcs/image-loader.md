@@ -16,7 +16,7 @@ Every feature that shows an image builds its own loader. iOS and Android each re
 
 ## Approach
 
-The host calls `load_image(reference)` on the runtime through UniFFI or the WASM bridge. The call is async and cancellable: cancelling it stops the fetch. It returns the bytes, their format as read from the bytes, and a content key, the blob's CID, which hosts key their disk caches on. Otherwise it fails as `Unsupported` when the reference names nothing the core loads, `Rejected` when the bytes fail the policy, or `Unavailable` when Bulletin does not return them. Only `Unavailable` can succeed on a later attempt. A failed image draws as a placeholder without affecting the card or tree. The renderer wire type remains unchanged.
+The host calls `load_image(reference)` on the Rust runtime or through UniFFI. The Rust loader also builds for WASM; JavaScript bindings are deferred. The call is async and cancellable: cancelling it stops the fetch. It returns the bytes, their format as read from the bytes, and a content key, the blob's CID, which hosts key their disk caches on. Otherwise it fails as `Unsupported` when the reference names nothing the core loads, `Rejected` when the bytes fail the policy, or `Unavailable` when an on-chain source cannot be resolved, names no image, or Bulletin does not return the bytes. Only `Unavailable` can succeed on a later attempt for the same immutable reference; a username may name different content after a profile refresh. A failed image draws as a placeholder without affecting the card or tree. The renderer wire type remains unchanged.
 
 References the core loads, and where it finds each one's CID:
 

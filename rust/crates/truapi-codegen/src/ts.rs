@@ -161,14 +161,12 @@ fn selected_public_aliases(
 		}
 	}
 
+	let selected_by_wrappers: BTreeSet<String> = selected_by_base.keys().cloned().collect();
 	for ty in &api.types {
 		let Some((version, base)) = version_prefixed_type(&ty.name) else {
 			continue;
 		};
-		if version > target_version {
-			continue;
-		}
-		if selected_by_base.contains_key(base) {
+		if version > target_version || selected_by_wrappers.contains(base) {
 			continue;
 		}
 		let entry = selected_by_base.entry(base.to_string()).or_insert((version, ty.name.clone()));
@@ -250,7 +248,7 @@ fn collect_preserved_version_prefixed_types(
 	}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 enum VersionedKind {
 	Unit,
 	Tuple(TypeRef),
@@ -334,6 +332,18 @@ fn validate_versioned_wrapper_shapes(api: &ApiDefinition) -> Result<()> {
 		}
 	}
 	Ok(())
+}
+
+/// The version a host-initiated item goes out in: the oldest one carrying the
+/// same payload as `wire_version`, so a host that predates `wire_version` still
+/// decodes it.
+fn host_initiated_item_version(wrapper: &VersionedWrapper, wire_version: u32) -> u32 {
+	let payload = &wrapper.variants[&wire_version].kind;
+	wrapper
+		.variants
+		.values()
+		.find(|variant| variant.kind == *payload)
+		.map_or(wire_version, |variant| variant.version)
 }
 
 fn versioned_wrapper_for<'a>(
@@ -947,6 +957,12 @@ fn method_wire_version(
 /// every wrapper it touches gets that version recorded here. Wrappers that no
 /// included method references end up absent from the map and can be elided
 /// from the emitted types altogether.
+///
+/// The request of a host-initiated subscription keeps every version up to the
+/// target, because the host picks the version it sends and the client has to
+/// decode whichever arrives. Its item keeps the version
+/// [`host_initiated_item_version`] picks. A host-initiated request answers in
+/// one version, so it decodes only that version of its request.
 fn versioned_wrapper_emit_versions(
 	api: &ApiDefinition,
 	wrappers: &BTreeMap<String, VersionedWrapper>,
@@ -963,6 +979,30 @@ fn versioned_wrapper_emit_versions(
 			};
 			for wrapper_name in method_versioned_wrappers(method, wrappers) {
 				emit.entry(wrapper_name).or_default().insert(wire_version);
+			}
+			if method.wire.host_initiated &&
+				method.kind == MethodKind::Subscription &&
+				let Some(request_name) = request_wrapper_name(method, wrappers)
+			{
+				let decoded_versions = wrappers[request_name]
+					.variants
+					.keys()
+					.filter(|version| **version <= target_version)
+					.copied();
+				emit.entry(request_name.to_string()).or_default().extend(decoded_versions);
+			}
+			if method.wire.host_initiated &&
+				let ReturnType::Subscription { item, interrupt } = &method.return_type
+			{
+				let interrupt = call_error_inner(interrupt).unwrap_or(interrupt);
+				for (name, wrapper) in [item, interrupt]
+					.into_iter()
+					.filter_map(|ty| versioned_wrapper_for(ty, wrappers))
+				{
+					emit.entry(name.to_string())
+						.or_default()
+						.insert(host_initiated_item_version(wrapper, wire_version));
+				}
 			}
 		}
 	}
@@ -1118,10 +1158,11 @@ fn generate_type_bindings(
 		writeln!(out, "export * from './types.js';").unwrap();
 	}
 	writeln!(out).unwrap();
+	let plain_variants = plain_variants_by_type(api);
 	for ty in types {
-		write_type_definition(&mut out, ty, &emit_versions, &aliases)?;
+		write_type_definition(&mut out, ty, &emit_versions, &aliases, &plain_variants)?;
 		writeln!(out).unwrap();
-		write_codec_definition(&mut out, ty, &emit_versions, &aliases)?;
+		write_codec_definition(&mut out, ty, &emit_versions, &aliases, &plain_variants)?;
 		writeln!(out).unwrap();
 	}
 	Ok(out)
@@ -2027,11 +2068,16 @@ fn emit_host_initiated_registration(
 			method.name
 		);
 	};
-	let Some((response_name, _)) = versioned_wrapper_for(response, wrappers) else {
+	let Some((response_name, response_wrapper)) = versioned_wrapper_for(response, wrappers) else {
 		bail!(
 			"host-initiated method `{}`: response type is not a recognized versioned wrapper",
 			method.name
 		);
+	};
+	let response_version = if method.kind == MethodKind::Request {
+		version
+	} else {
+		host_initiated_item_version(response_wrapper, version)
 	};
 	let request_codec = format!("T.{}", versioned_wrapper_ts_name(request_name));
 	let response_codec = format!("T.{}", versioned_wrapper_ts_name(response_name));
@@ -2059,7 +2105,7 @@ fn emit_host_initiated_registration(
         this.{field} = transport.registerHostInitiatedSubscription({{
           ids: W.{wire_const},{single_response}
           decodeRequest: {decode_request},
-          encodeItem: (item) => {response_codec}.enc({{ tag: "V{version}", value: item }}),
+          encodeItem: (item) => {response_codec}.enc({{ tag: "V{response_version}", value: item }}),
           encodeInterrupt: interruptEncoder({error_codec}),
           declinePayload: HOST_INITIATED_DECLINE_PAYLOAD,
           bufferCapacity: HOST_INITIATED_BUFFER_CAPACITY,
@@ -2216,6 +2262,7 @@ fn write_type_definition(
 	ty: &TypeDef,
 	emit_versions: &BTreeMap<String, BTreeSet<u32>>,
 	aliases: &BTreeMap<String, String>,
+	plain_variants: &BTreeMap<String, Vec<String>>,
 ) -> Result<()> {
 	let generated_names = NameMode::Generated { aliases };
 	let generic_decl = generic_param_declaration(&ty.generic_params);
@@ -2305,6 +2352,9 @@ fn write_type_definition(
 					writeln!(out, "  | {}", enum_variant_ts_type_mode(variant, generated_names)?)
 						.unwrap();
 				}
+				for variant in plain_variants.get(&ty.name).into_iter().flatten() {
+					writeln!(out, "  | {}", ts_string_literal(variant)).unwrap();
+				}
 				writeln!(out, ";").unwrap();
 			}
 		},
@@ -2318,6 +2368,7 @@ fn write_codec_definition(
 	ty: &TypeDef,
 	emit_versions: &BTreeMap<String, BTreeSet<u32>>,
 	aliases: &BTreeMap<String, String>,
+	plain_variants: &BTreeMap<String, Vec<String>>,
 ) -> Result<()> {
 	if ty.name == "ProductId" {
 		writeln!(
@@ -2369,8 +2420,13 @@ fn write_codec_definition(
 		}
 		let emitted_name = aliases.get(&ty.name).map(String::as_str).unwrap_or(&ty.name);
 		let type_name = top_level_type_name(emitted_name, &ty.generic_params);
-		let codec_expr =
+		let mut codec_expr =
 			type_codec_expr_mode_qualified(ty, &type_name, &ctx, generated_names, false)?;
+		if let Some(variants) = plain_variants.get(&ty.name) {
+			let variants =
+				variants.iter().map(|variant| ts_string_literal(variant)).collect::<Vec<_>>();
+			codec_expr = format!("S.withPlainVariants({codec_expr}, [{}])", variants.join(", "));
+		}
 		writeln!(
             out,
             "export const {emitted_name}: S.Codec<{type_name}> = S.lazy((): S.Codec<{type_name}> => {codec_expr});",
@@ -2477,6 +2533,54 @@ fn type_codec_expr_mode_qualified(
 			}
 		},
 	}
+}
+
+/// The unit variants each tagged enum also accepts as plain strings, by type
+/// name.
+///
+/// A unit-only enum is a string union in TS, so a version of it that gains a
+/// payload variant turns into a tagged union. Its callers keep passing the
+/// strings of the older version, which still name the same variants.
+fn plain_variants_by_type(api: &ApiDefinition) -> BTreeMap<String, Vec<String>> {
+	let mut plain_variants = BTreeMap::new();
+	for ty in &api.types {
+		let (Some((version, base)), TypeDefKind::Enum(variants)) =
+			(version_prefixed_type(&ty.name), &ty.kind)
+		else {
+			continue;
+		};
+		if is_unit_only_enum(ty) {
+			continue;
+		}
+		let older_strings: BTreeSet<&str> = api
+			.types
+			.iter()
+			.filter(|older| {
+				is_unit_only_enum(older) &&
+					version_prefixed_type(&older.name).is_some_and(
+						|(older_version, older_base)| older_base == base && older_version < version,
+					)
+			})
+			.filter_map(|older| match &older.kind {
+				TypeDefKind::Enum(older_variants) => Some(older_variants),
+				_ => None,
+			})
+			.flatten()
+			.map(|variant| variant.name.as_str())
+			.collect();
+		let plain: Vec<String> = variants
+			.iter()
+			.filter(|variant| {
+				matches!(variant.fields, VariantFields::Unit) &&
+					older_strings.contains(variant.name.as_str())
+			})
+			.map(|variant| variant.name.clone())
+			.collect();
+		if !plain.is_empty() {
+			plain_variants.insert(ty.name.clone(), plain);
+		}
+	}
+	plain_variants
 }
 
 fn is_unit_only_enum(ty: &TypeDef) -> bool {

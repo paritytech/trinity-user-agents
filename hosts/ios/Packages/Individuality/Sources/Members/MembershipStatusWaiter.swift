@@ -1,13 +1,10 @@
-import AsyncExtensions
 import Foundation
 import StructuredConcurrency
 import SubstrateSdk
-import SubstrateSdkExt
-import SubstrateStorageSubscription
 
 public protocol MembershipStatusWaiting {
-    /// The ring index once `input` is an included member the ring status covers, re-checked on every
-    /// change of its `Members` entry. Waits until then or until the caller cancels.
+    /// The ring index once `input` is an included member whose key the ring root covers. Waits until
+    /// then or until the caller cancels.
     func waitForStatus(of input: MembershipStatusInput) async throws -> MembersPallet.RingIndex
     func waitForStatus(of input: MembershipStatusInput, timeout: Duration) async throws -> MembersPallet.RingIndex?
 }
@@ -16,24 +13,18 @@ public enum MembershipStatusWaiterError: Error {
     case subscriptionEnded
 }
 
-/// Subscribes to the member's `Members` entry and runs the full status check whenever it changes. The
-/// ring keys page is written in the block that includes the member, so the entry is the one signal to
-/// watch; the check itself still reads the ring status, so a not-yet-covered position keeps waiting.
+/// Inclusion is two chain writes on two storage items: `onboard_people` marks the `Members` entry
+/// included, and a later `build_ring` bakes the key into the root by advancing `RingKeysStatus`.
+/// Neither write touches the other item, so each step is awaited on its own subscription.
 public final class MembershipStatusWaiter: MembershipStatusWaiting, @unchecked Sendable {
-    private let connection: JSONRPCEngine
-    private let runtimeCodingService: RuntimeCodingServiceProtocol
-    private let statusChecker: MembershipStatusChecking
+    private let subscriber: any MembershipSubscribing
     private let clock: any Clock<Duration>
 
     public init(
-        connection: JSONRPCEngine,
-        runtimeCodingService: RuntimeCodingServiceProtocol,
-        statusChecker: MembershipStatusChecking,
+        subscriber: any MembershipSubscribing,
         clock: any Clock<Duration> = ContinuousClock()
     ) {
-        self.connection = connection
-        self.runtimeCodingService = runtimeCodingService
-        self.statusChecker = statusChecker
+        self.subscriber = subscriber
         self.clock = clock
     }
 
@@ -51,35 +42,39 @@ public final class MembershipStatusWaiter: MembershipStatusWaiting, @unchecked S
     }
 
     public func waitForStatus(of input: MembershipStatusInput) async throws -> MembersPallet.RingIndex {
-        let request = DoubleMapSubscriptionRequest(
-            storagePath: MembersPallet.Storage.members(),
-            localKey: "",
-            keyParamClosure: {
-                (
-                    BytesCodable(wrappedValue: input.collection),
-                    BytesCodable(wrappedValue: input.memberKey)
-                )
-            }
-        )
+        let inclusion = try await awaitInclusion(of: input)
+        try await awaitRootCoverage(of: inclusion, in: input.collection)
+        return inclusion.ringIndex
+    }
+}
 
-        let stream: AnyAsyncSequence<BatchStorageSubscriptionSingleResult<MembersPallet.RingPosition?>>
-        stream = CallbackBatchStorageSubscription.asyncStream(
-            requests: [BatchStorageSubscriptionRequest(innerRequest: request, mappingKey: nil)],
-            connection: connection,
-            runtimeService: runtimeCodingService,
-            logger: nil
-        )
-
-        for try await result in stream {
-            // Only an included entry can pass the ring check, so onboarding updates are not re-read.
-            guard result.value?.inclusion != nil else { continue }
-
-            if let ringIndex = try await statusChecker.checkStatuses(of: [input], blockHash: nil)[input.memberKey] {
-                return ringIndex
+private extension MembershipStatusWaiter {
+    func awaitInclusion(of input: MembershipStatusInput) async throws -> MembersPallet.RingPosition.Included {
+        for try await position in subscriber.memberPositions(of: input) {
+            if let inclusion = position?.inclusion {
+                return inclusion
             }
         }
 
-        // The stream also ends when the caller cancels; that is not a subscription failure.
+        try endedWithoutResult()
+    }
+
+    func awaitRootCoverage(
+        of inclusion: MembersPallet.RingPosition.Included,
+        in collection: MembersPallet.CollectionIdentifier
+    ) async throws {
+        let keysPerPage = try await subscriber.ringKeysPageSize()
+        let statuses = subscriber.ringKeysStatuses(collection: collection, ringIndex: inclusion.ringIndex)
+
+        for try await status in statuses where status?.includesKey(at: inclusion, keysPerPage: keysPerPage) == true {
+            return
+        }
+
+        try endedWithoutResult()
+    }
+
+    /// A stream also ends when the caller cancels; that is not a subscription failure.
+    func endedWithoutResult() throws -> Never {
         try Task.checkCancellation()
         throw MembershipStatusWaiterError.subscriptionEnded
     }

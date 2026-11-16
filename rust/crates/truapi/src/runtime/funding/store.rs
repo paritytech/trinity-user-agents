@@ -16,7 +16,7 @@ use tracing::error;
 use super::PackedSession;
 pub(super) use crate::store::Db;
 use crate::{
-	host_logic::funding::{FundingSession, FundingSessionError},
+	host_logic::funding::{FundingSession, FundingSessionError, FundingSessionSummary},
 	store::DbError,
 };
 
@@ -24,8 +24,9 @@ use crate::{
 /// variants added later decode alongside the ones a row was written with; a
 /// field added to a stored struct or variant takes a new format.
 const SESSION_FORMAT: u16 = 5;
-/// Format of a stored summary.
-const SUMMARY_FORMAT: u16 = 2;
+/// Format of a stored summary. Format 2 lacked whether money moved, which
+/// is read as moved when the summary settled or refunded anything.
+const SUMMARY_FORMAT: u16 = 3;
 
 /// A table of records keyed by intent, with its queries.
 struct Table {
@@ -67,12 +68,24 @@ pub(super) async fn load(
 	db: &Db,
 ) -> Result<(Vec<FundingSession>, Vec<PackedSession>), FundingSessionError> {
 	db.write(|tx| {
-		let sessions = scan(tx, &SESSIONS)?;
-		let summaries = scan(tx, &SUMMARIES)?;
+		let sessions = scan(tx, &SESSIONS, |_, _| None)?;
+		let summaries = scan(tx, &SUMMARIES, summary_of_format)?;
 		if let Some(format) = sessions.newer.max(summaries.newer) {
 			return Ok(Err(FundingSessionError::NewerFormat { format }));
 		}
-		Ok(Ok((sessions.records, summaries.records)))
+		let summaries = summaries
+			.records
+			.into_iter()
+			.map(|packed: PackedSession| PackedSession {
+				summary: FundingSessionSummary {
+					money_moved: packed.money_moved,
+					..packed.summary
+				}
+				.with_ended(),
+				..packed
+			})
+			.collect();
+		Ok(Ok((sessions.records, summaries)))
 	})
 	.await?
 }
@@ -109,7 +122,23 @@ struct Scanned<T> {
 	newer: Option<u16>,
 }
 
-fn scan<T: Decode>(tx: &Transaction<'_>, table: &Table) -> Result<Scanned<T>, DbError> {
+/// A summary row of an older format this core still reads.
+fn summary_of_format(format: u16, input: &mut &[u8]) -> Option<PackedSession> {
+	if format != 2 {
+		return None;
+	}
+	let (summary, acknowledged) = <(FundingSessionSummary, bool)>::decode(input).ok()?;
+	let money_moved = summary.refunded.is_some() || summary.stage.settled_amount().is_some();
+	Some(PackedSession { summary, acknowledged, money_moved })
+}
+
+/// The rows of `table`, reading a row of an older format through `older`
+/// when it can.
+fn scan<T: Decode>(
+	tx: &Transaction<'_>,
+	table: &Table,
+	older: impl Fn(u16, &mut &[u8]) -> Option<T>,
+) -> Result<Scanned<T>, DbError> {
 	let mut scanned = Scanned { records: Vec::new(), newer: None };
 	let mut statement = tx.prepare_cached(table.select)?;
 	let mut rows = statement.query([])?;
@@ -119,14 +148,15 @@ fn scan<T: Decode>(tx: &Transaction<'_>, table: &Table) -> Result<Scanned<T>, Db
 		let input = &mut &record[..];
 		match u16::decode(input) {
 			Ok(stored) if stored > table.format => scanned.newer = scanned.newer.max(Some(stored)),
-			Ok(stored) if stored < table.format => {
-				error!(
+			Ok(stored) if stored < table.format => match older(stored, input) {
+				Some(value) if input.is_empty() => scanned.records.push(value),
+				_ => error!(
 					table = table.name,
 					%intent,
 					stored,
 					format = table.format,
 					"funding record of an older format; leaving it in place"
-				);
+				),
 			},
 			Ok(_) => match T::decode(input) {
 				Ok(value) if input.is_empty() => scanned.records.push(value),

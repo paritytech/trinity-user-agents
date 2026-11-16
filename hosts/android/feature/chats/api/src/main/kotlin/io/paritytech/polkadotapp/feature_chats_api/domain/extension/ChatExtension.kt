@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_chats_api.domain.extension
 
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.ChatBotStateController
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatFooterRenderer
+import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatInputSlotRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMenuRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatMessageRenderer
 import io.paritytech.polkadotapp.feature_chats_api.domain.middleware.bot.CustomChatOpenHandler
@@ -55,6 +56,17 @@ interface ChatExtension {
      */
     fun animatesMessageReveal(chatId: ChatId): Boolean = false
 
-    fun observeUserInputAllowed(chatId: ChatId): Flow<Boolean> = flowOf(true)
+    /** What the input slot of [chatId] holds. */
+    fun observeInputSlot(chatId: ChatId): Flow<ChatExtensionInputSlot> = flowOf(ChatExtensionInputSlot.TextInput)
     fun observeChatConfig(chatId: ChatId): Flow<ChatConfig> = flowOf(ChatConfig.Default)
+}
+
+/** What a chat shows in place of its message input. */
+sealed interface ChatExtensionInputSlot {
+    data object TextInput : ChatExtensionInputSlot
+
+    data object Hidden : ChatExtensionInputSlot
+
+    /** A card the extension draws itself, in place of the input. */
+    data class Card(val renderer: CustomChatInputSlotRenderer) : ChatExtensionInputSlot
 }

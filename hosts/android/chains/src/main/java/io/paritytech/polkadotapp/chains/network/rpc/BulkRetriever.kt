@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.chains.network.rpc
 
+import com.google.gson.JsonNull
 import io.novasama.substrate_sdk_android.wsrpc.SocketService
 import io.novasama.substrate_sdk_android.wsrpc.executeAsync
 import io.novasama.substrate_sdk_android.wsrpc.mappers.nonNull
@@ -15,27 +16,28 @@ class GetKeysPagedRequest(
     keyPrefix: String,
     pageSize: Int,
     fullKeyOffset: String?,
-) : RuntimeRequest(
-    method = "state_getKeysPaged",
-    params =
-    listOfNotNull(
-        keyPrefix,
-        pageSize,
-        fullKeyOffset,
-    )
-)
-
-class GetKeys(
-    keyPrefix: String,
     at: BlockHash?,
 ) : RuntimeRequest(
-    method = "state_getKeys",
-    params =
-    listOfNotNull(
-        keyPrefix,
-        at
-    )
+    method = "state_getKeysPaged",
+    params = pagedKeysParams(keyPrefix, pageSize, fullKeyOffset, at)
 )
+
+/**
+ * Positional params of `state_getKeysPaged`: prefix, page size, start key, block hash.
+ *
+ * A query pinned to [at] that has no start key yet sends JSON null in the third slot, so the block hash
+ * is not read as the start key.
+ */
+private fun pagedKeysParams(
+    keyPrefix: String,
+    pageSize: Int,
+    fullKeyOffset: String?,
+    at: BlockHash?,
+): List<Any> {
+    val offset = fullKeyOffset ?: JsonNull.INSTANCE.takeIf { at != null }
+
+    return listOfNotNull(keyPrefix, pageSize, offset, at)
+}
 
 class QueryStorageAtRequest(
     keys: List<String>,
@@ -60,8 +62,7 @@ class QueryStorageAtResponse(
 
 class BulkRetriever(private val pageSize: Int) {
     /**
-     * Retrieves all keys starting with [keyPrefix] from [at] block
-     * Returns only first [defaultPageSize] elements in case historical querying is used ([at] is not null)
+     * Retrieves all keys starting with [keyPrefix] from [at] block, or from the best block when [at] is null
      */
     suspend fun retrieveAllKeys(
         socketService: SocketService,
@@ -69,11 +70,7 @@ class BulkRetriever(private val pageSize: Int) {
         at: BlockHash? = null,
     ): List<String> =
         withContext(Dispatchers.IO) {
-            if (at != null) {
-                queryKeysByPrefixHistorical(socketService, keyPrefix, at)
-            } else {
-                queryKeysByPrefixCurrent(socketService, keyPrefix)
-            }
+            queryKeysByPrefix(socketService, keyPrefix, at)
         }
 
     suspend fun queryKeys(
@@ -99,26 +96,10 @@ class BulkRetriever(private val pageSize: Int) {
             }
         }
 
-    /**
-     * Note: the amount of keys returned by this method is limited by [defaultPageSize]
-     * So it is should not be used for storages with big amount of entries
-     */
-    private suspend fun queryKeysByPrefixHistorical(
+    private suspend fun queryKeysByPrefix(
         socketService: SocketService,
         prefix: String,
-        at: BlockHash,
-    ): List<String> {
-        // We use `state_getKeys` for historical prefix queries instead of `state_getKeysPaged`
-        // since most of the chains always return empty list when the same is requested via `state_getKeysPaged`
-        // Thus, we can only request up to 1000 first historical keys
-        val request = GetKeys(prefix, at)
-
-        return socketService.executeAsync(request, mapper = pojoList<String>().nonNull())
-    }
-
-    private suspend fun queryKeysByPrefixCurrent(
-        socketService: SocketService,
-        prefix: String,
+        at: BlockHash?,
     ): List<String> {
         val result = mutableListOf<String>()
 
@@ -127,7 +108,7 @@ class BulkRetriever(private val pageSize: Int) {
         while (true) {
             coroutineContext.ensureActive()
 
-            val request = GetKeysPagedRequest(prefix, pageSize, currentOffset)
+            val request = GetKeysPagedRequest(prefix, pageSize, currentOffset, at)
 
             val page = socketService.executeAsync(request, mapper = pojoList<String>().nonNull())
 

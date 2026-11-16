@@ -7,7 +7,7 @@ use truapi::latest::{HostPlatform, MaterialFailure, RenderContext, RendererNode}
 
 use super::{
 	config::native_host_platform,
-	renderer::{NativeSubscription, spawn_observation},
+	renderer::NativeSubscription,
 };
 use crate::{
 	NodeFallback, ResolvedMaterials, ShaderLanguage, SigningHostRuntime, Spawner,
@@ -64,7 +64,7 @@ pub fn resolve_materials(
 	let mut resolution =
 		runtime.resolve_materials(&tree, &context, language, float_filterable, failures);
 	let reporter = resolution.reporter();
-	let subscription = spawn_observation(spawner, async move {
+	let subscription = spawner.spawn_observation(async move {
 		while let Some(materials) = resolution.next().await {
 			observer.on_resolved(materials);
 		}

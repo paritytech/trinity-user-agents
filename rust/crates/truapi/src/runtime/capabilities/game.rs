@@ -15,7 +15,7 @@ use truapi::{
 
 use crate::{
 	platform::GamePlatform,
-	runtime::{ProductConnection, ProductRuntimeHost, versioning::version},
+	runtime::{AccountHolder, ProductConnection, ProductRuntimeHost, versioning::version},
 	unix_time::current_unix_secs,
 };
 
@@ -43,7 +43,7 @@ impl ProductConnection {
 }
 
 #[async_trait::async_trait]
-impl Game for ProductRuntimeHost {
+impl<H: AccountHolder> Game for ProductRuntimeHost<H> {
 	#[instrument(skip_all, fields(runtime.method = "game.remind_next_game"))]
 	async fn remind_next_game(
 		&self,

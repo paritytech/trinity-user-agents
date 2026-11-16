@@ -479,6 +479,7 @@
 				A5EDAAD12E93ECAF005DDA62 /* Sources */,
 				A5EDAAD22E93ECAF005DDA62 /* Frameworks */,
 				A5EDAAD32E93ECAF005DDA62 /* Resources */,
+				B57AC5000000000000000001 /* Bundle Trinity stacks */,
 				0C6EC9662EC629FB00C9B292 /* Embed Foundation Extensions */,
 				F06E600066544128849BC813 /* Upload Debug Symbols to Sentry */,
 			);
@@ -725,6 +726,36 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "if [ \"${CONFIGURATION}\" == \"Debug\" || [ \"${CONFIGURATION}\" == \"Release\" ] ; then\necho \"Skip Sentry debug symbols upload for Debug\"\nexit 0\nfi\n\n# This script is responsible for uploading debug symbols and source context for Sentry.\nif which sentry-cli >/dev/null; then\n  export SENTRY_ORG=paritytech\n  export SENTRY_PROJECT=polkadot-ios\n  ERROR=$(sentry-cli debug-files upload --include-sources \"$DWARF_DSYM_FOLDER_PATH\" 2>&1 >/dev/null)\n  if [ ! $? -eq 0 ]; then\n    echo \"warning: sentry-cli - $ERROR\"\n  fi\nelse\n  echo \"warning: sentry-cli not installed, download from https://github.com/getsentry/sentry-cli/releases\"\nfi\n";
+		};
+		B57AC5000000000000000001 /* Bundle Trinity stacks */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../../stacks/previewnet.link",
+				"$(SRCROOT)/../../stacks/previewnet.json",
+				"$(SRCROOT)/../../stacks/paseo-next-v2.link",
+				"$(SRCROOT)/../../stacks/paseo-next-v2.json",
+				"$(SRCROOT)/../../stacks/polkadot.link",
+				"$(SRCROOT)/../../stacks/polkadot.json",
+			);
+			name = "Bundle Trinity stacks";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/trinity-stack-previewnet.link",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/trinity-stack-previewnet.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/trinity-stack-paseo-next-v2.link",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/trinity-stack-paseo-next-v2.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/trinity-stack-polkadot.link",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/trinity-stack-polkadot.json",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\n\nstacks=\"${SRCROOT}/../../stacks\"\nresources=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}\"\n\nfor name in previewnet paseo-next-v2 polkadot; do\n    for extension in link json; do\n        cp \"${stacks}/${name}.${extension}\" \"${resources}/trinity-stack-${name}.${extension}\"\n    done\ndone\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

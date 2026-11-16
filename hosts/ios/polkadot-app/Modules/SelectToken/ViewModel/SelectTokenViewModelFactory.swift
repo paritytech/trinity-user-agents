@@ -30,7 +30,7 @@ extension SelectTokenViewModelFactory: SelectTokenViewModelFactoryProtocol {
 }
 
 private extension ChainAssetStyle {
-    var icon: ImageViewModelProtocol? {
-        logo.map { StaticImageViewModel(image: $0) }
+    var icon: AnyImageViewModel? {
+        logo.map { AnyImageViewModel(StaticImageViewModel(image: $0)) }
     }
 }

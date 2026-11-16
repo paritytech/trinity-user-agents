@@ -9,6 +9,9 @@ import type { WasmModuleShape } from "../../wasm-module.js";
 
 declare const init: WasmModuleShape["default"];
 export default init;
+export const initSync: (input: {
+  module: BufferSource | WebAssembly.Module;
+}) => unknown;
 
 export const WasmPairingHostRuntime: WasmModuleShape["WasmPairingHostRuntime"];
 export const WasmProductRuntime: WasmModuleShape["WasmProductRuntime"];

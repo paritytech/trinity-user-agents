@@ -35,7 +35,17 @@ pub trait IntoLatest: Versioned {
 /// Downgrade a latest payload into the variant a peer at `target` understands.
 pub trait FromLatest: Versioned {
 	/// Build the envelope for protocol version `target` (highest variant ≤ target).
+	///
+	/// A payload no variant up to `target` can carry goes out in the oldest
+	/// variant that can, so the result is newer than `target` only then.
 	fn from_latest(latest: Self::Latest, target: u8) -> Self;
+
+	/// Build the envelope for `target`, or `None` when no variant up to `target` carries the
+	/// payload.
+	fn try_from_latest(latest: Self::Latest, target: u8) -> Option<Self> {
+		let envelope = Self::from_latest(latest, target);
+		(envelope.version() <= target).then_some(envelope)
+	}
 }
 
 pub mod account;
