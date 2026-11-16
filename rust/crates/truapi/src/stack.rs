@@ -119,16 +119,17 @@ pub struct Stack {
 	chains: StackChains,
 }
 
-/// The genesis hash of each chain role a stack names. People and Bulletin are
-/// required: the core runs SSO and its own preimage submission over them.
+/// The genesis hash of each chain role the host serves. Asset Hub, People and
+/// Bulletin are required: the core reads dotNS and runs SSO and its own
+/// preimage submission over them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StackChains {
-	/// The relay chain.
+	/// The relay chain, which the core never reads itself. `None` for a host
+	/// that serves none, such as the CLI.
 	pub relay: Option<[u8; 32]>,
-	/// Asset Hub, where the dotNS contracts are deployed. Without one, product
-	/// manifests and session usernames do not resolve, and a `trustedProducts`
-	/// grant the core has not cached is refused.
-	pub asset_hub: Option<[u8; 32]>,
+	/// Asset Hub, where the dotNS contracts are deployed. Product manifests and
+	/// session usernames resolve from it.
+	pub asset_hub: [u8; 32],
 	/// The People chain.
 	pub people: [u8; 32],
 	/// The Bulletin chain.
@@ -156,11 +157,8 @@ pub enum StackError {
 		chain: ChainIdentifier,
 	},
 	/// The Relay or Asset Hub genesis hash is all zero, which names no chain.
-	/// A stack without one of them leaves the role out.
-	#[display(
-		"stack {} chain has an all-zero genesis hash; leave the role out instead",
-		<&str>::from(*chain)
-	)]
+	/// A stack without a Relay leaves the role out.
+	#[display("stack {} chain has an all-zero genesis hash", <&str>::from(*chain))]
 	ZeroGenesis {
 		/// The role with the all-zero hash.
 		chain: ChainIdentifier,
@@ -222,7 +220,7 @@ impl Stack {
 		let required = |chain| genesis_of(chain).ok_or(StackError::MissingChain { chain });
 		let chains = StackChains {
 			relay: genesis_of(ChainIdentifier::Relay),
-			asset_hub: genesis_of(ChainIdentifier::AssetHub),
+			asset_hub: required(ChainIdentifier::AssetHub)?,
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
@@ -244,18 +242,15 @@ impl Stack {
 			return Err(StackError::UnsupportedTld { tld });
 		}
 		let StackChains { relay, asset_hub, people, bulletin } = chains;
-		let optional_roles =
-			[(ChainIdentifier::Relay, relay), (ChainIdentifier::AssetHub, asset_hub)];
-		if let Some((chain, _)) = optional_roles
-			.into_iter()
-			.find(|(_, genesis_hash)| *genesis_hash == Some([0; 32]))
-		{
-			return Err(StackError::ZeroGenesis { chain });
+		if relay == Some([0; 32]) {
+			return Err(StackError::ZeroGenesis { chain: ChainIdentifier::Relay });
+		}
+		if asset_hub == [0; 32] {
+			return Err(StackError::ZeroGenesis { chain: ChainIdentifier::AssetHub });
 		}
 		reserved_values.refuse_malformed_extra_tld()?;
 		reserved_values.refuse_tld(&tld)?;
-		reserved_values
-			.refuse_genesis([relay, asset_hub].into_iter().flatten().chain([people, bulletin]))?;
+		reserved_values.refuse_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
 		Ok(Self { network, tld, chains })
 	}
 
@@ -282,7 +277,7 @@ impl Stack {
 		let StackChains { relay, asset_hub, people, bulletin } = self.chains;
 		match chain {
 			ChainIdentifier::Relay => relay,
-			ChainIdentifier::AssetHub => asset_hub,
+			ChainIdentifier::AssetHub => Some(asset_hub),
 			ChainIdentifier::People => Some(people),
 			ChainIdentifier::Bulletin => Some(bulletin),
 		}

@@ -993,7 +993,7 @@ impl Notifications for MockPlatform {
 pub fn mock_stack(
 	people: truapi::Bytes32,
 	bulletin: truapi::Bytes32,
-	asset_hub: Option<truapi::Bytes32>,
+	asset_hub: truapi::Bytes32,
 ) -> crate::platform::Stack {
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
 	let reserved_values = crate::platform::ReservedValuesPolicy::default();
@@ -1017,7 +1017,7 @@ pub mod mock_genesis {
 	/// The stack a mock host runs: [`super::mock_stack`] over the three mock
 	/// chains.
 	pub fn stack() -> crate::platform::Stack {
-		super::mock_stack(PEOPLE, BULLETIN, Some(ASSET_HUB))
+		super::mock_stack(PEOPLE, BULLETIN, ASSET_HUB)
 	}
 }
 
@@ -1075,12 +1075,16 @@ impl Features for MockPlatform {
 		if let Some(reason) = &self.config.faults.feature_error {
 			return Err(latest::GenericError { reason: reason.clone() });
 		}
-		let latest::HostFeatureSupportedRequest::Chain { genesis_hash } = request;
-		let served = !self.config.only_served_chains ||
-			self.config
-				.served_chains
-				.iter()
-				.any(|served| served.as_slice() == genesis_hash.as_slice());
+		let served = match request {
+			latest::HostFeatureSupportedRequest::Chain { genesis_hash } => {
+				!self.config.only_served_chains ||
+					self.config
+						.served_chains
+						.iter()
+						.any(|served| served.as_slice() == genesis_hash.as_slice())
+			},
+			latest::HostFeatureSupportedRequest::Materials { .. } => false,
+		};
 		Ok(latest::HostFeatureSupportedResponse {
 			supported: self.config.feature_supported && served,
 		})

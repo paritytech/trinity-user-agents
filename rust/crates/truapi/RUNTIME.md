@@ -19,80 +19,38 @@ protocol API into a working host. It owns:
 
 ## Architecture
 
-Two ownership bands. A **per-product-connection** band (byte frames →
-dispatcher → role-neutral product runtime) is minted once per host↔product
-connection by the role handle and lives for that product's whole session; a
-**shared per-host** band owns role-neutral infrastructure (`RuntimeServices`)
-and the role object (`PairingHost` or `SigningHost`), which is itself the
-`ProductAuthority` and the `HostSession`. Pure `host_logic` is a no-I/O library
-both bands call, not a stage in the frame path; the host's `Platform` impl is
-the syscall floor.
+Each product connection has its own `ProductRuntime`, `ProductRuntimeHost` and `ProductConnection`, which hold that product's adapters, permissions, action streams and its own chain connection, and a `ProductAccounts` that gives it the shared `HostAccounts` bound to that product. Everything else is shared per host: `HostAccounts` with its `AccountHolder`, the `HostSession`, and `RuntimeServices`. `host_logic` is a pure library both call, and the host's `Platform` implementation performs all I/O.
 
 ```text
-   ┌───────────────────────────────────────────────────────┐
-   │ product      sandboxed iframe · native WebView        │
-   └───────────────────────────────────────────────────────┘
-                              │  ▲
-          SCALE frames        │  │  MessageChannel · loopback
-          both directions     ▼  │  WS
-   ┌───────────────────────────────────────────────────────┐
-   │ binding layer :  host shell / transport adapter       │
-   │ thin byte bridge  ·  no protocol logic                │
-   └───────────────────────────────────────────────────────┘
+Per product connection
+┌─────────────────────────────────────────────────────────────┐
+│ ProductRuntime: frames → Dispatcher                         │
+│ ProductRuntimeHost<H>: validation and protocol adapters     │
+│ ProductConnection: permissions, platform adapters, demand   │
+│ ProductAccounts<H>: HostAccounts bound to this product      │
+└────────────────────┬──────────────────────┬─────────────────┘
+                     │ account operations   │ login / identity
+Shared per host      ▼                      ▼
+┌──────────────────────────────┐  ┌────────────────────────────┐
+│ HostAccounts<H>              │  │ HostSession                │
+│ acquire, retain, use grants  │  │ SigningHost                │
+│ HostGrantStore + registry    │  │ or SsoRequestService       │
+└──────────────────┬───────────┘  └────────────────────────────┘
+                   │ AccountHolder
+         ┌─────────┴─────────────────────┐
+         ▼                               ▼
+ WalletAccountHolder              RemoteAccountHolder
+ wallet secrets and issuance      canonical calls ↔ SSO messages
+         ▲                               │
+         │                               ▼
+ SsoAccountHolderService           SsoRequestService
+ confirms peer requests           selected channel and transport
 
- ══ per host→product connection ( one per connected product ) ══
-   ┌───────────────────────────────────────────────────────┐
-   │ ProductRuntime           frame endpoint               │
-   │ decode each SCALE frame → dispatch one typed call     │
-   └───────────────────────────────────────────────────────┘
-                              │  typed method call
-                              ▼
-   ┌───────────────────────────────────────────────────────┐
-   │ ProductRuntimeHost       role-neutral                 │
-   │ validate · permission-gate · confirm                  │
-   └───────────────────────────────────────────────────────┘
-                              │  wallet-authority tail :
-                              │  sign · alias · entropy · alloc
-                              │  via  ProductAccounts, the role
-                              │  bound to this product
-                              ▼
-
- ══ shared per host app ( one per host, all connections ) ══════
-     the PairingHostRuntime | SigningHostRuntime handle owns both:
-   ┌─────────────────────────────┐   ┌────────────────────────┐
-   │ role  =  ProductAuthority   │   │ RuntimeServices        │
-   │          + HostSession      │   │ platform · chain · RPC │
-   │ PairingHost | SigningHost   │   │                        │
-   └─────────────────────────────┘   └────────────────────────┘
-              │
-              │  PairingHost only : encrypted SSO channel
-              ▼
-       ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
-       ╎ remote signing host   ( external wallet ) ╎
-       └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
-
-   both bands call host_logic for pure work, never traverse it :
-   ┌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┐
-   ╎ host_logic       pure library ( no I/O )              ╎
-   ╎ crypto · codecs · derivation · policy                 ╎
-   └╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┘
-
- ══ host-owned floor · where every I/O above bottoms out ═══════
-   ┌───────────────────────────────────────────────────────┐
-   │ Platform impl  ( TS / Swift / Kotlin )                │
-   │ storage · prompts · chain RPC · navigation            │
-   └───────────────────────────────────────────────────────┘
+Shared RuntimeServices: platform, chain access and RPC clients
+Host Platform: storage, prompts, chain transport and navigation
 ```
 
-`ProductRuntimeHost` handles everything role-neutral (id normalization,
-permission gating, confirmation, soft product-key derivation), then delegates
-the wallet-authority tail (`sign_*`, `create_transaction`, `account_alias`,
-`create_proof`, `allocate_resources`, `derive_entropy`) through a
-`ProductAccounts` handle bound to its product, with an `AuthoritySession`
-snapshot the role revalidates before touching key material. Its
-per-connection state (adapters, permissions, action channels, open operations
-and its own chain connection) lives in a `ProductConnection`, and login, logout
-and connection state go through the role's `HostSession`.
+`HostAccounts` binds each call to the calling product and the current wallet activation, keeps the grants it was issued, and signs with delegated keys itself. It confirms signing, transaction, VRF and allocation requests with the user before the `AccountHolder` acts on them; allowances it allocates in the background need no confirmation. The `AccountHolder` owns wallet secrets and grant issuance and records ring-VRF registrations; `HostAccounts` records the provider the user selects, and `RingVrfRegistryStore` serializes both writes.
 
 `runtime.rs` owns the product runtime and shared helpers. The trait adapters
 are grouped by surface under `runtime/capabilities/`; cross-capability fixtures
@@ -263,6 +221,15 @@ it. The core keeps the newest face of a card from every
 `RenderContext::PocketCard` render, at most every two seconds and once more
 when the render stops, so a card has a face offline and at cold start.
 
+It also keeps materials (`materials` module), the text behind each material
+ID a renderer tree names. The core reads a material it lacks from Bulletin
+itself, with `bitswap_v1_get` over the Bulletin connection it holds for
+preimage submission, not through the host's preimage lookup. Only text that
+hashes to the ID is kept: a node that answers with other bytes ends the fetch,
+and the material falls back as `Integrity`. A material a saved Pocket face draws is never
+evicted, and the others share 4 MiB, oldest out first. At start-up the core
+fetches what the saved faces draw and the database lacks.
+
 Secrets the database must not hold go to the host's `EncryptedStorage`: the
 Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
 It reads, writes and deletes values by key and cannot list them, so a feature
@@ -304,21 +271,8 @@ is live.
 
 ### The two roles
 
-Both implement the role-neutral **`ProductAuthority`** and **`HostSession`**
-traits; each owns its role-specific lifecycle, so no method exists on a role
-that can't mean it:
-
-- **`PairingHost`** (seedless): the user's keys live in an external wallet, so
-  signing/aliases/entropy relay over an encrypted SSO channel (statement store
-  on the People chain). The v2 wire protocol uses raw X25519 keys, HKDF-SHA256,
-  and ChaCha20-Poly1305. `PairingHost` keeps the paired session's grants and
-  sends each wallet operation through `RemoteAccountHolder`;
-  [`SsoRequestService`](src/runtime/sso_request_service.rs) owns
-  pairing and login state, persisted auth-session reload, remote signing-host
-  liveness monitoring and the request channel, and reports session changes to
-  `PairingHost` through `PairedSessionOwner`, holding back its grant writes
-  until each change and the cleanup it leaves are done.
-- **`SigningHost`** (wallet-local): signs on device from local BIP-39 entropy,
+- **`PairingHost`** (seedless): runs `HostAccounts<RemoteAccountHolder>`, which keeps the paired session's grants, and owns logout. `SsoRequestService` owns pairing and login state, persisted session reload and remote signing-host liveness, and carries account operations to the phone over the encrypted SSO channel (People-chain statement store; v2 wire protocol with raw X25519 keys, HKDF-SHA256 and ChaCha20-Poly1305). It reports session changes to the grant store `HostAccounts` keeps its grants in through `PairedSessionOwner`, holding back grant writes until each change and the cleanup it leaves are done. The paired host confirms a signing, transaction, VRF or allocation request before forwarding it, and the phone confirms it again.
+- **`SigningHost`** (wallet-local): runs `HostAccounts<WalletAccountHolder>`. `WalletAccountHolder` owns local entropy, derivation, grant issuance and renewal, and asks for account access before a product uses another product's ring-VRF keys; `SigningHost` routes activation, lock and product reset through `HostAccounts`. It signs on device from local BIP-39 entropy,
   no pairing flow. `signing_host/local_activation.rs` establishes a session
   from host-held secret material. Its public identity is the RFC-0028
   `peopl.<tld>` index-0 product account of the configured network. RFC-0024 ring-VRF keys are explicit,
@@ -335,7 +289,7 @@ that can't mean it:
   call.
 - `WalletAccountHolder`: owns the active wallet on a signing host. Only its `with_keys` reads the root entropy, after checking that the call's session is still the installed wallet activation, so a lock or a wallet switch fails signing, issuance and pairing answers that began under the previous wallet.
 - `ProductConsent`: one per runtime. It holds account-access decisions and review rules, and runs account-access prompts one at a time for local product calls and paired requests alike. A paired caller never skips a review. A signature with another product's account is confirmed once per kind and owning product for the rest of the product execution.
-- `HostGrantStore`: holds the keys and public subtrees a host keeps for its products, per wallet on a signing host and per pairing on a paired host. A signing host keeps them in memory for one wallet activation. A product reset revokes that product's grants and fails grant work that began before it, without ending the wallet session or other products' calls.
+- `HostGrantStore`: holds the keys and public subtrees issued to `HostAccounts`, per wallet on a signing host and per pairing on a paired host. A signing host keeps them in memory for one wallet activation. A product reset revokes that product's grants and fails grant work that began before it, without ending the wallet session.
 
 `host_logic` stays pure: the orchestrators above call into it for codecs,
 session/SSO crypto, key derivation, and permission policy, while all I/O
@@ -554,19 +508,19 @@ for raw bytes signed inside the `<Bytes>` watermark.
   needs the core database: natively the configured `database_directory`,
   otherwise `set_core_db`. Products see a session in flight as
   `InProgress`.
-  The host lists its providers with `set_funding_provider_config` (Rust hosts
-  with `set_funding_providers`), each with the
-  Worker manifest it ships for it. Before the overlay shows, the core
-  announces the session's options, which `funding_options(intent)` works out
+  The host lists its providers by their published names with
+  `set_funding_provider_config`; a Rust host can instead hand
+  `set_funding_providers` the Worker manifest it ships for each. Before the
+  overlay shows, the core announces the session's options, which `funding_options(intent)` works out
   as it is read: `candidates` are the
   providers serving that session's direction, with their routes, from what the
   `includes.funding` configuration of each provider's Worker manifest declares:
   dotNS's answer once the core has read it (cached for a day, re-checked in the
   background on every query), the shipped snapshot until then, so the list
   renders with no chain read. A provider whose manifest no longer serves
-  Funding drops out. A provider whose `origin` is `Bundled` ships inside
-  the host: its shipped manifest is what the core goes by, and dotNS is never
-  read for it.
+  Funding drops out. A provider a Rust host offers with `origin: Bundled`
+  ships inside it: its shipped manifest is what the core goes by, and dotNS
+  is never read for it.
   `get_funding_quote(intent, amount)` prices `amount` on the rail, asset,
   network and country the last `select_funding_options` named (card and bank
   take the resolved fiat asset), returning `None` while there is nothing to
@@ -716,8 +670,13 @@ for raw bytes signed inside the `<Bytes>` watermark.
   session is open), `presentFrame` asks the host to
   show one of its screens through `present_provider_frame` (an App route only
   when the provider ships an App: a bundled entry's `app`, else an `app`
-  subname dotNS publishes, read within ten seconds; otherwise `NoApp`), and
-  `closeFrame`
+  subname dotNS publishes, read within ten seconds; otherwise `NoApp`). The
+  core never shows it on its own: it holds the call, tells the host through
+  `provider_frame_requested`, and presents it once the host calls
+  `open_provider_frame`, at once while the user looks at the session or when
+  the user taps a notice. One waits per session: a newer call replaces it
+  (`Dismissed`), and `closeFrame`, the payment moving or the session ending
+  drops it (`Closed`). `closeFrame`
   closes it through `close_provider_frame` once the provider is done with it,
   such as a card payment the user made: the open `presentFrame` answers
   `Closed` and the host shows the session sheet in its place. The core holds the
