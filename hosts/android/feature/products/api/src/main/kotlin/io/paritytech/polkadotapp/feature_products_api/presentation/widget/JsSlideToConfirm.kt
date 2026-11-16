@@ -240,13 +240,16 @@ private fun SlideToConfirmThumbFace(
         null
     }
 
+    // The track stands as tall as the product asked, as the room footer's 80 does, with the thumb centred in it.
+    val trackHeight = SlideToConfirmRules.thumbTrackHeightDp(widget).dp
+    val thumbInset = SlideToConfirmRules.thumbInsetDp(widget).dp
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(TRACK_HEIGHT)
+            .height(trackHeight)
             .clip(CircleShape)
             .background(colors.bg.surface.nested)
-            .padding(PolkadotTheme.spacings.small),
+            .padding(thumbInset),
         contentAlignment = Alignment.CenterStart,
     ) {
         Column(
@@ -279,7 +282,7 @@ private fun SlideToConfirmThumbFace(
             }
         }
 
-        val trackPaddingPx = with(LocalDensity.current) { PolkadotTheme.spacings.small.toPx() }
+        val trackPaddingPx = with(LocalDensity.current) { thumbInset.toPx() }
         val thumbTop = widget.accent?.toComposeColor() ?: colors.fg.primary
         val thumbBottom = lerp(thumbTop, colors.fg.secondary, THUMB_GRADIENT_DEPTH)
         Box(
@@ -335,8 +338,7 @@ private fun Modifier.idleShimmer(sweep: State<Float>?, highlight: Color): Modifi
         }
 }
 
-private val TRACK_HEIGHT = 72.dp
-private val THUMB_SIZE = 56.dp
+private val THUMB_SIZE = SlideToConfirmRules.THUMB_SIZE_DP.dp
 private val CHEVRON_SIZE = 24.dp
 private val SPINNER_STROKE = 2.dp
 

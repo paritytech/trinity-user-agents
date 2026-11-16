@@ -1,5 +1,10 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -71,10 +76,21 @@ class ProductRoomFooterCardRenderer(
                 }
                 is LoadingState.Loaded -> {
                     CompositionLocalProvider(LocalJsImageResolver provides imageResolver) {
-                        JsWidgetRenderer(
-                            widget = currentState.data,
-                            jsEventHandler = viewModel::handleUiEvent,
-                        )
+                        // A slide handing the footer back to a card crossfades into it, as one footer does into
+                        // the next. Within a face the tree only updates, so a slid thumb keeps its place.
+                        AnimatedContent(
+                            targetState = currentState.data,
+                            transitionSpec = {
+                                fadeIn(tween(HAND_BACK_MILLIS)) togetherWith fadeOut(tween(HAND_BACK_MILLIS))
+                            },
+                            contentKey = ProductRoomFooterFace::of,
+                            label = "roomFooterHandBack",
+                        ) { widget ->
+                            JsWidgetRenderer(
+                                widget = widget,
+                                jsEventHandler = viewModel::handleUiEvent,
+                            )
+                        }
                     }
                 }
                 is LoadingState.Error -> {
@@ -92,3 +108,6 @@ class ProductRoomFooterCardRenderer(
 
     override fun hashCode(): Int = 31 * room.hashCode() + card.hashCode()
 }
+
+/** How long a slide takes to hand the footer back to a card: the crossfade between two room footers. */
+private const val HAND_BACK_MILLIS = 250

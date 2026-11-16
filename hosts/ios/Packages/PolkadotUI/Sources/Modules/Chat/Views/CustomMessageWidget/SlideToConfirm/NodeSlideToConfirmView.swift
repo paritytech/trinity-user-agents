@@ -20,22 +20,27 @@ struct NodeSlideToConfirmView: View {
     }
 
     var body: some View {
-        SlideToConfirmFace(props: props, progress: track.progress, isHinting: isInteractive && !track.isDragging)
-            .overlay {
-                SlideToConfirmDragSurface(isInteractive: isInteractive, onChange: follow, onEnd: release)
-            }
-            .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
-            .opacity(props.isEnabled ? 1 : SlideToConfirmMetrics.disabledOpacity)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(accessibilityLabel)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { confirm() }
-            .disabled(!isInteractive)
-            .sensoryFeedback(.success, trigger: confirmations)
-            .onChange(of: props.isHeldAtEnd) { _, holds in
-                withAnimation(settleAnimation) { track.follow(productHoldsAtEnd: holds) }
-            }
-            .applyWidgetNodeModifiers(modifiers)
+        SlideToConfirmFace(
+            props: props,
+            progress: track.progress,
+            isHinting: isInteractive && !track.isDragging,
+            trackHeight: SlideToConfirmMetrics.thumbTrackHeight(given: modifiers)
+        )
+        .overlay {
+            SlideToConfirmDragSurface(isInteractive: isInteractive, onChange: follow, onEnd: release)
+        }
+        .onGeometryChange(for: CGFloat.self, of: \.size.width) { width = $0 }
+        .opacity(props.isEnabled ? 1 : SlideToConfirmMetrics.disabledOpacity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { confirm() }
+        .disabled(!isInteractive)
+        .sensoryFeedback(.success, trigger: confirmations)
+        .onChange(of: props.isHeldAtEnd) { _, holds in
+            withAnimation(settleAnimation) { track.follow(productHoldsAtEnd: holds) }
+        }
+        .applyWidgetNodeModifiers(modifiers)
     }
 }
 
@@ -98,4 +103,17 @@ enum SlideToConfirmMetrics {
     /// The label is gone once the thumb has travelled this share of the track.
     static let labelGoneAt: CGFloat = 0.6
     static let revealHeight: CGFloat = 96
+
+    /// How tall the thumb variant's track stands: the height the product gave the node, such as the
+    /// room footer's 80 that every docked card shares, or the track's own. Never less than the thumb,
+    /// which the track has to hold.
+    static func thumbTrackHeight(given modifiers: CustomMessageWidgetNode.Modifiers) -> CGFloat {
+        max(modifiers.height ?? trackHeight, thumbSize)
+    }
+
+    /// The space around the thumb inside a track, the same on every side: 8 in the track's own 72,
+    /// 12 in the room footer's 80, as on the web footer's pill.
+    static func thumbInset(trackHeight: CGFloat) -> CGFloat {
+        (trackHeight - thumbSize) / 2
+    }
 }

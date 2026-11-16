@@ -1,5 +1,6 @@
 package io.paritytech.polkadotapp.feature_products_api.presentation.widget
 
+import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -82,5 +83,36 @@ class SlideToConfirmRulesTest {
     @Test
     fun `a control at the start stays there`() {
         assertEquals(SlideSettle.STAY, SlideToConfirmRules.settle(heldAtEnd = false, loading = false, confirmed = false))
+    }
+
+    @Test
+    fun `a control given no height keeps the track's own 72, with the thumb 8 from its edges`() {
+        assertEquals(72, SlideToConfirmRules.thumbTrackHeightDp(ready))
+        assertEquals(8f, SlideToConfirmRules.thumbInsetDp(ready))
+    }
+
+    // The room footer docks its slider at 80, the height of every other docked card and of the web footer's pill.
+    @Test
+    fun `a control given the room footer's 80 stands 80, with the thumb 12 from its edges like the web pill`() {
+        val docked = ready.copy(modifiers = listOf(JsModifier.FillMaxWidth(), JsModifier.Size(height = 80)))
+
+        assertEquals(80, SlideToConfirmRules.thumbTrackHeightDp(docked))
+        assertEquals(12f, SlideToConfirmRules.thumbInsetDp(docked))
+    }
+
+    @Test
+    fun `a height too short for the thumb still holds the thumb`() {
+        val squeezed = ready.copy(modifiers = listOf(JsModifier.Size(height = 40)))
+
+        assertEquals(56, SlideToConfirmRules.thumbTrackHeightDp(squeezed))
+        assertEquals(0f, SlideToConfirmRules.thumbInsetDp(squeezed))
+    }
+
+    // Compose sizes a node by the first height in its chain; the track must agree with what is drawn around it.
+    @Test
+    fun `the first height the product gives is the one the track takes`() {
+        val twice = ready.copy(modifiers = listOf(JsModifier.Size(width = 300), JsModifier.Size(height = 80), JsModifier.Size(height = 64)))
+
+        assertEquals(80, SlideToConfirmRules.thumbTrackHeightDp(twice))
     }
 }
