@@ -127,6 +127,9 @@ private struct NodeImageView: View {
                     } else {
                         await resolveImage?(props.source)
                     }
+                // A load the source has moved on from must not draw over the new one.
+                guard !Task.isCancelled else { return }
+
                 picture = image.map(Picture.loaded) ?? .unavailable
             }
     }
