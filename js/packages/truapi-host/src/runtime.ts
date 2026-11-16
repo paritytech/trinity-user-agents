@@ -133,11 +133,14 @@ export interface StackStatus {
     /**
      * `current`: the published descriptor is the copy the core holds.
      * `unreachable` and `refused`: the core keeps the copy it holds.
+     * `notStored`: the published descriptor is newer, but core storage did
+     * not keep it, so the core asks for no restart and stores it after the
+     * next fetch.
      */
-    outcome: "current" | "unreachable" | "refused";
+    outcome: "current" | "unreachable" | "refused" | "notStored";
     /**
-     * Why a fetch was `unreachable`, or the rule a `refused` descriptor
-     * breaks.
+     * Why a fetch was `unreachable` or `notStored`, or the rule a `refused`
+     * descriptor breaks.
      */
     reason?: string;
   };

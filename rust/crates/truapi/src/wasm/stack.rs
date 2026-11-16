@@ -17,8 +17,8 @@ use super::{
 use crate::{
 	Spawner,
 	platform::{
-		CoreStorage, CoreStorageKey, Stack, StackFetchRequest, StackFetchResponse, StackHost,
-		StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
+		CoreStorage, CoreStorageKey, ReplaceCheck, Stack, StackFetchRequest, StackFetchResponse,
+		StackHost, StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
 	},
 	time::{RealTimer, SystemClock},
 };
@@ -124,12 +124,20 @@ impl StackRecords for CoreStorageRecords {
 		self.0.read_core_storage(CoreStorageKey::StackRecord { stack_id: stack_id.to_string() }).await
 	}
 
+	/// Reads the stored record before it writes. The two steps are not one
+	/// transaction, since core storage has none, so a second runtime writing
+	/// in between can still be overwritten.
 	async fn write_stack_record(
 		&self,
 		stack_id: &str,
 		record: Vec<u8>,
+		check: ReplaceCheck,
 	) -> Result<(), GenericError> {
 		let key = CoreStorageKey::StackRecord { stack_id: stack_id.to_string() };
+		let stored = self.0.read_core_storage(key.clone()).await?;
+		if stored.is_some_and(|stored| !check.replaces(&stored)) {
+			return Ok(());
+		}
 		self.0.write_core_storage(key, record).await
 	}
 }
@@ -215,6 +223,7 @@ fn status_to_js(status: &StackStatus) -> JsValue {
 			StackRefreshOutcome::Current => ("current", None),
 			StackRefreshOutcome::Unreachable { reason } => ("unreachable", Some(reason.as_str())),
 			StackRefreshOutcome::Refused { reason } => ("refused", Some(reason.as_str())),
+			StackRefreshOutcome::NotStored { reason } => ("notStored", Some(reason.as_str())),
 		};
 		object(&[("outcome", JsValue::from_str(outcome)), ("reason", JsValue::from(reason))])
 	});
