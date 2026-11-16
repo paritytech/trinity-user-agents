@@ -9,7 +9,10 @@ final class AssetDetailsWireframe: AssetDetailsWireframeProtocol {
 
     private let moduleNavigator: ModuleNavigating
 
-    init(context: WalletFlowContextProtocol, moduleNavigator: ModuleNavigating = ModuleNavigator()) {
+    init(
+        context: WalletFlowContextProtocol,
+        moduleNavigator: ModuleNavigating = ModuleNavigator()
+    ) {
         self.context = context
         self.moduleNavigator = moduleNavigator
     }
@@ -44,9 +47,5 @@ final class AssetDetailsWireframe: AssetDetailsWireframeProtocol {
             destination.controller,
             animated: true
         )
-    }
-
-    func showFundingHistory() {
-        FundingActivityCenter.shared.showHistory()
     }
 }

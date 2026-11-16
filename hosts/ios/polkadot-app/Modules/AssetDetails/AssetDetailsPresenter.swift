@@ -4,7 +4,6 @@ import SubstrateSdk
 import PolkadotUI
 import Coinage
 import ChainRegistry
-import TrUAPIHost
 
 @MainActor
 final class AssetDetailsPresenter {
@@ -105,11 +104,9 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
     }
 
     func onTopUp() {
-        openFunding(.in)
-    }
+        view?.didReceive(topUpLoading: true)
 
-    func onHistory() {
-        wireframe.showFundingHistory()
+        interactor?.openTopUp()
     }
 
     #if TESTNET_FEATURE
@@ -122,11 +119,9 @@ extension AssetDetailsPresenter: AssetDetailsPresenterProtocol {
 }
 
 extension AssetDetailsPresenter: AssetDetailsInteractorOutputProtocol {
-    func didCompleteFunding(_ direction: FundingDirection, result: Result<String?, Error>) {
-        view?.didReceive(fundingLoading: direction, isLoading: false)
+    func didOpenTopUp(_ result: Result<String?, Error>) {
+        view?.didReceive(topUpLoading: false)
 
-        // The Purse stays on screen whether or not a session started: it
-        // shows the session's progress itself.
         guard case let .failed(error) = FundingOpened(result) else { return }
 
         wireframe.present(error: error, from: view)
@@ -211,13 +206,5 @@ private extension AssetDetailsPresenter {
             traces: traces
         )
         view?.didReceive(coinageBreakdown: breakdown)
-    }
-}
-
-private extension AssetDetailsPresenter {
-    func openFunding(_ direction: FundingDirection) {
-        view?.didReceive(fundingLoading: direction, isLoading: true)
-
-        interactor?.openFunding(direction)
     }
 }

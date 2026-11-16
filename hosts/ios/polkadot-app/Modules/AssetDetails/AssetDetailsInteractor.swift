@@ -11,8 +11,8 @@ import AsyncExtensions
 import AsyncAlgorithms
 import ChainRegistry
 import BackgroundExecution
-import UIKitExt
 import TrUAPIHost
+import UIKitExt
 
 final class AssetDetailsInteractor: AnyProviderAutoCleaning {
     weak var presenter: AssetDetailsInteractorOutputProtocol?
@@ -30,9 +30,7 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
     private var recoveredBalanceTask: Task<Void, Error>?
 
     private let fundingOpener: FundingOpening
-    /// The one funding session being opened: the card opens top-ups only,
-    /// and a second tap replaces the first.
-    private var fundingTask: Task<Void, Never>?
+    private var topUpTask: Task<Void, Never>?
 
     #if TESTNET_FEATURE
         var backgroundExecutor: BackgroundExecuting?
@@ -59,7 +57,7 @@ final class AssetDetailsInteractor: AnyProviderAutoCleaning {
         recoveryStateTask?.cancel()
         recoveredBalanceTask?.cancel()
         priceSubscriptionTask?.cancel()
-        fundingTask?.cancel()
+        topUpTask?.cancel()
     }
 }
 
@@ -71,14 +69,14 @@ extension AssetDetailsInteractor: AssetDetailsInteractorInputProtocol {
         subscribeToRecoveredBalance()
     }
 
-    func openFunding(_ direction: FundingDirection) {
-        fundingTask?.cancel()
-        fundingTask = Task { [weak presenter, fundingOpener] in
+    func openTopUp() {
+        topUpTask?.cancel()
+        topUpTask = Task { [weak presenter, fundingOpener] in
             do {
-                let session = try await fundingOpener.openFunding(direction: direction)
-                await presenter?.didCompleteFunding(direction, result: .success(session))
+                let session = try await fundingOpener.openFunding(direction: .in)
+                await presenter?.didOpenTopUp(.success(session))
             } catch {
-                await presenter?.didCompleteFunding(direction, result: .failure(error))
+                await presenter?.didOpenTopUp(.failure(error))
             }
         }
     }
