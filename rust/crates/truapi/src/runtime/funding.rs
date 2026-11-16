@@ -1729,7 +1729,7 @@ impl FundingRegistry {
 		match answered {
 			Ok(()) => true,
 			Err(error) => {
-				tracing::warn!(%intent, %error, "storing a provider's cancel answer failed");
+				tracing::warn!(%error, "storing a provider's cancel answer failed");
 				false
 			},
 		}
