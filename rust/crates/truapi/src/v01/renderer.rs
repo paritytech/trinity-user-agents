@@ -370,6 +370,62 @@ pub struct ButtonProps {
 	pub click_action: Option<String>,
 }
 
+/// How a `SlideToConfirm` draws and moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum SlideToConfirmVariant {
+	/// A thumb travels along a track, and the label fades as it passes.
+	Thumb,
+	/// The face is peeled away from the leading edge, and what was under it
+	/// stays: the accent surface and `confirmed_text`.
+	Reveal,
+}
+
+/// Properties of a `SlideToConfirm`.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct SlideToConfirmProps {
+	/// Track label, such as "Slide to register".
+	pub text: String,
+	/// Second line under the label, such as a date.
+	pub secondary_text: Option<String>,
+	/// What the control reads once the slide is done, such as "I'll be
+	/// there". A `Reveal` shows it under the face as the face is peeled away.
+	/// Absent keeps `text`.
+	pub confirmed_text: Option<String>,
+	/// Defaults to `Thumb`.
+	pub variant: Option<SlideToConfirmVariant>,
+	/// Tint of the thumb, or of the surface a `Reveal` uncovers. Absent
+	/// leaves the colour to the host.
+	pub accent: Option<ColorToken>,
+	/// Whether the control accepts a slide. Absent leaves the default to the host.
+	#[serde(
+		default = "option_bool_json::absent",
+		deserialize_with = "option_bool_json::deserialize"
+	)]
+	pub enabled: OptionBool,
+	/// Whether the control shows a loading state. A loading control accepts
+	/// no slide. Absent leaves the default to the host.
+	#[serde(
+		default = "option_bool_json::absent",
+		deserialize_with = "option_bool_json::deserialize"
+	)]
+	pub loading: OptionBool,
+	/// Whether the control draws as already slid: the thumb at the end, or
+	/// the face gone. A confirmed control accepts no slide. Absent means not
+	/// confirmed.
+	#[serde(
+		default = "option_bool_json::absent",
+		deserialize_with = "option_bool_json::deserialize"
+	)]
+	pub confirmed: OptionBool,
+	/// Action triggered once the thumb is released at the end of the track.
+	/// The action carries an empty payload, as a `Button` press does. A
+	/// control without one is inert.
+	pub confirm_action: Option<String>,
+}
+
 /// Where image bytes come from: a place the host fetches them from, or the
 /// tree itself. The tree carries no URL. Fetched bytes are PNG, JPEG, WebP or
 /// SVG; inline bytes leave out SVG.
@@ -577,6 +633,16 @@ pub enum RendererNode {
 		props: MaterialsProps,
 		/// The content the layers draw over.
 		children: Vec<RendererNode>,
+	},
+	/// Slide-to-confirm control, as wide as the space it is given unless
+	/// sized. The host owns the drag and reports only a completed slide.
+	/// Index 11 is `Materials`'s.
+	#[codec(index = 12)]
+	SlideToConfirm {
+		/// Layout and styling.
+		modifiers: Vec<Modifier>,
+		/// Slide-to-confirm properties.
+		props: SlideToConfirmProps,
 	},
 }
 

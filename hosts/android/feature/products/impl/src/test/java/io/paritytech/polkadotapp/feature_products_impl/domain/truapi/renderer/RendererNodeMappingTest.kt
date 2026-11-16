@@ -5,6 +5,7 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsColor
 import io.paritytech.polkadotapp.feature_products_api.model.JsHorizontalAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
 import io.paritytech.polkadotapp.feature_products_api.model.JsShape
+import io.paritytech.polkadotapp.feature_products_api.model.JsSlideToConfirmVariant
 import io.paritytech.polkadotapp.feature_products_api.model.JsWidget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -20,6 +21,8 @@ import uniffi.truapi.HorizontalAlignment
 import uniffi.truapi.Modifier
 import uniffi.truapi.RendererNode
 import uniffi.truapi.Shape
+import uniffi.truapi.SlideToConfirmProps
+import uniffi.truapi.SlideToConfirmVariant
 import uniffi.truapi.TextProps
 
 class RendererNodeMappingTest {
@@ -94,6 +97,70 @@ class RendererNodeMappingTest {
         assertTrue("padding stayed drawable", listOfNotNull(padding.top, padding.end, padding.bottom, padding.start).all { it >= 0 })
         assertTrue("width stayed drawable", modifiers.filterIsInstance<JsModifier.Size>().single().width!! >= 0)
         assertTrue("border stayed drawable", modifiers.filterIsInstance<JsModifier.Border>().single().width >= 0)
+    }
+
+    @Test
+    fun `a slide to confirm carries every field the product set`() {
+        val node = RendererNode.SlideToConfirm(
+            modifiers = listOf(Modifier.Width(200u)),
+            props = SlideToConfirmProps(
+                text = "Slide to register",
+                secondaryText = "Fri 14 Nov",
+                confirmedText = "Registered",
+                variant = SlideToConfirmVariant.REVEAL,
+                accent = ColorToken.FG_SUCCESS,
+                enabled = false,
+                loading = true,
+                confirmed = true,
+                confirmAction = "register",
+            ),
+        )
+
+        val widget = node.toJsWidget() as JsWidget.SlideToConfirm
+
+        assertEquals(
+            JsWidget.SlideToConfirm(
+                text = "Slide to register",
+                secondaryText = "Fri 14 Nov",
+                confirmedText = "Registered",
+                variant = JsSlideToConfirmVariant.REVEAL,
+                accent = JsColor.FG_SUCCESS,
+                onConfirm = "register",
+                enabled = false,
+                loading = true,
+                confirmed = true,
+                modifiers = listOf(JsModifier.Size(width = 200, height = null, minWidth = null, minHeight = null)),
+            ),
+            widget,
+        )
+    }
+
+    // An absent OptionBool leaves the default to the host: a thumb that accepts a slide.
+    @Test
+    fun `a slide to confirm with only a label is a ready thumb`() {
+        val node = RendererNode.SlideToConfirm(
+            modifiers = emptyList(),
+            props = SlideToConfirmProps(
+                text = "Slide to register",
+                secondaryText = null,
+                confirmedText = null,
+                variant = null,
+                accent = null,
+                enabled = null,
+                loading = null,
+                confirmed = null,
+                confirmAction = null,
+            ),
+        )
+
+        val widget = node.toJsWidget() as JsWidget.SlideToConfirm
+
+        assertEquals(JsSlideToConfirmVariant.THUMB, widget.variant)
+        assertEquals(true, widget.enabled)
+        assertEquals(false, widget.loading)
+        assertEquals(false, widget.confirmed)
+        assertEquals(null, widget.accent)
+        assertEquals(null, widget.onConfirm)
     }
 
     @Test

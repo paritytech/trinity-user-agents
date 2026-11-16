@@ -13,7 +13,8 @@ extension RendererNode {
              .spacer,
              .text,
              .button,
-             .textField:
+             .textField,
+             .slideToConfirm:
             return leafWidgetNode(resolver: resolver)
 
         case let .materials(_, children):
@@ -111,6 +112,12 @@ private extension RendererNode {
                     isEnabled: props.enabled ?? true,
                     valueChangeAction: props.valueChangeAction
                 )),
+                modifiers: modifiers.toNodeModifiers(resolver: resolver)
+            )
+
+        case let .slideToConfirm(modifiers, props):
+            return CustomMessageWidgetNode(
+                content: .slideToConfirm(props.nodeProps(resolver: resolver)),
                 modifiers: modifiers.toNodeModifiers(resolver: resolver)
             )
 
@@ -357,6 +364,29 @@ private extension ImageProps {
                 .fill
             }
         return .init(source: nodeSource, fit: nodeFit)
+    }
+}
+
+private extension SlideToConfirmProps {
+    func nodeProps(resolver: any WidgetDesignTokenResolving) -> CustomMessageWidgetNode.SlideToConfirmProps {
+        let nodeVariant: CustomMessageWidgetNode.SlideToConfirmVariant =
+            switch variant ?? .thumb {
+            case .thumb: .thumb
+            case .reveal: .reveal
+            }
+        return .init(
+            text: text,
+            secondaryText: secondaryText,
+            confirmedText: confirmedText,
+            variant: nodeVariant,
+            accent: accent.map { resolver.color(for: $0.toScale()) },
+            state: .init(
+                isEnabled: enabled ?? true,
+                isLoading: loading ?? false,
+                isConfirmed: confirmed ?? false
+            ),
+            confirmAction: confirmAction
+        )
     }
 }
 

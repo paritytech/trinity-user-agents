@@ -3106,6 +3106,34 @@ fn reads_an_inline_image_from_hex() {
 	assert!(parse_renderer_node_json(image("89504e47")).is_err());
 }
 
+/// A face file names the control's fields in camelCase, as the generated
+/// client spells them, and leaves out what it does not set.
+#[test]
+fn reads_a_slide_to_confirm_from_json() {
+	let json = r#"{"tag":"SlideToConfirm","value":{"modifiers":[],"props":{
+		"text":"Slide to register","secondaryText":"Fri 14 Nov","confirmedText":"Registered",
+		"variant":"Reveal","accent":"FgSuccess","loading":true,
+		"confirmAction":"register"}}}"#;
+
+	assert_eq!(
+		parse_renderer_node_json(json.to_string()).expect("slide to confirm reads"),
+		latest::RendererNode::SlideToConfirm {
+			modifiers: Vec::new(),
+			props: latest::SlideToConfirmProps {
+				text: "Slide to register".to_string(),
+				secondary_text: Some("Fri 14 Nov".to_string()),
+				confirmed_text: Some("Registered".to_string()),
+				variant: Some(latest::SlideToConfirmVariant::Reveal),
+				accent: Some(latest::ColorToken::FgSuccess),
+				enabled: parity_scale_codec::OptionBool(None),
+				loading: parity_scale_codec::OptionBool(Some(true)),
+				confirmed: parity_scale_codec::OptionBool(None),
+				confirm_action: Some("register".to_string()),
+			},
+		}
+	);
+}
+
 /// `depth` boxes around an empty node, three brackets per box.
 fn nested_boxes(depth: usize) -> String {
 	let mut json = String::new();
