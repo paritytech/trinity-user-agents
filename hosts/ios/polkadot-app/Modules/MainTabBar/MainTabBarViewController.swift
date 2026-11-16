@@ -32,6 +32,7 @@ final class MainTabBarViewController: UIViewController {
     private var statusTitleCenterY: Constraint?
 
     private let statusBarTitleButton = StatusBarTitleButton()
+    private let statusStripContainer = StatusStripContainerView()
 
     lazy var container = TabBarContainer(hostController: self)
 
@@ -132,6 +133,7 @@ final class MainTabBarViewController: UIViewController {
                 return
             }
             applyWidgetLayout(for: chromeContext(for: container.selectedController))
+            bindScrollEdgeInteraction()
         }
 
         chromeController.onBottomClearanceInvalidated = { [weak self] in
@@ -176,9 +178,15 @@ private extension MainTabBarViewController {
     func installStatusBar() {
         additionalSafeAreaInsets.top = ChainConnectionStatusBarView.preferredHeight
 
+        view.addSubview(statusStripContainer)
+        statusStripContainer.snp.makeConstraints { make in
+            make.leading.trailing.top.equalToSuperview()
+            make.bottom.equalTo(view.safeAreaLayoutGuide.snp.top)
+        }
+
         addChild(statusBarHost)
         statusBarHost.view.backgroundColor = .clear
-        view.addSubview(statusBarHost.view)
+        statusStripContainer.addSubview(statusBarHost.view)
         statusBarHost.view.snp.makeConstraints { make in
             make.leading.trailing.equalToSuperview()
             make.bottom.equalTo(view.safeAreaLayoutGuide.snp.top)
@@ -191,7 +199,7 @@ private extension MainTabBarViewController {
             chainStatusAnchorWidth = make.width.equalTo(1).constraint
         }
 
-        view.addSubview(statusBarTitleButton)
+        statusStripContainer.addSubview(statusBarTitleButton)
         statusBarTitleButton.snp.makeConstraints { make in
             statusTitleLeading = make.leading.equalTo(statusBarHost.view)
                 .offset(ChainConnectionStatusBarView.horizontalPadding).constraint
@@ -392,6 +400,10 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
         productGamePill = viewModel
         applyProductGamePill()
     }
+
+    func showSettingsAttention(_ isVisible: Bool) {
+        chromeController.setSettingsAttention(isVisible)
+    }
 }
 
 // MARK: - Scan panel
@@ -399,6 +411,11 @@ extension MainTabBarViewController: MainTabBarViewProtocol {
 extension MainTabBarViewController {
     func openScanPanel() {
         chromeController.openPanelShowingDocklet(.content(.scan))
+    }
+
+    func openBackupSettings() {
+        chromeController.setPanel(nil)
+        presenter.didRequestBackupSettings()
     }
 
     func closeScanPanel() {
@@ -452,13 +469,11 @@ private extension MainTabBarViewController {
     }
 }
 
-extension MainTabBarViewController: TopmostChildProviding {
-    var topmostChild: UIViewController? {
-        container.selectedController
-    }
-}
-
 extension MainTabBarViewController {
+    func bindScrollEdgeInteraction() {
+        statusStripContainer.bindScrollEdge(toContentOf: container.selectedController)
+    }
+
     func refreshChrome() {
         applyChrome(chromeContext(for: container.selectedController))
         applyChips()
@@ -475,13 +490,5 @@ extension MainTabBarViewController {
 
     func refreshStatusBarTitle() {
         statusBarTitleButton.bind(viewModel: makeStatusBarTitleViewModel())
-    }
-
-    func attachWidget(_ configuration: any HashableContentConfiguration, for id: AppWidgetID) {
-        widgetController.attach(configuration, for: id)
-    }
-
-    func detachWidget(for id: AppWidgetID) {
-        widgetController.detach(for: id)
     }
 }
