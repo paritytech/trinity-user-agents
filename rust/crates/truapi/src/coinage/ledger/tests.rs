@@ -233,3 +233,38 @@ fn peer_secrets_are_kept_until_forgotten() {
 	block_on(db.write(|tx| forget_secrets(tx, &[[1; 32]]))).unwrap();
 	assert_eq!(block_on(db.read(|conn| super::secret(conn, &[1; 32]))).unwrap(), None);
 }
+
+fn found_on_chain(index: u32) -> AssetRecord {
+	AssetRecord { asset: Asset::Coin { purse: PurseId::MAIN, installation: INSTALLATION, index }, exponent: exponent(5) }
+}
+
+#[test]
+fn an_allocation_whose_index_is_taken_fails_instead_of_overwriting_the_row() {
+	let db = ledger();
+	let taken = found_on_chain(0);
+	block_on(db.write(move |tx| adopt(tx, &[taken]))).unwrap();
+	let outputs = [exponent(2)];
+	assert!(block_on(db.write(move |tx| allocate(tx, PurseId::MAIN, AssetKind::Coin, &outputs))).is_err());
+	let assets: Vec<AssetRecord> = view(&db).assets(PurseId::MAIN).copied().collect();
+	assert_eq!(assets, [taken], "the record found on chain keeps its exponent");
+}
+
+#[test]
+fn a_batch_whose_indices_are_taken_fails_instead_of_overwriting_the_rows() {
+	let db = ledger();
+	let taken = found_on_chain(1);
+	block_on(db.write(move |tx| adopt(tx, &[taken]))).unwrap();
+	let outputs = [exponent(2), exponent(3)];
+	assert!(block_on(db.write(move |tx| allocate(tx, PurseId::MAIN, AssetKind::Coin, &outputs))).is_err());
+	let assets: Vec<AssetRecord> = view(&db).assets(PurseId::MAIN).copied().collect();
+	assert_eq!(assets, [taken], "the batch's free first index is rolled back with the rest");
+}
+
+#[test]
+fn an_allocation_without_a_current_installation_fails() {
+	let db = open_memory_core_db();
+	for kind in [AssetKind::Coin, AssetKind::Entry] {
+		let outputs = [exponent(2)];
+		assert!(block_on(db.write(move |tx| allocate(tx, PurseId::MAIN, kind, &outputs))).is_err(), "{kind:?}");
+	}
+}

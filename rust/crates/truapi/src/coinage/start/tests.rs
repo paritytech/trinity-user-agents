@@ -5,8 +5,11 @@ use crate::{
 	coinage::{
 		PrivacyPolicy, PurseId,
 		classification::{CoinClass, Class, classify},
-		ledger::Mark,
-		testing::{NOW, TestWallet, chain_params, unbuilt_engine},
+		ledger::{AssetKind, Mark},
+		testing::{
+			NOW, TestWallet, chain_params, unbuilt_engine,
+			planning::{aged_coin, in_ring},
+		},
 	},
 	durable::DurableTxStatus,
 };
@@ -92,6 +95,62 @@ fn held_back_value_needs_the_users_confirmation_under_balanced() {
 	let confirmed = Request::Select { from: PurseId::MAIN, amount: 8, to: Destination::Purse(PurseId(4)), initiator: Some(Initiator::User), confirmed: true };
 	assert!(!needs_confirmation(&view, &confirmed, NOW, &chain_params()));
 	assert!(started(&wallet, &key(1), confirmed).is_ok(), "confirmed, it spends the held-back coin");
+}
+
+fn confirmed_user_payment(amount: u64) -> Request {
+	Request::Select { from: PurseId::MAIN, amount, to: Destination::Purse(PurseId(4)), initiator: Some(Initiator::User), confirmed: true }
+}
+
+#[test]
+fn most_private_keeps_coins_due_for_recycling_from_the_user_even_when_confirmed() {
+	let wallet = TestWallet::new(PrivacyPolicy::most_private());
+	wallet.hold(PurseId::MAIN, AssetKind::Coin, 3, aged_coin(3, 5));
+	let refused = started(&wallet, &key(1), confirmed_user_payment(8));
+	assert!(matches!(refused, Err(StartError::InsufficientFunds { available: 0 })), "{refused:?}");
+}
+
+#[test]
+fn most_private_keeps_entries_gaining_privacy_from_the_user_even_when_confirmed() {
+	let wallet = TestWallet::new(PrivacyPolicy::most_private());
+	wallet.hold(PurseId::MAIN, AssetKind::Entry, 3, in_ring(0, 20));
+	let refused = started(&wallet, &key(1), confirmed_user_payment(8));
+	assert!(matches!(refused, Err(StartError::InsufficientFunds { available: 0 })), "{refused:?}");
+}
+
+/// The value and disclosure mark of every output the start registered,
+/// smallest first.
+fn marked_outputs(wallet: &TestWallet, registered: &Registered) -> Vec<(u64, Option<Mark>)> {
+	let view = wallet.view();
+	let mut outputs: Vec<(u64, Option<Mark>)> = registered
+		.records
+		.iter()
+		.filter_map(|record| view.registrations().record(*record))
+		.flat_map(|record| record.rows.outputs.clone())
+		.map(|output| (view.asset(&output).unwrap().exponent.value(), view.mark(&output)))
+		.collect();
+	outputs.sort_by_key(|(value, mark)| (*value, mark.is_some()));
+	outputs
+}
+
+#[test]
+fn an_export_marks_the_delivered_outputs_of_its_split_and_keeps_the_change() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let eight = wallet.coin(3);
+	let registered = started(&wallet, &key(1), pay(5, Destination::Export(PurseId::MAIN))).unwrap();
+	let uncommitted = Some(Mark::Uncommitted);
+	assert_eq!(marked_outputs(&wallet, &registered), [(1, None), (1, uncommitted), (2, None), (4, uncommitted)]);
+	assert_eq!(wallet.view().mark(&eight), None, "the split coin is consumed, not handed out");
+	assert_eq!(registered.exported.iter().map(|coin| coin.exponent.value()).sum::<u64>(), 5);
+}
+
+#[test]
+fn an_export_marks_the_delivered_outputs_of_its_unload_and_keeps_the_change() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	wallet.entry(3, 0);
+	let registered = started(&wallet, &key(1), pay(5, Destination::Export(PurseId::MAIN))).unwrap();
+	let uncommitted = Some(Mark::Uncommitted);
+	assert_eq!(marked_outputs(&wallet, &registered), [(1, None), (1, uncommitted), (2, None), (4, uncommitted)]);
+	assert_eq!(registered.exported.iter().map(|coin| coin.exponent.value()).sum::<u64>(), 5);
 }
 
 #[test]
