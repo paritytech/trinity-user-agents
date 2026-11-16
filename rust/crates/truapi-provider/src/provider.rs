@@ -251,6 +251,8 @@ impl EmbeddedChainProvider {
 				relay: relay_source(source, self.relays.get(&genesis_hash).copied(), |relay| {
 					self.registered_or_stack(relay)
 				})?,
+				#[cfg(feature = "networks")]
+				catalog_service: None,
 			});
 		}
 		#[cfg(feature = "smoldot")]
@@ -261,7 +263,12 @@ impl EmbeddedChainProvider {
 			let relay = relay_source(&source, stack.relay_of(genesis_hash), |relay| {
 				self.registered_or_stack(relay)
 			})?;
-			return Ok(ResolvedChain { source, relay });
+			return Ok(ResolvedChain {
+				source,
+				relay,
+				#[cfg(feature = "networks")]
+				catalog_service: None,
+			});
 		}
 		#[cfg(feature = "networks")]
 		if let Some((catalog, relay)) = self.catalog_network(genesis_hash) {
@@ -271,6 +278,7 @@ impl EmbeddedChainProvider {
 			return Ok(ResolvedChain {
 				source: source.clone(),
 				relay: relay_source(source, relay, |relay| catalog.get(&relay).cloned())?,
+				catalog_service: crate::networks::catalog_service(genesis_hash),
 			});
 		}
 		Err(ProviderError::UnknownGenesis { genesis: genesis_hash })
@@ -294,6 +302,8 @@ impl EmbeddedChainProvider {
 			relay: resolved
 				.relay
 				.map(|(genesis, source)| (genesis, self.with_seeded_database(genesis, source))),
+			#[cfg(feature = "networks")]
+			catalog_service: resolved.catalog_service,
 		})
 	}
 
@@ -706,7 +716,7 @@ impl ChainProvider for EmbeddedChainProvider {
 			#[cfg(feature = "smoldot")]
 			source @ ChainSource::LightClient { .. } => {
 				#[cfg(feature = "networks")]
-				if let Some((network, service)) = crate::networks::catalog_service(genesis_hash) {
+				if let Some((network, service)) = resolved.catalog_service {
 					tracing::info!(network, service, "connecting via light client");
 				}
 				let relay = resolved.relay;

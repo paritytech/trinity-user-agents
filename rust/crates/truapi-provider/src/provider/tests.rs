@@ -99,8 +99,9 @@ fn parachain_with_a_seeded_relay(parachain_spec: &'static str) -> EmbeddedChainP
 		.build()
 }
 
-/// A blob registered for a relay reaches it even when the relay is never
-/// connected directly, only brought up behind one of its parachains.
+/// A blob registered for a relay goes with the relay source a parachain's
+/// connect hands the light client, so a relay that is never connected
+/// directly, only brought up behind a parachain, still starts warm.
 #[cfg(feature = "smoldot")]
 #[test]
 fn a_relay_blob_seeds_the_relay_brought_up_behind_a_parachain() {
@@ -720,5 +721,28 @@ fn load_database_refuses_a_catalog_chain_on_a_stack_provider() {
 	assert_eq!(
 		futures::executor::block_on(provider.load_database(catalog.people)),
 		Err(crate::ProviderError::UnknownGenesis { genesis: catalog.people })
+	);
+}
+
+/// Only a chain the catalog answered for is logged under a bundled network:
+/// a stack chain with a bundled genesis hash, as a fork's has, is not.
+#[cfg(feature = "networks")]
+#[test]
+fn only_a_chain_resolved_from_the_catalog_names_its_bundled_network() {
+	use crate::test_stack::{ASSET_HUB_SPEC, STACK_ID, genesis, synced_stack};
+
+	let asset_hub = genesis(ASSET_HUB_SPEC);
+	let stack = synced_stack(STACK_ID, "one");
+	stack
+		.add_light_spec(asset_hub, ASSET_HUB_SPEC.as_bytes())
+		.expect("the spec matches");
+	let providers = [
+		EmbeddedChainProvider::builder().catalog().stack(stack).build(),
+		EmbeddedChainProvider::builder().catalog().build(),
+	];
+
+	assert_eq!(
+		providers.map(|provider| provider.resolve(asset_hub).expect("resolves").catalog_service),
+		[None, Some(("paseo-next-v2", "asset-hub"))]
 	);
 }
