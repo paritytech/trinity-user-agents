@@ -6,8 +6,11 @@ use super::*;
 use crate::coinage::{
 	ledger::AssetKind,
 	status::{Failure, Status},
-	testing::{BLOCK, NOW, SCAN, TestRuntime, TestWallet, chain_config, coin_read, layer_interfaces, started_layer},
+	testing::{
+		BLOCK, NOW, SCAN, TestRuntime, TestWallet, chain_config, coin_read, layer_interfaces, set_status, started_layer,
+	},
 };
+use crate::durable::DurableTxId;
 
 fn op(id: u8) -> Op {
 	Op { key: OpKey { scope: b"product".to_vec(), id: [id; 32] }, retry: Retry::ExpiryOnly }
@@ -145,6 +148,96 @@ async fn deleting_an_empty_purse_closes_it_at_once() {
 	assert_eq!(layer.resolve_purse(purse).await.unwrap(), PurseId::MAIN);
 	let view = layer.view().await.unwrap();
 	assert_eq!(status(&view, &op(1).key, NOW, &layer.params()).unwrap().status, Status::Done);
+}
+
+#[tokio::test]
+async fn an_offload_of_nothing_is_refused() {
+	let (layer, ..) = started_layer(crate::store::open_memory_core_db()).await;
+	let refused = layer.offload(op(1), PurseId::MAIN, 0, [7; 32], Initiator::User, false).await;
+	assert!(matches!(refused, Err(Error::EmptyRequest)));
+}
+
+#[tokio::test]
+async fn an_offload_begun_earlier_is_joined_whatever_its_inputs_look_like_now() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let (layer, ..) = started_layer(wallet.db.clone()).await;
+	wallet.entry(4, 0);
+	let first = layer.offload(op(1), PurseId::MAIN, 10, [7; 32], Initiator::User, false).await.unwrap();
+	assert_eq!(first, Started::New);
+	let again = layer.offload(op(1), PurseId::MAIN, 10, [7; 32], Initiator::User, false).await.unwrap();
+	assert_eq!(again, Started::Joined, "the entry its offboard holds does not stop the join");
+	let view = layer.view().await.unwrap();
+	assert_eq!(view.registrations().of_operation(&op(1).key).count(), 1, "nothing is offboarded twice");
+}
+
+#[tokio::test]
+async fn an_offload_only_coins_and_held_back_entries_cover_asks_the_user_first() {
+	let dwell = crate::coinage::policy::ReadyRule {
+		members: crate::coinage::policy::MemberThreshold::Count(1),
+		dwell: Duration::from_secs(600),
+	};
+	let wallet = TestWallet::new(PrivacyPolicy { ready_when: vec![dwell], ..PrivacyPolicy::fastest() });
+	let (layer, ..) = started_layer(wallet.db.clone()).await;
+	wallet.coin(3);
+	wallet.entry(3, 0);
+	let unconfirmed = layer.offload(op(1), PurseId::MAIN, 8, [7; 32], Initiator::User, false).await;
+	assert!(matches!(unconfirmed, Err(Error::NeedsConfirmation)), "private coins do not spare the warning");
+	let confirmed = layer.offload(op(1), PurseId::MAIN, 8, [7; 32], Initiator::User, true).await;
+	assert_eq!(confirmed.unwrap(), Started::New);
+}
+
+/// The current installation's registrations, with their first record.
+async fn registrations(layer: &Layer) -> Vec<(OpKey, DurableTxId)> {
+	let view = layer.view().await.unwrap();
+	view.operations()
+		.filter(|operation| operation.kind == OpKind::RegisterInstallation)
+		.map(|operation| {
+			let record = view.registrations().of_operation(&operation.key).next().expect("a registered record").record;
+			(operation.key.clone(), record)
+		})
+		.collect()
+}
+
+#[tokio::test]
+async fn a_final_registration_is_not_started_again_and_reads_registered() {
+	let store = crate::store::open_memory_core_db();
+	let (layer, ..) = started_layer(store.clone()).await;
+	let (_, record) = registrations(&layer).await[0].clone();
+	set_status(&store, record, "FINALIZED_SUCCESS", None);
+	assert_eq!(layer.recoverable().await.unwrap(), Recoverability::Registered);
+
+	drop(layer);
+	let (layer, ..) = started_layer(store).await;
+	assert_eq!(registrations(&layer).await.len(), 1, "nothing is attempted for a final registration");
+	assert_eq!(layer.recoverable().await.unwrap(), Recoverability::Registered);
+}
+
+#[tokio::test]
+async fn a_registration_that_failed_earlier_is_started_again_at_once() {
+	let store = crate::store::open_memory_core_db();
+	let (layer, ..) = started_layer(store.clone()).await;
+	let (_, record) = registrations(&layer).await[0].clone();
+	set_status(&store, record, "FAILURE", Some("EXPIRED"));
+	assert_eq!(layer.recoverable().await.unwrap(), Recoverability::Pending { since: NOW });
+
+	drop(layer);
+	let (layer, ..) = started_layer(store).await;
+	assert_eq!(registrations(&layer).await.len(), 2, "the next start registers again");
+	assert_eq!(layer.recoverable().await.unwrap(), Recoverability::Pending { since: NOW });
+}
+
+#[tokio::test]
+async fn the_event_stream_reports_when_the_installation_becomes_recoverable() {
+	let store = crate::store::open_memory_core_db();
+	let (layer, ..) = started_layer(store.clone()).await;
+	let (_, record) = registrations(&layer).await[0].clone();
+	let mut events = layer.events().await.unwrap();
+	assert_eq!(events.next().await, Some(Event::Resynced));
+	set_status(&store, record, "FINALIZED_SUCCESS", None);
+	let mut recoverability = events.filter(|event| core::future::ready(matches!(event, Event::Recoverability(_))));
+	let reported =
+		tokio::time::timeout(Duration::from_secs(5), recoverability.next()).await.expect("the change is reported");
+	assert_eq!(reported, Some(Event::Recoverability(Recoverability::Registered)));
 }
 
 #[tokio::test]
