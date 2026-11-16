@@ -13,12 +13,14 @@ public enum RetryError: Error {
 /// - Parameters:
 ///   - maxAttempts: Total number of attempts (including the first). Must be at least 1.
 ///   - initialDelay: Delay before the first retry. Doubles after each subsequent retry.
+///   - clock: Clock the delays between attempts are slept on.
 ///   - shouldRetry: Returns false for errors that must fail at once without further attempts.
 ///   - operation: The async throwing closure to execute.
 /// - Returns: The result of a successful `operation` invocation.
 public func withRetry<T: Sendable>(
     maxAttempts: Int,
     initialDelay: Duration = .seconds(1),
+    clock: any Clock<Duration> = ContinuousClock(),
     shouldRetry: @Sendable @escaping (Error) -> Bool = { _ in true },
     operation: @Sendable @escaping () async throws -> T
 ) async throws -> T {
@@ -44,7 +46,7 @@ public func withRetry<T: Sendable>(
                 throw error
             }
 
-            try await Task.sleep(for: delay)
+            try await clock.sleep(for: delay)
             delay *= 2
         }
     }
