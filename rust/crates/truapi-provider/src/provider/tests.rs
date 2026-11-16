@@ -116,9 +116,12 @@ fn a_relay_blob_seeds_the_relay_brought_up_behind_a_parachain() {
 
 	let provider = parachain_with_a_seeded_relay(PARACHAIN_SPEC);
 
-	let _connection = futures::executor::block_on(provider.connect(PARACHAIN_GENESIS))
-		.expect("the parachain syncs through its relay");
+	let resolved = provider.resolve_seeded(PARACHAIN_GENESIS).expect("the relay is registered");
 
+	let Some((relay, ChainSource::LightClient { database_content, .. })) = resolved.relay else {
+		panic!("the parachain syncs through a light-client relay");
+	};
+	assert_eq!((relay, database_content.as_deref()), (RELAY_GENESIS, Some("relay-blob")));
 	assert!(!provider.has_database(RELAY_GENESIS), "the relay took its blob");
 }
 
@@ -555,4 +558,102 @@ fn a_registered_chain_has_only_the_relay_it_was_registered_with() {
 		.build();
 
 	assert_eq!([from_stack.relay_of(people), registered.relay_of(people)], [Some(relay), None]);
+}
+
+/// A registered chain wins as a relay too: a stack's parachain comes up
+/// behind a relay registered on the provider, and a registered parachain
+/// behind the stack's relay.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_relay_registered_or_from_the_stack_serves_a_parachain_from_the_other() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, genesis, stack};
+
+	let (relay, people) = (genesis(RELAY_SPEC), genesis(PEOPLE_SPEC));
+	let people_from_stack = stack(STACK_ID, "one");
+	people_from_stack
+		.add_light_spec(people, PEOPLE_SPEC.as_bytes())
+		.expect("the spec matches");
+	let relay_from_stack = stack(STACK_ID, "one");
+	relay_from_stack
+		.add_light_spec(relay, RELAY_SPEC.as_bytes())
+		.expect("the spec matches");
+	let providers = [
+		EmbeddedChainProvider::builder()
+			.chain(relay, ChainSource::light_client(RELAY_SPEC).build())
+			.stack(people_from_stack)
+			.build(),
+		EmbeddedChainProvider::builder()
+			.parachain(people, ChainSource::light_client(PEOPLE_SPEC).build(), relay)
+			.stack(relay_from_stack)
+			.build(),
+	];
+
+	for provider in providers {
+		let _connection = futures::executor::block_on(provider.connect(people))
+			.expect("People syncs through the relay");
+		assert_eq!(provider.relay_count(), 1, "the relay came up behind People");
+	}
+}
+
+/// A parachain is unknown until its relay's spec is added, so no stored blob
+/// is read for a chain `connect` would refuse.
+#[cfg(feature = "smoldot")]
+#[test]
+fn load_database_refuses_a_stack_parachain_without_its_relays_spec() {
+	use crate::test_stack::{PEOPLE_SPEC, RELAY_SPEC, STACK_ID, genesis, stack};
+
+	let (relay, people) = (genesis(RELAY_SPEC), genesis(PEOPLE_SPEC));
+	let stack = stack(STACK_ID, "one");
+	stack.add_light_spec(people, PEOPLE_SPEC.as_bytes()).expect("the spec matches");
+	let provider = EmbeddedChainProvider::builder().stack(stack).build();
+
+	assert_eq!(
+		futures::executor::block_on(provider.load_database(people)),
+		Err(crate::ProviderError::UnknownRelay { relay })
+	);
+}
+
+/// A stack's provider never resolves from the catalog, so it has nothing to
+/// load for a catalog chain either, even when built with `catalog()`.
+#[cfg(feature = "networks")]
+#[test]
+fn load_database_refuses_a_catalog_chain_on_a_stack_provider() {
+	use crate::test_stack::{STACK_ID, synced_stack};
+
+	let catalog = paseo_next_v2();
+	let provider = EmbeddedChainProvider::builder()
+		.catalog()
+		.stack(synced_stack(STACK_ID, "one"))
+		.build();
+
+	assert_eq!(
+		futures::executor::block_on(provider.load_database(catalog.people)),
+		Err(crate::ProviderError::UnknownGenesis { genesis: catalog.people })
+	);
+}
+
+/// The store keys a blob by genesis hash, which a fork shares with its
+/// source, so a stack's provider neither reads nor writes it rather than
+/// start a fork from its source's state.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_stack_provider_refuses_its_store() {
+	use crate::test_stack::{RELAY_SPEC, STACK_ID, genesis, synced_stack};
+
+	let relay = genesis(RELAY_SPEC);
+	let store = std::sync::Arc::new(MemoryStorageClient::default());
+	store.stored.lock().expect("test store").insert(relay, "source-blob".to_owned());
+	let provider = EmbeddedChainProvider::builder()
+		.stack(synced_stack(STACK_ID, "one"))
+		.storage(store.clone())
+		.build();
+
+	assert_eq!(
+		[
+			futures::executor::block_on(provider.load_database(relay)),
+			futures::executor::block_on(provider.save_database(relay)),
+		],
+		[Err(crate::ProviderError::StackStorage), Err(crate::ProviderError::StackStorage)]
+	);
+	assert_eq!(store.loads.load(std::sync::atomic::Ordering::Relaxed), 0);
 }

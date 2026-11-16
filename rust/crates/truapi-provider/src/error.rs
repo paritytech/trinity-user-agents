@@ -113,6 +113,11 @@ pub enum ProviderError {
 		"this provider was built without a stack, so it has no descriptor to check a light spec against"
 	)]
 	NoStack,
+	/// Warm start was asked of a provider built with both a stack and a store.
+	#[display(
+		"a stack's provider keeps no stored state: the store keys it by genesis hash, which a fork shares with its source"
+	)]
+	StackStorage,
 	/// A bundled genesis hash does not decode to 32 bytes.
 	#[display("bundled genesis hash {hex} is malformed")]
 	MalformedGenesis {
