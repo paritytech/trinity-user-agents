@@ -147,7 +147,7 @@ private fun FundingInProgressSheetContent(
 
 /** Top-ups and withdrawals together: those in progress, then those completed, newest first. */
 @Composable
-private fun FundingHistorySheetContent(
+internal fun FundingHistorySheetContent(
     state: FundingActivityUiState,
     onBack: () -> Unit,
     onRowClick: (id: String) -> Unit,
