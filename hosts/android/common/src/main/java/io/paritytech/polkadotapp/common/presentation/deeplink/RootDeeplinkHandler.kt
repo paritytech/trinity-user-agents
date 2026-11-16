@@ -1,18 +1,15 @@
-package io.paritytech.polkadotapp.app.root.deeplink
+package io.paritytech.polkadotapp.common.presentation.deeplink
 
 import android.net.Uri
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
-import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
-import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
-import io.paritytech.polkadotapp.common.presentation.deeplink.tryCanHandle
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import kotlinx.coroutines.withContext
 import uniffi.truapi.Stack
 import javax.inject.Inject
 
-internal class RootDeeplinkHandler @Inject constructor(
+class RootDeeplinkHandler @Inject constructor(
     private val coroutineDispatchers: CoroutineDispatchers,
-    private val stack: Stack,
+    private val stack: Stack?,
     private val handlers: Set<@JvmSuppressWildcards DeepLinkHandler>,
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri): Boolean {
@@ -29,5 +26,5 @@ internal class RootDeeplinkHandler @Inject constructor(
             ?: Result.failure(IllegalArgumentException("No matching handlers found to handle deeplink: $data"))
     }
 
-    private fun Uri.candidates(): List<Uri> = listOfNotNull(toAppSchemeDeeplinkOrNull(stack), this)
+    private fun Uri.candidates(): List<Uri> = listOfNotNull(stack?.let { toAppSchemeDeeplinkOrNull(it) }, this)
 }

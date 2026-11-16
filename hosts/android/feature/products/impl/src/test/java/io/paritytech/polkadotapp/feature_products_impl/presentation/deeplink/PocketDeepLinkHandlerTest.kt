@@ -7,9 +7,9 @@ import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
+import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.PocketDeeplink
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.PocketDeeplinkParser
@@ -17,40 +17,68 @@ import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 
 class PocketDeepLinkHandlerTest {
-    private val tld = requireNotNull(DotNsTld.parse("paseo"))
-    private val link = "polkadotapp://pocket"
+    private val collectionLink = "polkadotapp://pocket"
+    private val malformedLink = "polkadotapp://pocket/add"
 
-    // The TLD saved on an earlier launch, with the People chain unreachable.
+    // A fresh install with the People chain unreachable: no TLD is known yet.
     private val tldProvider = mockk<DotNsTldProvider> {
-        every { currentTldOrNull() } returns tld
+        every { currentTldOrNull() } returns null
         coEvery { getTld() } returns Result.failure(IOException("people chain unreachable"))
     }
 
-    private val handler = PocketDeepLinkHandler(
+    private fun handler(canParse: Boolean = true) = PocketDeepLinkHandler(
         dispatchers = TestCoroutineDispatchers(Dispatchers.Unconfined),
         dotNsTldProvider = tldProvider,
-        parser = mockk<PocketDeeplinkParser> { every { parse(link) } returns PocketDeeplink.Collection },
+        parser = mockk<PocketDeeplinkParser> {
+            every { this@mockk.canParse } returns canParse
+            every { parse(collectionLink) } returns PocketDeeplink.Collection
+            every { parse(malformedLink) } returns null
+        },
         publishedCards = mockk(),
         collection = mockk(),
         cardOpenRequests = mockk(),
         gate = mockk(),
         accountRepository = mockk<AccountRepository>(relaxed = true),
         router = mockk(),
-        context = mockk<Context>(),
+        context = mockk<Context> { every { getString(any()) } returns "malformed" },
     )
 
     @Test
-    fun `an offline cold start opens the collection under the TLD the link was claimed with`() = runBlocking {
-        val outcome = handle(mockk<Uri> { every { this@mockk.toString() } returns link })
+    fun `the collection opens before the network's TLD is known`() = runBlocking {
+        val handler = handler()
+        val data = pocketUri(collectionLink)
 
-        assertTrue(outcome.getOrNull() is DeeplinkProcessingOutcome.Navigate)
+        assertTrue(handler.canHandle(data))
+        assertTrue(handle(handler, data).getOrNull() is DeeplinkProcessingOutcome.Navigate)
         coVerify(exactly = 0) { tldProvider.getTld() }
     }
 
-    private suspend fun handle(data: Uri) = coroutineScope { with(ComputationalScope(this)) { handler.handle(data) } }
+    @Test
+    fun `a malformed Pocket link is answered before the network's TLD is known`() = runBlocking {
+        val handler = handler()
+        val data = pocketUri(malformedLink)
+
+        assertTrue(handler.canHandle(data))
+        assertTrue(handle(handler, data).getOrNull() is DeeplinkProcessingOutcome.ShowMessage)
+    }
+
+    @Test
+    fun `no Pocket link is claimed without the bundled stack`() = runBlocking {
+        assertFalse(handler(canParse = false).canHandle(pocketUri(collectionLink)))
+    }
+
+    private fun pocketUri(link: String) = mockk<Uri> {
+        every { scheme } returns DeepLinkHandler.APP_SCHEME
+        every { host } returns "pocket"
+        every { this@mockk.toString() } returns link
+    }
+
+    private suspend fun handle(handler: PocketDeepLinkHandler, data: Uri) =
+        coroutineScope { with(ComputationalScope(this)) { handler.handle(data) } }
 }

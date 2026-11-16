@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.app.root.deeplink
+package io.paritytech.polkadotapp.common.presentation.deeplink
 
 import android.net.Uri
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler.Companion.APP_SCHEME

@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import android.content.Context
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import uniffi.truapi.BundledStack
+import timber.log.Timber
 import uniffi.truapi.Stack
 
 /**
@@ -31,7 +32,10 @@ enum class TrUAPIStack(
         )
     }
 
-    fun opened(context: Context): Stack = Stack.openBundled(bundled(context))
+    // Null when the bundled copy is missing or refused; the runtime reports the same failure when it starts.
+    fun openedOrNull(context: Context): Stack? = runCatching { Stack.openBundled(bundled(context)) }
+        .onFailure { Timber.e(it, "truapi: the bundled %s stack could not be opened", name) }
+        .getOrNull()
 
     companion object {
         fun of(environment: TestnetEnvironment): TrUAPIStack = when (environment) {

@@ -48,9 +48,9 @@ internal class PocketDeepLinkHandler @Inject constructor(
     @param:ApplicationContext private val context: Context,
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri): Boolean {
-        if (!isPocketLink(data.scheme, data.host)) return false
-        val tld = dotNsTldProvider.currentTldOrNull() ?: return false
+        if (!isPocketLink(data.scheme, data.host) || !parser.canParse) return false
         val card = parser.parse(data.toString()) as? PocketDeeplink.Card ?: return true
+        val tld = dotNsTldProvider.currentTldOrNull() ?: return false
 
         // Adding a card runs the product's worker and hosts its pages, so the same products are
         // reachable here as through any other dotNS link.
@@ -69,18 +69,18 @@ internal class PocketDeepLinkHandler @Inject constructor(
 
     context(scope: ComputationalScope)
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> = withContext(dispatchers.io) {
-        claimedTld().flatMap { tld ->
-            when (val deeplink = parser.parse(data.toString())) {
-                null -> Result.success(malformed(data))
-                PocketDeeplink.Collection -> openCollection()
-                is PocketDeeplink.Card -> productIdFromHost(deeplink.productId.value, tld).flatMap { productId ->
+        when (val deeplink = parser.parse(data.toString())) {
+            null -> Result.success(malformed(data))
+            PocketDeeplink.Collection -> openCollection()
+            is PocketDeeplink.Card -> claimedTld()
+                .flatMap { tld -> productIdFromHost(deeplink.productId.value, tld) }
+                .flatMap { productId ->
                     dispatchCard(PocketCardKey(productId, PocketCardId(deeplink.cardId)), deeplink.pageQuery)
                 }
-            }
         }
     }
 
-    // The TLD `canHandle` used. Reading it again from the People chain would block the link when the
+    // The TLD `canHandle` used for a card. Reading it again from the People chain would block the link when the
     // app starts offline.
     private suspend fun claimedTld(): Result<DotNsTld> =
         dotNsTldProvider.currentTldOrNull()?.let { Result.success(it) } ?: dotNsTldProvider.getTld()

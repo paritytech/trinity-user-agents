@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.app.root.deeplink
+package io.paritytech.polkadotapp.common.presentation.deeplink
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -9,9 +9,9 @@ import uniffi.truapi.Stack
 import uniffi.truapi.appDeeplinkScheme
 import java.io.File
 
-// A stack from the core checkout's `stacks/`, which the app bundles, as the core opens it.
+// A stack from the assets the app ships, as the core opens it.
 private fun bundledStack(name: String, allowsReservedValues: Boolean): Stack {
-    val stacks = File("../../../stacks")
+    val stacks = File(System.getProperty("truapi.stackAssets"), "stacks")
     return Stack.openBundled(
         BundledStack(
             pointer = File(stacks, "$name.link").readText().trim(),
@@ -33,7 +33,7 @@ private val BUNDLED_STACKS = listOf(
 class DeeplinkWebHostNormalizerTest {
     @Test
     fun `every network's share domains and the app scheme reach the app through its intent filters`() {
-        val manifest = File("src/main/AndroidManifest.xml").readText()
+        val manifest = File("../app/src/main/AndroidManifest.xml").readText()
         val hosts = BUNDLED_STACKS.flatMap { it.productShareHosts() }.flatMap { listOf(it, "*.$it") }
         val schemes = Regex("""android:scheme="([^"]+)"""").findAll(manifest).map { it.groupValues[1] }.toSet()
 

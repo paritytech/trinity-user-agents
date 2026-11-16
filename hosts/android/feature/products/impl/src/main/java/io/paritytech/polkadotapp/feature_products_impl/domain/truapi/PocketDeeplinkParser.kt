@@ -28,8 +28,11 @@ sealed interface PocketDeeplink {
  * way. Kept behind this adapter, like the host bridges, so a bindgen rename does not ripple.
  * A card of a product the [stack] does not serve reads as no Pocket link.
  */
-class PocketDeeplinkParser @Inject constructor(private val stack: Stack) {
-    fun parse(url: String): PocketDeeplink? = when (val decision = stack.parseNavigate(url)) {
+class PocketDeeplinkParser @Inject constructor(private val stack: Stack?) {
+    /** False when the bundled stack could not be opened, so no link can be read. */
+    val canParse: Boolean get() = stack != null
+
+    fun parse(url: String): PocketDeeplink? = when (val decision = stack?.parseNavigate(url)) {
         is NavigateDecision.Pocket -> PocketDeeplink.Card(
             productId = decision.identifier,
             action = when (decision.action) {

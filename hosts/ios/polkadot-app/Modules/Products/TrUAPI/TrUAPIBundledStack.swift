@@ -35,10 +35,18 @@ enum TrUAPIBundledStack {
         }
     }
 
-    /// The stack this build runs, opened once at launch so links and trust are
-    /// judged by the core's stack before the runtime starts. `nil` only when the
-    /// bundled copy is missing or refused, which the runtime also reports.
-    static let opened: Stack? = try? current.open()
+    /// The stack this build runs, opened on first use, which may come before the
+    /// runtime starts, so links and trust are judged by the core's stack. `nil`
+    /// when the bundled copy is missing or refused; the error is logged here and
+    /// the runtime reports it again when it starts.
+    static let opened: Stack? = {
+        do {
+            return try current.open()
+        } catch {
+            Logger.shared.error("The bundled Trinity stack could not be opened: \(error)")
+            return nil
+        }
+    }()
 
     static let previewnet = Definition(resource: "trinity-stack-previewnet", allowsReservedValues: false)
 

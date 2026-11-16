@@ -430,11 +430,12 @@ internal interface ProductsModule {
     fun bindRequestPaymentUseCase(impl: RealRequestPaymentUseCase): RequestPaymentUseCase
 
     companion object {
-        // Opened once at startup so links and trust are judged by the core's stack before the runtime starts.
+        // Links are judged by the core's stack before the runtime starts. Absent when the bundled copy cannot be
+        // opened, so a bad stack disables those links instead of crashing the app at launch.
         @Provides
         @Singleton
-        fun provideStack(@ApplicationContext context: Context, environment: TestnetEnvironment): Stack =
-            TrUAPIStack.of(environment).opened(context)
+        fun provideStack(@ApplicationContext context: Context, environment: TestnetEnvironment): Stack? =
+            TrUAPIStack.of(environment).openedOrNull(context)
 
         @Provides
         @Singleton
