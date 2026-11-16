@@ -8,9 +8,9 @@
 #
 # Authentication is federated. The job proves its identity with the run's OIDC
 # token and receives a short lived credential, so no long lived key for this
-# project is stored anywhere. The identity is bound to main, so the run starts
-# from a push to main: a pull request event's token names the pull request
-# rather than the branch, and the binding never accepts it.
+# project is stored anywhere. The identity is bound to main, so a delivering run
+# starts from a push to main: a pull request event's token names the pull
+# request rather than the branch, and the binding never accepts it.
 name: Android debug distribution
 
 on:
@@ -76,7 +76,7 @@ jobs:
     env:
       DELIVER: ${{ github.event_name != 'workflow_dispatch' || inputs.deliver }}
     steps:
-      # The pushed commit, which is what landed on main.
+      # The pushed commit, which is what landed on main, or the dispatched ref.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -118,10 +118,9 @@ jobs:
           CI_KEYSTORE_KEY_ALIAS: ${{ secrets.CI_KEYSTORE_KEY_ALIAS }}
           CI_KEYSTORE_KEY_PASS: ${{ secrets.CI_KEYSTORE_KEY_PASS }}
         # gradle.properties gives Gradle and the Kotlin daemon 8 GB each, which
-        # is the whole of this runner's 16 GB before Cargo and KSP, and the
-        # runner was lost mid build when they reached it. Capped here so local
-        # builds keep their settings. Memory is printed every 30 seconds so a
-        # runner that still dies leaves its last reading in this log.
+        # would fill this runner's 16 GB before Cargo and KSP. Capped here so
+        # local builds keep their settings. Memory is printed every 30 seconds
+        # so a runner that still dies leaves its last reading in this log.
         run: |
           set -euo pipefail
           free -m
