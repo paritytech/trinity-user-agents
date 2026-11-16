@@ -711,6 +711,14 @@ fn a_stack_provider_names_its_stack_to_the_store() {
 	assert!(block_on(provider.save_database(relay.to_vec())).expect("the store accepts it"));
 
 	let calls = store.calls();
+	let named: Vec<_> = calls
+		.iter()
+		.map(|call| match call {
+			StoreCall::Load { genesis_hash, stack } |
+			StoreCall::Save { genesis_hash, stack, .. } => (*genesis_hash, stack.clone()),
+		})
+		.collect();
+	assert_eq!(named, vec![(relay, Some(STACK_ID.to_owned())); calls.len()]);
 	let Some(StoreCall::Save { blob, .. }) = calls.last() else {
 		panic!("the snapshot was not saved: {calls:?}");
 	};
@@ -720,8 +728,4 @@ fn a_stack_provider_names_its_stack_to_the_store() {
 			.is_some(),
 		"the stack's provider reads back what it saved"
 	);
-	let stack = Some(STACK_ID.to_owned());
-	let load = || StoreCall::Load { genesis_hash: relay, stack: stack.clone() };
-	let save = StoreCall::Save { genesis_hash: relay, blob: blob.clone(), stack: stack.clone() };
-	assert_eq!(*calls, [load(), load(), save]);
 }

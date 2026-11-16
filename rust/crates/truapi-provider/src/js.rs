@@ -339,7 +339,8 @@ const STORAGE_DEADLINE: core::time::Duration = core::time::Duration::from_secs(5
 /// When a stack's `generation` changes, close every connection of the
 /// previous provider and `free()` it before building the next one. Its
 /// snapshot loop runs until then, and stores under the same stack and genesis
-/// hash, replacing the next provider's state.
+/// hash, replacing the next provider's state. `free()` also keeps a snapshot
+/// already under way from being stored.
 #[wasm_bindgen]
 pub struct ChainProviderHandle {
 	inner: Arc<EmbeddedChainProvider>,
@@ -347,6 +348,15 @@ pub struct ChainProviderHandle {
 	/// not each start their own loop.
 	#[cfg(feature = "smoldot")]
 	persisting: Arc<std::sync::Mutex<std::collections::HashSet<[u8; 32]>>>,
+}
+
+/// A snapshot loop holds the provider while it saves, so letting go of the
+/// handle alone would not stop a save that is under way.
+#[cfg(feature = "smoldot")]
+impl Drop for ChainProviderHandle {
+	fn drop(&mut self) {
+		self.inner.stop_saving();
+	}
 }
 
 #[cfg(feature = "smoldot")]

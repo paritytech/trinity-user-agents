@@ -105,6 +105,23 @@ fn a_spec_of_another_chain_is_refused() {
 	);
 }
 
+/// Bytes that are not even text are still refused as a digest mismatch, so
+/// the host is told the file it fetched is not the one the descriptor names.
+#[test]
+fn a_spec_that_is_not_utf8_is_refused_by_its_digest() {
+	let stack = stack(STACK_ID, "one");
+	let people = genesis(PEOPLE_SPEC);
+
+	assert_eq!(
+		stack.add_light_spec(people, &[0xff, 0xfe]),
+		Err(ProviderError::LightSpec {
+			role: "People".to_owned(),
+			genesis: people,
+			source: Error::SpecDigest,
+		})
+	);
+}
+
 #[test]
 fn a_spec_for_a_chain_outside_the_stack_is_refused() {
 	let stack = stack(STACK_ID, "one");

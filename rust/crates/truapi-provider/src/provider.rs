@@ -171,6 +171,8 @@ impl EmbeddedChainProviderBuilder {
 			#[cfg(feature = "smoldot")]
 			stored_quality: Mutex::new(HashMap::new()),
 			#[cfg(feature = "smoldot")]
+			saving_stopped: core::sync::atomic::AtomicBool::new(false),
+			#[cfg(feature = "smoldot")]
 			light: crate::light::LightState::new(self.connection_types, self.keep_chains_running),
 			#[cfg(feature = "networks")]
 			catalog: self.catalog,
@@ -216,6 +218,9 @@ pub struct EmbeddedChainProvider {
 	/// assuming nothing else writes the same key.
 	#[cfg(feature = "smoldot")]
 	stored_quality: Mutex<HashMap<[u8; 32], bool>>,
+	/// Set by [`stop_saving`](Self::stop_saving).
+	#[cfg(feature = "smoldot")]
+	saving_stopped: core::sync::atomic::AtomicBool,
 	#[cfg(feature = "smoldot")]
 	light: crate::light::LightState,
 	#[cfg(feature = "networks")]
@@ -251,6 +256,8 @@ impl EmbeddedChainProvider {
 				relay: relay_source(source, self.relays.get(&genesis_hash).copied(), |relay| {
 					self.registered_or_stack(relay)
 				})?,
+				#[cfg(feature = "networks")]
+				catalog_service: None,
 			});
 		}
 		#[cfg(feature = "smoldot")]
@@ -261,7 +268,12 @@ impl EmbeddedChainProvider {
 			let relay = relay_source(&source, stack.relay_of(genesis_hash), |relay| {
 				self.registered_or_stack(relay)
 			})?;
-			return Ok(ResolvedChain { source, relay });
+			return Ok(ResolvedChain {
+				source,
+				relay,
+				#[cfg(feature = "networks")]
+				catalog_service: None,
+			});
 		}
 		#[cfg(feature = "networks")]
 		if let Some((catalog, relay)) = self.catalog_network(genesis_hash) {
@@ -271,6 +283,7 @@ impl EmbeddedChainProvider {
 			return Ok(ResolvedChain {
 				source: source.clone(),
 				relay: relay_source(source, relay, |relay| catalog.get(&relay).cloned())?,
+				catalog_service: crate::networks::catalog_service(genesis_hash),
 			});
 		}
 		Err(ProviderError::UnknownGenesis { genesis: genesis_hash })
@@ -294,6 +307,8 @@ impl EmbeddedChainProvider {
 			relay: resolved
 				.relay
 				.map(|(genesis, source)| (genesis, self.with_seeded_database(genesis, source))),
+			#[cfg(feature = "networks")]
+			catalog_service: resolved.catalog_service,
 		})
 	}
 
@@ -360,6 +375,15 @@ impl EmbeddedChainProvider {
 	/// Whether this provider was built with somewhere to keep blobs.
 	pub fn has_storage(&self) -> bool {
 		self.storage.is_some()
+	}
+
+	/// Store nothing from now on, a snapshot already under way included.
+	///
+	/// A host that replaces this provider, as when its stack's `generation`
+	/// changes, calls it so a late save cannot replace what the next provider
+	/// stored under the same stack and genesis hash.
+	pub fn stop_saving(&self) {
+		self.saving_stopped.store(true, core::sync::atomic::Ordering::Relaxed);
 	}
 
 	/// The store this provider keeps blobs in, or an error naming what is
@@ -603,6 +627,15 @@ impl EmbeddedChainProvider {
 			);
 			return Ok(false);
 		}
+		// Checked last, after every await, so a snapshot that was under way
+		// when the provider was let go still writes nothing.
+		if self.saving_stopped.load(core::sync::atomic::Ordering::Relaxed) {
+			tracing::debug!(
+				genesis = %hex::encode(genesis_hash),
+				"not stored: this provider has stopped saving"
+			);
+			return Ok(false);
+		}
 		// The blob is not kept in `seeded_databases`: a chain only consumes one
 		// on its first add, and this chain is live, so nothing could read it
 		// back before the process ends.
@@ -706,7 +739,7 @@ impl ChainProvider for EmbeddedChainProvider {
 			#[cfg(feature = "smoldot")]
 			source @ ChainSource::LightClient { .. } => {
 				#[cfg(feature = "networks")]
-				if let Some((network, service)) = crate::networks::catalog_service(genesis_hash) {
+				if let Some((network, service)) = resolved.catalog_service {
 					tracing::info!(network, service, "connecting via light client");
 				}
 				let relay = resolved.relay;

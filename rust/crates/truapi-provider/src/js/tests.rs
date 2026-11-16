@@ -6,7 +6,16 @@ wasm_bindgen_test_configure!(run_in_browser);
 
 /// A client whose `load` and `save` record every argument they were called
 /// with, so a test can prove the wasm boundary actually reaches the object the
-/// host passed. `load` answers `stored`, and a call without a stack records `-`.
+/// host passed. `load` answers `stored`, and a call whose stack is `undefined`
+/// records `-`, so a `null` stack shows up as itself.
+/// How [`recording_client`] records a `stack` argument.
+fn recorded_stack(stack: &JsValue) -> String {
+	if stack.is_undefined() {
+		return "-".to_owned();
+	}
+	stack.as_string().unwrap_or_else(|| format!("{stack:?}"))
+}
+
 fn recording_client(
 	calls: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
 	stored: String,
@@ -16,7 +25,7 @@ fn recording_client(
 	let load_calls = std::rc::Rc::clone(&calls);
 	let load = Closure::<dyn FnMut(String, JsValue) -> JsValue>::new(
 		move |genesis: String, stack: JsValue| {
-			let stack = stack.as_string().unwrap_or_else(|| "-".to_owned());
+			let stack = recorded_stack(&stack);
 			load_calls.borrow_mut().push(format!("load {genesis} {stack}"));
 			JsValue::from_str(&stored)
 		},
@@ -27,7 +36,7 @@ fn recording_client(
 	let save_calls = std::rc::Rc::clone(&calls);
 	let save = Closure::<dyn FnMut(String, String, JsValue)>::new(
 		move |genesis: String, blob: String, stack: JsValue| {
-			let stack = stack.as_string().unwrap_or_else(|| "-".to_owned());
+			let stack = recorded_stack(&stack);
 			save_calls.borrow_mut().push(format!("save {genesis} {blob} {stack}"));
 		},
 	);

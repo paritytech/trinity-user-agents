@@ -130,9 +130,9 @@ impl LightStack {
 			genesis: genesis_hash,
 			source,
 		};
-		let specification = core::str::from_utf8(specification)
-			.map_err(|error| refused(Error::MalformedSpec(error.to_string())))?;
-		chain.check_light_spec(specification.as_bytes()).map_err(refused)?;
+		chain.check_light_spec(specification).map_err(refused)?;
+		let specification =
+			core::str::from_utf8(specification).expect("a light spec that parsed as JSON is UTF-8");
 		self.specs().insert(genesis_hash, specification.to_owned());
 		Ok(())
 	}
