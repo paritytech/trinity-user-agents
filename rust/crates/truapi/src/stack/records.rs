@@ -58,29 +58,24 @@ fn record_sequence(pointer: &Pointer, record: &[u8]) -> Option<u32> {
 #[async_trait::async_trait]
 impl StackRecords for crate::store::Db {
 	async fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError> {
-		use rusqlite::OptionalExtension;
-
 		let stack_id = stack_id.to_string();
-		self.read(move |conn| {
-			Ok(conn
-				.query_row(
-					"SELECT record FROM stack_record WHERE stack_id = ?1",
-					[stack_id],
-					|row| row.get(0),
-				)
-				.optional()?)
-		})
-		.await
-		.map_err(|error| error.to_string().into())
+		self.read(move |conn| Ok(stored_record(conn, &stack_id)?))
+			.await
+			.map_err(|error| error.to_string().into())
 	}
 
 	async fn write_stack_record(
 		&self,
 		stack_id: &str,
 		record: Vec<u8>,
+		check: ReplaceCheck,
 	) -> Result<(), GenericError> {
 		let stack_id = stack_id.to_string();
 		self.write(move |tx| {
+			let stored = stored_record(tx, &stack_id)?;
+			if stored.is_some_and(|stored| !check.replaces(&stored)) {
+				return Ok(());
+			}
 			tx.execute(
 				"INSERT INTO stack_record (stack_id, record) VALUES (?1, ?2)
 				 ON CONFLICT (stack_id) DO UPDATE SET record = excluded.record",
@@ -91,4 +86,18 @@ impl StackRecords for crate::store::Db {
 		.await
 		.map_err(|error| error.to_string().into())
 	}
+}
+
+/// The record stored for `stack_id`, read in the caller's transaction.
+#[cfg(not(target_arch = "wasm32"))]
+fn stored_record(
+	conn: &rusqlite::Connection,
+	stack_id: &str,
+) -> rusqlite::Result<Option<Vec<u8>>> {
+	use rusqlite::OptionalExtension;
+
+	conn.query_row("SELECT record FROM stack_record WHERE stack_id = ?1", [stack_id], |row| {
+		row.get(0)
+	})
+	.optional()
 }

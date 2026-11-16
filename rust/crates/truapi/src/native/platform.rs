@@ -10,8 +10,8 @@ use crate::{
 		AuthPresenter, ChainProvider, CoreStorage, CoreStorageKey, DevicePermissionStatus,
 		ExtrinsicVersionHost, Features, JsonRpcConnection, LocaleHost, Navigation, Notifications,
 		PermissionDecision, Permissions, PreimageHost, ProductContext, ProductId,
-		ProductOperations, ProductStorage, ProviderError, ThemeHost, UserConfirmation,
-		UserConfirmationReview,
+		ProductOperations, ProductStorage, ProviderError, StackFetchRequest, StackFetchResponse,
+		StackHost, StackStatus, ThemeHost, UserConfirmation, UserConfirmationReview,
 	},
 };
 use futures::{
@@ -95,7 +95,7 @@ impl crate::platform::ScannerPlatform for ScannerCallbackPlatform {
 	}
 }
 
-/// [`crate::platform::StackHost`] served by host-provided
+/// [`StackHost`] served by host-provided
 /// [`NativeStackCallbacks`].
 pub struct StackCallbackHost {
 	/// Host HTTP client and stack status observer.
@@ -103,15 +103,15 @@ pub struct StackCallbackHost {
 }
 
 #[async_trait::async_trait]
-impl crate::platform::StackHost for StackCallbackHost {
+impl StackHost for StackCallbackHost {
 	async fn fetch_stack_descriptor(
 		&self,
-		request: crate::platform::StackFetchRequest,
-	) -> Result<crate::platform::StackFetchResponse, v01::GenericError> {
+		request: StackFetchRequest,
+	) -> Result<StackFetchResponse, v01::GenericError> {
 		Ok(self.stack.fetch_stack_descriptor(request).await?)
 	}
 
-	fn stack_changed(&self, status: crate::platform::StackStatus) {
+	fn stack_changed(&self, status: StackStatus) {
 		self.stack.stack_changed(status);
 	}
 }

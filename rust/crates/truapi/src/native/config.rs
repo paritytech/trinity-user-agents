@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use crate::{
 	platform::{
-		ExecutableKind, HostInfo, PlatformInfo, ProductContext, ProductId,
-		RuntimeConfigValidationError, SigningHostConfig, Stack,
+		ExecutableKind, HostIdentity, HostInfo, PlatformInfo, ProductContext, ProductId,
+		RuntimeConfigValidationError, StackError,
 	},
 	pocket_cards::PinnedPocketCard,
 };
@@ -48,7 +48,7 @@ pub struct HostRuntimeConfig {
 
 /// The stack a host build ships: its pointer, its signed descriptor, and
 /// whether the build lets it use Polkadot's reserved values.
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Clone, uniffi::Record)]
 pub struct BundledStack {
 	/// The stack's link, `polkadotapp://stack?key=0x…&url=…`. It must carry a
 	/// key.
@@ -71,12 +71,11 @@ pub struct ProductExecutionConfig {
 }
 
 /// [`HostRuntimeConfig`] once validated, in the shape the runtime is built from.
-#[derive(Debug)]
 pub struct NativeResolvedHostRuntimeConfig {
-	/// Configuration the signing-host runtime runs with, on the stack the
-	/// bundled copy names.
-	pub signing: SigningHostConfig,
-	/// The stack the host build ships, which the runtime refreshes.
+	/// The host the wallet and products see.
+	pub host: HostIdentity,
+	/// The stack the host build ships. The runtime resolves it when it is
+	/// built, and refreshes it while it runs.
 	pub stack: BundledStack,
 	/// Entropy to activate a local signing session with at construction.
 	pub local_session_secret: Option<Vec<u8>>,
@@ -123,6 +122,12 @@ impl From<RuntimeConfigValidationError> for NativeRuntimeConfigError {
 	}
 }
 
+impl From<StackError> for NativeRuntimeConfigError {
+	fn from(err: StackError) -> Self {
+		Self::Invalid { reason: err.to_string() }
+	}
+}
+
 /// The platform products see in `System::host_info`. The native library ships
 /// only inside iOS and Android apps, so the target decides it.
 pub fn native_host_platform() -> HostPlatform {
@@ -139,10 +144,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 	type Error = NativeRuntimeConfigError;
 
 	fn try_from(config: HostRuntimeConfig) -> Result<Self, Self::Error> {
-		let BundledStack { pointer, descriptor, allows_reserved_values } = &config.stack;
-		let stack = Stack::bundled(pointer, descriptor, *allows_reserved_values)
-			.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })?;
-		let signing = SigningHostConfig::new(
+		let host = HostIdentity::new(
 			HostInfo {
 				name: config.host_name,
 				icon: config.host_icon,
@@ -150,10 +152,9 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 				platform: native_host_platform(),
 			},
 			PlatformInfo { kind: config.platform_type, version: config.platform_version },
-			stack,
 		)?;
 		Ok(Self {
-			signing,
+			host,
 			stack: config.stack,
 			local_session_secret: config.local_session_secret,
 			local_session_lite_username: config.local_session_lite_username,

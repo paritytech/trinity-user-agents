@@ -11,7 +11,7 @@ use crate::{
 	markers,
 	platform::{
 		CoreAdmin, ExecutableKind, PermissionAuthorizationRequest, PermissionAuthorizationStatus,
-		ProductContext, ProductId, StackRefresh, StackStatus,
+		ProductContext, ProductId, SigningHostConfig, StackRefresh, StackStatus,
 	},
 	time::{RealTimer, SystemClock},
 };
@@ -146,10 +146,8 @@ impl NativeTrUApiHostRuntime {
 			Box::new(core_db.clone()),
 			Arc::new(RealTimer),
 			Box::new(SystemClock),
-		))
-		.map_err(|error| NativeRuntimeConfigError::Invalid { reason: error.to_string() })?;
-		let mut signing = runtime_config.signing;
-		signing.stack = stack_refresh.stack();
+		))?;
+		let signing = SigningHostConfig { host: runtime_config.host, stack: stack_refresh.stack() };
 		let events = Arc::new(NativeEventBus::default());
 		let platform = Arc::new(CallbackPlatform {
 			callbacks: callbacks.clone(),
@@ -641,6 +639,10 @@ impl NativeTrUApiHostRuntime {
 	///
 	/// Set-once: answers whether this call installed them. A runtime without
 	/// them stays on the copy it started from.
+	///
+	/// The refresh holds `callbacks` until this runtime drops. Hold the
+	/// runtime weakly from them: a strong reference keeps it, and its
+	/// refresh, running after the host builds a new one.
 	pub fn set_stack_callbacks(&self, callbacks: Arc<dyn NativeStackCallbacks>) -> bool {
 		self.stack_refresh
 			.start(Box::new(StackCallbackHost { stack: callbacks }), &self.spawner)
