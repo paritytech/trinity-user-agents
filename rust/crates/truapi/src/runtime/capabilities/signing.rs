@@ -129,9 +129,8 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 						};
 						CallError::Domain(error)
 					})?;
-				let request = CreateTransactionAuthorityRequest::Product(
-					payload.with_call_data(call_data),
-				);
+				let request =
+					CreateTransactionAuthorityRequest::Product(payload.with_call_data(call_data));
 				self.accounts
 					.create_transaction(&session, cx, request)
 					.await

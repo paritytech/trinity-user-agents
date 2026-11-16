@@ -1918,9 +1918,12 @@ fn cross_product_alias_reuses_persisted_account_access_grant() {
 		served(request.clone()),
 	))
 	.expect("first alias succeeds");
-	futures::executor::block_on(
-		authority.accounts().account_alias(&session, &cx, &product, served(request)),
-	)
+	futures::executor::block_on(authority.accounts().account_alias(
+		&session,
+		&cx,
+		&product,
+		served(request),
+	))
 	.expect("second alias succeeds from cached grant");
 
 	assert_eq!(

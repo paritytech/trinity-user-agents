@@ -1693,16 +1693,15 @@ impl FundingRegistry {
 					return false;
 				};
 				let target = intent.clone();
-				self
-					.commit(current_unix_millis(), move |draft| {
-						let now_ms = current_unix_millis();
-						let changed = draft
-							.sessions
-							.get_mut(&target)
-							.is_some_and(|session| session.answer_cancel(answer, now_ms));
-						((), if changed { vec![target] } else { Vec::new() })
-					})
-					.await
+				self.commit(current_unix_millis(), move |draft| {
+					let now_ms = current_unix_millis();
+					let changed = draft
+						.sessions
+						.get_mut(&target)
+						.is_some_and(|session| session.answer_cancel(answer, now_ms));
+					((), if changed { vec![target] } else { Vec::new() })
+				})
+				.await
 			},
 			ProviderCall::Cancel(intent, CancelCall::Settle(decision)) => {
 				let heard =
@@ -1714,14 +1713,13 @@ impl FundingRegistry {
 					return false;
 				}
 				let target = intent.clone();
-				self
-					.commit(current_unix_millis(), move |draft| {
-						if let Some(session) = draft.sessions.get_mut(&target) {
-							session.cancel_settled(&decision);
-						}
-						((), Vec::new())
-					})
-					.await
+				self.commit(current_unix_millis(), move |draft| {
+					if let Some(session) = draft.sessions.get_mut(&target) {
+						session.cancel_settled(&decision);
+					}
+					((), Vec::new())
+				})
+				.await
 			},
 		};
 		match answered {

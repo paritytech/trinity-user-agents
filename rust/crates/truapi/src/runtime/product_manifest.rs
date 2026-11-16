@@ -32,10 +32,7 @@ use crate::{
 		},
 		worker_manifest::{WorkerManifest, check_app_manifest},
 	},
-	runtime::{
-		dotns_lookup::DotnsLookup,
-		services::RuntimeServices,
-	},
+	runtime::{dotns_lookup::DotnsLookup, services::RuntimeServices},
 	unix_time::current_unix_secs,
 };
 
@@ -64,14 +61,8 @@ async fn fetch_root_manifest(
 	asset_hub_chain_genesis_hash: [u8; 32],
 	product_id: &ProductId,
 ) -> Result<Option<String>, DotnsError> {
-	fetch_text_record(
-		chain,
-		asset_hub_chain_genesis_hash,
-		product_id,
-		None,
-		MANIFEST_RECORD_KEY,
-	)
-	.await
+	fetch_text_record(chain, asset_hub_chain_genesis_hash, product_id, None, MANIFEST_RECORD_KEY)
+		.await
 }
 
 /// Reads the JSON `product_id`'s `worker.<product_id>.<tld>` subname publishes
@@ -676,24 +667,29 @@ async fn root_manifest(
 	if services.stack().require_served(target).is_err() {
 		return (None, ManifestSource::Unserved);
 	}
-	let read = cached_dotns_json(platform, CoreStorageKey::product_manifest(target), CachePolicy::UseCache, || async {
-		let genesis_hash = services.asset_hub_chain_genesis_hash();
-		let (chain, target) = (services.chain.clone(), target.clone());
-		services
-			.dotns_reads
-			.root_manifests
-			.run(target.bare_label().to_string(), move || async move {
-				fetch_root_manifest(&chain, genesis_hash, &target).await.map_err(|error| {
-					let reason = error.reason();
-					warn!(%target, %reason, "root manifest lookup failed");
-					ManifestSource::LookupFailed { reason }
+	let read = cached_dotns_json(
+		platform,
+		CoreStorageKey::product_manifest(target),
+		CachePolicy::UseCache,
+		|| async {
+			let genesis_hash = services.asset_hub_chain_genesis_hash();
+			let (chain, target) = (services.chain.clone(), target.clone());
+			services
+				.dotns_reads
+				.root_manifests
+				.run(target.bare_label().to_string(), move || async move {
+					fetch_root_manifest(&chain, genesis_hash, &target).await.map_err(|error| {
+						let reason = error.reason();
+						warn!(%target, %reason, "root manifest lookup failed");
+						ManifestSource::LookupFailed { reason }
+					})
 				})
-			})
-			.await
-			.unwrap_or_else(|| {
-				Err(ManifestSource::LookupFailed { reason: READ_ENDED_UNANSWERED.to_string() })
-			})
-	})
+				.await
+				.unwrap_or_else(|| {
+					Err(ManifestSource::LookupFailed { reason: READ_ENDED_UNANSWERED.to_string() })
+				})
+		},
+	)
 	.await;
 	match read {
 		Ok((json, DotnsRead::Cached { age_secs })) => (json, ManifestSource::Cached { age_secs }),
@@ -722,22 +718,23 @@ pub async fn read_worker_manifest(
 		// id the stack does not run.
 		return Ok((None, DotnsRead::Fetched));
 	}
-	let (json, read) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), policy, || async {
-		let genesis_hash = services.asset_hub_chain_genesis_hash();
-		let (chain, product) = (services.chain.clone(), product_id.clone());
-		services
-			.dotns_reads
-			.worker_manifests
-			.run(product_id.bare_label().to_string(), move || async move {
-				fetch_worker_manifest(&chain, genesis_hash, &product)
-					.await
-					.map_err(|error| error.reason())
-			})
-			.await
-			.unwrap_or_else(|| Err(READ_ENDED_UNANSWERED.to_string()))
-	})
-	.await
-	.inspect_err(|reason| warn!(%product_id, %reason, "worker manifest lookup failed"))?;
+	let (json, read) =
+		cached_dotns_json(platform, worker_manifest_cache_key(product_id), policy, || async {
+			let genesis_hash = services.asset_hub_chain_genesis_hash();
+			let (chain, product) = (services.chain.clone(), product_id.clone());
+			services
+				.dotns_reads
+				.worker_manifests
+				.run(product_id.bare_label().to_string(), move || async move {
+					fetch_worker_manifest(&chain, genesis_hash, &product)
+						.await
+						.map_err(|error| error.reason())
+				})
+				.await
+				.unwrap_or_else(|| Err(READ_ENDED_UNANSWERED.to_string()))
+		})
+		.await
+		.inspect_err(|reason| warn!(%product_id, %reason, "worker manifest lookup failed"))?;
 	let Some(json) = json else {
 		return Ok((None, read));
 	};
@@ -790,11 +787,16 @@ pub async fn publishes_app(
 	if services.stack().require_served(product_id).is_err() {
 		return Some(false);
 	}
-	let read = cached_dotns_json(platform, app_manifest_cache_key(product_id), CachePolicy::UseCache, || async {
-		fetch_app_manifest(&services.chain, services.asset_hub_chain_genesis_hash(), product_id)
-			.await
-			.map_err(|error| error.reason())
-	});
+	let read = cached_dotns_json(
+		platform,
+		app_manifest_cache_key(product_id),
+		CachePolicy::UseCache,
+		|| async {
+			fetch_app_manifest(&services.chain, services.asset_hub_chain_genesis_hash(), product_id)
+				.await
+				.map_err(|error| error.reason())
+		},
+	);
 	let (json, _) = with_ceiling(ceiling, read)
 		.await?
 		.inspect_err(|reason| warn!(%product_id, %reason, "app manifest lookup failed"))

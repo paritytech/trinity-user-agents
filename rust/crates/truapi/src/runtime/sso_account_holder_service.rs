@@ -133,7 +133,8 @@ impl SsoAccountHolderService {
 					// A relayed request carries no caller identity, and this role
 					// confirms every one of them anyway.
 					let invocation = cx.account_invocation(None);
-					let request = SignPayloadAuthorityRequest::Product(self.wallet.serve(*request)?);
+					let request =
+						SignPayloadAuthorityRequest::Product(self.wallet.serve(*request)?);
 					let review = request.review(&invocation.caller);
 					self.confirmed(invocation, review, |invocation| {
 						self.wallet.sign_payload(invocation, request)

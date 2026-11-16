@@ -447,7 +447,9 @@ impl CreateTransactionAuthorityRequest {
 			},
 			Self::LegacyAccount { product_account, request } => {
 				CreateTransactionReview::LegacyAccount {
-					account: LegacySigningAccount::Product(ProductAccountId::clone(product_account)),
+					account: LegacySigningAccount::Product(ProductAccountId::clone(
+						product_account,
+					)),
 					payload: request.clone(),
 				}
 			},

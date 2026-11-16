@@ -183,9 +183,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		cx: &CallContext,
 		request: Served<HostAccountCreateProofRequest>,
 	) -> Result<HostAccountCreateProofResponse, RingVrfError> {
-		self.accounts
-			.create_proof(session, cx, &self.connection.product, request)
-			.await
+		self.accounts.create_proof(session, cx, &self.connection.product, request).await
 	}
 
 	/// Register a ring-VRF key owned by this product.
@@ -288,13 +286,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		payload: Vec<u8>,
 	) -> Result<[u8; 64], AuthorityError> {
 		self.accounts
-			.sign_statement_store_product_payload(
-				session,
-				cx,
-				&self.connection,
-				account,
-				payload,
-			)
+			.sign_statement_store_product_payload(session, cx, &self.connection, account, payload)
 			.await
 	}
 

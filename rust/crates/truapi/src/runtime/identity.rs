@@ -22,10 +22,7 @@ use crate::{
 		},
 		session::SessionInfo,
 	},
-	runtime::{
-		dotns_lookup::DotnsLookup,
-		services::DotnsReads,
-	},
+	runtime::{dotns_lookup::DotnsLookup, services::DotnsReads},
 	session_usernames::SessionUsernames,
 };
 
