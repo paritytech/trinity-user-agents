@@ -86,6 +86,9 @@ pub struct FundingProviders {
 	/// Quote lists waiting for the providers to change before their next
 	/// round.
 	changed: WakeSignal,
+	/// The manifest of the core's native route while it serves anything,
+	/// listed before every provider the host offers.
+	native: Mutex<Option<WorkerManifest>>,
 }
 
 impl FundingProviders {
@@ -153,10 +156,22 @@ impl FundingProviders {
 			.collect()
 	}
 
-	/// The host's providers in its order, each with the manifest the core
-	/// goes by.
+	/// The native route while it serves anything, then the host's providers
+	/// in its order, each with the manifest the core goes by.
 	fn providers(&self) -> Vec<(ProductId, Option<WorkerManifest>)> {
-		manifests(&lock(&self.entries))
+		let native = lock(&self.native)
+			.clone()
+			.map(|manifest| (ProductId::native_funding(), Some(manifest)));
+		native.into_iter().chain(manifests(&lock(&self.entries))).collect()
+	}
+
+	/// Make `manifest` what the native route serves, `None` while it serves
+	/// nothing. Returns whether that changed.
+	pub fn set_native(&self, manifest: Option<WorkerManifest>) -> bool {
+		let mut native = lock(&self.native);
+		let changed = *native != manifest;
+		*native = manifest;
+		changed
 	}
 
 	/// Make `offered` the providers, keeping what dotNS said of each one
@@ -262,17 +277,22 @@ impl FundingProviders {
 		country_support(&self.providers(), &learned, direction, rail, asset, current_unix_millis())
 	}
 
-	/// Whether `provider_id` ships an App, as the host said.
+	/// Whether `provider_id` ships an App, as the host said. The native route
+	/// ships none.
 	pub fn app(&self, provider_id: &ProductId) -> FundingProviderApp {
+		if provider_id.is_native_funding() {
+			return FundingProviderApp::Absent;
+		}
 		lock(&self.entries)
 			.iter()
 			.find(|entry| entry.product_id == *provider_id)
 			.map_or(FundingProviderApp::Unknown, |entry| entry.app)
 	}
 
-	/// Whether the host offers no funding provider.
+	/// Whether the host offers no funding provider and the native route
+	/// serves nothing.
 	pub fn is_empty(&self) -> bool {
-		lock(&self.entries).is_empty()
+		lock(&self.entries).is_empty() && lock(&self.native).is_none()
 	}
 
 	/// Whether a session can be handed to `provider_id`: it is a quote target.
@@ -487,6 +507,8 @@ impl RuntimeServices {
 	/// read that fails keeps what the core had, since it says nothing about
 	/// the provider.
 	pub fn refresh_funding_providers(self: &Arc<Self>) {
+		#[cfg(not(target_arch = "wasm32"))]
+		self.refresh_native_funding();
 		let services = self.clone();
 		self.spawner.spawn(async move {
 			let mut loaded = services.funding_providers().learned_store.lock().await;
@@ -586,7 +608,7 @@ impl RuntimeServices {
 	/// for one the host lists without a manifest: every open overlay is sent
 	/// its options again, and every watched quote list asks again at once,
 	/// so a provider read after the overlay opened still shows and quotes.
-	fn funding_providers_changed(self: &Arc<Self>) {
+	pub(crate) fn funding_providers_changed(self: &Arc<Self>) {
 		self.funding_providers().changed.wake();
 		for intent in self.funding().presenting() {
 			self.send_funding_options(&intent);

@@ -9,7 +9,12 @@
 //! credits through the host's top-up with a session key as the source.
 
 pub mod chain;
+mod destinations;
+mod install;
 pub mod keys;
+pub mod live;
 pub mod session;
+#[cfg(test)]
+pub mod testing;
 pub mod tokens;
 pub mod xcm;

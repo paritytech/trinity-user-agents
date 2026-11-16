@@ -23,6 +23,7 @@ fn declared_networks_are_listed_once_in_order() {
 		limits: Vec::new(),
 		declares_routes: true,
 		brand: None,
+		native: false,
 	};
 	let candidates = [
 		candidate(vec![
@@ -348,4 +349,38 @@ fn limits_count_only_the_providers_routing_the_rail() {
 		country: None,
 	});
 	assert_eq!((limits.min, limits.max), (Some(20_000_000), Some(90_000_000)));
+}
+
+// The core's native route is listed first while it serves anything, flagged
+// so the host names it and asks for a withdrawal's destination itself, and
+// asked for crypto quotes only.
+#[test]
+fn the_native_route_is_listed_first_while_it_serves_anything() {
+	use crate::native_funding::tokens::{NativeToken, native_manifest};
+
+	let providers = providers(&[("card.dot", Some(manifest(CARD_IN)))]);
+	let native = ProductId::native_funding();
+
+	assert!(providers.set_native(native_manifest(&[NativeToken::Dot, NativeToken::DotUsd])));
+	assert!(!providers.set_native(native_manifest(&[NativeToken::Dot, NativeToken::DotUsd])));
+	let inbound = providers.candidates(FundingDirection::In);
+	assert_eq!(ids(inbound.clone()), vec![native.clone(), ProductId::for_test("card.dot")]);
+	assert_eq!(inbound.iter().map(|candidate| candidate.native).collect::<Vec<_>>(), [true, false]);
+	assert_eq!(inbound[0].routes[0].assets, ["DOT", "dotUSD"]);
+	assert_eq!(inbound[0].routes[0].networks, Some(vec!["polkadot".to_string()]));
+	assert_eq!(
+		providers.quote_targets_for(FundingDirection::In, FundingRail::Crypto),
+		vec![native.clone()]
+	);
+	assert_eq!(
+		providers.quote_targets_for(FundingDirection::In, FundingRail::Card),
+		vec![ProductId::for_test("card.dot")]
+	);
+	assert!(providers.candidates(FundingDirection::Out).is_empty());
+	assert_eq!(providers.app(&native), FundingProviderApp::Absent);
+
+	assert!(providers.set_native(native_manifest(&[])));
+	assert_eq!(ids(providers.candidates(FundingDirection::In)), vec![ProductId::for_test(
+		"card.dot"
+	)]);
 }

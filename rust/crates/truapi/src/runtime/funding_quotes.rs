@@ -652,9 +652,12 @@ pub struct WorkerHold {
 }
 
 impl WorkerHold {
-	/// Hold `provider`'s worker, so the host runs it to answer.
+	/// Hold `provider`'s worker, so the host runs it to answer. The native
+	/// route runs in the core and has no worker, so its hold holds nothing.
 	pub fn acquire(services: &Arc<RuntimeServices>, provider: &ProductId) -> Self {
-		services.worker_ledger.acquire(provider);
+		if !provider.is_native_funding() {
+			services.worker_ledger.acquire(provider);
+		}
 		Self { services: Arc::downgrade(services), provider: provider.clone() }
 	}
 
@@ -667,7 +670,9 @@ impl WorkerHold {
 impl Drop for WorkerHold {
 	fn drop(&mut self) {
 		// Services that are gone took their ledger with them.
-		if let Some(services) = self.services.upgrade() {
+		if let Some(services) = self.services.upgrade() &&
+			!self.provider.is_native_funding()
+		{
 			services.worker_ledger.release(&self.provider);
 		}
 	}

@@ -2,90 +2,18 @@
 
 use std::sync::{Arc, Mutex};
 
-use truapi::latest::GenericError;
-
 use super::*;
 use crate::{
 	installation::InstallationId,
 	native_funding::{
-		chain::{ChainError, InPrice},
 		keys::session_key_from_entropy,
+		testing::{ENTROPY, FakeChain, FixedInstallation, FixedKeys},
 	},
-	runtime::AuthorityError,
 };
 
-const ENTROPY: [u8; 16] = [3; 16];
 const INTENT: &str = "fs_native";
 const SEND: u128 = 25_000_000_000;
 const CREDIT: u128 = 10_000_000;
-
-/// A chain whose state the test sets, and whose conversion lands `landing`
-/// CASH on People.
-#[derive(Default)]
-struct FakeChain {
-	state: Mutex<ChainState>,
-}
-
-#[derive(Default)]
-struct ChainState {
-	deposit: u128,
-	nonce: u64,
-	on_people: u128,
-	landing: u128,
-	converted: Vec<(NativeToken, Tier, u128, u128)>,
-}
-
-impl FakeChain {
-	fn with(&self, edit: impl FnOnce(&mut ChainState)) {
-		edit(&mut self.state.lock().unwrap());
-	}
-
-	fn converted(&self) -> Vec<(NativeToken, Tier, u128, u128)> {
-		self.state.lock().unwrap().converted.clone()
-	}
-}
-
-#[async_trait::async_trait]
-impl NativeChain for FakeChain {
-	async fn tokens_in(&self) -> Result<Vec<NativeToken>, ChainError> {
-		Ok(vec![NativeToken::Dot, NativeToken::DotUsd])
-	}
-
-	async fn price_in(&self, token: NativeToken, cash: u128) -> Result<InPrice, ChainError> {
-		Ok(match token {
-			NativeToken::Dot => InPrice { tier: Tier::Pool, send: SEND, network_fee: 1_000, exact: false },
-			_ => InPrice { tier: Tier::Direct, send: cash + 50_000, network_fee: 50_000, exact: true },
-		})
-	}
-
-	async fn balance(&self, _token: NativeToken, _account: [u8; 32]) -> Result<u128, ChainError> {
-		Ok(self.state.lock().unwrap().deposit)
-	}
-
-	async fn nonce(&self, _account: [u8; 32]) -> Result<u64, ChainError> {
-		Ok(self.state.lock().unwrap().nonce)
-	}
-
-	async fn cash_on_people(&self, _account: [u8; 32]) -> Result<u128, ChainError> {
-		Ok(self.state.lock().unwrap().on_people)
-	}
-
-	async fn convert(
-		&self,
-		_key: &SessionKey,
-		token: NativeToken,
-		tier: Tier,
-		deposit: u128,
-		min_cash: u128,
-	) -> Result<(), ChainError> {
-		let mut state = self.state.lock().unwrap();
-		state.converted.push((token, tier, deposit, min_cash));
-		state.deposit = 0;
-		state.nonce = 1;
-		state.on_people = state.landing;
-		Ok(())
-	}
-}
 
 /// A registry that records what the route reports and starts, and serves a
 /// session until it is delivered or failed.
@@ -132,24 +60,6 @@ impl NativeSessions for FakeSessions {
 				FundingUpdate::In(FundingInboundUpdate::Delivered) | FundingUpdate::Failed { .. }
 			)
 		})
-	}
-}
-
-struct FixedKeys;
-
-impl SessionKeys for FixedKeys {
-	fn session_key(&self, slot: &SessionKeySlot) -> Result<SessionKey, AuthorityError> {
-		session_key_from_entropy(&ENTROPY, slot)
-			.map_err(|error| AuthorityError::Unavailable { reason: error.to_string() })
-	}
-}
-
-struct FixedInstallation;
-
-#[async_trait::async_trait]
-impl InstallationIdProvider for FixedInstallation {
-	async fn current_installation(&self) -> Result<InstallationId, GenericError> {
-		Ok(InstallationId([9; 32]))
 	}
 }
 

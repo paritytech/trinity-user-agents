@@ -151,6 +151,9 @@ pub struct RuntimeServices {
 	/// recovery to whoever calls it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_work_observer: OnceLock<Arc<dyn DurableWorkObserver>>,
+	/// The core's native funding route, once installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	native_funding: OnceLock<Arc<crate::native_funding::session::NativeFunding>>,
 	/// The stack the host runs, fixed for the life of the runtime.
 	stack: Stack,
 	/// Reference counts per product worker.
@@ -279,6 +282,8 @@ impl RuntimeServices {
 			encrypted_storage: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_work_observer: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			native_funding: OnceLock::new(),
 			stack,
 			worker_ledger: WorkerLedger::default(),
 			chain,
@@ -500,6 +505,22 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_holding_tracker(&self, tracker: HoldingTracker) -> bool {
 		self.holding_tracker.set(tracker).is_ok()
+	}
+
+	/// The core's native funding route, once installed.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn native_funding(&self) -> Option<&Arc<crate::native_funding::session::NativeFunding>> {
+		self.native_funding.get()
+	}
+
+	/// Keep `route` as the core's native funding route. Set-once; returns
+	/// whether this call kept it.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub(crate) fn keep_native_funding(
+		&self,
+		route: Arc<crate::native_funding::session::NativeFunding>,
+	) -> bool {
+		self.native_funding.set(route).is_ok()
 	}
 
 	/// Install the provider of the installation id. Set-once; returns

@@ -318,6 +318,17 @@ impl WalletAccountHolder {
 		})
 	}
 
+	/// The native funding route's key at `slot`.
+	pub fn funding_session_key(
+		&self,
+		slot: &crate::native_funding::keys::SessionKeySlot,
+	) -> Result<crate::native_funding::keys::SessionKey, AuthorityError> {
+		self.with_installed_keys(|keys| {
+			crate::native_funding::keys::session_key_from_entropy(&keys.entropy, slot)
+				.map_err(AuthorityError::from)
+		})
+	}
+
 	/// The identity chat key.
 	pub fn identity_chat_private_key(&self) -> Result<[u8; 32], AuthorityError> {
 		self.with_installed_keys(|keys| Ok(derive_identity_chat_private_key(&keys.entropy)))

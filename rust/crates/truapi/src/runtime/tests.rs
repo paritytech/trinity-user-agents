@@ -12729,3 +12729,136 @@ fn offer_test_quote(services: &Arc<RuntimeServices>, intent: &str, provider_id: 
 	);
 	"q-test".to_string()
 }
+
+// The native route runs a top-up through the registry like a provider's
+// worker: it is listed first once the chain serves it, the user picks its
+// quote, it reports where to pay, converts the deposit once it lands, and
+// credits the CASH through the host's top-up under its own id, which the
+// session is delivered from.
+#[test]
+fn a_native_top_up_is_delivered_through_the_registry() {
+	use crate::native_funding::{
+		session::{NativeFunding, NativeFundingDeps},
+		testing::{FakeChain, FixedInstallation, FixedKeys},
+	};
+
+	const CREDIT: u128 = 10_000_000;
+	let services = funding_services();
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let engine = Arc::new(RecordingTopUpPlatform::default());
+	assert!(services.install_top_up_platform(engine.clone()));
+	let chain = Arc::new(FakeChain::default());
+	let route = NativeFunding::new(NativeFundingDeps {
+		sessions: Arc::new(Arc::downgrade(&services)),
+		chain: chain.clone(),
+		keys: Arc::new(FixedKeys),
+		installation: Arc::new(FixedInstallation),
+		spawner: services.spawner.clone(),
+		poll: Duration::from_millis(5),
+	});
+	assert!(services.install_native_funding(route.clone()));
+	let native = ProductId::native_funding();
+	let listed = (0..200).any(|_| {
+		std::thread::sleep(Duration::from_millis(5));
+		services.funding_providers().is_quote_target(&native)
+	});
+	assert!(listed, "the native route is offered once the chain serves it");
+
+	let intent = futures::executor::block_on(services.open_funding(
+		None,
+		new_intent(),
+		v01::FundingDirection::In,
+		Some(CREDIT),
+	))
+	.expect("opened")
+	.intent;
+	let ask = v01::FundingQuoteAsk {
+		direction: v01::FundingDirection::In,
+		rail: v01::FundingRail::Crypto,
+		asset: "dotUSD".to_string(),
+		network: Some("polkadot".to_string()),
+		amount: CREDIT,
+		country: None,
+	};
+	let v01::FundingQuoteAnswer::Quoted { quote } =
+		futures::executor::block_on(route.quote_ask(ask.clone()))
+	else {
+		panic!("the native route prices dotUSD");
+	};
+	services.funding_quotes().show(
+		&intent,
+		ask,
+		vec![crate::platform::FundingQuoteRow {
+			provider_id: native.clone(),
+			state: crate::platform::FundingQuoteState::Quoted { quote: quote.clone() },
+		}],
+	);
+	assert!(
+		futures::executor::block_on(services.select_funding_provider(
+			&intent,
+			&native,
+			&quote.quote_id
+		))
+		.expect("selected")
+	);
+	let deposit_reported = (0..200).any(|_| {
+		std::thread::sleep(Duration::from_millis(5));
+		services.funding().get(&intent).is_some_and(|session| {
+			session.updates.iter().any(|record| {
+				matches!(
+					record.update,
+					v01::FundingUpdate::In(v01::FundingInboundUpdate::Deposit { .. })
+				)
+			})
+		})
+	});
+	assert!(deposit_reported, "the session shows where to pay");
+
+	chain.with(|state| {
+		state.deposit = quote.send_amount;
+		state.landing = CREDIT;
+	});
+
+	assert_eq!(
+		wait_for_stage(&services, &intent),
+		Some(v01::HostFundingStatusSubscribeItem::Delivered { credited: CREDIT })
+	);
+	let started = engine.started.lock().expect("started mutex poisoned").clone();
+	assert_eq!(started.len(), 1);
+	assert_eq!(started[0].0, "native:funding");
+	assert_eq!(started[0].1.amount, CREDIT);
+	assert_eq!(started[0].1.funding.as_deref(), Some(intent.as_str()));
+	assert!(matches!(started[0].1.source, v01::PaymentTopUpSource::PrivateKey { .. }));
+	assert_eq!(chain.converted().len(), 1);
+}
+
+// The native route serves only a withdrawal session's destination it can pay
+// out to: an SS58 account, named for a withdrawal the core holds.
+#[test]
+fn a_native_withdrawal_keeps_the_destination_the_user_named() {
+	let tasks = HeldTasks::default();
+	let services = funding_services_on(&crate::store::open_memory_core_db(), tasks.spawner());
+	assert!(services.funding().install_platform(RecordingFundingPlatform::answering(
+		crate::platform::FundingPresentOutcome::Started,
+	)));
+	let intent = opened_session(&services, &tasks);
+	let account = [5; 32];
+	let address = crate::host_logic::product_account::product_public_key_to_address(account);
+
+	futures::executor::block_on(services.set_native_funding_destination(&intent, &address))
+		.expect("kept");
+
+	assert_eq!(
+		futures::executor::block_on(services.native_funding_destination(&intent)),
+		Ok(Some(account))
+	);
+	for (session, destination) in [(intent.as_str(), "not an address"), ("fs_unknown", address.as_str())]
+	{
+		assert!(matches!(
+			futures::executor::block_on(services.set_native_funding_destination(session, destination)),
+			Err(crate::host_logic::funding::FundingSessionError::InvalidDestination { .. })
+		));
+	}
+}

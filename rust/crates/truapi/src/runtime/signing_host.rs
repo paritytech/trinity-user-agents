@@ -294,6 +294,16 @@ impl crate::nft::ItemSecrets for SigningHost {
 	}
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+impl crate::native_funding::keys::SessionKeys for SigningHost {
+	fn session_key(
+		&self,
+		slot: &crate::native_funding::keys::SessionKeySlot,
+	) -> Result<crate::native_funding::keys::SessionKey, AuthorityError> {
+		self.wallet.funding_session_key(slot)
+	}
+}
+
 /// The user's chat key, until the team settles which key products publish
 /// for `Static` cheques.
 #[cfg(not(target_arch = "wasm32"))]

@@ -437,6 +437,17 @@ impl NativeTrUApiHostRuntime {
 		Ok(self.runtime.acknowledge_funding_session(&intent).await?)
 	}
 
+	/// Record `address`, the SS58 Asset Hub account from the host's address
+	/// sheet, as where withdrawal session `intent` pays out through the
+	/// native funding route.
+	pub async fn set_native_funding_destination(
+		&self,
+		intent: String,
+		address: String,
+	) -> Result<(), HostRejection> {
+		Ok(self.runtime.set_native_funding_destination(&intent, &address).await?)
+	}
+
 	/// Cancel funding session `intent` at the user's request, and say what
 	/// that did. `TooLate` asks the host to tell the user the balance was
 	/// already credited.

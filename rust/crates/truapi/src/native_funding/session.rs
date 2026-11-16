@@ -135,7 +135,20 @@ pub struct NativeFunding {
 	deps: NativeFundingDeps,
 	/// The sessions whose flow runs, by intent.
 	running: Mutex<HashMap<String, Running>>,
+	/// When what the route serves was last read, in Unix milliseconds, and
+	/// whether a read runs.
+	checks: Mutex<Checks>,
 }
+
+/// When the route's live check last ran, and whether one runs.
+#[derive(Default)]
+struct Checks {
+	last_ms: Option<u64>,
+	running: bool,
+}
+
+/// How long what the route serves is trusted before it is read again.
+const CHECK_TTL_MS: u64 = 60_000;
 
 /// A session whose flow runs.
 struct Running {
@@ -171,7 +184,25 @@ impl QuotedRoute {
 impl NativeFunding {
 	/// The route over `deps`.
 	pub fn new(deps: NativeFundingDeps) -> Arc<Self> {
-		Arc::new(Self { deps, running: Mutex::default() })
+		Arc::new(Self { deps, running: Mutex::default(), checks: Mutex::default() })
+	}
+
+	/// Take the next live check of what the route serves, unless one runs or
+	/// the last one is less than a minute old at `now_ms`.
+	pub fn begin_check(&self, now_ms: u64) -> bool {
+		let mut checks = self.checks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+		let fresh = checks.last_ms.is_some_and(|last| now_ms.saturating_sub(last) < CHECK_TTL_MS);
+		if checks.running || fresh {
+			return false;
+		}
+		checks.running = true;
+		true
+	}
+
+	/// The check [`Self::begin_check`] took ended at `now_ms`.
+	pub fn end_check(&self, now_ms: u64) {
+		let mut checks = self.checks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+		*checks = Checks { last_ms: Some(now_ms), running: false };
 	}
 
 	/// The tokens the route can take in now, read live.

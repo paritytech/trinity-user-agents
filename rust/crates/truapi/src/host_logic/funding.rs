@@ -2120,6 +2120,12 @@ pub enum FundingSessionError {
 		/// The stored format.
 		format: u16,
 	},
+	/// A withdrawal destination the native route cannot pay out to.
+	#[display("invalid funding destination: {reason}")]
+	InvalidDestination {
+		/// Why it was refused.
+		reason: String,
+	},
 }
 
 /// `target` as the host may show it: an App route must be a relative route

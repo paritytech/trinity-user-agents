@@ -846,6 +846,17 @@ impl SigningHostRuntime {
 		self.services.funding_amount_issue(intent, amount, spendable)
 	}
 
+	/// Record `address`, an SS58 Asset Hub account, as where withdrawal
+	/// session `intent` pays out through the native funding route.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub async fn set_native_funding_destination(
+		&self,
+		intent: &str,
+		address: &str,
+	) -> Result<(), v01::GenericError> {
+		Ok(self.services.set_native_funding_destination(intent, address).await?)
+	}
+
 	/// Ended funding session `intent`'s summary, held in full or compacted,
 	/// including a cancel that moved no money, which `funding_history`
 	/// leaves out.
@@ -1162,11 +1173,49 @@ impl SigningHostRuntime {
 			tracing::warn!("no core database set, durable transactions and NFT purses are off");
 			return;
 		};
+		self.start_native_funding();
 		let signer = Arc::new(Arc::downgrade(&self.signing_host));
 		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer) else {
 			return;
 		};
 		self.start_nft_purses(db, engine);
+	}
+
+	/// Installs the core's native funding route, which takes top-ups on the
+	/// stack's own network, when the stack names its payment asset and an
+	/// installation provider is set.
+	#[cfg(not(target_arch = "wasm32"))]
+	fn start_native_funding(&self) {
+		use crate::native_funding::{
+			live::LiveNativeChain,
+			session::{NativeFunding, NativeFundingDeps},
+		};
+
+		let Some(payment) = self.services.stack().payment().copied() else {
+			tracing::warn!("the stack names no payment asset, native funding is off");
+			return;
+		};
+		let Some(installation) = self.services.installation_provider() else {
+			tracing::warn!("no installation provider set, native funding is off");
+			return;
+		};
+		let chains = self.services.stack().chains();
+		let chain = LiveNativeChain::new(
+			self.services.chain.clone(),
+			self.services.extrinsics.clone(),
+			chains.asset_hub,
+			chains.people,
+			payment,
+		);
+		let route = NativeFunding::new(NativeFundingDeps {
+			sessions: Arc::new(Arc::downgrade(&self.services)),
+			chain: Arc::new(chain),
+			keys: Arc::new(Arc::downgrade(&self.signing_host)),
+			installation,
+			spawner: self.services.spawner.clone(),
+			poll: NATIVE_FUNDING_POLL,
+		});
+		self.services.install_native_funding(route);
 	}
 
 	/// Installs the NFT ledger over `db` and `durable`, with the static receive
@@ -1561,6 +1610,11 @@ impl SigningHostRuntime {
 			.open_service(own_statement_account_id, own_encryption_public_key)
 	}
 }
+
+/// How often the native funding route reads the chain while a session waits
+/// on a deposit or on CASH reaching People: about one Asset Hub block.
+#[cfg(not(target_arch = "wasm32"))]
+const NATIVE_FUNDING_POLL: core::time::Duration = core::time::Duration::from_secs(6);
 
 /// Installs the durable transaction engine over `db`, reports its pending
 /// work and starts its submissions. `None` when an engine is already

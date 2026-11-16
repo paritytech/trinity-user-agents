@@ -16,11 +16,15 @@
 
 use core::cmp::Ordering;
 
-use subxt::ext::scale_encode::{self, EncodeAsType, TypeResolver};
+use subxt::ext::{
+	scale_decode::DecodeAsType,
+	scale_encode::{self, EncodeAsType, TypeResolver},
+};
 
 /// `xcm::v5::Location`.
-#[derive(Clone, Debug, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, Debug, PartialEq, Eq, EncodeAsType, DecodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+#[decode_as_type(crate_path = "subxt::ext::scale_decode")]
 pub struct Location {
 	/// Hops up.
 	pub parents: u8,
@@ -29,8 +33,9 @@ pub struct Location {
 }
 
 /// `xcm::v5::Junctions`, in the arities the native route uses.
-#[derive(Clone, Debug, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, Debug, PartialEq, Eq, EncodeAsType, DecodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+#[decode_as_type(crate_path = "subxt::ext::scale_decode")]
 pub enum Junctions {
 	/// No junction.
 	Here,
@@ -43,8 +48,9 @@ pub enum Junctions {
 }
 
 /// `xcm::v5::Junction`, in the variants the native route uses.
-#[derive(Clone, Debug, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, Debug, PartialEq, Eq, EncodeAsType, DecodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+#[decode_as_type(crate_path = "subxt::ext::scale_decode")]
 pub enum Junction {
 	/// A parachain by id.
 	Parachain(u32),
@@ -62,8 +68,9 @@ pub enum Junction {
 }
 
 /// `xcm::v5::NetworkId`, in the one variant the native route names.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, EncodeAsType)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, EncodeAsType, DecodeAsType)]
 #[encode_as_type(crate_path = "subxt::ext::scale_encode")]
+#[decode_as_type(crate_path = "subxt::ext::scale_decode")]
 pub enum NetworkId {
 	/// Polkadot, which Paseo also names itself.
 	Polkadot,
@@ -650,7 +657,7 @@ pub const FEE_MARGIN_BPS: u128 = 1_000;
 
 /// `fee` with [`FEE_MARGIN_BPS`] on top, rounded up.
 pub fn with_fee_margin(fee: u128) -> u128 {
-	fee.saturating_add((fee.saturating_mul(FEE_MARGIN_BPS) + 9_999) / 10_000)
+	fee.saturating_add(fee.saturating_mul(FEE_MARGIN_BPS).div_ceil(10_000))
 }
 
 /// The destination fee allowance: `remote_fee_buffer`, or 1% of what is

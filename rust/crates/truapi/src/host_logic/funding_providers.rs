@@ -250,7 +250,12 @@ pub struct FundingCandidate {
 	/// serve any rail, whatever its answers confirmed so far.
 	pub declares_routes: bool,
 	/// The name and icon its root manifest gives it, once the core has one.
+	/// `None` for the native route, which the host names itself.
 	pub brand: Option<crate::host_internal::product_manifest::ProductBrand>,
+	/// Whether this is the core's own native route rather than a provider's
+	/// worker. The host names and brands it, approves its payment request
+	/// without asking again, and asks for a withdrawal's destination itself.
+	pub native: bool,
 }
 
 impl FundingCandidate {
@@ -319,6 +324,7 @@ impl FundingCandidate {
 			limits,
 			declares_routes: declared.is_some(),
 			brand: None,
+			native: provider_id.is_native_funding(),
 		})
 	}
 }
