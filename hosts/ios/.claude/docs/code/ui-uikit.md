@@ -122,6 +122,7 @@ Prefer natural ordering over manual index tracking:
 6. **Localize all strings** — use localization system; hardcoded strings are flagged in reviews
 7. **Use design system tokens** — colors, spacing, typography from the design system, not hardcoded values
 8. **Remove preview/debug Tasks before merging** — debug or preview-only Tasks must be clearly scoped or removed
+9. **Theme a subtree from a container view** — set `traitOverrides.appTheme` on a view that holds a hosting controller's view, not on that view itself; a child view controller takes its traits from its view's superview
 
 ## Cell Reuse Performance
 

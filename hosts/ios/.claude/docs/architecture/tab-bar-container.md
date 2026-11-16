@@ -343,17 +343,10 @@ The two change at different rates. The navigation controller is stable for the t
 
 **State-based rule.** The Clearance depends on the state the Docklet resolves to, not on the kind of screen.
 
-- `TabBarVisibilityPolicy.bottomClearance(for:bottomSafeAreaInset:)` returns the resting height minus the bottom safe area when the state is Shown. It returns 0 when the state is Tucked or Hidden.
-- `TabBarBottomChromeController.bottomClearance(for:)` resolves the state a context settles on and applies that rule. `restingBarHeight(for:)` adds the bottom safe area to the result. That sum sets the floating widgets' bottom offset.
-- A tab root, a pushed screen without `hidesBottomBarWhenPushed`, and a screen the user has set to Shown all take the Clearance. A tucked tab root, an open chat and a mounted product take none.
-- The Clearance goes on the tab's navigation controller, so every screen in that stack sees it while the Docklet is Shown.
-- The shelf and the center panel overlay content. They do not change the Clearance.
-
-**Resolved state.** The Clearance is computed for the state a context resolves to, so navigation lays out for the incoming screen. An animated navigation applies the incoming screen's layout with the transition coordinator. An interactive transition moves the Docklet with `setInteractiveTarget(_:)`. A cancelled interactive pop lays out the staying screen.
-
-**In-place commit.** `TabBarBottomChromeController` calls `onDockletStateCommitted` when the fold commits a state outside `apply(_:)`. That covers a drag release, an auto-hide tuck, and a panel that restores the Docklet (`openPanelShowingDocklet`). `apply(_:)` does not fire it, because the host lays out for that context itself.
-
-`MainTabBarViewController.applyDockletStateCommitted()` then re-lays out the widgets and the Clearance inside `DSTabBarStyle.animateCenterChange(in:_:)`. The move runs on the centre control's ease-out, and it snaps under Reduce Motion. A main scroll view of the selected controller keeps its place from the bottom edge. Before the change it records its distance from the bottom. When the bottom edge moved by at least that distance, the scroll view keeps that distance, so its last rows move with the Docklet.
+- `TabBarVisibilityPolicy.bottomClearance(for:bottomSafeAreaInset:)`: resting height minus the bottom safe area when Shown, 0 when Tucked or Hidden. `TabBarBottomChromeController.bottomClearance(for:)` applies it to the state a context resolves to; plus the bottom safe area, it sets the widgets' bottom offset.
+- The Clearance goes on the tab's navigation controller. A tucked tab root, an open chat and a mounted product take none. The shelf and the center panel overlay content and leave it unchanged.
+- Navigation lays out for the incoming screen alongside its transition, interactive pops and their cancellation included.
+- A state committed in place (drag release, auto-hide, `openPanelShowingDocklet`) fires `onDockletStateCommitted`; `apply(_:)` does not. `MainTabBarViewController.applyDockletStateCommitted()` then animates the widgets and the Clearance with `DSTabBarStyle.animateCenterChange(in:_:)`, snapping under Reduce Motion. A main scroll view within the moved distance of its bottom keeps that distance, so its last rows follow the Docklet.
 - `TabBarChromeSurfaceView` reads both safe-area insets from its superview, not from itself. The fold transforms the surface, and a transformed view's own insets change with the transform.
 
 **Recalculation.** Three events recompute the insets from `container.selectedController`:
@@ -370,27 +363,14 @@ Navigation and tab switches (`applyChrome(_:animatingAlongside:)`), the in-place
 
 ### Hosted SwiftUI screens
 
-A `UIHostingController` passes a new safe area to SwiftUI in a transaction with no animation. A SwiftUI screen therefore jumps to a new Clearance in one frame. `SafeAreaFollowingHostingController<Content>` moves the screen on the Docklet's ease instead.
+A `UIHostingController` hands SwiftUI a new safe area without animation, so a SwiftUI screen jumps to a new Clearance in one frame. `SafeAreaFollowingHostingController<Content>` moves it on the Docklet's ease instead.
 
-- It sets `safeAreaRegions = .keyboard`. SwiftUI stops seeing the container's safe area, and keyboard avoidance is unchanged. Its root view, `SafeAreaFollowingRoot`, also applies `.ignoresSafeArea(.container)` outside the padding. On iOS 18, SwiftUI still receives the container safe area after `safeAreaRegions` excludes it, so the insets would count twice without it.
-- It copies `view.safeAreaInsets` into an observable value. Its root view, `SafeAreaFollowingRoot`, applies that value with `.safeAreaPadding`.
-- `applySafeAreaInsets()` writes the current safe area to SwiftUI. The controller calls it for every safe-area change. The subclass's `bottomSafeAreaChange` decides how the write applies:
-  - `animated` (default): the screen moves with the change on `DSTabBarStyle.centerEaseOut`, when `SafeAreaChangeAnimation.animates(from:to:isOnScreen:reduceMotion:)` returns true. That rule needs the view on screen, Reduce Motion off, and a change to the bottom inset alone. Any other change applies at once, including a rotation.
-  - `immediate`: the screen takes the new inset at once.
-  - `held`: SwiftUI keeps the bottom inset it has. The other edges still update. A screen that returns `held` calls `applySafeAreaInsets()` when the hold ends.
-- `viewIsAppearing` writes the current value without animation, so the first frame never lays out on zero insets.
-- A subclass reads and writes its screen through `content`, which replaces `rootView`. It overrides `bottomSafeAreaChange`. `WalletMainViewController` returns `held` while the Collectibles peek is pressed, coloured or lifted, and the Pocket has not cleared for the open item. Otherwise it returns `immediate` while a Pocket item is open, and `animated` when none is.
-  - Why `held`: a touch on the peek also tucks the Docklet. The push starts 0.17 s later, before a 0.33 s move of the peek would end, so the book would lift from a frame the peek has not reached. The press reaches SwiftUI before the tuck changes the safe area, so the peek never moves under the finger and its book lifts from where it was touched. Under Reduce Motion the Collectibles screen fades in and the Pocket does not clear, so the hold lasts until the peek lands at rest after the return, and the Pocket is covered for that time.
-  - Known limit: on iOS 18.6 the hold does not take on a tap, so the peek moves as in an ordinary tuck and its book lifts from the settled place.
-  - Why `immediate`: an open item flies back to the frame the Pocket reports. `WalletMainViewController` calls `applySafeAreaInsets()` when the press changes, when the Pocket clears for the open item, and when the peek lands at rest.
+- It sets `safeAreaRegions = .keyboard`, and its root, `SafeAreaFollowingRoot`, applies `.ignoresSafeArea(.container)` (needed on iOS 18) and hands `view.safeAreaInsets` back through `.safeAreaPadding`.
+- `applySafeAreaInsets()` writes the insets on every change. A subclass picks how through `bottomSafeAreaChange`: `animated` (default, on `DSTabBarStyle.centerEaseOut` when only the bottom changed, on screen, Reduce Motion off), `immediate`, or `held` (keeps the bottom inset until the subclass calls `applySafeAreaInsets()`).
+- `viewIsAppearing` writes the insets without animation, so the first frame never lays out on zero insets.
+- `WalletMainViewController` holds while the Collectibles peek is pressed or lifted, so the book lifts from where it was touched. It is `immediate` while a Pocket item is open, so the item flies back to the frame the Pocket reports. On iOS 18.6 the hold does not take on a tap.
 
-Adopt it for a screen inside the tab container with SwiftUI content pinned to the bottom. Scroll-only screens, modal screens, window-root screens and child views do not need it. Current adopters: `WalletMainViewController` and `ThemeSelectionHostingController`. The latter serves the theme screen opened from Settings (`ThemeSelectionViewFactory.createView(onComplete:)`). The onboarding theme screen is a window root and uses a plain `UIHostingController` (`createView(observer:)`). In a build with `FEATURE_PRODUCTS`, Settings is presented modally, so the Settings theme screen sits inside the tab container only in builds without that flag.
-
-A SwiftUI `ScrollView` in an adopting screen takes the inset on SwiftUI's animation, so the bottom pin in `applyDockletStateCommitted` sees no shift and leaves a list at its bottom where it is.
-
-### Product pages
-
-Product pages pad their content by `env(safe-area-inset-bottom)` so they clear a Shown Docklet. The rule is in [Web view layout](host-api-products.md#web-view-layout).
+Adopters: `WalletMainViewController` and `ThemeSelectionHostingController` (Settings theme screen, inside the tab container only in builds without `FEATURE_PRODUCTS`). Scroll-only, modal and window-root screens use a plain `UIHostingController`. A SwiftUI `ScrollView` takes the inset on SwiftUI's own animation, so the bottom pin leaves it alone.
 
 ## Top Status Strip
 
@@ -404,15 +384,11 @@ A Presented product covers the container, so it draws its own strip with the sam
 
 ### Theme
 
-The strip takes its theme from the screen on top of the selected tab. `MainTabBarViewController.applyStatusStripTheme()` runs from `refreshStatusBarTitle()`. It reads `StatusStripThemeProviding` (`polkadot-app/Modules/MainTabBar/StatusBarTitleViewModel.swift`) on the top screen of the selected tab's navigation stack, or on the selected controller when it is not a navigation controller.
+`MainTabBarViewController.applyStatusStripTheme()` reads `StatusStripThemeProviding` on the top screen of the selected tab and sets its `statusStripTheme` as `traitOverrides.appTheme` on `StatusStripContainerView`. Nil keeps the app's theme. The rings' hosting controller takes its traits from that container, and `ChainStatusRings` carries `.id(appTheme)` so the rings rebuild on a change. Providers call `onStatusStripThemeChanged` to re-apply.
 
-- The provider's `statusStripTheme` is a `ThemeSelection?`. Nil means the app's theme. A theme is set as `traitOverrides.appTheme` on `StatusStripContainerView`, which holds the strip title button and the chain rings' hosting controller view. The hosting controller takes its traits from its view's superview, so SwiftUI sees the override too. Nil removes the override.
-- `ChainConnectionStatusBarView` builds its rings through a private `ChainStatusRings` view. That view reads `\.appTheme` and carries `.id(appTheme)`. The rings take no input from the theme, so the id rebuilds all of them when the theme changes.
-- The provider sets `onStatusStripThemeChanged`, and the strip re-applies when that fires.
-- `CollectiblesViewController` returns `.berlinNight` while its page is expanded. An expanded page is dark in every app theme and draws under the strip and the navigation bar. Its `applyBarTheme()` also sets the override on its navigation controller. `AppNavigationController` re-applies its bar style on `DSThemeTrait` changes, which re-tints the navigation bar, back button included. The override is removed on collapse and in `viewWillDisappear`.
-- `SPAViewController` is a second provider. A mounted product page draws under the status strip in its own colours, which can be dark or light whatever the app's theme is. It reads the page's computed CSS background, root element then body, through `callAsyncJavaScript`, and builds a `PageBackgroundTone` from the first colour that is not fully transparent, by luminance.
-- It names a theme only where the page clashes with the app's theme. `PageBackgroundTone.statusStripTheme(appThemeIsLight:)` returns `.berlinNight` for a dark page under a light app theme, `.berlinDay` for a light page under a dark app theme, and nil otherwise. A page that matches the app theme gives nil, so the strip keeps the app's own theme, including themes other than Berlin Day and Berlin Night. A page with no visible background also gives nil. The app theme's lightness comes from `UIColor.bgSurfaceMain` resolved with the controller's traits.
-- It reads again when a load finishes, when a loaded page moves to another address, and when the app's theme changes. On an app theme change it drops the tone, so the strip follows the app's theme, and reads the page again on the next main-queue turn, after the change has reached the web view. A page that follows the theme restyles without a reload, and a tone read before it restyles would be stale. A failed read leaves the last result in place. Unlike `CollectiblesViewController`, it does not set the theme on its navigation controller: only the strip follows the page. A page that paints its background only inside a container, or changes it by script without changing its address, is not detected. While a screen loads its next page, the tone of the previous page stays until the load finishes.
+- `CollectiblesViewController` returns `.berlinNight` while expanded, and `applyBarTheme()` sets the same override on its navigation controller.
+- `SPAViewController` reads the page's computed CSS background (root element, then body). The web view takes that colour, so the iOS 26 scroll edge effect under the strip tints towards the page. `PageBackgroundTone` names a theme only on a clash: `.berlinNight` for a dark page under a light app theme, `.berlinDay` for a light page under a dark one.
+- It reads on load, on a change of address, and on an app theme change, where it drops the tone and reads again on the next main-queue turn. A background painted only inside a container, or changed by script alone, is not detected.
 
 ## Mounting and Re-tap
 
