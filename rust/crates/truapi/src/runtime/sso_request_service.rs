@@ -462,13 +462,15 @@ impl SsoRequestService {
 	/// Discard pairing bootstrap material so the next login generates a new
 	/// device keypair and topic.
 	pub async fn forget_pairing_identity(&self) -> Result<(), String> {
-		self.services.storage()
+		self.services
+			.storage()
 			.clear(CoreStorageKey::PairingDeviceIdentity)
 			.await
 			.map_err(|error| {
 				format!("session disconnected, but pairing identity reset failed: {}", error.reason)
 			})?;
-		self.services.storage()
+		self.services
+			.storage()
 			.clear(CoreStorageKey::LastProcessedPairingStatement)
 			.await
 			.map_err(|error| {
@@ -576,7 +578,8 @@ impl SsoRequestService {
 			self.auth_state.store_disconnected();
 		}
 		let auth_result = if pending_auth_deletion {
-			self.services.storage()
+			self.services
+				.storage()
 				.clear(CoreStorageKey::AuthSession)
 				.await
 				.map(|()| {
@@ -724,7 +727,8 @@ impl SsoRequestService {
 		}
 		self.auth_state.connected(&connected_session_ui_info(&resolved));
 		if let Err(err) = self
-			.services.storage()
+			.services
+			.storage()
 			.write(CoreStorageKey::AuthSession, encode_persisted_session(&resolved))
 			.await
 		{

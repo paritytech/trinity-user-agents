@@ -90,6 +90,27 @@ describe("host-api-test-sdk option compatibility", () => {
     ]);
   });
 
+  it("names a stack's generation after its chains, in one case", () => {
+    // The generation tells one run of the chains from another, so the case a
+    // suite spells a hash in must not make it another run, and a suite on the
+    // mock chains runs the mock stack's generation.
+    const generationOf = (chains: (typeof SAMPLE_CHAIN)[]) =>
+      fromNetworks(chains).runtimeConfig.testStack.generation;
+    const hub = (genesisHash: string) => ({ ...SAMPLE_CHAIN, genesisHash });
+    const mockPeople = {
+      ...SAMPLE_CHAIN,
+      id: "paseo-people",
+      genesisHash: MOCK_GENESIS.people,
+    };
+    const live = `none:0xabcd:${MOCK_GENESIS.people}:${MOCK_GENESIS.bulletin}`;
+    expect([
+      generationOf([hub("0xABCD")]),
+      generationOf([hub("0xabcd")]),
+      generationOf([]),
+      generationOf([mockPeople]),
+    ]).toEqual([live, live, "mock", "mock"]);
+  });
+
   it("rejects a pinned product account, and says why", () => {
     expect(() =>
       createTestHostFixture({
