@@ -48,12 +48,24 @@ const RESERVED_GENESIS_HASHES: [[u8; 32]; 4] = [
 const RESERVED_TLD: &str = "dot";
 
 /// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
-/// and the genesis hash of each chain role the core uses.
+/// the genesis hash of each chain role the core uses, and the coinage pallet
+/// it runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Stack {
 	network: String,
 	tld: String,
 	chains: StackChains,
+	coinage: Option<StackCoinage>,
+}
+
+/// The coinage pallet a stack runs on its People chain, and the contract its
+/// installation registry lives in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StackCoinage {
+	/// The coinage instance the layer serves.
+	pub instance: u32,
+	/// The `AccountDataStore` contract on Asset Hub, when the stack names one.
+	pub registry: Option<[u8; 20]>,
 }
 
 /// The genesis hash of each chain role the host serves. Asset Hub, People and
@@ -152,7 +164,19 @@ impl Stack {
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
-		Self::new(descriptor.network, descriptor.tld, chains, allows_reserved_values)
+		let registry = descriptor
+			.contracts
+			.as_ref()
+			.and_then(|contracts| contracts.get("accountDataStore"))
+			.and_then(|address| hex::decode(address.trim_start_matches("0x")).ok())
+			.and_then(|address| <[u8; 20]>::try_from(address).ok());
+		let coinage = descriptor
+			.coinage
+			.as_ref()
+			.filter(|coinage| coinage.chain == "People")
+			.map(|coinage| StackCoinage { instance: coinage.instance, registry });
+		let stack = Self::new(descriptor.network, descriptor.tld, chains, allows_reserved_values)?;
+		Ok(Self { coinage, ..stack })
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
@@ -182,7 +206,7 @@ impl Stack {
 			}
 			refuse_reserved_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
 		}
-		Ok(Self { network, tld, chains })
+		Ok(Self { network, tld, chains, coinage: None })
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.
@@ -200,6 +224,13 @@ impl Stack {
 	/// The stack's chains.
 	pub fn chains(&self) -> &StackChains {
 		&self.chains
+	}
+
+	/// The coinage pallet the stack runs on its People chain; none when it
+	/// runs none there, or the stack came from a host rather than a
+	/// descriptor.
+	pub fn coinage(&self) -> Option<StackCoinage> {
+		self.coinage
 	}
 
 	/// The genesis hash of the chain with this role, or `None` when the stack

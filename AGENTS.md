@@ -25,7 +25,9 @@ rust/crates/
                          modules keep NFT purses in the same database, transfer items
                          as deferred durable transactions, and receive cheques over
                          the statement store; its `coinage` module is the coinage
-                         layer, one submodule per component of docs/design/coinage/;
+                         layer, one submodule per component of docs/design/coinage/,
+                         which `start_core_services` starts once the host calls
+                         `enable_coinage`;
                          its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
                          from Bulletin by CID and checks them

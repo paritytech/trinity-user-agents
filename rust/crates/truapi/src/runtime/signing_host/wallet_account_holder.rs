@@ -3,6 +3,8 @@
 mod account;
 mod allowance;
 mod allowance_renewal;
+#[cfg(not(target_arch = "wasm32"))]
+mod coinage;
 mod pairing;
 #[cfg(test)]
 mod tests;

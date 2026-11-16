@@ -55,6 +55,23 @@ fn a_bundled_stack_answers_get_chain_info_from_its_descriptor() {
 	);
 }
 
+/// The coinage layer serves the instance and reads the registry the stack
+/// names, so every host of a stack finds the same coins.
+#[test]
+fn a_bundled_stack_names_its_coinage_instance_and_registry() {
+	let mut descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	assert_eq!(bundled(&descriptor, false).expect("stack is valid").coinage(), None);
+	descriptor["coinage"] = serde_json::json!({ "chain": "People", "instance": 3 });
+	descriptor["contracts"] =
+		serde_json::json!({ "accountDataStore": "0x58c9963308c7735cf72ab633e8a9d892f5ab9e05" });
+	let registry: [u8; 20] =
+		hex::decode("58c9963308c7735cf72ab633e8a9d892f5ab9e05").unwrap().try_into().unwrap();
+	assert_eq!(
+		bundled(&descriptor, false).expect("stack is valid").coinage(),
+		Some(StackCoinage { instance: 3, registry: Some(registry) })
+	);
+}
+
 /// Only a stack link names a stack, so any other pointer is refused.
 #[test]
 fn a_pointer_that_is_not_a_stack_link_is_refused() {

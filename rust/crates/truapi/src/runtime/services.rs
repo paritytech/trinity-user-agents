@@ -11,6 +11,8 @@ use std::{
 };
 
 #[cfg(not(target_arch = "wasm32"))]
+use crate::coinage::{payments::flows::Payments, plugins::Running};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::durable::{DurableTxEngine, DurableWorkObserver};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::store::{Db, DbError};
@@ -151,6 +153,16 @@ pub struct RuntimeServices {
 	/// recovery to whoever calls it.
 	#[cfg(not(target_arch = "wasm32"))]
 	durable_work_observer: OnceLock<Arc<dyn DurableWorkObserver>>,
+	/// Set once the host turned the coinage layer on. Unset leaves it off.
+	#[cfg(not(target_arch = "wasm32"))]
+	coinage_enabled: OnceLock<()>,
+	/// The handle the coinage plug-ins and the layer share, closed until the
+	/// layer's start sequence has run.
+	#[cfg(not(target_arch = "wasm32"))]
+	coinage_running: Running,
+	/// Coinage payments over the started layer.
+	#[cfg(not(target_arch = "wasm32"))]
+	coinage_payments: OnceLock<Payments>,
 	/// The stack the host runs, fixed for the life of the runtime.
 	stack: Stack,
 	/// Reference counts per product worker.
@@ -279,6 +291,12 @@ impl RuntimeServices {
 			encrypted_storage: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			durable_work_observer: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			coinage_enabled: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			coinage_running: Running::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			coinage_payments: OnceLock::new(),
 			stack,
 			worker_ledger: WorkerLedger::default(),
 			chain,
@@ -466,6 +484,38 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub(crate) fn core_db(&self) -> Result<Db, DbError> {
 		self.core_db.get().cloned().ok_or(DbError::NotConfigured)
+	}
+
+	/// Turn the coinage layer on. Set-once; returns whether this call turned
+	/// it on.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn enable_coinage(&self) -> bool {
+		self.coinage_enabled.set(()).is_ok()
+	}
+
+	/// Whether the host turned the coinage layer on.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn coinage_enabled(&self) -> bool {
+		self.coinage_enabled.get().is_some()
+	}
+
+	/// The handle the coinage plug-ins and the layer share.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn coinage_running(&self) -> &Running {
+		&self.coinage_running
+	}
+
+	/// Install coinage payments over the started layer. Returns whether this
+	/// call installed them.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_coinage_payments(&self, payments: Payments) -> bool {
+		self.coinage_payments.set(payments).is_ok()
+	}
+
+	/// Coinage payments, once the layer's start sequence has run.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn coinage_payments(&self) -> Option<Payments> {
+		self.coinage_payments.get().cloned()
 	}
 
 	/// Install the durable transaction engine. Set-once, like the database it

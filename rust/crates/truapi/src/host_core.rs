@@ -1148,9 +1148,21 @@ impl SigningHostRuntime {
 		self.services.install_encrypted_storage(storage)
 	}
 
+	/// Turn the coinage layer on: [`Self::start_core_services`] then starts
+	/// it, when the stack runs coinage, over the installed wallet's seed, and
+	/// NFT purses derive their keys under the installation the layer owns.
+	/// A host whose app still runs a coinage engine of its own leaves it off,
+	/// because two engines on one seed compete for the same coins. Set-once;
+	/// returns whether this call turned it on.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn enable_coinage(&self) -> bool {
+		self.services.enable_coinage()
+	}
+
 	/// Starts what runs over the core database: the durable transaction
-	/// engine, then NFT purses with the tracker of their holdings. Call it
-	/// once the setters it reads have run: [`Self::set_core_db`],
+	/// engine, then the coinage layer, then NFT purses with the tracker of
+	/// their holdings. Call it once the setters it reads have run:
+	/// [`Self::set_core_db`], [`Self::enable_coinage`],
 	/// [`Self::set_installation_provider`], [`Self::set_encrypted_storage`]
 	/// and [`Self::set_durable_work_observer`]. NFT transfers and purses need
 	/// the encrypted storage. A part whose inputs are missing
@@ -1163,9 +1175,15 @@ impl SigningHostRuntime {
 			return;
 		};
 		let signer = Arc::new(Arc::downgrade(&self.signing_host));
-		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer) else {
+		let wallet = CoinageWallet {
+			seed: Arc::new(Arc::downgrade(&self.signing_host)),
+			personhood: Arc::new(Arc::downgrade(&self.signing_host)),
+			channel: Arc::new(crate::runtime::CoinageChannel(Arc::downgrade(&self.signing_host))),
+		};
+		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer, &wallet) else {
 			return;
 		};
+		start_coinage(&self.services, db.clone(), engine.clone(), wallet);
 		self.start_nft_purses(db, engine);
 	}
 
@@ -1196,10 +1214,15 @@ impl SigningHostRuntime {
 		db: crate::store::Db,
 		durable: Arc<crate::durable::DurableTxEngine>,
 	) -> Option<crate::nft::NftLedger> {
-		let Some(installation) = self.services.installation_provider() else {
-			tracing::warn!("no installation provider set, NFT purses are off");
-			return None;
-		};
+		let installation: Arc<dyn crate::installation::InstallationIdProvider> =
+			if self.services.coinage_enabled() {
+				Arc::new(crate::coinage::registry::StoredInstallation(db.clone()))
+			} else if let Some(provider) = self.services.installation_provider() {
+				provider
+			} else {
+				tracing::warn!("no installation provider set, NFT purses are off");
+				return None;
+			};
 		let Some(encrypted) = self.services.encrypted_storage() else {
 			tracing::warn!("no encrypted storage set, NFT purses are off");
 			return None;
@@ -1570,8 +1593,9 @@ fn start_durable_engine(
 	services: &Arc<RuntimeServices>,
 	db: crate::store::Db,
 	signer: Arc<dyn crate::nft::ItemSigner>,
+	wallet: &CoinageWallet,
 ) -> Option<Arc<crate::durable::DurableTxEngine>> {
-	let engine = durable_engine(services, db, signer);
+	let engine = durable_engine(services, db, signer, wallet);
 	if !services.install_durable_engine(engine.clone()) {
 		return None;
 	}
@@ -1587,6 +1611,7 @@ fn durable_engine(
 	services: &RuntimeServices,
 	db: crate::store::Db,
 	signer: Arc<dyn crate::nft::ItemSigner>,
+	wallet: &CoinageWallet,
 ) -> Arc<crate::durable::DurableTxEngine> {
 	use crate::{
 		durable::{DurableDeps, DurableTxEngine},
@@ -1594,7 +1619,7 @@ fn durable_engine(
 	};
 
 	let chain = Arc::new(services.chain.clone());
-	let registry = durable_registry(services, signer);
+	let registry = durable_registry(services, db.clone(), signer, wallet);
 	DurableTxEngine::new(DurableDeps {
 		db,
 		registry,
@@ -1607,17 +1632,20 @@ fn durable_engine(
 	})
 }
 
-/// The domains the durable engine serves: NFT transfers, on the
-/// Asset Hub that runs the Scarcity pallet. They need encrypted storage, which
-/// keeps the secrets of imported item keys.
+/// The domains the durable engine serves: the coinage layer's two, when the
+/// host set it up, and NFT transfers, on the Asset Hub that runs the
+/// Scarcity pallet. NFT transfers need encrypted storage, which keeps the
+/// secrets of imported item keys.
 #[cfg(not(target_arch = "wasm32"))]
 fn durable_registry(
 	services: &RuntimeServices,
+	db: crate::store::Db,
 	signer: Arc<dyn crate::nft::ItemSigner>,
+	wallet: &CoinageWallet,
 ) -> crate::durable::DurableRegistry {
 	use crate::nft::{ImportedSecretStore, ScarcityTransfersDeps, with_scarcity_transfers};
 
-	let registry = crate::durable::DurableRegistry::new();
+	let registry = with_coinage_domains(services, db, wallet, crate::durable::DurableRegistry::new());
 	let Some(encrypted) = services.encrypted_storage() else {
 		tracing::warn!("no encrypted storage set, NFT transfers are off");
 		return registry;
@@ -1632,6 +1660,126 @@ fn durable_registry(
 		extrinsics: services.extrinsics.clone(),
 	};
 	with_scarcity_transfers(registry, deps)
+}
+
+/// What the coinage layer takes from the installed wallet.
+#[cfg(not(target_arch = "wasm32"))]
+struct CoinageWallet {
+	seed: Arc<dyn crate::coinage::plugins::Seed>,
+	personhood: Arc<dyn crate::coinage::plugins::PersonhoodSource>,
+	channel: Arc<dyn crate::coinage::payments::channel::Transport>,
+}
+
+/// The coinage instance the layer serves: the stack's, when the host turned
+/// the layer on.
+#[cfg(not(target_arch = "wasm32"))]
+fn coinage_of(services: &RuntimeServices) -> Option<crate::stack::StackCoinage> {
+	services.coinage_enabled().then(|| services.stack().coinage()).flatten()
+}
+
+/// `registry` with the coinage layer's domains, when the layer runs. Their
+/// plug-ins build nothing until the layer's start sequence opens the running
+/// handle.
+#[cfg(not(target_arch = "wasm32"))]
+fn with_coinage_domains(
+	services: &RuntimeServices,
+	db: crate::store::Db,
+	wallet: &CoinageWallet,
+	registry: crate::durable::DurableRegistry,
+) -> crate::durable::DurableRegistry {
+	use crate::coinage::{
+		chain::CoinageStorage,
+		plugins::{CoinageDeps, with_coinage},
+	};
+
+	let Some(coinage) = coinage_of(services) else {
+		return registry;
+	};
+	let chain = Arc::new(services.chain.clone());
+	let people_genesis = services.stack().chains().people.into();
+	let deps = CoinageDeps {
+		store: db,
+		seed: wallet.seed.clone(),
+		clock: Arc::new(crate::unix_time::current_unix_secs),
+		people: Arc::new(CoinageStorage::new(chain.clone(), chain, people_genesis, coinage.instance)),
+		people_genesis,
+		asset_hub_genesis: services.asset_hub_chain_genesis_hash().into(),
+		extrinsics: services.extrinsics.clone(),
+		personhood: wallet.personhood.clone(),
+		running: services.coinage_running().clone(),
+	};
+	with_coinage(registry, deps)
+}
+
+/// Starts the coinage layer over `db` and `engine`, when it runs, and
+/// installs coinage payments over it once its start sequence has run. A
+/// layer that fails to start is logged and stays off.
+#[cfg(not(target_arch = "wasm32"))]
+fn start_coinage(
+	services: &Arc<RuntimeServices>,
+	db: crate::store::Db,
+	engine: Arc<crate::durable::DurableTxEngine>,
+	wallet: CoinageWallet,
+) {
+	use crate::coinage::{
+		ChainConfig, PrivacyPolicy,
+		chain::{CoinageStorage, PeopleRuntime},
+		layer::{Interfaces, SystemRandomness, start},
+		payments::flows::{PaymentDeps, PaymentParams, Payments, SystemDraws},
+		reconstruction::{InstallationRegistry, ScanConfig},
+		registry::{ContractRegistry, NoRegistry},
+	};
+
+	let Some(coinage) = coinage_of(services) else {
+		return;
+	};
+	let chain = Arc::new(services.chain.clone());
+	let people_genesis = services.stack().chains().people.into();
+	let registry: Arc<dyn InstallationRegistry> = match coinage.registry {
+		Some(contract) => Arc::new(ContractRegistry {
+			chain: services.chain.clone(),
+			genesis: services.asset_hub_chain_genesis_hash().into(),
+			contract,
+			seed: wallet.seed.clone(),
+		}),
+		None => Arc::new(NoRegistry),
+	};
+	let store = db.clone();
+	let channel = wallet.channel.clone();
+	let interfaces = Interfaces {
+		store: db,
+		engine,
+		chain: Arc::new(CoinageStorage::new(chain.clone(), chain.clone(), people_genesis, coinage.instance)),
+		runtime: Arc::new(PeopleRuntime::new(chain.clone(), chain, people_genesis, coinage.instance)),
+		seed: wallet.seed,
+		clock: Arc::new(crate::unix_time::current_unix_secs),
+		randomness: Arc::new(SystemRandomness),
+		personhood: wallet.personhood,
+		registry,
+		spawner: services.spawner.clone(),
+		policy: PrivacyPolicy::fastest(),
+	};
+	let running = services.coinage_running().clone();
+	let weak = Arc::downgrade(services);
+	services.spawner.spawn(async move {
+		let config = ChainConfig::shipped(coinage.instance);
+		match start(interfaces, config, ScanConfig::SHIPPED, None, running).await {
+			Ok(layer) => {
+				let payments = Payments::new(PaymentDeps {
+					layer,
+					store,
+					transport: channel,
+					draws: Arc::new(SystemDraws),
+					clock: Arc::new(crate::unix_time::current_unix_millis),
+					params: PaymentParams::SHIPPED,
+				});
+				if let Some(services) = weak.upgrade() {
+					services.install_coinage_payments(payments);
+				}
+			},
+			Err(error) => tracing::warn!(%error, "the coinage layer did not start"),
+		}
+	});
 }
 
 /// Starts tracking what NFT item keys hold on Asset Hub, which runs the
