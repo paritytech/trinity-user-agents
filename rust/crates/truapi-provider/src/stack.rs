@@ -163,11 +163,6 @@ impl LightStack {
 		&self.generation
 	}
 
-	/// The header of the databases this stack's provider stores.
-	pub fn database_header(&self) -> crate::storage::Header<'_> {
-		crate::storage::Header { stack: &self.id, generation: &self.generation }
-	}
-
 	/// The relay `genesis_hash` syncs through. The relay itself, and a chain
 	/// outside the stack, have none.
 	pub fn relay_of(&self, genesis_hash: [u8; 32]) -> Option<[u8; 32]> {

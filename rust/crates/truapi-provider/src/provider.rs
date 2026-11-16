@@ -317,6 +317,12 @@ fn relay_source(
 	}
 }
 
+/// The header of the databases `stack`'s provider stores.
+#[cfg(feature = "smoldot")]
+fn database_header(stack: &crate::stack::LightStack) -> crate::storage::Header<'_> {
+	crate::storage::Header { stack: stack.id(), generation: stack.generation() }
+}
+
 /// Max size for a [`snapshot`](EmbeddedChainProvider::snapshot) database blob.
 #[cfg(feature = "smoldot")]
 const SNAPSHOT_MAX_BYTES: usize = 8_000_000;
@@ -429,7 +435,7 @@ impl EmbeddedChainProvider {
 			return Ok(stored.filter(|stored| !crate::storage::carries_header(stored)));
 		};
 		let stored = store.load(genesis_hash, Some(stack.id().to_owned())).await?;
-		Ok(stored.and_then(|stored| stack.database_header().unseal(stored)))
+		Ok(stored.and_then(|stored| database_header(stack).unseal(stored)))
 	}
 
 	/// Put a seed back after a connect that never reached `add_chain`.
@@ -583,7 +589,7 @@ impl EmbeddedChainProvider {
 		// back before the process ends.
 		match &self.stack {
 			Some(stack) => {
-				let sealed = stack.database_header().seal(&blob);
+				let sealed = database_header(stack).seal(&blob);
 				store.save(genesis_hash, sealed, Some(stack.id().to_owned())).await?;
 			},
 			None => store.save(genesis_hash, blob, None).await?,
