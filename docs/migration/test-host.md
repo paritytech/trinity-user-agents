@@ -179,6 +179,7 @@ const address = await productAccountAddress({ account: "alice", productId: asPro
   the old package does from 0.14. Up to 0.12 they sat under `.statement`. `seedPreimage` returns the key as bytes, not
   hex. `getPreimages` returns the values only, as `Uint8Array[]`, with no `key`, `fromProduct` or `timestamp`. From 0.30
   statement entries also carry `channel`, `expiry` (a bigint) and `decryptionKey`, which `injectStatement` also takes.
+  From 0.32 `injectStatement` also takes a tagged `proof`, which an entry reads back untagged as `{ signature, signer }`.
 - **Removed methods.** These old methods have no equivalent, so skip or rewrite specs that use them: `clearChat`,
   `clearOperationLog`, `clearProductStorage`, `clearResourceAllocationLog`, `clearUserConfirmationLog`,
   `getDevicePermissionStatuses`, `getFeatureSupport`, `getLocale`, `getOpenOperations`, `getOperationLog`,

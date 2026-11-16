@@ -189,18 +189,21 @@ function expiryOf(value: bigint | number): bigint {
 const PROOF_TAGS = ["Sr25519", "Ed25519", "Ecdsa", "OnChain"];
 
 /**
- * Refuse a proof the codec would reshape.
+ * Refuse a proof the codec would reshape or cannot encode.
  *
  * A signature of the wrong length is not refused by the codec: a short one
  * runs into the signer and a long one is cut. Decoding what was encoded and
  * comparing catches every such field at once.
  */
 function checkProof(proof: StatementProof): void {
+  const refuse = (reason: string): never => {
+    throw new Error(`testHost injectStatement: \`proof\` ${reason}.`);
+  };
+  if (proof === null || typeof proof !== "object") {
+    refuse(`is a tagged object, not ${String(proof)}`);
+  }
   if (!PROOF_TAGS.includes(proof.tag)) {
-    throw new Error(
-      `testHost injectStatement: \`proof\` is one of ` +
-        `${PROOF_TAGS.join(", ")}, not "${String(proof.tag)}".`,
-    );
+    refuse(`is one of ${PROOF_TAGS.join(", ")}, not "${String(proof.tag)}"`);
   }
   // Keys sorted, so a proof written with its fields in another order matches.
   const canonical = (value: unknown) =>
@@ -217,13 +220,22 @@ function checkProof(proof: StatementProof): void {
               )
             : field,
     );
-  if (
-    canonical(StatementProof.dec(StatementProof.enc(proof))) !==
-    canonical(proof)
-  ) {
-    throw new Error(
-      `testHost injectStatement: \`proof\` has a field of the wrong length ` +
-        `for ${proof.tag}: ${canonical(proof.value)}.`,
+  let roundTrip: string;
+  try {
+    roundTrip = canonical(StatementProof.dec(StatementProof.enc(proof)));
+  } catch (error) {
+    return refuse(
+      `does not encode as ${proof.tag}: ${canonical(proof.value)} ` +
+        `(${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+  if (roundTrip !== canonical(proof)) {
+    refuse(
+      `does not fit ${proof.tag}, which takes ` +
+        (proof.tag === "OnChain"
+          ? "32-byte `0x` hex `who` and `blockHash` and a u64 bigint `event`"
+          : "a `0x` hex `signature` and `signer` of its fixed lengths") +
+        `: ${canonical(proof.value)}`,
     );
   }
 }

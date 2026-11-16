@@ -109,29 +109,17 @@ The statement-store controls are served, so they are not in this grep.
 `injectChatAction` is not: the core serves chat only to a product running as a
 worker, and this host always embeds the product as an iframe, so every call is
 refused with `operation denied for this execution`. Treat specs that rely on it
-as blocked. `injectStatement` takes `{topics, data, channel, expiry,
-decryptionKey, proof}` the way the old package spells them, or the SCALE wire
-bytes, and answers the `StatementEntry` it retained; `getSubmittedStatements`
-and `getStatements` answer entries too, so a suite reading `0x` hex off them
-reads `entry.data` instead.
+as blocked. `injectStatement` takes `{topics, data}` as the old package does
+from 0.14, plus `channel`, `expiry` and `decryptionKey` from 0.30 and `proof`
+from 0.32, or the SCALE wire bytes, and answers the `StatementEntry` it
+retained; `getSubmittedStatements` and `getStatements` answer entries too, so a
+suite reading `0x` hex off them reads `entry.data` instead.
 
 Byte fields are `0x` hex, not `Uint8Array`, on the way in and out:
-`page.evaluate` flattens a `Uint8Array` inside an object. The old package's
-`entry.statement.data` becomes `entry.data`, and the same for `topics`,
-`channel`, `decryptionKey` and `proof`; `expiry` stays a `bigint`. A
-`proof: { tag: "Sr25519", value: { signature, signer } }` keeps its shape with
-hex fields.
-
-A suite that relays statements between several hosts, one page per peer, needs
-no patched host bundle: inject each page's `getSubmittedStatements()` into the
-others. An entry's `proof` drops the tag `injectStatement` takes, so leave it
-out; nothing here verifies a proof.
-
-```ts
-for (const { proof, ...statement } of await alice.getSubmittedStatements()) {
-  await bob.injectStatement(statement);
-}
-```
+`page.evaluate` flattens a `Uint8Array` inside an object. `expiry` is a
+`bigint`. `injectStatement` takes a tagged proof,
+`{ tag: "Sr25519", value: { signature, signer } }` with hex fields, but an
+entry reads it back untagged, so the signer is `entry.proof.signer`.
 
 ## 1. Swap the import
 
@@ -582,9 +570,11 @@ missed:
   `data` at the top level, as the old package's do from 0.14 (up to 0.12 they
   sat under `.statement`). From 0.30 they also carry
   `channel`, `expiry` (a bigint) and `decryptionKey`, which `injectStatement`
-  also takes (#1935). A `Remote` permission log entry's `value` is the tagged
-  permission `{ tag: "Remote", value: { domains } }`. `value` is typed
-  `unknown`, so narrow it:
+  also takes (#1935). From 0.32 `injectStatement` also takes a tagged `proof`,
+  which an entry reads back untagged as `{ signature, signer }`. A `Remote`
+  permission log entry's `value` is the tagged permission
+  `{ tag: "Remote", value: { domains } }`. `value` is typed `unknown`, so narrow
+  it:
   `(entry.value as { value: { domains: string[] } }).value.domains`.
   `getProductStorage()` answers `Uint8Array` values, not strings.
 - **Removed members.** Some old `TestHostAPI` members have no equivalent, and a

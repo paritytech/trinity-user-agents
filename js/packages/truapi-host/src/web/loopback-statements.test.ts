@@ -382,9 +382,26 @@ describe("the statement encoding the store actually sees", () => {
     const signer = `0x${"22".repeat(32)}`;
     expect(
       withProof({ tag: "Sr25519", value: { signature: "0x11", signer } }),
-    ).toThrow(/wrong length for Sr25519/);
+    ).toThrow(/does not fit Sr25519/);
     expect(withProof({ tag: "Schnorr", value: {} })).toThrow(
       /`proof` is one of/,
     );
+  });
+
+  it("refuses a proof the codec cannot encode with a testHost message", () => {
+    const withProof = (proof: unknown) => () =>
+      encodeStatement({
+        topics: [],
+        proof: proof as Parameters<typeof encodeStatement>[0]["proof"],
+      });
+    const hash = `0x${"22".repeat(32)}`;
+    for (const proof of [
+      null,
+      { tag: "Sr25519" },
+      { tag: "Sr25519", value: { signature: "0xzz", signer: hash } },
+      { tag: "OnChain", value: { who: hash, blockHash: hash, event: 5 } },
+    ]) {
+      expect(withProof(proof)).toThrow(/^testHost injectStatement: `proof`/);
+    }
   });
 });
