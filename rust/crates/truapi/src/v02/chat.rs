@@ -22,7 +22,7 @@ pub struct HostChatPostMessageRequest {
 /// `Card` pins a product-drawn body under the feed, rendered with
 /// `RenderContext::ChatRoomFooter` and never shown as a message.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum ChatRoomFooter {
 	/// The text field the user types messages into.
 	TextInput,

@@ -3,6 +3,7 @@ import { describe, expect, it } from "bun:test";
 import { err, ok } from "neverthrow";
 
 import {
+  ExecutableKind,
   HostChatCreateRoomRequest,
   HostChatCreateRoomResponse,
   HostDevicePermissionRequest,
@@ -26,7 +27,6 @@ import {
   CoreStorageKey,
   PermissionDecision,
   ProductContext,
-  ExecutableKind,
   UserConfirmationReview,
 } from "./generated/host-callbacks.js";
 import { makeHostCallbacks, settle } from "./test-support.js";
