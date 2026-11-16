@@ -7,7 +7,8 @@ use super::{
 		AccountGrant, AccountGrantOutcome, AccountHolder, AccountInvocation, Allowance,
 		AuthorityError, AuthoritySession, AutoSigningKey, BulletinAllowanceKey,
 		CreateTransactionAuthorityRequest, GrantKeeping, SignPayloadAuthorityRequest,
-		SignRawAuthorityRequest, StatementStoreAllowanceKey, require_current_session,
+		SignRawAuthorityRequest, StatementStoreAllowanceKey, SubtreeResolution,
+		require_current_session,
 	},
 	ring_vrf_registry::{RingVrfRegistryStore, apply_ring_vrf_disclosure, validate_owner_listing},
 	sso_remote::SsoRemoteResponseError,
@@ -25,7 +26,10 @@ use crate::{
 		},
 		sso_wire::SsoRequest,
 	},
-	host_logic::entropy::derive_product_entropy_from_source,
+	host_logic::{
+		entropy::derive_product_entropy_from_source,
+		session::{SessionInfo, SessionState},
+	},
 	platform::ProductId,
 };
 use futures::{
@@ -152,21 +156,33 @@ impl AccountHolder for RemoteAccountHolder {
 		self.service.current_session()
 	}
 
-	fn require_current_session(&self, session: &AuthoritySession) -> Result<(), AuthorityError> {
-		require_current_session(&self.service.session_state(), session).map(|_| ())
+	fn session_state(&self) -> Arc<SessionState> {
+		self.service.session_state()
 	}
 
-	async fn product_subtree_public_key(
+	fn require_current_session(
 		&self,
-		invocation: AccountInvocation<'_>,
-		product_id: &ProductId,
-	) -> Result<[u8; 32], AuthorityError> {
+		session: &AuthoritySession,
+	) -> Result<SessionInfo, AuthorityError> {
+		require_current_session(&self.service.session_state(), session)
+	}
+
+	async fn product_subtree_public_key<'a>(
+		&'a self,
+		invocation: AccountInvocation<'a>,
+		product_id: &'a ProductId,
+	) -> Result<SubtreeResolution<'a>, AuthorityError> {
 		let session = require_current_session(&self.service.session_state(), invocation.session)?;
+		if session.sso.is_none() {
+			return Err(AuthorityError::Disconnected);
+		}
 		let request = ProductSubtreeRequest { product_id: product_id.clone() };
-		self.service
-			.call(invocation.call, &session, request)
-			.await?
-			.map_err(remote_authority_error)
+		Ok(SubtreeResolution::Ask(Box::pin(async move {
+			self.service
+				.call(invocation.call, &session, request)
+				.await?
+				.map_err(remote_authority_error)
+		})))
 	}
 
 	async fn sign_vrf(
@@ -222,7 +238,10 @@ impl AccountHolder for RemoteAccountHolder {
 	) -> Result<latest::HostSignPayloadResponse, AuthorityError> {
 		let request = match request {
 			SignRawAuthorityRequest::Product(request) => request,
-			SignRawAuthorityRequest::LegacyAccount { account, request } => {
+			SignRawAuthorityRequest::LegacyAccount { product_account, request } => {
+				latest::HostSignRawRequest { account: product_account, payload: request.payload }
+			},
+			SignRawAuthorityRequest::IdentityAccount { account, request } => {
 				let request = SignRawWithLegacyAccountRequest { account, data: request.payload };
 				if !watermarked {
 					return self
@@ -419,29 +438,20 @@ impl AccountHolder for RemoteAccountHolder {
 			resources: request.resources,
 			on_existing: policy,
 		};
-		Ok(stream::once(async move {
-			self.service
-				.call(invocation.call, &session, request)
-				.await?
-				.map_err(remote_authority_error)
-		})
-		.flat_map(|result| {
-			stream::iter(match result {
-				Ok(outcomes) => outcomes
-					.into_iter()
-					.map(|outcome| match outcome {
-						SsoAllocationOutcome::Allocated(resource) => {
-							decode_grant(resource).map(AccountGrantOutcome::Allocated)
-						},
-						SsoAllocationOutcome::Rejected => Ok(AccountGrantOutcome::Rejected),
-						SsoAllocationOutcome::NotAvailable => {
-							Ok(AccountGrantOutcome::NotAvailable { reason: None })
-						},
-					})
-					.collect::<Vec<_>>(),
-				Err(error) => vec![Err(error)],
-			})
-		})
+		let outcomes = self
+			.service
+			.call(invocation.call, &session, request)
+			.await?
+			.map_err(remote_authority_error)?;
+		Ok(stream::iter(outcomes.into_iter().map(|outcome| match outcome {
+			SsoAllocationOutcome::Allocated(resource) => {
+				decode_grant(resource).map(AccountGrantOutcome::Allocated)
+			},
+			SsoAllocationOutcome::Rejected => Ok(AccountGrantOutcome::Rejected),
+			SsoAllocationOutcome::NotAvailable => {
+				Ok(AccountGrantOutcome::NotAvailable { reason: None })
+			},
+		}))
 		.boxed())
 	}
 
@@ -531,7 +541,7 @@ fn remote_authority_error(reason: String) -> AuthorityError {
 /// only the kind so no key material reaches logs.
 fn unexpected_resource(label: &str, resource: &SsoAllocatedResource) -> AuthorityError {
 	AuthorityError::Unknown {
-		reason: format!("Unexpected {label} response resource: {}", resource.kind()),
+		reason: format!("Unexpected {label} response resource: {}", <&str>::from(resource)),
 	}
 }
 

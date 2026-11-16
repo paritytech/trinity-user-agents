@@ -123,6 +123,7 @@ fun RootNavBarOverlay(
     onAppClose: (Long) -> Unit,
     onOffset: (Dp) -> Unit,
     onBarHeight: (Dp) -> Unit,
+    onBarHiddenFraction: (Float) -> Unit,
 ) {
     val navigationInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     val threeButtonNavigation = WindowInsets.tappableElement.asPaddingValues().calculateBottomPadding() > 0.dp
@@ -186,6 +187,10 @@ fun RootNavBarOverlay(
                     }
                 }
             }
+        }
+
+        LaunchedEffect(hideState) {
+            snapshotFlow { hideState.hiddenFraction }.collect(onBarHiddenFraction)
         }
 
         LaunchedEffect(barMode) {

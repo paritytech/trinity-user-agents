@@ -34,6 +34,7 @@ use crate::{
 use crate::{
 	encrypted_storage::EncryptedStorage,
 	installation::InstallationIdProvider,
+	materials::Materials,
 	nft::{HoldingTracker, NftLedger},
 	nft_purse::{NftPurses, NftPursesDeps, StaticReceiveSecret},
 };
@@ -109,6 +110,8 @@ pub struct RuntimeServices {
 	pub contact_handles: crate::runtime::contacts::ContactHandleCache,
 	/// dotNS reads running now, shared by the callers that overlap them.
 	pub dotns_reads: DotnsReads,
+	/// Public profile resolution and native cache retention shared by host callers.
+	pub public_profiles: Arc<crate::public_profile::PublicProfilesService>,
 	/// Host Game adapter, installed once at startup by a host that can hold
 	/// reminders. Unset leaves every product Game call `Unsupported`.
 	game_platform: OnceLock<Arc<dyn GamePlatform>>,
@@ -133,6 +136,9 @@ pub struct RuntimeServices {
 	/// installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	nft_ledger: OnceLock<NftLedger>,
+	/// The materials on the device, over the core database, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	materials: OnceLock<Materials>,
 	/// The secret that opens `Static` NFT cheques, installed with the ledger.
 	#[cfg(not(target_arch = "wasm32"))]
 	static_receive_secret: OnceLock<Arc<dyn StaticReceiveSecret>>,
@@ -227,6 +233,11 @@ impl RuntimeServices {
 	) -> Arc<Self> {
 		let chain_provider = Arc::new(HostChainProvider::new(platform.clone()));
 		let chain = ChainRuntime::new(chain_provider, spawner.clone());
+		let public_profiles = Arc::new(crate::public_profile::PublicProfilesService::new(
+			chain.clone(),
+			stack.chains().asset_hub,
+			spawner.clone(),
+		));
 		let statement_store = StatementStoreRpc::new(
 			platform.clone(),
 			chain.clone(),
@@ -252,6 +263,7 @@ impl RuntimeServices {
 			contacts_platform: OnceLock::new(),
 			contact_handles: Default::default(),
 			dotns_reads: DotnsReads::new(spawner.clone()),
+			public_profiles,
 			game_platform: OnceLock::new(),
 			scanner_platform: OnceLock::new(),
 			scan_open: AtomicBool::new(false),
@@ -262,6 +274,8 @@ impl RuntimeServices {
 			durable_engine: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			nft_ledger: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
+			materials: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			static_receive_secret: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
@@ -307,12 +321,11 @@ impl RuntimeServices {
 		self.stack.storage(self.platform.as_ref())
 	}
 
-	/// The Asset Hub dotNS reads run against, when the stack has one.
+	/// The Asset Hub dotNS reads run against.
 	///
 	/// Fixed by construction, so the chain a grant is adjudicated against
-	/// cannot move under a running product. `None` fails every manifest lookup
-	/// closed: grants are refused rather than assumed.
-	pub fn asset_hub_chain_genesis_hash(&self) -> Option<[u8; 32]> {
+	/// cannot move under a running product.
+	pub fn asset_hub_chain_genesis_hash(&self) -> [u8; 32] {
 		self.stack.chains().asset_hub
 	}
 
@@ -453,10 +466,12 @@ impl RuntimeServices {
 	/// Install the core database, which also stores the funding sessions.
 	///
 	/// Set-once, so durable state cannot move to another file under a running
-	/// consumer. Returns whether this call installed it.
+	/// consumer. Returns `None` if a database was already installed.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub(crate) fn install_core_db(&self, db: Db) -> bool {
-		self.core_db.set(db.clone()).is_ok() && self.funding.install_db(db)
+	pub(crate) fn install_core_db(&self, db: Db) -> Option<()> {
+		self.core_db.set(db.clone()).ok()?;
+		self.public_profiles.install_db(db.clone())?;
+		self.funding.install_db(db).then_some(())
 	}
 
 	/// The core database.
@@ -476,6 +491,13 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
 		self.durable_engine.get().cloned()
+	}
+
+	/// Install the materials on the device. Set-once, like the database they
+	/// are kept in. Returns whether this call installed them.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_materials(&self, materials: Materials) -> bool {
+		self.materials.set(materials).is_ok()
 	}
 
 	/// Install the NFT ledger. Set-once, like the database it runs on.

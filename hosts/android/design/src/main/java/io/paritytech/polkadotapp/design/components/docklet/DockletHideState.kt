@@ -70,6 +70,8 @@ class DockletHideState internal constructor(
 
     val glowAlpha: Float get() = max(currentProgress(), 1f - barAlpha.value)
 
+    val hiddenFraction: Float get() = glowAlpha.coerceIn(0f, 1f)
+
     fun quietFade(): Float = if (quiet) currentProgress() else 0f
 
     fun pose(): DockletPose {

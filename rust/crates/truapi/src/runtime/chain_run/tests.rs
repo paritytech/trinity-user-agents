@@ -4,7 +4,7 @@ use crate::test_support::{MemoryCoreStorage, paseo_test_stack, test_stack, test_
 /// The same stack after a wipe whose operator left `generation` as it was:
 /// only the genesis hashes differ.
 fn wiped_stack() -> Stack {
-	test_stack("paseo", [0x77; 32], [0xbb; 32], Some([0xcc; 32]))
+	test_stack("paseo", [0x77; 32], [0xbb; 32], [0xcc; 32])
 }
 
 /// A wipe has to be noticed once, and only once: the data read from the old

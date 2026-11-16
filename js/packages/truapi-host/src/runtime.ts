@@ -1,4 +1,4 @@
-import type { ProductId } from "@parity/truapi";
+import type { ExecutableKind, ProductId } from "@parity/truapi";
 import type {
   HostChatActionSubscribeItem,
   HostRendererActionSubscribeItem,
@@ -7,11 +7,7 @@ import type {
   WireProvider,
 } from "@parity/truapi";
 import { StackStorageKey as GeneratedStackStorageKey } from "./generated/host-callbacks.js";
-import type {
-  CoreAdmin,
-  ExecutableKind,
-  StackStorageKey,
-} from "./generated/host-callbacks.js";
+import type { CoreAdmin, StackStorageKey } from "./generated/host-callbacks.js";
 
 // The typed capability interfaces below come straight from the
 // `truapi::platform` Rust module via `truapi-codegen --platform-ts-output`.

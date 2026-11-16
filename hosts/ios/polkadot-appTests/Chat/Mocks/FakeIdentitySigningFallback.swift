@@ -40,4 +40,8 @@ final class FakeIdentitySigningFallback: NonPrivateSigningFallbacking, @unchecke
 
         return signer
     }
+
+    func consentedIdentitySigner(for _: AccountId, ownSignKeyId _: String) async throws -> StatementStoreSigning? {
+        signer
+    }
 }
