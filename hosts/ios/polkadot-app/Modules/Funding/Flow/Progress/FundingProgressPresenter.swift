@@ -8,6 +8,7 @@ final class FundingProgressPresenter: FundingScreenPresenter {
     private let wireframe: FundingProgressWireframeProtocol
     private let logger: LoggerProtocol
     private var hasAcknowledged = false
+    private var hasShownDeposit = false
 
     init(
         context: FundingFlowContext,
@@ -21,11 +22,33 @@ final class FundingProgressPresenter: FundingScreenPresenter {
         super.init(context: context, interactor: interactor)
     }
 
+    override func setup() {
+        super.setup()
+        showDepositOnceReported()
+    }
+
     override func entryDidChange(from _: FundingEntry) {
+        showDepositOnceReported()
         guard entry.hasEnded, !hasAcknowledged else { return }
 
         hasAcknowledged = true
         interactor.acknowledge()
+    }
+}
+
+private extension FundingProgressPresenter {
+    /// Opens where to send a crypto top-up, once, as soon as its provider
+    /// reports the address: on the app's own network that is the whole flow,
+    /// while a provider that serves another network with its own screen
+    /// reports no address, so only its screen opens.
+    func showDepositOnceReported() {
+        let current = state
+        guard !hasShownDeposit, current.direction == .in, !current.hasReached(.received),
+              case .crypto? = current.progress?.deposit
+        else { return }
+
+        hasShownDeposit = true
+        wireframe.show(.deposit)
     }
 }
 
