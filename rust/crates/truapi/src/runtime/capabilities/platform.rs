@@ -259,7 +259,7 @@ impl<H: AccountHolder> Permissions for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|inner| async move {
 				if let latest::RemotePermission::NftPurseRead { owner } = &inner.permission {
-					self.connection.require_served_owner(owner)?;
+					self.connection.require_served(owner)?;
 				}
 				let service = self.connection.permissions_service();
 				match service.check_or_prompt_remote(inner).await {

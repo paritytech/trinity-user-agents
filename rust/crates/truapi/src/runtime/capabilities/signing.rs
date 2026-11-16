@@ -40,7 +40,7 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 			.exec(|inner| async move {
 				debug!("sign_payload: requesting signing-host signature");
 				let owner = inner.account.dot_ns_identifier.clone();
-				self.connection.require_served(&owner)?;
+				let request = self.connection.serve(SignPayloadAuthorityRequest::Product(inner))?;
 				self.connection
 					.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 					.await?;
@@ -52,7 +52,7 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 					return Err(CallError::Domain(latest::HostSignPayloadError::PermissionDenied));
 				}
 				self.accounts
-					.sign_payload(&session, cx, SignPayloadAuthorityRequest::Product(inner))
+					.sign_payload(&session, cx, request)
 					.await
 					.map_err(signing_call_error)
 			})
@@ -96,6 +96,9 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 			.exec(|mut inner| async move {
 				debug!("create_transaction: requesting signing-host signature");
 				let owner = inner.signer.dot_ns_identifier.clone();
+				// Refused before the checks below, which would answer for an
+				// unserved owner as for one that grants nothing. The request is
+				// served once its contacts are substituted.
 				self.connection.require_served(&owner)?;
 				self.connection
 					.require_chain_submit(latest::HostCreateTransactionError::PermissionDenied)
@@ -131,12 +134,10 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 						};
 						CallError::Domain(error)
 					})?;
+				let request =
+					self.connection.serve(CreateTransactionAuthorityRequest::Product(inner))?;
 				self.accounts
-					.create_transaction(
-						&session,
-						cx,
-						CreateTransactionAuthorityRequest::Product(inner),
-					)
+					.create_transaction(&session, cx, request)
 					.await
 					.map_err(transaction_call_error)
 			})
@@ -174,15 +175,12 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 				self.connection
 					.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 					.await?;
+				let request = self.connection.serve(SignPayloadAuthorityRequest::LegacyAccount {
+					product_account,
+					request: inner,
+				})?;
 				self.accounts
-					.sign_payload(
-						&session,
-						cx,
-						SignPayloadAuthorityRequest::LegacyAccount {
-							product_account,
-							request: inner,
-						},
-					)
+					.sign_payload(&session, cx, request)
 					.await
 					.map_err(signing_call_error)
 			})
@@ -260,8 +258,9 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 						CreateTransactionAuthorityRequest::IdentityAccount(inner)
 					},
 				};
+				let request = self.connection.serve(authority_request)?;
 				self.accounts
-					.create_transaction(&session, cx, authority_request)
+					.create_transaction(&session, cx, request)
 					.await
 					.map(|response| latest::HostCreateTransactionWithLegacyAccountResponse {
 						transaction: response.transaction,
@@ -282,7 +281,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		debug!("sign_raw: requesting signing-host signature");
 		let inner = request;
 		let owner = inner.account.dot_ns_identifier.clone();
-		self.connection.require_served(&owner)?;
+		let request = self.connection.serve(SignRawAuthorityRequest::Product(inner))?;
 		self.connection
 			.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 			.await?;
@@ -294,7 +293,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			return Err(CallError::Domain(latest::HostSignPayloadError::PermissionDenied));
 		}
 		self.accounts
-			.sign_raw(&session, cx, SignRawAuthorityRequest::Product(inner), watermarked)
+			.sign_raw(&session, cx, request, watermarked)
 			.await
 			.map_err(raw_signing_call_error)
 	}
@@ -325,8 +324,9 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 				SignRawAuthorityRequest::IdentityAccount { account, request: inner }
 			},
 		};
+		let request = self.connection.serve(authority_request)?;
 		self.accounts
-			.sign_raw(&session, cx, authority_request, watermarked)
+			.sign_raw(&session, cx, request, watermarked)
 			.await
 			.map_err(raw_signing_call_error)
 	}

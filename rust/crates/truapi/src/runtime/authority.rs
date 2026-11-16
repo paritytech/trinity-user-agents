@@ -31,6 +31,7 @@ use crate::{
 		session::{SessionInfo, SessionState},
 		statement_store::statement_public_key_from_secret,
 	},
+	stack::{NamesProducts, UnservedProduct},
 };
 
 use super::sso_remote::{
@@ -283,8 +284,8 @@ impl From<RawPayloadError> for AuthorityError {
 	}
 }
 
-impl From<crate::stack::UnservedProduct> for AuthorityError {
-	fn from(error: crate::stack::UnservedProduct) -> Self {
+impl From<UnservedProduct> for AuthorityError {
+	fn from(error: UnservedProduct) -> Self {
 		Self::NotSupported { reason: error.to_string() }
 	}
 }
@@ -382,6 +383,35 @@ pub enum CreateTransactionAuthorityRequest {
 	},
 	/// Create a transaction with the active wallet's identity account.
 	IdentityAccount(LegacyAccountTxPayload),
+}
+
+impl NamesProducts for SignPayloadAuthorityRequest {
+	fn products(&self) -> Vec<&ProductId> {
+		match self {
+			Self::Product(request) => request.account.products(),
+			Self::LegacyAccount { product_account, .. } => product_account.products(),
+		}
+	}
+}
+
+impl NamesProducts for SignRawAuthorityRequest {
+	fn products(&self) -> Vec<&ProductId> {
+		match self {
+			Self::Product(request) => request.account.products(),
+			Self::LegacyAccount { product_account, .. } => product_account.products(),
+			Self::IdentityAccount { .. } => vec![],
+		}
+	}
+}
+
+impl NamesProducts for CreateTransactionAuthorityRequest {
+	fn products(&self) -> Vec<&ProductId> {
+		match self {
+			Self::Product(payload) => payload.signer.products(),
+			Self::LegacyAccount { product_account, .. } => product_account.products(),
+			Self::IdentityAccount(_) => vec![],
+		}
+	}
 }
 
 impl SignPayloadAuthorityRequest {

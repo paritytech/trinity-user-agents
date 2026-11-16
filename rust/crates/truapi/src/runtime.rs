@@ -167,6 +167,7 @@ use crate::{
 		session::{SessionInfo, SessionState},
 		x25519_seal::X25519PrivateKey,
 	},
+	stack::{self, NamesProducts, Served},
 };
 
 /// Error reason surfaced to products when a permission is not granted.
@@ -474,19 +475,16 @@ impl ProductConnection {
 		&self.product.product_id
 	}
 
-	/// Refuses a product a request names when the stack does not serve its
-	/// TLD. Handlers call it before any key, grant or manifest is looked up.
-	fn require_served<D>(&self, product_id: &ProductId) -> Result<(), CallError<D>> {
-		Ok(self.services.stack().require_served(product_id)?)
+	/// Refuses a request naming a product the stack does not serve, before any
+	/// grant or manifest is looked up for it.
+	fn require_served<T: NamesProducts, D>(&self, value: &T) -> Result<(), CallError<D>> {
+		Ok(stack::require_served(self.services.stack().tld(), value)?)
 	}
 
-	/// [`Self::require_served`] for a purse owner a request names. An owner
-	/// that is not a product passes.
-	fn require_served_owner<D>(&self, owner: &latest::NftPurseOwner) -> Result<(), CallError<D>> {
-		match owner {
-			latest::NftPurseOwner::Product(product_id) => self.require_served(product_id),
-			latest::NftPurseOwner::Root => Ok(()),
-		}
+	/// `value` as [`Served`], which the account calls take, once the stack
+	/// serves every product it names.
+	fn serve<T: NamesProducts, D>(&self, value: T) -> Result<Served<T>, CallError<D>> {
+		Ok(stack::serve(self.services.stack().tld(), value)?)
 	}
 
 	// Foreign reads must keep the authorized owner, not the calling product.
@@ -861,16 +859,14 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		cx: &CallContext,
 		session: &AuthoritySession,
 	) -> Result<[u8; 32], AuthorityError> {
-		self.accounts
-			.product_account_public_key(
-				cx,
-				session,
-				&latest::ProductAccountId {
-					dot_ns_identifier: self.connection.product_id().clone(),
-					derivation_index: latest::DerivationIndex::Index(0),
-				},
-			)
-			.await
+		let account = stack::serve(
+			self.connection.services.stack().tld(),
+			latest::ProductAccountId {
+				dot_ns_identifier: self.connection.product_id().clone(),
+				derivation_index: latest::DerivationIndex::Index(0),
+			},
+		)?;
+		self.accounts.product_account_public_key(cx, session, &account).await
 	}
 
 	async fn classify_legacy_address_signer(

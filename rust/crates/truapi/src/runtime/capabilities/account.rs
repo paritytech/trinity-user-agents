@@ -41,10 +41,10 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 	) -> Result<HostAccountGetResponse, CallError<HostAccountGetError>> {
 		version(request)
 			.exec(|latest::HostAccountGetRequest { product_account_id }| async move {
-				self.connection.require_served(&product_account_id.dot_ns_identifier)?;
+				let account = self.connection.serve(product_account_id)?;
 				let public_key = self
 					.accounts
-					.get_account(cx, product_account_id)
+					.get_account(cx, account)
 					.await
 					.map_err(account_get_authority_error)?;
 
@@ -63,8 +63,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 	) -> Result<HostAccountGetAliasResponse, CallError<HostAccountGetAliasError>> {
 		version(request)
 			.exec(|request| async move {
-				self.connection.require_served(&request.key_handle.dot_ns_identifier)?;
-				self.connection.require_served(&request.context.product_id)?;
+				let request = self.connection.serve(request)?;
 				let session = self
 					.accounts
 					.current_session()
@@ -86,8 +85,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 	) -> Result<HostAccountCreateProofResponse, CallError<HostAccountCreateProofError>> {
 		version(request)
 			.exec(|request| async move {
-				self.connection.require_served(&request.key_handle.dot_ns_identifier)?;
-				self.connection.require_served(&request.context.product_id)?;
+				let request = self.connection.serve(request)?;
 				let session = self
 					.accounts
 					.current_session()
@@ -129,7 +127,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 	) -> Result<HostAccountListRingVrfKeysResponse, CallError<HostAccountListRingVrfKeysError>> {
 		version(request)
 			.exec(|request| async move {
-				self.connection.require_served(&request.owner)?;
+				let request = self.connection.serve(request)?;
 				let session = self.accounts.current_session().ok_or(CallError::Domain(
 					latest::HostAccountListRingVrfKeysError::NotConnected,
 				))?;
@@ -149,7 +147,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 	) -> Result<HostAccountRingVrfSignResponse, CallError<HostAccountRingVrfSignError>> {
 		version(request)
 			.exec(|request| async move {
-				self.connection.require_served(&request.key_handle.dot_ns_identifier)?;
+				let request = self.connection.serve(request)?;
 				let session = self
 					.accounts
 					.current_session()
@@ -170,7 +168,7 @@ impl<H: AccountHolder> Account for ProductRuntimeHost<H> {
 	) -> Result<HostAccountSignVrfResponse, CallError<HostAccountSignVrfError>> {
 		version(request)
 			.exec(|request| async move {
-				self.connection.require_served(&request.account.dot_ns_identifier)?;
+				let request = self.connection.serve(request)?;
 				validate_vrf_transcript(&request).map_err(|reason| {
 					CallError::Domain(latest::HostAccountSignVrfError::Unknown { reason })
 				})?;

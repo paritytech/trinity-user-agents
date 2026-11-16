@@ -8,7 +8,10 @@
 
 use trinity_stack::{Chain, Pointer, open};
 use truapi::latest::{
-	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
+	ChainIdentifier, HostAccountCreateProofRequest, HostAccountGetAliasRequest,
+	HostAccountListRingVrfKeysRequest, HostAccountRingVrfSignRequest, HostAccountSignVrfRequest,
+	NftPurseOwner, ProductAccountId, RemoteChainInfoError, RemoteChainInfoRequest,
+	RemoteChainInfoResponse,
 };
 
 use crate::{CallError, ProductId, dotns_name::is_dns_label};
@@ -69,12 +72,100 @@ pub fn serves(stack_tld: &str, product_id: &ProductId) -> bool {
 	product_id.network_suffix().is_none_or(|tld| serves_tld(stack_tld, tld))
 }
 
-/// [`serves`] as a check: fails with the product and the stack's TLD.
-pub fn require_served(stack_tld: &str, product_id: &ProductId) -> Result<(), UnservedProduct> {
-	if serves(stack_tld, product_id) {
-		return Ok(());
+/// [`serves`] as a check over every product `value` names: fails with the
+/// first one a stack on `stack_tld` does not run.
+pub fn require_served<T: NamesProducts>(stack_tld: &str, value: &T) -> Result<(), UnservedProduct> {
+	match value.products().into_iter().find(|product_id| !serves(stack_tld, product_id)) {
+		Some(product_id) => {
+			Err(UnservedProduct { product_id: product_id.clone(), stack_tld: stack_tld.to_owned() })
+		},
+		None => Ok(()),
 	}
-	Err(UnservedProduct { product_id: product_id.clone(), stack_tld: stack_tld.to_owned() })
+}
+
+/// `value` as [`Served`] once [`require_served`] passes.
+pub fn serve<T: NamesProducts>(stack_tld: &str, value: T) -> Result<Served<T>, UnservedProduct> {
+	require_served(stack_tld, &value)?;
+	Ok(Served(value))
+}
+
+/// A value every product of which the stack runs.
+///
+/// Only [`serve`] builds one, so a function that takes a `Served` value cannot
+/// be reached with a product the stack does not run. It derefs to the value.
+pub struct Served<T>(T);
+
+impl<T> Served<T> {
+	/// The value, for a callee that takes it without the proof.
+	pub fn into_inner(self) -> T {
+		self.0
+	}
+}
+
+impl<T> core::ops::Deref for Served<T> {
+	type Target = T;
+
+	fn deref(&self) -> &T {
+		&self.0
+	}
+}
+
+/// A value that names products, each of which the stack has to run before the
+/// core acts on the value.
+pub trait NamesProducts {
+	/// Every product the value names.
+	fn products(&self) -> Vec<&ProductId>;
+}
+
+impl NamesProducts for ProductId {
+	fn products(&self) -> Vec<&ProductId> {
+		vec![self]
+	}
+}
+
+impl NamesProducts for ProductAccountId {
+	fn products(&self) -> Vec<&ProductId> {
+		vec![&self.dot_ns_identifier]
+	}
+}
+
+impl NamesProducts for NftPurseOwner {
+	fn products(&self) -> Vec<&ProductId> {
+		match self {
+			Self::Product(product_id) => vec![product_id],
+			Self::Root => vec![],
+		}
+	}
+}
+
+impl NamesProducts for HostAccountSignVrfRequest {
+	fn products(&self) -> Vec<&ProductId> {
+		self.account.products()
+	}
+}
+
+impl NamesProducts for HostAccountGetAliasRequest {
+	fn products(&self) -> Vec<&ProductId> {
+		vec![&self.key_handle.dot_ns_identifier, &self.context.product_id]
+	}
+}
+
+impl NamesProducts for HostAccountCreateProofRequest {
+	fn products(&self) -> Vec<&ProductId> {
+		vec![&self.key_handle.dot_ns_identifier, &self.context.product_id]
+	}
+}
+
+impl NamesProducts for HostAccountListRingVrfKeysRequest {
+	fn products(&self) -> Vec<&ProductId> {
+		vec![&self.owner]
+	}
+}
+
+impl NamesProducts for HostAccountRingVrfSignRequest {
+	fn products(&self) -> Vec<&ProductId> {
+		self.key_handle.products()
+	}
 }
 
 /// A product under a TLD the stack does not serve.

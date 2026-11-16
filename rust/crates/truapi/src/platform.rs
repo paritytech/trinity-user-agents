@@ -34,6 +34,7 @@ pub use crate::{
 	},
 	stack::{Stack, StackChains, StackError, UnservedProduct},
 };
+use crate::stack::NamesProducts;
 
 use truapi::{
 	latest::{
@@ -1914,10 +1915,10 @@ pub enum UserConfirmationReview {
 	NftPurseDrain(NftPurseDrainReview),
 }
 
-impl UserConfirmationReview {
-	/// Every product the review names to the user: the caller, and the owner
-	/// of each account, context or purse it asks about.
-	pub fn products(&self) -> Vec<&ProductId> {
+/// The products a review names to the user: the caller, and the owner of each
+/// account, context or purse it asks about.
+impl NamesProducts for UserConfirmationReview {
+	fn products(&self) -> Vec<&ProductId> {
 		fn account<'a>(
 			calling: &'a Option<ProductId>,
 			account: &'a ProductAccountId,

@@ -73,9 +73,7 @@ impl SsoAccountHolderService {
 	where
 		F: Future<Output = Result<T, AuthorityError>>,
 	{
-		for product_id in review.products() {
-			self.wallet.require_served(product_id)?;
-		}
+		self.wallet.require_served(&review)?;
 		self.consent
 			.review(invocation.call, invocation.caller.clone(), self.platform.as_ref(), review)
 			.await?;

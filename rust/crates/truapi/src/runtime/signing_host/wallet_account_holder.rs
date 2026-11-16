@@ -46,7 +46,7 @@ use crate::{
 		},
 		vrf::{self, Vrf},
 	},
-	stack,
+	stack::{self, NamesProducts},
 };
 
 /// RFC-0022 domain for the responder's persistent SSO X25519 key.
@@ -189,10 +189,10 @@ impl WalletAccountHolder {
 		}
 	}
 
-	/// Refuses a product the stack does not serve, for a caller that has to
-	/// know before it asks the user anything.
-	pub fn require_served(&self, product_id: &ProductId) -> Result<(), AuthorityError> {
-		Ok(self.services.stack().require_served(product_id)?)
+	/// Refuses `value` when it names a product the stack does not serve, for a
+	/// caller that has to know before it asks the user anything.
+	pub fn require_served<T: NamesProducts>(&self, value: &T) -> Result<(), AuthorityError> {
+		Ok(stack::require_served(self.services.stack().tld(), value)?)
 	}
 
 	fn with_keys<T, E: From<AuthorityError>>(
