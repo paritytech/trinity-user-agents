@@ -316,3 +316,47 @@ fn executable_names_cannot_create_invalid_product_ids() {
 	let longest = ProductId::for_test(&format!("{label}.{label}.{label}.{}.dot", "b".repeat(60)));
 	assert!(longest.executable(ExecutableKind::Worker).is_err());
 }
+
+/// The native funding route's id round-trips through every path a stored or
+/// host-supplied id takes, and names no dotNS product and no network.
+#[test]
+fn the_native_funding_id_round_trips_and_names_no_product() {
+	let native = ProductId::native_funding();
+
+	assert!(native.is_native_funding());
+	assert_eq!(native.as_str().parse::<ProductId>(), Ok(native.clone()));
+	assert_eq!("Native:Funding".parse::<ProductId>(), Ok(native.clone()));
+	assert_eq!(ProductId::decode(&mut native.encode().as_slice()), Ok(native.clone()));
+	assert_eq!(native.dotns_name(), None);
+	assert_eq!(native.network_suffix(), None);
+	assert!(!native.is_localhost());
+	assert!(!native.has_trusted_remote_permissions());
+	assert!(native.to_share_host().is_none());
+}
+
+/// No dotNS name, localhost id or near miss parses as the native funding id,
+/// so no published or local product can take it.
+#[test]
+fn nothing_else_parses_as_the_native_funding_id() {
+	let near_misses = [
+		"native-funding.dot",
+		"native.funding.paseo",
+		"funding.native",
+		"native:funding.dot",
+		"worker.native:funding",
+		"native:funding:1",
+		"native:",
+		"localhost:funding",
+	];
+	for input in near_misses {
+		assert!(
+			input.parse::<ProductId>().map_or(true, |id| !id.is_native_funding()),
+			"{input} parsed as the native funding id"
+		);
+	}
+	for tld in DOTNS_TLDS {
+		let published = ProductId::from_name("native-funding", tld).expect("a dotNS name");
+		assert!(!published.is_native_funding());
+	}
+	assert!(!ProductId::for_test("localhost:3000").is_native_funding());
+}

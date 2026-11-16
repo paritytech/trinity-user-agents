@@ -31,6 +31,11 @@ const LOCALHOST_PRODUCT_LABEL: &str = "localhost";
 /// The start of a development product identifier that names a port.
 const LOCALHOST_PORT_PREFIX: &str = "localhost:";
 
+/// The id the core's own funding route goes by. The `:` keeps it out of
+/// every name dotNS can register and the localhost forms, so no product
+/// published or served locally can take it.
+const NATIVE_FUNDING_PRODUCT_ID: &str = "native:funding";
+
 /// Public share hosts append this suffix to a complete dotNS identity.
 pub const PRODUCT_SHARE_SUFFIX: &str = ".li";
 
@@ -130,6 +135,9 @@ impl FromStr for ProductId {
 				actual: normalized.len(),
 			});
 		}
+		if normalized == NATIVE_FUNDING_PRODUCT_ID {
+			return Ok(Self(normalized));
+		}
 		if !has_well_formed_labels(&normalized) {
 			return Err(ProductIdError::Invalid { input: product_id.to_string() });
 		}
@@ -163,6 +171,18 @@ impl ProductId {
 	#[cfg(any(test, feature = "mock"))]
 	pub fn for_test(product_id: &str) -> Self {
 		product_id.parse().expect("test product id is valid")
+	}
+
+	/// The id the core's own funding route goes by, as the provider of the
+	/// sessions it serves and the product its top-ups and payments are
+	/// started for. It names no dotNS product and no localhost one.
+	pub fn native_funding() -> Self {
+		Self(NATIVE_FUNDING_PRODUCT_ID.to_string())
+	}
+
+	/// Whether this is [`Self::native_funding`].
+	pub fn is_native_funding(&self) -> bool {
+		self.0 == NATIVE_FUNDING_PRODUCT_ID
 	}
 
 	/// The normalized identifier.
