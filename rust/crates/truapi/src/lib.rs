@@ -879,25 +879,19 @@ cfg_select! {
 		#[cfg(not(target_arch = "wasm32"))]
 		pub mod native_debug;
 
-		#[cfg(not(target_arch = "wasm32"))]
 		pub mod store;
 
-		#[cfg(not(target_arch = "wasm32"))]
 		#[macro_use]
 		pub mod durable;
 
-		#[cfg(not(target_arch = "wasm32"))]
 		pub mod encrypted_storage;
 
 		mod image_loader;
 
-		#[cfg(not(target_arch = "wasm32"))]
 		pub mod installation;
 
-		#[cfg(not(target_arch = "wasm32"))]
 		mod nft;
 
-		#[cfg(not(target_arch = "wasm32"))]
 		mod nft_purse;
 
 		#[cfg(not(target_arch = "wasm32"))]

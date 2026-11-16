@@ -135,6 +135,12 @@ tracing = { workspace = true, optional = true }
 # not `env-filter` (which drags in `regex`, heavy on wasm).
 tracing-subscriber = { workspace = true, features = ["registry", "std"], optional = true }
 imagesize = { workspace = true, features = ["gif", "jpeg", "png", "webp"], optional = true }
+rusqlite = { workspace = true, features = ["array", "bundled", "fallible_uint", "hooks"], optional = true }
+rusqlite_migration = { workspace = true, optional = true }
+itertools = { workspace = true, optional = true }
+# The clearing root of an NFT operation.
+binary-merkle-tree = { workspace = true, optional = true }
+hash-db = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 uniffi = { workspace = true }
@@ -147,15 +153,9 @@ tokio = { workspace = true, features = ["rt-multi-thread", "net", "sync", "macro
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["handshake"], optional = true }
 subxt = { workspace = true, features = ["native"], optional = true }
 subxt-rpcs = { workspace = true, features = ["jsonrpsee", "native"], optional = true }
-rusqlite = { workspace = true, features = ["array", "bundled", "fallible_uint", "hooks"], optional = true }
 # The material format reads numbers to the last digit, as JavaScript does.
 serde_json = { workspace = true, features = ["float_roundtrip"], optional = true }
 async-sqlite = { workspace = true, features = ["bundled"], optional = true }
-rusqlite_migration = { workspace = true, optional = true }
-itertools = { workspace = true, optional = true }
-# The clearing root of an NFT operation.
-binary-merkle-tree = { workspace = true, optional = true }
-hash-db = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 futures-timer = { workspace = true, features = ["wasm-bindgen"], optional = true }
@@ -189,6 +189,10 @@ required-features = ["mock"]
 [[test]]
 name = "wasm_crypto_vectors"
 required-features = ["mock"]
+
+[[test]]
+name = "wasm_store"
+required-features = ["runtime"]
 
 [[test]]
 name = "wire_result_shape"

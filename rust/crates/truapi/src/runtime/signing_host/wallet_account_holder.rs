@@ -276,7 +276,6 @@ impl WalletAccountHolder {
 	}
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl WalletAccountHolder {
 	/// Run `use_keys` against the wallet installed now.
 	fn with_installed_keys<T>(

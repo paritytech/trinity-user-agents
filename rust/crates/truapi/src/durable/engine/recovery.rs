@@ -58,8 +58,9 @@ impl LostChains {
 }
 
 /// Why recovery stopped while transactions were still live. The host retries.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, uniffi::Error)]
-#[uniffi(flat_error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Error))]
+#[cfg_attr(not(target_arch = "wasm32"), uniffi(flat_error))]
 pub enum RecoveryError {
 	/// The runtime has no core database, so there is nothing to recover.
 	#[error("no core database configured")]

@@ -264,7 +264,6 @@ impl HostSession for SigningHost {
 	}
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl crate::nft::ItemKeyDeriver for SigningHost {
 	fn derive_item_keys(
 		&self,
@@ -274,7 +273,6 @@ impl crate::nft::ItemKeyDeriver for SigningHost {
 	}
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl crate::nft::ItemSigner for SigningHost {
 	fn item_signer(
 		&self,
@@ -284,7 +282,6 @@ impl crate::nft::ItemSigner for SigningHost {
 	}
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl crate::nft::ItemSecrets for SigningHost {
 	fn derive_item_secrets(
 		&self,
@@ -296,7 +293,6 @@ impl crate::nft::ItemSecrets for SigningHost {
 
 /// The user's chat key, until the team settles which key products publish
 /// for `Static` cheques.
-#[cfg(not(target_arch = "wasm32"))]
 impl crate::nft_purse::StaticReceiveSecret for SigningHost {
 	fn static_receive_secret(
 		&self,

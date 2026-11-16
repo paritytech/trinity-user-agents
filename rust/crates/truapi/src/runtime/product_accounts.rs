@@ -18,11 +18,9 @@ use truapi::{
 
 #[cfg(test)]
 use crate::host_logic::session::SessionInfo;
-#[cfg(not(target_arch = "wasm32"))]
 use crate::platform::UserConfirmationReview;
 use crate::{host_internal::sso_messages::RingVrfError, platform::ProductId};
 
-#[cfg(not(target_arch = "wasm32"))]
 use super::authority::AccountCaller;
 use super::{
 	HostAccounts, ProductConnection,
@@ -77,7 +75,6 @@ impl<H: AccountHolder> ProductAccounts<H> {
 	/// the product may skip it.
 	///
 	/// Fails `Rejected` when the user declines.
-	#[cfg(not(target_arch = "wasm32"))]
 	pub async fn confirm(
 		&self,
 		cx: &CallContext,
