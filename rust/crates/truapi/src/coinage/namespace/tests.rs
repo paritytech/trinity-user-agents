@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::*;
 
 const PHRASE: &str = "bottom drive obey lake curtain smoke basket hold race lonely fit walk";
@@ -43,6 +45,27 @@ fn a_coin_key_has_the_same_scalar_and_account_on_every_derivation() {
 	assert_eq!(first.0[..32], second.0[..32]);
 	let secret = schnorrkel::SecretKey::from_bytes(&first.0).unwrap();
 	assert_eq!(secret.to_public().to_bytes(), first_account);
+}
+
+#[test]
+fn distinct_paths_give_distinct_keys() {
+	let entropy = entropy();
+	let vrf = futures::executor::block_on(crate::runtime::load_vrf()).unwrap();
+	let mut accounts = HashSet::new();
+	let mut members = HashSet::new();
+	let mut seeds = HashSet::new();
+	for purse in [PurseId(0), PurseId(1), PurseId::MAIN] {
+		for installation in [InstallationId([0; 32]), InstallationId([1; 32])] {
+			for item in 0..4 {
+				let (_, account) = coin_key(&entropy, purse, installation, item).unwrap();
+				assert!(accounts.insert(account), "coin {purse:?} {installation:?} {item}");
+				let (seed, member) = entry_key(&entropy, purse, installation, item, &vrf).unwrap();
+				assert!(seeds.insert(seed.0), "entry seed {purse:?} {installation:?} {item}");
+				assert!(members.insert(member), "entry member {purse:?} {installation:?} {item}");
+			}
+		}
+	}
+	assert!(accounts.iter().all(|account| !members.contains(account)));
 }
 
 #[test]

@@ -9,6 +9,8 @@ use subxt::{Metadata, utils::H256};
 
 use super::{
 	Asset, ChainConfig, ChainParams, Exponent, PrivacyPolicy, PurseId, Snapshot,
+	chain::{AliasState, ChainCoin, CoinageChain, RingPlace},
+	plugins::{PersonhoodSource, Seed},
 	ledger::{
 		AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation, observe,
 		snapshot,
@@ -18,6 +20,9 @@ use super::{
 	registration::{Admission, RegisterError, Rows, coinage_domain, register, registry_domain},
 };
 use crate::{
+	chain::{HashAndNumber, Heads, StorageWatchError},
+	chain_runtime::RuntimeFailure,
+	runtime::statement_allowance::{PersonhoodSigner, ring::RingParams},
 	durable::{
 		DeferredDurableTx, DurableRegistry, DurableRequest, DurableTxEngine, DurableTxEntry, DurableTxId,
 		PolicyError, PolicyParams, Preparation, RegistrationError, SubmissionPolicy, Unobservable,
@@ -119,6 +124,97 @@ pub fn register_rows(
 
 /// The time tests classify at, in Unix seconds.
 pub const NOW: u64 = 1_000_000;
+
+/// The recovery phrase entropy the plug-in and observation tests derive
+/// keys from.
+pub const ENTROPY: [u8; 16] = [3; 16];
+
+/// A seed that always gives [`ENTROPY`].
+pub struct FixedSeed;
+
+impl Seed for FixedSeed {
+	fn entropy(&self) -> Option<Vec<u8>> {
+		Some(ENTROPY.to_vec())
+	}
+}
+
+/// No person, so no unload is built and no token checked.
+pub struct NoPerson;
+
+#[async_trait::async_trait]
+impl PersonhoodSource for NoPerson {
+	async fn person(&self) -> Option<(Arc<dyn PersonhoodSigner>, RingParams, u32)> {
+		None
+	}
+}
+
+/// A chain whose coins and ring places a test sets, the same at both heads;
+/// every read fails while `failing` is set.
+#[derive(Default)]
+pub struct FakeChain {
+	/// The coin at each account.
+	pub coins: parking_lot::Mutex<HashMap<[u8; 32], ChainCoin>>,
+	/// The exponent and ring place of each member key.
+	pub places: parking_lot::Mutex<HashMap<[u8; 32], (i8, RingPlace)>>,
+	/// The state of each alias that has one.
+	pub aliases: parking_lot::Mutex<HashMap<[u8; 32], AliasState>>,
+	/// Every read fails.
+	pub failing: core::sync::atomic::AtomicBool,
+}
+
+impl FakeChain {
+	fn check(&self) -> Result<(), StorageWatchError> {
+		if self.failing.load(core::sync::atomic::Ordering::SeqCst) {
+			let failure = RuntimeFailure::host_failure("fake_chain", "the test fails every read");
+			return Err(StorageWatchError::Chain(failure));
+		}
+		Ok(())
+	}
+}
+
+#[async_trait::async_trait]
+impl CoinageChain for FakeChain {
+	async fn heads(&self) -> Result<Heads, StorageWatchError> {
+		let block = HashAndNumber { hash: H256([1; 32]), number: 10 };
+		Ok(Heads { finalized: block, best: block })
+	}
+
+	async fn coins_at(&self, _: H256, accounts: &[[u8; 32]]) -> Result<Vec<Option<ChainCoin>>, StorageWatchError> {
+		self.check()?;
+		let coins = self.coins.lock();
+		Ok(accounts.iter().map(|account| coins.get(account).copied()).collect())
+	}
+
+	async fn members_at(&self, _: H256, members: &[[u8; 32]]) -> Result<Vec<Option<(u32, i8)>>, StorageWatchError> {
+		self.check()?;
+		let places = self.places.lock();
+		Ok(members.iter().map(|member| places.get(member).map(|(exponent, _)| (0, *exponent))).collect())
+	}
+
+	async fn places_at(&self, _: H256, _: i8, members: &[[u8; 32]]) -> Result<Vec<Option<RingPlace>>, StorageWatchError> {
+		self.check()?;
+		let places = self.places.lock();
+		Ok(members.iter().map(|member| places.get(member).map(|(_, place)| *place)).collect())
+	}
+
+	async fn aliases_at(&self, _: H256, _: i8, _: u32, aliases: &[[u8; 32]]) -> Result<Vec<Option<AliasState>>, StorageWatchError> {
+		self.check()?;
+		let states = self.aliases.lock();
+		Ok(aliases.iter().map(|alias| states.get(alias).copied()).collect())
+	}
+
+	async fn ring_members_at(&self, _: H256, _: i8, _: u32) -> Result<Vec<[u8; 32]>, StorageWatchError> {
+		Ok(Vec::new())
+	}
+
+	async fn tokens_consumed_at(&self, _: H256, tokens: &[(u32, [u8; 32])]) -> Result<Vec<bool>, StorageWatchError> {
+		Ok(vec![false; tokens.len()])
+	}
+
+	async fn nonce_at(&self, _: H256, _: [u8; 32]) -> Result<u32, StorageWatchError> {
+		Ok(0)
+	}
+}
 
 /// A store with a minted installation, and helpers to hold assets in it.
 pub struct TestWallet {

@@ -6,6 +6,7 @@
 //! instance on the People chain and reaches the chain only through the
 //! interfaces the design's section 1 lists.
 
+pub mod assembly;
 pub mod balance;
 pub mod chain;
 pub mod classification;
@@ -15,6 +16,7 @@ pub mod namespace;
 pub mod operation;
 pub mod params;
 pub mod planning;
+pub mod plugins;
 pub mod policy;
 pub mod registration;
 pub mod selection;
