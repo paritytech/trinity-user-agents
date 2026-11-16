@@ -202,7 +202,7 @@ fun RootNavBar(
             )
         }
         val restingHeight = maxHeight - dock.top + DockletGeometry.PillProud
-        LaunchedEffect(restingHeight) { currentOnRestingHeightChange(restingHeight) }
+        LaunchedEffect(restingHeight, forceShown) { currentOnRestingHeightChange(restingHeight) }
         LaunchedEffect(dock.right, density) { currentOnBarWidthChange(with(density) { dock.right.toPx() }) }
 
         val networkStatusOpen = networkStatusItem && networkStatusExpanded
