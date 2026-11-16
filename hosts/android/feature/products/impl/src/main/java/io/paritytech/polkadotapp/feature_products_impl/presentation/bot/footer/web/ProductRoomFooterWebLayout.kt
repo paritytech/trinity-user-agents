@@ -15,6 +15,7 @@ import android.webkit.WebView
 import android.widget.FrameLayout
 import androidx.core.view.ViewCompat
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsWebViewClient
+import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.overlay.ProductOverlayPage
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.overlay.ProductOverlayWebLayout
 import timber.log.Timber
 
@@ -86,8 +87,8 @@ class ProductRoomFooterWebLayout(
             Timber.d("Web footer of %s refused an overlay: one is already showing", productId)
             return
         }
-        val url = ProductRoomFooterWebPage.url(path, productId) ?: run {
-            Timber.w("Web footer of %s refused an overlay off the product origin: %s", productId, path)
+        val url = ProductOverlayPage.url(path, productId) ?: run {
+            Timber.w("Web footer of %s refused an overlay that is no page of the product: %s", productId, path)
             return
         }
         overlay = ProductOverlayWebLayout.show(this, productId, url, content)

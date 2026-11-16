@@ -160,8 +160,8 @@ private extension ProductRoomFooterWebView {
     /// ends with its page or at its limit.
     func showOverlay(path: String) {
         guard let window else { return }
-        guard let url = ProductRoomFooterWebPage.url(path: path, productId: productId) else {
-            logger.warning("[truapi.product] web footer refused an overlay off the product origin: \(path)")
+        guard let url = ProductOverlayWebView.pageURL(path: path, productId: productId) else {
+            logger.warning("[truapi.product] web footer refused an overlay that is no page of the product: \(path)")
             return
         }
         ProductOverlayWebView.show(

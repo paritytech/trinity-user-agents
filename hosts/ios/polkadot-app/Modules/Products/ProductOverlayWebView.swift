@@ -42,6 +42,20 @@ enum ProductOverlayMessage: Equatable {
 final class ProductOverlayWebView: UIView {
     nonisolated static let limit: Duration = .seconds(5)
 
+    /// The overlay page at `path` on the product's own origin, or nil when `path` would leave it or names no file.
+    ///
+    /// The page must be a file with an extension, such as `confetti-overlay.html`. The content handler answers an
+    /// empty path, a bare query or fragment, or a path with no extension with the product's whole app (its
+    /// client-side routes), which must never cover the chat. Android answers those with a 404.
+    nonisolated static func pageURL(path: String, productId: ProductId) -> URL? {
+        guard let url = ProductRoomFooterWebPage.url(path: path, productId: productId),
+              !url.hasDirectoryPath,
+              !url.pathExtension.isEmpty else {
+            return nil
+        }
+        return url
+    }
+
     private let productId: ProductId
     private let logger: LoggerProtocol
     private let webView: WKWebView
