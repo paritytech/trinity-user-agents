@@ -181,3 +181,13 @@ fn an_unload_is_given_up_once_an_alias_is_unloaded_and_waits_while_one_is_locked
 	chain.aliases.lock().insert(alias, AliasState::Unloaded);
 	assert!(matches!(check(), Some(AliasCheck::Consumed)));
 }
+
+#[test]
+fn the_installation_registry_domain_lives_on_asset_hub() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let registry = with_coinage(DurableRegistry::new(), deps(&wallet, Arc::new(FakeChain::default()), Running::new()));
+	assert_eq!(
+		(registry.chain(&registry_domain()), registry.chain(&coinage_domain())),
+		(Some(H256([0xcd; 32])), Some(H256([0xab; 32])))
+	);
+}
