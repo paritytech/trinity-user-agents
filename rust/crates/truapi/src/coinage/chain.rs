@@ -144,6 +144,19 @@ pub struct RingPlace {
 	pub revision: u32,
 }
 
+/// Where a member key stands in its recycler collection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RingPosition {
+	/// Queued to join a ring. It was never in one, so its entry was never
+	/// unloaded.
+	Onboarding,
+	/// In a ring.
+	Included(RingPlace),
+	/// Taken out of its ring, or any other position the layer does not
+	/// read: the pallet holds no ring index to read its alias under.
+	Suspended,
+}
+
 /// The coinage pallet's storage, and the members pallet's recycler rings,
 /// read at one block. Every read is batched over its keys, and a missing
 /// value reads as none.
@@ -155,13 +168,14 @@ pub trait CoinageChain: Send + Sync {
 	async fn coins_at(&self, at: H256, accounts: &[[u8; 32]]) -> Result<Vec<Option<ChainCoin>>, StorageWatchError>;
 	/// The instance and exponent each member key was loaded under.
 	async fn members_at(&self, at: H256, members: &[[u8; 32]]) -> Result<Vec<Option<(u32, i8)>>, StorageWatchError>;
-	/// The place of each member key in its recycler ring of `exponent`.
+	/// The position of each member key in the recycler collection of
+	/// `exponent`; none for a key that is not a member.
 	async fn places_at(
 		&self,
 		at: H256,
 		exponent: i8,
 		members: &[[u8; 32]],
-	) -> Result<Vec<Option<RingPlace>>, StorageWatchError>;
+	) -> Result<Vec<Option<RingPosition>>, StorageWatchError>;
 	/// The state of each alias in ring `ring` of `exponent`.
 	async fn aliases_at(
 		&self,
@@ -265,20 +279,28 @@ impl CoinageChain for CoinageStorage {
 		at: H256,
 		exponent: i8,
 		members: &[[u8; 32]],
-	) -> Result<Vec<Option<RingPlace>>, StorageWatchError> {
+	) -> Result<Vec<Option<RingPosition>>, StorageWatchError> {
 		let collection = recycler_collection(self.instance, exponent);
 		let keys: Vec<([u8; 32], [u8; 32])> = members.iter().map(|member| (collection, *member)).collect();
 		let positions = self.values(at, MEMBERS, "Members", &keys).await?;
 		let mut places = Vec::with_capacity(positions.len());
 		for position in positions {
-			let Some((ring, page, slot)) = position.as_ref().and_then(included_position) else {
+			let Some(position) = position else {
 				places.push(None);
+				continue;
+			};
+			if variant_name(&position) == Some("Onboarding") {
+				places.push(Some(RingPosition::Onboarding));
+				continue;
+			}
+			let Some((ring, page, slot)) = included_position(&position) else {
+				places.push(Some(RingPosition::Suspended));
 				continue;
 			};
 			let (status, revision) = self.ring_status(at, collection, ring).await?;
 			let field = |name: &str| status.as_ref().and_then(|status| number(status, name));
 			let immutable_since = status.as_ref().and_then(|status| status.at("immutable_since")).and_then(|since| since.at(0));
-			places.push(Some(RingPlace {
+			places.push(Some(RingPosition::Included(RingPlace {
 				ring,
 				page,
 				position: slot,
@@ -286,7 +308,7 @@ impl CoinageChain for CoinageStorage {
 				included: field("included").unwrap_or(0) as u32,
 				immutable_since: immutable_since.and_then(Value::as_u128).map(|since| since as u64),
 				revision,
-			}));
+			})));
 		}
 		Ok(places)
 	}

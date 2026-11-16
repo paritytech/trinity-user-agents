@@ -11,7 +11,7 @@ use std::{collections::HashMap, sync::Arc};
 use super::{
 	Asset, ChainParams, Exponent,
 	assembly::{UNLOADING_RECYCLER_CONTEXT, free_token_context},
-	chain::{AliasState, CoinageChain},
+	chain::{AliasState, CoinageChain, RingPosition},
 	ledger::{self, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, TokenId},
 	namespace::{coin_key, entry_seed},
 	plugins::{PersonhoodSource, Seed},
@@ -103,8 +103,8 @@ pub async fn on_block(deps: &ObserverDeps, block: HashAndNumber, now: u64, param
 		};
 		for (EntryKeys { asset, alias, .. }, place) in group.iter().zip(places) {
 			let read = match place {
-				None => Read::Entry(None),
-				Some(place) => match deps.chain.aliases_at(at, exponent, place.ring, &[*alias]).await {
+				None | Some(RingPosition::Onboarding | RingPosition::Suspended) => Read::Entry(None),
+				Some(RingPosition::Included(place)) => match deps.chain.aliases_at(at, exponent, place.ring, &[*alias]).await {
 					Err(_) => Read::Failed,
 					Ok(states) => {
 						let lifetime = params.config().ring_lifetime.as_secs();

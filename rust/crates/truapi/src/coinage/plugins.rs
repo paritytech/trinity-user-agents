@@ -19,7 +19,7 @@ use subxt::utils::H256;
 use super::{
 	Asset, ChainParams, Snapshot,
 	assembly::{self, Build, Context, Funding, Keys, Personhood, Ring, Transaction},
-	chain::{AliasState, ChainCoin, CoinageChain},
+	chain::{AliasState, ChainCoin, CoinageChain, RingPosition},
 	ledger::{self, Mark, Read, Subject},
 	namespace::{coin_key, entry_seed},
 	operation::{OpKey, Retry},
@@ -437,16 +437,20 @@ impl PassScope for Proven {
 	}
 }
 
-/// The account of every coin and the member key and alias of every entry
-/// the pass's records name.
+/// The account of every coin and the keys of every entry the pass's records
+/// name.
 #[derive(Default)]
 struct AssetKeys {
 	accounts: HashMap<Asset, [u8; 32]>,
-	members: HashMap<Asset, [u8; 32]>,
-	aliases: HashMap<Asset, [u8; 32]>,
-	/// For each entry input, its exponent as the chain stores it and the
-	/// ring it was last observed in.
-	rings: HashMap<Asset, (i8, u32)>,
+	entries: HashMap<Asset, EntryKeys>,
+}
+
+/// The keys the chain knows an entry by, and its exponent as the chain
+/// stores it.
+struct EntryKeys {
+	member: [u8; 32],
+	alias: [u8; 32],
+	exponent: i8,
 }
 
 impl AssetKeys {
@@ -466,14 +470,13 @@ impl AssetKeys {
 				},
 				Asset::Entry { purse, installation, index } => {
 					let seed = entry_seed(entropy, purse, installation, index);
-					if let Ok(member) = vrf.member(&seed.0) {
-						keys.members.insert(asset, member);
-					}
-					if let Ok(alias) = vrf.alias(&seed.0, &assembly::UNLOADING_RECYCLER_CONTEXT) {
-						keys.aliases.insert(asset, alias);
-					}
-					if let Some((exponent, ring, _)) = ring_of(view, &asset) {
-						keys.rings.insert(asset, (exponent, ring));
+					let derived = (
+						vrf.member(&seed.0),
+						vrf.alias(&seed.0, &assembly::UNLOADING_RECYCLER_CONTEXT),
+						view.asset(&asset).and_then(|record| i8::try_from(record.exponent.get()).ok()),
+					);
+					if let (Ok(member), Ok(alias), Some(exponent)) = derived {
+						keys.entries.insert(asset, EntryKeys { member, alias, exponent });
 					}
 				},
 			}
@@ -487,33 +490,55 @@ struct Reads {
 	coins: Option<HashMap<[u8; 32], Option<ChainCoin>>>,
 	/// For each member key, the exponent it was loaded under.
 	members: Option<HashMap<[u8; 32], Option<i8>>>,
-	/// The alias states of the entry inputs whose ring is known; an alias
-	/// whose read failed is absent.
-	aliases: HashMap<[u8; 32], Option<AliasState>>,
+	/// Whether each entry's alias is unloaded, for the entries whose
+	/// position and alias state were read: an onboarding entry was never in a
+	/// ring, so it was never unloaded. A suspended entry, and one whose read
+	/// failed, is absent.
+	unloaded: HashMap<Asset, bool>,
 }
 
 impl Reads {
 	async fn at(chain: &dyn CoinageChain, at: H256, keys: &AssetKeys) -> Self {
 		let accounts: Vec<[u8; 32]> = keys.accounts.values().copied().collect();
-		let members: Vec<[u8; 32]> = keys.members.values().copied().collect();
+		let members: Vec<[u8; 32]> = keys.entries.values().map(|entry| entry.member).collect();
 		let coins = chain.coins_at(at, &accounts).await.ok().map(|coins| accounts.iter().copied().zip(coins).collect());
 		let member_reads = chain.members_at(at, &members).await.ok();
 		let members_map = member_reads
 			.map(|found| members.iter().copied().zip(found.into_iter().map(|loaded| loaded.map(|(_, exponent)| exponent))).collect());
-		let mut rings: HashMap<(i8, u32), Vec<[u8; 32]>> = HashMap::new();
-		for (entry, ring) in &keys.rings {
-			if let Some(alias) = keys.aliases.get(entry) {
-				rings.entry(*ring).or_default().push(*alias);
-			}
-		}
-		let mut aliases = HashMap::new();
-		for ((exponent, ring), group) in rings {
-			if let Ok(states) = chain.aliases_at(at, exponent, ring, &group).await {
-				aliases.extend(group.into_iter().zip(states));
-			}
-		}
-		Self { coins, members: members_map, aliases }
+		Self { coins, members: members_map, unloaded: unloaded_at(chain, at, keys).await }
 	}
+}
+
+/// Whether each entry's alias is unloaded at `at`, for the entries the chain
+/// answers for (see [`Reads`]).
+async fn unloaded_at(chain: &dyn CoinageChain, at: H256, keys: &AssetKeys) -> HashMap<Asset, bool> {
+	let mut by_exponent: HashMap<i8, Vec<(&Asset, &EntryKeys)>> = HashMap::new();
+	for (entry, entry_keys) in &keys.entries {
+		by_exponent.entry(entry_keys.exponent).or_default().push((entry, entry_keys));
+	}
+	let mut unloaded = HashMap::new();
+	let mut rings: HashMap<(i8, u32), Vec<(&Asset, &EntryKeys)>> = HashMap::new();
+	for (exponent, group) in by_exponent {
+		let members: Vec<[u8; 32]> = group.iter().map(|(_, entry_keys)| entry_keys.member).collect();
+		let Ok(positions) = chain.places_at(at, exponent, &members).await else { continue };
+		for ((entry, entry_keys), position) in group.into_iter().zip(positions) {
+			match position {
+				Some(RingPosition::Onboarding) => {
+					unloaded.insert(*entry, false);
+				},
+				Some(RingPosition::Included(place)) => rings.entry((exponent, place.ring)).or_default().push((entry, entry_keys)),
+				Some(RingPosition::Suspended) | None => {},
+			}
+		}
+	}
+	for ((exponent, ring), group) in rings {
+		let aliases: Vec<[u8; 32]> = group.iter().map(|(_, entry_keys)| entry_keys.alias).collect();
+		if let Ok(states) = chain.aliases_at(at, exponent, ring, &aliases).await {
+			let read = states.into_iter().map(|state| state == Some(AliasState::Unloaded));
+			unloaded.extend(group.into_iter().map(|(entry, _)| *entry).zip(read));
+		}
+	}
+	unloaded
 }
 
 /// The oracle's rules for one record at one head.
@@ -543,14 +568,14 @@ impl Judge<'_> {
 	}
 
 	fn member_present(&self, entry: &Asset) -> Option<bool> {
-		let member = self.keys.members.get(entry)?;
-		let found = *self.reads.members.as_ref()?.get(member)?;
+		let member = self.keys.entries.get(entry)?.member;
+		let found = *self.reads.members.as_ref()?.get(&member)?;
 		Some(found.is_some_and(|exponent| Some(exponent) == self.expected(entry)))
 	}
 
-	fn alias_unloaded(&self, entry: &Asset) -> bool {
-		let alias = self.keys.aliases.get(entry);
-		alias.and_then(|alias| self.reads.aliases.get(alias)).is_some_and(|state| *state == Some(AliasState::Unloaded))
+	/// Whether `entry`'s alias is unloaded; none when unknown.
+	fn alias_unloaded(&self, entry: &Asset) -> Option<bool> {
+		self.reads.unloaded.get(entry).copied()
 	}
 
 	fn completed(&self) -> bool {
@@ -559,7 +584,7 @@ impl Judge<'_> {
 			Asset::Entry { .. } => self.member_present(output) == Some(true),
 			_ => matches!(self.coin(output), Some(Some(_))),
 		});
-		let alias_unloaded = rows.inputs.iter().any(|input| matches!(input, Asset::Entry { .. }) && self.alias_unloaded(input));
+		let alias_unloaded = rows.inputs.iter().any(|input| self.alias_unloaded(input) == Some(true));
 		let settled_and_gone = !rows.inputs.is_empty() &&
 			rows.inputs.iter().all(|input| self.settled(input) && matches!(self.coin(input), Some(None)));
 		let consumer_final = rows.outputs.iter().any(|output| {
@@ -584,7 +609,7 @@ impl Judge<'_> {
 		let available = rows.inputs.iter().any(|input| {
 			let own = !matches!(input, Asset::PeerCoin(_)) && self.view.mark(input).is_none();
 			own && match input {
-				Asset::Entry { .. } => self.member_present(input) == Some(true) && !self.alias_unloaded(input),
+				Asset::Entry { .. } => self.member_present(input) == Some(true) && self.alias_unloaded(input) == Some(false),
 				_ => matches!(self.coin(input), Some(Some(_))),
 			}
 		});
