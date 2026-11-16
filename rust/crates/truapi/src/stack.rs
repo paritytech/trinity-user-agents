@@ -181,7 +181,9 @@ pub enum StackError {
 	},
 	/// The build allows its stack reserved values and also reserves extra
 	/// ones, which that stack may then name.
-	#[display("reserved values that allow the stack every reserved value cannot reserve extra ones")]
+	#[display(
+		"reserved values that allow the stack every reserved value cannot reserve extra ones"
+	)]
 	AllowedWithExtras,
 	/// The build reserves a TLD that no stack can have, so it reserves nothing.
 	#[display("reserved tld {tld:?} is not one of {}", DOTNS_TLDS.join(", "))]

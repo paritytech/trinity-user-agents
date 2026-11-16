@@ -77,8 +77,9 @@ export interface ReservedValuesPolicy {
   /** Genesis hashes reserved on top of the core's, as 0x-prefixed hex or bytes. */
   extraGenesisHashes?: (string | Uint8Array)[];
   /**
-   * dotNS TLDs reserved on top of the core's, each `dot`, `paseo` or
-   * `testnet`, the TLDs a stack can have, without the leading dot.
+   * dotNS TLDs reserved on top of the core's, each written as a stack's TLD
+   * is, without the leading dot. The core's refusal of any other entry names
+   * the TLDs a stack can have.
    */
   extraTlds?: string[];
 }

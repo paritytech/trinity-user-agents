@@ -222,7 +222,7 @@ fn a_stack_from_parts_is_held_to_the_reserved_values() {
 /// A build reserves the values of a network it ships so that no other stack
 /// passes for it. They are held to the rule Polkadot's are.
 #[test]
-fn a_builds_extra_reserved_values_need_its_permission() {
+fn a_builds_extra_reserved_values_are_refused() {
 	let on_extra_tld = test_descriptor("testnet", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
 	let on_extra_asset_hub = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xe5; 32]);
 	let extra_hash_as_another_role = with_an_unread_role([0xd4; 32]);
@@ -249,8 +249,7 @@ fn a_builds_extra_reserved_values_leave_the_cores_in_force() {
 	let on_polkadot_people = test_descriptor("paseo", POLKADOT_PEOPLE, [0xb2; 32], [0xc3; 32]);
 
 	assert_eq!(
-		[&on_dot, &on_polkadot_people]
-			.map(|descriptor| bundled(descriptor, &reserving_extras())),
+		[&on_dot, &on_polkadot_people].map(|descriptor| bundled(descriptor, &reserving_extras())),
 		[
 			Err(StackError::ReservedTld { tld: "dot".to_string() }),
 			Err(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }),
@@ -263,14 +262,21 @@ fn a_builds_extra_reserved_values_leave_the_cores_in_force() {
 #[test]
 fn allowed_reserved_values_with_extra_ones_are_refused() {
 	let descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
-	let chains =
-		StackChains { relay: None, asset_hub: [0xc3; 32], people: [0xa1; 32], bulletin: [0xb2; 32] };
+	let chains = StackChains {
+		relay: None,
+		asset_hub: [0xc3; 32],
+		people: [0xa1; 32],
+		bulletin: [0xb2; 32],
+	};
 	let policies = [
 		ReservedValuesPolicy {
 			extra_tlds: vec!["testnet".to_string()],
 			..ReservedValuesPolicy::ALLOWED
 		},
-		ReservedValuesPolicy { extra_genesis_hashes: vec![[0xe5; 32]], ..ReservedValuesPolicy::ALLOWED },
+		ReservedValuesPolicy {
+			extra_genesis_hashes: vec![[0xe5; 32]],
+			..ReservedValuesPolicy::ALLOWED
+		},
 	];
 
 	assert_eq!(
@@ -280,7 +286,8 @@ fn allowed_reserved_values_with_extra_ones_are_refused() {
 				Stack::new("paseo".into(), "paseo".into(), chains.clone(), &policy).err(),
 			)
 		}),
-		[(); 2].map(|()| (Some(StackError::AllowedWithExtras), Some(StackError::AllowedWithExtras))),
+		[(); 2]
+			.map(|()| (Some(StackError::AllowedWithExtras), Some(StackError::AllowedWithExtras))),
 	);
 }
 
