@@ -42,6 +42,7 @@ extension ChatModelMapper: CoreDataMapperProtocol {
         }
 
         let hasIncomingReaction = Self.hasUnreadReaction(for: entity)
+        let peerSeenOrder = UInt64(max(0, entity.peerSeenOrder))
 
         let roomMetadata = try (entity.roomMetadata).map {
             try ChatRoomMetadataEntityMapper().transform(entity: $0)
@@ -63,7 +64,8 @@ extension ChatModelMapper: CoreDataMapperProtocol {
                 unreadDisplayMessageCount: unreadCount,
                 hasIncomingReaction: hasIncomingReaction,
                 createdAt: entity.createdAt,
-                roomMetadata: roomMetadata
+                roomMetadata: roomMetadata,
+                peerSeenOrder: peerSeenOrder
             )
         case let .chatExtension(extId, roomId):
             let unreadCount = Self.nonReactionUnreadCount(for: entity)
@@ -75,6 +77,7 @@ extension ChatModelMapper: CoreDataMapperProtocol {
                 hasIncomingReaction: hasIncomingReaction,
                 createdAt: entity.createdAt,
                 roomMetadata: roomMetadata,
+                peerSeenOrder: peerSeenOrder,
                 roomFooter: entity.footer.flatMap(Chat.RoomFooter.init(storedValue:))
             )
         }
