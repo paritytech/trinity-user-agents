@@ -12,7 +12,7 @@ use crate::{
 	nft::{AllocateItemsError, ItemKey, PurseId, StartOperationError},
 	nft_purse::{NftPurses, drain_needs_confirmation},
 	platform::{NftPurseDrainDestination, NftPurseDrainReview, UserConfirmationReview},
-	runtime::{ProductRuntimeHost, authority::AuthorityError},
+	runtime::{AccountHolder, ProductRuntimeHost, authority::AuthorityError},
 };
 
 /// How one call's error type names the refusals its operation can meet.
@@ -87,7 +87,7 @@ pub struct Drain {
 	pub destination: NftPurseDrainDestination,
 }
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// Registers a rebalance after checking both purses, the key and the
 	/// items, and then confirming a drain of a purse the caller does not own.
 	pub async fn rebalance_nft_purse(
@@ -180,7 +180,7 @@ impl ProductRuntimeHost {
 			item_count: drain.item_count,
 			destination: drain.destination,
 		});
-		match self.confirm(cx, review).await {
+		match self.accounts.confirm(cx, review).await {
 			Ok(()) => Ok(()),
 			Err(AuthorityError::Rejected) => Err(CallError::Domain(denied)),
 			Err(error) => Err(host_failure(error)),
