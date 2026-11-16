@@ -270,8 +270,9 @@ where each chain's `lightSpec` is published, the host fetches it and hands the
 bytes over, and the provider checks them
 against the descriptor's `sha256` and the chain's genesis hash, wires each
 parachain to the relay and runs the statement-store protocol where the
-descriptor sets `statementStore`. A chain whose spec has not arrived is unknown
-until the host adds it, and the rest of the stack runs. The crate also bundles
+descriptor sets `statementStore`. A chain is unknown until the host adds its
+spec, and a parachain also until the relay's is added; the chains that have
+what they need run meanwhile. The crate also bundles
 a chain-spec catalog for `paseo-next-v2` and `previewnet`, which a stack's
 provider never consults. The light
 client holds at most 32 connections at once and refuses a `connect` past that, so a

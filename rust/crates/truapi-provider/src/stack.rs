@@ -13,7 +13,7 @@ use std::{
 
 use trinity_stack::{Chain, Descriptor, Error, Pointer};
 
-use crate::{ChainSource, ProviderError, config::ResolvedChain};
+use crate::{ChainSource, ProviderError};
 
 /// Where a chain's light spec is published.
 #[derive(Debug, PartialEq, Eq)]
@@ -32,10 +32,10 @@ pub struct LightSpecSource {
 
 /// The light-client chains of one stack.
 ///
-/// A chain whose spec was not added is unknown to the provider, and the rest
-/// of the stack runs without it. Build one provider per stack: the light
-/// client keys a chain by its genesis hash, which a fork shares with its
-/// source.
+/// A chain is unknown to the provider until its spec is added, and a
+/// parachain also until the relay's is. The chains that have what they need
+/// run meanwhile. Build one provider per stack: the light client keys a chain
+/// by its genesis hash, which a fork shares with its source.
 pub struct LightStack {
 	id: String,
 	generation: String,
@@ -62,30 +62,20 @@ impl LightStack {
 	/// The chains of `descriptor`, with no light spec yet.
 	///
 	/// `id` is what identifies the stack, as `trinity_stack::Pointer::stack_id`
-	/// gives it. Fails when a genesis hash does not decode, when two chains
-	/// share one, or when the descriptor has no relay.
+	/// gives it. Fails when the descriptor breaks a rule of its format, as one
+	/// built in code can.
 	pub fn new(id: impl Into<String>, descriptor: &Descriptor) -> Result<Self, ProviderError> {
-		let mut chains: Vec<([u8; 32], Chain)> = Vec::with_capacity(descriptor.chains.len());
-		for chain in &descriptor.chains {
-			let genesis = chain.try_genesis().map_err(refused)?;
-			if chains.iter().any(|(known, _)| *known == genesis) {
-				return Err(refused(Error::Malformed(format!(
-					"genesisHash {} appears on more than one chain",
-					chain.genesis_hash
-				))));
-			}
-			chains.push((genesis, chain.clone()));
-		}
-		let relay = descriptor
-			.relay()
-			.ok_or_else(|| refused(Error::RelayCount(0)))?
-			.try_genesis()
-			.map_err(refused)?;
+		descriptor.validate().map_err(refused)?;
+		let relay = descriptor.relay().expect("a valid descriptor has a relay").genesis();
 		Ok(Self {
 			id: id.into(),
 			generation: descriptor.generation.clone(),
 			relay,
-			chains,
+			chains: descriptor
+				.chains
+				.iter()
+				.map(|chain| (chain.genesis(), chain.clone()))
+				.collect(),
 			specs: Mutex::new(HashMap::new()),
 		})
 	}
@@ -126,8 +116,7 @@ impl LightStack {
 	/// [`ProviderError::LightSpec`] when either differs or the descriptor
 	/// names no light spec for the chain, and with
 	/// [`ProviderError::UnknownGenesis`] for a chain outside the stack. A
-	/// refused spec changes nothing, and a chain the light client already
-	/// runs keeps the spec it started with.
+	/// refused spec changes nothing.
 	pub fn add_light_spec(
 		&self,
 		genesis_hash: [u8; 32],
@@ -141,9 +130,9 @@ impl LightStack {
 			genesis: genesis_hash,
 			source,
 		};
-		chain.check_light_spec(specification).map_err(refused)?;
 		let specification = core::str::from_utf8(specification)
 			.map_err(|error| refused(Error::MalformedSpec(error.to_string())))?;
+		chain.check_light_spec(specification.as_bytes()).map_err(refused)?;
 		self.specs().insert(genesis_hash, specification.to_owned());
 		Ok(())
 	}
@@ -163,36 +152,35 @@ impl LightStack {
 		&self.generation
 	}
 
-	/// The relay `genesis_hash` syncs through. The relay itself, and a chain
-	/// outside the stack, have none.
-	pub fn relay_of(&self, genesis_hash: [u8; 32]) -> Option<[u8; 32]> {
-		(genesis_hash != self.relay && self.chain(genesis_hash).is_some()).then_some(self.relay)
-	}
-
-	/// What the light client needs to run `genesis_hash`.
-	///
-	/// Fails with [`ProviderError::UnknownGenesis`] for a chain outside the
-	/// stack or without its spec, and with [`ProviderError::UnknownRelay`] for
-	/// a parachain whose relay has no spec yet.
-	pub fn resolve(&self, genesis_hash: [u8; 32]) -> Result<ResolvedChain, ProviderError> {
-		let source = self
-			.source(genesis_hash)
-			.ok_or(ProviderError::UnknownGenesis { genesis: genesis_hash })?;
-		let relay = match self.relay_of(genesis_hash) {
-			None => None,
-			Some(relay) => {
-				let source = self.source(relay).ok_or(ProviderError::UnknownRelay { relay })?;
-				Some((relay, source))
-			},
-		};
-		Ok(ResolvedChain { source, relay })
-	}
-
 	fn chain(&self, genesis_hash: [u8; 32]) -> Option<&Chain> {
 		self.chains
 			.iter()
 			.find(|(genesis, _)| *genesis == genesis_hash)
 			.map(|(_, chain)| chain)
+	}
+
+	fn specs(&self) -> MutexGuard<'_, HashMap<[u8; 32], String>> {
+		self.specs.lock().unwrap_or_else(PoisonError::into_inner)
+	}
+}
+
+/// What the provider reads of a stack to connect to its chains.
+///
+/// A trait of this private module, so a host that holds a [`LightStack`]
+/// sees only what it hands over.
+pub trait StackChains {
+	/// The relay `genesis_hash` syncs through. The relay itself, and a chain
+	/// outside the stack, have none.
+	fn relay_of(&self, genesis_hash: [u8; 32]) -> Option<[u8; 32]>;
+
+	/// What the light client runs `genesis_hash` from, once its spec was
+	/// added.
+	fn source(&self, genesis_hash: [u8; 32]) -> Option<ChainSource>;
+}
+
+impl StackChains for LightStack {
+	fn relay_of(&self, genesis_hash: [u8; 32]) -> Option<[u8; 32]> {
+		(genesis_hash != self.relay && self.chain(genesis_hash).is_some()).then_some(self.relay)
 	}
 
 	fn source(&self, genesis_hash: [u8; 32]) -> Option<ChainSource> {
@@ -202,10 +190,6 @@ impl LightStack {
 			database_content: None,
 			statement_protocol: self.chain(genesis_hash)?.statement_store == Some(true),
 		})
-	}
-
-	fn specs(&self) -> MutexGuard<'_, HashMap<[u8; 32], String>> {
-		self.specs.lock().unwrap_or_else(PoisonError::into_inner)
 	}
 }
 

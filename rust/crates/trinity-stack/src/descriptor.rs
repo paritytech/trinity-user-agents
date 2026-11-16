@@ -278,8 +278,9 @@ impl Descriptor {
 		Ok(Some(url.into()))
 	}
 
-	/// Checks the RFC's format rules on known fields.
-	fn validate(&self) -> Result<(), Error> {
+	/// Checks the RFC's format rules on known fields, as [`Descriptor::from_json`] does. A
+	/// descriptor built in code has not passed them, so a reader that takes one checks it here.
+	pub fn validate(&self) -> Result<(), Error> {
 		if self.generation.is_empty() {
 			return Err(Error::Empty("generation"));
 		}
@@ -295,6 +296,7 @@ impl Descriptor {
 	fn validate_chains(&self) -> Result<(), Error> {
 		let mut roles = HashSet::new();
 		let mut para_ids = HashSet::new();
+		let mut genesis_hashes = HashSet::new();
 		for chain in &self.chains {
 			if !roles.insert(chain.role.as_str()) {
 				return Err(Error::DuplicateChainRole(chain.role.clone()));
@@ -308,6 +310,9 @@ impl Descriptor {
 				_ => {},
 			}
 			format::hex_bytes::<32>("genesisHash", &chain.genesis_hash)?;
+			if !genesis_hashes.insert(chain.genesis_hash.as_str()) {
+				return Err(Error::DuplicateGenesisHash(chain.genesis_hash.clone()));
+			}
 			if chain.rpc.is_empty() {
 				return Err(Error::Empty("rpc"));
 			}
@@ -423,13 +428,8 @@ impl Chain {
 	/// The genesis hash as bytes. Decodes hex that validation already checked, so it panics only
 	/// on a chain that skipped [`Descriptor::from_json`] and deserialisation.
 	pub fn genesis(&self) -> [u8; 32] {
-		self.try_genesis().expect("invalid genesisHash in a descriptor")
-	}
-
-	/// The genesis hash as bytes, for a chain that may have skipped validation. Fails when it is
-	/// not 32 bytes of lowercase 0x-prefixed hex.
-	pub fn try_genesis(&self) -> Result<[u8; 32], Error> {
 		format::hex_bytes("genesisHash", &self.genesis_hash)
+			.expect("invalid genesisHash in a descriptor")
 	}
 }
 
