@@ -336,7 +336,7 @@ console.log(JSON.stringify({{
 	let output = command.stdin(Stdio::null()).output().await?;
 	let stdout = String::from_utf8_lossy(&output.stdout);
 	let stderr = String::from_utf8_lossy(&output.stderr);
-	assert!(output.status.success(), "{stdout}\n{stderr}");
+	assert!(output.status.success(), "{}\n{stdout}\n{stderr}", output.status);
 	let outcome: serde_json::Value = serde_json::from_str(stdout.trim())
 		.with_context(|| format!("worker output: {stdout}\n{stderr}"))?;
 	assert_eq!(

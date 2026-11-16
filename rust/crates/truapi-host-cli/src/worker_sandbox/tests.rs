@@ -79,11 +79,15 @@ fn the_landlock_rules_grant_the_policy_and_the_system_libraries_bun_loads() {
 	assert!(rules.read.ends_with(&policy().read));
 	assert!(rules.read.contains(&PathBuf::from("/usr/lib")));
 	assert!(rules.read.contains(&PathBuf::from("/etc/resolv.conf")));
-	assert!(
-		!rules
-			.read
-			.iter()
-			.any(|path| path.starts_with("/proc") || path.starts_with("/home"))
+	assert!(!rules.read.iter().any(|path| path.starts_with("/home")));
+	// Of `/proc`, only the worker's own process and two system-wide files.
+	assert_eq!(
+		rules.read.iter().filter(|path| path.starts_with("/proc")).collect::<Vec<_>>(),
+		[
+			Path::new("/proc/self"),
+			Path::new("/proc/meminfo"),
+			Path::new("/proc/sys/vm/overcommit_memory"),
+		]
 	);
 	assert_eq!(rules.execute[0], PathBuf::from("/opt/bun/bin/bun"));
 	assert!(rules.execute[1..].iter().all(|path| {

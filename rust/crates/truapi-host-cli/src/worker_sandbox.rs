@@ -229,8 +229,11 @@ mod platform {
 	pub fn exec(policy: &Policy, arguments: Vec<OsString>) -> anyhow::Error {
 		match restrict(&LandlockRules::of(policy)) {
 			Ok(RulesetStatus::FullyEnforced) => {},
+			// Only when the kernel predates `ABI_REQUESTED`: Linux 7.0
+			// lacks ABI 9, which confines connecting to Unix sockets.
 			Ok(RulesetStatus::PartiallyEnforced) => eprintln!(
-				"[worker sandbox] this kernel enforces only part of the worker's Landlock sandbox"
+				"[worker sandbox] this kernel's Landlock predates ABI 9 (Linux 7.1), so it \
+				 enforces only part of the worker's sandbox"
 			),
 			Ok(RulesetStatus::NotEnforced) => {
 				return anyhow::anyhow!(
@@ -298,7 +301,8 @@ pub struct LandlockRules {
 }
 
 /// What a dynamically linked `bun` reads to start and to reach the network:
-/// shared libraries, name resolution, certificates and time zones.
+/// shared libraries, name resolution, certificates, time zones and its own
+/// process's details.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const LINUX_SYSTEM_READ: &[&str] = &[
 	"/lib",
@@ -321,6 +325,17 @@ const LINUX_SYSTEM_READ: &[&str] = &[
 	"/usr/share/zoneinfo",
 	"/dev/urandom",
 	"/dev/random",
+	// The worker's own process directory, never `/proc` itself, which would
+	// show other processes' environments. Landlock resolves `/proc/self` when
+	// the rule is added, to this process, which keeps its pid through the
+	// exec: glibc reads the main thread's stack bounds from
+	// `/proc/self/maps`, and JavaScriptCore aborts without them.
+	"/proc/self",
+	// The memory and processors the allocators and thread pools size
+	// themselves by.
+	"/proc/meminfo",
+	"/proc/sys/vm/overcommit_memory",
+	"/sys/devices/system/cpu",
 ];
 
 /// The dynamic loaders `bun` may be linked against, which the kernel
