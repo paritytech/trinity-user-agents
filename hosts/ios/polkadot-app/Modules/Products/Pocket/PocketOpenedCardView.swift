@@ -101,23 +101,46 @@ private struct PocketCardEdge: View {
 }
 
 private extension View {
-    /// Draws a layer of the card `depth` points behind its middle, as `side` is seen at the current turn.
     func turnedLayer(_ turn: PocketCardTurn, side: PocketCardSide, depth: Double) -> some View {
-        rotation3DEffect(
-            .degrees(PocketCardTurn.layerRotation(side, at: turn.angle)),
-            axis: (x: 0, y: 1, z: 0),
-            perspective: 0.42
-        )
-        .scaleEffect(turn.scale)
-        .offset(x: turn.depthOffset(depth))
+        modifier(TurnedLayer(turn: turn, side: side, depth: depth))
     }
 
-    /// Only the face up takes presses and is read aloud, judged from where the card is mid-turn rather than where it
-    /// is going.
     func turnedFace(_ turn: PocketCardTurn, side: PocketCardSide, depth: Double) -> some View {
+        modifier(TurnedFace(turn: turn, side: side, depth: depth))
+    }
+}
+
+/// Draws a layer of the card `depth` points behind its middle, as `side` is seen at the current turn. The angle is
+/// read here rather than by the card, so a turn redraws the layers and not the faces inside them.
+private struct TurnedLayer: ViewModifier {
+    let turn: PocketCardTurn
+    let side: PocketCardSide
+    let depth: Double
+
+    func body(content: Content) -> some View {
+        content
+            .rotation3DEffect(
+                .degrees(PocketCardTurn.layerRotation(side, at: turn.angle)),
+                axis: (x: 0, y: 1, z: 0),
+                perspective: 0.42
+            )
+            .scaleEffect(turn.scale)
+            .offset(x: turn.depthOffset(depth))
+    }
+}
+
+/// Only the face up takes presses and is read aloud, judged from where the card is mid-turn rather than where it is
+/// going.
+private struct TurnedFace: ViewModifier {
+    let turn: PocketCardTurn
+    let side: PocketCardSide
+    let depth: Double
+
+    func body(content: Content) -> some View {
         let shown = turn.shownSide == side
 
-        return turnedLayer(turn, side: side, depth: depth)
+        return content
+            .turnedLayer(turn, side: side, depth: depth)
             .opacity(shown ? 1 : 0)
             .zIndex(shown ? 1 : 0)
             .allowsHitTesting(shown)

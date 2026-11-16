@@ -76,7 +76,7 @@ final class PocketCardTurn {
     }
 
     func drag(by points: Double, width: Double) {
-        guard !isHoming else { return }
+        guard isUserMoving, !isHoming else { return }
 
         angle = withinOneFlip(angle + points * Self.halfTurn / width)
         heading = angle
@@ -84,7 +84,7 @@ final class PocketCardTurn {
 
     /// Lands on the face the release heads for, never more than one flip from the face the drag began on.
     func release(velocity pointsPerSecond: Double, width: Double) {
-        guard !isHoming else { return }
+        guard isUserMoving, !isHoming else { return }
 
         // Capped so a hard flick still settles on the next face instead of swinging past it.
         let velocity = min(max(pointsPerSecond * Self.halfTurn / width, -Self.maxSettleSpeed), Self.maxSettleSpeed)
@@ -98,7 +98,7 @@ final class PocketCardTurn {
 
         if side != Self.shownSide(at: heading) {
             turnOver()
-        } else if angle != heading {
+        } else if angle != heading, settle == nil {
             start(Settle(start: angle, target: heading, velocity: 0, spring: Self.turnSpring, owner: .page))
         }
     }
@@ -230,6 +230,7 @@ private extension PocketCardTurn {
 final class DisplayLinkFrames: NSObject, PocketCardTurnFrames {
     private var link: CADisplayLink?
     private var step: ((Double) -> Bool)?
+    private var previousTimestamp: CFTimeInterval?
 
     func start(_ step: @escaping (Double) -> Bool) {
         self.step = step
@@ -240,11 +241,15 @@ final class DisplayLinkFrames: NSObject, PocketCardTurnFrames {
         self.link = link
     }
 
+    /// Steps by the time that actually passed, so a dropped frame does not slow the turn.
     @objc private func tick(_ link: CADisplayLink) {
-        guard step?(link.targetTimestamp - link.timestamp) == true else {
+        let elapsed = link.timestamp - (previousTimestamp ?? link.timestamp - link.duration)
+        previousTimestamp = link.timestamp
+        guard step?(elapsed) == true else {
             link.invalidate()
             self.link = nil
             step = nil
+            previousTimestamp = nil
             return
         }
     }

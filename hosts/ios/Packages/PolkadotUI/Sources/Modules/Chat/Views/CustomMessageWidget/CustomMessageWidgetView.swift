@@ -123,7 +123,7 @@ private struct NodeImageView: View {
                 picture = .loading
                 let image =
                     if case let .inline(bytes) = props.source {
-                        CustomMessageWidgetNode.ImageSource.decodeInline(bytes)
+                        await Task.detached { CustomMessageWidgetNode.ImageSource.decodeInline(bytes) }.value
                     } else {
                         await resolveImage?(props.source)
                     }

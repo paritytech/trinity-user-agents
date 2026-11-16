@@ -163,6 +163,19 @@ struct PocketCardTurnTests {
         #expect(!turn.isUserMoving && !turn.canTurn)
     }
 
+    // The finger may still be down when the manifest says there is no back, and the card must not turn to one.
+    @Test
+    func aDragUnderWayStopsTurningWhenTheBackGoesAway() {
+        let turn = dragged(by: cardWidth * 0.3)
+
+        turn.backChanged(available: false)
+        turn.drag(by: cardWidth * 0.5, width: cardWidth)
+        turn.release(velocity: 5_000, width: cardWidth)
+        frames.runToEnd()
+
+        #expect(turn.angle == 0)
+    }
+
     @Test
     func reduceMotionTurnsTheCardWithoutASpring() {
         let turn = turn(reduceMotion: true)
