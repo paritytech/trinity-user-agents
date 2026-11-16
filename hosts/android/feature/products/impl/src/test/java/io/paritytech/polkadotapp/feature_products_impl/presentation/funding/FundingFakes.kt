@@ -20,6 +20,7 @@ import uniffi.truapi.FundingAmountIssue
 import uniffi.truapi.FundingDirection
 import uniffi.truapi.FundingFrameOutcome
 import uniffi.truapi.FundingOptions
+import uniffi.truapi.FundingProgress
 import uniffi.truapi.FundingQuoteList
 import uniffi.truapi.FundingSelection
 import uniffi.truapi.FundingSession
@@ -136,12 +137,13 @@ object FundingFixtures {
         options: FundingOptions? = FakeFundingCore.options(ramp),
         quotes: FundingQuoteList? = null,
         isPresented: Boolean = true,
+        progress: FundingProgress? = session?.let { FakeFundingCore.progress() },
     ) = FundingEntry.of(
         id = "intent",
         fallbackDirection = FundingDirection.IN,
         fallbackAmount = null,
         session = session,
-        progress = session?.let { FakeFundingCore.progress() },
+        progress = progress,
         summary = null,
         options = options,
         quotes = quotes,

@@ -22,6 +22,7 @@ import uniffi.truapi.FundingQuoteRefusal
 import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingQuoteUnavailable
 import uniffi.truapi.FundingRail
+import uniffi.truapi.FundingStep
 import uniffi.truapi.ProductId
 import uniffi.truapi.fundingNetworkName
 import java.math.BigDecimal
@@ -297,14 +298,19 @@ fun FundingFlowState.toDepositUiState(
     isCancelling: Boolean,
 ): FundingDepositUiState {
     val content = when (val deposit = progress?.deposit) {
-        is FundingDeposit.Crypto -> FundingDepositContent.Crypto(
-            qrPayload = deposit.uri ?: deposit.address,
-            amount = FundingAssetUnit.of(deposit.asset, deposit.decimals.toInt()).format(deposit.amount),
-            exact = deposit.exact,
-            address = deposit.address,
-            networkName = fundingNetworkName(deposit.network),
-            networkIcon = fundingNetworkIcon(deposit.network),
-        )
+        // Only the app's own network reports an address; a provider serving another one takes the payment in its own
+        // screen. Once the provider has the funds the address is no longer somewhere to send to.
+        is FundingDeposit.Crypto -> when {
+            progress?.hasReceived() == true -> FundingDepositContent.ProgressOnly
+            else -> FundingDepositContent.Crypto(
+                qrPayload = deposit.uri ?: deposit.address,
+                amount = FundingAssetUnit.of(deposit.asset, deposit.decimals.toInt()).format(deposit.amount),
+                exact = deposit.exact,
+                address = deposit.address,
+                networkName = fundingNetworkName(deposit.network),
+                networkIcon = fundingNetworkIcon(deposit.network),
+            )
+        }
 
         is FundingDeposit.Bank -> FundingDepositContent.Bank(
             amount = FundingAssetUnit.of(deposit.currency, deposit.decimals.toInt()).format(deposit.amount),
@@ -316,6 +322,7 @@ fun FundingFlowState.toDepositUiState(
 
         null -> when {
             noProviderQuoted && !session.started -> FundingDepositContent.Problem(noProviderProblem())
+            session.started && rail == FundingRail.CRYPTO -> FundingDepositContent.ProgressOnly
             else -> FundingDepositContent.Waiting(preparing = session.started, card = rail == FundingRail.CARD)
         }
     }
@@ -341,6 +348,9 @@ fun FundingFlowState.toDepositUiState(
         content = session.failure?.let { FundingDepositContent.Problem(FundingSummaryProblem.Failed(it)) } ?: content,
     )
 }
+
+/** The provider has the user's payment: the received milestone, or one past it. */
+private fun FundingProgress.hasReceived(): Boolean = steps.any { it.reachedAtMs != null && it.step != FundingStep.STARTED }
 
 /** The band line, worded per `FundingBand`'s docs for this session's rail and [asset]. */
 fun FundingFlowState.bandLine(band: FundingBand, asset: String?): FundingBandUi? {
