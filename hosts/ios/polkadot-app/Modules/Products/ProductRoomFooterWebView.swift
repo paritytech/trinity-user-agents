@@ -30,7 +30,9 @@ final class ProductRoomFooterWebView: UIView {
     let pageURL: URL
     private let productId: ProductId
     private let onAction: ActionHandler
-    private let makeOverlaySchemeHandler: @MainActor () -> any WKURLSchemeHandler
+    /// The product's content, shared with the overlays this page asks for, so an overlay neither opens the content
+    /// again nor serves another version of it.
+    private let schemeHandler: any WKURLSchemeHandler
     private let logger: LoggerProtocol
     private let webView: WKWebView
     private let backdrop = UIView()
@@ -49,14 +51,13 @@ final class ProductRoomFooterWebView: UIView {
         productId: ProductId,
         height: UInt32,
         schemeHandler: any WKURLSchemeHandler,
-        makeOverlaySchemeHandler: @escaping @MainActor () -> any WKURLSchemeHandler,
         onAction: @escaping ActionHandler,
         logger: LoggerProtocol
     ) {
         self.pageURL = pageURL
         self.productId = productId
         self.onAction = onAction
-        self.makeOverlaySchemeHandler = makeOverlaySchemeHandler
+        self.schemeHandler = schemeHandler
         self.logger = logger
 
         let configuration = WKWebViewConfiguration()
@@ -167,7 +168,7 @@ private extension ProductRoomFooterWebView {
             over: window,
             pageURL: url,
             productId: productId,
-            schemeHandler: makeOverlaySchemeHandler(),
+            schemeHandler: schemeHandler,
             logger: logger
         )
     }
