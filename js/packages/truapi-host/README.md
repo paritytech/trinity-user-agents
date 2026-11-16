@@ -32,6 +32,11 @@ A suite moving from `@parity/host-api-test-sdk` follows the [migration guide](..
 `test-host` features, which is what lets the test host hold keys and answer
 resource allocation as granted without allocating anything.
 
+A host that uses the raw glue builds each runtime with an async `create`, as in
+`await WasmPairingHostRuntime.create(callbacks, hostConfig)`. Building one reads
+the core's stack record from the host's core storage, which answers
+asynchronously.
+
 `ProductRuntimeConfig` configures both host roles. `stack` is the Trinity stack
 the host build runs:
 
@@ -45,8 +50,8 @@ The core takes every chain it uses, the network `getChainInfo` reports and the
 signing host's TLD from the descriptor. It refuses a pointer without a key and a
 descriptor without an Asset Hub, People or Bulletin chain.
 
-The wasm core keeps the descriptor current when the host passes three raw
-callbacks to the runtime constructor, typed as `StackCallbacks`:
+The wasm core keeps the descriptor current when the host passes two raw
+callbacks to `create`, typed as `StackCallbacks`:
 
 - `fetchStackDescriptor(request)`: fetch `request.url` with a `GET`, without
   following redirects, and answer `document` or `notModified`. Throw for
@@ -59,10 +64,9 @@ callbacks to the runtime constructor, typed as `StackCallbacks`:
   changes a chain, the network, the TLD or the generation, and applies once
   the runtime is built again. `generation` changes when the stack restarts its
   chains: key cached chain data by it.
-- `storeStackRecord(record)`: keep the bytes and pass them back as
-  `stack.stored` at the next start, so the core starts from the last copy it
-  verified instead of the bundled one. Without it the core never sets
-  `restartRequired`, because the next start could not read the newer copy.
+
+The core keeps the last copy it verified in core storage, under the
+`StackRecord` key, and starts from it when it is newer than the bundled one.
 
 Without `fetchStackDescriptor` the core stays on the copy it started from. The
 `/web` worker runtime does not pass these callbacks yet.

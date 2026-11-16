@@ -112,7 +112,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       requestWorkerTransition: () => {},
     };
     const { productId, ...hostConfig } = bundledRuntimeConfig();
-    const runtime = new WasmPairingHostRuntime(raw, hostConfig);
+    const runtime = await WasmPairingHostRuntime.create(raw, hostConfig);
     // The core emits response frames through `emitFrame`; the worker supplies
     // it per-core outside the generated adapter, so the harness does too.
     runtime.productRuntime({ productId }, { emitFrame: () => {} });
@@ -139,18 +139,17 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     pointer.searchParams.delete("key");
 
     expect(
-      () =>
-        new WasmPairingHostRuntime(
-          {
-            ...createWasmRawCallbacks(createMockHost().callbacks),
-            requestWorkerTransition: () => {},
-          },
-          {
-            ...hostConfig,
-            stack: { ...hostConfig.stack, pointer: pointer.href },
-          },
-        ),
-    ).toThrow("runtimeConfig.stack: stack pointer has no key");
+      WasmPairingHostRuntime.create(
+        {
+          ...createWasmRawCallbacks(createMockHost().callbacks),
+          requestWorkerTransition: () => {},
+        },
+        {
+          ...hostConfig,
+          stack: { ...hostConfig.stack, pointer: pointer.href },
+        },
+      ),
+    ).rejects.toThrow("runtimeConfig.stack: stack pointer has no key");
   });
 
   it("refreshes the stack through the host's fetch and reports each change", async () => {
@@ -164,7 +163,6 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     const { productId: _productId, ...hostConfig } = bundledRuntimeConfig();
     const requests: StackFetchRequest[] = [];
     const statuses: StackStatus[] = [];
-    const records: Uint8Array[] = [];
     const answers: StackFetchResponse[] = [
       { status: "document", bytes: hostConfig.stack.descriptor, etag: '"v1"' },
     ];
@@ -177,28 +175,33 @@ suite("real WASM core ↔ createMockHost bridge", () => {
         return answer;
       },
       stackChanged: (status) => statuses.push(status),
-      storeStackRecord: (record) => void records.push(record),
     };
     const settled = () => new Promise((resolve) => setTimeout(resolve, 200));
+    // One host, so the core storage the first runtime writes is what the
+    // second one reads.
+    const mock = createMockHost();
+    const start = () =>
+      WasmPairingHostRuntime.create(
+        {
+          ...createWasmRawCallbacks(mock.callbacks),
+          requestWorkerTransition: () => {},
+          ...stackCallbacks,
+        },
+        hostConfig,
+      );
 
-    const runtime = new WasmPairingHostRuntime(
-      {
-        ...createWasmRawCallbacks(createMockHost().callbacks),
-        requestWorkerTransition: () => {},
-        ...stackCallbacks,
-      },
-      hostConfig,
-    );
+    const runtime = await start();
     await settled();
     online = true;
     runtime.refreshStack();
     await settled();
 
     const pointer = new URL(hostConfig.stack.pointer);
-    expect(requests).toEqual([
-      { url: pointer.searchParams.get("url"), maxBytes: 1024 * 1024 },
-      { url: pointer.searchParams.get("url"), maxBytes: 1024 * 1024 },
-    ]);
+    const request = {
+      url: pointer.searchParams.get("url"),
+      maxBytes: 1024 * 1024,
+    };
+    expect(requests).toEqual([request, request]);
     expect(statuses.map((status) => status.lastRefresh)).toEqual([
       undefined,
       { outcome: "unreachable", reason: "offline" },
@@ -210,17 +213,16 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       "previewnet",
       descriptor.generation,
     ]);
-    expect(records).toHaveLength(1);
 
-    // The record is what the next start reads, so it has to be accepted back.
-    const restarted = new WasmPairingHostRuntime(
-      {
-        ...createWasmRawCallbacks(createMockHost().callbacks),
-        requestWorkerTransition: () => {},
-      },
-      { ...hostConfig, stack: { ...hostConfig.stack, stored: records[0] } },
-    );
-    expect(restarted.stackStatus().descriptor).toBe(statuses[2].descriptor);
+    // The record went to core storage. A core built from the bundled copy
+    // alone would fetch at once; one that read the record knows its copy was
+    // fetched moments ago and waits for the hour.
+    const restarted = await start();
+    await settled();
+    expect([requests.length, restarted.stackStatus().descriptor]).toEqual([
+      2,
+      statuses[2].descriptor,
+    ]);
   });
 
   it("isolates one real-core boot from the next through reset()", async () => {
@@ -236,7 +238,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     const mock = createMockHost();
     const { productId, ...hostConfig } = bundledRuntimeConfig();
     const boot = async () => {
-      const runtime = new WasmPairingHostRuntime(
+      const runtime = await WasmPairingHostRuntime.create(
         {
           ...createWasmRawCallbacks(mock.callbacks),
           requestWorkerTransition: () => {},

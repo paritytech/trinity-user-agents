@@ -975,9 +975,10 @@ impl WasmPairingHostRuntime {
 		self.runtime.set_submit_preimages_locally(local);
 	}
 
-	/// Build a shared runtime from host-level platform callbacks and host config.
-	#[wasm_bindgen(constructor)]
-	pub fn new(
+	/// Build a shared runtime from host-level platform callbacks and host
+	/// config. Resolves once the core has read its stack record from the
+	/// host's core storage.
+	pub async fn create(
 		callbacks: JsValue,
 		host_config: JsValue,
 	) -> Result<WasmPairingHostRuntime, JsValue> {
@@ -994,7 +995,7 @@ impl WasmPairingHostRuntime {
 			scanner_platform,
 		} = wasm_platform(bridge);
 		let spawner = Spawner::default();
-		let stack = stack_from_js(&host_config, &callbacks, &spawner)?;
+		let stack = stack_from_js(&host_config, &callbacks, platform.clone(), &spawner).await?;
 		let host_config = pairing_host_config_from_js(&host_config, stack.stack.clone())?;
 		let runtime = PairingHostRuntime::with_platforms(
 			platform,
@@ -1019,9 +1020,9 @@ impl WasmPairingHostRuntime {
 		Ok(Self { runtime: Rc::new(runtime), stack })
 	}
 
-	/// The stack the runtime runs: `{ descriptor, stale, expired,
-	/// restartRequired, newGeneration, lastRefresh? }`, the value the
-	/// `stackChanged` callback receives. `undefined` for a test stack.
+	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
+	/// restartRequired, lastRefresh? }`, the value the `stackChanged`
+	/// callback receives. `undefined` for a test stack.
 	#[wasm_bindgen(js_name = stackStatus)]
 	pub fn stack_status(&self) -> JsValue {
 		self.stack.status()
@@ -1352,8 +1353,9 @@ impl WasmSigningHostRuntime {
 	}
 
 	/// Build a shared signing runtime from host callbacks and host config.
-	#[wasm_bindgen(constructor)]
-	pub fn new(
+	/// Resolves once the core has read its stack record from the host's core
+	/// storage.
+	pub async fn create(
 		callbacks: JsValue,
 		host_config: JsValue,
 	) -> Result<WasmSigningHostRuntime, JsValue> {
@@ -1370,7 +1372,7 @@ impl WasmSigningHostRuntime {
 			scanner_platform,
 		} = wasm_platform(bridge);
 		let spawner = Spawner::default();
-		let stack = stack_from_js(&host_config, &callbacks, &spawner)?;
+		let stack = stack_from_js(&host_config, &callbacks, platform.clone(), &spawner).await?;
 		let host_config = signing_host_config_from_js(&host_config, stack.stack.clone())?;
 		let runtime = SigningHostRuntime::with_platforms(
 			platform,
@@ -1395,9 +1397,9 @@ impl WasmSigningHostRuntime {
 		Ok(Self { runtime: Rc::new(runtime), stack })
 	}
 
-	/// The stack the runtime runs: `{ descriptor, stale, expired,
-	/// restartRequired, newGeneration, lastRefresh? }`, the value the
-	/// `stackChanged` callback receives. `undefined` for a test stack.
+	/// The stack the runtime runs: `{ descriptor, generation, stale, expired,
+	/// restartRequired, lastRefresh? }`, the value the `stackChanged`
+	/// callback receives. `undefined` for a test stack.
 	#[wasm_bindgen(js_name = stackStatus)]
 	pub fn stack_status(&self) -> JsValue {
 		self.stack.status()
@@ -1678,9 +1680,12 @@ impl WasmProductRuntime {
 	/// Build the core from a JS callbacks object. The object must define
 	/// every host capability the [`crate::platform::Platform`] trait set
 	/// requires (camelCase property names; see the source for the full
-	/// list).
-	#[wasm_bindgen(constructor)]
-	pub fn new(callbacks: JsValue, runtime_config: JsValue) -> Result<WasmProductRuntime, JsValue> {
+	/// list). Resolves once the core has read its stack record from the host's
+	/// core storage.
+	pub async fn create(
+		callbacks: JsValue,
+		runtime_config: JsValue,
+	) -> Result<WasmProductRuntime, JsValue> {
 		// Surface Rust panics to the browser console. A panic mid-dispatch
 		// aborts the call as a wasm trap; the host should treat a thrown error
 		// from `receiveFrame` as a fatal-instance signal and rebuild the
@@ -1701,7 +1706,7 @@ impl WasmProductRuntime {
 			scanner_platform,
 		} = wasm_platform(bridge);
 		let spawner = Spawner::default();
-		let stack = stack_from_js(&runtime_config, &callbacks, &spawner)?;
+		let stack = stack_from_js(&runtime_config, &callbacks, platform.clone(), &spawner).await?;
 		let (host_config, product) = runtime_config_from_js(&runtime_config, stack.stack.clone())?;
 		// The optional adapters install on the host runtime the product hangs
 		// off, not on the product runtime itself.

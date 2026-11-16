@@ -12,13 +12,13 @@ use wasm_bindgen::{JsCast, JsValue};
 
 use super::{
 	await_optional_promise, call_js_function, get_optional_bool_at, get_optional_function,
-	get_optional_string_at, get_required_object, get_required_string_at, invoke_unit,
+	get_optional_string_at, get_required_object, get_required_string_at,
 };
 use crate::{
 	Spawner,
 	platform::{
-		Stack, StackFetchRequest, StackFetchResponse, StackHost, StackRecords, StackRefresh,
-		StackRefreshOutcome, StackStatus,
+		CoreStorage, CoreStorageKey, Stack, StackFetchRequest, StackFetchResponse, StackHost,
+		StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
 	},
 	time::{RealTimer, SystemClock},
 };
@@ -55,13 +55,14 @@ impl WasmStack {
 /// host build bundles, or, in a test-host build only, `testStack`, built from
 /// its parts because a test host has no descriptor to bundle.
 ///
-/// `stack.stored` is the record the host last received through
-/// `storeStackRecord`. The core starts from it when it is newer than the
-/// bundled copy. With a `fetchStackDescriptor` callback the core refreshes the
-/// descriptor through it and reports each change to `stackChanged`.
-pub fn stack_from_js(
+/// The core keeps the last descriptor it verified in `storage`, and starts
+/// from it when it is newer than the bundled copy. With a
+/// `fetchStackDescriptor` callback the core refreshes the descriptor through it
+/// and reports each change to `stackChanged`.
+pub async fn stack_from_js(
 	runtime_config: &JsValue,
 	callbacks: &JsValue,
+	storage: Arc<dyn CoreStorage>,
 	spawner: &Spawner,
 ) -> Result<WasmStack, JsValue> {
 	#[cfg(feature = "test-host")]
@@ -80,18 +81,15 @@ pub fn stack_from_js(
 		"runtimeConfig.stack.allowsReservedValues",
 	)?
 	.unwrap_or(false);
-	let records = JsStackRecords {
-		stored: bytes_at(&stack, "stored")?,
-		store: get_optional_function(callbacks, "storeStackRecord")?.map(SendWrapper::new),
-	};
 	let refresh = StackRefresh::load(
 		&pointer,
 		&descriptor,
 		allows_reserved_values,
-		Box::new(records),
+		Box::new(CoreStorageRecords(storage)),
 		Arc::new(RealTimer),
 		Box::new(SystemClock),
 	)
+	.await
 	.map_err(|error| JsValue::from_str(&format!("runtimeConfig.stack: {error}")))?;
 	if let Some(fetch) = get_optional_function(callbacks, "fetchStackDescriptor")? {
 		let host = JsStackHost {
@@ -116,30 +114,23 @@ fn bytes_at(stack: &JsValue, name: &str) -> Result<Option<Vec<u8>>, JsValue> {
 		.map_err(|_| JsValue::from_str(&format!("runtimeConfig.stack.{name} must be a Uint8Array")))
 }
 
-/// The stack's record, kept by the JS host: read from `runtimeConfig.stack`
-/// and written through `storeStackRecord`.
-struct JsStackRecords {
-	stored: Option<Vec<u8>>,
-	store: Option<SendWrapper<Function>>,
-}
+/// The stack's record, kept in the host's core storage with the rest of the
+/// browser core's data.
+struct CoreStorageRecords(Arc<dyn CoreStorage>);
 
 #[async_trait::async_trait]
-impl StackRecords for JsStackRecords {
-	fn read_stack_record(&self, _stack_id: &str) -> Result<Option<Vec<u8>>, GenericError> {
-		Ok(self.stored.clone())
+impl StackRecords for CoreStorageRecords {
+	async fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError> {
+		self.0.read_core_storage(CoreStorageKey::StackRecord { stack_id: stack_id.to_string() }).await
 	}
 
 	async fn write_stack_record(
 		&self,
-		_stack_id: &str,
+		stack_id: &str,
 		record: Vec<u8>,
 	) -> Result<(), GenericError> {
-		// Without the callback nothing is kept, and the core must not ask for
-		// a restart that would start from the old copy.
-		let Some(store) = &self.store else {
-			return Err("the host passed no storeStackRecord callback".to_string().into());
-		};
-		Ok(invoke_unit(store, vec![Uint8Array::from(record.as_slice()).into()]).await?)
+		let key = CoreStorageKey::StackRecord { stack_id: stack_id.to_string() };
+		self.0.write_core_storage(key, record).await
 	}
 }
 

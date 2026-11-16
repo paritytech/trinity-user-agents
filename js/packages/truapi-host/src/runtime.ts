@@ -74,12 +74,6 @@ export interface BundledStack {
    * `false`.
    */
   allowsReservedValues?: boolean;
-  /**
-   * The record the core last passed to {@link StackCallbacks.storeStackRecord}.
-   * The core starts from the descriptor in it when that is newer than
-   * `descriptor`.
-   */
-  stored?: Uint8Array;
 }
 
 /** A fetch of the stack's descriptor for the host to make. */
@@ -129,8 +123,8 @@ export interface StackStatus {
    */
   expired: boolean;
   /**
-   * The core handed `storeStackRecord` a newer copy that changes a chain, the
-   * network, the TLD or the generation. It runs that copy from its next
+   * The core stored a newer copy that changes a chain, the network, the TLD
+   * or the generation. It runs that copy from its next
    * start, so build the runtime again to follow it.
    */
   restartRequired: boolean;
@@ -165,14 +159,6 @@ export interface StackCallbacks {
   ): StackFetchResponse | Promise<StackFetchResponse>;
   /** The stack's status when the runtime starts, and on each change. */
   stackChanged?(status: StackStatus): void;
-  /**
-   * Keep `record` and pass it back as {@link BundledStack.stored} at the next
-   * start. Each call replaces the record before it. Throw or reject when the
-   * record could not be kept. The core gives up after 30 seconds. Without
-   * this callback, or while it fails, the core never sets `restartRequired`:
-   * the next start could not read the newer copy.
-   */
-  storeStackRecord?(record: Uint8Array): void | Promise<void>;
 }
 
 /** Configuration for one product runtime hosted by the wasm core. */
