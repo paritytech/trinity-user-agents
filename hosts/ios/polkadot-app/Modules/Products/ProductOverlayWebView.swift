@@ -17,13 +17,14 @@ enum ProductOverlayMessage: Equatable {
 
     /// Reads a message posted as an object or as its JSON text. Anything else is dropped.
     init?(body: Any) {
-        let fields: [String: Any]? = if let object = body as? [String: Any] {
-            object
-        } else if let text = body as? String {
-            try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
-        } else {
-            nil
-        }
+        let fields: [String: Any]? =
+            if let object = body as? [String: Any] {
+                object
+            } else if let text = body as? String {
+                try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+            } else {
+                nil
+            }
         guard fields?["kind"] as? String == "overlayDone" else { return nil }
         self = .done
     }

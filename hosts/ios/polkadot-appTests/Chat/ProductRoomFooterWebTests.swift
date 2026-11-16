@@ -145,8 +145,9 @@ struct ProductFooterMessageTests {
         #expect(ProductFooterMessage(body: ["kind": "haptic", "style": "success"] as [String: Any]) ==
             .haptic(style: "success"))
         #expect(ProductFooterMessage(body: ["kind": "haptic"] as [String: Any]) == .haptic(style: "success"))
-        #expect(ProductFooterMessage(body: ["kind": "sendOverlay", "path": "confetti-overlay.html?seed=7"] as [String: Any]) ==
-            .sendOverlay(path: "confetti-overlay.html?seed=7"))
+        #expect(ProductFooterMessage(body: ["kind": "sendOverlay",
+                                            "path": "confetti-overlay.html?seed=7"] as [String: Any]) ==
+                .sendOverlay(path: "confetti-overlay.html?seed=7"))
         #expect(ProductFooterMessage(body: ["kind": "ready", "height": 104] as [String: Any]) == .ready(height: 104))
         #expect(ProductFooterMessage(body: ["kind": "ready"] as [String: Any]) == .ready(height: nil))
     }
