@@ -412,31 +412,15 @@ and `CoreStorageKey::product_manifest` keys its manifest cache entry.
 
 Parsing checks syntax only: a TLD is any DNS label, because a wire frame or a
 stored record is decoded with no stack in hand. The stack decides which names
-are products. A stack runs a localhost id and a name under the reserved `dot`
-TLD or its own TLD, and nothing else (`stack::serves`). That is checked where a
-product enters the runtime:
-
-- `ProductContext::served_by` builds the product a host asks the core to run,
-  for the wasm, native and CLI bridges alike.
-- Each call that names another product (an account owner, a proof context, a
-  storage owner, a purse owner) answers `MalformedFrame` for one the stack does
-  not serve. The handler takes the request through `serve`, the only way to
-  build a `Served` value. The account, signing and proof calls of
-  `HostAccounts` take the request as `Served`, and the signing requests the core
-  builds hold their product account as `Served`, so neither a handler nor a
-  paired host's request reaches a key without the check.
-- The signing role's wallet derives no key for one, and refuses a paired host's
-  request before it asks the user when the review names one. It also checks
-  inside each derivation, since a stored renewal target and the core's own
-  derivations reach it without a request to serve.
-- The manifest readers answer that one publishes nothing. They drop the id's
-  TLD and cache by bare label, so they would otherwise answer with a namesake's
-  manifest.
-- A host's worker reference for one is logged and dropped.
-- `parse_navigate` reads a name as dotNS only under a served TLD and passes any
-  other host on as external. A dotNS name resolves back into the host's own
-  product surface, so it bypasses the outbound domain grant.
-- `product_share_hosts` lists one share host per served TLD.
+are products: a localhost id, and a name under the reserved `dot` TLD or the
+stack's own TLD (`Stack::serves`). The core checks this where a product id
+enters the runtime: the product a host asks it to run
+(`ProductContext::served_by`), a call naming another product (answered
+`MalformedFrame`), a paired host's request to the signing wallet, the manifest
+readers and the host's worker references. `runtime::served` describes how a
+checked value is carried to the account calls. Native hosts open the bundled
+stack as a `Stack` object and judge navigation, share links and trusted
+products through its methods, so they never supply a TLD of their own.
 
 `REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels. A label is
 trusted under a TLD the stack serves. These products bypass recorded permissions and
