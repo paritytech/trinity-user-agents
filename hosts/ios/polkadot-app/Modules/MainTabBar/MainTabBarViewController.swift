@@ -535,13 +535,11 @@ extension MainTabBarViewController {
             self?.applyStatusStripTheme()
         }
 
-        // The rings redraw for an override on their hosting controller, not for one on its view.
+        // The rings' hosting controller takes its traits from its view's superview, so the container reaches them.
         if let theme = provider?.statusStripTheme {
-            statusBarTitleButton.traitOverrides.appTheme = theme
-            statusBarHost.traitOverrides.appTheme = theme
+            statusStripContainer.traitOverrides.appTheme = theme
         } else {
-            statusBarTitleButton.traitOverrides.remove(DSThemeTrait.self)
-            statusBarHost.traitOverrides.remove(DSThemeTrait.self)
+            statusStripContainer.traitOverrides.remove(DSThemeTrait.self)
         }
     }
 
