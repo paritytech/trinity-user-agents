@@ -795,7 +795,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   every network, and answers `Unsupported` to any other product without
   calling the host. While nobody is signed in it answers `NotConnected`,
   also without calling the host. Each username is the bare DotNS label with
-  no top-level domain, and the core drops an empty one.
+  no top-level domain, and the core drops any entry that is not one.
 - `GamePlatform`: hold the game product's next-game reminder and drop it.
   The core serves Game only to `dim2`, on every network, and answers
   `Unsupported` to any other product without calling the host. A host

@@ -1237,6 +1237,28 @@ fn contacts_usernames_leaves_out_a_contact_without_a_username() {
 }
 
 #[test]
+fn contacts_usernames_leaves_out_a_name_that_is_not_a_bare_dotns_label() {
+	// Given
+	let host = contacts_host(
+		"dim2.dot",
+		stub_platform(),
+		Some(StubContactsPlatform::listing(&["alice", "alice.07", "bob.dot", "Alice Smith"])),
+		true,
+	);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		response,
+		Ok(HostContactsUsernamesResponse::V1(v01::HostContactsUsernamesResponse {
+			usernames: vec!["alice".to_string(), "alice.07".to_string()],
+		}))
+	);
+}
+
+#[test]
 fn contacts_usernames_maps_a_platform_failure_to_unknown() {
 	// Given
 	let host = contacts_host(

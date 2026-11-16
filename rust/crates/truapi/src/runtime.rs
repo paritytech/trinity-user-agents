@@ -1508,7 +1508,12 @@ impl Contacts for ProductRuntimeHost {
 						.map_err(|error| unknown(error.reason))?;
 				match listing {
 					crate::platform::HostContactUsernames::Listed { mut usernames } => {
-						usernames.retain(|username| !username.is_empty());
+						usernames.retain(|username| {
+							crate::dotns_name::is_dns_label(username) ||
+								crate::host_logic::dotns_gateway::is_dotted_lite_username(
+									username,
+								)
+						});
 						Ok(latest::HostContactsUsernamesResponse { usernames })
 					},
 					crate::platform::HostContactUsernames::Unsupported => {
