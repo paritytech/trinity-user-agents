@@ -54,6 +54,24 @@ pub struct Stack {
 	network: String,
 	tld: String,
 	chains: StackChains,
+	payment: Option<StackPayment>,
+}
+
+/// Where the stack keeps the asset the user's balance is paid in, and the
+/// parachain ids XCM routes it between Asset Hub and People by.
+///
+/// Read from the descriptor's `payment` asset, which must sit in Asset Hub's
+/// `Assets` pallet, and from the Asset Hub and People `paraId`s. People keys
+/// the same asset by its Asset Hub location, so the asset id names it on both
+/// chains.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StackPayment {
+	/// Asset Hub's parachain id.
+	pub asset_hub_para_id: u32,
+	/// People's parachain id.
+	pub people_para_id: u32,
+	/// The payment asset's id in Asset Hub's `Assets` pallet.
+	pub asset_id: u32,
 }
 
 /// The genesis hash of each chain role the host serves. Asset Hub, People and
@@ -152,7 +170,9 @@ impl Stack {
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
-		Self::new(descriptor.network, descriptor.tld, chains, allows_reserved_values)
+		let payment = payment_of(&descriptor);
+		let stack = Self::new(descriptor.network, descriptor.tld, chains, allows_reserved_values)?;
+		Ok(Self { payment, ..stack })
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
@@ -182,7 +202,13 @@ impl Stack {
 			}
 			refuse_reserved_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
 		}
-		Ok(Self { network, tld, chains })
+		Ok(Self { network, tld, chains, payment: None })
+	}
+
+	/// This stack with `payment` as where it keeps its payment asset, for a
+	/// stack built from parts.
+	pub fn with_payment(self, payment: StackPayment) -> Self {
+		Self { payment: Some(payment), ..self }
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.
@@ -200,6 +226,12 @@ impl Stack {
 	/// The stack's chains.
 	pub fn chains(&self) -> &StackChains {
 		&self.chains
+	}
+
+	/// Where the stack keeps its payment asset. `None` when the descriptor
+	/// names no payment asset in Asset Hub's `Assets` pallet.
+	pub fn payment(&self) -> Option<&StackPayment> {
+		self.payment.as_ref()
 	}
 
 	/// The genesis hash of the chain with this role, or `None` when the stack
@@ -229,6 +261,20 @@ impl Stack {
 			})
 			.ok_or(RemoteChainInfoError::NotSupported)
 	}
+}
+
+/// The descriptor's payment asset, when it sits in Asset Hub's `Assets`
+/// pallet. A valid descriptor gives every chain but the Relay a `paraId`.
+fn payment_of(descriptor: &trinity_stack::Descriptor) -> Option<StackPayment> {
+	let asset = descriptor.assets.iter().flatten().find(|asset| {
+		asset.role == "payment" && asset.chain == "AssetHub" && asset.pallet == "Assets"
+	})?;
+	let para_id = |role: ChainIdentifier| descriptor.chain(role.into())?.para_id;
+	Some(StackPayment {
+		asset_hub_para_id: para_id(ChainIdentifier::AssetHub)?,
+		people_para_id: para_id(ChainIdentifier::People)?,
+		asset_id: asset.id,
+	})
 }
 
 fn refuse_reserved_genesis(

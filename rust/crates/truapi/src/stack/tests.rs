@@ -193,3 +193,54 @@ fn an_all_zero_relay_or_asset_hub_is_refused() {
 			.map(|chain| Err(StackError::ZeroGenesis { chain })),
 	);
 }
+
+/// The payment asset comes from the descriptor's `payment` asset on Asset
+/// Hub, with the Asset Hub and People parachain ids XCM routes it by.
+#[test]
+fn a_bundled_stack_carries_its_payment_asset() {
+	let mut descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	descriptor["assets"] = serde_json::json!([
+		{ "role": "payment", "chain": "AssetHub", "pallet": "Assets", "id": 50000413 }
+	]);
+
+	let stack = bundled(&descriptor, false).expect("stack is valid");
+
+	assert_eq!(
+		stack.payment(),
+		Some(&StackPayment { asset_hub_para_id: 1000, people_para_id: 1004, asset_id: 50000413 })
+	);
+}
+
+/// A stack whose payment asset is not in Asset Hub's `Assets` pallet has no
+/// payment asset to route.
+#[test]
+fn a_stack_without_a_payment_asset_on_asset_hub_has_none() {
+	let with_assets = |assets: serde_json::Value| {
+		let mut descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+		descriptor["assets"] = assets;
+		bundled(&descriptor, false).expect("stack is valid").payment().copied()
+	};
+	let payment = |chain: &str, pallet: &str| {
+		serde_json::json!([{ "role": "payment", "chain": chain, "pallet": pallet, "id": 7 }])
+	};
+
+	assert_eq!(with_assets(serde_json::json!([])), None);
+	assert_eq!(with_assets(payment("AssetHub", "ForeignAssets")), None);
+	assert_eq!(with_assets(payment("People", "Assets")), None);
+	assert!(with_assets(payment("AssetHub", "Assets")).is_some());
+}
+
+/// The bundled Paseo stack resolves the values getcash configures by hand in
+/// its `network.json`.
+#[test]
+fn the_bundled_paseo_stack_resolves_getcash_network_values() {
+	let pointer = include_str!("../../../../../stacks/paseo-next-v2.link").trim();
+	let descriptor = include_bytes!("../../../../../stacks/paseo-next-v2.json");
+
+	let stack = Stack::bundled(pointer, descriptor, false).expect("the bundled stack opens");
+
+	assert_eq!(
+		stack.payment(),
+		Some(&StackPayment { asset_hub_para_id: 1500, people_para_id: 1502, asset_id: 50000413 })
+	);
+}
