@@ -68,12 +68,16 @@ pub trait Contacts: Send + Sync {
 	/// ```ts
 	/// const result = await truapi.contacts.usernames({});
 	/// if (result.isErr()) {
+	///   const refusal =
+	///     result.error.tag === "Domain" && result.error.value.tag === "V1"
+	///       ? result.error.value.value.tag
+	///       : result.error.tag;
 	///   assert(
-	///     result.error.tag === "Unsupported" || result.error.tag === "NotConnected",
+	///     refusal === "Unsupported" || refusal === "NotConnected",
 	///     "contacts.usernames failed:",
 	///     result,
 	///   );
-	///   console.log("contact usernames are not served here:", result.error.tag);
+	///   console.log("contact usernames are not served here:", refusal);
 	/// } else {
 	///   console.log("contact usernames:", result.value.usernames);
 	/// }
