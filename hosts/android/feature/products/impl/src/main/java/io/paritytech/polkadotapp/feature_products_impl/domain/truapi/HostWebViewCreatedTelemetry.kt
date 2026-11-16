@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventLevel
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
@@ -39,6 +40,7 @@ private fun HostEventOrigin.webViewCreated(
     monotonicMs: Long,
 ) = HostEvent(
     name = HostWebViewCreatedTelemetry.EVENT_NAME,
+    level = HostEventLevel.INFO,
     tags = baseTags() + ("truapi.host_version" to hostVersion),
     extras = baseExtras() + mapOf(
         "host.session_id" to sessionId,

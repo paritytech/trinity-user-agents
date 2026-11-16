@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventLevel
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
@@ -31,6 +32,7 @@ class HostWebViewCreatedTelemetryTest {
         reporter.report("bootstrap-session-42")
 
         assertEquals(HostWebViewCreatedTelemetry.EVENT_NAME, captured?.name)
+        assertEquals(HostEventLevel.INFO, captured?.level)
         assertEquals("bootstrap-session-42", captured?.extras?.get("host.session_id"))
         assertEquals("nightly", captured?.tags?.get("host.app_variant"))
         assertEquals("gp", captured?.tags?.get("host.app_flavor"))

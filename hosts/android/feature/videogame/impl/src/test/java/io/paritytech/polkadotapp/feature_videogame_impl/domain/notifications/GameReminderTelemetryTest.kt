@@ -5,6 +5,7 @@ import io.mockk.mockk
 import io.mockk.verify
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventLevel
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.time.TimeProvider
@@ -36,6 +37,7 @@ class GameReminderTelemetryTest {
     fun `scheduled carries the product, the start and a negative fire delay as numbers`() {
         val event = reported(GameReminderEvent.Scheduled(game, START, GameReminderDelivery.ALARM))
         assertEquals("host.reminder.scheduled", event.name)
+        assertEquals(HostEventLevel.INFO, event.level)
         assertEquals("android", event.tags["host.platform"])
         assertEquals("alarm", event.tags["reminder.delivery"])
         assertEquals("game.dot", event.tags["reminder.product_id"])

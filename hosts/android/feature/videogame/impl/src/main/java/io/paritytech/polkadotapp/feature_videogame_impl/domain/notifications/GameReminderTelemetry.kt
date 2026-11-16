@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.feature_videogame_impl.domain.notifications
 
 import io.paritytech.polkadotapp.common.data.telemetry.HostEvent
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
+import io.paritytech.polkadotapp.common.data.telemetry.HostEventLevel
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOrigin
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.baseExtras
@@ -104,5 +105,5 @@ private fun GameReminderEvent.toHostEvent(origin: HostEventOrigin, nowMillis: Lo
             put("reminder.delay_after_start_ms", nowMillis - startsAt)
         }
     }
-    return HostEvent(name = event.eventName(), tags = tags, extras = extras)
+    return HostEvent(name = event.eventName(), level = HostEventLevel.INFO, tags = tags, extras = extras)
 }

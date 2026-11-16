@@ -11,8 +11,12 @@ data class HostEventOrigin(
     val appBuild: Long,
 )
 
+/** INFO leaves as a Sentry log line; WARNING and ERROR are captured as events. */
+enum class HostEventLevel { INFO, WARNING, ERROR }
+
 data class HostEvent(
     val name: String,
+    val level: HostEventLevel,
     val tags: Map<String, String>,
     val extras: Map<String, Any>,
 )
@@ -31,12 +35,14 @@ fun HostEventOrigin.baseExtras(): Map<String, Any> = mapOf("host.app_build" to a
 
 fun HostEventOrigin.productNotificationShown(productId: String) = HostEvent(
     name = "host.product_notification.shown",
+    level = HostEventLevel.INFO,
     tags = baseTags() + ("product_notification.product_id" to productId),
     extras = baseExtras(),
 )
 
 fun HostEventOrigin.productNotificationTapped(productId: String) = HostEvent(
     name = "host.product_notification.tapped",
+    level = HostEventLevel.INFO,
     tags = baseTags() + ("product_notification.product_id" to productId),
     extras = baseExtras(),
 )
