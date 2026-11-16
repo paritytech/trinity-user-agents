@@ -10,11 +10,11 @@ use std::{
 };
 
 use sha2::{Digest, Sha256};
-use trinity_stack::{Descriptor, Document, Pointer};
+use trinity_stack::{Descriptor, Document};
 use truapi::latest::ChainIdentifier;
 
-use super::{ChainEndpoint, Stack, stack::light_client};
-use crate::chain::{ChainAccess, ChainBackend};
+use super::{ChainEndpoint, Stack};
+use crate::chain::{ChainAccess, ChainBackend, StackLightClient};
 
 /// Paseo's light spec, answered from without network access.
 pub const RELAY_LIGHT_SPEC: &str =
@@ -68,11 +68,6 @@ pub fn test_access(chain_backend: ChainBackend) -> ChainAccess {
 	}
 }
 
-/// The pointer test stacks are read under.
-pub fn test_pointer() -> Pointer {
-	Pointer::new("https://stack.example/descriptor.json", None).expect("a descriptor URL")
-}
-
 impl Stack {
 	/// The descriptor this stack reads.
 	pub fn descriptor(&self) -> &Descriptor {
@@ -105,8 +100,7 @@ impl Stack {
 		let mut document = serde_json::to_value(&self.descriptor).expect("descriptor not JSON");
 		edit(&mut document);
 		let descriptor = Descriptor::from_json(document).expect("invalid edited descriptor");
-		Self::new(&test_pointer(), descriptor, &test_access(self.chain_backend()))
-			.expect("edited stack refused")
+		Self::new(descriptor, &test_access(self.chain_backend())).expect("edited stack refused")
 	}
 
 	/// This stack with the chain of `role` edited as JSON.
@@ -140,13 +134,9 @@ impl Stack {
 						});
 					})
 				});
-		let light = light_client(
-			&test_pointer(),
-			&edited.descriptor,
-			&edited.chains,
-			spec_directory.into(),
-		)
-		.expect("the edited stack names its light specs");
+		let light =
+			StackLightClient::new(&edited.descriptor, &edited.chains, spec_directory.into())
+				.expect("the edited stack names its light specs");
 		Self { light_client: Some(Arc::new(light)), ..edited }
 	}
 

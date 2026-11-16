@@ -178,3 +178,24 @@ async fn test_light_spec_wrong_or_unreachable() {
 		"the relay's spec is loaded and People's is still missing"
 	);
 }
+
+/// Every chain syncs through the relay, so a relay spec that cannot be
+/// fetched stops the command at start instead of failing every chain on use.
+#[tokio::test]
+async fn test_light_relay_spec_unreachable() {
+	let (server, _) = crate::network::serve_light_specs().await;
+	let (moved, people) = (format!("{server}/moved.json"), format!("{server}/people.json"));
+	let directory = tempfile::tempdir().expect("temporary directory");
+	let stack = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).with_light_specs_at(
+		&moved,
+		&people,
+		directory.path(),
+	);
+
+	let error = verify_chains(&stack, None)
+		.await
+		.expect("no chain has one of Polkadot's genesis hashes")
+		.expect_err("the relay's spec cannot be fetched");
+
+	assert!(error.to_string().contains("Relay") && error.to_string().contains(&moved), "{error}");
+}

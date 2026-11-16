@@ -41,20 +41,7 @@ impl NetworkSource {
 	/// copy fails a check, the descriptor is fetched once more and the checks
 	/// repeat only when the published copy is then in use.
 	pub async fn resolve_checked(&self) -> Result<Stack> {
-		let (stack, built_in) = self.resolve_routes(BUILT_IN_REFRESH_TIMEOUT).await?;
-		let Err(error) = verify_chains(&stack, built_in.as_ref()).await? else {
-			return Ok(stack);
-		};
-		if built_in.map(|origin| origin.copy) != Some(BuiltInCopy::Unreachable) {
-			return Err(error);
-		}
-		tracing::info!("{error}; fetching the published descriptor again");
-		let (stack, built_in) = self.resolve_routes(FETCH_TIMEOUT).await?;
-		if built_in.as_ref().map(|origin| origin.copy) != Some(BuiltInCopy::Published) {
-			return Err(error);
-		}
-		verify_chains(&stack, built_in.as_ref()).await??;
-		Ok(stack)
+		checked(|fetch_timeout| self.resolve_routes(fetch_timeout)).await
 	}
 
 	/// [`Self::resolve_checked`] without contacting any chain; only a
@@ -74,9 +61,7 @@ impl NetworkSource {
 			NetworkChoice::Stack(stack_arg) => {
 				let stack = load_descriptor(&stack_arg.value)
 					.await
-					.and_then(|(pointer, descriptor)| {
-						Stack::new(&pointer, descriptor, &self.chain_access)
-					})
+					.and_then(|descriptor| Stack::new(descriptor, &self.chain_access))
 					.map_err(|error| anyhow!("{}: {error}", stack_arg.source))?;
 				(stack, None)
 			},
@@ -88,6 +73,29 @@ impl NetworkSource {
 		};
 		Ok((stack, built_in))
 	}
+}
+
+/// The stack `resolve` gives once its chains pass the checks, as
+/// [`NetworkSource::resolve_checked`] describes. `resolve` is given the
+/// timeout for a built-in's published descriptor.
+async fn checked<Resolved>(resolve: impl Fn(Duration) -> Resolved) -> Result<Stack>
+where
+	Resolved: Future<Output = Result<(Stack, Option<BuiltInOrigin>)>>,
+{
+	let (stack, built_in) = resolve(BUILT_IN_REFRESH_TIMEOUT).await?;
+	let Err(error) = verify_chains(&stack, built_in.as_ref()).await? else {
+		return Ok(stack);
+	};
+	if built_in.map(|origin| origin.copy) != Some(BuiltInCopy::Unreachable) {
+		return Err(error);
+	}
+	tracing::info!("{error}; fetching the published descriptor again");
+	let (stack, built_in) = resolve(FETCH_TIMEOUT).await?;
+	if built_in.as_ref().map(|origin| origin.copy) != Some(BuiltInCopy::Published) {
+		return Err(error);
+	}
+	verify_chains(&stack, built_in.as_ref()).await??;
+	Ok(stack)
 }
 
 #[cfg(test)]

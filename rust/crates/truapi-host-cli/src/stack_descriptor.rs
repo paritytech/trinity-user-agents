@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use reqwest::Url;
-use trinity_stack::{Descriptor, Fetched, Pointer, accept};
+use trinity_stack::{Chain, Descriptor, Fetched, Pointer, accept};
 
 /// A local file has no URL of its own; the pointer only carries the key to check. Every local
 /// file is read under it, so its `stack_id` does not tell one file's stack from another's.
@@ -55,10 +55,10 @@ pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<
 	}
 }
 
-/// The pointer and the descriptor a `--stack` value points to: a link or a URL, fetched and
-/// checked against the key a link carries, or a local descriptor file, signed or not. Fails when
-/// it is unreachable, breaks a rule or is past `expiresAt`; warns when it is past `validUntil`.
-pub async fn load_descriptor(stack: &str) -> Result<(Pointer, Descriptor)> {
+/// The descriptor a `--stack` value points to: a link or a URL, fetched and checked against the
+/// key a link carries, or a local descriptor file, signed or not. Fails when it is unreachable,
+/// breaks a rule or is past `expiresAt`; warns when it is past `validUntil`.
+pub async fn load_descriptor(stack: &str) -> Result<Descriptor> {
 	let (pointer, bytes) = read_stack(stack, None).await?;
 	let accepted = accept(&pointer, None, Fetched::Document(&bytes), unix_now() as i64)
 		.map_err(|error| anyhow!("stack {stack} is {}", refused(error)))?;
@@ -68,7 +68,7 @@ pub async fn load_descriptor(stack: &str) -> Result<(Pointer, Descriptor)> {
 	if accepted.stale {
 		tracing::warn!("stack {stack} is past validUntil; its operator should republish");
 	}
-	Ok((pointer, accepted.stack.descriptor))
+	Ok(accepted.stack.descriptor)
 }
 
 /// One value for each chain role a host routes.
@@ -103,21 +103,34 @@ impl<T> Roles<T> {
 	}
 }
 
+/// The chains of `descriptor` the light client runs: the relay, then People,
+/// Asset Hub and Bulletin. One the descriptor does not have is left out.
+pub fn light_client_chains(descriptor: &Descriptor) -> impl Iterator<Item = &Chain> {
+	let roles = ROLE_NAMES.iter().filter_map(|role| descriptor.chain(role));
+	descriptor.relay().into_iter().chain(roles)
+}
+
 /// Whether `stack` and `other` agree in every field the CLI reads: `id`, which
 /// is the product namespace, the TLD, `generation`, the `dub` service,
-/// `dotns.popController`, and the genesis hash and full `rpc` list of People,
-/// Asset Hub and Bulletin. The full lists are compared because the Polkadot
-/// fork check contacts every node the reference lists for a chain.
+/// `dotns.popController`, the genesis hash and full `rpc` list of People,
+/// Asset Hub and Bulletin, and the `lightSpec.sha256` of those and the relay.
+/// The full lists are compared because the Polkadot fork check contacts every
+/// node the reference lists for a chain.
 pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
 	fn role_chain<'a>(descriptor: &'a Descriptor, role: &str) -> Option<([u8; 32], &'a [String])> {
 		descriptor.chain(role).map(|chain| (chain.genesis(), chain.rpc.as_slice()))
+	}
+	fn light_specs(descriptor: &Descriptor) -> impl Iterator<Item = Option<&str>> {
+		light_client_chains(descriptor)
+			.map(|chain| chain.light_spec.as_ref().map(|spec| spec.sha256.as_str()))
 	}
 	stack.id == other.id &&
 		stack.tld == other.tld &&
 		stack.generation == other.generation &&
 		stack.service("dub") == other.service("dub") &&
 		stack.dotns_address("popController") == other.dotns_address("popController") &&
-		ROLE_NAMES.iter().all(|role| role_chain(stack, role) == role_chain(other, role))
+		ROLE_NAMES.iter().all(|role| role_chain(stack, role) == role_chain(other, role)) &&
+		light_specs(stack).eq(light_specs(other))
 }
 
 /// Why `fetched` cannot replace `stored`, the copy a stack already runs on:

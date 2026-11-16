@@ -1,14 +1,15 @@
 //! The light client of a stack.
 //!
 //! `truapi-provider` checks and runs the light specs; this module gets them to
-//! it. A spec comes from the copy the CLI kept the last time it passed the
-//! check, or from the URL the stack's descriptor names. Start at
+//! it. A spec comes from the ones this build ships with its built-in stacks,
+//! from the copy the CLI kept the last time it passed the check, or from the
+//! URL the stack's descriptor names. Start at
 //! [`StackLightClient::new`].
 
 use std::{
 	collections::HashMap,
 	path::{Path, PathBuf},
-	time::{Duration, SystemTime},
+	time::{Duration, Instant, SystemTime},
 };
 
 use trinity_stack::Descriptor;
@@ -16,7 +17,7 @@ use truapi::platform::{ChainProvider, JsonRpcConnection, ProviderError};
 use truapi_provider::{EmbeddedChainProvider, LightSpecSource, LightStack};
 
 use crate::{
-	network::ChainEndpoint,
+	network::{ChainEndpoint, bundled_light_spec},
 	platform::{StorageError, atomic_write},
 	stack_descriptor::{FETCH_TIMEOUT, FetchError, Roles, fetch},
 };
@@ -24,6 +25,11 @@ use crate::{
 /// How long a kept spec outlives its last use. A relay's spec is replaced
 /// whenever its operator publishes a fresher checkpoint, so old ones pile up.
 const KEPT_SPEC_LIFETIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+/// How long a spec that could not be fetched is reported unreachable without
+/// fetching it again, so the chains waiting on it, as every parachain waits on
+/// its relay's, do not each wait out another fetch.
+const UNREACHABLE_SPEC_RETRY: Duration = Duration::from_secs(60);
 
 /// One stack's chains on the embedded light client, kept running between
 /// uses. It stores no database, so every process syncs from the specs'
@@ -34,10 +40,16 @@ pub struct StackLightClient {
 	/// depend on the server a spec came from.
 	spec_directory: PathBuf,
 	/// Each light spec the descriptor names, by its chain's genesis hash, with
-	/// the lock held while it is loaded. Connects that need the same spec
-	/// fetch it once, and a spec that cannot be fetched holds up no other
-	/// chain.
-	named: HashMap<[u8; 32], (LightSpecSource, tokio::sync::Mutex<()>)>,
+	/// its last failed fetch, locked while the spec is loaded. Connects that
+	/// need the same spec share one fetch and its outcome, and a spec that
+	/// cannot be fetched holds up no other chain.
+	named: HashMap<[u8; 32], (LightSpecSource, tokio::sync::Mutex<Option<FailedFetch>>)>,
+}
+
+/// A fetch of a light spec that failed.
+struct FailedFetch {
+	at: Instant,
+	cause: String,
 }
 
 impl core::fmt::Debug for StackLightClient {
@@ -62,7 +74,7 @@ pub enum MissingSpec {
 		cause: String,
 	},
 	/// The spec is larger than the CLI reads, so fetching it again gets
-	/// nowhere.
+	/// nowhere. A connect reports it as a refusal, not a transport failure.
 	#[display("the light spec of {role} at {url} is {}", FetchError::TooLarge)]
 	TooLarge {
 		/// The chain's role in the descriptor.
@@ -76,24 +88,37 @@ pub enum MissingSpec {
 }
 
 impl StackLightClient {
-	/// A light client for the stack `stack_id` names, keeping checked specs in
-	/// `spec_directory`. Fails as `LightStack::new` does.
+	/// A light client for `descriptor`'s stack routed as `routed`, keeping
+	/// checked specs in `spec_directory`. Fails as `LightStack::new` does, and
+	/// when the descriptor names no light spec for a routed chain or its relay.
 	pub fn new(
-		stack_id: &str,
 		descriptor: &Descriptor,
+		routed: &Roles<ChainEndpoint>,
 		spec_directory: PathBuf,
-	) -> Result<Self, ProviderError> {
-		let stack = LightStack::new(stack_id, descriptor)?;
+	) -> anyhow::Result<Self> {
+		let stack = LightStack::new(descriptor.id.clone(), descriptor)?;
 		let named = stack
 			.light_specs()
 			.into_iter()
-			.map(|named| (named.genesis_hash, (named, tokio::sync::Mutex::new(()))))
+			.map(|named| (named.genesis_hash, (named, tokio::sync::Mutex::new(None))))
 			.collect();
-		Ok(Self {
+		let light = Self {
 			provider: EmbeddedChainProvider::builder().stack(stack).keep_chains_running().build(),
 			spec_directory,
 			named,
-		})
+		};
+		let run = light.chains(routed);
+		for chain in &descriptor.chains {
+			let genesis = chain.genesis();
+			anyhow::ensure!(
+				!run.contains(&genesis) || light.named.contains_key(&genesis),
+				"--chain-backend light-client cannot run {}: its descriptor names no lightSpec for \
+				 {}; use --chain-backend rpc",
+				descriptor.id,
+				chain.role
+			);
+		}
+		Ok(light)
 	}
 
 	/// The provider running the stack's chains.
@@ -120,8 +145,11 @@ impl StackLightClient {
 			match self.load_spec(genesis).await {
 				Ok(()) => {},
 				Err(MissingSpec::Wrong(error)) => return Err(error),
-				Err(missing) => {
-					return Err(ProviderError::Transport { reason: missing.to_string() });
+				Err(too_large @ MissingSpec::TooLarge { .. }) => {
+					return Err(ProviderError::Host { reason: too_large.to_string() });
+				},
+				Err(unreachable @ MissingSpec::Unreachable { .. }) => {
+					return Err(ProviderError::Transport { reason: unreachable.to_string() });
 				},
 			}
 		}
@@ -129,16 +157,32 @@ impl StackLightClient {
 	}
 
 	/// Hands the provider the light spec of the chain with `genesis_hash`,
-	/// once. The kept copy is used while it passes the check. Otherwise the
-	/// spec is fetched, checked and kept.
+	/// once. The spec this build ships, then the kept copy, is used while it
+	/// passes the check. Otherwise the spec is fetched, checked and kept. A
+	/// spec that could not be fetched is reported unreachable without another
+	/// fetch for [`UNREACHABLE_SPEC_RETRY`].
 	pub async fn load_spec(&self, genesis_hash: [u8; 32]) -> Result<(), MissingSpec> {
-		let (LightSpecSource { role, url, sha256, .. }, loading) = self
+		let (LightSpecSource { role, url, sha256, .. }, last_failure) = self
 			.named
 			.get(&genesis_hash)
 			.ok_or(MissingSpec::Wrong(ProviderError::UnknownGenesis { genesis: genesis_hash }))?;
-		let _loading = loading.lock().await;
-		if self.provider.has_light_spec(genesis_hash) {
+		let mut last_failure = last_failure.lock().await;
+		let bundled = bundled_light_spec(sha256);
+		if self.provider.has_light_spec(genesis_hash) ||
+			bundled.is_some_and(|spec| {
+				self.provider.add_light_spec(genesis_hash, spec.as_bytes()).is_ok()
+			}) {
 			return Ok(());
+		}
+		let unreachable = |cause: &str| MissingSpec::Unreachable {
+			role: role.clone(),
+			url: url.clone(),
+			cause: cause.to_owned(),
+		};
+		if let Some(failure) = &*last_failure &&
+			failure.at.elapsed() < UNREACHABLE_SPEC_RETRY
+		{
+			return Err(unreachable(&failure.cause));
 		}
 		let kept = self.spec_directory.join(format!("{sha256}.json"));
 
@@ -155,12 +199,14 @@ impl StackLightClient {
 
 		let bytes = match fetch(url, FETCH_TIMEOUT).await {
 			Ok(bytes) => bytes,
+			Err(FetchError::TooLarge) => {
+				return Err(MissingSpec::TooLarge { role: role.clone(), url: url.clone() });
+			},
 			Err(cause) => {
-				let (role, url) = (role.clone(), url.clone());
-				return Err(match cause {
-					FetchError::TooLarge => MissingSpec::TooLarge { role, url },
-					cause => MissingSpec::Unreachable { role, url, cause: cause.to_string() },
-				});
+				let cause = cause.to_string();
+				let error = unreachable(&cause);
+				*last_failure = Some(FailedFetch { at: Instant::now(), cause });
+				return Err(error);
 			},
 		};
 		self.provider.add_light_spec(genesis_hash, &bytes).map_err(MissingSpec::Wrong)?;

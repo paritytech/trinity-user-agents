@@ -77,6 +77,30 @@ async fn concurrent_loads_fetch_a_spec_once() {
 	assert_eq!(requests.load(Ordering::Relaxed), 1);
 }
 
+/// A built-in runs on a fresh state directory with every spec server out of
+/// reach, as on a CI runner that blocks them: its specs ship with the build.
+#[tokio::test]
+async fn a_built_in_starts_from_the_specs_it_ships() {
+	let (server, requests) = serve_light_specs().await;
+	let directory = tempfile::tempdir().expect("temporary directory");
+	let unreachable = format!("{server}/moved.json");
+	let stack = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc).with_edit(|descriptor| {
+		for chain in descriptor["chains"].as_array_mut().expect("chains is an array") {
+			if let Some(spec) = chain.get_mut("lightSpec") {
+				spec["url"] = unreachable.as_str().into();
+			}
+		}
+	});
+	let light = StackLightClient::new(stack.descriptor(), stack.chains(), directory.path().into())
+		.expect("the bundled copy names its light specs");
+
+	for genesis in light.chains(stack.chains()) {
+		light.load_spec(genesis).await.expect("the spec ships with the build");
+	}
+
+	assert_eq!(requests.load(Ordering::Relaxed), 0);
+}
+
 /// A run must not depend on the server a spec came from: the stack starts from
 /// what the CLI last checked.
 #[tokio::test]
@@ -212,9 +236,35 @@ async fn a_spec_too_large_to_read_is_not_unreachable() {
 	let stack = stack_served_at(&server, "large.json", "people.json", directory.path());
 
 	let refused = light_client(&stack).load_spec(relay).await;
+	let connect = light_client(&stack).connect(relay).await.err();
 
 	assert!(
 		matches!(&refused, Err(MissingSpec::TooLarge { role, .. }) if role == "Relay"),
 		"{refused:?}"
 	);
+	assert!(
+		matches!(&connect, Some(ProviderError::Host { reason }) if reason.contains("Relay")),
+		"a transport failure would have the chain runtime connect again: {connect:?}"
+	);
+}
+
+/// Every parachain waits on its relay's spec, so a fetch that failed is the
+/// answer for the chains waiting on it and for the connects that follow,
+/// rather than one more fetch, and one more timeout, each.
+#[tokio::test]
+async fn a_spec_that_cannot_be_fetched_is_fetched_once() {
+	let (server, requests) = serve_light_specs().await;
+	let directory = tempfile::tempdir().expect("temporary directory");
+	let relay = light_spec_genesis(RELAY_LIGHT_SPEC);
+	let stack = stack_served_at(&server, "moved.json", "people.json", directory.path());
+	let light = light_client(&stack);
+
+	let waiting =
+		tokio::join!(light.load_spec(relay), light.load_spec(relay), light.load_spec(relay));
+	let later = light.load_spec(relay).await;
+
+	for outcome in [waiting.0, waiting.1, waiting.2, later] {
+		assert!(matches!(outcome, Err(MissingSpec::Unreachable { .. })), "{outcome:?}");
+	}
+	assert_eq!(requests.load(Ordering::Relaxed), 1);
 }

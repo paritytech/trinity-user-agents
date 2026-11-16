@@ -90,6 +90,12 @@ fn stack_descriptor(edit: impl FnOnce(&mut serde_json::Value)) -> Descriptor {
 	Descriptor::from_json(document).unwrap()
 }
 
+/// A `lightSpec` whose `sha256` repeats `byte`.
+fn light_spec(byte: &str) -> serde_json::Value {
+	let sha256 = format!("0x{}", byte.repeat(32));
+	serde_json::json!({ "url": "https://spec.example/light.json", "sha256": sha256 })
+}
+
 /// An edit to a descriptor's JSON.
 type DescriptorEdit = Box<dyn FnOnce(&mut serde_json::Value)>;
 
@@ -101,7 +107,7 @@ fn test_reads_same_by_field() {
 	let people = |edit: fn(&mut serde_json::Value)| {
 		move |descriptor: &mut serde_json::Value| edit(&mut descriptor["chains"][1])
 	};
-	let differs: [(&str, DescriptorEdit); 8] = [
+	let differs: [(&str, DescriptorEdit); 10] = [
 		("id", Box::new(|descriptor| descriptor["id"] = "other".into())),
 		("tld", Box::new(|descriptor| descriptor["tld"] = "testnet".into())),
 		("generation", Box::new(|descriptor| descriptor["generation"] = "g2".into())),
@@ -132,6 +138,11 @@ fn test_reads_same_by_field() {
 		(
 			"role first rpc",
 			Box::new(people(|chain| chain["rpc"] = serde_json::json!(["ws://127.0.0.1:9998"]))),
+		),
+		("role light spec", Box::new(people(|chain| chain["lightSpec"] = light_spec("06")))),
+		(
+			"relay light spec",
+			Box::new(|descriptor| descriptor["chains"][0]["lightSpec"] = light_spec("07")),
 		),
 	];
 	let unnoticed: Vec<&str> = differs

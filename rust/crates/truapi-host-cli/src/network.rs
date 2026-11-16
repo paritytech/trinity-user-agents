@@ -20,7 +20,7 @@ mod testing;
 #[cfg(test)]
 pub use testing::{PEOPLE_LIGHT_SPEC, RELAY_LIGHT_SPEC, light_spec_genesis, serve_light_specs};
 
-pub use built_in::ensure_built_in_runnable;
+pub use built_in::{bundled_light_spec, ensure_built_in_runnable};
 
 /// Networks the headless hosts know by name, each a test network this build
 /// ships a signed stack copy of. The CLI account store saves BIP-39 mnemonics

@@ -1011,10 +1011,13 @@ truapi-host stack bundle 'polkadotapp://stack?key=0x…&url=…' --out stack.jso
 stack, one whose `tld` or `id` differs from the copy at `--out`, also when that
 copy was signed with another key (every derived account, or the namespace every
 session is stored under, would change; remove the copy to bundle it on purpose),
-and a built-in network's copy the CLI cannot run on.
+and a built-in network's copy the CLI cannot run on over either chain backend.
 With `--skip-same-projection`, which `scripts/update-stacks.sh` passes, a fetched
 copy that differs from the one at `--out` only in fields truapi-host does not read
-leaves it in place and reports it as current. [SPEC.md](SPEC.md#67-top-level-stack)
+leaves it in place and reports it as current. `--light-specs <file>` also fetches
+the light specs of the relay, People, Asset Hub and Bulletin, checks them against
+the descriptor and writes them to `<file>` by `sha256`; the script passes it for
+each stack with a `stacks/light-specs/<name>.json`, which the binary ships. [SPEC.md](SPEC.md#67-top-level-stack)
 has every option.
 
 ## Statement-store allowance
@@ -1172,8 +1175,10 @@ the CLI creates and cleans up a unique temporary Unix socket.
 chains with the embedded light client instead of dialing the network's RPC nodes,
 for when public nodes refuse the host, such as a rate-limited CI runner. Every
 command uses the selected backend. The light client takes its chain specs from
-the stack's descriptor, so it runs every built-in network and any `--stack`. It
-is slower than RPC and drops PGAS claims, so `pgas-check --submit` refuses to
+the stack's descriptor, so it runs every built-in network and any `--stack`. The
+binary ships the specs of the built-in networks, so they need no spec server; a
+`--stack` naming other specs fetches them once and keeps them under the state
+directory. It is slower than RPC and drops PGAS claims, so `pgas-check --submit` refuses to
 run on it (SPEC.md §14.3).
 
 ## Serving a dev server (one process, no terminal)
