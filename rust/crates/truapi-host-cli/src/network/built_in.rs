@@ -292,12 +292,13 @@ fn refresh_from_last_run(
 			 keeping that one"
 		);
 	}
-	let refresh_from = |document: Option<&[u8]>| {
+	let refresh_from = |document: Option<&[u8]>, name: &str| {
 		let fetched = document.map_or(Fetched::Unreachable, Fetched::Document);
-		refresh_stack(id, pointer, bundled, fetched, now_unix_seconds, chain_backend)
+		refresh_stack(id, name, pointer, bundled, fetched, now_unix_seconds, chain_backend)
 	};
+	let published_name = format!("published {id} stack descriptor at {}", pointer.url());
 	let from_published = match published.filter(|_| !rolled_back) {
-		Some(published) => Some(refresh_from(Some(published))?),
+		Some(published) => Some(refresh_from(Some(published), &published_name)?),
 		None => None,
 	};
 	let published_in_use = from_published
@@ -305,7 +306,7 @@ fn refresh_from_last_run(
 		.is_some_and(|refresh| refresh.copy == BuiltInCopy::Published);
 	let mut refresh = match from_published {
 		Some(refresh) if published_in_use || last_run.is_none() => refresh,
-		_ => refresh_from(last_run)?,
+		_ => refresh_from(last_run, &format!("{id} stack descriptor this host last ran on"))?,
 	};
 	refresh.copy = match published {
 		None => BuiltInCopy::Unreachable,
@@ -317,11 +318,13 @@ fn refresh_from_last_run(
 
 /// The stack a built-in network runs on: `fetched` when [`accept`] takes it
 /// over `bundled`, has the bundled copy's `tld` and `id`, and is a stack the
-/// CLI can run on; otherwise `bundled`, with a warning. Carries a notice when
-/// the stack in use differs from the bundled one in a field the CLI reads.
-/// Fails when the descriptor in use is past `expiresAt`.
+/// CLI can run on; otherwise `bundled`, with a warning that calls `fetched`
+/// the `fetched_name`. Carries a notice when the stack in use differs from
+/// the bundled one in a field the CLI reads. Fails when the descriptor in use
+/// is past `expiresAt`.
 fn refresh_stack(
 	id: &str,
+	fetched_name: &str,
 	pointer: &Pointer,
 	bundled: &[u8],
 	fetched: Fetched,
@@ -337,16 +340,13 @@ fn refresh_stack(
 		Status::Unreachable => BuiltInCopy::Unreachable,
 		Status::Refused(error) => {
 			tracing::warn!(
-				"the published {id} stack descriptor is refused ({}): {error}; not using it",
+				"the {fetched_name} is refused ({}): {error}; not using it",
 				error.code()
 			);
 			BuiltInCopy::Rejected
 		},
 		status => {
-			tracing::warn!(
-				"the published {id} stack descriptor is a {}; not using it",
-				status.code()
-			);
+			tracing::warn!("the {fetched_name} is a {}; not using it", status.code());
 			BuiltInCopy::Rejected
 		},
 	};
@@ -370,10 +370,7 @@ fn refresh_stack(
 	let (stack, stale, copy, notice) = match published_stack {
 		Ok(stack) => (stack, accepted.stale, copy, notice),
 		Err(reason) => {
-			tracing::warn!(
-				"the published {id} stack descriptor at {} {reason}; not using it",
-				pointer.url()
-			);
+			tracing::warn!("the {fetched_name} {reason}; not using it");
 			ensure!(!bundled_copy.expired, "the {id} stack is past expiresAt; it has shut down");
 			let bundled =
 				Stack::new(pointer.stack_id(), bundled_copy.stack.descriptor, chain_backend)?;
