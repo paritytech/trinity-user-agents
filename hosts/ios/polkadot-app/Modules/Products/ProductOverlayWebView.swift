@@ -30,6 +30,30 @@ enum ProductOverlayMessage: Equatable {
     }
 }
 
+// MARK: - When a footer may ask
+
+/// A footer page may cover the screen only just after the user touched it: an overlay is honoured within
+/// `window` of a touch that ended inside the footer, and dropped otherwise. Without it, a page could keep its
+/// content drawn over the host's navigation and chat while taps go through to controls it can't see.
+struct ProductOverlayTouchRule {
+    /// How long after a touch on the footer its page may still ask for an overlay.
+    static let window: Duration = .seconds(1)
+
+    private var lastTouchEnd: ContinuousClock.Instant?
+
+    /// A touch on the footer ended at `instant`; only one that ended inside the footer counts.
+    mutating func touchEnded(at instant: ContinuousClock.Instant, insideFooter: Bool) {
+        guard insideFooter else { return }
+        lastTouchEnd = instant
+    }
+
+    func allowsOverlay(at instant: ContinuousClock.Instant) -> Bool {
+        guard let lastTouchEnd else { return false }
+        let elapsed = lastTouchEnd.duration(to: instant)
+        return elapsed >= .zero && elapsed <= Self.window
+    }
+}
+
 // MARK: - View
 
 /// A see-through webview over the whole window, showing one of the product's own pages for a

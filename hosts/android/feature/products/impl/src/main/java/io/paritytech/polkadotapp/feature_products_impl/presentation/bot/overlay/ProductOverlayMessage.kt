@@ -7,6 +7,30 @@ import kotlinx.serialization.json.JsonPrimitive
 import java.net.URI
 import java.net.URISyntaxException
 
+/**
+ * A footer page may cover the screen only just after the user touched it: an overlay is honoured within [WINDOW_MILLIS]
+ * of a touch that ended inside the footer, and dropped otherwise. Without it, a page could keep its content drawn over
+ * the host's navigation and chat while taps go through to controls it can't see.
+ */
+class ProductOverlayTouchRule {
+    private var lastTouchEndMillis: Long? = null
+
+    /** A touch on the footer ended at [atMillis] (uptime); only one that ended inside the footer counts. */
+    fun touchEnded(atMillis: Long, insideFooter: Boolean) {
+        if (insideFooter) lastTouchEndMillis = atMillis
+    }
+
+    fun allowsOverlay(atMillis: Long): Boolean {
+        val last = lastTouchEndMillis ?: return false
+        return atMillis - last in 0..WINDOW_MILLIS
+    }
+
+    companion object {
+        /** How long after a touch on the footer its page may still ask for an overlay. */
+        const val WINDOW_MILLIS = 1_000L
+    }
+}
+
 /** Where an overlay loads from: one of the product's own pages. */
 object ProductOverlayPage {
     /**

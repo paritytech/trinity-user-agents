@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Rect
 import android.os.Build
 import android.os.Message
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
@@ -16,6 +17,7 @@ import android.widget.FrameLayout
 import androidx.core.view.ViewCompat
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsWebViewClient
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.overlay.ProductOverlayPage
+import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.overlay.ProductOverlayTouchRule
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.overlay.ProductOverlayWebLayout
 import timber.log.Timber
 
@@ -24,7 +26,8 @@ import timber.log.Timber
  *
  * The page reports through `window.ProductFooter`: an action goes to the product as a press in the room footer, a haptic
  * plays, `sendOverlay` shows another of the product's pages over the whole screen for a moment, and `ready` sizes and
- * reveals it. The webview stays within the footer; the overlay is a webview of its own.
+ * reveals it. The webview stays within the footer; the overlay is a webview of its own, and it is only honoured just
+ * after a touch on the footer ([ProductOverlayTouchRule]).
  */
 @SuppressLint("ViewConstructor")
 class ProductRoomFooterWebLayout(
@@ -36,6 +39,7 @@ class ProductRoomFooterWebLayout(
     private val onHeight: (Int) -> Unit,
     private val onRevealed: () -> Unit = {},
 ) : FrameLayout(context) {
+    private val overlayTouchRule = ProductOverlayTouchRule()
     private var webView: WebView = createWebView()
     private var isRevealed = false
     private var overlay: ProductOverlayWebLayout? = null
@@ -83,6 +87,10 @@ class ProductRoomFooterWebLayout(
      * replaces mid-effect does not cut it short, and it always ends with its page or at its limit.
      */
     private fun showOverlay(path: String) {
+        if (!overlayTouchRule.allowsOverlay(SystemClock.uptimeMillis())) {
+            Timber.d("Web footer of %s dropped an overlay asked for without a touch on the footer", productId)
+            return
+        }
         if (overlay?.isShowing == true) {
             Timber.d("Web footer of %s refused an overlay: one is already showing", productId)
             return
@@ -118,7 +126,14 @@ class ProductRoomFooterWebLayout(
         alpha = 0f
         // Parents that would take the drag for a scroll or a swipe never get to intercept one that starts here.
         setOnTouchListener { view, event ->
-            if (event.actionMasked == MotionEvent.ACTION_DOWN) view.parent?.requestDisallowInterceptTouchEvent(true)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> view.parent?.requestDisallowInterceptTouchEvent(true)
+                // A touch that ends on the footer lets its page ask for an overlay for a moment (ProductOverlayTouchRule).
+                MotionEvent.ACTION_UP -> {
+                    val inside = event.x in 0f..view.width.toFloat() && event.y in 0f..view.height.toFloat()
+                    overlayTouchRule.touchEnded(event.eventTime, inside)
+                }
+            }
             false
         }
         webViewClient = FooterWebViewClient()

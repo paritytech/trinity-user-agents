@@ -21,6 +21,46 @@ struct ProductOverlayMessageTests {
     }
 }
 
+struct ProductOverlayTouchRuleTests {
+    private let touch = ContinuousClock.now
+
+    @Test func anOverlayJustAfterATouchOnTheFooterIsHonoured() {
+        var rule = ProductOverlayTouchRule()
+        rule.touchEnded(at: touch, insideFooter: true)
+
+        #expect(rule.allowsOverlay(at: touch))
+        #expect(rule.allowsOverlay(at: touch + .milliseconds(900)))
+        #expect(rule.allowsOverlay(at: touch + ProductOverlayTouchRule.window))
+    }
+
+    @Test func anOverlayWithNoTouchIsDropped() {
+        #expect(!ProductOverlayTouchRule().allowsOverlay(at: touch))
+    }
+
+    @Test func anOverlayAfterTheWindowIsDropped() {
+        var rule = ProductOverlayTouchRule()
+        rule.touchEnded(at: touch, insideFooter: true)
+
+        #expect(!rule.allowsOverlay(at: touch + ProductOverlayTouchRule.window + .milliseconds(1)))
+        #expect(!rule.allowsOverlay(at: touch + .seconds(10)))
+    }
+
+    @Test func aTouchThatEndedOutsideTheFooterDoesNotCount() {
+        var rule = ProductOverlayTouchRule()
+        rule.touchEnded(at: touch, insideFooter: false)
+
+        #expect(!rule.allowsOverlay(at: touch + .milliseconds(100)))
+    }
+
+    @Test func aLaterTouchOutsideTheFooterKeepsTheEarlierOne() {
+        var rule = ProductOverlayTouchRule()
+        rule.touchEnded(at: touch, insideFooter: true)
+        rule.touchEnded(at: touch + .milliseconds(500), insideFooter: false)
+
+        #expect(rule.allowsOverlay(at: touch + .milliseconds(800)))
+    }
+}
+
 struct ProductOverlayPageTests {
     private let product = try! ProductId("overlay-test.testnet")
 
@@ -96,30 +136,57 @@ struct ProductOverlayWebViewTests {
         #expect(await waitUntil(seconds: 5) { !overlay.isShowing }, "the overlay outlived its limit")
     }
 
-    /// The footer page asks for a bare query first, which would be the product's whole app, then for a real page.
-    /// Only the real page shows, served by the footer's own content handler.
-    @Test func theFooterShowsOnlyAnOverlayThatNamesAPage() async throws {
-        let content = PagesSchemeHandler(pages: [
-            "/footer.html": Self.footerAskingForOverlays,
-            "/overlay.html": Self.stuckPage
-        ])
-        let footer = try ProductRoomFooterWebView(
-            pageURL: #require(ProductRoomFooterWebPage.url(path: "footer.html", productId: product)),
-            productId: product,
-            height: 64,
-            schemeHandler: content,
-            onAction: { _, _ in true },
-            logger: StubLogger()
-        )
-        footer.frame = CGRect(x: 0, y: 700, width: 390, height: 64)
-        window.addSubview(footer)
+    /// Just after a touch on the footer, the page asks for a bare query first, which would be the product's whole
+    /// app, then for a real page. Only the real page shows, served by the footer's own content handler.
+    @Test func theFooterShowsAnOverlayJustAfterATouchOnIt() async throws {
+        let (footer, content, asked) = try await makeFooter()
 
-        let shown = await waitUntil(seconds: 10) { overlay(in: window) != nil }
-        #expect(shown, "the footer's overlay never showed")
+        footer.touchEnded(at: CGPoint(x: 195, y: 32))
+        footer.send(.state("ask"))
+
+        #expect(await waitUntil(seconds: 10) { overlay(in: window) != nil }, "the footer's overlay never showed")
         #expect(await waitUntil(seconds: 2) { content.requestedPaths.contains("/overlay.html") })
         #expect(content.requestedPaths == ["/footer.html", "/overlay.html"], "an overlay loaded something else")
+        #expect(asked.on)
 
         overlay(in: window)?.dismiss()
+        footer.removeFromSuperview()
+    }
+
+    @Test func theFooterDropsAnOverlayAskedForWithNoTouch() async throws {
+        let (footer, content, asked) = try await makeFooter()
+
+        footer.send(.state("ask"))
+
+        #expect(await waitUntil(seconds: 10) { asked.on }, "the page never asked")
+        #expect(overlay(in: window) == nil)
+        #expect(content.requestedPaths == ["/footer.html"])
+        footer.removeFromSuperview()
+    }
+
+    @Test func theFooterDropsAnOverlayAskedForAfterTheWindow() async throws {
+        let (footer, content, asked) = try await makeFooter()
+
+        footer.touchEnded(at: CGPoint(x: 195, y: 32))
+        try await Task.sleep(for: ProductOverlayTouchRule.window + .milliseconds(200))
+        footer.send(.state("ask"))
+
+        #expect(await waitUntil(seconds: 10) { asked.on }, "the page never asked")
+        #expect(overlay(in: window) == nil)
+        #expect(content.requestedPaths == ["/footer.html"])
+        footer.removeFromSuperview()
+    }
+
+    @Test func aTouchThatEndedOutsideTheFooterDoesNotCount() async throws {
+        let (footer, content, asked) = try await makeFooter()
+
+        // The finger went down on the footer and lifted above it, over the chat.
+        footer.touchEnded(at: CGPoint(x: 195, y: -40))
+        footer.send(.state("ask"))
+
+        #expect(await waitUntil(seconds: 10) { asked.on }, "the page never asked")
+        #expect(overlay(in: window) == nil)
+        #expect(content.requestedPaths == ["/footer.html"])
         footer.removeFromSuperview()
     }
 }
@@ -131,12 +198,44 @@ private extension ProductOverlayWebViewTests {
     </script></body></html>
     """
     static let stuckPage = #"<!doctype html><html><body style="background:transparent"></body></html>"#
+    /// Asks for two overlays whenever the host tells it something, then reports it asked with an action.
     static let footerAskingForOverlays = """
     <!doctype html><html><body><script>
-    webkit.messageHandlers.productFooter.postMessage({ kind: 'sendOverlay', path: '?x' });
-    webkit.messageHandlers.productFooter.postMessage({ kind: 'sendOverlay', path: 'overlay.html' });
+    var post = function (message) { webkit.messageHandlers.productFooter.postMessage(message); };
+    window.productFooter = { receive: function () {
+      post({ kind: 'sendOverlay', path: '?x' });
+      post({ kind: 'sendOverlay', path: 'overlay.html' });
+      post({ kind: 'action', actionId: 'asked' });
+    } };
+    post({ kind: 'ready' });
     </script></body></html>
     """
+
+    /// A footer in the window whose page has loaded, its content handler, and whether its page has asked.
+    func makeFooter() async throws -> (ProductRoomFooterWebView, PagesSchemeHandler, Flag) {
+        let content = PagesSchemeHandler(pages: [
+            "/footer.html": Self.footerAskingForOverlays,
+            "/overlay.html": Self.stuckPage
+        ])
+        let asked = Flag()
+        let footer = try ProductRoomFooterWebView(
+            pageURL: #require(ProductRoomFooterWebPage.url(path: "footer.html", productId: product)),
+            productId: product,
+            height: 64,
+            schemeHandler: content,
+            onAction: { actionId, _ in
+                if actionId == "asked" { asked.on = true }
+                return true
+            },
+            logger: StubLogger()
+        )
+        footer.frame = CGRect(x: 0, y: 700, width: 390, height: 64)
+        window.addSubview(footer)
+        let revealed = Flag()
+        footer.whenRevealed { revealed.on = true }
+        #expect(await waitUntil(seconds: 10) { revealed.on }, "the footer page never loaded")
+        return (footer, content, asked)
+    }
 
     func overlay(in window: UIWindow) -> ProductOverlayWebView? {
         window.subviews.lazy.compactMap { $0 as? ProductOverlayWebView }.first
@@ -186,6 +285,11 @@ private final class OnePageSchemeHandler: NSObject, WKURLSchemeHandler {
     }
 
     func webView(_: WKWebView, stop _: any WKURLSchemeTask) {}
+}
+
+@MainActor
+private final class Flag {
+    var on = false
 }
 
 /// Answers the pages it has by path, fails the rest, and remembers every path asked for.

@@ -18,7 +18,8 @@ import WebKit
 /// The page reports through the `productFooter` message handler: an action goes
 /// to the product as a press in the room footer, a haptic plays, `sendOverlay` shows another of
 /// the product's pages over the whole window for a moment, and `ready` reveals it. The overlay
-/// is a webview of its own; this one never leaves the slot.
+/// is a webview of its own; this one never leaves the slot. It is only honoured just after a
+/// touch on the footer (`ProductOverlayTouchRule`).
 @MainActor
 final class ProductRoomFooterWebView: UIView {
     typealias ActionHandler = @MainActor (_ actionId: String, _ payload: String?) async -> Bool
@@ -36,7 +37,8 @@ final class ProductRoomFooterWebView: UIView {
     private let logger: LoggerProtocol
     private let webView: WKWebView
     private let backdrop = UIView()
-    private let dragWinner = UIPanGestureRecognizer()
+    private let dragWinner = FooterDragRecognizer()
+    private var overlayTouchRule = ProductOverlayTouchRule()
     private var heightConstraint: NSLayoutConstraint!
     private var revealFallback: Task<Void, Never>?
     private var lastActionAt: Date?
@@ -130,6 +132,12 @@ final class ProductRoomFooterWebView: UIView {
         }
     }
 
+    /// A touch on the footer ended at `location`, in the footer's own coordinates. One that ended inside the footer
+    /// lets the page ask for an overlay for a moment (`ProductOverlayTouchRule`).
+    func touchEnded(at location: CGPoint) {
+        overlayTouchRule.touchEnded(at: .now, insideFooter: bounds.contains(location))
+    }
+
     func handle(_ message: ProductFooterMessage) {
         switch message {
         case let .action(actionId, payload):
@@ -160,6 +168,10 @@ private extension ProductRoomFooterWebView {
     /// ends with its page or at its limit.
     func showOverlay(path: String) {
         guard let window else { return }
+        guard overlayTouchRule.allowsOverlay(at: .now) else {
+            logger.debug("[truapi.product] web footer dropped an overlay asked for without a touch on the footer")
+            return
+        }
         guard let url = ProductOverlayWebView.pageURL(path: path, productId: productId) else {
             logger.warning("[truapi.product] web footer refused an overlay that is no page of the product: \(path)")
             return
@@ -222,6 +234,7 @@ private extension ProductRoomFooterWebView {
         dragWinner.delaysTouchesBegan = false
         dragWinner.delaysTouchesEnded = false
         dragWinner.delegate = self
+        dragWinner.onTouchEnded = { [weak self] location in self?.touchEnded(at: location) }
         addGestureRecognizer(dragWinner)
     }
 
@@ -294,6 +307,18 @@ private extension ProductRoomFooterWebView {
             return
         }
         handle(parsed)
+    }
+}
+
+/// The footer's drag recognizer, which also reports where each touch on the footer ended, a tap or a drag alike.
+private final class FooterDragRecognizer: UIPanGestureRecognizer {
+    var onTouchEnded: ((CGPoint) -> Void)?
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        if let touch = touches.first, let view {
+            onTouchEnded?(touch.location(in: view))
+        }
+        super.touchesEnded(touches, with: event)
     }
 }
 
