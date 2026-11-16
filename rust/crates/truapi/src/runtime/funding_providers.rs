@@ -19,7 +19,7 @@ use tracing::warn;
 
 use super::{
 	funding::lock,
-	product_manifest::{CachePolicy, DotnsRead, product_brand, read_worker_manifest},
+	product_manifest::{DotnsRead, CachePolicy, product_brand, read_worker_manifest},
 	services::RuntimeServices,
 };
 use crate::{
@@ -562,8 +562,8 @@ impl RuntimeServices {
 		let platform = self.platform.as_ref();
 		let read = read_worker_manifest(self, platform, product_id, CachePolicy::UseCache).await;
 		let cached = matches!(read, Ok((_, DotnsRead::Cached { .. })));
-		let mut changed =
-			read.is_ok_and(|(manifest, _)| self.funding_providers().answered(product_id, manifest));
+		let mut changed = read
+			.is_ok_and(|(manifest, _)| self.funding_providers().answered(product_id, manifest));
 		if let Ok(Some(brand)) = product_brand(self, platform, product_id).await {
 			changed |= self.funding_providers().branded(product_id, brand);
 		}

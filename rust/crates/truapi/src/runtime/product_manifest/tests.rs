@@ -163,10 +163,9 @@ fn an_uncached_lookup_reports_why_it_read_no_manifest() {
 			(
 				None,
 				ManifestSource::LookupFailed {
-					reason:
-						"Asset Hub connection: legacy_connection: remote_chain_connect: Host { \
+					reason: "Asset Hub connection: legacy_connection: remote_chain_connect: Host { \
 					         reason: \"fixture serves no chain\" }"
-							.to_string(),
+						.to_string(),
 				},
 			),
 			(None, ManifestSource::TimedOut),
