@@ -98,7 +98,12 @@ fn signing_fixture(platform: Arc<StubPlatform>) -> (Arc<RuntimeServices>, Arc<Si
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		crate::test_support::test_stack(NETWORK_SUFFIX, [0; 32], [0xbb; 32], None),
+		crate::test_support::test_stack(
+			NETWORK_SUFFIX,
+			[0; 32],
+			[0xbb; 32],
+			crate::test_support::UNSERVED_GENESIS,
+		),
 	)
 	.expect("signing host config is valid");
 	let services = RuntimeServices::new(

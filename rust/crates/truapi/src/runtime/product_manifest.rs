@@ -282,9 +282,6 @@ pub enum ManifestSource {
 	/// Read from dotNS by this lookup.
 	#[display("dotNS")]
 	Fetched,
-	/// The host names no Asset Hub to resolve against.
-	#[display("no Asset Hub")]
-	NoAssetHub,
 	/// The dotNS lookup failed. Nothing was cached.
 	#[display("dotNS lookup failed: {reason}")]
 	LookupFailed { reason: String },
@@ -683,9 +680,8 @@ async fn root_manifest(
 	target: &ProductId,
 ) -> (Option<String>, ManifestSource) {
 	let key = CoreStorageKey::product_manifest(target);
-	let read = cached_dotns_json(services, platform, key, || async {
-		let genesis_hash =
-			services.asset_hub_chain_genesis_hash().ok_or(ManifestSource::NoAssetHub)?;
+	let read = cached_dotns_json(services, platform, key, CachePolicy::UseCache, || async {
+		let genesis_hash = services.asset_hub_chain_genesis_hash();
 		let (chain, target) = (services.chain.clone(), target.clone());
 		services
 			.dotns_reads
@@ -713,18 +709,21 @@ async fn root_manifest(
 /// Why a shared dotNS read gave no answer: its task ended first.
 const READ_ENDED_UNANSWERED: &str = "the dotNS read ended without answering";
 
-/// `product_id`'s Worker manifest, cached and shared as [`root_manifest`] is.
-/// `Ok(None)` when it publishes none or what it publishes cannot be used, which
-/// the RFC treats alike; `Err` when the chain could not be read, which says
-/// nothing about the product.
-pub async fn worker_manifest(
+/// `product_id`'s Worker manifest, shared as [`root_manifest`] is, and where it
+/// was read: from the cache when
+/// `policy` allows and the entry is fresh, otherwise from dotNS, which then
+/// replaces the cached entry. `None` when it publishes none or what it
+/// publishes cannot be used, which the RFC treats alike; `Err` when the chain
+/// could not be read, which says nothing about the product.
+pub async fn read_worker_manifest(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	product_id: &ProductId,
-) -> Result<Option<WorkerManifest>, String> {
+	policy: CachePolicy,
+) -> Result<(Option<WorkerManifest>, DotnsRead), String> {
 	let key = worker_manifest_cache_key(product_id);
-	let (json, _) = cached_dotns_json(services, platform, key, || async {
-		let genesis_hash = asset_hub(services)?;
+	let (json, read) = cached_dotns_json(services, platform, key, policy, || async {
+		let genesis_hash = services.asset_hub_chain_genesis_hash();
 		let (chain, product) = (services.chain.clone(), product_id.clone());
 		services
 			.dotns_reads
@@ -740,11 +739,12 @@ pub async fn worker_manifest(
 	.await
 	.inspect_err(|reason| warn!(%product_id, %reason, "worker manifest lookup failed"))?;
 	let Some(json) = json else {
-		return Ok(None);
+		return Ok((None, read));
 	};
-	Ok(WorkerManifest::parse(&json)
+	let manifest = WorkerManifest::parse(&json)
 		.inspect_err(|reason| warn!(%product_id, %reason, "worker manifest is unusable"))
-		.ok())
+		.ok();
+	Ok((manifest, read))
 }
 
 /// Cache key for a product's Worker manifest, keyed by bare label as
@@ -787,12 +787,12 @@ pub async fn publishes_app(
 	product_id: &ProductId,
 	ceiling: Duration,
 ) -> Option<bool> {
-	let read =
-		cached_dotns_json(services, platform, app_manifest_cache_key(product_id), || async {
-			fetch_app_manifest(&services.chain, asset_hub(services)?, product_id)
-				.await
-				.map_err(|error| error.reason())
-		});
+	let key = app_manifest_cache_key(product_id);
+	let read = cached_dotns_json(services, platform, key, CachePolicy::UseCache, || async {
+		fetch_app_manifest(&services.chain, services.asset_hub_chain_genesis_hash(), product_id)
+			.await
+			.map_err(|error| error.reason())
+	});
 	let (json, _) = with_ceiling(ceiling, read)
 		.await?
 		.inspect_err(|reason| warn!(%product_id, %reason, "app manifest lookup failed"))
@@ -813,6 +813,17 @@ pub enum DotnsRead {
 	Fetched,
 }
 
+/// Whether a dotNS read may answer from its cached entry or must read dotNS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CachePolicy {
+	/// Answer from a cached entry younger than [`MANIFEST_TTL_SECS`].
+	UseCache,
+	/// Read dotNS whatever is cached, and cache what it answers: for a caller
+	/// that must see a republished record, such as the funding providers a
+	/// launch lists.
+	Refresh,
+}
+
 /// The JSON `fetch` reads from dotNS, from its entry under `key` when that is
 /// younger than [`MANIFEST_TTL_SECS`], and where it was read. Whatever `fetch`
 /// answers, including that there is nothing published, is cached for that
@@ -825,6 +836,7 @@ async fn cached_dotns_json<F, E>(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	key: CoreStorageKey,
+	policy: CachePolicy,
 	fetch: impl FnOnce() -> F,
 ) -> Result<(Option<String>, DotnsRead), E>
 where
@@ -838,7 +850,8 @@ where
 	// honoured forever. The TTL is documented as the revocation bound, so such
 	// an entry is one a publisher could never withdraw. Treating it as stale
 	// costs one lookup and cannot be worse than that.
-	if let Ok(Some(bytes)) = storage.read(key.clone()).await &&
+	if policy == CachePolicy::UseCache &&
+		let Ok(Some(bytes)) = storage.read(key.clone()).await &&
 		let Ok(cached) = CachedManifest::decode(&mut bytes.as_slice()) &&
 		cached.fetched_at_secs <= now &&
 		now - cached.fetched_at_secs < MANIFEST_TTL_SECS
@@ -850,11 +863,4 @@ where
 	let entry = CachedManifest { fetched_at_secs: now, json: json.clone() };
 	let _ = storage.write(key, entry.encode()).await;
 	Ok((json, DotnsRead::Fetched))
-}
-
-/// The Asset Hub dotNS is read from, or why there is none.
-fn asset_hub(services: &RuntimeServices) -> Result<[u8; 32], String> {
-	services
-		.asset_hub_chain_genesis_hash()
-		.ok_or_else(|| "the host has no Asset Hub to read dotNS from".to_string())
 }

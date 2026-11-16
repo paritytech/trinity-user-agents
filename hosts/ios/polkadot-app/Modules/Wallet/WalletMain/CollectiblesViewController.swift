@@ -296,10 +296,12 @@ private extension CollectiblesViewController {
         expand.startAnimation()
     }
 
-    /// The book sits at the top of the screen, inset as the Pocket's peek is.
+    /// The book sits at the top of the screen, inset as the Pocket's peek is, its art scaled to its width.
     func layoutBook() {
         let inset = CollectiblesBookTiming.pageInset
-        let size = CGSize(width: view.bounds.width - 2 * inset, height: UIImage.collectiblesBook.size.height)
+        let width = view.bounds.width - 2 * inset
+        let imageSize = UIImage.collectiblesBook.size
+        let size = CGSize(width: width, height: width * imageSize.height / imageSize.width)
         book.bounds = CGRect(origin: .zero, size: size)
         book.center = CGPoint(x: view.bounds.midX, y: view.safeAreaInsets.top + inset + size.height / 2)
     }
