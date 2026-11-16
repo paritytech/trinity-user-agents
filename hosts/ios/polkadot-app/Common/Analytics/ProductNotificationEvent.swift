@@ -21,9 +21,7 @@ struct ProductNotificationEvent: Equatable {
         /// a banner shown in the foreground, a tapped one and one the user swiped away all read as gone at the next
         /// sweep.
         case gone
-        /// The host cancelled the booking.
         case cancelled
-        /// The user tapped the notification.
         case tapped
     }
 
@@ -34,6 +32,17 @@ struct ProductNotificationEvent: Equatable {
         case readFailed = "read_failed"
         case addFailed = "add_failed"
         case storeFailed = "store_failed"
+
+        /// The `CriticalIssue` kind a broken booking reports, nil for a booking the host refused.
+        var issueKind: StaticString? {
+            switch self {
+            case .limitReached: nil
+            case .sweepFailed: "sweep-failed"
+            case .readFailed: "read-failed"
+            case .addFailed: "add-failed"
+            case .storeFailed: "store-failed"
+            }
+        }
     }
 
     let productId: String
@@ -102,7 +111,7 @@ struct ProductNotificationEvent: Equatable {
             name: "host.product_notification.\(step.rawValue)",
             origin: origin,
             monotonicMilliseconds: monotonicMilliseconds,
-            level: reason == nil || reason == .limitReached ? .info : .error,
+            level: reason?.issueKind == nil ? .info : .error,
             tags: tags,
             extras: extras
         )

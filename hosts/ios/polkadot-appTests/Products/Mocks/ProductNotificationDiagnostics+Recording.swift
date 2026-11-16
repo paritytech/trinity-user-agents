@@ -23,6 +23,7 @@ func expectedProductNotificationHostEvent(
     productId: String,
     id: UInt32?,
     deliveredAt: Date? = nil,
+    scheduledAtMs: Int? = nil,
     level: HostLogLevel = .info,
     tags: [String: String] = [:]
 ) -> HostEvent {
@@ -43,6 +44,7 @@ func expectedProductNotificationHostEvent(
     extras["product_notification.delivered_at_unix_ms"] = deliveredAt.map {
         .integer(Int($0.timeIntervalSince1970 * 1_000))
     }
+    extras["product_notification.scheduled_at_unix_ms"] = scheduledAtMs.map { .integer($0) }
 
     return HostEvent(
         name: "host.product_notification.\(step)",
@@ -54,15 +56,10 @@ func expectedProductNotificationHostEvent(
     )
 }
 
-final class RecordingIssueReporter: IssueReporting, @unchecked Sendable {
-    private let lock = NSLock()
-    private var reportedIssues: [CriticalIssue] = []
-
-    var issues: [CriticalIssue] {
-        lock.withLock { reportedIssues }
-    }
-
-    func report(_ issue: CriticalIssue) {
-        lock.withLock { reportedIssues.append(issue) }
+/// Orders product notification events by booking id, for steps whose order among bookings is not defined.
+func sortedByBookingId(_ events: some Sequence<HostEvent>) -> [HostEvent] {
+    events.sorted {
+        String(describing: $0.extras["product_notification.id"])
+            < String(describing: $1.extras["product_notification.id"])
     }
 }

@@ -35,17 +35,8 @@ struct ProductNotificationDiagnostics: Sendable {
             .notScheduled,
             event: ProductNotificationEvent(productId: productId, notificationId: notificationId, reason: reason)
         )
-        switch reason {
-        case .sweepFailed:
-            issues.report(CriticalIssue(flow: "product-notification", kind: "sweep-failed", error: error))
-        case .readFailed:
-            issues.report(CriticalIssue(flow: "product-notification", kind: "read-failed", error: error))
-        case .addFailed:
-            issues.report(CriticalIssue(flow: "product-notification", kind: "add-failed", error: error))
-        case .storeFailed:
-            issues.report(CriticalIssue(flow: "product-notification", kind: "store-failed", error: error))
-        case .limitReached:
-            break
+        if let kind = reason.issueKind {
+            issues.report(CriticalIssue(flow: "product-notification", kind: kind, error: error))
         }
     }
 

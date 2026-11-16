@@ -214,9 +214,8 @@ private extension ProductNotificationScheduler {
             .asyncExecute()
         guard storedEntry != nil else { return }
 
-        diagnostics.cancelled(entry: entry)
-
         try await repository.saveOperation({ [] }, { [entry.identifier] }).asyncExecute()
+        diagnostics.cancelled(entry: entry)
 
         logger.debug("Cancelled notification \(notificationId) \(productId)")
     }
@@ -231,9 +230,9 @@ private extension ProductNotificationScheduler {
 
         let unIdentifiers = entries.map(\.unIdentifier)
         notificationCenter.removePendingNotificationRequests(withIdentifiers: unIdentifiers)
-        entries.forEach(diagnostics.cancelled(entry:))
 
         try await repository.deleteAllOperation().asyncExecute()
+        entries.forEach(diagnostics.cancelled(entry:))
 
         logger.debug("Cancelled notifications \(productId)")
     }

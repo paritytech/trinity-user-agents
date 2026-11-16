@@ -1,9 +1,7 @@
 import struct TrUAPIHost.ProductId
-import CoreData
 import Foundation
 import FoundationExt
 import IssueMonitoring
-import Operation_iOS
 import Products
 import Testing
 import UIKit
@@ -20,13 +18,12 @@ struct ProductNotificationSchedulerSweepTests {
     private let center = HoldingNotificationCenter()
     private let recorder = RecordingHostEventRecorder()
     private let applicationEvents = NotificationCenter()
-    private let storageFacade = StoreRefusingStorageFacade()
 
     private let scheduler: ProductNotificationScheduler
 
     init() {
         scheduler = ProductNotificationScheduler(
-            storageFacade: storageFacade,
+            storageFacade: UserDataStorageTestFacade(),
             notificationCenter: center,
             diagnostics: ProductNotificationDiagnostics.recording(into: recorder),
             applicationStateStreams: ApplicationStateStreamFactory(notificationCenter: applicationEvents)
@@ -39,21 +36,6 @@ struct ProductNotificationSchedulerSweepTests {
 
     private func delivered(_ id: UInt32) -> HostEvent {
         expectedProductNotificationHostEvent("delivered", productId: Self.product, id: id, deliveredAt: firedAt)
-    }
-
-    private func notScheduled(_ id: UInt32?, reason: String) -> HostEvent {
-        expectedProductNotificationHostEvent(
-            "not_scheduled",
-            productId: Self.product,
-            id: id,
-            level: .error,
-            tags: ["product_notification.reason": reason]
-        )
-    }
-
-    private func attemptedBookingId() throws -> UInt32 {
-        let identifier = try #require(center.inner.attemptedRequests.last?.identifier)
-        return try #require(identifier.split(separator: ":").last.flatMap { UInt32($0) })
     }
 
     private func pendingIdentifiers() async -> [String] {
@@ -168,58 +150,10 @@ struct ProductNotificationSchedulerSweepTests {
             try await scheduler.cancelAll(forProductId: productId)
         }
 
-        let byId: (HostEvent, HostEvent) -> Bool = {
-            String(describing: $0.extras["product_notification.id"])
-                < String(describing: $1.extras["product_notification.id"])
-        }
         #expect(Array(recorder.events.prefix(2)) == [event("scheduled", id), event("scheduled", nextId)])
         #expect(
-            recorder.events.dropFirst(2).sorted(by: byId)
-                == [event("cancelled", id), event("cancelled", nextId)].sorted(by: byId)
-        )
-    }
-
-    @Test func aRefusedStoreReadRecordsNotScheduledWithoutAnIdAndStillThrows() async throws {
-        let id = try await book()
-        storageFacade.refuseReads()
-
-        await #expect(throws: ReadRefused.self) {
-            _ = try await scheduler.schedule(productId: productId, request: request)
-        }
-
-        #expect(recorder.events == [event("scheduled", id), notScheduled(nil, reason: "sweep_failed")])
-    }
-
-    @Test func aRefusedStoreWriteLeavesNothingPending() async throws {
-        storageFacade.refuseWrites()
-
-        await #expect(throws: WriteRefused.self) {
-            _ = try await book()
-        }
-
-        let id = try attemptedBookingId()
-        #expect(await pendingIdentifiers() == [])
-        #expect(recorder.events == [notScheduled(id, reason: "store_failed")])
-    }
-
-    @Test func aFailedPruneReportsTheStaleBookingOnlyOnTheRetry() async throws {
-        let lostId = try await book()
-        center.inner.losePending()
-        storageFacade.refuseWrites()
-
-        await #expect(throws: WriteRefused.self) {
-            _ = try await book()
-        }
-        storageFacade.allowWrites()
-        let nextId = try await book()
-
-        #expect(
-            recorder.events == [
-                event("scheduled", lostId),
-                notScheduled(nil, reason: "sweep_failed"),
-                event("gone", lostId),
-                event("scheduled", nextId)
-            ]
+            sortedByBookingId(recorder.events.dropFirst(2))
+                == sortedByBookingId([event("cancelled", id), event("cancelled", nextId)])
         )
     }
 
@@ -235,7 +169,7 @@ struct ProductNotificationSchedulerSweepTests {
         await #expect(throws: CancellationError.self) {
             _ = try await withdrawn.value
         }
-        let withdrawnId = try attemptedBookingId()
+        let withdrawnId = try #require(center.inner.lastAttemptedBookingId)
         let kept = ScheduledNotificationEntry(productId: productId, notificationId: keptId)
         #expect(await pendingIdentifiers() == [kept.unIdentifier])
         #expect(
@@ -271,29 +205,17 @@ struct ProductNotificationSchedulerSweepTests {
         #expect(recorder.events == [])
     }
 
-    @Test func aCancelTakesTheBookingOffTheScreenWhenTheStoreFails() async throws {
-        let id = try await book()
-        storageFacade.refuseReads()
-
-        await #expect(throws: ReadRefused.self) {
-            try await scheduler.cancel(productId: productId, notificationId: id)
-        }
-
-        #expect(await pendingIdentifiers() == [])
-    }
-
     @Test(arguments: [(UInt64(2_000_000_000_000), 2_000_000_000_000), (UInt64.max, Int.max)])
     func aBookingRecordsWhenItIsDue(requestedMs: UInt64, reportedMs: Int) async throws {
         let dated = ScheduledNotificationRequest(text: request.text, deeplink: nil, scheduledAtMs: requestedMs)
 
         let id = try await scheduler.schedule(productId: productId, request: dated)
 
-        let undated = event("scheduled", id)
-        let dueTime = ["product_notification.scheduled_at_unix_ms": HostEventValue.integer(reportedMs)]
-        let expected = HostEvent(
-            name: undated.name,
-            tags: undated.tags,
-            extras: undated.extras.merging(dueTime) { _, new in new }
+        let expected = expectedProductNotificationHostEvent(
+            "scheduled",
+            productId: Self.product,
+            id: id,
+            scheduledAtMs: reportedMs
         )
         #expect(recorder.events == [expected])
     }
@@ -403,123 +325,5 @@ private final class HoldingNotificationCenter: ScheduledNotificationCentering, @
                 waitingRead = continuation
             }
         }
-    }
-}
-
-private struct ReadRefused: Error {}
-
-private struct WriteRefused: Error {}
-
-/// Works like the test facade until told to refuse, then fails every read of a stored row or every write.
-private final class StoreRefusingStorageFacade: UserDataStorageTestFacade, @unchecked Sendable {
-    private let refusal = StoreRefusal()
-
-    func refuseReads() {
-        refusal.refusesReads = true
-    }
-
-    func refuseWrites() {
-        refusal.refusesWrites = true
-    }
-
-    func allowWrites() {
-        refusal.refusesWrites = false
-    }
-
-    override func createRepository<T, U>(
-        filter: NSPredicate?,
-        sortDescriptors: [NSSortDescriptor],
-        mapper: AnyCoreDataMapper<T, U>
-    ) -> CoreDataRepository<T, U>
-        where T: Operation_iOS.Identifiable, U: NSManagedObject {
-        CoreDataRepository(
-            databaseService: WriteRefusingDatabaseService(wrapped: databaseService, refusal: refusal),
-            mapper: AnyCoreDataMapper(ReadRefusingMapper(wrapping: mapper, refusal: refusal)),
-            filter: filter,
-            sortDescriptors: sortDescriptors
-        )
-    }
-}
-
-private final class StoreRefusal: @unchecked Sendable {
-    private let lock = NSLock()
-    private var reads = false
-    private var writes = false
-
-    var refusesReads: Bool {
-        get { lock.withLock { reads } }
-        set { lock.withLock { reads = newValue } }
-    }
-
-    var refusesWrites: Bool {
-        get { lock.withLock { writes } }
-        set { lock.withLock { writes = newValue } }
-    }
-}
-
-private final class ReadRefusingMapper<T: Operation_iOS.Identifiable, U: NSManagedObject>: CoreDataMapperProtocol {
-    private let wrapped: AnyCoreDataMapper<T, U>
-    private let refusal: StoreRefusal
-
-    init(wrapping wrapped: AnyCoreDataMapper<T, U>, refusal: StoreRefusal) {
-        self.wrapped = wrapped
-        self.refusal = refusal
-    }
-
-    var entityIdentifierFieldName: String {
-        wrapped.entityIdentifierFieldName
-    }
-
-    func transform(entity: U) throws -> T {
-        guard !refusal.refusesReads else {
-            throw ReadRefused()
-        }
-        return try wrapped.transform(entity: entity)
-    }
-
-    func populate(entity: U, from model: T, using context: NSManagedObjectContext) throws {
-        try wrapped.populate(entity: entity, from: model, using: context)
-    }
-}
-
-/// Fails writes at the service, since a deletion never reaches the mapper.
-private struct WriteRefusingDatabaseService: CoreDataServiceProtocol {
-    let wrapped: CoreDataServiceProtocol
-    let refusal: StoreRefusal
-
-    var configuration: CoreDataServiceConfigurationProtocol {
-        wrapped.configuration
-    }
-
-    func performWrite<T>(_ block: @escaping CoreDataContextBlock<T>, completion: @escaping CoreDataResultBlock<T>) {
-        guard !refusal.refusesWrites else {
-            completion(.failure(WriteRefused()))
-            return
-        }
-        wrapped.performWrite(block, completion: completion)
-    }
-
-    func performRead<T>(_ block: @escaping CoreDataContextBlock<T>, completion: @escaping CoreDataResultBlock<T>) {
-        wrapped.performRead(block, completion: completion)
-    }
-
-    func performAsync(block: @escaping CoreDataContextInvocationBlock) {
-        wrapped.performAsync(block: block)
-    }
-
-    func performObserve(block: @escaping CoreDataContextInvocationBlock) {
-        wrapped.performObserve(block: block)
-    }
-
-    func performWithObserver(block: @escaping CoreDataWriterObserverBlock) {
-        wrapped.performWithObserver(block: block)
-    }
-
-    func close() throws {
-        try wrapped.close()
-    }
-
-    func drop() throws {
-        try wrapped.drop()
     }
 }

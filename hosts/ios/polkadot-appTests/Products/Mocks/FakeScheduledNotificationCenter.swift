@@ -12,9 +12,10 @@ final class FakeScheduledNotificationCenter: ScheduledNotificationCentering, @un
     private var attempted: [UNNotificationRequest] = []
     private var refusesAdd = false
 
-    /// Every request handed to `add`, including the ones it refused.
-    var attemptedRequests: [UNNotificationRequest] {
-        lock.withLock { attempted }
+    /// The booking id of the last request handed to `add`, refused or not.
+    var lastAttemptedBookingId: UInt32? {
+        let identifier = lock.withLock { attempted.last?.identifier }
+        return identifier?.split(separator: ":").last.flatMap { UInt32($0) }
     }
 
     func refuseAdd() {

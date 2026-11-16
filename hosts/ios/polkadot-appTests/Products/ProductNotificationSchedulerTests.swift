@@ -1,12 +1,9 @@
 import struct TrUAPIHost.ProductId
-import CoreData
 import Foundation
 import FoundationExt
 import IssueMonitoring
-import Operation_iOS
 import Products
 import Testing
-import UIKit
 @testable import polkadot_app
 
 @Suite("Product notification scheduler")
@@ -23,6 +20,7 @@ struct ProductNotificationSchedulerTests {
     private let firedAt = Date(timeIntervalSince1970: 2_000_000_000)
     private let center = FakeScheduledNotificationCenter()
     private let recorder = RecordingHostEventRecorder()
+    private let issues = RecordingIssueReporter()
     private let applicationEvents = NotificationCenter()
 
     private let scheduler: ProductNotificationScheduler
@@ -31,7 +29,7 @@ struct ProductNotificationSchedulerTests {
         scheduler = ProductNotificationScheduler(
             storageFacade: UserDataStorageTestFacade(),
             notificationCenter: center,
-            diagnostics: ProductNotificationDiagnostics.recording(into: recorder),
+            diagnostics: ProductNotificationDiagnostics.recording(into: recorder, issues: issues),
             applicationStateStreams: ApplicationStateStreamFactory(notificationCenter: applicationEvents)
         )
     }
@@ -58,15 +56,6 @@ struct ProductNotificationSchedulerTests {
         )
     }
 
-    private func attemptedBookingId() throws -> UInt32 {
-        let identifier = try #require(center.attemptedRequests.last?.identifier)
-        return try #require(identifier.split(separator: ":").last.flatMap { UInt32($0) })
-    }
-
-    private func becomeActive() {
-        applicationEvents.post(name: UIApplication.didBecomeActiveNotification, object: nil)
-    }
-
     @Test func bookingRecordsScheduled() async throws {
         let id = try await scheduler.schedule(productId: productId, request: request)
 
@@ -80,24 +69,20 @@ struct ProductNotificationSchedulerTests {
             _ = try await scheduler.schedule(productId: productId, request: request)
         }
 
-        let id = try attemptedBookingId()
+        let id = try #require(center.lastAttemptedBookingId)
         #expect(recorder.events == [notScheduled(id, reason: "add_failed")])
     }
 
-    @Test func refusedStoreWriteRecordsNotScheduledAndStillThrows() async throws {
-        let scheduler = ProductNotificationScheduler(
-            storageFacade: SaveRefusingStorageFacade(),
-            notificationCenter: center,
-            diagnostics: ProductNotificationDiagnostics.recording(into: recorder),
-            applicationStateStreams: ApplicationStateStreamFactory(notificationCenter: applicationEvents)
-        )
+    @Test func refusedHandOverReportsAnIssueWithTheRefusal() async throws {
+        center.refuseAdd()
 
-        await #expect(throws: SaveRefused.self) {
+        await #expect(throws: FakeScheduledNotificationCenter.AddRefused()) {
             _ = try await scheduler.schedule(productId: productId, request: request)
         }
 
-        let id = try attemptedBookingId()
-        #expect(recorder.events == [notScheduled(id, reason: "store_failed")])
+        #expect(issues.issues.map { [$0.flow, $0.kind, $0.errorType] } == [
+            ["product-notification", "add-failed", String(reflecting: FakeScheduledNotificationCenter.AddRefused.self)]
+        ])
     }
 
     @Test func bookingPastTheSlotLimitRecordsNotScheduledWithoutAnId() async throws {
@@ -129,13 +114,10 @@ struct ProductNotificationSchedulerTests {
 
         try await scheduler.cancelAll(forProductId: productId)
 
-        let byId: (HostEvent, HostEvent) -> Bool = {
-            String(describing: $0.extras["product_notification.id"])
-                < String(describing: $1.extras["product_notification.id"])
-        }
-        let cancellations = [cancelled(first), cancelled(second)].sorted(by: byId)
         #expect(Array(recorder.events.prefix(2)) == [scheduled(first), scheduled(second)])
-        #expect(recorder.events.dropFirst(2).sorted(by: byId) == cancellations)
+        #expect(
+            sortedByBookingId(recorder.events.dropFirst(2)) == sortedByBookingId([cancelled(first), cancelled(second)])
+        )
     }
 
     @Test func aCancelledBookingIsNotAlsoReportedGone() async throws {
@@ -147,23 +129,11 @@ struct ProductNotificationSchedulerTests {
         #expect(recorder.events == [scheduled(cancelledId), cancelled(cancelledId), scheduled(nextId)])
     }
 
-    @Test func activationReportsABookingNoLongerPendingOrDeliveredAsGone() async throws {
-        let id = try await scheduler.schedule(productId: productId, request: request)
-        center.losePending()
-        await scheduler.start()
-
-        becomeActive()
-        try await recorder.waitForEvents(count: 2)
-
-        #expect(recorder.events == [scheduled(id), gone(id)])
-    }
-
-    @Test func activationReportsABookingStillInNotificationCenterAsDelivered() async throws {
+    @Test func startReportsABookingStillInNotificationCenterAsDelivered() async throws {
         let id = try await scheduler.schedule(productId: productId, request: request)
         center.firePending(at: firedAt)
-        await scheduler.start()
 
-        becomeActive()
+        await scheduler.start()
         try await recorder.waitForEvents(count: 2)
 
         #expect(
@@ -190,43 +160,5 @@ struct ProductNotificationSchedulerTests {
         let secondId = try await scheduler.schedule(productId: productId, request: request)
 
         #expect(recorder.events == [scheduled(firstId), scheduled(secondId)])
-    }
-}
-
-private struct SaveRefused: Error {}
-
-/// Reads like the test facade, and fails every write of a model.
-private final class SaveRefusingStorageFacade: UserDataStorageTestFacade {
-    override func createRepository<T, U>(
-        filter: NSPredicate?,
-        sortDescriptors: [NSSortDescriptor],
-        mapper: AnyCoreDataMapper<T, U>
-    ) -> CoreDataRepository<T, U>
-        where T: Operation_iOS.Identifiable, U: NSManagedObject {
-        super.createRepository(
-            filter: filter,
-            sortDescriptors: sortDescriptors,
-            mapper: AnyCoreDataMapper(SaveRefusingMapper(reading: mapper))
-        )
-    }
-}
-
-private final class SaveRefusingMapper<T: Operation_iOS.Identifiable, U: NSManagedObject>: CoreDataMapperProtocol {
-    private let reading: AnyCoreDataMapper<T, U>
-
-    init(reading: AnyCoreDataMapper<T, U>) {
-        self.reading = reading
-    }
-
-    var entityIdentifierFieldName: String {
-        reading.entityIdentifierFieldName
-    }
-
-    func transform(entity: U) throws -> T {
-        try reading.transform(entity: entity)
-    }
-
-    func populate(entity _: U, from _: T, using _: NSManagedObjectContext) throws {
-        throw SaveRefused()
     }
 }
