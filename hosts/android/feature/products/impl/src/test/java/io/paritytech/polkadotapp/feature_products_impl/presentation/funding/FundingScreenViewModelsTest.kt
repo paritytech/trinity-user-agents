@@ -34,8 +34,8 @@ import uniffi.truapi.CancelOutcome
 import uniffi.truapi.CancelTerms
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingDirection
-import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingFailure
+import uniffi.truapi.FundingQuoteState
 import uniffi.truapi.FundingRail
 import uniffi.truapi.FundingStage
 import io.paritytech.polkadotapp.common.R as RCommon
