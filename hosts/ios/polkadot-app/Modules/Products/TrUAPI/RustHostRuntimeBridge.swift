@@ -125,6 +125,8 @@ final class RustHostRuntimeBridge: HostBridge, @unchecked Sendable {
                 return false
             }
             return chainRegistry.getConnection(for: chain.chainId) != nil
+        case .materials:
+            return false
         }
     }
 

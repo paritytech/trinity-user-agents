@@ -66,3 +66,18 @@ pub struct HostRendererActionSubscribeItem {
 	/// of the new value, with no length prefix.
 	pub payload: Vec<u8>,
 }
+
+/// A `Materials` node that fell back.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct HostRendererFailureSubscribeItem {
+	/// Where the body lives.
+	pub context: RenderContext,
+	/// The node's position among the tree's `Materials` nodes, depth first,
+	/// starting at 0.
+	pub node: u32,
+	/// The material that failed, when the failure belongs to one.
+	pub material: Option<[u8; 32]>,
+	/// Why the node fell back.
+	pub reason: crate::v01::MaterialFailure,
+}
