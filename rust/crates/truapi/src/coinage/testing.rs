@@ -10,7 +10,9 @@ use subxt::{Metadata, utils::H256};
 use super::{
 	Asset, ChainConfig, ChainParams, Exponent, PrivacyPolicy, PurseId, Snapshot,
 	chain::{AliasState, ChainCoin, CoinageChain, RingPlace},
-	plugins::{PersonhoodSource, Seed},
+	layer::{Interfaces, Layer, Randomness, RuntimeFacts, RuntimeSource, start},
+	plugins::{PersonhoodSource, Running, Seed},
+	reconstruction::{InstallationRegistry, ScanConfig},
 	ledger::{
 		AssetKind, BlockRef, CoinOnChain, EntryOnChain, Facts, Read, Subject, allocate, mint_installation, observe,
 		snapshot,
@@ -303,4 +305,73 @@ pub fn set_status(db: &Db, record: DurableTxId, status: &'static str, failure: O
 		Ok(())
 	}))
 	.expect("the status is written");
+}
+
+/// A runtime that passes A3's check until `failing` is set.
+#[derive(Default)]
+pub struct TestRuntime {
+	/// Every read fails.
+	pub failing: core::sync::atomic::AtomicBool,
+}
+
+#[async_trait::async_trait]
+impl RuntimeSource for TestRuntime {
+	async fn runtime(&self, _: Option<HashAndNumber>) -> Option<RuntimeFacts> {
+		if self.failing.load(core::sync::atomic::Ordering::SeqCst) {
+			return None;
+		}
+		Some(RuntimeFacts { metadata: Arc::new(people_metadata()), instance: Some(instance_record()), maximum_age: Some(16) })
+	}
+}
+
+/// Draws that mint the installation `[7; 32]`.
+pub struct TestDraws;
+
+impl Randomness for TestDraws {
+	fn installation(&self) -> InstallationId {
+		InstallationId([7; 32])
+	}
+}
+
+/// A registry whose read always fails.
+pub struct NoRegistry;
+
+#[async_trait::async_trait]
+impl InstallationRegistry for NoRegistry {
+	async fn records(&self) -> Option<Vec<Vec<u8>>> {
+		None
+	}
+}
+
+/// The block tests revalidate at.
+pub const BLOCK: HashAndNumber = HashAndNumber { hash: H256([2; 32]), number: 20 };
+
+/// A small reconstruction scan.
+pub const SCAN: ScanConfig = ScanConfig { batch: 4, gap: 1, deep_gap: 2, purse_gap: 1 };
+
+/// The interfaces a test layer starts with, over `store`, at [`NOW`].
+pub fn layer_interfaces(store: Db, runtime: Arc<TestRuntime>) -> Interfaces {
+	Interfaces {
+		engine: unbuilt_engine(store.clone()),
+		store,
+		chain: Arc::new(FakeChain::default()),
+		runtime,
+		seed: Arc::new(FixedSeed),
+		clock: Arc::new(|| NOW),
+		randomness: Arc::new(TestDraws),
+		personhood: Arc::new(NoPerson),
+		registry: Arc::new(NoRegistry),
+		spawner: crate::Spawner::new(tokio::runtime::Handle::current()),
+		policy: PrivacyPolicy::fastest(),
+	}
+}
+
+/// A layer started over `store`, with its running handle and its runtime.
+pub async fn started_layer(store: Db) -> (Layer, Running, Arc<TestRuntime>) {
+	let runtime = Arc::new(TestRuntime::default());
+	let running = Running::new();
+	let layer = start(layer_interfaces(store, runtime.clone()), chain_config(), SCAN, None, running.clone())
+		.await
+		.expect("the layer starts");
+	(layer, running, runtime)
 }

@@ -11,6 +11,7 @@ pub mod balance;
 pub mod chain;
 pub mod classification;
 pub mod denominations;
+pub mod layer;
 pub mod ledger;
 pub mod maintenance;
 pub mod namespace;
@@ -27,6 +28,7 @@ pub mod registration;
 pub mod selection;
 pub mod split;
 pub mod start;
+pub mod status;
 pub mod tokens;
 
 #[cfg(test)]
