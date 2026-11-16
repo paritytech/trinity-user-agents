@@ -36,6 +36,7 @@ class ProductOverlayWebLayout private constructor(
     private val limitMillis: Long,
 ) : FrameLayout(context) {
     private val webView = WebView(context)
+    private var released = false
     private val expire = Runnable {
         Timber.d("Overlay of %s ran out of time", productId)
         dismiss()
@@ -52,7 +53,8 @@ class ProductOverlayWebLayout private constructor(
         webView.webChromeClient = OverlayChromeClient()
         ProductPageBridge.install(webView, ProductOverlayMessage.BRIDGE_NAME, productId, LABEL) { data ->
             when (ProductOverlayMessage.parse(data)) {
-                ProductOverlayMessage.Done -> dismiss()
+                // Not inside the webview's own message callback: dismiss() destroys it.
+                ProductOverlayMessage.Done -> post { dismiss() }
                 null -> Timber.d("Overlay of %s dropped an unreadable message", productId)
             }
         }
@@ -62,13 +64,17 @@ class ProductOverlayWebLayout private constructor(
 
     /** Whether it is still on screen. */
     val isShowing: Boolean
-        get() = parent != null
+        get() = parent != null && !released
+
+    /** Whether its webview has been freed, which happens once it leaves the screen for any reason. For tests. */
+    internal val isReleased: Boolean
+        get() = released
 
     /** Takes the overlay away and frees its webview. Safe to call more than once. */
     fun dismiss() {
         removeCallbacks(expire)
         (parent as? ViewGroup)?.removeView(this)
-        destroyProductPage(webView)
+        release()
     }
 
     override fun onAttachedToWindow() {
@@ -79,6 +85,15 @@ class ProductOverlayWebLayout private constructor(
     override fun onDetachedFromWindow() {
         removeCallbacks(expire)
         super.onDetachedFromWindow()
+        // The screen can go away under the overlay (the activity finished or was recreated). Nothing calls dismiss()
+        // then, so the webview is freed here, or it would keep the old activity alive.
+        release()
+    }
+
+    private fun release() {
+        if (released) return
+        released = true
+        destroyProductPage(webView)
     }
 
     // Every touch goes to what is under the overlay: the chat.

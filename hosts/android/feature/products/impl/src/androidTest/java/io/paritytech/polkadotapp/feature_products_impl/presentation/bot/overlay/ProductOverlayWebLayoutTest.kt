@@ -104,6 +104,21 @@ class ProductOverlayWebLayoutTest {
         instrumentation.runOnMainSync { assertFalse(overlay!!.isShowing) }
     }
 
+    @Test
+    fun anOverlayIsFreedWhenItsScreenGoesAway() {
+        val overlay = show("stuck.html")
+        assertNotNull(overlay)
+
+        // The activity is destroyed and made again while the overlay shows; nothing calls dismiss().
+        scenario.recreate()
+        instrumentation.waitForIdleSync()
+
+        instrumentation.runOnMainSync {
+            assertTrue("the overlay's webview outlived its screen", overlay!!.isReleased)
+            assertFalse(overlay.isShowing)
+        }
+    }
+
     private fun show(page: String, limitMillis: Long = ProductOverlayWebLayout.OVERLAY_LIMIT_MILLIS): ProductOverlayWebLayout? {
         val url = requireNotNull(ProductRoomFooterWebPage.url(page, PRODUCT))
         var overlay: ProductOverlayWebLayout? = null
