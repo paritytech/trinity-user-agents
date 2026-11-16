@@ -57,8 +57,8 @@ pub struct UnservedProduct {
 	pub stack_tld: String,
 }
 
-/// A request naming such a product is malformed, as one whose id does not
-/// parse is.
+/// A request naming such a product is malformed, the same as one whose id
+/// does not parse.
 impl<D> From<UnservedProduct> for CallError<D> {
 	fn from(error: UnservedProduct) -> Self {
 		CallError::MalformedFrame { reason: error.to_string() }

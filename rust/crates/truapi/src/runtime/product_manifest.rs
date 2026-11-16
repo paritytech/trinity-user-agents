@@ -55,9 +55,9 @@ const APP_SUBNAME: &str = "app";
 /// The two are one answer because a caller cannot act on the difference.
 ///
 /// The TLD the identifier carries is discarded and the node re-derived under
-/// the TLD the network reports. A stack serves `dot` names beside its own, so
-/// `dim2.dot` reaching a `.paseo` deployment has to resolve there rather than
-/// hash a name no registry holds.
+/// the TLD the network reports. A stack also serves `dot` names, so `dim2.dot`
+/// on a `paseo` deployment resolves as `dim2.paseo`: no registry there holds a
+/// `dim2.dot` node.
 #[instrument(skip_all, fields(runtime.method = "product_manifest.fetch"))]
 async fn fetch_root_manifest(
 	chain: &ChainRuntime,
@@ -671,8 +671,8 @@ async fn root_manifest(
 	platform: &dyn Platform,
 	target: &ProductId,
 ) -> (Option<String>, ManifestSource) {
-	// The read below drops the id's TLD and is cached by bare label, so an
-	// unserved id would be answered with its namesake's manifest.
+	// The read below drops the TLD and caches by bare label, so an
+	// unserved `foo.testnet` would get `foo.paseo`'s manifest.
 	if services.stack().require_served(target).is_err() {
 		return (None, ManifestSource::Unserved);
 	}
@@ -718,7 +718,8 @@ pub async fn read_worker_manifest(
 	policy: CachePolicy,
 ) -> Result<(Option<WorkerManifest>, DotnsRead), String> {
 	if services.stack().require_served(product_id).is_err() {
-		// Nothing was read, so a caller has nothing to read again.
+		// Reported as just fetched: there is nothing to refresh for an
+		// id the stack does not run.
 		return Ok((None, DotnsRead::Fetched));
 	}
 	let (json, read) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), policy, || async {

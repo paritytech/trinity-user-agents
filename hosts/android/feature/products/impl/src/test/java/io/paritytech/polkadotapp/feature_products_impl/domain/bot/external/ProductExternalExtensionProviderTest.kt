@@ -47,7 +47,7 @@ class ProductExternalExtensionProviderTest {
         assertEquals(listOf(playground to ProductChatExtensionOrigin.InstalledByUser), extensions.map { it.product to it.origin })
     }
 
-    // A fork runs on its own TLD, so the host places that network's game product, not Polkadot's.
+    // On a fork, the host places the fork's game product, not Polkadot's.
     @Test
     fun `a fork places its own network's game product in host chats`() = runTest {
         val context: Context = mockk(relaxed = true)

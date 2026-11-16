@@ -40,8 +40,8 @@ fn test_stack_from_descriptor() {
 	assert_eq!(*stack.chains(), Roles { people, ..paseo.chains().clone() });
 }
 
-/// A stack brings its own TLD: the core serves names under it without
-/// knowing it in advance.
+/// The core serves names under a stack's TLD without knowing that TLD
+/// in advance.
 #[test]
 fn test_stack_runs_on_its_own_tld() {
 	let staging = edit_stack(|descriptor| descriptor["tld"] = "staging".into());

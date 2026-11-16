@@ -422,8 +422,8 @@ checked value is carried to the account calls. Native hosts open the bundled
 stack as a `Stack` object and judge navigation, share links and trusted
 products through its methods, so they never supply a TLD of their own.
 
-`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels. A label is
-trusted under a TLD the stack serves. These products bypass recorded permissions and
+`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels. A label
+counts only under a TLD the stack serves. These products bypass recorded permissions and
 permission prompts. Device permissions still need the OS grant. The runtime grants
 account access, username disclosure, signing with their own product accounts and
 AutoSigning without approval. Legacy-account signing still asks the user, except

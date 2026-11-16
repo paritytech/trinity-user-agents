@@ -14,7 +14,8 @@ use crate::{
 /// cap on chat identifiers.
 pub const PRODUCT_ID_MAX_BYTES: usize = 256;
 
-/// Trusted product labels, under whichever TLD the host's stack serves.
+/// Trusted product labels. A label counts only under a TLD the host's
+/// stack serves.
 ///
 /// These products bypass recorded permissions and permission prompts. Device
 /// permissions still need the OS grant.
@@ -38,8 +39,8 @@ pub const PRODUCT_SHARE_SUFFIX: &str = ".li";
 /// Only [`FromStr`] builds one, so two values are equal exactly when they name
 /// the same product executable. Encodes as the identifier string.
 ///
-/// Parsing checks syntax only: any DNS label is a TLD. Which names a host
-/// runs as products is its stack's decision.
+/// Parsing checks syntax only, so any DNS label is accepted as a TLD. The
+/// host's stack decides which names it runs.
 ///
 /// Accepted forms are defined in host-spec C.7:
 /// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L109-L128>
@@ -221,8 +222,8 @@ impl ProductId {
 	/// Stored decisions don't change this.
 	///
 	/// Matches the whole label: `peopl.dot` and `peopl.paseo` are trusted,
-	/// `app.peopl.dot` and localhost ids are not. The TLD is not judged here,
-	/// so ask only about a product the host's stack serves.
+	/// `app.peopl.dot` and localhost ids are not. The TLD is not checked here,
+	/// so call this only for a product the host's stack serves.
 	///
 	/// [`RemotePermission`]: truapi::latest::RemotePermission
 	pub fn has_trusted_remote_permissions(&self) -> bool {
@@ -236,8 +237,8 @@ impl ProductId {
 		self.dotns_name() == Some(GAME_PRODUCT_LABEL)
 	}
 
-	/// Parse a share host, without a URL or network lookup. Any TLD parses:
-	/// whether the host serves the product is its stack's decision.
+	/// Parse a share host, without a URL or network lookup. Any TLD parses;
+	/// the host's stack decides whether it runs the product.
 	pub fn from_share_host(input: &str) -> Option<Self> {
 		let hostname = normalize_host(input);
 		let identifier = hostname.strip_suffix(PRODUCT_SHARE_SUFFIX)?.parse::<Self>().ok()?;

@@ -54,7 +54,7 @@ class RealRingVrfKeySourceTest {
         membersRingLocator = membersRingLocator,
     )
 
-    // A fork runs on its own TLD, so its personhood keys are reserved under it and Polkadot's are not.
+    // On a fork, the personhood keys are reserved under the fork's TLD, not under `dot`.
     @Test
     fun `a fork's reserved personhood keys are under its own TLD`() = runBlocking<Unit> {
         val tldProvider: DotNsTldProvider = mockk {

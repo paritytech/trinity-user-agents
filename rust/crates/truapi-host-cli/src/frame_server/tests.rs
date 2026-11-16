@@ -367,8 +367,8 @@ fn product_selection_compares_canonical_ids() {
 	assert_eq!(product.select(ProductId::for_test("LOCALHOST:3000"), &stack()), Ok(false));
 }
 
-/// The host runs no product on a TLD its stack does not serve, so the
-/// selection stays where it was.
+/// Selecting a product on a TLD the stack does not serve fails and
+/// keeps the current selection.
 #[test]
 fn product_selection_refuses_a_tld_the_stack_does_not_serve() {
 	let stack = stack();

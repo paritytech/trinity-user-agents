@@ -97,8 +97,8 @@ fn a_network_on_the_share_suffix_keeps_its_own_names() {
 	);
 }
 
-/// A fork runs products under its own TLD and under Polkadot's, and reads any
-/// other network's names as the web addresses they are.
+/// A fork runs products under `dot` and its own TLD, and treats names under
+/// any other TLD as web addresses.
 #[test]
 fn a_host_reads_only_its_own_and_the_reserved_tld_as_dotns() {
 	for (input, stack_tld, is_dotns) in [
@@ -126,8 +126,8 @@ fn a_host_reads_only_its_own_and_the_reserved_tld_as_dotns() {
 	}
 }
 
-/// A Pocket deeplink is the host's own, so it is refused rather than opened
-/// elsewhere when its product is on a TLD the stack does not serve.
+/// A Pocket deeplink always belongs to the host, so one for a product on a
+/// TLD the stack does not serve is refused, not opened as a web link.
 #[test]
 fn a_pocket_deeplink_names_a_product_the_stack_serves() {
 	let link = |product: &str| format!("polkadotapp://pocket/add?product={product}&card=loyalty");

@@ -918,8 +918,8 @@ fn review_discriminants_do_not_move() {
 	assert_eq!(discriminants, [9, 11]);
 }
 
-/// A paired request is refused before its prompt when the review names a
-/// product the stack does not serve, so each review has to name the caller and
+/// A paired request is refused before the prompt if its review names a product
+/// the stack does not serve. For that, each review must list the caller and
 /// every product whose account or context it asks about.
 #[test]
 fn a_review_names_the_caller_and_every_product_it_asks_about() {

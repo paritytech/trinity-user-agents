@@ -190,8 +190,8 @@ impl WalletAccountHolder {
 		}
 	}
 
-	/// `value` as [`Served`] once the stack runs every product it names, for a
-	/// paired host's request, which reaches the wallet without a product
+	/// Wraps `value` in [`Served`] if the stack runs every product it names.
+	/// For a paired host's request, which does not pass through a product
 	/// connection.
 	pub fn serve<T: NamesProducts>(&self, value: T) -> Result<Served<T>, AuthorityError> {
 		Ok(serve(self.services.stack(), value)?)

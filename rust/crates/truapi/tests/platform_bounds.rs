@@ -130,8 +130,8 @@ fn product_id_validation_cases() {
 	assert_eq!(" ".parse::<ProductId>(), Err(ProductIdError::Empty));
 }
 
-/// A web domain parses, since a TLD is any DNS label. The host still runs it
-/// as a product only under Polkadot's TLD or its stack's own.
+/// A web domain parses, because any DNS label is a valid TLD. The host runs
+/// it as a product only under `dot` or its stack's TLD.
 #[test]
 fn a_host_runs_only_products_its_stack_serves() {
 	let stack = truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], [0xcc; 32]);

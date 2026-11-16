@@ -49,8 +49,8 @@ use zeroize::Zeroizing;
 /// A host role builds one and shares it with every product connection. Each
 /// product call is bound to the calling product and to the session it started
 /// under, and a signing, transaction, VRF or allocation request is confirmed
-/// with the user before the account holder acts on it. An account, key or
-/// context a request names arrives [`Served`], so none is resolved for a
+/// with the user before the account holder acts on it. Accounts, keys and
+/// contexts a request names arrive [`Served`], so nothing is resolved for a
 /// product the stack does not run. Kept grants are read
 /// under a revision that a product reset, a lock or a session change advances;
 /// grant work that began before the change fails `Disconnected`. A kept

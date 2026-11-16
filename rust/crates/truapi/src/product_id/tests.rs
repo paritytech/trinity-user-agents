@@ -28,8 +28,8 @@ fn named_products_take_one_label_as_the_network_suffix() {
 	assert!(!localhost.matches_network("dot"));
 }
 
-/// Whether `raw` parses to an id with a trusted label. The TLD is the
-/// stack's to judge, which the stack tests cover.
+/// Whether `raw` parses to an id with a trusted label. The stack tests
+/// cover the TLD.
 fn has_trusted_label(raw: &str) -> bool {
 	raw.parse::<ProductId>().is_ok_and(|id| id.has_trusted_remote_permissions())
 }
@@ -146,8 +146,8 @@ fn trusted_remote_permission_labels_are_bare_lowercase_labels() {
 	}
 }
 
-/// Parsing has no stack to ask, so it accepts every TLD dotNS could register
-/// and leaves the choice of TLDs to the stack that runs the product.
+/// Parsing has no stack to ask, so it accepts any TLD dotNS could register.
+/// The stack decides which TLDs it runs.
 #[test]
 fn any_dns_label_is_a_tld_and_a_name_needs_one() {
 	for id in ["browse.fork", "browse.com", "app.browse.x1"] {

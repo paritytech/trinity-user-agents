@@ -128,9 +128,8 @@ fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
 /// Root entropy the signing-host fixtures activate their wallet with.
 pub const ENTROPY: [u8; 16] = [0xAB; 16];
 
-/// `value` as a stack serves it. The account calls take their products served,
-/// and every product these tests name is under the reserved `dot` TLD, which
-/// every stack runs.
+/// Wraps `value` in `Served` for the account calls. Every product these tests
+/// name is under `dot`, which every stack runs.
 pub fn served<T: NamesProducts>(value: T) -> Served<T> {
 	serve(&crate::test_support::paseo_test_stack(), value).expect("every stack runs a .dot product")
 }
@@ -4736,9 +4735,9 @@ fn cross_product_storage_rejects_invalid_targets_before_dispatch() {
 	assert!(HostLocalStorageReadRequest::decode(&mut frame.as_slice()).is_ok());
 }
 
-/// The manifest readers drop the TLD an id carries and cache by bare label,
-/// so an id on an unserved TLD would be answered with its namesake's manifest.
-/// They answer that it publishes nothing.
+/// Manifests are cached by bare label, so `foo.testnet` would get
+/// `foo.paseo`'s manifest. For an id on an unserved TLD the readers return no
+/// manifest.
 #[test]
 fn an_unserved_product_is_not_answered_with_its_namesakes_manifest() {
 	use futures::executor::block_on;
@@ -4794,9 +4793,9 @@ fn is_malformed<T, E>(result: Result<T, CallError<E>>) -> bool {
 	matches!(result, Err(CallError::MalformedFrame { .. }))
 }
 
-/// A product on a TLD the stack does not serve still decodes, since decoding
-/// has no stack to ask. Every call naming one answers as it would for an id
-/// that does not decode, before a key, grant or manifest is looked up for it.
+/// An id on a TLD the stack does not serve still decodes, because decoding
+/// has no stack. Every call that names it fails as if the id did not decode,
+/// before any key, grant or manifest lookup.
 #[test]
 fn a_call_naming_a_product_the_stack_does_not_serve_is_malformed() {
 	use futures::executor::block_on;

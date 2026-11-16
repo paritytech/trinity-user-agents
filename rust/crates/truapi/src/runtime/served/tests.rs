@@ -1,8 +1,8 @@
 use super::*;
 
 /// A request can name several products, such as a key handle and a context.
-/// It is served only when the stack runs every one of them, and the refusal
-/// names the first it does not run.
+/// It passes only if the stack runs all of them, and the error names the
+/// first one that fails.
 #[test]
 fn a_value_is_served_only_when_every_product_it_names_is() {
 	let alias = |key_handle: &str, context: &str| HostAccountGetAliasRequest {

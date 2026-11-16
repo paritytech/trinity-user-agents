@@ -80,8 +80,8 @@ internal class PocketDeepLinkHandler @Inject constructor(
         }
     }
 
-    // The TLD `canHandle` claimed the link under. Reading it again from the People chain would hold an
-    // offline cold start's link on the network.
+    // The TLD `canHandle` used. Reading it again from the People chain would block the link when the
+    // app starts offline.
     private suspend fun claimedTld(): Result<DotNsTld> =
         dotNsTldProvider.currentTldOrNull()?.let { Result.success(it) } ?: dotNsTldProvider.getTld()
 

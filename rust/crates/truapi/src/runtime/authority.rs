@@ -334,9 +334,9 @@ impl AuthorityCancelError {
 	}
 }
 
-/// Payload-signing request selected by the product API entrypoint. The
-/// product account it names is [`Served`], so whoever builds one has checked
-/// the stack runs that product.
+/// Payload-signing request selected by the product API entrypoint. Its
+/// product account is [`Served`], so it can only be built for a product the
+/// stack runs.
 #[derive(Clone)]
 pub enum SignPayloadAuthorityRequest {
 	/// Sign a payload with a product-derived account.
@@ -350,8 +350,8 @@ pub enum SignPayloadAuthorityRequest {
 	},
 }
 
-/// Raw-signing request selected by the product API entrypoint. A product
-/// account it names is [`Served`].
+/// Raw-signing request selected by the product API entrypoint. Its
+/// product account is [`Served`].
 #[derive(Clone)]
 pub enum SignRawAuthorityRequest {
 	/// Sign raw data with a product-derived account.
@@ -372,8 +372,8 @@ pub enum SignRawAuthorityRequest {
 	},
 }
 
-/// Transaction-creation request selected by the product API entrypoint. A
-/// product account it names is [`Served`].
+/// Transaction-creation request selected by the product API entrypoint.
+/// Its product account is [`Served`].
 #[derive(Clone)]
 pub enum CreateTransactionAuthorityRequest {
 	/// Create a transaction with a product-derived account.
