@@ -54,6 +54,7 @@ File-by-file code review. For each rule violated, note severity (blocking/major/
 - [ ] SwiftUI gestures: state set in `onChanged` is reset when the gesture is cancelled (`@GestureState`), since `onEnded` does not run on cancellation.
 - [ ] Custom gesture-driven controls expose an accessibility label, trait and action.
 - [ ] Content that overhangs a hosting view is inside the view's hit region.
+- [ ] A SwiftUI screen inside the tab container with bottom-pinned content subclasses `SafeAreaFollowingHostingController`, not `UIHostingController` (see `architecture/tab-bar-container.md`, Hosted SwiftUI screens).
 
 **Ref:** code/ui-uikit.md, code/design-system.md
 
@@ -129,8 +130,13 @@ File-by-file code review. For each rule violated, note severity (blocking/major/
 - [ ] Existing shared mock extended instead of forked
 - [ ] Mocks are dumb (record inputs, `simulate…` helpers); assertions live in the test
 - [ ] Mocked at the lowest injectable seam, real production types exercised above it
+- [ ] New tests target risky (Tier 1/2) behavior; no tests for field-copy mappers, pass-through wiring or `init` assembly
+- [ ] No tests of humble objects (labels, fonts, colors, view hierarchy, wireframe pushes); rules were extracted into a testable type
+- [ ] Case tables are one `@Test(arguments:)`, not copies
+- [ ] No `Task.sleep` / fixed polling / short timeout in tests; waits are event-based (`ManualClock.waitForSleep`, stream element, recorder)
+- [ ] Tested production logic takes `any Clock<Duration>` / `DateProviding` instead of calling `Task.sleep` / `Date()`
 
-**Ref:** code/testing.md
+**Ref:** code/testing.md, `tester` skill
 
 ## PR Hygiene
 

@@ -13,7 +13,7 @@ public struct ChatCallMessageConfiguration: HashableContentConfiguration {
         case active
         case finished(duration: String)
         case missed
-        case cancelled(ringDuration: String)
+        case cancelled
     }
 
     public enum Direction: Hashable {
@@ -24,17 +24,20 @@ public struct ChatCallMessageConfiguration: HashableContentConfiguration {
     let callType: CallType
     let direction: Direction
     let state: State
+    let statusConfiguration: ChatMessageStatusViewConfiguration?
     let onTap: (() -> Void)?
 
     public init(
         callType: CallType,
         direction: Direction,
         state: State,
+        statusConfiguration: ChatMessageStatusViewConfiguration? = nil,
         onTap: (() -> Void)? = nil
     ) {
         self.callType = callType
         self.direction = direction
         self.state = state
+        self.statusConfiguration = statusConfiguration
         self.onTap = onTap
     }
 
@@ -51,12 +54,14 @@ public struct ChatCallMessageConfiguration: HashableContentConfiguration {
         lhs.callType == rhs.callType
             && lhs.direction == rhs.direction
             && lhs.state == rhs.state
+            && lhs.statusConfiguration == rhs.statusConfiguration
     }
 
     public func hash(into hasher: inout Hasher) {
         hasher.combine(callType)
         hasher.combine(direction)
         hasher.combine(state)
+        hasher.combine(statusConfiguration)
     }
 }
 
@@ -89,7 +94,7 @@ final class ChatCallMessageView: UIView, UIContentView {
 
     private let textStack: UIStackView = create {
         $0.axis = .vertical
-        $0.alignment = .leading
+        $0.alignment = .fill
         $0.spacing = 0
     }
 
@@ -97,6 +102,14 @@ final class ChatCallMessageView: UIView, UIContentView {
         $0.spacing = 2
         $0.axis = .horizontal
     }
+
+    private let bottomRowStack: UIStackView = create {
+        $0.axis = .horizontal
+        $0.alignment = .center
+        $0.spacing = DSSpacings.small
+    }
+
+    private var statusView: (UIView & UIContentView)?
 
     private let contentStack: UIStackView = create {
         $0.axis = .horizontal
@@ -141,8 +154,10 @@ private extension ChatCallMessageView {
         detailsTextStack.addArrangedSubview(subtitleIcon)
         detailsTextStack.addArrangedSubview(subtitleLabel)
 
+        bottomRowStack.addArrangedSubview(detailsTextStack)
+
         textStack.addArrangedSubview(titleLabel)
-        textStack.addArrangedSubview(detailsTextStack)
+        textStack.addArrangedSubview(bottomRowStack)
 
         contentStack.addArrangedSubview(iconContainerView)
         contentStack.addArrangedSubview(textStack)
@@ -151,7 +166,7 @@ private extension ChatCallMessageView {
             top: DSSpacings.small,
             left: DSSpacings.extraMedium,
             bottom: DSSpacings.small,
-            right: DSSpacings.extraLargeIncreased
+            right: DSSpacings.small
         )
         addSubview(contentStack)
         contentStack.snp.makeConstraints {
@@ -198,6 +213,12 @@ private extension ChatCallMessageView {
 
         subtitleLabel.text = configuration.state.subtitle
         subtitleLabel.textColor = configuration.direction.subtitleColor
+
+        statusView.apply(configuration.statusConfiguration) { view in
+            view.setContentHuggingPriority(.required, for: .horizontal)
+            view.setContentCompressionResistancePriority(.required, for: .horizontal)
+            bottomRowStack.addArrangedSubview(view)
+        }
 
         iconContainerView.backgroundColor = configuration.direction.iconContainerColor
         iconImageView.image = configuration.callType.icon.withRenderingMode(.alwaysTemplate)
@@ -268,12 +289,12 @@ private extension ChatCallMessageView {
             ),
             ChatCallMessageConfiguration.outbox(
                 callType: .audio,
-                state: .cancelled(ringDuration: "15 сек"),
+                state: .cancelled,
                 statusConfiguration: .outbox(date: .now, formatter: PreviewTimestampFormatter(), status: .delivered)
             ),
             ChatCallMessageConfiguration.outbox(
                 callType: .video,
-                state: .cancelled(ringDuration: "15 сек"),
+                state: .cancelled,
                 statusConfiguration: .outbox(date: .now, formatter: PreviewTimestampFormatter(), status: .delivered)
             ),
         ]

@@ -32,14 +32,7 @@ extension DeclineIncomingChatRequestMapper: CoreDataMapperProtocol {
         }
 
         entity.status = Chat.RequestStatus.incoming(.declined).rawValue
-
-        if let contact: CDChatContact = try? context.first(for: .contact(for: contactId)) {
-            context.delete(contact)
-        }
-
-        if let chat: CDChat = try? context.first(for: .chatWithContact(for: contactId)) {
-            context.delete(chat)
-        }
+        context.deleteChatContactAndChat(for: contactId)
     }
 }
 
