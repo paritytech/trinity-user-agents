@@ -57,7 +57,9 @@ import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotificatio
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.AssetContainerScriptProvider
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.ContainerScriptProvider
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.ProductLocalStorage
+import io.paritytech.polkadotapp.feature_products_impl.data.storage.ProductRoomFooterStorage
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.RealProductLocalStorage
+import io.paritytech.polkadotapp.feature_products_impl.data.storage.RealProductRoomFooterStorage
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.RealTopUpSourceStorage
 import io.paritytech.polkadotapp.feature_products_impl.data.storage.TopUpSourceStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.ProductAccountDerivationUseCase
@@ -130,6 +132,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProduc
 import io.paritytech.polkadotapp.feature_products_impl.domain.product.RealProductScriptResolver
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.ProductBotManagementInteractor
 import io.paritytech.polkadotapp.feature_products_impl.domain.productBotManagement.RealProductBotManagementInteractor
+import io.paritytech.polkadotapp.feature_products_impl.domain.profile.PublicProfileAvatarImageLoaderRegistrar
 import io.paritytech.polkadotapp.feature_products_impl.domain.runtime.PrefsProductRuntimeSettings
 import io.paritytech.polkadotapp.feature_products_impl.domain.search.ProductChatSearchResultProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.serialization.JsWidgetSerializer
@@ -255,6 +258,10 @@ internal interface ProductsModule {
 
     @Binds
     @IntoSet
+    fun bindPublicProfileAvatarImageLoaderRegistrar(impl: PublicProfileAvatarImageLoaderRegistrar): ImageLoaderComponentRegistrar
+
+    @Binds
+    @IntoSet
     fun bindPocketDeepLinkHandler(impl: PocketDeepLinkHandler): DeepLinkHandler
 
     @Binds
@@ -262,6 +269,9 @@ internal interface ProductsModule {
 
     @Binds
     fun bindTopUpSourceStorage(impl: RealTopUpSourceStorage): TopUpSourceStorage
+
+    @Binds
+    fun bindProductRoomFooterStorage(impl: RealProductRoomFooterStorage): ProductRoomFooterStorage
 
     @Binds
     fun bindTopUpRepository(impl: RealTopUpRepository): TopUpRepository

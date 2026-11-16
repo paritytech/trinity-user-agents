@@ -349,9 +349,7 @@ fn overlapping_lookups_of_one_session_open_the_follows_of_one() {
 				version: None,
 				platform: truapi::latest::HostPlatform::Unknown,
 			},
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			crate::test_support::paseo_test_stack(),
 			crate::Spawner::for_test(),
 		);
 		let session = session_without_usernames([0x11; 32], ACCOUNT);

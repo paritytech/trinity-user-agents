@@ -1756,7 +1756,7 @@ A stack with the id `polkadot` cannot run, since that namespace may contain
 sessions of real Polkadot identities.
 
 `paseo-next-v2`, `previewnet` and `pcf-devnet` are built-in stacks. The binary
-ships a signed copy of each in `stacks/<name>.json`, with the link that carries
+ships a signed copy of each from the repository's `stacks/<name>.json`, with the link that carries
 its pointer in `stacks/<name>.link`. A command that resolves a built-in fetches
 the published descriptor (3-second timeout) and runs the RFC's `accept` with the
 shipped copy as the stored one, then uses what it returns. A published descriptor
@@ -1806,10 +1806,10 @@ descriptor that breaks a rule and one past `expiresAt` are errors that name the
 stack; one past `validUntil` is used with a warning. Its endpoints and People's
 `NetworkSuffix` are checked as above. `--chain-backend light-client` is
 refused with `--stack`, since the light client syncs only the networks
-`truapi-provider` bundles. The product namespace (`HostChainSet.network` and the
-state directory) is the descriptor's `id` without a trailing `-fork`, which must
-be a lowercase label; the `polkadot-fork` namespace is its full `id`, so it does
-not share the `polkadot` namespace.
+`truapi-provider` bundles. `get_chain_info` reports the descriptor's
+`network`. The product namespace (the state directory) is the descriptor's `id`
+without a trailing `-fork`, which must be a lowercase label; the `polkadot-fork`
+namespace is its full `id`, so it does not share the `polkadot` namespace.
 
 #### `network-check`
 
@@ -2037,12 +2037,10 @@ Deliberately unavailable methods:
 - all nine Coin Payment methods, which answer `CallError::Unsupported`; and
 - all four Payment methods, which answer typed `Unknown` domain errors.
 
-A successful `System/feature_supported` call resolves the queried chain against
-the host's chain set, the same set `Chain/get_chain_info` answers from, so it
-returns `true` for the network's People, Bulletin and Asset Hub genesis hashes and
-`false` for anything else. A materials question returns `false`, answered by the
-core. Success means the method is wired, not that every feature
-is present.
+A successful `System/feature_supported` call returns `true` for the People,
+Bulletin and Asset Hub genesis hashes of the host's stack, the chains
+`Chain/get_chain_info` answers for, and `false` for anything else. A materials question returns `false`, answered
+by the core. Success means the method is wired, not that every feature is present.
 
 ### 15.2 Platform-specific semantics
 
