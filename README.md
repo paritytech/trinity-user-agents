@@ -309,9 +309,11 @@ host owns where the bytes live. The crate stores nothing itself: a host implemen
 `StorageClient` over storage it already owns, on web and native alike, so it keeps
 control of quota and of whether the bytes are backed up or encrypted. A blob is
 stored per stack and genesis hash, because a fork shares its source's genesis
-hashes. A stack's provider starts each blob with a line naming the stack and its
-`generation` and reads back only its own, so a store that ignores the stack
-still cannot mix two stacks, and a stack that restarted its chains starts fresh.
+hashes, so a store shared by two stacks must key on the stack as well. A
+stack's provider starts each blob with a line naming the stack and its
+`generation` and reads back only its own, so a stack that restarted its chains
+starts fresh. The provider never deletes a blob: the host deletes those of a
+stack or chain it no longer runs.
 
 ### Building extrinsics
 

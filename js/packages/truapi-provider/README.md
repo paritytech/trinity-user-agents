@@ -61,8 +61,8 @@ const provider = builder.build();
 
 - `setStack` throws when the link is malformed or the descriptor is refused
   under it. A link with a key accepts only a descriptor signed with that key.
-  The descriptor's `validUntil`, `expiresAt` and `sequence` are not read, so
-  pass a copy a stack reader accepted.
+  See [`LightStack::open`](../../../rust/crates/truapi-provider/src/stack.rs)
+  for which copy of the descriptor to pass.
 - `addLightSpec` throws when the bytes differ from the descriptor's `sha256` or
   imply another genesis hash, and names the chain's role. Pass the bytes as
   served, because the digest covers them. A wrong spec is what a stale
@@ -75,7 +75,10 @@ const provider = builder.build();
   chains run the statement-store protocol. The bundled catalog is not used.
 - Build one provider per stack, and a new one when the stack's `generation`
   changes. The light client keys a chain by its genesis hash, which a fork
-  shares with its source.
+  shares with its source. Before building the new one, close every connection
+  of the previous provider and call its `free()`. Until then its snapshots
+  are stored under the same stack and genesis hash and replace the new
+  provider's state.
 
 Warm start is opt-in, because this package stores nothing itself. Hand
 `setStorage` a client to storage you already own:
@@ -83,24 +86,38 @@ Warm start is opt-in, because this package stores nothing itself. Hand
 ```js
 builder.setStorage({
   async load(genesisHash, stack) {
-    return (await myStore.get(`${stack ?? ""}:${genesisHash}`)) ?? null;
+    return (await myStore.get(key(genesisHash, stack))) ?? null;
   },
   async save(genesisHash, blob, stack) {
-    await myStore.put(`${stack ?? ""}:${genesisHash}`, blob);
+    await myStore.put(key(genesisHash, stack), blob);
   },
 });
+
+function key(genesisHash, stack) {
+  return stack === undefined ? genesisHash : `${stack}:${genesisHash}`;
+}
 ```
 
 Both are called with a `0x`-prefixed lowercase genesis hash. `stack` identifies
-the stack given to `setStack`: its key in hex when the link has one, otherwise
-its normalised descriptor URL. It is `undefined` on a provider without a stack.
-Keep a blob per stack and genesis hash, and return it unchanged. A stack's
-provider starts each blob with a line naming the stack and its `generation`,
-and reads back only its own, so a fork never resumes from its source's state
-and a wiped stack starts fresh. A client that cannot
+the stack given to `setStack`, as `stackId` from `@parity/trinity-stack` gives it
+for the link: its key in hex when the link has one, otherwise its normalised
+descriptor URL. It is `undefined` on a provider without a stack. Key the store
+on `stack` and genesis hash, and return a blob unchanged. A stack's provider
+starts each blob with a line naming the stack and its `generation`, and reads
+back only its own, so a fork never resumes from its source's state and a wiped
+stack starts fresh. A store keyed on the genesis hash alone is not safe to
+share between two stacks all the same: each provider replaces the other's blob
+on every save, and both start cold on every launch. A client that cannot
 answer must reject rather than resolve `null`, which means "nothing stored yet"
 and would let the next write replace good state. Without a client every chain
 syncs from the checkpoint in the chain spec on every run.
+
+The provider never deletes a blob, and one can reach 8 MB. A blob of an older
+`generation` under a genesis hash the stack still has is replaced by the next
+save. Anything else no provider reads again stays until you delete it: the
+blobs of a stack you no longer run, those of a genesis hash the stack's
+`lightSpecs()` no longer lists, and, once every provider you build has a stack,
+those stored with `stack` undefined.
 
 `setDatabaseContent(genesisHash, blob)` seeds one chain for this run and beats
 anything the client would load for it. `saveDatabase(genesisHash)` forces a write

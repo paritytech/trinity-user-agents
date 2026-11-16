@@ -137,11 +137,11 @@ impl ChainProviderBuilder {
 	/// Serve the chains of a Trinity stack, not the bundled catalog.
 	///
 	/// `link` and `descriptor` are the stack's link and its descriptor as
-	/// served. Fetch what [`light_specs`](Self::light_specs) lists and hand
-	/// each spec to [`add_light_spec`](Self::add_light_spec). The descriptor's
-	/// `validUntil`, `expiresAt` and `sequence` are not read, so pass a copy a
-	/// stack reader accepted. Throws when the link is malformed, the
-	/// descriptor is refused under it, or a stack was already set.
+	/// served, opened as [`LightStack::open`](crate::LightStack::open) does.
+	/// Fetch what [`light_specs`](Self::light_specs) lists and hand each spec
+	/// to [`add_light_spec`](Self::add_light_spec). Throws when the link is
+	/// malformed, the descriptor is refused under it, or a stack was already
+	/// set.
 	#[cfg(feature = "smoldot")]
 	#[wasm_bindgen(js_name = setStack)]
 	pub fn set_stack(&mut self, link: &str, descriptor: &[u8]) -> Result<(), JsError> {
@@ -334,7 +334,12 @@ const SNAPSHOT_INTERVAL_MAX: core::time::Duration = core::time::Duration::from_s
 #[cfg(feature = "smoldot")]
 const STORAGE_DEADLINE: core::time::Duration = core::time::Duration::from_secs(5);
 
-/// A built provider; hand out one per page/worker.
+/// A built provider; hand out one per page/worker and stack.
+///
+/// When a stack's `generation` changes, close every connection of the
+/// previous provider and `free()` it before building the next one. Its
+/// snapshot loop runs until then, and stores under the same stack and genesis
+/// hash, replacing the next provider's state.
 #[wasm_bindgen]
 pub struct ChainProviderHandle {
 	inner: Arc<EmbeddedChainProvider>,

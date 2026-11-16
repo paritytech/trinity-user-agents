@@ -10,6 +10,8 @@ only on the chains the descriptor marks. `provider.addLightSpec` adds a spec aft
 resolve chains from the bundled catalog.
 
 Breaking: the storage client is called as `load(genesisHash, stack)` and `save(genesisHash, blob, stack)`. `stack`
-identifies the stack and is `undefined` without one. A store that serves more than one stack must keep a blob per
-stack and genesis hash. A stack's provider starts each blob with a line naming the stack and its `generation` and
-reads back only its own. A provider without a stack stores what it stored before.
+identifies the stack and is `undefined` without one. A store that serves more than one stack must key on `stack` and
+the genesis hash. A stack's provider starts each blob with a line naming the stack and its `generation` and reads back
+only its own. A provider without a stack stores what it stored before. The provider never deletes a blob; the README
+lists the ones no provider reads again. Free the previous provider before building one for a stack's new
+`generation`.

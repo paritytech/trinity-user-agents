@@ -14,7 +14,8 @@
 //! line naming the stack and its `generation`, and reads back only its own,
 //! whatever the store does with the stack it is handed. A provider without a
 //! stack reads nothing that starts with such a line. The next save replaces
-//! what was not read.
+//! what was not read. The provider never deletes a blob, so one of a stack or
+//! chain the host no longer runs stays until the host deletes it.
 //!
 //! Reads and writes are explicit, through
 //! [`load_database`](crate::EmbeddedChainProvider::load_database) and
@@ -69,8 +70,9 @@ pub trait StorageClient: Send + Sync {
 	/// Read the blob stored for `genesis_hash` on `stack`, if any.
 	///
 	/// `stack` identifies the stack the provider was built for, and is `None`
-	/// on a provider built without one. The same genesis hash on another stack
-	/// is another blob.
+	/// on a provider built without one. It is an opaque string, such as a URL,
+	/// to escape before using it in a path. The same genesis hash on another
+	/// stack is another blob.
 	async fn load(
 		&self,
 		genesis_hash: [u8; 32],

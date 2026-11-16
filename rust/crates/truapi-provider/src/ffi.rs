@@ -314,8 +314,9 @@ pub struct LightSpec {
 	pub spec: Vec<u8>,
 }
 
-/// Embedded-smoldot chain provider. Construct one per process and share it;
-/// every connection runs on the single embedded light client.
+/// Embedded-smoldot chain provider. Construct one per process, or one per
+/// stack on a host that runs several, and share it; every connection runs on
+/// its single embedded light client.
 #[derive(uniffi::Object)]
 pub struct ChainProvider {
 	inner: EmbeddedChainProvider,
@@ -350,10 +351,14 @@ impl ChainProvider {
 	/// state.
 	///
 	/// `link` and `descriptor` are the stack's link and its descriptor as
-	/// served. The descriptor's `validUntil`, `expiresAt` and `sequence` are
-	/// not read, so pass a copy a stack reader accepted. `light_specs` are the
+	/// served, opened as [`LightStack::open`] does. `light_specs` are the
 	/// specs fetched from the URLs `stack_light_specs` lists. A chain left out
 	/// is unknown until [`add_light_spec`](Self::add_light_spec) supplies it.
+	///
+	/// When the stack's `generation` changes, disconnect every connection of
+	/// the previous provider, stop saving through it and drop it before
+	/// creating the next one. Both store under the same stack and genesis
+	/// hash, so a save from the previous one replaces the next one's state.
 	///
 	/// Fails with `Stack` when the link or the descriptor is refused, and with
 	/// `LightSpec` when a spec is not the one the descriptor names.
