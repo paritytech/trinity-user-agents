@@ -92,6 +92,7 @@ struct Candidate {
 	exponent: Exponent,
 	ring: Option<(u32, u32)>,
 	minted_by: Option<DurableTxId>,
+	gaining_privacy: bool,
 }
 
 /// Chooses inputs from `request.purse` for `request.want`.
@@ -128,7 +129,8 @@ pub fn select(
 }
 
 /// The purse's assets selection may take, usable now and usable later, each
-/// in selection's order: largest exponent first, then by asset.
+/// in selection's order: entries still gaining privacy after the others, then
+/// largest exponent first, then by asset.
 fn candidates(view: &Snapshot, request: SelectRequest, now: u64, params: &ChainParams) -> (Vec<Candidate>, Vec<Candidate>) {
 	let mut usable_now = Vec::new();
 	let mut usable_later = Vec::new();
@@ -147,6 +149,7 @@ fn candidates(view: &Snapshot, request: SelectRequest, now: u64, params: &ChainP
 			exponent: record.exponent,
 			ring: ring_of(view, &record.asset),
 			minted_by: minting.map(|facts| facts.record),
+			gaining_privacy: is_entry && matches!(state.selectability, Selectability::HeldBack(_)),
 		};
 		match (state.selectability, is_entry) {
 			(Selectability::Now, _) => usable_now.push(candidate),
@@ -160,7 +163,12 @@ fn candidates(view: &Snapshot, request: SelectRequest, now: u64, params: &ChainP
 			_ => {},
 		}
 	}
-	let order = |a: &Candidate, b: &Candidate| b.exponent.cmp(&a.exponent).then_with(|| a.asset.cmp(&b.asset));
+	let order = |a: &Candidate, b: &Candidate| {
+		a.gaining_privacy
+			.cmp(&b.gaining_privacy)
+			.then_with(|| b.exponent.cmp(&a.exponent))
+			.then_with(|| a.asset.cmp(&b.asset))
+	};
 	usable_now.sort_by(order);
 	usable_later.sort_by(order);
 	(usable_now, usable_later)
