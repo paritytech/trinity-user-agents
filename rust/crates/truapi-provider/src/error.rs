@@ -18,8 +18,12 @@ pub enum ProviderError {
 		/// The queried genesis hash.
 		genesis: [u8; 32],
 	},
-	/// A parachain named a relay that is not a registered light-client chain.
-	#[display("relay 0x{} is not a registered light-client chain", hex::encode(relay))]
+	/// A parachain's relay has no light-client source: it is not registered as
+	/// a light-client chain, and the stack has no spec for it yet.
+	#[display(
+		"relay 0x{} has no light-client source: it is not registered as a light-client chain, and the stack has no spec for it yet",
+		hex::encode(relay)
+	)]
 	UnknownRelay {
 		/// The relay genesis hash the parachain referenced.
 		relay: [u8; 32],
