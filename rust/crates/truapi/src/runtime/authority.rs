@@ -336,7 +336,7 @@ impl AuthorityCancelError {
 
 /// Payload-signing request selected by the product API entrypoint. Its
 /// product account is [`Served`], so it can only be built for a product the
-/// stack runs.
+/// stack serves.
 #[derive(Clone)]
 pub enum SignPayloadAuthorityRequest {
 	/// Sign a payload with a product-derived account.

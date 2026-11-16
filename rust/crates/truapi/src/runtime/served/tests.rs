@@ -1,7 +1,7 @@
 use super::*;
 
 /// A request can name several products, such as a key handle and a context.
-/// It passes only if the stack runs all of them, and the error names the
+/// It passes only if the stack serves all of them, and the error names the
 /// first one that fails.
 #[test]
 fn a_value_is_served_only_when_every_product_it_names_is() {

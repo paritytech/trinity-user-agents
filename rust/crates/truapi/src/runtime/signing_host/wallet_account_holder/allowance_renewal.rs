@@ -429,7 +429,7 @@ impl WalletAccountHolder {
 
 /// Skip unusable entries so they cannot prevent renewal of other targets.
 ///
-/// An entry for a product this stack does not run belongs to another network
+/// An entry for a product this stack does not serve belongs to another network
 /// the host may switch back to, so it is skipped without a warning and stays in
 /// the ledger.
 #[cfg(not(target_arch = "wasm32"))]

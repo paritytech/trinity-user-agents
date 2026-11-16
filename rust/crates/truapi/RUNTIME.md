@@ -412,13 +412,13 @@ and `CoreStorageKey::product_manifest` keys its manifest cache entry.
 
 Parsing a `ProductId` checks syntax only, so any DNS label is a valid TLD. Wire
 frames and stored records are decoded without a stack, so the stack decides
-which ids it runs: localhost ids, names under `dot`, and names under its own TLD
+which ids it serves: localhost ids, names under `dot`, and names under its own TLD
 (`stack::serves`). The core checks this wherever an id comes in:
 
-- A host cannot open a product the stack does not run. `ProductContext::served_by`
+- A host cannot open a product the stack does not serve. `ProductContext::served_by`
   refuses it in the wasm, native and CLI bridges.
 - A product call that names another product answers `MalformedFrame` when the
-  stack does not run it. Handlers check requests with `serve`, and `HostAccounts`
+  stack does not serve it. Handlers check requests with `serve`, and `HostAccounts`
   and the signing requests take only `Served` values, so no path reaches a key
   without that check.
 - The wallet refuses a paired host's request before showing it to the user. It

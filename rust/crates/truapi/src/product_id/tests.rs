@@ -147,7 +147,7 @@ fn trusted_remote_permission_labels_are_bare_lowercase_labels() {
 }
 
 /// Parsing has no stack to ask, so it accepts any TLD dotNS could register.
-/// The stack decides which TLDs it runs.
+/// The stack decides which TLDs it serves.
 #[test]
 fn any_dns_label_is_a_tld_and_a_name_needs_one() {
 	for id in ["browse.fork", "browse.com", "app.browse.x1"] {

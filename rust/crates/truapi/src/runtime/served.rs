@@ -1,4 +1,4 @@
-//! Proof that the stack runs every product a value names.
+//! Proof that the stack serves every product a value names.
 //!
 //! [`serve`] checks a value against the stack's TLD and wraps it in [`Served`].
 //! `RUNTIME.md` lists where the core takes a product as `Served`.
@@ -15,7 +15,7 @@ use crate::{
 	stack::{UnservedProduct, require_served},
 };
 
-/// A value that names only products the stack runs.
+/// A value that names only products the stack serves.
 ///
 /// Only [`serve`] creates one, so a function that takes `Served` cannot be
 /// called without the check. It derefs to the value. It does not record
@@ -47,16 +47,16 @@ impl Served<ProductAccountTxPayload> {
 	}
 }
 
-/// A value that names products. The core acts on it only if the stack runs
+/// A value that names products. The core acts on it only if the stack serves
 /// all of them.
 pub trait NamesProducts {
 	/// Every product the value names.
 	fn products(&self) -> Vec<&ProductId>;
 }
 
-/// Wraps `value` in [`Served`] if a stack on `stack_tld` runs every
+/// Wraps `value` in [`Served`] if a stack on `stack_tld` serves every
 /// product it names. Otherwise fails with the first product it does not
-/// run.
+/// serve.
 pub fn serve<T: NamesProducts>(stack_tld: &str, value: T) -> Result<Served<T>, UnservedProduct> {
 	for product_id in value.products() {
 		require_served(stack_tld, product_id)?;

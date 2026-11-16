@@ -719,7 +719,7 @@ pub async fn read_worker_manifest(
 ) -> Result<(Option<WorkerManifest>, DotnsRead), String> {
 	if services.stack().require_served(product_id).is_err() {
 		// Reported as just fetched: there is nothing to refresh for an
-		// id the stack does not run.
+		// id the stack does not serve.
 		return Ok((None, DotnsRead::Fetched));
 	}
 	let (json, read) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), policy, || async {

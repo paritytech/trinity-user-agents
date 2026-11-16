@@ -40,7 +40,7 @@ pub const PRODUCT_SHARE_SUFFIX: &str = ".li";
 /// the same product executable. Encodes as the identifier string.
 ///
 /// Parsing checks syntax only, so any DNS label is accepted as a TLD. The
-/// host's stack decides which names it runs.
+/// host's stack decides which names it serves.
 ///
 /// Accepted forms are defined in host-spec C.7:
 /// <https://github.com/paritytech/host-spec/blob/adb3989208ae1c2107dbf0159611353e6989422c/spec/C-account-derivation.md?plain=1#L109-L128>
@@ -238,7 +238,7 @@ impl ProductId {
 	}
 
 	/// Parse a share host, without a URL or network lookup. Any TLD parses;
-	/// the host's stack decides whether it runs the product.
+	/// the host's stack decides whether it serves the product.
 	pub fn from_share_host(input: &str) -> Option<Self> {
 		let hostname = normalize_host(input);
 		let identifier = hostname.strip_suffix(PRODUCT_SHARE_SUFFIX)?.parse::<Self>().ok()?;
