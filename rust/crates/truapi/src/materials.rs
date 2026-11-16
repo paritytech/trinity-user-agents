@@ -319,6 +319,7 @@ fn visit_materials<'tree>(
 		RendererNode::String { .. } |
 		RendererNode::Spacer { .. } |
 		RendererNode::TextField { .. } |
+		RendererNode::SlideToConfirm { .. } |
 		RendererNode::Image { .. } => return,
 	};
 	let nested = nested || matches!(node, RendererNode::Materials { .. });
