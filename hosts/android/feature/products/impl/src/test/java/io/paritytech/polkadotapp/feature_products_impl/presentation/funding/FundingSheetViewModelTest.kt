@@ -10,9 +10,12 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingFlo
 import io.paritytech.polkadotapp.feature_products_impl.domain.funding.FundingProviderBrand
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFixtures.entry
 import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.FundingFixtures.ramp
+import io.paritytech.polkadotapp.feature_products_impl.presentation.funding.screens.FundingDepositViewModel
 import io.paritytech.polkadotapp.feature_products_impl.presentation.productBotManagement.ProductsRouter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -24,7 +27,10 @@ import org.junit.Before
 import org.junit.Test
 import uniffi.truapi.FundingCancel
 import uniffi.truapi.FundingChoice
+import uniffi.truapi.FundingDeposit
+import uniffi.truapi.FundingProgressStep
 import uniffi.truapi.FundingRail
+import uniffi.truapi.FundingStep
 import uniffi.truapi.ProductId
 
 class FundingSheetViewModelTest {
@@ -112,6 +118,70 @@ class FundingSheetViewModelTest {
         assertEquals(FundingScreen.DEPOSIT, bank.screen.value?.screen)
     }
 
+    // A provider serving another network takes the payment in its own screen and reports no address, so the sheet
+    // follows the session without one; on the app's own network the provider reports where to send.
+    @Test
+    fun `a crypto top-up shows its progress, and its address only once the provider reports one`() = runTest(testDispatcher) {
+        service.entry.emit(entry())
+        val sheet = sheet()
+        val deposit = depositOn(sheet)
+        advanceUntilIdle()
+        sheet.update { it.withRail(FundingRail.CRYPTO) }
+
+        val running = startedOn(FundingRail.CRYPTO)
+        service.entry.emit(entry(session = running, isPresented = false))
+        advanceUntilIdle()
+        assertEquals(FundingScreen.DEPOSIT, sheet.screen.value?.screen)
+        assertEquals(FundingDepositContent.ProgressOnly, deposit.state.value?.content)
+
+        service.entry.emit(entry(session = running, isPresented = false, progress = progress(deposit = cryptoDeposit)))
+        advanceUntilIdle()
+        assertEquals(FundingScreen.DEPOSIT, sheet.screen.value?.screen)
+        assertEquals("1Address", (deposit.state.value?.content as? FundingDepositContent.Crypto)?.address)
+
+        val received = progress(deposit = cryptoDeposit, reached = FundingStep.RECEIVED)
+        service.entry.emit(entry(session = running, isPresented = false, progress = received))
+        advanceUntilIdle()
+        assertEquals(FundingDepositContent.ProgressOnly, deposit.state.value?.content)
+    }
+
+    @Test
+    fun `a bank top-up prepares its deposit until the provider reports the account`() = runTest(testDispatcher) {
+        service.entry.emit(entry())
+        val sheet = sheet()
+        val deposit = depositOn(sheet)
+        advanceUntilIdle()
+        sheet.update { it.withRail(FundingRail.BANK) }
+
+        val running = startedOn(FundingRail.BANK)
+        service.entry.emit(entry(session = running, isPresented = false))
+        advanceUntilIdle()
+        assertEquals(FundingScreen.DEPOSIT, sheet.screen.value?.screen)
+        assertEquals(FundingDepositContent.Waiting(preparing = true, card = false), deposit.state.value?.content)
+
+        service.entry.emit(entry(session = running, isPresented = false, progress = progress(deposit = bankDeposit)))
+        advanceUntilIdle()
+        assertEquals("REF-1", (deposit.state.value?.content as? FundingDepositContent.Bank)?.reference)
+    }
+
+    @Test
+    fun `a crypto session the user comes back to shows its address only if the provider reported one`() = runTest(testDispatcher) {
+        service.entry.emit(entry(session = startedOn(FundingRail.CRYPTO), isPresented = false))
+        val following = sheet()
+        val progressOnly = depositOn(following)
+        advanceUntilIdle()
+        assertEquals(FundingScreen.DEPOSIT, following.screen.value?.screen)
+        assertEquals(FundingDepositContent.ProgressOnly, progressOnly.state.value?.content)
+
+        val reportedDeposit = progress(deposit = cryptoDeposit)
+        service.entry.emit(entry(session = startedOn(FundingRail.CRYPTO), isPresented = false, progress = reportedDeposit))
+        val reported = sheet()
+        val address = depositOn(reported)
+        advanceUntilIdle()
+        assertEquals(FundingScreen.DEPOSIT, reported.screen.value?.screen)
+        assertTrue(address.state.value?.content is FundingDepositContent.Crypto)
+    }
+
     @Test
     fun `the provider's cancel offer opens once and closes when it is gone`() = runTest(testDispatcher) {
         val running = startedOn(FundingRail.BANK)
@@ -141,6 +211,36 @@ class FundingSheetViewModelTest {
         assertEquals(2, service.calls.count { it == "leave" })
         coVerify { router.closeFundingOverlay("intent") }
     }
+
+    private fun TestScope.depositOn(sheet: FundingSheetViewModel) =
+        FundingDepositViewModel(sheet, mockk(relaxed = true)).also { it.state.launchIn(backgroundScope) }
+
+    private fun progress(deposit: FundingDeposit?, reached: FundingStep? = null) = FakeFundingCore.progress().copy(
+        deposit = deposit,
+        steps = listOfNotNull(reached?.let { FundingProgressStep(it, reachedAtMs = 1uL) }),
+    )
+
+    private val cryptoDeposit = FundingDeposit.Crypto(
+        address = "1Address",
+        network = "polkadot",
+        asset = "DOT",
+        amount = "10000000000",
+        decimals = 10u,
+        exact = true,
+        uri = null,
+        expiresAt = null,
+    )
+
+    private val bankDeposit = FundingDeposit.Bank(
+        amount = "5000",
+        currency = "EUR",
+        decimals = 2u,
+        beneficiary = "Ramp",
+        account = "DE00",
+        bankCode = null,
+        reference = "REF-1",
+        expiresAt = null,
+    )
 
     private fun startedOn(rail: FundingRail) = FakeFundingCore.session("intent", providerId = ramp)
         .copy(choice = FundingChoice(FakeFundingCore.quote("q-1"), rail, "EUR", null))

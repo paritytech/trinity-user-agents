@@ -53,7 +53,7 @@ private val LIVE_ICON_SIZE = 48.dp
 private val LIVE_GLYPH_SIZE = 24.dp
 private val COPY_ROW_ICON_SIZE = 20.dp
 
-/** Where to send the funds, as the provider reported it, while the session waits for them. */
+/** Where to send the funds, once the provider reports it, and how the session goes. */
 @Composable
 fun FundingDepositScreen(
     state: FundingDepositUiState,
@@ -93,6 +93,15 @@ fun FundingDepositScreen(
                 color = PolkadotTheme.colors.fg.error,
                 textAlign = TextAlign.Center,
             )
+
+            FundingDepositContent.ProgressOnly -> if (state.progress == null) {
+                NovaCircularProgressIndicator(
+                    modifier = Modifier
+                        .padding(top = PolkadotTheme.spacings.extraLarge)
+                        .size(INDICATOR_SIZE)
+                        .align(Alignment.CenterHorizontally),
+                )
+            }
 
             is FundingDepositContent.Waiting -> Column(
                 modifier = Modifier

@@ -139,7 +139,10 @@ class FundingSheetViewModel @Inject constructor(
         }
     }
 
-    /** The sheet as it opens: on the amount for a new session, on its deposit for one the user comes back to. */
+    /**
+     * The sheet as it opens: on the amount for a new session, on its deposit screen for one the user comes back to,
+     * with where to send only if the provider reported it.
+     */
     private suspend fun initial(entry: FundingEntry): FundingFlowState {
         val cash = interactor.cash()
         val detected = entry.options?.detectedCountry?.let(FundingCountries::country)
@@ -172,7 +175,11 @@ class FundingSheetViewModel @Inject constructor(
             .withQuotes(entry.quotes, entry.staleQuotes, entry.isQuoting)
     }
 
-    /** Card top-ups are paid in the provider's own screen, so the sheet closes; the others show where to send. */
+    /**
+     * Card top-ups are paid in the provider's own screen, so the sheet closes. The others follow the session on the
+     * deposit screen, which shows where to send once the provider reports it: a crypto provider serving another network
+     * than the app's own takes the payment in its own screen and reports none.
+     */
     private fun started(rail: FundingRail) {
         when (rail) {
             FundingRail.CARD -> close()

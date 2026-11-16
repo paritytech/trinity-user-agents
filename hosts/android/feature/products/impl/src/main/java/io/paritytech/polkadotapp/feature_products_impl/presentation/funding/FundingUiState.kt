@@ -304,6 +304,12 @@ sealed interface FundingDepositContent {
     /** Why there is no deposit: no provider, a failed start, or the session failed. */
     data class Problem(val problem: FundingSummaryProblem) : FundingDepositContent
 
+    /**
+     * A started crypto session with no address to show: the provider takes the payment in its own screen, has not
+     * reported the address yet, or already has the funds. The screen shows the session's progress only.
+     */
+    data object ProgressOnly : FundingDepositContent
+
     /** No deposit yet: a provider is being found, or the chosen one is preparing it. */
     data class Waiting(val preparing: Boolean, val card: Boolean) : FundingDepositContent
 }
