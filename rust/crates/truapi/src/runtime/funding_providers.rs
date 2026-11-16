@@ -19,7 +19,7 @@ use tracing::warn;
 
 use super::{
 	funding::lock,
-	product_manifest::{DotnsRead, Honour, product_brand, read_worker_manifest},
+	product_manifest::{DotnsRead, CachePolicy, product_brand, read_worker_manifest},
 	services::RuntimeServices,
 };
 use crate::{
@@ -560,7 +560,7 @@ impl RuntimeServices {
 	/// by.
 	async fn read_provider_manifest(self: &Arc<Self>, product_id: &ProductId) {
 		let platform = self.platform.as_ref();
-		let read = read_worker_manifest(self, platform, product_id, Honour::Cache).await;
+		let read = read_worker_manifest(self, platform, product_id, CachePolicy::UseCache).await;
 		let cached = matches!(read, Ok((_, DotnsRead::Cached { .. })));
 		let mut changed = read
 			.is_ok_and(|(manifest, _)| self.funding_providers().answered(product_id, manifest));
@@ -575,7 +575,7 @@ impl RuntimeServices {
 		// that now serves more, or less, is offered as it publishes.
 		if cached &&
 			let Ok((manifest, _)) =
-				read_worker_manifest(self, platform, product_id, Honour::Live).await &&
+				read_worker_manifest(self, platform, product_id, CachePolicy::Refresh).await &&
 			self.funding_providers().answered(product_id, manifest)
 		{
 			self.funding_providers_changed();
