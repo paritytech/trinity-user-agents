@@ -4,7 +4,7 @@ import {
   coreWireSchemaHash,
   createDebuggerLink,
   type DebuggerSocket,
-} from "./worker-runtime.js";
+} from "./worker-debugger-link.js";
 import { isLoopbackWsUrl } from "./worker-protocol.js";
 
 /**

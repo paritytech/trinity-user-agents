@@ -4,6 +4,26 @@ import Testing
 import UIKit
 
 struct TrUAPIWsBridgeTests {
+    @Test(.timeLimit(.minutes(5)))
+    func anInvalidUsernameTerminatesTheProfileStreamWithTheCoreDomainError() async throws {
+        let runtime = try TrUAPIHostRuntime(
+            bridge: StubHostBridge(),
+            runtimeConfig: Self.makeHostRuntimeConfig()
+        )
+        defer { withExtendedLifetime(runtime) {} }
+        do {
+            for try await _ in runtime.resolvePublicProfile(
+                username: "invalid username",
+                options: .init(forceFresh: false, skipStale: false)
+            ) {
+                Issue.record("An invalid username must not produce a profile")
+            }
+            Issue.record("An invalid username must terminate the profile stream with an error")
+        } catch let error as PublicProfileError {
+            guard case .InvalidUsername = error else { throw error }
+        }
+    }
+
     /// The core raises a start marker as a runtime comes up, so a host log opens
     /// with proof that the channel carrying every later marker reaches Swift at
     /// all. It is raised below the core's console floor on purpose, so this also
