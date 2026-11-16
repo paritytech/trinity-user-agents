@@ -316,16 +316,17 @@ impl RingVrfRegistryStore {
 			return Ok(snapshot);
 		}
 		let key = CoreStorageKey::RingVrfRegistry { root_public_key };
-		let snapshot = match self.services.storage().read(key.clone()).await.map_err(storage_error)? {
-			Some(blob) => match decode_snapshot(&blob) {
-				Ok(snapshot) => snapshot,
-				Err(error) => {
-					let _ = self.services.storage().clear(key).await;
-					return Err(error);
+		let snapshot =
+			match self.services.storage().read(key.clone()).await.map_err(storage_error)? {
+				Some(blob) => match decode_snapshot(&blob) {
+					Ok(snapshot) => snapshot,
+					Err(error) => {
+						let _ = self.services.storage().clear(key).await;
+						return Err(error);
+					},
 				},
-			},
-			None => RegistrySnapshot::default(),
-		};
+				None => RegistrySnapshot::default(),
+			};
 		self.cache
 			.lock()
 			.expect("ring-VRF registry cache mutex poisoned")
@@ -348,7 +349,8 @@ impl RingVrfRegistryStore {
 		{
 			return Ok(());
 		}
-		self.services.storage()
+		self.services
+			.storage()
 			.write(CoreStorageKey::RingVrfRegistry { root_public_key }, snapshot.encode())
 			.await
 			.map_err(storage_error)?;
