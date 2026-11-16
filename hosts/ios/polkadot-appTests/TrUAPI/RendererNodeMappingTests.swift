@@ -4,6 +4,7 @@ import Products
 import SwiftUI
 import Testing
 import TrUAPIHost
+import UIKit
 @testable import polkadot_app
 
 @Suite("RendererNode mapping")
@@ -291,6 +292,30 @@ struct RendererNodeMappingTests {
         #expect(props.source == .bulletin(cid: "bafyimage"))
         #expect(widget.modifiers.width == 120)
         #expect(widget.modifiers.height == 80)
+    }
+
+    /// Every host refuses the same inline bytes, so the core decides once, in
+    /// the mapping. Bytes it allows are drawn as they are, with no resolver;
+    /// refused ones keep the space their modifiers give, so the face around
+    /// them does not move.
+    @Test func anInlineImageDrawsOnlyBytesTheCoreAllows() throws {
+        let png = UIGraphicsImageRenderer(size: CGSize(width: 4, height: 4)).pngData { context in
+            context.fill(CGRect(x: 0, y: 0, width: 4, height: 4))
+        }
+        let cases = [png, Data("<svg/>".utf8), png + Data(count: 64 * 1_024)]
+
+        let drawn = try cases.map { bytes in
+            let node = RendererNode.image(
+                modifiers: [.width(40), .height(40)],
+                props: ImageProps(source: .inline(bytes), fit: nil)
+            )
+            let widget = try #require(node.toWidgetNode(resolver: resolver))
+            #expect(widget.modifiers.width == 40)
+            guard case let .image(props) = widget.content else { return false }
+            return props.source == .inline(bytes)
+        }
+
+        #expect(drawn == [true, false, false])
     }
 
     /// A picture the host holds in an archive is named by path rather than by
