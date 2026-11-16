@@ -54,8 +54,8 @@ export type LoopbackStatements = boolean | "default";
  * Expand `networks` into the settings that have to agree: the proxies that
  * route each chain, the chains `featureSupported` reports served, and the test
  * stack the core answers `getChainInfo` from. A role `networks` leaves out
- * keeps the {@link mockTestStack} chain, because the core needs People and
- * Bulletin to start.
+ * keeps the {@link mockTestStack} chain, because the core needs Asset Hub,
+ * People and Bulletin to start.
  *
  * A single proxy carries no genesis hash: an unhashed proxy takes every
  * request, so routing survives a chain reset while only the DECLARED hash --

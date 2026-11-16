@@ -192,10 +192,9 @@ async fn the_light_client_reaches_paseo_next_v2() {
 async fn reach_paseo_next_v2(backend: ChainBackend) {
 	use subxt_rpcs::client::rpc_params;
 
-	use crate::{
-		bulletin_lookup::{BitswapRpc, BlobSource, SourceError},
-		dotns_read::AssetHubReader,
-	};
+	use truapi::{BlobSource, SourceError};
+
+	use crate::{bulletin_lookup::BitswapRpc, dotns_read::AssetHubReader};
 
 	let network = Network::PaseoNextV2.bundled_stack(backend);
 	let provider = Arc::new(CliChainProvider::new(&network));
