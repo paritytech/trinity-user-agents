@@ -71,21 +71,19 @@ pub struct ProductSelection {
 	/// lifetime: the core reads it per connection, and chat is denied to a
 	/// connection that opened as `App`.
 	execution_kind: ExecutableKind,
-	/// The stack the host runs, which decides the products it may select.
-	stack: Stack,
 }
 
 impl ProductSelection {
-	/// Select the initial product identity. Fails when `stack` does not serve
-	/// the product's TLD.
+	/// Select the initial product identity. Fails when `stack`, the stack the
+	/// host runs, does not serve the product's TLD.
 	pub fn new(
 		product_id: ProductId,
 		execution_kind: ExecutableKind,
-		stack: Stack,
+		stack: &Stack,
 	) -> Result<Arc<Self>, RuntimeConfigValidationError> {
-		let product = ProductContext::served_by(&stack, product_id, execution_kind)?;
+		let product = ProductContext::served_by(stack, product_id, execution_kind)?;
 		let (current, _) = watch::channel(product);
-		Ok(Arc::new(Self { current, execution_kind, stack }))
+		Ok(Arc::new(Self { current, execution_kind }))
 	}
 
 	/// The current product id.
@@ -94,9 +92,14 @@ impl ProductSelection {
 	}
 
 	/// Select a product, returning whether the selection changed. Fails, and
-	/// keeps the selection, when the stack does not serve the product's TLD.
-	pub fn select(&self, product_id: ProductId) -> Result<bool, RuntimeConfigValidationError> {
-		let product = ProductContext::served_by(&self.stack, product_id, self.execution_kind)?;
+	/// keeps the selection, when `stack`, the stack the host runs, does not
+	/// serve the product's TLD.
+	pub fn select(
+		&self,
+		product_id: ProductId,
+		stack: &Stack,
+	) -> Result<bool, RuntimeConfigValidationError> {
+		let product = ProductContext::served_by(stack, product_id, self.execution_kind)?;
 		Ok(self.current.send_if_modified(|current| {
 			if current == &product {
 				false

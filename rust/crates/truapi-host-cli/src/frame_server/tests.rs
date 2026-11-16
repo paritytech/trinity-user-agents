@@ -68,13 +68,17 @@ async fn start_tcp_server(
 	Ok((address, server))
 }
 
-/// An App selection on the default network's stack.
-fn selection(product_id: &str) -> Arc<ProductSelection> {
-	let stack = crate::network::Network::default()
+/// The default network's stack.
+fn stack() -> Stack {
+	crate::network::Network::default()
 		.bundled_stack(ChainBackend::Rpc)
 		.core_stack()
-		.expect("the bundled stack is valid");
-	ProductSelection::new(ProductId::for_test(product_id), ExecutableKind::App, stack)
+		.expect("the bundled stack is valid")
+}
+
+/// An App selection on [`stack`].
+fn selection(product_id: &str) -> Arc<ProductSelection> {
+	ProductSelection::new(ProductId::for_test(product_id), ExecutableKind::App, &stack())
 		.expect("the stack serves the product")
 }
 
@@ -358,22 +362,23 @@ fn product_selection_compares_canonical_ids() {
 	let product = selection(" Dotli.DOT ");
 
 	assert_eq!(product.current().as_str(), "dotli.dot");
-	assert_eq!(product.select(ProductId::for_test("localhost:3000")), Ok(true));
+	assert_eq!(product.select(ProductId::for_test("localhost:3000"), &stack()), Ok(true));
 	assert_eq!(product.current().as_str(), "localhost:3000");
-	assert_eq!(product.select(ProductId::for_test("LOCALHOST:3000")), Ok(false));
+	assert_eq!(product.select(ProductId::for_test("LOCALHOST:3000"), &stack()), Ok(false));
 }
 
 /// The host runs no product on a TLD its stack does not serve, so the
 /// selection stays where it was.
 #[test]
 fn product_selection_refuses_a_tld_the_stack_does_not_serve() {
+	let stack = stack();
 	let product = selection("first.dot");
-	let tld = product.stack.tld().to_owned();
+	let tld = stack.tld().to_owned();
 
-	assert_eq!(product.select(ProductId::for_test(&format!("second.{tld}"))), Ok(true));
+	assert_eq!(product.select(ProductId::for_test(&format!("second.{tld}")), &stack), Ok(true));
 	let unserved = ProductId::for_test("third.elsewhere");
 	assert_eq!(
-		product.select(unserved.clone()),
+		product.select(unserved.clone(), &stack),
 		Err(truapi::platform::UnservedProduct { product_id: unserved, stack_tld: tld.clone() }
 			.into())
 	);
@@ -385,10 +390,10 @@ async fn changing_product_notifies_connections() -> Result<()> {
 	let product = selection("first.dot");
 	let mut connection = product.subscribe();
 
-	assert_eq!(product.select(ProductId::for_test("second.dot")), Ok(true));
+	assert_eq!(product.select(ProductId::for_test("second.dot"), &stack()), Ok(true));
 	connection.changed().await?;
 	assert_eq!(connection.borrow().product_id.as_str(), "second.dot");
-	assert_eq!(product.select(ProductId::for_test("SECOND.DOT")), Ok(false));
+	assert_eq!(product.select(ProductId::for_test("SECOND.DOT"), &stack()), Ok(false));
 	assert!(!connection.has_changed()?);
 	Ok(())
 }
