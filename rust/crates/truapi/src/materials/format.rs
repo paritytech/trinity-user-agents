@@ -61,8 +61,9 @@ impl From<FormatError> for MaterialFailure {
 	}
 }
 
-/// The type of a declared parameter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The type of a declared parameter, parsed from its name in the format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString)]
+#[strum(serialize_all = "camelCase")]
 pub enum ParamKind {
 	/// `float`
 	Float,
@@ -83,20 +84,6 @@ pub enum ParamKind {
 }
 
 impl ParamKind {
-	fn parse(name: &str) -> Option<Self> {
-		Some(match name {
-			"float" => Self::Float,
-			"vec2" => Self::Vec2,
-			"vec3" => Self::Vec3,
-			"vec4" => Self::Vec4,
-			"samplerFloat" => Self::SamplerFloat,
-			"samplerVec2" => Self::SamplerVec2,
-			"samplerVec3" => Self::SamplerVec3,
-			"samplerVec4" => Self::SamplerVec4,
-			_ => return None,
-		})
-	}
-
 	/// Whether `default` is a value of this number type: a number for `float`,
 	/// an array of as many numbers as components for a vector. A sampler takes
 	/// no default, not even `null`.
@@ -254,7 +241,7 @@ fn read_params(controls: &[Map<String, Value>]) -> Result<Vec<ParamKind>, Format
 	let mut params = Vec::with_capacity(controls.len());
 	for control in controls {
 		let name = control.get("name").and_then(Value::as_str).filter(|name| is_identifier(name));
-		let kind = control.get("type").and_then(Value::as_str).and_then(ParamKind::parse);
+		let kind = control.get("type").and_then(Value::as_str).and_then(|name| name.parse().ok());
 		let (Some(name), Some(kind)) = (name, kind) else {
 			return Err(FormatError::InvalidParameter);
 		};

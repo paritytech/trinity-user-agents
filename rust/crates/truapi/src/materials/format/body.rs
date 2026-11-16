@@ -16,6 +16,10 @@ const INPUTS: [&str; 8] = [
 const INTERFACE_KEYWORDS: [&str; 7] =
 	["uniform", "layout", "attribute", "varying", "buffer", "shared", "precision"];
 
+const RESERVED_PREFIXES: [&str; 2] = ["gl_", "_shaderlab_"];
+
+const INPUT_PREFIXES: [&str; 2] = ["sl_", "r_"];
+
 const SAMPLING_FUNCTIONS: [&str; 14] = [
 	"texture",
 	"textureProj",
@@ -69,12 +73,14 @@ fn follows_rules_as_read(body: &str) -> bool {
 	words_allowed && entry_point_declared(&tokens)
 }
 
+/// Whether `word` may appear in a body: no interface keyword, no reserved
+/// backend name, and a name shaped like a renderer input must be one.
 fn word_allowed(word: &str) -> bool {
-	let input_prefix = word.starts_with("sl_") || word.starts_with("r_");
-	!INTERFACE_KEYWORDS.contains(&word) &&
-		!word.starts_with("gl_") &&
-		!word.starts_with("_shaderlab_") &&
-		(!input_prefix || INPUTS.contains(&word))
+	let starts_with_any = |prefixes: &[&str]| prefixes.iter().any(|prefix| word.starts_with(prefix));
+	if INTERFACE_KEYWORDS.contains(&word) || starts_with_any(&RESERVED_PREFIXES) {
+		return false;
+	}
+	INPUTS.contains(&word) || !starts_with_any(&INPUT_PREFIXES)
 }
 
 /// Every top-level function named `material` must have the entry point's
