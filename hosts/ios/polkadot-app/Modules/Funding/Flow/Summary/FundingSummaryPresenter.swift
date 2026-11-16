@@ -37,11 +37,10 @@ extension FundingSummaryPresenter: FundingSummaryPresenterProtocol {
             defer { activity.isStarting = false }
             do {
                 try await interactor.start(provider: providerId)
-                if current.direction == .in, current.rail == .crypto {
-                    wireframe.showDeposit()
-                } else {
-                    wireframe.showProgress()
-                }
+                // A crypto top-up's address opens from the progress screen
+                // once the provider reports one; a provider that serves the
+                // network with its own screen reports none.
+                wireframe.showProgress()
             } catch FundingStartError.left {
                 return
             } catch let FundingStartError.notSelected(failure) {
