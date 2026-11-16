@@ -4,6 +4,9 @@ mod v0_to_v1_durable_tx;
 mod v10_to_v11_profile_cache_lru;
 mod v11_to_v12_durable_domain_policies;
 mod v12_to_v13_durable_birth_hash;
+mod v13_to_v14_coinage_ledger;
+mod v14_to_v15_coinage_operations;
+mod v15_to_v16_coinage_registration;
 mod v1_to_v2_scheduled_submissions;
 mod v2_to_v3_nft_purses;
 mod v3_to_v4_nft_items;
@@ -33,5 +36,8 @@ pub fn core_migrations() -> Migrations<'static> {
 		v10_to_v11_profile_cache_lru::profile_cache_lru(),
 		v11_to_v12_durable_domain_policies::drop_durable_tx_policy_id(),
 		v12_to_v13_durable_birth_hash::drop_durable_tx_birth_hash(),
+		v13_to_v14_coinage_ledger::create_coinage_ledger(),
+		v14_to_v15_coinage_operations::create_coinage_operations(),
+		v15_to_v16_coinage_registration::create_coinage_registration(),
 	])
 }

@@ -6,7 +6,7 @@ use truapi::latest::GenericError;
 
 /// The id of this app installation, which keys are derived under. Recovery
 /// can find it because the host registers it before handing it out.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Encode, Decode)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
 pub struct InstallationId(pub [u8; 32]);
 
 impl TryFrom<Vec<u8>> for InstallationId {

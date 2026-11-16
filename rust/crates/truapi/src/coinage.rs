@@ -8,15 +8,19 @@
 
 pub mod chain;
 pub mod denominations;
+pub mod ledger;
 pub mod namespace;
+pub mod operation;
 pub mod params;
 pub mod policy;
+pub mod registration;
 pub mod split;
 
 #[cfg(test)]
 pub mod testing;
 
 pub use denominations::Exponent;
+pub use ledger::{Asset, Snapshot};
 pub use namespace::{CoinSecret, PurseId};
 pub use params::{ChainConfig, ChainParams};
 pub use policy::{HeldBackSpend, Initiator, MemberThreshold, PrivacyPolicy, ReadyRule, RecycleAge};
