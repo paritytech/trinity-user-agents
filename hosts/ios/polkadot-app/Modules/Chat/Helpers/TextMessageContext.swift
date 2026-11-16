@@ -7,6 +7,7 @@ struct TextMessageContext {
     let attachments: [ChatRichTextMessageConfiguration.AttachmentItem]?
     let productLinkPreview: ChatProductLinkPreviewConfiguration?
     let status: Chat.LocalMessage.Status
+    let isSeenByPeer: Bool
     let deliveryDate: Date?
     let layoutContext: MessageLayoutContext
     let replyInfo: ChatMessageContainerConfiguration.ReplyInfo?
@@ -21,6 +22,7 @@ struct TextMessageContext {
         attachments: [ChatRichTextMessageConfiguration.AttachmentItem]?,
         productLinkPreview: ChatProductLinkPreviewConfiguration?,
         status: Chat.LocalMessage.Status,
+        isSeenByPeer: Bool,
         deliveryDate: Date?,
         layoutContext: MessageLayoutContext,
         replyInfo: ChatMessageContainerConfiguration.ReplyInfo?,
@@ -34,6 +36,7 @@ struct TextMessageContext {
         self.attachments = attachments
         self.productLinkPreview = productLinkPreview
         self.status = status
+        self.isSeenByPeer = isSeenByPeer
         self.deliveryDate = deliveryDate
         self.layoutContext = layoutContext
         self.replyInfo = replyInfo
