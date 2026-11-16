@@ -364,7 +364,7 @@ class HostApiInteractor @Inject constructor(
     ): Result<NotificationId> {
         return if (scheduledAt == null) {
             val id = NotificationId.generate(callingProductId)
-            productNotificationPublisher.publishNotification(id.value, callingProductId, text, deeplink)
+            productNotificationPublisher.publishNotification(id, callingProductId, text, deeplink, scheduledAt = null)
             Result.success(id)
         } else {
             productNotificationScheduler.schedule(callingProductId, text, deeplink, scheduledAt)

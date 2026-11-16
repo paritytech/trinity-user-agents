@@ -10,7 +10,6 @@ import io.paritytech.polkadotapp.common.data.telemetry.HostMonotonicTimeProvider
 import io.paritytech.polkadotapp.common.data.telemetry.baseExtras
 import io.paritytech.polkadotapp.common.data.telemetry.baseTags
 import io.paritytech.polkadotapp.common.data.telemetry.isFreshNotificationLaunch
-import io.paritytech.polkadotapp.common.data.telemetry.productNotificationShown
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
 import io.paritytech.polkadotapp.test_shared.any
 import io.sentry.SentryEvent
@@ -151,8 +150,8 @@ class HostProcessTelemetryTest {
         val captured = mutableListOf<HostEvent>()
         val capture = HostEventCapture { captured += it() }
 
-        capture.capture { origin.productNotificationShown(productId = "jolly.dot") }
-        capture.capture { origin.productNotificationTapped(productId = "jolly.dot") }
+        capture.capture { origin.productNotificationTapped(productId = "jolly.dot", notificationId = 7) }
+        capture.capture { origin.productNotificationTapped(productId = "jolly.dot", notificationId = null) }
 
         val expectedTags = mapOf(
             "host.platform" to "android",
@@ -164,7 +163,11 @@ class HostProcessTelemetryTest {
         val expectedExtras = mapOf<String, Any>("host.app_build" to 42L)
         assertEquals(
             listOf(
-                HostEvent("host.product_notification.shown", expectedTags, expectedExtras),
+                HostEvent(
+                    "host.product_notification.tapped",
+                    expectedTags,
+                    expectedExtras + ("product_notification.id" to 7L),
+                ),
                 HostEvent("host.product_notification.tapped", expectedTags, expectedExtras),
             ),
             captured,
@@ -177,7 +180,7 @@ class HostProcessTelemetryTest {
         )
         disabledCapture.capture {
             eventBuilt = true
-            origin.productNotificationShown(productId = "jolly.dot")
+            origin.productNotificationTapped(productId = "jolly.dot", notificationId = 7)
         }
 
         assertFalse(eventBuilt)
