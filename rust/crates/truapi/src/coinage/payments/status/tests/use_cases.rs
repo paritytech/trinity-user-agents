@@ -14,8 +14,24 @@ fn claimed(finalized: bool) -> HostPaymentTopUpStatusSubscribeItem {
 	HostPaymentTopUpStatusSubscribeItem::Claimed { finalized }
 }
 
-fn top_up(items: &[StatusItem], amount: u64) -> Vec<HostPaymentTopUpStatusSubscribeItem> {
-	items.iter().map(|item| top_up_status(*item, amount, UNIT)).collect()
+/// The RFC-6 items of a top-up of `cents` whole cents.
+fn top_up(items: &[StatusItem], cents: u128) -> Vec<HostPaymentTopUpStatusSubscribeItem> {
+	items.iter().map(|item| top_up_status(*item, cents * UNIT, UNIT)).collect()
+}
+
+/// The product asked for 8.5 cents; coinage moves whole cents, so the
+/// top-up cannot be complete at 8.
+#[test]
+fn an_amount_rounded_down_to_a_whole_cent_ends_partial() {
+	let done = item(Status::Done, 8, 0);
+	let asked = 8 * UNIT + UNIT / 2;
+	assert_eq!(top_up_status(done, asked, UNIT), HostPaymentTopUpStatusSubscribeItem::ClaimedPartially {
+		actual_claimed: 8 * UNIT
+	});
+	assert_eq!(payment_status(done, asked, UNIT), HostPaymentStatusSubscribeItem::ClaimedPartially {
+		actual_claimed: 8 * UNIT
+	});
+	assert_eq!(payment_status(done, 8 * UNIT, UNIT), HostPaymentStatusSubscribeItem::Completed);
 }
 
 #[test]

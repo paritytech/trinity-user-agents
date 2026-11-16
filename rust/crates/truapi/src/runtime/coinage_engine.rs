@@ -45,6 +45,9 @@ use crate::{
 /// How long a top-up waits for its source to hold the funds.
 const TOP_UP_WINDOW: Duration = Duration::from_secs(3600);
 
+/// The reason a status stream ends with when layer 1 cannot read the status.
+const STATUS_UNAVAILABLE: &str = "the status is unavailable";
+
 /// The keys of a product's own accounts, which a top-up may be paid from.
 pub trait ProductFunding: Send + Sync {
 	/// The funding capability of `account`; none when the wallet cannot
@@ -139,21 +142,28 @@ impl CoinageEngine {
 		(record.kind == kind).then_some(record)
 	}
 
-	/// An operation's status items from layer 1, mapped by `map`; a refused
-	/// operation's single terminal item instead.
-	async fn statuses<T: Send + 'static>(
+	/// An operation's status items from layer 1, mapped by `map`, each only
+	/// when it differs from the last; a refused operation's single terminal
+	/// item instead. A status layer 1 cannot read ends the stream with
+	/// `unavailable`, never with an outcome (layer 1, P11).
+	async fn statuses<T, E>(
 		&self,
 		record: &Rfc6Record,
 		refused: T,
+		unavailable: E,
 		map: impl Fn(crate::coinage::status::StatusItem) -> T + Send + 'static,
 		is_last: impl Fn(&T) -> bool + Send + 'static,
-	) -> BoxStream<'static, T> {
+	) -> BoxStream<'static, Result<T, E>>
+	where
+		T: PartialEq + Clone + Send + 'static,
+		E: Send + 'static,
+	{
 		if record.operation.refused.is_some() {
-			return stream::once(core::future::ready(refused)).boxed();
+			return stream::once(core::future::ready(Ok(refused))).boxed();
 		}
 		match self.payments.layer().status(record.operation.key.clone()).await {
-			Ok(items) => items.map(map).take_until_inclusive(is_last),
-			Err(_) => stream::once(core::future::ready(refused)).boxed(),
+			Ok(items) => items.map(map).take_until_inclusive(is_last).map(Ok).distinct_until_changed(),
+			Err(_) => stream::once(core::future::ready(Err(unavailable))).boxed(),
 		}
 	}
 }
@@ -207,23 +217,26 @@ impl TopUpPlatform for CoinageEngine {
 				}
 			}
 		}
+		let coins: Vec<CoinSecret> = match &request.source {
+			PaymentTopUpSource::Coins { sr25519_secret_keys } => sr25519_secret_keys.iter().map(|secret| CoinSecret(*secret)).collect(),
+			_ => Vec::new(),
+		};
+		if self.payments.layer().importing(&coins).await.map_err(|error| unknown(error.to_string()))? {
+			return Err(HostPaymentTopUpError::SourceBusy);
+		}
 		let record = Rfc6Record {
 			product: product.product_id.as_str().as_bytes().to_vec(),
 			id: request.id,
 			kind: Rfc6Kind::TopUp,
-			amount: cents,
+			amount: request.amount,
 			source,
 			funding: request.funding.clone(),
 			operation: OperationRecord { key: key.clone(), refused: None },
 		};
 		self.record(record).await.map_err(unknown)?.map_err(|_| HostPaymentTopUpError::AlreadyExists)?;
-		let started = match (&request.source, funding) {
-			(PaymentTopUpSource::Coins { sr25519_secret_keys }, _) => {
-				let coins = sr25519_secret_keys.iter().map(|secret| CoinSecret(*secret)).collect();
-				self.payments.layer().import(op, into, coins).await
-			},
-			(_, Some(funding)) => self.payments.layer().top_up(op, into, cents, funding).await,
-			(_, None) => return Err(HostPaymentTopUpError::InvalidSource),
+		let started = match funding {
+			None => self.payments.layer().import(op, into, coins).await,
+			Some(funding) => self.payments.layer().top_up(op, into, cents, funding).await,
 		};
 		match started {
 			Ok(_) => Ok(()),
@@ -258,7 +271,8 @@ impl TopUpPlatform for CoinageEngine {
 				)
 			};
 			let refused = HostPaymentTopUpStatusSubscribeItem::NotClaimed;
-			engine.statuses(&record, refused, move |item| top_up_status(item, amount, unit), is_last).await.map(Ok).boxed()
+			let unavailable = HostPaymentTopUpStatusSubscribeError::Unknown { reason: STATUS_UNAVAILABLE.into() };
+			engine.statuses(&record, refused, unavailable, move |item| top_up_status(item, amount, unit), is_last).await
 		})
 		.flatten()
 		.boxed()
@@ -285,7 +299,7 @@ impl PaymentPlatform for CoinageEngine {
 			product: product.product_id.as_str().as_bytes().to_vec(),
 			id: request.id,
 			kind: Rfc6Kind::Payment,
-			amount: cents,
+			amount: request.amount,
 			source: None,
 			funding: request.funding.clone(),
 			operation: OperationRecord { key: key.clone(), refused: None },
@@ -326,7 +340,8 @@ impl PaymentPlatform for CoinageEngine {
 			let (amount, unit) = (record.amount, engine.payments.layer().asset_unit());
 			let is_last = |item: &HostPaymentStatusSubscribeItem| !matches!(item, HostPaymentStatusSubscribeItem::Processing);
 			let refused = HostPaymentStatusSubscribeItem::Failed { reason: "the payment did not start".into() };
-			engine.statuses(&record, refused, move |item| payment_status(item, amount, unit), is_last).await.map(Ok).boxed()
+			let unavailable = HostPaymentStatusSubscribeError::Unknown { reason: STATUS_UNAVAILABLE.into() };
+			engine.statuses(&record, refused, unavailable, move |item| payment_status(item, amount, unit), is_last).await
 		})
 		.flatten()
 		.boxed()

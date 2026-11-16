@@ -145,13 +145,15 @@ pub fn coin_payment_error(error: &Error) -> CoinPaymentError {
 	}
 }
 
-/// A payment's RFC-6 status, with its amount in cents and the asset's unit:
-/// `Completed` only at layer 1's `Done` with the full amount settled.
-pub fn payment_status(item: StatusItem, amount: u64, unit: u128) -> HostPaymentStatusSubscribeItem {
-	let claimed = u128::from(item.progress.settled).saturating_mul(unit);
+/// A payment's RFC-6 status, with its amount and the cent both in the
+/// asset's units: `Completed` only at layer 1's `Done` with the full amount
+/// settled, so an amount rounded down to whole cents ends partial (N2
+/// invariant 5).
+pub fn payment_status(item: StatusItem, amount: u128, unit: u128) -> HostPaymentStatusSubscribeItem {
+	let claimed = in_units(item.progress.settled, unit);
 	match item.status {
-		Status::Done if item.progress.settled >= amount => HostPaymentStatusSubscribeItem::Completed,
-		status if status.is_terminal() && item.progress.settled > 0 => {
+		Status::Done if claimed >= amount => HostPaymentStatusSubscribeItem::Completed,
+		status if status.is_terminal() && claimed > 0 => {
 			HostPaymentStatusSubscribeItem::ClaimedPartially { actual_claimed: claimed }
 		},
 		Status::Failed(failure) => HostPaymentStatusSubscribeItem::Failed { reason: format!("{failure:?}") },
@@ -160,23 +162,31 @@ pub fn payment_status(item: StatusItem, amount: u64, unit: u128) -> HostPaymentS
 	}
 }
 
-/// A top-up's RFC-6 status, with its amount in cents and the asset's unit:
-/// `Claimed { finalized: false }` once the value that succeeded, on the best
-/// chain or finally, reaches the amount, otherwise `Detecting` while it
-/// waits for the source and `Claiming` while it is built or submitted; and
-/// `Claimed { finalized: true }` at layer 1's `Done` with the full amount.
-pub fn top_up_status(item: StatusItem, amount: u64, unit: u128) -> HostPaymentTopUpStatusSubscribeItem {
+/// A top-up's RFC-6 status, with its amount and the cent both in the asset's
+/// units: `Claimed { finalized: false }` once the value that succeeded, on
+/// the best chain or finally, reaches the amount, otherwise `Detecting`
+/// while it waits for the source and `Claiming` while it is built or
+/// submitted; and `Claimed { finalized: true }` at layer 1's `Done` with the
+/// full amount, so an amount rounded down to whole cents ends partial (N2
+/// invariant 5).
+pub fn top_up_status(item: StatusItem, amount: u128, unit: u128) -> HostPaymentTopUpStatusSubscribeItem {
 	let Progress { settled, provisional, .. } = item.progress;
+	let claimed = in_units(settled, unit);
 	match item.status {
-		Status::Done if settled >= amount => HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true },
-		status if status.is_terminal() && settled > 0 => {
-			HostPaymentTopUpStatusSubscribeItem::ClaimedPartially { actual_claimed: u128::from(settled).saturating_mul(unit) }
+		Status::Done if claimed >= amount => HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: true },
+		status if status.is_terminal() && claimed > 0 => {
+			HostPaymentTopUpStatusSubscribeItem::ClaimedPartially { actual_claimed: claimed }
 		},
 		status if status.is_terminal() => HostPaymentTopUpStatusSubscribeItem::NotClaimed,
-		_ if settled + provisional >= amount => HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false },
+		_ if in_units(settled + provisional, unit) >= amount => HostPaymentTopUpStatusSubscribeItem::Claimed { finalized: false },
 		Status::Waiting => HostPaymentTopUpStatusSubscribeItem::Detecting,
 		_ => HostPaymentTopUpStatusSubscribeItem::Claiming,
 	}
+}
+
+/// `cents` in the asset's units, saturating.
+fn in_units(cents: u64, unit: u128) -> u128 {
+	u128::from(cents).saturating_mul(unit)
 }
 
 fn clearing(item: StatusItem) -> CoinPaymentStatus {

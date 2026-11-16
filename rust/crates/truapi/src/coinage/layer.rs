@@ -634,6 +634,20 @@ impl Layer {
 		Ok(self.launch(&op, OpKind::Import, arguments, request).await?.0)
 	}
 
+	/// Whether a claim that has not reached a stable verdict holds one of
+	/// `coins`, so that another import of it could not start.
+	pub async fn importing(&self, coins: &[CoinSecret]) -> Result<bool, Error> {
+		let view = self.view().await?;
+		Ok(coins.iter().filter_map(account_of).any(|account| {
+			view.registrations().consumers(&Asset::PeerCoin(account)).any(|claim| {
+				!matches!(
+					claim.state.status,
+					crate::durable::DurableTxStatus::FinalizedSuccess { .. } | crate::durable::DurableTxStatus::Failure(_)
+				)
+			})
+		}))
+	}
+
 	// ---- Maintenance and recovery ----
 
 	/// Runs whatever maintenance is due at `now` (F2), advances every open

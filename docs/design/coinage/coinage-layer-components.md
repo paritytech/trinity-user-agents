@@ -1388,6 +1388,7 @@ fn commit_export(export: OpKey, within: Option<StoreTxn>) -> Result<(), Error>; 
 fn release_export(export: OpKey) -> Result<(), Error>;                     // invariant 3: never committed
 fn reclaim(op: Op, export: OpKey, into: PurseId) -> Result<Started, Error>;  // C1 invariant 4: `into` must be open
 fn import(op: Op, into: PurseId, coins: Vec<CoinSecret>) -> Result<Started, Error>;
+fn importing(coins: Vec<CoinSecret>) -> bool;  // a claim without a stable verdict holds one of them (C1)
 
 struct Export { started: Started, coins: Vec<ExportedCoin> }   // the same coins however often it is joined
 struct ExportedCoin { account: AccountId, secret: CoinSecret, exponent: Exponent }
