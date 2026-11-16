@@ -30,6 +30,7 @@ public enum BottomSafeAreaChange {
     case held
 }
 
+@MainActor
 @Observable
 final class HostSafeAreaInsets {
     var value = EdgeInsets()
