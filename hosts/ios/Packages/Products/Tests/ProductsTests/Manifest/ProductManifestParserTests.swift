@@ -293,6 +293,34 @@ struct ProductManifestParserTests {
         #expect(worker.pocketCards.isEmpty)
     }
 
+    /// A back is read from the archive like the front, so a published card can
+    /// never name an address for the host to fetch. A card that leaves `back`
+    /// out, or sets it to null as Android reads the same, has no back to turn to.
+    @Test func readsABackAsAnArchivePathAndItsAbsenceAsNoBack() throws {
+        let cards = """
+        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","back":"faces/loyalty-back.json"},
+         {"id":"trophy","title":"Trophy","preview":"faces/trophy.json"},
+         {"id":"medal","title":"Medal","preview":"faces/medal.json","back":null}]
+        """
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
+
+        #expect(worker.pocketCards.map(\.back) == [.archive(path: "faces/loyalty-back.json"), nil, nil])
+    }
+
+    /// A back that is blank or not a path is a card defect like any other, and
+    /// Android refuses it too: the product loses its cards, not its worker.
+    @Test(arguments: [#""  ""#, "7", "true"])
+    func publishesNoCardsWhenTheBackIsNotAPath(_ back: String) throws {
+        let cards = """
+        [{"id":"loyalty","title":"Loyalty","preview":"faces/loyalty.json","back":\(back)},
+         {"id":"trophy","title":"Trophy","preview":"faces/trophy.json"}]
+        """
+        let worker = try #require(parsedWorker(Fixtures.worker(pocket: "true", cards: cards)))
+
+        #expect(worker.serves(.chat))
+        #expect(worker.pocketCards.isEmpty)
+    }
+
     /// Two cards under one id would make the card a product hands out ambiguous,
     /// so the whole set is refused rather than one of them picked.
     @Test func publishesNoCardsWhenIdsRepeat() throws {

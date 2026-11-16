@@ -231,12 +231,16 @@ private extension ProductManifestParser {
         guard let preview = dto.preview, !preview.trimmed.isEmpty else {
             throw PocketCardManifestError.missingField("preview")
         }
+        if let back = dto.back, back.trimmed.isEmpty {
+            throw PocketCardManifestError.missingField("back")
+        }
 
         return try PocketCardDefinition(
             id: screening.id(rawId),
             title: screening.title(title),
             preview: .archive(path: preview),
-            faceShown: dto.faceShown ?? true
+            faceShown: dto.faceShown ?? true,
+            back: dto.back.map { .archive(path: $0) }
         )
     }
 }

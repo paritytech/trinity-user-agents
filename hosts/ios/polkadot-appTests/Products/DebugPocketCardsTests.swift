@@ -71,18 +71,32 @@ struct DebugPocketCardsTests {
         ))
         #expect(store.widgetURL(for: loyaltyKey) == nil)
     }
+
+    /// A worker served from the Mac has no archive to ship a back in, so the
+    /// typed back URL is what lets a debug card turn over at all.
+    @Test
+    func offersATypedBackFaceAsTheCardsBack() throws {
+        let store = DebugPocketCards(settingsManager: InMemorySettingsManager())
+        store.save(card(backFaceUrl: backUrl))
+
+        let definition = try #require(try store.cards(for: ProductId("game.paseo")).first)
+
+        #expect(definition.back == .url(backUrl))
+    }
 }
 
 // MARK: - Fixtures
 
 private let faceUrl = "http://127.0.0.1:5173/faces/loyalty.json"
+private let backUrl = "http://127.0.0.1:5173/faces/loyalty-back.json"
 
 private let loyaltyKey = PocketCardKey(productId: try! ProductId("game.paseo"), cardId: PocketCardId(value: "loyalty"))
 
 private func card(
     productId: ProductId = try! ProductId("game.paseo"),
     cardId: String = "loyalty",
-    widgetUrl: URL? = nil
+    widgetUrl: URL? = nil,
+    backFaceUrl: String? = nil
 ) -> DebugPocketCard {
     DebugPocketCard(
         productId: productId,
@@ -90,6 +104,7 @@ private func card(
         title: "Loyalty",
         faceUrl: faceUrl,
         widgetUrl: widgetUrl,
-        faceShown: nil
+        faceShown: nil,
+        backFaceUrl: backFaceUrl
     )
 }
