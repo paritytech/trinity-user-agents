@@ -416,11 +416,13 @@ are products: a localhost id, and a name under the reserved `dot` TLD or the
 stack's own TLD (`Stack::serves`). The core checks this where a product id
 enters the runtime: the product a host asks it to run
 (`ProductContext::served_by`), a call naming another product (answered
-`MalformedFrame`), a paired host's request to the signing wallet, the manifest
-readers and the host's worker references. `runtime::served` describes how a
-checked value is carried to the account calls. Native hosts open the bundled
-stack as a `Stack` object and judge navigation, share links and trusted
-products through its methods, so they never supply a TLD of their own.
+`MalformedFrame`), a paired host's request to the signing wallet, every key
+derivation in that wallet (a stored renewal target reaches it without a
+request), the manifest readers and the host's worker references.
+`runtime::served` describes how a checked value is carried to the account calls.
+Native hosts open the bundled stack as a `Stack` object and judge navigation,
+share links and trusted products through its methods, so they never supply a TLD
+of their own.
 
 `REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels. A label
 counts only under a TLD the stack serves. These products bypass recorded permissions and

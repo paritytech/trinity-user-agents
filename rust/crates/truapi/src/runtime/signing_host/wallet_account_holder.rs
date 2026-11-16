@@ -348,7 +348,8 @@ impl WalletKeys {
 	}
 
 	/// Refuses a product the stack does not serve. Every derivation keyed by a
-	/// product id calls it first, so a paired host's request is checked as well.
+	/// product id calls it first, so a paired host's request and a stored renewal
+	/// target, which reaches the wallet without a request, are checked as well.
 	fn require_served(&self, product_id: &ProductId) -> Result<(), AuthorityError> {
 		Ok(self.stack.require_served(product_id)?)
 	}
