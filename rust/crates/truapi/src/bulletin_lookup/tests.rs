@@ -70,10 +70,14 @@ async fn a_miss_is_reported_at_once_then_the_blob_when_it_lands_then_the_end() {
 	assert_eq!(calls(&lookup), 3);
 }
 
+/// A node that serves bytes not matching the CID would serve them again, so the lookup asks it
+/// no more and hands the bytes over: each caller checks them against its key.
 #[tokio::test]
-async fn bytes_that_do_not_hash_to_the_key_are_never_emitted() {
-	let lookup = scripted(vec![Ok(Some(b"forged".to_vec())), Ok(Some(blob()))]);
-	assert_eq!(events(&lookup, &preimage_key(&blob())).await, vec![Ok(None), Ok(Some(blob()))]);
+async fn bytes_that_do_not_hash_to_the_key_end_the_lookup_for_the_caller_to_judge() {
+	let forged = b"forged".to_vec();
+	let lookup = scripted(vec![Ok(None), Ok(Some(forged.clone()))]);
+	assert_eq!(events(&lookup, &preimage_key(&blob())).await, vec![Ok(None), Ok(Some(forged))]);
+	assert_eq!(calls(&lookup), 2);
 }
 
 #[tokio::test]

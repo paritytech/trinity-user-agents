@@ -11,7 +11,9 @@
 //! reported as a miss as well, never as the end of the subscription, so a caller waiting on a
 //! blob survives a transport failure. A request the node can never answer, such as an invalid
 //! CID or a node without `bitswap_v1_get`, ends the subscription with an error after the miss.
-//! Every value is checked against the key before it is emitted.
+//! A value is emitted as the node gave it and ends the subscription. One that does not hash to
+//! the key is logged, since asking again would only get the same bytes, and every caller checks
+//! the value against its key.
 
 use core::{ops::ControlFlow, time::Duration};
 use std::sync::{Arc, Weak};
@@ -80,8 +82,7 @@ impl BlobSource for Weak<RuntimeServices> {
 	}
 }
 
-/// Lookups over one blob source: the CID for each key, and the check that what comes back
-/// hashes to it.
+/// Lookups over one blob source, by the CID of each key.
 pub struct BulletinLookup<S> {
 	source: Arc<S>,
 	timer: Arc<dyn Timer>,
@@ -124,16 +125,16 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
 		retry_on(self.timer.as_ref(), attempt, |()| self.poll_interval).await
 	}
 
-	/// One read: the blob if the source holds it and it hashes to `cid`.
+	/// One read: the blob if the source holds it, as the source gave it.
 	async fn read(&self, cid: &BulletinCid) -> Result<Option<Vec<u8>>, SourceError> {
 		let Some(value) = self.source.get(cid).await? else {
 			return Ok(None);
 		};
-		if !cid.matches(&value) {
+		if cid.matches(&value) {
+			info!(%cid, size = value.len(), "preimage read from Bulletin");
+		} else {
 			warn!(%cid, "preimage source returned bytes that do not hash to the CID");
-			return Ok(None);
 		}
-		info!(%cid, size = value.len(), "preimage read from Bulletin");
 		Ok(Some(value))
 	}
 }
