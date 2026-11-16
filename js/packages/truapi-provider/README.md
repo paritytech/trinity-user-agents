@@ -68,9 +68,10 @@ const provider = builder.build();
   served, because the digest covers them. A wrong spec is what a stale
   descriptor looks like after a wipe, so fetch the descriptor again before
   refusing the stack.
-- A chain without its spec is unknown to the provider and `connect` rejects.
-  The rest of the stack runs. `provider.addLightSpec(genesisHash, bytes)`
-  supplies the spec later. A parachain also needs its relay's.
+- A chain is unknown to the provider until its spec is added, and a parachain
+  also until the relay's is; `connect` rejects for it meanwhile, and the chains
+  that have what they need run. `provider.addLightSpec(genesisHash, bytes)`
+  supplies a spec later.
 - The descriptor decides the relay every other chain syncs through, and which
   chains run the statement-store protocol. The bundled catalog is not used.
 - Build one provider per stack, and a new one when the stack's `generation`
@@ -99,15 +100,18 @@ function key(genesisHash, stack) {
 ```
 
 Both are called with a `0x`-prefixed lowercase genesis hash. `stack` identifies
-the stack given to `setStack`, as `stackId` from `@parity/trinity-stack` gives it
-for the link: its key in hex when the link has one, otherwise its normalised
-descriptor URL. It is `undefined` on a provider without a stack. Key the store
+the stack given to `setStack`, as `stackId(decodeLink(link))` from
+`@parity/trinity-stack` gives it: its key in hex when the link has one,
+otherwise its normalised descriptor URL. It is `undefined` on a provider
+without a stack. Key the store
 on `stack` and genesis hash, and return a blob unchanged. A stack's provider
 starts each blob with a line naming the stack and its `generation`, and reads
 back only its own, so a fork never resumes from its source's state and a wiped
 stack starts fresh. A store keyed on the genesis hash alone is not safe to
 share between two stacks all the same: each provider replaces the other's blob
-on every save, and both start cold on every launch. A client that cannot
+on every save, so on the next launch only the one that saved last resumes and
+the other starts cold. A stack's provider and a provider without one sharing
+such a store do the same. A client that cannot
 answer must reject rather than resolve `null`, which means "nothing stored yet"
 and would let the next write replace good state. Without a client every chain
 syncs from the checkpoint in the chain spec on every run.

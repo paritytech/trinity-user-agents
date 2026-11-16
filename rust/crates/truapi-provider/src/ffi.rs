@@ -330,7 +330,8 @@ impl ChainProvider {
 	/// [`save_database`](Self::save_database) fail rather than quietly doing nothing.
 	///
 	/// Use [`with_storage`](Self::with_storage) to resume from state the host
-	/// keeps for it.
+	/// keeps for it, or [`for_stack_with_storage`](Self::for_stack_with_storage)
+	/// for a stack.
 	#[uniffi::constructor]
 	pub fn new() -> Arc<Self> {
 		Arc::new(Self { inner: EmbeddedChainProvider::builder().catalog().build() })
@@ -348,7 +349,9 @@ impl ChainProvider {
 	}
 
 	/// Create a provider for a Trinity stack, with nowhere to keep finalized
-	/// state.
+	/// state, so [`load_database`](Self::load_database) and
+	/// [`save_database`](Self::save_database) fail on it; use
+	/// [`for_stack_with_storage`](Self::for_stack_with_storage) to keep it.
 	///
 	/// `link` and `descriptor` are the stack's link and its descriptor as
 	/// served, opened as [`LightStack::open`] does. `light_specs` are the
@@ -407,10 +410,12 @@ impl ChainProvider {
 	/// instead of syncing from the chain-spec checkpoint. Answers whether a
 	/// blob is now in hand.
 	///
-	/// Fails when the provider was built through [`new`](Self::new), which has
-	/// nowhere to keep blobs. A chain that never warms up looks exactly like
-	/// one with nothing stored yet, so the missing store is reported rather
-	/// than swallowed: build with [`with_storage`](Self::with_storage). It also
+	/// Fails when the provider was built through [`new`](Self::new) or
+	/// [`for_stack`](Self::for_stack), which have nowhere to keep blobs. A
+	/// chain that never warms up looks exactly like one with nothing stored
+	/// yet, so the missing store is reported rather than swallowed: build with
+	/// [`with_storage`](Self::with_storage) or
+	/// [`for_stack_with_storage`](Self::for_stack_with_storage). It also
 	/// fails for a genesis `connect` refuses too: one outside the bundled
 	/// catalog, or a stack's chain with no light spec yet.
 	///

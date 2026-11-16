@@ -652,6 +652,28 @@ fn a_provider_without_a_stack_does_not_read_a_stacks_blob() {
 	);
 }
 
+/// A provider being replaced keeps its snapshot from landing over what its
+/// successor stored under the same stack and genesis hash, even one that was
+/// already under way when it stopped.
+#[cfg(feature = "smoldot")]
+#[test]
+fn a_provider_that_stopped_saving_stores_nothing() {
+	use futures::executor::block_on;
+
+	const GENESIS: [u8; 32] = [12; 32];
+	const WITH_CODE: &str = r#"{"chain":{"a":1},"runtimeCode":"AAAA"}"#;
+	let client = std::sync::Arc::new(MemoryStorageClient::default());
+	let provider = EmbeddedChainProvider::builder()
+		.chain(GENESIS, ChainSource::light_client("{}").build())
+		.storage(client.clone())
+		.build();
+
+	provider.stop_saving();
+
+	assert_eq!(block_on(provider.store_blob(GENESIS, WITH_CODE.to_owned())), Ok(false));
+	assert_eq!(client.blob(GENESIS), None);
+}
+
 /// A registered chain wins as a relay too: a stack's parachain comes up
 /// behind a relay registered on the provider, and a registered parachain
 /// behind the stack's relay.
