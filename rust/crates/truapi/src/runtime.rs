@@ -23,6 +23,7 @@ pub use dotns_lookup::{DotnsLookup, DotnsLookupKind};
 mod funding;
 mod funding_providers;
 mod funding_quotes;
+mod funding_start;
 mod host_accounts;
 mod host_grants;
 mod host_session;
