@@ -335,6 +335,7 @@ fun RootNavBarOverlay(
                 DockletAutoHideEffect(
                     hideState = hideState,
                     searchOpen = pull.scanExpanded,
+                    keyboardUp = keyboardUp,
                     tipShown = (hideState.countsAsHidden && dockletTip != null) || tooltipVisible,
                     panelExpanded = pull.appsExpanded || pull.networkStatusExpanded,
                     dockletAreas = { dockletAreas },

@@ -8,13 +8,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -213,14 +211,6 @@ private fun ChatFeedScreenInternal(
     val barInsets = LocalAppNavigationBarInsets.current
     val navigationBars = WindowInsets.navigationBars
     val ime = WindowInsets.ime
-    val density = LocalDensity.current
-    val inputLift by remember(barInsets, navigationBars, ime, density) {
-        derivedStateOf {
-            val systemBottom = maxOf(navigationBars.getBottom(density), ime.getBottom(density))
-            val band = (barInsets.getBottom(density) - systemBottom).coerceAtLeast(0)
-            with(density) { (band * (1f - barHiddenFraction.value)).toDp() }
-        }
-    }
 
     // Messages can be replied to only when we have a regular send message input
     val canReplyToMessages = chatInputUiState is ChatInputUiState.SendMessage && !chatInputUiState.isChatRequest
@@ -249,9 +239,10 @@ private fun ChatFeedScreenInternal(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
+                    .shrinkAboveDocklet(barInsets, navigationBars, ime) { barHiddenFraction.value }
             ) {
                 chatMessagesLoadingState.onLoaded {
-                    CompositionLocalProvider(LocalChatFooterHeight provides footerHeight + inputLift) {
+                    CompositionLocalProvider(LocalChatFooterHeight provides footerHeight) {
                         ChatFeed(
                             chatMessagesState = it,
                             username = username,
@@ -278,7 +269,6 @@ private fun ChatFeedScreenInternal(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
-                        .padding(bottom = inputLift)
                 ) {
                     ChatInputRow(
                         inputState = chatInputUiState,
