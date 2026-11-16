@@ -68,7 +68,6 @@ class ProductRoomFooterWebRenderer(
             modifier = Modifier
                 .fillMaxWidth()
                 // The slot is the composer area: the chat's own background, so messages scrolled under it stay hidden.
-                // The webview is transparent and only its overlay, drawn above this box, lets the chat show through.
                 .background(PolkadotTheme.colors.bg.surface.main)
                 .navigationBarsPadding()
                 .imePadding()

@@ -12,7 +12,6 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewTreeObserver
 import android.webkit.JavascriptInterface
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
@@ -22,7 +21,6 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsWebViewClient
@@ -33,11 +31,7 @@ import java.io.ByteArrayInputStream
  * A transparent webview where the composer would be, showing the product's own page.
  *
  * The page reports through `window.ProductFooter`: an action goes to the product as a press in the room footer, a haptic
- * plays, `overlay` lets the page draw over the chat above it for a moment, and `ready` sizes and reveals it.
- *
- * The webview reaches from the footer's bottom up to the status bar from before it is revealed, and keeps that size
- * while the footer stays where it is: resizing a webview blanks it until Chromium draws it again, so the overlay is a
- * clip that opens and closes, never a resize.
+ * plays, and `ready` sizes and reveals it. The webview stays within the footer.
  */
 @SuppressLint("ViewConstructor")
 class ProductRoomFooterWebLayout(
@@ -51,21 +45,12 @@ class ProductRoomFooterWebLayout(
 ) : FrameLayout(context) {
     private val origin = ProductRoomFooterWebPage.origin(productId)
     private var webView: WebView = createWebView()
-    private var isOverlaying = false
     private var isRevealed = false
-    private var isRevealPending = false
-
-    // The webview's height in pixels, from the footer's bottom to the status bar; 0 until it is first sized.
-    private var webViewHeight = 0
-    private val hideOverlay = Runnable { setOverlay(false) }
-    private val revealFallback = Runnable { reveal(evenIfUnsized = true) }
-    private val sizer = ViewTreeObserver.OnPreDrawListener { sizeWebView() }
+    private val revealFallback = Runnable { reveal() }
 
     init {
         setBackgroundColor(Color.TRANSPARENT)
-        clipChildren = false
-        clipToPadding = false
-        addView(webView, webViewLayoutParams(LayoutParams.MATCH_PARENT))
+        addView(webView, webViewLayoutParams())
         webView.loadUrl(pageUrl)
         postDelayed(revealFallback, REVEAL_FALLBACK_MILLIS)
     }
@@ -78,36 +63,20 @@ class ProductRoomFooterWebLayout(
     }
 
     fun release() {
-        removeCallbacks(hideOverlay)
         removeCallbacks(revealFallback)
         destroy(webView)
-    }
-
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
-        // The interop holder clips its child by default, which would cut the overlay off at the footer's top.
-        (parent as? ViewGroup)?.clipChildren = false
-        viewTreeObserver.addOnPreDrawListener(sizer)
-    }
-
-    override fun onDetachedFromWindow() {
-        viewTreeObserver.removeOnPreDrawListener(sizer)
-        setOverlay(false)
-        super.onDetachedFromWindow()
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
         // A drag that starts at the screen edge on the slider is the page's, not the system back gesture.
         ViewCompat.setSystemGestureExclusionRects(this, listOf(Rect(0, 0, width, height)))
-        applyOverlayClip()
     }
 
     private fun handle(message: ProductFooterMessage) {
         when (message) {
             is ProductFooterMessage.Action -> onAction(message)
             is ProductFooterMessage.Haptic -> playHaptic(message.style)
-            is ProductFooterMessage.Overlay -> setOverlay(message.isOn)
             is ProductFooterMessage.Ready -> {
                 ProductRoomFooterWebPage.height(message.height)?.let(onHeight)
                 reveal()
@@ -115,59 +84,8 @@ class ProductRoomFooterWebLayout(
         }
     }
 
-    /**
-     * Lets the transparent webview draw over the chat above the footer, up to the status bar, by lifting its clip.
-     *
-     * Only the drawing grows: this view keeps the footer's bounds, so a touch above the footer still lands on the chat
-     * and the page cannot take touches there.
-     */
-    private fun setOverlay(isOn: Boolean) {
-        removeCallbacks(hideOverlay)
-        isOverlaying = isOn && isAttachedToWindow
-        applyOverlayClip()
-        if (isOverlaying) postDelayed(hideOverlay, OVERLAY_LIMIT_MILLIS)
-    }
-
-    /** Outside the overlay, the webview draws only within the footer. */
-    private fun applyOverlayClip() {
-        val clip = if (isOverlaying || webViewHeight <= height) null else Rect(0, webViewHeight - height, width, webViewHeight)
-        if (webView.clipBounds != clip) webView.clipBounds = clip
-    }
-
-    /**
-     * Sizes the webview from the footer's bottom up to the status bar, when that distance changed: the first time, and
-     * when the footer moves. A footer that only grows or shrinks upwards keeps the size. Always lets the frame draw.
-     */
-    private fun sizeWebView(): Boolean {
-        if (height == 0 || width == 0) return true
-        val wanted = (bottomInWindow() - statusBarHeight()).coerceAtLeast(height)
-        if (wanted == webViewHeight) return true
-        webViewHeight = wanted
-        val params = webView.layoutParams as LayoutParams
-        params.height = wanted
-        webView.layoutParams = params
-        applyOverlayClip()
-        if (isRevealPending) reveal()
-        return true
-    }
-
-    private fun bottomInWindow(): Int {
-        val location = IntArray(2)
-        getLocationInWindow(location)
-        return location[1] + height
-    }
-
-    private fun statusBarHeight(): Int =
-        ViewCompat.getRootWindowInsets(this)?.getInsets(WindowInsetsCompat.Type.statusBars())?.top ?: 0
-
-    /** Shows the page once the webview has its final size, so it never changes size on screen. */
-    private fun reveal(evenIfUnsized: Boolean = false) {
-        if (webViewHeight == 0 && !evenIfUnsized) {
-            isRevealPending = true
-            return
-        }
+    private fun reveal() {
         removeCallbacks(revealFallback)
-        isRevealPending = false
         if (isRevealed) return
         isRevealed = true
         webView.animate().alpha(1f).setDuration(REVEAL_ANIMATION_MILLIS).start()
@@ -300,9 +218,7 @@ class ProductRoomFooterWebLayout(
         removeView(dead)
         destroy(dead)
         webView = createWebView()
-        addView(webView, webViewLayoutParams(webViewHeight.takeIf { it > 0 } ?: LayoutParams.MATCH_PARENT))
-        isOverlaying = false
-        applyOverlayClip()
+        addView(webView, webViewLayoutParams())
         isRevealed = false
         webView.loadUrl(pageUrl)
         postDelayed(revealFallback, REVEAL_FALLBACK_MILLIS)
@@ -315,14 +231,13 @@ class ProductRoomFooterWebLayout(
         view.destroy()
     }
 
-    private fun webViewLayoutParams(height: Int) = LayoutParams(LayoutParams.MATCH_PARENT, height, Gravity.BOTTOM)
+    private fun webViewLayoutParams() = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT, Gravity.BOTTOM)
 
     private fun refusedResponse() = WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0))).apply {
         setStatusCodeAndReasonPhrase(404, "Not Found")
     }
 
     private companion object {
-        const val OVERLAY_LIMIT_MILLIS = 6_000L
         const val REVEAL_FALLBACK_MILLIS = 2_000L
         const val REVEAL_ANIMATION_MILLIS = 150L
     }

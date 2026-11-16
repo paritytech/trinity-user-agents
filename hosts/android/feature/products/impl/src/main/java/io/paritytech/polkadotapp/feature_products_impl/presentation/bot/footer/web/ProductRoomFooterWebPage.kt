@@ -5,7 +5,6 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 import java.net.URI
 import java.net.URISyntaxException
@@ -74,8 +73,6 @@ sealed interface ProductFooterMessage {
 
     data class Haptic(val style: String) : ProductFooterMessage
 
-    data class Overlay(val isOn: Boolean) : ProductFooterMessage
-
     data class Ready(val height: Double?) : ProductFooterMessage
 
     companion object {
@@ -91,7 +88,6 @@ sealed interface ProductFooterMessage {
             return when (fields.string("kind")) {
                 "action" -> action(fields)
                 "haptic" -> Haptic(fields.string("style") ?: DEFAULT_HAPTIC)
-                "overlay" -> fields.boolean("on")?.let(::Overlay)
                 "ready" -> Ready((fields["height"] as? JsonPrimitive)?.takeIf { !it.isString }?.doubleOrNull)
                 else -> null
             }
@@ -113,8 +109,6 @@ sealed interface ProductFooterMessage {
         }
 
         private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
-
-        private fun JsonObject.boolean(key: String): Boolean? = (this[key] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull
 
         private fun String.utf8Size(): Int = toByteArray(Charsets.UTF_8).size
     }

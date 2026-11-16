@@ -128,7 +128,7 @@ private fun SlotLayerContent(layer: SlotLayer, isFront: Boolean) {
     }
     Box(
         modifier = Modifier
-            // Alpha per draw, not through an offscreen layer, which would cut off what the renderer draws above the slot.
+            // Alpha per draw, without an offscreen layer.
             .graphicsLayer {
                 alpha = layer.alpha.value
                 compositingStrategy = CompositingStrategy.ModulateAlpha

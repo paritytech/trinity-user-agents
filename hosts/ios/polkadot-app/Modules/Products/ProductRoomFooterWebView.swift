@@ -13,18 +13,15 @@ import WebKit
 ///
 /// The page draws on a transparent background over a backdrop in the chat's own colour, which
 /// fills the slot and the strip below it down to the screen edge, so the chat scrolling under
-/// the footer stays hidden, as it does under the composer. Only the part of the webview that
-/// `overlay` stretches above the slot is see-through.
+/// the footer stays hidden, as it does under the composer. The webview stays within the slot.
 ///
 /// The page reports through the `productFooter` message handler: an action goes
-/// to the product as a press in the room footer, a haptic plays, `overlay` lets
-/// the page draw over the chat above it for a moment, and `ready` reveals it.
+/// to the product as a press in the room footer, a haptic plays, and `ready` reveals it.
 @MainActor
 final class ProductRoomFooterWebView: UIView {
     typealias ActionHandler = @MainActor (_ actionId: String, _ payload: String?) async -> Bool
 
     private enum Constants {
-        static let overlayLimit: Duration = .seconds(6)
         static let revealDelay: Duration = .seconds(2)
     }
 
@@ -36,15 +33,10 @@ final class ProductRoomFooterWebView: UIView {
     private let backdrop = UIView()
     private let dragWinner = UIPanGestureRecognizer()
     private var heightConstraint: NSLayoutConstraint!
-    private var webViewTopConstraint: NSLayoutConstraint!
-    private var overlayTimeout: Task<Void, Never>?
     private var revealFallback: Task<Void, Never>?
     private var lastActionAt: Date?
     private var isRevealed = false
     private var revealWaiters: [() -> Void] = []
-    private var shrinkCover: UIView?
-
-    private(set) var isOverlaying = false
 
     /// The chat around the slot, told when the page changes the slot's height so its bottom inset follows.
     weak var inputHandler: ChatInputHandling?
@@ -112,10 +104,7 @@ final class ProductRoomFooterWebView: UIView {
     override func didMoveToWindow() {
         super.didMoveToWindow()
         setNeedsLayout()
-        guard window != nil else {
-            setOverlay(false)
-            return
-        }
+        guard window != nil else { return }
         makeDragWin()
     }
 
@@ -147,39 +136,12 @@ final class ProductRoomFooterWebView: UIView {
             }
         case let .haptic(style):
             Self.playHaptic(style)
-        case let .overlay(isOn):
-            setOverlay(isOn)
         case let .ready(height):
             if let height = ProductRoomFooterWebPage.height(reported: height), height != heightConstraint.constant {
                 heightConstraint.constant = height
                 inputHandler?.chatInputDidChange()
             }
             reveal()
-        }
-    }
-
-    /// Lets the transparent webview draw over the chat above the footer, up to the top safe area.
-    ///
-    /// Only the drawing grows: a touch above the footer lands outside this view's bounds, so the
-    /// chat keeps it, and the page cannot take touches there.
-    func setOverlay(_ isOn: Bool) {
-        overlayTimeout?.cancel()
-        overlayTimeout = nil
-        guard isOn, let window else {
-            if isOverlaying, window != nil {
-                coverShrink()
-            }
-            isOverlaying = false
-            webViewTopConstraint.constant = 0
-            return
-        }
-        let top = convert(bounds, to: window).minY
-        webViewTopConstraint.constant = -max(0, top - window.safeAreaInsets.top)
-        isOverlaying = true
-        overlayTimeout = Task { [weak self] in
-            try? await Task.sleep(for: Constants.overlayLimit)
-            guard !Task.isCancelled else { return }
-            self?.setOverlay(false)
         }
     }
 }
@@ -221,10 +183,9 @@ private extension ProductRoomFooterWebView {
         webView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(webView)
         heightConstraint = heightAnchor.constraint(equalToConstant: height)
-        webViewTopConstraint = webView.topAnchor.constraint(equalTo: topAnchor)
         NSLayoutConstraint.activate([
             heightConstraint,
-            webViewTopConstraint,
+            webView.topAnchor.constraint(equalTo: topAnchor),
             webView.leadingAnchor.constraint(equalTo: leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: trailingAnchor),
             webView.bottomAnchor.constraint(equalTo: bottomAnchor)
@@ -236,33 +197,6 @@ private extension ProductRoomFooterWebView {
         dragWinner.delaysTouchesEnded = false
         dragWinner.delegate = self
         addGestureRecognizer(dragWinner)
-    }
-
-    /// A webview that shrinks shows nothing until the page paints at its new size, which is a
-    /// blank frame in the slot when the overlay ends. A still of the page as it was covers the
-    /// webview until then.
-    func coverShrink() {
-        shrinkCover?.removeFromSuperview()
-        guard let cover = webView.snapshotView(afterScreenUpdates: false) else { return }
-        cover.frame = webView.frame
-        cover.isUserInteractionEnabled = false
-        insertSubview(cover, aboveSubview: webView)
-        shrinkCover = cover
-
-        let uncover = { [weak self, weak cover] in
-            guard let self, let cover, cover === shrinkCover else { return }
-            cover.removeFromSuperview()
-            shrinkCover = nil
-        }
-        // Two animation frames of the page, then one of the screen, so its new size is on screen.
-        webView.callAsyncJavaScript(
-            "await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))",
-            in: nil,
-            in: .page
-        ) { _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { uncover() }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { uncover() }
     }
 
     func reveal() {

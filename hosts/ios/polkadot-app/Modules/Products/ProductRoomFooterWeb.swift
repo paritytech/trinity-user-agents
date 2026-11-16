@@ -64,7 +64,6 @@ enum ProductRoomFooterWebPage {
 enum ProductFooterMessage: Equatable {
     case action(actionId: String, payload: String?)
     case haptic(style: String)
-    case overlay(isOn: Bool)
     case ready(height: Double?)
 
     static let handlerName = "productFooter"
@@ -81,9 +80,6 @@ enum ProductFooterMessage: Equatable {
             self = action
         case "haptic":
             self = .haptic(style: fields["style"] as? String ?? "success")
-        case "overlay":
-            guard let isOn = fields["on"] as? Bool else { return nil }
-            self = .overlay(isOn: isOn)
         case "ready":
             self = .ready(height: (fields["height"] as? NSNumber)?.doubleValue)
         default:

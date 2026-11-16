@@ -12,8 +12,8 @@ class ProductRoomFooterWebPageTest {
     @Test
     fun `a relative path lands on the product origin with its query kept`() {
         assertEquals(
-            "https://dim2.dot/slide-footer.html?label=Slide%20to%20register&action=jollity.register&overlay=1",
-            ProductRoomFooterWebPage.url("slide-footer.html?label=Slide%20to%20register&action=jollity.register&overlay=1", PRODUCT),
+            "https://dim2.dot/slide-footer.html?label=Slide%20to%20register&action=jollity.register",
+            ProductRoomFooterWebPage.url("slide-footer.html?label=Slide%20to%20register&action=jollity.register", PRODUCT),
         )
         assertEquals("https://dim2.dot/footers/slide.html#top", ProductRoomFooterWebPage.url("footers/slide.html#top", PRODUCT))
         assertEquals("https://dim2.dot/slide.html", ProductRoomFooterWebPage.url("  slide.html \n", PRODUCT))
@@ -85,8 +85,6 @@ class ProductFooterMessageTest {
                 ProductFooterMessage.Action("jollity.register", null),
                 ProductFooterMessage.Haptic("success"),
                 ProductFooterMessage.Haptic("success"),
-                ProductFooterMessage.Overlay(true),
-                ProductFooterMessage.Overlay(false),
                 ProductFooterMessage.Ready(96.0),
                 ProductFooterMessage.Ready(null),
             ),
@@ -94,8 +92,6 @@ class ProductFooterMessageTest {
                 """{"kind":"action","actionId":"jollity.register"}""",
                 """{"kind":"haptic","style":"success"}""",
                 """{"kind":"haptic"}""",
-                """{"kind":"overlay","on":true}""",
-                """{"kind":"overlay","on":false}""",
                 """{"kind":"ready","height":96}""",
                 """{"kind":"ready"}""",
             ).map(ProductFooterMessage::parse),
@@ -138,8 +134,8 @@ class ProductFooterMessageTest {
             """{"kind":"action","actionId":7}""",
             """{"kind":"action","actionId":"${"a".repeat(257)}"}""",
             """{"kind":"action","actionId":"a","payload":"${"p".repeat(64 * 1024 + 1)}"}""",
-            """{"kind":"overlay"}""",
-            """{"kind":"overlay","on":"true"}""",
+            // The footer never stretches over the chat: an overlay is not a footer message.
+            """{"kind":"overlay","on":true}""",
         )
 
         assertEquals(dropped.map { null }, dropped.map(ProductFooterMessage::parse))

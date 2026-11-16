@@ -137,15 +137,14 @@ struct ProductFooterMessageTests {
         #expect(ProductFooterMessage(body: ["kind": "haptic", "style": "success"] as [String: Any]) ==
             .haptic(style: "success"))
         #expect(ProductFooterMessage(body: ["kind": "haptic"] as [String: Any]) == .haptic(style: "success"))
-        #expect(ProductFooterMessage(body: ["kind": "overlay", "on": true] as [String: Any]) == .overlay(isOn: true))
-        #expect(ProductFooterMessage(body: ["kind": "overlay", "on": false] as [String: Any]) == .overlay(isOn: false))
         #expect(ProductFooterMessage(body: ["kind": "ready", "height": 104] as [String: Any]) == .ready(height: 104))
         #expect(ProductFooterMessage(body: ["kind": "ready"] as [String: Any]) == .ready(height: nil))
     }
 
     @Test func anythingElseIsDropped() {
         #expect(ProductFooterMessage(body: ["kind": "navigate", "url": "https://evil.invalid"] as [String: Any]) == nil)
-        #expect(ProductFooterMessage(body: ["kind": "overlay"] as [String: Any]) == nil)
+        // The footer never stretches over the chat: an overlay is not a footer message.
+        #expect(ProductFooterMessage(body: ["kind": "overlay", "on": true] as [String: Any]) == nil)
         #expect(ProductFooterMessage(body: 42) == nil)
         #expect(ProductFooterMessage(body: "not json") == nil)
         #expect(ProductFooterMessage(body: ["actionId": "go"] as [String: Any]) == nil)
