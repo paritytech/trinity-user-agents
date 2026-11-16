@@ -53,6 +53,50 @@ async fn ws_follow_initializes() {
 	follow_initializes(ChainSource::rpc_node(url)).await;
 }
 
+/// Every chain of the bundled `paseo` network syncs on the light client from
+/// its genesis hash alone, the way a host connects to it: the follow
+/// initializes once the chain is synced, and a later `finalized` event shows
+/// the chain keeps up with the network.
+#[cfg(feature = "networks")]
+#[tokio::test]
+#[ignore = "requires network access to Paseo"]
+async fn paseo_network_follows_finalized_blocks() {
+	let (_, chains) = EmbeddedChainProvider::builder()
+		.add_network("paseo")
+		.expect("the network is bundled");
+	let provider = EmbeddedChainProvider::builder().catalog().build();
+
+	let follows = [chains.relay, chains.assethub, chains.bulletin, chains.people].map(|genesis| {
+		let provider = &provider;
+		async move {
+			let connection =
+				provider.connect(genesis).await.expect("the catalog resolves the chain");
+			let mut responses = connection.responses();
+			connection.send(
+				r#"{"jsonrpc":"2.0","id":1,"method":"chainHead_v1_follow","params":[false]}"#
+					.to_owned(),
+			);
+			let event = tokio::time::timeout(Duration::from_secs(300), async {
+				let mut initialized = false;
+				loop {
+					let frame = responses.next().await.expect("the connection stays alive");
+					let frame: Value = serde_json::from_str(&frame).expect("frames are valid JSON");
+					match frame["params"]["result"]["event"].as_str() {
+						Some("initialized") => initialized = true,
+						Some("finalized") if initialized => return frame,
+						Some("stop") => panic!("the follow of {} stopped", hex::encode(genesis)),
+						_ => {},
+					}
+				}
+			})
+			.await;
+			connection.close();
+			event.unwrap_or_else(|_| panic!("{} finalized no block in time", hex::encode(genesis)))
+		}
+	});
+	futures::future::join_all(follows).await;
+}
+
 /// The Paseo relay chain spec named by `PASEO_CHAIN_SPEC`.
 #[cfg(feature = "smoldot")]
 fn paseo_spec() -> String {

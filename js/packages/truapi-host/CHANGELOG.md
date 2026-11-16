@@ -1,5 +1,101 @@
 # @parity/truapi-host
 
+## 0.31.0
+
+### Major Changes
+
+- a0db061: A product can dock one of its own cards in the footer of a room it created by setting the footer to `Card`
+  with a `ChatCustomMessage`, and replaces or clears it by setting another footer. The host draws the card through the
+  product's renderer with a new `ChatRoomFooter` render context, and a press inside it reaches the product's
+  `rendererActionSubscribe` with that context.
+
+  A TypeScript caller of `setRoomFooter` passes the footer as a tagged value, for example `{ tag: "TextInput" }`. The
+  plain strings `"TextInput"` and `"Empty"` stay accepted and go out as those tagged values, so a published worker keeps
+  working. Decoded footers are always tagged.
+
+  The exported `RenderContext` and `ChatRoomFooter` types are the v0.2 ones, with the `ChatRoomFooter` render context
+  and the `Card` footer, and the v0.1 ones are exported as `V01RenderContext` and `V01ChatRoomFooter`.
+
+  A host serving chat reads `footer` in `setChatRoomFooter` as a tagged value, and native hosts handle the `Card` case
+  of `ChatRoomFooter`.
+
+- 5fd8dfc: A native wallet with its own SSO transport opens one service per peer with `openSsoService`, which replaces
+  `handleSsoRequest` on the host runtime. Each service is bound to the wallet activation that authenticated the peer, so
+  after a lock or wallet switch it answers not-connected instead of using the new wallet. `handleSsoControl` applies a
+  `Cancel` at once, so it reaches the request it withdraws instead of waiting behind it.
+- 7cb581f: The core takes its chain configuration from a Trinity stack descriptor. `ProductRuntimeConfig.stack` replaces
+  `people`, `bulletin`, `assetHub` and `networkSuffix`: `pointer` is the stack's link
+  (`polkadotapp://stack?key=0x…&url=…`), `descriptor` the bytes of the signed copy the host build bundles, and
+  `allowsReservedValues` whether the build may run a stack on Polkadot's genesis hashes or the `dot` TLD. The core
+  verifies the copy against the pointer's key and refuses a pointer without a key, a descriptor without a People or
+  Bulletin chain, and a reserved value the build does not allow. `getChainInfo` answers from the descriptor's `chains`
+  and `network`, so the `supportedChains` host callback and the `HostChainSet` and `HostChainEntry` types are removed.
+  The test host runs a stack built from its parts: `mockRuntimeConfig()` returns a `testStack` over the `MOCK_GENESIS`
+  chains, which only the `wasm/testing` bundle reads, `startTestHost` and `createMockClient` take
+  `Partial<MockRuntimeConfig>` overrides, `fromNetworks` and `liveChain` build it from their chains, and
+  `MockHostConfig.servedChains` replaces `supportedChains` as the genesis hashes `featureSupported` answers from under
+  `onlyServedChains`.
+
+### Minor Changes
+
+- 7679e5f: Adds `ImageSource::Inline`, an image carried in the renderer tree itself, so a product can draw a picture it
+  makes at run time. It is PNG, JPEG or WebP and at most 64 KiB, and in JSON its bytes are a `0x` hex string. A host
+  built before this release cannot draw a tree that uses it.
+- 5ba5669: Adds the back of a Pocket card. `RenderContext` gains `PocketCardBack`, the context a product draws a card's
+  back on and receives presses on it under. A product built before this release cannot decode it, so a product declares
+  `back` only once it is on this release. `expandedCard.setBackShown` lets the widget under an opened card turn it to
+  its back or its front, and a host that cannot turn cards answers `Unsupported`, as every host does in this release.
+- 3430e33: Native hosts load contact avatars with `loadImage` and a `Username` reference. The core caches dotNS profile
+  records for one hour, with an optional forced refresh, and loads avatars through the shared Bulletin image loader. The
+  result carries verified bytes, their format and the CID content key. A missing avatar is `ImageError::Unavailable`.
+  The Rust WASM resolver reads the chain without a record cache.
+- 1b4c8c3: Add `@parity/truapi-host/node`, the pairing host for a Node process such as a CLI.
+  `createNodePairingHostRuntime` takes the same callbacks and options as `createWebWorkerPairingHostRuntime` and returns
+  the same runtime, with the core in a `node:worker_threads` thread and its WASM read from disk.
+  `createHeadlessHostCallbacks` supplies the capabilities a host without a screen does not have, and builds V4
+  transactions unless the host passes its V5 chains as `extrinsicVersion`. The core reads its ring-VRF module from disk
+  when it is loaded from a `file:` URL, so the core loads under Node without `fetch`. The core bundles declare
+  themselves ES modules, so Node loads them without a warning, including Node 22 releases that do not detect module
+  syntax. `./web` reads the dev log level from `localStorage` only when that is usable, which it is not on Node 25
+  without `--localstorage-file`.
+
+### Patch Changes
+
+- 6e0e689: Bind native background tasks to the host's Tokio runtime and schedule browser tasks on the local WASM
+  executor. Rust embedders construct `truapi::Spawner` with a runtime handle on native targets or `Default` on WASM, and
+  submit futures with `spawn`.
+- 0fbc7f0: A paired host sends each wallet operation through `RemoteAccountHolder`, which turns it into an SSO request
+  and keeps the paired copy of the phone's ring-VRF registrations. Paired session changes hold back the host's grant
+  writes: a login, a restored or external session and a sign-out finish revoking the previous session's grants and
+  clearing its stored auth session before the next session is installed, and a deletion that failed is retried first. A
+  login that another activation replaced is not installed, and activating an external session reports an error when the
+  previous session's cleanup fails. A cancelled SSO request is withdrawn from the phone even when the wait for its
+  answer is dropped.
+- 52a7335: A paired signing host keeps serving when its connection to the People chain drops. It retries an
+  acknowledgement, a pairing answer or a disconnect notice for about 15 seconds. If an acknowledgement still fails, it
+  ends the session and answers the request once it reconnects. It retries a response until the People chain takes it,
+  because the request has already run. A response the People chain refuses is published again when the request is
+  delivered again, without running the request a second time. A light client that finds no peer to take a statement
+  counts as an unreachable People chain.
+
+  `truapi-host signing-host exec '/pair <link>'` restarts the responder after a failure and exits only when the paired
+  host disconnects. It waits 1 second before the first restart, doubling up to 30 seconds. A session it cannot serve at
+  all, such as one without an active local session, ends `/pair` with an error instead of restarting.
+
+- Updated dependencies [9646fa5]
+- Updated dependencies [a0db061]
+- Updated dependencies [d504e3b]
+- Updated dependencies [bc8f528]
+- Updated dependencies [1038b44]
+- Updated dependencies [95ee87f]
+- Updated dependencies [939ef4b]
+- Updated dependencies [be0f333]
+- Updated dependencies [7679e5f]
+- Updated dependencies [5ba5669]
+- Updated dependencies [0d63024]
+- Updated dependencies [52a7335]
+  - @parity/truapi@0.31.0
+
 ## 0.30.0
 
 ### Major Changes

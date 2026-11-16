@@ -43,8 +43,7 @@ the host build runs:
 
 The core takes every chain it uses, the network `getChainInfo` reports and the
 signing host's TLD from the descriptor. It refuses a pointer without a key and a
-descriptor without a People or Bulletin chain. Without an Asset Hub no product
-manifest resolves, so a cross-product grant that is not cached is refused.
+descriptor without an Asset Hub, People or Bulletin chain.
 
 The wasm core keeps the descriptor current when the host passes three raw
 callbacks to the runtime constructor, typed as `StackCallbacks`:

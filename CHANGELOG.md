@@ -5,6 +5,57 @@ All notable changes to the TrUAPI protocol are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
+## [0.31.0] - 2026-11-12
+
+### RFCs
+
+- **Accepted:** Personhood identity account
+
+### Added
+
+- bundle the Paseo system parachains as the paseo network (#2058)
+- read and publish public profiles (#1844)
+- move update to settings (#1925)
+- install truapi-host and trinity-stack from GitHub Actions workflows (#2046)
+- resolve a Trinity stack from a signed descriptor (#1963)
+- tuck the Docklet into the right edge and bring it back (#1989)
+- add a ./node entry that runs the pairing host in a worker thread (#1481)
+- show contacts' public profile avatars (#1837)
+- open and close the Balance card, Pocket cards and Collectibles the same way (#1986)
+- open Collectibles inside the Pocket tab as a book (#1979)
+- peek the tucked docklet on auto-hide (#1934)
+- ask for an optional GitHub username on issue reports (#1981)
+- move the screen title and product menu into the status bar (#1854)
+
+### Changed
+
+- take chain config from the Trinity stack (#1964)
+- let a product dock its own card in a chat room footer (#1781)
+- RemoteAccountHolder for the paired host (#1999)
+- one SSO service per paired peer (#1977)
+- the core holds the funding facts and host state both apps share (#1983)
+- replace deprecated UniFFI trait exports with foreign (#2025)
+- resolve public profile metadata (#1838)
+- use a concrete task spawner (#1546)
+- let a renderer image carry its own bytes (#1862)
+- let a Pocket card have a back the user can turn to (#1559)
+- report issues as host events through one sender (#1988)
+- devicehood derivation change (#1974)
+
+### Fixed
+
+- open network status inside the docklet like iOS (#2008)
+- hide navigation bar on Settings root (#2035)
+- make the tab switch instant like the system tab bar (#2037)
+- wait for the tab's navigation transition before a tab switch (#2038)
+- prune dropped preimage and storage change subscriptions (#2028)
+- keep every follow in the budget line the host receives (#1992)
+- reuse a presented product and confirm before replacing it (#1991)
+- share overlapping dotNS reads so a burst holds one follow (#1993)
+- clear the dotNS reservation queue before register-name claims (#1691)
+- group host events by their name (#1985)
+- keep a paired signing host serving when the People chain drops (#1821)
+
 ## [0.30.0] - 2026-11-09
 
 ### Added
@@ -32,6 +83,7 @@ generated from [Conventional Commits](https://www.conventionalcommits.org/).
 
 ### Changed
 
+- @parity/truapi 0.30.0, @parity/truapi-host 0.30.0, @parity/truapi-provider 0.4.0, @parity/trinity-stack 0.2.1 (#1978)
 - one WalletAccountHolder owns the signing host's wallet (#1952)
 - send game reminder events through the host capture (#1975)
 - run every network from its stack descriptor (#1944)

@@ -77,7 +77,7 @@ impl SsoAccountHolderService {
 
 	/// Require the activation that authenticated this peer.
 	pub fn require_current_session(&self) -> Result<(), AuthorityError> {
-		self.wallet.require_current_session(&self.session)
+		self.wallet.require_current_session(&self.session).map(drop)
 	}
 
 	/// Apply a withdrawal without waiting behind the request it cancels.
@@ -171,7 +171,7 @@ impl SsoAccountHolderService {
 		};
 		self.serve_sign_raw(
 			cx,
-			SignRawAuthorityRequest::LegacyAccount {
+			SignRawAuthorityRequest::IdentityAccount {
 				account: request.account,
 				request: public_request,
 			},
@@ -448,6 +448,9 @@ impl SsoAccountHolderService {
 	) -> ProductSubtreeResponse {
 		self.wallet
 			.product_subtree_public_key(cx.account_invocation(None), &request.product_id)
+			.await
+			.map_err(|err| err.to_string())?
+			.resolve()
 			.await
 			.map_err(|err| err.to_string())
 	}

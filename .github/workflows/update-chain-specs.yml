@@ -44,11 +44,9 @@ jobs:
       - name: Install truapi-host
         id: install
         if: ${{ !cancelled() }}
-        run: |
-          bash scripts/truapi-host-installer.sh
-          echo "TRUAPI_HOST=$TRUAPI_HOST_BIN_DIR/truapi-host" >> "$GITHUB_ENV"
-        env:
-          TRUAPI_HOST_BIN_DIR: ${{ runner.temp }}/bin
+        uses: ./.github/actions/install-truapi-host
+        with:
+          version: latest
 
       - name: Refresh stack descriptors
         id: stacks
