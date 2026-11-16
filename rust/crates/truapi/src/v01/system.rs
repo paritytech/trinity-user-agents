@@ -20,6 +20,14 @@ pub enum HostFeatureSupportedRequest {
 		/// Chain genesis hash.
 		genesis_hash: Vec<u8>,
 	},
+	/// Ask whether the host draws materials of one format version, requiring
+	/// these features.
+	Materials {
+		/// Format version, as on the `// @material` line.
+		format_version: u32,
+		/// Feature names, as on the `// @requires` line.
+		features: Vec<String>,
+	},
 }
 
 /// Error from [`crate::api::System::navigate_to`].

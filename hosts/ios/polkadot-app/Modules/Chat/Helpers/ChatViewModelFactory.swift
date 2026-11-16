@@ -294,7 +294,8 @@ private extension ChatViewModelFactory {
         let latestEdit = listModel.getLatestEdit(for: message.messageId)
         let isEdited = listModel.isEdited(message.messageId)
 
-        let deliveryDate: Date? = (layoutContext.showTimestamp || isEdited)
+        let hidesTime = listModel.outOfDayMessageIds.contains(message.messageId)
+        let deliveryDate: Date? = (layoutContext.showTimestamp || isEdited) && !hidesTime
             ? Date.fromChatTimestamp(message.timestamp)
             : nil
 

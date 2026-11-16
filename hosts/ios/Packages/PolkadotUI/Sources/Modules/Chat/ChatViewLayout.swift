@@ -96,12 +96,6 @@ public final class ChatViewLayout: DiffableCollectionViewProviderView<String, St
         setupScrollEdgeEffect()
     }
 
-    override public func layoutSubviews() {
-        super.layoutSubviews()
-        // A docked product card is measured before it has a width and redraws once its node arrives.
-        chatInputDidChange()
-    }
-
     private func setupScrollEdgeEffect() {
         // iOS 26: the system fades chat content scrolling beneath the floating input bar
         // (same soft scroll edge effect as the Liquid Glass tab bar). The bar's glass
@@ -206,14 +200,12 @@ public extension ChatViewLayout {
                 inputHandler: self,
                 keyboardGuide: keyboardLayoutGuide
             )
-
-            currentInputViewHeight = chatInputHostView.contentHeight
         } else {
             hideInput()
             chatInputHostView.clear()
-            currentInputViewHeight = 0
         }
         layoutIfNeeded()
+        currentInputViewHeight = chatInputHostView.contentHeight
         updateContentInsets(bottomInset: currentKeyboardHeight)
 
         scrollDownButton.unreadCount = viewModel.scrollDownConfiguration.unreadCount
