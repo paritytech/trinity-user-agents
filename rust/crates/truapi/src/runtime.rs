@@ -446,9 +446,14 @@ impl ProductConnection {
 	}
 
 	fn permissions_service(&self) -> PermissionsService<'_, dyn Platform, dyn Platform> {
-		PermissionsService::new(self.platform.as_ref(), self.platform.as_ref(), &self.product)
-			.with_status_host(self.permission_status.as_deref())
-			.with_temporary_permissions(self.temporary_permissions.clone())
+		PermissionsService::new(
+			self.platform.as_ref(),
+			self.platform.as_ref(),
+			&self.product,
+			self.services.stack(),
+		)
+		.with_status_host(self.permission_status.as_deref())
+		.with_temporary_permissions(self.temporary_permissions.clone())
 	}
 
 	/// Trusted executable kind attached to this product connection.
