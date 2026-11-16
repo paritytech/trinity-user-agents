@@ -4,6 +4,7 @@ import TrUAPIHost
 final class FundingAmountInteractor: FundingEntryInteractor, FundingAmountInteractorInputProtocol {
     private let environment: FundingFlowEnvironment
     private let balance = FundingFollowing()
+    private let entries = FundingFollowing()
 
     init(service: FundingServiceProtocol, entryId: String, environment: FundingFlowEnvironment) {
         self.environment = environment
@@ -17,6 +18,16 @@ final class FundingAmountInteractor: FundingEntryInteractor, FundingAmountIntera
     func followSpendable(_ onChange: @escaping @MainActor (Decimal) -> Void) {
         balance.task = Task { [environment] in
             await environment.followSpendable(onChange)
+        }
+    }
+
+    func followEntries(_ onChange: @escaping @MainActor ([FundingEntry]) -> Void) {
+        entries.task = Task { [service] in
+            do {
+                for try await entries in service.subscribeEntries() {
+                    onChange(entries)
+                }
+            } catch {}
         }
     }
 }

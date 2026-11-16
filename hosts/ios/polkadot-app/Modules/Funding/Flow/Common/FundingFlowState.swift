@@ -43,6 +43,7 @@ struct FundingFlowState {
     var startError: String?
     var isCancelling = false
     var isAnsweringOffer = false
+    var historyClock: FundingHistoryClock = .hidden
 }
 
 // MARK: - Draft

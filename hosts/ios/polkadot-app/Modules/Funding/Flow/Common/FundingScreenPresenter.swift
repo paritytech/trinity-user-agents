@@ -34,6 +34,7 @@ class FundingScreenPresenter: FundingEntryInteractorOutputProtocol {
         state.startError = activity.startError
         state.isCancelling = activity.isCancelling
         state.isAnsweringOffer = activity.isAnsweringOffer
+        state.historyClock = activity.historyClock
         return state
     }
 
@@ -79,4 +80,5 @@ struct FundingScreenActivity: Equatable {
     var startError: String?
     var isCancelling = false
     var isAnsweringOffer = false
+    var historyClock: FundingHistoryClock = .hidden
 }
