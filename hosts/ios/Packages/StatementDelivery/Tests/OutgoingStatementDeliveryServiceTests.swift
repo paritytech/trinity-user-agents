@@ -69,6 +69,42 @@ struct OutgoingStatementDeliveryServiceTests {
         #expect(resolver.calls.isEmpty)
         #expect(service.publishes.isEmpty)
     }
+
+    @Test func retiredStatementCannotBeDelivered() async {
+        let delivery = makeDelivery()
+        await delivery.retire("A")
+
+        await #expect(throws: OutgoingStatementRetiredError.self) {
+            try await delivery.deliverOnce(input, signer: StubSigner(keyId: "x"), period: 10)
+        }
+        #expect(service.publishes.isEmpty)
+    }
+
+    @Test func retireWaitsForRunningPublish() async throws {
+        service.holdPublishes()
+        let delivery = makeDelivery()
+        let signer = StubSigner(keyId: "x")
+        let running = Task { try await delivery.deliverOnce(input, signer: signer, period: 10) }
+        await service.waitUntilPublishStarted()
+
+        let retiring = Task { await delivery.retire("A") }
+        service.release()
+        await retiring.value
+
+        #expect(store.published.map(\.id) == ["A"])
+        try await running.value
+    }
+
+    @Test func retiredFirstDeliveryStopsWithoutFailure() async {
+        store.awaitFirstDelivery(of: "A")
+        let delivery = makeDelivery()
+        await delivery.retire("A")
+
+        await delivery.deliverUntilPublished(input)
+
+        #expect(store.failed.isEmpty)
+        #expect(service.publishes.isEmpty)
+    }
 }
 
 private extension OutgoingStatementDeliveryServiceTests {
