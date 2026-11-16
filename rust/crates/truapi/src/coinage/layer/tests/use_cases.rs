@@ -7,7 +7,7 @@ use crate::{
 		planning::Call,
 		registration::RecordFacts,
 		start::RecordParams,
-		testing::funding::funding,
+		testing::{funding::funding, set_status},
 	},
 	durable::DurableTxId,
 };
@@ -118,4 +118,22 @@ async fn a_balance_is_reported_again_when_a_registration_takes_a_coin_and_not_ot
 	layer.create_purse("unrelated".into(), Vec::new()).await.unwrap();
 	layer.export(op(1), PurseId::MAIN, 8, Initiator::User, false).await.unwrap();
 	assert_eq!(balances.next().await.unwrap().spendable, 0, "the next balance reported is the changed one");
+}
+
+/// A capability can hold a key a product handed over; it is held while the
+/// top-up may still build, and no longer.
+#[tokio::test]
+async fn the_funding_of_a_top_up_is_kept_until_its_verdict_and_dropped_then() {
+	let (layer, running, _) = started_layer(crate::store::open_memory_core_db()).await;
+	layer.top_up(op(1), PurseId::MAIN, 8, funding(1)).await.unwrap();
+	let held = || running.state().unwrap().funding.contains_key(&op(1).key);
+	let loads = ids(&records(&layer, &op(1).key).await);
+
+	set_status(&layer.0.store, loads[0], "PENDING_SUCCESS", None);
+	layer.run_due(NOW).await.unwrap();
+	assert!(held(), "a load only included in a block may still be retracted and rebuilt");
+
+	set_status(&layer.0.store, loads[0], "FINALIZED_SUCCESS", None);
+	layer.run_due(NOW).await.unwrap();
+	assert!(!held());
 }

@@ -670,8 +670,19 @@ impl Layer {
 			let key = cancelled.key.clone();
 			self.0.store.write(move |tx| operation::record_end(tx, &key, OperationEnd::Cancelled)).await?;
 		}
+		self.drop_ended_funding(&view);
 		self.changed();
 		Ok(due)
+	}
+
+	/// Drops the funding capability of every top-up that has ended, so that
+	/// a key a product handed over is held no longer than its top-up needs
+	/// it (invariant 6).
+	fn drop_ended_funding(&self, view: &Snapshot) {
+		let (now, params) = (self.now(), self.params());
+		self.0.running.update(|state| {
+			state.funding.retain(|key, _| !status(view, key, now, &params).is_some_and(|item| item.status.is_terminal()));
+		});
 	}
 
 	/// Starts a reconstruction of `purses` (F4); its scan runs in the
