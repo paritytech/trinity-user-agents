@@ -13,7 +13,7 @@
 //! CID or a node without `bitswap_v1_get`, ends the subscription with an error after the miss.
 //! Every value is checked against the key before it is emitted.
 
-use core::time::Duration;
+use core::{ops::ControlFlow, time::Duration};
 use std::sync::{Arc, Weak};
 
 use futures::{
@@ -28,7 +28,7 @@ use crate::{
 	host_internal::bulletin::{BitswapError, BulletinCid, bitswap_get},
 	platform::PreimageHost,
 	runtime::RuntimeServices,
-	time::{RealTimer, Timer},
+	time::{RealTimer, Timer, retry_on},
 };
 
 /// How long a miss waits before asking the node again: about one Bulletin block.
@@ -107,17 +107,21 @@ impl<S: BlobSource + 'static> BulletinLookup<S> {
 	/// Asks again every poll interval until the source holds the blob, or fails once it never
 	/// can.
 	async fn until_held(self, cid: BulletinCid) -> Result<Vec<u8>, api::GenericError> {
-		loop {
-			self.timer.sleep(self.poll_interval).await;
+		let attempt = || async {
 			match self.read(&cid).await {
-				Ok(Some(value)) => return Ok(value),
-				Ok(None) => {},
+				Ok(Some(value)) => ControlFlow::Break(Ok(value)),
+				Ok(None) => ControlFlow::Continue(()),
 				Err(SourceError::Transient(reason)) => {
-					debug!(%cid, %reason, "preimage lookup failed, still trying")
+					debug!(%cid, %reason, "preimage lookup failed, still trying");
+					ControlFlow::Continue(())
 				},
-				Err(SourceError::Permanent(reason)) => return Err(api::GenericError { reason }),
+				Err(SourceError::Permanent(reason)) => {
+					ControlFlow::Break(Err(api::GenericError { reason }))
+				},
 			}
-		}
+		};
+		self.timer.sleep(self.poll_interval).await;
+		retry_on(self.timer.as_ref(), attempt, |()| self.poll_interval).await
 	}
 
 	/// One read: the blob if the source holds it and it hashes to `cid`.
