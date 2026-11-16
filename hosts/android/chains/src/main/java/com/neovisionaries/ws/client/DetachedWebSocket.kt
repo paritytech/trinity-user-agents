@@ -1,15 +1,9 @@
 package com.neovisionaries.ws.client
 
-/**
- * A [WebSocket] whose transport lives outside nv-websocket-client. Subclasses override
- * [connectAsynchronously], [sendText] and [disconnect], and report what their transport does
- * through the `report*` methods, which drive the listeners and [getState] as a real socket would.
- *
- * Declared in nv's package because [WebSocket]'s only constructor is package-private.
- */
+// In nv-websocket-client's package because WebSocket's only constructor is package-private.
 abstract class DetachedWebSocket(factory: WebSocketFactory) :
     WebSocket(factory, false, null, "localhost", "/", null) {
-        protected fun reportConnecting() {
+    protected fun reportConnecting() {
         moveTo(WebSocketState.CONNECTING)
     }
 

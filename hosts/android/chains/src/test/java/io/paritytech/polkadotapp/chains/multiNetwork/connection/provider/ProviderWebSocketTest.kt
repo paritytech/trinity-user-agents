@@ -2,6 +2,8 @@ package io.paritytech.polkadotapp.chains.multiNetwork.connection.provider
 
 import com.google.gson.Gson
 import com.google.gson.JsonObject
+import com.neovisionaries.ws.client.WebSocketAdapter
+import com.neovisionaries.ws.client.WebSocketState
 import io.novasama.substrate_sdk_android.wsrpc.SocketService
 import io.novasama.substrate_sdk_android.wsrpc.executeAsync
 import io.novasama.substrate_sdk_android.wsrpc.networkStateFlow
@@ -19,12 +21,18 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
+import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.seconds
+import com.neovisionaries.ws.client.WebSocket as SdkWebSocket
 
 class ProviderWebSocketTest {
     private val gson = Gson()
@@ -84,6 +92,32 @@ class ProviderWebSocketTest {
         assertEquals(0, server.requestCount)
     }
 
+    // SocketService disconnects a socket that is still dialling whenever it pauses or switches node.
+    // The connection the dial opens afterwards must be released, or it stays open behind a socket
+    // SocketService already counts as closed.
+    @Test
+    fun `a socket disconnected while dialling releases the connection it opens afterwards`() {
+        val released = CountDownLatch(1)
+        server.enqueue(
+            MockResponse.Builder()
+                .headersDelay(SLOW_HANDSHAKE_MILLIS, TimeUnit.MILLISECONDS)
+                .webSocketUpgrade(releaseWatcher(released))
+                .build()
+        )
+        server.start()
+        val events = LinkedBlockingQueue<String>()
+        val socket = ProviderWebSocketFactory(ByteArray(GENESIS_SIZE)) { true }
+            .createSocket(server.url("/").toString().replaceFirst("http", "ws"))
+            .addListener(recorder(events))
+
+        socket.connectAsynchronously()
+        server.takeRequest(TIMEOUT.inWholeSeconds, TimeUnit.SECONDS)
+        socket.disconnect()
+
+        assertTrue(released.await(TIMEOUT.inWholeSeconds, TimeUnit.SECONDS))
+        assertEquals(listOf("CONNECTING", "CLOSED"), events.toList())
+    }
+
     private fun serve(listener: WebSocketListener): String {
         server.enqueue(upgrade(listener))
         server.start()
@@ -92,7 +126,31 @@ class ProviderWebSocketTest {
 
     private fun upgrade(listener: WebSocketListener) = MockResponse.Builder().webSocketUpgrade(listener).build()
 
-    /** Answers each request with its method name; a subscription gets one notification. */
+    private fun recorder(events: LinkedBlockingQueue<String>) = object : WebSocketAdapter() {
+        override fun onStateChanged(websocket: SdkWebSocket, newState: WebSocketState) {
+            events.add(newState.name)
+        }
+
+        override fun onConnected(websocket: SdkWebSocket, headers: Map<String, List<String>>) {
+            events.add("connected")
+        }
+    }
+
+    private fun releaseWatcher(released: CountDownLatch) = object : WebSocketListener() {
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            webSocket.close(code, null)
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            released.countDown()
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            released.countDown()
+        }
+    }
+
+    // Answers each request with its method name; a subscription gets one notification.
     private fun node(dropAfterNotifying: Boolean = false) = object : WebSocketListener() {
         override fun onMessage(webSocket: WebSocket, text: String) {
             val request = gson.fromJson(text, JsonObject::class.java)
@@ -116,6 +174,7 @@ class ProviderWebSocketTest {
         const val SUBSCRIBE = "chain_subscribeNewHeads"
         const val HEAD = "0x01"
         const val GOING_AWAY = 1001
+        const val SLOW_HANDSHAKE_MILLIS = 500L
         val TIMEOUT = 10.seconds
     }
 }

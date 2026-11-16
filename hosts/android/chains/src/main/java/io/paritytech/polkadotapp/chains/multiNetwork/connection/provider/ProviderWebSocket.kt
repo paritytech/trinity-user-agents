@@ -24,10 +24,8 @@ class ProviderWebSocketFactory(
     override fun createSocket(uri: String, timeout: Int): WebSocket = createSocket(uri)
 }
 
-/**
- * The provider never reconnects: a failed dial or a dropped socket ends in `CLOSED`, which the SDK's
- * `SocketService` handles as it does for any node.
- */
+// The provider never reconnects: a failed dial or a dropped socket ends in CLOSED, so SocketService
+// reconnects as it does for any node.
 private class ProviderWebSocket(
     factory: WebSocketFactory,
     private val genesisHash: ByteArray,
