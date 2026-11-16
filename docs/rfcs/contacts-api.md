@@ -28,7 +28,7 @@ not the address book — so this exposes the interaction rather than the list.
 
 Contacts come from the chat lists the Host's chat extensions hold; Hosts keep their own schema
 and no new address book is imposed. A Host **renders the picker itself** and resolves handles on request, so names cross only to the game product. That matters because the only name a Host has for a
-contact is often a globally correlatable People-chain username.
+contact is often a globally correlatable dotNS username.
 
 ```rust
 enum ContactPickOutcome {
