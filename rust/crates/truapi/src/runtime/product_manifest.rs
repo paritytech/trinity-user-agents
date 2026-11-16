@@ -674,7 +674,7 @@ async fn root_manifest(
 	platform: &dyn Platform,
 	target: &ProductId,
 ) -> (Option<String>, ManifestSource) {
-	let read = cached_dotns_json(platform, CoreStorageKey::product_manifest(target), || async {
+	let read = cached_dotns_json(platform, CoreStorageKey::product_manifest(target), CachePolicy::UseCache, || async {
 		let genesis_hash = services.asset_hub_chain_genesis_hash();
 		let (chain, target) = (services.chain.clone(), target.clone());
 		services
@@ -703,16 +703,19 @@ async fn root_manifest(
 /// Why a shared dotNS read gave no answer: its task ended first.
 const READ_ENDED_UNANSWERED: &str = "the dotNS read ended without answering";
 
-/// `product_id`'s Worker manifest, cached and shared as [`root_manifest`] is.
-/// `Ok(None)` when it publishes none or what it publishes cannot be used, which
-/// the RFC treats alike; `Err` when the chain could not be read, which says
-/// nothing about the product.
-pub async fn worker_manifest(
+/// `product_id`'s Worker manifest, shared as [`root_manifest`] is, and where it
+/// was read: from the cache when
+/// `policy` allows and the entry is fresh, otherwise from dotNS, which then
+/// replaces the cached entry. `None` when it publishes none or what it
+/// publishes cannot be used, which the RFC treats alike; `Err` when the chain
+/// could not be read, which says nothing about the product.
+pub async fn read_worker_manifest(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
 	product_id: &ProductId,
-) -> Result<Option<WorkerManifest>, String> {
-	let (json, _) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), || async {
+	policy: CachePolicy,
+) -> Result<(Option<WorkerManifest>, DotnsRead), String> {
+	let (json, read) = cached_dotns_json(platform, worker_manifest_cache_key(product_id), policy, || async {
 		let genesis_hash = services.asset_hub_chain_genesis_hash();
 		let (chain, product) = (services.chain.clone(), product_id.clone());
 		services
@@ -729,11 +732,12 @@ pub async fn worker_manifest(
 	.await
 	.inspect_err(|reason| warn!(%product_id, %reason, "worker manifest lookup failed"))?;
 	let Some(json) = json else {
-		return Ok(None);
+		return Ok((None, read));
 	};
-	Ok(WorkerManifest::parse(&json)
+	let manifest = WorkerManifest::parse(&json)
 		.inspect_err(|reason| warn!(%product_id, %reason, "worker manifest is unusable"))
-		.ok())
+		.ok();
+	Ok((manifest, read))
 }
 
 /// Cache key for a product's Worker manifest, keyed by bare label as
@@ -776,7 +780,7 @@ pub async fn publishes_app(
 	product_id: &ProductId,
 	ceiling: Duration,
 ) -> Option<bool> {
-	let read = cached_dotns_json(platform, app_manifest_cache_key(product_id), || async {
+	let read = cached_dotns_json(platform, app_manifest_cache_key(product_id), CachePolicy::UseCache, || async {
 		fetch_app_manifest(&services.chain, services.asset_hub_chain_genesis_hash(), product_id)
 			.await
 			.map_err(|error| error.reason())
@@ -801,6 +805,17 @@ pub enum DotnsRead {
 	Fetched,
 }
 
+/// Whether a dotNS read may answer from its cached entry or must read dotNS.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CachePolicy {
+	/// Answer from a cached entry younger than [`MANIFEST_TTL_SECS`].
+	UseCache,
+	/// Read dotNS whatever is cached, and cache what it answers: for a caller
+	/// that must see a republished record, such as the funding providers a
+	/// launch lists.
+	Refresh,
+}
+
 /// The JSON `fetch` reads from dotNS, from its entry under `key` when that is
 /// younger than [`MANIFEST_TTL_SECS`], and where it was read. Whatever `fetch`
 /// answers, including that there is nothing published, is cached for that
@@ -812,6 +827,7 @@ pub enum DotnsRead {
 async fn cached_dotns_json<F, E>(
 	platform: &dyn Platform,
 	key: CoreStorageKey,
+	policy: CachePolicy,
 	fetch: impl FnOnce() -> F,
 ) -> Result<(Option<String>, DotnsRead), E>
 where
@@ -824,7 +840,8 @@ where
 	// honoured forever. The TTL is documented as the revocation bound, so such
 	// an entry is one a publisher could never withdraw. Treating it as stale
 	// costs one lookup and cannot be worse than that.
-	if let Ok(Some(bytes)) = platform.read_core_storage(key.clone()).await &&
+	if policy == CachePolicy::UseCache &&
+		let Ok(Some(bytes)) = platform.read_core_storage(key.clone()).await &&
 		let Ok(cached) = CachedManifest::decode(&mut bytes.as_slice()) &&
 		cached.fetched_at_secs <= now &&
 		now - cached.fetched_at_secs < MANIFEST_TTL_SECS
