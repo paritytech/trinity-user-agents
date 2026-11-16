@@ -185,9 +185,10 @@ pub enum BuiltInCopy {
 	/// published descriptor could not be fetched; a later fetch may still
 	/// return it.
 	Unreachable,
-	/// The bundled copy, because the published descriptor was refused, a
-	/// rollback, a conflict, changed the TLD or the id, or is not a stack the
-	/// CLI can run on; fetching it again returns the same.
+	/// The copy this host last ran on, or else the bundled copy, because the
+	/// published descriptor was refused, a rollback, a conflict, changed the
+	/// TLD or the id, or is not a stack the CLI can run on; fetching it again
+	/// returns the same.
 	Rejected,
 }
 
@@ -269,8 +270,9 @@ impl std::fmt::Display for StackNotice {
 /// [`BuiltInCopy::Unreachable`]: the published descriptor may still arrive.
 ///
 /// A `published` copy that [`accept`] does not take over `last_run`, such as
-/// one with a lower `sequence`, is a rollback: `last_run` stays in use and
-/// the copy is reported as [`BuiltInCopy::Rejected`].
+/// one with a lower `sequence`, is a rollback. It and a `published` copy that
+/// [`refresh_stack`] refuses leave `last_run` in use, and are reported as
+/// [`BuiltInCopy::Rejected`].
 fn refresh_from_last_run(
 	id: &str,
 	pointer: &Pointer,
@@ -290,15 +292,26 @@ fn refresh_from_last_run(
 			 keeping that one"
 		);
 	}
-	let document = published.filter(|_| !rolled_back).or(last_run);
-	let fetched = document.map_or(Fetched::Unreachable, Fetched::Document);
-	let mut refresh =
-		refresh_stack(id, pointer, bundled, fetched, now_unix_seconds, chain_backend)?;
-	if rolled_back {
-		refresh.copy = BuiltInCopy::Rejected;
-	} else if published.is_none() {
-		refresh.copy = BuiltInCopy::Unreachable;
-	}
+	let refresh_from = |document: Option<&[u8]>| {
+		let fetched = document.map_or(Fetched::Unreachable, Fetched::Document);
+		refresh_stack(id, pointer, bundled, fetched, now_unix_seconds, chain_backend)
+	};
+	let from_published = match published.filter(|_| !rolled_back) {
+		Some(published) => Some(refresh_from(Some(published))?),
+		None => None,
+	};
+	let published_in_use = from_published
+		.as_ref()
+		.is_some_and(|refresh| refresh.copy == BuiltInCopy::Published);
+	let mut refresh = match from_published {
+		Some(refresh) if published_in_use || last_run.is_none() => refresh,
+		_ => refresh_from(last_run)?,
+	};
+	refresh.copy = match published {
+		None => BuiltInCopy::Unreachable,
+		Some(_) if published_in_use => BuiltInCopy::Published,
+		Some(_) => BuiltInCopy::Rejected,
+	};
 	Ok(refresh)
 }
 
@@ -324,15 +337,14 @@ fn refresh_stack(
 		Status::Unreachable => BuiltInCopy::Unreachable,
 		Status::Refused(error) => {
 			tracing::warn!(
-				"the published {id} stack descriptor is refused ({}): {error}; using the bundled \
-				 copy",
+				"the published {id} stack descriptor is refused ({}): {error}; not using it",
 				error.code()
 			);
 			BuiltInCopy::Rejected
 		},
 		status => {
 			tracing::warn!(
-				"the published {id} stack descriptor is a {}; using the bundled copy",
+				"the published {id} stack descriptor is a {}; not using it",
 				status.code()
 			);
 			BuiltInCopy::Rejected
@@ -359,7 +371,7 @@ fn refresh_stack(
 		Ok(stack) => (stack, accepted.stale, copy, notice),
 		Err(reason) => {
 			tracing::warn!(
-				"the published {id} stack descriptor at {} {reason}; using the bundled copy",
+				"the published {id} stack descriptor at {} {reason}; not using it",
 				pointer.url()
 			);
 			ensure!(!bundled_copy.expired, "the {id} stack is past expiresAt; it has shut down");
