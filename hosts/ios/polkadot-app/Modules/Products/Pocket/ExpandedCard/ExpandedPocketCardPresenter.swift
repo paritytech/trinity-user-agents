@@ -68,4 +68,8 @@ extension ExpandedPocketCardPresenter: ExpandedPocketCardInteractorOutputProtoco
     func didRequestFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
         view?.setFaceShown(shown) ?? .notPresented
     }
+
+    func didRequestBackShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
+        view?.setBackShown(shown) ?? .notPresented
+    }
 }

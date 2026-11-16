@@ -121,6 +121,10 @@ private final class RecordingOutput: ExpandedPocketCardInteractorOutputProtocol 
         .applied
     }
 
+    func didRequestBackShown(_: Bool) -> ExpandedCardFaceOutcome {
+        .applied
+    }
+
     private static func resume(
         _ waiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)],
         reaching count: Int

@@ -21,5 +21,6 @@ final class StubExpandedPocketCardView: ExpandedPocketCardViewProtocol {
     func showLoadFailure(_: ErrorContent) {}
     func updateLoadPhase(_: ProductLoadPhase) {}
     func setFaceShown(_: Bool) -> ExpandedCardFaceOutcome { .applied }
+    func setBackShown(_: Bool) -> ExpandedCardFaceOutcome { .applied }
     func applyOpeningFace(shown _: Bool) {}
 }

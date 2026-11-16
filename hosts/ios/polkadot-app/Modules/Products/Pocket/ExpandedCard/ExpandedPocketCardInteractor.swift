@@ -57,6 +57,10 @@ extension ExpandedPocketCardInteractor: ExpandedCardFaceShowing {
     func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
         presenter?.didRequestFaceShown(shown) ?? .notPresented
     }
+
+    func setBackShown(_ shown: Bool) -> ExpandedCardFaceOutcome {
+        presenter?.didRequestBackShown(shown) ?? .notPresented
+    }
 }
 
 extension ExpandedPocketCardInteractor: SPAProductReloading {

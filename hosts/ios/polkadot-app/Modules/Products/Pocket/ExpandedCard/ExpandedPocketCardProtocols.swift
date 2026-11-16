@@ -17,6 +17,7 @@ protocol ExpandedPocketCardViewProtocol: ControllerBackedProtocol {
     func showLoadFailure(_ content: ErrorContent)
     func updateLoadPhase(_ phase: ProductLoadPhase)
     func setFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome
+    func setBackShown(_ shown: Bool) -> ExpandedCardFaceOutcome
     func applyOpeningFace(shown: Bool)
 }
 
@@ -41,6 +42,7 @@ protocol ExpandedPocketCardInteractorOutputProtocol: AnyObject {
     func didUpdateLoadPhase(_ phase: ProductLoadPhase)
     func didFail(error: Error)
     func didRequestFaceShown(_ shown: Bool) -> ExpandedCardFaceOutcome
+    func didRequestBackShown(_ shown: Bool) -> ExpandedCardFaceOutcome
 }
 
 @MainActor

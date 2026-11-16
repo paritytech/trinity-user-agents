@@ -1046,6 +1046,18 @@
         }
       }
     },
+    "pocket.card.turn.over": {
+      "comment": "Accessibility action that turns an opened Pocket card over to its other side.",
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn over"
+          }
+        }
+      }
+    },
     "pocket.deeplink.malformed": {
       "comment": "Shown for a link under the reserved host target that is not a Pocket link.",
       "extractionState": "manual",

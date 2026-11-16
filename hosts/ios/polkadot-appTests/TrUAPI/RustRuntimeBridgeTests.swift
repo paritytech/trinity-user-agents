@@ -593,12 +593,22 @@ struct RustRuntimeBridgeTests {
     }
 
     @MainActor
+    @Test func expandedCardTurnReachesTheCardsFace() async throws {
+        let face = StubCardFace()
+        let bridge: HostBridge = makeBridge(cardFace: face)
+
+        #expect(try await bridge.setExpandedCardBackShown(shown: true) == .noBack)
+        #expect(face.backRequests == [true])
+    }
+
+    @MainActor
     @Test func expandedCardFaceIsNotPresentedOnceTheCardIsGone() async throws {
         var face: StubCardFace? = StubCardFace()
         let bridge: HostBridge = makeBridge(cardFace: face)
         face = nil
 
         #expect(try await bridge.setExpandedCardFaceShown(shown: false) == .notPresented)
+        #expect(try await bridge.setExpandedCardBackShown(shown: true) == .notPresented)
     }
 
     // MARK: attach
