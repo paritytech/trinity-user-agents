@@ -63,8 +63,9 @@ const SILENCE_CHECKS_PER_DEADLINE: u32 = 6;
 /// refuses every request once it owes 1024 frames, and the WebSocket transport
 /// closes the connection once 1024 requests queue unsent. A burst past either
 /// fails every caller on the connection, so a request waits here for a slot
-/// instead. The margin below 1024 leaves room for the unsubscribe and unpin
-/// requests that are sent without one.
+/// instead. The margin below 1024 leaves room for unsubscribes and other
+/// fire-and-forget sends, which take no slot. A request the transport never
+/// answers keeps its slot until the connection closes.
 const MAX_REQUESTS_IN_FLIGHT: usize = 512;
 
 /// JSON-RPC client backed by a host-owned [`JsonRpcConnection`].
