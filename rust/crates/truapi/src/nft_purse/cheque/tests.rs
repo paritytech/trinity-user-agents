@@ -14,6 +14,9 @@ use crate::{
 
 const FROM: PurseId = PurseId(0);
 
+/// The creation time test cheques are created at, in Unix milliseconds.
+const CREATED_AT: u64 = 1_700_000_000_000;
+
 /// Purse calls over a fresh database whose purse 0 holds `count` items.
 fn purses_holding(count: u32) -> (TempDir, NftPurses, Vec<ItemKey>) {
 	let (dir, db) = open_temporary_core_db();
@@ -41,7 +44,7 @@ fn create_test_cheque(
 ) -> Result<NftPurseCheque, HandoffError<SealError>> {
 	let items = keys.iter().copied().collect();
 	let prepared = block_on(purses.prepare_cheque(&creator(product), FROM, to, items))?;
-	block_on(prepared.create())
+	block_on(prepared.create(CREATED_AT))
 }
 
 /// The keys `cheque` opens to with `secret`.
@@ -291,4 +294,82 @@ fn a_cheque_whose_secrets_sign_for_other_items_is_corrupted() {
 	assert!(
 		matches!(opened, Err(CorruptedCheque::KeyMismatch { listed, .. }) if listed == swapped.items[0])
 	);
+}
+
+fn listed_cheques(purses: &NftPurses, product: &str) -> Vec<NftPurseChequeRecord> {
+	block_on(purses.list_cheques(&creator(product))).unwrap()
+}
+
+fn static_destination(cheque_id: [u8; 32]) -> NftPurseChequeDestination {
+	let public = X25519Keypair::generate().unwrap().public_key().0;
+	NftPurseChequeDestination::Static {
+		encryption_key: X25519PublicKey(public),
+		cheque_id: NftPurseChequeId(cheque_id),
+	}
+}
+
+/// A product that lost a cheque delivers it again from the list, so the list
+/// must give back the very bytes it was handed, not a resealed copy.
+#[test]
+fn a_created_cheque_is_listed_as_it_was_returned() {
+	let (_dir, purses, keys) = purses_holding(1);
+	let to = static_destination([9; 32]);
+
+	let cheque = create_test_cheque(&purses, "tickets.dot", &to, &keys).unwrap();
+
+	let expected = NftPurseChequeRecord {
+		cheque,
+		from: NftPurseId(FROM.0),
+		destination: to,
+		created_at: CREATED_AT,
+	};
+	assert_eq!(listed_cheques(&purses, "tickets.dot"), vec![expected]);
+}
+
+/// Cheques are scoped to the product that created them, so one product never
+/// sees another's, even under the same static cheque id.
+#[test]
+fn cheques_are_listed_oldest_first_to_their_creator_only() {
+	let (_dir, purses, keys) = purses_holding(3);
+	let first =
+		create_test_cheque(&purses, "tickets.dot", &static_destination([9; 32]), &keys[..1]);
+	let foreign =
+		create_test_cheque(&purses, "other.dot", &static_destination([9; 32]), &keys[1..2]);
+	let second =
+		create_test_cheque(&purses, "tickets.dot", &static_destination([1; 32]), &keys[2..]);
+
+	let ids = |product: &str| -> Vec<NftPurseChequeId> {
+		listed_cheques(&purses, product)
+			.into_iter()
+			.map(|record| record.cheque.id)
+			.collect()
+	};
+
+	assert_eq!(ids("tickets.dot"), vec![first.unwrap().id, second.unwrap().id]);
+	assert_eq!(ids("other.dot"), vec![foreign.unwrap().id]);
+}
+
+/// A refused cheque handed nothing off and reached nobody, so there is
+/// nothing to recover and it must not be listed.
+#[test]
+fn a_refused_cheque_is_not_listed() {
+	let (_dir, purses, keys) = purses_holding(2);
+	let to = static_destination([9; 32]);
+	let cheque = create_test_cheque(&purses, "tickets.dot", &to, &keys[..1]).unwrap();
+
+	let reused_id =
+		create_test_cheque(&purses, "tickets.dot", &static_destination([9; 32]), &keys[1..]);
+	let low_order = NftPurseChequeDestination::Static {
+		encryption_key: X25519PublicKey([0; 32]),
+		cheque_id: NftPurseChequeId([2; 32]),
+	};
+	let unsealable = create_test_cheque(&purses, "tickets.dot", &low_order, &keys[1..]);
+
+	assert!(matches!(reused_id, Err(HandoffError::TagInUse(_))));
+	assert!(matches!(unsealable, Err(HandoffError::Seal(_))));
+	let listed: Vec<NftPurseCheque> = listed_cheques(&purses, "tickets.dot")
+		.into_iter()
+		.map(|record| record.cheque)
+		.collect();
+	assert_eq!(listed, vec![cheque]);
 }

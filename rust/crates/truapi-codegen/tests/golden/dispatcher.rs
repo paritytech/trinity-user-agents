@@ -1586,6 +1586,25 @@ where
     }
     {
         let host = host.clone();
+        dispatcher.on_request(wire_table::NFT_PURSE_LIST_CHEQUES, move |request_id: String, request: versioned::nft_purse::HostNftPurseListChequesRequest, cancel: truapi::CancellationToken| {
+            let host = host.clone();
+            Box::pin(async move {
+                let target_version = request.version();
+                let cx = CallContext::with_parts(request_id, cancel);
+                let result: Result<versioned::nft_purse::HostNftPurseListChequesResponse, truapi::CallError<versioned::nft_purse::HostNftPurseListChequesError>> =
+                    match host.list_cheques(&cx, request).await {
+                        Ok(response) => Ok(<versioned::nft_purse::HostNftPurseListChequesResponse as truapi::versioned::FromLatest>::from_latest(
+                            truapi::versioned::IntoLatest::into_latest(response),
+                            target_version,
+                        )),
+                        Err(err) => Err(downgrade_call_error(err, target_version)),
+                    };
+                result.encode()
+            })
+        });
+    }
+    {
+        let host = host.clone();
         dispatcher.on_request(wire_table::NFT_PURSE_DEPOSIT, move |request_id: String, request: versioned::nft_purse::HostNftPurseDepositRequest, cancel: truapi::CancellationToken| {
             let host = host.clone();
             Box::pin(async move {
