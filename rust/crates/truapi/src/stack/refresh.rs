@@ -82,7 +82,7 @@ impl StackRefresh {
 	/// ignored.
 	///
 	/// `clock` tells how old a copy is and `timer` waits for the next fetch.
-	pub fn load(
+	pub async fn load(
 		pointer: &str,
 		bundled: &[u8],
 		allows_reserved_values: bool,
@@ -91,7 +91,7 @@ impl StackRefresh {
 		clock: Box<dyn Clock>,
 	) -> Result<Self, StackError> {
 		let pointer = signed_pointer(pointer)?;
-		let stored = records.read_stack_record(&pointer.stack_id()).unwrap_or_else(|error| {
+		let stored = records.read_stack_record(&pointer.stack_id()).await.unwrap_or_else(|error| {
 			tracing::warn!("stored stack descriptor could not be read: {error}");
 			None
 		});

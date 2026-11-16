@@ -59,7 +59,7 @@ struct MemoryRecords {
 
 #[async_trait::async_trait]
 impl StackRecords for Arc<MemoryRecords> {
-	fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError> {
+	async fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError> {
 		Ok(self.records.lock().expect("records mutex poisoned").get(stack_id).cloned())
 	}
 
@@ -151,8 +151,15 @@ fn load(
 ) -> StackRefresh {
 	let (link, bundled) =
 		sign_test_descriptor(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE));
-	StackRefresh::load(&link, &bundled, false, Box::new(records), timer, Box::new(clock))
-		.expect("bundled copy is valid")
+	futures::executor::block_on(StackRefresh::load(
+		&link,
+		&bundled,
+		false,
+		Box::new(records),
+		timer,
+		Box::new(clock),
+	))
+	.expect("bundled copy is valid")
 }
 
 /// A core on the bundled copy whose host answers fetches with `responses`.
