@@ -22,6 +22,7 @@ use std::{
 };
 
 use crate::platform::JsonRpcConnection;
+use async_lock::{Semaphore, SemaphoreGuardArc};
 use futures::{
 	FutureExt, Stream, StreamExt,
 	channel::{mpsc, oneshot},
@@ -56,6 +57,16 @@ const MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION: usize = 256;
 const REQUEST_SILENCE_DEADLINE: Duration = Duration::from_secs(30);
 const SILENCE_CHECKS_PER_DEADLINE: u32 = 6;
 
+/// Most requests one connection may have sent and not yet seen answered.
+///
+/// The transports under a connection bound what they owe: the light client
+/// refuses every request once it owes 1024 frames, and the WebSocket transport
+/// closes the connection once 1024 requests queue unsent. A burst past either
+/// fails every caller on the connection, so a request waits here for a slot
+/// instead. The margin below 1024 leaves room for the unsubscribe and unpin
+/// requests that are sent without one.
+const MAX_REQUESTS_IN_FLIGHT: usize = 512;
+
 /// JSON-RPC client backed by a host-owned [`JsonRpcConnection`].
 pub struct HostRpcClient {
 	inner: Arc<HostRpcClientInner>,
@@ -68,6 +79,8 @@ struct HostRpcClientInner {
 	closed: AtomicBool,
 	stop_response_loop: Mutex<Option<oneshot::Sender<()>>>,
 	pending: Mutex<HashMap<String, PendingRequest>>,
+	/// Slots for requests sent and not yet answered, held by [`PendingRequest`].
+	request_slots: Arc<Semaphore>,
 	subscriptions: Mutex<SubscriptionState>,
 	last_frame_at: Mutex<Instant>,
 	silence_deadline: Duration,
@@ -212,6 +225,9 @@ struct PendingRequest {
 	method: String,
 	tx: oneshot::Sender<Result<Box<RawValue>, RpcError>>,
 	sent_at: Instant,
+	/// Freed when the answer arrives or the connection closes, not when the
+	/// caller stops waiting, because the request is owed until then.
+	_slot: SemaphoreGuardArc,
 }
 
 #[derive(Debug, derive_more::Display, derive_more::Error)]
@@ -247,13 +263,14 @@ impl HostRpcClient {
 	/// silence deadline with nothing arriving, so the requests on a dead socket
 	/// fail and the next caller can open a new one.
 	pub fn new(connection: Arc<dyn JsonRpcConnection>, spawner: Spawner) -> Self {
-		Self::with_silence_deadline(connection, spawner, REQUEST_SILENCE_DEADLINE)
+		Self::with_limits(connection, spawner, REQUEST_SILENCE_DEADLINE, MAX_REQUESTS_IN_FLIGHT)
 	}
 
-	fn with_silence_deadline(
+	fn with_limits(
 		connection: Arc<dyn JsonRpcConnection>,
 		spawner: Spawner,
 		silence_deadline: Duration,
+		max_requests_in_flight: usize,
 	) -> Self {
 		let (stop_response_tx, stop_response_rx) = oneshot::channel();
 		let client = Self {
@@ -264,6 +281,7 @@ impl HostRpcClient {
 				closed: AtomicBool::new(false),
 				stop_response_loop: Mutex::new(Some(stop_response_tx)),
 				pending: Mutex::new(HashMap::new()),
+				request_slots: Arc::new(Semaphore::new(max_requests_in_flight)),
 				subscriptions: Mutex::new(SubscriptionState::default()),
 				last_frame_at: Mutex::new(Instant::now()),
 				silence_deadline,
@@ -394,6 +412,8 @@ impl HostRpcClientInner {
 		method: &str,
 		params: Option<Box<RawValue>>,
 	) -> Result<Box<RawValue>, RpcError> {
+		// A caller that stops waiting here has sent nothing.
+		let slot = self.request_slots.acquire_arc().await;
 		let id = self.next_request_id();
 		let (tx, rx) = oneshot::channel();
 		{
@@ -403,7 +423,12 @@ impl HostRpcClientInner {
 			}
 			pending.insert(
 				id.clone(),
-				PendingRequest { method: method.to_string(), tx, sent_at: Instant::now() },
+				PendingRequest {
+					method: method.to_string(),
+					tx,
+					sent_at: Instant::now(),
+					_slot: slot,
+				},
 			);
 		}
 
