@@ -1,3 +1,5 @@
+use truapi::platform::StackStorage;
+
 use super::*;
 use crate::chain::ChainBackend;
 
@@ -801,35 +803,105 @@ async fn two_stacks_writing_one_file_keep_each_others_entries() {
 	);
 }
 
-/// State a host wrote before keys included a stack id sits in the same file
-/// under the slot alone. The core has to find it there, and once it has moved
-/// it under its stack, the old entry must be gone from the file.
+/// A fork and its source can run at once and write one file at the same
+/// time. Each write reads the file, changes its own entries and writes it
+/// back; one that read before the other wrote would put back what the other
+/// had replaced, and its entries would be lost.
+#[test]
+fn two_stacks_writing_one_file_at_once_lose_nothing() {
+	use truapi::platform::CoreStorage;
+
+	const WRITES: usize = 40;
+	let temporary = tempdir().expect("create storage root");
+	let state_dir = temporary.path().join("state");
+	let paths = || CliStoragePaths::new(state_dir.clone(), state_dir.join("storage"));
+	let slot = |index: usize| CoreStorageKey::AllowanceKeys { session_id: index.to_string() };
+	let key = |network: &crate::network::Stack, index| StackStorageKey {
+		stack: network.identity().id,
+		slot: slot(index),
+	};
+	let networks = [test_network(), fork_network()];
+
+	std::thread::scope(|scope| {
+		for network in &networks {
+			let platform =
+				CliPlatform::new(network, Some(paths()), ApprovalPolicy::AutoAccept, None);
+			scope.spawn(move || {
+				for index in 0..WRITES {
+					futures::executor::block_on(
+						platform.write_core_storage(key(network, index), vec![1]),
+					)
+					.expect("write");
+				}
+			});
+		}
+	});
+
+	let restarted = CliPlatform::new(&networks[0], Some(paths()), ApprovalPolicy::AutoAccept, None);
+	let missing = networks
+		.iter()
+		.flat_map(|network| (0..WRITES).map(move |index| (network, index)))
+		.filter(|&(network, index)| {
+			let read =
+				futures::executor::block_on(restarted.read_core_storage(key(network, index)));
+			read != Ok(Some(vec![1]))
+		})
+		.count();
+	assert_eq!(missing, 0);
+}
+
+/// A session a host stored before keys included a stack id, as hex of the
+/// SCALE-encoded `AuthSession` slot alone.
+const SESSION_STORED_ALONE: &str = r#"{"values":{"00":"cafebabe"}}"#;
+
+/// A fork and its source started at once both loaded the file before either
+/// looked for a value stored with no stack id. The first to look takes those
+/// values; the other must see that in the file rather than in the copy it
+/// loaded, or it signs in with the same session.
 #[tokio::test]
-async fn a_value_stored_with_no_stack_id_is_read_and_then_removed_from_the_file() {
+async fn values_stored_with_no_stack_id_go_to_one_of_two_stacks_started_at_once() {
 	let temporary = tempdir().expect("create storage root");
 	let state_dir = temporary.path().join("state");
 	std::fs::create_dir_all(&state_dir).expect("state dir");
-	let core_path = state_dir.join("core-storage.json");
-	std::fs::write(&core_path, r#"{"values":{"00":"cafebabe"}}"#).expect("seed core storage");
-	let network = test_network();
-	let platform = CliPlatform::new(
-		&network,
-		Some(CliStoragePaths::new(state_dir.clone(), state_dir.join("storage"))),
-		ApprovalPolicy::AutoAccept,
-		None,
+	std::fs::write(state_dir.join("core-storage.json"), SESSION_STORED_ALONE)
+		.expect("seed core storage");
+	let paths = || CliStoragePaths::new(state_dir.clone(), state_dir.join("storage"));
+	let (source, fork) = (test_network(), fork_network());
+	let on_source = CliPlatform::new(&source, Some(paths()), ApprovalPolicy::AutoAccept, None);
+	let on_fork = CliPlatform::new(&fork, Some(paths()), ApprovalPolicy::AutoAccept, None);
+
+	let (source_id, fork_id) = (source.identity().id, fork.identity().id);
+	let sessions = (
+		StackStorage::new(on_source.as_ref(), &source_id)
+			.read(CoreStorageKey::AuthSession)
+			.await,
+		StackStorage::new(on_fork.as_ref(), &fork_id)
+			.read(CoreStorageKey::AuthSession)
+			.await,
 	);
+	assert_eq!(sessions, (Ok(Some(vec![0xca, 0xfe, 0xba, 0xbe])), Ok(None)));
+}
+
+/// Before the first pairing resolves a user, the host keeps its state in the
+/// bootstrap directory, values stored with no stack id included. Those have
+/// to follow the stack into the user's directory, or a user who updated
+/// loses the session and grants they had before.
+#[tokio::test]
+async fn values_stored_with_no_stack_id_follow_the_first_pairing() {
+	let temporary = tempdir().expect("create pairing storage root");
+	let network_dir = temporary.path().join("testnet");
+	let bootstrap_dir = network_dir.join("pairing-host");
+	std::fs::create_dir_all(&bootstrap_dir).expect("bootstrap dir");
+	std::fs::write(bootstrap_dir.join("core-storage.json"), SESSION_STORED_ALONE)
+		.expect("seed core storage");
+	let network = test_network();
+	let platform = pairing_platform(&network, &network_dir);
+
+	platform.switch_pairing_user_storage("alice.dot").expect("select alice");
 
 	let id = network.identity().id;
-	let storage = truapi::platform::StackStorage::new(platform.as_ref(), &id);
-	let read = storage.read(CoreStorageKey::AuthSession).await;
-
-	let stored = load_hex_key_map(&core_path);
-	let moved = parity_scale_codec::Encode::encode(&session_of(&network));
-	assert_eq!(
-		(read, stored),
-		(
-			Ok(Some(vec![0xca, 0xfe, 0xba, 0xbe])),
-			HashMap::from([(moved, vec![0xca, 0xfe, 0xba, 0xbe])])
-		)
-	);
+	let session = StackStorage::new(platform.as_ref(), &id)
+		.read(CoreStorageKey::AuthSession)
+		.await;
+	assert_eq!(session, Ok(Some(vec![0xca, 0xfe, 0xba, 0xbe])));
 }
