@@ -423,7 +423,7 @@ pub fn published_test_descriptor(
 	generation: &str,
 	people: [u8; 32],
 ) -> serde_json::Value {
-	let mut descriptor = test_descriptor("paseo", people, [0xbb; 32], Some([0xcc; 32]));
+	let mut descriptor = test_descriptor("paseo", people, [0xbb; 32], [0xcc; 32]);
 	descriptor["sequence"] = sequence.into();
 	descriptor["generation"] = generation.into();
 	descriptor
