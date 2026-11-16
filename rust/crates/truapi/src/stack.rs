@@ -18,7 +18,7 @@ use truapi::latest::{
 
 use crate::dotns_name::DOTNS_TLDS;
 
-pub use records::StackRecords;
+pub use records::{ReplaceCheck, StackRecords};
 pub use refresh::{StackHost, StackRefresh};
 pub use source::{StackFetchRequest, StackFetchResponse, StackRefreshOutcome, StackStatus};
 

@@ -207,6 +207,31 @@ fn a_refused_copy_does_not_stand_in_the_way_of_the_corrected_one() {
 	);
 }
 
+/// While a host rebuilds its runtime, the old and the new one can both
+/// refresh. The slower one must not store an older copy over a newer one, or
+/// the next start would go back to chains that no longer exist.
+#[test]
+fn a_record_never_replaces_a_newer_one() {
+	let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+	let record_of = |sequence| {
+		let mut source = load(&published_test_descriptor(1, "first", TEST_STACK_PEOPLE), None);
+		serve(&mut source, &published_test_descriptor(sequence, "first", TEST_STACK_PEOPLE), START)
+			.expect("a newer copy is stored")
+	};
+	let record = serve(&mut source, &published_test_descriptor(2, "first", TEST_STACK_PEOPLE), START)
+		.expect("a newer copy is stored");
+	let check = source.replace_check(&record);
+
+	assert_eq!(
+		[
+			check.replaces(&record_of(3)),
+			check.replaces(&record_of(2)),
+			check.replaces(b"not a record")
+		],
+		[false, true, true]
+	);
+}
+
 /// A lower `sequence` under the stack's key is an old copy served again. It
 /// must not take the stack back to chains that no longer exist.
 #[test]

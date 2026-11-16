@@ -11,7 +11,7 @@ use truapi::latest::GenericError;
 
 use super::*;
 use crate::{
-	stack::StackRefreshOutcome,
+	stack::{ReplaceCheck, StackRefreshOutcome},
 	test_support::{
 		TEST_STACK_PEOPLE, TEST_STACK_WIPED_PEOPLE, published_test_descriptor, sign_test_descriptor,
 	},
@@ -67,6 +67,7 @@ impl StackRecords for Arc<MemoryRecords> {
 		&self,
 		stack_id: &str,
 		record: Vec<u8>,
+		check: ReplaceCheck,
 	) -> Result<(), GenericError> {
 		if self.stuck.load(Ordering::SeqCst) {
 			return futures::future::pending().await;
@@ -74,10 +75,10 @@ impl StackRecords for Arc<MemoryRecords> {
 		if self.disk_full.load(Ordering::SeqCst) {
 			return Err("disk full".to_string().into());
 		}
-		self.records
-			.lock()
-			.expect("records mutex poisoned")
-			.insert(stack_id.to_string(), record);
+		let mut records = self.records.lock().expect("records mutex poisoned");
+		if records.get(stack_id).is_none_or(|existing| check.replaces(existing)) {
+			records.insert(stack_id.to_string(), record);
+		}
 		Ok(())
 	}
 }
@@ -243,7 +244,10 @@ fn a_copy_that_could_not_be_stored_asks_for_no_restart() {
 			(while_full.last_refresh, while_full.restart_required),
 			(once_stored.last_refresh, once_stored.restart_required),
 		],
-		[(Some(StackRefreshOutcome::Current), false), (Some(StackRefreshOutcome::Current), true)]
+		[
+			(Some(StackRefreshOutcome::NotStored { reason: "disk full".to_string() }), false),
+			(Some(StackRefreshOutcome::Current), true),
+		]
 	);
 }
 
@@ -264,7 +268,7 @@ fn a_store_that_never_finishes_does_not_hold_the_loop() {
 
 	assert_eq!(
 		(after_fetch.last_refresh, after_fetch.restart_required),
-		(Some(StackRefreshOutcome::Current), false)
+		(Some(StackRefreshOutcome::NotStored { reason: "not stored within 30s".to_string() }), false)
 	);
 }
 
