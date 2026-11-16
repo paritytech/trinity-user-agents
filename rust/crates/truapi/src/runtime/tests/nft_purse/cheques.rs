@@ -368,18 +368,13 @@ fn revoking_another_products_cheque_answers_cheque_not_found() {
 	assert_eq!(refused, Err(CallError::Domain(not_found)));
 }
 
-fn list_cheques(
+fn list_cheques_as_product(
 	host: &ProductRuntimeHost<RemoteAccountHolder>,
 ) -> Result<Vec<v01::NftPurseChequeRecord>, CallError<HostNftPurseListChequesError>> {
 	let request = HostNftPurseListChequesRequest::V1(v01::HostNftPurseListChequesRequest {});
 	let listed = block_on(host.list_cheques(&CallContext::default(), request))?;
 	let HostNftPurseListChequesResponse::V1(response) = listed;
 	Ok(response.cheques)
-}
-
-fn unix_millis_now() -> u64 {
-	let since_epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap();
-	u64::try_from(since_epoch.as_millis()).unwrap()
 }
 
 /// A product that lost a cheque finds it again, as it was created and still
@@ -389,12 +384,12 @@ fn a_cheque_is_listed_to_its_creator_only_and_stays_listed_after_a_revoke() {
 	let purses = product_purses(Arc::new(StubPlatform::default()));
 	let items = purses.held_items(PurseId(TICKETS), 1);
 	let receive_key = create_receive_key(&purses.host, 1).unwrap();
-	let before = unix_millis_now();
+	let before = crate::current_unix_millis();
 	let cheque = create_cheque(&purses.host, TICKETS, to_receive_key(receive_key), items).unwrap();
-	let after = unix_millis_now();
+	let after = crate::current_unix_millis();
 	revoke(&purses.host, cheque.id).unwrap();
 
-	let listed = list_cheques(&purses.host).unwrap();
+	let listed = list_cheques_as_product(&purses.host).unwrap();
 
 	let created_at = listed.first().map(|record| record.created_at).unwrap_or_default();
 	assert!((before..=after).contains(&created_at), "{created_at} not in {before}..={after}");
@@ -405,5 +400,5 @@ fn a_cheque_is_listed_to_its_creator_only_and_stays_listed_after_a_revoke() {
 		created_at,
 	};
 	assert_eq!(listed, vec![expected]);
-	assert_eq!(list_cheques(&purses.other_product()), Ok(vec![]));
+	assert_eq!(list_cheques_as_product(&purses.other_product()), Ok(vec![]));
 }

@@ -107,7 +107,8 @@ impl NftPurses {
 	}
 
 	/// Every cheque `creator` made on this host, oldest first, each as
-	/// [`PreparedCheque::create`] returned it.
+	/// [`PreparedCheque::create`] returned it. Fails only when the database
+	/// fails or holds a cheque that does not decode.
 	pub async fn list_cheques(
 		&self,
 		creator: &ProductId,

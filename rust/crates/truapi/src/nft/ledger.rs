@@ -343,7 +343,8 @@ impl NftLedger {
 		drop(secrets);
 		self.db
 			.write_unless_refused(move |tx| {
-				let recorded = record_handoff(tx, &request).and_then(|()| Ok(record(tx, &sealed)?));
+				let recorded = record_handoff(tx, &request)
+					.and_then(|()| record(tx, &sealed).map_err(HandoffError::Db));
 				Ok(recorded.map(|()| sealed))
 			})
 			.await?

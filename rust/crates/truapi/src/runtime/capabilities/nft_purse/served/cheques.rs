@@ -1,10 +1,7 @@
 //! Handing NFT items to another user: receive keys on the receiving side, and
 //! cheques on the sending side.
 
-use std::{
-	collections::BTreeSet,
-	time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::BTreeSet;
 
 use truapi::{CallContext, CallError, latest};
 
@@ -60,7 +57,6 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		let not_found = CallError::Domain(latest::HostNftPurseCreateChequeError::PurseNotFound);
 		let owner = purses.owner_of(from).await.map_err(host_failure)?.ok_or(not_found)?;
 		let item_count = u32::try_from(items.len()).map_err(host_failure)?;
-		let created_at = unix_millis_now()?;
 		let drain =
 			Drain { from, owner, item_count, destination: NftPurseDrainDestination::Cheque };
 		let caller = self.connection.product_id();
@@ -70,12 +66,15 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			.map_err(create_cheque_failure)?;
 		let denied = latest::HostNftPurseCreateChequeError::Denied;
 		self.confirm_drain(cx, drain, denied).await?;
-		let cheque = prepared.create(created_at).await.map_err(create_cheque_failure)?;
+		let cheque = prepared
+			.create(crate::current_unix_millis())
+			.await
+			.map_err(create_cheque_failure)?;
 		Ok(latest::HostNftPurseCreateChequeResponse { cheque })
 	}
 
 	/// The cheques the calling product created on this host, oldest first.
-	/// Asks nothing: a product sees only its own cheques.
+	/// The user is not asked, since a product only ever sees its own cheques.
 	pub async fn list_nft_cheques(
 		&self,
 	) -> Result<
@@ -252,13 +251,6 @@ fn import_registration_failure(
 		RegistrationError::UnknownDomain(_) => CallError::Unsupported,
 		other => host_failure(other),
 	}
-}
-
-/// The host's wall clock in Unix milliseconds. A clock before 1970 is the
-/// host's failure.
-fn unix_millis_now<E>() -> Result<u64, CallError<E>> {
-	let since_epoch = SystemTime::now().duration_since(UNIX_EPOCH).map_err(host_failure)?;
-	u64::try_from(since_epoch.as_millis()).map_err(host_failure)
 }
 
 /// The product's refusals as its domain errors, everything else as the

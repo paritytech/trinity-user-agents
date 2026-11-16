@@ -385,8 +385,8 @@ under the cheque id, so they are spent from then on. In the same write, the
 core database keeps the cheque as returned, with its source purse, destination
 and creation time, in `nft_cheque`. A second cheque with the same id from the
 same product answers `OperationExists`, and `listCheques` returns every cheque
-the calling product created, oldest first, so a product that lost one can
-deliver the same bytes again or revoke it.
+the calling product created since the core started keeping them, oldest first,
+so a product that lost one can deliver the same bytes again or revoke it.
 
 `deposit` opens a received cheque and registers one move per item into fresh
 keys of the purse the product names, under the cheque id, and returns;

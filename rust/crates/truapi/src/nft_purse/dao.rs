@@ -2,9 +2,7 @@
 
 use parity_scale_codec::{Decode, DecodeAll, Encode};
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, named_params, types::Type};
-use truapi::latest::{
-	NftPurseCheque, NftPurseChequeDestination, NftPurseChequeRecord, NftPurseId, NftPurseReceiveKey,
-};
+use truapi::latest::{NftPurseChequeRecord, NftPurseId, NftPurseReceiveKey};
 
 use crate::{nft::PurseId, platform::ProductId, store::DbError};
 
@@ -89,8 +87,8 @@ fn cheque_record(row: &Row<'_>) -> rusqlite::Result<NftPurseChequeRecord> {
 	let id: [u8; 32] = row.get(0)?;
 	Ok(NftPurseChequeRecord {
 		from: NftPurseId(row.get(1)?),
-		destination: decode_cheque_column::<NftPurseChequeDestination>(row, 2, &id)?,
-		cheque: decode_cheque_column::<NftPurseCheque>(row, 3, &id)?,
+		destination: decode_cheque_column(row, 2, &id)?,
+		cheque: decode_cheque_column(row, 3, &id)?,
 		created_at: row.get(4)?,
 	})
 }
@@ -104,7 +102,9 @@ fn decode_cheque_column<T: Decode>(
 	let bytes: Vec<u8> = row.get(index)?;
 	T::decode_all(&mut bytes.as_slice()).map_err(|error| {
 		let id = hex::encode(id);
-		let reason = format!("column {index} of stored cheque {id} does not decode: {error}");
+		let expected = core::any::type_name::<T>();
+		let reason =
+			format!("column {index} of stored cheque {id} is not a SCALE {expected}: {error}");
 		rusqlite::Error::FromSqlConversionFailure(index, Type::Blob, reason.into())
 	})
 }

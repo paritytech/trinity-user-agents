@@ -1,5 +1,6 @@
 ---
 "@parity/truapi": minor
+"@parity/truapi-host": minor
 ---
 
 `nftPurse.listCheques` returns every cheque the calling product created on this host, oldest first, exactly as

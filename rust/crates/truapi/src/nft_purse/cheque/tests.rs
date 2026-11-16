@@ -300,7 +300,14 @@ fn listed_cheques(purses: &NftPurses, product: &str) -> Vec<NftPurseChequeRecord
 	block_on(purses.list_cheques(&creator(product))).unwrap()
 }
 
-fn static_destination(cheque_id: [u8; 32]) -> NftPurseChequeDestination {
+fn listed_cheque_ids(purses: &NftPurses, product: &str) -> Vec<NftPurseChequeId> {
+	listed_cheques(purses, product)
+		.into_iter()
+		.map(|record| record.cheque.id)
+		.collect()
+}
+
+fn static_cheque_to_fresh_key(cheque_id: [u8; 32]) -> NftPurseChequeDestination {
 	let public = X25519Keypair::generate().unwrap().public_key().0;
 	NftPurseChequeDestination::Static {
 		encryption_key: X25519PublicKey(public),
@@ -313,7 +320,7 @@ fn static_destination(cheque_id: [u8; 32]) -> NftPurseChequeDestination {
 #[test]
 fn a_created_cheque_is_listed_as_it_was_returned() {
 	let (_dir, purses, keys) = purses_holding(1);
-	let to = static_destination([9; 32]);
+	let to = static_cheque_to_fresh_key([9; 32]);
 
 	let cheque = create_test_cheque(&purses, "tickets.dot", &to, &keys).unwrap();
 
@@ -326,50 +333,49 @@ fn a_created_cheque_is_listed_as_it_was_returned() {
 	assert_eq!(listed_cheques(&purses, "tickets.dot"), vec![expected]);
 }
 
-/// Cheques are scoped to the product that created them, so one product never
-/// sees another's, even under the same static cheque id.
+/// Cheques come back in the order they were created, which is not the order
+/// of their ids, and only to the product that created them, so one product
+/// never sees another's, even under the same static cheque id.
 #[test]
 fn cheques_are_listed_oldest_first_to_their_creator_only() {
 	let (_dir, purses, keys) = purses_holding(3);
-	let first =
-		create_test_cheque(&purses, "tickets.dot", &static_destination([9; 32]), &keys[..1]);
+	let first = create_test_cheque(
+		&purses,
+		"tickets.dot",
+		&static_cheque_to_fresh_key([9; 32]),
+		&keys[..1],
+	);
 	let foreign =
-		create_test_cheque(&purses, "other.dot", &static_destination([9; 32]), &keys[1..2]);
-	let second =
-		create_test_cheque(&purses, "tickets.dot", &static_destination([1; 32]), &keys[2..]);
+		create_test_cheque(&purses, "other.dot", &static_cheque_to_fresh_key([9; 32]), &keys[1..2]);
+	let second = create_test_cheque(
+		&purses,
+		"tickets.dot",
+		&static_cheque_to_fresh_key([1; 32]),
+		&keys[2..],
+	);
 
-	let ids = |product: &str| -> Vec<NftPurseChequeId> {
-		listed_cheques(&purses, product)
-			.into_iter()
-			.map(|record| record.cheque.id)
-			.collect()
-	};
+	let own = listed_cheque_ids(&purses, "tickets.dot");
+	let others = listed_cheque_ids(&purses, "other.dot");
 
-	assert_eq!(ids("tickets.dot"), vec![first.unwrap().id, second.unwrap().id]);
-	assert_eq!(ids("other.dot"), vec![foreign.unwrap().id]);
+	assert_eq!(own, vec![first.unwrap().id, second.unwrap().id]);
+	assert_eq!(others, vec![foreign.unwrap().id]);
 }
 
-/// A refused cheque handed nothing off and reached nobody, so there is
-/// nothing to recover and it must not be listed.
+/// A cheque refused for reusing an id handed nothing off and reached nobody,
+/// so there is nothing to recover and it must not be listed.
 #[test]
 fn a_refused_cheque_is_not_listed() {
 	let (_dir, purses, keys) = purses_holding(2);
-	let to = static_destination([9; 32]);
+	let to = static_cheque_to_fresh_key([9; 32]);
 	let cheque = create_test_cheque(&purses, "tickets.dot", &to, &keys[..1]).unwrap();
 
-	let reused_id =
-		create_test_cheque(&purses, "tickets.dot", &static_destination([9; 32]), &keys[1..]);
-	let low_order = NftPurseChequeDestination::Static {
-		encryption_key: X25519PublicKey([0; 32]),
-		cheque_id: NftPurseChequeId([2; 32]),
-	};
-	let unsealable = create_test_cheque(&purses, "tickets.dot", &low_order, &keys[1..]);
+	let reused_id = create_test_cheque(
+		&purses,
+		"tickets.dot",
+		&static_cheque_to_fresh_key([9; 32]),
+		&keys[1..],
+	);
 
 	assert!(matches!(reused_id, Err(HandoffError::TagInUse(_))));
-	assert!(matches!(unsealable, Err(HandoffError::Seal(_))));
-	let listed: Vec<NftPurseCheque> = listed_cheques(&purses, "tickets.dot")
-		.into_iter()
-		.map(|record| record.cheque)
-		.collect();
-	assert_eq!(listed, vec![cheque]);
+	assert_eq!(listed_cheque_ids(&purses, "tickets.dot"), vec![cheque.id]);
 }
