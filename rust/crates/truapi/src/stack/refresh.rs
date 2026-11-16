@@ -209,19 +209,26 @@ impl Shared {
 		if let Err(reason) = &served {
 			tracing::debug!("stack descriptor fetch failed: {reason}");
 		}
-		let (stack_id, record) = {
+		let (stack_id, write) = {
 			let mut source = self.source();
-			(source.stack_id(), source.fetched(served, self.now()))
+			let write = source.fetched(served, self.now()).map(|record| {
+				let check = source.replace_check(&record);
+				(record, check)
+			});
+			(source.stack_id(), write)
 		};
-		let Some(record) = record else { return };
-		let write = self.records.write_stack_record(&stack_id, record);
+		let Some((record, check)) = write else { return };
+		let write = self.records.write_stack_record(&stack_id, record, check);
 		let stored = match select(write, self.timer.sleep(STORE_TIMEOUT)).await {
 			Either::Left((stored, _)) => stored.map_err(|error| error.reason),
 			Either::Right(_) => Err(format!("not stored within {}s", STORE_TIMEOUT.as_secs())),
 		};
 		match stored {
 			Ok(()) => self.source().record_stored(),
-			Err(reason) => tracing::warn!("stack descriptor could not be stored: {reason}"),
+			Err(reason) => {
+				tracing::warn!("stack descriptor could not be stored: {reason}");
+				self.source().record_not_stored(reason);
+			},
 		}
 	}
 }

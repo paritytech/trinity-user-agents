@@ -198,41 +198,29 @@ does not check genesis hashes against the live chains.
 The core starts from the bundled descriptor or the last one it verified,
 whichever has the higher `sequence`. It never waits on the network to start.
 
-The core fetches the published descriptor once the host installs its
-callbacks, unless the last fetch was under an hour ago. After that it fetches
-once an hour, and whenever the host asks. A sleeping device can stretch that
-hour, so a host calls `refresh_stack` when its app returns to the foreground.
+The core has no HTTP client. A native host installs `NativeStackCallbacks` with
+`set_stack_callbacks` to make the fetch and receive the stack's `StackStatus`,
+and the core keeps the last descriptor it verified in its database. A browser
+host passes the `fetchStackDescriptor` and `stackChanged` raw callbacks, and the
+core keeps the descriptor in core storage under `CoreStorageKey::StackRecord`.
+Without the callbacks the core stays on the descriptor it started from.
+
+The core fetches once the callbacks are installed, unless the last fetch was
+under an hour ago, then once an hour and whenever the host calls
+`refresh_stack`. A sleeping device can stretch that hour, so a host calls it
+when its app returns to the foreground. `StackFetchRequest` says how to make
+the request.
 
 `trinity-stack`'s `StackReader` decides whether to take a fetched descriptor:
 a failed fetch, a refused descriptor or a lower `sequence` keeps the current
 one. The core also refuses a descriptor it could not start from, such as one
 without a People chain.
 
-The core has no HTTP client, so the host fetches and reports what it got:
-
-| Host         | Fetch and status                                                                | Stored copy                                                 |
-| ------------ | ------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| iOS, Android | `NativeStackCallbacks`, installed with `set_stack_callbacks`                    | the core database                                           |
-| Browser      | the `fetchStackDescriptor` and `stackChanged` raw callbacks                     | core storage, under `CoreStorageKey::StackRecord`           |
-
-Without the callbacks the core stays on the descriptor it started from.
-
-The host sends a `GET` without following redirects, stops reading at
-`max_bytes` (1 MiB), and fails the fetch for anything but `200` and `304`. The
-core waits 30 seconds for an answer, then counts the fetch as failed.
-
-`stack_changed` reports a `StackStatus` when the callbacks are installed and on
-every change, and `stack_status` returns the current one. The type documents
-each field.
-
 A newer descriptor that changes a genesis hash, the network, the TLD or the
-`generation` applies from the next start. Once the core has stored it, the
-status has `restart_required` set, and the host builds the runtime again. Any
-other change shows in the status at once.
-
-The status names the `generation` the core runs, which changes when the stack
-restarts its chains. A host keys cached chain data by it, such as a light
-client's database, so data from before a restart of the chains is not reused.
+`generation` applies from the next start. Once the core has stored it,
+`StackStatus` has `restart_required` set, and the host builds the runtime
+again. Any other change applies at once. `StackStatus` documents the rest,
+including the `generation` a host keys cached chain data by.
 
 ### Core database
 

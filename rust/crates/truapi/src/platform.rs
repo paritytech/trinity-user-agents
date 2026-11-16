@@ -34,7 +34,7 @@ pub use crate::{
 	},
 	stack::{
 		Stack, StackChains, StackError, StackFetchRequest, StackFetchResponse, StackHost,
-		StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
+		ReplaceCheck, StackRecords, StackRefresh, StackRefreshOutcome, StackStatus,
 	},
 };
 

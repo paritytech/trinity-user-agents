@@ -11,7 +11,7 @@ use trinity_stack::{
 	Descriptor, FetchRequest, Pointer, Refresh, Served, StackReader, Status, Verified, open,
 };
 
-use super::{Stack, StackError};
+use super::{ReplaceCheck, Stack, StackError};
 
 /// How old a copy gets before the core fetches the descriptor again.
 const REFRESH_MAX_AGE_SECS: u64 = 60 * 60;
@@ -62,6 +62,13 @@ pub enum StackRefreshOutcome {
 	/// The published descriptor was refused. The core keeps the copy it holds.
 	Refused {
 		/// The rule the published descriptor breaks.
+		reason: String,
+	},
+	/// The published descriptor is newer, but the core could not store it.
+	/// The next start would not read it, so the core asks for no restart and
+	/// stores it again after the next fetch.
+	NotStored {
+		/// Why the store failed.
 		reason: String,
 	},
 }
@@ -329,6 +336,17 @@ impl StackSource {
 		if let Some(copy) = self.unstored.take() {
 			self.next_start = Some(copy);
 		}
+	}
+
+	/// Says the record the last [`Self::fetched`] returned could not be
+	/// stored, and why. The host sees it in [`StackStatus::last_refresh`].
+	pub fn record_not_stored(&mut self, reason: String) {
+		self.last_refresh = Some(StackRefreshOutcome::NotStored { reason });
+	}
+
+	/// The check for storing `record`, which [`Self::fetched`] returned.
+	pub fn replace_check(&self, record: &[u8]) -> ReplaceCheck {
+		ReplaceCheck::new(self.pointer.clone(), record)
 	}
 
 	/// Why the core cannot run a served document that verifies under the
