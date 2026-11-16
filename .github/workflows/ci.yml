@@ -518,7 +518,7 @@ jobs:
         uses: ./.github/actions/setup-swiftlint
 
       # Exit 2 means an error severity violation, which the comparison
-      # reports like any other. A skipped SourceKit rule would make this job
+      # always reports as new. A skipped SourceKit rule would make this job
       # disagree with the app build, so it fails instead.
       - name: Lint against the warning baseline
         working-directory: hosts/ios

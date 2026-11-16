@@ -9,7 +9,10 @@
 # build's warning ratchet keys them, on path and message with digit runs
 # collapsed, so a line shift or a new count in the message ("currently
 # contains 508") does not read as a new violation. Multiplicity is kept, so a
-# second instance of a listed violation in the same file still counts as new.
+# second instance of a listed violation in the same file still counts as new,
+# while repeats on one line count once, as the app build counts them. The
+# baseline holds only warnings, so an error's message matching a listed
+# warning still counts as new.
 #
 # Accepting a violation, or moving a file that has one, means updating
 # warnings.json, the same as for the app build.
@@ -52,14 +55,17 @@ result="$(jq -n \
   | ($report[0] | map({
       path: (.file | ltrimstr($root)),
       line: .line,
-      message: "\(.type) Violation: \(.reason) (\(.rule_id))"
-    })) as $found
+      message: "\(.type) Violation: \(.reason) (\(.rule_id))",
+      error: (.severity == "Error")
+    }) | unique_by([.path, .line, .message])) as $found
   | ($listed | map(key) | group_by(.) | map({key: .[0], value: length}) | from_entries) as $counts
   | {
       listed: ($listed | length),
       found: ($found | length),
-      added: ($found | group_by(key) | map(sort_by(.line) | .[($counts[.[0] | key] // 0):])
-              | flatten | sort_by(.path, .line))
+      added: (($found | map(select(.error)))
+              + ($found | map(select(.error | not)) | group_by(key)
+                 | map(sort_by(.line) | .[($counts[.[0] | key] // 0):]) | flatten)
+              | sort_by(.path, .line))
     }')"
 
 jq -r '"listed=\(.listed) found=\(.found) added=\(.added | length)"' <<<"$result"
