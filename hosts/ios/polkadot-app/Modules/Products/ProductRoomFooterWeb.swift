@@ -64,11 +64,14 @@ enum ProductRoomFooterWebPage {
 enum ProductFooterMessage: Equatable {
     case action(actionId: String, payload: String?)
     case haptic(style: String)
+    /// Show the product's page at `path`, a path on its own origin like the footer's, over the whole window.
+    case sendOverlay(path: String)
     case ready(height: Double?)
 
     static let handlerName = "productFooter"
     static let actionIdMaxBytes = 256
     static let payloadMaxBytes = 64 * 1_024
+    static let overlayPathMaxBytes = 2 * 1_024
 
     /// Reads a message posted as an object or as its JSON text. Anything else is dropped.
     init?(body: Any) {
@@ -80,6 +83,13 @@ enum ProductFooterMessage: Equatable {
             self = action
         case "haptic":
             self = .haptic(style: fields["style"] as? String ?? "success")
+        case "sendOverlay":
+            guard let path = fields["path"] as? String,
+                  !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  path.utf8.count <= Self.overlayPathMaxBytes else {
+                return nil
+            }
+            self = .sendOverlay(path: path)
         case "ready":
             self = .ready(height: (fields["height"] as? NSNumber)?.doubleValue)
         default:

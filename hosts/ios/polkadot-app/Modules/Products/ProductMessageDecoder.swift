@@ -148,6 +148,7 @@ final class ProductMessageDecoder: ChatMessageCustomDecoding {
                     productId: content.productId,
                     height: height,
                     schemeHandler: content.makeSchemeHandler(),
+                    makeOverlaySchemeHandler: { content.makeSchemeHandler() },
                     onAction: { actionId, payload in
                         await handler.dispatchRoomFooterEvent(
                             roomId: roomId,

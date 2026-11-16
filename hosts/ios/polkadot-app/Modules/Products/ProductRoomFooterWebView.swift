@@ -16,7 +16,9 @@ import WebKit
 /// the footer stays hidden, as it does under the composer. The webview stays within the slot.
 ///
 /// The page reports through the `productFooter` message handler: an action goes
-/// to the product as a press in the room footer, a haptic plays, and `ready` reveals it.
+/// to the product as a press in the room footer, a haptic plays, `sendOverlay` shows another of
+/// the product's pages over the whole window for a moment, and `ready` reveals it. The overlay
+/// is a webview of its own; this one never leaves the slot.
 @MainActor
 final class ProductRoomFooterWebView: UIView {
     typealias ActionHandler = @MainActor (_ actionId: String, _ payload: String?) async -> Bool
@@ -28,6 +30,7 @@ final class ProductRoomFooterWebView: UIView {
     let pageURL: URL
     private let productId: ProductId
     private let onAction: ActionHandler
+    private let makeOverlaySchemeHandler: @MainActor () -> any WKURLSchemeHandler
     private let logger: LoggerProtocol
     private let webView: WKWebView
     private let backdrop = UIView()
@@ -46,12 +49,14 @@ final class ProductRoomFooterWebView: UIView {
         productId: ProductId,
         height: UInt32,
         schemeHandler: any WKURLSchemeHandler,
+        makeOverlaySchemeHandler: @escaping @MainActor () -> any WKURLSchemeHandler,
         onAction: @escaping ActionHandler,
         logger: LoggerProtocol
     ) {
         self.pageURL = pageURL
         self.productId = productId
         self.onAction = onAction
+        self.makeOverlaySchemeHandler = makeOverlaySchemeHandler
         self.logger = logger
 
         let configuration = WKWebViewConfiguration()
@@ -136,6 +141,8 @@ final class ProductRoomFooterWebView: UIView {
             }
         case let .haptic(style):
             Self.playHaptic(style)
+        case let .sendOverlay(path):
+            showOverlay(path: path)
         case let .ready(height):
             if let height = ProductRoomFooterWebPage.height(reported: height), height != heightConstraint.constant {
                 heightConstraint.constant = height
@@ -147,6 +154,24 @@ final class ProductRoomFooterWebView: UIView {
 }
 
 private extension ProductRoomFooterWebView {
+    /// Shows the product's page at `path` over the window, one at a time. It outlives this
+    /// footer: a footer the product replaces mid-effect does not cut it short, and it always
+    /// ends with its page or at its limit.
+    func showOverlay(path: String) {
+        guard let window else { return }
+        guard let url = ProductRoomFooterWebPage.url(path: path, productId: productId) else {
+            logger.warning("[truapi.product] web footer refused an overlay off the product origin: \(path)")
+            return
+        }
+        ProductOverlayWebView.show(
+            over: window,
+            pageURL: url,
+            productId: productId,
+            schemeHandler: makeOverlaySchemeHandler(),
+            logger: logger
+        )
+    }
+
     static let noSelectionScript = """
     (function () {
       var style = document.createElement('style');

@@ -79,12 +79,13 @@ class ProductRoomFooterWebPageTest {
 
 class ProductFooterMessageTest {
     @Test
-    fun `the four kinds are read`() {
+    fun `the five kinds are read`() {
         assertEquals(
             listOf(
                 ProductFooterMessage.Action("jollity.register", null),
                 ProductFooterMessage.Haptic("success"),
                 ProductFooterMessage.Haptic("success"),
+                ProductFooterMessage.SendOverlay("confetti-overlay.html?seed=7"),
                 ProductFooterMessage.Ready(96.0),
                 ProductFooterMessage.Ready(null),
             ),
@@ -92,6 +93,7 @@ class ProductFooterMessageTest {
                 """{"kind":"action","actionId":"jollity.register"}""",
                 """{"kind":"haptic","style":"success"}""",
                 """{"kind":"haptic"}""",
+                """{"kind":"sendOverlay","path":"confetti-overlay.html?seed=7"}""",
                 """{"kind":"ready","height":96}""",
                 """{"kind":"ready"}""",
             ).map(ProductFooterMessage::parse),
@@ -136,6 +138,11 @@ class ProductFooterMessageTest {
             """{"kind":"action","actionId":"a","payload":"${"p".repeat(64 * 1024 + 1)}"}""",
             // The footer never stretches over the chat: an overlay is not a footer message.
             """{"kind":"overlay","on":true}""",
+            """{"kind":"sendOverlay"}""",
+            """{"kind":"sendOverlay","path":""}""",
+            """{"kind":"sendOverlay","path":"  "}""",
+            """{"kind":"sendOverlay","path":7}""",
+            """{"kind":"sendOverlay","path":"${"p".repeat(2 * 1024 + 1)}"}""",
         )
 
         assertEquals(dropped.map { null }, dropped.map(ProductFooterMessage::parse))
@@ -146,11 +153,13 @@ class ProductFooterMessageTest {
     fun `the limits are inclusive`() {
         val id = "a".repeat(ProductFooterMessage.ACTION_ID_MAX_BYTES)
         val payload = "p".repeat(ProductFooterMessage.PAYLOAD_MAX_BYTES)
+        val path = "p".repeat(ProductFooterMessage.OVERLAY_PATH_MAX_BYTES)
 
         assertEquals(
             ProductFooterMessage.Action(id, payload),
             ProductFooterMessage.parse("""{"kind":"action","actionId":"$id","payload":"$payload"}"""),
         )
+        assertEquals(ProductFooterMessage.SendOverlay(path), ProductFooterMessage.parse("""{"kind":"sendOverlay","path":"$path"}"""))
     }
 }
 

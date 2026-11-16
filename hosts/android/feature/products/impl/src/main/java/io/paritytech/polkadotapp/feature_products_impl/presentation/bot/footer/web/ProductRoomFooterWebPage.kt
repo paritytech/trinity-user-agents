@@ -73,12 +73,16 @@ sealed interface ProductFooterMessage {
 
     data class Haptic(val style: String) : ProductFooterMessage
 
+    /** Show the product's page at [path], a path on its own origin like the footer's, over the whole screen. */
+    data class SendOverlay(val path: String) : ProductFooterMessage
+
     data class Ready(val height: Double?) : ProductFooterMessage
 
     companion object {
         const val BRIDGE_NAME = "ProductFooter"
         const val ACTION_ID_MAX_BYTES = 256
         const val PAYLOAD_MAX_BYTES = 64 * 1024
+        const val OVERLAY_PATH_MAX_BYTES = 2 * 1024
 
         private const val DEFAULT_HAPTIC = "success"
 
@@ -88,6 +92,7 @@ sealed interface ProductFooterMessage {
             return when (fields.string("kind")) {
                 "action" -> action(fields)
                 "haptic" -> Haptic(fields.string("style") ?: DEFAULT_HAPTIC)
+                "sendOverlay" -> fields.string("path")?.takeIf { it.isNotBlank() && it.utf8Size() <= OVERLAY_PATH_MAX_BYTES }?.let(::SendOverlay)
                 "ready" -> Ready((fields["height"] as? JsonPrimitive)?.takeIf { !it.isString }?.doubleOrNull)
                 else -> null
             }
