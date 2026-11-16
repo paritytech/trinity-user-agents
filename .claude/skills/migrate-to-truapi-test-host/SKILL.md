@@ -109,10 +109,29 @@ The statement-store controls are served, so they are not in this grep.
 `injectChatAction` is not: the core serves chat only to a product running as a
 worker, and this host always embeds the product as an iframe, so every call is
 refused with `operation denied for this execution`. Treat specs that rely on it
-as blocked. `injectStatement` takes `{topics, data}` the way the old package
-spells it, or the SCALE wire bytes, and answers the `StatementEntry` it
-retained; `getSubmittedStatements` and `getStatements` answer entries too, so a
-suite reading `0x` hex off them reads `entry.data` instead.
+as blocked. `injectStatement` takes `{topics, data, channel, expiry,
+decryptionKey, proof}` the way the old package spells them, or the SCALE wire
+bytes, and answers the `StatementEntry` it retained; `getSubmittedStatements`
+and `getStatements` answer entries too, so a suite reading `0x` hex off them
+reads `entry.data` instead.
+
+Byte fields are `0x` hex, not `Uint8Array`, on the way in and out:
+`page.evaluate` flattens a `Uint8Array` inside an object. The old package's
+`entry.statement.data` becomes `entry.data`, and the same for `topics`,
+`channel`, `decryptionKey` and `proof`; `expiry` stays a `bigint`. A
+`proof: { tag: "Sr25519", value: { signature, signer } }` keeps its shape with
+hex fields.
+
+A suite that relays statements between several hosts, one page per peer, needs
+no patched host bundle: inject each page's `getSubmittedStatements()` into the
+others. An entry's `proof` drops the tag `injectStatement` takes, so leave it
+out; nothing here verifies a proof.
+
+```ts
+for (const { proof, ...statement } of await alice.getSubmittedStatements()) {
+  await bob.injectStatement(statement);
+}
+```
 
 ## 1. Swap the import
 
