@@ -160,8 +160,8 @@ fn a_known_handle_the_call_does_not_declare_is_caught() {
 }
 
 #[test]
-fn the_product_wire_surface_is_the_picker_and_the_blessed_username_read() {
-	// No product reaches contact accounts or the list, and only the blessed
+fn the_product_wire_surface_is_the_picker_and_the_game_username_read() {
+	// No product reaches contact accounts or the list, and only the game
 	// product reaches usernames, which the refusal tests in `runtime/tests.rs`
 	// hold for every other product. This asserts the dispatch table itself, so
 	// any other `Contacts` method fails here rather than shipping.

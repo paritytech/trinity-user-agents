@@ -7,6 +7,7 @@ import io.paritytech.polkadotapp.common.domain.model.toDataByteArray
 import io.paritytech.polkadotapp.common.utils.blake2b256
 import io.paritytech.polkadotapp.feature_chats_api.domain.ContactDirectory
 import io.paritytech.polkadotapp.feature_chats_api.domain.model.Contact
+import io.paritytech.polkadotapp.feature_chats_api.domain.model.hasEstablishedChat
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.onEach
@@ -39,7 +40,7 @@ class AppContactsHostBridge @Inject constructor(
     /** Unblocked contacts' accounts, from the latest snapshot. */
     private var accounts: List<ByteArray>? = null
 
-    /** Usernames of the unblocked contacts, from the latest snapshot. */
+    /** Usernames of the unblocked contacts with an established chat, from the latest snapshot. */
     private var usernames: List<String>? = null
 
     /** Rebuilt when the contacts or the key change; the key changes with the session. */
@@ -101,10 +102,11 @@ class AppContactsHostBridge @Inject constructor(
     }
 
     /**
-     * The usernames of the contacts the picker would offer, as the chain
-     * record labels them. Only before the first snapshot does it fetch,
-     * blocking the caller, and it does not keep what it read, so a list with
-     * no snapshot behind it cannot go stale.
+     * The usernames of the unblocked contacts the user has an established chat
+     * with, as stored with each contact. A contact with a pending chat request
+     * is left out, though the picker still offers it. Only before the first
+     * snapshot does it fetch, blocking the caller, and it does not keep what it
+     * read, so a list with no snapshot behind it cannot go stale.
      */
     override fun contactUsernames(productId: ProductId): HostContactUsernames {
         val snapshot = synchronized(lock) { usernames }
@@ -112,7 +114,8 @@ class AppContactsHostBridge @Inject constructor(
         return HostContactUsernames.Listed(current)
     }
 
-    private fun List<Contact>.usernames(): List<String> = mapNotNull { it.username?.takeIf(String::isNotEmpty) }
+    private fun List<Contact>.usernames(): List<String> =
+        filter { it.hasEstablishedChat() }.mapNotNull { it.username?.takeIf(String::isNotEmpty) }
 
     /**
      * Emits whenever someone leaves the user's contacts, removed or blocked.

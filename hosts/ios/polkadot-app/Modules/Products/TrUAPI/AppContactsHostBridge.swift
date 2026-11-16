@@ -41,9 +41,11 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
     /// ones.
     func update(contacts: [Chat.Contact]) {
         let unblocked = Self.unblocked(contacts)
+        let unblockedAccounts = unblocked.map(\.accountId)
+        let unblockedUsernames = Self.usernames(of: unblocked)
         lock.lock()
-        accounts = unblocked.map(\.accountId)
-        usernames = Self.usernames(of: unblocked)
+        accounts = unblockedAccounts
+        usernames = unblockedUsernames
         index = nil
         lock.unlock()
     }
@@ -81,10 +83,10 @@ final class AppContactsHostBridge: ContactsHostBridge, @unchecked Sendable {
         return .picked(account: picked)
     }
 
-    /// The usernames of the contacts the picker would offer, as the chain
-    /// record labels them. Only before the first snapshot does it fetch,
-    /// blocking the caller, and it does not keep what it read, so a list with
-    /// no snapshot behind it cannot go stale.
+    /// The usernames of the contacts the picker would offer, as stored with
+    /// each contact when it was added. Only before the first snapshot does it
+    /// fetch, blocking the caller, and it does not keep what it read, so a list
+    /// with no snapshot behind it cannot go stale.
     func contactUsernames(productId _: ProductId) throws -> HostContactUsernames {
         let snapshot = lock.withLock { usernames }
         let current = try snapshot ?? Self.usernames(of: fetchUnblockedContactsBlocking())

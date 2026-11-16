@@ -1813,7 +1813,8 @@ export interface ContactsPlatform {
    * check `product` itself: it says who is asking and is not a filter.
    * Answer from the contacts the host already holds, without a prompt.
    * Defaults to `HostContactUsernames::Unsupported`, so a host that lists
-   * nothing gives its products a truthful answer.
+   * nothing gives its products a truthful answer. A JS host passes it with
+   * the other two contacts callbacks, or the whole group counts as absent.
    */
   contactUsernames?(product: ProductContext): Promise<HostContactUsernames>;
 }

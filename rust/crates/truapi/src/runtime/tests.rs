@@ -1192,7 +1192,7 @@ fn contacts_pick_maps_a_platform_failure_to_unknown() {
 }
 
 #[test]
-fn contacts_usernames_returns_the_hosts_list_to_a_blessed_product() {
+fn contacts_usernames_returns_the_hosts_list_to_the_game_product() {
 	// Given
 	let host = contacts_host(
 		"dim2.dot",
@@ -1214,10 +1214,26 @@ fn contacts_usernames_returns_the_hosts_list_to_a_blessed_product() {
 }
 
 #[test]
-fn contacts_usernames_is_unsupported_for_a_product_that_is_not_blessed() {
+fn contacts_usernames_is_unsupported_for_a_product_that_is_not_the_game() {
 	// Given
 	let contacts = StubContactsPlatform::listing(&["alice", "bob"]);
 	let host = contacts_host("voting.dot", stub_platform(), Some(contacts.clone()), true);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(
+		(response, contacts.username_reads.load(Ordering::SeqCst)),
+		(Err(CallError::Unsupported), 0)
+	);
+}
+
+#[test]
+fn contacts_usernames_is_unsupported_for_a_signed_out_product_that_is_not_the_game() {
+	// Given
+	let contacts = StubContactsPlatform::listing(&["alice", "bob"]);
+	let host = contacts_host("voting.dot", stub_platform(), Some(contacts.clone()), false);
 
 	// When
 	let response = usernames(&host);
@@ -1250,6 +1266,18 @@ fn contacts_usernames_is_unsupported_for_the_other_trusted_products() {
 fn contacts_usernames_without_a_platform_is_unsupported() {
 	// Given
 	let host = contacts_host("dim2.dot", stub_platform(), None, true);
+
+	// When
+	let response = usernames(&host);
+
+	// Then
+	assert_eq!(response, Err(CallError::Unsupported));
+}
+
+#[test]
+fn contacts_usernames_signed_out_without_a_platform_is_unsupported() {
+	// Given
+	let host = contacts_host("dim2.dot", stub_platform(), None, false);
 
 	// When
 	let response = usernames(&host);

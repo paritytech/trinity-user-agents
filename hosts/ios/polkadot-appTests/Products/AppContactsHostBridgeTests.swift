@@ -92,6 +92,16 @@ struct AppContactsHostBridgeTests {
         #expect([first, second] == [.listed(usernames: ["alice.07"]), .listed(usernames: ["alice.08"])])
     }
 
+    @Test("Before the first snapshot usernames are read from the contacts store only")
+    func storedUsernamesAreReadWithTheContactFilter() throws {
+        let repositoryFactory = MockChatContactRepositoryFactory()
+        let bridge = makeBridge(repositoryFactory: repositoryFactory)
+
+        _ = try bridge.contactUsernames(productId: ProductId("dim2.dot"))
+
+        #expect(repositoryFactory.filters == [NSPredicate.isContact()])
+    }
+
     private func makeBridge(
         repositoryFactory: ChatContactRepositoryMaking = MockChatContactRepositoryFactory()
     ) -> AppContactsHostBridge {

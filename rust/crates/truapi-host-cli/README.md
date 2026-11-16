@@ -832,8 +832,10 @@ Scripts under `js/scripts/` include:
 
   Contacts are served on every phase, from `TRUAPI_CONTACTS`
   (`alice=0x<32-byte account>;bob=0x…`) or, unset, from a two-name development
-  list so `contacts.pick` has someone to return. An empty spec is an empty list,
-  which is what answers `NoContacts`. `TRUAPI_CONTACT_PICK` names which contact
+  list so `contacts.pick` has someone to return. Each name is also the username
+  `contacts.usernames` serves to the game product, so it is a bare dotNS label
+  such as `alice` or `alice.07`, and the core drops any other name. An empty
+  spec is an empty list, which is what answers `NoContacts`. `TRUAPI_CONTACT_PICK` names which contact
   the picker offers; the approval surface asks about it like any other action,
   so a headless run approves it and an interactive one does not.
 
