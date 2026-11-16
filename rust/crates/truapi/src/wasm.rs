@@ -589,6 +589,11 @@ fn stack_from_js(value: &JsValue) -> Result<Stack, JsValue> {
 		return test_stack_from_js(&test_stack);
 	}
 	let stack = get_required_object(value, "stack", "runtimeConfig.stack")?;
+	refuse_unknown_fields(
+		&stack,
+		"runtimeConfig.stack",
+		&["pointer", "descriptor", "reservedValues"],
+	)?;
 	let pointer = get_required_string_at(&stack, "pointer", "runtimeConfig.stack.pointer")?;
 	let descriptor = Reflect::get(&stack, &JsValue::from_str("descriptor"))?
 		.dyn_into::<Uint8Array>()
@@ -599,27 +604,32 @@ fn stack_from_js(value: &JsValue) -> Result<Stack, JsValue> {
 		.map_err(|error| JsValue::from_str(&format!("runtimeConfig.stack: {error}")))
 }
 
+/// Refuses a field of the config object at `path` outside `fields`. A misspelt
+/// or retired field would otherwise be read as absent, and its value ignored.
+fn refuse_unknown_fields(object: &JsValue, path: &str, fields: &[&str]) -> Result<(), JsValue> {
+	if Array::is_array(object) {
+		return Err(JsValue::from_str(&format!("{path} must be an object")));
+	}
+	let unknown_field = Reflect::own_keys(object)?
+		.iter()
+		.filter_map(|key| key.as_string())
+		.find(|key| !fields.contains(&key.as_str()));
+	match unknown_field {
+		Some(field) => Err(JsValue::from_str(&format!(
+			"{path}.{field} is not a field; {path} takes {}",
+			fields.join(", ")
+		))),
+		None => Ok(()),
+	}
+}
+
 /// A stack config's optional `reservedValues`, at `path`. Each of its fields
-/// is optional. A field it does not have is refused, because a misspelt one
-/// would be read as absent and reserve nothing.
+/// is optional, and one it does not have is refused.
 fn reserved_values_from_js(stack: &JsValue, path: &str) -> Result<ReservedValuesPolicy, JsValue> {
-	const FIELDS: [&str; 3] = ["allowed", "extraGenesisHashes", "extraTlds"];
 	let Some(reserved_values) = get_optional_object(stack, "reservedValues", path)? else {
 		return Ok(ReservedValuesPolicy::default());
 	};
-	if Array::is_array(&reserved_values) {
-		return Err(JsValue::from_str(&format!("{path} must be an object")));
-	}
-	let unknown_field = Reflect::own_keys(&reserved_values)?
-		.iter()
-		.filter_map(|key| key.as_string())
-		.find(|key| !FIELDS.contains(&key.as_str()));
-	if let Some(field) = unknown_field {
-		return Err(JsValue::from_str(&format!(
-			"{path}.{field} is not a field; {path} takes {}",
-			FIELDS.join(", ")
-		)));
-	}
+	refuse_unknown_fields(&reserved_values, path, &["allowed", "extraGenesisHashes", "extraTlds"])?;
 	Ok(ReservedValuesPolicy {
 		allowed: get_optional_bool_at(&reserved_values, "allowed", &format!("{path}.allowed"))?
 			.unwrap_or(false),
@@ -643,6 +653,11 @@ fn reserved_values_from_js(stack: &JsValue, path: &str) -> Result<ReservedValues
 /// optional `reservedValues`.
 #[cfg(feature = "test-host")]
 fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
+	refuse_unknown_fields(
+		stack,
+		"runtimeConfig.testStack",
+		&["network", "tld", "relay", "assetHub", "people", "bulletin", "reservedValues"],
+	)?;
 	let genesis = |role: &str| {
 		let path = format!("runtimeConfig.testStack.{role}");
 		get_optional_object(stack, role, &path)?

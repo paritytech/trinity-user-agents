@@ -153,8 +153,9 @@ suite("real WASM core ↔ createMockHost bridge", () => {
   });
 
   it("holds a stack to the reserved values its build adds", async () => {
-    // A build that reserves previewnet's TLD or one of its genesis hashes
-    // starts previewnet only when it allows the stack reserved values.
+    // A build that reserves previewnet's TLD or one of its genesis hashes does
+    // not start previewnet, and one that allows its stack every reserved value
+    // has none of its own to add.
     const start = await pairingHostStarter();
     const stack = bundledTestStack();
     const envelope = JSON.parse(new TextDecoder().decode(stack.descriptor));
@@ -169,13 +170,21 @@ suite("real WASM core ↔ createMockHost bridge", () => {
     expect(reserving({ extraGenesisHashes: [genesisHash] })).toThrow(
       `runtimeConfig.stack: stack uses the reserved genesis hash ${genesisHash}`,
     );
-    expect(
-      reserving({
-        allowed: true,
-        extraTlds: ["testnet"],
-        extraGenesisHashes: [genesisHash],
-      }),
-    ).not.toThrow();
+    expect(reserving({ allowed: true, extraTlds: ["testnet"] })).toThrow(
+      "runtimeConfig.stack: reserved values that allow the stack every reserved value cannot reserve extra ones",
+    );
+    expect(reserving({ allowed: true })).not.toThrow();
+  });
+
+  it("refuses a stack field it does not have", async () => {
+    // A retired or misspelt field would be read as absent, and a host on an
+    // older shape would meet a refusal that does not name its mistake.
+    const start = await pairingHostStarter();
+    const stack = { ...bundledTestStack(), allowsReservedValues: true };
+
+    expect(() => start(stack)).toThrow(
+      "runtimeConfig.stack.allowsReservedValues is not a field; runtimeConfig.stack takes pointer, descriptor, reservedValues",
+    );
   });
 
   it("refuses reserved values it cannot read in full", async () => {
@@ -201,6 +210,7 @@ suite("real WASM core ↔ createMockHost bridge", () => {
         { extraTlds: "testnet" },
         { extraTlds: ["paseo", null] },
         { extraTlds: [".testnet"] },
+        { extraTlds: ["kusama"] },
         { extraGenesisHashes: ["0x1234"] },
         { extraGenesisHashes: [new Uint8Array(31)] },
       ].map(refusal),
@@ -210,7 +220,8 @@ suite("real WASM core ↔ createMockHost bridge", () => {
       `${path}.allowed must be a boolean`,
       `${path}.extraTlds must be an array`,
       `${path}.extraTlds[1] must be a string`,
-      'runtimeConfig.stack: reserved tld ".testnet" must be one lowercase label of a-z, 0-9 and -, without the leading dot',
+      'runtimeConfig.stack: reserved tld ".testnet" is not one of dot, paseo, testnet',
+      'runtimeConfig.stack: reserved tld "kusama" is not one of dot, paseo, testnet',
       `${path}.extraGenesisHashes[0]: expected 32-byte hex string, got 4 hex chars`,
       `${path}.extraGenesisHashes[0] must be exactly 32 bytes, got 31`,
     ]);

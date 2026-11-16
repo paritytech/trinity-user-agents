@@ -53,5 +53,10 @@ suite("test stack against the real core", () => {
         reservedValues: { extraTlds: ["paseo"] },
       }),
     ).toThrow("runtimeConfig.testStack: stack uses the reserved tld paseo");
+    expect(
+      starting({ ...onDot, allowsReservedValues: true } as TestStack),
+    ).toThrow(
+      "runtimeConfig.testStack.allowsReservedValues is not a field; runtimeConfig.testStack takes network, tld, relay, assetHub, people, bulletin, reservedValues",
+    );
   });
 });
