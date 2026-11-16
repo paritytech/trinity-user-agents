@@ -1,4 +1,5 @@
 import DesignSystem
+import UIKit
 
 /// Whether a product page draws on a dark or a light background, read from the CSS colours the page computes.
 enum PageBackgroundTone: Equatable {
@@ -10,12 +11,31 @@ enum PageBackgroundTone: Equatable {
     /// Each colour is a computed CSS value such as `rgb(5, 5, 5)` or `rgba(0, 0, 0, 0)`, outermost element first,
     /// so a page that paints `body` over a transparent `html` reads as its `body`.
     init?(cssColors: [String]) {
-        guard let color = cssColors.lazy.compactMap({ Self.visibleComponents(of: $0) }).first else {
+        guard let color = Self.visibleColor(in: cssColors) else { return nil }
+
+        self.init(color: color)
+    }
+
+    /// The tone of an opaque colour, from its Rec. 709 luma against the dark threshold.
+    init(color: UIColor) {
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        color.getRed(&red, green: &green, blue: &blue, alpha: nil)
+
+        let luminance = Self.redWeight * Double(red) + Self.greenWeight * Double(green) + Self.blueWeight * Double(blue)
+        self = luminance < Self.darkThreshold ? .dark : .light
+    }
+
+    /// The first colour in `cssColors` that is not fully transparent, as an opaque colour.
+    ///
+    /// The colours are computed CSS values, outermost element first. Nil when every colour is fully transparent.
+    static func visibleColor(in cssColors: [String]) -> UIColor? {
+        guard let components = cssColors.lazy.compactMap({ Self.visibleComponents(of: $0) }).first else {
             return nil
         }
 
-        let luminance = Self.redWeight * color.red + Self.greenWeight * color.green + Self.blueWeight * color.blue
-        self = luminance < Self.darkThreshold ? .dark : .light
+        return UIColor(red: components.red, green: components.green, blue: components.blue, alpha: 1)
     }
 
     /// The theme the status strip takes over a page of this tone, or nil where the app's own theme already reads

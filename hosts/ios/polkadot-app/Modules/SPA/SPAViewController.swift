@@ -237,8 +237,17 @@ private extension SPAViewController {
             // A read cut off by a navigation fails after the next page's read has answered.
             guard let cssColors = (try? result.get()) as? [String] else { return }
 
-            self?.setPageBackgroundTone(PageBackgroundTone(cssColors: cssColors))
+            let pageColor = PageBackgroundTone.visibleColor(in: cssColors)
+            self?.applyPageBackground(pageColor)
         }
+    }
+
+    /// The status strip's scroll edge effect tints with the web view's background, so it takes the page colour.
+    func applyPageBackground(_ pageColor: UIColor?) {
+        let color = pageColor ?? .bgSurfaceMain
+        rootView.webView.backgroundColor = color
+        rootView.webView.underPageBackgroundColor = color
+        setPageBackgroundTone(pageColor.map(PageBackgroundTone.init(color:)))
     }
 
     func setPageBackgroundTone(_ tone: PageBackgroundTone?) {
