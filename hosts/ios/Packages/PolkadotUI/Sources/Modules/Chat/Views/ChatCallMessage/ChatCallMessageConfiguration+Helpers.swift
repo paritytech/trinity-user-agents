@@ -78,12 +78,11 @@ extension ChatCallMessageConfiguration {
             return isAudio ? String(localized: .chatCallOutgoingAudio) : String(localized: .chatCallOutgoingVideo)
         case (_, .active):
             return isAudio ? String(localized: .chatCallActiveAudio) : String(localized: .chatCallActiveVideo)
-        case (_, .finished):
+        case (_, .finished),
+             (_, .cancelled):
             return isAudio ? String(localized: .chatCallFinishedAudio) : String(localized: .chatCallFinishedVideo)
         case (_, .missed):
             return isAudio ? String(localized: .chatCallMissedAudio) : String(localized: .chatCallMissedVideo)
-        case (_, .cancelled):
-            return isAudio ? String(localized: .chatCallCancelledAudio) : String(localized: .chatCallCancelledVideo)
         }
     }
 }
@@ -101,8 +100,8 @@ extension ChatCallMessageConfiguration.State {
             duration
         case .missed:
             String(localized: .chatCallSubtitleMissed)
-        case let .cancelled(ringDuration):
-            ringDuration
+        case .cancelled:
+            String(localized: .chatCallSubtitleNoAnswer)
         }
     }
 

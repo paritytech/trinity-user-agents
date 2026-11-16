@@ -5,7 +5,7 @@ public enum DSAvatarFactory {
     // Chat list row.
     public static func chatList(
         _ viewModel: AvatarViewModel,
-        icon: (any ImageViewModelProtocol)?
+        icon: AnyImageViewModel?
     ) -> DSAsyncAvatar {
         DSAsyncAvatar(placeholder: viewModel, icon: icon, size: .s64)
     }

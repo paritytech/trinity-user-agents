@@ -6,10 +6,6 @@ fn avatar(cid: &str) -> ProfileAvatar {
 	ProfileAvatar { cid: cid.parse().unwrap(), format: ImageFormat::Png }
 }
 
-fn text_of(record: &ProfileRecord) -> String {
-	STANDARD.encode(record.encode())
-}
-
 #[test]
 fn avatar_records_encode_the_digest_and_format() {
 	for (text, format) in [
@@ -20,7 +16,7 @@ fn avatar_records_encode_the_digest_and_format() {
 		let record = ProfileRecord::from_text(text).expect("record decodes");
 
 		assert_eq!(
-			(text_of(&record), record.avatar()),
+			(record.to_text().unwrap(), record.avatar()),
 			(text.to_string(), Some(ProfileAvatar { cid: CID.parse().unwrap(), format })),
 		);
 	}
@@ -36,7 +32,8 @@ fn an_incomplete_avatar_is_preserved_and_skipped() {
 				WrapperKeepOpaque::from_value(ProfileEntry::Avatar(avatar(CID))),
 			],
 		};
-		let read = ProfileRecord::from_text(&text_of(&record)).expect("opaque record decodes");
+		let read =
+			ProfileRecord::from_text(&record.to_text().unwrap()).expect("opaque record decodes");
 
 		assert_eq!((read.encode(), read.avatar()), (record.encode(), Some(avatar(CID))));
 	}
@@ -73,11 +70,27 @@ fn an_entry_kind_from_a_newer_writer_is_kept_and_skipped() {
 		],
 	};
 
-	let read = ProfileRecord::from_text(&text_of(&record)).expect("record decodes");
+	let read = ProfileRecord::from_text(&record.to_text().unwrap()).expect("record decodes");
 
 	assert_eq!(read, record);
 	assert_eq!(read.avatar(), Some(avatar(CID)));
 	assert_eq!(read.encode(), record.encode(), "a writer rewrites the unknown entry unchanged");
+}
+
+#[test]
+fn a_new_avatar_replaces_the_one_readers_show_and_keeps_other_entries() {
+	let entry = |seed: u8| {
+		WrapperKeepOpaque::from_value(ProfileEntry::Avatar(ProfileAvatar {
+			cid: [seed; 32].into(),
+			format: ImageFormat::Png,
+		}))
+	};
+	let unknown = WrapperKeepOpaque::from_encoded(vec![7, 1, 2]);
+	let mut record = ProfileRecord { entries: vec![unknown.clone(), entry(1), entry(2)] };
+
+	record.set_avatar(ProfileAvatar { cid: [3; 32].into(), format: ImageFormat::Png });
+
+	assert_eq!(record, ProfileRecord { entries: vec![entry(3), unknown, entry(2)] });
 }
 
 #[test]
@@ -101,7 +114,7 @@ fn an_avatar_in_an_unknown_format_is_no_avatar() {
 		[vec![0u8], CID.parse::<BulletinCid>().unwrap().encode(), vec![9u8]].concat();
 	let record = ProfileRecord { entries: vec![WrapperKeepOpaque::from_encoded(unknown_format)] };
 
-	let read = ProfileRecord::from_text(&text_of(&record)).expect("record decodes");
+	let read = ProfileRecord::from_text(&record.to_text().unwrap()).expect("record decodes");
 
 	assert_eq!(read.avatar(), None);
 }
@@ -115,8 +128,9 @@ fn a_malformed_record_is_refused() {
 	let oversized =
 		ProfileRecord { entries: vec![WrapperKeepOpaque::from_encoded(vec![0; MAX_RECORD_BYTES])] };
 
+	assert_eq!(oversized.to_text(), None, "a writer never publishes what readers refuse");
 	assert_eq!(ProfileRecord::from_text(&with_trailing_bytes), None);
-	assert_eq!(ProfileRecord::from_text(&text_of(&oversized)), None);
+	assert_eq!(ProfileRecord::from_text(&STANDARD.encode(oversized.encode())), None);
 	assert_eq!(ProfileRecord::from_text("not base64!"), None);
 }
 
@@ -142,7 +156,7 @@ fn a_gif_avatar_uses_the_shared_image_format() {
 	let record = ProfileRecord::from_text(text).expect("GIF record decodes");
 
 	assert_eq!(
-		(text_of(&record), record.avatar()),
+		(record.to_text().unwrap(), record.avatar()),
 		(
 			text.to_string(),
 			Some(ProfileAvatar { cid: CID.parse().unwrap(), format: ImageFormat::Gif })

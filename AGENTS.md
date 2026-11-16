@@ -26,7 +26,10 @@ rust/crates/
                          as scheduled durable transactions, and receive cheques over
                          the statement store; its `public_profile` domain resolves and caches
                          profile records, and its `image_loader` reads the images they name
-                         from Bulletin by CID and checks them
+                         from Bulletin by CID and checks them; its `materials` module keeps
+                         the materials renderer trees name in the same database, read from
+                         Bulletin by its `bulletin_lookup` module and checked against
+                         Shaderlab's material format and the tree limits
   truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
                          also links the truapi crate to emit the core marker
                          table as TypeScript, which rustdoc JSON does not carry
@@ -91,7 +94,7 @@ ios/truapi-host/           TrUAPIHost Swift package over the truapi UniFFI core;
                            ios/truapi-host/scripts/rebuild.sh
 playground/                Next.js interactive playground; deploys to the truapi-playground dotNS label
 hosts/ios/                 iOS host app; resolves the core from this tree
-hosts/android/             Android host app
+hosts/android/             Android host app; resolves the core from this tree
 hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule
@@ -122,6 +125,7 @@ scripts/cli-runner-package.test.ts
 .github/consumers.json     maps each released package to the repos notified by a bump issue
 nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc JSON; CI, the
                            scripts and the Makefile all read it
+rust-toolchain.toml        pins every other cargo command in the repo to stable
 .github/registry-drift-exceptions.json
                            documents intentionally unpublished npm package versions
 ```
@@ -131,8 +135,11 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
 - `truapi` holds the canonical protocol definitions and, behind its default
   `runtime` feature, the host runtime. The protocol half builds without the
   runtime (`--no-default-features`), which is what codegen links and reads, so
-  protocol modules never depend on runtime modules. Syscall traits live in the
-  `platform` module, host-side runtime types in the runtime modules. The whole
+  protocol modules never depend on runtime modules. The feature gates only the
+  runtime block in `lib.rs`. Protocol types, their derives and their methods
+  do not depend on it (UniFFI derives are native-only); what they need lives on
+  the protocol side too. Syscall traits live in the `platform` module,
+  host-side runtime types in the runtime modules. The whole
   crate is one UniFFI namespace, `truapi`, so native bindings use protocol types
   directly. The published binaries keep their `truapi_server` names
   (`truapi_server.xcframework`, `dist/wasm/*/truapi_server*`).
@@ -324,10 +331,11 @@ Two ways to lose work that involve no pushing at all:
 - Follow the Conventions section of `docs/design/host-telemetry.md` for anything
   that sends telemetry from a host. Read it before adding an event, a log line
   or a metric, and before touching a sender. It covers which Sentry product a
-  signal belongs in, which field a query can select on, why every captured event
-  sets a fingerprint, and what the core's marker table decides. Its `Adding a
-  signal` subsection shows what a host event looks like on each host, how a
-  core log line is registered and raised, and how to check one in Sentry.
+  signal belongs in and how its level decides that, which field a captured
+  event is queried on, why every captured event sets a fingerprint, and what
+  the core's marker table decides. Its `Adding a signal` subsection shows what
+  a host event looks like on each host, how a core log line is registered and
+  raised, and how to check one in Sentry.
 
 ## Scope of a change
 
