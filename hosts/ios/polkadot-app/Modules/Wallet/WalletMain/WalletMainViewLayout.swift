@@ -47,7 +47,7 @@ struct WalletView: View {
             // to, at the page the card names. The shape is named so the
             // peek a card shows is all of it that takes a press, the
             // rest is under the card above.
-            PocketCollectionCardView(card: card)
+            PocketCollectionCardView(card: card, keepsBackCurrent: card.privileged)
                 .pocketMotion(motion(ofPosition: index + 1))
                 .onGeometryChange(for: CGRect.self) { proxy in
                     proxy.frame(in: .global)

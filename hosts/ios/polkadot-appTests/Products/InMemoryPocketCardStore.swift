@@ -74,7 +74,8 @@ actor InMemoryPocketCardStore: PocketCardStore {
         snapshots.send(stored)
     }
 
-    func face(for key: PocketCardKey) async -> RendererNode? {
+    func face(for key: PocketCardKey, side: PocketCardSide) async -> RendererNode? {
+        guard side == .front else { return nil }
         if let kept = faces[key] { return kept }
         guard pinned.pinned(key) != nil else { return nil }
 

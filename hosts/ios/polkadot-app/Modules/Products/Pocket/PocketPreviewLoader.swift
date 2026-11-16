@@ -65,6 +65,17 @@ struct PocketPreviewLoader {
     }
 }
 
+extension PocketPreviewLoader {
+    /// The loader the app uses: published faces from the worker's archive, and
+    /// a debug card's typed address over the network.
+    init(dotNsResolver: any DotNsResolverProtocol) {
+        self.init(
+            archive: ProductWorkerArchive(dotNsResolver: dotNsResolver, content: .current),
+            fetch: PocketPreviewFetch.bounded
+        )
+    }
+}
+
 /// Reads a face over the network without letting the other end decide how much
 /// the host holds: the body is taken as it arrives and dropped as soon as it
 /// passes the bound, rather than buffered whole and measured afterwards.

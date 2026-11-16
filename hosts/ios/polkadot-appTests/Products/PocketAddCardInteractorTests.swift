@@ -54,7 +54,7 @@ struct PocketAddCardInteractorTests {
         #expect(try await store.cards() == [
             PocketCardEntry(key: offer.key, title: "Loyalty", privileged: false)
         ])
-        #expect(await store.face(for: offer.key) == offer.face)
+        #expect(await store.face(for: offer.key, side: .front) == offer.face)
     }
 
     /// A card the store could not keep is raised rather than reported as

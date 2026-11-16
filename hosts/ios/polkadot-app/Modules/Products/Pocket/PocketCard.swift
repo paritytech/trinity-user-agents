@@ -61,9 +61,10 @@ protocol PocketCardStore: PocketCollection {
     /// tell apart from a card the Pocket now holds.
     func add(_ card: PocketCardEntry, face: RendererNode) async throws
 
-    /// The newest face held for `key`: the last one its product drew, or the
-    /// bundled one for a host-placed card that has never drawn.
-    func face(for key: PocketCardKey) async -> RendererNode?
+    /// The newest face held for one side of `key`: the last one its product
+    /// drew, or for the front of a host-placed card that has never drawn, the
+    /// bundled one.
+    func face(for key: PocketCardKey, side: PocketCardSide) async -> RendererNode?
 }
 
 /// The cards the host itself places: present on first run, removable by nobody.
