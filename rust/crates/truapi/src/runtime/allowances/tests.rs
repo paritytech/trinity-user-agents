@@ -1,5 +1,7 @@
 use super::*;
-use crate::test_support::{MemoryCoreStorage, paseo_test_stack, sso_session_info, test_stack, test_storage};
+use crate::test_support::{
+	MemoryCoreStorage, paseo_test_stack, sso_session_info, test_stack, test_storage,
+};
 
 #[test]
 fn entries_stored_with_string_ids_read_and_write_unchanged() {
@@ -107,6 +109,43 @@ fn clears_session_allowance_keys() {
 			None
 		);
 	});
+}
+
+/// An install that stored allowance keys before they carried a run holds
+/// them as a bare list. Which run they belong to is unknown, so none is handed
+/// out; revoking a product clears them, so its secret does not stay at rest.
+#[test]
+fn allowance_keys_stored_without_a_run_are_not_read_and_are_cleared_on_revoke() {
+	let storage = MemoryCoreStorage::default();
+	let session = sso_session_info();
+	let product = ProductId::for_test("dotli.dot");
+	let run = paseo_test_stack().run();
+	let unstamped = vec![StoredAllowanceEntry {
+		product_id: product.clone(),
+		resource: AllowanceResource::Bulletin,
+		slot_account_key: vec![1; 64],
+	}]
+	.encode();
+	let key = storage_key(&session).unwrap();
+
+	let (read, after_revoke) = futures::executor::block_on(async {
+		test_storage(&storage).write(key.clone(), unstamped).await.unwrap();
+		let read = read_allowance_key(
+			&test_storage(&storage),
+			&run,
+			&session,
+			&product,
+			AllowanceResource::Bulletin,
+		)
+		.await
+		.unwrap();
+		clear_product_allowance_keys(&test_storage(&storage), &run, &session, &product)
+			.await
+			.unwrap();
+		(read, test_storage(&storage).read(key).await.unwrap())
+	});
+
+	assert_eq!((read, after_revoke), (None, None));
 }
 
 /// An allowance key names a slot account on a chain, and a wipe replaces the

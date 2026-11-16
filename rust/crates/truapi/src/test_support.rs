@@ -268,9 +268,10 @@ impl StubPlatform {
 	/// run of the [`paseo_test_stack`], as the core does once it stores a
 	/// session, so the session is restored as stored.
 	pub fn with_usernames_read_in_this_run(self) -> Self {
+		let blob = self.session_blob.as_deref().expect("the platform stores a session");
 		self.local_storage.lock().expect("local storage mutex poisoned").insert(
 			core_storage_test_key(CoreStorageKey::SessionUsernamesRun),
-			paseo_test_stack().run().encode(),
+			usernames_record(&paseo_test_stack(), blob),
 		);
 		self
 	}
@@ -442,6 +443,12 @@ pub fn test_stack(
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
 	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, true)
 		.expect("test stack is valid")
+}
+
+/// The `SessionUsernamesRun` value the core records once the usernames in the
+/// session `blob` were read in `stack`'s run.
+pub fn usernames_record(stack: &crate::platform::Stack, blob: &[u8]) -> Vec<u8> {
+	stack.run().stamp(&sp_crypto_hashing::blake2_256(blob))
 }
 
 /// Whether `platform` holds no core value but the record of the run the

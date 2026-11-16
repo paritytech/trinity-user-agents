@@ -211,11 +211,53 @@ fn login_store_notifications_follow_the_persisted_value() {
 					.chain((!changed).then(|| {
 						(
 							test_storage_key(CoreStorageKey::SessionUsernamesRun).encode(),
-							paseo_test_stack().run().encode(),
+							crate::test_support::usernames_record(
+								&paseo_test_stack(),
+								&encode_persisted_session(&stored),
+							),
 						)
 					})),
 				),
 			),
 		);
 	}
+}
+
+/// A device that is offline cannot tell a username from a missing one. The
+/// lookup after a session is installed must then leave the session, the
+/// stored blob and the record as they were, so the username is not erased
+/// and the next start looks again.
+#[test]
+fn a_failed_username_lookup_changes_nothing() {
+	let storage = Arc::new(crate::test_support::MemoryCoreStorage::default());
+	let platform = Arc::new(StubPlatform {
+		core_storage_override: Some(storage.clone()),
+		chain_connect_error: Some("offline"),
+		..Default::default()
+	});
+	let (_, pairing) = ProductRuntimeHost::new_compat_with_pairing(platform, Spawner::for_test());
+	let host = pairing.session().clone();
+	let session = sso_session_info();
+	let blob = encode_persisted_session(&session);
+	let stored = || {
+		block_on(
+			crate::test_support::test_storage(storage.as_ref()).read(CoreStorageKey::AuthSession),
+		)
+		.unwrap()
+	};
+	block_on(
+		crate::test_support::test_storage(storage.as_ref())
+			.write(CoreStorageKey::AuthSession, blob.clone()),
+	)
+	.unwrap();
+	block_on(host.set_connected_session_for_tests(session.clone()));
+
+	block_on(host.look_up_usernames(session.clone(), Some(blob.clone())));
+
+	let record = block_on(
+		crate::test_support::test_storage(storage.as_ref())
+			.read(CoreStorageKey::SessionUsernamesRun),
+	)
+	.unwrap();
+	assert_eq!((host.session_state.current(), stored(), record), (Some(session), Some(blob), None));
 }

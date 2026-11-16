@@ -66,14 +66,24 @@ sweep of a product's state finds both. `createHeadlessHostCallbacks` treats a
 host without the three as holding nothing.
 
 After a wipe a stack has the same id and new chains. The core sees that by the
-`generation` and the genesis hashes, and drops what it read from the old
-chains: cached manifests, the usernames in the session, allowance keys and the
-ring-VRF registry. The session and stored permissions are kept. Allowance
-keys and a ring-VRF registry stored before this was recorded carry no run and
-are dropped once, and so are the usernames in a stored session. The core
-cannot tell which run the usernames in a blob passed to
-`activateExternalSession` were read in, so it looks them up again on every
-activation unless the blob is the one in the `AuthSession` slot.
+`generation` and the Asset Hub, People and Bulletin genesis hashes, and stops
+using what it read from the old chains: cached manifests and allowance keys are
+ignored until they are read again, the ring-VRF registry loses the rings on
+chains the stack no longer runs, and the session's usernames are looked up
+again. The session and stored permissions are kept. A session is installed at
+once and its usernames are looked up afterwards; a lookup that fails, as on a
+device that is offline, changes nothing.
+
+The core vouches for the usernames in an `AuthSession` blob through the
+`SessionUsernamesRun` slot, which holds the run they were read in and a hash of
+that blob. A host that keeps the `AuthSession` value under a key of its own,
+such as one shared between origins, keeps `SessionUsernamesRun` next to it. A
+blob passed to `activateExternalSession` that the slot does not vouch for has
+its usernames looked up again on every activation.
+
+An install updated to this version with no wipe loses only this: a pairing
+host asks for each product's allowance again, because the stored keys carry no
+run, and the stored session's usernames are looked up once in the background.
 
 ## Bundler requirements
 

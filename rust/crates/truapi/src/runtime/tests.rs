@@ -158,7 +158,8 @@ pub fn signing_runtime_on_asset_hub(
 
 /// A signing host whose wallet is active under [`ENTROPY`].
 pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
-	let (_services, signing_host) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
+	let (_services, signing_host) =
+		signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	signing_host
@@ -7589,11 +7590,13 @@ fn external_session_activation_replaces_and_fences_the_previous_session() {
 #[test]
 fn stored_session_activation_resolves_after_connected_installation() {
 	let stored = sso_session_info();
-	let platform = Arc::new(StubPlatform {
-		session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
-		..Default::default()
-	}
-	.with_usernames_read_in_this_run());
+	let platform = Arc::new(
+		StubPlatform {
+			session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
+			..Default::default()
+		}
+		.with_usernames_read_in_this_run(),
+	);
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 

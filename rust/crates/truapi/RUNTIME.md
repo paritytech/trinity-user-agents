@@ -428,18 +428,20 @@ for raw bytes signed inside the `<Bytes>` watermark.
   identity, and permission authorization state, keyed by stack. The core
   reaches it only through [`StackStorage`](src/stack/storage.rs), whose docs
   say how keys name the stack and which stack reads the values a host stored
-  before they did. A wipe keeps a stack's id and replaces its chains. The core tells one run of the chains from the next by `StackRun`:
-  the descriptor's `generation` and the genesis hashes. A cached manifest,
-  allowance keys and a ring-VRF registry are stored with the run they were
-  read in, and a value from another run, or one stored without a run, reads
-  as absent until it is written again. The usernames in the `AuthSession`
-  slot are part of the session blob, so the `SessionUsernamesRun` slot
-  records the run they were read in. When the stack is in another run, or
-  none is recorded, the stored session is installed with its usernames
-  looked up again. A session blob the host keeps itself and passes to
-  `activate_external_session` always has its usernames looked up again,
-  unless it is the blob in the `AuthSession` slot. The session and the stored
-  permissions are kept.
+  before they did. A wipe keeps a stack's id and replaces its chains. The
+  core tells one run of the chains from the next by `StackRun`: the
+  descriptor's `generation` and the Asset Hub, People and Bulletin genesis
+  hashes. Cached manifests and allowance keys are stored with the run they
+  were read in; one from another run, or stored without a run, is ignored
+  until it is written again. The ring-VRF registry is the wallet's own
+  record, so it is kept, without the rings on chains the stack no longer
+  runs. The `SessionUsernamesRun` slot records the run in which the
+  usernames of the `AuthSession` blob were read, with a hash of that blob.
+  A session whose blob it does not vouch for is installed at once and its
+  usernames are looked up afterwards: they are kept meanwhile when nothing is
+  recorded, and dropped when the record names another run or blob. A lookup
+  that fails changes nothing. The session and the stored permissions are
+  kept.
 - `Navigation`: open URLs in the system browser.
 - `Notifications`: deliver and cancel push notifications.
 - `Permissions`: prompt for device and remote authorizations.

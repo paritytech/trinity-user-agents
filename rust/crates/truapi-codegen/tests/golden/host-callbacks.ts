@@ -265,9 +265,11 @@ export type CoreStorageKey =
    */
   | { tag: "UnscopedEntriesOwner"; value?: undefined }
   /**
-   * The `StackRun` the usernames in the `AuthSession` slot were read in.
-   * When the stack is in another run, or none is recorded, the core looks
-   * the usernames up again before it installs the stored session.
+   * The `StackRun` the usernames in the `AuthSession` blob were read in,
+   * with a hash of that blob, so it vouches for that blob only. A host that
+   * keeps the `AuthSession` value under a key of its own keeps this one
+   * next to it. When it vouches for another run or another blob, the core
+   * installs the session and looks its usernames up again.
    */
   | { tag: "SessionUsernamesRun"; value?: undefined };
 

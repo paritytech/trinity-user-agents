@@ -34,10 +34,7 @@ use crate::{
 		},
 		worker_manifest::{WorkerManifest, check_app_manifest},
 	},
-	runtime::{
-		dotns_lookup::DotnsLookup,
-		services::RuntimeServices,
-	},
+	runtime::{dotns_lookup::DotnsLookup, services::RuntimeServices},
 	unix_time::current_unix_secs,
 };
 
@@ -68,14 +65,8 @@ async fn fetch_root_manifest(
 	asset_hub_chain_genesis_hash: [u8; 32],
 	product_id: &ProductId,
 ) -> Result<Option<String>, DotnsError> {
-	fetch_text_record(
-		chain,
-		asset_hub_chain_genesis_hash,
-		product_id,
-		None,
-		MANIFEST_RECORD_KEY,
-	)
-	.await
+	fetch_text_record(chain, asset_hub_chain_genesis_hash, product_id, None, MANIFEST_RECORD_KEY)
+		.await
 }
 
 /// Reads the JSON `product_id`'s `worker.<product_id>.<tld>` subname publishes

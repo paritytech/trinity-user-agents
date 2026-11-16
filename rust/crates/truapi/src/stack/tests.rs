@@ -527,3 +527,36 @@ fn the_stacks_value_is_read_before_one_stored_with_no_stack_id() {
 		assert_eq!(storage.read(slot).await, Ok(Some(b"newer".to_vec())));
 	});
 }
+
+/// A stack with `relay` and these generation and genesis hashes.
+fn stack_in_run(generation: &str, relay: Option<[u8; 32]>, asset_hub: [u8; 32]) -> Stack {
+	let identity = StackIdentity { id: "stack".to_string(), generation: generation.to_string() };
+	let chains = StackChains { relay, asset_hub, people: [0xa1; 32], bulletin: [0xb2; 32] };
+	Stack::new(identity, "paseo".to_string(), "paseo".to_string(), chains, false)
+		.expect("stack is valid")
+}
+
+/// A value stamped in one run is read back in that run only. A new
+/// `generation` or a new Asset Hub is another run. The relay chain, which the
+/// core never reads, is not part of the run, so a host that starts or stops
+/// serving it keeps what the core stored. A stamp of another version is
+/// another run, so a later layout cannot be misread as this one.
+#[test]
+fn a_stamped_value_is_read_back_in_its_own_run_only() {
+	let run = stack_in_run("g1", None, [0xc3; 32]).run();
+	let stamped = run.stamp(b"value");
+	let read_in = |stack: Stack| stack.run().read_stamped(&stamped).map(<[u8]>::to_vec);
+	let mut other_version = stamped.clone();
+	other_version[0] = 2;
+
+	assert_eq!(
+		[
+			read_in(stack_in_run("g1", None, [0xc3; 32])),
+			read_in(stack_in_run("g1", Some([0x01; 32]), [0xc3; 32])),
+			read_in(stack_in_run("g2", None, [0xc3; 32])),
+			read_in(stack_in_run("g1", None, [0xc4; 32])),
+			run.read_stamped(&other_version).map(<[u8]>::to_vec),
+		],
+		[Some(b"value".to_vec()), Some(b"value".to_vec()), None, None, None]
+	);
+}

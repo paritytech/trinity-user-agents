@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-	platform::{CoreStorageKey, ProductId},
+	platform::{CoreStorageKey, ProductId, StackChains},
 	runtime::RuntimeServices,
 };
 use parity_scale_codec::{Decode, Encode};
@@ -27,6 +27,30 @@ struct RegistrySnapshot {
 	complete_owners: Vec<ProductId>,
 	/// First registration wins until the user selects another provider.
 	selected_providers: Vec<SelectedProvider>,
+}
+
+impl RegistrySnapshot {
+	/// The snapshot without the rings on chains that `chains` no longer has.
+	///
+	/// A wipe replaces a stack's chains and the rings on them, while a
+	/// registration on a chain the stack still runs stays valid. An entry left
+	/// with no ring is dropped, and an owner that lost a ring is no longer
+	/// listed completely, so its listing is read again.
+	fn on_chains(mut self, chains: &StackChains) -> Self {
+		let kept = |ring: &RingLocation| chains.contains(ring.chain_id);
+		let mut incomplete = Vec::new();
+		for entry in &mut self.entries {
+			let before = entry.rings.len();
+			entry.rings.retain(kept);
+			if entry.rings.len() != before {
+				incomplete.push(entry.handle.dot_ns_identifier.clone());
+			}
+		}
+		self.entries.retain(|entry| !entry.rings.is_empty());
+		self.complete_owners.retain(|owner| !incomplete.contains(owner));
+		self.selected_providers.retain(|provider| kept(&provider.ring));
+		self
+	}
 }
 
 /// Shared durable repository used by both account-authority roles.
@@ -316,20 +340,18 @@ impl RingVrfRegistryStore {
 			return Ok(snapshot);
 		}
 		let key = CoreStorageKey::RingVrfRegistry { root_public_key };
-		let stored = self.services.storage().read(key.clone()).await.map_err(storage_error)?;
-		let run = self.services.stack().run();
-		// A registry filled in another run of the chains names rings that are
-		// gone, so it reads as empty and the next write replaces it.
-		let snapshot = match stored.as_deref().and_then(|blob| run.read_stamped(blob)) {
-			Some(blob) => match decode_snapshot(blob) {
-				Ok(snapshot) => snapshot,
-				Err(error) => {
-					let _ = self.services.storage().clear(key).await;
-					return Err(error);
+		let snapshot =
+			match self.services.storage().read(key.clone()).await.map_err(storage_error)? {
+				Some(blob) => match decode_snapshot(&blob) {
+					Ok(snapshot) => snapshot,
+					Err(error) => {
+						let _ = self.services.storage().clear(key).await;
+						return Err(error);
+					},
 				},
-			},
-			None => RegistrySnapshot::default(),
-		};
+				None => RegistrySnapshot::default(),
+			};
+		let snapshot = snapshot.on_chains(self.services.stack().chains());
 		self.cache
 			.lock()
 			.expect("ring-VRF registry cache mutex poisoned")
@@ -354,10 +376,7 @@ impl RingVrfRegistryStore {
 		}
 		self.services
 			.storage()
-			.write(
-				CoreStorageKey::RingVrfRegistry { root_public_key },
-				self.services.stack().run().stamp(&snapshot.encode()),
-			)
+			.write(CoreStorageKey::RingVrfRegistry { root_public_key }, snapshot.encode())
 			.await
 			.map_err(storage_error)?;
 		self.cache

@@ -16,7 +16,7 @@ pub use storage::StackStorage;
 use std::sync::Arc;
 
 use futures::lock::Mutex;
-use parity_scale_codec::{Decode, Encode};
+use parity_scale_codec::{Decode, Encode, Error as CodecError, Input, Output};
 use trinity_stack::{Chain, Pointer, open};
 use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
@@ -77,8 +77,8 @@ pub struct Stack {
 
 impl PartialEq for Stack {
 	fn eq(&self, other: &Self) -> bool {
-		(&self.identity, &self.network, &self.tld, &self.chains)
-			== (&other.identity, &other.network, &other.tld, &other.chains)
+		(&self.identity, &self.network, &self.tld, &self.chains) ==
+			(&other.identity, &other.network, &other.tld, &other.chains)
 	}
 }
 
@@ -101,15 +101,42 @@ pub struct StackIdentity {
 }
 
 /// One run of a stack's chains, from one wipe to the next: the descriptor's
-/// `generation` and the genesis hashes.
+/// `generation` and the genesis hashes of the chains the core reads.
 ///
 /// A wipe changes both. The hashes are compared as well, so a wipe is noticed
 /// even when the operator left `generation` as it was. What the core stored
-/// about the chains in another run is stale.
-#[derive(Clone, PartialEq, Eq, Encode, Decode)]
+/// about the chains in another run is stale. The relay chain is left out:
+/// the core never reads it, so adding or removing it is not a wipe.
+///
+/// It encodes as a version byte, then its fields, independent of
+/// [`StackChains`]. An encoding with another version decodes as an error,
+/// which every reader takes for another run.
+#[derive(Clone, PartialEq, Eq)]
 pub struct StackRun {
 	generation: String,
-	chains: StackChains,
+	asset_hub: [u8; 32],
+	people: [u8; 32],
+	bulletin: [u8; 32],
+}
+
+/// The version byte that leads an encoded [`StackRun`].
+const STACK_RUN_V1: u8 = 1;
+
+impl Encode for StackRun {
+	fn encode_to<T: Output + ?Sized>(&self, dest: &mut T) {
+		STACK_RUN_V1.encode_to(dest);
+		(&self.generation, &self.asset_hub, &self.people, &self.bulletin).encode_to(dest);
+	}
+}
+
+impl Decode for StackRun {
+	fn decode<I: Input>(input: &mut I) -> Result<Self, CodecError> {
+		if u8::decode(input)? != STACK_RUN_V1 {
+			return Err("unknown stack run version".into());
+		}
+		let (generation, asset_hub, people, bulletin) = Decode::decode(input)?;
+		Ok(Self { generation, asset_hub, people, bulletin })
+	}
 }
 
 impl StackRun {
@@ -132,7 +159,7 @@ impl StackRun {
 /// The genesis hash of each chain role the host serves. Asset Hub, People and
 /// Bulletin are required: the core reads dotNS and runs SSO and its own
 /// preimage submission over them.
-#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StackChains {
 	/// The relay chain, which the core never reads itself. `None` for a host
 	/// that serves none, such as the CLI.
@@ -144,6 +171,14 @@ pub struct StackChains {
 	pub people: [u8; 32],
 	/// The Bulletin chain.
 	pub bulletin: [u8; 32],
+}
+
+impl StackChains {
+	/// Whether one of these chains has `genesis_hash`.
+	pub fn contains(&self, genesis_hash: [u8; 32]) -> bool {
+		let Self { relay, asset_hub, people, bulletin } = self;
+		*relay == Some(genesis_hash) || [asset_hub, people, bulletin].contains(&&genesis_hash)
+	}
 }
 
 /// Why a stack was refused.
@@ -285,7 +320,8 @@ impl Stack {
 
 	/// The run the stack's chains are in.
 	pub fn run(&self) -> StackRun {
-		StackRun { generation: self.identity.generation.clone(), chains: self.chains.clone() }
+		let StackChains { asset_hub, people, bulletin, .. } = self.chains;
+		StackRun { generation: self.identity.generation.clone(), asset_hub, people, bulletin }
 	}
 
 	/// The ecosystem `get_chain_info` reports, such as `polkadot` or `paseo`.
