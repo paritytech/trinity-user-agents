@@ -1,4 +1,5 @@
 import struct TrUAPIHost.ProductId
+import enum TrUAPIHost.CoinPaymentPurseAction
 import Foundation_iOS
 import Products
 import UIKit
@@ -69,6 +70,7 @@ private extension ProductPermissionPromptViewFactory {
         )
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     static func makeSingleContent(
         productId: ProductId,
         permission: ProductPermission
@@ -153,6 +155,18 @@ private extension ProductPermissionPromptViewFactory {
                 body: NftPurseReadCopy.description(ownerProductId: ownerProductId),
                 icon: makeIcon(systemName: "square.stack.3d.up.fill")
             )
+        case .coinPayment:
+            PromptContent(
+                title: String(localized: .Products.permissionTitleRemote(productId: productId.rawValue)),
+                body: String(localized: .Products.permissionBodyCoinPayment),
+                icon: makeIcon(systemName: "creditcard.fill")
+            )
+        case let .coinPaymentPurse(purse, action):
+            PromptContent(
+                title: String(localized: .Products.permissionTitleRemote(productId: productId.rawValue)),
+                body: CoinPaymentPurseCopy.description(purse: purse, action: action),
+                icon: makeIcon(systemName: "banknote.fill")
+            )
         }
     }
 
@@ -169,6 +183,7 @@ private extension ProductPermissionPromptViewFactory {
         )
     }
 
+    // swiftlint:disable:next cyclomatic_complexity
     static func permissionDescription(for permission: ProductPermission) -> String {
         switch permission {
         case let .networkAccess(domain):
@@ -197,6 +212,10 @@ private extension ProductPermissionPromptViewFactory {
             "- " + String(localized: .Products.permissionBodyUserIdentityAccess)
         case let .nftPurseRead(ownerProductId):
             "- " + NftPurseReadCopy.description(ownerProductId: ownerProductId)
+        case .coinPayment:
+            "- " + String(localized: .Products.permissionBodyCoinPayment)
+        case let .coinPaymentPurse(purse, action):
+            "- " + CoinPaymentPurseCopy.description(purse: purse, action: action)
         }
     }
 
@@ -271,5 +290,28 @@ enum NftPurseReadCopy {
             return String(localized: .Products.permissionBodyNftPurseReadRoot)
         }
         return String(localized: .Products.permissionBodyNftPurseReadProduct(ownerProductId: ownerProductId.rawValue))
+    }
+}
+
+/// How a coinage purse and a grant on it read, shared by the prompt, the settings list and the
+/// spend confirmation.
+enum CoinPaymentPurseCopy {
+    /// The purse id the core gives the user's main purse.
+    static let mainPurse = UInt32.max
+
+    static func name(purse: UInt32) -> String {
+        guard purse != mainPurse else {
+            return String(localized: .Products.permissionCoinPaymentPurseMain)
+        }
+        return String(localized: .Products.permissionCoinPaymentPurseNumbered(purse: String(purse)))
+    }
+
+    static func description(purse: UInt32, action: CoinPaymentPurseAction) -> String {
+        let purseName = name(purse: purse)
+        return switch action {
+        case .query: String(localized: .Products.permissionBodyCoinPaymentPurseQuery(purse: purseName))
+        case .receive: String(localized: .Products.permissionBodyCoinPaymentPurseReceive(purse: purseName))
+        case .spend: String(localized: .Products.permissionBodyCoinPaymentPurseSpend(purse: purseName))
+        }
     }
 }

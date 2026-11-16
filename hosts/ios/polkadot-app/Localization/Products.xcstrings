@@ -1,6 +1,39 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "action.coinPaymentSpend.body": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$(productId)@ wants to spend %2$(amount)@ from %3$(fromPurse)@."
+          }
+        }
+      }
+    },
+    "action.coinPaymentSpend.heldBackValue": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This includes funds that are still gaining privacy."
+          }
+        }
+      }
+    },
+    "action.coinPaymentSpend.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spend Coinage"
+          }
+        }
+      }
+    },
     "action.nftPurseDrain.owner.you": {
       "extractionState": "manual",
       "localizations": {
@@ -283,6 +316,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Chain transactions"
+          }
+        }
+      }
+    },
+    "app.permission.coinPayment.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coinage payments"
+          }
+        }
+      }
+    },
+    "app.permission.coinPaymentPurse.title": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coinage purses"
           }
         }
       }
@@ -622,6 +677,50 @@
         }
       }
     },
+    "permission.body.coinPayment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pay and receive with coinage."
+          }
+        }
+      }
+    },
+    "permission.body.coinPaymentPurseQuery": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "See the details and balance of %1$(purse)@."
+          }
+        }
+      }
+    },
+    "permission.body.coinPaymentPurseReceive": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Receive value into %1$(purse)@."
+          }
+        }
+      }
+    },
+    "permission.body.coinPaymentPurseSpend": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spend value from %1$(purse)@."
+          }
+        }
+      }
+    },
     "permission.body.manageInSettingsHint": {
       "extractionState": "manual",
       "localizations": {
@@ -926,6 +1025,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "Open URLs"
+          }
+        }
+      }
+    },
+    "permission.coinPaymentPurse.main": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "your main coinage purse"
+          }
+        }
+      }
+    },
+    "permission.coinPaymentPurse.numbered": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "coinage purse %1$(purse)@"
           }
         }
       }

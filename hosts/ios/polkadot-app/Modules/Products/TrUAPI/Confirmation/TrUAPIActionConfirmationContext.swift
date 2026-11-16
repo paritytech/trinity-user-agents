@@ -1,6 +1,7 @@
 import struct TrUAPIHost.ProductId
 import Foundation
 import Products
+import SubstrateSdk
 
 enum TrUAPIActionConfirmationRequest: Equatable, Sendable {
     case productSubtree(productId: ProductId)
@@ -12,6 +13,14 @@ enum TrUAPIActionConfirmationRequest: Equatable, Sendable {
         ownerProductId: ProductId?,
         itemCount: UInt32,
         destination: NftPurseDrainTarget
+    )
+    /// Spend value from a coinage purse, in the payment asset's smallest units.
+    /// `takesHeldBackValue` means the spend also takes value still gaining privacy.
+    case coinPaymentSpend(
+        productId: ProductId,
+        fromPurse: UInt32,
+        amount: Balance,
+        takesHeldBackValue: Bool
     )
 }
 

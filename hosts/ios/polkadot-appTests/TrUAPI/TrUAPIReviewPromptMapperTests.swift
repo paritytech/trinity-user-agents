@@ -102,6 +102,36 @@ struct TrUAPIReviewPromptMapperTests {
         ))
     }
 
+    /// Amounts are u128 in the core, so one past 64 bits must reach the prompt intact.
+    @Test
+    func mapsCoinPaymentSpendFromTheMainPurseWithItsFullAmount() throws {
+        let request = try mapper.makeActionRequest(from: CoinPaymentSpendReview(
+            callingProductId: callerId,
+            fromPurse: .max,
+            amount: "340282366920938463463374607431768211455",
+            takesHeldBackValue: true
+        ))
+
+        #expect(request == .coinPaymentSpend(
+            productId: callerId,
+            fromPurse: .max,
+            amount: Balance(2).power(128) - 1,
+            takesHeldBackValue: true
+        ))
+    }
+
+    @Test
+    func refusesACoinPaymentSpendWhoseAmountIsNotANumber() {
+        #expect(throws: TrUAPIReviewMappingError.invalidAmount("ten")) {
+            try mapper.makeActionRequest(from: CoinPaymentSpendReview(
+                callingProductId: callerId,
+                fromPurse: 2,
+                amount: "ten",
+                takesHeldBackValue: false
+            ))
+        }
+    }
+
     @Test
     func mapsAccountAliasToContextProductAccountAccess() {
         let request = mapper.makePermissionRequest(from: AccountAliasReview(

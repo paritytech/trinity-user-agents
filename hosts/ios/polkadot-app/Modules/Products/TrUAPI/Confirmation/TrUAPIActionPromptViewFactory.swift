@@ -2,6 +2,7 @@ import struct TrUAPIHost.ProductId
 import Foundation_iOS
 import PolkadotUI
 import Products
+import SubstrateSdk
 import UIKit
 import UIKitExt
 
@@ -36,6 +37,15 @@ enum TrUAPIActionPromptViewFactory {
                 destination: destination
             )
             iconName = "square.stack.3d.up"
+        case let .coinPaymentSpend(productId, fromPurse, amount, takesHeldBackValue):
+            title = String(localized: .Products.actionCoinPaymentSpendTitle)
+            body = makeCoinPaymentSpendBody(
+                productId: productId,
+                fromPurse: fromPurse,
+                amount: amount,
+                takesHeldBackValue: takesHeldBackValue
+            )
+            iconName = "banknote"
         }
 
         let icon = UIImage(systemName: iconName, withConfiguration: UIImage.SymbolConfiguration(
@@ -96,5 +106,25 @@ enum TrUAPIActionPromptViewFactory {
                 owner: owner
             ))
         }
+    }
+
+    private static func makeCoinPaymentSpendBody(
+        productId: ProductId,
+        fromPurse: UInt32,
+        amount: Balance,
+        takesHeldBackValue: Bool
+    ) -> String {
+        let formattedAmount = PaymentRequestViewFactory.mainChainAsset().map {
+            PaymentRequestViewFactory.formatAmount(amount, chainAsset: $0)
+        } ?? String(amount)
+        let spend = String(localized: .Products.actionCoinPaymentSpendBody(
+            productId: productId.rawValue,
+            amount: formattedAmount,
+            fromPurse: CoinPaymentPurseCopy.name(purse: fromPurse)
+        ))
+        guard takesHeldBackValue else {
+            return spend
+        }
+        return spend + "\n\n" + String(localized: .Products.actionCoinPaymentSpendHeldBackValue)
     }
 }

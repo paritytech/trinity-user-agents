@@ -6,6 +6,7 @@ import TrUAPIHost
 enum TrUAPIReviewMappingError: Error, Equatable {
     case invalidDerivationIndexLength(Int)
     case notASigningReview
+    case invalidAmount(String)
 }
 
 // MARK: - TrUAPIHost account conversions

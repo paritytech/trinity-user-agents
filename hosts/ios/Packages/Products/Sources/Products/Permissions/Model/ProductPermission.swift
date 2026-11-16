@@ -1,4 +1,5 @@
 import struct TrUAPIHost.ProductId
+import enum TrUAPIHost.CoinPaymentPurseAction
 import Foundation
 
 /// Permission a product can request from the host.
@@ -15,6 +16,8 @@ public enum ProductPermission: Equatable, Sendable {
     public static let statementSubmitAccessTypeName = "statement_submit"
     public static let userIdentityAccessTypeName = "user_identity_access"
     public static let nftPurseReadTypeName = "nft_purse_read"
+    public static let coinPaymentTypeName = "coin_payment"
+    public static let coinPaymentPurseTypeName = "coin_payment_purse"
 
     case deviceCapability(DeviceCapabilityType)
     case networkAccess(domain: String)
@@ -27,6 +30,10 @@ public enum ProductPermission: Equatable, Sendable {
     case userIdentityAccess
     /// Reading the NFT purses of another owner: a product, or the user's own account when `nil`.
     case nftPurseRead(ownerProductId: ProductId?)
+    /// Paying and receiving with coinage purses at all.
+    case coinPayment
+    /// One action on one coinage purse another product created, or on the main purse.
+    case coinPaymentPurse(purse: UInt32, action: CoinPaymentPurseAction)
 
     /// Whether this is one of the core's `RemotePermission` cases: a product's
     /// own outbound access.
@@ -47,7 +54,9 @@ public enum ProductPermission: Equatable, Sendable {
              .accountAccess,
              .balanceAccess,
              .userIdentityAccess,
-             .nftPurseRead:
+             .nftPurseRead,
+             .coinPayment,
+             .coinPaymentPurse:
             false
         }
     }
@@ -74,6 +83,10 @@ public enum ProductPermission: Equatable, Sendable {
             Self.userIdentityAccessTypeName
         case .nftPurseRead:
             Self.nftPurseReadTypeName
+        case .coinPayment:
+            Self.coinPaymentTypeName
+        case .coinPaymentPurse:
+            Self.coinPaymentPurseTypeName
         }
     }
 
@@ -87,12 +100,15 @@ public enum ProductPermission: Equatable, Sendable {
             targetProductId.rawValue
         case let .nftPurseRead(ownerProductId):
             ownerProductId?.rawValue ?? ""
+        case let .coinPaymentPurse(purse, action):
+            "\(purse):\(action.persistedName)"
         case .balanceAccess,
              .webRtcAccess,
              .chainSubmitAccess,
              .preimageSubmitAccess,
              .statementSubmitAccess,
-             .userIdentityAccess:
+             .userIdentityAccess,
+             .coinPayment:
             ""
         }
     }
@@ -125,8 +141,37 @@ public enum ProductPermission: Equatable, Sendable {
             if key.isEmpty { return .nftPurseRead(ownerProductId: nil) }
             guard let owner = try? ProductId(key) else { return nil }
             return .nftPurseRead(ownerProductId: owner)
+        case coinPaymentTypeName:
+            return .coinPayment
+        case coinPaymentPurseTypeName:
+            let parts = key.split(separator: ":", omittingEmptySubsequences: false)
+            guard parts.count == 2,
+                  let purse = UInt32(parts[0]),
+                  let action = CoinPaymentPurseAction(persistedName: String(parts[1])) else {
+                return nil
+            }
+            return .coinPaymentPurse(purse: purse, action: action)
         default:
             return nil
+        }
+    }
+}
+
+private extension CoinPaymentPurseAction {
+    var persistedName: String {
+        switch self {
+        case .query: "query"
+        case .receive: "receive"
+        case .spend: "spend"
+        }
+    }
+
+    init?(persistedName: String) {
+        switch persistedName {
+        case "query": self = .query
+        case "receive": self = .receive
+        case "spend": self = .spend
+        default: return nil
         }
     }
 }

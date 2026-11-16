@@ -291,6 +291,8 @@ extension RemotePermission {
         case .statementSubmit: Products.RemotePermissionRequest.statementSubmit.toDomainPermissions()
         case .balanceAccess: [.balanceAccess]
         case let .nftPurseRead(owner): [.nftPurseRead(ownerProductId: owner.productId)]
+        case .coinPayment: [.coinPayment]
+        case let .coinPaymentPurse(purse, action): [.coinPaymentPurse(purse: purse, action: action)]
         }
     }
 }
