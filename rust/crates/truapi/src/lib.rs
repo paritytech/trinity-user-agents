@@ -895,6 +895,9 @@ cfg_select! {
 		pub mod installation;
 
 		#[cfg(not(target_arch = "wasm32"))]
+		mod native_funding;
+
+		#[cfg(not(target_arch = "wasm32"))]
 		mod nft;
 
 		#[cfg(not(target_arch = "wasm32"))]
