@@ -4,7 +4,6 @@ import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
-import io.mockk.verify
 import io.paritytech.polkadotapp.chains.network.binding.intoBalance
 import io.paritytech.polkadotapp.common.domain.model.intoAccountId
 import io.paritytech.polkadotapp.common.presentation.clipboard.ClipboardService
@@ -31,6 +30,7 @@ import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.Pars
 import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.UsernameAddressConverterFactory
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
+import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.sendPayment.domain.RealSendPaymentInteractor
 import io.paritytech.polkadotapp.test_shared.any
@@ -59,7 +59,6 @@ import org.mockito.Mockito.mock
 import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Instant
 import io.paritytech.polkadotapp.common.R as RCommon
-import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
 
 private const val CHAIN_ID = "chain"
 private val STATE_TIMEOUT = 1.seconds

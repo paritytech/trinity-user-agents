@@ -3,8 +3,8 @@ package io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingActivityStep
 import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingRailType
 import io.paritytech.polkadotapp.feature_tokens_api.presentation.model.TokenAmountModel
-import kotlin.time.Instant
 import kotlinx.collections.immutable.ImmutableList
+import kotlin.time.Instant
 
 /** The CASH card's funding lists: what is in progress, delayed first, then what completed, newest first. */
 data class FundingActivityUiState(

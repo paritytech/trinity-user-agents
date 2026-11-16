@@ -205,7 +205,6 @@ private fun LazyListScope.section(
     items(rows, key = { it.id }, contentType = { "row" }) { row -> FundingActivityRow(row = row, onClick = { onRowClick(row.id) }) }
 }
 
-
 /** One session: a glyph and the amount, the rail in a pill, and the line under it. */
 @Composable
 fun FundingActivityRow(row: FundingActivityRowUi, onClick: () -> Unit, modifier: Modifier = Modifier) {
@@ -288,7 +287,6 @@ private fun RowGlyph(icon: FundingRowIcon) {
         )
     }
 }
-
 
 @Composable
 private fun subtitle(subtitle: FundingRowSubtitle): String = when (subtitle) {

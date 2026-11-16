@@ -17,6 +17,7 @@ import io.paritytech.polkadotapp.feature_chats_api.domain.usecase.GetContactsUse
 import io.paritytech.polkadotapp.feature_chats_api.presentation.ChatStarter
 import io.paritytech.polkadotapp.feature_chats_api.presentation.address.ContactsAddressConverterFactory
 import io.paritytech.polkadotapp.feature_chats_api.presentation.error.toPresentationError
+import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_transfers_api.presentation.PreviousPaymentsAddressConverterFactory
 import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.ParseAddressUsernameConverterFactory
 import io.paritytech.polkadotapp.feature_usernames_api.presentation.address.UsernameAddressConverterFactory
@@ -25,7 +26,6 @@ import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.Sen
 import io.paritytech.polkadotapp.feature_wallet_api.presentation.enterAmount.TransferMethodPayload
 import io.paritytech.polkadotapp.feature_wallet_impl.PocketRouter
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.WithdrawUnavailablePresentationError
-import io.paritytech.polkadotapp.feature_products_api.domain.funding.FundingDirection
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.funding.FundingActivityMixin
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.pocket.models.FundingSheet
 import io.paritytech.polkadotapp.feature_wallet_impl.presentation.scanAddressQr.ScanAddressQrResultPayload
