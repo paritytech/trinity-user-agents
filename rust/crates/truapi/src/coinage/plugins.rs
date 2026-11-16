@@ -260,6 +260,13 @@ impl CoinagePolicy {
 			Call::Load(from) => {
 				let funding = running.funding.get(&facts.operation).cloned();
 				let Some(funding) = funding else { return Some(Preparation::GiveUp) };
+				if earlier_load_open(view, waiting.id, from) {
+					return None;
+				}
+				let funds = deps.people.funds_at(heads.finalized.hash, from).await.ok()?;
+				if funds < load_cost(&tx, &running.params) {
+					return None;
+				}
 				context.nonce = Some(deps.people.nonce_at(heads.finalized.hash, from).await.ok()?);
 				Some(funding)
 			},
@@ -305,6 +312,31 @@ fn window_period(params: &ChainParams, retry: Retry, now: u64) -> u32 {
 		}
 	}
 	period
+}
+
+/// Whether a load paid by `from` and registered before `record` has no
+/// stable verdict yet: the layer builds one transaction per signing account
+/// at a time, in registration order, so each reads the nonce the one
+/// before it left (E2 invariant 4).
+fn earlier_load_open(view: &Snapshot, record: DurableTxId, from: [u8; 32]) -> bool {
+	view.registrations().records().any(|earlier| {
+		let paid_by_from = earlier
+			.state
+			.plan
+			.as_ref()
+			.and_then(|plan| RecordParams::from_params(&plan.params))
+			.is_some_and(|params| params.call == Call::Load(from));
+		let stable = matches!(earlier.state.status, DurableTxStatus::FinalizedSuccess { .. } | DurableTxStatus::Failure(_));
+		earlier.record < record && paid_by_from && !stable
+	})
+}
+
+/// What the funding account must hold before a load is built: the value it
+/// loads in the external asset's units, and the asset's minimum balance it
+/// keeps, since a load preserves the paying account.
+fn load_cost(tx: &Transaction, params: &ChainParams) -> u128 {
+	let cents: u64 = tx.outputs.iter().map(|(_, exponent)| exponent.value()).sum();
+	u128::from(cents).saturating_mul(params.instance().asset_unit).saturating_add(params.config().external_minimum_balance)
 }
 
 /// What the chain shows of an unload's aliases right before it is built.

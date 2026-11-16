@@ -164,6 +164,8 @@ pub struct FakeChain {
 	pub aliases: parking_lot::Mutex<HashMap<[u8; 32], AliasState>>,
 	/// Every read fails.
 	pub failing: core::sync::atomic::AtomicBool,
+	/// What each account holds of the external asset; none for the rest.
+	pub funds: parking_lot::Mutex<HashMap<[u8; 32], u128>>,
 }
 
 impl FakeChain {
@@ -217,6 +219,11 @@ impl CoinageChain for FakeChain {
 
 	async fn nonce_at(&self, _: H256, _: [u8; 32]) -> Result<u32, StorageWatchError> {
 		Ok(0)
+	}
+
+	async fn funds_at(&self, _: H256, account: [u8; 32]) -> Result<u128, StorageWatchError> {
+		self.check()?;
+		Ok(self.funds.lock().get(&account).copied().unwrap_or(0))
 	}
 }
 

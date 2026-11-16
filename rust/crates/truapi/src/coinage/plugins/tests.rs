@@ -181,3 +181,5 @@ fn an_unload_is_given_up_once_an_alias_is_unloaded_and_waits_while_one_is_locked
 	chain.aliases.lock().insert(alias, AliasState::Unloaded);
 	assert!(matches!(check(), Some(AliasCheck::Consumed)));
 }
+
+mod use_cases;
