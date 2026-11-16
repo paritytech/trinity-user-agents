@@ -703,23 +703,12 @@ async fn root_manifest(
 /// Why a shared dotNS read gave no answer: its task ended first.
 const READ_ENDED_UNANSWERED: &str = "the dotNS read ended without answering";
 
-/// `product_id`'s Worker manifest, cached and shared as [`root_manifest`] is.
-/// `Ok(None)` when it publishes none or what it publishes cannot be used, which
-/// the RFC treats alike; `Err` when the chain could not be read, which says
-/// nothing about the product.
-pub async fn worker_manifest(
-	services: &RuntimeServices,
-	platform: &dyn Platform,
-	product_id: &ProductId,
-) -> Result<Option<WorkerManifest>, String> {
-	read_worker_manifest(services, platform, product_id, CachePolicy::UseCache)
-		.await
-		.map(|(manifest, _)| manifest)
-}
-
-/// `product_id`'s Worker manifest and where it was read: from the cache when
+/// `product_id`'s Worker manifest, shared as [`root_manifest`] is, and where it
+/// was read: from the cache when
 /// `policy` allows and the entry is fresh, otherwise from dotNS, which then
-/// replaces the cached entry.
+/// replaces the cached entry. `None` when it publishes none or what it
+/// publishes cannot be used, which the RFC treats alike; `Err` when the chain
+/// could not be read, which says nothing about the product.
 pub async fn read_worker_manifest(
 	services: &RuntimeServices,
 	platform: &dyn Platform,
