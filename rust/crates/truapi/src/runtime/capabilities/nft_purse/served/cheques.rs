@@ -12,10 +12,10 @@ use crate::{
 	nft::{HandoffError, ItemKey, ItemRefusal, PurseId, StartImportError, StartOperationError},
 	nft_purse::{CreateReceiveKeyError, DepositRefusal, NftPurses},
 	platform::{NftPurseDrainDestination, ProductId},
-	runtime::ProductRuntimeHost,
+	runtime::{AccountHolder, ProductRuntimeHost},
 };
 
-impl ProductRuntimeHost {
+impl<H: AccountHolder> ProductRuntimeHost<H> {
 	/// A receive key into the purse the product named. Any product may receive
 	/// into any purse, so nothing is asked.
 	pub async fn create_nft_receive_key(
