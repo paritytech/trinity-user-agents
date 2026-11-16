@@ -1124,3 +1124,26 @@ fn an_unmoved_cancel_leaves_history_but_keeps_its_summary() {
 	block_on(registry.sweep(NOW + 1)).expect("swept");
 	assert_eq!((registry.history().len(), registry.summary("fs_1").is_some()), (0, true));
 }
+
+// A provider that takes a session while its overlay is still up, as the
+// core's start on the best quote does, is announced: the host learns the
+// session started rather than treating it as one the user left unstarted.
+#[test]
+fn a_session_assigned_under_its_overlay_is_announced() {
+	let registry = registry_on(&open_memory_core_db());
+	let feed = Arc::new(RecordingFeed::default());
+	assert!(registry.install_platform(Arc::new(SilentPlatform)));
+	registry.install_feed(feed.clone());
+	block_on(registry.present(NOW, session("fs_1", NOW))).expect("presented");
+	feed.clear();
+
+	let assigned = block_on(registry.select_provider(
+		NOW,
+		"fs_1",
+		&ProductId::for_test("ramp.dot"),
+		crate::host_logic::funding::test_choice(),
+	))
+	.expect("assigned");
+
+	assert_eq!((assigned, feed.sessions("fs_1")), (true, 1));
+}

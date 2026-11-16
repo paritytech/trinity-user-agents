@@ -96,7 +96,7 @@ fn pairing_config_validation_cases() {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			PlatformInfo::default(),
-			truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], Some([0xcc; 32])),
+			truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], [0xcc; 32]),
 			case.pairing_deeplink_scheme.to_string(),
 		)
 		.map(|_| ());
@@ -134,7 +134,7 @@ fn product_id_validation_cases() {
 /// as a product only under Polkadot's TLD or its stack's own.
 #[test]
 fn a_host_runs_only_products_its_stack_serves() {
-	let stack = truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], Some([0xcc; 32]));
+	let stack = truapi::platform::mock::mock_stack([0xa2; 32], [0xbb; 32], [0xcc; 32]);
 	let run = |raw: &str| {
 		let product_id: ProductId = raw.parse().expect("the id is well formed");
 		ProductContext::served_by(&stack, product_id.clone(), ExecutableKind::App)

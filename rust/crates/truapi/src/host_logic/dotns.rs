@@ -7,6 +7,7 @@
 use crate::{
 	dotns_name::normalize_host,
 	platform::{ProductId, normalize_chat_identifier},
+	product_id::PRODUCT_SHARE_SUFFIX,
 	stack::{served_tlds, serves, serves_tld},
 };
 use url::{Url, form_urlencoded};
@@ -17,9 +18,6 @@ pub const APP_SCHEME: &str = "polkadotapp";
 
 /// The internal URL scheme under which hosts serve product content.
 pub const PRODUCT_SCHEME: &str = "polkadot";
-
-/// Public share hosts append this suffix to a complete dotNS identity.
-pub const PRODUCT_SHARE_SUFFIX: &str = ".li";
 
 const HTTP_SCHEME: &str = "http";
 const HTTPS_SCHEME: &str = "https";
@@ -133,7 +131,7 @@ impl ProductLink {
 		let hostname = parsed.host_str()?;
 		// The direct reading is tried too: on a network whose TLD is the share
 		// suffix, the share reading names a product one label shorter.
-		let identifier = ProductId::from_share_host(hostname, network_suffix)
+		let identifier = ProductId::from_share_host(hostname)
 			.into_iter()
 			.chain(normalize_host(hostname).parse::<ProductId>())
 			.find(|identifier| identifier.matches_network(network_suffix))?;

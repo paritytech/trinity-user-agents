@@ -1676,7 +1676,7 @@ impl FundingRegistry {
 	/// whether the worker answered within [`CALL_TIMEOUT`] and the answer was
 	/// stored.
 	async fn put(&self, link: &dyn FundingProviderLink, call: ProviderCall) -> bool {
-		let (intent, answered) = match call {
+		let answered = match call {
 			ProviderCall::Assign(session) => {
 				let intent = session.intent.clone();
 				let taken = within(CALL_TIMEOUT, link.assign(*session)).await.unwrap_or(false);
@@ -1693,7 +1693,7 @@ impl FundingRegistry {
 					return false;
 				};
 				let target = intent.clone();
-				let answered = self
+				self
 					.commit(current_unix_millis(), move |draft| {
 						let now_ms = current_unix_millis();
 						let changed = draft
@@ -1702,8 +1702,7 @@ impl FundingRegistry {
 							.is_some_and(|session| session.answer_cancel(answer, now_ms));
 						((), if changed { vec![target] } else { Vec::new() })
 					})
-					.await;
-				(intent, answered)
+					.await
 			},
 			ProviderCall::Cancel(intent, CancelCall::Settle(decision)) => {
 				let heard =
@@ -1715,21 +1714,20 @@ impl FundingRegistry {
 					return false;
 				}
 				let target = intent.clone();
-				let answered = self
+				self
 					.commit(current_unix_millis(), move |draft| {
 						if let Some(session) = draft.sessions.get_mut(&target) {
 							session.cancel_settled(&decision);
 						}
 						((), Vec::new())
 					})
-					.await;
-				(intent, answered)
+					.await
 			},
 		};
 		match answered {
 			Ok(()) => true,
 			Err(error) => {
-				tracing::warn!(%intent, %error, "storing a provider's cancel answer failed");
+				tracing::warn!(%error, "storing a provider's cancel answer failed");
 				false
 			},
 		}
@@ -1784,9 +1782,12 @@ impl FundingRegistry {
 	}
 
 	/// Queue `session`'s current stage for the host, which hears of a session
-	/// once the user starts it.
+	/// once it started: the user started it, or a provider took it while its
+	/// overlay is still up, as the core's start on the best quote does.
 	fn tell_host(&self, held: &Held, session: &FundingSession) {
-		if self.platform.get().is_some() && !held.presenting.contains_key(&session.intent) {
+		let started =
+			!held.presenting.contains_key(&session.intent) || session.provider_id.is_some();
+		if self.platform.get().is_some() && started {
 			self.lock_announcements()
 				.pending
 				.push_back((session.intent.clone(), session.wire_item()));
