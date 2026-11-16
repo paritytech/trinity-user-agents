@@ -9,6 +9,8 @@ use truapi::{
 	},
 };
 
+mod use_cases;
+
 use super::*;
 use crate::coinage::{
 	PrivacyPolicy, PurseId,

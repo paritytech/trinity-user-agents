@@ -119,6 +119,13 @@ impl CoinageEngine {
 		self.payments.store().write(move |tx| records::record_rfc6(tx, &record)).await.map_err(|error| error.to_string())
 	}
 
+	/// Whether `product` already used `id` for a payment or a top-up.
+	async fn used(&self, product: &ProductContext, id: Bytes32) -> Result<bool, String> {
+		let product = product.product_id.as_str().as_bytes().to_vec();
+		let record = self.payments.store().read(move |conn| records::rfc6(conn, &product, id)).await;
+		record.map(|record| record.is_some()).map_err(|error| error.to_string())
+	}
+
 	/// Records that layer 1 refused to start the operation `key`.
 	async fn refuse(&self, key: &OpKey, error: &Error) {
 		let (key, refusal) = (key.clone(), crate::coinage::payments::status::coin_payment_error(error));
@@ -166,6 +173,9 @@ impl TopUpPlatform for CoinageEngine {
 		let cents = self.cents(request.amount);
 		if cents == 0 {
 			return Err(HostPaymentTopUpError::InvalidAmount);
+		}
+		if self.used(product, request.id).await.map_err(unknown)? {
+			return Err(HostPaymentTopUpError::AlreadyExists);
 		}
 		let into = request.into.map_or(PurseId::MAIN, PurseId);
 		if !self.authorize(product, into, Action::TopUp, cents, false).await.map_err(|error| unknown(error.to_string()))? {
@@ -262,6 +272,9 @@ impl PaymentPlatform for CoinageEngine {
 		let cents = self.cents(request.amount);
 		if cents == 0 {
 			return Err(HostPaymentError::InvalidAmount);
+		}
+		if self.used(product, request.id).await.map_err(unknown)? {
+			return Err(HostPaymentError::AlreadyExists);
 		}
 		let from = request.from.map_or(PurseId::MAIN, PurseId);
 		if !self.authorize(product, from, Action::Spend, cents, false).await.map_err(|error| unknown(error.to_string()))? {
