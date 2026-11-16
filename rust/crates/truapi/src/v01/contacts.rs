@@ -79,11 +79,11 @@ pub struct HostContactsUsernamesRequest {}
 pub struct HostContactsUsernamesResponse {
 	/// One username per contact, in host order, and empty when the user has no
 	/// contacts. A contact without a username is left out, and so is any name
-	/// the host holds that is not a bare DotNS label.
+	/// the host holds that is not a bare dotNS label.
 	///
-	/// Each entry is the bare DotNS label with no top-level domain: the full
-	/// name when the contact has one (`alice`), otherwise the lite name with its
-	/// two-digit index (`alice.07`).
+	/// Each entry is the bare dotNS label with no top-level domain: the
+	/// personhood name when the contact has one (`alice`), otherwise the device
+	/// name with its two-digit index (`alice.07`).
 	pub usernames: Vec<String>,
 }
 
