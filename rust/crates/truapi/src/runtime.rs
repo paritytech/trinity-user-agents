@@ -20,7 +20,7 @@ mod chain_run;
 mod chat;
 pub mod contacts;
 mod dotns_lookup;
-pub use dotns_lookup::{DotnsLookup, DotnsLookupKind};
+pub use dotns_lookup::DotnsLookup;
 mod funding;
 mod funding_providers;
 mod funding_quotes;
