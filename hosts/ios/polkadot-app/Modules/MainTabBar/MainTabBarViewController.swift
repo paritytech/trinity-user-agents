@@ -496,12 +496,6 @@ private extension MainTabBarViewController {
     }
 }
 
-extension MainTabBarViewController: TopmostChildProviding {
-    var topmostChild: UIViewController? {
-        container.selectedController
-    }
-}
-
 extension MainTabBarViewController {
     func bindScrollEdgeInteraction() {
         statusStripContainer.bindScrollEdge(toContentOf: container.selectedController)
@@ -523,14 +517,6 @@ extension MainTabBarViewController {
 
     func refreshStatusBarTitle() {
         statusBarTitleButton.bind(viewModel: makeStatusBarTitleViewModel())
-    }
-
-    func attachWidget(_ configuration: any HashableContentConfiguration, for id: AppWidgetID) {
-        widgetController.attach(configuration, for: id)
-    }
-
-    func detachWidget(for id: AppWidgetID) {
-        widgetController.detach(for: id)
     }
 }
 

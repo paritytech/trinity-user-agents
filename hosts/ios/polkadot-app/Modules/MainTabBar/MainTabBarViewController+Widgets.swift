@@ -1,8 +1,17 @@
 import UIKit
+import PolkadotUI
 
 // MARK: - Floating widget layout
 
 extension MainTabBarViewController {
+    func attachWidget(_ configuration: any HashableContentConfiguration, for id: AppWidgetID) {
+        widgetController.attach(configuration, for: id)
+    }
+
+    func detachWidget(for id: AppWidgetID) {
+        widgetController.detach(for: id)
+    }
+
     func applyWidgetLayout(
         for context: TabBarChromeContext,
         animatingAlongside transitionCoordinator: UIViewControllerTransitionCoordinator? = nil

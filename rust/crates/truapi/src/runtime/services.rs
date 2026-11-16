@@ -33,6 +33,7 @@ use crate::{
 use crate::{
 	encrypted_storage::EncryptedStorage,
 	installation::InstallationIdProvider,
+	materials::Materials,
 	nft::{HoldingTracker, NftLedger},
 	nft_purse::{NftPurses, NftPursesDeps, StaticReceiveSecret},
 };
@@ -46,9 +47,8 @@ const PREIMAGE_CACHE_MAX_BYTES: usize = 16 * 1024 * 1024;
 /// Store catches up.
 const STATEMENT_CACHE_MAX_ENTRIES: usize = 64;
 
-/// dotNS reads running now. A read opens its own Asset Hub follow and holds it
-/// until it settles, so callers asking for the same thing while one runs wait
-/// for its answer, and a burst of them holds one follow slot, not one each.
+/// dotNS reads running now. Callers asking for the same thing while one runs
+/// wait for its answer, so a burst of them reads Asset Hub once, not once each.
 #[derive(Clone)]
 pub struct DotnsReads {
 	/// Root manifest reads, by product label.
@@ -134,6 +134,9 @@ pub struct RuntimeServices {
 	/// installed with it.
 	#[cfg(not(target_arch = "wasm32"))]
 	nft_ledger: OnceLock<NftLedger>,
+	/// The materials on the device, over the core database, installed with it.
+	#[cfg(not(target_arch = "wasm32"))]
+	materials: OnceLock<Materials>,
 	/// The secret that opens `Static` NFT cheques, installed with the ledger.
 	#[cfg(not(target_arch = "wasm32"))]
 	static_receive_secret: OnceLock<Arc<dyn StaticReceiveSecret>>,
@@ -270,6 +273,8 @@ impl RuntimeServices {
 			#[cfg(not(target_arch = "wasm32"))]
 			nft_ledger: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
+			materials: OnceLock::new(),
+			#[cfg(not(target_arch = "wasm32"))]
 			static_receive_secret: OnceLock::new(),
 			#[cfg(not(target_arch = "wasm32"))]
 			holding_tracker: OnceLock::new(),
@@ -309,12 +314,11 @@ impl RuntimeServices {
 		&self.stack
 	}
 
-	/// The Asset Hub dotNS reads run against, when the stack has one.
+	/// The Asset Hub dotNS reads run against.
 	///
 	/// Fixed by construction, so the chain a grant is adjudicated against
-	/// cannot move under a running product. `None` fails every manifest lookup
-	/// closed: grants are refused rather than assumed.
-	pub fn asset_hub_chain_genesis_hash(&self) -> Option<[u8; 32]> {
+	/// cannot move under a running product.
+	pub fn asset_hub_chain_genesis_hash(&self) -> [u8; 32] {
 		self.stack.chains().asset_hub
 	}
 
@@ -480,6 +484,13 @@ impl RuntimeServices {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn durable_engine(&self) -> Option<Arc<DurableTxEngine>> {
 		self.durable_engine.get().cloned()
+	}
+
+	/// Install the materials on the device. Set-once, like the database they
+	/// are kept in. Returns whether this call installed them.
+	#[cfg(not(target_arch = "wasm32"))]
+	pub fn install_materials(&self, materials: Materials) -> bool {
+		self.materials.set(materials).is_ok()
 	}
 
 	/// Install the NFT ledger. Set-once, like the database it runs on.
