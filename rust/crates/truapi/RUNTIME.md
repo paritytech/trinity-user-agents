@@ -410,36 +410,29 @@ builds a `ProductId`, so holding one means the id is normalized. Code that reads
 an id uses its methods, such as `bare_label` and `has_trusted_remote_permissions`,
 and `CoreStorageKey::product_manifest` keys its manifest cache entry.
 
-Parsing checks syntax only: a TLD is any DNS label, because a wire frame or a
-stored record is decoded with no stack in hand. The stack decides which names
-are products. A stack runs a localhost id and a name under the reserved `dot`
-TLD or its own TLD, and nothing else (`stack::serves`). That is checked where a
-product enters the runtime:
+Parsing a `ProductId` checks syntax only, so any DNS label is a valid TLD. Wire
+frames and stored records are decoded without a stack, so the stack decides
+which ids it runs: localhost ids, names under `dot`, and names under its own TLD
+(`stack::serves`). The core checks this wherever an id comes in:
 
-- `ProductContext::served_by` builds the product a host asks the core to run,
-  for the wasm, native and CLI bridges alike.
-- Each call that names another product (an account owner, a proof context, a
-  storage owner, a purse owner) answers `MalformedFrame` for one the stack does
-  not serve. The handler takes the request through `serve`, the only way to
-  build a `Served` value. The account, signing and proof calls of
-  `HostAccounts` take the request as `Served`, and the signing requests the core
-  builds hold their product account as `Served`, so neither a handler nor a
-  paired host's request reaches a key without the check.
-- The signing role's wallet derives no key for one, and refuses a paired host's
-  request before it asks the user when the review names one. It also checks
-  inside each derivation, since a stored renewal target and the core's own
-  derivations reach it without a request to serve.
-- The manifest readers answer that one publishes nothing. They drop the id's
-  TLD and cache by bare label, so they would otherwise answer with a namesake's
-  manifest.
-- A host's worker reference for one is logged and dropped.
-- `parse_navigate` reads a name as dotNS only under a served TLD and passes any
-  other host on as external. A dotNS name resolves back into the host's own
-  product surface, so it bypasses the outbound domain grant.
-- `product_share_hosts` lists one share host per served TLD.
+- A host cannot open a product the stack does not run. `ProductContext::served_by`
+  refuses it in the wasm, native and CLI bridges.
+- A product call that names another product answers `MalformedFrame` when the
+  stack does not run it. Handlers check requests with `serve`, and `HostAccounts`
+  and the signing requests take only `Served` values, so no path reaches a key
+  without that check.
+- The wallet refuses a paired host's request before showing it to the user. It
+  also checks in every key derivation, because stored renewal targets reach it
+  without a request.
+- The manifest readers return nothing for such an id. They cache by bare label,
+  so `foo.testnet` would otherwise get `foo.paseo`'s manifest.
+- A worker reference for such an id is dropped with a warning.
+- `parse_navigate` treats a name under any other TLD as an external link, because
+  a dotNS link opens inside the host without a domain grant.
+- `product_share_hosts` returns one share host per served TLD.
 
-`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels. A label is
-trusted under a TLD the stack serves. These products bypass recorded permissions and
+`REMOTE_PERMISSION_TRUSTED_LABELS` lists the trusted product labels. A label
+counts only under a TLD the stack serves. These products bypass recorded permissions and
 permission prompts. Device permissions still need the OS grant. The runtime grants
 account access, username disclosure, signing with their own product accounts and
 AutoSigning without approval. Legacy-account signing still asks the user, except
