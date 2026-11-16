@@ -512,7 +512,10 @@ mod cross_product_storage {
 			.as_secs();
 		let applied = product_config::apply(
 			platform,
-			platform.stack_identity(),
+			&crate::network::Network::default()
+				.bundled_stack(ChainBackend::Rpc)
+				.core_stack()
+				.expect("the bundled stack is valid"),
 			std::slice::from_ref(&config),
 			now,
 		)

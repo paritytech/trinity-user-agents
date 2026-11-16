@@ -219,8 +219,9 @@ fn a_live_read_replaces_a_fresh_cached_entry() {
 		crate::Spawner::for_test(),
 	);
 	let key = worker_manifest_cache_key(&ProductId::for_test("fundtest.dot"));
+	let storage = services.storage();
 	let read = |policy: CachePolicy| {
-		cached_dotns_json(&services, platform.as_ref(), key.clone(), policy, || async {
+		cached_dotns_json(&storage, key.clone(), policy, || async {
 			Ok::<_, String>(Some("republished".to_string()))
 		})
 	};

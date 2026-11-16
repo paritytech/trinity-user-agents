@@ -307,11 +307,6 @@ impl CliPlatform {
 		*self.approval.lock().expect("approval policy mutex poisoned") = approval;
 	}
 
-	/// Identity of the stack this host runs.
-	pub fn stack_identity(&self) -> &StackIdentity {
-		&self.stack_identity
-	}
-
 	fn core_key(key: &StackStorageKey) -> Vec<u8> {
 		use parity_scale_codec::Encode;
 		key.encode()

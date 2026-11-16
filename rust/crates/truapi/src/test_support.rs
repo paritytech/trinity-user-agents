@@ -4,7 +4,7 @@
 use std::{
 	collections::HashMap,
 	sync::{
-		Arc, Mutex,
+		Arc, LazyLock, Mutex,
 		atomic::{AtomicBool, AtomicUsize, Ordering},
 	},
 	task::{Context, Poll},
@@ -341,9 +341,6 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 /// Identity of every [`test_stack`].
 pub const TEST_STACK_ID: &str = "test-stack";
 
-/// Generation of every [`test_stack`].
-pub const TEST_STACK_GENERATION: &str = "test-generation";
-
 /// `slot` under [`TEST_STACK_ID`], the key a test host stores it by.
 pub fn test_storage_key(slot: CoreStorageKey) -> StackStorageKey {
 	StackStorageKey { stack: TEST_STACK_ID.to_string(), slot }
@@ -409,9 +406,14 @@ impl PlatformCoreStorage for MemoryCoreStorage {
 	}
 }
 
-/// Core storage for the [`test_stack`], kept in `host`.
+/// Core storage for the [`paseo_test_stack`], kept in `host`.
+///
+/// Every caller shares one stack, and with it whether that stack holds the
+/// values a host stored under a slot alone, which the first test to ask
+/// settles for all. A test about those values builds its own stack.
 pub fn test_storage<S: PlatformCoreStorage + ?Sized>(host: &S) -> StackStorage<'_, S> {
-	StackStorage::new(host, TEST_STACK_ID)
+	static STACK: LazyLock<crate::platform::Stack> = LazyLock::new(paseo_test_stack);
+	STACK.storage(host)
 }
 
 /// A stack on `tld` over these chains, without a relay. Reserved values are
@@ -424,7 +426,7 @@ pub fn test_stack(
 ) -> crate::platform::Stack {
 	let identity = crate::platform::StackIdentity {
 		id: TEST_STACK_ID.to_string(),
-		generation: TEST_STACK_GENERATION.to_string(),
+		generation: "test-generation".to_string(),
 	};
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
 	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, true)
@@ -507,6 +509,23 @@ pub fn test_stack_link(secret: Option<&[u8; 32]>) -> String {
 	trinity_stack::Pointer::new("https://stack.test.invalid/stack.json", key.as_deref())
 		.expect("test pointer is valid")
 		.to_link(trinity_stack::DEFAULT_LINK_BASE)
+}
+
+/// Runtime services over `platform` on the [`paseo_test_stack`].
+pub fn test_services(
+	platform: Arc<dyn crate::platform::Platform>,
+) -> Arc<crate::runtime::RuntimeServices> {
+	crate::runtime::RuntimeServices::new(
+		platform,
+		HostInfo {
+			name: "Test Host".to_string(),
+			icon: None,
+			version: None,
+			platform: truapi::latest::HostPlatform::Unknown,
+		},
+		paseo_test_stack(),
+		crate::Spawner::for_test(),
+	)
 }
 
 /// Runtime configuration used by platform-backed runtime tests.

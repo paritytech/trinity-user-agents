@@ -8,7 +8,7 @@ use std::{
 use truapi::{CallContext, latest::GenericError};
 
 use super::{
-	ProductConnection,
+	ProductConnection, RuntimeServices,
 	authority::{AccountCaller, AuthorityError},
 };
 use crate::{
@@ -18,31 +18,25 @@ use crate::{
 	platform::{
 		AccountAccessReview, CoreStorageKey, CreateTransactionReview, CrossProductSignatureKind,
 		PermissionAuthorizationStatus, PermissionDecision, Platform, ProductId, SignPayloadReview,
-		SignRawReview, Stack, StackStorage, UserConfirmationReview,
+		SignRawReview, UserConfirmationReview,
 	},
 };
 
 /// One runtime's consent policy: one decision store, one prompt at a time, one set of rules.
 pub struct ProductConsent {
-	platform: Arc<dyn Platform>,
-	stack: Stack,
+	services: Arc<RuntimeServices>,
 	permission_prompt: futures::lock::Mutex<()>,
 	allowed_once: Mutex<HashSet<(String, String)>>,
 }
 
 impl ProductConsent {
-	/// Store decisions for `stack` through `platform`, the runtime-wide one.
-	pub fn new(platform: Arc<dyn Platform>, stack: Stack) -> Self {
+	/// Store decisions in the storage of the stack `services` runs.
+	pub fn new(services: Arc<RuntimeServices>) -> Self {
 		Self {
-			platform,
-			stack,
+			services,
 			permission_prompt: futures::lock::Mutex::new(()),
 			allowed_once: Mutex::default(),
 		}
-	}
-
-	fn storage(&self) -> StackStorage<'_, dyn Platform> {
-		self.stack.storage(self.platform.as_ref())
 	}
 
 	/// Whether `requester` may use `target`'s accounts, prompting through `prompt`
@@ -85,7 +79,7 @@ impl ProductConsent {
 			PermissionDecision::Deny => PermissionAuthorizationStatus::Denied,
 		};
 		set_authorization_status(
-			&self.storage(),
+			&self.services.storage(),
 			CoreStorageKey::product_account_access_authorization(requester, target),
 			status,
 		)
@@ -167,7 +161,7 @@ impl ProductConsent {
 		target: &ProductId,
 	) -> Result<Option<PermissionAuthorizationStatus>, AccountAccessError> {
 		let stored = authorization_status(
-			&self.storage(),
+			&self.services.storage(),
 			CoreStorageKey::product_account_access_authorization(requester, target),
 		)
 		.await

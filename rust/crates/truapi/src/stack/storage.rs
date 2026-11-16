@@ -19,7 +19,7 @@ use crate::platform::{CoreStorage, CoreStorageKey, StackStorageKey};
 /// removes both. Other stacks never see those values. Two hosts that look at
 /// the same moment can both take them.
 ///
-/// Built by [`Stack::storage`]. The core stores nothing except through it.
+/// [`Stack::storage`] is its only constructor.
 pub struct StackStorage<'a, S: CoreStorage + ?Sized> {
 	host: &'a S,
 	stack: &'a str,
@@ -27,28 +27,17 @@ pub struct StackStorage<'a, S: CoreStorage + ?Sized> {
 }
 
 impl Stack {
-	/// The core's storage for this stack over the host's `storage`.
+	/// The core's storage for this stack, kept in `host`.
 	///
 	/// Every storage built from a stack, or a clone of it, shares whether the
 	/// stack holds the values stored under a slot alone, so the host is asked
 	/// once a run.
-	pub fn storage<'a, S: CoreStorage + ?Sized>(&'a self, storage: &'a S) -> StackStorage<'a, S> {
-		StackStorage {
-			host: storage,
-			stack: &self.identity.id,
-			holds_unscoped: self.holds_unscoped.clone(),
-		}
+	pub fn storage<'a, S: CoreStorage + ?Sized>(&'a self, host: &'a S) -> StackStorage<'a, S> {
+		StackStorage { host, stack: &self.identity.id, holds_unscoped: self.holds_unscoped.clone() }
 	}
 }
 
-impl<'a, S: CoreStorage + ?Sized> StackStorage<'a, S> {
-	/// Storage in `host` for the stack with the id `stack`, which asks the
-	/// host on its own whether the stack holds the values stored under a slot
-	/// alone.
-	pub fn new(host: &'a S, stack: &'a str) -> Self {
-		Self { host, stack, holds_unscoped: Arc::default() }
-	}
-
+impl<S: CoreStorage + ?Sized> StackStorage<'_, S> {
 	/// Read the value in `slot`.
 	pub async fn read(&self, slot: CoreStorageKey) -> Result<Option<Vec<u8>>, GenericError> {
 		if let Some(value) = self.host.read_core_storage(self.key(slot.clone())).await? {

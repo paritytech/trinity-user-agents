@@ -1,5 +1,3 @@
-use truapi::platform::StackStorage;
-
 use super::*;
 use crate::chain::ChainBackend;
 
@@ -850,6 +848,11 @@ fn two_stacks_writing_one_file_at_once_lose_nothing() {
 	assert_eq!(missing, 0);
 }
 
+/// The stack the core runs for `network`.
+fn core_stack(network: &crate::network::Stack) -> truapi::platform::Stack {
+	network.core_stack().expect("the bundled stack is valid")
+}
+
 /// A session a host stored before keys included a stack id, as hex of the
 /// SCALE-encoded `AuthSession` slot alone.
 const SESSION_STORED_ALONE: &str = r#"{"values":{"00":"cafebabe"}}"#;
@@ -870,14 +873,10 @@ async fn values_stored_with_no_stack_id_go_to_one_of_two_stacks_started_at_once(
 	let on_source = CliPlatform::new(&source, Some(paths()), ApprovalPolicy::AutoAccept, None);
 	let on_fork = CliPlatform::new(&fork, Some(paths()), ApprovalPolicy::AutoAccept, None);
 
-	let (source_id, fork_id) = (source.identity().id, fork.identity().id);
+	let (source, fork) = (core_stack(&source), core_stack(&fork));
 	let sessions = (
-		StackStorage::new(on_source.as_ref(), &source_id)
-			.read(CoreStorageKey::AuthSession)
-			.await,
-		StackStorage::new(on_fork.as_ref(), &fork_id)
-			.read(CoreStorageKey::AuthSession)
-			.await,
+		source.storage(on_source.as_ref()).read(CoreStorageKey::AuthSession).await,
+		fork.storage(on_fork.as_ref()).read(CoreStorageKey::AuthSession).await,
 	);
 	assert_eq!(sessions, (Ok(Some(vec![0xca, 0xfe, 0xba, 0xbe])), Ok(None)));
 }
@@ -899,8 +898,8 @@ async fn values_stored_with_no_stack_id_follow_the_first_pairing() {
 
 	platform.switch_pairing_user_storage("alice.dot").expect("select alice");
 
-	let id = network.identity().id;
-	let session = StackStorage::new(platform.as_ref(), &id)
+	let session = core_stack(&network)
+		.storage(platform.as_ref())
 		.read(CoreStorageKey::AuthSession)
 		.await;
 	assert_eq!(session, Ok(Some(vec![0xca, 0xfe, 0xba, 0xbe])));

@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use super::*;
-use crate::test_support::{MemoryCoreStorage, StubPlatform, test_storage};
+use crate::test_support::{MemoryCoreStorage, StubPlatform, paseo_test_stack, test_storage};
 
 /// A request that has not expired at any `now` these tests use.
 const REQUEST: ReplayRequest<'static> =
@@ -356,10 +356,11 @@ fn a_request_served_before_keys_included_a_stack_is_not_executed_again() {
 			VersionedRequestLedger::V1(ledger).encode(),
 		);
 		let executions = Arc::new(AtomicUsize::new(0));
+		let stack = paseo_test_stack();
 
 		let counted = executions.clone();
 		let outcome = execute_once(
-			&test_storage(&host),
+			&stack.storage(&host),
 			&SsoReplayLocks::default(),
 			scope(1, 2, 3),
 			REQUEST,

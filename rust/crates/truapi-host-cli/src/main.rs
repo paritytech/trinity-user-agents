@@ -1760,7 +1760,12 @@ async fn start_signing_host(
 		chat.clone(),
 		pocket.clone(),
 	)?;
-	apply_local_product_grants(platform.as_ref(), &args.product_config).await?;
+	apply_local_product_grants(
+		platform.as_ref(),
+		&network.core_stack().context("invalid stack")?,
+		&args.product_config,
+	)
+	.await?;
 	let runtime_factory = frame_server::SwitchableSigningRuntime::new(runtime.clone());
 	let last_script = profile
 		.as_ref()
@@ -2172,7 +2177,11 @@ const INTERRUPTED_EXIT_CODE: i32 = 130;
 /// cannot tell them is that the manifest is not published yet, so the host says
 /// it every run: a grant that works locally and was never deployed is the
 /// failure this feature would otherwise cause.
-async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -> Result<()> {
+async fn apply_local_product_grants(
+	platform: &CliPlatform,
+	stack: &truapi::platform::Stack,
+	paths: &[PathBuf],
+) -> Result<()> {
 	if paths.is_empty() {
 		return Ok(());
 	}
@@ -2181,7 +2190,7 @@ async fn apply_local_product_grants(platform: &CliPlatform, paths: &[PathBuf]) -
 		.duration_since(std::time::UNIX_EPOCH)
 		.context("system clock is before the Unix epoch")?
 		.as_secs();
-	let applied = product_config::apply(platform, platform.stack_identity(), &configs, now).await?;
+	let applied = product_config::apply(platform, stack, &configs, now).await?;
 	if applied.is_empty() {
 		return Ok(());
 	}

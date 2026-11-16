@@ -24,7 +24,7 @@ use crate::{
 		session::{SessionInfo, SessionState, encode_persisted_session},
 		session_store::SessionStoreChangeNotifier,
 	},
-	platform::{CoreStorageKey, PairingHostConfig, Platform, ProductContext, StackStorage},
+	platform::{CoreStorageKey, PairingHostConfig, ProductContext},
 	session_usernames::SessionUsernames,
 };
 use channel::SsoDisconnectMonitor;
@@ -139,7 +139,7 @@ impl SessionStoreSync {
 
 /// Canonical paired session selection, cleanup and request transport.
 pub struct SsoRequestService {
-	platform: Arc<dyn Platform>,
+	services: Arc<RuntimeServices>,
 	host_config: PairingHostConfig,
 	chain: ChainRuntime,
 	/// dotNS reads shared with the rest of this host, so username lookups that
@@ -165,10 +165,6 @@ pub struct SsoRequestService {
 }
 
 impl SsoRequestService {
-	fn storage(&self) -> StackStorage<'_, dyn Platform> {
-		self.host_config.stack.storage(self.platform.as_ref())
-	}
-
 	/// Select paired sessions in `session_state` for `owner`, which keeps their grants.
 	pub fn new(
 		services: Arc<RuntimeServices>,
@@ -176,10 +172,8 @@ impl SsoRequestService {
 		session_state: Arc<SessionState>,
 		owner: Arc<dyn PairedSessionOwner>,
 	) -> Arc<Self> {
-		let platform = services.platform.clone();
-		let auth_state = AuthStateMachine::new(platform.clone());
+		let auth_state = AuthStateMachine::new(services.platform.clone());
 		Arc::new_cyclic(|weak_self| Self {
-			platform,
 			host_config,
 			chain: services.chain.clone(),
 			dotns_reads: services.dotns_reads.clone(),
@@ -200,6 +194,7 @@ impl SsoRequestService {
 			session_store_change_ticks: AtomicUsize::new(0),
 			weak_self: weak_self.clone(),
 			spawner: services.spawner.clone(),
+			services,
 		})
 	}
 
@@ -324,7 +319,7 @@ impl SsoRequestService {
 			let barrier = self.owner.write_barrier().await;
 			self.drain_session_deletions(&barrier).await;
 			let epoch = self.advance_session_lifecycle();
-			let read = self.storage().read(CoreStorageKey::AuthSession).await;
+			let read = self.services.storage().read(CoreStorageKey::AuthSession).await;
 			(epoch, read)
 		};
 		let blob = match read {
@@ -358,7 +353,7 @@ impl SsoRequestService {
 		if self.session_epoch() != activation_epoch {
 			return Err(StoredSessionActivationError::Changed);
 		}
-		let latest = self.storage().read(CoreStorageKey::AuthSession).await;
+		let latest = self.services.storage().read(CoreStorageKey::AuthSession).await;
 		let error = match latest {
 			Ok(latest) if latest.as_deref() == Some(blob.as_slice()) => None,
 			Ok(_) => Some((false, StoredSessionActivationError::Changed)),
@@ -381,7 +376,7 @@ impl SsoRequestService {
 			return Err(StoredSessionActivationError::Changed);
 		}
 		if resolved_blob != blob && self.session_epoch() == activation_epoch {
-			let _ = self.storage().write(CoreStorageKey::AuthSession, resolved_blob).await;
+			let _ = self.services.storage().write(CoreStorageKey::AuthSession, resolved_blob).await;
 		}
 		self.drain_session_deletions(&barrier).await;
 		Ok(())
@@ -432,11 +427,11 @@ impl SsoRequestService {
 			selection.advance_epoch()
 		};
 		let blob = encode_persisted_session(session);
-		self.storage().write(CoreStorageKey::AuthSession, blob.clone()).await?;
+		self.services.storage().write(CoreStorageKey::AuthSession, blob.clone()).await?;
 		while self.is_current_login_attempt(generation) {
 			let latest_epoch = self.session_epoch();
 			if latest_epoch != epoch {
-				let latest = self.storage().read(CoreStorageKey::AuthSession).await?;
+				let latest = self.services.storage().read(CoreStorageKey::AuthSession).await?;
 				let mut selection =
 					self.selection.lock().expect("session selection mutex poisoned");
 				if selection.login_generation != generation {
@@ -467,13 +462,13 @@ impl SsoRequestService {
 	/// Discard pairing bootstrap material so the next login generates a new
 	/// device keypair and topic.
 	pub async fn forget_pairing_identity(&self) -> Result<(), String> {
-		self.storage()
+		self.services.storage()
 			.clear(CoreStorageKey::PairingDeviceIdentity)
 			.await
 			.map_err(|error| {
 				format!("session disconnected, but pairing identity reset failed: {}", error.reason)
 			})?;
-		self.storage()
+		self.services.storage()
 			.clear(CoreStorageKey::LastProcessedPairingStatement)
 			.await
 			.map_err(|error| {
@@ -581,7 +576,7 @@ impl SsoRequestService {
 			self.auth_state.store_disconnected();
 		}
 		let auth_result = if pending_auth_deletion {
-			self.storage()
+			self.services.storage()
 				.clear(CoreStorageKey::AuthSession)
 				.await
 				.map(|()| {
@@ -729,7 +724,7 @@ impl SsoRequestService {
 		}
 		self.auth_state.connected(&connected_session_ui_info(&resolved));
 		if let Err(err) = self
-			.storage()
+			.services.storage()
 			.write(CoreStorageKey::AuthSession, encode_persisted_session(&resolved))
 			.await
 		{
