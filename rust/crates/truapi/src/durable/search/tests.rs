@@ -29,6 +29,17 @@ fn a_hit_reports_its_block_and_the_outcome_read_there() {
 }
 
 #[test]
+fn a_hit_at_the_first_block_of_the_range_is_found() {
+	let chain = FakeChain::new(130, 140);
+	chain.include(100, TX, DispatchOutcome::Succeeded);
+
+	assert_eq!(
+		search(&chain, 100, 130),
+		SearchResult::Found { block: block(100), outcome: Some(DispatchOutcome::Succeeded) }
+	);
+}
+
+#[test]
 fn absence_over_a_fully_read_range_is_complete() {
 	let chain = FakeChain::new(130, 140);
 
