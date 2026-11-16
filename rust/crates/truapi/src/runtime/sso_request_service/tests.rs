@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
 	platform::{AuthState, CoreStorage, ProductId, StackStorageKey},
-	runtime::{ProductAuthority, ProductRuntimeHost, allowances},
+	runtime::{ProductRuntimeHost, allowances},
 	test_support::{StubPlatform, sso_session_info, test_storage_key},
 };
 use futures::{FutureExt, executor::block_on};
@@ -83,7 +83,9 @@ fn interrupted_cleanup_retains_its_scope_and_later_auth_deletion() {
 		] {
 			block_on(storage.write_core_storage(test_storage_key(key), blob.clone())).unwrap();
 		}
-		pairing.cache_product_subtree_for_test(&session, &product_id, [0xAB; 32]);
+		pairing
+			.accounts()
+			.cache_product_subtree_for_test(&session, &product_id, [0xAB; 32]);
 		let (release, pause) = oneshot::channel();
 		*storage.pause.lock().unwrap() = Some((CoreStorageKey::AutoSigningKeys, pause));
 		*storage.failure.lock().unwrap() = Some(CoreStorageKey::AutoSigningKeys);

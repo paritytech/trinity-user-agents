@@ -604,9 +604,9 @@ fn stack_from_js(value: &JsValue) -> Result<Stack, JsValue> {
 		.map_err(|error| JsValue::from_str(&format!("runtimeConfig.stack: {error}")))
 }
 
-/// `runtimeConfig.testStack`: `id`, `generation`, `network`, `tld`, `people`,
-/// `bulletin` and the optional `assetHub` and `relay`, each `{ genesisHash }`,
-/// and `allowsReservedValues`, which defaults to false.
+/// `runtimeConfig.testStack`: `id`, `generation`, `network`, `tld`,
+/// `assetHub`, `people`, `bulletin` and the optional `relay`, each
+/// `{ genesisHash }`, and `allowsReservedValues`, which defaults to false.
 ///
 /// Give two test stacks different `id`s to keep their stored state apart.
 #[cfg(feature = "test-host")]
@@ -626,7 +626,7 @@ fn test_stack_from_js(stack: &JsValue) -> Result<Stack, JsValue> {
 	};
 	let chains = StackChains {
 		relay: genesis("relay")?,
-		asset_hub: genesis("assetHub")?,
+		asset_hub: required("assetHub")?,
 		people: required("people")?,
 		bulletin: required("bulletin")?,
 	};

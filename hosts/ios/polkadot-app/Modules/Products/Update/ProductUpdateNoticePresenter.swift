@@ -1,5 +1,6 @@
 import struct TrUAPIHost.ProductId
 import Products
+import PolkadotUI
 import UIKit
 
 @MainActor
@@ -36,7 +37,7 @@ final class ProductUpdateNoticePresenter: ProductUpdateNoticePresenting {
         window = notice
         notice.show(ProductUpdateNoticeView(
             productName: productName,
-            icon: iconFactory.createViewModel(for: productId),
+            icon: AnyImageViewModel(iconFactory.createViewModel(for: productId)),
             onUpdate: onUpdate,
             onDismiss: onDismiss
         ))

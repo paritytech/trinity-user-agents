@@ -31,7 +31,7 @@ extension AppDetailPresenter: AppDetailPresenterProtocol {
     func setup() {
         // The icon is keyed by domain alone, so it starts loading without waiting for the manifest.
         view?.didReceive(name: productId.rawValue, subtitle: nil)
-        view?.didReceive(icon: iconViewModelFactory.createViewModel(for: productId))
+        view?.didReceive(icon: AnyImageViewModel(iconViewModelFactory.createViewModel(for: productId)))
 
         interactor.setup()
     }

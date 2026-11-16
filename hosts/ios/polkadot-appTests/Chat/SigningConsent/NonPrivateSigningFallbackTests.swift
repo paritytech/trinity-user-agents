@@ -66,6 +66,45 @@ struct NonPrivateSigningFallbackTests {
 
         #expect(prompter.subjects.map(\.username) == ["peer"])
     }
+
+    @Test @MainActor func backgroundSigningWithoutConsentDefersInsteadOfPrompting() async throws {
+        let fallback = ForegroundConsentSigningFallback(
+            base: makeFallback(),
+            activity: ApplicationActivityStub(isInBackground: true)
+        )
+
+        await #expect(throws: ChatSigningConsentUnavailableError.self) {
+            try await fallback.identitySigner(for: peer, ownSignKeyId: ownSignKeyId)
+        }
+
+        #expect(prompter.subjects.isEmpty)
+        #expect(pendingMessages.failedContacts.isEmpty)
+    }
+
+    @Test @MainActor func backgroundSigningUsesStoredConsent() async throws {
+        try await consentStore().grant(for: peer)
+        let fallback = ForegroundConsentSigningFallback(
+            base: makeFallback(),
+            activity: ApplicationActivityStub(isInBackground: true)
+        )
+
+        let signer = try await fallback.identitySigner(for: peer, ownSignKeyId: ownSignKeyId)
+
+        #expect(try signer.accountId == identityAccountId())
+        #expect(prompter.subjects.isEmpty)
+    }
+
+    @Test @MainActor func foregroundSigningStillAsksForConsent() async throws {
+        prompter.answers = [true]
+        let fallback = ForegroundConsentSigningFallback(
+            base: makeFallback(),
+            activity: ApplicationActivityStub(isInBackground: false)
+        )
+
+        _ = try await fallback.identitySigner(for: peer, ownSignKeyId: ownSignKeyId)
+
+        #expect(prompter.subjects.map(\.contactAccountId) == [peer])
+    }
 }
 
 private extension NonPrivateSigningFallbackTests {

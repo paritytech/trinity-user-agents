@@ -4,6 +4,7 @@ import Operation_iOS
 import KeyDerivation
 import SubstrateSdk
 import ChainRegistry
+import FoundationExt
 
 enum RootPresenterFactory: RootPresenterFactoryProtocol {
     static func createPresenter(
@@ -60,9 +61,10 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
         let chainRegistryClosure = { ChainRegistryFacade.sharedRegistry }
 
         let productPrewarmer = ProductContentPrewarmer(
-            makeLabels: { await createProductLabels(flowStateProvider: flowStateProvider) },
+            labelsProvider: ProductPrewarmLabelsProvider(flowStateProvider: flowStateProvider),
             chainRegistryClosure: chainRegistryClosure,
-            flowStateProvider: flowStateProvider
+            flowStateProvider: flowStateProvider,
+            activity: ApplicationActivity()
         )
 
         let interactor = RootInteractor(
@@ -96,25 +98,5 @@ enum RootPresenterFactory: RootPresenterFactoryProtocol {
         window.rootViewController = initViewController
 
         return presenter
-    }
-
-    @MainActor
-    private static func createProductLabels(flowStateProvider: SPAFlowStateProviding) async -> [String] {
-        #if FEATURE_PRODUCTS
-            let staticProducts = [AppConfig.DotNs.dotNsBrowse]
-        #else
-            let staticProducts: [String] = []
-        #endif
-
-        let fundingProvider = FundingDomainProvider(
-            hostProvider: flowStateProvider.flowState().hostProvider
-        )
-
-        let fundingPages = await [
-            try? fundingProvider.fundingPage(),
-            try? fundingProvider.offrampPage()
-        ]
-
-        return staticProducts + fundingPages.compactMap { $0?.host.name }
     }
 }
