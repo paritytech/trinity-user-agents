@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "polkadotapp-workflows",
-      "description": "Architect / Implementer / Reviewer / Commit-message skills for the PolkadotApp codebase.",
+      "description": "Architect / Implementer / Reviewer / Tester / Commit-message skills for the PolkadotApp codebase.",
       "source": "./polkadotapp-workflows"
     }
   ]

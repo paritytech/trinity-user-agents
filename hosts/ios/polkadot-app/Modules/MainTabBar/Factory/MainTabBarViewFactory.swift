@@ -125,10 +125,17 @@ enum MainTabBarViewFactory {
             messageDecoder: messageDecoder
         )
 
+        let seenReceiptService = SeenReceiptService(
+            storageFacade: storageFacade,
+            sender: serviceCoordinator.chatCoordinator.outboxService,
+            logger: Logger.shared
+        )
+
         return ChatFlowState(
             extensionsRegistry: serviceCoordinator.chatExtensionsRegistry,
             callCoordinator: serviceCoordinator.callCoordinator,
             outboxService: serviceCoordinator.chatCoordinator.outboxService,
+            seenReceiptService: seenReceiptService,
             attachmentUploadStateProvider: serviceCoordinator.attachmentUploadService,
             attachmentDownloadStateProvider: serviceCoordinator.attachmentDownloadService,
             foregroundVisibilityReporter: foregroundVisibilityReporter,
@@ -137,6 +144,7 @@ enum MainTabBarViewFactory {
             coinageService: serviceCoordinator.coinageService,
             networkStatusService: serviceCoordinator.networkStatusService,
             allowanceCleanupService: serviceCoordinator.allowanceManagerFacade.cleanupService,
+            chatRequestCancelService: serviceCoordinator.chatRequestCancelService,
             flowState: spaFlowState
         )
     }
