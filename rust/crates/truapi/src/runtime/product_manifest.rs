@@ -35,7 +35,7 @@ use crate::{
 		worker_manifest::{WorkerManifest, check_app_manifest},
 	},
 	runtime::{
-		dotns_lookup::{DotnsLookup, DotnsLookupKind},
+		dotns_lookup::DotnsLookup,
 		services::RuntimeServices,
 	},
 	unix_time::current_unix_secs,
@@ -71,7 +71,6 @@ async fn fetch_root_manifest(
 	fetch_text_record(
 		chain,
 		asset_hub_chain_genesis_hash,
-		DotnsLookupKind::Manifest(product_id),
 		product_id,
 		None,
 		MANIFEST_RECORD_KEY,
@@ -91,7 +90,6 @@ async fn fetch_worker_manifest(
 	fetch_text_record(
 		chain,
 		asset_hub_chain_genesis_hash,
-		DotnsLookupKind::WorkerManifest(product_id),
 		product_id,
 		Some(WORKER_SUBNAME),
 		EXECUTABLE_RECORD_KEY,
@@ -110,7 +108,6 @@ async fn fetch_app_manifest(
 	fetch_text_record(
 		chain,
 		asset_hub_chain_genesis_hash,
-		DotnsLookupKind::AppManifest(product_id),
 		product_id,
 		Some(APP_SUBNAME),
 		EXECUTABLE_RECORD_KEY,
@@ -125,17 +122,15 @@ fn record_node(tld: &str, product_id: &ProductId, subname: Option<&str>) -> [u8;
 }
 
 /// Reads text record `key` on `product_id`'s base name, or on its `subname`
-/// when one is given. `kind` names the lookup in its follow id.
+/// when one is given.
 async fn fetch_text_record(
 	chain: &ChainRuntime,
 	asset_hub_chain_genesis_hash: [u8; 32],
-	kind: DotnsLookupKind<'_>,
 	product_id: &ProductId,
 	subname: Option<&str>,
 	key: &str,
 ) -> Result<Option<String>, DotnsError> {
-	let mut lookup =
-		DotnsLookup::pinned_to_best_block(chain, asset_hub_chain_genesis_hash, kind).await?;
+	let mut lookup = DotnsLookup::at_best_block(chain, asset_hub_chain_genesis_hash).await?;
 
 	read_text_record(&mut lookup, product_id, subname, key).await
 }
@@ -203,9 +198,9 @@ pub struct CachedManifest {
 	/// answered that the product publishes none.
 	///
 	/// A miss is cached because refusing is the common outcome: without it every
-	/// refused call reopens a chainHead follow and re-reads the contracts, and
-	/// the round trip tells the caller which targets have a manifest and which
-	/// do not — the distinction one uniform refusal exists to hide.
+	/// refused call re-reads the contracts, and the round trip tells the caller
+	/// which targets have a manifest and which do not — the distinction one
+	/// uniform refusal exists to hide.
 	pub json: Option<String>,
 }
 
@@ -671,7 +666,7 @@ async fn key_access(
 ///
 /// Lookups of one product that miss the cache together share one dotNS read,
 /// through [`DotnsReads::root_manifests`](crate::runtime::services::DotnsReads::root_manifests), so
-/// a burst of them holds one Asset Hub follow rather than one each. The read runs to the end
+/// a burst of them reads Asset Hub once rather than once each. The read runs to the end
 /// whatever its callers do, so one that gives up on its ceiling does not cut it short for
 /// the rest.
 async fn root_manifest(
