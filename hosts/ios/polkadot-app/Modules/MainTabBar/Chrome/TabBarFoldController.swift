@@ -91,7 +91,7 @@ final class TabBarFoldController {
         let override = context.screen === navigationScreen
             ? userOverride
             : state.carriedOverride
-        return TabBarVisibilityPolicy.state(derived: context.foldDerived, override: override)
+        return TabBarVisibilityState(derived: context.foldDerived, override: override)
     }
 
     /// Moves the chrome toward `state` in sync with an interactive transition. Unlike `apply(state:)`
@@ -206,7 +206,7 @@ private extension TabBarFoldController {
     }
 
     var policyState: TabBarVisibilityState {
-        TabBarVisibilityPolicy.state(derived: foldDerived, override: userOverride)
+        TabBarVisibilityState(derived: foldDerived, override: userOverride)
     }
 
     var geometry: DockletGeometry {

@@ -47,7 +47,7 @@ MainTabBarViewController            container, status strip, widget and inset la
 | Edge glow band, boost and shimmer | `polkadot-app/Modules/MainTabBar/Chrome/TabBarEdgeGlowView.swift` |
 | Fold transform target, bar width | `polkadot-app/Modules/MainTabBar/Chrome/TabBarChromeSurfaceView.swift` |
 | Fold state machine | `polkadot-app/Modules/MainTabBar/Chrome/TabBarFoldController.swift` |
-| Fold state resolution | `polkadot-app/Modules/MainTabBar/Chrome/TabBarVisibilityPolicy.swift` |
+| Fold state resolution | `polkadot-app/Modules/MainTabBar/Chrome/TabBarVisibilityState.swift` |
 | Docklet motion core: hide progress, settle (spring or Reduce Motion fade), release velocity, content fade target | `polkadot-app/Modules/MainTabBar/Chrome/DockletMotion.swift`, `DockletSpring.swift`, `DockletReducedFade.swift`, `DockletDragSamples.swift` (pure value types) |
 | Path: pose, hold, aim, direction lock, Edge glow and Grab zone rects | `polkadot-app/Modules/MainTabBar/Chrome/DockletPath.swift`, `DockletDrawbridge*.swift`, `DockletHeldPose.swift`, `DockletAim.swift`, `DockletDirectionLock.swift`, `DockletGeometry.swift` (pure value types) |
 | Auto-hide and session peek | `polkadot-app/Modules/MainTabBar/Chrome/DockletAutoHide.swift`, `DockletTouchObserver.swift`, `DockletPeek.swift` |
@@ -246,7 +246,7 @@ The three states are `shown`, `tucked` and `hidden`. The bar's position between 
 - **Tucked.** On the Drawbridge, the bar turns a quarter and slides out to the right, and the Edge glow stays on the right edge (`DockletDrawbridge`).
 - **Hidden.** The bar slides fully off the leading edge. There is no Edge glow and no grab zone, so tab navigation is not available on that screen. No type conforms to `TabBarChromeVisibilityCustomizing` yet, so no screen sets Hidden.
 
-`TabBarVisibilityPolicy.state(derived:override:)` resolves the state in this order:
+`TabBarVisibilityState.init(derived:override:)` resolves the state in this order:
 
 1. A derived `hidden` (chat) wins over everything.
 2. A user override (`tucked` or `shown`) wins.
@@ -343,7 +343,7 @@ The two change at different rates. The navigation controller is stable for the t
 
 **State-based rule.** The Clearance depends on the state the Docklet resolves to, not on the kind of screen.
 
-- `TabBarVisibilityPolicy.bottomClearance(for:bottomSafeAreaInset:)`: resting height minus the bottom safe area when Shown, 0 when Tucked or Hidden. `TabBarBottomChromeController.bottomClearance(for:)` applies it to the state a context resolves to; plus the bottom safe area, it sets the widgets' bottom offset.
+- `TabBarVisibilityState.bottomClearance(bottomSafeAreaInset:)`: resting height minus the bottom safe area when Shown, 0 when Tucked or Hidden. `TabBarBottomChromeController.bottomClearance(for:)` applies it to the state a context resolves to; plus the bottom safe area, it sets the widgets' bottom offset.
 - The Clearance goes on the tab's navigation controller. A tucked tab root, an open chat and a mounted product take none. The shelf and the center panel overlay content and leave it unchanged.
 - Navigation lays out for the incoming screen alongside its transition, interactive pops and their cancellation included.
 - A state committed in place (drag release, auto-hide, `openPanelShowingDocklet`) fires `onDockletStateCommitted`; `apply(_:)` does not. `MainTabBarViewController.applyDockletStateCommitted()` then animates the widgets and the Clearance with `DSTabBarStyle.animateCenterChange(in:_:)`, snapping under Reduce Motion. A main scroll view within the moved distance of its bottom keeps that distance, so its last rows follow the Docklet.

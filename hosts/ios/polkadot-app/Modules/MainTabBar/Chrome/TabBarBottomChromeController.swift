@@ -168,10 +168,7 @@ final class TabBarBottomChromeController: UIViewController {
 
     /// The Clearance the bar publishes for `context`, which is zero unless the bar resolves to shown.
     func bottomClearance(for context: TabBarChromeContext) -> CGFloat {
-        TabBarVisibilityPolicy.bottomClearance(
-            for: resolvedState(for: context),
-            bottomSafeAreaInset: view.safeAreaInsets.bottom
-        )
+        resolvedState(for: context).bottomClearance(bottomSafeAreaInset: view.safeAreaInsets.bottom)
     }
 
     deinit {
