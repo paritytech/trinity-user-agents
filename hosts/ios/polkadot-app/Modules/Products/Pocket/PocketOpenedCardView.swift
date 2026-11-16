@@ -24,14 +24,14 @@ struct PocketOpenedCardView: View {
         ZStack {
             PocketCardEdge(turn: turn)
             PocketCollectionCardView(card: card)
-                .turnedFace(turn, side: .front, depth: -PocketCardEdge.thickness / 2)
+                .modifier(TurnedFace(turn: turn, side: .front, depth: -PocketCardEdge.thickness / 2))
             PocketProductCardView(
                 title: card.title,
                 face: back,
                 resolveImage: pocket?.faceImages(of: card),
                 onAction: { action, value in pocket?.send(action, value, for: card.key, side: .back) }
             )
-            .turnedFace(turn, side: .back, depth: PocketCardEdge.thickness / 2)
+            .modifier(TurnedFace(turn: turn, side: .back, depth: PocketCardEdge.thickness / 2))
         }
         .accessibilityElement(children: .contain)
         .accessibilityActions {
@@ -75,11 +75,11 @@ private struct PocketCardEdge: View {
                     .mask(alignment: turn.isLeftSideNearer ? .leading : .trailing) {
                         Rectangle().frame(width: Self.strip)
                     }
-                    .turnedLayer(
-                        turn,
+                    .modifier(TurnedLayer(
+                        turn: turn,
                         side: .front,
                         depth: Self.thickness * (Double(slice) / Double(Self.slices - 1) - 0.5)
-                    )
+                    ))
             }
         }
         .frame(height: PocketCardSize.height)
@@ -97,16 +97,6 @@ private struct PocketCardEdge: View {
             green: channel(Self.shaded.green, Self.lit.green),
             blue: channel(Self.shaded.blue, Self.lit.blue)
         )
-    }
-}
-
-private extension View {
-    func turnedLayer(_ turn: PocketCardTurn, side: PocketCardSide, depth: Double) -> some View {
-        modifier(TurnedLayer(turn: turn, side: side, depth: depth))
-    }
-
-    func turnedFace(_ turn: PocketCardTurn, side: PocketCardSide, depth: Double) -> some View {
-        modifier(TurnedFace(turn: turn, side: side, depth: depth))
     }
 }
 
@@ -140,7 +130,7 @@ private struct TurnedFace: ViewModifier {
         let shown = turn.shownSide == side
 
         return content
-            .turnedLayer(turn, side: side, depth: depth)
+            .modifier(TurnedLayer(turn: turn, side: side, depth: depth))
             .opacity(shown ? 1 : 0)
             .zIndex(shown ? 1 : 0)
             .allowsHitTesting(shown)
