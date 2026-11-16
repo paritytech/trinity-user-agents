@@ -789,10 +789,11 @@ the labels that build it: `ci:ios-simulator`, `ci:ios-device` and
 - `preview`, an installable simulator `.app` attached to the run, stamped with
   the commit it came from in `TrUAPICommit`
 
-The `iOS SwiftLint` job, also part of `CI Status`, lints the app tree and its
-base on ubuntu and fails on any SwiftLint violation the change adds. It runs on
-pull requests touching the app and in the merge queue, where it catches two
-pull requests that each pass but break a rule together, such as a file's length.
+The `iOS SwiftLint` job, also part of `CI Status`, lints the app tree on ubuntu
+and fails on any SwiftLint error, and on any warning the committed baseline
+does not list. It runs on pull requests whose changes can affect the app and in
+the merge queue, where it catches two pull requests that each pass but break a
+rule together, such as a file's length.
 
 Pull requests that build the app carry a comment linking the build for its head
 commit, updated in place as the branch moves. To run one:
