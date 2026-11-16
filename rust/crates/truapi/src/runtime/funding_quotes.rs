@@ -37,7 +37,7 @@ use truapi::latest::{
 };
 
 use super::{
-	funding::{lock, within},
+	funding::lock,
 	funding_telemetry::{self, FundingFact, Region},
 	services::RuntimeServices,
 };
@@ -50,6 +50,7 @@ use crate::{
 	platform::{
 		FundingQuoteList, FundingQuoteRow, FundingQuoteState, FundingQuoteUnavailable, ProductId,
 	},
+	time::within,
 	unix_time::current_unix_millis,
 };
 

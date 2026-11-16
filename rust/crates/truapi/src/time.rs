@@ -1,9 +1,9 @@
 //! Waiting: [`Timer`] for waits that tests can control, and [`retry`] with
 //! [`Backoff`] for retrying an operation.
 
-use core::time::Duration;
+use core::{future::Future, time::Duration};
 
-use futures::future::{BoxFuture, ready};
+use futures::future::{BoxFuture, Either, ready};
 
 /// Waits for a duration.
 pub trait Timer: Send + Sync {
@@ -20,6 +20,14 @@ impl Timer for RealTimer {
 			return Box::pin(ready(()));
 		}
 		Box::pin(futures_timer::Delay::new(duration))
+	}
+}
+
+/// `future`'s output, or `None` once `limit` passed first.
+pub(crate) async fn within<T>(limit: Duration, future: impl Future<Output = T>) -> Option<T> {
+	match futures::future::select(core::pin::pin!(future), futures_timer::Delay::new(limit)).await {
+		Either::Left((output, _)) => Some(output),
+		Either::Right(_) => None,
 	}
 }
 
