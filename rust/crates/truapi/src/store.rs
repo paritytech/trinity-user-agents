@@ -1,10 +1,14 @@
-//! Core-owned SQLite store: one writer connection, a small read-only pool,
-//! and async access that works on any executor.
+//! Core-owned SQLite store: one writer, read access that sees the last
+//! commit, and async calls that work on any executor.
 //!
-//! Each connection runs on its own thread (via `async-sqlite`), so SQLite work
-//! never blocks the runtime's executor. [`Db::observe`] turns a query into a
-//! stream that follows every commit.
+//! [`Db`] is the same on every target. Where its closures run is the
+//! backend's: on native targets each connection has its own thread (via
+//! `async-sqlite`), so SQLite work never blocks the runtime's executor, and
+//! reads go through a small read-only pool. On `wasm32` there are no threads,
+//! so one connection in the calling instance runs each closure in place.
+//! [`Db::observe`] turns a query into a stream that follows every commit.
 
+mod backend;
 mod migration;
 mod observe;
 
@@ -14,13 +18,13 @@ use std::{
 	sync::Arc,
 };
 
-use async_sqlite::{JournalMode, Pool, PoolBuilder};
-use rusqlite::{OpenFlags, TransactionBehavior};
+use rusqlite::TransactionBehavior;
 use rusqlite_migration::Migrations;
 
+use backend::Backend;
 pub use migration::core_migrations;
 pub use observe::ObservedStatement;
-use observe::{Invalidation, authorize_for_change_tracking, track_changes};
+use observe::{Invalidation, track_changes};
 
 /// Where a database lives.
 #[derive(Clone)]
@@ -40,7 +44,7 @@ pub struct DbConfig {
 	/// `open` returns.
 	pub migrations: fn() -> Migrations<'static>,
 	/// Number of read-only connections. A [`DbLocation::Memory`] database
-	/// reads through the writer instead.
+	/// reads through the writer instead, as every database does on `wasm32`.
 	pub readers: usize,
 }
 
@@ -102,18 +106,9 @@ pub enum DbError {
 	Unobservable(&'static str),
 }
 
-impl From<async_sqlite::Error> for DbError {
-	fn from(error: async_sqlite::Error) -> Self {
-		match error {
-			async_sqlite::Error::Closed => Self::Closed,
-			async_sqlite::Error::Rusqlite(error) => Self::Sqlite(error),
-			other => Self::Connection(other.to_string()),
-		}
-	}
-}
-
 /// What a database reports about itself.
-#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct DbStatus {
 	/// Version of the SQLite library serving the database.
 	pub sqlite_version: String,
@@ -126,8 +121,7 @@ pub struct DbStatus {
 /// A handle to one SQLite database. Cloning shares the same connections.
 #[derive(Clone)]
 pub struct Db {
-	writer: Pool,
-	readers: Pool,
+	backend: Backend,
 	invalidation: Arc<Invalidation>,
 }
 
@@ -135,60 +129,9 @@ impl Db {
 	/// Opens or creates the database, applies the connection settings and runs
 	/// pending migrations on the writer.
 	pub async fn open(config: DbConfig) -> Result<Self, DbError> {
-		let writer = match &config.location {
-			DbLocation::File(path) => PoolBuilder::new().path(path).journal_mode(JournalMode::Wal),
-			DbLocation::Memory => PoolBuilder::new(),
-		}
-		.num_conns(1)
-		.open()
-		.await
-		.map_err(|error| DbError::Open(error.to_string()))?;
-
-		let migrations = config.migrations;
 		let invalidation = Arc::new(Invalidation::default());
-		let hook = invalidation.clone();
-		writer
-			.conn_mut_and_then(move |conn| {
-				conn.pragma_update(None, "synchronous", "FULL")?;
-				conn.pragma_update(None, "foreign_keys", true)?;
-				conn.pragma_update(None, "temp_store", "MEMORY")?;
-				conn.busy_timeout(BUSY_TIMEOUT)?;
-				rusqlite::vtab::array::load_module(conn)?;
-				match migrations().to_latest(conn) {
-					Ok(()) |
-					Err(rusqlite_migration::Error::MigrationDefinition(
-						rusqlite_migration::MigrationDefinitionError::NoMigrationsDefined,
-					)) => Ok(()),
-					Err(error) => Err(DbError::Migration(error.to_string())),
-				}?;
-				track_changes(conn, hook).map_err(DbError::from)
-			})
-			.await?;
-
-		let readers = match &config.location {
-			DbLocation::File(path) => {
-				let readers = PoolBuilder::new()
-					.path(path)
-					.flags(OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
-					.num_conns(config.readers)
-					.open()
-					.await
-					.map_err(|error| DbError::Open(error.to_string()))?;
-				readers
-					.conn_for_each(|conn| {
-						conn.busy_timeout(BUSY_TIMEOUT)?;
-						rusqlite::vtab::array::load_module(conn)?;
-						conn.authorizer(Some(authorize_for_change_tracking))
-					})
-					.await
-					.into_iter()
-					.collect::<Result<Vec<()>, _>>()?;
-				readers
-			},
-			DbLocation::Memory => writer.clone(),
-		};
-
-		Ok(Self { writer, readers, invalidation })
+		let backend = Backend::open(&config, invalidation.clone()).await?;
+		Ok(Self { backend, invalidation })
 	}
 
 	/// Runs `f` in one `BEGIN IMMEDIATE` transaction on the writer. Commits
@@ -217,8 +160,8 @@ impl Db {
 		E: Send + 'static,
 	{
 		let invalidation = self.invalidation.clone();
-		self.writer
-			.conn_mut_and_then(move |conn| {
+		self.backend
+			.with_writer(move |conn| {
 				let outcome = in_transaction_unless_refused(conn, f);
 				// Publish only once readers can see the rows: `commit_hook`
 				// runs before the commit is visible.
@@ -231,13 +174,14 @@ impl Db {
 			.await
 	}
 
-	/// Runs `f` on a read-only connection that sees the last committed state.
+	/// Runs `f` on a connection that sees the last committed state. It is
+	/// read-only wherever the backend keeps a separate one for reads.
 	pub async fn read<T, F>(&self, f: F) -> Result<T, DbError>
 	where
 		F: FnOnce(&rusqlite::Connection) -> Result<T, DbError> + Send + 'static,
 		T: Send + 'static,
 	{
-		self.readers.conn_and_then(f).await
+		self.backend.with_reader(f).await
 	}
 
 	/// Reports the SQLite version, schema version and file path.
@@ -252,16 +196,34 @@ impl Db {
 		.await
 	}
 
-	/// Checkpoints the write-ahead log and closes every connection.
+	/// Closes every connection, after checkpointing the write-ahead log where
+	/// the backend keeps one.
 	pub async fn close(&self) -> Result<(), DbError> {
-		self.writer
-			.conn(|conn| conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())))
-			.await?;
-		self.readers.close().await?;
-		self.writer.close().await?;
+		self.backend.close().await?;
 		self.invalidation.close();
 		Ok(())
 	}
+}
+
+/// Applies the settings every writer carries, runs the pending `migrations`
+/// and makes the writer report its committed changes to `invalidation`.
+fn prepare_writer(
+	conn: &mut rusqlite::Connection,
+	migrations: fn() -> Migrations<'static>,
+	invalidation: Arc<Invalidation>,
+) -> Result<(), DbError> {
+	conn.pragma_update(None, "synchronous", "FULL")?;
+	conn.pragma_update(None, "foreign_keys", true)?;
+	conn.pragma_update(None, "temp_store", "MEMORY")?;
+	rusqlite::vtab::array::load_module(conn)?;
+	match migrations().to_latest(conn) {
+		Ok(()) |
+		Err(rusqlite_migration::Error::MigrationDefinition(
+			rusqlite_migration::MigrationDefinitionError::NoMigrationsDefined,
+		)) => Ok(()),
+		Err(error) => Err(DbError::Migration(error.to_string())),
+	}?;
+	track_changes(conn, invalidation).map_err(DbError::from)
 }
 
 /// Runs `f` in a transaction that commits only when `f` returns `Ok(Ok(_))`
@@ -278,8 +240,6 @@ fn in_transaction_unless_refused<T, E>(
 	tx.commit()?;
 	Ok(Ok(value))
 }
-
-const BUSY_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(5);
 
 #[cfg(test)]
 mod tests;

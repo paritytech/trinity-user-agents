@@ -327,7 +327,7 @@ impl Db {
 		if let Some(tables) = self.invalidation.resolved.lock().get(sql) {
 			return Ok(tables.clone());
 		}
-		let tables = self.readers.conn_and_then(move |conn| resolve_tables(conn, sql)).await?;
+		let tables = self.read(move |conn| resolve_tables(conn, sql)).await?;
 		self.invalidation.resolved.lock().insert(sql, tables.clone());
 		Ok(tables)
 	}
