@@ -103,6 +103,35 @@ pub enum RemotePermission {
 		/// Whose purses.
 		owner: NftPurseOwner,
 	},
+	/// Using CoinPayment purses at all (RFC 0017's `CoinPayment` permission).
+	/// The host asks for it on the first CoinPayment call that needs it.
+	#[display("pay and receive with coinage")]
+	CoinPayment,
+	/// One action on one CoinPayment purse that another product created, or
+	/// on the main purse. A grant covers that purse and action only.
+	#[display("{action} coinage purse {purse}")]
+	CoinPaymentPurse {
+		/// The purse.
+		purse: u32,
+		/// What the product may do with it.
+		action: CoinPaymentPurseAction,
+	},
+}
+
+/// What a [`RemotePermission::CoinPaymentPurse`] grant lets a product do with
+/// a purse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encode, Decode, Display)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum CoinPaymentPurseAction {
+	/// See its metadata and balance.
+	#[display("see")]
+	Query,
+	/// Let value land in it.
+	#[display("receive into")]
+	Receive,
+	/// Let value leave it.
+	#[display("spend from")]
+	Spend,
 }
 
 /// remote-permission request (RFC 0002).
