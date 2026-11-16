@@ -52,6 +52,8 @@ RFC must state what the host is and is not obliged to recover.
   and refuses to consume them again. This covers the keys of a received cheque too: while one operation moves an item
   from a key, whether a purse key or a cheque key, no other operation may move it, since only one move can land.
   `revoke_cheque` moves items handed off in a cheque into fresh keys of their purse.
+- The host keeps every cheque it creates, and `list_cheques` returns them to the product that created them, so a
+  product can recover a cheque whose response or copy it lost.
 - Products cannot sign arbitrary transactions with purse items, because the host could then not track item status.
   `transfer_item` covers the one external transfer products need.
 - Backup recovery restores assets only. In-use statuses and purse-to-product ownership are not guaranteed to survive,
@@ -462,6 +464,8 @@ a listen with `Other`, and the product listens again on the same channel.
 // The items become InUse for good. `revoke_cheque` moves them into fresh keys instead.
 // The cheque id is the idempotency key, scoped to the calling product: creating a second
 // cheque with the same id fails with OperationExists.
+// The host keeps the returned cheque, and `list_cheques` returns it again, so a product
+// that gets OperationExists on a retry finds the cheque there.
 // Asks for a confirmation if owner(from) != PurseOwner::Product(self).
 fn create_cheque(
     from: PurseId,
@@ -511,6 +515,31 @@ enum RevokeChequeError {
 
 Each move waits up to 30 minutes for its key to hold an NFT. A key the recipient emptied first is reported in
 `Status::Incomplete.failed`.
+
+#### List cheques
+
+```rust
+// Sender side: every cheque the calling product created on this host, oldest first.
+// Each comes back exactly as create_cheque returned it, so a product that lost the
+// response or its own copy can deliver it again or revoke it.
+// Lists a cheque whatever happened to it since: deposited, revoked or refunded.
+// Needs no grant or confirmation. Another product's cheques are never listed.
+fn list_cheques() -> Result<Vec<ChequeRecord>, ListChequesError>;
+
+struct ChequeRecord {
+    cheque: Cheque,
+    // The purse the items left
+    from: PurseId,
+    // The destination create_cheque was called with
+    destination: ChequeDestination,
+    // Host wall clock at creation, Unix milliseconds. Informational only.
+    created_at: u64,
+}
+
+enum ListChequesError {
+    Other(GenericError),
+}
+```
 
 #### Deposit a cheque
 
@@ -626,6 +655,8 @@ The host's only obligation during backup recovery is to recover all assets. In a
 - The host MAY recover purse metadata (name, owning product). A purse whose metadata is not recovered SHOULD be owned
   by `PurseOwner::Root`, and the host SHOULD give it a name of its choice.
 - The host MAY recover handoff marks and the information needed to rebuild `InUse` statuses.
+- The host MAY recover the cheque records `list_cheques` returns. A cheque whose record is not recovered is no longer
+  listed.
 
 ## Drawbacks
 
@@ -641,6 +672,7 @@ The host's only obligation during backup recovery is to recover all assets. In a
 ## Testing, Security, and Privacy
 
 - Products never see item secrets. Secrets leave the host only inside `Cheque.encrypted_secrets`.
+- The host stores every cheque it creates, including `encrypted_secrets`, which stay sealed to the recipient.
 - A cheque's cleartext part links item keys and, for `Ephemeral`, the receive key. Products must transmit cheques
   over an encrypted channel.
 
