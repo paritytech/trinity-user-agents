@@ -87,7 +87,7 @@ fn progress_counts_settled_and_in_flight_value_from_the_records() {
 	let rows = [3, 1].map(|exponent| Rows { inputs: vec![wallet.coin(exponent)], outputs: Vec::new(), tokens: Vec::new() });
 	let records = register_rows(&engine, &key(1), Admission::Ordinary, rows.to_vec()).unwrap();
 	set_status(&wallet.db, records[0], "FINALIZED_SUCCESS", None);
-	assert_eq!(item(&wallet, &key(1)), StatusItem { status: Status::Settling, progress: Progress { settled: 8, in_flight: 2 } });
+	assert_eq!(item(&wallet, &key(1)), StatusItem { status: Status::Settling, progress: Progress { settled: 8, in_flight: 2, provisional: 0 } });
 }
 
 #[test]
@@ -112,10 +112,10 @@ fn an_export_prepares_until_its_commit_and_fails_not_committed_once_released() {
 		ledger::mark_disclosed(tx, &[coin]).map(|_| ())
 	}))
 	.unwrap();
-	assert_eq!(item(&wallet, &key(1)), StatusItem { status: Status::Preparing, progress: Progress { settled: 0, in_flight: 8 } });
+	assert_eq!(item(&wallet, &key(1)), StatusItem { status: Status::Preparing, progress: Progress { settled: 0, in_flight: 8, provisional: 0 } });
 
 	block_on(wallet.db.write(move |tx| ledger::commit_disclosed(tx, &[coin]))).unwrap();
-	assert_eq!(item(&wallet, &key(1)), StatusItem { status: Status::Done, progress: Progress { settled: 8, in_flight: 0 } });
+	assert_eq!(item(&wallet, &key(1)), StatusItem { status: Status::Done, progress: Progress { settled: 8, in_flight: 0, provisional: 0 } });
 
 	begin(&wallet, &key(2), OpKind::Export, Vec::new());
 	block_on(wallet.db.write(|tx| operation::record_release(tx, &key(2)))).unwrap();
@@ -162,3 +162,5 @@ fn no_completion_exists_before_the_status_is_terminal() {
 	assert_eq!(completion(&wallet.view(), &key(1), NOW, &chain_params(), &ENTROPY), None);
 	assert_eq!(open_operations(&wallet.view(), NOW, &chain_params()), vec![key(1)]);
 }
+
+mod use_cases;

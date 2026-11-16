@@ -5,7 +5,7 @@ use crate::coinage::{
 };
 
 fn item(status: Status, settled: u64, in_flight: u64) -> StatusItem {
-	StatusItem { status, progress: Progress { settled, in_flight } }
+	StatusItem { status, progress: Progress { settled, in_flight, provisional: 0 } }
 }
 
 fn coin(exponent: u8, status: ExportStatus) -> ExportedCoinStatus {
@@ -80,3 +80,5 @@ fn a_refusal_never_reveals_more_than_rfc_17_names() {
 		reference: empty()
 	});
 }
+
+mod use_cases;
