@@ -14,9 +14,9 @@ const POLKADOT_ASSET_HUB: [u8; 32] = [
 ];
 
 /// A build that reserves two genesis hashes and the `testnet` TLD.
-fn reserving_extras(allowed: bool) -> ReservedValuesPolicy {
+fn reserving_extras() -> ReservedValuesPolicy {
 	ReservedValuesPolicy {
-		allowed,
+		allowed: false,
 		extra_genesis_hashes: vec![[0xe5; 32], [0xd4; 32]],
 		extra_tlds: vec!["testnet".to_string()],
 	}
@@ -231,14 +231,13 @@ fn a_builds_extra_reserved_values_need_its_permission() {
 		[&on_extra_tld, &on_extra_asset_hub, &extra_hash_as_another_role].map(|descriptor| {
 			(
 				bundled(descriptor, &ReservedValuesPolicy::default()).is_ok(),
-				bundled(descriptor, &reserving_extras(false)).err(),
-				bundled(descriptor, &reserving_extras(true)).is_ok(),
+				bundled(descriptor, &reserving_extras()).err(),
 			)
 		}),
 		[
-			(true, Some(StackError::ReservedTld { tld: "testnet".to_string() }), true),
-			(true, Some(StackError::ReservedGenesis { genesis_hash: [0xe5; 32] }), true),
-			(true, Some(StackError::ReservedGenesis { genesis_hash: [0xd4; 32] }), true),
+			(true, Some(StackError::ReservedTld { tld: "testnet".to_string() })),
+			(true, Some(StackError::ReservedGenesis { genesis_hash: [0xe5; 32] })),
+			(true, Some(StackError::ReservedGenesis { genesis_hash: [0xd4; 32] })),
 		]
 	);
 }
@@ -251,7 +250,7 @@ fn a_builds_extra_reserved_values_leave_the_cores_in_force() {
 
 	assert_eq!(
 		[&on_dot, &on_polkadot_people]
-			.map(|descriptor| bundled(descriptor, &reserving_extras(false))),
+			.map(|descriptor| bundled(descriptor, &reserving_extras())),
 		[
 			Err(StackError::ReservedTld { tld: "dot".to_string() }),
 			Err(StackError::ReservedGenesis { genesis_hash: POLKADOT_PEOPLE }),
@@ -259,26 +258,70 @@ fn a_builds_extra_reserved_values_leave_the_cores_in_force() {
 	);
 }
 
-/// A reserved TLD is compared with a stack's as written, so an entry that is
-/// not a TLD would reserve nothing. The build is told instead, whether or not
-/// it allows its stack reserved values.
+/// A stack allowed reserved values may name any of them, so extra ones beside
+/// `allowed` would reserve nothing. The build is told instead.
 #[test]
-fn an_extra_tld_that_is_not_a_tld_is_refused() {
+fn allowed_reserved_values_with_extra_ones_are_refused() {
 	let descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
-	let entries = [".testnet", "Testnet", "testnet ", ""];
-	let reserving = |entry: &str, allowed| ReservedValuesPolicy {
-		allowed,
+	let chains =
+		StackChains { relay: None, asset_hub: [0xc3; 32], people: [0xa1; 32], bulletin: [0xb2; 32] };
+	let policies = [
+		ReservedValuesPolicy {
+			extra_tlds: vec!["testnet".to_string()],
+			..ReservedValuesPolicy::ALLOWED
+		},
+		ReservedValuesPolicy { extra_genesis_hashes: vec![[0xe5; 32]], ..ReservedValuesPolicy::ALLOWED },
+	];
+
+	assert_eq!(
+		policies.map(|policy| {
+			(
+				bundled(&descriptor, &policy).err(),
+				Stack::new("paseo".into(), "paseo".into(), chains.clone(), &policy).err(),
+			)
+		}),
+		[(); 2].map(|()| (Some(StackError::AllowedWithExtras), Some(StackError::AllowedWithExtras))),
+	);
+}
+
+/// A reserved TLD is compared with a stack's as written, and a stack's TLD is
+/// one the core serves, so any other entry would reserve nothing. The build is
+/// told instead.
+#[test]
+fn an_extra_tld_no_stack_can_have_is_refused() {
+	let descriptor = test_descriptor("paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	let entries = ["kusama", ".testnet", "Testnet", "testnet ", ""];
+	let reserving = |entry: &str| ReservedValuesPolicy {
 		extra_tlds: vec!["testnet".to_string(), entry.to_string()],
 		..ReservedValuesPolicy::default()
 	};
 
 	assert_eq!(
-		entries.map(|entry| {
-			[false, true].map(|allowed| bundled(&descriptor, &reserving(entry, allowed)))
-		}),
-		entries.map(|entry| {
-			[false, true].map(|_| Err(StackError::MalformedReservedTld { tld: entry.to_string() }))
-		}),
+		entries.map(|entry| bundled(&descriptor, &reserving(entry))),
+		entries.map(|entry| Err(StackError::UnsupportedReservedTld { tld: entry.to_string() })),
+	);
+}
+
+/// The policy is the build's own and stays the same whatever stack it runs, so
+/// a fault in it is reported even while the stack breaks a rule of its own.
+#[test]
+fn a_policy_fault_is_reported_before_the_stacks() {
+	let policy = ReservedValuesPolicy {
+		extra_tlds: vec!["kusama".to_string()],
+		..ReservedValuesPolicy::default()
+	};
+	let on_kusama = test_descriptor("kusama", [0xa1; 32], [0xb2; 32], [0xc3; 32]);
+	let (_, bytes) = sign_test_descriptor(&on_kusama);
+	let zero_asset_hub =
+		StackChains { relay: None, asset_hub: [0; 32], people: [0xa1; 32], bulletin: [0xb2; 32] };
+
+	assert_eq!(
+		[
+			bundled(&on_kusama, &policy),
+			Stack::bundled(&test_stack_link(None), &bytes, &policy),
+			Stack::new("paseo".into(), "kusama".into(), zero_asset_hub, &policy),
+		],
+		[(); 3].map(|()| Err(StackError::UnsupportedReservedTld { tld: "kusama".to_string() })),
 	);
 }
 

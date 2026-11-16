@@ -12,7 +12,7 @@ use truapi::latest::{
 	ChainIdentifier, RemoteChainInfoError, RemoteChainInfoRequest, RemoteChainInfoResponse,
 };
 
-use crate::dotns_name::{DOTNS_TLDS, is_dns_label};
+use crate::dotns_name::DOTNS_TLDS;
 
 const POLKADOT_RELAY_GENESIS: [u8; 32] = [
 	0x91, 0xb1, 0x71, 0xbb, 0x15, 0x8e, 0x2d, 0x38, 0x48, 0xfa, 0x23, 0xa9, 0xf1, 0xc2, 0x51, 0x82,
@@ -52,18 +52,25 @@ const RESERVED_TLD: &str = "dot";
 ///
 /// The core reserves Polkadot's genesis hashes and the `dot` TLD. A build can
 /// reserve more here and cannot reserve fewer. A stack that names a reserved
-/// value starts only when `allowed` is set.
+/// value, the core's or the build's, under any chain role starts only when
+/// `allowed` is set.
+///
+/// The core refuses a policy that would reserve less than it says: `allowed`
+/// together with extra values, which the allowed stack may name anyway, and
+/// an extra TLD that no stack can have, one outside
+/// [`DOTNS_TLDS`](crate::platform::DOTNS_TLDS). It refuses the policy before
+/// it reads the stack.
 #[derive(Clone, Default)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct ReservedValuesPolicy {
 	/// Whether the stack may name reserved values. Only a Polkadot or
-	/// Polkadot-fork build sets it.
+	/// Polkadot-fork build sets it, and then reserves no extra values.
 	pub allowed: bool,
 	/// Genesis hashes reserved on top of the core's.
 	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
 	pub extra_genesis_hashes: Vec<[u8; 32]>,
-	/// dotNS TLDs reserved on top of the core's, each one lowercase label
-	/// without the leading dot. A stack is refused under any other entry.
+	/// dotNS TLDs reserved on top of the core's, each written as a stack's TLD
+	/// is, without the leading dot.
 	#[cfg_attr(not(target_arch = "wasm32"), uniffi(default))]
 	pub extra_tlds: Vec<String>,
 }
@@ -73,11 +80,14 @@ impl ReservedValuesPolicy {
 	pub const ALLOWED: Self =
 		Self { allowed: true, extra_genesis_hashes: Vec::new(), extra_tlds: Vec::new() };
 
-	/// Refuses an entry of `extra_tlds` that could match no stack's TLD, which
-	/// would otherwise reserve nothing.
-	fn refuse_malformed_extra_tld(&self) -> Result<(), StackError> {
-		match self.extra_tlds.iter().find(|tld| !is_dns_label(tld)) {
-			Some(tld) => Err(StackError::MalformedReservedTld { tld: tld.clone() }),
+	/// Refuses extra values that would reserve nothing: any at all when the
+	/// stack is allowed reserved values, and a TLD no stack can have.
+	fn refuse_extras_that_reserve_nothing(&self) -> Result<(), StackError> {
+		if self.allowed && !(self.extra_genesis_hashes.is_empty() && self.extra_tlds.is_empty()) {
+			return Err(StackError::AllowedWithExtras);
+		}
+		match self.extra_tlds.iter().find(|tld| !DOTNS_TLDS.contains(&tld.as_str())) {
+			Some(tld) => Err(StackError::UnsupportedReservedTld { tld: tld.clone() }),
 			None => Ok(()),
 		}
 	}
@@ -169,12 +179,13 @@ pub enum StackError {
 		/// The descriptor's TLD.
 		tld: String,
 	},
-	/// The build reserves a TLD that is not one lowercase label, so it could
-	/// match no stack's.
-	#[display(
-		"reserved tld {tld:?} must be one lowercase label of a-z, 0-9 and -, without the leading dot"
-	)]
-	MalformedReservedTld {
+	/// The build allows its stack reserved values and also reserves extra
+	/// ones, which that stack may then name.
+	#[display("reserved values that allow the stack every reserved value cannot reserve extra ones")]
+	AllowedWithExtras,
+	/// The build reserves a TLD that no stack can have, so it reserves nothing.
+	#[display("reserved tld {tld:?} is not one of {}", DOTNS_TLDS.join(", "))]
+	UnsupportedReservedTld {
 		/// The entry as the build wrote it.
 		tld: String,
 	},
@@ -201,14 +212,15 @@ impl Stack {
 	/// (`polkadotapp://stack?key=0x…&url=…`), `descriptor` the signed copy the
 	/// build ships, and `reserved_values` the build's policy on reserved values.
 	///
-	/// Fails with a [`StackError`] naming the rule the copy breaks. `validUntil`
-	/// and `expiresAt` are not checked, because the bundled copy is the only one
-	/// the host has.
+	/// Fails with a [`StackError`] naming the rule the policy or the copy
+	/// breaks, the policy's first. `validUntil` and `expiresAt` are not
+	/// checked, because the bundled copy is the only one the host has.
 	pub fn bundled(
 		pointer: &str,
 		descriptor: &[u8],
 		reserved_values: &ReservedValuesPolicy,
 	) -> Result<Self, StackError> {
+		reserved_values.refuse_extras_that_reserve_nothing()?;
 		let pointer = Pointer::from_link(pointer).map_err(StackError::Pointer)?;
 		if pointer.key().is_none() {
 			return Err(StackError::Unsigned);
@@ -224,15 +236,27 @@ impl Stack {
 			people: required(ChainIdentifier::People)?,
 			bulletin: required(ChainIdentifier::Bulletin)?,
 		};
-		Self::new(descriptor.network, descriptor.tld, chains, reserved_values)
+		Self::from_chains(descriptor.network, descriptor.tld, chains, reserved_values)
 	}
 
 	/// A stack from genesis hashes a host resolved itself rather than from a
 	/// bundled descriptor, such as the CLI's.
 	///
-	/// Applies the same TLD and reserved-value rules as [`Self::bundled`], and
-	/// refuses an all-zero Relay or Asset Hub genesis hash.
+	/// Applies the same policy, TLD and reserved-value rules as
+	/// [`Self::bundled`], and refuses an all-zero Relay or Asset Hub genesis
+	/// hash.
 	pub fn new(
+		network: String,
+		tld: String,
+		chains: StackChains,
+		reserved_values: &ReservedValuesPolicy,
+	) -> Result<Self, StackError> {
+		reserved_values.refuse_extras_that_reserve_nothing()?;
+		Self::from_chains(network, tld, chains, reserved_values)
+	}
+
+	/// Checks a stack's TLD and chains under a policy already checked.
+	fn from_chains(
 		network: String,
 		tld: String,
 		chains: StackChains,
@@ -248,7 +272,6 @@ impl Stack {
 		if asset_hub == [0; 32] {
 			return Err(StackError::ZeroGenesis { chain: ChainIdentifier::AssetHub });
 		}
-		reserved_values.refuse_malformed_extra_tld()?;
 		reserved_values.refuse_tld(&tld)?;
 		reserved_values.refuse_genesis(relay.into_iter().chain([asset_hub, people, bulletin]))?;
 		Ok(Self { network, tld, chains })
