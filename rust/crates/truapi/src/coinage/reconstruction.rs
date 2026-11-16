@@ -166,6 +166,36 @@ pub async fn reconstruct(
 	config: &ScanConfig,
 	params: &ChainParams,
 ) -> Result<usize, ReconstructError> {
+	run(deps, &purses, deep, config, params, Installations::All).await
+}
+
+/// The default reconstruction (F4 invariant 5): adds the installations the
+/// registry lists, then scans the main purse and every purse the store
+/// knows under each installation whose first scan has not completed, so an
+/// installation is scanned in full once. Returns how many assets it adopted.
+pub async fn reconstruct_default(
+	deps: &ReconstructionDeps,
+	config: &ScanConfig,
+	params: &ChainParams,
+) -> Result<usize, ReconstructError> {
+	run(deps, &Purses::MainOnly, false, config, params, Installations::Unscanned).await
+}
+
+/// Which known installations a reconstruction scans.
+#[derive(Clone, Copy, PartialEq)]
+enum Installations {
+	All,
+	Unscanned,
+}
+
+async fn run(
+	deps: &ReconstructionDeps,
+	purses: &Purses,
+	deep: bool,
+	config: &ScanConfig,
+	params: &ChainParams,
+	installations: Installations,
+) -> Result<usize, ReconstructError> {
 	let entropy = deps.seed.entropy().ok_or(ReconstructError::Unavailable)?;
 	if let Some(records) = deps.registry.records().await {
 		let (datastore, _) = super::namespace::datastore_key(&entropy).map_err(|_| ReconstructError::Unavailable)?;
@@ -178,7 +208,10 @@ pub async fn reconstruct(
 	let context = ScanContext { entropy: &entropy, at, gap: if deep { config.deep_gap } else { config.gap }, batch: config.batch, params };
 	let mut adopted = 0;
 	for (installation, progress) in view.installations().to_vec() {
-		let mut scanned: Vec<PurseId> = match &purses {
+		if installations == Installations::Unscanned && progress.first_scan_done {
+			continue;
+		}
+		let mut scanned: Vec<PurseId> = match purses {
 			Purses::MainOnly | Purses::Walk => vec![PurseId::MAIN],
 			Purses::These(listed) => core::iter::once(PurseId::MAIN).chain(listed.iter().copied()).collect(),
 		};
@@ -194,7 +227,7 @@ pub async fn reconstruct(
 			let namespace = Namespace { purse, installation, first_scan_done };
 			adopted += scan(deps, &context, namespace, resume.filter(|position| position.purse == purse)).await?;
 		}
-		if purses == Purses::Walk {
+		if *purses == Purses::Walk {
 			let mut empty = 0;
 			let mut purse = 0;
 			while empty < config.purse_gap {
