@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.tappableElement
 import androidx.compose.runtime.Composable
@@ -132,6 +133,8 @@ fun RootNavBarOverlay(
         val drawbridge = remember(dock, maxWidth, maxHeight) { DockletDrawbridge(dock, maxWidth, maxHeight) }
         val scope = rememberCoroutineScope()
         val density = LocalDensity.current
+        val ime = WindowInsets.ime
+        val keyboardUp by remember(ime, density) { derivedStateOf { ime.getBottom(density) > 0 } }
         val nubPx = with(density) { NUB_WIDTH.toPx() }
         val flingVelocityPx = with(density) { FLING_VELOCITY_THRESHOLD.toPx() }
         val pull = remember(scope, nubPx, flingVelocityPx) { TabBarPullState(scope, nubPx, flingVelocityPx) }
@@ -343,7 +346,9 @@ fun RootNavBarOverlay(
                         HiddenDockBack(hideState = hideState, restoresOnBack = barMode == TabBarMode.Main)
                     }
                 }
-                HiddenDockGlow(hideState = hideState, glowMasks = glowMasks, dockletTip = dockletTip, onTipDismiss = onDockletTipDismiss)
+                if (!keyboardUp) {
+                    HiddenDockGlow(hideState = hideState, glowMasks = glowMasks, dockletTip = dockletTip, onTipDismiss = onDockletTipDismiss)
+                }
             }
         }
     }
