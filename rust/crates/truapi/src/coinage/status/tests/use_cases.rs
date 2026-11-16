@@ -5,6 +5,7 @@ use crate::{
 	coinage::{
 		Exponent,
 		ledger::{BlockRef, Facts},
+		testing::funding::register_records,
 	},
 	durable::DurableTxId,
 };
@@ -142,3 +143,20 @@ fn an_import_whose_coins_never_arrived_before_its_window_closed_moved_nothing() 
 	let completion = completion(&wallet.view(), &key(1), NOW, &chain_params(), &ENTROPY).unwrap();
 	assert_eq!(completion.coins, vec![([1; 32], CoinResult::Absent)]);
 }
+
+/// A load's input is its account's funds, which no status reads, so a
+/// top-up whose loads wait to be built waits for its funds: RFC-6 reports
+/// it `Detecting` (N2 invariant 4).
+#[test]
+fn a_top_up_whose_loads_wait_to_be_built_is_waiting_for_its_funds() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let engine = unbuilt_engine(wallet.db.clone());
+	begin(&wallet, &key(1), OpKind::TopUp, Vec::new());
+	let exponent = [Exponent::new(3).unwrap()];
+	let entry = block_on(wallet.db.write(move |tx| ledger::allocate(tx, PurseId::MAIN, AssetKind::Entry, &exponent))).unwrap()[0];
+	let load = RecordParams { call: Call::Load([1; 32]), retry: crate::coinage::operation::Retry::Until(NOW + 3600) };
+	let rows = Rows { inputs: Vec::new(), outputs: vec![entry], tokens: Vec::new() };
+	register_records(&engine, &key(1), Admission::Ordinary, vec![(rows, load)]).unwrap();
+	assert_eq!(item(&wallet, &key(1)), StatusItem { status: Status::Waiting, progress: progress(0, 8, 0) });
+}
+

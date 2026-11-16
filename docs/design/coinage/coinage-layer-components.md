@@ -740,7 +740,7 @@ fn open_operations(view: Snapshot) -> Vec<OpKey>;
 | Some waiting to be built, the inputs of one of them usable | `Preparing` |
 | Otherwise: waiting to be built, no inputs yet usable (B3) | `Waiting` |
 
-`Waiting` names no time. When a wait ends depends on rings, token periods and other operations, and the layer promises nothing about it. A record that failed while its rebuild policy allows another attempt is back to *waiting to be built*, so the operation returns to `Preparing` or `Waiting`.
+`Waiting` names no time. When a wait ends depends on rings, token periods and other operations, and the layer promises nothing about it. A load's input is its funding account's funds, which the status does not read, and C2 builds a load as soon as they cover it. So a load waiting to be built has no usable input, and a top-up waiting for its funds is `Waiting`. A record that failed while its rebuild policy allows another attempt is back to *waiting to be built*, so the operation returns to `Preparing` or `Waiting`.
 
 For three kinds of operation, the status depends on more than the records.
 
