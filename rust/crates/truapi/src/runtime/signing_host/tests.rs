@@ -1159,10 +1159,9 @@ fn a_refusal_covers_every_executable_of_the_refused_target() {
 	});
 	cache_grant(&platform, "peopl.dot", r#"{"ordinary":["context"]}"#);
 	futures::executor::block_on(
-		crate::runtime::product_consent::ProductConsent::new(
+		crate::runtime::product_consent::ProductConsent::new(crate::test_support::test_services(
 			platform.clone(),
-			crate::test_support::paseo_test_stack(),
-		)
+		))
 		.account_access(
 			&ProductId::for_test("ordinary.dot"),
 			&ProductId::for_test("peopl.dot"),

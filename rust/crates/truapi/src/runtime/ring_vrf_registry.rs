@@ -5,7 +5,10 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
-use crate::platform::{CoreStorageKey, Platform, ProductId, Stack, StackStorage};
+use crate::{
+	platform::{CoreStorageKey, ProductId},
+	runtime::RuntimeServices,
+};
 use parity_scale_codec::{Decode, Encode};
 use truapi::latest::{ProductAccountId, RegisteredRingVrfKey, RingLocation, RingVrfKeyDisclosure};
 
@@ -28,8 +31,7 @@ struct RegistrySnapshot {
 
 /// Shared durable repository used by both account-authority roles.
 pub struct RingVrfRegistryStore {
-	platform: Arc<dyn Platform>,
-	stack: Stack,
+	services: Arc<RuntimeServices>,
 	cache: Mutex<HashMap<[u8; 32], RegistrySnapshot>>,
 	storage_guard: futures::lock::Mutex<()>,
 }
@@ -151,14 +153,9 @@ impl RegistryUpdate<'_> {
 }
 
 impl RingVrfRegistryStore {
-	fn storage(&self) -> StackStorage<'_, dyn Platform> {
-		self.stack.storage(self.platform.as_ref())
-	}
-
-	pub fn new(platform: Arc<dyn Platform>, stack: Stack) -> Arc<Self> {
+	pub fn new(services: Arc<RuntimeServices>) -> Arc<Self> {
 		Arc::new(Self {
-			platform,
-			stack,
+			services,
 			cache: Mutex::new(HashMap::new()),
 			storage_guard: futures::lock::Mutex::new(()),
 		})
@@ -319,11 +316,11 @@ impl RingVrfRegistryStore {
 			return Ok(snapshot);
 		}
 		let key = CoreStorageKey::RingVrfRegistry { root_public_key };
-		let snapshot = match self.storage().read(key.clone()).await.map_err(storage_error)? {
+		let snapshot = match self.services.storage().read(key.clone()).await.map_err(storage_error)? {
 			Some(blob) => match decode_snapshot(&blob) {
 				Ok(snapshot) => snapshot,
 				Err(error) => {
-					let _ = self.storage().clear(key).await;
+					let _ = self.services.storage().clear(key).await;
 					return Err(error);
 				},
 			},
@@ -351,7 +348,7 @@ impl RingVrfRegistryStore {
 		{
 			return Ok(());
 		}
-		self.storage()
+		self.services.storage()
 			.write(CoreStorageKey::RingVrfRegistry { root_public_key }, snapshot.encode())
 			.await
 			.map_err(storage_error)?;

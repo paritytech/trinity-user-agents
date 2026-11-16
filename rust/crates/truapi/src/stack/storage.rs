@@ -2,22 +2,24 @@
 
 use truapi::latest::GenericError;
 
+use super::Stack;
 use crate::platform::{CoreStorage, CoreStorageKey};
 
 /// Host storage as the core reaches it for the stack it runs.
 ///
-/// Built by [`Stack::storage`](super::Stack::storage). The core stores nothing
-/// except through it.
+/// [`Stack::storage`] is its only constructor.
 pub struct StackStorage<'a, S: CoreStorage + ?Sized> {
 	host: &'a S,
 }
 
-impl<'a, S: CoreStorage + ?Sized> StackStorage<'a, S> {
-	/// The stack's slots, kept in `host`.
-	pub fn new(host: &'a S) -> Self {
-		Self { host }
+impl Stack {
+	/// The core's storage for this stack, kept in `host`.
+	pub fn storage<'a, S: CoreStorage + ?Sized>(&'a self, host: &'a S) -> StackStorage<'a, S> {
+		StackStorage { host }
 	}
+}
 
+impl<S: CoreStorage + ?Sized> StackStorage<'_, S> {
 	/// Read the value in `slot`.
 	pub async fn read(&self, slot: CoreStorageKey) -> Result<Option<Vec<u8>>, GenericError> {
 		self.host.read_core_storage(slot).await

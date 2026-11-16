@@ -208,8 +208,8 @@ pub struct CachedManifest {
 /// grant instead of resolving one.
 ///
 /// Write the bytes under [`CoreStorageKey::product_manifest`] for the product the
-/// manifest belongs to, in the stack the host runs. The core reads that entry before it consults
-/// the Asset Hub, so a seeded manifest answers a grant on a host with no dotNS access at
+/// manifest belongs to. The core reads that entry before it consults the Asset
+/// Hub, so a seeded manifest answers a grant on a host with no dotNS access at
 /// all — which is what makes a cross-product flow reachable locally, before
 /// either product is deployed.
 ///
@@ -675,7 +675,8 @@ async fn root_manifest(
 	target: &ProductId,
 ) -> (Option<String>, ManifestSource) {
 	let key = CoreStorageKey::product_manifest(target);
-	let read = cached_dotns_json(services, platform, key, CachePolicy::UseCache, || async {
+	let storage = services.stack().storage(platform);
+	let read = cached_dotns_json(&storage, key, CachePolicy::UseCache, || async {
 		let genesis_hash = services.asset_hub_chain_genesis_hash();
 		let (chain, target) = (services.chain.clone(), target.clone());
 		services
@@ -717,7 +718,8 @@ pub async fn read_worker_manifest(
 	policy: CachePolicy,
 ) -> Result<(Option<WorkerManifest>, DotnsRead), String> {
 	let key = worker_manifest_cache_key(product_id);
-	let (json, read) = cached_dotns_json(services, platform, key, policy, || async {
+	let storage = services.stack().storage(platform);
+	let (json, read) = cached_dotns_json(&storage, key, policy, || async {
 		let genesis_hash = services.asset_hub_chain_genesis_hash();
 		let (chain, product) = (services.chain.clone(), product_id.clone());
 		services
@@ -783,7 +785,8 @@ pub async fn publishes_app(
 	ceiling: Duration,
 ) -> Option<bool> {
 	let key = app_manifest_cache_key(product_id);
-	let read = cached_dotns_json(services, platform, key, CachePolicy::UseCache, || async {
+	let storage = services.stack().storage(platform);
+	let read = cached_dotns_json(&storage, key, CachePolicy::UseCache, || async {
 		fetch_app_manifest(&services.chain, services.asset_hub_chain_genesis_hash(), product_id)
 			.await
 			.map_err(|error| error.reason())
@@ -828,8 +831,7 @@ pub enum CachePolicy {
 /// only that the chain could not be read, and holding that for a day would
 /// turn one blip into a day of withdrawn grants or missing providers.
 async fn cached_dotns_json<F, E>(
-	services: &RuntimeServices,
-	platform: &dyn Platform,
+	storage: &StackStorage<'_, dyn Platform + '_>,
 	key: CoreStorageKey,
 	policy: CachePolicy,
 	fetch: impl FnOnce() -> F,
@@ -837,7 +839,6 @@ async fn cached_dotns_json<F, E>(
 where
 	F: Future<Output = Result<Option<String>, E>>,
 {
-	let storage = services.stack().storage(platform);
 	let now = current_unix_secs();
 	// `fetched_at_secs <= now` is part of the freshness test, not an assumption.
 	// Without it a `saturating_sub` on a future stamp yields 0, which is below
