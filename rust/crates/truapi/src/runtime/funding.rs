@@ -1676,7 +1676,7 @@ impl FundingRegistry {
 	/// whether the worker answered within [`CALL_TIMEOUT`] and the answer was
 	/// stored.
 	async fn put(&self, link: &dyn FundingProviderLink, call: ProviderCall) -> bool {
-		let (intent, answered) = match call {
+		let answered = match call {
 			ProviderCall::Assign(session) => {
 				let intent = session.intent.clone();
 				let taken = within(CALL_TIMEOUT, link.assign(*session)).await.unwrap_or(false);
@@ -1703,7 +1703,7 @@ impl FundingRegistry {
 						((), if changed { vec![target] } else { Vec::new() })
 					})
 					.await;
-				(intent, answered)
+				answered
 			},
 			ProviderCall::Cancel(intent, CancelCall::Settle(decision)) => {
 				let heard =
@@ -1723,7 +1723,7 @@ impl FundingRegistry {
 						((), Vec::new())
 					})
 					.await;
-				(intent, answered)
+				answered
 			},
 		};
 		match answered {
