@@ -153,7 +153,7 @@ async function runStartupDiagnosis(): Promise<void> {
   // The diagnosis asks the user to type a command, so its room keeps the input.
   const footer = await chat.setRoomFooter({
     roomId: diagnosticRoomId,
-    footer: "TextInput",
+    footer: { tag: "TextInput" },
   });
   if (footer.isErr()) {
     throw new Error(`setRoomFooter failed: ${JSON.stringify(footer.error)}`);

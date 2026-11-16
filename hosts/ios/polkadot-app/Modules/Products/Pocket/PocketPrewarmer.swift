@@ -37,7 +37,7 @@ final class PocketPrewarmer {
     /// The app, because that is what a pressed card opens.
     private func warm(_ productId: ProductId) async {
         do {
-            try await warmer.warm(productId, serving: .app)
+            try await warmer.warm(productId, serving: .fixed(.app))
             warmed.insert(productId)
             logger.debug("[pocket] warmed \(productId)'s archive")
         } catch {

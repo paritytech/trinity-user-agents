@@ -200,14 +200,12 @@ public extension ChatViewLayout {
                 inputHandler: self,
                 keyboardGuide: keyboardLayoutGuide
             )
-
-            currentInputViewHeight = chatInputHostView.contentHeight
         } else {
             hideInput()
             chatInputHostView.clear()
-            currentInputViewHeight = 0
         }
         layoutIfNeeded()
+        currentInputViewHeight = chatInputHostView.contentHeight
         updateContentInsets(bottomInset: currentKeyboardHeight)
 
         scrollDownButton.unreadCount = viewModel.scrollDownConfiguration.unreadCount

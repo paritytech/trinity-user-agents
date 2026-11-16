@@ -1,3 +1,5 @@
+mod public_profile;
+
 use super::*;
 use crate::{
 	PairedSsoPeer,
@@ -203,8 +205,8 @@ fn a_renderer_action_reaches_the_product_that_rendered_it() {
 		truapi::versioned::renderer::HostRendererActionSubscribeRequest::V1,
 	));
 
-	let published = v01::HostRendererActionSubscribeItem {
-		context: v01::RenderContext::ChatMessage {
+	let published = truapi::latest::HostRendererActionSubscribeItem {
+		context: truapi::latest::RenderContext::ChatMessage {
 			room_id: "support".to_string(),
 			message_id: "message-1".to_string(),
 			message_type: "vote".to_string(),
@@ -221,8 +223,8 @@ fn a_renderer_action_reaches_the_product_that_rendered_it() {
 		core::task::Poll::Ready(Some(item)) => item,
 		other => panic!("a published renderer action must be ready, got {other:?}"),
 	};
-	let delivered = delivered.expect("expected a renderer action item").into_latest();
-	assert_eq!(delivered, published);
+	let delivered = delivered.expect("expected a renderer action item");
+	assert_eq!(truapi::versioned::IntoLatest::into_latest(delivered), published);
 	// The scanner checks taps on a connection, while hosts publish them here.
 	assert!(admin.product_runtime().connection().recently_tapped());
 }
@@ -262,12 +264,12 @@ fn a_material_node_that_falls_back_reaches_the_product_that_rendered_it() {
 		&truapi::CallContext::with_request_id("failures-1".to_string()),
 		truapi::versioned::renderer::HostRendererFailureSubscribeRequest::V1,
 	));
-	let context = v01::RenderContext::PocketCard { card_id: "stamps".to_string() };
+	let context = truapi::latest::RenderContext::PocketCard { card_id: "stamps".to_string() };
 	let over_the_layer_limit = (0..17)
-		.map(|_| v01::MaterialInstance { material: [7; 32], args: Vec::new() })
+		.map(|_| truapi::latest::MaterialInstance { material: [7; 32], args: Vec::new() })
 		.collect();
-	let tree = v01::RendererNode::Materials {
-		props: v01::MaterialsProps { layers: over_the_layer_limit },
+	let tree = truapi::latest::RendererNode::Materials {
+		props: truapi::latest::MaterialsProps { layers: over_the_layer_limit },
 		children: Vec::new(),
 	};
 
@@ -280,11 +282,11 @@ fn a_material_node_that_falls_back_reaches_the_product_that_rendered_it() {
 
 	assert_eq!(
 		delivered,
-		v01::HostRendererFailureSubscribeItem {
+		truapi::latest::HostRendererFailureSubscribeItem {
 			context,
 			node: 0,
 			material: None,
-			reason: v01::MaterialFailure::LimitExceeded,
+			reason: truapi::latest::MaterialFailure::LimitExceeded,
 		}
 	);
 	assert!(!admin.product_runtime().connection().recently_tapped());

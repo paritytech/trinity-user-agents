@@ -25,6 +25,30 @@ fn a_post_answers_in_the_callers_version() {
 	assert_eq!(HostChatPostMessageResponse::from_latest(response, 2).version(), 2);
 }
 
+#[test]
+fn a_v01_footer_upgrades_unchanged() {
+	let upgraded = [v01::ChatRoomFooter::TextInput, v01::ChatRoomFooter::Empty].map(|footer| {
+		HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
+			room_id: "room".to_string(),
+			footer,
+		})
+		.into_latest()
+	});
+
+	assert_eq!(
+		upgraded,
+		[v02::ChatRoomFooter::TextInput, v02::ChatRoomFooter::Empty].map(|footer| {
+			v02::HostChatSetRoomFooterRequest { room_id: "room".to_string(), footer }
+		})
+	);
+}
+
+#[test]
+fn a_footer_answers_in_the_callers_version() {
+	assert_eq!(HostChatSetRoomFooterResponse::from_latest((), 1).version(), 1);
+	assert_eq!(HostChatSetRoomFooterResponse::from_latest((), 2).version(), 2);
+}
+
 // Fixture is `ChatRegisterBotV1_request` output from triangle-js-sdks
 // `packages/host-api`, under an `Enum({ v1: … })` envelope. Requests and
 // success responses match that host; error frames do not, because

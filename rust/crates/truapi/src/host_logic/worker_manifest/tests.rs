@@ -161,3 +161,56 @@ fn a_route_of_the_wrong_shape_fails_the_document() {
 
 	assert!(manifest.is_err());
 }
+
+// A Worker serving no surface is refused, along with one without an
+// entrypoint or an `appVersion`, and a `null` reads as the key being
+// absent.
+#[test]
+fn a_worker_needs_an_entrypoint_a_version_and_a_surface() {
+	let parse = |json: &str| WorkerManifest::parse(json).map(|manifest| manifest.funding.is_some());
+	let cases = [
+		(
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":" ","includes":{"chat":true}}"#,
+			Err(ExecutableManifestError::Entrypoint),
+		),
+		(
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{}}"#,
+			Err(ExecutableManifestError::NoModality),
+		),
+		(
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{"chat":false,"pocket":null}}"#,
+			Err(ExecutableManifestError::NoModality),
+		),
+		(
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":null}"#,
+			Err(ExecutableManifestError::NoModality),
+		),
+		(
+			r#"{"$v":1,"appVersion":[1,0,0,"rc1"],"kind":"worker","entrypoint":"w.js","includes":{"funding":{}}}"#,
+			Ok(true),
+		),
+		(
+			r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker","entrypoint":"w.js","includes":{"chat":true,"funding":null}}"#,
+			Ok(false),
+		),
+	];
+	for (json, expected) in cases {
+		assert_eq!(parse(json), expected, "{json}");
+	}
+	assert!(matches!(
+		parse(r#"{"$v":1,"kind":"worker","entrypoint":"w.js","includes":{"chat":true}}"#),
+		Err(ExecutableManifestError::Json { .. })
+	));
+}
+
+// An App manifest is checked against its own kind.
+#[test]
+fn an_app_manifest_needs_the_app_kind() {
+	assert_eq!(
+		(
+			check_app_manifest(r#"{"$v":1,"appVersion":[1,0,0],"kind":"app"}"#),
+			check_app_manifest(r#"{"$v":1,"appVersion":[1,0,0],"kind":"worker"}"#),
+		),
+		(Ok(()), Err(ExecutableManifestError::Kind { kind: "worker".into(), expected: "app" }))
+	);
+}

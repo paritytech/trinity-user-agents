@@ -27,48 +27,9 @@ include(":bindings:bandersnatch-crypto")
 include(":bindings:hydra-dx-math")
 include(":bindings:sr25519-vrf")
 
-// The :bindings:truapi-host module compiles the TrUAPI Rust core from an
-// out-of-repo checkout, located via `truapi.dir` in local.properties or the
-// TRUAPI_DIR env var. The module is required — :feature:products:impl depends
-// on it in every variant — so a missing or stale checkout fails configuration
-// here, with instructions, instead of later with a missing-project error.
-run {
-    val localProps = java.util.Properties().apply {
-        val f = file("local.properties")
-        if (f.exists()) f.inputStream().use { load(it) }
-    }
-    val truapiDir = (localProps.getProperty("truapi.dir") ?: System.getenv("TRUAPI_DIR"))
-        ?.takeIf { it.isNotBlank() }
-    val configuredDir = truapiDir?.let {
-        val d = File(it).let { p -> if (p.isAbsolute) p else file(it) }
-        if (File(d, "rust/crates/truapi").isDirectory) d else null
-    }
-    // When this tree is vendored into the core's own repository the core is two
-    // levels up, so there is nothing to check out. An explicit truapi.dir or
-    // TRUAPI_DIR still wins, which keeps a separate checkout working for anyone
-    // building this tree on its own.
-    val inTreeDir = file("../..").takeIf { File(it, "rust/crates/truapi").isDirectory }
-    // Only an absent setting falls back. A configured one that does not resolve
-    // still fails here, with instructions, rather than being quietly replaced
-    // and dying later in cargo.
-    val resolved = if (truapiDir != null) configuredDir else inTreeDir
-    if (resolved == null) {
-        val configured = truapiDir?.let { "truapi.dir=$it does not contain rust/crates/truapi" }
-            ?: "truapi.dir is not set and this tree is not inside the core repository"
-        error(
-            "A truapi checkout is required to build this project ($configured). " +
-                "Run scripts/setup-truapi.py, which clones " +
-                "https://github.com/paritytech/trinity-user-agents at the `truapi_ref` pin from " +
-                ".github/actions/install/action.yaml and sets truapi.dir in local.properties. " +
-                "Pass --dir to keep the checkout somewhere else, or set TRUAPI_DIR yourself.",
-        )
-    }
-    include(":bindings:truapi-host")
-    // Standalone demo app that loads a product through the TrUAPI core.
-    if (file("bindings/truapi-host-demo/build.gradle.kts").exists()) {
-        include(":bindings:truapi-host-demo")
-    }
-}
+// The :bindings:truapi-host module compiles the TrUAPI Rust core from the
+// repository this tree is vendored into, two levels up.
+include(":bindings:truapi-host")
 
 include(":test-shared")
 
