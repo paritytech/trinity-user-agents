@@ -12,6 +12,7 @@ UI is primarily programmatic UIKit with SwiftUI views hosted via `UIHostingContr
 - ViewModels use `@Observable` macro (Observation framework)
 - ViewLayout lives in `Packages/PolkadotUI/Sources/Modules/`
 - Events flow via closure callbacks on ViewModel
+- A screen inside the tab container with SwiftUI content pinned to the bottom subclasses `SafeAreaFollowingHostingController<Layout>` instead of `UIHostingController<Layout>`, and reads its view through `content`. See [Hosted SwiftUI screens](../architecture/tab-bar-container.md#hosted-swiftui-screens).
 
 ```swift
 // ViewController wraps SwiftUI
