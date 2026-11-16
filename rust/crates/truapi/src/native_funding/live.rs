@@ -656,10 +656,17 @@ impl NativeChain for LiveNativeChain {
 		};
 		let (fees, dispatch, _) = self.fees(&reads, &plan, &leg, converted * 2).await?;
 		let send = converted + fees + dispatch + plan.keep;
+		// A token counted in CASH's own units pays every fee, the PSM's and
+		// People's included, as what it sends above the amount. A pool tier's
+		// token is priced by the pool, so only its chain fees count.
+		let network_fee = match plan.tier {
+			Tier::Direct | Tier::Psm { .. } => send.saturating_sub(cash),
+			Tier::Pool | Tier::StablePool => fees + dispatch + plan.keep,
+		};
 		Ok(InPrice {
 			tier: plan.tier,
 			send,
-			network_fee: send.saturating_sub(cash),
+			network_fee,
 			exact: matches!(plan.tier, Tier::Direct | Tier::Psm { .. }),
 		})
 	}
@@ -691,7 +698,7 @@ impl NativeChain for LiveNativeChain {
 	async fn cash_on_people(&self, account: [u8; 32]) -> Result<u128, ChainError> {
 		let reads = Reads { at: self.at(self.people).await? };
 		let held = reads
-			.storage("ForeignAssets", "Account", (self.cash_on_people_location(), AccountId32(account)))
+			.storage("Assets", "Account", (self.cash_on_people_location(), AccountId32(account)))
 			.await?
 			.and_then(|holding| holding.at("balance").and_then(|balance| balance.as_u128()));
 		Ok(held.unwrap_or_default())
@@ -792,3 +799,6 @@ impl ConversionCall {
 		}
 	}
 }
+
+#[cfg(test)]
+mod tests;
