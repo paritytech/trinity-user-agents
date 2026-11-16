@@ -74,14 +74,10 @@ async fn runtime(network: &Stack, state: &Path) -> Result<SigningHostRuntime> {
 	let db = truapi::store::Db::open(truapi::store::core_db_config(state))
 		.await
 		.with_context(|| crate::core_db_cleanup_request(state))?;
-	let genesis = network.genesis();
 	let mut config = SigningHostConfig::new(
 		crate::host_info("Materials Planner"),
 		crate::platform_info(),
-		genesis.people,
-		genesis.bulletin,
-		genesis.asset_hub,
-		network.tld().to_string(),
+		network.core_stack().context("invalid stack")?,
 	)
 	.context("invalid signing host config")?;
 	config.materials_enabled = true;
