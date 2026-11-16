@@ -247,8 +247,8 @@ fn a_copy_that_could_not_be_stored_asks_for_no_restart() {
 	);
 }
 
-/// A browser host's `storeStackRecord` may return a promise that never
-/// settles. The loop must not wait on it forever, or no later fetch could
+/// A browser core stores the record through the host, whose promise may
+/// never settle. The loop must not wait on it forever, or no later fetch could
 /// start and a wipe would never reach the host.
 #[test]
 fn a_store_that_never_finishes_does_not_hold_the_loop() {
