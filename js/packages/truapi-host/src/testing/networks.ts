@@ -57,7 +57,7 @@ export type LoopbackStatements = boolean | "default";
  * stack the core answers `getChainInfo` from. A role `networks` leaves out
  * keeps the {@link mockTestStack} chain, because the core needs Asset Hub,
  * People and Bulletin to start. The stack's `generation` names the genesis
- * hashes it ends up with.
+ * hashes it ends up with, or stays `mock` when they are all the mock's.
  *
  * A single proxy carries no genesis hash: an unhashed proxy takes every
  * request, so routing survives a chain reset while only the DECLARED hash --

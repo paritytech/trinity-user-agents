@@ -1814,8 +1814,9 @@ namespace is its full `id`, so it does not share the `polkadot` namespace.
 The stack's id, which the core takes with the descriptor's `generation`, is the
 key of the link when it has one, and otherwise the URL. The URL of a built-in
 stack with no key is read with that stack's key, so it is verified and is the
-same stack as under its network name. A local file's id is its canonical path:
-two files are two stacks, and a file that moves becomes another stack.
+same stack as under its network name. A local file's id is `file:` followed by
+its canonical path: two files are two stacks, and a file that moves becomes
+another stack.
 
 #### `network-check`
 
