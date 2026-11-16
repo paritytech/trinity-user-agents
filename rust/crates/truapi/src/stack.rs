@@ -76,8 +76,8 @@ pub struct Stack {
 
 impl PartialEq for Stack {
 	fn eq(&self, other: &Self) -> bool {
-		(&self.identity, &self.network, &self.tld, &self.chains)
-			== (&other.identity, &other.network, &other.tld, &other.chains)
+		(&self.identity, &self.network, &self.tld, &self.chains) ==
+			(&other.identity, &other.network, &other.tld, &other.chains)
 	}
 }
 

@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use futures::lock::Mutex;
 use parity_scale_codec::Encode;
+use tracing::warn;
 use truapi::latest::GenericError;
 
 use super::Stack;
@@ -58,10 +59,20 @@ impl<S: CoreStorage + ?Sized> StackStorage<'_, S> {
 	/// under the slot alone.
 	///
 	/// The value under the slot alone goes first. Cleared second, a kill
-	/// between the two would leave it for the next read to bring back.
+	/// between the two would leave it for the next read to bring back. When
+	/// the host cannot say which stack holds those values, the one under the
+	/// slot alone is cleared if the host can, so a sign-out still signs out;
+	/// only the clear under the stack's key can then fail the call.
 	pub async fn clear(&self, slot: CoreStorageKey) -> Result<(), GenericError> {
-		if self.holds_unscoped().await? {
-			self.host.clear_unscoped_core_storage(slot.clone()).await?;
+		match self.holds_unscoped().await {
+			Ok(true) => self.host.clear_unscoped_core_storage(slot.clone()).await?,
+			Ok(false) => {},
+			Err(error) => {
+				warn!(reason = %error.reason, "reading which stack holds the values stored with no stack id failed");
+				if let Err(error) = self.host.clear_unscoped_core_storage(slot.clone()).await {
+					warn!(reason = %error.reason, "clearing a value stored with no stack id failed");
+				}
+			},
 		}
 		self.host.clear_core_storage(self.key(slot)).await
 	}

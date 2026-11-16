@@ -158,7 +158,8 @@ pub fn signing_runtime_on_asset_hub(
 
 /// A signing host whose wallet is active under [`ENTROPY`].
 pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
-	let (_services, signing_host) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
+	let (_services, signing_host) =
+		signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	signing_host

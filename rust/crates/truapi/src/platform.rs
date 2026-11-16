@@ -1619,7 +1619,9 @@ pub trait CoreStorage: Send + Sync {
 	///
 	/// The core writes only [`CoreStorageKey::UnscopedEntriesOwner`] here. A
 	/// host that serves [`Self::read_unscoped_core_storage`] has to keep it, or
-	/// no stack reads the entries.
+	/// no stack reads the entries. A host whose storage two processes share
+	/// keeps the first value written instead of replacing it, so stacks that
+	/// claim the entries at once agree on one owner.
 	async fn write_unscoped_core_storage(
 		&self,
 		_slot: CoreStorageKey,
