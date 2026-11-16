@@ -587,6 +587,11 @@ fn core_storage_key_description_is_strict_and_product_scoped() {
 			"AppManifest",
 			Some(CoreStorageKeyOwner::ProductLabel("ramp".to_string())),
 		),
+		(
+			CoreStorageKey::NativeFundingDestination { intent: "fs_1".to_string() },
+			"NativeFundingDestination",
+			None,
+		),
 	] {
 		let description = describe_core_storage_key(&key.encode()).expect("valid key");
 		assert_eq!(description, CoreStorageKeyDescription { kind, owner });

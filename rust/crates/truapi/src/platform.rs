@@ -1204,6 +1204,13 @@ pub enum CoreStorageKey {
 		/// Bare label of the product whose App manifest was cached.
 		product_label: String,
 	},
+	/// The Asset Hub account a withdrawal through the core's native funding
+	/// route pays out to.
+	#[codec(index = 17)]
+	NativeFundingDestination {
+		/// The funding session.
+		intent: String,
+	},
 }
 
 /// Permission storage payload, whose targets can be bare manifest labels.
@@ -1322,6 +1329,7 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::AppManifest { product_label } => {
 			("AppManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
+		CoreStorageKey::NativeFundingDestination { .. } => ("NativeFundingDestination", None),
 	};
 	Ok(CoreStorageKeyDescription { kind, owner })
 }

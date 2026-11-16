@@ -30,7 +30,7 @@ mod host_session;
 mod identity;
 pub mod login_failure;
 mod pairing_host;
-mod payment_id;
+pub(crate) mod payment_id;
 mod product_accounts;
 mod product_consent;
 pub mod product_manifest;

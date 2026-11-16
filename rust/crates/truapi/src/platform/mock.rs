@@ -841,6 +841,9 @@ fn core_key(key: &CoreStorageKey) -> String {
 		CoreStorageKey::AppManifest { product_label } => {
 			format!("core:app-manifest:{product_label}")
 		},
+		CoreStorageKey::NativeFundingDestination { intent } => {
+			format!("core:native-funding-destination:{intent}")
+		},
 		CoreStorageKey::AllowanceKeys { session_id } => {
 			format!("core:allowance-keys:{session_id}")
 		},
