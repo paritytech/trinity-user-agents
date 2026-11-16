@@ -1,10 +1,11 @@
 use super::{
 	super::{
 		ChainEndpoint, Network,
-		testing::{edit_chain, edit_stack},
+		testing::{edit_descriptor, edit_stack},
 	},
 	*,
 };
+use crate::stack_descriptor::Roles;
 
 /// `descriptor` as a stack, for a descriptor `Stack::new` may reject.
 fn read_stack(descriptor: Descriptor) -> Result<Stack> {
@@ -50,13 +51,23 @@ fn test_stack_unserved_tld_error() {
 }
 
 /// The host routes each role by its genesis, so two roles on one genesis
-/// would send one role's traffic to the other's chain.
+/// would send one role's traffic to the other's chain. Such a descriptor is
+/// refused as it is read, before it can become a stack.
 #[test]
 fn test_stack_shared_genesis_error() {
 	let paseo = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
 	let shared = format!("0x{}", hex::encode(paseo.genesis().people));
-	let descriptor = edit_chain("Bulletin", |chain| chain["genesisHash"] = shared.into());
-	assert!(read_stack(descriptor).is_err());
+	let descriptor = edit_descriptor(|descriptor| {
+		let chains = descriptor["chains"].as_array_mut().expect("chains is an array");
+		let bulletin =
+			chains.iter_mut().find(|chain| chain["role"] == "Bulletin").expect("Bulletin");
+		bulletin["genesisHash"] = shared.clone().into();
+	});
+
+	assert_eq!(
+		trinity_stack::Document::parse(&descriptor).map(|_| ()),
+		Err(trinity_stack::Error::DuplicateGenesisHash(shared))
+	);
 }
 
 /// A stack id becomes a state directory name, so one that is not a plain
