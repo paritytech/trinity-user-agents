@@ -4,7 +4,6 @@ import io.paritytech.polkadotapp.feature_products_api.model.JsAlignment
 import io.paritytech.polkadotapp.feature_products_api.model.JsArrangement
 import io.paritytech.polkadotapp.feature_products_api.model.JsBlendingMode
 import io.paritytech.polkadotapp.feature_products_api.model.JsColor
-import io.paritytech.polkadotapp.feature_products_api.model.JsEffect
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageFit
 import io.paritytech.polkadotapp.feature_products_api.model.JsImageSource
 import io.paritytech.polkadotapp.feature_products_api.model.JsModifier
@@ -73,7 +72,7 @@ class PocketFaceJsonTest {
     fun `decodes the nodes the unified renderer added`() {
         val face = readPocketFace(
             """
-            {"tag":"Effect","value":{"props":{"effect":"Rainbow"},"children":[
+            {"tag":"Materials","value":{"props":{"layers":[{"material":"0x${"07".repeat(32)}","args":[{"tag":"Float","value":1069547520}]}]},"children":[
               {"tag":"Image","value":{
                 "modifiers":[{"tag":"Width","value":40},{"tag":"BlendingMode","value":"Multiply"},
                              {"tag":"Border","value":{"width":1,"color":"FgTertiary","shape":{"tag":"Square"}}}],
@@ -83,10 +82,11 @@ class PocketFaceJsonTest {
             """.trimIndent()
         ).getOrThrow().toJsWidget()
 
-        val effect = face as JsWidget.Effect
-        assertEquals(JsEffect.RAINBOW, effect.effect)
+        // No material draws yet, so the node is its children, placed as a box places them.
+        val materials = face as JsWidget.Box
+        assertEquals(null, materials.contentAlignment)
 
-        val stamp = effect.children[0] as JsWidget.Image
+        val stamp = materials.children[0] as JsWidget.Image
         assertEquals(JsImageSource.Archive("images/stamp.png"), stamp.source)
         assertEquals(JsImageFit.COVER, stamp.fit)
         assertEquals(
@@ -98,7 +98,7 @@ class PocketFaceJsonTest {
             stamp.modifiers,
         )
 
-        val remote = effect.children[1] as JsWidget.Image
+        val remote = materials.children[1] as JsWidget.Image
         assertEquals(JsImageSource.Bulletin("bafy"), remote.source)
         assertEquals("fit defaults to Fill", JsImageFit.FILL, remote.fit)
     }
@@ -107,12 +107,12 @@ class PocketFaceJsonTest {
         """{"tag":"Box","value":{"modifiers":[],"props":{},"children":[$inner]}}"""
     }
 
-    // The core streams a live face up to 64 levels deep. A shallower bound here would refuse, as a
-    // preview, a face this host already draws live and iOS draws in both places.
+    // The core streams a live face 64 decoder levels deep: 64 boxes around a leaf. A shallower bound
+    // here would refuse, as a preview, a face this host already draws live and iOS draws in both places.
     @Test
     fun `reads a tree as deep as the core streams, and refuses one deeper so it cannot blow the stack`() {
-        assertTrue(readPocketFace(levels(64)).isSuccess)
-        assertTrue(readPocketFace(levels(65)).exceptionOrNull() is NativeRendererException.TooDeep)
+        assertTrue(readPocketFace(levels(65)).isSuccess)
+        assertTrue(readPocketFace(levels(66)).exceptionOrNull() is NativeRendererException.TooDeep)
     }
 
     // A size is read back as an Int when the face is drawn, where a negative padding throws at

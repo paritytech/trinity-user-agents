@@ -200,7 +200,7 @@ impl LearnedSupport {
 /// A rail, asset and country a provider recently refused, so the host can
 /// leave it out for a user there.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingUnsupported {
 	/// The rail.
 	pub rail: FundingRail,
@@ -214,7 +214,7 @@ pub struct FundingUnsupported {
 /// its quote refusals showed them, so the host can show the limits before
 /// quoting.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingLimit {
 	/// The rail.
 	pub rail: FundingRail,
@@ -233,7 +233,7 @@ pub struct FundingLimit {
 /// A provider a session can be handed to, with only the routes that serve the
 /// session's direction.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingCandidate {
 	/// The provider's product id.
 	pub provider_id: ProductId,
@@ -364,7 +364,7 @@ pub const FUNDING_MIN_AMOUNT: u128 = 10_000_000;
 /// may take any amount, so a bound is only known once every provider showed
 /// one. The minimum is never below [`FUNDING_MIN_AMOUNT`].
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingAmountLimits {
 	/// The smallest amount the session takes, in balance units: the smallest
 	/// minimum across providers when every provider showed one, and never
@@ -443,7 +443,7 @@ pub fn amount_limits(
 /// What the core knows about funding from one country, for the host's
 /// country picker.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingCountry {
 	/// ISO 3166-1 alpha-2 code.
 	pub country: String,
@@ -453,7 +453,7 @@ pub struct FundingCountry {
 
 /// Whether a provider serves a country.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingCountrySupport {
 	/// A provider serves it, by its manifest or a recent quote answer.
 	Supported {
@@ -469,7 +469,7 @@ pub enum FundingCountrySupport {
 /// What the user has picked so far in a session's overlay, which the
 /// countries and amount limits in [`FundingOptions`] go by.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingSelection {
 	/// How the user pays or is paid.
 	pub rail: FundingRail,
@@ -489,7 +489,7 @@ pub struct FundingSelection {
 /// for the user's selection, what each country supports and the amounts it
 /// takes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingOptions {
 	/// The providers the session can be handed to.
 	pub candidates: Vec<FundingCandidate>,
@@ -522,7 +522,7 @@ pub struct FundingOptions {
 
 /// The amounts one network takes for a crypto selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingNetworkLimits {
 	/// The network, as routes declare it.
 	pub network: String,

@@ -117,14 +117,14 @@ struct CoinageSubmissionParamsTests {
         }
     }
 
-    @Test("a retried transfer's window is the claim's, so neither side gives up first")
-    func retriedTransferMatchesClaimWindow() {
+    @Test("a retried transfer is rebuilt for the chat payment window")
+    func retriedTransferUsesChatPaymentWindow() {
         let start = Date(timeIntervalSince1970: 1_700_000_000)
 
         let params = TransferSubmissionParams.retriedTransfer(from: start)
 
         #expect(params.retryFailures)
-        #expect(params.buildUntil == start.addingTimeInterval(CoinageConstants.claimRetryWindow))
+        #expect(params.buildUntil == start.addingTimeInterval(CoinageConstants.chatPaymentRetryWindow))
     }
 
     @Test("an attempt that never landed is always worth rebuilding, however late")

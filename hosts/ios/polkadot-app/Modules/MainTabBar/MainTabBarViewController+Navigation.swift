@@ -1,6 +1,13 @@
 import UIKit
+import UIKitExt
 
 // MARK: - Navigation transitions
+
+extension MainTabBarViewController: TopmostChildProviding {
+    var topmostChild: UIViewController? {
+        container.selectedController
+    }
+}
 
 extension MainTabBarViewController {
     func chromeContext(
@@ -96,5 +103,8 @@ extension MainTabBarViewController: AppNavigationControllerTransitionObserving {
             stack: navigationController.viewControllers,
             showing: viewController
         ))
+        if navigationController === container.selectedController {
+            bindScrollEdgeInteraction()
+        }
     }
 }

@@ -23,6 +23,12 @@ truapi_macros::versioned_type! {
 		V2 => v02::HostRendererActionSubscribeItem,
 	}
 	pub enum HostRendererActionSubscribeError { V1 => v01::GenericError, V2 => v01::GenericError }
+	pub enum HostRendererFailureSubscribeRequest { V1, V2 }
+	pub enum HostRendererFailureSubscribeItem {
+		V1 => v01::HostRendererFailureSubscribeItem,
+		V2 => v02::HostRendererFailureSubscribeItem,
+	}
+	pub enum HostRendererFailureSubscribeError { V1 => v01::GenericError, V2 => v01::GenericError }
 }
 
 fn upgrade(context: v01::RenderContext) -> v02::RenderContext {
@@ -168,3 +174,65 @@ impl FromLatest for HostRendererActionSubscribeError {
 
 #[cfg(test)]
 mod tests;
+
+impl IntoLatest for HostRendererFailureSubscribeItem {
+	fn into_latest(self) -> Self::Latest {
+		match self {
+			Self::V1(v01::HostRendererFailureSubscribeItem { context, node, material, reason }) => {
+				v02::HostRendererFailureSubscribeItem {
+					context: upgrade(context),
+					node,
+					material,
+					reason,
+				}
+			},
+			Self::V2(latest) => latest,
+		}
+	}
+}
+
+impl FromLatest for HostRendererFailureSubscribeItem {
+	fn from_latest(latest: Self::Latest, target: u8) -> Self {
+		let v02::HostRendererFailureSubscribeItem { context, node, material, reason } = latest;
+		if target >= 2 {
+			return Self::V2(v02::HostRendererFailureSubscribeItem {
+				context,
+				node,
+				material,
+				reason,
+			});
+		}
+		match downgrade(context) {
+			Ok(context) => {
+				Self::V1(v01::HostRendererFailureSubscribeItem { context, node, material, reason })
+			},
+			Err(context) => {
+				Self::V2(v02::HostRendererFailureSubscribeItem { context, node, material, reason })
+			},
+		}
+	}
+}
+
+impl IntoLatest for HostRendererFailureSubscribeRequest {
+	fn into_latest(self) -> Self::Latest {}
+}
+
+impl FromLatest for HostRendererFailureSubscribeRequest {
+	fn from_latest((): Self::Latest, target: u8) -> Self {
+		if target >= 2 { Self::V2 } else { Self::V1 }
+	}
+}
+
+impl IntoLatest for HostRendererFailureSubscribeError {
+	fn into_latest(self) -> Self::Latest {
+		match self {
+			Self::V1(payload) | Self::V2(payload) => payload,
+		}
+	}
+}
+
+impl FromLatest for HostRendererFailureSubscribeError {
+	fn from_latest(latest: Self::Latest, target: u8) -> Self {
+		if target >= 2 { Self::V2(latest) } else { Self::V1(latest) }
+	}
+}

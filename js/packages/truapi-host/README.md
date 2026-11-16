@@ -43,8 +43,7 @@ the host build runs:
 
 The core takes every chain it uses, the network `getChainInfo` reports and the
 signing host's TLD from the descriptor. It refuses a pointer without a key and a
-descriptor without a People or Bulletin chain. Without an Asset Hub no product
-manifest resolves, so a cross-product grant that is not cached is refused.
+descriptor without an Asset Hub, People or Bulletin chain.
 
 The test host has no descriptor, so it passes `testStack` instead: the network,
 the TLD and each chain's genesis hash. Only the `wasm/testing` bundle reads it.
