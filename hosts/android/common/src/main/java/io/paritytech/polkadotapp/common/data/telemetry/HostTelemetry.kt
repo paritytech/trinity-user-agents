@@ -19,7 +19,6 @@ data class HostEvent(
 
 const val PRODUCT_NOTIFICATION_INTENT_MARKER = "product_notification"
 const val PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID = "product_notification_product_id"
-const val PRODUCT_NOTIFICATION_INTENT_NOTIFICATION_ID = "product_notification_id"
 
 fun HostEventOrigin.baseTags(): Map<String, String> = mapOf(
     "host.platform" to platform,
@@ -30,13 +29,16 @@ fun HostEventOrigin.baseTags(): Map<String, String> = mapOf(
 
 fun HostEventOrigin.baseExtras(): Map<String, Any> = mapOf("host.app_build" to appBuild)
 
-fun HostEventOrigin.productNotificationTapped(productId: String, notificationId: Int?) = productNotification(
-    ProductNotificationStep.TAPPED,
-    productId,
-    notificationId,
-    reason = null,
-    scheduledAtMillis = null,
-    deliveredAtMillis = null,
+fun HostEventOrigin.productNotificationShown(productId: String) = HostEvent(
+    name = "host.product_notification.shown",
+    tags = baseTags() + ("product_notification.product_id" to productId),
+    extras = baseExtras(),
+)
+
+fun HostEventOrigin.productNotificationTapped(productId: String) = HostEvent(
+    name = "host.product_notification.tapped",
+    tags = baseTags() + ("product_notification.product_id" to productId),
+    extras = baseExtras(),
 )
 
 /** A tap is recorded once: not again when the activity is restored or relaunched from Recents. */

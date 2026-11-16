@@ -584,8 +584,8 @@ host failures. Android and iOS hosts with Sentry enabled report the reminder
 lifecycle through `host.reminder.*` Sentry events without changing reminder
 delivery or cleanup.
 
-Android and iOS hosts with Sentry enabled report each product notification
-through `host.product_notification.*` events, tagged with
+iOS hosts with Sentry enabled report each product notification through
+`host.product_notification.*` events, tagged with
 `product_notification.product_id`. Each event carries the booking id as the
 extra `product_notification.id`.
 

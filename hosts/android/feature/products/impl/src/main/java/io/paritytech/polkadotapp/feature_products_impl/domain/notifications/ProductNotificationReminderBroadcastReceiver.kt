@@ -1,18 +1,14 @@
-@file:OptIn(ExperimentalTime::class)
-
 package io.paritytech.polkadotapp.feature_products_impl.domain.notifications
 
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.AndroidEntryPoint
-import io.paritytech.polkadotapp.common.data.telemetry.ProductNotificationReason
 import io.paritytech.polkadotapp.common.utils.launchAsyncJob
 import io.paritytech.polkadotapp.feature_products_impl.data.scheduledNotification.ScheduledProductNotificationRepository
 import io.paritytech.polkadotapp.feature_products_impl.domain.hostApi.ProductNotificationPublisher
 import uniffi.truapi.ProductId
 import javax.inject.Inject
-import kotlin.time.ExperimentalTime
 
 @AndroidEntryPoint
 class ProductNotificationReminderBroadcastReceiver : BroadcastReceiver() {
@@ -29,9 +25,6 @@ class ProductNotificationReminderBroadcastReceiver : BroadcastReceiver() {
     @Inject
     lateinit var repository: ScheduledProductNotificationRepository
 
-    @Inject
-    lateinit var telemetry: ProductNotificationTelemetry
-
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_POST_PRODUCT_NOTIFICATION) return
 
@@ -43,23 +36,8 @@ class ProductNotificationReminderBroadcastReceiver : BroadcastReceiver() {
         val notificationId = NotificationId(notificationIdValue)
 
         launchAsyncJob {
-            val row = repository.find(productId, notificationId)
-            if (row == null) {
-                telemetry.suppressed(
-                    productId,
-                    notificationId,
-                    scheduledAt = null,
-                    ProductNotificationReason.BOOKING_MISSING,
-                )
-                return@launchAsyncJob
-            }
-            notificationPublisher.publishNotification(
-                notificationId,
-                productId,
-                row.text,
-                row.deeplink,
-                row.scheduledAt,
-            )
+            val row = repository.find(productId, notificationId) ?: return@launchAsyncJob
+            notificationPublisher.publishNotification(notificationId.value, productId, row.text, row.deeplink)
             repository.delete(productId, notificationId)
         }
     }

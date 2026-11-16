@@ -44,7 +44,6 @@ import io.paritytech.polkadotapp.app.root.presentation.root.compose.chatoverlay.
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventCapture
 import io.paritytech.polkadotapp.common.data.telemetry.HostEventOriginProvider
 import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_MARKER
-import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_NOTIFICATION_ID
 import io.paritytech.polkadotapp.common.data.telemetry.PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID
 import io.paritytech.polkadotapp.common.data.telemetry.isFreshNotificationLaunch
 import io.paritytech.polkadotapp.common.data.telemetry.productNotificationTapped
@@ -389,14 +388,9 @@ class RootActivity : AppCompatActivity(R.layout.activity_root) {
             val productId = intent.getStringExtra(PRODUCT_NOTIFICATION_INTENT_PRODUCT_ID)
                 ?.let { ProductId.parse(it).getOrNull() }
                 ?: return@runCatching
-            val notificationId = if (intent.hasExtra(PRODUCT_NOTIFICATION_INTENT_NOTIFICATION_ID)) {
-                intent.getIntExtra(PRODUCT_NOTIFICATION_INTENT_NOTIFICATION_ID, 0)
-            } else {
-                null
-            }
 
             hostEventCapture.capture {
-                hostEventOriginProvider.current().productNotificationTapped(productId.value, notificationId)
+                hostEventOriginProvider.current().productNotificationTapped(productId.value)
             }
         }.logFailure("Failed to capture product notification tapped event")
     }
