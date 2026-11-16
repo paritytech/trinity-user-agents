@@ -14,7 +14,9 @@ fn a_value_is_served_only_when_every_product_it_names_is() {
 		ring_location: crate::test_support::ring_location_fixture(),
 	};
 	let refused = |key_handle, context| {
-		serve("paseo", alias(key_handle, context)).err().map(|unserved| unserved.product_id)
+		serve(&crate::test_support::paseo_test_stack(), alias(key_handle, context))
+			.err()
+			.map(|unserved| unserved.product_id)
 	};
 
 	assert_eq!(

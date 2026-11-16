@@ -1573,7 +1573,8 @@ const DOORS: [Door; 2] = [Door::Product, Door::Paired];
 /// a `.paseo` context on, and the context check has to hold the context to the
 /// owner's network itself.
 fn served_on_paseo<T: NamesProducts>(value: T) -> Served<T> {
-	serve("paseo", value).expect("a paseo stack runs .dot and .paseo products")
+	serve(&crate::test_support::paseo_test_stack(), value)
+		.expect("a paseo stack runs .dot and .paseo products")
 }
 
 /// The account holder's answer to `payload` from a paired peer naming itself `caller`.

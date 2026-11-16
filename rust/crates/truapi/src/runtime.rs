@@ -479,7 +479,7 @@ impl ProductConnection {
 	/// `value` as [`Served`] once the stack runs every product it names. A
 	/// request naming another one is malformed, and nothing is looked up for it.
 	fn serve<T: NamesProducts, D>(&self, value: T) -> Result<Served<T>, CallError<D>> {
-		Ok(serve(self.services.stack().tld(), value)?)
+		Ok(serve(self.services.stack(), value)?)
 	}
 
 	// Foreign reads must keep the authorized owner, not the calling product.
@@ -871,7 +871,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			return Ok(LegacySigner::Identity(requested_key));
 		}
 		let slot_zero = serve(
-			self.connection.services.stack().tld(),
+			self.connection.services.stack(),
 			latest::ProductAccountId {
 				dot_ns_identifier: self.connection.product_id().clone(),
 				derivation_index: latest::DerivationIndex::Index(0),

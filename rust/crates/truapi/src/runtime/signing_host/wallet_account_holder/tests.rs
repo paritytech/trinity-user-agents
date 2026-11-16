@@ -113,7 +113,7 @@ fn direct_signing_rejects_registry_public_key_mismatched_with_wallet() {
 /// request reaches these without passing a handler's check.
 #[test]
 fn no_key_is_derived_for_a_product_the_stack_does_not_serve() {
-	let keys = WalletKeys::new(vec![7; 32], "paseo".to_string());
+	let keys = WalletKeys::new(vec![7; 32], crate::test_support::paseo_test_stack());
 	let derives = |product: &str| {
 		let product_id = ProductId::for_test(product);
 		let account = ProductAccountId {

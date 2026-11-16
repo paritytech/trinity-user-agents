@@ -5,10 +5,12 @@ import Testing
 
 @Suite("WebDeeplinkNormalizer Tests")
 struct WebDeeplinkNormalizerTests {
-    private let normalizer = WebDeeplinkNormalizer(
-        appScheme: "polkadotapp",
-        tldProvider: StubDotNsTldProvider(tld: "paseo")
-    )
+    private let normalizer: WebDeeplinkNormalizer
+
+    init() throws {
+        let stack = try TrUAPIBundledStack.paseoNextV2.open()
+        normalizer = WebDeeplinkNormalizer(appScheme: "polkadotapp", stack: stack)
+    }
 
     @Test("Maps bare host first path segment to action")
     func mapsBareHostAction() throws {
@@ -80,10 +82,10 @@ struct WebDeeplinkNormalizerTests {
         #expect(normalizer.appSchemeDeeplink(from: url) == nil)
     }
 
-    @Test("Rewrites nothing before the network's TLD is known")
-    func rewritesNothingWithoutATld() throws {
+    @Test("Rewrites nothing when the bundled stack could not be opened")
+    func rewritesNothingWithoutAStack() throws {
         let url = try #require(URL(string: "https://dot.li/pair"))
-        let normalizer = WebDeeplinkNormalizer(appScheme: "polkadotapp", tldProvider: StubDotNsTldProvider(tld: nil))
+        let normalizer = WebDeeplinkNormalizer(appScheme: "polkadotapp", stack: nil)
 
         #expect(normalizer.appSchemeDeeplink(from: url) == nil)
     }

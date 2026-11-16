@@ -50,7 +50,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
     override suspend fun canHandle(data: Uri): Boolean {
         if (!isPocketLink(data.scheme, data.host)) return false
         val tld = dotNsTldProvider.currentTldOrNull() ?: return false
-        val card = parser.parse(data.toString(), tld) as? PocketDeeplink.Card ?: return true
+        val card = parser.parse(data.toString()) as? PocketDeeplink.Card ?: return true
 
         // Adding a card runs the product's worker and hosts its pages, so the same products are
         // reachable here as through any other dotNS link.
@@ -70,7 +70,7 @@ internal class PocketDeepLinkHandler @Inject constructor(
     context(scope: ComputationalScope)
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> = withContext(dispatchers.io) {
         claimedTld().flatMap { tld ->
-            when (val deeplink = parser.parse(data.toString(), tld)) {
+            when (val deeplink = parser.parse(data.toString())) {
                 null -> Result.success(malformed(data))
                 PocketDeeplink.Collection -> openCollection()
                 is PocketDeeplink.Card -> productIdFromHost(deeplink.productId.value, tld).flatMap { productId ->

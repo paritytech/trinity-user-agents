@@ -132,7 +132,7 @@ pub const ENTROPY: [u8; 16] = [0xAB; 16];
 /// and every product these tests name is under the reserved `dot` TLD, which
 /// every stack runs.
 pub fn served<T: NamesProducts>(value: T) -> Served<T> {
-	serve("dot", value).expect("every stack runs a .dot product")
+	serve(&crate::test_support::paseo_test_stack(), value).expect("every stack runs a .dot product")
 }
 
 /// A locked signing host on `.dot`. With no dotNS Asset Hub, activation looks
@@ -164,7 +164,8 @@ pub fn signing_runtime_on_asset_hub(
 
 /// A signing host whose wallet is active under [`ENTROPY`].
 pub fn active_signing_host(platform: Arc<StubPlatform>) -> Arc<SigningHostRole> {
-	let (_services, signing_host) = signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
+	let (_services, signing_host) =
+		signing_runtime_on_asset_hub(platform, crate::test_support::UNSERVED_GENESIS);
 	futures::executor::block_on(signing_host.activate_local_session(ENTROPY.to_vec()))
 		.expect("activation succeeds");
 	signing_host

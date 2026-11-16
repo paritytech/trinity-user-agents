@@ -496,9 +496,11 @@ fn product_target_resolves_to_allocation_derivation() {
 		.public
 		.to_bytes();
 
-	let resolved =
-		resolve_target(&WalletKeys::new(entropy.to_vec(), "paseo".to_string()), &product("a.dot"))
-			.unwrap();
+	let resolved = resolve_target(
+		&WalletKeys::new(entropy.to_vec(), crate::test_support::paseo_test_stack()),
+		&product("a.dot"),
+	)
+	.unwrap();
 	assert_eq!(
 		resolved,
 		ResolvedRenewalTarget { label: "product:a.dot".to_string(), account_id: expected }
@@ -514,7 +516,7 @@ fn wallet_sso_target_resolves_to_the_responder_identity() {
 		.to_bytes();
 
 	let resolved = resolve_target(
-		&WalletKeys::new(entropy.to_vec(), "paseo".to_string()),
+		&WalletKeys::new(entropy.to_vec(), crate::test_support::paseo_test_stack()),
 		&StatementRenewalTarget::WalletSso,
 	)
 	.unwrap();
@@ -657,8 +659,12 @@ fn untracking_a_device_preserves_the_other_identitys_entry() {
 #[test]
 fn owner_key_follows_the_root_entropy() {
 	assert_ne!(
-		WalletKeys::new(vec![7; 32], "paseo".to_string()).root_public_key().unwrap(),
-		WalletKeys::new(vec![8; 32], "paseo".to_string()).root_public_key().unwrap()
+		WalletKeys::new(vec![7; 32], crate::test_support::paseo_test_stack())
+			.root_public_key()
+			.unwrap(),
+		WalletKeys::new(vec![8; 32], crate::test_support::paseo_test_stack())
+			.root_public_key()
+			.unwrap()
 	);
 }
 
@@ -680,7 +686,7 @@ fn a_renewal_target_does_not_name_its_account_in_full() {
 /// every tick for as long as the host stays on this network.
 #[test]
 fn another_networks_target_is_skipped_without_a_warning() {
-	let keys = WalletKeys::new(vec![7; 32], "paseo".to_string());
+	let keys = WalletKeys::new(vec![7; 32], crate::test_support::paseo_test_stack());
 	let target = |product: &str| StatementRenewalTarget::ProductStatementAllowance {
 		product_id: ProductId::for_test(product),
 	};

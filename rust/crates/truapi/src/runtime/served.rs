@@ -1,7 +1,9 @@
 //! Proof that the stack runs every product a value names.
 //!
-//! [`serve`] checks a value against the stack's TLD and wraps it in [`Served`].
-//! `RUNTIME.md` lists where the core takes a product as `Served`.
+//! [`serve`] checks a value against the stack and wraps it in [`Served`]. A
+//! handler serves a request that names another product before it acts, and
+//! `HostAccounts` and the signing requests the core builds take their products
+//! as `Served`, so no key is resolved for a product the stack does not run.
 
 use truapi::latest::{
 	HostAccountCreateProofRequest, HostAccountGetAliasRequest, HostAccountListRingVrfKeysRequest,
@@ -12,7 +14,7 @@ use truapi::latest::{
 
 use crate::{
 	ProductId,
-	stack::{UnservedProduct, require_served},
+	stack::{Stack, UnservedProduct},
 };
 
 /// A value that names only products the stack runs.
@@ -54,11 +56,11 @@ pub trait NamesProducts {
 	fn products(&self) -> Vec<&ProductId>;
 }
 
-/// `value` as [`Served`] once a stack on `stack_tld` runs every product it
-/// names. Fails with the first one it does not.
-pub fn serve<T: NamesProducts>(stack_tld: &str, value: T) -> Result<Served<T>, UnservedProduct> {
+/// `value` as [`Served`] once `stack` runs every product it names. Fails with
+/// the first one it does not.
+pub fn serve<T: NamesProducts>(stack: &Stack, value: T) -> Result<Served<T>, UnservedProduct> {
 	for product_id in value.products() {
-		require_served(stack_tld, product_id)?;
+		stack.require_served(product_id)?;
 	}
 	Ok(Served(value))
 }

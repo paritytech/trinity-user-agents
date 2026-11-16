@@ -3,6 +3,7 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 import android.content.Context
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import uniffi.truapi.BundledStack
+import uniffi.truapi.Stack
 
 /**
  * The Trinity stacks the app bundles, and which one each environment runs.
@@ -29,6 +30,8 @@ enum class TrUAPIStack(
             allowsReservedValues = allowsReservedValues,
         )
     }
+
+    fun opened(context: Context): Stack = Stack.openBundled(bundled(context))
 
     companion object {
         fun of(environment: TestnetEnvironment): TrUAPIStack = when (environment) {

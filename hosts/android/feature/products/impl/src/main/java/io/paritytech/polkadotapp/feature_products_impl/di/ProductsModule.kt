@@ -11,6 +11,7 @@ import dagger.multibindings.IntoSet
 import dagger.multibindings.Multibinds
 import io.paritytech.polkadotapp.common.BuildConfig
 import io.paritytech.polkadotapp.common.data.image.ImageLoaderComponentRegistrar
+import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.utils.FeatureOption
@@ -143,6 +144,7 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.Execu
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealExecuteTopUpUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.RealTopUpService
 import io.paritytech.polkadotapp.feature_products_impl.domain.topUpRequest.TopUpService
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.TrUAPIStack
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.worker.TrUAPIPocketFaceStreams
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.RealResolveProductUseCase
 import io.paritytech.polkadotapp.feature_products_impl.domain.usecase.ResolveProductUseCase
@@ -161,6 +163,7 @@ import io.paritytech.polkadotapp.feature_products_impl.presentation.spaHost.Runt
 import io.paritytech.polkadotapp.feature_scan_api.domain.ScanContentParser
 import okhttp3.Call
 import okhttp3.OkHttpClient
+import uniffi.truapi.Stack
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
 
@@ -427,6 +430,12 @@ internal interface ProductsModule {
     fun bindRequestPaymentUseCase(impl: RealRequestPaymentUseCase): RequestPaymentUseCase
 
     companion object {
+        // Opened once at startup so links and trust are judged by the core's stack before the runtime starts.
+        @Provides
+        @Singleton
+        fun provideStack(@ApplicationContext context: Context, environment: TestnetEnvironment): Stack =
+            TrUAPIStack.of(environment).opened(context)
+
         @Provides
         @Singleton
         @TrUAPIChainHttpClient

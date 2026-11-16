@@ -47,36 +47,6 @@ const RESERVED_GENESIS_HASHES: [[u8; 32]; 4] = [
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
 
-/// The dotNS TLDs a stack on `stack_tld` serves names under: Polkadot's
-/// reserved TLD, then the stack's own when it is another one.
-///
-/// The core has no other list of TLDs. Product ids, dotNS links and share
-/// hosts are all judged against this one. A `stack_tld` that is not a DNS
-/// label is left out, since a host can pass any string over FFI.
-pub fn served_tlds(stack_tld: &str) -> impl Iterator<Item = &str> {
-	let own = stack_tld != RESERVED_TLD && is_dns_label(stack_tld);
-	[RESERVED_TLD].into_iter().chain(own.then_some(stack_tld))
-}
-
-/// Whether `tld` is one of the [`served_tlds`] of a stack on `stack_tld`.
-pub fn serves_tld(stack_tld: &str, tld: &str) -> bool {
-	served_tlds(stack_tld).any(|served| served == tld)
-}
-
-/// Whether a stack on `stack_tld` runs `product_id`: a localhost development
-/// id, or a name under one of its [`served_tlds`].
-pub fn serves(stack_tld: &str, product_id: &ProductId) -> bool {
-	product_id.network_suffix().is_none_or(|tld| serves_tld(stack_tld, tld))
-}
-
-/// [`serves`] as a check: fails with the product and the stack's TLD.
-pub fn require_served(stack_tld: &str, product_id: &ProductId) -> Result<(), UnservedProduct> {
-	if serves(stack_tld, product_id) {
-		return Ok(());
-	}
-	Err(UnservedProduct { product_id: product_id.clone(), stack_tld: stack_tld.to_owned() })
-}
-
 /// A product under a TLD the stack does not serve.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::Error)]
 #[display("product {product_id} is not under a TLD the {stack_tld} stack serves")]
@@ -95,15 +65,10 @@ impl<D> From<UnservedProduct> for CallError<D> {
 	}
 }
 
-/// Whether a stack on `stack_tld` gives `product_id` every `RemotePermission`
-/// without a prompt: a trusted label under a TLD the stack serves.
-pub fn trusts(stack_tld: &str, product_id: &ProductId) -> bool {
-	serves(stack_tld, product_id) && product_id.has_trusted_remote_permissions()
-}
-
 /// The stack a host runs: the network `get_chain_info` reports, the dotNS TLD,
 /// and the genesis hash of each chain role the core uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Object))]
 pub struct Stack {
 	network: String,
 	tld: String,
@@ -251,10 +216,39 @@ impl Stack {
 		&self.tld
 	}
 
-	/// `serves` as a check against this stack's TLD: fails with the product and
-	/// the TLD.
+	/// The dotNS TLDs this stack serves names under: Polkadot's reserved TLD,
+	/// then its own when it is another one.
+	///
+	/// The core has no other list of TLDs. Product ids, dotNS links and share
+	/// hosts are all judged against this one.
+	pub fn served_tlds(&self) -> impl Iterator<Item = &str> {
+		let own = (self.tld != RESERVED_TLD).then_some(self.tld.as_str());
+		[RESERVED_TLD].into_iter().chain(own)
+	}
+
+	/// Whether `tld` is one of [`Self::served_tlds`].
+	pub fn serves_tld(&self, tld: &str) -> bool {
+		self.served_tlds().any(|served| served == tld)
+	}
+
+	/// Whether this stack runs `product_id`: a localhost development id, or a
+	/// name under one of [`Self::served_tlds`].
+	pub fn serves(&self, product_id: &ProductId) -> bool {
+		product_id.network_suffix().is_none_or(|tld| self.serves_tld(tld))
+	}
+
+	/// [`Self::serves`] as a check: fails with the product and the stack's TLD.
 	pub fn require_served(&self, product_id: &ProductId) -> Result<(), UnservedProduct> {
-		require_served(&self.tld, product_id)
+		if self.serves(product_id) {
+			return Ok(());
+		}
+		Err(UnservedProduct { product_id: product_id.clone(), stack_tld: self.tld.clone() })
+	}
+
+	/// Whether this stack gives `product_id` every `RemotePermission` without a
+	/// prompt: a trusted label under a TLD it serves.
+	pub fn trusts(&self, product_id: &ProductId) -> bool {
+		self.serves(product_id) && product_id.has_trusted_remote_permissions()
 	}
 
 	/// The stack's chains.

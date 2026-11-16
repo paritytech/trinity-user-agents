@@ -34,7 +34,7 @@ class PocketDeepLinkHandlerTest {
     private val handler = PocketDeepLinkHandler(
         dispatchers = TestCoroutineDispatchers(Dispatchers.Unconfined),
         dotNsTldProvider = tldProvider,
-        parser = mockk<PocketDeeplinkParser> { every { parse(link, tld) } returns PocketDeeplink.Collection },
+        parser = mockk<PocketDeeplinkParser> { every { parse(link) } returns PocketDeeplink.Collection },
         publishedCards = mockk(),
         collection = mockk(),
         cardOpenRequests = mockk(),

@@ -28,7 +28,17 @@ enum TrUAPIBundledStack {
                 allowsReservedValues: allowsReservedValues
             )
         }
+
+        /// The stack as the core opens it from `bundle`.
+        func open(from bundle: Bundle = .main) throws -> Stack {
+            try Stack.openBundled(stack: load(from: bundle))
+        }
     }
+
+    /// The stack this build runs, opened once at launch so links and trust are
+    /// judged by the core's stack before the runtime starts. `nil` only when the
+    /// bundled copy is missing or refused, which the runtime also reports.
+    static let opened: Stack? = try? current.open()
 
     static let previewnet = Definition(resource: "trinity-stack-previewnet", allowsReservedValues: false)
 
