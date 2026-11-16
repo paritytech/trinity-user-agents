@@ -21,6 +21,8 @@ pub mod params;
 pub mod planning;
 pub mod plugins;
 pub mod policy;
+pub mod reconstruction;
+pub mod registry;
 pub mod registration;
 pub mod selection;
 pub mod split;
