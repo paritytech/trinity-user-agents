@@ -1,6 +1,13 @@
 import UIKit
+import UIKitExt
 
 // MARK: - Navigation transitions
+
+extension MainTabBarViewController: TopmostChildProviding {
+    var topmostChild: UIViewController? {
+        container.selectedController
+    }
+}
 
 extension MainTabBarViewController {
     func chromeContext(
