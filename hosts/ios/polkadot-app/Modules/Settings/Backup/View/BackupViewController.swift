@@ -1,19 +1,17 @@
 import UIKit
-import PolkadotUI
-import FoundationExt
+import SwiftUI
 
-final class BackupViewController: UIViewController, ViewHolder {
-    // MARK: Properties
-
-    typealias RootViewType = BackupViewLayout
-
+final class BackupViewController: UIHostingController<BackupViewLayout> {
     let presenter: BackupPresenterProtocol
-
-    // MARK: Initial methods
 
     init(presenter: BackupPresenterProtocol) {
         self.presenter = presenter
-        super.init(nibName: nil, bundle: nil)
+        super.init(
+            rootView: BackupViewLayout(
+                viewModel: BackupViewModel(statusType: nil, restoredBalance: nil),
+                presenter: presenter
+            )
+        )
     }
 
     @available(*, unavailable)
@@ -21,25 +19,11 @@ final class BackupViewController: UIViewController, ViewHolder {
         fatalError("init(coder:) has not been implemented")
     }
 
-    // MARK: Life cycle
-
-    override func loadView() {
-        view = BackupViewLayout()
-    }
-
     override func viewDidLoad() {
         super.viewDidLoad()
-
-        configureController()
-        presenter.setup()
-        rootView.buttonsDelegate = self
-    }
-
-    // MARK: Private methods
-
-    private func configureController() {
-        title = String(localized: .backupMainTitle)
         view.backgroundColor = .bgSurfaceMain
+        title = String(localized: .backupMainTitle)
+        presenter.setup()
     }
 }
 
@@ -47,14 +31,6 @@ final class BackupViewController: UIViewController, ViewHolder {
 
 extension BackupViewController: BackupViewProtocol {
     func updateViewModel(_ viewModel: BackupViewModel) {
-        rootView.bind(model: viewModel)
-    }
-}
-
-// MARK: - BackupButtonsViewDelegate
-
-extension BackupViewController: BackupButtonsViewDelegate {
-    func didTapButton(_ type: BackupButtonsView.ButtonType) {
-        presenter.handleButtonTap(type: type)
+        rootView = BackupViewLayout(viewModel: viewModel, presenter: presenter)
     }
 }

@@ -13,6 +13,8 @@
 // pin addresses by reading them back from the host, never by hard-coding a
 // well-known one.
 
+import { mockTestStack, type TestStack } from "../web/create-mock-host.js";
+
 /** Name of a built-in dev account. */
 export type DevAccountName = "alice" | "bob" | "charlie" | "dave";
 
@@ -144,8 +146,8 @@ export const DEFAULT_CHAIN = PASEO_ASSET_HUB;
 /**
  * Fixture settings for proxying one real chain.
  *
- * A live chain has to agree in three places -- what the host proxies to, what
- * it reports serving, and what its runtime config declares -- and the product
+ * A live chain has to agree in three places: what the host proxies to, what
+ * it reports serving, and the Asset Hub of the test stack it runs. The product
  * checks the last two against its own descriptor bundle. Getting one of them
  * wrong fails as a genesis mismatch that names neither the setting nor the
  * file, so this builds all three from one value.
@@ -161,25 +163,24 @@ export const DEFAULT_CHAIN = PASEO_ASSET_HUB;
 export function liveChain(chain: { rpcUrl: string; genesisHash: string }): {
   mock: {
     chainProxies: { rpcUrl: string }[];
-    supportedChains: {
-      network: string;
-      chains: { identifier: "AssetHub"; genesisHash: `0x${string}` }[];
-    };
+    servedChains: string[];
   };
-  runtimeConfig: Record<string, unknown>;
+  runtimeConfig: { testStack: TestStack };
 } {
-  const genesisHash = chain.genesisHash as `0x${string}`;
   return {
     mock: {
       // No hash on the proxy: it takes every request, so routing survives a
       // reset even while the declared hash below has to be re-pinned.
       chainProxies: [{ rpcUrl: chain.rpcUrl }],
-      supportedChains: {
+      servedChains: [chain.genesisHash],
+    },
+    runtimeConfig: {
+      testStack: {
+        ...mockTestStack(),
         network: "paseo",
-        chains: [{ identifier: "AssetHub", genesisHash }],
+        assetHub: { genesisHash: chain.genesisHash },
       },
     },
-    runtimeConfig: { assetHub: { genesisHash } },
   };
 }
 

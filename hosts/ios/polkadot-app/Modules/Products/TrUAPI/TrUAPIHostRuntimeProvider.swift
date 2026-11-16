@@ -10,11 +10,6 @@ import SubstrateSdk
 import KeyDerivation
 import Keystore_iOS
 
-/// Runtime configuration error raised while assembling the shared host config.
-enum TrUAPIRuntimeConfigError: Error {
-    case missingGenesisHash(chain: String)
-}
-
 /// Vends the process-wide ``TrUAPIHostRuntime``. Product executions open off
 /// the single shared runtime, so its authentication and core services are
 /// shared across every SPA and chat product.
@@ -35,10 +30,10 @@ protocol TrUAPIHostRuntimeProviding: AnyObject, Sendable {
     func attach(workerManager: any TrUAPIWorkerManaging)
 }
 
-/// Lazily builds one ``TrUAPIHostRuntime`` from host identity + people/bulletin
-/// genesis hashes + the local session secret, activates the local session
-/// once, and caches it. Lazy so startup is not blocked and the runtime is only
-/// assembled once chains are synced and a session secret exists.
+/// Lazily builds one ``TrUAPIHostRuntime`` from host identity + the stack the
+/// build bundles + the local session secret, activates the local session once,
+/// and caches it. Lazy so startup is not blocked and the runtime is only
+/// assembled once a session secret exists.
 final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Sendable {
     private let chainRegistry: ChainRegistryProtocol
     private let entropyManager: RootEntropyManaging
@@ -135,7 +130,6 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
         let secret = try entropyManager.fetchRootEntropy()
         let networkSuffix = try tldProvider.currentTldOrError()
         let runtimeConfig = try Self.makeRuntimeConfig(
-            chainRegistry: chainRegistry,
             secret: secret,
             liteUsername: settingsManager.string(for: .username),
             networkSuffix: networkSuffix,
@@ -193,37 +187,16 @@ final class TrUAPIHostRuntimeProvider: TrUAPIHostRuntimeProviding, @unchecked Se
 }
 
 extension TrUAPIHostRuntimeProvider {
-    /// Assemble the immutable host-wide config. Genesis hashes are fetched from
-    /// the registry and must resolve; a missing hash fails explicitly rather
-    /// than degrading. `networkSuffix` is the dotNS TLD the core derives the
-    /// wallet's reserved identities under, so it has to be the one the app's own
-    /// built-in accounts derive from. Exposed for testing the genesis-validation
-    /// seam.
+    /// Assemble the immutable host-wide config. Every chain fact the core uses
+    /// comes from the stack this build bundles, ``TrUAPIBundledStack/current``.
+    /// `networkSuffix` is the dotNS TLD the app's own built-in accounts derive
+    /// from, which names the products backing the pinned Pocket cards.
     static func makeRuntimeConfig(
-        chainRegistry: ChainRegistryProtocol,
         secret: Data,
         liteUsername: String?,
         networkSuffix: String,
         databaseDirectory: String
     ) throws -> HostRuntimeConfig {
-        let peopleChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.peopleChain)
-        let bulletinChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.bulletInChain)
-        let assetHubChain = try chainRegistry.getChainOrError(for: AppConfig.Chains.assethubChain)
-
-        guard let peopleGenesisHex = peopleChain.explicitGenesisHash else {
-            throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "people")
-        }
-        guard let bulletinGenesisHex = bulletinChain.explicitGenesisHash else {
-            throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "bulletin")
-        }
-        // Product manifests are read from the dotNS contracts on Asset Hub, so
-        // a missing hash here refuses every cross-product `trustedProducts`
-        // grant indistinguishably from the other product granting nothing.
-        // Fail explicitly, like its siblings, rather than passing all-zero.
-        guard let assetHubGenesisHex = assetHubChain.explicitGenesisHash else {
-            throw TrUAPIRuntimeConfigError.missingGenesisHash(chain: "assetHub")
-        }
-
         let bundle = Bundle.main
         let version = bundle.appVersion.map { version in
             bundle.appBuild.map { "\(version) (\($0))" } ?? version
@@ -234,10 +207,7 @@ extension TrUAPIHostRuntimeProvider {
             hostVersion: version,
             platformType: "ios",
             platformVersion: UIDevice.current.systemVersion,
-            peopleChainGenesisHash: Data(hexString: peopleGenesisHex),
-            bulletinChainGenesisHash: Data(hexString: bulletinGenesisHex),
-            assetHubChainGenesisHash: Data(hexString: assetHubGenesisHex),
-            networkSuffix: networkSuffix,
+            stack: TrUAPIBundledStack.current.load(),
             databaseDirectory: databaseDirectory,
             pinnedPocketCards: AssetPinnedPocketCards(tld: networkSuffix).cards(),
             localSessionSecret: secret,

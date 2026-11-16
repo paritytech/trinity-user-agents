@@ -8,6 +8,7 @@ import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.model.Product
 import io.paritytech.polkadotapp.feature_products_api.model.derivation.ReservedProductIds
 import io.paritytech.polkadotapp.feature_products_impl.data.repository.ProductIntegrationRepository
+import io.paritytech.polkadotapp.feature_products_impl.data.storage.ProductRoomFooterStorage
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductBotFactory
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatExtension
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductChatExtensionOrigin
@@ -31,7 +32,7 @@ class ProductExternalExtensionProviderTest {
     private val hostPlacedProducts: HostPlacedProducts = mockk()
     private val provider = ProductExternalExtensionProvider(
         integrationRepository,
-        ProductBotFactory(mockk<Context>(relaxed = true), mockk(), mockk(), mockk()),
+        ProductBotFactory(mockk<Context>(relaxed = true), mockk(), mockk(), mockk(), mockk<ProductRoomFooterStorage> { every { read(any()) } returns emptyMap() }),
         hostPlacedProducts,
     )
 
@@ -57,7 +58,7 @@ class ProductExternalExtensionProviderTest {
         }
         val provider = ProductExternalExtensionProvider(
             integrationRepository,
-            ProductBotFactory(context, mockk(), mockk(), mockk()),
+            ProductBotFactory(context, mockk(), mockk(), mockk(), mockk<ProductRoomFooterStorage> { every { read(any()) } returns emptyMap() }),
             HostPlacedProducts(context, tldProvider),
         )
         every { integrationRepository.observeProductsByType(IntegrationType.Chat) } returns flowOf(listOf(playground))

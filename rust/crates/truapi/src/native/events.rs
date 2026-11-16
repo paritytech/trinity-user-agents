@@ -13,8 +13,9 @@ use super::subscribers::Subscribers;
 pub struct NativeEventBus {
 	theme_changes: Mutex<Subscribers<(), Result<v01::HostThemeSubscribeItem, v01::GenericError>>>,
 	locale_changes: Mutex<Subscribers<(), Result<v01::HostLocaleSubscribeItem, v01::GenericError>>>,
-	preimage_changes: Mutex<Vec<PreimageSubscription>>,
-	storage_changes: Mutex<Vec<StorageSubscription>>,
+	preimage_changes: Mutex<Subscribers<Vec<u8>, Option<Vec<u8>>>>,
+	storage_changes:
+		Mutex<Subscribers<String, Result<v01::HostLocalStorageChangeItem, v01::GenericError>>>,
 	chain_events: Mutex<NativeChainEvents>,
 	chat_room_changes: Mutex<Subscribers<(), v01::HostChatListSubscribeItem>>,
 }
@@ -23,16 +24,6 @@ pub struct NativeEventBus {
 struct NativeChainEvents {
 	responses: HashMap<u32, mpsc::UnboundedSender<String>>,
 	early_close_generation: u64,
-}
-
-struct PreimageSubscription {
-	key: Vec<u8>,
-	tx: mpsc::UnboundedSender<Result<Option<Vec<u8>>, v01::GenericError>>,
-}
-
-struct StorageSubscription {
-	key: String,
-	tx: mpsc::UnboundedSender<Result<v01::HostLocalStorageChangeItem, v01::GenericError>>,
 }
 
 impl NativeEventBus {
@@ -82,12 +73,12 @@ impl NativeEventBus {
 	pub fn subscribe_preimage_changes(
 		&self,
 		key: Vec<u8>,
-	) -> mpsc::UnboundedReceiver<Result<Option<Vec<u8>>, v01::GenericError>> {
+	) -> mpsc::UnboundedReceiver<Option<Vec<u8>>> {
 		let (tx, rx) = mpsc::unbounded();
 		self.preimage_changes
 			.lock()
 			.expect("native preimage subscribers mutex poisoned")
-			.push(PreimageSubscription { key, tx });
+			.register(key, tx);
 		rx
 	}
 
@@ -96,12 +87,7 @@ impl NativeEventBus {
 		self.preimage_changes
 			.lock()
 			.expect("native preimage subscribers mutex poisoned")
-			.retain(|sub| {
-				if sub.key != key {
-					return true;
-				}
-				sub.tx.unbounded_send(Ok(value.clone())).is_ok()
-			});
+			.send(key, &value);
 	}
 
 	/// Stream later changes to the product storage value under `key`.
@@ -113,7 +99,7 @@ impl NativeEventBus {
 		self.storage_changes
 			.lock()
 			.expect("native storage subscribers mutex poisoned")
-			.push(StorageSubscription { key, tx });
+			.register(key, tx);
 		rx
 	}
 
@@ -123,12 +109,7 @@ impl NativeEventBus {
 		self.storage_changes
 			.lock()
 			.expect("native storage subscribers mutex poisoned")
-			.retain(|sub| {
-				if sub.key != key {
-					return true;
-				}
-				sub.tx.unbounded_send(Ok(item.clone())).is_ok()
-			});
+			.send(key, &Ok(item));
 	}
 
 	/// Count of host-reported closes, taken before a connect so a close that
@@ -228,3 +209,6 @@ impl NativeEventBus {
 			.send(&(), &item);
 	}
 }
+
+#[cfg(test)]
+mod tests;

@@ -1,3 +1,5 @@
+use parity_scale_codec::{DecodeAll, Encode};
+
 use super::*;
 
 /// A blob stored on Paseo Bulletin: `bitswap_v1_get` with this CID returns the bytes whose
@@ -34,5 +36,26 @@ fn only_a_canonical_blake2b_cid_parses() {
 			Err(BulletinCidError::Hash),
 			Err(BulletinCidError::Codec),
 		]
+	);
+}
+
+#[test]
+fn scale_encodes_only_the_digest() {
+	let text = "bafk2bzaceaf5do2x4p46vaazk2txb7qqnd4vaobvi6wkixq5hu2u2v6qctfqy";
+	let cid = text.parse::<BulletinCid>().unwrap();
+	let digest =
+		hex::decode("0bd1bb57e3f9ea801956a770fe1068f950383547aca45e1d3d354d57d014cb0c").unwrap();
+
+	assert_eq!(
+		(cid.encode(), BulletinCid::decode_all(&mut digest.as_slice()).unwrap()),
+		(digest, cid),
+	);
+}
+
+#[test]
+fn scale_requires_a_complete_digest() {
+	assert_eq!(
+		[0, 31, 33].map(|length| BulletinCid::decode_all(&mut vec![0; length].as_slice()).is_err()),
+		[true; 3],
 	);
 }

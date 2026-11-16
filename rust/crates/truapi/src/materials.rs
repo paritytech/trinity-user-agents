@@ -167,7 +167,8 @@ impl Materials {
 			select_biased! {
 				answer = lookup.next() => match answer {
 					Some(Ok(Some(bytes))) if preimage_key(&bytes) == id => return self.keep(id, bytes).await,
-					Some(Ok(_)) => {},
+					Some(Ok(Some(_))) => return Err(MaterialFailure::Integrity),
+					Some(Ok(None)) => {},
 					Some(Err(error)) => {
 						tracing::warn!(reason = %error.reason, "a material lookup failed for good");
 						return Err(MaterialFailure::NotFound);

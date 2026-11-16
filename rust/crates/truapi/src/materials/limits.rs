@@ -19,45 +19,67 @@ const MAX_TREE_IMAGES: usize = 16;
 /// it does, depth first. A node that falls back adds nothing to the tree's
 /// totals, so later nodes are decided the same way on every host.
 pub fn tree_failures(tree: &RendererNode) -> Vec<Option<MaterialFailure>> {
-	let mut layers = 0;
-	let mut materials = HashSet::new();
-	let mut images: Vec<&ImageSource> = Vec::new();
-	materials_nodes(tree)
-		.into_iter()
-		.map(|(props, nested)| {
-			if nested {
-				return Some(MaterialFailure::LimitExceeded);
+	let mut budget = TreeBudget::default();
+	let mut failures = Vec::new();
+	for (props, nested) in materials_nodes(tree) {
+		failures.push(check_node(props, nested).and_then(|()| budget.admit(props)).err());
+	}
+	failures
+}
+
+/// The limits a node meets on its own.
+fn check_node(props: &MaterialsProps, nested: bool) -> Result<(), MaterialFailure> {
+	if nested {
+		return Err(MaterialFailure::LimitExceeded);
+	}
+	if props.layers.is_empty() {
+		return Err(MaterialFailure::InvalidStack);
+	}
+	let too_many_images = props
+		.layers
+		.iter()
+		.any(|layer| image_arguments(&layer.args).count() > MAX_IMAGE_ARGUMENTS);
+	if props.layers.len() > MAX_NODE_LAYERS || too_many_images {
+		return Err(MaterialFailure::LimitExceeded);
+	}
+	Ok(())
+}
+
+/// What the nodes admitted so far add up to.
+#[derive(Default)]
+struct TreeBudget<'tree> {
+	layers: usize,
+	materials: HashSet<[u8; 32]>,
+	images: Vec<&'tree ImageSource>,
+}
+
+impl<'tree> TreeBudget<'tree> {
+	/// Adds the node to the totals if it fits, and nothing otherwise.
+	fn admit(&mut self, props: &'tree MaterialsProps) -> Result<(), MaterialFailure> {
+		let layers = self.layers + props.layers.len();
+		let new_materials: HashSet<[u8; 32]> = props
+			.layers
+			.iter()
+			.map(|layer| layer.material)
+			.filter(|material| !self.materials.contains(material))
+			.collect();
+		let mut new_images = Vec::new();
+		for image in image_sources(props) {
+			if !self.images.contains(&image) && !new_images.contains(&image) {
+				new_images.push(image);
 			}
-			if props.layers.is_empty() {
-				return Some(MaterialFailure::InvalidStack);
-			}
-			let too_many_images = props
-				.layers
-				.iter()
-				.any(|layer| image_arguments(&layer.args).count() > MAX_IMAGE_ARGUMENTS);
-			if props.layers.len() > MAX_NODE_LAYERS || too_many_images {
-				return Some(MaterialFailure::LimitExceeded);
-			}
-			let mut node_materials = materials.clone();
-			node_materials.extend(props.layers.iter().map(|layer| layer.material));
-			let mut node_images = images.clone();
-			for image in image_sources(props) {
-				if !node_images.contains(&image) {
-					node_images.push(image);
-				}
-			}
-			if layers + props.layers.len() > MAX_TREE_LAYERS ||
-				node_materials.len() > MAX_TREE_MATERIALS ||
-				node_images.len() > MAX_TREE_IMAGES
-			{
-				return Some(MaterialFailure::LimitExceeded);
-			}
-			layers += props.layers.len();
-			materials = node_materials;
-			images = node_images;
-			None
-		})
-		.collect()
+		}
+		if layers > MAX_TREE_LAYERS ||
+			self.materials.len() + new_materials.len() > MAX_TREE_MATERIALS ||
+			self.images.len() + new_images.len() > MAX_TREE_IMAGES
+		{
+			return Err(MaterialFailure::LimitExceeded);
+		}
+		self.layers = layers;
+		self.materials.extend(new_materials);
+		self.images.extend(new_images);
+		Ok(())
+	}
 }
 
 fn image_arguments(args: &[Parameter]) -> impl Iterator<Item = &ImageRef> {
