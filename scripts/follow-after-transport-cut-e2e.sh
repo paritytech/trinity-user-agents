@@ -34,7 +34,7 @@ cargo build -q -p truapi-host-cli
 host="target/debug/truapi-host"
 
 # The paseo-next-v2 stack this build ships, whose Bulletin the proxy forwards to.
-descriptor="$("$host" stack verify rust/crates/truapi-host-cli/stacks/paseo-next-v2.json | jq .descriptor)"
+descriptor="$("$host" stack verify stacks/paseo-next-v2.json | jq .descriptor)"
 bulletin_ws="$(jq -r '.chains[] | select(.role == "Bulletin") | .rpc[0]' <<<"$descriptor")"
 
 echo "==> starting the Bulletin proxy"

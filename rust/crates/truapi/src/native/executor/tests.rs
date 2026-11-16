@@ -1,5 +1,5 @@
 use super::*;
-use futures::FutureExt;
+use std::sync::Arc;
 
 #[test]
 fn shared_executor_uses_multithread_scheduler() {
@@ -43,13 +43,10 @@ fn spawned_core_tasks_run_on_the_shared_runtime() {
 	let executor = shared_native_executor().expect("shared native executor");
 	let (runtime_tx, runtime_rx) = std::sync::mpsc::channel();
 
-	executor.spawner()(
-		async move {
-			let runtime = Handle::try_current().map(|handle| handle.id());
-			runtime_tx.send(runtime.ok()).unwrap();
-		}
-		.boxed(),
-	);
+	executor.spawner().spawn(async move {
+		let runtime = Handle::try_current().map(|handle| handle.id());
+		runtime_tx.send(runtime.ok()).unwrap();
+	});
 
 	let ran_on = runtime_rx
 		.recv_timeout(std::time::Duration::from_secs(5))

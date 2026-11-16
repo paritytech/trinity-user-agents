@@ -668,6 +668,11 @@
     <string name="search_section_recents">RECENTS</string>
     <string name="search_section_results">RESULTS</string>
     <string name="docklet_close_search">Close search</string>
+    <string name="docklet_show_dock">Show dock</string>
+    <string name="docklet_tucked_tip_title">Your dock is tucked away</string>
+    <string name="docklet_tucked_tip_message">Drag in from the right edge, or tap here</string>
+    <string name="docklet_auto_hidden_tip_title">Docklet tucked itself away</string>
+    <string name="docklet_auto_hidden_tip_message">It hides when you\'re not using it. Drag it in from the glow, or tap here</string>
 
     <string name="add_contact_search_placeholder">Type username</string>
     <string name="add_contact_no_recent_searches">No recent searches</string>

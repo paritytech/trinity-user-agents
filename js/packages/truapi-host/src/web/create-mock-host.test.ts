@@ -659,14 +659,22 @@ describe("createMockHost TestHostAPI parity", () => {
     // The Rust mock declares the same three. A suite that routes on a chain
     // has to be answered the same way by either, and dropping one here would
     // otherwise only show up as a chain-routed call failing much later.
-    const host = createMockHost();
-    expect(await host.callbacks.features.supportedChains()).toEqual({
+    const host = createMockHost({ onlyServedChains: true });
+    const supported = (genesisHash: string) =>
+      host.callbacks.features
+        .featureSupported({ tag: "Chain", value: { genesisHash } })
+        .then((answer) => answer.supported);
+    expect(
+      await Promise.all(
+        [...Object.values(MOCK_GENESIS), `0x${"44".repeat(32)}`].map(supported),
+      ),
+    ).toEqual([true, true, true, false]);
+    expect(mockRuntimeConfig().testStack).toEqual({
       network: "mock",
-      chains: [
-        { identifier: "People", genesisHash: MOCK_GENESIS.people },
-        { identifier: "Bulletin", genesisHash: MOCK_GENESIS.bulletin },
-        { identifier: "AssetHub", genesisHash: MOCK_GENESIS.assetHub },
-      ],
+      tld: "paseo",
+      people: { genesisHash: MOCK_GENESIS.people },
+      bulletin: { genesisHash: MOCK_GENESIS.bulletin },
+      assetHub: { genesisHash: MOCK_GENESIS.assetHub },
     });
   });
 
@@ -936,9 +944,6 @@ describe("createMockHost TestHostAPI parity", () => {
         value: { genesisHash: "0x00" },
       }),
     ).rejects.toThrow("unknown");
-    await expect(feature.callbacks.features.supportedChains()).rejects.toThrow(
-      "unknown",
-    );
 
     const confirmation = createMockHost({
       faults: { confirmationError: "no ui" },

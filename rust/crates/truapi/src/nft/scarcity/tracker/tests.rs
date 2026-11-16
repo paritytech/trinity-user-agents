@@ -22,7 +22,6 @@ use crate::{
 		test_ledger,
 	},
 	store::{Db, open_temporary_core_db},
-	test_support::test_spawner,
 	time::{ManualTimer, Timer},
 };
 
@@ -148,7 +147,7 @@ fn tracker_after(prepare: impl FnOnce(&Db)) -> TrackerFixture {
 		ledger: ledger.clone(),
 		storage: Arc::new(ScriptedChain::new(announce)),
 		genesis: GENESIS,
-		spawner: test_spawner(),
+		spawner: Spawner::for_test(),
 	});
 	TrackerFixture { _dir: dir, db, ledger, opened, _tracker: tracker }
 }

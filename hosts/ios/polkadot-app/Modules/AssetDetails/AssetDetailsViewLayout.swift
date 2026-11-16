@@ -7,8 +7,10 @@ struct AssetDetailsView: View {
     @State var viewModel: AssetDetailsViewModelProtocol
     var isExpanded: Bool = false
     var onCardTapped: () -> Void
-    var overscroll: CGFloat = 0
-    var onCollapse: (() -> Void)?
+    var overscroll: DSOverscroll?
+    var isCardHidden: Bool = false
+    var showsOpenedFace: Bool = false
+    var onCardFrame: (CGRect) -> Void = { _ in }
 
     #if DEBUG
         /// Which holdings the coins draw, for reviewing the depiction. Debug builds only.
@@ -25,21 +27,24 @@ struct AssetDetailsView: View {
         viewModel: AssetDetailsViewModelProtocol = AssetDetailsViewModel(),
         isExpanded: Bool = false,
         onCardTapped: @escaping () -> Void,
-        overscroll: CGFloat = 0,
-        onCollapse: (() -> Void)? = nil
+        overscroll: DSOverscroll? = nil,
+        isCardHidden: Bool = false,
+        showsOpenedFace: Bool = false,
+        onCardFrame: @escaping (CGRect) -> Void = { _ in }
     ) {
         _viewModel = State(initialValue: viewModel)
         self.isExpanded = isExpanded
         self.onCardTapped = onCardTapped
         self.overscroll = overscroll
-        self.onCollapse = onCollapse
+        self.isCardHidden = isCardHidden
+        self.showsOpenedFace = showsOpenedFace
+        self.onCardFrame = onCardFrame
     }
 
     var body: some View {
         DSExpandableCardLayout(
             isExpanded: isExpanded,
             overscroll: overscroll,
-            onCollapse: onCollapse,
             card: { headerCard },
             details: { expandedBody }
         )
@@ -50,16 +55,17 @@ struct AssetDetailsView: View {
         if let balanceCardModel = viewModel.balanceCardModel {
             balanceCard(balanceCardModel)
                 .onTapGesture { onCardTapped() }
+                .opacity(isCardHidden ? 0 : 1)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { onCardFrame($0) }
         }
     }
 
     @ViewBuilder
     private var expandedBody: some View {
         VStack(spacing: 16) {
-            if viewModel.showsBackupNotification {
-                backupCard()
-            } else {
-                actions()
+            actions()
+            if viewModel.showsRestoredBalanceHint {
+                restoredBalanceHint()
             }
             #if DEBUG
                 // The card stays on a wallet that holds no coinage, which is where the test
@@ -109,17 +115,26 @@ struct AssetDetailsView: View {
         AssetDetailsBalanceCard(
             viewModel: balanceCardModel,
             isUpdating: viewModel.isUpdating,
-            isExpanded: isExpanded
+            isExpanded: isExpanded || showsOpenedFace
         )
     }
 
-    private func backupCard() -> some View {
-        WalletBackupNotificationCard(
-            isUpdating: viewModel.isUpdating,
-            onSync: viewModel.onBackupSync,
-            onCancel: viewModel.onBackupCancel,
-            onWhyUpdate: viewModel.onBackupWhyUpdate
-        )
+    private func restoredBalanceHint() -> some View {
+        Button {
+            viewModel.onOpenBackupSettings?()
+        } label: {
+            HStack(spacing: 0) {
+                Text(.BalanceSync.pocketHint)
+                    .typography(.bodySmall)
+                Image(.iconArrowRight20)
+                    .renderingMode(.template)
+                    .resizable()
+                    .frame(width: Constants.hintIconSize, height: Constants.hintIconSize)
+            }
+            .foregroundStyle(Color.fgSecondary)
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
     }
 
     private func actions() -> some View {
@@ -216,4 +231,10 @@ struct AssetDetailsView: View {
             .disabled(viewModel.isTestnetTopUpInProgress)
         }
     #endif
+}
+
+private extension AssetDetailsView {
+    enum Constants {
+        static let hintIconSize: CGFloat = 16
+    }
 }

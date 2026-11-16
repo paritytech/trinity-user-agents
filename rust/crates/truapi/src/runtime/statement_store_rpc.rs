@@ -24,6 +24,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::{
+	Spawner,
 	chain_runtime::{ChainRuntime, RuntimeFailure, RuntimeFailureKind, rpc_failure},
 	host_logic::statement_store::{
 		NewStatements, SUBMIT_STATEMENT_METHOD, SUBSCRIBE_STATEMENT_METHOD, StatementBatches,
@@ -33,7 +34,6 @@ use crate::{
 	},
 	host_rpc_client::HostRpcClient,
 	stream_extensions::StreamExtensions as _,
-	subscription::Spawner,
 };
 
 #[cfg(test)]

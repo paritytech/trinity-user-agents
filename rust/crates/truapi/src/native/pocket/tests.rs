@@ -4,10 +4,7 @@ use futures::executor::block_on;
 use truapi::latest::RendererNode;
 
 use super::*;
-use crate::{
-	store::open_temporary_core_db,
-	test_support::{test_spawner, wait_until},
-};
+use crate::{store::open_temporary_core_db, test_support::wait_until};
 
 #[derive(Default)]
 struct Drawn(Mutex<Vec<ProductRendererRenderItem>>);
@@ -34,7 +31,7 @@ fn a_pocket_card_render_draws_each_face_and_keeps_it_on_its_side() {
 	let drawn = Arc::new(Drawn::default());
 	let render = |context| {
 		let (card_id, side) = card_side(&context).expect("a Pocket card context names a side");
-		keeping_faces(cards.clone(), product.clone(), card_id, side, drawn.clone(), &test_spawner())
+		keeping_faces(cards.clone(), product.clone(), card_id, side, drawn.clone(), &Spawner::for_test())
 	};
 	let front = RendererNode::String { text: "Stamps: 3".into() };
 	let back = RendererNode::String { text: "Code".into() };

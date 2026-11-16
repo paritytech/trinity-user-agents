@@ -14,11 +14,11 @@ use std::{
 use futures::{
 	FutureExt,
 	channel::oneshot,
-	future::{AbortHandle, Abortable, BoxFuture, Shared},
+	future::{AbortHandle, Abortable, Shared},
 };
 use tracing::{Instrument, instrument::WithSubscriber};
 
-use crate::subscription::Spawner;
+use crate::Spawner;
 
 /// Reads keyed by `K` whose answers, `V`, are shared by every caller that
 /// asked while the read ran.
@@ -99,9 +99,7 @@ where
 			}
 			.in_current_span()
 			.with_current_subscriber();
-			let task: BoxFuture<'static, ()> =
-				Abortable::new(task, registration).map(|_| ()).boxed();
-			(self.spawner)(task);
+			self.spawner.spawn(Abortable::new(task, registration).map(|_| ()));
 		}
 		answer.await.ok()
 	}

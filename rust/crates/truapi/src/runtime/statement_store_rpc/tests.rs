@@ -13,13 +13,14 @@ use futures::executor::{block_on, block_on_stream};
 
 use super::{LIVE_WAIT, LivePeopleStatements, StatementStoreRpc, StatementSubmitError};
 use crate::{
+	Spawner,
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure, RuntimeFailureKind},
 	host_logic::statement_store::{
 		MAX_MATCH_ALL_TOPICS, NewStatements, SUBMIT_STATEMENT_METHOD, StatementStoreApi,
 		StatementWatchError, TopicFilter, hex_topic,
 	},
 	platform::JsonRpcConnection,
-	test_support::{StubPlatform, statement_page_frame, subscribe_ack_frame, test_spawner},
+	test_support::{StubPlatform, statement_page_frame, subscribe_ack_frame},
 };
 
 const PEOPLE_GENESIS: [u8; 32] = [0x11; 32];
@@ -120,9 +121,9 @@ impl JsonRpcConnection for PeopleChainConnection {
 fn statement_store(chain: &Arc<PeopleChain>) -> StatementStoreRpc {
 	StatementStoreRpc::new(
 		Arc::new(StubPlatform::default()),
-		ChainRuntime::new(chain.clone(), test_spawner()),
+		ChainRuntime::new(chain.clone(), Spawner::for_test()),
 		PEOPLE_GENESIS,
-		test_spawner(),
+		Spawner::for_test(),
 	)
 }
 
@@ -246,9 +247,9 @@ fn watching_statement_store(frames: Vec<String>) -> (StatementStoreRpc, Arc<Stub
 	let chain = PeopleChain::new(vec![Upstream::Drops]);
 	let statement_store = StatementStoreRpc::new(
 		platform.clone(),
-		ChainRuntime::new(chain, test_spawner()),
+		ChainRuntime::new(chain, Spawner::for_test()),
 		PEOPLE_GENESIS,
-		test_spawner(),
+		Spawner::for_test(),
 	);
 	(statement_store, platform)
 }

@@ -24,6 +24,10 @@ extension WalletMainPresenter: WalletMainPresenterProtocol {
         interactor.setup()
     }
 
+    func showBalanceCard() {
+        wireframe.showBalanceCard()
+    }
+
     func showCollectibles() {
         guard let collectiblesPage else { return }
         wireframe.showCollectibles(page: collectiblesPage)

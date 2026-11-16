@@ -37,7 +37,7 @@ impl DurableTxEngine {
 			report(&observer, pending);
 			ready(())
 		});
-		(self.spawner)(Box::pin(Abortable::new(reports, registration).map(|_| ())));
+		self.spawner.spawn(Abortable::new(reports, registration).map(|_| ()));
 		if let Some(previous) = self.reporter.lock().replace(abort) {
 			previous.abort();
 		}

@@ -142,13 +142,13 @@ fn error_reason_strings_are_stable() {
 mod orchestration {
 	use super::*;
 	use crate::{
+		Spawner,
 		chain_runtime::{RuntimeChainProvider, RuntimeFailure},
 		host_internal::extrinsic::tests::{
 			OfflineChainState, bulletin_chain_state, bulletin_runtime_call, split_v4, system_events,
 		},
 		host_logic::product_account::SR25519_SIGNING_CONTEXT,
 		platform::JsonRpcConnection,
-		subscription::thread_per_subscription_spawner,
 	};
 	use futures::{StreamExt, channel::mpsc, stream::BoxStream};
 	use parity_scale_codec::{Compact, Decode, Encode};
@@ -734,7 +734,7 @@ mod orchestration {
 	}
 
 	fn rpc(provider: Arc<BulletinScriptedProvider>) -> BulletinRpc {
-		let chain = ChainRuntime::new(provider, thread_per_subscription_spawner());
+		let chain = ChainRuntime::new(provider, Spawner::for_test());
 		let extrinsics = Arc::new(ExtrinsicService::over_chain(
 			chain.clone(),
 			Arc::new(crate::chain::V4OnlyHost),

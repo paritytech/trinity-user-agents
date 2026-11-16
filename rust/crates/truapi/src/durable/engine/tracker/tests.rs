@@ -13,11 +13,11 @@ use crate::{
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{
+	Spawner,
 	durable::{
 		oracle::{DurableRegistry, Unobservable},
 		testing::{
-			FakeChain, GENESIS, block, block_hash, counting_spawner, engine_with_spawner,
-			extrinsic, without_plan,
+			FakeChain, GENESIS, block, block_hash, engine_with_spawner, extrinsic, without_plan,
 		},
 	},
 	test_support::wait_until,
@@ -69,7 +69,7 @@ fn register(
 ) -> (Fixture, Option<mpsc::UnboundedSender<WatchEvent>>) {
 	let chain = FakeChain::new(130, 140);
 	let events = prepare(&chain);
-	let (spawner, finished) = counting_spawner();
+	let (spawner, finished) = Spawner::counting();
 	let (dir, engine, timer) = engine_with_spawner(
 		&chain,
 		DurableRegistry::new().with_domain(test_domain(), Arc::new(Unobservable(GENESIS))),

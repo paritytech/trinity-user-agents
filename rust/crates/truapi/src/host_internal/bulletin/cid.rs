@@ -2,6 +2,8 @@
 
 use core::str::FromStr;
 
+use parity_scale_codec::{Decode, Encode};
+
 use super::preimage_key;
 
 /// CIDv1, the `raw` codec, then the multihash header: blake2b-256 (0xb220 as a
@@ -13,8 +15,8 @@ const BASE32_ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
 /// The CID transaction storage serves a preimage under, as a Bulletin node's `bitswap_v1_get`
 /// takes it: CIDv1, the `raw` codec and the blake2b-256 multihash of the content, which is the
 /// preimage key itself, in lower-case base32 with the multibase `b` prefix. Built from the
-/// preimage key, or parsed from that text.
-#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display, derive_more::From)]
+/// preimage key, or parsed from that text. SCALE encodes the 32-byte digest.
+#[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, derive_more::Display, derive_more::From)]
 #[display("{}", encode(_0))]
 pub struct BulletinCid([u8; 32]);
 

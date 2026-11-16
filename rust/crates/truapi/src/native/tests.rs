@@ -16,8 +16,12 @@ use truapi::v01;
 
 use super::ws_bridge::WsBridgeStartError;
 use crate::{
-	PairedSsoPeer, PairingProposal, host_internal::bulletin::preimage_key,
+	PairedSsoPeer, PairingProposal,
+	host_internal::bulletin::preimage_key,
 	host_logic::worker::WorkerTransition,
+	markers::{
+		MARKERS, MarkerClass, NATIVE_PUSH_NOTIFICATION, Severity, TRACING_ERROR, TRACING_WARN,
+	},
 };
 
 use super::{
@@ -105,7 +109,7 @@ pub struct EventCallbacks {
 	pub chat_bot_rejection: Mutex<Option<String>>,
 	pub chat_post_rejection: Mutex<Option<String>>,
 	pub chat_posted: Mutex<Vec<(String, v01::ChatMessageContent, Option<String>)>>,
-	pub chat_room_footers: Mutex<Vec<(String, v01::ChatRoomFooter)>>,
+	pub chat_room_footers: Mutex<Vec<(String, truapi::latest::ChatRoomFooter)>>,
 	pub theme: Mutex<v01::HostThemeSubscribeItem>,
 	pub locale: Mutex<v01::HostLocaleSubscribeItem>,
 	pub preimages: Mutex<PreimageFixtureEntries>,
@@ -381,9 +385,6 @@ impl HostCallbacks for EventCallbacks {
 	) -> Result<bool, HostRejection> {
 		Ok(false)
 	}
-	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
-		Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
-	}
 
 	async fn transaction_extension_versions(
 		&self,
@@ -475,7 +476,7 @@ impl NativeChatCallbacks for EventCallbacks {
 	async fn set_room_footer(
 		&self,
 		room_id: String,
-		footer: v01::ChatRoomFooter,
+		footer: truapi::latest::ChatRoomFooter,
 	) -> Result<(), HostRejection> {
 		self.chat_room_footers
 			.lock()
@@ -544,10 +545,9 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		host_version: None,
 		platform_type: None,
 		platform_version: None,
-		people_chain_genesis_hash: vec![0xa2; 32],
-		bulletin_chain_genesis_hash: vec![0xbb; 32],
-		asset_hub_chain_genesis_hash: vec![0xcc; 32],
-		network_suffix: "paseo".to_string(),
+		stack: native_bundled_stack(&crate::test_support::test_descriptor(
+			"paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32],
+		)),
 		// Every runtime opens its own database; the directory is left for the
 		// OS to clean so the fixture can stay a plain value.
 		database_directory: tempfile::tempdir().unwrap().keep().to_string_lossy().into_owned(),
@@ -555,6 +555,12 @@ pub fn native_host_runtime_config() -> HostRuntimeConfig {
 		local_session_secret: Some(vec![7; 32]),
 		local_session_lite_username: Some("alice".to_string()),
 	}
+}
+
+/// `descriptor` signed, as a native host bundles it.
+fn native_bundled_stack(descriptor: &serde_json::Value) -> crate::native::BundledStack {
+	let (pointer, descriptor) = crate::test_support::sign_test_descriptor(descriptor);
+	crate::native::BundledStack { pointer, descriptor, allows_reserved_values: false }
 }
 
 pub fn native_execution_config(
@@ -1701,16 +1707,16 @@ fn native_chat_adapter_hands_the_room_footer_to_the_host() {
 	futures::executor::block_on(crate::platform::ChatPlatform::set_chat_room_footer(
 		&platform,
 		&product,
-		v01::HostChatSetRoomFooterRequest {
+		truapi::latest::HostChatSetRoomFooterRequest {
 			room_id: "support".to_string(),
-			footer: v01::ChatRoomFooter::Empty,
+			footer: truapi::latest::ChatRoomFooter::Empty,
 		},
 	))
 	.unwrap();
 
 	assert_eq!(
 		*callbacks.chat_room_footers.lock().expect("room footers mutex poisoned"),
-		[("support".to_string(), v01::ChatRoomFooter::Empty)]
+		[("support".to_string(), truapi::latest::ChatRoomFooter::Empty)]
 	);
 }
 
@@ -1815,77 +1821,71 @@ fn runtime_config_reports_the_platform_the_library_was_built_for() {
 }
 
 #[test]
-fn runtime_config_rejects_wrong_size_genesis_hash() {
-	let err = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		people_chain_genesis_hash: vec![0; 31],
-		..native_host_runtime_config()
-	})
-	.unwrap_err();
-
-	assert_eq!(
-		err,
-		NativeRuntimeConfigError::Invalid {
-			reason: "people_chain_genesis_hash must be exactly 32 bytes, got 31".to_string(),
-		}
-	);
-}
-
-#[test]
-fn each_configured_genesis_hash_reaches_its_own_field() {
-	// Three adjacent `Vec<u8>` feeding a positional constructor:
-	// transposing any two compiles and, without this, passes.
+fn each_descriptor_chain_reaches_its_own_role() {
 	let resolved = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		people_chain_genesis_hash: vec![0xa1; 32],
-		bulletin_chain_genesis_hash: vec![0xb2; 32],
-		asset_hub_chain_genesis_hash: vec![0xc3; 32],
+		stack: native_bundled_stack(&crate::test_support::test_descriptor(
+			"paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32],
+		)),
 		..native_host_runtime_config()
 	})
 	.expect("config is valid");
 
 	assert_eq!(
-		(
-			resolved.signing.people_chain_genesis_hash,
-			resolved.signing.bulletin_chain_genesis_hash,
-			resolved.signing.asset_hub_chain_genesis_hash,
-		),
-		([0xa1; 32], [0xb2; 32], [0xc3; 32]),
+		resolved.signing.stack.chains(),
+		&crate::platform::StackChains {
+			relay: Some([0x01; 32]),
+			asset_hub: [0xc3; 32],
+			people: [0xa1; 32],
+			bulletin: [0xb2; 32],
+		},
 	);
 }
 
 #[test]
-fn a_wrong_size_asset_hub_genesis_hash_is_rejected_as_its_own_field() {
-	// An empty vec must be an error, never a silent all-zero "no Asset
-	// Hub".
-	for len in [0usize, 31, 33] {
-		let err = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-			asset_hub_chain_genesis_hash: vec![0; len],
-			..native_host_runtime_config()
-		})
-		.unwrap_err();
-
-		assert_eq!(
-			err,
-			NativeRuntimeConfigError::Invalid {
-				reason: format!("asset_hub_chain_genesis_hash must be exactly 32 bytes, got {len}"),
-			}
-		);
-	}
-}
-
-#[test]
-fn runtime_config_rejects_a_network_suffix_that_is_not_a_bare_tld() {
-	// The suffix ends every reserved derivation (`peopl.<suffix>`), so a
-	// shell passing the dotted form would silently derive a stranger.
+fn runtime_config_refuses_a_stack_pointer_without_a_key() {
+	// A copy the host fetches later is checked against the pointer's key, so
+	// only a signed stack may start.
+	let mut stack = native_host_runtime_config().stack;
+	stack.pointer = crate::test_support::test_stack_link(None);
 	let err = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		network_suffix: ".paseo".to_string(),
+		stack,
 		..native_host_runtime_config()
 	})
 	.unwrap_err();
+
 	assert_eq!(
 		err,
 		NativeRuntimeConfigError::Invalid {
-			reason: r#"network_suffix must be a supported dotNS TLD, got ".paseo""#.to_string(),
+			reason: crate::platform::StackError::Unsigned.to_string()
 		}
+	);
+}
+
+#[test]
+fn runtime_config_passes_the_reserved_values_flag_through() {
+	// A testnet build must not run a stack on `dot`; a Polkadot build may.
+	let mut stack = native_bundled_stack(&crate::test_support::test_descriptor(
+		"dot", [0xa1; 32], [0xb2; 32], [0xc3; 32],
+	));
+	let refused = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
+		stack: stack.clone(),
+		..native_host_runtime_config()
+	});
+	stack.allows_reserved_values = true;
+	let allowed = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
+		stack,
+		..native_host_runtime_config()
+	});
+
+	assert_eq!(
+		(refused.err(), allowed.map(|resolved| resolved.signing.stack.tld().to_owned()).ok()),
+		(
+			Some(NativeRuntimeConfigError::Invalid {
+				reason: "stack uses Polkadot's reserved tld dot, which this build does not allow"
+					.to_string(),
+			}),
+			Some("dot".to_string()),
+		),
 	);
 }
 
@@ -2069,9 +2069,6 @@ fn start_ws_bridge_twice_returns_already_running() {
 			_request: v01::HostFeatureSupportedRequest,
 		) -> Result<bool, HostRejection> {
 			Ok(false)
-		}
-		fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
-			Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
 		}
 
 		async fn transaction_extension_versions(
@@ -2269,9 +2266,6 @@ fn pending_permission_decision_does_not_stall_bridge() {
 			_request: v01::HostFeatureSupportedRequest,
 		) -> Result<bool, HostRejection> {
 			Ok(true)
-		}
-		fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection> {
-			Ok(crate::platform::HostChainSet { network: "paseo".to_string(), chains: Vec::new() })
 		}
 
 		async fn transaction_extension_versions(
@@ -2738,10 +2732,116 @@ pub fn native_host_runtime_no_session() -> Arc<NativeTrUApiHostRuntime> {
 }
 
 #[test]
-fn handle_sso_request_rejects_undecodable_bytes() {
-	let runtime = native_host_runtime_no_session();
-	let result = futures::executor::block_on(runtime.handle_sso_request(vec![0xFF, 0xFF, 0xFF]));
-	assert!(result.is_err(), "garbage bytes must be a decode error");
+fn native_sso_binding_verifies_transport_and_retains_its_activation() {
+	use crate::{
+		host_internal::sso_messages::{
+			ProductSubtreeRequest, RemoteMessage, RemoteMessageData, Response, v1,
+		},
+		host_logic::{
+			product_account::{derive_identity_keypair, derive_product_subtree_keypair},
+			sso::pairing::derive_x25519_keypair_from_entropy,
+		},
+	};
+	use parity_scale_codec::Encode;
+
+	let entropy = [7; 32];
+	let statement = derive_identity_keypair(&entropy, "paseo").unwrap().public.to_bytes();
+	let (_, encryption) = derive_x25519_keypair_from_entropy(&entropy, b"sso");
+	assert!(
+		native_host_runtime_no_session()
+			.open_sso_service(statement, encryption)
+			.is_err()
+	);
+	for replacement in [vec![8; 32], entropy.to_vec()] {
+		let runtime = NativeTrUApiHostRuntime::with_runtime_config(
+			Arc::new(EventCallbacks::new()),
+			native_host_runtime_config(),
+		)
+		.unwrap();
+		assert_eq!(
+			(
+				runtime.open_sso_service([0; 32], encryption).is_err(),
+				runtime.open_sso_service(statement, [0; 32]).is_err(),
+			),
+			(true, true),
+		);
+		let service = runtime.open_sso_service(statement, encryption).unwrap();
+		let request = RemoteMessage::request(
+			"subtree".to_string(),
+			ProductSubtreeRequest { product_id: ProductId::for_test("browse.dot") },
+		)
+		.encode();
+		let response = |payload| SsoRequestOutcome::Response {
+			message: RemoteMessage {
+				message_id: "subtree:response".to_string(),
+				data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(Response {
+					responding_to: "subtree".to_string(),
+					payload,
+				})),
+			}
+			.encode(),
+		};
+		let public_key = derive_product_subtree_keypair(
+			&crate::host_logic::product_account::derive_root_keypair_from_entropy(&entropy)
+				.unwrap(),
+			&ProductId::for_test("browse.dot"),
+		)
+		.unwrap()
+		.public
+		.to_bytes();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
+			response(Ok(public_key))
+		);
+		let other_peer = runtime.open_sso_service(statement, encryption).unwrap();
+		let cancel = RemoteMessage {
+			message_id: "cancel".to_string(),
+			data: RemoteMessageData::V1(v1::RemoteMessage::Cancel(
+				crate::host_internal::sso_messages::Withdrawal {
+					message_id: "subtree".to_string(),
+				},
+			)),
+		}
+		.encode();
+		assert_eq!(service.handle_sso_control(cancel).unwrap(), Some(SsoRequestOutcome::Ignored));
+		assert_eq!(
+			futures::executor::block_on(other_peer.handle_sso_request(request.clone())).unwrap(),
+			response(Ok(public_key))
+		);
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(request.clone())).unwrap(),
+			SsoRequestOutcome::Ignored
+		);
+		assert_eq!(service.handle_sso_control(request.clone()).unwrap(), None);
+		assert!(futures::executor::block_on(service.handle_sso_request(vec![0xff; 3])).is_err());
+		assert!(service.handle_sso_control(vec![0xff; 3]).is_err());
+		let response_variant = RemoteMessage {
+			message_id: "response".to_string(),
+			data: RemoteMessageData::V1(v1::RemoteMessage::ProductSubtreeResponse(Response {
+				responding_to: "subtree".to_string(),
+				payload: Ok(public_key),
+			})),
+		}
+		.encode();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(response_variant)).unwrap(),
+			SsoRequestOutcome::Ignored
+		);
+		let disconnected = RemoteMessage {
+			message_id: "disconnect".to_string(),
+			data: RemoteMessageData::V1(v1::RemoteMessage::Disconnected),
+		}
+		.encode();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(disconnected)).unwrap(),
+			SsoRequestOutcome::Disconnected
+		);
+		runtime.activate_local_session(replacement, None).unwrap();
+		assert_eq!(
+			futures::executor::block_on(service.handle_sso_request(request)).unwrap(),
+			response(Err("signing host session is not active".to_string()))
+		);
+	}
 }
 
 #[test]
@@ -3080,9 +3180,102 @@ fn nested_boxes(depth: usize) -> String {
 /// so no host draws one it could not read back.
 #[test]
 fn refuses_a_face_deeper_than_the_core_carries() {
-	assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize - 1)).is_ok());
+	assert!(parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize)).is_ok());
 	assert!(matches!(
 		parse_renderer_node_json(nested_boxes(MAX_FACE_DEPTH as usize + 1)),
+		Err(NativeRendererError::TooDeep { .. })
+	));
+}
+
+/// `children` wrapped in a `Materials` node with one layer, in the shape the
+/// generated client writes: the ID as hex, numbers as their bit patterns.
+fn materials_around(material_hex: &str, children: &str) -> String {
+	format!(
+		r#"{{"tag":"Materials","value":{{"props":{{"layers":[{{"material":"0x{material_hex}","args":[{{"tag":"Float","value":1069547520}},{{"tag":"Vec2","value":[1,2]}},{{"tag":"SamplerFloat","value":{{"tag":"Noise"}}}},{{"tag":"SamplerVec4","value":{{"tag":"Source","value":{{"tag":"Archive","value":"mask.png"}}}}}}]}}]}},"children":[{children}]}}}}"#
+	)
+}
+
+#[test]
+fn reads_a_materials_node_as_the_client_writes_it() {
+	let json = materials_around(&"07".repeat(32), r#"{"tag":"Nil"}"#);
+
+	assert_eq!(
+		parse_renderer_node_json(json).expect("a materials face reads"),
+		latest::RendererNode::Materials {
+			props: latest::MaterialsProps {
+				layers: vec![latest::MaterialInstance {
+					material: [7; 32],
+					args: vec![
+						latest::Parameter::Float(1.5f32.to_bits()),
+						latest::Parameter::Vec2([1, 2]),
+						latest::Parameter::SamplerFloat(latest::ImageRef::Noise),
+						latest::Parameter::SamplerVec4(latest::ImageRef::Source(
+							latest::ImageSource::Archive("mask.png".to_string()),
+						)),
+					],
+				}],
+			},
+			children: vec![latest::RendererNode::Nil],
+		}
+	);
+}
+
+#[test]
+fn refuses_a_material_id_that_is_not_32_bytes() {
+	let json = materials_around(&"07".repeat(31), r#"{"tag":"Nil"}"#);
+
+	assert!(matches!(parse_renderer_node_json(json), Err(NativeRendererError::Malformed { .. })));
+}
+
+/// A `Materials` node holds children like any container, so it cannot hide a
+/// tree deeper than the core carries.
+#[test]
+fn counts_depth_through_a_materials_node() {
+	let one_too_deep = nested_boxes(MAX_FACE_DEPTH as usize);
+
+	assert!(matches!(
+		parse_renderer_node_json(materials_around(&"07".repeat(32), &one_too_deep)),
+		Err(NativeRendererError::TooDeep { .. })
+	));
+}
+
+/// `boxes` boxes around a `Materials` node with one layer.
+fn materials_under_boxes(boxes: usize) -> String {
+	let open = r#"{"tag":"Box","value":{"modifiers":[],"props":{},"children":["#.repeat(boxes);
+	format!("{open}{}{}", materials_around(&"07".repeat(32), ""), "]}}".repeat(boxes))
+}
+
+/// Whatever face the reader accepts reads back after it is kept, layers
+/// included, so a host never draws a face it cannot keep.
+#[test]
+fn the_deepest_face_with_materials_reads_back_once_kept() {
+	let layer_levels = 2;
+	let deepest =
+		parse_renderer_node_json(materials_under_boxes(MAX_FACE_DEPTH as usize - layer_levels))
+			.expect("the deepest materials face reads");
+
+	let (_dir, db) = crate::store::open_temporary_core_db();
+	let cards = futures::executor::block_on(crate::pocket_cards::PocketCards::open(db, Vec::new()))
+		.unwrap();
+	let product = ProductId::for_test("loyalty.dot");
+	futures::executor::block_on(cards.add(
+		product.clone(),
+		"stamps".into(),
+		"Stamps".into(),
+		deepest.clone(),
+	))
+	.unwrap();
+	assert_eq!(
+		futures::executor::block_on(cards.face(
+			product,
+			"stamps".into(),
+			crate::pocket_cards::PocketCardSide::Front,
+		))
+		.unwrap(),
+		Some(deepest)
+	);
+	assert!(matches!(
+		parse_renderer_node_json(materials_under_boxes(MAX_FACE_DEPTH as usize - layer_levels + 1)),
 		Err(NativeRendererError::TooDeep { .. })
 	));
 }
@@ -3157,23 +3350,14 @@ fn screening_normalizes_and_trims() {
 	assert!(screen_pocket_card_id("   ".to_string()).is_err());
 }
 
-/// A session change as the core pushed it: the intent, the session and its
-/// progress.
-type PushedChange = (
-	String,
-	Option<crate::host_logic::funding::FundingSession>,
-	Option<crate::host_logic::funding::FundingProgress>,
-);
-
 /// A native funding overlay the user starts at once, recording what the
-/// core hands it.
+/// core tells it changed and what it could read back when it was shown.
 #[derive(Default)]
 struct RecordingNativeFunding {
-	changes: Mutex<Vec<PushedChange>>,
-	/// The intents whose options the overlay held when it was shown.
-	options_before_shown: Mutex<Vec<String>>,
-	options: Mutex<Vec<String>>,
-	in_progress: Mutex<Vec<bool>>,
+	host: std::sync::OnceLock<std::sync::Weak<NativeTrUApiHostRuntime>>,
+	changes: Mutex<Vec<(Option<String>, super::funding_feed::FundingChangeKind)>>,
+	/// Whether the overlay could read its options when it was shown.
+	options_when_shown: Mutex<Option<bool>>,
 }
 
 #[async_trait::async_trait]
@@ -3181,12 +3365,13 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 	async fn present_funding(
 		&self,
 		_product_id: Option<ProductId>,
-		_intent: String,
+		intent: String,
 		_direction: v01::FundingDirection,
 		_amount: Option<u128>,
 	) -> Result<crate::platform::FundingPresentOutcome, HostRejection> {
-		let options = self.options.lock().expect("options mutex poisoned").clone();
-		*self.options_before_shown.lock().expect("options mutex poisoned") = options;
+		let host = self.host.get().and_then(std::sync::Weak::upgrade).expect("host alive");
+		*self.options_when_shown.lock().expect("options mutex poisoned") =
+			Some(host.funding_options(intent).is_some());
 		Ok(crate::platform::FundingPresentOutcome::Started)
 	}
 
@@ -3201,54 +3386,35 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 
 	fn close_provider_frame(&self, _provider_id: ProductId, _intent: String) {}
 
-	async fn provider_has_app(&self, _provider_id: ProductId) -> bool {
-		true
-	}
-
-	fn funding_session_changed(
-		&self,
-		intent: String,
-		_status: v01::HostFundingStatusSubscribeItem,
-		session: Option<crate::host_logic::funding::FundingSession>,
-		progress: Option<crate::host_logic::funding::FundingProgress>,
-	) {
-		self.changes
-			.lock()
-			.expect("changes mutex poisoned")
-			.push((intent, session, progress));
-	}
-
-	fn funding_in_progress_changed(&self, in_progress: bool) {
-		self.in_progress.lock().expect("in-progress mutex poisoned").push(in_progress);
-	}
-
-	fn funding_options_changed(
-		&self,
-		intent: String,
-		_options: crate::host_logic::funding_providers::FundingOptions,
-	) {
-		self.options.lock().expect("options mutex poisoned").push(intent);
-	}
+	fn provider_frame_requested(&self, _provider_id: ProductId, _intent: String) {}
 
 	async fn detected_country(&self) -> Option<String> {
 		None
 	}
 
-	fn funding_quotes_changed(&self, _intent: String, _quotes: crate::platform::FundingQuoteList) {}
+	fn funding_changed(
+		&self,
+		intent: Option<String>,
+		kind: super::funding_feed::FundingChangeKind,
+	) {
+		self.changes.lock().expect("changes mutex poisoned").push((intent, kind));
+	}
 }
 
-// The host draws a session only from what the core pushes: the overlay's
-// options arrive before it is shown, and each change carries the session
-// and its progress as the core holds them, followed by whether a provider
-// works on any session.
+// The host reads funding state back from the runtime once the core says
+// what changed: the overlay's options while it is up, then the started
+// session and its progress; no resume marker is left while no
+// provider works on a session.
 #[test]
-fn the_core_pushes_what_the_host_draws() {
-	let host = NativeTrUApiHostRuntime::with_runtime_config(
-		Arc::new(EventCallbacks::new()),
-		native_host_runtime_config(),
-	)
-	.expect("host runtime config should be valid");
+fn the_host_reads_back_what_the_core_says_changed() {
+	use super::funding_feed::FundingChangeKind;
+	let config = native_host_runtime_config();
+	let database_directory = config.database_directory.clone();
+	let host =
+		NativeTrUApiHostRuntime::with_runtime_config(Arc::new(EventCallbacks::new()), config)
+			.expect("host runtime config should be valid");
 	let funding = Arc::new(RecordingNativeFunding::default());
+	assert!(funding.host.set(Arc::downgrade(&host)).is_ok());
 	assert!(host.set_funding_callbacks(funding.clone()));
 
 	let intent =
@@ -3257,23 +3423,74 @@ fn the_core_pushes_what_the_host_draws() {
 			.expect("started");
 
 	let changes = funding.changes.lock().expect("changes mutex poisoned").clone();
-	let (announced, session, progress) = changes.last().cloned().expect("a change");
-	let session = session.expect("session kept");
+	let session = host.funding_session(intent.clone()).expect("session held");
 	assert_eq!(
 		(
-			announced,
+			host.funding_session_open(intent.clone()),
+			host.funding_session_open("unknown".to_string())
+		),
+		(true, false)
+	);
+	assert_eq!(
+		(
+			changes.contains(&(Some(intent.clone()), FundingChangeKind::Options)),
+			changes.contains(&(Some(intent.clone()), FundingChangeKind::Session)),
+			*funding.options_when_shown.lock().expect("options mutex poisoned"),
+			host.funding_options(intent.clone()).is_some(),
 			session.intent.clone(),
-			progress,
-			funding.options_before_shown.lock().expect("options mutex poisoned").clone(),
-			funding.in_progress.lock().expect("in-progress mutex poisoned").last().copied(),
+			host.funding_progress(intent.clone()).map(|progress| progress.status),
+			host.funding_entries()
+				.into_iter()
+				.map(|entry| entry.session.intent)
+				.collect::<Vec<_>>(),
+			host.funding_quotes(intent.clone()).is_some(),
+			super::funding_resume_pending(database_directory),
 		),
 		(
+			true,
+			true,
+			Some(true),
+			false,
 			intent.clone(),
-			intent.clone(),
-			Some(session.progress(crate::unix_time::current_unix_millis())),
+			Some(session.progress(crate::unix_time::current_unix_millis()).status),
 			vec![intent],
-			Some(false),
+			false,
+			false,
 		)
+	);
+}
+
+// Funding is available once the configuration offers a provider, and the
+// host hears so only when the list really changed, not on each refresh; a
+// list that went empty comes back with the next refresh naming it.
+#[test]
+fn providers_change_is_announced_only_when_the_list_changes() {
+	use super::funding_feed::FundingChangeKind;
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		native_host_runtime_config(),
+	)
+	.expect("host runtime config should be valid");
+	let funding = Arc::new(RecordingNativeFunding::default());
+	assert!(host.set_funding_callbacks(funding.clone()));
+	let configure = |names: &[&str]| {
+		host.set_funding_provider_config(names.iter().map(|name| name.to_string()).collect())
+			.expect("configured");
+		let changes = funding.changes.lock().expect("changes mutex poisoned");
+		let announced =
+			changes.iter().filter(|change| **change == (None, FundingChangeKind::Providers));
+		(announced.count(), host.funding_available())
+	};
+
+	assert_eq!(
+		(
+			host.funding_available(),
+			configure(&["ramp"]),
+			configure(&["ramp"]),
+			configure(&[]),
+			configure(&["ramp"])
+		),
+		(false, (1, true), (1, true), (2, false), (3, true))
 	);
 }
 
@@ -3310,4 +3527,32 @@ mod bridge_lines {
 		assert_eq!(logs.len(), 1);
 		assert_eq!(logs[0].1.chars().count(), HOST_SINK_DETAIL_MAX_CHARS);
 	}
+}
+
+#[test]
+fn the_exported_map_holds_every_entry_and_nothing_else() {
+	let exported = core_markers();
+	assert_eq!(exported.len(), MARKERS.len(), "the exported map lost or gained an entry");
+	for marker in MARKERS {
+		assert_eq!(
+			exported.get(marker.target),
+			Some(&marker.class),
+			"{} did not survive the crossing",
+			marker.target
+		);
+	}
+}
+
+#[test]
+fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
+	let exported = core_markers();
+	assert_eq!(
+		exported.get(TRACING_ERROR.target),
+		Some(&MarkerClass::Export { severity: Severity::Error })
+	);
+	assert_eq!(
+		exported.get(TRACING_WARN.target),
+		Some(&MarkerClass::Export { severity: Severity::Warn })
+	);
+	assert_eq!(exported.get(NATIVE_PUSH_NOTIFICATION.target), Some(&MarkerClass::Local));
 }

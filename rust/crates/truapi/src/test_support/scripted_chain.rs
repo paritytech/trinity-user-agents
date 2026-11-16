@@ -19,10 +19,11 @@ use subxt::{
 };
 
 use crate::{
+	Spawner,
 	chain_runtime::{ChainRuntime, RuntimeChainProvider, RuntimeFailure},
 	host_internal::extrinsic::tests::bulletin_runtime_call,
 	platform::JsonRpcConnection,
-	test_support::{chain_halted_error, test_spawner},
+	test_support::chain_halted_error,
 	time::ManualTimer,
 };
 
@@ -320,7 +321,8 @@ impl ScriptedChainHead {
 			}
 		}));
 		let timer = Arc::new(ManualTimer::default());
-		let chain = ChainRuntime::new(provider.clone(), test_spawner()).with_timer(timer.clone());
+		let chain =
+			ChainRuntime::new(provider.clone(), Spawner::for_test()).with_timer(timer.clone());
 		(provider, chain, timer)
 	}
 }

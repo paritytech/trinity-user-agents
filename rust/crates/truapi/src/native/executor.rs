@@ -2,13 +2,12 @@
 
 use std::{
 	io,
-	sync::{Arc, Mutex, OnceLock},
+	sync::{Mutex, OnceLock},
 };
 
-use futures::future::BoxFuture;
 use tokio::runtime::{Handle, Runtime};
 
-use crate::subscription::Spawner;
+use crate::Spawner;
 
 /// Process-wide executor shared by every native host runtime and product bridge.
 ///
@@ -43,10 +42,7 @@ impl SharedNativeExecutor {
 
 	/// Spawner that runs core tasks on this runtime, whichever thread spawns them.
 	pub fn spawner(&self) -> Spawner {
-		let handle = self.handle();
-		Arc::new(move |task: BoxFuture<'static, ()>| {
-			handle.spawn(task);
-		})
+		Spawner::new(self.handle())
 	}
 }
 

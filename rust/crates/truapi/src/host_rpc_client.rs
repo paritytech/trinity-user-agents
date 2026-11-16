@@ -37,7 +37,7 @@ use tracing::{instrument, warn};
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
-use crate::subscription::Spawner;
+use crate::Spawner;
 
 const MAX_BUFFERED_SUBSCRIPTIONS: usize = 64;
 const MAX_BUFFERED_ITEMS_PER_SUBSCRIPTION: usize = 256;
@@ -332,7 +332,7 @@ impl HostRpcClient {
 				}
 			}
 		};
-		(spawner)(fut.boxed());
+		spawner.spawn(fut);
 	}
 }
 

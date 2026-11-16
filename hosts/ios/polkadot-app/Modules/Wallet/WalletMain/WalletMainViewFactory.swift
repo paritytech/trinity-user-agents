@@ -1,5 +1,4 @@
 import Foundation
-import Keystore_iOS
 import SubstrateSdk
 import ChainRegistry
 
@@ -10,17 +9,20 @@ enum WalletMainViewFactory {
         chainAssetId: ChainAssetId
     ) -> WalletMainViewProtocol? {
         let chainRegistry = ChainRegistryFacade.sharedRegistry
-        let walletRepo: WalletManagerRepositoryProtocol = .shared
 
         guard
-            let wallet = try? walletRepo.main(),
             let chain = chainRegistry.getChain(for: chainAssetId.chainId),
             let chainAsset = chain.chainAsset(for: chainAssetId.assetId)
         else {
             return nil
         }
+        let assetDetailsScene = AssetDetailsViewFactory.createEmbeddedScene(
+            context: context,
+            chainAsset: chainAsset
+        )
         let wireframe = WalletMainWireframe(
-            flowState: context.flowState
+            flowState: context.flowState,
+            assetDetailsScene: assetDetailsScene
         )
 
         let interactor = WalletMainInteractor(
@@ -42,16 +44,7 @@ enum WalletMainViewFactory {
 
         let view = WalletMainViewController(
             presenter: presenter,
-            assetDetailsScene:
-            AssetDetailsViewFactory.createEmbeddedScene(
-                context: context,
-                chainAsset: chainAsset
-            ),
-            identityDetailsScene:
-            IdentityDetailsViewFactory.createEmbeddedScene(
-                chainModel: chainAsset.chain,
-                wallet: wallet
-            )
+            assetDetailsScene: assetDetailsScene
         )
         presenter.view = view
 

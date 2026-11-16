@@ -9,8 +9,8 @@ use futures::{
 
 use super::*;
 use crate::{
+	Spawner,
 	chain_runtime::RuntimeChainProvider,
-	subscription::thread_per_subscription_spawner,
 	test_support::{ScriptedProvider, extract_id, notification_sender, wait_for_sent},
 };
 
@@ -60,7 +60,7 @@ fn a_follow_keeps_no_operation_ends_once_no_download_reply_is_pending() {
 	let provider = node();
 	let connection = futures::executor::block_on(provider.connect(vec![0xab; 32])).unwrap();
 	let client = RuntimeCallClient::new(
-		HostRpcClient::new(connection, thread_per_subscription_spawner()),
+		HostRpcClient::new(connection, Spawner::for_test()),
 		vec![0xab; 32],
 		RuntimeCallCache::default(),
 	);

@@ -7,7 +7,7 @@ use futures::{
 	future::{AbortHandle, Abortable},
 };
 
-use crate::subscription::Spawner;
+use crate::Spawner;
 
 /// A task running on a [`Spawner`] until this handle is dropped.
 pub struct BackgroundTask(AbortHandle);
@@ -18,7 +18,7 @@ impl BackgroundTask {
 	pub fn spawn(spawner: &Spawner, task: impl Future<Output = ()> + Send + 'static) -> Self {
 		let (abort, registration) = AbortHandle::new_pair();
 		let abortable = Abortable::new(task, registration).map(|_| ());
-		spawner(abortable.boxed());
+		spawner.spawn(abortable);
 		Self(abort)
 	}
 }

@@ -19,13 +19,14 @@ use std::{
 use futures::{
 	Stream, StreamExt,
 	channel::mpsc,
-	future::{BoxFuture, Either, select},
+	future::{Either, select},
 	stream::BoxStream,
 };
 use parity_scale_codec::{Decode, DecodeLimit, Encode};
 use truapi::CallError;
 
 use crate::{
+	Spawner,
 	frame::{
 		IdFactory, MESSAGE_TYPE_INTERRUPT, MESSAGE_TYPE_RECEIVE, MESSAGE_TYPE_RESPONSE,
 		MESSAGE_TYPE_START, MESSAGE_TYPE_STOP, PROTOCOL_ERROR_KEY, Payload, ProtocolErrorV1,
@@ -37,30 +38,6 @@ use crate::{
 };
 
 type StopFn = Box<dyn FnOnce() + Send>;
-
-/// Spawns a subscription-driving future onto the caller's runtime. The
-/// future is `Send` because the inner [`SubscriptionStream`] is a
-/// `BoxStream<'static, _>` and every captured value the manager threads
-/// through it is also `Send`. Each platform bridge supplies an
-/// implementation that hands the future to the runtime driving its transport
-/// (`tokio::spawn`, `wasm_bindgen_futures::spawn_local`, ...).
-///
-/// An implementation must not panic. The core spawns teardown work from
-/// `Drop`, where a panic during unwinding aborts the process, so a spawner
-/// whose runtime is already gone drops the future and reports the failure
-/// instead.
-pub type Spawner = Arc<dyn Fn(BoxFuture<'static, ()>) + Send + Sync>;
-
-/// Convenience spawner for tests and embedders that don't yet wire a
-/// real runtime: starts a fresh OS thread per subscription and drives the
-/// future with `futures::executor::block_on`. Not available on wasm32 since
-/// the platform has no threads.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn thread_per_subscription_spawner() -> Spawner {
-	Arc::new(|fut: BoxFuture<'static, ()>| {
-		std::thread::spawn(move || futures::executor::block_on(fut));
-	})
-}
 
 /// One yielded value of a subscription stream after SCALE-encoding.
 pub enum SubscriptionOutput {
@@ -223,7 +200,7 @@ impl SubscriptionManager {
 
 		let active = self.active.clone();
 
-		let future: BoxFuture<'static, ()> = Box::pin(async move {
+		let future = async move {
 			let completed = {
 				let mut cancel_rx = cancel_rx;
 				loop {
@@ -287,9 +264,9 @@ impl SubscriptionManager {
 					},
 				});
 			}
-		});
+		};
 
-		(self.spawner)(future);
+		self.spawner.spawn(future);
 	}
 
 	/// Convenience for callers that already hold the stream with no async gap

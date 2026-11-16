@@ -18,6 +18,7 @@ use tracing::{error, instrument};
 use truapi::{CancellationToken, versioned::Versioned};
 
 use crate::{
+	Spawner,
 	frame::{
 		MESSAGE_TYPE_CANCEL, MESSAGE_TYPE_INTERRUPT, MESSAGE_TYPE_REQUEST, MESSAGE_TYPE_RESPONSE,
 		MESSAGE_TYPE_START, MESSAGE_TYPE_STOP, PROTOCOL_ERROR_KEY, PROTOCOL_ERROR_METHOD_ID,
@@ -25,7 +26,7 @@ use crate::{
 		encode_cancelled_response, encode_malformed_frame_error,
 	},
 	generated::wire_table::MethodIds,
-	subscription::{Spawner, SubscriptionManager, SubscriptionStream},
+	subscription::{SubscriptionManager, SubscriptionStream},
 	transport::Transport,
 };
 
