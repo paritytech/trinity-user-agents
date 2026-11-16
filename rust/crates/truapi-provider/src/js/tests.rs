@@ -4,10 +4,6 @@ use super::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
-/// A client whose `load` and `save` record every argument they were called
-/// with, so a test can prove the wasm boundary actually reaches the object the
-/// host passed. `load` answers `stored`, and a call whose stack is `undefined`
-/// records `-`, so a `null` stack shows up as itself.
 /// How [`recording_client`] records a `stack` argument.
 fn recorded_stack(stack: &JsValue) -> String {
 	if stack.is_undefined() {
@@ -16,6 +12,10 @@ fn recorded_stack(stack: &JsValue) -> String {
 	stack.as_string().unwrap_or_else(|| format!("{stack:?}"))
 }
 
+/// A client whose `load` and `save` record every argument they were called
+/// with, so a test can prove the wasm boundary actually reaches the object the
+/// host passed. `load` answers `stored`, and a call whose stack is `undefined`
+/// records `-`, so a `null` stack shows up as itself.
 fn recording_client(
 	calls: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
 	stored: String,

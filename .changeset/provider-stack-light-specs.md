@@ -14,4 +14,4 @@ identifies the stack and is `undefined` without one. A store that serves more th
 the genesis hash. A stack's provider starts each blob with a line naming the stack and its `generation` and reads back
 only its own. A provider without a stack stores what it stored before. The provider never deletes a blob; the README
 lists the ones no provider reads again. Free the previous provider before building one for a stack's new
-`generation`; `free()` also keeps a snapshot it has under way from being stored.
+`generation`; `free()` also keeps a snapshot not yet handed to the client from being stored.
