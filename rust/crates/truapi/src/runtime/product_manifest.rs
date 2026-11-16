@@ -197,7 +197,8 @@ pub struct CachedManifest {
 	///
 	/// A miss is cached because refusing is the common outcome: without it every
 	/// refused call re-reads the contracts, and the round trip tells the caller
-	/// which targets have a manifest and which do not — the distinction one uniform refusal exists to hide.
+	/// which targets have a manifest and which do not — the distinction one
+	/// uniform refusal exists to hide.
 	pub json: Option<String>,
 }
 

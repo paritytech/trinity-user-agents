@@ -1815,66 +1815,18 @@ impl ChainConnection {
 		let head = format!(
 			"this connection to chain {genesis} holds {held} of {FOLLOWS_A_NODE_BUDGETS} follows, the next is refused: "
 		);
-		let entries = holding
+		let occupants = holding
 			.iter()
 			.map(|follow_id| {
 				let activity = follows
 					.get(follow_id)
 					.map(|follow| follow.describe_activity(now))
 					.unwrap_or_default();
-				(Self::occupant_name(follow_id), activity)
+				format!("{} {activity}", Self::occupant_name(follow_id))
 			})
-			.collect::<Vec<_>>();
-		let room = crate::logging::HOST_SINK_DETAIL_MAX_CHARS
-			.saturating_sub(head.chars().count() + held.saturating_sub(1) * 2);
-		let occupants = Self::fit_entries(&entries, room).join(", ");
+			.collect::<Vec<_>>()
+			.join(", ");
 		format!("{head}{occupants}")
-	}
-
-	/// Each `(name, activity)` as `name activity`, all of them inside `room`
-	/// characters between them.
-	///
-	/// Nothing is cut when everything fits. Otherwise the shortest entries
-	/// are kept whole and the longest share what is left equally. A cut
-	/// entry loses the end of its name and keeps its activity, which is what
-	/// says whether a follow is stale or its receiver gone; only an entry
-	/// whose activity alone outruns its share is cut at its end.
-	fn fit_entries(entries: &[(String, String)], room: usize) -> Vec<String> {
-		let whole = entries
-			.iter()
-			.map(|(name, activity)| format!("{name} {activity}"))
-			.collect::<Vec<_>>();
-		let mut by_length = (0..whole.len()).collect::<Vec<_>>();
-		by_length.sort_by_key(|&index| whole[index].chars().count());
-		let mut fitted = whole.clone();
-		let mut left = room;
-		for (placed, &index) in by_length.iter().enumerate() {
-			let share = left / (whole.len() - placed);
-			let length = whole[index].chars().count();
-			if length <= share {
-				left = left.saturating_sub(length);
-				continue;
-			}
-			let (name, activity) = &entries[index];
-			let name_room = share.saturating_sub(activity.chars().count() + 1);
-			fitted[index] = if name_room >= 2 {
-				format!("{} {activity}", Self::bound_entry(name, name_room))
-			} else {
-				Self::bound_entry(&whole[index], share)
-			};
-			left = left.saturating_sub(fitted[index].chars().count());
-		}
-		fitted
-	}
-
-	/// `entry` within `max_chars`, marking a cut so a name read short is not
-	/// mistaken for a name that is short.
-	fn bound_entry(entry: &str, max_chars: usize) -> String {
-		if entry.chars().count() <= max_chars {
-			return entry.to_string();
-		}
-		let kept = crate::logging::truncate_to_chars(entry, max_chars.saturating_sub(1));
-		format!("{kept}\u{2026}")
 	}
 
 	/// Local ids of the follows holding a slot in this connection's budget.

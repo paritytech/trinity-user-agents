@@ -86,7 +86,7 @@ use crate::{
 		ProductContext, ProductId,
 	},
 	runtime::payment_id::host_payment_id,
-	time::{Backoff, retry},
+	time::{Backoff, retry, within},
 	unix_time::current_unix_millis,
 	wake::WakeSignal,
 };
@@ -2053,14 +2053,6 @@ async fn reconcile(services: Weak<RuntimeServices>, mut woken: mpsc::UnboundedRe
 		if !woke {
 			return;
 		}
-	}
-}
-
-/// `future`'s output, or `None` once `limit` passed first.
-pub(crate) async fn within<T>(limit: Duration, future: impl Future<Output = T>) -> Option<T> {
-	match futures::future::select(core::pin::pin!(future), futures_timer::Delay::new(limit)).await {
-		Either::Left((output, _)) => Some(output),
-		Either::Right(_) => None,
 	}
 }
 

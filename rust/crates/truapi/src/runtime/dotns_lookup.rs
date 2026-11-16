@@ -7,19 +7,21 @@
 //! decide whether the core or a product can follow a chain. No chain metadata
 //! is needed.
 
-use core::{future::Future, time::Duration};
+use core::{
+	sync::atomic::{AtomicU64, Ordering},
+	time::Duration,
+};
 
-use async_lock::Semaphore;
-use futures::{FutureExt, future::join_all, pin_mut};
+use futures::future::join_all;
 use subxt::utils::H256;
-use tracing::{debug, info};
+use tracing::{Instrument, Span, debug, debug_span, info};
 
 use crate::{
 	chain::{EvmContractError, RuntimeApiCaller},
 	chain_runtime::{ChainRuntime, LegacyConnection},
 	evm_contract::read_batch,
 	host_logic::dotns_gateway::{DotnsError, DotnsTransport},
-	time::{RealTimer, Timer},
+	time::within,
 };
 
 /// Budget for one step of a lookup: finding the block, one storage read, one
@@ -29,20 +31,20 @@ const OPERATION_TIMEOUT: Duration = Duration::from_secs(10);
 #[cfg(test)]
 const OPERATION_TIMEOUT: Duration = Duration::from_millis(100);
 
-/// Most dotNS requests in flight at once, across every lookup. The core's
-/// connection queues about a thousand requests before it drops or refuses
-/// them, and its transaction client shares that connection, so a burst of
-/// lookups waits here instead. Waiting does not count against
-/// [`OPERATION_TIMEOUT`].
-const MAX_REQUESTS_IN_FLIGHT: usize = 256;
+/// Step names a timed out lookup reports.
+const FINDING_THE_BLOCK: &str = "finding the best Asset Hub block";
+const STORAGE_READ: &str = "an Asset Hub storage read";
+const RUNTIME_CALL: &str = "an Asset Hub runtime call";
 
-static REQUESTS_IN_FLIGHT: Semaphore = Semaphore::new(MAX_REQUESTS_IN_FLIGHT);
+/// Numbers lookups so the lines of concurrent ones can be told apart.
+static NEXT_LOOKUP: AtomicU64 = AtomicU64::new(1);
 
 /// One block context for a sequence of dotNS reads, over the core's legacy
 /// connection to Asset Hub.
 pub struct DotnsLookup {
 	legacy: LegacyConnection,
 	at: H256,
+	span: Span,
 }
 
 impl DotnsLookup {
@@ -52,48 +54,46 @@ impl DotnsLookup {
 		chain: &ChainRuntime,
 		asset_hub_chain_genesis_hash: [u8; 32],
 	) -> Result<Self, DotnsError> {
-		let _permit = REQUESTS_IN_FLIGHT.acquire().await;
-		let opened = async {
+		let span = debug_span!(
+			target: "truapi::dotns",
+			"dotns_lookup",
+			lookup = NEXT_LOOKUP.fetch_add(1, Ordering::Relaxed)
+		);
+		let lookup_span = span.clone();
+		let opened = async move {
 			let legacy = chain
 				.legacy_connection(&asset_hub_chain_genesis_hash)
 				.await
-				.map_err(|failure| failure.to_string())?;
+				.map_err(DotnsError::Connection)?;
 			let at = legacy
 				.methods
 				.chain_get_block_hash(None)
 				.await
-				.map_err(|error| error.to_string())?
-				.ok_or("the node named no best block")?;
-			Ok::<_, String>(Self { legacy, at })
+				.map_err(|source| DotnsError::Rpc { method: "chain_getBlockHash", source })?
+				.ok_or(DotnsError::NoBestBlock)?;
+			Ok(Self { legacy, at, span: lookup_span })
 		};
 		// This path does network I/O, can stall for `OPERATION_TIMEOUT`, and
 		// fails closed into a refusal a caller cannot tell from "you were not
 		// granted this", so say what it did.
-		let lookup = within(opened, "finding the best Asset Hub block")
+		let lookup = within(OPERATION_TIMEOUT, opened)
+			.instrument(span.clone())
 			.await
-			.and_then(core::convert::identity)
-			.inspect_err(|reason| {
-				info!(
-					target: "truapi::dotns",
-					%reason,
-					"no best Asset Hub block to read dotNS at; every grant \
-					 behind this lookup is refused"
-				);
-			})
-			.map_err(DotnsError::Chain)?;
-		debug!(target: "truapi::dotns", at = ?lookup.at, "reading dotNS at the best Asset Hub block");
+			.unwrap_or(Err(DotnsError::TimedOut { step: FINDING_THE_BLOCK }))
+			.inspect_err(|error| {
+				span.in_scope(|| {
+					info!(
+						target: "truapi::dotns",
+						reason = %error.reason(),
+						"no best Asset Hub block to read dotNS at; every grant \
+						 behind this lookup is refused"
+					);
+				});
+			})?;
+		span.in_scope(|| {
+			debug!(target: "truapi::dotns", at = ?lookup.at, "reading dotNS at the best Asset Hub block");
+		});
 		Ok(lookup)
-	}
-}
-
-/// Runs `step`, or names it as timed out after [`OPERATION_TIMEOUT`].
-async fn within<T>(step: impl Future<Output = T>, name: &str) -> Result<T, String> {
-	let step = step.fuse();
-	let timeout = RealTimer.sleep(OPERATION_TIMEOUT).fuse();
-	pin_mut!(step, timeout);
-	futures::select! {
-		output = step => Ok(output),
-		() = timeout => Err(format!("{name} timed out")),
 	}
 }
 
@@ -101,16 +101,18 @@ async fn within<T>(step: impl Future<Output = T>, name: &str) -> Result<T, Strin
 impl DotnsTransport for DotnsLookup {
 	/// Reads one storage value at the lookup's block. `Ok(None)` when absent.
 	async fn storage(&mut self, key: Vec<u8>) -> Result<Option<Vec<u8>>, DotnsError> {
-		let _permit = REQUESTS_IN_FLIGHT.acquire().await;
 		let read = self.legacy.methods.state_get_storage(&key, Some(self.at));
-		let value = within(read, "an Asset Hub storage read")
-			.await?
-			.map_err(|error| DotnsError::Storage(error.to_string()))?;
-		debug!(
-			target: "truapi::dotns",
-			bytes = value.as_ref().map(Vec::len),
-			"dotNS storage read returned"
-		);
+		let value = within(OPERATION_TIMEOUT, read)
+			.await
+			.ok_or(DotnsError::TimedOut { step: STORAGE_READ })?
+			.map_err(|source| DotnsError::Rpc { method: "state_getStorage", source })?;
+		self.span.in_scope(|| {
+			debug!(
+				target: "truapi::dotns",
+				bytes = value.as_ref().map(Vec::len),
+				"dotNS storage read returned"
+			);
+		});
 		Ok(value)
 	}
 
@@ -131,18 +133,21 @@ impl DotnsTransport for DotnsLookup {
 		dest: &[u8; 20],
 		inputs: Vec<Vec<u8>>,
 	) -> Vec<Result<Vec<u8>, EvmContractError>> {
+		let span = self.span.clone();
 		read_batch(self, dest, inputs)
 			.await
 			.inspect(|result| {
-				debug!(
-					target: "truapi::dotns",
-					dest = %hex::encode(dest),
-					outcome = match result {
-						Ok(data) => format!("{} bytes", data.len()),
-						Err(reason) => format!("failed: {reason}"),
-					},
-					"dotNS contract view returned"
-				);
+				span.in_scope(|| {
+					debug!(
+						target: "truapi::dotns",
+						dest = %hex::encode(dest),
+						outcome = match result {
+							Ok(data) => format!("{} bytes", data.len()),
+							Err(reason) => format!("failed: {reason}"),
+						},
+						"dotNS contract view returned"
+					);
+				});
 			})
 			.collect()
 	}
@@ -165,12 +170,12 @@ impl RuntimeApiCaller for DotnsLookup {
 	) -> Vec<Result<Vec<u8>, subxt::Error>> {
 		let (methods, at) = (&self.legacy.methods, self.at);
 		join_all(inputs.iter().map(|input| async move {
-			let _permit = REQUESTS_IN_FLIGHT.acquire().await;
-			within(methods.state_call(function, Some(input), Some(at)), "an Asset Hub runtime call")
+			within(OPERATION_TIMEOUT, methods.state_call(function, Some(input), Some(at)))
 				.await
-				.map_err(subxt::Error::other_str)?
+				.ok_or_else(|| subxt::Error::other_str(format!("{RUNTIME_CALL} timed out")))?
 				.map_err(Into::into)
 		}))
+		.instrument(self.span.clone())
 		.await
 	}
 }

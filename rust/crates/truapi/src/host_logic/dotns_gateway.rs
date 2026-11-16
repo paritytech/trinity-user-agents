@@ -23,6 +23,7 @@ use thiserror::Error;
 use tracing::warn;
 
 use crate::{
+	chain_runtime::RuntimeFailure,
 	chain::{
 		EvmContractError, ExtensionError, InheritedImplication, SubstrateSigner,
 		TransactionExtension,
@@ -342,9 +343,26 @@ pub enum DotnsError {
 	#[error("{0}")]
 	#[from(String)]
 	Storage(String),
-	/// Asset Hub could not be reached, or named no finalized block to read at.
-	#[error("{0}")]
-	Chain(String),
+	/// The core's Asset Hub connection could not be opened.
+	#[error("Asset Hub connection")]
+	Connection(#[source] RuntimeFailure),
+	/// A legacy JSON-RPC read of Asset Hub failed.
+	#[error("{method}")]
+	Rpc {
+		/// JSON-RPC method that failed.
+		method: &'static str,
+		/// Failure the node or connection reported.
+		source: subxt_rpcs::Error,
+	},
+	/// The node answered `chain_getBlockHash` with no block.
+	#[error("chain_getBlockHash returned no best block")]
+	NoBestBlock,
+	/// A lookup step ran past its budget.
+	#[error("{step} timed out")]
+	TimedOut {
+		/// Step that ran out of time.
+		step: &'static str,
+	},
 	/// The controller's protocol registry could not be read.
 	#[error("DotnsPopController.protocolRegistry()")]
 	ProtocolRegistry(#[source] DotnsCallError),
