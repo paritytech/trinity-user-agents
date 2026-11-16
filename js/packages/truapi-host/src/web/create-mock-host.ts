@@ -1735,13 +1735,14 @@ export interface TestStackChain {
  */
 export interface TestStack {
   /**
-   * The stack's id. Give two test stacks different ids to keep their stored
-   * state apart.
+   * Tells this stack apart from others. Any non-empty string; a host with a
+   * bundled descriptor takes the key in the stack's link.
    */
   id: string;
   /**
-   * Changes when the stack's chains restart, as after a wipe. The core then
-   * reads cached manifests again.
+   * The run of the stack's chains, which changes when they restart, as after
+   * a wipe. Any non-empty string; a host with a bundled descriptor takes the
+   * descriptor's `generation`.
    */
   generation: string;
   /** The network `getChainInfo` reports. */
@@ -1773,10 +1774,8 @@ export type MockRuntimeConfig = Omit<ProductRuntimeConfig, "stack"> & {
 
 /**
  * The stack a mock host runs by default: network `mock` under the `paseo`
- * TLD, over the {@link MOCK_GENESIS} chains. Its `id` is `mock`, and so is
- * the `id` of every stack built from it, such as `fromNetworks` and
- * `liveChain` return. Two hosts that share one storage backend and must not
- * share state need different ids.
+ * TLD, over the {@link MOCK_GENESIS} chains, with `mock` as its `id` and its
+ * `generation`.
  */
 export function mockTestStack(): TestStack {
   return {
@@ -1787,6 +1786,24 @@ export function mockTestStack(): TestStack {
     people: { genesisHash: MOCK_GENESIS.people },
     bulletin: { genesisHash: MOCK_GENESIS.bulletin },
     assetHub: { genesisHash: MOCK_GENESIS.assetHub },
+  };
+}
+
+/**
+ * `stack` with a `generation` named after its genesis hashes, for a stack
+ * whose chains were replaced: other chains are another run.
+ */
+export function withChainsGeneration(stack: TestStack): TestStack {
+  const genesis = (chain?: TestStackChain): string =>
+    chain === undefined
+      ? "none"
+      : typeof chain.genesisHash === "string"
+        ? chain.genesisHash
+        : `0x${hex(chain.genesisHash)}`;
+  const { relay, assetHub, people, bulletin } = stack;
+  return {
+    ...stack,
+    generation: [relay, assetHub, people, bulletin].map(genesis).join(":"),
   };
 }
 

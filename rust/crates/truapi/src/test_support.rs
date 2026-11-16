@@ -339,9 +339,6 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 /// Identity of every [`test_stack`].
 pub const TEST_STACK_ID: &str = "test-stack";
 
-/// Generation of every [`test_stack`].
-pub const TEST_STACK_GENERATION: &str = "test-generation";
-
 /// A stack on `tld` over these chains, without a relay. Reserved values are
 /// allowed, so a test may run on `dot`.
 pub fn test_stack(
@@ -352,7 +349,7 @@ pub fn test_stack(
 ) -> crate::platform::Stack {
 	let identity = crate::platform::StackIdentity {
 		id: TEST_STACK_ID.to_string(),
-		generation: TEST_STACK_GENERATION.to_string(),
+		generation: "test-generation".to_string(),
 	};
 	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
 	crate::platform::Stack::new(identity, "paseo".to_string(), tld.to_string(), chains, true)
