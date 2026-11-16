@@ -1,6 +1,5 @@
 package io.paritytech.polkadotapp.feature_products_impl.presentation.bot.overlay
 
-import android.net.Uri
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.MotionEvent
@@ -10,13 +9,6 @@ import androidx.activity.ComponentActivity
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import io.mockk.coEvery
-import io.mockk.every
-import io.mockk.mockk
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsResolver
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
-import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
-import io.paritytech.polkadotapp.feature_dotns_api.presentation.DotNsWebViewClient
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer.web.ProductFooterHostEvent
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer.web.ProductRoomFooterWebLayout
 import io.paritytech.polkadotapp.feature_products_impl.presentation.bot.footer.web.ProductRoomFooterWebPage
@@ -69,7 +61,7 @@ class ProductRoomFooterOverlayTouchTest {
                 context = activity,
                 productId = PRODUCT,
                 pageUrl = requireNotNull(ProductRoomFooterWebPage.url("footer.html", PRODUCT)),
-                content = content(),
+                content = archiveContent(archive),
                 onAction = { if (it.actionId == "asked") asked = true },
                 onHeight = {},
                 onRevealed = { revealed = true }
@@ -81,7 +73,7 @@ class ProductRoomFooterOverlayTouchTest {
 
     @After
     fun tearDown() {
-        instrumentation.runOnMainSync { overlay()?.dismiss() }
+        instrumentation.runOnMainSync { shownOverlay()?.dismiss() }
         scenario.close()
         archive.deleteRecursively()
     }
@@ -91,7 +83,7 @@ class ProductRoomFooterOverlayTouchTest {
         touch(endY = 100f)
         ask()
 
-        assertTrue("the footer's overlay never showed", waitUntil(5_000) { overlay() != null })
+        assertTrue("the footer's overlay never showed", waitUntil(5_000) { shownOverlay() != null })
     }
 
     @Test
@@ -141,24 +133,16 @@ class ProductRoomFooterOverlayTouchTest {
         instrumentation.waitForIdleSync()
     }
 
+    /** The overlay over the screen, looked up from the test thread. */
     private fun overlay(): ProductOverlayWebLayout? {
         var found: ProductOverlayWebLayout? = null
-        instrumentation.runOnMainSync {
-            found = (0 until screen.childCount).map(screen::getChildAt).filterIsInstance<ProductOverlayWebLayout>().firstOrNull()
-        }
+        instrumentation.runOnMainSync { found = shownOverlay() }
         return found
     }
 
-    private fun content(): DotNsWebViewClient {
-        val resolver = mockk<DotNsResolver> {
-            coEvery { resolveToLocalUri(any()) } returns Result.success(Uri.fromFile(archive))
-        }
-        val tld = mockk<DotNsTldProvider> {
-            coEvery { getTld() } returns Result.success(DotNsTld.parse("dot")!!)
-            every { currentTldOrNull() } returns DotNsTld.parse("dot")
-        }
-        return DotNsWebViewClient(resolver, tld)
-    }
+    /** The overlay over the screen; on the main thread only. */
+    private fun shownOverlay(): ProductOverlayWebLayout? =
+        (0 until screen.childCount).map(screen::getChildAt).filterIsInstance<ProductOverlayWebLayout>().firstOrNull()
 
     private fun waitUntil(timeoutMillis: Long, condition: () -> Boolean): Boolean {
         val deadline = SystemClock.uptimeMillis() + timeoutMillis
