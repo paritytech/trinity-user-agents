@@ -47,12 +47,12 @@ const RESERVED_GENESIS_HASHES: [[u8; 32]; 4] = [
 /// person's Polkadot identities.
 const RESERVED_TLD: &str = "dot";
 
-/// The dotNS TLDs a stack on `stack_tld` serves names under: Polkadot's
-/// reserved TLD, then the stack's own when it is another one.
+/// The dotNS TLDs a stack on `stack_tld` serves: `dot`, then
+/// `stack_tld` if it differs.
 ///
-/// The core has no other list of TLDs. Product ids, dotNS links and share
-/// hosts are all judged against this one. A `stack_tld` that is not a DNS
-/// label is left out, since a host can pass any string over FFI.
+/// This is the core's only list of TLDs. Product ids, dotNS links and
+/// share hosts are all checked against it. A `stack_tld` that is not a
+/// DNS label is left out, because a host can pass any string over FFI.
 pub fn served_tlds(stack_tld: &str) -> impl Iterator<Item = &str> {
 	let own = stack_tld != RESERVED_TLD && is_dns_label(stack_tld);
 	[RESERVED_TLD].into_iter().chain(own.then_some(stack_tld))
@@ -87,8 +87,8 @@ pub struct UnservedProduct {
 	pub stack_tld: String,
 }
 
-/// A request naming such a product is malformed, as one whose id does not
-/// parse is.
+/// A request naming such a product is malformed, the same as one whose id
+/// does not parse.
 impl<D> From<UnservedProduct> for CallError<D> {
 	fn from(error: UnservedProduct) -> Self {
 		CallError::MalformedFrame { reason: error.to_string() }

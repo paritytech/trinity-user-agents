@@ -41,9 +41,9 @@ enum PocketLinkClassification: Equatable {
 
 /// Classifies through the core's `parse_navigate`, so every host reads a Pocket
 /// link the same way. Kept behind this adapter, like the host bridges, so a
-/// bindgen rename does not ripple through the app. A card of a product the
-/// network does not serve is malformed, and no link is ours before the
-/// network's TLD is known.
+/// bindgen rename does not ripple through the app. A card for a product on a
+/// TLD the network does not serve is malformed. Before the TLD is known, no
+/// link is handled.
 struct PocketDeeplinkParser {
     /// The host every Pocket link names.
     static let host = "pocket"

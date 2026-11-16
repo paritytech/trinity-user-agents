@@ -102,8 +102,8 @@ struct PocketDeeplinkParserTests {
         #expect(classify("https://pocket/add?product=game.dot&card=loyalty") == .notOurs)
     }
 
-    /// The network serves its own TLD and Polkadot's, so a card of another
-    /// network's product is a Pocket link the core refuses.
+    /// A card for another network's product is still a Pocket link, and
+    /// the core refuses it.
     @Test
     func readsACardOfAnotherNetworksProductAsMalformed() {
         guard case .pocket = classify("polkadotapp://pocket/add?product=game.paseo&card=loyalty") else {
@@ -113,8 +113,8 @@ struct PocketDeeplinkParserTests {
         #expect(classify("polkadotapp://pocket/add?product=game.testnet&card=loyalty") == .malformed)
     }
 
-    /// Which products are the network's is unknown until its TLD is, so no link
-    /// is claimed before then.
+    /// Without the network's TLD the app cannot tell which products are its
+    /// own, so it claims no link.
     @Test
     func claimsNoLinkBeforeTheNetworksTldIsKnown() {
         let parser = PocketDeeplinkParser(tldProvider: StubDotNsTldProvider(tld: nil))

@@ -15,7 +15,8 @@ enum ProductPermissionRequesterFactory {
         //
         // `hasTrustedRemotePermissions` is the core's own answer, so the app and
         // the protocol path cannot disagree about which products are trusted.
-        // Before the network's TLD is known no product is trusted, so each asks.
+        // Until the network's TLD is known, no product is trusted and each one
+        // asks.
         let trusted = TrustedRemoteProductPermissionRequester(
             isTrustedForRemoteAccess: { productId in
                 tldProvider.currentTld().map {

@@ -21,7 +21,7 @@ struct WebDeeplinkNormalizer: WebDeeplinkNormalizing {
     }
 
     func appSchemeDeeplink(from url: URL) -> URL? {
-        // Which share hosts are this app's depends on the network, so none is rewritten before its TLD is known.
+        // Share hosts depend on the network, so nothing is rewritten until its TLD is known.
         guard
             let tld = tldProvider.currentTld(),
             let scheme = url.scheme?.lowercased(),

@@ -583,8 +583,9 @@ fn an_execution_opens_only_for_a_product_the_stack_serves() {
 	assert!(matches!(open("myapp.elsewhere"), Err(NativeRuntimeConfigError::Invalid { .. })));
 }
 
-/// A worker reference for a product the stack does not serve is dropped: the
-/// worker could never open, so the host would be asked to start it for good.
+/// A worker reference for a product the stack does not serve is dropped. The
+/// worker can never open, so keeping the reference would make the host retry
+/// it forever.
 #[test]
 fn a_worker_reference_for_an_unserved_product_starts_nothing() {
 	let callbacks = Arc::new(EventCallbacks::new());

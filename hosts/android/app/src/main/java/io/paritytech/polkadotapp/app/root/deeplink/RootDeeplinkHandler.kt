@@ -29,7 +29,7 @@ internal class RootDeeplinkHandler @Inject constructor(
             ?: Result.failure(IllegalArgumentException("No matching handlers found to handle deeplink: $data"))
     }
 
-    // Which share domains are this app's depends on the network, so none is rewritten before its TLD is known.
+    // Share domains depend on the network, so nothing is rewritten until its TLD is known.
     private fun Uri.candidates(): List<Uri> =
         listOfNotNull(dotNsTldProvider.currentTldOrNull()?.let { toAppSchemeDeeplinkOrNull(it) }, this)
 }

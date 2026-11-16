@@ -17,14 +17,14 @@ use crate::{
 
 /// A value that names only products the stack runs.
 ///
-/// Only [`serve`] builds one, so a function that takes a `Served` value is
-/// reached only after the check. It derefs to the value. It does not record
-/// which stack checked it: a value is served and used within one runtime.
+/// Only [`serve`] creates one, so a function that takes `Served` cannot be
+/// called without the check. It derefs to the value. It does not record
+/// which stack checked it, so create and use it within one runtime.
 #[derive(Clone)]
 pub struct Served<T>(T);
 
 impl<T> Served<T> {
-	/// The value, for a callee that takes it without the proof.
+	/// Unwraps the value for a callee that does not need the proof.
 	pub fn into_inner(self) -> T {
 		self.0
 	}
@@ -39,23 +39,24 @@ impl<T> core::ops::Deref for Served<T> {
 }
 
 impl Served<ProductAccountTxPayload> {
-	/// The payload with `call_data` in place of its own. Call data names no
-	/// product, so the payload stays served.
+	/// Replaces the call data. Call data names no product, so the payload
+	/// stays served.
 	pub fn with_call_data(mut self, call_data: Vec<u8>) -> Self {
 		self.0.call_data = call_data;
 		self
 	}
 }
 
-/// A value that names products, each of which the stack has to run before the
-/// core acts on the value.
+/// A value that names products. The core acts on it only if the stack runs
+/// all of them.
 pub trait NamesProducts {
 	/// Every product the value names.
 	fn products(&self) -> Vec<&ProductId>;
 }
 
-/// `value` as [`Served`] once a stack on `stack_tld` runs every product it
-/// names. Fails with the first one it does not.
+/// Wraps `value` in [`Served`] if a stack on `stack_tld` runs every
+/// product it names. Otherwise fails with the first product it does not
+/// run.
 pub fn serve<T: NamesProducts>(stack_tld: &str, value: T) -> Result<Served<T>, UnservedProduct> {
 	for product_id in value.products() {
 		require_served(stack_tld, product_id)?;

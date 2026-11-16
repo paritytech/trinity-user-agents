@@ -675,9 +675,9 @@ fn a_renewal_target_does_not_name_its_account_in_full() {
 	assert_eq!(written, r#"Account { account_id: abababab, label: "pairing peer" }"#);
 }
 
-/// A host that switched networks still holds the other network's entries. They
-/// are not the unresolvable targets a warning is for: one would be raised on
-/// every tick for as long as the host stays on this network.
+/// After a network switch the ledger still holds the other network's entries.
+/// They are skipped without a warning, because the warning would repeat on
+/// every tick.
 #[test]
 fn another_networks_target_is_skipped_without_a_warning() {
 	let keys = WalletKeys::new(vec![7; 32], "paseo".to_string());

@@ -383,9 +383,9 @@ fn a_withdrawn_statement_proof_is_not_signed_with_a_kept_key() {
 }
 
 /// A paired host on an older core can still relay a request for a product
-/// this stack does not serve. It is refused before the user is asked, since
-/// an approval could never be honoured. The caller and the account are
-/// checked alike, and a relayed raw signature names no caller at all.
+/// this stack does not serve. It is refused before the user sees it,
+/// because the wallet could not sign it anyway. Both the caller and the
+/// account are checked; a relayed raw signature has no caller.
 #[test]
 fn a_relayed_request_naming_an_unserved_product_never_prompts() {
 	let platform = granting_platform();

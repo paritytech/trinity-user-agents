@@ -108,9 +108,9 @@ fn direct_signing_rejects_registry_public_key_mismatched_with_wallet() {
 	));
 }
 
-/// Every derivation keyed by a product id is refused for a product the stack
-/// does not serve, whichever caller or request named it. A paired host's
-/// request reaches these without passing a handler's check.
+/// Every derivation keyed by a product id refuses a product the stack does
+/// not serve, whoever asked for it. A paired host's request reaches these
+/// without a handler's check.
 #[test]
 fn no_key_is_derived_for_a_product_the_stack_does_not_serve() {
 	let keys = WalletKeys::new(vec![7; 32], "paseo".to_string());

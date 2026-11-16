@@ -177,8 +177,8 @@ fn the_reserved_tld_is_served_once() {
 	assert_eq!(served_tlds("paseo").collect::<Vec<_>>(), ["dot", "paseo"]);
 }
 
-/// A host passes the TLD over FFI as any string. One that is not a label
-/// serves nothing of its own, so an empty one does not yield a `.li` share
+/// A host can pass any string as the TLD over FFI. One that is not a label
+/// adds no TLD, so an empty string does not produce a bare `.li` share
 /// host.
 #[test]
 fn a_malformed_stack_tld_serves_only_the_reserved_one() {

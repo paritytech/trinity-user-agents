@@ -1567,11 +1567,10 @@ enum Door {
 
 const DOORS: [Door; 2] = [Door::Product, Door::Paired];
 
-/// `value` as a stack on `paseo` serves it: that stack runs `.dot` and `.paseo`
-/// products alike. The fixtures run on `dot`, which refuses a `.paseo` name
-/// before any account call. A stack serving two TLDs passes a `.dot` owner with
-/// a `.paseo` context on, and the context check has to hold the context to the
-/// owner's network itself.
+/// Wraps `value` as a `paseo` stack would; that stack runs both `.dot` and
+/// `.paseo`. The fixtures run on `dot`, which refuses a `.paseo` context before
+/// the context check. On a stack with two TLDs such a request reaches that
+/// check, which must keep the context on its owner's network.
 fn served_on_paseo<T: NamesProducts>(value: T) -> Served<T> {
 	serve("paseo", value).expect("a paseo stack runs .dot and .paseo products")
 }

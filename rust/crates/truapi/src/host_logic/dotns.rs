@@ -129,8 +129,9 @@ impl ProductLink {
 			return None;
 		}
 		let hostname = parsed.host_str()?;
-		// The direct reading is tried too: on a network whose TLD is the share
-		// suffix, the share reading names a product one label shorter.
+		// Try the direct reading too: when the network's TLD is the share
+		// suffix, the share reading gives a name one label shorter than the
+		// product.
 		let identifier = ProductId::from_share_host(hostname)
 			.into_iter()
 			.chain(normalize_host(hostname).parse::<ProductId>())
