@@ -54,6 +54,7 @@ File-by-file code review. For each rule violated, note severity (blocking/major/
 - [ ] SwiftUI gestures: state set in `onChanged` is reset when the gesture is cancelled (`@GestureState`), since `onEnded` does not run on cancellation.
 - [ ] Custom gesture-driven controls expose an accessibility label, trait and action.
 - [ ] Content that overhangs a hosting view is inside the view's hit region.
+- [ ] A SwiftUI screen inside the tab container with bottom-pinned content subclasses `SafeAreaFollowingHostingController`, not `UIHostingController` (see `architecture/tab-bar-container.md`, Hosted SwiftUI screens).
 
 **Ref:** code/ui-uikit.md, code/design-system.md
 

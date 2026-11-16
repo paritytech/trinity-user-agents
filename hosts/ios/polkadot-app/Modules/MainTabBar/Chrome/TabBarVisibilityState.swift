@@ -1,4 +1,5 @@
 import Foundation
+import PolkadotUI
 
 enum TabBarVisibilityState: Equatable {
     case shown
@@ -18,23 +19,32 @@ enum TabBarFoldDerived: Equatable {
     case hidden
 }
 
-enum TabBarVisibilityPolicy {
-    static func state(derived: TabBarFoldDerived, override: TabBarFoldOverride) -> TabBarVisibilityState {
+extension TabBarVisibilityState {
+    /// The state a bar shows for a screen's derived fold and the user's override; a derived hide wins.
+    init(derived: TabBarFoldDerived, override: TabBarFoldOverride) {
         guard derived != .hidden else {
-            return .hidden
+            self = .hidden
+            return
         }
         switch override {
         case .tucked:
-            return .tucked
+            self = .tucked
         case .shown:
-            return .shown
+            self = .shown
         case .none:
-            return derived.defaultState
+            self = derived.defaultState
         }
     }
-}
 
-extension TabBarVisibilityState {
+    /// The Clearance a bar in this state publishes for its content. A shown bar takes its resting height above the
+    /// bottom safe area; a tucked or hidden bar takes none.
+    func bottomClearance(bottomSafeAreaInset: CGFloat) -> CGFloat {
+        guard self == .shown else {
+            return 0
+        }
+        return DSTabBarStyle.restingHeight(bottomSafeAreaInset: bottomSafeAreaInset) - bottomSafeAreaInset
+    }
+
     /// The override a new screen starts with when the bar comes from this state. Only a tucked bar carries over,
     /// so the new screen's derived state decides otherwise.
     var carriedOverride: TabBarFoldOverride {
