@@ -27,7 +27,7 @@ pub use testing::engine_on;
 pub use dao::{group, group_exists};
 pub use engine::{
 	DurableDeps, DurableRequest, DurableSubmission, DurableTxEngine, DurableWorkObserver,
-	EmptyRequest, RecoveryError, RegistrationError,
+	EmptyRequest, MAX_REBUILD_COOLDOWN, RecoveryError, RegistrationError,
 };
 pub use model::{
 	DeferredDurableTx, DomainId, DurableTxEntry, DurableTxFailureKind, DurableTxId, DurableTxState,

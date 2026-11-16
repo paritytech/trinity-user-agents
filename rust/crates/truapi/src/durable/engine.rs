@@ -30,6 +30,7 @@ use crate::{
 };
 use executor::SubmissionExecutor;
 
+pub use executor::MAX_REBUILD_COOLDOWN;
 pub use recovery::RecoveryError;
 pub use registration::{DurableRequest, DurableSubmission, EmptyRequest, RegistrationError};
 pub use reporting::DurableWorkObserver;

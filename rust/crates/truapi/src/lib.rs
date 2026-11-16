@@ -889,6 +889,9 @@ cfg_select! {
 		#[cfg(not(target_arch = "wasm32"))]
 		pub mod encrypted_storage;
 
+		#[cfg(not(target_arch = "wasm32"))]
+		pub mod coinage;
+
 		mod image_loader;
 
 		#[cfg(not(target_arch = "wasm32"))]
