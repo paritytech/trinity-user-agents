@@ -459,6 +459,14 @@
     <string name="product_permission_nft_purse_read_title">%1$s would Like to See the NFTs of %2$s</string>
     <string name="product_permission_nft_purse_read_subtitle">NFT purse access lets the product see these purses and the items in them. %1$s</string>
     <string name="product_permission_nft_purse_read_owner_account">your account</string>
+    <string name="product_permission_coin_payment_title">%1$s would Like to Pay and Receive with Coinage</string>
+    <string name="product_permission_coin_payment_subtitle">Coinage access lets the product pay and receive with coinage purses. Every spend still asks for your confirmation. %1$s</string>
+    <string name="product_permission_coin_payment_purse_query_title">%1$s would Like to See %2$s</string>
+    <string name="product_permission_coin_payment_purse_receive_title">%1$s would Like to Receive into %2$s</string>
+    <string name="product_permission_coin_payment_purse_spend_title">%1$s would Like to Spend from %2$s</string>
+    <string name="product_permission_coin_payment_purse_subtitle">Coinage purse access lets the product use a purse it did not create. Every spend still asks for your confirmation. %1$s</string>
+    <string name="product_permission_coin_payment_purse_name">coinage purse %1$s</string>
+    <string name="product_permission_coin_payment_purse_main">your main coinage purse</string>
     <string name="product_permission_user_identity_title">%1$s Would like to know your identity</string>
     <string name="product_permission_user_identity_subtitle">This reveals your primary username to the product. %1$s</string>
     <string name="product_payment_request_title">Product %1$s requests payment of %2$s</string>
@@ -837,6 +845,11 @@
     <string name="product_permission_type_balance_access">Balance</string>
     <string name="product_permission_type_balance_access_description">Balance access</string>
     <string name="product_permission_type_nft_purse_read_description">NFT purse access</string>
+    <string name="product_permission_type_coin_payment">Coinage</string>
+    <string name="product_permission_type_coin_payment_description">Coinage payments</string>
+    <string name="product_permission_type_coin_payment_purse_query_description">See the coinage purse</string>
+    <string name="product_permission_type_coin_payment_purse_receive_description">Receive into the coinage purse</string>
+    <string name="product_permission_type_coin_payment_purse_spend_description">Spend from the coinage purse</string>
     <string name="product_permission_type_user_identity_access">Identity</string>
     <string name="product_permission_type_user_identity_access_description">Primary username disclosure</string>
     <string name="product_permission_capability_notifications">Notifications</string>
@@ -1004,6 +1017,7 @@
     <string name="truapi_confirm_title_account_access">Allow account access?</string>
     <string name="truapi_confirm_title_product_subtree">Allow own-account access?</string>
     <string name="truapi_confirm_title_nft_purse_drain">Move NFT items?</string>
+    <string name="truapi_confirm_title_coin_payment_spend">Spend from a coinage purse?</string>
     <string name="truapi_confirm_label_request">Request</string>
     <string name="truapi_confirm_label_call">Call</string>
     <string name="truapi_confirm_label_call_data">Call data</string>
@@ -1029,6 +1043,11 @@
     <string name="truapi_confirm_value_nft_cheque">A cheque for another user</string>
     <string name="truapi_confirm_value_nft_refund">Back to the sender of a deposited cheque</string>
     <string name="truapi_confirm_value_nft_owner_you">Your account</string>
+    <string name="truapi_confirm_label_coin_from_purse">From purse</string>
+    <string name="truapi_confirm_value_coin_main_purse">Your main purse</string>
+    <string name="truapi_confirm_label_coin_amount">Amount (smallest units)</string>
+    <string name="truapi_confirm_label_coin_held_back">Value still gaining privacy</string>
+    <string name="truapi_confirm_value_coin_held_back">Included in this spend</string>
     <string name="truapi_confirm_requested_by">Requested by %1$s</string>
     <string name="truapi_confirm_approve">Approve</string>
     <string name="truapi_confirm_reject">Reject</string>

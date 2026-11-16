@@ -14,6 +14,8 @@ import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermission
 import io.paritytech.polkadotapp.feature_products_impl.domain.permissions.models.ProductPermissionStatus
 import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose.ownerName
+import io.paritytech.polkadotapp.feature_products_impl.presentation.permissionPrompt.compose.purseName
+import uniffi.truapi.CoinPaymentPurseAction
 import io.paritytech.polkadotapp.common.R as RCommon
 
 @Composable
@@ -61,6 +63,8 @@ private fun ProductPermission.displayName(): String {
         is ProductPermission.BalanceAccess -> stringResource(RCommon.string.product_permission_type_balance_access)
         is ProductPermission.UserIdentityAccess -> stringResource(RCommon.string.product_permission_type_user_identity_access)
         is ProductPermission.NftPurseRead -> ownerName()
+        is ProductPermission.CoinPayment -> stringResource(RCommon.string.product_permission_type_coin_payment)
+        is ProductPermission.CoinPaymentPurse -> purseName()
         is ProductPermission.RemotePermission.NetworkAccess -> domain
         ProductPermission.RemotePermission.WebRtcAccess -> stringResource(RCommon.string.product_permission_type_webrtc)
         ProductPermission.RemotePermission.ChainSubmitAccess -> stringResource(RCommon.string.product_permission_type_chain_submit)
@@ -95,6 +99,12 @@ private fun ProductPermission.descriptionRes(): Int = when (this) {
     is ProductPermission.BalanceAccess -> RCommon.string.product_permission_type_balance_access_description
     is ProductPermission.UserIdentityAccess -> RCommon.string.product_permission_type_user_identity_access_description
     is ProductPermission.NftPurseRead -> RCommon.string.product_permission_type_nft_purse_read_description
+    is ProductPermission.CoinPayment -> RCommon.string.product_permission_type_coin_payment_description
+    is ProductPermission.CoinPaymentPurse -> when (action) {
+        CoinPaymentPurseAction.QUERY -> RCommon.string.product_permission_type_coin_payment_purse_query_description
+        CoinPaymentPurseAction.RECEIVE -> RCommon.string.product_permission_type_coin_payment_purse_receive_description
+        CoinPaymentPurseAction.SPEND -> RCommon.string.product_permission_type_coin_payment_purse_spend_description
+    }
     is ProductPermission.RemotePermission.NetworkAccess -> RCommon.string.product_permission_type_network_access
     ProductPermission.RemotePermission.WebRtcAccess,
     ProductPermission.RemotePermission.ChainSubmitAccess,
