@@ -14,7 +14,7 @@ use core::{
 
 use futures::future::join_all;
 use subxt::utils::H256;
-use tracing::{Instrument, Span, debug, debug_span, info};
+use tracing::{Instrument, Span, debug, instrument, warn};
 
 use crate::{
 	chain::{EvmContractError, RuntimeApiCaller},
@@ -50,17 +50,18 @@ pub struct DotnsLookup {
 impl DotnsLookup {
 	/// Reads Asset Hub at its best block, so a record is visible as soon as
 	/// it is included.
+	#[instrument(
+		level = "debug",
+		target = "truapi::dotns",
+		name = "dotns_lookup",
+		skip_all,
+		fields(lookup = NEXT_LOOKUP.fetch_add(1, Ordering::Relaxed))
+	)]
 	pub async fn at_best_block(
 		chain: &ChainRuntime,
 		asset_hub_chain_genesis_hash: [u8; 32],
 	) -> Result<Self, DotnsError> {
-		let span = debug_span!(
-			target: "truapi::dotns",
-			"dotns_lookup",
-			lookup = NEXT_LOOKUP.fetch_add(1, Ordering::Relaxed)
-		);
-		let lookup_span = span.clone();
-		let opened = async move {
+		let opened = async {
 			let legacy = chain
 				.legacy_connection(&asset_hub_chain_genesis_hash)
 				.await
@@ -71,28 +72,23 @@ impl DotnsLookup {
 				.await
 				.map_err(|source| DotnsError::Rpc { method: "chain_getBlockHash", source })?
 				.ok_or(DotnsError::NoBestBlock)?;
-			Ok(Self { legacy, at, span: lookup_span })
+			Ok(Self { legacy, at, span: Span::current() })
 		};
 		// This path does network I/O, can stall for `OPERATION_TIMEOUT`, and
 		// fails closed into a refusal a caller cannot tell from "you were not
 		// granted this", so say what it did.
 		let lookup = within(OPERATION_TIMEOUT, opened)
-			.instrument(span.clone())
 			.await
 			.unwrap_or(Err(DotnsError::TimedOut { step: FINDING_THE_BLOCK }))
 			.inspect_err(|error| {
-				span.in_scope(|| {
-					info!(
-						target: "truapi::dotns",
-						reason = %error.reason(),
-						"the dotNS lookup could not open at a best Asset Hub \
-						 block; every grant behind it is refused"
-					);
-				});
+				warn!(
+					target: "truapi::dotns",
+					reason = %error.reason(),
+					"the dotNS lookup could not open at a best Asset Hub \
+					 block; every grant behind it is refused"
+				);
 			})?;
-		span.in_scope(|| {
-			debug!(target: "truapi::dotns", at = ?lookup.at, "reading dotNS at the best Asset Hub block");
-		});
+		debug!(target: "truapi::dotns", at = ?lookup.at, "reading dotNS at the best Asset Hub block");
 		Ok(lookup)
 	}
 }
@@ -104,8 +100,15 @@ impl DotnsTransport for DotnsLookup {
 		let read = self.legacy.methods.state_get_storage(&key, Some(self.at));
 		let value = within(OPERATION_TIMEOUT, read)
 			.await
-			.ok_or(DotnsError::TimedOut { step: STORAGE_READ })?
-			.map_err(|source| DotnsError::Rpc { method: "state_getStorage", source })?;
+			.map(|read| {
+				read.map_err(|source| DotnsError::Rpc { method: "state_getStorage", source })
+			})
+			.unwrap_or(Err(DotnsError::TimedOut { step: STORAGE_READ }))
+			.inspect_err(|error| {
+				self.span.in_scope(|| {
+					debug!(target: "truapi::dotns", reason = %error.reason(), "dotNS storage read failed");
+				});
+			})?;
 		self.span.in_scope(|| {
 			debug!(
 				target: "truapi::dotns",

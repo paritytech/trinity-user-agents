@@ -377,6 +377,10 @@ fn a_failed_lookup_is_named_in_the_refusal() {
 	assert_eq!(
 		lines,
 		vec![
+			"truapi.tracing.warn truapi::dotns: the dotNS lookup could not open at a best \
+			 Asset Hub block; every grant behind it is refused {reason=finding the best \
+			 Asset Hub block timed out}"
+				.to_string(),
 			"truapi.tracing.warn truapi::runtime::product_manifest: root manifest lookup \
 			 failed {target=peopl.dot, reason=finding the best Asset Hub block timed out}"
 				.to_string(),

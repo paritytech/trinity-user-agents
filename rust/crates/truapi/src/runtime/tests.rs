@@ -7788,6 +7788,10 @@ fn a_manifest_refusal_tells_the_host_what_it_judged_by() {
 		"truapi.tracing.warn truapi::runtime::product_manifest: root manifest lookup failed \
 		 {{target=peopl.dot, reason={reason}}}"
 	);
+	let lookup_unopened = format!(
+		"truapi.tracing.warn truapi::dotns: the dotNS lookup could not open at a best Asset Hub \
+		 block; every grant behind it is refused {{reason={reason}}}"
+	);
 	let refusal =
 		manifest_refusal_line("manifest unavailable", &format!("dotNS lookup failed: {reason}"));
 	assert_eq!(
@@ -7801,7 +7805,14 @@ fn a_manifest_refusal_tells_the_host_what_it_judged_by() {
 					v01::HostAccountRingVrfSignError::NotAllowlisted
 				))),
 			)),
-			vec![lookup_failed.clone(), refusal.clone(), lookup_failed, refusal],
+			vec![
+				lookup_unopened.clone(),
+				lookup_failed.clone(),
+				refusal.clone(),
+				lookup_unopened,
+				lookup_failed,
+				refusal
+			],
 		)
 	);
 }
