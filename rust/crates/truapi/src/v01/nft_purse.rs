@@ -32,7 +32,7 @@ pub struct NftPurseReceiveKey(pub [u8; 32]);
 
 /// Who owns an NFT purse.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode, Display)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum NftPurseOwner {
 	/// The product with this id created the purse.
 	#[display("{_0}")]

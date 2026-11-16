@@ -6,10 +6,17 @@ internal import SnapKit
 public struct SearchContactListConfiguration: HashableContentConfiguration {
     public var userName: String
     public var avatarViewModel: AvatarViewModel
+    /// Loaded over the placeholder while preserving the row's identity.
+    public var icon: AnyImageViewModel?
 
-    public init(userName: String, avatarViewModel: AvatarViewModel) {
+    public init(
+        userName: String,
+        avatarViewModel: AvatarViewModel,
+        icon: AnyImageViewModel? = nil
+    ) {
         self.userName = userName
         self.avatarViewModel = avatarViewModel
+        self.icon = icon
     }
 
     public func makeContentView() -> any UIView & UIContentView {
@@ -51,7 +58,7 @@ final class SearchContactListView: UIView, UIContentView {
     private func setupViews() {
         addSubview(avatarView)
         avatarView.snp.makeConstraints {
-            $0.size.equalTo(DSSearchAvatar.dimension)
+            $0.size.equalTo(DSLetterAvatar.Size.s40.dimension)
             $0.leading.equalToSuperview()
             $0.top.bottom.equalToSuperview().inset(12)
         }
@@ -70,6 +77,7 @@ final class SearchContactListView: UIView, UIContentView {
 
         nameLabel.text = configuration.userName
         avatarView.viewModel = configuration.avatarViewModel
+        avatarView.icon = configuration.icon
     }
 }
 

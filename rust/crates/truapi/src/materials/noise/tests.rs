@@ -93,7 +93,8 @@ fn the_seed_matches_the_vectors() {
 }
 
 /// The seed comes from the id that names the body, so a chat message keeps
-/// its look whichever room shows it, and a card's back reads its front's noise.
+/// its look whichever room shows it, a card's back reads its front's noise,
+/// and a room's footer reads its room's.
 #[test]
 fn each_context_seeds_from_the_id_that_names_its_body() {
 	let seeds = [
@@ -105,8 +106,12 @@ fn each_context_seeds_from_the_id_that_names_its_body() {
 		RenderContext::InputWidget { candidate_id: "foobar".to_string() },
 		RenderContext::PocketCard { card_id: String::new() },
 		RenderContext::PocketCardBack { card_id: "a".to_string() },
+		RenderContext::ChatRoomFooter {
+			room_id: "a".to_string(),
+			message_type: "foobar".to_string(),
+		},
 	]
 	.map(|context| noise_seed(&context));
 
-	assert_eq!(seeds, [0xe40c_292c, 0xbf9c_f968, 0x811c_9dc5, 0xe40c_292c]);
+	assert_eq!(seeds, [0xe40c_292c, 0xbf9c_f968, 0x811c_9dc5, 0xe40c_292c, 0xe40c_292c]);
 }

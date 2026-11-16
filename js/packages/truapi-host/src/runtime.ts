@@ -1,4 +1,4 @@
-import type { ProductId } from "@parity/truapi";
+import type { ExecutableKind, ProductId } from "@parity/truapi";
 import type {
   HostChatActionSubscribeItem,
   HostRendererActionSubscribeItem,
@@ -7,11 +7,7 @@ import type {
   WireProvider,
 } from "@parity/truapi";
 import { CoreStorageKey as GeneratedCoreStorageKey } from "./generated/host-callbacks.js";
-import type {
-  CoreAdmin,
-  CoreStorageKey,
-  ExecutableKind,
-} from "./generated/host-callbacks.js";
+import type { CoreAdmin, CoreStorageKey } from "./generated/host-callbacks.js";
 
 // The typed capability interfaces below come straight from the
 // `truapi::platform` Rust module via `truapi-codegen --platform-ts-output`.
@@ -60,6 +56,26 @@ export interface ChainConnection {
  */
 export type LogLevel = string;
 
+/** The Trinity stack a host build bundles. */
+export interface BundledStack {
+  /**
+   * The stack's link, `polkadotapp://stack?key=0x…&url=…`. It must carry a key:
+   * the core refuses an unsigned stack.
+   */
+  pointer: string;
+  /**
+   * The bundled descriptor's bytes as served: a signed envelope that verifies
+   * under the pointer's key.
+   */
+  descriptor: Uint8Array;
+  /**
+   * Whether this build may run a stack that uses Polkadot's genesis hashes or
+   * the `dot` TLD. Only a Polkadot or Polkadot-fork build sets it. Defaults to
+   * `false`.
+   */
+  allowsReservedValues?: boolean;
+}
+
 /** Configuration for one product runtime hosted by the wasm core. */
 export interface ProductRuntimeConfig {
   /** Stable identifier used to scope product accounts, permissions, and storage. */
@@ -87,45 +103,17 @@ export interface ProductRuntimeConfig {
     /** Platform or operating-system version. */
     version?: string;
   };
-  /** People-chain configuration used for statement-store SSO. */
-  people: {
-    /** People-chain genesis hash. */
-    genesisHash: string | Uint8Array;
-  };
-  /** Bulletin-chain configuration used for in-core preimage submission. */
-  bulletin: {
-    /** Bulletin-chain genesis hash. */
-    genesisHash: string | Uint8Array;
-  };
   /**
-   * Asset Hub configuration. Session usernames and the product manifests
-   * that carry `trustedProducts` grants are both read from the dotNS
-   * contracts deployed there. Without a usable genesis hash no manifest
-   * resolves, so every cross-product grant not already cached is refused,
-   * indistinguishably from the other product having granted nothing. An
-   * all-zero hash declares deliberately that this host has no Asset Hub.
-   *
-   * The wasm signing host requires the same `assetHub.genesisHash`, though it
-   * takes an untyped config object rather than this interface.
+   * The stack the host build runs. Every chain the core uses, the network
+   * `getChainInfo` reports and the TLD a signing host derives its identities
+   * under come from it.
    */
-  assetHub: {
-    /** Asset Hub genesis hash. */
-    genesisHash: string | Uint8Array;
-  };
+  stack: BundledStack;
   /** Wallet pairing configuration. */
   pairing: {
     /** URI scheme used for wallet pairing deeplinks. */
     deeplinkScheme: string;
   };
-  /**
-   * dotNS TLD the host's reserved identities derive under, such as `"dot"` or
-   * `"paseo"`.
-   *
-   * Required by a signing host, which derives its own keys and so has to know
-   * which network's identities it is deriving. A pairing host never derives
-   * them -- the paired wallet does -- and ignores this.
-   */
-  networkSuffix?: string;
 }
 
 /**

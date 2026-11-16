@@ -67,8 +67,7 @@ fn a_material_fetched_once_is_ready_after_a_restart_without_bulletin() {
 
 /// A node waits while its material loads, falls back once the deadline
 /// passes, and still draws when the material arrives late, so a card heals by
-/// itself. Bytes that do not hash to the ID never draw, whatever the lookup
-/// hands over.
+/// itself.
 #[test]
 fn nothing_by_the_deadline_is_not_found_and_a_late_arrival_still_draws() {
 	let (_dir, db) = open_temporary_core_db();
@@ -79,7 +78,6 @@ fn nothing_by_the_deadline_is_not_found_and_a_late_arrival_still_draws() {
 
 	assert_eq!(answers.next().now_or_never(), None, "nothing is reported while loading");
 
-	device.bulletin.answer(id, b"forged".to_vec());
 	device.pass_the_deadline();
 	assert_eq!(next(&mut answers), Some(Err(MaterialFailure::NotFound)));
 	let mut later = device.materials.observe(id);
@@ -224,6 +222,24 @@ fn a_material_this_core_cannot_read_is_refused_and_not_kept() {
 		assert_eq!(next(&mut answers), Some(Err(failure)));
 		assert_eq!(next(&mut answers), None);
 	}
+	assert!(device.kept_ids().is_empty());
+}
+
+/// A node that answers with bytes that do not hash to the ID is broken, and
+/// asking it again would get the same bytes. The fetch stops, and the node falls
+/// back with `Integrity`, the failure the RFC names for this.
+#[test]
+fn bytes_that_do_not_hash_to_the_id_are_an_integrity_failure() {
+	let (_dir, db) = open_temporary_core_db();
+	let device = Device::over(db);
+	let id = preimage_key(TEXT);
+	let mut answers = device.materials.observe(id);
+	wait_until(|| device.bulletin.lookups(id) == 1, "the material is looked up");
+
+	device.bulletin.answer(id, b"forged".to_vec());
+
+	assert_eq!(next(&mut answers), Some(Err(MaterialFailure::Integrity)));
+	assert_eq!(next(&mut answers), None);
 	assert!(device.kept_ids().is_empty());
 }
 

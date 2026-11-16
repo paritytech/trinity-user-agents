@@ -37,8 +37,8 @@ import {
   mockRuntimeConfig,
   type MockHost,
   type MockHostConfig,
+  type MockRuntimeConfig,
 } from "../web/create-mock-host.js";
-import type { ProductRuntimeConfig } from "../runtime.js";
 import {
   checkDerivationIndex,
   resolveAccount,
@@ -63,7 +63,7 @@ export interface TestHostPageOptions {
   /** Behaviour knobs forwarded to {@link createMockHost}. */
   mock?: MockHostConfig;
   /** Overrides merged into {@link mockRuntimeConfig}. */
-  runtimeConfig?: Partial<ProductRuntimeConfig>;
+  runtimeConfig?: Partial<MockRuntimeConfig>;
   /**
    * Resolved WASM entry. Defaults to the signing-enabled `testing` bundle,
    * which is what lets the host own dev accounts instead of waiting on a
