@@ -74,7 +74,7 @@ pub enum HostContactsPickError {
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostContactsUsernamesRequest {}
 
-/// The DotNS usernames of the unblocked chat contacts of the user.
+/// The dotNS usernames of the unblocked chat contacts of the user.
 #[derive(Debug, Clone, PartialEq, Eq, Encode, Decode)]
 pub struct HostContactsUsernamesResponse {
 	/// One username per contact, in host order, and empty when the user has no

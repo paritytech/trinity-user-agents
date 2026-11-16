@@ -782,7 +782,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   Widget. It is carried per product connection on `ConnectionAdapters`, so only
   the Widget under a card reaches that card.
 - `ContactsPlatform`: resolve the handles a transaction names to contacts,
-  render the picker that selects one, and list the DotNS usernames of the
+  render the picker that selects one, and list the dotNS usernames of the
   contacts the picker would offer. `contacts` is the only required method.
   `pick_contact` defaults to `Unsupported`, so a host serving no picker says so
   rather than looking like a user who declined, and `contact_usernames`
@@ -794,7 +794,7 @@ for raw bytes signed inside the `<Bytes>` watermark.
   The core serves `contacts.usernames` only to the game product, `dim2` on
   every network, and answers `Unsupported` to any other product without
   calling the host. While nobody is signed in it answers `NotConnected`,
-  also without calling the host. Each username is the bare DotNS label with
+  also without calling the host. Each username is the bare dotNS label with
   no top-level domain, and the core drops any entry that is not one.
 - `GamePlatform`: hold the game product's next-game reminder and drop it.
   The core serves Game only to `dim2`, on every network, and answers

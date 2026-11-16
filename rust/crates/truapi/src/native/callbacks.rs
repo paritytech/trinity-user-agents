@@ -375,7 +375,7 @@ pub trait NativeContactsCallbacks: Send + Sync {
 		product_id: ProductId,
 	) -> Result<crate::platform::HostContactPick, HostRejection>;
 
-	/// List the DotNS usernames of the unblocked contacts the picker would
+	/// List the dotNS usernames of the unblocked contacts the picker would
 	/// offer, asked on behalf of `product_id`.
 	///
 	/// The core asks only for the game product. A host that does not list

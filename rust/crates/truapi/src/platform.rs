@@ -2501,7 +2501,7 @@ pub enum HostContactPick {
 #[derive(Encode, Decode)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum HostContactUsernames {
-	/// The DotNS usernames of the unblocked contacts the picker would offer,
+	/// The dotNS usernames of the unblocked contacts the picker would offer,
 	/// in host order, each the bare label with no top-level domain.
 	Listed {
 		/// One username per contact that has one.
@@ -2562,7 +2562,7 @@ pub trait ContactsPlatform: Send + Sync {
 		Ok(HostContactPick::Unsupported)
 	}
 
-	/// List the DotNS usernames of the unblocked contacts the picker would
+	/// List the dotNS usernames of the unblocked contacts the picker would
 	/// offer.
 	///
 	/// The core calls this only for the game product, so a host does not

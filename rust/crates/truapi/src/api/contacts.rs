@@ -18,7 +18,7 @@ use crate::{
 ///
 /// That is also why there is no permission to request: the user choosing a
 /// contact in host UI is the consent. The one exception is the game product,
-/// Jollity, which may also read the DotNS usernames of the contacts of the
+/// Jollity, which may also read the dotNS usernames of the contacts of the
 /// user, never their accounts.
 #[wire_trait(id = 20)]
 #[async_trait::async_trait]
@@ -59,7 +59,7 @@ pub trait Contacts: Send + Sync {
 		Err(CallError::unavailable())
 	}
 
-	/// Return the DotNS usernames of the chat contacts of the user.
+	/// Return the dotNS usernames of the chat contacts of the user.
 	///
 	/// Served only to the game product, `dim2` on every network, with no prompt.
 	/// Any other product, and a host that lists no usernames, gets `Unsupported`.

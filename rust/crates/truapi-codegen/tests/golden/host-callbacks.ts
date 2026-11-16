@@ -567,7 +567,7 @@ export type HostContactPick =
  */
 export type HostContactUsernames =
   /**
-   * The DotNS usernames of the unblocked contacts the picker would offer,
+   * The dotNS usernames of the unblocked contacts the picker would offer,
    * in host order, each the bare label with no top-level domain.
    */
   | { tag: "Listed"; value: { usernames: Array<string> } }
@@ -1829,7 +1829,7 @@ export interface ContactsPlatform {
   pickContact?(product: ProductContext): Promise<HostContactPick>;
 
   /**
-   * List the DotNS usernames of the unblocked contacts the picker would
+   * List the dotNS usernames of the unblocked contacts the picker would
    * offer.
    *
    * The core calls this only for the game product, so a host does not

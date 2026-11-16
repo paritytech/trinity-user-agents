@@ -5,7 +5,7 @@
 //! development list, so the generated example and the battery have someone to
 //! pick without a chat extension behind them. An empty spec is an empty list,
 //! which is how `NoContacts` gets exercised. Each name is also the username the
-//! game product reads, so a spec names contacts by their DotNS label.
+//! game product reads, so a spec names contacts by their dotNS label.
 //!
 //! The picker is this host's own approval surface: it names the contact it
 //! would return and takes yes or no. A headless run auto-approves it, an

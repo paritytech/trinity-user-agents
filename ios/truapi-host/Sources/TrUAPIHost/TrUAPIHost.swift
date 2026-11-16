@@ -338,7 +338,7 @@ public protocol ContactsHostBridge: AnyObject, Sendable {
     /// overlay.
     func pickContact(productId: ProductId) async throws -> HostContactPick
 
-    /// List the DotNS usernames of the unblocked contacts the picker would
+    /// List the dotNS usernames of the unblocked contacts the picker would
     /// offer, each the bare label with no top-level domain. The core asks only
     /// for the game product, so `productId` is not a filter. Called inline,
     /// so answer from what is already in hand. Defaults to `.unsupported`.

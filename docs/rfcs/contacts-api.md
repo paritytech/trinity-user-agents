@@ -44,14 +44,14 @@ Three outcomes because the retry decision differs: `Dismissed` is worth offering
 is not, and a Host with no picker answers `Unsupported`. No permission is requested — the user
 selecting a contact is the consent.
 
-The game product, Jollity (`dim2` on every network), may also read the DotNS usernames of the
+The game product, Jollity (`dim2` on every network), may also read the dotNS usernames of the
 unblocked contacts of the user, without a prompt:
 
 ```rust
 fn host_contacts_usernames() -> Result<Vec<String>, HostContactsUsernamesError>;
 ```
 
-Each username is the bare DotNS label without a top-level domain, and a contact without one is left
+Each username is the bare dotNS label without a top-level domain, and a contact without one is left
 out. The list carries no account and no handle. Every other product, and a Host that lists no
 usernames, gets `Unsupported`, and the Host is never asked on their behalf. While nobody is signed in,
 Jollity gets `NotConnected`, as `contacts.pick` does.

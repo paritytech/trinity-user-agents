@@ -284,7 +284,7 @@ the host actually holds and so returns `undefined` while it is signed out.
 `contacts` needs all three callbacks, `contacts`, `pickContact` and
 `contactUsernames`, or the group counts as absent. `pickContact` draws the
 picker and returns the chosen account, or `NoContacts` when there is nobody to
-show. `contactUsernames` returns the DotNS usernames of the unblocked contacts,
+show. `contactUsernames` returns the dotNS usernames of the unblocked contacts,
 which the core serves only to the game product, or `{ tag: "Unsupported" }`
 when the host cannot list them. `contacts({ handleKey, handles })` resolves the handles a
 transaction names: one entry per handle, in order, the account or `undefined`.
