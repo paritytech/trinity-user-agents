@@ -1,5 +1,6 @@
 use core::sync::atomic::AtomicU64;
 
+use futures::StreamExt;
 use truapi::{
 	api::CoinPayment,
 	versioned::coin_payment::{
@@ -18,6 +19,18 @@ use crate::coinage::{
 
 const PRODUCT: &str = "shop.dot";
 
+/// A wallet whose product accounts cannot pay a top-up.
+struct NoProductAccounts;
+
+impl crate::runtime::ProductFunding for NoProductAccounts {
+	fn product_account(
+		&self,
+		_: &truapi::latest::ProductAccountId,
+	) -> Option<Arc<dyn crate::coinage::assembly::Funding>> {
+		None
+	}
+}
+
 /// A product host over a running coinage layer, with the wallet behind it.
 async fn coinage_host(platform: Arc<StubPlatform>) -> (TestWallet, ProductRuntimeHost<RemoteAccountHolder>) {
 	let wallet = TestWallet::new(PrivacyPolicy::fastest());
@@ -25,7 +38,13 @@ async fn coinage_host(platform: Arc<StubPlatform>) -> (TestWallet, ProductRuntim
 	let services = payment_services_over(platform);
 	let clock = Arc::new(AtomicU64::new(NOW * 1000));
 	let payments = payments(layer, wallet.db.clone(), Arc::new(Board::default()), clock);
+	let engine = crate::runtime::CoinageEngine {
+		payments: payments.clone(),
+		platform: services.platform.clone(),
+		funding: Arc::new(NoProductAccounts),
+	};
 	assert!(services.install_coinage_payments(payments));
+	assert!(services.install_coinage_engine(Arc::new(engine)));
 	let host = payment_host(&services, PRODUCT, true);
 	(wallet, host)
 }
@@ -92,3 +111,49 @@ async fn every_spend_asks_the_user_and_a_refusal_is_denied() {
 	assert_eq!((reviews[0].from_purse, reviews[0].takes_held_back_value), (purse, false));
 }
 
+/// The fixture's chain says one cent is 10 000 of the asset's units.
+const UNIT: u128 = 10_000;
+
+fn payment_request(amount: u128, id: u8) -> truapi::versioned::payment::HostPaymentRequest {
+	truapi::versioned::payment::HostPaymentRequest::V2(truapi::v02::HostPaymentRequest {
+		from: None,
+		amount,
+		destination: [9; 32],
+		id: [id; 32],
+		funding: None,
+	})
+}
+
+#[tokio::test]
+async fn rfc6_balance_is_the_spendable_value_of_the_main_purse_in_asset_units() {
+	let (wallet, host) = coinage_host(Arc::new(StubPlatform::default())).await;
+	wallet.hold(PurseId::MAIN, AssetKind::Coin, 3, coin_read(3));
+	let request = truapi::versioned::payment::HostPaymentBalanceSubscribeRequest::V1(
+		v01::HostPaymentBalanceSubscribeRequest { purse: None },
+	);
+	let mut balances = truapi::api::Payment::balance_subscribe(&host, &CallContext::default(), request).await;
+	let first = balances.next().await.expect("a balance").expect("no failure");
+	let truapi::versioned::payment::HostPaymentBalanceSubscribeItem::V1(first) = first;
+	assert_eq!(first.available, 8 * UNIT);
+}
+
+#[tokio::test]
+async fn an_rfc6_payment_the_user_declines_or_below_a_cent_is_refused() {
+	let (wallet, host) = coinage_host(Arc::new(StubPlatform::default())).await;
+	wallet.hold(PurseId::MAIN, AssetKind::Coin, 3, coin_read(3));
+	let declined = truapi::api::Payment::request(&host, &CallContext::default(), payment_request(8 * UNIT, 1)).await;
+	assert!(matches!(declined, Err(CallError::Domain(_))), "the stub platform declines the spend");
+	let too_small = truapi::api::Payment::request(&host, &CallContext::default(), payment_request(UNIT - 1, 2)).await;
+	assert!(matches!(too_small, Err(CallError::Domain(_))), "less than a cent is refused");
+}
+
+#[tokio::test]
+async fn an_rfc6_payment_runs_once_under_its_id() {
+	let platform = Arc::new(StubPlatform { coin_payment_spend_confirmed: true, ..Default::default() });
+	let (wallet, host) = coinage_host(platform).await;
+	wallet.hold(PurseId::MAIN, AssetKind::Entry, 3, crate::coinage::testing::entry_read(0));
+	let first = truapi::api::Payment::request(&host, &CallContext::default(), payment_request(8 * UNIT, 1)).await;
+	assert!(first.is_ok(), "the payment starts: {first:?}");
+	let again = truapi::api::Payment::request(&host, &CallContext::default(), payment_request(8 * UNIT, 1)).await;
+	assert!(matches!(again, Err(CallError::Domain(_))), "a reused id is refused");
+}

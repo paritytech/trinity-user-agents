@@ -1179,6 +1179,7 @@ impl SigningHostRuntime {
 			seed: Arc::new(Arc::downgrade(&self.signing_host)),
 			personhood: Arc::new(Arc::downgrade(&self.signing_host)),
 			channel: Arc::new(crate::runtime::CoinageChannel(Arc::downgrade(&self.signing_host))),
+			funding: Arc::new(Arc::downgrade(&self.signing_host)),
 		};
 		let Some(engine) = start_durable_engine(&self.services, db.clone(), signer, &wallet) else {
 			return;
@@ -1668,6 +1669,7 @@ struct CoinageWallet {
 	seed: Arc<dyn crate::coinage::plugins::Seed>,
 	personhood: Arc<dyn crate::coinage::plugins::PersonhoodSource>,
 	channel: Arc<dyn crate::coinage::payments::channel::Transport>,
+	funding: Arc<dyn crate::runtime::ProductFunding>,
 }
 
 /// The coinage instance the layer serves: the stack's, when the host turned
@@ -1746,6 +1748,8 @@ fn start_coinage(
 	};
 	let store = db.clone();
 	let channel = wallet.channel.clone();
+	let funding = wallet.funding.clone();
+	let platform = services.platform.clone();
 	let interfaces = Interfaces {
 		store: db,
 		engine,
@@ -1773,8 +1777,10 @@ fn start_coinage(
 					clock: Arc::new(crate::unix_time::current_unix_millis),
 					params: PaymentParams::SHIPPED,
 				});
+				let engine = crate::runtime::CoinageEngine { payments: payments.clone(), platform, funding };
 				if let Some(services) = weak.upgrade() {
 					services.install_coinage_payments(payments);
+					services.install_coinage_engine(Arc::new(engine));
 				}
 			},
 			Err(error) => tracing::warn!(%error, "the coinage layer did not start"),

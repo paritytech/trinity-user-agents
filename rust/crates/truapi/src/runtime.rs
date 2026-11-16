@@ -17,6 +17,8 @@ mod authority;
 pub mod bulletin_rpc;
 mod capabilities;
 mod chat;
+#[cfg(not(target_arch = "wasm32"))]
+mod coinage_engine;
 pub mod contacts;
 mod dotns_lookup;
 pub use dotns_lookup::{DotnsLookup, DotnsLookupKind};
@@ -88,6 +90,8 @@ pub use pairing_host::PairingHost as PairingHostRole;
 use product_accounts::ProductAccounts;
 pub use renderer::renderer_access_for;
 pub use services::RuntimeServices;
+#[cfg(not(target_arch = "wasm32"))]
+pub use coinage_engine::{CoinageEngine, ProductFunding};
 #[cfg(not(target_arch = "wasm32"))]
 pub use signing_host::CoinageChannel;
 pub use signing_host::{LocalActivation, SigningHost as SigningHostRole};

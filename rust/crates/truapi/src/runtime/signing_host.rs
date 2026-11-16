@@ -366,6 +366,19 @@ impl crate::coinage::payments::channel::Transport for CoinageChannel {
 	}
 }
 
+/// The installed wallet's product accounts, which a coinage top-up may be
+/// paid from.
+#[cfg(not(target_arch = "wasm32"))]
+impl crate::runtime::ProductFunding for std::sync::Weak<SigningHost> {
+	fn product_account(
+		&self,
+		account: &truapi::latest::ProductAccountId,
+	) -> Option<Arc<dyn crate::coinage::assembly::Funding>> {
+		let keypair = self.upgrade()?.wallet.coinage_product_keypair(account).ok()?;
+		Some(Arc::new(crate::coinage::assembly::KeypairFunding(keypair)))
+	}
+}
+
 /// The user's chat key, until the team settles which key products publish
 /// for `Static` cheques.
 #[cfg(not(target_arch = "wasm32"))]
