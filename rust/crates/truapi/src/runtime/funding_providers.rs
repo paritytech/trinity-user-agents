@@ -337,7 +337,11 @@ impl RuntimeServices {
 	) -> Result<(), FundingSessionError> {
 		let (entries, invalid) = provider_config(&published_names, self.stack().tld());
 		for name in invalid {
-			warn!(%name, "funding provider configuration names no product");
+			warn!(
+				target: crate::markers::FUNDING_PROVIDER_CONFIG_INVALID.target,
+				%name,
+				"funding provider configuration names no product"
+			);
 		}
 		self.set_funding_providers(entries)
 	}
@@ -519,7 +523,11 @@ impl RuntimeServices {
 				.write_core_storage(CoreStorageKey::FundingSupport, records.encode())
 				.await
 			{
-				tracing::warn!(reason = %error.reason, "storing what funding providers serve failed");
+				tracing::warn!(
+					target: crate::markers::FUNDING_SUPPORT_STORE_FAILED.target,
+					reason = %crate::logging::HostText::new(&error.reason),
+					"storing what funding providers serve failed"
+				);
 			}
 		});
 	}
@@ -535,13 +543,21 @@ impl RuntimeServices {
 		let stored = match self.platform.read_core_storage(CoreStorageKey::FundingSupport).await {
 			Ok(Some(bytes)) => {
 				Vec::<LearnedSupport>::decode(&mut bytes.as_slice()).unwrap_or_else(|error| {
-					tracing::warn!(%error, "dropping undecodable funding provider records");
+					tracing::warn!(
+						target: crate::markers::FUNDING_SUPPORT_READ_FAILED.target,
+						%error,
+						"dropping undecodable funding provider records"
+					);
 					Vec::new()
 				})
 			},
 			Ok(None) => Vec::new(),
 			Err(error) => {
-				tracing::warn!(reason = %error.reason, "reading what funding providers serve failed");
+				tracing::warn!(
+					target: crate::markers::FUNDING_SUPPORT_READ_FAILED.target,
+					reason = %crate::logging::HostText::new(&error.reason),
+					"reading what funding providers serve failed"
+				);
 				return false;
 			},
 		};

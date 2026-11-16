@@ -117,6 +117,80 @@ markers! {
 	/// message, which is written for operators and names no person.
 	TRACING_ERROR = "truapi.tracing.error" => Export(Error);
 
+	// ------------------------------------------------------------- funding
+	//
+	// Health of the funding modality. No detail names a session, a quote, an
+	// amount or an account; a reason a host gave is bounded.
+	// Funding's flow facts travel as events, through `crate::funding_events`.
+
+	/// The expiry sweep could not store its result. Detail carries the
+	/// storage error.
+	FUNDING_SWEEP_FAILED = "truapi.funding.sweep_failed" => Export(Warn);
+
+	/// Loading the stored sessions failed and is retried. Detail carries the
+	/// storage error and the pause before the retry.
+	FUNDING_SESSIONS_LOAD_FAILED = "truapi.funding.sessions_load_failed" => Export(Warn);
+
+	/// The stored sessions were written by a newer app, so funding stays
+	/// unavailable. Detail carries the stored format number.
+	FUNDING_NEWER_FORMAT = "truapi.funding.newer_format" => Export(Error);
+
+	/// A stored session record does not decode, or is of a format this app
+	/// cannot upgrade. Detail names the table, the format and the size.
+	FUNDING_RECORD_UNREADABLE = "truapi.funding.record_unreadable" => Export(Error);
+
+	/// Storing a session's outcome once its funds moved failed, and is
+	/// retried. Detail carries the storage error and the pause.
+	FUNDING_SETTLE_FAILED = "truapi.funding.settle_failed" => Export(Warn);
+
+	/// Storing a provider's answer to a cancel failed. Detail carries the
+	/// storage error.
+	FUNDING_CANCEL_ANSWER_STORE_FAILED = "truapi.funding.cancel_answer_store_failed" => Export(Warn);
+
+	/// A provider answered a cancel with something it may not, which counts
+	/// as a refusal. Detail names the answer's kind only.
+	FUNDING_CANCEL_ANSWER_INVALID = "truapi.funding.cancel_answer_invalid" => Export(Error);
+
+	/// Asking the host whether it holds funds a provider started failed.
+	/// Detail carries the host's reason, bounded.
+	FUNDING_FUNDS_READ_FAILED = "truapi.funding.funds_read_failed" => Export(Warn);
+
+	/// Storing whether the host holds those funds failed. Detail carries the
+	/// storage error.
+	FUNDING_FUNDS_STORE_FAILED = "truapi.funding.funds_store_failed" => Export(Warn);
+
+	/// Reading a top-up's or payment's status from the host failed. Detail
+	/// carries the host's reason, bounded.
+	FUNDING_STATUS_READ_FAILED = "truapi.funding.status_read_failed" => Export(Warn);
+
+	/// A session's funds cannot be followed, as the host installed no top-up
+	/// or payment platform.
+	FUNDING_PLATFORM_MISSING = "truapi.funding.platform_missing" => Export(Error);
+
+	/// The overlay could not be shown or its session stored. Detail names the
+	/// error's kind only.
+	FUNDING_OVERLAY_FAILED = "truapi.funding.overlay_failed" => Export(Warn);
+
+	/// A session armed to start on its best quote did not. Detail names the
+	/// error's kind only.
+	FUNDING_AUTO_START_FAILED = "truapi.funding.auto_start_failed" => Export(Warn);
+
+	/// The host's funding provider configuration names something that is not
+	/// a product. Detail carries that name, from the host's own config.
+	FUNDING_PROVIDER_CONFIG_INVALID = "truapi.funding.provider_config_invalid" => Export(Warn);
+
+	/// Storing what providers' quotes showed they serve failed. Detail
+	/// carries the storage error.
+	FUNDING_SUPPORT_STORE_FAILED = "truapi.funding.support_store_failed" => Export(Warn);
+
+	/// Reading what providers' quotes showed they serve failed, or the
+	/// records did not decode. Detail carries the error.
+	FUNDING_SUPPORT_READ_FAILED = "truapi.funding.support_read_failed" => Export(Warn);
+
+	/// The launch marker that resumes funding was not written. Detail carries
+	/// the I/O error, not the path.
+	FUNDING_RESUME_MARKER_FAILED = "truapi.funding.resume_marker_failed" => Export(Error);
+
 	// ------------------------------------------------- native host callbacks
 	//
 	// These stay on the device. Their details describe what the person is doing

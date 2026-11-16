@@ -38,6 +38,7 @@ use truapi::latest::{
 
 use super::{
 	funding::{lock, within},
+	funding_telemetry::{self, FundingFact, Region},
 	services::RuntimeServices,
 };
 use crate::{
@@ -344,6 +345,12 @@ impl RuntimeServices {
 			self.funding().get(intent).map_or(ask.direction, |session| session.direction);
 		let ask = FundingQuoteAsk { direction, ..ask };
 		let (request_id, registration) = self.funding_quotes().start(intent, ask.clone());
+		let superseded =
+			self.funding()
+				.telemetry()
+				.quotes_requested(intent, request_id, current_unix_millis());
+		self.funding()
+			.report_facts(intent, None, Some(&ask), Vec::from_iter(superseded));
 		let rounds =
 			self.clone()
 				.quote_rounds(intent.to_string(), request_id, ask, deadline, refresh);
@@ -369,6 +376,7 @@ impl RuntimeServices {
 			None => self.detected_funding_country().await,
 		};
 		let ask = FundingQuoteAsk { country, ..ask };
+		self.funding().telemetry().asked_in(&intent, Region::of(ask.country.as_deref()));
 		let mut rows: Vec<FundingQuoteRow> = Vec::new();
 		loop {
 			// The providers changing starts the next round at once, so one
@@ -459,7 +467,11 @@ impl RuntimeServices {
 			if let Err(error) =
 				services.select_funding_provider(&intent, &provider_id, &quote_id).await
 			{
-				warn!(%intent, %error, "funding session not started when quoted");
+				warn!(
+					target: crate::markers::FUNDING_AUTO_START_FAILED.target,
+					error = error.kind(),
+					"funding session not started when quoted"
+				);
 			}
 		});
 	}
@@ -523,6 +535,16 @@ impl RuntimeServices {
 		let quotable = !session.is_terminal() && session.provider_id.is_none();
 		if !self.funding_quotes().publish(intent, list, quotable) {
 			return false;
+		}
+		let settled = self.funding().telemetry().quotes_shown(intent, list, current_unix_millis());
+		if settled.is_some() {
+			let asked = self.funding_quotes().asked(intent);
+			self.funding().report_facts(
+				intent,
+				Some(&session),
+				asked.as_ref(),
+				Vec::from_iter(settled),
+			);
 		}
 		if let Some(platform) = self.funding().platform() {
 			platform.funding_quotes_changed(intent.to_string(), Some(list.clone()));
@@ -728,6 +750,51 @@ fn best_quote(
 			.max_by_key(|(_, quote)| scaled(quote.receive_amount, quote.asset_decimals)),
 	};
 	best.map(|(row, _)| row.provider_id.clone())
+}
+
+/// What handing a session in `direction` to `provider_id` on `choice` tells
+/// telemetry, against the list `shown` it was picked from: the quote's rank
+/// by what the user gets, how many quoted, and buckets of its fees and time.
+pub(crate) fn chosen_fact(
+	direction: FundingDirection,
+	shown: Option<&FundingQuoteList>,
+	provider_id: &ProductId,
+	choice: &FundingChoice,
+) -> FundingFact {
+	let quoted: Vec<(&ProductId, &FundingQuote)> = shown
+		.iter()
+		.flat_map(|list| &list.rows)
+		.filter_map(|row| match &row.state {
+			FundingQuoteState::Quoted { quote } => Some((&row.provider_id, quote)),
+			_ => None,
+		})
+		.collect();
+	let value = |quote: &FundingQuote| match direction {
+		FundingDirection::In => scaled(quote.send_amount, quote.asset_decimals),
+		FundingDirection::Out => scaled(quote.receive_amount, quote.asset_decimals),
+	};
+	let mine = value(&choice.quote);
+	let better = quoted
+		.iter()
+		.filter(|(other, quote)| {
+			*other != provider_id &&
+				match direction {
+					FundingDirection::In => value(quote) < mine,
+					FundingDirection::Out => value(quote) > mine,
+				}
+		})
+		.count();
+	let quote = &choice.quote;
+	FundingFact::ProviderChosen {
+		best: shown.and_then(|list| list.best.as_ref()) == Some(provider_id),
+		rank: better as u64 + 1,
+		quote_count: quoted.len() as u64,
+		fee_bucket: funding_telemetry::fee_bucket(
+			quote.provider_fee.saturating_add(quote.network_fee),
+			quote.send_amount,
+		),
+		eta_bucket: funding_telemetry::eta_bucket(quote.eta_secs),
+	}
 }
 
 /// `amount` in an asset with `decimals`, at 18 decimals, so amounts quoted at

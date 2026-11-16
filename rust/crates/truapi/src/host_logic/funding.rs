@@ -912,7 +912,7 @@ impl FundingSession {
 	}
 
 	/// The session's steps, each with when it was reached, if it was.
-	fn steps_reached(&self) -> Vec<FundingProgressStep> {
+	pub(crate) fn steps_reached(&self) -> Vec<FundingProgressStep> {
 		let steps = FundingStep::of(self.direction);
 		let first = |matches: fn(&FundingUpdate) -> bool| {
 			self.updates
@@ -1869,7 +1869,16 @@ impl FundingSession {
 				true
 			},
 			answer => {
-				error!(intent = %self.intent, ?answer, "a provider's cancel answer does not fit");
+				let kind = match answer {
+					FundingCancelAnswer::Stopped => "stopped",
+					FundingCancelAnswer::Offer { .. } => "offer",
+					FundingCancelAnswer::Refused { .. } => "refused",
+				};
+				error!(
+					target: crate::markers::FUNDING_CANCEL_ANSWER_INVALID.target,
+					kind,
+					"a provider's cancel answer does not fit"
+				);
 				self.cancel = Some(FundingCancel::Refused { reason: String::new() });
 				true
 			},
@@ -2120,6 +2129,19 @@ pub enum FundingSessionError {
 		/// The stored format.
 		format: u16,
 	},
+}
+
+impl FundingSessionError {
+	/// The error's kind, without the ids or amounts it carries.
+	pub fn kind(&self) -> &'static str {
+		match self {
+			Self::Storage { .. } => "storage",
+			Self::InvalidProvider { .. } => "invalid_provider",
+			Self::UnknownQuote { .. } => "unknown_quote",
+			Self::QuoteAmountMismatch { .. } => "quote_amount_mismatch",
+			Self::NewerFormat { .. } => "newer_format",
+		}
+	}
 }
 
 /// `target` as the host may show it: an App route must be a relative route

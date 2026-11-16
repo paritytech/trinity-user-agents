@@ -1064,8 +1064,16 @@ fn a_compaction_that_fails_to_store_keeps_every_session() {
 #[test]
 fn a_replaced_frame_leaves_its_successor_tracked() {
 	let registry = FundingRegistry::default();
-	let mut first = registry.request_frame("fs_1", worker("ramp.dot"));
-	let mut second = registry.request_frame("fs_1", worker("ramp.dot"));
+	let mut first = registry.request_frame(
+		"fs_1",
+		worker("ramp.dot"),
+		crate::runtime::funding_telemetry::FrameTarget::Page,
+	);
+	let mut second = registry.request_frame(
+		"fs_1",
+		worker("ramp.dot"),
+		crate::runtime::funding_telemetry::FrameTarget::Page,
+	);
 	assert_eq!(block_on(first.opened()), Some(FundingFrameOutcome::Dismissed));
 	assert!(registry.open_frame("fs_1"));
 	assert_eq!(block_on(second.opened()), None);
@@ -1087,7 +1095,11 @@ fn a_frame_asked_for_after_the_payment_moved_is_closed_at_once() {
 			..session("fs_1", NOW)
 		},
 	);
-	let mut frame = registry.request_frame("fs_1", worker("ramp.dot"));
+	let mut frame = registry.request_frame(
+		"fs_1",
+		worker("ramp.dot"),
+		crate::runtime::funding_telemetry::FrameTarget::Page,
+	);
 
 	assert_eq!(
 		futures::FutureExt::now_or_never(frame.opened()),
@@ -1101,7 +1113,11 @@ fn a_frame_asked_for_after_the_payment_moved_is_closed_at_once() {
 #[test]
 fn a_frame_closed_before_it_is_presented_shows_nothing() {
 	let registry = FundingRegistry::default();
-	let mut frame = registry.request_frame("fs_1", worker("ramp.dot"));
+	let mut frame = registry.request_frame(
+		"fs_1",
+		worker("ramp.dot"),
+		crate::runtime::funding_telemetry::FrameTarget::Page,
+	);
 	assert!(registry.open_frame("fs_1"));
 	assert!(registry.close_open_frame("fs_1"));
 

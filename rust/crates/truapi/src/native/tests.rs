@@ -3296,6 +3296,8 @@ struct RecordingNativeFunding {
 	changes: Mutex<Vec<(Option<String>, super::funding_feed::FundingChangeKind)>>,
 	/// Whether the overlay could read its options when it was shown.
 	options_when_shown: Mutex<Option<bool>>,
+	/// The funding events the core reported, in order.
+	events: Mutex<Vec<crate::platform::FundingEvent>>,
 }
 
 #[async_trait::async_trait]
@@ -3337,6 +3339,35 @@ impl super::callbacks::NativeFundingCallbacks for RecordingNativeFunding {
 	) {
 		self.changes.lock().expect("changes mutex poisoned").push((intent, kind));
 	}
+
+	fn funding_event(&self, event: crate::platform::FundingEvent) {
+		self.events.lock().expect("events mutex poisoned").push(event);
+	}
+}
+
+// A native host receives the core's funding facts through its callbacks,
+// each with the same random reference and none naming the session.
+#[test]
+fn a_native_host_receives_funding_events() {
+	let host = NativeTrUApiHostRuntime::with_runtime_config(
+		Arc::new(EventCallbacks::new()),
+		native_host_runtime_config(),
+	)
+	.expect("host runtime config should be valid");
+	let funding = Arc::new(RecordingNativeFunding::default());
+	assert!(funding.host.set(Arc::downgrade(&host)).is_ok());
+	assert!(host.set_funding_callbacks(funding.clone()));
+
+	let intent =
+		futures::executor::block_on(host.open_funding(v01::FundingDirection::In, Some(1_000)))
+			.expect("opened")
+			.expect("started");
+
+	let events = funding.events.lock().expect("events mutex poisoned").clone();
+	let names: Vec<&str> = events.iter().map(|event| event.name.as_str()).collect();
+	assert_eq!(names, ["truapi.funding.overlay_opened", "truapi.funding.overlay_closed"]);
+	assert_eq!(events[0].session_ref, events[1].session_ref);
+	assert!(events.iter().all(|event| !format!("{event:?}").contains(&intent)));
 }
 
 // The host reads funding state back from the runtime once the core says

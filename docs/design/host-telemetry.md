@@ -155,10 +155,41 @@ A host has to call the function to hold the table at all, so a host that never c
 
 The benefit is that the number of places the rule is written stays at one as hosts are added, and that a marker is local until someone states otherwise rather than exported until someone notices.
 
+## Funding events
+
+Funding is the first area whose facts leave the core as structured events rather than as log lines. A log detail is one capped string, which cannot be counted or filtered by property, and `on_core_log` does not reach the web hosts. So the core reports funding facts through a platform hook, and a second table in the core decides what they may carry.
+
+**The registry.** `rust/crates/truapi/src/funding_events.rs` lists every `truapi.funding.*` event with the tag and measure keys it may carry, and each entry's doc comment lists the closed set each key takes. `funding_events::check` refuses an event the table does not list, or one carrying a key its entry does not name, and the registry reports nothing it refuses. Facts are built from typed values in `runtime/funding_telemetry.rs`: closed enums and fixed buckets, never a string a provider, a product or a manifest wrote.
+
+**The hook.** `FundingPlatform::funding_event(FundingEvent)` defaults to doing nothing; natively it is the required callback `NativeFundingCallbacks::funding_event`. A `FundingEvent` is a name, a level (`info` or `error`), a `session_ref`, a list of tags and a list of measures (counts, and durations in milliseconds). A host maps it onto its own recorder: tags to tags, measures and `session_ref` (as `funding.ref`) to extras, the level to its routing, and on `truapi.funding.ended` a fingerprint of the name with `funding.outcome` and `funding.reason`. Host UI events that the core never sees are the host's own, named `host.funding.*`.
+
+| Event | Fires when |
+|---|---|
+| `overlay_opened` | the overlay opens on a new session |
+| `overlay_closed` | it closes: started, dismissed or failed, and how far the user got |
+| `quotes_settled` | every provider asked for a quote request answered, or a newer request replaced it |
+| `provider_chosen` | the session is handed to a provider on a quote: its rank, fee and time buckets |
+| `provider_took` | the provider's worker takes the session, or first fails to |
+| `step_reached` | a milestone (received, added, sent) is first reached |
+| `status_flag` | taking longer, retrying or retrying a payout first shows |
+| `ended` | the provider is done with the session: outcome, reason class, whether it was expected |
+| `cancel_requested` | the user asks to cancel |
+| `cancel_answered` | the provider answers a cancel, or its worker first fails to |
+| `cancel_confirmed` | the user answers a cancel offer |
+| `frame_requested`, `frame_opened`, `frame_closed` | a provider's screen is asked for, opened, and closed, or dropped before the user opened it |
+
+Every event also carries the session's direction, opener, first-party product or `third_party`, rail, listed provider, asset and network when they are plain identifiers, an amount bucket and its age. Each is emitted once, on a change a commit stored or on the call that made it, never on loading sessions after a restart.
+
+**Privacy.** No event carries a session's intent, a quote, transaction or reference id, an address, an exact amount, fee or limit, a provider's own text, or a URL. Amounts are CASH buckets (`<10` to `5k+`), fees basis-point buckets, and a country only its region: `eu`, `uk`, `us`, `other`, or `unset`. `session_ref` is drawn at random per session and kept in memory only, so it joins a session's events without leading back to the session; a session resumed after a restart draws a new one.
+
+**Forwarding.** The core emits these on every build. A host forwards them only from builds that are not released, which is the gate its Sentry recorder already applies on both mobile hosts, and there is no consent screen behind them. Shipping them from a release build needs consent and a policy decision first.
+
+**Health.** Funding's own warnings are markers in the `markers!` table, `truapi.funding.*` with a class each, and none of their details names a session.
+
 ## Open questions
 
 1. Does the registry belong beside the logging layer in `truapi`, or in the `truapi::platform` module with the other host-facing contracts?
-2. Do events and metrics want the same treatment, or is the log channel the only one with a boundary worth policing?
+2. ~~Do events and metrics want the same treatment, or is the log channel the only one with a boundary worth policing?~~ Settled for events: they get a table of their own, as funding's does above. Metrics still ride on events.
 3. When Desktop and dot.li get a core-log channel, does it carry the class on each line or read the table the way the native hosts do?
 4. Does Android route an info host event to Sentry Logs the way iOS does, which means `HostEvent` grows a level there?
 

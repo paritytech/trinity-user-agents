@@ -8,10 +8,10 @@
 //! There is no chain behind it: this exists so a battery can drive the
 //! product's side of funding headlessly.
 //!
-//! Every overlay request and every session change the core reports is
-//! appended to the transcript named by `TRUAPI_FUNDING_LOG`, one JSON object
-//! per line, so a battery can assert what the host saw rather than only what
-//! the product was told.
+//! Every overlay request, every session change and every funding event the
+//! core reports is appended to the transcript named by `TRUAPI_FUNDING_LOG`,
+//! one JSON object per line, so a battery can assert what the host saw rather
+//! than only what the product was told.
 
 use std::{
 	collections::VecDeque,
@@ -23,7 +23,9 @@ use truapi::{
 	SigningHostRuntime, current_unix_millis,
 	host_logic::funding::FundingStage,
 	latest::{FundingDirection, FundingFailure, GenericError, HostFundingStatusSubscribeItem},
-	platform::{FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext},
+	platform::{
+		FundingEvent, FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext,
+	},
 };
 
 use crate::transcript::Transcript;
@@ -181,6 +183,24 @@ impl FundingPlatform for CliFundingHost {
 			"intent": intent,
 			"tag": tag,
 			"amount": amount.map(|amount| amount.to_string()),
+		}));
+	}
+
+	fn funding_event(&self, event: FundingEvent) {
+		self.transcript.record(serde_json::json!({
+			"kind": "event",
+			"name": event.name,
+			"ref": event.session_ref,
+			"tags": event
+				.tags
+				.into_iter()
+				.map(|tag| (tag.key, serde_json::Value::String(tag.value)))
+				.collect::<serde_json::Map<_, _>>(),
+			"measures": event
+				.measures
+				.into_iter()
+				.map(|measure| (measure.key, serde_json::Value::from(measure.value)))
+				.collect::<serde_json::Map<_, _>>(),
 		}));
 	}
 }

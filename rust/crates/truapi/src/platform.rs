@@ -2204,6 +2204,68 @@ pub enum FundingPresentOutcome {
 	Dismissed,
 }
 
+/// One funding fact the core reports for telemetry, named and shaped by the
+/// registry in [`crate::funding_events`].
+///
+/// Nothing in it identifies a session, a person or an amount: tags hold
+/// closed values only, amounts and fees arrive as coarse buckets and a
+/// country as a coarse region, and `session_ref` is a random id the core
+/// draws for telemetry alone. A host maps it onto its own event recorder,
+/// and only on builds that are not released: the core emits it whatever the
+/// build, and the host decides whether it leaves the device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct FundingEvent {
+	/// The registered name, `truapi.funding.<thing>`.
+	pub name: String,
+	/// How loud the event is, which picks where the host sends it.
+	pub level: FundingEventLevel,
+	/// A random id that joins one session's events. It is drawn per session
+	/// and kept in memory only, so it cannot be traced back to the session,
+	/// its provider or its payments.
+	pub session_ref: String,
+	/// What the event is queried on, each key registered for its name and
+	/// each value from a closed set.
+	pub tags: Vec<FundingEventTag>,
+	/// Counts and durations in milliseconds, each key registered for its
+	/// name.
+	pub measures: Vec<FundingEventMeasure>,
+}
+
+/// One tag of a [`FundingEvent`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct FundingEventTag {
+	/// The key, `funding.<field>`.
+	pub key: String,
+	/// The value, from the closed set the registry documents for the key.
+	pub value: String,
+}
+
+/// One count or duration of a [`FundingEvent`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
+pub struct FundingEventMeasure {
+	/// The key, `funding.<field>`.
+	pub key: String,
+	/// The count, or the duration in milliseconds.
+	pub value: u64,
+}
+
+/// How loud a [`FundingEvent`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
+pub enum FundingEventLevel {
+	/// A step of the flow, counted rather than alerted on.
+	Info,
+	/// A session that broke on the core's or the provider's side.
+	Error,
+}
+
 /// Host-implemented funding surface: the native overlay a funding session
 /// runs in. Optional: a host that omits it leaves funding requests answered
 /// `Unsupported`.
@@ -2264,6 +2326,13 @@ pub trait FundingPlatform: Send + Sync {
 	/// provider again. `None` once a selection on another route withdrew it.
 	fn funding_quotes_changed(&self, intent: String, quotes: Option<FundingQuoteList>) {
 		let _ = (intent, quotes);
+	}
+
+	/// Observe a funding fact for telemetry. Every build gets these; a host
+	/// sends them on only from builds that are not released, and never
+	/// adds a session's intent to them.
+	fn funding_event(&self, event: FundingEvent) {
+		let _ = event;
 	}
 }
 
