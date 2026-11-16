@@ -31,11 +31,7 @@ enum PageBackgroundTone: Equatable {
     ///
     /// The colours are computed CSS values, outermost element first. Nil when every colour is fully transparent.
     static func visibleColor(in cssColors: [String]) -> UIColor? {
-        guard let components = cssColors.lazy.compactMap({ Self.visibleComponents(of: $0) }).first else {
-            return nil
-        }
-
-        return UIColor(red: components.red, green: components.green, blue: components.blue, alpha: 1)
+        cssColors.lazy.compactMap { Self.visibleColor(of: $0) }.first
     }
 
     /// The theme the status strip takes over a page of this tone, or nil where the app's own theme already reads
@@ -61,9 +57,8 @@ private extension PageBackgroundTone {
     static let blueWeight = 0.0722
     static let darkThreshold = 0.5
 
-    /// Red, green and blue in 0...1 of an `rgb()` or `rgba()` value, or nil when it is fully transparent or in
-    /// another notation.
-    static func visibleComponents(of cssColor: String) -> (red: Double, green: Double, blue: Double)? {
+    /// An opaque colour from an `rgb()` or `rgba()` value, nil when fully transparent or in another notation.
+    static func visibleColor(of cssColor: String) -> UIColor? {
         guard
             cssColor.hasPrefix("rgb"),
             let open = cssColor.firstIndex(of: "("),
@@ -82,6 +77,6 @@ private extension PageBackgroundTone {
         if numbers.count >= 4, numbers[3] == 0 {
             return nil
         }
-        return (numbers[0] / 255, numbers[1] / 255, numbers[2] / 255)
+        return UIColor(red: numbers[0] / 255, green: numbers[1] / 255, blue: numbers[2] / 255, alpha: 1)
     }
 }
