@@ -377,7 +377,9 @@ impl EmbeddedChainProvider {
 		self.storage.is_some()
 	}
 
-	/// Store nothing from now on, a snapshot already under way included.
+	/// Store nothing from now on, including a snapshot already taken but not
+	/// yet handed to the store. A save the store has already been called with
+	/// still completes.
 	///
 	/// A host that replaces this provider, as when its stack's `generation`
 	/// changes, calls it so a late save cannot replace what the next provider
@@ -627,8 +629,8 @@ impl EmbeddedChainProvider {
 			);
 			return Ok(false);
 		}
-		// Checked last, after every await, so a snapshot that was under way
-		// when the provider was let go still writes nothing.
+		// Checked last, after every await, so a snapshot taken before the
+		// provider was let go is still not handed to the store.
 		if self.saving_stopped.load(core::sync::atomic::Ordering::Relaxed) {
 			tracing::debug!(
 				genesis = %hex::encode(genesis_hash),

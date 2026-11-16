@@ -340,7 +340,7 @@ const STORAGE_DEADLINE: core::time::Duration = core::time::Duration::from_secs(5
 /// previous provider and `free()` it before building the next one. Its
 /// snapshot loop runs until then, and stores under the same stack and genesis
 /// hash, replacing the next provider's state. `free()` also keeps a snapshot
-/// already under way from being stored.
+/// not yet handed to the client from being stored.
 #[wasm_bindgen]
 pub struct ChainProviderHandle {
 	inner: Arc<EmbeddedChainProvider>,
@@ -351,7 +351,7 @@ pub struct ChainProviderHandle {
 }
 
 /// A snapshot loop holds the provider while it saves, so letting go of the
-/// handle alone would not stop a save that is under way.
+/// handle alone would not stop a snapshot not yet handed to the client.
 #[cfg(feature = "smoldot")]
 impl Drop for ChainProviderHandle {
 	fn drop(&mut self) {

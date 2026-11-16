@@ -131,8 +131,8 @@ impl LightStack {
 			source,
 		};
 		chain.check_light_spec(specification).map_err(refused)?;
-		let specification =
-			core::str::from_utf8(specification).expect("a light spec that parsed as JSON is UTF-8");
+		let specification = core::str::from_utf8(specification)
+			.map_err(|error| refused(Error::MalformedSpec(error.to_string())))?;
 		self.specs().insert(genesis_hash, specification.to_owned());
 		Ok(())
 	}

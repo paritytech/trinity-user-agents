@@ -652,9 +652,9 @@ fn a_provider_without_a_stack_does_not_read_a_stacks_blob() {
 	);
 }
 
-/// A provider being replaced keeps its snapshot from landing over what its
-/// successor stored under the same stack and genesis hash, even one that was
-/// already under way when it stopped.
+/// A provider being replaced must not land a snapshot over what its successor
+/// stored under the same stack and genesis hash: once it has stopped saving,
+/// a blob that reaches the store step is not written.
 #[cfg(feature = "smoldot")]
 #[test]
 fn a_provider_that_stopped_saving_stores_nothing() {
