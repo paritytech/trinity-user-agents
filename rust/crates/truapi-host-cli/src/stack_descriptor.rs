@@ -68,8 +68,8 @@ pub async fn read_stack(stack: &str, key: Option<&str>) -> Result<(Pointer, Vec<
 /// Fails when it is unreachable, breaks a rule or is past `expiresAt`; warns when it is past
 /// `validUntil`.
 ///
-/// The id is the pointer's. A local file has no pointer of its own, so its id is its canonical
-/// path: two files are two stacks, and a file that moves becomes another stack.
+/// The id is the pointer's. A local file has no pointer of its own, so its id is `file:` followed
+/// by its canonical path: two files are two stacks, and a file that moves becomes another stack.
 pub async fn load_descriptor(stack: &str, key: Option<&str>) -> Result<(String, Descriptor)> {
 	let (pointer, bytes, source) = read_stack(stack, key).await?;
 	let accepted = accept(&pointer, None, Fetched::Document(&bytes), unix_now() as i64)
