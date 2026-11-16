@@ -388,7 +388,7 @@ A Presented product covers the container, so it draws its own strip with the sam
 
 - `CollectiblesViewController` returns `.berlinNight` while expanded, and `applyBarTheme()` sets the same override on its navigation controller.
 - `SPAViewController` reads the page's computed CSS background (root element, then body). The web view takes that colour, so the iOS 26 scroll edge effect under the strip tints towards the page. `PageBackgroundTone` names a theme only on a clash: `.berlinNight` for a dark page under a light app theme, `.berlinDay` for a light page under a dark one.
-- It reads on load, on a change of address, and on an app theme change, where it drops the tone and reads again on the next main-queue turn. A background painted only inside a container, or changed by script alone, is not detected.
+- A document-start script, `PageBackgroundReporter`, registered as an `SPAJSEngine` script handler, watches the document with a `MutationObserver`, `prefers-color-scheme` and `transitionend`. It posts the root and body colours on the next frame whenever they change, so a page that applies the host theme after loading is followed. On an app theme change the strip re-evaluates its theme against the new app theme. A background painted only inside a container is not detected.
 
 ## Mounting and Re-tap
 
