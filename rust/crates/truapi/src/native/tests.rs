@@ -1876,22 +1876,38 @@ fn runtime_config_passes_the_reserved_values_through() {
 
 #[test]
 fn runtime_config_holds_the_stack_to_the_builds_extra_reserved_values() {
-	// A build that reserves a TLD must not start a stack on it.
-	let mut stack = native_bundled_stack(&crate::test_support::test_descriptor(
+	// A build that reserves a TLD or a genesis hash must not start a stack on it.
+	let stack = native_bundled_stack(&crate::test_support::test_descriptor(
 		"paseo", [0xa1; 32], [0xb2; 32], [0xc3; 32],
 	));
-	stack.reserved_values.extra_tlds = vec!["paseo".to_string()];
-	let refused = NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
-		stack,
-		..native_host_runtime_config()
-	});
+	let reserving = |reserved_values| {
+		NativeResolvedHostRuntimeConfig::try_from(HostRuntimeConfig {
+			stack: crate::native::BundledStack { reserved_values, ..stack.clone() },
+			..native_host_runtime_config()
+		})
+		.err()
+	};
+	let refused = |reason: &str| {
+		Some(NativeRuntimeConfigError::Invalid {
+			reason: format!("{reason}, which this build does not allow"),
+		})
+	};
 
 	assert_eq!(
-		refused.err(),
-		Some(NativeRuntimeConfigError::Invalid {
-			reason: "stack uses the reserved tld paseo, which this build does not allow"
-				.to_string(),
-		}),
+		[
+			reserving(crate::platform::ReservedValuesPolicy {
+				extra_tlds: vec!["paseo".to_string()],
+				..Default::default()
+			}),
+			reserving(crate::platform::ReservedValuesPolicy {
+				extra_genesis_hashes: vec![[0xc3; 32]],
+				..Default::default()
+			}),
+		],
+		[
+			refused("stack uses the reserved tld paseo"),
+			refused(&format!("stack uses the reserved genesis hash 0x{}", "c3".repeat(32))),
+		],
 	);
 }
 
