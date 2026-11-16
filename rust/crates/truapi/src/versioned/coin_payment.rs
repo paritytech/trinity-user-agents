@@ -30,4 +30,13 @@ truapi_macros::versioned_type! {
 	pub enum HostCoinPaymentListenForRequest { V1 => v01::HostCoinPaymentListenForRequest }
 	pub enum HostCoinPaymentListenForItem { V1 => v01::HostCoinPaymentListenForItem }
 	pub enum HostCoinPaymentListenForError { V1 => v01::CoinPaymentError }
+	pub enum HostCoinPaymentChequeStatusRequest { V1 => v01::HostCoinPaymentChequeStatusRequest }
+	pub enum HostCoinPaymentChequeStatusItem { V1 => v01::CoinPaymentChequeProgress }
+	pub enum HostCoinPaymentChequeStatusError { V1 => v01::CoinPaymentError }
+	pub enum HostCoinPaymentCancelChequeRequest { V1 => v01::HostCoinPaymentCancelChequeRequest }
+	pub enum HostCoinPaymentCancelChequeItem { V1 => v01::CoinPaymentStatus }
+	pub enum HostCoinPaymentCancelChequeError { V1 => v01::CoinPaymentError }
+	pub enum HostCoinPaymentListPursesRequest { V1 => v01::HostCoinPaymentListPursesRequest }
+	pub enum HostCoinPaymentListPursesResponse { V1 => v01::HostCoinPaymentListPursesResponse }
+	pub enum HostCoinPaymentListPursesError { V1 => v01::CoinPaymentError }
 }

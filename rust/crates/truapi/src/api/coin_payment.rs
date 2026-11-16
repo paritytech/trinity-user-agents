@@ -3,6 +3,9 @@
 use crate::{
 	CallContext, CallError, Subscription,
 	versioned::coin_payment::{
+		HostCoinPaymentCancelChequeError, HostCoinPaymentCancelChequeItem,
+		HostCoinPaymentCancelChequeRequest, HostCoinPaymentChequeStatusError,
+		HostCoinPaymentChequeStatusItem, HostCoinPaymentChequeStatusRequest,
 		HostCoinPaymentCreateChequeError, HostCoinPaymentCreateChequeRequest,
 		HostCoinPaymentCreateChequeResponse, HostCoinPaymentCreatePurseError,
 		HostCoinPaymentCreatePurseRequest, HostCoinPaymentCreatePurseResponse,
@@ -10,12 +13,13 @@ use crate::{
 		HostCoinPaymentCreateReceivableResponse, HostCoinPaymentDeletePurseError,
 		HostCoinPaymentDeletePurseItem, HostCoinPaymentDeletePurseRequest,
 		HostCoinPaymentDepositError, HostCoinPaymentDepositItem, HostCoinPaymentDepositRequest,
-		HostCoinPaymentListenForError, HostCoinPaymentListenForItem,
-		HostCoinPaymentListenForRequest, HostCoinPaymentQueryPurseError,
-		HostCoinPaymentQueryPurseRequest, HostCoinPaymentQueryPurseResponse,
-		HostCoinPaymentRebalancePurseError, HostCoinPaymentRebalancePurseItem,
-		HostCoinPaymentRebalancePurseRequest, HostCoinPaymentRefundError,
-		HostCoinPaymentRefundItem, HostCoinPaymentRefundRequest,
+		HostCoinPaymentListPursesError, HostCoinPaymentListPursesRequest,
+		HostCoinPaymentListPursesResponse, HostCoinPaymentListenForError,
+		HostCoinPaymentListenForItem, HostCoinPaymentListenForRequest,
+		HostCoinPaymentQueryPurseError, HostCoinPaymentQueryPurseRequest,
+		HostCoinPaymentQueryPurseResponse, HostCoinPaymentRebalancePurseError,
+		HostCoinPaymentRebalancePurseItem, HostCoinPaymentRebalancePurseRequest,
+		HostCoinPaymentRefundError, HostCoinPaymentRefundItem, HostCoinPaymentRefundRequest,
 	},
 	wire, wire_trait,
 };
@@ -226,5 +230,80 @@ pub trait CoinPayment: Send + Sync {
 		_request: HostCoinPaymentListenForRequest,
 	) -> Subscription<HostCoinPaymentListenForItem, CallError<HostCoinPaymentListenForError>> {
 		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// Follow what became of one of the caller's cheques: how much of it is
+	/// still minting, claimable, claimed by the payee, or back with the payer.
+	/// The stream closes once nothing is minting or claimable.
+	///
+	/// ```ts
+	/// import { type CoinPaymentCheque } from "@parity/truapi";
+	/// import { firstValueFrom, from } from "rxjs";
+	///
+	/// const cheque: CoinPaymentCheque = {
+	///   id: "0x0000000000000000000000000000000000000000000000000000000000000000",
+	///   amount: 1000,
+	///   encryptedSecrets: "0x",
+	/// };
+	///
+	/// const progress = await firstValueFrom(
+	///   from(truapi.coinPayment.chequeStatus({ request: { cheque } })),
+	/// );
+	/// console.log("cheque progress:", progress);
+	/// ```
+	#[wire(id = 9)]
+	async fn cheque_status(
+		&self,
+		_cx: &CallContext,
+		_request: HostCoinPaymentChequeStatusRequest,
+	) -> Subscription<HostCoinPaymentChequeStatusItem, CallError<HostCoinPaymentChequeStatusError>>
+	{
+		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// Take back what a payee has not claimed of one of the caller's cheques,
+	/// without waiting for its claim deadline. Whoever moves a coin first has
+	/// it.
+	///
+	/// ```ts
+	/// import { type CoinPaymentCheque } from "@parity/truapi";
+	/// import { firstValueFrom, from } from "rxjs";
+	///
+	/// const cheque: CoinPaymentCheque = {
+	///   id: "0x0000000000000000000000000000000000000000000000000000000000000000",
+	///   amount: 1000,
+	///   encryptedSecrets: "0x",
+	/// };
+	///
+	/// const status = await firstValueFrom(
+	///   from(truapi.coinPayment.cancelCheque({ request: { cheque } })),
+	/// );
+	/// console.log("cancellation status:", status);
+	/// ```
+	#[wire(id = 10)]
+	async fn cancel_cheque(
+		&self,
+		_cx: &CallContext,
+		_request: HostCoinPaymentCancelChequeRequest,
+	) -> Subscription<HostCoinPaymentCancelChequeItem, CallError<HostCoinPaymentCancelChequeError>>
+	{
+		Subscription::interrupted(CallError::unavailable())
+	}
+
+	/// List the purses the caller may see: those it created, and those the
+	/// user let it see.
+	///
+	/// ```ts
+	/// const result = await truapi.coinPayment.listPurses({});
+	/// assert(result.isOk(), "listPurses failed:", result);
+	/// console.log("purses:", result.value.purses);
+	/// ```
+	#[wire(id = 11)]
+	async fn list_purses(
+		&self,
+		_cx: &CallContext,
+		_request: HostCoinPaymentListPursesRequest,
+	) -> Result<HostCoinPaymentListPursesResponse, CallError<HostCoinPaymentListPursesError>> {
+		Err(CallError::unavailable())
 	}
 }

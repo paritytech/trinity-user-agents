@@ -1,6 +1,6 @@
 //! Product-facing payment capability adapters.
 //!
-//! Payment returns typed domain errors; CoinPayment returns Unsupported.
+//! Payment returns typed domain errors.
 
 use std::sync::Arc;
 
@@ -9,24 +9,9 @@ use parity_scale_codec::Encode;
 use tracing::instrument;
 use truapi::{
 	CallContext, CallError, Subscription,
-	api::{CoinPayment, Payment},
+	api::Payment,
 	latest,
 	versioned::{
-		coin_payment::{
-			HostCoinPaymentCreateChequeError, HostCoinPaymentCreateChequeRequest,
-			HostCoinPaymentCreateChequeResponse, HostCoinPaymentCreatePurseError,
-			HostCoinPaymentCreatePurseRequest, HostCoinPaymentCreatePurseResponse,
-			HostCoinPaymentCreateReceivableError, HostCoinPaymentCreateReceivableRequest,
-			HostCoinPaymentCreateReceivableResponse, HostCoinPaymentDeletePurseError,
-			HostCoinPaymentDeletePurseItem, HostCoinPaymentDeletePurseRequest,
-			HostCoinPaymentDepositError, HostCoinPaymentDepositItem, HostCoinPaymentDepositRequest,
-			HostCoinPaymentListenForError, HostCoinPaymentListenForItem,
-			HostCoinPaymentListenForRequest, HostCoinPaymentQueryPurseError,
-			HostCoinPaymentQueryPurseRequest, HostCoinPaymentQueryPurseResponse,
-			HostCoinPaymentRebalancePurseError, HostCoinPaymentRebalancePurseItem,
-			HostCoinPaymentRebalancePurseRequest, HostCoinPaymentRefundError,
-			HostCoinPaymentRefundItem, HostCoinPaymentRefundRequest,
-		},
 		payment::{
 			HostPaymentBalanceSubscribeError, HostPaymentBalanceSubscribeItem,
 			HostPaymentBalanceSubscribeRequest, HostPaymentError, HostPaymentRequest,
@@ -56,106 +41,6 @@ use crate::{
 		versioning::version,
 	},
 };
-
-#[async_trait::async_trait]
-impl<H: AccountHolder> CoinPayment for ProductRuntimeHost<H> {
-	#[instrument(skip_all, fields(runtime.method = "coin_payment.create_purse"))]
-	async fn create_purse(
-		&self,
-		_cx: &CallContext,
-		request: HostCoinPaymentCreatePurseRequest,
-	) -> Result<HostCoinPaymentCreatePurseResponse, CallError<HostCoinPaymentCreatePurseError>> {
-		version(request).exec(|_| async move { Err(CallError::Unsupported) }).await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "coin_payment.query_purse"))]
-	async fn query_purse(
-		&self,
-		_cx: &CallContext,
-		request: HostCoinPaymentQueryPurseRequest,
-	) -> Result<HostCoinPaymentQueryPurseResponse, CallError<HostCoinPaymentQueryPurseError>> {
-		version(request).exec(|_| async move { Err(CallError::Unsupported) }).await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "coin_payment.rebalance_purse"))]
-	async fn rebalance_purse(
-		&self,
-		_cx: &CallContext,
-		request: HostCoinPaymentRebalancePurseRequest,
-	) -> Subscription<
-		HostCoinPaymentRebalancePurseItem,
-		CallError<HostCoinPaymentRebalancePurseError>,
-	> {
-		version(request)
-			.exec(|_| async move { Subscription::interrupted(CallError::Unsupported) })
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "coin_payment.delete_purse"))]
-	async fn delete_purse(
-		&self,
-		_cx: &CallContext,
-		request: HostCoinPaymentDeletePurseRequest,
-	) -> Subscription<HostCoinPaymentDeletePurseItem, CallError<HostCoinPaymentDeletePurseError>> {
-		version(request)
-			.exec(|_| async move { Subscription::interrupted(CallError::Unsupported) })
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "coin_payment.create_receivable"))]
-	async fn create_receivable(
-		&self,
-		_cx: &CallContext,
-		request: HostCoinPaymentCreateReceivableRequest,
-	) -> Result<
-		HostCoinPaymentCreateReceivableResponse,
-		CallError<HostCoinPaymentCreateReceivableError>,
-	> {
-		version(request).exec(|_| async move { Err(CallError::Unsupported) }).await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "coin_payment.create_cheque"))]
-	async fn create_cheque(
-		&self,
-		_cx: &CallContext,
-		request: HostCoinPaymentCreateChequeRequest,
-	) -> Result<HostCoinPaymentCreateChequeResponse, CallError<HostCoinPaymentCreateChequeError>> {
-		version(request).exec(|_| async move { Err(CallError::Unsupported) }).await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "coin_payment.deposit"))]
-	async fn deposit(
-		&self,
-		_cx: &CallContext,
-		request: HostCoinPaymentDepositRequest,
-	) -> Subscription<HostCoinPaymentDepositItem, CallError<HostCoinPaymentDepositError>> {
-		version(request)
-			.exec(|_| async move { Subscription::interrupted(CallError::Unsupported) })
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "coin_payment.refund"))]
-	async fn refund(
-		&self,
-		_cx: &CallContext,
-		request: HostCoinPaymentRefundRequest,
-	) -> Subscription<HostCoinPaymentRefundItem, CallError<HostCoinPaymentRefundError>> {
-		version(request)
-			.exec(|_| async move { Subscription::interrupted(CallError::Unsupported) })
-			.await
-	}
-
-	#[instrument(skip_all, fields(runtime.method = "coin_payment.listen_for_payment"))]
-	async fn listen_for_payment(
-		&self,
-		_cx: &CallContext,
-		request: HostCoinPaymentListenForRequest,
-	) -> Subscription<HostCoinPaymentListenForItem, CallError<HostCoinPaymentListenForError>> {
-		version(request)
-			.exec(|_| async move { Subscription::interrupted(CallError::Unsupported) })
-			.await
-	}
-}
 
 /// Funds a funding provider's worker is starting for a session it serves,
 /// recorded before the host is asked.
