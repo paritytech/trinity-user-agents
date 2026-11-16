@@ -19,12 +19,11 @@ use crate::{
 	platform::{PairingHostConfig, ProductId},
 };
 
-/// The paired session's kept grants, Allow once answers and ring-VRF
-/// registry, as the session service changes them.
+/// The paired session's kept grants and Allow once answers, as the session
+/// service changes them.
 struct PairedGrants {
 	grants: Arc<HostGrantStore>,
 	consent: Arc<ProductConsent>,
-	ring_vrf_registry: Arc<RingVrfRegistryStore>,
 }
 
 #[async_trait::async_trait]
@@ -44,17 +43,6 @@ impl PairedSessionOwner for PairedGrants {
 
 	async fn finish_cleanup(&self, barrier: &GrantBarrier) -> Result<(), String> {
 		self.grants.persistence_under(barrier).drain_cleanup().await
-	}
-
-	async fn forget_chain_data(&self, barrier: &GrantBarrier, session: &SessionInfo) -> bool {
-		let allowances = self.grants.persistence_under(barrier).forget_allowances(session).await;
-		let registry = self
-			.ring_vrf_registry
-			.clear(session.public_key)
-			.await
-			.inspect_err(|error| tracing::warn!(?error, "ring-VRF registry clear failed"))
-			.is_ok();
-		allowances && registry
 	}
 
 	async fn prepare_session(
@@ -88,17 +76,13 @@ impl PairingHost {
 			RemoteAccountHolder::GRANT_KEEPING,
 			session_state.clone(),
 		));
-		let ring_vrf_registry = RingVrfRegistryStore::new(platform, stack);
 		let session = SsoRequestService::new(
 			services.clone(),
 			host_config,
 			session_state,
-			Arc::new(PairedGrants {
-				grants: grants.clone(),
-				consent: consent.clone(),
-				ring_vrf_registry: ring_vrf_registry.clone(),
-			}),
+			Arc::new(PairedGrants { grants: grants.clone(), consent: consent.clone() }),
 		);
+		let ring_vrf_registry = RingVrfRegistryStore::new(platform, stack);
 		let accounts = Arc::new(HostAccounts::new(
 			services.clone(),
 			Arc::new(RemoteAccountHolder::new(

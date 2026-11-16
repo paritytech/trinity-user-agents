@@ -291,23 +291,6 @@ impl RingVrfRegistryStore {
 		update.persist().await
 	}
 
-	/// Forgets everything registered under `root_public_key`.
-	///
-	/// The registry names rings on the People chain, so it does not outlive
-	/// the run of the chains it was filled in.
-	pub async fn clear(&self, root_public_key: [u8; 32]) -> Result<(), RingVrfError> {
-		let _guard = self.storage_guard.lock().await;
-		self.storage()
-			.clear(CoreStorageKey::RingVrfRegistry { root_public_key })
-			.await
-			.map_err(storage_error)?;
-		self.cache
-			.lock()
-			.expect("ring-VRF registry cache mutex poisoned")
-			.remove(&root_public_key);
-		Ok(())
-	}
-
 	async fn snapshot(&self, root_public_key: [u8; 32]) -> Result<RegistrySnapshot, RingVrfError> {
 		if let Some(snapshot) = self
 			.cache
@@ -336,8 +319,11 @@ impl RingVrfRegistryStore {
 			return Ok(snapshot);
 		}
 		let key = CoreStorageKey::RingVrfRegistry { root_public_key };
-		let snapshot = match self.storage().read(key.clone()).await.map_err(storage_error)? {
-			Some(blob) => match decode_snapshot(&blob) {
+		let stored = self.storage().read(key.clone()).await.map_err(storage_error)?;
+		// A registry filled in another run of the chains names rings that are
+		// gone, so it reads as empty and the next write replaces it.
+		let snapshot = match stored.as_deref().and_then(|blob| self.stack.run().read_stamped(blob)) {
+			Some(blob) => match decode_snapshot(blob) {
 				Ok(snapshot) => snapshot,
 				Err(error) => {
 					let _ = self.storage().clear(key).await;
@@ -369,7 +355,10 @@ impl RingVrfRegistryStore {
 			return Ok(());
 		}
 		self.storage()
-			.write(CoreStorageKey::RingVrfRegistry { root_public_key }, snapshot.encode())
+			.write(
+				CoreStorageKey::RingVrfRegistry { root_public_key },
+				self.stack.run().stamp(&snapshot.encode()),
+			)
 			.await
 			.map_err(storage_error)?;
 		self.cache

@@ -34,6 +34,30 @@ fn registry_is_wallet_scoped_durable_and_registration_is_idempotent() {
 	assert_eq!(futures::executor::block_on(reloaded.entry(first_root, &key)).unwrap(), Some(entry));
 }
 
+/// The registry names rings on the People chain, which a wipe replaces. Every
+/// wallet that used the device filled its own registry, and none of them may
+/// be read in the next run of the chains, even one never activated since.
+/// The same chains keep every registry.
+#[test]
+fn a_registry_filled_in_another_run_of_the_chains_is_empty() {
+	let platform = Arc::new(StubPlatform::default());
+	let key = handle("owner.dot", 7);
+	let before = RingVrfRegistryStore::new(platform.clone(), paseo_test_stack());
+	for root in [[1; 32], [2; 32]] {
+		futures::executor::block_on(before.register(root, key.clone(), ring(1), [9; 32])).unwrap();
+	}
+
+	let entries = |stack| {
+		let store = RingVrfRegistryStore::new(platform.clone(), stack);
+		[[1; 32], [2; 32]].map(|root| {
+			futures::executor::block_on(store.entry(root, &key)).unwrap().is_some()
+		})
+	};
+
+	let wiped = crate::test_support::test_stack("paseo", [0x77; 32], [0xbb; 32], [0xcc; 32]);
+	assert_eq!([entries(paseo_test_stack()), entries(wiped)], [[true; 2], [false; 2]]);
+}
+
 #[test]
 fn first_registrar_remains_selected_until_explicitly_changed() {
 	let store = RingVrfRegistryStore::new(Arc::new(StubPlatform::default()), paseo_test_stack());

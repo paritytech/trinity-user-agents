@@ -437,12 +437,17 @@ for raw bytes signed inside the `<Bytes>` watermark.
   other. A clear removes both, the unscoped one first, so a kill between the
   two cannot bring a cleared value back. A wipe keeps a stack's id and replaces its
   chains. The core tells one run of the chains from the next by `StackRun`:
-  the descriptor's `generation` and the genesis hashes. A cached manifest
-  records its run and is not read under another one. The usernames in a
-  session, its allowance keys and the ring-VRF registry carry no run, so the
-  `ChainRun` slot records the one they were read in: when it differs, they are
-  dropped before a session is installed, and only then is the new run
-  recorded. The session and the stored permissions are kept.
+  the descriptor's `generation` and the genesis hashes. A cached manifest,
+  allowance keys and a ring-VRF registry are stored with the run they were
+  read in, and a value from another run, or one stored without a run, reads
+  as absent until it is written again. The usernames in the `AuthSession`
+  slot are part of the session blob, so the `SessionUsernamesRun` slot
+  records the run they were read in. When the stack is in another run, or
+  none is recorded, the stored session is installed with its usernames
+  looked up again. A session blob the host keeps itself and passes to
+  `activate_external_session` always has its usernames looked up again,
+  unless it is the blob in the `AuthSession` slot. The session and the stored
+  permissions are kept.
 - `Navigation`: open URLs in the system browser.
 - `Notifications`: deliver and cancel push notifications.
 - `Permissions`: prompt for device and remote authorizations.

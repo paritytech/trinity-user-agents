@@ -89,6 +89,23 @@ pub struct StackRun {
 	chains: StackChains,
 }
 
+impl StackRun {
+	/// `value` led by this run, for a value read from the chains that is
+	/// stored. [`Self::read_stamped`] gives it back only in the same run.
+	pub fn stamp(&self, value: &[u8]) -> Vec<u8> {
+		let mut stamped = self.encode();
+		stamped.extend_from_slice(value);
+		stamped
+	}
+
+	/// The value [`Self::stamp`] stored in `stamped`, or `None` when another
+	/// run stamped it or nothing did: the chains it was read from are gone.
+	pub fn read_stamped<'a>(&self, stamped: &'a [u8]) -> Option<&'a [u8]> {
+		let mut value = stamped;
+		(Self::decode(&mut value).ok()? == *self).then_some(value)
+	}
+}
+
 /// The genesis hash of each chain role the host serves. Asset Hub, People and
 /// Bulletin are required: the core reads dotNS and runs SSO and its own
 /// preimage submission over them.

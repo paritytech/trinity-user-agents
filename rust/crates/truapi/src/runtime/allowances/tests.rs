@@ -1,14 +1,14 @@
 use super::*;
-use crate::test_support::{MemoryCoreStorage, sso_session_info, test_storage};
+use crate::test_support::{MemoryCoreStorage, paseo_test_stack, sso_session_info, test_stack, test_storage};
 
 #[test]
 fn entries_stored_with_string_ids_read_and_write_unchanged() {
-	// Installs already hold entries keyed by the id string, so the stored
-	// format must stay that string.
+	// An entry names its product by the id string, so the stored format must
+	// stay that string.
 	let stored =
 		vec![("dotli.dot".to_string(), AllowanceResource::StatementStore, vec![2u8; 64])].encode();
 	let entries = decode_entries(&stored).expect("string-keyed entries decode");
-	assert_eq!(encode_entries(entries), stored);
+	assert_eq!(entries.encode(), stored);
 }
 
 #[test]
@@ -19,6 +19,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 	futures::executor::block_on(async {
 		write_allowance_key(
 			&test_storage(&storage),
+			&paseo_test_stack().run(),
 			&session,
 			&ProductId::for_test("dotli.dot"),
 			AllowanceResource::Bulletin,
@@ -28,6 +29,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 		.unwrap();
 		write_allowance_key(
 			&test_storage(&storage),
+			&paseo_test_stack().run(),
 			&session,
 			&ProductId::for_test("dotli.dot"),
 			AllowanceResource::StatementStore,
@@ -39,6 +41,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 		assert_eq!(
 			read_allowance_key(
 				&test_storage(&storage),
+				&paseo_test_stack().run(),
 				&session,
 				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::Bulletin
@@ -50,6 +53,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 		assert_eq!(
 			read_allowance_key(
 				&test_storage(&storage),
+				&paseo_test_stack().run(),
 				&session,
 				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::StatementStore
@@ -61,6 +65,7 @@ fn stores_allowance_keys_by_product_and_resource() {
 		assert_eq!(
 			read_allowance_key(
 				&test_storage(&storage),
+				&paseo_test_stack().run(),
 				&session,
 				&ProductId::for_test("other.dot"),
 				AllowanceResource::Bulletin
@@ -80,6 +85,7 @@ fn clears_session_allowance_keys() {
 	futures::executor::block_on(async {
 		write_allowance_key(
 			&test_storage(&storage),
+			&paseo_test_stack().run(),
 			&session,
 			&ProductId::for_test("dotli.dot"),
 			AllowanceResource::Bulletin,
@@ -91,6 +97,7 @@ fn clears_session_allowance_keys() {
 		assert_eq!(
 			read_allowance_key(
 				&test_storage(&storage),
+				&paseo_test_stack().run(),
 				&session,
 				&ProductId::for_test("dotli.dot"),
 				AllowanceResource::Bulletin
@@ -100,4 +107,37 @@ fn clears_session_allowance_keys() {
 			None
 		);
 	});
+}
+
+/// An allowance key names a slot account on a chain, and a wipe replaces the
+/// chains. A key stored in another run must not be handed out, so that the
+/// product asks for a new allowance instead of one the chain no longer knows.
+#[test]
+fn allowance_keys_stored_in_another_run_of_the_chains_are_not_read() {
+	let storage = MemoryCoreStorage::default();
+	let session = sso_session_info();
+	let product = ProductId::for_test("dotli.dot");
+	let read = |stack: crate::platform::Stack| {
+		futures::executor::block_on(read_allowance_key(
+			&test_storage(&storage),
+			&stack.run(),
+			&session,
+			&product,
+			AllowanceResource::Bulletin,
+		))
+		.unwrap()
+	};
+
+	futures::executor::block_on(write_allowance_key(
+		&test_storage(&storage),
+		&paseo_test_stack().run(),
+		&session,
+		&product,
+		AllowanceResource::Bulletin,
+		vec![1; 64],
+	))
+	.unwrap();
+
+	let wiped = test_stack("paseo", [0x77; 32], [0xbb; 32], [0xcc; 32]);
+	assert_eq!([read(paseo_test_stack()), read(wiped)], [Some(vec![1; 64]), None]);
 }

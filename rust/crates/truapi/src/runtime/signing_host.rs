@@ -18,14 +18,9 @@ pub use wallet_account_holder::{StatementRenewalTarget, WalletAccountHolder};
 #[cfg(not(target_arch = "wasm32"))]
 use super::allowances::current_unix_secs;
 use super::{
-	AccountHolder, HostAccounts, HostSession, RuntimeServices,
-	authority::AuthorityError,
-	chain_run::{ChainRun, StoredRun},
-	connected_session_ui_info,
-	host_grants::HostGrantStore,
-	product_consent::ProductConsent,
-	ring_vrf_registry::RingVrfRegistryStore,
-	sso_responder_service::SsoResponderService,
+	AccountHolder, HostAccounts, HostSession, RuntimeServices, authority::AuthorityError,
+	connected_session_ui_info, host_grants::HostGrantStore, product_consent::ProductConsent,
+	ring_vrf_registry::RingVrfRegistryStore, sso_responder_service::SsoResponderService,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use crate::runtime::statement_allowance;
@@ -54,10 +49,6 @@ pub struct SigningHost {
 	auth_state: AuthStateMachine,
 	/// Product account policy and the grants kept for this wallet activation.
 	accounts: Arc<HostAccounts<WalletAccountHolder>>,
-	/// Durable RFC-0024 registry, scoped by the active wallet root.
-	ring_vrf_registry: Arc<RingVrfRegistryStore>,
-	/// Tells when the registry was filled in an earlier run of the chains.
-	chain_run: ChainRun,
 	sso_responder: Arc<SsoResponderService>,
 	#[cfg(not(target_arch = "wasm32"))]
 	renewal_loop_started: std::sync::atomic::AtomicBool,
@@ -94,7 +85,7 @@ impl SigningHost {
 				wallet.session_state(),
 			)),
 			ring_resolver,
-			ring_vrf_registry.clone(),
+			ring_vrf_registry,
 			consent.clone(),
 			#[cfg(feature = "test-host")]
 			wallet.resource_controls().clone(),
@@ -105,34 +96,9 @@ impl SigningHost {
 			auth_state: AuthStateMachine::new(platform),
 			accounts,
 			wallet,
-			ring_vrf_registry,
-			chain_run: ChainRun::default(),
 			#[cfg(not(target_arch = "wasm32"))]
 			renewal_loop_started: std::sync::atomic::AtomicBool::new(false),
 		})
-	}
-
-	/// Drops the ring-VRF registry of the wallet rooted at `root_public_key`
-	/// when it was filled in an earlier run of the stack's chains, then
-	/// records the run they are in.
-	///
-	/// The run is not recorded while the registry is left, so the next
-	/// activation drops it again.
-	async fn enter_chain_run(&self, root_public_key: [u8; 32]) {
-		let (storage, stack) = (self.services.storage(), self.services.stack());
-		let entered = match self.chain_run.stored(&storage, stack).await {
-			None | Some(StoredRun::Current) => false,
-			Some(StoredRun::Unrecorded) => true,
-			Some(StoredRun::Earlier) => self
-				.ring_vrf_registry
-				.clear(root_public_key)
-				.await
-				.inspect_err(|error| tracing::warn!(?error, "ring-VRF registry clear failed"))
-				.is_ok(),
-		};
-		if entered {
-			self.chain_run.record(&storage, stack).await;
-		}
 	}
 
 	/// Product account policy and grants shared by this host's connections.

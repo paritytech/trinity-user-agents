@@ -257,12 +257,11 @@ export type CoreStorageKey =
    */
   | { tag: "AppManifest"; value: { productLabel: string } }
   /**
-   * The `StackRun` in which the core last read what it stores about the
-   * stack's chains: the session's usernames, allowance keys and the
-   * ring-VRF registry. When the stack is in another run the core drops
-   * them before a session uses them.
+   * The `StackRun` the usernames in the `AuthSession` slot were read in.
+   * When the stack is in another run, or none is recorded, the core looks
+   * the usernames up again before it installs the stored session.
    */
-  | { tag: "ChainRun"; value?: undefined };
+  | { tag: "SessionUsernamesRun"; value?: undefined };
 
 /**
  * Review shown before a product creates a ring-VRF proof (RFC 0004).
@@ -1130,7 +1129,7 @@ export const CoreStorageKey: S.Codec<CoreStorageKey> = S.lazy(
         16,
         S.Struct({ productLabel: S.str }) as S.Codec<{ productLabel: string }>,
       ] as const,
-      ChainRun: [17, S._void] as const,
+      SessionUsernamesRun: [17, S._void] as const,
     }),
 );
 

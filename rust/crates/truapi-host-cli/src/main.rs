@@ -4276,6 +4276,7 @@ mod cli_tests {
 					profile.path.join("session.json"),
 					br#"{"version":1,"last_script":"saved.ts"}"#.to_vec(),
 				),
+				(profile.path.join("core-storage.json"), br#"{"values":{}}"#.to_vec()),
 				(profile.path.join("scripts/saved.ts"), b"console.log('saved');".to_vec()),
 				(profile.product_storage_dir.join("saved"), b"product data".to_vec()),
 			];
@@ -4283,8 +4284,6 @@ mod cli_tests {
 				std::fs::create_dir_all(path.parent().unwrap())?;
 				std::fs::write(path, bytes)?;
 			}
-			let core_storage = profile.path.join("core-storage.json");
-			std::fs::write(&core_storage, br#"{"values":{}}"#)?;
 			let role = session.catalog.profile(DEFAULT_SESSION_NAME)?;
 			let blocked_pointer =
 				role.path.join(format!(".current-session.{}.tmp", std::process::id()));
@@ -4326,17 +4325,6 @@ mod cli_tests {
 					path.display()
 				);
 			}
-			// Activating the signer records the run of the stack's chains, which
-			// is the profile's own state and comes back with it.
-			let stack = Network::default().bundled_stack(ChainBackend::Rpc).core_stack()?;
-			let run_record = truapi::platform::StackStorageKey {
-				stack: stack.id().to_owned(),
-				slot: truapi::platform::CoreStorageKey::ChainRun,
-			};
-			assert_eq!(
-				crate::platform::stored_core_values(&core_storage),
-				HashMap::from([(run_record.encode(), stack.run().encode())]),
-			);
 
 			std::fs::remove_dir(blocked_pointer)?;
 			if slash_command {

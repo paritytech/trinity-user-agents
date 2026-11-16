@@ -2785,37 +2785,3 @@ fn direct_allocation_handles_empty_and_optional_resource_batches() {
 		]
 	);
 }
-
-/// The wallet's registry names rings on the People chain. After a wipe those
-/// rings are gone, and a proof against one would fail, so the wallet starts
-/// the new run with an empty registry.
-#[test]
-fn a_wipe_drops_the_wallets_ring_vrf_registry() {
-	let platform = Arc::new(StubPlatform::default());
-	let activate = || {
-		let (_services, authority) = signing_runtime_with_platform(platform.clone());
-		futures::executor::block_on(authority.activate_local_session(ENTROPY.to_vec()))
-			.expect("activation succeeds");
-		authority.accounts().current_session().expect("active session").public_key
-	};
-	let registry = CoreStorageKey::RingVrfRegistry { root_public_key: activate() };
-	let storage = test_storage(platform.as_ref());
-	let earlier = crate::test_support::test_run([0x99; 32]);
-	futures::executor::block_on(async {
-		for (slot, value) in [
-			(CoreStorageKey::ChainRun, parity_scale_codec::Encode::encode(&earlier)),
-			(registry.clone(), vec![2]),
-		] {
-			storage.write(slot, value).await.expect("stub core storage writes");
-		}
-	});
-
-	activate();
-
-	let stored = |slot| futures::executor::block_on(storage.read(slot)).expect("stub reads");
-	let current = crate::test_support::test_run(crate::test_support::UNSERVED_GENESIS);
-	assert_eq!(
-		(stored(registry), stored(CoreStorageKey::ChainRun)),
-		(None, Some(parity_scale_codec::Encode::encode(&current)))
-	);
-}

@@ -69,10 +69,12 @@ two as holding nothing.
 After a wipe a stack has the same id and new chains. The core sees that by the
 `generation` and the genesis hashes, and drops what it read from the old
 chains: cached manifests, the usernames in the session, allowance keys and the
-ring-VRF registry. The session and stored permissions are kept. A host that
-keeps the session blob itself gets the session back without usernames until
-they resolve on the new chains, and should store what the core then reports:
-the core ignores the usernames in that blob only until it next starts.
+ring-VRF registry. The session and stored permissions are kept. Allowance
+keys and a ring-VRF registry stored before this was recorded carry no run and
+are dropped once, and so are the usernames in a stored session. The core
+cannot tell which run the usernames in a blob passed to
+`activateExternalSession` were read in, so it looks them up again on every
+activation unless the blob is the one in the `AuthSession` slot.
 
 ## Bundler requirements
 

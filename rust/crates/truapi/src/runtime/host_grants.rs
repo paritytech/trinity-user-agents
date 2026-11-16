@@ -402,6 +402,7 @@ impl HostGrantStore {
 		if self.keeping == GrantKeeping::Paired {
 			allowances::write_allowance_key(
 				&self.storage(),
+				&self.stack.run(),
 				session,
 				product_id,
 				resource,
@@ -414,6 +415,7 @@ impl HostGrantStore {
 			if self.keeping == GrantKeeping::Paired {
 				let _ = allowances::remove_allowance_key(
 					&self.storage(),
+					&self.stack.run(),
 					session,
 					product_id,
 					resource,
@@ -492,8 +494,14 @@ impl HostGrantStore {
 		}
 		let allowance = {
 			let Some(secret) =
-				allowances::read_allowance_key(&self.storage(), session, product_id, resource)
-					.await?
+				allowances::read_allowance_key(
+					&self.storage(),
+					&self.stack.run(),
+					session,
+					product_id,
+					resource,
+				)
+				.await?
 			else {
 				return Ok(None);
 			};
@@ -843,21 +851,13 @@ impl HostGrantPersistence<'_> {
 			warn!(%reason, "AutoSigning capability owner reconciliation failed");
 		}
 		if let Some(previous) = previous.filter(|previous| *previous != session) {
-			self.forget_allowances(previous).await;
+			self.store.caches().forget_allowances(Some(previous));
+			if let Err(reason) =
+				allowances::clear_session_allowance_keys(&self.store.storage(), previous).await
+			{
+				warn!(%reason, "allowance capability clear failed during session replacement");
+			}
 		}
-	}
-
-	/// Drops the allowance keys kept for `session`, and says whether the
-	/// stored ones are gone.
-	///
-	/// An allowance is granted on a chain, so its key is of no use once the
-	/// session ends or the chain restarts.
-	pub async fn forget_allowances(&self, session: &SessionInfo) -> bool {
-		self.store.caches().forget_allowances(Some(session));
-		allowances::clear_session_allowance_keys(&self.store.storage(), session)
-			.await
-			.inspect_err(|reason| warn!(%reason, "allowance capability clear failed"))
-			.is_ok()
 	}
 
 	/// Remove one product's capabilities without changing session selection.
@@ -872,6 +872,7 @@ impl HostGrantPersistence<'_> {
 			self.store.keeping == GrantKeeping::Paired &&
 			let Err(error) = allowances::clear_product_allowance_keys(
 				&self.store.storage(),
+				&self.store.stack.run(),
 				session,
 				product_id,
 			)

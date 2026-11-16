@@ -9,7 +9,6 @@ use super::{
 	HostSession,
 	auth_state::AuthStateMachine,
 	authority::{AuthoritySession, authority_session},
-	chain_run::{ChainRun, StoredRun},
 	connected_session_ui_info,
 	host_grants::GrantBarrier,
 	identity::resolve_session_identity_with_chain,
@@ -35,9 +34,10 @@ use pairing::{SsoPairingFlow, SsoPairingOutcome};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use tracing::{instrument, warn};
+use parity_scale_codec::Encode;
 use truapi::{
 	CallError, latest as api,
-	latest::{HostRequestLoginError, HostRequestLoginResponse},
+	latest::{GenericError, HostRequestLoginError, HostRequestLoginResponse},
 };
 
 /// `session` without its usernames, so they are looked up on the chains the
@@ -62,10 +62,6 @@ pub trait PairedSessionOwner: Send + Sync {
 
 	/// Finish pending durable revocation; failures stay pending.
 	async fn finish_cleanup(&self, barrier: &GrantBarrier) -> Result<(), String>;
-
-	/// Drop what the owner keeps for `session` that was read from chains the
-	/// stack no longer runs, and say whether all of it is gone.
-	async fn forget_chain_data(&self, barrier: &GrantBarrier, session: &SessionInfo) -> bool;
 
 	/// Reconcile kept grants with `next` before it is published.
 	async fn prepare_session(
@@ -167,7 +163,6 @@ pub struct SsoRequestService {
 	selection: Mutex<Selection>,
 	owner: Arc<dyn PairedSessionOwner>,
 	session_store_activation: futures::lock::Mutex<()>,
-	chain_run: ChainRun,
 	#[cfg(test)]
 	external_session_activation_pause: Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
 	#[cfg(test)]
@@ -177,6 +172,41 @@ pub struct SsoRequestService {
 }
 
 impl SsoRequestService {
+	/// Whether the usernames in `blob` were read in the run the stack's chains
+	/// are in.
+	///
+	/// The core records that run for the blob in the `AuthSession` slot only,
+	/// so a blob the host keeps elsewhere, which may be a copy from before a
+	/// wipe, is never taken for current. A record or slot that cannot be read
+	/// counts as another run: looking the usernames up again costs a lookup,
+	/// and keeping stale ones would name accounts on chains that are gone.
+	async fn usernames_are_current(&self, blob: &[u8]) -> bool {
+		let storage = self.storage();
+		let run = storage.read(CoreStorageKey::SessionUsernamesRun).await;
+		let stored = storage.read(CoreStorageKey::AuthSession).await;
+		matches!(run, Ok(Some(run)) if run == self.host_config.stack.run().encode()) &&
+			matches!(stored, Ok(Some(stored)) if stored == blob)
+	}
+
+	/// Records that the usernames in the `AuthSession` slot were read in the
+	/// run the stack's chains are in. A failed write leaves the earlier
+	/// record, so they are looked up again on the next start.
+	async fn record_usernames_run(&self) {
+		let run = self.host_config.stack.run().encode();
+		if let Err(error) = self.storage().write(CoreStorageKey::SessionUsernamesRun, run).await {
+			warn!(reason = %error.reason, "recording the run of the session's usernames failed");
+		}
+	}
+
+	/// Writes `blob` to the `AuthSession` slot. Its usernames were read in
+	/// the run the stack's chains are in, which is recorded once it is
+	/// stored.
+	async fn store_session(&self, blob: Vec<u8>) -> Result<(), GenericError> {
+		self.storage().write(CoreStorageKey::AuthSession, blob).await?;
+		self.record_usernames_run().await;
+		Ok(())
+	}
+
 	fn storage(&self) -> StackStorage<'_, dyn Platform> {
 		self.host_config.stack.storage(self.platform.as_ref())
 	}
@@ -206,7 +236,6 @@ impl SsoRequestService {
 			selection: Mutex::new(Selection::default()),
 			owner,
 			session_store_activation: futures::lock::Mutex::new(()),
-			chain_run: ChainRun::default(),
 			#[cfg(test)]
 			external_session_activation_pause: Mutex::new(None),
 			#[cfg(test)]
@@ -294,10 +323,7 @@ impl SsoRequestService {
 	async fn install_external_session(&self, blob: &[u8]) -> Result<(), String> {
 		let _activation = self.session_store_activation.lock().await;
 		let session = crate::host_logic::session::decode_persisted_session(blob)?;
-		// The host keeps this session, so it can hand over the same copy after
-		// the run is recorded, still naming what was read in the earlier one.
-		let stale = self.chain_run.started_earlier(&self.storage(), &self.host_config.stack).await;
-		let session = if stale { without_usernames(session) } else { session };
+		let session = if self.usernames_are_current(blob).await { session } else { without_usernames(session) };
 		self.invalidate_login_attempts();
 		let activation_epoch = self.advance_session_lifecycle();
 		let resolved = resolve_session_identity_with_chain(
@@ -363,11 +389,8 @@ impl SsoRequestService {
 				return Err(StoredSessionActivationError::Invalid(error));
 			},
 		};
-		let stored_run = self.chain_run.stored(&self.storage(), &self.host_config.stack).await;
-		let session = match stored_run {
-			Some(StoredRun::Earlier) => without_usernames(session),
-			_ => session,
-		};
+		let usernames_are_current = self.usernames_are_current(&blob).await;
+		let session = if usernames_are_current { session } else { without_usernames(session) };
 		let resolved = resolve_session_identity_with_chain(
 			&self.dotns_reads,
 			&self.chain,
@@ -394,7 +417,7 @@ impl SsoRequestService {
 			}
 			return Err(error);
 		}
-		let entered_run = self.prepare_session_installation(&barrier, &resolved).await;
+		self.prepare_session_installation(&barrier, &resolved).await;
 		if self.session_epoch() != activation_epoch {
 			return Err(StoredSessionActivationError::Changed);
 		}
@@ -402,16 +425,12 @@ impl SsoRequestService {
 		if !self.install_session_if_current(resolved, activation_epoch, false, None) {
 			return Err(StoredSessionActivationError::Changed);
 		}
-		// The stored session still names the usernames of an earlier run until
-		// this write lands, so the run is recorded only after it has.
-		let stored = resolved_blob == blob ||
-			(self.session_epoch() == activation_epoch &&
-				self.storage()
-					.write(CoreStorageKey::AuthSession, resolved_blob)
-					.await
-					.is_ok());
-		if entered_run && stored {
-			self.record_chain_run().await;
+		if resolved_blob != blob {
+			if self.session_epoch() == activation_epoch {
+				let _ = self.store_session(resolved_blob).await;
+			}
+		} else if !usernames_are_current {
+			self.record_usernames_run().await;
 		}
 		self.drain_session_deletions(&barrier).await;
 		Ok(())
@@ -451,7 +470,7 @@ impl SsoRequestService {
 		if !self.is_current_login_attempt(generation) {
 			return Ok(false);
 		}
-		let entered_run = self.prepare_session_installation(&barrier, session).await;
+		self.prepare_session_installation(&barrier, session).await;
 		let mut epoch = {
 			let mut selection = self.selection.lock().expect("session selection mutex poisoned");
 			if selection.login_generation != generation {
@@ -482,9 +501,7 @@ impl SsoRequestService {
 				epoch = latest_epoch;
 			}
 			if self.install_session_if_current(session.clone(), epoch, false, Some(generation)) {
-				if entered_run {
-					self.record_chain_run().await;
-				}
+				self.record_usernames_run().await;
 				return Ok(true);
 			}
 		}
@@ -646,30 +663,11 @@ impl SsoRequestService {
 		self.drain_session_deletions(&barrier).await;
 	}
 
-	/// Prepare the owner for `session`, and say whether the run of the
-	/// stack's chains is to be recorded once `session` is installed.
-	///
-	/// What the owner keeps for `session` from an earlier run is dropped
-	/// here. The run is not recorded while any of it is left, so the next
-	/// start drops it again.
-	async fn prepare_session_installation(
-		&self,
-		barrier: &GrantBarrier,
-		session: &SessionInfo,
-	) -> bool {
+	async fn prepare_session_installation(&self, barrier: &GrantBarrier, session: &SessionInfo) {
 		self.drain_session_deletions(barrier).await;
 		self.owner
 			.prepare_session(barrier, self.session_state.current().as_ref(), session)
 			.await;
-		match self.chain_run.stored(&self.storage(), &self.host_config.stack).await {
-			None | Some(StoredRun::Current) => false,
-			Some(StoredRun::Unrecorded) => true,
-			Some(StoredRun::Earlier) => self.owner.forget_chain_data(barrier, session).await,
-		}
-	}
-
-	async fn record_chain_run(&self) {
-		self.chain_run.record(&self.storage(), &self.host_config.stack).await;
 	}
 
 	async fn set_connected_session_if_current(
@@ -682,13 +680,8 @@ impl SsoRequestService {
 		if self.session_epoch() != activation_epoch {
 			return false;
 		}
-		let entered_run = self.prepare_session_installation(&barrier, &session).await;
-		let installed =
-			self.install_session_if_current(session, activation_epoch, external_session, None);
-		if installed && entered_run {
-			self.record_chain_run().await;
-		}
-		installed
+		self.prepare_session_installation(&barrier, &session).await;
+		self.install_session_if_current(session, activation_epoch, external_session, None)
 	}
 
 	fn install_session_if_current(
@@ -785,11 +778,7 @@ impl SsoRequestService {
 			}
 		}
 		self.auth_state.connected(&connected_session_ui_info(&resolved));
-		if let Err(err) = self
-			.storage()
-			.write(CoreStorageKey::AuthSession, encode_persisted_session(&resolved))
-			.await
-		{
+		if let Err(err) = self.store_session(encode_persisted_session(&resolved)).await {
 			warn!(reason = %err.reason, "refreshed session identity persist failed");
 		}
 		self.drain_session_deletions(&barrier).await;

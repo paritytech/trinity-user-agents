@@ -7452,7 +7452,7 @@ fn external_session_activation_is_memory_only_and_rejects_trailing_bytes() {
 	let platform = Arc::new(StubPlatform::default());
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
-	let session = sso_session_info();
+	let session = external_sso_session_info();
 	let blob = crate::host_logic::session::encode_persisted_session(&session);
 
 	futures::executor::block_on(pairing_host.session().activate_external_session(&blob))
@@ -7566,7 +7566,7 @@ fn external_session_activation_replaces_and_fences_the_previous_session() {
 		Arc::new(StubPlatform::default()),
 		Spawner::for_test(),
 	);
-	let first = sso_session_info();
+	let first = external_sso_session_info();
 	let mut replacement = first.clone();
 	replacement.public_key = [0x44; 32];
 	replacement.identity_account_id = Some([0x55; 32]);
@@ -7592,7 +7592,8 @@ fn stored_session_activation_resolves_after_connected_installation() {
 	let platform = Arc::new(StubPlatform {
 		session_blob: Some(crate::host_logic::session::encode_persisted_session(&stored)),
 		..Default::default()
-	});
+	}
+	.with_usernames_read_in_this_run());
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 
@@ -7634,8 +7635,10 @@ fn stored_session_activation_rejects_invalid_blob_and_disconnects() {
 fn activating_an_untagged_stored_session_restores_it_and_rewrites_the_slot() {
 	let stored = sso_session_info();
 	let untagged = stored.encode();
-	let platform =
-		Arc::new(StubPlatform { session_blob: Some(untagged.clone()), ..Default::default() });
+	let platform = Arc::new(
+		StubPlatform { session_blob: Some(untagged.clone()), ..Default::default() }
+			.with_usernames_read_in_this_run(),
+	);
 	let (host, pairing_host) =
 		ProductRuntimeHost::new_compat_with_pairing(platform.clone(), Spawner::for_test());
 

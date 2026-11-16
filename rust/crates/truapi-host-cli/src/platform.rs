@@ -1355,12 +1355,6 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), StorageError> {
 	Ok(())
 }
 
-/// The entries of a core storage file, by key.
-#[cfg(test)]
-pub fn stored_core_values(path: &Path) -> HashMap<Vec<u8>, Vec<u8>> {
-	load_hex_key_map(path)
-}
-
 fn load_hex_key_map(path: &Path) -> HashMap<Vec<u8>, Vec<u8>> {
 	load_string_map(path)
 		.into_iter()

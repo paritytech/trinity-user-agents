@@ -264,6 +264,17 @@ pub type StorageChangeSender = futures::channel::mpsc::UnboundedSender<
 >;
 
 impl StubPlatform {
+	/// Records that the usernames in [`Self::session_blob`] were read in the
+	/// run of the [`paseo_test_stack`], as the core does once it stores a
+	/// session, so the session is restored as stored.
+	pub fn with_usernames_read_in_this_run(self) -> Self {
+		self.local_storage.lock().expect("local storage mutex poisoned").insert(
+			core_storage_test_key(CoreStorageKey::SessionUsernamesRun),
+			paseo_test_stack().run().encode(),
+		);
+		self
+	}
+
 	/// Fail every open subscription on `key`, as a host whose store broke
 	/// mid-stream would.
 	pub fn fail_storage_subscriptions(&self, key: &str, reason: &str) {
@@ -422,13 +433,14 @@ pub fn test_stack(
 		.expect("test stack is valid")
 }
 
-/// Whether `platform` holds no core value but the record of the chains' run.
+/// Whether `platform` holds no core value but the record of the run the
+/// stored session's usernames were read in.
 ///
 /// A session leaves that record behind when it ends. It names no secret, so
 /// a check that nothing of a session is left stored allows it.
-pub fn only_the_chain_run_is_stored(platform: &StubPlatform) -> bool {
+pub fn only_the_usernames_run_is_stored(platform: &StubPlatform) -> bool {
 	let stored = platform.local_storage.lock().expect("local storage mutex poisoned");
-	let run = core_storage_test_key(CoreStorageKey::ChainRun);
+	let run = core_storage_test_key(CoreStorageKey::SessionUsernamesRun);
 	stored.keys().all(|key| *key == run)
 }
 
@@ -609,6 +621,17 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 	)
 	.unwrap();
 	(host_session, responder_session)
+}
+
+/// [`sso_session_info`] as a host that keeps the session itself holds it:
+/// without usernames, which the core looks up whenever it activates such a
+/// session.
+pub fn external_sso_session_info() -> crate::host_logic::session::SessionInfo {
+	crate::host_logic::session::SessionInfo {
+		lite_username: None,
+		full_username: None,
+		..sso_session_info()
+	}
 }
 
 /// Connected session fixture with deterministic SSO channel material.

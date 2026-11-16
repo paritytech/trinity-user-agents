@@ -1204,12 +1204,11 @@ pub enum CoreStorageKey {
 		/// Bare label of the product whose App manifest was cached.
 		product_label: String,
 	},
-	/// The [`StackRun`] in which the core last read what it stores about the
-	/// stack's chains: the session's usernames, allowance keys and the
-	/// ring-VRF registry. When the stack is in another run the core drops
-	/// them before a session uses them.
+	/// The [`StackRun`] the usernames in the `AuthSession` slot were read in.
+	/// When the stack is in another run, or none is recorded, the core looks
+	/// the usernames up again before it installs the stored session.
 	#[codec(index = 17)]
-	ChainRun,
+	SessionUsernamesRun,
 }
 
 /// The key a host stores core-owned state under: a [`CoreStorageKey`] slot
@@ -1345,7 +1344,7 @@ pub fn describe_core_storage_key(
 		CoreStorageKey::AppManifest { product_label } => {
 			("AppManifest", Some(CoreStorageKeyOwner::ProductLabel(product_label)))
 		},
-		CoreStorageKey::ChainRun => ("ChainRun", None),
+		CoreStorageKey::SessionUsernamesRun => ("SessionUsernamesRun", None),
 	};
 	Ok(CoreStorageKeyDescription { stack, kind, owner })
 }
