@@ -28,6 +28,9 @@ git submodule update --init --recursive
 
 - [ ] **Rust workspace** — invoke the `rust-checks` skill. All four
       cargo commands clean.
+- [ ] **Rust design** — if any Rust changed, run the
+      `rust-design-reviewer` agent on the diff. Fix each finding or state
+      in the PR why the rule does not apply.
 - [ ] **Codegen** — only if Rust trait surface changed. Invoke the
       `regen-codegen` skill, then commit
       `js/packages/truapi/src/{generated,playground}/`.
