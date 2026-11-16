@@ -2,8 +2,8 @@ package io.paritytech.polkadotapp.feature_products_impl.domain.truapi
 
 import android.content.Context
 import io.paritytech.polkadotapp.common.data.network.TestnetEnvironment
-import uniffi.truapi.BundledStack
 import timber.log.Timber
+import uniffi.truapi.BundledStack
 import uniffi.truapi.Stack
 
 /**

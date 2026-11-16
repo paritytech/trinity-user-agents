@@ -12,6 +12,7 @@ import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessing
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.PocketDeeplink
+import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.PocketDeeplinkAction
 import io.paritytech.polkadotapp.feature_products_impl.domain.truapi.PocketDeeplinkParser
 import io.paritytech.polkadotapp.test_shared.TestCoroutineDispatchers
 import kotlinx.coroutines.Dispatchers
@@ -20,11 +21,13 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import uniffi.truapi.ProductId
 import java.io.IOException
 
 class PocketDeepLinkHandlerTest {
     private val collectionLink = "polkadotapp://pocket"
     private val malformedLink = "polkadotapp://pocket/add"
+    private val cardLink = "polkadotapp://pocket/add?product=game.paseo&card=loyalty"
 
     // A fresh install with the People chain unreachable: no TLD is known yet.
     private val tldProvider = mockk<DotNsTldProvider> {
@@ -39,6 +42,12 @@ class PocketDeepLinkHandlerTest {
             every { this@mockk.canParse } returns canParse
             every { parse(collectionLink) } returns PocketDeeplink.Collection
             every { parse(malformedLink) } returns null
+            every { parse(cardLink) } returns PocketDeeplink.Card(
+                productId = ProductId.parse("game.paseo").getOrThrow(),
+                action = PocketDeeplinkAction.ADD,
+                cardId = "loyalty",
+                pageQuery = "",
+            )
         },
         publishedCards = mockk(),
         collection = mockk(),
@@ -66,6 +75,12 @@ class PocketDeepLinkHandlerTest {
 
         assertTrue(handler.canHandle(data))
         assertTrue(handle(handler, data).getOrNull() is DeeplinkProcessingOutcome.ShowMessage)
+    }
+
+    // A card names a product, which only the network's TLD can resolve, so it waits for that TLD.
+    @Test
+    fun `a card link is declined before the network's TLD is known`() = runBlocking {
+        assertFalse(handler().canHandle(pocketUri(cardLink)))
     }
 
     @Test
