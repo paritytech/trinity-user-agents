@@ -339,79 +339,46 @@
         }
       }
     },
-    "backup.action.backup" : {
+    "backup.cell.cloud.backup" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Backup Your Account"
+            "value" : "Cloud backup"
           }
         }
       }
     },
-    "backup.action.settings" : {
+    "backup.cell.cloud.off" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Backup Your Account"
+            "value" : "Off"
           }
         }
       }
     },
-    "backup.action.view.secret" : {
+    "backup.cell.cloud.on" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "View Secret Recovery Phrase"
+            "value" : "On"
           }
         }
       }
     },
-    "backup.info.created.subtitle" : {
+    "backup.cell.secret.phrase" : {
       "extractionState" : "manual",
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Your account is backed up to iCloud. If you lose your device or get a new one, you’ll be able to recover the account."
-          }
-        }
-      }
-    },
-    "backup.info.created.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Account is Backed Up"
-          }
-        }
-      }
-    },
-    "backup.info.disabled.subtitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Securely back up your account to iCloud so you can restore it if you lose your device or get a new one."
-          }
-        }
-      }
-    },
-    "backup.info.disabled.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Backup your account"
+            "value" : "Secret phrase"
           }
         }
       }
@@ -427,28 +394,6 @@
         }
       }
     },
-    "backup.info.notfound.subtitle" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Securely back up your account to iCloud so you can restore them if lose your device or get a new one."
-          }
-        }
-      }
-    },
-    "backup.info.notfound.title" : {
-      "extractionState" : "manual",
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Backup your account"
-          }
-        }
-      }
-    },
     "backup.main.title" : {
       "extractionState" : "manual",
       "localizations" : {
@@ -456,6 +401,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Backup"
+          }
+        }
+      }
+    },
+    "backup.section.recovery" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recovery"
           }
         }
       }

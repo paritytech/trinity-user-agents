@@ -29,7 +29,8 @@ pub mod mock;
 pub use crate::{
 	dotns_name::{DOTNS_TLDS, MAX_DNS_LABEL_LEN, has_dotns_tld, is_dns_label},
 	product_id::{
-		PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError, REMOTE_PERMISSION_TRUSTED_LABELS,
+		ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError,
+		REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
 	stack::{
 		Stack, StackChains, StackError, StackFetchRequest, StackFetchResponse, StackHost,
@@ -121,37 +122,6 @@ pub struct ProductContext {
 	pub product_id: ProductId,
 	/// Trusted kind of executable attached to this connection by the host.
 	pub execution_kind: ExecutableKind,
-}
-
-/// Trusted kind of product executable attached to a TrUAPI connection.
-///
-/// Mirrors the executable kinds a product manifest declares. The variants are
-/// capability classes: a connection reaches an execution-gated service only
-/// when its kind matches exactly, so `App` and `Widget` carry the same
-/// capability and differ only in how the host presents them, and `Worker` is
-/// the only kind that may serve the Chat modality.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Encode, Decode)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
-pub enum ExecutableKind {
-	/// Visible full-page entrypoint such as `app/index.html`.
-	#[default]
-	App,
-	/// Visible embedded surface such as a dashboard card.
-	Widget,
-	/// Headless executable the host runs while a modality holds a reference
-	/// to it; the only kind that may serve the Chat modality.
-	Worker,
-}
-
-impl ExecutableKind {
-	/// The dotNS prefix used for this kind's executable records.
-	pub fn dotns_label(self) -> &'static str {
-		match self {
-			Self::App => "app",
-			Self::Widget => "widget",
-			Self::Worker => "worker",
-		}
-	}
 }
 
 /// Host metadata.
@@ -2136,7 +2106,7 @@ pub struct FundingPresentation {
 
 /// The providers' quotes for one ask, as the host draws its provider list.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingQuoteList {
 	/// The request this list answers, as `request_funding_quotes` returned
 	/// it. The core keeps only the current request's list, so a list read
@@ -2168,7 +2138,7 @@ pub struct FundingQuoteList {
 
 /// Why an amount cannot go ahead.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingAmountIssue {
 	/// A withdrawal of more than the user can spend.
 	NotEnoughBalance,
@@ -2186,7 +2156,7 @@ pub enum FundingAmountIssue {
 
 /// One provider's place in the list a quote request fills in.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Record))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Record))]
 pub struct FundingQuoteRow {
 	/// The provider.
 	pub provider_id: ProductId,
@@ -2196,7 +2166,7 @@ pub struct FundingQuoteRow {
 
 /// Where a provider's quote stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingQuoteState {
 	/// Asked, not answered yet.
 	Pending,
@@ -2215,7 +2185,7 @@ pub enum FundingQuoteState {
 
 /// Why a provider cannot be offered for an ask.
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(all(feature = "runtime", not(target_arch = "wasm32")), derive(uniffi::Enum))]
+#[cfg_attr(not(target_arch = "wasm32"), derive(uniffi::Enum))]
 pub enum FundingQuoteUnavailable {
 	/// The provider refused to price it.
 	Refused {
@@ -2250,12 +2220,20 @@ pub trait FundingPlatform: Send + Sync {
 		session: FundingPresentation,
 	) -> Result<FundingPresentOutcome, GenericError>;
 
+	/// `provider` asked to show a screen for session `intent`. The core
+	/// holds it until the host calls `open_provider_frame(intent)`, which
+	/// the host does at once while the user looks at the session, or once
+	/// the user taps a notice that the provider wants to show something.
+	/// A worker never puts a screen in front of the user on its own.
+	fn provider_frame_requested(&self, provider: &ProductContext, intent: String);
+
 	/// Show `target` for `provider`'s session `intent` in a frame the host
-	/// owns, and answer once it closes. A page is an https URL the core has
-	/// checked: the host shows its origin, and closes the frame with
-	/// `Returned` when the page reaches its return URL. The core closes the
-	/// frame itself, through
-	/// [`Self::close_provider_frame`], once the session's payment moved.
+	/// owns, and answer once it closes. Called only once the host opened the
+	/// request [`Self::provider_frame_requested`] announced. A page is an
+	/// https URL the core has checked: the host shows its origin, and closes
+	/// the frame with `Returned` when the page reaches its return URL. The
+	/// core closes the frame itself, through [`Self::close_provider_frame`],
+	/// once the session's payment moved.
 	async fn present_provider_frame(
 		&self,
 		provider: &ProductContext,

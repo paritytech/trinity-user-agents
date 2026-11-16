@@ -254,6 +254,10 @@ final class TabBarBottomChromeController: UIViewController {
         }
     #endif
 
+    func setSettingsAttention(_ isVisible: Bool) {
+        barModel.showsSettingsAttention = isVisible
+    }
+
     func setSPATabs(_ chips: [TabBarShelfChip], selected: UUID?) {
         if spaTabCount != chips.count {
             spaTabCount = chips.count

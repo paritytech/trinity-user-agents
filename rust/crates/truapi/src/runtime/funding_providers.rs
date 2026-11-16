@@ -19,7 +19,7 @@ use tracing::warn;
 
 use super::{
 	funding::lock,
-	product_manifest::{product_brand, worker_manifest},
+	product_manifest::{DotnsRead, CachePolicy, product_brand, read_worker_manifest},
 	services::RuntimeServices,
 };
 use crate::{
@@ -327,16 +327,15 @@ impl RuntimeServices {
 	}
 
 	/// Offer the providers the host's remote configuration lists by name,
-	/// then the `bundled` ones it does not name, telling the feed when the
-	/// list changed. A name that is not a product id is skipped and logged.
-	/// A call listing what the last one did changes nothing the host sees,
-	/// so the host can call it on every refresh.
+	/// without a TLD, read on the network the stack is on, telling the feed
+	/// when the list changed. A name that is not a product id, or that names
+	/// a TLD, is skipped and logged. A call listing what the last one did changes
+	/// nothing the host sees, so the host can call it on every refresh.
 	pub fn set_funding_provider_config(
 		self: &Arc<Self>,
 		published_names: Vec<String>,
-		bundled: Vec<FundingProviderEntry>,
 	) -> Result<(), FundingSessionError> {
-		let (entries, invalid) = provider_config(&published_names, bundled);
+		let (entries, invalid) = provider_config(&published_names, self.stack().tld());
 		for name in invalid {
 			warn!(%name, "funding provider configuration names no product");
 		}
@@ -560,13 +559,25 @@ impl RuntimeServices {
 	/// Read `product_id`'s Worker manifest and brand into what the core goes
 	/// by.
 	async fn read_provider_manifest(self: &Arc<Self>, product_id: &ProductId) {
-		let read = worker_manifest(self, self.platform.as_ref(), product_id).await;
-		let mut changed =
-			read.is_ok_and(|manifest| self.funding_providers().answered(product_id, manifest));
-		if let Ok(Some(brand)) = product_brand(self, self.platform.as_ref(), product_id).await {
+		let platform = self.platform.as_ref();
+		let read = read_worker_manifest(self, platform, product_id, CachePolicy::UseCache).await;
+		let cached = matches!(read, Ok((_, DotnsRead::Cached { .. })));
+		let mut changed = read
+			.is_ok_and(|(manifest, _)| self.funding_providers().answered(product_id, manifest));
+		if let Ok(Some(brand)) = product_brand(self, platform, product_id).await {
 			changed |= self.funding_providers().branded(product_id, brand);
 		}
 		if changed {
+			self.funding_providers_changed();
+		}
+		// A cached copy can predate a redeploy, and the cache lives a day: the
+		// cached routes show at once, then dotNS is read again so a provider
+		// that now serves more, or less, is offered as it publishes.
+		if cached &&
+			let Ok((manifest, _)) =
+				read_worker_manifest(self, platform, product_id, CachePolicy::Refresh).await &&
+			self.funding_providers().answered(product_id, manifest)
+		{
 			self.funding_providers_changed();
 		}
 	}

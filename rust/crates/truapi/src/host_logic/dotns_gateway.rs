@@ -27,9 +27,11 @@ use crate::{
 		EvmContractError, ExtensionError, InheritedImplication, SubstrateSigner,
 		TransactionExtension,
 	},
-	dotns_views::{network_tld, protocol_component, read_view, tld_node},
+	dotns_views::{network_tld, protocol_component, tld_node},
 	platform::{MAX_DNS_LABEL_LEN, is_dns_label},
 };
+
+pub use crate::dotns_views::read_view;
 
 alloy_sol_types::sol!("src/host_logic/dotns_gateway/contracts.sol");
 

@@ -927,7 +927,7 @@ fn the_mock_stack_names_the_chains_the_mock_serves() {
 			"paseo",
 			crate::platform::StackChains {
 				relay: None,
-				asset_hub: Some([0x33; 32]),
+				asset_hub: [0x33; 32],
 				people: [0x11; 32],
 				bulletin: [0x22; 32],
 			}
