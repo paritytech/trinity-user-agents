@@ -113,7 +113,7 @@ fn a_lookup_reads_one_best_block_without_a_follow() {
 }
 
 /// A burst of lookups for different names, more than a node's follow budget,
-/// all resolve over the one connection and send no `chainHead_v1` method.
+/// all resolve and send no `chainHead_v1` method.
 #[test]
 fn a_burst_of_different_names_all_resolve() {
 	let provider = Arc::new(ScriptedProvider::with_frames(|request| {
@@ -136,24 +136,32 @@ fn a_burst_of_different_names_all_resolve() {
 	assert_eq!(outcomes, (0u8..8).map(|name| (Some(vec![name]), vec![name])).collect::<Vec<_>>());
 }
 
-/// A node that never names its best block fails the lookup after one step's
-/// budget instead of holding its caller.
+/// A node that names no best block fails the lookup in one step, whether it
+/// answers with none or never answers, instead of holding its caller.
 #[test]
 fn a_lookup_with_no_best_block_fails_in_one_step() {
-	let provider = Arc::new(ScriptedProvider::with_frames(|request| {
-		let request: Value = serde_json::from_str(request).unwrap();
-		match request["method"].as_str().unwrap() {
-			"chain_getBlockHash" => vec![],
-			method => panic!("unexpected RPC method: {method}"),
-		}
-	}));
-	let chain = ChainRuntime::new(provider, Spawner::for_test());
-	let error = futures::executor::block_on(DotnsLookup::at_best_block(&chain, [0x11; 32]))
-		.err()
-		.expect("no best block, no lookup");
+	let open = |answer: Option<Value>| {
+		let provider = Arc::new(ScriptedProvider::with_frames(move |request| {
+			let request: Value = serde_json::from_str(request).unwrap();
+			match request["method"].as_str().unwrap() {
+				"chain_getBlockHash" => answer
+					.iter()
+					.map(|result| {
+						json!({ "jsonrpc": "2.0", "id": request["id"], "result": result })
+							.to_string()
+					})
+					.collect(),
+				method => panic!("unexpected RPC method: {method}"),
+			}
+		}));
+		let chain = ChainRuntime::new(provider, Spawner::for_test());
+		futures::executor::block_on(DotnsLookup::at_best_block(&chain, [0x11; 32]))
+			.err()
+			.expect("no best block, no lookup")
+			.to_string()
+	};
 	assert_eq!(
-		error.to_string(),
-		"finding the best Asset Hub block timed out",
-		"{error:?}"
+		[open(Some(Value::Null)), open(None)],
+		["chain_getBlockHash returned no best block", "finding the best Asset Hub block timed out"]
 	);
 }

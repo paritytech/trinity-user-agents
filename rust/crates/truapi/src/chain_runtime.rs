@@ -564,7 +564,7 @@ impl ChainRuntime {
 
 		// `follow_intents` already holds exactly this scope's follow ids, so
 		// sweeping `follow_starts` against them needs no assumption about how
-		// an id is shaped and covers host-internal follows too.
+		// an id is shaped.
 		let released_follow_ids: HashSet<String> = self
 			.follow_intents
 			.lock()

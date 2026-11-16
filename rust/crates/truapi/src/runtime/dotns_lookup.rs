@@ -85,8 +85,8 @@ impl DotnsLookup {
 					info!(
 						target: "truapi::dotns",
 						reason = %error.reason(),
-						"no best Asset Hub block to read dotNS at; every grant \
-						 behind this lookup is refused"
+						"the dotNS lookup could not open at a best Asset Hub \
+						 block; every grant behind it is refused"
 					);
 				});
 			})?;
