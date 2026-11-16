@@ -459,7 +459,7 @@ impl RuntimeServices {
 			if let Err(error) =
 				services.select_funding_provider(&intent, &provider_id, &quote_id).await
 			{
-				warn!(%intent, %error, "funding session not started when quoted");
+				warn!(%error, "funding session not started when quoted");
 			}
 		});
 	}
