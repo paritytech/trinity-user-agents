@@ -33,7 +33,10 @@ pub use crate::{
 		ExecutableKind, PRODUCT_ID_MAX_BYTES, ProductId, ProductIdError,
 		REMOTE_PERMISSION_TRUSTED_LABELS,
 	},
-	stack::{Stack, StackChains, StackError, UnservedProduct},
+	stack::{
+		ReplaceCheck, Stack, StackChains, StackError, StackFetchRequest, StackFetchResponse,
+		StackHost, StackRecords, StackRefresh, StackRefreshOutcome, StackStatus, UnservedProduct,
+	},
 };
 
 use truapi::{
