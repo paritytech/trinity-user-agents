@@ -64,6 +64,7 @@ async fn verify_light_specs(light: &StackLightClient, stack: &Stack) -> Result<(
 		}
 	});
 	futures::future::try_join_all(loads).await?;
+	light.forget_unreachable().await;
 	Ok(())
 }
 

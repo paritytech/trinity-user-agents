@@ -86,12 +86,16 @@ jobs:
             assuming the suite passed.
 
             When a stack restarted from genesis, `every_catalog_genesis_hash_matches_its_bundled_spec`
-            or `test_light_client_catalog_match` fails: the refresh rewrites the specs and the
-            descriptors, never the catalog constants. Edit `genesis_hex` in
-            `rust/crates/truapi-provider/src/networks.rs` in this same PR. The first failure prints
-            the network and service, the hash the refreshed spec derives to on the left
-            and the stale catalog constant on the right; copy the left one into `networks.rs`, and
-            update any consumer that pins the old hash.
+            fails: the refresh rewrites the specs and the descriptors, never the catalog constants.
+            Edit `genesis_hex` in `rust/crates/truapi-provider/src/networks.rs` in this same PR. The
+            failure prints the network and service, the hash the refreshed spec derives to on the
+            left and the stale catalog constant on the right; copy the left one into `networks.rs`,
+            and update any consumer that pins the old hash.
+
+            If `test_bundled_light_specs_match_the_bundled_copies` fails, a descriptor in `stacks/`
+            names a light spec that `stacks/light-specs/` does not hold or that fails the check.
+            `scripts/update-stacks.sh` writes both together, so rerun it rather than editing either
+            file.
 
             If `test_built_in_network_hosts` fails, a stack moved an endpoint: confirm the new
             host is a test network before adding it to `TEST_NETWORK_HOSTS` in

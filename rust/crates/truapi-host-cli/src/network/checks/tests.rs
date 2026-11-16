@@ -140,7 +140,7 @@ async fn test_polkadot_fork_check_wiring() {
 /// one that cannot be fetched only leaves its chain unavailable.
 #[tokio::test]
 async fn test_light_spec_wrong_or_unreachable() {
-	let (server, _) = crate::network::serve_light_specs().await;
+	let (server, requests) = crate::network::serve_light_specs().await;
 	let (relay, people) = (format!("{server}/relay.json"), format!("{server}/people.json"));
 	let bundled = Network::PaseoNextV2.bundled_stack(ChainBackend::Rpc);
 	let directory = tempfile::tempdir().expect("temporary directory");
@@ -176,6 +176,13 @@ async fn test_light_spec_wrong_or_unreachable() {
 			.map(|genesis| light.provider().has_light_spec(genesis)),
 		[true, false],
 		"the relay's spec is loaded and People's is still missing"
+	);
+	let fetched = requests.load(std::sync::atomic::Ordering::Relaxed);
+	assert!(light.load_spec(people).await.is_err(), "the server still does not have it");
+	assert_eq!(
+		requests.load(std::sync::atomic::Ordering::Relaxed),
+		fetched + 1,
+		"a connect after the start check fetches the spec again, as the start check logs"
 	);
 }
 

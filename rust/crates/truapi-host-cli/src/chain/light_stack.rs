@@ -47,9 +47,12 @@ pub struct StackLightClient {
 }
 
 /// A fetch of a light spec that failed.
-struct FailedFetch {
-	at: Instant,
-	cause: String,
+enum FailedFetch {
+	/// The spec could not be fetched at `at`.
+	Unreachable { at: Instant, cause: String },
+	/// The spec is larger than the CLI reads, which another fetch in this run
+	/// would not change.
+	TooLarge,
 }
 
 impl core::fmt::Debug for StackLightClient {
@@ -160,7 +163,8 @@ impl StackLightClient {
 	/// once. The spec this build ships, then the kept copy, is used while it
 	/// passes the check. Otherwise the spec is fetched, checked and kept. A
 	/// spec that could not be fetched is reported unreachable without another
-	/// fetch for [`UNREACHABLE_SPEC_RETRY`].
+	/// fetch for [`UNREACHABLE_SPEC_RETRY`], and one too large to read is
+	/// reported so for the rest of the run.
 	pub async fn load_spec(&self, genesis_hash: [u8; 32]) -> Result<(), MissingSpec> {
 		let (LightSpecSource { role, url, sha256, .. }, last_failure) = self
 			.named
@@ -179,10 +183,16 @@ impl StackLightClient {
 			url: url.clone(),
 			cause: cause.to_owned(),
 		};
-		if let Some(failure) = &*last_failure &&
-			failure.at.elapsed() < UNREACHABLE_SPEC_RETRY
-		{
-			return Err(unreachable(&failure.cause));
+		match &*last_failure {
+			Some(FailedFetch::TooLarge) => {
+				return Err(MissingSpec::TooLarge { role: role.clone(), url: url.clone() });
+			},
+			Some(FailedFetch::Unreachable { at, cause })
+				if at.elapsed() < UNREACHABLE_SPEC_RETRY =>
+			{
+				return Err(unreachable(cause));
+			},
+			_ => {},
 		}
 		let kept = self.spec_directory.join(format!("{sha256}.json"));
 
@@ -200,12 +210,13 @@ impl StackLightClient {
 		let bytes = match fetch(url, FETCH_TIMEOUT).await {
 			Ok(bytes) => bytes,
 			Err(FetchError::TooLarge) => {
+				*last_failure = Some(FailedFetch::TooLarge);
 				return Err(MissingSpec::TooLarge { role: role.clone(), url: url.clone() });
 			},
 			Err(cause) => {
 				let cause = cause.to_string();
 				let error = unreachable(&cause);
-				*last_failure = Some(FailedFetch { at: Instant::now(), cause });
+				*last_failure = Some(FailedFetch::Unreachable { at: Instant::now(), cause });
 				return Err(error);
 			},
 		};
@@ -223,6 +234,19 @@ impl StackLightClient {
 			);
 		}
 		Ok(())
+	}
+
+	/// Forgets every spec that could not be fetched, so the next connect to
+	/// its chain fetches it again rather than reporting the failure for
+	/// [`UNREACHABLE_SPEC_RETRY`]. The start check calls it once it has
+	/// logged them, since a command connects well within that time.
+	pub async fn forget_unreachable(&self) {
+		for (_, last_failure) in self.named.values() {
+			let mut last_failure = last_failure.lock().await;
+			if matches!(*last_failure, Some(FailedFetch::Unreachable { .. })) {
+				*last_failure = None;
+			}
+		}
 	}
 }
 

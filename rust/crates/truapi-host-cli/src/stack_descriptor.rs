@@ -110,27 +110,35 @@ pub fn light_client_chains(descriptor: &Descriptor) -> impl Iterator<Item = &Cha
 	descriptor.relay().into_iter().chain(roles)
 }
 
-/// Whether `stack` and `other` agree in every field the CLI reads: `id`, which
-/// is the product namespace, the TLD, `generation`, the `dub` service,
-/// `dotns.popController`, the genesis hash and full `rpc` list of People,
-/// Asset Hub and Bulletin, and the `lightSpec.sha256` of those and the relay.
-/// The full lists are compared because the Polkadot fork check contacts every
-/// node the reference lists for a chain.
+/// Whether `stack` and `other` agree in every field the CLI reads apart from
+/// the light specs: `id`, which is the product namespace, the TLD,
+/// `generation`, the `dub` service, `dotns.popController`, and the genesis
+/// hash and full `rpc` list of People, Asset Hub and Bulletin. The full lists
+/// are compared because the Polkadot fork check contacts every node the
+/// reference lists for a chain. A light spec is left out because a relay's
+/// rotates with every fresh checkpoint and the light client fetches the one
+/// the descriptor names itself.
 pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
 	fn role_chain<'a>(descriptor: &'a Descriptor, role: &str) -> Option<([u8; 32], &'a [String])> {
 		descriptor.chain(role).map(|chain| (chain.genesis(), chain.rpc.as_slice()))
-	}
-	fn light_specs(descriptor: &Descriptor) -> impl Iterator<Item = Option<&str>> {
-		light_client_chains(descriptor)
-			.map(|chain| chain.light_spec.as_ref().map(|spec| spec.sha256.as_str()))
 	}
 	stack.id == other.id &&
 		stack.tld == other.tld &&
 		stack.generation == other.generation &&
 		stack.service("dub") == other.service("dub") &&
 		stack.dotns_address("popController") == other.dotns_address("popController") &&
-		ROLE_NAMES.iter().all(|role| role_chain(stack, role) == role_chain(other, role)) &&
-		light_specs(stack).eq(light_specs(other))
+		ROLE_NAMES.iter().all(|role| role_chain(stack, role) == role_chain(other, role))
+}
+
+/// Whether a bundled copy of `stack` can stay in place of `other`: they
+/// [read the same](reads_same) and name the same `lightSpec.sha256` for the
+/// relay, People, Asset Hub and Bulletin, whose specs the binary ships.
+pub fn bundles_same(stack: &Descriptor, other: &Descriptor) -> bool {
+	fn light_specs(descriptor: &Descriptor) -> impl Iterator<Item = Option<&str>> {
+		light_client_chains(descriptor)
+			.map(|chain| chain.light_spec.as_ref().map(|spec| spec.sha256.as_str()))
+	}
+	reads_same(stack, other) && light_specs(stack).eq(light_specs(other))
 }
 
 /// Why `fetched` cannot replace `stored`, the copy a stack already runs on:

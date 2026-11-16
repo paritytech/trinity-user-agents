@@ -227,10 +227,10 @@ async fn a_spec_being_fetched_does_not_hold_up_another_chain() {
 }
 
 /// A spec larger than the CLI reads stays that large, so it is not reported as
-/// one to fetch again.
+/// one to fetch again, nor fetched again by the connects that follow.
 #[tokio::test]
 async fn a_spec_too_large_to_read_is_not_unreachable() {
-	let (server, _) = serve_light_specs().await;
+	let (server, requests) = serve_light_specs().await;
 	let directory = tempfile::tempdir().expect("temporary directory");
 	let relay = light_spec_genesis(RELAY_LIGHT_SPEC);
 	let stack = stack_served_at(&server, "large.json", "people.json", directory.path());
@@ -246,6 +246,7 @@ async fn a_spec_too_large_to_read_is_not_unreachable() {
 		matches!(&connect, Some(ProviderError::Host { reason }) if reason.contains("Relay")),
 		"a transport failure would have the chain runtime connect again: {connect:?}"
 	);
+	assert_eq!(requests.load(Ordering::Relaxed), 1, "the oversized spec is read once");
 }
 
 /// Every parachain waits on its relay's spec, so a fetch that failed is the

@@ -21,8 +21,8 @@ use crate::{
 	network::ensure_built_in_runnable,
 	platform,
 	stack_descriptor::{
-		FETCH_TIMEOUT, describe_pin_change, fetch, light_client_chains, pointer_of, read_stack,
-		reads_same, refused, unix_now,
+		FETCH_TIMEOUT, bundles_same, describe_pin_change, fetch, light_client_chains, pointer_of,
+		read_stack, refused, unix_now,
 	},
 	terminal_ui::qr_rows,
 };
@@ -294,7 +294,7 @@ async fn bundle(
 		}
 		is_current = skip_same_projection &&
 			open(bytes, &pointer).is_ok() &&
-			reads_same(stored_descriptor, descriptor) &&
+			bundles_same(stored_descriptor, descriptor) &&
 			stored_descriptor.expires_at == descriptor.expires_at &&
 			stored_descriptor.valid_until == descriptor.valid_until;
 	}
