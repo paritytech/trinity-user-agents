@@ -22,6 +22,9 @@ protocol FundingAmountInteractorInputProtocol: AnyObject {
     /// Calls `onChange` with what a payment can spend, now and on every
     /// balance change, while the screen is up.
     func followSpendable(_ onChange: @escaping @MainActor (Decimal) -> Void)
+    /// Calls `onChange` with every session the core holds, now and on every
+    /// change, while the screen is up.
+    func followEntries(_ onChange: @escaping @MainActor ([FundingEntry]) -> Void)
 }
 
 @MainActor

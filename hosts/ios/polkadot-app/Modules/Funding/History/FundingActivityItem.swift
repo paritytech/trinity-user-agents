@@ -133,3 +133,22 @@ extension FundingActivityItem {
         return (inFlight, history)
     }
 }
+
+/// The amount screen's history clock, read from every session the core holds.
+enum FundingHistoryClock: Equatable {
+    /// No session has started: the history would be empty.
+    case hidden
+    case shown
+    /// A session has started and not ended: the clock wears a dot.
+    case running
+
+    init(entries: [FundingEntry]) {
+        if entries.contains(where: { $0.phase == .running }) {
+            self = .running
+        } else if entries.contains(where: \.hasEnded) {
+            self = .shown
+        } else {
+            self = .hidden
+        }
+    }
+}

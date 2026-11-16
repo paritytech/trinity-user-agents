@@ -26,7 +26,7 @@ final class FundingFlowWireframe {
 
     /// The flow's sheet went away.
     var onClose: (() -> Void)?
-    /// Leaves the flow for the history of every session.
+    /// Shows the history of every session over the flow.
     var onHistory: (() -> Void)?
     /// Leaves the flow for a new session the same way.
     var onStartOver: ((FundingDirection) -> Void)?
@@ -119,9 +119,10 @@ extension FundingFlowWireframe {
         }
     }
 
+    /// The history over the flow, which stays up underneath: closing the
+    /// history comes back to the screen it was opened from.
     func showHistory() {
-        let onHistory = onHistory
-        close { onHistory?() }
+        onHistory?()
     }
 
     func startOver() {

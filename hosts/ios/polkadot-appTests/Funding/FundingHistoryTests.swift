@@ -57,6 +57,18 @@ struct FundingHistoryTests {
         #expect(FundingActivityItem(summary: sentSummary)?.status == .sent)
         #expect(FundingEndedSession(summary: sentSummary)?.payoutState == .paidOut)
     }
+
+    @Test
+    func theClockShowsOnceASessionStartedAndWearsADotWhileOneRuns() {
+        let settingUp = entry("new", session: nil, summary: nil)
+        let ended = entry("old", session: nil, summary: summary("old", settledAtMs: 1_000))
+        let running = entry("run", session: session("run", stage: .open), summary: nil)
+
+        #expect(FundingHistoryClock(entries: []) == .hidden)
+        #expect(FundingHistoryClock(entries: [settingUp]) == .hidden)
+        #expect(FundingHistoryClock(entries: [settingUp, ended]) == .shown)
+        #expect(FundingHistoryClock(entries: [ended, running]) == .running)
+    }
 }
 
 /// The provider closing its screens for a session takes them down and hands
@@ -171,6 +183,20 @@ private func withdrawal(
             steps: [.started, .received, .sent],
             waitingAt: nil
         )
+    )
+}
+
+private func entry(_ id: String, session: FundingSession?, summary: FundingSessionSummary?) -> FundingEntry {
+    FundingEntry(
+        id: id,
+        direction: .in,
+        amount: nil,
+        session: session,
+        progress: nil,
+        summary: summary,
+        options: nil,
+        quotes: nil,
+        isQuoting: false
     )
 }
 

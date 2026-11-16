@@ -27,6 +27,9 @@ final class FundingAmountPresenter: FundingScreenPresenter {
         super.setup()
         reportSelection()
         refreshAmountIssue()
+        interactor.followEntries { [weak self] entries in
+            self?.activity.historyClock = FundingHistoryClock(entries: entries)
+        }
         guard context.direction == .out else { return }
 
         interactor.followSpendable { [weak self] spendable in
