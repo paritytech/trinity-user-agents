@@ -12,6 +12,7 @@ use super::{
 	AccountHolder, PERMISSION_DENIED_REASON, ProductRuntimeHost,
 	authority::{AuthorityError, StatementStoreAllowanceKey},
 	remote_authority_call, remote_authority_context,
+	served::Served,
 	statement_store_rpc::{self, StatementStoreRpc},
 	versioning::version,
 };
@@ -21,7 +22,6 @@ use crate::host_logic::statement_store::{
 	unsigned_statement_signing_payload, validated_topic_filter,
 };
 
-use crate::stack::Served;
 use serde_json::Value;
 use subxt_rpcs::client::RpcSubscription;
 use tracing::instrument;

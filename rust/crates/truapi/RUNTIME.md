@@ -420,13 +420,15 @@ a product enters the runtime:
   for the wasm, native and CLI bridges alike.
 - Each call that names another product (an account owner, a proof context, a
   storage owner, a purse owner) answers `MalformedFrame` for one the stack does
-  not serve. The account, signing and proof calls of `ProductAccounts` take the
-  request as `Served`, which only `stack::serve` builds, so a handler cannot
-  reach them without the check.
+  not serve. The handler takes the request through `serve`, the only way to
+  build a `Served` value. The account, signing and proof calls of
+  `HostAccounts` take the request as `Served`, and the signing requests the core
+  builds hold their product account as `Served`, so neither a handler nor a
+  paired host's request reaches a key without the check.
 - The signing role's wallet derives no key for one, and refuses a paired host's
-  request before it asks the user when the review names one. It checks inside
-  each derivation, since a paired host's request and a stored renewal target
-  reach it without passing a product connection.
+  request before it asks the user when the review names one. It also checks
+  inside each derivation, since a stored renewal target and the core's own
+  derivations reach it without a request to serve.
 - The manifest readers answer that one publishes nothing. They drop the id's
   TLD and cache by bare label, so they would otherwise answer with a namesake's
   manifest.

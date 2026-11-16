@@ -187,33 +187,6 @@ fn a_malformed_stack_tld_serves_only_the_reserved_one() {
 	}
 }
 
-/// A request can name several products, such as a key handle and a context.
-/// It is served only when the stack runs every one of them, and the refusal
-/// names the first it does not run.
-#[test]
-fn a_value_is_served_only_when_every_product_it_names_is() {
-	struct Pair(ProductId, ProductId);
-	impl NamesProducts for Pair {
-		fn products(&self) -> Vec<&ProductId> {
-			vec![&self.0, &self.1]
-		}
-	}
-	let refused = |first, second| {
-		serve("paseo", Pair(ProductId::for_test(first), ProductId::for_test(second)))
-			.err()
-			.map(|unserved| unserved.product_id)
-	};
-
-	assert_eq!(
-		[
-			refused("app.paseo", "app.dot"),
-			refused("app.paseo", "app.testnet"),
-			refused("app.testnet", "app.fork"),
-		],
-		[None, Some(ProductId::for_test("app.testnet")), Some(ProductId::for_test("app.testnet"))]
-	);
-}
-
 /// Polkadot's values, the `dot` TLD or a Polkadot genesis hash under any role,
 /// a role the core reads or one it never reads, start only in a build that
 /// allows them.

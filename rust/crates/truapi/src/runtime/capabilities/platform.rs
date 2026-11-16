@@ -258,11 +258,9 @@ impl<H: AccountHolder> Permissions for ProductRuntimeHost<H> {
 	) -> Result<RemotePermissionResponse, CallError<RemotePermissionError>> {
 		version(request)
 			.exec(|inner| async move {
-				if let latest::RemotePermission::NftPurseRead { owner } = &inner.permission {
-					self.connection.require_served(owner)?;
-				}
+				let inner = self.connection.serve(inner)?;
 				let service = self.connection.permissions_service();
-				match service.check_or_prompt_remote(inner).await {
+				match service.check_or_prompt_remote(inner.into_inner()).await {
 					Ok(decision) => Ok(latest::RemotePermissionResponse {
 						granted: decision == PermissionAuthorizationStatus::Authorized,
 					}),
@@ -293,7 +291,7 @@ impl<H: AccountHolder> LocalStorage for ProductRuntimeHost<H> {
 					|| CallError::Domain(latest::HostLocalStorageReadError::AccessNotGranted);
 				let owner = match product {
 					Some(target) => {
-						self.connection.require_served(&target)?;
+						let target = self.connection.serve(target)?;
 						if !self
 							.connection
 							.holds_cross_product_scope(&target, Granted::Storage)
@@ -301,7 +299,7 @@ impl<H: AccountHolder> LocalStorage for ProductRuntimeHost<H> {
 						{
 							return Err(access_not_granted());
 						}
-						target
+						target.into_inner()
 					},
 					None => self.connection.product_id().clone(),
 				};

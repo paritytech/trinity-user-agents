@@ -218,8 +218,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 		latest::HostNftPurseListPursesResponse,
 		CallError<latest::HostNftPurseListPursesError>,
 	> {
-		let latest::HostNftPurseListPursesRequest { owner } = request;
-		self.connection.require_served(&owner)?;
+		let owner = self.connection.serve(request.owner)?;
 		self.require_session()?;
 		let purses = self.connection.nft_purses()?;
 		if let Some(grant) = nft_purse::read_grant(self.connection.product_id(), &owner) {

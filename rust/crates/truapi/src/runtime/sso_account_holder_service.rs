@@ -73,7 +73,7 @@ impl SsoAccountHolderService {
 	where
 		F: Future<Output = Result<T, AuthorityError>>,
 	{
-		self.wallet.require_served(&review)?;
+		let review = self.wallet.serve(review)?.into_inner();
 		self.consent
 			.review(invocation.call, invocation.caller.clone(), self.platform.as_ref(), review)
 			.await?;
@@ -126,26 +126,29 @@ impl SsoAccountHolderService {
 		request: SignRequest,
 	) -> Result<api::HostSignPayloadResponse, String> {
 		let watermarked = matches!(request, SignRequest::Raw(_));
-		match request {
-			SignRequest::Payload(request) => {
-				// A relayed request carries no caller identity, and this role
-				// confirms every one of them anyway.
-				let invocation = cx.account_invocation(None);
-				let request = SignPayloadAuthorityRequest::Product(*request);
-				let review = request.review(&invocation.caller);
-				self.confirmed(invocation, review, |invocation| {
-					self.wallet.sign_payload(invocation, request)
-				})
-				.await
-			},
-			SignRequest::Raw(raw) | SignRequest::RawUnwatermarkedDeprecated(raw) => {
-				self.serve_sign_raw(cx, SignRawAuthorityRequest::Product(raw), watermarked)
+		async {
+			match request {
+				SignRequest::Payload(request) => {
+					// A relayed request carries no caller identity, and this role
+					// confirms every one of them anyway.
+					let invocation = cx.account_invocation(None);
+					let request = SignPayloadAuthorityRequest::Product(self.wallet.serve(*request)?);
+					let review = request.review(&invocation.caller);
+					self.confirmed(invocation, review, |invocation| {
+						self.wallet.sign_payload(invocation, request)
+					})
 					.await
-			},
-			SignRequest::RawWithLegacyAccountUnwatermarkedDeprecated(request) => {
-				self.serve_sign_raw_with_legacy_account(cx, request, false).await
-			},
+				},
+				SignRequest::Raw(raw) | SignRequest::RawUnwatermarkedDeprecated(raw) => {
+					let request = SignRawAuthorityRequest::Product(self.wallet.serve(raw)?);
+					self.serve_sign_raw(cx, request, watermarked).await
+				},
+				SignRequest::RawWithLegacyAccountUnwatermarkedDeprecated(request) => {
+					self.serve_sign_raw_with_legacy_account(cx, request, false).await
+				},
+			}
 		}
+		.await
 		.map_err(|error| error.to_string())
 	}
 
@@ -377,7 +380,10 @@ impl SsoAccountHolderService {
 		request: CreateTransactionRequest,
 	) -> CreateTransactionResponse {
 		let CreateTransactionPayload::V1(payload) = request.payload;
-		let payload = payload.into_product_payload();
+		let payload = self
+			.wallet
+			.serve(payload.into_product_payload())
+			.map_err(AuthorityError::into_sso_reason)?;
 		self.serve_create_transaction(cx, CreateTransactionAuthorityRequest::Product(payload))
 			.await
 	}

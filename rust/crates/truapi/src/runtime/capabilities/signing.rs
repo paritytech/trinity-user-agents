@@ -39,8 +39,7 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 		version(request)
 			.exec(|inner| async move {
 				debug!("sign_payload: requesting signing-host signature");
-				let owner = inner.account.dot_ns_identifier.clone();
-				let request = self.connection.serve(SignPayloadAuthorityRequest::Product(inner))?;
+				let request = self.connection.serve(inner)?;
 				self.connection
 					.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 					.await?;
@@ -48,11 +47,11 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 					.accounts
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostSignPayloadError::Rejected))?;
-				if !self.may_use_product_account(&owner, cx).await {
+				if !self.may_use_product_account(&request.account.dot_ns_identifier, cx).await {
 					return Err(CallError::Domain(latest::HostSignPayloadError::PermissionDenied));
 				}
 				self.accounts
-					.sign_payload(&session, cx, request)
+					.sign_payload(&session, cx, SignPayloadAuthorityRequest::Product(request))
 					.await
 					.map_err(signing_call_error)
 			})
@@ -93,13 +92,9 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 		request: HostCreateTransactionRequest,
 	) -> Result<HostCreateTransactionResponse, CallError<HostCreateTransactionError>> {
 		version(request)
-			.exec(|mut inner| async move {
+			.exec(|inner| async move {
 				debug!("create_transaction: requesting signing-host signature");
-				let owner = inner.signer.dot_ns_identifier.clone();
-				// Refused before the checks below, which would answer for an
-				// unserved owner as for one that grants nothing. The request is
-				// served once its contacts are substituted.
-				self.connection.require_served(&owner)?;
+				let payload = self.connection.serve(inner)?;
 				self.connection
 					.require_chain_submit(latest::HostCreateTransactionError::PermissionDenied)
 					.await?;
@@ -107,13 +102,13 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 					.accounts
 					.current_session()
 					.ok_or(CallError::Domain(latest::HostCreateTransactionError::Rejected))?;
-				if !self.may_use_product_account(&owner, cx).await {
+				if !self.may_use_product_account(&payload.signer.dot_ns_identifier, cx).await {
 					return Err(CallError::Domain(
 						latest::HostCreateTransactionError::PermissionDenied,
 					));
 				}
-				inner.call_data = self
-					.substitute_declared_contacts(inner.call_data, &inner.contacts)
+				let call_data = self
+					.substitute_declared_contacts(payload.call_data.clone(), &payload.contacts)
 					.await
 					.map_err(|error| {
 						let error = match error {
@@ -134,8 +129,9 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 						};
 						CallError::Domain(error)
 					})?;
-				let request =
-					self.connection.serve(CreateTransactionAuthorityRequest::Product(inner))?;
+				let request = CreateTransactionAuthorityRequest::Product(
+					payload.with_call_data(call_data),
+				);
 				self.accounts
 					.create_transaction(&session, cx, request)
 					.await
@@ -175,10 +171,8 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 				self.connection
 					.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 					.await?;
-				let request = self.connection.serve(SignPayloadAuthorityRequest::LegacyAccount {
-					product_account,
-					request: inner,
-				})?;
+				let request =
+					SignPayloadAuthorityRequest::LegacyAccount { product_account, request: inner };
 				self.accounts
 					.sign_payload(&session, cx, request)
 					.await
@@ -258,9 +252,8 @@ impl<H: AccountHolder> Signing for ProductRuntimeHost<H> {
 						CreateTransactionAuthorityRequest::IdentityAccount(inner)
 					},
 				};
-				let request = self.connection.serve(authority_request)?;
 				self.accounts
-					.create_transaction(&session, cx, request)
+					.create_transaction(&session, cx, authority_request)
 					.await
 					.map(|response| latest::HostCreateTransactionWithLegacyAccountResponse {
 						transaction: response.transaction,
@@ -280,8 +273,7 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 	) -> Result<latest::HostSignPayloadResponse, CallError<latest::HostSignPayloadError>> {
 		debug!("sign_raw: requesting signing-host signature");
 		let inner = request;
-		let owner = inner.account.dot_ns_identifier.clone();
-		let request = self.connection.serve(SignRawAuthorityRequest::Product(inner))?;
+		let request = self.connection.serve(inner)?;
 		self.connection
 			.require_chain_submit(latest::HostSignPayloadError::PermissionDenied)
 			.await?;
@@ -289,11 +281,11 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 			.accounts
 			.current_session()
 			.ok_or(CallError::Domain(latest::HostSignPayloadError::Rejected))?;
-		if !self.may_use_product_account(&owner, cx).await {
+		if !self.may_use_product_account(&request.account.dot_ns_identifier, cx).await {
 			return Err(CallError::Domain(latest::HostSignPayloadError::PermissionDenied));
 		}
 		self.accounts
-			.sign_raw(&session, cx, request, watermarked)
+			.sign_raw(&session, cx, SignRawAuthorityRequest::Product(request), watermarked)
 			.await
 			.map_err(raw_signing_call_error)
 	}
@@ -324,9 +316,8 @@ impl<H: AccountHolder> ProductRuntimeHost<H> {
 				SignRawAuthorityRequest::IdentityAccount { account, request: inner }
 			},
 		};
-		let request = self.connection.serve(authority_request)?;
 		self.accounts
-			.sign_raw(&session, cx, request, watermarked)
+			.sign_raw(&session, cx, authority_request, watermarked)
 			.await
 			.map_err(raw_signing_call_error)
 	}

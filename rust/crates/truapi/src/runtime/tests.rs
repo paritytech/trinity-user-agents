@@ -128,6 +128,13 @@ fn test_product_account_public(product_id: &str, index: u32) -> [u8; 32] {
 /// Root entropy the signing-host fixtures activate their wallet with.
 pub const ENTROPY: [u8; 16] = [0xAB; 16];
 
+/// `value` as a stack serves it. The account calls take their products served,
+/// and every product these tests name is under the reserved `dot` TLD, which
+/// every stack runs.
+pub fn served<T: NamesProducts>(value: T) -> Served<T> {
+	serve("dot", value).expect("every stack runs a .dot product")
+}
+
 /// A locked signing host on `.dot`. With no dotNS Asset Hub, activation looks
 /// up no username on the scripted chain.
 pub fn signing_runtime_on_asset_hub(
@@ -7882,7 +7889,7 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 			&session,
 			&cx,
 			&ProductContext::new(ProductId::for_test("dim2next.dot")),
-			v01::HostAccountCreateProofRequest {
+			served(v01::HostAccountCreateProofRequest {
 				key_handle: v01::ProductAccountId {
 					dot_ns_identifier: ProductId::for_test("peopl.dot"),
 					derivation_index: v01::DerivationIndex::Index(0),
@@ -7893,7 +7900,7 @@ fn the_pairing_authority_admits_a_context_only_its_product_granted() {
 				},
 				ring_location: ring_location_fixture(),
 				message: b"prove me".to_vec(),
-			},
+			}),
 		))
 	};
 

@@ -13,13 +13,14 @@ use std::sync::Arc;
 
 use super::{
 	super::{
-		AccountHolder, HostSession, ProductConnection, ProductRuntimeHost, RuntimeServices,
-		SigningHostRole, SsoAccountHolderService,
+		AccountHolder, HostSession, NamesProducts, ProductConnection, ProductRuntimeHost,
+		RuntimeServices, Served, SigningHostRole, SsoAccountHolderService,
 		authority::{
 			AccountCaller, AccountInvocation, AuthorityError, AuthoritySession,
 			CreateTransactionAuthorityRequest, SignPayloadAuthorityRequest,
 			SignRawAuthorityRequest, StatementStoreAllowanceKey,
 		},
+		serve,
 	},
 	LocalActivation, TEST_NETWORK_SUFFIX, WalletAccountHolder,
 	ring_vrf::{MemberCandidate, ResolvedRing, RingResolver},
@@ -42,7 +43,7 @@ use crate::{
 	runtime::{
 		sso_service::Dispatch,
 		tests::{
-			ENTROPY, active_signing_host, grant_auto_signing, product_runtime_for,
+			ENTROPY, active_signing_host, grant_auto_signing, product_runtime_for, served,
 			signing_runtime_on_asset_hub,
 		},
 	},
@@ -489,11 +490,11 @@ fn a_consented_alias_read_warns_nobody() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test("myapp.dot")),
-			HostAccountGetAliasRequest {
+			served(HostAccountGetAliasRequest {
 				key_handle: full_person_key_handle(),
 				context: context_of("other.dot"),
 				ring_location,
-			},
+			}),
 		))
 		.expect("the user consented to the read");
 	});
@@ -632,11 +633,11 @@ fn a_context_grant_covers_the_identity_read() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test(caller)),
-			v01::HostAccountGetAliasRequest {
+			served(v01::HostAccountGetAliasRequest {
 				key_handle: full_person_key_handle(),
 				context: context.clone(),
 				ring_location: ring.clone(),
-			},
+			}),
 		))
 	};
 
@@ -692,7 +693,7 @@ fn a_grantee_cannot_mint_the_owners_alias_in_a_third_partys_context() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test(caller)),
-			v01::HostAccountCreateProofRequest {
+			served_on_paseo(v01::HostAccountCreateProofRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
 					product_id: ProductId::for_test(context),
@@ -700,7 +701,7 @@ fn a_grantee_cannot_mint_the_owners_alias_in_a_third_partys_context() {
 				},
 				ring_location: ring.clone(),
 				message: b"m".to_vec(),
-			},
+			}),
 		))
 	};
 
@@ -805,11 +806,11 @@ fn third_product_context(
 		&session,
 		&CallContext::default(),
 		&ProductContext::new(ProductId::for_test("dim2next.dot")),
-		v01::HostAccountGetAliasRequest {
+		served_on_paseo(v01::HostAccountGetAliasRequest {
 			key_handle: full_person_key_handle(),
 			context,
 			ring_location: ring,
-		},
+		}),
 	));
 	(proof, alias)
 }
@@ -988,10 +989,10 @@ fn an_owner_listing_its_own_keys_is_not_prompted_for_its_own_account() {
 		&session,
 		&CallContext::default(),
 		&ProductContext::new(ProductId::for_test("PEOPL.DOT")),
-		v01::HostAccountListRingVrfKeysRequest {
+		served(v01::HostAccountListRingVrfKeysRequest {
 			owner: ProductId::for_test("peopl.dot"),
 			disclosure: v01::RingVrfKeyDisclosure::PublicKey,
-		},
+		}),
 	));
 	assert!(
 		listed.is_ok(),
@@ -1034,7 +1035,7 @@ fn a_cross_network_namesake_is_not_treated_as_the_owner() {
 		&session,
 		&CallContext::default(),
 		&ProductContext::new(ProductId::for_test("peopl.paseo")),
-		v01::HostAccountCreateProofRequest {
+		served(v01::HostAccountCreateProofRequest {
 			key_handle: full_person_key_handle(),
 			context: v01::ProductProofContext {
 				product_id: ProductId::for_test("bank.dot"),
@@ -1042,7 +1043,7 @@ fn a_cross_network_namesake_is_not_treated_as_the_owner() {
 			},
 			ring_location: ring.clone(),
 			message: b"m".to_vec(),
-		},
+		}),
 	));
 	assert_eq!(
 		minted.err(),
@@ -1072,7 +1073,7 @@ fn a_grantee_may_spell_its_own_context_differently() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test("dim2.dot")),
-			v01::HostAccountCreateProofRequest {
+			served(v01::HostAccountCreateProofRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
 					product_id: ProductId::for_test(context),
@@ -1080,7 +1081,7 @@ fn a_grantee_may_spell_its_own_context_differently() {
 				},
 				ring_location: ring.clone(),
 				message: b"m".to_vec(),
-			},
+			}),
 		))
 	};
 	assert!(mint("dim2.dot").is_ok(), "control: the canonical spelling");
@@ -1206,14 +1207,14 @@ fn a_grantee_cannot_read_the_owners_alias_in_a_third_partys_context() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test(caller)),
-			v01::HostAccountGetAliasRequest {
+			served_on_paseo(v01::HostAccountGetAliasRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
 					product_id: ProductId::for_test(context),
 					suffix: v01::DerivationIndex::Index(0),
 				},
 				ring_location: ring.clone(),
-			},
+			}),
 		))
 	};
 
@@ -1266,7 +1267,7 @@ fn an_owner_spelled_differently_still_proves_with_its_own_key() {
 			&session,
 			&CallContext::default(),
 			&ProductContext::new(ProductId::for_test(caller)),
-			v01::HostAccountCreateProofRequest {
+			served(v01::HostAccountCreateProofRequest {
 				key_handle: full_person_key_handle(),
 				context: v01::ProductProofContext {
 					product_id: ProductId::for_test("peopl.dot"),
@@ -1274,7 +1275,7 @@ fn an_owner_spelled_differently_still_proves_with_its_own_key() {
 				},
 				ring_location: ring.clone(),
 				message: b"m".to_vec(),
-			},
+			}),
 		))
 	};
 	assert!(prove("peopl.dot").is_ok(), "control: the canonical spelling");
@@ -1566,6 +1567,15 @@ enum Door {
 
 const DOORS: [Door; 2] = [Door::Product, Door::Paired];
 
+/// `value` as a stack on `paseo` serves it: that stack runs `.dot` and `.paseo`
+/// products alike. The fixtures run on `dot`, which refuses a `.paseo` name
+/// before any account call. A stack serving two TLDs passes a `.dot` owner with
+/// a `.paseo` context on, and the context check has to hold the context to the
+/// owner's network itself.
+fn served_on_paseo<T: NamesProducts>(value: T) -> Served<T> {
+	serve("paseo", value).expect("a paseo stack runs .dot and .paseo products")
+}
+
 /// The account holder's answer to `payload` from a paired peer naming itself `caller`.
 fn paired_request<P>(
 	authority: &SigningHostRole,
@@ -1604,7 +1614,7 @@ impl Door {
 				session,
 				&CallContext::default(),
 				&ProductContext::new(ProductId::for_test(caller)),
-				request,
+				served_on_paseo(request),
 			)),
 			Door::Paired => paired_request(authority, caller, request),
 		}
@@ -1623,7 +1633,7 @@ impl Door {
 				session,
 				&CallContext::default(),
 				&ProductContext::new(ProductId::for_test(caller)),
-				request,
+				served(request),
 			)),
 			Door::Paired => paired_request(authority, caller, request),
 		}
@@ -1773,23 +1783,23 @@ fn ring_alias_and_proof_share_the_explicit_registered_key() {
 		&session,
 		&cx,
 		&ProductContext::new(ProductId::for_test("peopl.dot")),
-		HostAccountGetAliasRequest {
+		served(HostAccountGetAliasRequest {
 			key_handle: full_person_key_handle(),
 			context: context.clone(),
 			ring_location: ring_location.clone(),
-		},
+		}),
 	))
 	.expect("alias succeeds");
 	let proof = futures::executor::block_on(authority.accounts().create_proof(
 		&session,
 		&cx,
 		&ProductContext::new(ProductId::for_test("peopl.dot")),
-		HostAccountCreateProofRequest {
+		served(HostAccountCreateProofRequest {
 			key_handle: full_person_key_handle(),
 			context,
 			ring_location,
 			message: b"prove me".to_vec(),
-		},
+		}),
 	))
 	.expect("proof succeeds");
 
@@ -1813,7 +1823,7 @@ fn alias_checks_the_exact_registry_ring_before_resolving_it() {
 		&session,
 		&CallContext::default(),
 		&ProductContext::new(ProductId::for_test("peopl.dot")),
-		HostAccountGetAliasRequest {
+		served(HostAccountGetAliasRequest {
 			key_handle: full_person_key_handle(),
 			context: v01::ProductProofContext {
 				product_id: ProductId::for_test("myapp.dot"),
@@ -1823,7 +1833,7 @@ fn alias_checks_the_exact_registry_ring_before_resolving_it() {
 				chain_id: registered_ring.chain_id,
 				junctions: vec![],
 			},
-		},
+		}),
 	))
 	.unwrap_err();
 
@@ -1850,11 +1860,11 @@ fn foreign_alias_prompts_but_foreign_proof_is_refused_without_a_prompt() {
 		&session,
 		&cx,
 		&ProductContext::new(ProductId::for_test("myapp.dot")),
-		HostAccountGetAliasRequest {
+		served(HostAccountGetAliasRequest {
 			key_handle: full_person_key_handle(),
 			context: context.clone(),
 			ring_location: ring_location.clone(),
-		},
+		}),
 	));
 	assert_eq!(alias, Err(RingVrfError::Rejected));
 
@@ -1862,12 +1872,12 @@ fn foreign_alias_prompts_but_foreign_proof_is_refused_without_a_prompt() {
 		&session,
 		&cx,
 		&ProductContext::new(ProductId::for_test("myapp.dot")),
-		HostAccountCreateProofRequest {
+		served(HostAccountCreateProofRequest {
 			key_handle: full_person_key_handle(),
 			context,
 			ring_location,
 			message: b"prove me".to_vec(),
-		},
+		}),
 	));
 	assert_eq!(proof, Err(RingVrfError::NotAllowlisted));
 	assert_eq!(
@@ -1905,11 +1915,11 @@ fn cross_product_alias_reuses_persisted_account_access_grant() {
 		&session,
 		&cx,
 		&product,
-		request.clone(),
+		served(request.clone()),
 	))
 	.expect("first alias succeeds");
 	futures::executor::block_on(
-		authority.accounts().account_alias(&session, &cx, &product, request),
+		authority.accounts().account_alias(&session, &cx, &product, served(request)),
 	)
 	.expect("second alias succeeds from cached grant");
 
@@ -1989,7 +1999,7 @@ fn sign_vrf_replays_transcript_and_returns_verifiable_proof() {
 		&session,
 		&CallContext::default(),
 		&connection(&authority, "myapp.dot"),
-		request,
+		served(request),
 	))
 	.expect("VRF signing succeeds");
 
@@ -2042,7 +2052,7 @@ fn approved_auto_signing_product_skips_vrf_confirmation_but_other_product_does_n
 		&session,
 		&CallContext::default(),
 		&connection(&authority, "myapp.dot"),
-		vrf_request("myapp.dot"),
+		served(vrf_request("myapp.dot")),
 	))
 	.expect("granted product signs without another confirmation");
 	assert!(
@@ -2058,7 +2068,7 @@ fn approved_auto_signing_product_skips_vrf_confirmation_but_other_product_does_n
 		&session,
 		&CallContext::default(),
 		&connection(&authority, "other.dot"),
-		vrf_request("myapp.dot"),
+		served(vrf_request("myapp.dot")),
 	))
 	.expect_err("different calling product remains confirmation-bound");
 	assert_eq!(error, AuthorityError::Rejected);
@@ -2097,7 +2107,7 @@ fn auto_signing_grant_does_not_cross_root_identity_replacement() {
 		&replacement,
 		&CallContext::default(),
 		&connection(&authority, "myapp.dot"),
-		vrf_request("myapp.dot"),
+		served(vrf_request("myapp.dot")),
 	))
 	.expect_err("replacement root must receive its own confirmation");
 	assert_eq!(error, AuthorityError::Rejected);
@@ -2139,7 +2149,7 @@ fn auto_signing_grant_does_not_cross_disconnect_and_same_wallet_reactivation() {
 		&reactivated,
 		&CallContext::default(),
 		&connection(&authority, "myapp.dot"),
-		vrf_request("myapp.dot"),
+		served(vrf_request("myapp.dot")),
 	))
 	.expect_err("reactivated wallet must receive its own confirmation");
 	assert_eq!(error, AuthorityError::Rejected);
@@ -2181,7 +2191,7 @@ fn stale_auto_signing_completion_cannot_grant_same_wallet_reactivation() {
 		&current,
 		&CallContext::default(),
 		&connection(&authority, "myapp.dot"),
-		vrf_request("myapp.dot"),
+		served(vrf_request("myapp.dot")),
 	))
 	.expect_err("stale allocation must not grant the replacement activation");
 	assert_eq!(error, AuthorityError::Rejected);
@@ -2223,7 +2233,7 @@ fn auto_signing_grant_does_not_cross_runtime_instance() {
 		&session,
 		&CallContext::default(),
 		&connection(&replacement, "myapp.dot"),
-		vrf_request("myapp.dot"),
+		served(vrf_request("myapp.dot")),
 	))
 	.expect_err("a separate runtime must receive its own confirmation");
 	assert_eq!(error, AuthorityError::Rejected);
@@ -2258,10 +2268,10 @@ fn sign_payload_product_and_legacy_use_the_substrate_preimage() {
 
 	let product_response = futures::executor::block_on(authority.wallet.sign_payload(
 		relayed(&cx, &session),
-		SignPayloadAuthorityRequest::Product(v01::HostSignPayloadRequest {
+		SignPayloadAuthorityRequest::Product(served(v01::HostSignPayloadRequest {
 			account: product_account(0),
 			payload: payload.clone(),
-		}),
+		})),
 	))
 	.expect("product payload signing succeeds");
 
@@ -2295,7 +2305,7 @@ fn sign_payload_product_and_legacy_use_the_substrate_preimage() {
 	let legacy_response = futures::executor::block_on(authority.wallet.sign_payload(
 		relayed(&cx, &session),
 		SignPayloadAuthorityRequest::LegacyAccount {
-			product_account: product_account(0),
+			product_account: served(product_account(0)),
 			request: v01::HostSignPayloadWithLegacyAccountRequest {
 				signer: format!("0x{}", hex::encode(keypair.public.to_bytes())),
 				payload,
@@ -2405,7 +2415,7 @@ fn create_transaction_reaches_chain_metadata_resolution() {
 
 	let err = futures::executor::block_on(activation.wallet.create_transaction(
 		relayed(&cx, &session),
-		CreateTransactionAuthorityRequest::Product(tx_payload(0)),
+		CreateTransactionAuthorityRequest::Product(served(tx_payload(0))),
 	))
 	.expect_err("fixture cannot resolve metadata");
 	assert!(
@@ -2424,7 +2434,7 @@ fn create_transaction_legacy_signer_mismatch_errors() {
 
 	let payload = tx_payload(0);
 	let request = CreateTransactionAuthorityRequest::LegacyAccount {
-		product_account: product_account(0),
+		product_account: served(product_account(0)),
 		request: v01::LegacyAccountTxPayload {
 			signer: [0xff; 32], // does not match the derived slot-zero key
 			genesis_hash: payload.genesis_hash,
@@ -2453,7 +2463,7 @@ fn create_transaction_requires_active_session() {
 
 	let err = futures::executor::block_on(activation.wallet.create_transaction(
 		relayed(&cx, &stale_session),
-		CreateTransactionAuthorityRequest::Product(tx_payload(0)),
+		CreateTransactionAuthorityRequest::Product(served(tx_payload(0))),
 	))
 	.expect_err("no active session");
 	assert_eq!(err, AuthorityError::Disconnected);
@@ -2558,7 +2568,7 @@ fn reactivation_invalidates_prior_session_snapshot() {
 	};
 	let err = futures::executor::block_on(authority.wallet.sign_raw(
 		relayed(&cx, &stale),
-		SignRawAuthorityRequest::Product(request),
+		SignRawAuthorityRequest::Product(served(request)),
 		true,
 	))
 	.expect_err("stale snapshot rejected");
@@ -2585,7 +2595,7 @@ fn disconnect_clears_local_session() {
 	};
 	let err = futures::executor::block_on(authority.wallet.sign_raw(
 		relayed(&cx, &session),
-		SignRawAuthorityRequest::Product(request),
+		SignRawAuthorityRequest::Product(served(request)),
 		true,
 	))
 	.expect_err("no session after disconnect");

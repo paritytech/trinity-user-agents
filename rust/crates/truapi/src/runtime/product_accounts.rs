@@ -20,7 +20,7 @@ use truapi::{
 use crate::host_logic::session::SessionInfo;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::platform::UserConfirmationReview;
-use crate::{host_internal::sso_messages::RingVrfError, platform::ProductId, stack::Served};
+use crate::{host_internal::sso_messages::RingVrfError, platform::ProductId};
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::authority::AccountCaller;
@@ -33,16 +33,15 @@ use super::{
 	},
 	contacts::ContactHandles,
 	product_consent::ProductConsent,
+	served::Served,
 };
 
 /// The host's accounts as one product connection sees them.
 ///
 /// Its account calls act for that connection's product, except
 /// [`Self::product_subtree_public_key_within`], which serves host
-/// administration for any product. A call that names an account or key of a
-/// product takes it as [`Served`], so no key is resolved for a product the
-/// stack does not run. [`Self::consent`] is the runtime's consent, shared by
-/// every product.
+/// administration for any product. [`Self::consent`] is the runtime's
+/// consent, shared by every product.
 pub struct ProductAccounts<H: AccountHolder> {
 	accounts: Arc<HostAccounts<H>>,
 	connection: Arc<ProductConnection>,
@@ -97,7 +96,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		cx: &CallContext,
 		account: Served<ProductAccountId>,
 	) -> Result<[u8; 32], AuthorityError> {
-		self.accounts.get_account(cx, &self.connection, account.into_inner()).await
+		self.accounts.get_account(cx, &self.connection, account).await
 	}
 
 	/// Public key of a product account this product may already use.
@@ -129,7 +128,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		cx: &CallContext,
 		request: Served<HostAccountSignVrfRequest>,
 	) -> Result<VrfSignature, AuthorityError> {
-		self.accounts.sign_vrf(session, cx, &self.connection, request.into_inner()).await
+		self.accounts.sign_vrf(session, cx, &self.connection, request).await
 	}
 
 	/// Sign a SCALE transaction payload for a product account.
@@ -137,9 +136,9 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: Served<SignPayloadAuthorityRequest>,
+		request: SignPayloadAuthorityRequest,
 	) -> Result<HostSignPayloadResponse, AuthorityError> {
-		self.accounts.sign_payload(session, cx, &self.connection, request.into_inner()).await
+		self.accounts.sign_payload(session, cx, &self.connection, request).await
 	}
 
 	/// Sign arbitrary bytes for a product account.
@@ -147,11 +146,11 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: Served<SignRawAuthorityRequest>,
+		request: SignRawAuthorityRequest,
 		watermarked: bool,
 	) -> Result<HostSignPayloadResponse, AuthorityError> {
 		self.accounts
-			.sign_raw(session, cx, &self.connection, request.into_inner(), watermarked)
+			.sign_raw(session, cx, &self.connection, request, watermarked)
 			.await
 	}
 
@@ -160,11 +159,9 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		&self,
 		session: &AuthoritySession,
 		cx: &CallContext,
-		request: Served<CreateTransactionAuthorityRequest>,
+		request: CreateTransactionAuthorityRequest,
 	) -> Result<HostCreateTransactionResponse, AuthorityError> {
-		self.accounts
-			.create_transaction(session, cx, &self.connection, request.into_inner())
-			.await
+		self.accounts.create_transaction(session, cx, &self.connection, request).await
 	}
 
 	/// Derive a contextual alias for an explicit registered ring-VRF key.
@@ -175,7 +172,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		request: Served<HostAccountGetAliasRequest>,
 	) -> Result<HostAccountGetAliasResponse, RingVrfError> {
 		self.accounts
-			.account_alias(session, cx, &self.connection.product, request.into_inner())
+			.account_alias(session, cx, &self.connection.product, request)
 			.await
 	}
 
@@ -187,7 +184,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		request: Served<HostAccountCreateProofRequest>,
 	) -> Result<HostAccountCreateProofResponse, RingVrfError> {
 		self.accounts
-			.create_proof(session, cx, &self.connection.product, request.into_inner())
+			.create_proof(session, cx, &self.connection.product, request)
 			.await
 	}
 
@@ -211,7 +208,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		request: Served<HostAccountListRingVrfKeysRequest>,
 	) -> Result<HostAccountListRingVrfKeysResponse, RingVrfError> {
 		self.accounts
-			.list_ring_vrf_keys(session, cx, &self.connection.product, request.into_inner())
+			.list_ring_vrf_keys(session, cx, &self.connection.product, request)
 			.await
 	}
 
@@ -223,7 +220,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 		request: Served<HostAccountRingVrfSignRequest>,
 	) -> Result<HostAccountRingVrfSignResponse, RingVrfError> {
 		self.accounts
-			.ring_vrf_sign(session, cx, &self.connection.product, request.into_inner())
+			.ring_vrf_sign(session, cx, &self.connection.product, request)
 			.await
 	}
 
@@ -295,7 +292,7 @@ impl<H: AccountHolder> ProductAccounts<H> {
 				session,
 				cx,
 				&self.connection,
-				account.into_inner(),
+				account,
 				payload,
 			)
 			.await

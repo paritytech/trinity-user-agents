@@ -40,13 +40,14 @@ use crate::{
 		contacts::ContactHandles,
 		product_consent::ProductConsent,
 		ring_vrf_registry::RingVrfRegistryStore,
+		served::{NamesProducts, Served, serve},
 		statement_allowance::{
 			PersonhoodSigner, StatementAllowanceError, collection::PersonhoodCollection, proof,
 			ring::RingParams,
 		},
 		vrf::{self, Vrf},
 	},
-	stack::{self, NamesProducts},
+	stack,
 };
 
 /// RFC-0022 domain for the responder's persistent SSO X25519 key.
@@ -189,10 +190,11 @@ impl WalletAccountHolder {
 		}
 	}
 
-	/// Refuses `value` when it names a product the stack does not serve, for a
-	/// caller that has to know before it asks the user anything.
-	pub fn require_served<T: NamesProducts>(&self, value: &T) -> Result<(), AuthorityError> {
-		Ok(stack::require_served(self.services.stack().tld(), value)?)
+	/// `value` as [`Served`] once the stack runs every product it names, for a
+	/// paired host's request, which reaches the wallet without a product
+	/// connection.
+	pub fn serve<T: NamesProducts>(&self, value: T) -> Result<Served<T>, AuthorityError> {
+		Ok(serve(self.services.stack().tld(), value)?)
 	}
 
 	fn with_keys<T, E: From<AuthorityError>>(

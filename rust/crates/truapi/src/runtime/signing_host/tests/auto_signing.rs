@@ -303,7 +303,7 @@ fn a_kept_key_proves_with_its_own_alias() {
 		&session,
 		&CallContext::default(),
 		&ProductContext::new(product_id.clone()),
-		request,
+		served(request),
 	))
 	.expect("the kept key proves");
 
@@ -366,10 +366,10 @@ fn a_withdrawn_statement_proof_is_not_signed_with_a_kept_key() {
 			&session,
 			&cx,
 			&connection(&activation, "myapp.dot"),
-			v01::ProductAccountId {
+			served(v01::ProductAccountId {
 				dot_ns_identifier: ProductId::for_test("myapp.dot"),
 				derivation_index: v01::DerivationIndex::Index(0),
-			},
+			}),
 			b"statement".to_vec(),
 		));
 
