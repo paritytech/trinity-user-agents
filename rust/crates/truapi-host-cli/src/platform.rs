@@ -7,7 +7,7 @@
 //! pairing deeplink and observe connection status.
 
 use std::{
-	collections::HashMap,
+	collections::{HashMap, HashSet},
 	fs,
 	io::{IsTerminal, Write},
 	path::{Path, PathBuf},
@@ -411,7 +411,7 @@ impl CliPlatform {
 			Self::core_key(&StackStorageKey { stack: self.stack_identity.id.clone(), slot })
 		});
 		let stack_key_prefix = self.stack_key_prefix();
-		let carried = {
+		let (carried, carried_unscoped, bootstrap_path) = {
 			// Keep the same path -> storage lock order used by persistence so
 			// an auth transition cannot deadlock with a concurrent core write.
 			let current_path =
@@ -421,11 +421,12 @@ impl CliPlatform {
 				// Another stack's entries stay where that stack will look.
 				// Entries stored with no stack id come along: they are this
 				// stack's if the core gave them to it.
-				current
+				let (own, unscoped) = current
 					.iter()
 					.filter(|(key, _)| key.starts_with(&stack_key_prefix) || is_unscoped(key))
 					.map(|(key, value)| (key.clone(), value.clone()))
-					.collect::<Vec<_>>()
+					.partition::<Vec<_>, _>(|(key, _)| key.starts_with(&stack_key_prefix));
+				(own, unscoped, current_path.clone())
 			} else {
 				let carried = transient_keys
 					.iter()
@@ -434,11 +435,27 @@ impl CliPlatform {
 				if let Some(path) = current_path.as_deref() {
 					save_stack_entries(path, &current, &stack_key_prefix)?;
 				}
-				carried
+				(carried, Vec::new(), None)
 			}
 		};
 
-		let target_core = update_storage_file(&target_core_path, |stored| stored.extend(carried))?;
+		// The stack's own entries are the login in progress, so they replace
+		// what the user's directory holds. One stored with no stack id there
+		// is as current as the bootstrap's, and stays.
+		let moved = carried
+			.iter()
+			.chain(&carried_unscoped)
+			.map(|(key, _)| key.clone())
+			.collect::<HashSet<_>>();
+		let target_core = update_storage_file(&target_core_path, |stored| {
+			stored.extend(carried);
+			for (key, value) in carried_unscoped {
+				stored.entry(key).or_insert(value);
+			}
+		})?;
+		if let Some(path) = bootstrap_path {
+			update_storage_file(&path, |stored| stored.retain(|key, _| !moved.contains(key)))?;
+		}
 		let mut target_products = load_product_storage(&target_product_dir);
 		if migrating_bootstrap {
 			target_products.extend(
@@ -689,16 +706,22 @@ impl CoreStorage for CliPlatform {
 		value: Vec<u8>,
 	) -> Result<(), api::GenericError> {
 		use parity_scale_codec::Encode;
+		// The core writes here only to claim the values stored with no stack
+		// id. The first claim stays: of a fork and its source claiming at
+		// once, the later one then reads back the other's id and takes none.
 		let key = slot.encode();
-		if let Some(path) = self.store_path(&slot) {
-			update_storage_file(&path, |stored| {
-				stored.insert(key.clone(), value.clone());
-			})?;
+		let path = self.store_path(&slot);
+		let mut store = self.store(&slot).lock().expect("core storage mutex poisoned");
+		let Some(path) = path else {
+			store.entry(key).or_insert(value);
+			return Ok(());
+		};
+		let stored = update_storage_file(&path, |stored| {
+			stored.entry(key.clone()).or_insert(value);
+		})?;
+		if let Some(kept) = stored.get(&key) {
+			store.insert(key, kept.clone());
 		}
-		self.store(&slot)
-			.lock()
-			.expect("core storage mutex poisoned")
-			.insert(key, value);
 		Ok(())
 	}
 
