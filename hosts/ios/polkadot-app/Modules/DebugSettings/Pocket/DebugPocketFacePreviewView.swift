@@ -13,6 +13,12 @@ struct DebugPocketFacePreviewView: View {
                 .autocorrectionDisabled()
                 .textFieldStyle(.roundedBorder)
 
+            TextField("Back face URL (optional)", text: $viewModel.backUrl)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .textFieldStyle(.roundedBorder)
+
             Button("Draw") { Task { await viewModel.load() } }
                 .buttonStyle(.borderedProminent)
                 .disabled(viewModel.isLoading)
@@ -21,6 +27,11 @@ struct DebugPocketFacePreviewView: View {
             // Pocket will show.
             PocketProductCardView(title: "Preview", face: viewModel.face, resolveImage: viewModel.imageResolver)
                 .id(viewModel.draws)
+
+            if let back = viewModel.back {
+                PocketProductCardView(title: "Back", face: back, resolveImage: viewModel.backImageResolver)
+                    .id(viewModel.draws)
+            }
 
             if let refusal = viewModel.refusal {
                 ScrollView {

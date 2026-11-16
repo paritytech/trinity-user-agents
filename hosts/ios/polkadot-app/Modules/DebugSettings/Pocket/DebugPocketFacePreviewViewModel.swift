@@ -15,16 +15,24 @@ import TrUAPIHost
 @MainActor
 final class DebugPocketFacePreviewViewModel {
     var url = "http://127.0.0.1:5173/pocket/devicehood.json"
+    var backUrl = ""
     private(set) var face: CustomMessageWidgetNode?
+    private(set) var back: CustomMessageWidgetNode?
     private(set) var refusal: String?
     private(set) var isLoading = false
     // Counts draws, so drawing an unchanged face again still reloads its images.
     private(set) var draws = 0
     private var drawnURL: URL?
+    private var drawnBackURL: URL?
 
     /// Resolves images against the face that was drawn, not the address being typed.
     var imageResolver: WidgetImageResolver? {
         drawnURL.map(DebugPocketFacePreviewImages.resolver(faceURL:))
+    }
+
+    /// The back's images resolve against the back's own address.
+    var backImageResolver: WidgetImageResolver? {
+        drawnBackURL.map(DebugPocketFacePreviewImages.resolver(faceURL:))
     }
 
     private let fetch: @Sendable (URL, Int) async throws -> Data
@@ -45,8 +53,14 @@ final class DebugPocketFacePreviewViewModel {
     }
 
     func load() async {
+        let backUrl = backUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let address = URL(string: url) else {
             show(refusal: "'\(url)' is not an address")
+            return
+        }
+        let backAddress = URL(string: backUrl)
+        guard backUrl.isEmpty || backAddress != nil else {
+            show(refusal: "'\(backUrl)' is not an address")
             return
         }
 
@@ -54,12 +68,10 @@ final class DebugPocketFacePreviewViewModel {
         defer { isLoading = false }
 
         do {
-            let data = try await fetch(address, PocketPreviewLoader.maxBytes)
-            guard let json = String(bytes: data, encoding: .utf8) else {
-                throw DebugPocketFacePreviewError.notUtf8
-            }
-            face = try parseRendererNodeJson(json: json).toWidgetNode(resolver: resolver)
+            face = try await drawn(address)
+            back = if let backAddress { try await drawn(backAddress) } else { nil }
             drawnURL = address
+            drawnBackURL = backAddress
             draws += 1
             refusal = nil
         } catch {
@@ -67,9 +79,18 @@ final class DebugPocketFacePreviewViewModel {
         }
     }
 
+    private func drawn(_ address: URL) async throws -> CustomMessageWidgetNode? {
+        let data = try await fetch(address, PocketPreviewLoader.maxBytes)
+        guard let json = String(bytes: data, encoding: .utf8) else {
+            throw DebugPocketFacePreviewError.notUtf8
+        }
+        return try parseRendererNodeJson(json: json).toWidgetNode(resolver: resolver)
+    }
+
     private func show(refusal message: String) {
         refusal = message
         face = nil
+        back = nil
     }
 }
 
@@ -99,6 +120,8 @@ enum DebugPocketFacePreviewImages {
         gateway: (String) -> URL?
     ) -> URL? {
         switch source {
+        case .inline:
+            return nil
         case let .bulletin(cid):
             return gateway(cid)
         case let .archive(path):
