@@ -164,7 +164,8 @@ export interface StackCallbacks {
   ): StackFetchResponse | Promise<StackFetchResponse>;
   /**
    * The stack's status when the runtime starts, and on each change. A host
-   * without `fetchStackDescriptor` gets the one at start.
+   * without `fetchStackDescriptor` gets the one at start. A runtime built
+   * from a test stack has no status and calls neither callback.
    */
   stackChanged?(status: StackStatus): void;
 }

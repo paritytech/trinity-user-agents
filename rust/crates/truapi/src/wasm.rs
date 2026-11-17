@@ -1656,9 +1656,9 @@ impl WasmProductRuntime {
 	/// requires (camelCase property names; see the source for the full
 	/// list). Resolves once the core has read its stack record from the host's
 	/// core storage, or after a few seconds without it. A product runtime
-	/// built on its own starts from that
-	/// record but does not refresh the descriptor: it has no `stackStatus`
-	/// or `refreshStack`, and a host runtime is what keeps the stack current.
+	/// built on its own starts from that record but does not refresh the
+	/// descriptor: it has no `stackStatus` or `refreshStack`, and a host
+	/// runtime is what keeps the stack current.
 	pub async fn create(
 		callbacks: JsValue,
 		runtime_config: JsValue,
