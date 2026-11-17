@@ -19,7 +19,7 @@ use subxt::utils::H256;
 use super::{
 	Asset, ChainParams, Snapshot,
 	assembly::{self, Build, Context, Funding, Keys, Personhood, Ring, Transaction},
-	chain::{AliasState, ChainCoin, CoinageChain},
+	chain::{AliasState, ChainCoin, CoinageChain, RingPosition},
 	ledger::{self, Mark, Read, Subject},
 	namespace::{coin_key, entry_seed},
 	operation::{OpKey, Retry},
@@ -32,8 +32,9 @@ use crate::{
 	chain::{ExtrinsicService, Heads},
 	chain_runtime::RuntimeFailure,
 	durable::{
-		CompletionOracle, DeferredDurableTx, DurableRegistry, DurableTxEntry, DurableTxId, DurableTxStatus, HeadKind,
-		PassScope, PolicyError, PolicyParams, Preparation, SubmissionPolicy, Unobservable, VerdictFailureKind,
+		self, CompletionOracle, DeferredDurableTx, DurableRegistry, DurableTxEntry, DurableTxId, DurableTxStatus,
+		HeadKind, PassScope, PolicyError, PolicyParams, Preparation, SubmissionPolicy, Unobservable,
+		VerdictFailureKind, Window,
 	},
 	runtime::{
 		Vrf, load_vrf,
@@ -234,7 +235,8 @@ impl CoinagePolicy {
 		let cancelled =
 			view.operation(&facts.operation).is_some_and(|operation| operation.cancel_requested || operation.released);
 		let past_deadline = matches!(params.retry, Retry::Until(deadline) if now > deadline);
-		if cancelled || past_deadline {
+		let inputs_gone = matches!(params.call, Call::Load(_)) || facts.rows.inputs.iter().any(|input| gone(input, view));
+		if cancelled || (past_deadline && inputs_gone) {
 			return Some(Preparation::GiveUp);
 		}
 		let uncommitted_export = facts.rows.outputs.iter().any(|output| view.mark(output) == Some(Mark::Uncommitted));
@@ -260,6 +262,13 @@ impl CoinagePolicy {
 			Call::Load(from) => {
 				let funding = running.funding.get(&facts.operation).cloned();
 				let Some(funding) = funding else { return Some(Preparation::GiveUp) };
+				if earlier_load_open(view, waiting.id, from) {
+					return None;
+				}
+				let funds = deps.people.funds_at(heads.finalized.hash, from).await.ok()?;
+				if funds < load_cost(&tx, &running.params) {
+					return None;
+				}
 				context.nonce = Some(deps.people.nonce_at(heads.finalized.hash, from).await.ok()?);
 				Some(funding)
 			},
@@ -305,6 +314,31 @@ fn window_period(params: &ChainParams, retry: Retry, now: u64) -> u32 {
 		}
 	}
 	period
+}
+
+/// Whether a load paid by `from` and registered before `record` has no
+/// stable verdict yet: the layer builds one transaction per signing account
+/// at a time, in registration order, so each reads the nonce the one
+/// before it left (E2 invariant 4).
+fn earlier_load_open(view: &Snapshot, record: DurableTxId, from: [u8; 32]) -> bool {
+	view.registrations().records().any(|earlier| {
+		let paid_by_from = earlier
+			.state
+			.plan
+			.as_ref()
+			.and_then(|plan| RecordParams::from_params(&plan.params))
+			.is_some_and(|params| params.call == Call::Load(from));
+		let stable = matches!(earlier.state.status, DurableTxStatus::FinalizedSuccess { .. } | DurableTxStatus::Failure(_));
+		earlier.record < record && paid_by_from && !stable
+	})
+}
+
+/// What the funding account must hold before a load is built: the value it
+/// loads in the external asset's units, and the asset's minimum balance it
+/// keeps, since a load preserves the paying account.
+fn load_cost(tx: &Transaction, params: &ChainParams) -> u128 {
+	let cents: u64 = tx.outputs.iter().map(|(_, exponent)| exponent.value()).sum();
+	u128::from(cents).saturating_mul(params.instance().asset_unit).saturating_add(params.config().external_minimum_balance)
 }
 
 /// What the chain shows of an unload's aliases right before it is built.
@@ -359,6 +393,13 @@ fn buildable(input: &Asset, view: &Snapshot, now: u64) -> bool {
 	}
 }
 
+/// Whether F1 last saw `input` gone: a coin whose account it read empty. An
+/// input it never read is not gone.
+fn gone(input: &Asset, view: &Snapshot) -> bool {
+	let value = view.observation(&Subject::Asset(*input)).and_then(|observation| observation.value.as_ref());
+	matches!(value, Some(Read::Coin { now: None, .. }))
+}
+
 /// The transaction a record builds, from C1's rows and its call.
 fn transaction(facts: &RecordFacts, call: Call, view: &Snapshot) -> Option<Transaction> {
 	let exponent = |asset: &Asset| match asset {
@@ -406,6 +447,7 @@ impl CompletionOracle for CoinageOracle {
 		let now = (deps.clock)();
 		let records: Vec<&RecordFacts> =
 			transactions.iter().filter_map(|entry| view.registrations().record(entry.id)).collect();
+		let windows = minter_windows(&deps.store, &records, &view).await;
 		let keys = AssetKeys::derive(&records, &view, &entropy, &vrf);
 		let finalized = Reads::at(deps.people.as_ref(), heads.finalized.hash, &keys).await;
 		let best = Reads::at(deps.people.as_ref(), heads.best.hash, &keys).await;
@@ -413,7 +455,8 @@ impl CompletionOracle for CoinageOracle {
 		let mut proven = HashMap::new();
 		for facts in records {
 			for (head, reads) in [(HeadKind::Finalized, &finalized), (HeadKind::Best, &best)] {
-				let judge = Judge { facts, view: &view, keys: &keys, reads, now };
+				let judge =
+					Judge { facts, view: &view, keys: &keys, reads, now, finalized: heads.finalized.number, windows: &windows };
 				let guard = token_guard.get(&facts.record).copied().unwrap_or(true);
 				let finalized = matches!(head, HeadKind::Finalized);
 				proven.insert((facts.record, finalized), (judge.completed(), guard && judge.not_completed()));
@@ -437,16 +480,39 @@ impl PassScope for Proven {
 	}
 }
 
-/// The account of every coin and the member key and alias of every entry
-/// the pass's records name.
+/// The window of each record that finally minted an input of `records`. A
+/// window that cannot be read is left out, so its input is not settled.
+async fn minter_windows(store: &Db, records: &[&RecordFacts], view: &Snapshot) -> HashMap<DurableTxId, Window> {
+	let minters: HashSet<DurableTxId> = records
+		.iter()
+		.flat_map(|facts| &facts.rows.inputs)
+		.filter_map(|input| view.registrations().creator(input))
+		.filter(|minter| matches!(minter.state.status, DurableTxStatus::FinalizedSuccess { .. }))
+		.map(|minter| minter.record)
+		.collect();
+	let read = store.read(move |conn| {
+		Ok(minters
+			.into_iter()
+			.filter_map(|minter| Some((minter, durable::entry(conn, minter).ok()??.window)))
+			.collect::<HashMap<_, _>>())
+	});
+	read.await.unwrap_or_default()
+}
+
+/// The account of every coin and the keys of every entry the pass's records
+/// name.
 #[derive(Default)]
 struct AssetKeys {
 	accounts: HashMap<Asset, [u8; 32]>,
-	members: HashMap<Asset, [u8; 32]>,
-	aliases: HashMap<Asset, [u8; 32]>,
-	/// For each entry input, its exponent as the chain stores it and the
-	/// ring it was last observed in.
-	rings: HashMap<Asset, (i8, u32)>,
+	entries: HashMap<Asset, EntryKeys>,
+}
+
+/// The keys the chain knows an entry by, and its exponent as the chain
+/// stores it.
+struct EntryKeys {
+	member: [u8; 32],
+	alias: [u8; 32],
+	exponent: i8,
 }
 
 impl AssetKeys {
@@ -466,14 +532,13 @@ impl AssetKeys {
 				},
 				Asset::Entry { purse, installation, index } => {
 					let seed = entry_seed(entropy, purse, installation, index);
-					if let Ok(member) = vrf.member(&seed.0) {
-						keys.members.insert(asset, member);
-					}
-					if let Ok(alias) = vrf.alias(&seed.0, &assembly::UNLOADING_RECYCLER_CONTEXT) {
-						keys.aliases.insert(asset, alias);
-					}
-					if let Some((exponent, ring, _)) = ring_of(view, &asset) {
-						keys.rings.insert(asset, (exponent, ring));
+					let derived = (
+						vrf.member(&seed.0),
+						vrf.alias(&seed.0, &assembly::UNLOADING_RECYCLER_CONTEXT),
+						view.asset(&asset).and_then(|record| i8::try_from(record.exponent.get()).ok()),
+					);
+					if let (Ok(member), Ok(alias), Some(exponent)) = derived {
+						keys.entries.insert(asset, EntryKeys { member, alias, exponent });
 					}
 				},
 			}
@@ -487,33 +552,55 @@ struct Reads {
 	coins: Option<HashMap<[u8; 32], Option<ChainCoin>>>,
 	/// For each member key, the exponent it was loaded under.
 	members: Option<HashMap<[u8; 32], Option<i8>>>,
-	/// The alias states of the entry inputs whose ring is known; an alias
-	/// whose read failed is absent.
-	aliases: HashMap<[u8; 32], Option<AliasState>>,
+	/// Whether each entry's alias is unloaded, for the entries whose
+	/// position and alias state were read: an onboarding entry was never in a
+	/// ring, so it was never unloaded. A suspended entry, and one whose read
+	/// failed, is absent.
+	unloaded: HashMap<Asset, bool>,
 }
 
 impl Reads {
 	async fn at(chain: &dyn CoinageChain, at: H256, keys: &AssetKeys) -> Self {
 		let accounts: Vec<[u8; 32]> = keys.accounts.values().copied().collect();
-		let members: Vec<[u8; 32]> = keys.members.values().copied().collect();
+		let members: Vec<[u8; 32]> = keys.entries.values().map(|entry| entry.member).collect();
 		let coins = chain.coins_at(at, &accounts).await.ok().map(|coins| accounts.iter().copied().zip(coins).collect());
 		let member_reads = chain.members_at(at, &members).await.ok();
 		let members_map = member_reads
 			.map(|found| members.iter().copied().zip(found.into_iter().map(|loaded| loaded.map(|(_, exponent)| exponent))).collect());
-		let mut rings: HashMap<(i8, u32), Vec<[u8; 32]>> = HashMap::new();
-		for (entry, ring) in &keys.rings {
-			if let Some(alias) = keys.aliases.get(entry) {
-				rings.entry(*ring).or_default().push(*alias);
-			}
-		}
-		let mut aliases = HashMap::new();
-		for ((exponent, ring), group) in rings {
-			if let Ok(states) = chain.aliases_at(at, exponent, ring, &group).await {
-				aliases.extend(group.into_iter().zip(states));
-			}
-		}
-		Self { coins, members: members_map, aliases }
+		Self { coins, members: members_map, unloaded: unloaded_at(chain, at, keys).await }
 	}
+}
+
+/// Whether each entry's alias is unloaded at `at`, for the entries the chain
+/// answers for (see [`Reads`]).
+async fn unloaded_at(chain: &dyn CoinageChain, at: H256, keys: &AssetKeys) -> HashMap<Asset, bool> {
+	let mut by_exponent: HashMap<i8, Vec<(&Asset, &EntryKeys)>> = HashMap::new();
+	for (entry, entry_keys) in &keys.entries {
+		by_exponent.entry(entry_keys.exponent).or_default().push((entry, entry_keys));
+	}
+	let mut unloaded = HashMap::new();
+	let mut rings: HashMap<(i8, u32), Vec<(&Asset, &EntryKeys)>> = HashMap::new();
+	for (exponent, group) in by_exponent {
+		let members: Vec<[u8; 32]> = group.iter().map(|(_, entry_keys)| entry_keys.member).collect();
+		let Ok(positions) = chain.places_at(at, exponent, &members).await else { continue };
+		for ((entry, entry_keys), position) in group.into_iter().zip(positions) {
+			match position {
+				Some(RingPosition::Onboarding) => {
+					unloaded.insert(*entry, false);
+				},
+				Some(RingPosition::Included(place)) => rings.entry((exponent, place.ring)).or_default().push((entry, entry_keys)),
+				Some(RingPosition::Suspended) | None => {},
+			}
+		}
+	}
+	for ((exponent, ring), group) in rings {
+		let aliases: Vec<[u8; 32]> = group.iter().map(|(_, entry_keys)| entry_keys.alias).collect();
+		if let Ok(states) = chain.aliases_at(at, exponent, ring, &aliases).await {
+			let read = states.into_iter().map(|state| state == Some(AliasState::Unloaded));
+			unloaded.extend(group.into_iter().map(|(entry, _)| *entry).zip(read));
+		}
+	}
+	unloaded
 }
 
 /// The oracle's rules for one record at one head.
@@ -523,6 +610,10 @@ struct Judge<'a> {
 	keys: &'a AssetKeys,
 	reads: &'a Reads,
 	now: u64,
+	/// The finalized head's number.
+	finalized: u64,
+	/// The window of each record that finally minted an input.
+	windows: &'a HashMap<DurableTxId, Window>,
 }
 
 impl Judge<'_> {
@@ -543,14 +634,14 @@ impl Judge<'_> {
 	}
 
 	fn member_present(&self, entry: &Asset) -> Option<bool> {
-		let member = self.keys.members.get(entry)?;
-		let found = *self.reads.members.as_ref()?.get(member)?;
+		let member = self.keys.entries.get(entry)?.member;
+		let found = *self.reads.members.as_ref()?.get(&member)?;
 		Some(found.is_some_and(|exponent| Some(exponent) == self.expected(entry)))
 	}
 
-	fn alias_unloaded(&self, entry: &Asset) -> bool {
-		let alias = self.keys.aliases.get(entry);
-		alias.and_then(|alias| self.reads.aliases.get(alias)).is_some_and(|state| *state == Some(AliasState::Unloaded))
+	/// Whether `entry`'s alias is unloaded; none when unknown.
+	fn alias_unloaded(&self, entry: &Asset) -> Option<bool> {
+		self.reads.unloaded.get(entry).copied()
 	}
 
 	fn completed(&self) -> bool {
@@ -559,7 +650,7 @@ impl Judge<'_> {
 			Asset::Entry { .. } => self.member_present(output) == Some(true),
 			_ => matches!(self.coin(output), Some(Some(_))),
 		});
-		let alias_unloaded = rows.inputs.iter().any(|input| matches!(input, Asset::Entry { .. }) && self.alias_unloaded(input));
+		let alias_unloaded = rows.inputs.iter().any(|input| self.alias_unloaded(input) == Some(true));
 		let settled_and_gone = !rows.inputs.is_empty() &&
 			rows.inputs.iter().all(|input| self.settled(input) && matches!(self.coin(input), Some(None)));
 		let consumer_final = rows.outputs.iter().any(|output| {
@@ -584,7 +675,7 @@ impl Judge<'_> {
 		let available = rows.inputs.iter().any(|input| {
 			let own = !matches!(input, Asset::PeerCoin(_)) && self.view.mark(input).is_none();
 			own && match input {
-				Asset::Entry { .. } => self.member_present(input) == Some(true) && !self.alias_unloaded(input),
+				Asset::Entry { .. } => self.member_present(input) == Some(true) && self.alias_unloaded(input) == Some(false),
 				_ => matches!(self.coin(input), Some(Some(_))),
 			}
 		});
@@ -603,14 +694,15 @@ impl Judge<'_> {
 	}
 
 	/// A coin this layer minted, never disclosed, whose minter succeeded
-	/// finally.
+	/// finally and whose minter's window is closed at the finalized head: one
+	/// block past its death, as the durability layer closes a window.
 	fn settled(&self, input: &Asset) -> bool {
 		matches!(input, Asset::Coin { .. }) &&
 			self.view.mark(input).is_none() &&
-			self.view
-				.registrations()
-				.creator(input)
-				.is_some_and(|minter| matches!(minter.state.status, DurableTxStatus::FinalizedSuccess { .. }))
+			self.view.registrations().creator(input).is_some_and(|minter| {
+				matches!(minter.state.status, DurableTxStatus::FinalizedSuccess { .. }) &&
+					self.windows.get(&minter.record).is_some_and(|window| self.finalized > window.death())
+			})
 	}
 }
 
