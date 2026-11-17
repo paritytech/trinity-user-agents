@@ -132,11 +132,11 @@ class TrUAPIWorkerSupervisor @Inject constructor(
 
     private suspend fun boot(productId: ProductId, worker: RunningWorker): Result<TrUAPIProductExecution> {
         val resolved = scriptResolver.resolveWorker(productId).getOrElse { return Result.failure(it) }
-        val includesChat = resolved.includesChat
+        val includesChat = resolved.executable.includesChat
         val runtime = runtimeProvider.get().runtime().getOrElse { return Result.failure(it) }
-        val workerScript = WorkerScript.of(resolved.scriptUrl)
+        val workerScript = WorkerScript.of(resolved.executable.scriptUrl)
 
-        val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript), worker.scope)
+        val provider = webViewProviderFactory.create(ChatWebViewConfig(productId, workerScript, resolved.source), worker.scope)
         val webViewRuntime = WebViewRuntime(provider).also { worker.webViewRuntime = it }
         // The bootstrap publishes the loopback port and token, so it goes to the worker's own origin only.
         val installBootstrap = runCatching {

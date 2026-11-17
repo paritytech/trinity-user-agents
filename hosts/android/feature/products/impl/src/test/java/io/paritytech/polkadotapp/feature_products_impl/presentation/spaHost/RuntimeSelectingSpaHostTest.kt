@@ -23,7 +23,11 @@ class RuntimeSelectingSpaHostTest {
     private val truapi = mockk<TrUAPISpaHost> {
         every { with(scope) { with(messageDisplay) { createSession(any(), any(), any()) } } } returns session
     }
-    private val runtimeSettings = mockk<ProductRuntimeSettings> { every { isTrUAPIRuntimeEnabled() } returns false }
+    private val runtimeSettings = object : ProductRuntimeSettings {
+        override fun isTrUAPIRuntimeEnabled() = false
+
+        override fun setTrUAPIRuntimeEnabled(enabled: Boolean) = Unit
+    }
     private val bundledProducts = bundledProducts(mapOf("bundled-products/provider.dot/app/index.html" to "<html></html>"))
     private val host = RuntimeSelectingSpaHost(native, truapi, runtimeSettings, productSources(bundledProducts))
 

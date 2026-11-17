@@ -1,4 +1,4 @@
-package io.paritytech.polkadotapp.feature_products_impl.data.bundled
+package io.paritytech.polkadotapp.feature_products_impl.domain.webView
 
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
