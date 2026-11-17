@@ -13,10 +13,11 @@
 //! differ, the test writes the frames it encoded to `chat-v2-frames.txt.actual`
 //! beside the snapshot.
 //!
-//! `post_message` and `set_room_footer` keep the frames of the first Chat
-//! methods. Products that use the first SDK call them through the client that
-//! the host injects. `create_room` has a second version, in which the host
-//! makes the room id, and its first frames still decode.
+//! `post_message` keeps the frames of the first Chat methods. Products that use
+//! the first SDK call it through the client that the host injects.
+//! `create_room` has a second version, in which the host makes the room id, and
+//! `set_room_footer` one in which a footer can dock a card. The first frames of
+//! both still decode.
 
 use std::{fmt::Debug, fs, path::PathBuf};
 
@@ -307,13 +308,28 @@ fn frames() -> Vec<String> {
 			"6.set_room_footer.request",
 			wire_table::CHAT_SET_ROOM_FOOTER,
 			MESSAGE_TYPE_REQUEST,
+			HostChatSetRoomFooterRequest::V2(v02::HostChatSetRoomFooterRequest {
+				room_id: room(),
+				footer: v02::ChatRoomFooter::TextInput,
+			}),
+		),
+		line(
+			"6.set_room_footer.response",
+			wire_table::CHAT_SET_ROOM_FOOTER,
+			MESSAGE_TYPE_RESPONSE,
+			Ok::<_, CallError<HostChatSetRoomFooterError>>(HostChatSetRoomFooterResponse::V2),
+		),
+		line(
+			"6.set_room_footer.v1_request",
+			wire_table::CHAT_SET_ROOM_FOOTER,
+			MESSAGE_TYPE_REQUEST,
 			HostChatSetRoomFooterRequest::V1(v01::HostChatSetRoomFooterRequest {
 				room_id: room(),
 				footer: v01::ChatRoomFooter::TextInput,
 			}),
 		),
 		line(
-			"6.set_room_footer.response",
+			"6.set_room_footer.v1_response",
 			wire_table::CHAT_SET_ROOM_FOOTER,
 			MESSAGE_TYPE_RESPONSE,
 			Ok::<_, CallError<HostChatSetRoomFooterError>>(HostChatSetRoomFooterResponse::V1),

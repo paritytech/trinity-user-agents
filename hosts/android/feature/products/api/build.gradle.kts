@@ -21,6 +21,7 @@ dependencies {
     api(project(":common"))
     api(project(":design"))
     api(project(":bindings:bandersnatch-crypto"))
+    api(project(":bindings:truapi-host"))
     api(project(":feature:dotns:api"))
     api(project(":feature:members:api"))
     api(project(":chains"))
@@ -36,3 +37,5 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.test.runner)
 }
+
+apply(from = rootProject.file("gradle/truapi-unit-tests.gradle.kts"))

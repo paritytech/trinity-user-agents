@@ -6,8 +6,8 @@ use crate::{
 	host_internal::sso_messages::{
 		RemoteMessage, RemoteMessageData, SignRawWithLegacyAccountRequest, SignRequest, v1,
 	},
-	platform::SignRawReview,
-	runtime::{signing_host::sso_service::SigningHostSsoService, sso_service::Dispatch},
+	platform::{LegacySigningAccount, SignRawReview},
+	runtime::sso_service::Dispatch,
 };
 use parity_scale_codec::{Decode, Encode};
 use truapi::versioned::signing::{
@@ -87,7 +87,7 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
 			let (_, activation) = signing_runtime_with_platform(platform.clone());
 			futures::executor::block_on(activation.activate_local_session(ENTROPY.to_vec()))
 				.unwrap();
-			let service = SigningHostSsoService::new(activation);
+			let service = sso_service(&activation);
 			let identity = derive_identity_keypair(&ENTROPY, TEST_NETWORK_SUFFIX).unwrap();
 			let root = derive_root_keypair_from_entropy(&ENTROPY).unwrap();
 			let product =
@@ -132,7 +132,8 @@ fn paired_raw_signing_review_matches_the_signed_bytes_and_requires_confirmation(
 				let request = SignRequest::decode(&mut encoded.as_slice()).unwrap();
 				RemoteMessage::request("proof".into(), request)
 			};
-			let Dispatch::Response(answer) = futures::executor::block_on(service.answer(message))
+			let Ok(Dispatch::Response(answer)) =
+				futures::executor::block_on(service.answer(message))
 			else {
 				panic!("expected signing response")
 			};
@@ -179,7 +180,8 @@ fn assert_review_watermark(platform: &StubPlatform, legacy: bool, watermarked: b
 		SignRawReview::Product { request, watermarked, .. } => {
 			(false, *watermarked, &request.payload)
 		},
-		SignRawReview::LegacyAccount { request, watermarked } => {
+		SignRawReview::LegacyAccount { account, request, watermarked } => {
+			assert_eq!(*account, LegacySigningAccount::Identity);
 			(true, *watermarked, &request.payload)
 		},
 	};

@@ -222,6 +222,19 @@ impl Descriptor {
 		self.chains.iter().find(|chain| chain.role == role)
 	}
 
+	/// The service of this kind, when the stack has one.
+	pub fn service(&self, kind: &str) -> Option<&Service> {
+		self.services.iter().find(|service| service.kind == kind)
+	}
+
+	/// The dotNS contract address under this `DotnsConstants` key as bytes, when the stack has
+	/// one. Decodes hex that validation already checked, so it panics only on a descriptor that
+	/// skipped [`Descriptor::from_json`] and deserialisation.
+	pub fn dotns_address(&self, key: &str) -> Option<[u8; 20]> {
+		let address = self.dotns.as_ref()?.get(key)?;
+		Some(format::hex_bytes("dotns", address).expect("invalid dotns address in a descriptor"))
+	}
+
 	/// The URL a dotNS name opens at on the stack's most preferred `web-gateway`, or `None` when
 	/// the stack names none. The name is one label, or several ending in the stack's `tld`; fails
 	/// with [`Error::InvalidName`] otherwise, so `my-app.dot` on a `testnet` stack is refused
@@ -239,11 +252,7 @@ impl Descriptor {
 		if !bare.split('.').all(is_label) {
 			return Err(invalid());
 		}
-		let Some(gateway) = self
-			.services
-			.iter()
-			.find(|service| service.kind == "web-gateway")
-			.and_then(|service| service.urls.first())
+		let Some(gateway) = self.service("web-gateway").and_then(|service| service.urls.first())
 		else {
 			return Ok(None);
 		};
@@ -401,6 +410,15 @@ impl Descriptor {
 	}
 }
 
+impl Chain {
+	/// The genesis hash as bytes. Decodes hex that validation already checked, so it panics only
+	/// on a chain that skipped [`Descriptor::from_json`] and deserialisation.
+	pub fn genesis(&self) -> [u8; 32] {
+		format::hex_bytes("genesisHash", &self.genesis_hash)
+			.expect("invalid genesisHash in a descriptor")
+	}
+}
+
 impl Serialize for Descriptor {
 	fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
 		Descriptor::serialize(self, serializer)
@@ -438,21 +456,4 @@ fn is_known_kind(kind: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	const RELAY: &str = r#"[{"role":"Relay","genesisHash":"0x860145753657e73c29b9388ffa0a8aebc643ea87434b4b271b6c3c3cc9e6bf92","rpc":["ws://127.0.0.1:9944"]}]"#;
-
-	#[test]
-	fn deserialising_directly_applies_the_same_rules() {
-		let broken = format!(
-			r#"{{"$v":1,"sequence":1,"generation":"g","id":"a","name":"A","network":"n","tld":".dot","services":[],"chains":{RELAY}}}"#
-		);
-		let error = serde_json::from_str::<Descriptor>(&broken).unwrap_err();
-		assert!(error.to_string().starts_with("invalid-tld:"), "{error}");
-		let valid: Descriptor = serde_json::from_str(&broken.replace(".dot", "dot")).unwrap();
-		let round_trip: Descriptor =
-			serde_json::from_str(&serde_json::to_string(&valid).unwrap()).unwrap();
-		assert_eq!(round_trip, valid);
-	}
-}
+mod tests;

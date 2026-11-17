@@ -146,6 +146,12 @@ ignores the Google values at runtime.
 
 ## How it works
 
+Product identities use the host SDK
+[`ProductId`](../../android/truapi-host/README.md#public-surface), constructed
+through Rust and held as Kotlin values. Navigation applies the active dotNS
+network and executable-owner rules separately. Room and protocol serializers
+keep the identifier string representation on disk and on the wire.
+
 Polkadot Android is a self-custodial superapp: your keys are created on your phone, stay on your phone, and everything else — identity, chat, payments, apps — is built on top of them using Polkadot's public chains instead of company servers.
 
 ### What it does
@@ -162,6 +168,10 @@ Polkadot Android is a self-custodial superapp: your keys are created on your pho
 - It does **not** act as a custodian of your keys or your money — the keys are stored only on your device, and nobody (including the developers) can freeze, recover, or move your funds. If you lose your device and have no cloud/written backup, the associated accounts are gone.
 - It does **not** route your chats and calls through company messaging servers — messages travel through the public chain, calls go peer-to-peer.
 - It is **not** a production-hardened product — treat it as a reference implementation (see the warning at the top).
+
+### Centralised dependencies
+
+- **Runtime configuration (Firebase Remote Config).** The chain list and RPC nodes, the identity-backend URL, DotNS and other contract addresses, the IPFS gateway and the on/off-ramp URLs are fetched from Firebase Remote Config. This repository ships no defaults, and the app waits for a successful fetch on every start, so the owner of the Firebase project can change these values without an app update, and the app cannot start without Firebase. Forks point the same build at their own project ([docs/DEPLOYMENT.md §4.1](./docs/DEPLOYMENT.md#41-remote-config-keys)). This is a known trade-off, tracked in [#306](https://github.com/paritytech/polkadot-android-community/issues/306).
 
 ### Under the hood
 

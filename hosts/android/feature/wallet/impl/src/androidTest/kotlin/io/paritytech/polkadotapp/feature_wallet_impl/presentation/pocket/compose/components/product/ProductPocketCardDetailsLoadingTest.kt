@@ -13,7 +13,6 @@ import io.paritytech.polkadotapp.designsystem.themes.PolkadotAppTheme
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsLoadProgress
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardId
 import io.paritytech.polkadotapp.feature_products_api.domain.pocket.PocketCardKey
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownAnswer
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.FaceShownRequest
 import io.paritytech.polkadotapp.feature_products_api.presentation.spaHost.SpaHostSession
@@ -33,6 +32,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import uniffi.truapi.ProductId
 
 @RunWith(AndroidJUnit4::class)
 class ProductPocketCardDetailsLoadingTest {
@@ -45,6 +45,7 @@ class ProductPocketCardDetailsLoadingTest {
         override val webView = MutableStateFlow<WebView?>(null)
         override val currentUrl = MutableStateFlow("")
         override val loadProgress = MutableStateFlow<DotNsLoadProgress>(DotNsLoadProgress.Completed)
+        override val isPageRevealed = MutableStateFlow(true)
         override val title = MutableStateFlow("")
         override val faceShownRequests get() = faceRequests
         override fun pauseConnections() = Unit
@@ -52,7 +53,7 @@ class ProductPocketCardDetailsLoadingTest {
     }
 
     private val card = PocketCardUiModel.ProductCard(
-        key = PocketCardKey(ProductId.fromStoredValue("pocketdemo.dot"), PocketCardId("loyalty")),
+        key = PocketCardKey(ProductId.parse("pocketdemo.dot").getOrThrow(), PocketCardId("loyalty")),
         title = "Loyalty",
         pinned = false,
     )

@@ -6,15 +6,15 @@ struct ChatKeyPathsTests {
     private let peerAccountId = Data(repeating: 0xAB, count: 32)
     private let peerHex = "0x" + String(repeating: "ab", count: 32)
 
-    @Test func statementAccountLivesUnderChatProduct() {
+    @Test func statementAccountLivesUnderChatProduct() throws {
         #expect(
-            ChatKeyPaths.statement(tld: "dot", peerAccountId: peerAccountId) ==
+            try ChatKeyPaths.statement(tld: "dot", peerAccountId: peerAccountId) ==
                 "//product//chat.dot//peer-statement//" + peerHex
         )
     }
 
-    @Test func hopAccountIsSharedUnderChatProduct() {
-        #expect(ChatKeyPaths.hop(tld: "dot") == "//product//chat.dot//hop")
+    @Test func hopAccountIsSharedUnderChatProduct() throws {
+        #expect(try ChatKeyPaths.hop(tld: "dot") == "//product//chat.dot//hop")
     }
 
     @Test func requestAccountIsOneShotPerPeriod() throws {
@@ -55,7 +55,7 @@ struct ChatKeyPathsTests {
     }
 
     @Test func restoreFromSameMnemonicReproducesAccounts() throws {
-        let path = ChatKeyPaths.statement(tld: "dot", peerAccountId: peerAccountId)
+        let path = try ChatKeyPaths.statement(tld: "dot", peerAccountId: peerAccountId)
 
         let original = try ChatSignerManager(entropyManager: FixedRootEntropyManager()).makeSigner(for: path)
         let restored = try ChatSignerManager(entropyManager: FixedRootEntropyManager()).makeSigner(for: path)

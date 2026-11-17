@@ -4,7 +4,6 @@ import io.novasama.substrate_sdk_android.extensions.fromHex
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.storage.accountSecrets.AccountSecretsStorage
 import io.paritytech.polkadotapp.feature_account_api.domain.model.MetaAccount
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.test_shared.whenever
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
@@ -12,6 +11,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.mockito.Mockito.mock
+import uniffi.truapi.ProductId
 
 class DeriveEntropyUseCaseTest {
     private val accountRepository: AccountRepository = mock()
@@ -35,7 +35,7 @@ class DeriveEntropyUseCaseTest {
 
     @Test
     fun `derives entropy matching reference implementation`() = runBlocking {
-        val productId = ProductId.fromStoredValue("test.product.dot")
+        val productId = ProductId.parse("test.product.dot").getOrThrow()
         val key = "my-key".toByteArray(Charsets.UTF_8)
 
         val result = useCase.deriveEntropy(productId, key).getOrThrow()
@@ -46,7 +46,7 @@ class DeriveEntropyUseCaseTest {
 
     @Test
     fun `different key produces different entropy`() = runBlocking {
-        val productId = ProductId.fromStoredValue("test.product.dot")
+        val productId = ProductId.parse("test.product.dot").getOrThrow()
         val key = "other-key".toByteArray(Charsets.UTF_8)
 
         val result = useCase.deriveEntropy(productId, key).getOrThrow()
@@ -57,7 +57,7 @@ class DeriveEntropyUseCaseTest {
 
     @Test
     fun `different product produces different entropy`() = runBlocking {
-        val productId = ProductId.fromStoredValue("other.product.dot")
+        val productId = ProductId.parse("other.product.dot").getOrThrow()
         val key = "my-key".toByteArray(Charsets.UTF_8)
 
         val result = useCase.deriveEntropy(productId, key).getOrThrow()
@@ -68,7 +68,7 @@ class DeriveEntropyUseCaseTest {
 
     @Test
     fun `same inputs produce same output (determinism)`() = runBlocking {
-        val productId = ProductId.fromStoredValue("test.product.dot")
+        val productId = ProductId.parse("test.product.dot").getOrThrow()
         val key = "my-key".toByteArray(Charsets.UTF_8)
 
         val result1 = useCase.deriveEntropy(productId, key).getOrThrow()
@@ -79,7 +79,7 @@ class DeriveEntropyUseCaseTest {
 
     @Test
     fun `rejects key longer than 32 bytes`() = runBlocking {
-        val productId = ProductId.fromStoredValue("test.product.dot")
+        val productId = ProductId.parse("test.product.dot").getOrThrow()
         val key = ByteArray(33) { 0x01 }
 
         val result = useCase.deriveEntropy(productId, key)
@@ -89,7 +89,7 @@ class DeriveEntropyUseCaseTest {
 
     @Test
     fun `output is 32 bytes`() = runBlocking {
-        val productId = ProductId.fromStoredValue("test.product.dot")
+        val productId = ProductId.parse("test.product.dot").getOrThrow()
         val key = "test".toByteArray(Charsets.UTF_8)
 
         val result = useCase.deriveEntropy(productId, key).getOrThrow()

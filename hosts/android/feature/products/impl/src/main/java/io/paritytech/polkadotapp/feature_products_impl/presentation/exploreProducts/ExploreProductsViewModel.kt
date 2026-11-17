@@ -3,14 +3,13 @@ package io.paritytech.polkadotapp.feature_products_impl.presentation.exploreProd
 import androidx.core.net.toUri
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import io.paritytech.polkadotapp.common.presentation.deeplink.asWebUri
 import io.paritytech.polkadotapp.common.presentation.screens.BaseViewModel
 import io.paritytech.polkadotapp.common.utils.flowOf
 import io.paritytech.polkadotapp.common.utils.logFailure
 import io.paritytech.polkadotapp.common.utils.shareInBackground
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_products_api.domain.runtime.ProductRuntimeSettings
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_impl.domain.bot.ProductsBotApiImpl
 import io.paritytech.polkadotapp.feature_products_impl.domain.exploreProducts.ExploreProductsService
@@ -33,6 +32,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 /**
@@ -79,7 +79,7 @@ class ExploreProductsViewModel @Inject constructor(
         .stateIn(scope = this, started = SharingStarted.Eagerly, initialValue = null)
 
     fun onProductSelected(productId: ProductId) {
-        launch { router.openSpaBrowser(SpaBrowserPayload.ByProductId(productId.value)) }
+        launch { router.openSpaBrowser(SpaBrowserPayload.ByProductId(productId)) }
     }
 
     fun pauseConnections() {
@@ -100,7 +100,7 @@ class ExploreProductsViewModel @Inject constructor(
         val webViewProvider = browserWebViewProviderFactory.create(exploreUrl, navigationPolicy, allowIframes = false, viewModelScope)
         webViewProvider.addOnPageStartedListener { url ->
             dotNsTldProvider.currentTldOrNull()
-                ?.let { tld -> ProductId.fromUrl(url.toUri(), tld).getOrNull() }
+                ?.let { tld -> productIdFromUrl(url.toUri(), tld).getOrNull() }
                 ?.let { productRegistrar.launchEnsureRegistered(it) }
         }
 
@@ -149,7 +149,7 @@ class ExploreProductsViewModel @Inject constructor(
         val hostApiNavigation = NavigationPolicy.HostApiNavigation(
             onDeeplinkNavigation = { destination ->
                 dotNsTldProvider.currentTldOrNull()
-                    ?.let { tld -> ProductId.fromUrl(destination.asWebUri(), tld) }
+                    ?.let { tld -> productIdFromUrl(destination, tld) }
                     ?.onSuccess(::onProductSelected)
                     ?.logFailure("Explore navigateTo: not a product url $destination")
             },

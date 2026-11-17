@@ -25,6 +25,10 @@ final class AssetDetailsWireframe: AssetDetailsWireframeProtocol {
         moduleNavigator.presentProduct(page: page)
     }
 
+    func showBackupSettings() {
+        moduleNavigator.openBackupSettings()
+    }
+
     func showTransfer(from view: ControllerBackedProtocol?, chainAsset: ChainAsset) {
         guard let searchView = SearchAccountViewFactory.createView(
             for: chainAsset,

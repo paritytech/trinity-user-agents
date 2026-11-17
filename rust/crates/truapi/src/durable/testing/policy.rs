@@ -40,7 +40,7 @@ pub type PrepareScript =
 	Box<dyn Fn(&[DurableTxId]) -> BoxFuture<'static, PrepareAnswer> + Send + Sync>;
 
 /// What a [`ScriptedPolicy`] answers to every retry question.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum RetryAnswer {
 	Retry,
 	Final,

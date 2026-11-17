@@ -8,9 +8,6 @@ target/
 
 # Local configuration file (sdk path, etc)
 local.properties
-
-# Default location for the TrUAPI core checkout (scripts/setup-truapi.py)
-.truapi/
 .DS_Store
 
 # Log/OS Files

@@ -27,7 +27,7 @@ internal object ProductDerivationModule {
     @IntoMap
     @AccountPurposeKey(MetaAccount.Purpose.WALLET)
     fun provideWalletAccountDerivation(dotNsTldProvider: DotNsTldProvider): AccountDerivationProvider {
-        return ReservedProductAccountDerivationProvider(dotNsTldProvider, ReservedProductIds::lightPersonIdentity)
+        return ReservedProductAccountDerivationProvider(dotNsTldProvider, ReservedProductIds::personhood)
     }
 
     @Provides

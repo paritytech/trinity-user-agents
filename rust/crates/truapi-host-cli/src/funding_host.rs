@@ -23,9 +23,7 @@ use truapi::{
 	SigningHostRuntime, current_unix_millis,
 	host_logic::funding::FundingStage,
 	latest::{FundingDirection, FundingFailure, GenericError, HostFundingStatusSubscribeItem},
-	platform::{
-		FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext, async_trait,
-	},
+	platform::{FundingPlatform, FundingPresentOutcome, FundingPresentation, ProductContext},
 };
 
 use crate::transcript::Transcript;
@@ -35,7 +33,7 @@ use crate::transcript::Transcript;
 const SETTLE_AFTER: Duration = Duration::from_millis(500);
 
 /// What the scripted provider does with one request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Outcome {
 	/// The user starts and the funds arrive.
 	Deliver(u128),
@@ -108,7 +106,7 @@ fn settled_stage(outcome: Outcome) -> Option<FundingStage> {
 	}
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl FundingPlatform for CliFundingHost {
 	async fn present_funding(
 		&self,
@@ -150,6 +148,27 @@ impl FundingPlatform for CliFundingHost {
 		Ok(FundingPresentOutcome::Started)
 	}
 
+	// The scripted host stands in for the provider, so it has no screens of
+	// the provider's to show.
+	async fn present_provider_frame(
+		&self,
+		_provider: &ProductContext,
+		_intent: String,
+		_target: truapi::latest::FundingFrameTarget,
+	) -> Result<truapi::latest::FundingFrameOutcome, GenericError> {
+		Ok(truapi::latest::FundingFrameOutcome::Dismissed)
+	}
+
+	fn close_provider_frame(&self, _provider: &ProductContext, _intent: String) {}
+
+	// The scripted user always looks at the session, so a provider's screen
+	// opens as soon as it is asked for.
+	fn provider_frame_requested(&self, _provider: &ProductContext, intent: String) {
+		if let Some(runtime) = self.runtime.upgrade() {
+			runtime.open_provider_frame(&intent);
+		}
+	}
+
 	fn funding_session_changed(&self, intent: String, status: HostFundingStatusSubscribeItem) {
 		let (tag, amount) = match status {
 			HostFundingStatusSubscribeItem::InProgress { .. } => ("InProgress", None),
@@ -167,22 +186,4 @@ impl FundingPlatform for CliFundingHost {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	// The battery seeds one outcome per request it makes, in order. An entry
-	// this host cannot read is skipped, and the entries after it keep their
-	// order.
-	#[test]
-	fn outcomes_are_read_in_order_and_unknown_entries_dropped() {
-		assert_eq!(
-			parse_outcomes("deliver:900, release:500,fail,bogus,dismiss,deliver:x"),
-			VecDeque::from([
-				Outcome::Deliver(900),
-				Outcome::Release(500),
-				Outcome::Fail,
-				Outcome::Dismiss,
-			])
-		);
-	}
-}
+mod tests;

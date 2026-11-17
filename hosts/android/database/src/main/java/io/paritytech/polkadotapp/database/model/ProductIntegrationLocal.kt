@@ -2,6 +2,7 @@ package io.paritytech.polkadotapp.database.model
 
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import uniffi.truapi.ProductId
 
 @Entity(
     tableName = "product_integrations",
@@ -16,7 +17,7 @@ import androidx.room.ForeignKey
     ]
 )
 class ProductIntegrationLocal(
-    val productId: String,
+    val productId: ProductId,
     val type: String,
     val metadata: String?,
 )

@@ -1,3 +1,4 @@
+import struct TrUAPIHost.ProductId
 import Foundation
 import BigInt
 import FoundationExt
@@ -7,7 +8,6 @@ import Operation_iOS
 import AsyncExtensions
 import SDKLogger
 import StateMachine
-import StructuredConcurrency
 
 /// Protocol defining the coinage facade operations.
 public protocol CoinageServicing: Actor {
@@ -66,7 +66,7 @@ public protocol CoinageServicing: Actor {
     /// Register an external payment identified by `(productId, paymentId)`.
     /// Throws `ExternalPaymentError.alreadyExists` on replay.
     func initiateExternalPayment(
-        productId: String,
+        productId: ProductId?,
         paymentId: String,
         amountInPlanks: Balance,
         destination: AccountId
@@ -75,7 +75,7 @@ public protocol CoinageServicing: Actor {
     /// Subscribe to the status of an external payment identified by `(productId, paymentId)`; the
     /// stream fails with `ExternalPaymentError.notFound` for an unknown identity.
     nonisolated func subscribeExternalPaymentStatus(
-        productId: String,
+        productId: ProductId?,
         paymentId: String
     ) -> AnyAsyncSequence<ExternalPaymentStatus>
 
@@ -248,7 +248,7 @@ extension CoinageService: CoinageServicing {
     }
 
     public func initiateExternalPayment(
-        productId: String,
+        productId: ProductId?,
         paymentId: String,
         amountInPlanks: Balance,
         destination: AccountId
@@ -262,7 +262,7 @@ extension CoinageService: CoinageServicing {
     }
 
     public nonisolated func subscribeExternalPaymentStatus(
-        productId: String,
+        productId: ProductId?,
         paymentId: String
     ) -> AnyAsyncSequence<ExternalPaymentStatus> {
         externalPaymentService.subscribePaymentStatus(productId: productId, paymentId: paymentId)
@@ -400,16 +400,14 @@ extension CoinageService: CoinageServicing {
         amount: BigUInt,
         externalAssetHolder: any WalletManaging
     ) async throws -> BigUInt {
-        try await markStallRegion("Loading vouchers") {
-            let context = try await requireContext()
-            let vouchers = try await voucherService.load(
-                amount: amount,
-                externalAssetHolder: externalAssetHolder,
-                breakdownContext: context,
-                groupId: nil
-            )
-            return vouchers.reduce(BigUInt.zero) { $0 + context.valueInPlanks(for: $1.exponent) }
-        }
+        let context = try await requireContext()
+        let vouchers = try await voucherService.load(
+            amount: amount,
+            externalAssetHolder: externalAssetHolder,
+            breakdownContext: context,
+            groupId: nil
+        )
+        return vouchers.reduce(BigUInt.zero) { $0 + context.valueInPlanks(for: $1.exponent) }
     }
 
     public func coinageBalanceService() async throws -> CoinageBalanceServiceProtocol {

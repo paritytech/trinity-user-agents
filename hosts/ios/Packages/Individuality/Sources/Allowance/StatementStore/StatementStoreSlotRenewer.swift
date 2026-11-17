@@ -93,7 +93,12 @@ private extension StatementStoreSlotRenewer {
                 logger.debug("Period rollover detected during renewal; aborting remaining submissions")
                 return true
             }
+
+            logger.debug("Will submit renewal for \(allowance.domain) \(slot.seq)")
+
             try await submit(allowance: allowance, slot: slot, period: period)
+
+            logger.debug("Did complete renewal for \(allowance.domain) \(slot.seq)")
         }
         return false
     }

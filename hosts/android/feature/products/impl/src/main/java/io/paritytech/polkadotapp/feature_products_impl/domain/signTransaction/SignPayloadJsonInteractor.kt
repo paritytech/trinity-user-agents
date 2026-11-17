@@ -85,9 +85,8 @@ class SignPayloadJsonInteractor @AssistedInject constructor(
                 call = context.parsedExtrinsic.call,
                 account = account.accountId,
             )
-            // Identity-account transactions are not sponsored, and a legacy
-            // account never reaches signing: the core signs those itself.
-            SigningAccount.IdentityAccount, is SigningAccount.Legacy -> Result.success(Unit)
+            // Identity-account transactions are not sponsored.
+            SigningAccount.IdentityAccount -> Result.success(Unit)
         }
     }
 

@@ -1,8 +1,8 @@
 package io.paritytech.polkadotapp.feature_products_api.domain.pocket
 
 import android.net.Uri
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
 import io.paritytech.polkadotapp.feature_products_api.model.toUrl
+import uniffi.truapi.ProductId
 
 /** The label a product declares for one of its cards, unique within that product. */
 @JvmInline

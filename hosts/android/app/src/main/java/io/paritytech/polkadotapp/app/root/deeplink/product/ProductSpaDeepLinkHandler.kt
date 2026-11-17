@@ -5,17 +5,17 @@ import io.paritytech.polkadotapp.app.root.presentation.root.RootRouter
 import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeepLinkHandler
 import io.paritytech.polkadotapp.common.presentation.deeplink.DeeplinkProcessingOutcome
-import io.paritytech.polkadotapp.common.presentation.deeplink.asWebUri
 import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import io.paritytech.polkadotapp.feature_account_api.data.repository.AccountRepository
 import io.paritytech.polkadotapp.feature_account_api.data.repository.awaitAccountsInitialized
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTld
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsTldProvider
 import io.paritytech.polkadotapp.feature_dotns_api.domain.DotNsUtils
-import io.paritytech.polkadotapp.feature_products_api.model.ProductId
+import io.paritytech.polkadotapp.feature_products_api.model.productIdFromUrl
 import io.paritytech.polkadotapp.feature_products_api.presentation.SpaBrowserPayload
 import io.paritytech.polkadotapp.feature_products_api.presentation.deeplink.ProductDeepLinkGate
 import kotlinx.coroutines.withContext
+import uniffi.truapi.ProductId
 import javax.inject.Inject
 
 internal class ProductSpaDeepLinkHandler @Inject constructor(
@@ -27,12 +27,12 @@ internal class ProductSpaDeepLinkHandler @Inject constructor(
 ) : DeepLinkHandler {
     override suspend fun canHandle(data: Uri): Boolean {
         val tld = dotNsTldProvider.currentTldOrNull() ?: return false
-        if (!DotNsUtils.isDotDomain(data.asWebUri(), tld)) return false
+        if (!DotNsUtils.isDotDomain(data, tld)) return false
 
         return gate.opens(data.productId(tld))
     }
 
-    private fun Uri.productId(tld: DotNsTld): ProductId? = ProductId.fromUrl(asWebUri(), tld).getOrNull()
+    private fun Uri.productId(tld: DotNsTld): ProductId? = productIdFromUrl(this, tld).getOrNull()
 
     context(scope: ComputationalScope)
     override suspend fun handle(data: Uri): Result<DeeplinkProcessingOutcome> =
@@ -40,7 +40,7 @@ internal class ProductSpaDeepLinkHandler @Inject constructor(
             dotNsTldProvider.getTld().mapCatching { tld ->
                 accountRepository.awaitAccountsInitialized()
 
-                val normalized = DotNsUtils.normalize(data.asWebUri(), tld)
+                val normalized = DotNsUtils.normalize(data, tld)
                     ?: error("Not a $tld domain: $data")
 
                 DeeplinkProcessingOutcome.Navigate {

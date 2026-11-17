@@ -10,8 +10,12 @@ rust/crates/
                          (canonical), plus the runtime hosts implement (default `runtime`
                          feature); ships as WASM (browser/node); its `platform` module
                          holds the host syscall traits (storage, navigation, consent, ...),
-                         its `chain` module builds the core's own extrinsics through
-                         `ExtrinsicService`, and, on native targets, its `durable` module follows presigned
+                         its `stack` module resolves the Trinity stack the host runs, the
+                         core's only chain configuration, from the descriptor its build
+                         bundles, its `chain` module builds the core's own extrinsics through
+                         `ExtrinsicService` and reads and writes contracts through
+                         `EvmContractCaller` with signer-bound prepared transactions;
+                         on native targets, its `durable` module follows presigned
                          transactions to a verdict over the core database and builds
                          scheduled ones through their submission policies, and its
                          `encrypted_storage` module holds the host store encrypted at
@@ -20,8 +24,17 @@ rust/crates/
                          Asset Hub) and `nft_purse` (the NFT purses RFC over them)
                          modules keep NFT purses in the same database, transfer items
                          as scheduled durable transactions, and receive cheques over
-                         the statement store
-  truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher
+                         the statement store; its `public_profile` domain resolves and caches
+                         profile records, and its `image_loader` reads the images they name
+                         from Bulletin by CID and checks them; its `materials` module keeps
+                         the materials renderer trees name in the same database, read from
+                         Bulletin by its `bulletin_lookup` module, checked against Shaderlab's
+                         material format and the tree limits, built into the shaders apps
+                         compile (GLSL ES, and Metal through naga), and resolved per tree for
+                         the apps to draw
+  truapi-codegen/        rustdoc JSON → TypeScript client + Rust dispatcher;
+                         also links the truapi crate to emit the core marker
+                         table as TypeScript, which rustdoc JSON does not carry
   truapi-macros/         #[wire_trait(id = N)] and #[wire(id = N)] proc-macros;
                          #[sso_service] for truapi's inter-host SSO protocol
                          One implementation module per macro; lib.rs holds entry points
@@ -36,12 +49,15 @@ rust/crates/
 js/packages/
   truapi/                  @parity/truapi TS package; generated TS lives under ignored paths
   truapi-host/            @parity/truapi-host: WASM-backed host runtime. Subpath entries:
-                          `.` (shared host types), `/web` (iframe + Web
-                          Worker), `/worker-runtime` (Worker entry), and the
-                          test host `/testing` (createMockHost),
-                          `/testing/playwright` (fixture), `/testing/server`
-                          (node server), `/testing/client` (no-iframe client),
-                          `/testing/dev-accounts`, `/testing/host-page`.
+                          `.` (shared host types), `/markers` (the core's
+                          table of which log markers may leave the device),
+                          `/web` (iframe + Web Worker), `/node` (worker
+                          thread), `/worker-runtime`
+                          (Worker entry), and the test host `/testing`
+                          (createMockHost), `/testing/playwright` (fixture),
+                          `/testing/server` (node server), `/testing/client`
+                          (no-iframe client), `/testing/dev-accounts`,
+                          `/testing/host-page`.
                           Two WASM bundles (gitignored) under dist/wasm/, built
                           via `make wasm`: `web/` is the production browser host
                           and `testing/` adds the `wasm-signing-host` and
@@ -80,14 +96,20 @@ ios/truapi-host/           TrUAPIHost Swift package over the truapi UniFFI core;
                            ios/truapi-host/scripts/rebuild.sh
 playground/                Next.js interactive playground; deploys to the truapi-playground dotNS label
 hosts/ios/                 iOS host app; resolves the core from this tree
-hosts/android/             Android host app
+hosts/android/             Android host app; resolves the core from this tree
 hosts/imports.json         source repository and imported revision per host,
                            read and updated by scripts/refresh-host-import.sh
 hosts/dotli/               dotli submodule
+stacks/                    the link and signed descriptor of each Trinity stack a host build
+                           bundles; `scripts/update-stacks.sh` refreshes each descriptor from
+                           its link
 docs/                      design docs, RFCs, feature proposals
 scripts/codegen.sh         regenerate the TS client from the Rust crate
 scripts/battery.sh         run the generated battery against both headless CLI host roles,
                            plus the Pocket phase a Worker execution serves
+scripts/cli-backends-e2e.ts
+                           run the CLI on both chain backends (rpc, light-client) and
+                           compare what each serves; `make e2e-cli-backends`
 scripts/bundle-size.mjs    measure the JS/WASM of the asset groups given (raw, gzip, brotli);
                            .github/actions/bundle-size takes them as `assets`, stores
                            main's snapshot and comments the comparison on PRs
@@ -96,6 +118,9 @@ scripts/refresh-host-import.sh
 scripts/host-papp-fixtures.ts
                            print host-papp's encoding of the SSO messages the core
                            pins, from a triangle-js-sdks checkout
+scripts/shaderlab-shader-fixtures.ts
+                           print the shaders Shaderlab's compile step writes for the
+                           core's material shader tests, from a shaderlab-spa checkout
 scripts/truapi-host-installer.sh
                            one-liner installer for the prebuilt truapi-host CLI
 scripts/build-cli-runner.ts
@@ -105,6 +130,7 @@ scripts/cli-runner-package.test.ts
 .github/consumers.json     maps each released package to the repos notified by a bump issue
 nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc JSON; CI, the
                            scripts and the Makefile all read it
+rust-toolchain.toml        pins every other cargo command in the repo to stable
 .github/registry-drift-exceptions.json
                            documents intentionally unpublished npm package versions
 ```
@@ -114,8 +140,11 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
 - `truapi` holds the canonical protocol definitions and, behind its default
   `runtime` feature, the host runtime. The protocol half builds without the
   runtime (`--no-default-features`), which is what codegen links and reads, so
-  protocol modules never depend on runtime modules. Syscall traits live in the
-  `platform` module, host-side runtime types in the runtime modules. The whole
+  protocol modules never depend on runtime modules. The feature gates only the
+  runtime block in `lib.rs`. Protocol types, their derives and their methods
+  do not depend on it (UniFFI derives are native-only); what they need lives on
+  the protocol side too. Syscall traits live in the `platform` module,
+  host-side runtime types in the runtime modules. The whole
   crate is one UniFFI namespace, `truapi`, so native bindings use protocol types
   directly. The published binaries keep their `truapi_server` names
   (`truapi_server.xcframework`, `dist/wasm/*/truapi_server*`).
@@ -160,7 +189,10 @@ nightly-toolchain          the dated nightly for rustfmt, CI clippy and rustdoc 
   Archives are uploaded to the
   `@parity/truapi@<version>` release, followed by the `truapi-host-cli-stable`
   pointer that `scripts/truapi-host-installer.sh` and the CLI's own updater
-  read. Release asset URLs must percent-encode the tag
+  read, and then the `truapi-host-cli-v<version>` tag that workflows pin
+  `.github/actions/install-truapi-host` to; that action installs the CLI
+  version of the commit it is checked out at, so the tag installs its own
+  release. Release asset URLs must percent-encode the tag
   (`%40parity%2Ftruapi%40<version>`). `make cli-dist CLI_TARGET=<triple>`
   reproduces one archive locally, and `make e2e-cli-update` installs and
   self-updates it against a loopback release server.
@@ -299,6 +331,17 @@ Two ways to lose work that involve no pushing at all:
   create one with `gh label` or the web UI. `docs/labels.md` describes the
   system.
 
+## Host telemetry
+
+- Follow the Conventions section of `docs/design/host-telemetry.md` for anything
+  that sends telemetry from a host. Read it before adding an event, a log line
+  or a metric, and before touching a sender. It covers which Sentry product a
+  signal belongs in and how its level decides that, which field a captured
+  event is queried on, why every captured event sets a fingerprint, and what
+  the core's marker table decides. Its `Adding a signal` subsection shows what
+  a host event looks like on each host, how a core log line is registered and
+  raised, and how to check one in Sentry.
+
 ## Scope of a change
 
 - Do not improve adjacent code, comments, or formatting unless asked. Do not
@@ -318,6 +361,26 @@ rest.
   a mutation run. Anything that lands is read by people.
 - Documentation explains contracts and non-obvious invariants, not a history
   of how the change was developed.
+
+## Rust docs
+
+- A doc comment is a one-line `///` summary, a blank `///` line, then a short
+  body that states the contract, units and failure conditions. A summary with
+  no body on a non-trivial item is a smell.
+- Item-level notes go in `///` on the item. Use `//` only for line-local
+  reasoning, since `//` does not show in rustdoc or IDE hover.
+- Do not repeat trait docs on impls.
+- Every `pub mod` has a `//!` block with its purpose and entry point.
+- Put identifiers in backticks and intra-doc links in brackets. Use `Self::`
+  for siblings.
+- A link target that exists only under some cfg is plain code, not a link, so
+  the link does not break in the other configurations.
+- After rewrapping doc prose, check line starts. `+ `, `- ` and `1. ` turn a
+  line into a list item, and `[x]:` at the start of a paragraph is parsed as a
+  link definition and dropped.
+- After API, rename or cfg changes, run
+  `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` for each cfg and feature
+  combination. Check, clippy and tests do not catch broken intra-doc links.
 
 ## Code is read by people and only incidentally run
 
@@ -347,6 +410,36 @@ rest.
 - Fix the underlying cause instead of suppressing a diagnostic or adding a
   fallback that hides an error.
 
+- Do not derive `Copy`, `Clone`, `Debug`, `PartialEq` or `Eq`, and do not
+  require them as bounds, unless something uses them. Removing `Clone` is the
+  one change that can compile while changing behaviour: `.clone()` on a
+  reference clones the reference. Check every `.clone()` call site first.
+- Do not add a synthetic `Default` to a type with no natural default. Construct
+  the value at the boundary.
+- Do not add `#[inline]` to private or crate-internal functions. Use it only on
+  small public items that need cross-crate inlining.
+
+## Lints, unsafe and features
+
+- Treat warnings as errors. Fix the cause of a lint and never silence it with
+  `#[allow]` or `#[expect]`. A silencer keeps the defect and makes it look
+  intentional. The one exception is a signature fixed by a third-party trait,
+  such as tungstenite's callback, where the lint cannot be fixed in our code;
+  the allow then sits on that item with a comment naming the trait.
+- For cast lints, change the source type first, then widen the destination.
+  Prefer `try_from` over `as`.
+- After a bulk regex edit, reread every signature it touched.
+- Use a safe std API when one exists. Unsafe is a last resort.
+- Write one unsafe operation per `unsafe {}` block, each with its own
+  `// SAFETY:` comment that states the invariant and why it holds.
+- Do not mark a function `unsafe` if it can check its preconditions itself.
+- Cargo features are additive. A feature compiled in with no runtime opt-in
+  behaves like the feature off, because Cargo unifies features across the
+  build.
+- Build modes that change behaviour or ABI go behind `--cfg` (declared with
+  check-cfg), not a cargo feature.
+- Production builds carry no debug-only behaviour.
+
 ## Establish visibility through module hierarchy
 
 Do not use scoped visibility modifiers such as `pub(crate)`, `pub(super)`, or
@@ -370,6 +463,11 @@ belongs to an existing type rather than adding another free-standing export.
   does.
 - Prefer one `assert_eq!` over a whole value to several assertions on
   individual fields.
+- Put unit tests in a `#[cfg(test)] mod tests;` declaration backed by its own
+  file (`foo/tests.rs`), not inline in the production file.
+- Test private behaviour from that submodule. A `cfg(test)` hook in production
+  code is a last resort; keep it minimal.
+- Give test fixtures and helpers the narrowest visibility that works.
 - In the Android host (`hosts/android`), build test doubles with `mockk` where
   possible, rather than hand-written fakes or Mockito. Instrumentation tests
   get it through `mockk-android`.
