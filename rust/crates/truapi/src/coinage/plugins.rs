@@ -235,7 +235,7 @@ impl CoinagePolicy {
 		let cancelled =
 			view.operation(&facts.operation).is_some_and(|operation| operation.cancel_requested || operation.released);
 		let past_deadline = matches!(params.retry, Retry::Until(deadline) if now > deadline);
-		if cancelled || past_deadline {
+		if cancelled || (past_deadline && facts.rows.inputs.iter().any(|input| gone(input, view))) {
 			return Some(Preparation::GiveUp);
 		}
 		let uncommitted_export = facts.rows.outputs.iter().any(|output| view.mark(output) == Some(Mark::Uncommitted));
@@ -390,6 +390,13 @@ fn buildable(input: &Asset, view: &Snapshot, now: u64) -> bool {
 		Read::Entry(Some(entry)) => entry.locked_until.is_none_or(|until| until <= now) && entry.included > 0,
 		_ => false,
 	}
+}
+
+/// Whether F1 last saw `input` gone: a coin whose account it read empty. An
+/// input it never read is not gone.
+fn gone(input: &Asset, view: &Snapshot) -> bool {
+	let value = view.observation(&Subject::Asset(*input)).and_then(|observation| observation.value.as_ref());
+	matches!(value, Some(Read::Coin { now: None, .. }))
 }
 
 /// The transaction a record builds, from C1's rows and its call.
