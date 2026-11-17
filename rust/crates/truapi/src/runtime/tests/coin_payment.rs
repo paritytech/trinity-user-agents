@@ -175,6 +175,36 @@ async fn an_rfc6_payment_the_user_declines_or_below_a_cent_is_refused() {
 	assert!(matches!(too_small, Err(CallError::Domain(_))), "less than a cent is refused");
 }
 
+/// An RFC-6 call made while the coinage layers start is answered by them,
+/// not refused as unsupported.
+#[tokio::test]
+async fn an_rfc6_call_made_while_the_layers_start_is_served_by_them() {
+	let wallet = TestWallet::new(PrivacyPolicy::fastest());
+	let (layer, ..) = started_layer(wallet.db.clone()).await;
+	let services = payment_services_over(Arc::new(StubPlatform::default()));
+	let (started, start) = futures::channel::oneshot::channel();
+	assert!(services.install_coinage_start(futures::FutureExt::shared(start)));
+	let host = payment_host(&services, PRODUCT, true);
+	let context = CallContext::default();
+	let too_small = truapi::api::Payment::request(&host, &context, payment_request(UNIT - 1, 1));
+
+	let clock = Arc::new(AtomicU64::new(NOW * 1000));
+	let start_layers = async {
+		tokio::task::yield_now().await;
+		let payments = payments(layer.clone(), wallet.db.clone(), Arc::new(Board::default()), clock);
+		let engine = crate::runtime::CoinageEngine {
+			payments: payments.clone(),
+			platform: services.platform.clone(),
+			funding: Arc::new(NoProductAccounts),
+		};
+		assert!(services.install_coinage_payments(payments));
+		assert!(services.install_coinage_engine(Arc::new(engine)));
+		started.send(Ok(layer)).ok();
+	};
+	let (too_small, ()) = futures::join!(too_small, start_layers);
+	assert!(matches!(too_small, Err(CallError::Domain(_))), "the layers refuse less than a cent: {too_small:?}");
+}
+
 #[tokio::test]
 async fn an_rfc6_payment_runs_once_under_its_id() {
 	let platform = Arc::new(StubPlatform { coin_payment_spend_confirmed: true, ..Default::default() });

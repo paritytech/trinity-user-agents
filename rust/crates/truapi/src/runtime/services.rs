@@ -613,7 +613,10 @@ impl RuntimeServices {
 	/// call installed it.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_coinage_engine(&self, engine: Arc<crate::runtime::CoinageEngine>) -> bool {
-		self.coinage_engine.set(engine).is_ok()
+		let installed = self.coinage_engine.set(engine).is_ok();
+		// Funding sessions waiting on the engine can be followed now.
+		self.funding.wake();
+		installed
 	}
 
 	/// Install the outcome of the coinage layer's start, which
