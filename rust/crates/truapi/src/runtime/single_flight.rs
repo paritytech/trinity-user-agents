@@ -1,9 +1,8 @@
 //! One read per key at a time.
 //!
-//! A dotNS read opens its own Asset Hub follow and holds it until the read
-//! settles. Callers asking for the same thing while a read is running wait for
-//! its answer instead of opening a follow each, so a burst of them costs the
-//! connection one follow slot.
+//! A dotNS read takes several round trips to Asset Hub. Callers asking for the
+//! same thing while a read is running wait for its answer instead of starting
+//! their own, so a burst of them reads the chain once.
 
 use core::{future::Future, hash::Hash};
 use std::{

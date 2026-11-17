@@ -1,5 +1,6 @@
 use crate::platform::{
-	AuthState, DevicePermissionStatus, PermissionDecision, ProductId, UserConfirmationReview,
+	AuthState, DevicePermissionStatus, PermissionDecision, ProductId, StackFetchRequest,
+	StackFetchResponse, StackStatus, UserConfirmationReview,
 };
 use truapi::latest;
 
@@ -152,11 +153,6 @@ pub trait HostCallbacks: Send + Sync {
 		&self,
 		request: latest::HostFeatureSupportedRequest,
 	) -> Result<bool, HostRejection>;
-
-	/// Enumerate the chains this host serves (RFC 0026): its environment plus
-	/// one entry per chain role. Invoked on the dispatcher thread; must return
-	/// promptly.
-	fn supported_chains(&self) -> Result<crate::platform::HostChainSet, HostRejection>;
 
 	/// The chains the host builds as V5 general transactions, each with its
 	/// transaction extension pipeline. A chain not listed is built as V4.
@@ -476,6 +472,29 @@ pub trait NativeScannerCallbacks: Send + Sync {
 	) -> Result<crate::platform::HostScan, HostRejection>;
 }
 
+/// Native side of the stack's descriptor refresh. A host passes an
+/// implementation to [`NativeTrUApiHostRuntime::set_stack_callbacks`]; without
+/// one the core stays on the copy it started from.
+///
+/// [`NativeTrUApiHostRuntime::set_stack_callbacks`]: super::NativeTrUApiHostRuntime::set_stack_callbacks
+#[uniffi::export(rust, foreign)]
+#[async_trait::async_trait]
+pub trait NativeStackCallbacks: Send + Sync {
+	/// Fetch the stack's descriptor over HTTP, as `request` describes, with
+	/// the host's HTTP client. Fail when the server gave no usable answer:
+	/// the status reports the failure's reason. The core awaits this on a
+	/// background thread, and counts a fetch that takes too long as failed.
+	async fn fetch_stack_descriptor(
+		&self,
+		request: StackFetchRequest,
+	) -> Result<StackFetchResponse, HostRejection>;
+
+	/// The stack's status, once when the callbacks are installed and again
+	/// whenever it changes. Arrives on a core thread: hand it off rather than
+	/// blocking.
+	fn stack_changed(&self, status: StackStatus);
+}
+
 /// Native funding overlay. A host with a funding modality passes an
 /// implementation to [`NativeTrUApiHostRuntime::set_funding_callbacks`];
 /// without one, funding requests answer `Unsupported`.
@@ -496,10 +515,18 @@ pub trait NativeFundingCallbacks: Send + Sync {
 		amount: Option<u128>,
 	) -> Result<crate::platform::FundingPresentOutcome, HostRejection>;
 
+	/// Provider `provider_id` asked to show a screen for session `intent`.
+	/// The core holds it until the host calls `open_provider_frame(intent)`:
+	/// at once while the user looks at the session, otherwise once the user
+	/// taps a notice that the provider wants to show something.
+	fn provider_frame_requested(&self, provider_id: ProductId, intent: String);
+
 	/// Show `target` for provider `provider_id`'s session `intent` in a frame
-	/// the host owns, and report how it closed. A page is a checked https
-	/// URL: answer `Returned` when it reaches its return URL. The core closes
-	/// the frame through `close_provider_frame` once the session's payment moved.
+	/// the host owns, and report how it closed. Called only once the host
+	/// opened the request `provider_frame_requested` announced. A page is a
+	/// checked https URL: answer `Returned` when it reaches its return URL.
+	/// The core closes the frame through `close_provider_frame` once the
+	/// session's payment moved.
 	async fn present_provider_frame(
 		&self,
 		provider_id: ProductId,

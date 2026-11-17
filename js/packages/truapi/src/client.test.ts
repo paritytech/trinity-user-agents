@@ -281,6 +281,32 @@ describe("generated client transport", () => {
         expect(toHex(fixture.sent[0])).toBe(toHex(expectedFrame));
     });
 
+    it("sends a plain string room footer as the frame of its tagged value", () => {
+        for (const footer of ["Empty", "TextInput"] as const) {
+            const fixture = providerFixture();
+            const client = createClient(createTransport(fixture.provider));
+
+            void client.chat.setRoomFooter({ roomId: "room", footer });
+            void client.chat.setRoomFooter({ roomId: "room", footer: { tag: footer } });
+
+            const [plain, tagged] = fixture.sent.map((frame) =>
+                toHex(frame.slice(str.enc("p:1").length)),
+            );
+            expect(plain).toBe(tagged);
+        }
+    });
+
+    it("refuses a room footer string that names no unit variant", () => {
+        const client = createClient(createTransport(providerFixture().provider));
+
+        expect(() =>
+            client.chat.setRoomFooter({
+                roomId: "room",
+                footer: "Card" as "Empty",
+            }),
+        ).toThrow("Unknown enum variant: Card");
+    });
+
     it("uses the transport codec version for generated handshake calls", () => {
         const fixture = providerFixture();
         const transport = createTransport(fixture.provider);

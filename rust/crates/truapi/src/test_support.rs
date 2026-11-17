@@ -49,7 +49,10 @@ use truapi::{
 };
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret as X25519SecretKey};
 
+mod legacy_asset_hub;
 mod scripted_chain;
+
+pub use legacy_asset_hub::{legacy_asset_hub_frames, view_output};
 
 pub use scripted_chain::{
 	FollowRefusal, ScriptedChainHead, ScriptedProvider, extract_id, later_notification_sender,
@@ -333,6 +336,119 @@ pub fn stub_platform() -> Arc<StubPlatform> {
 	Arc::new(StubPlatform::default())
 }
 
+/// A stack on `tld` over these chains, without a relay. Reserved values are
+/// allowed, so a test may run on `dot`.
+pub fn test_stack(
+	tld: &str,
+	people: [u8; 32],
+	bulletin: [u8; 32],
+	asset_hub: [u8; 32],
+) -> crate::platform::Stack {
+	let chains = crate::platform::StackChains { relay: None, asset_hub, people, bulletin };
+	crate::platform::Stack::new("paseo".to_string(), tld.to_string(), chains, true)
+		.expect("test stack is valid")
+}
+
+/// A genesis hash no [`StubPlatform`] serves: `connect` to it always fails.
+///
+/// A fixture whose tests script or count chain RPC names it as its Asset Hub,
+/// so the username lookup a session activation starts on another thread sends
+/// nothing to the stub's chain.
+pub const UNSERVED_GENESIS: [u8; 32] = [0xfe; 32];
+
+/// The stack most runtime tests run on: [`test_stack`] on `paseo` with People
+/// `[0; 32]`, Bulletin `[0xbb; 32]` and Asset Hub `[0xcc; 32]`.
+pub fn paseo_test_stack() -> crate::platform::Stack {
+	test_stack("paseo", [0; 32], [0xbb; 32], [0xcc; 32])
+}
+
+/// The key [`sign_test_descriptor`] signs with.
+const TEST_STACK_SECRET: [u8; 32] = [0x5e; 32];
+
+/// A descriptor for a stack on `tld` over a relay and these chains, ready for
+/// [`sign_test_descriptor`]. Its `network` is always `paseo`; none of the TLD
+/// or reserved-value checks read it.
+pub fn test_descriptor(
+	tld: &str,
+	people: [u8; 32],
+	bulletin: [u8; 32],
+	asset_hub: [u8; 32],
+) -> serde_json::Value {
+	let chains = [
+		test_descriptor_chain("Relay", [0x01; 32], None),
+		test_descriptor_chain("AssetHub", asset_hub, Some(1000)),
+		test_descriptor_chain("People", people, Some(1004)),
+		test_descriptor_chain("Bulletin", bulletin, Some(1010)),
+	];
+	serde_json::json!({
+		"$v": 1,
+		"sequence": 1,
+		"generation": "test",
+		"id": "test",
+		"name": "Test",
+		"network": "paseo",
+		"tld": tld,
+		"chains": chains,
+		"services": [],
+	})
+}
+
+/// One `chains` entry of a test descriptor.
+pub fn test_descriptor_chain(
+	role: &str,
+	genesis: [u8; 32],
+	para_id: Option<u32>,
+) -> serde_json::Value {
+	let mut chain = serde_json::json!({
+		"role": role,
+		"genesisHash": format!("0x{}", hex::encode(genesis)),
+		"rpc": ["wss://rpc.test.invalid"],
+	});
+	if let Some(para_id) = para_id {
+		chain["paraId"] = para_id.into();
+	}
+	chain
+}
+
+/// The People chain the test stack is published on.
+pub const TEST_STACK_PEOPLE: [u8; 32] = [0xa1; 32];
+
+/// The People chain the test stack is published on after a wipe. No test
+/// bundles a stack on it, so a copy that names it always changes the chain.
+pub const TEST_STACK_WIPED_PEOPLE: [u8; 32] = [0xa9; 32];
+
+/// The test stack's descriptor as published at `sequence` in `generation`,
+/// with People on `people`, Bulletin on `[0xbb; 32]` and Asset Hub on
+/// `[0xcc; 32]`. A wipe is a higher `sequence`, another `generation` and
+/// another `people`.
+pub fn published_test_descriptor(
+	sequence: u32,
+	generation: &str,
+	people: [u8; 32],
+) -> serde_json::Value {
+	let mut descriptor = test_descriptor("paseo", people, [0xbb; 32], [0xcc; 32]);
+	descriptor["sequence"] = sequence.into();
+	descriptor["generation"] = generation.into();
+	descriptor
+}
+
+/// `descriptor` signed with [`TEST_STACK_SECRET`], and the pointer link that
+/// verifies it.
+pub fn sign_test_descriptor(descriptor: &serde_json::Value) -> (String, Vec<u8>) {
+	let bytes = serde_json::to_vec(descriptor).expect("a JSON value serialises");
+	let signed = trinity_stack::sign(&bytes, &TEST_STACK_SECRET).expect("test descriptor is valid");
+	(test_stack_link(Some(&TEST_STACK_SECRET)), signed)
+}
+
+/// The link to the test stack's URL, keyed with the public key of `secret`
+/// when one is given.
+pub fn test_stack_link(secret: Option<&[u8; 32]>) -> String {
+	let key = secret.map(|secret| format!("0x{}", hex::encode(trinity_stack::public_key(secret))));
+	trinity_stack::Pointer::new("https://stack.test.invalid/stack.json", key.as_deref())
+		.expect("test pointer is valid")
+		.to_link(trinity_stack::DEFAULT_LINK_BASE)
+}
+
 /// Runtime configuration used by platform-backed runtime tests.
 pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 	(
@@ -344,9 +460,7 @@ pub fn runtime_config(product_id: &str) -> (PairingHostConfig, ProductContext) {
 				platform: truapi::latest::HostPlatform::Web,
 			},
 			PlatformInfo::default(),
-			[0; 32],
-			[0xbb; 32],
-			[0xcc; 32],
+			paseo_test_stack(),
 			"polkadotapp".to_string(),
 		)
 		.expect("test host runtime config is valid"),
@@ -399,9 +513,7 @@ pub fn sso_host_and_responder_sessions() -> (SsoSessionInfo, SsoSessionInfo) {
 			platform: truapi::latest::HostPlatform::Unknown,
 		},
 		PlatformInfo::default(),
-		[0; 32],
-		[0xbb; 32],
-		[0xcc; 32],
+		paseo_test_stack(),
 		"polkadotapp".to_string(),
 	)
 	.expect("test pairing config is valid");
@@ -1293,22 +1405,6 @@ impl PlatformFeatures for StubPlatform {
 	) -> Result<v01::HostFeatureSupportedResponse, v01::GenericError> {
 		Ok(v01::HostFeatureSupportedResponse { supported: true })
 	}
-
-	async fn supported_chains(&self) -> Result<crate::platform::HostChainSet, v01::GenericError> {
-		Ok(crate::platform::HostChainSet {
-			network: "paseo".to_string(),
-			chains: vec![
-				crate::platform::HostChainEntry {
-					identifier: v01::ChainIdentifier::AssetHub,
-					genesis_hash: [0xaa; 32],
-				},
-				crate::platform::HostChainEntry {
-					identifier: v01::ChainIdentifier::People,
-					genesis_hash: [0x22; 32],
-				},
-			],
-		})
-	}
 }
 
 struct RecordingConnection {
@@ -1914,7 +2010,7 @@ impl ChainProvider for StubPlatform {
 		if let Some(reason) = failure {
 			return Err(ProviderError::Transport { reason: reason.to_string() });
 		}
-		if self.unreachable_genesis == Some(genesis_hash) {
+		if genesis_hash == UNSERVED_GENESIS || self.unreachable_genesis == Some(genesis_hash) {
 			return Err(ProviderError::Host { reason: "fixture serves no such chain".to_string() });
 		}
 		if self.chain_connect_pending {

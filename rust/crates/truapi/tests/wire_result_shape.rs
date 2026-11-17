@@ -147,9 +147,9 @@ fn get_chain_info_ok_response_round_trips_over_the_wire() {
 		truapi::versioned::chain::RemoteChainInfoResponse,
 		CallError<truapi::versioned::chain::RemoteChainInfoError>,
 	> = Ok(truapi::versioned::chain::RemoteChainInfoResponse::V1(v01::RemoteChainInfoResponse {
-		network: "paseo".to_string(),
+		network: "mock".to_string(),
 		chain: v01::ChainIdentifier::AssetHub,
-		genesis_hash: [0xaa; 32],
+		genesis_hash: [0xcc; 32],
 	}));
 	assert_eq!(response.payload.value, expected.encode());
 }
@@ -157,7 +157,8 @@ fn get_chain_info_ok_response_round_trips_over_the_wire() {
 #[test]
 fn get_chain_info_unserved_chain_uses_err_discriminant() {
 	let core = make_core();
-	let request = v01::RemoteChainInfoRequest { chain: v01::ChainIdentifier::Bulletin };
+	// The test stack has no relay.
+	let request = v01::RemoteChainInfoRequest { chain: v01::ChainIdentifier::Relay };
 	let ids = request_ids("chain_get_chain_info").expect("known request method");
 	let frame = ProtocolMessage {
 		request_id: "p:10".into(),

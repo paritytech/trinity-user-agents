@@ -20,11 +20,6 @@ for script in "$PROJECT_ROOT"/scripts/*.sh; do
     fi
 done
 
-# Named rather than globbed into the loop above: scripts/ also holds one-off
-# tools that must not run as part of setup.
-echo ""
-"$PROJECT_ROOT/scripts/setup-truapi.py"
-
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "✅ Setup complete!"

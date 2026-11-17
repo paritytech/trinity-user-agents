@@ -28,6 +28,7 @@ protocol SettingsInteractorOutputProtocol: AnyObject {
     func didReceivePrivacyStrategy(_ strategy: RecyclingStrategyType)
     func didReceiveTabBarLabelsEnabled(_ isEnabled: Bool)
     func didReceivePaymentsBackupStatus(_ status: CoinageAccountBackupStatus)
+    func didReceiveRestoredBalanceWaiting(_ isWaiting: Bool)
 }
 
 @MainActor

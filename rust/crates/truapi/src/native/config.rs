@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use crate::{
 	platform::{
-		ExecutableKind, HostInfo, PlatformInfo, ProductContext, ProductId,
-		RuntimeConfigValidationError, SigningHostConfig,
+		ExecutableKind, HostIdentity, HostInfo, PlatformInfo, ProductContext, ProductId,
+		RuntimeConfigValidationError, StackError,
 	},
 	pocket_cards::PinnedPocketCard,
 };
@@ -26,25 +26,10 @@ pub struct HostRuntimeConfig {
 	/// Optional platform/browser version shown by the wallet during SSO pairing.
 	#[uniffi(default)]
 	pub platform_version: Option<String>,
-	/// People-chain genesis hash. Must be exactly 32 bytes.
-	pub people_chain_genesis_hash: Vec<u8>,
-	/// Bulletin-chain genesis hash. Must be exactly 32 bytes.
-	pub bulletin_chain_genesis_hash: Vec<u8>,
-	/// Asset Hub genesis hash, where the dotNS contracts are deployed. Must be
-	/// exactly 32 bytes.
-	///
-	/// Product manifests are read from dotNS, so this is what makes a
-	/// `trustedProducts` grant resolvable. 32 zero bytes says this host has no
-	/// Asset Hub; grants already in the manifest cache stay honoured until they
-	/// expire.
-	pub asset_hub_chain_genesis_hash: Vec<u8>,
-	/// The network's dotNS TLD without the leading dot (`dot`, `paseo`,
-	/// `testnet`). The wallet's reserved identities are derived under it:
-	/// `peopl.<suffix>` for the identity account (its account 0) and the person
-	/// ring-VRF keys. Read it from the network the host is configured for, the
-	/// way the host's own onboarding does; a wrong value derives a different
-	/// person from the same seed.
-	pub network_suffix: String,
+	/// The stack the host build runs. Every chain the core uses, the network
+	/// `get_chain_info` reports and the TLD the wallet's identities derive
+	/// under come from it.
+	pub stack: BundledStack,
 	/// Existing, writable directory for core-owned databases, kept out of
 	/// device backups. The runtime opens its database there at startup.
 	pub database_directory: String,
@@ -61,6 +46,21 @@ pub struct HostRuntimeConfig {
 	pub local_session_lite_username: Option<String>,
 }
 
+/// The stack a host build ships: its pointer, its signed descriptor, and
+/// whether the build lets it use Polkadot's reserved values.
+#[derive(Clone, uniffi::Record)]
+pub struct BundledStack {
+	/// The stack's link, `polkadotapp://stack?key=0x…&url=…`. It must carry a
+	/// key.
+	pub pointer: String,
+	/// The bundled descriptor's bytes, as served: a signed envelope that
+	/// verifies under the pointer's key.
+	pub descriptor: Vec<u8>,
+	/// Whether this build may run a stack that uses Polkadot's genesis hashes
+	/// or the `dot` TLD. Only a Polkadot or Polkadot-fork build sets it.
+	pub allows_reserved_values: bool,
+}
+
 /// Trusted identity attached by a native host to one executable connection.
 #[derive(Clone, uniffi::Record)]
 pub struct ProductExecutionConfig {
@@ -71,10 +71,12 @@ pub struct ProductExecutionConfig {
 }
 
 /// [`HostRuntimeConfig`] once validated, in the shape the runtime is built from.
-#[derive(Debug)]
 pub struct NativeResolvedHostRuntimeConfig {
-	/// Configuration the signing-host runtime runs with.
-	pub signing: SigningHostConfig,
+	/// The host the wallet and products see.
+	pub host: HostIdentity,
+	/// The stack the host build ships. The runtime resolves it when it is
+	/// built, and refreshes it while it runs.
+	pub stack: BundledStack,
 	/// Entropy to activate a local signing session with at construction.
 	pub local_session_secret: Option<Vec<u8>>,
 	/// Lite username attached to that local session.
@@ -120,11 +122,10 @@ impl From<RuntimeConfigValidationError> for NativeRuntimeConfigError {
 	}
 }
 
-/// A 32-byte genesis hash handed over as bytes, or the error naming `field`.
-fn genesis_hash(field: &str, bytes: &[u8]) -> Result<[u8; 32], NativeRuntimeConfigError> {
-	bytes.try_into().map_err(|_| NativeRuntimeConfigError::Invalid {
-		reason: format!("{field} must be exactly 32 bytes, got {}", bytes.len()),
-	})
+impl From<StackError> for NativeRuntimeConfigError {
+	fn from(err: StackError) -> Self {
+		Self::Invalid { reason: err.to_string() }
+	}
 }
 
 /// The platform products see in `System::host_info`. The native library ships
@@ -143,13 +144,7 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 	type Error = NativeRuntimeConfigError;
 
 	fn try_from(config: HostRuntimeConfig) -> Result<Self, Self::Error> {
-		let people_chain_genesis_hash =
-			genesis_hash("people_chain_genesis_hash", &config.people_chain_genesis_hash)?;
-		let bulletin_chain_genesis_hash =
-			genesis_hash("bulletin_chain_genesis_hash", &config.bulletin_chain_genesis_hash)?;
-		let asset_hub_chain_genesis_hash =
-			genesis_hash("asset_hub_chain_genesis_hash", &config.asset_hub_chain_genesis_hash)?;
-		let signing = SigningHostConfig::new(
+		let host = HostIdentity::new(
 			HostInfo {
 				name: config.host_name,
 				icon: config.host_icon,
@@ -157,13 +152,10 @@ impl TryFrom<HostRuntimeConfig> for NativeResolvedHostRuntimeConfig {
 				platform: native_host_platform(),
 			},
 			PlatformInfo { kind: config.platform_type, version: config.platform_version },
-			people_chain_genesis_hash,
-			bulletin_chain_genesis_hash,
-			asset_hub_chain_genesis_hash,
-			config.network_suffix,
 		)?;
 		Ok(Self {
-			signing,
+			host,
+			stack: config.stack,
 			local_session_secret: config.local_session_secret,
 			local_session_lite_username: config.local_session_lite_username,
 			database_directory: PathBuf::from(config.database_directory),

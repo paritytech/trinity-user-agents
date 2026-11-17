@@ -511,37 +511,6 @@ impl HostGrantStore {
 		});
 	}
 
-	/// Drop a product's Bulletin key from memory and storage before it is replaced.
-	pub async fn evict_bulletin_allowance(
-		&self,
-		session: &SessionInfo,
-		grant_revision: u64,
-		product_id: &ProductId,
-	) -> Result<(), AuthorityError> {
-		let _storage = self.persistence().await;
-		if !self.session_secret_allocation_is_current(session, grant_revision) {
-			return Err(AuthorityError::Disconnected);
-		}
-		self.caches().bulletin_allowances.remove(&AllowanceCacheKey::new(
-			session,
-			product_id,
-			AllowanceResource::Bulletin,
-		));
-		if self.keeping == GrantKeeping::Paired {
-			allowances::remove_allowance_key(
-				&*self.storage,
-				session,
-				product_id,
-				AllowanceResource::Bulletin,
-			)
-			.await?;
-		}
-		if !self.session_secret_allocation_is_current(session, grant_revision) {
-			return Err(AuthorityError::Disconnected);
-		}
-		Ok(())
-	}
-
 	/// Validate and retain delegated signing authority for the selected session.
 	///
 	/// A wallet's own host keeps it in memory for this activation; a paired host stores it.
@@ -738,6 +707,23 @@ impl HostGrantGuard<'_> {
 	/// Revision selected by the held guard.
 	pub fn revision(&self) -> u64 {
 		self.state.revision
+	}
+
+	/// Whether `key` is still the AutoSigning key kept for `product_id`.
+	///
+	/// A reset of that product and a wallet lock each drop it. A reset of
+	/// another product does not.
+	pub fn keeps_auto_signing_key(
+		&self,
+		session: &SessionInfo,
+		product_id: &ProductId,
+		key: &AutoSigningKey,
+	) -> bool {
+		self.store
+			.caches()
+			.auto_signing_keys
+			.get(&(AutoSigningOwner::from_session(session), product_id.clone()))
+			.is_some_and(|kept| kept.as_secret_bytes() == key.as_secret_bytes())
 	}
 
 	fn is_current(&self, session: &SessionInfo, revision: u64) -> bool {

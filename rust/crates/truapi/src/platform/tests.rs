@@ -1,47 +1,5 @@
 use super::*;
 
-fn signing_host_config(
-	network_suffix: &str,
-) -> Result<SigningHostConfig, RuntimeConfigValidationError> {
-	SigningHostConfig::new(
-		HostInfo {
-			name: "Test host".to_string(),
-			icon: None,
-			version: None,
-			platform: HostPlatform::Unknown,
-		},
-		PlatformInfo::default(),
-		[0; 32],
-		[1; 32],
-		[2; 32],
-		network_suffix.to_string(),
-	)
-}
-
-#[test]
-fn a_signing_host_is_configured_for_one_dotns_tld() {
-	for tld in DOTNS_TLDS {
-		let config = signing_host_config(tld).expect("a known TLD is a valid suffix");
-		assert_eq!(config.network_suffix, *tld);
-	}
-
-	assert_eq!(
-		signing_host_config(""),
-		Err(RuntimeConfigValidationError::EmptyField { field: "network_suffix" })
-	);
-	for malformed in
-		["pasoe", "unknown", ".paseo", "peopl.paseo", "Paseo", "pas eo", "a-b", "abcdefghijklmnopq"]
-	{
-		assert_eq!(
-			signing_host_config(malformed),
-			Err(RuntimeConfigValidationError::InvalidNetworkSuffix {
-				network_suffix: malformed.to_string()
-			}),
-			"{malformed:?} must be rejected"
-		);
-	}
-}
-
 fn file_with_url(url: &str) -> ChatMessageContent {
 	ChatMessageContent::File(ChatFile {
 		url: url.to_string(),
