@@ -13,6 +13,7 @@ struct PocketCardOpening {
     let flowState: SPAFlowState
     let navigator: ModuleNavigating
     let pocket: ProductPocketService
+    var sources: ProductSources = .app
 
     func open(_ card: PocketCardViewModel, pageQuery: String = "") {
         guard
@@ -23,9 +24,9 @@ struct PocketCardOpening {
         navigator.openWallet { wallet, wasOnScreen in
             // A second screen would take the open card's page and leave it blank.
             guard !pocket.cardHosts.isOnDisplay(card.key) else {
-                let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
+                let content = sources.cardContent(for: card.key, pageQuery: pageQuery)
                 pocket.cardHosts.reload(card.key, at: pageQuery) { view in
-                    if let widgetURL { view.navigate(to: widgetURL) } else { view.navigate(to: page) }
+                    if case let .directURL(url) = content { view.navigate(to: url) } else { view.navigate(to: page) }
                 }
                 return
             }
@@ -72,21 +73,11 @@ private extension PocketCardOpening {
         page: ProductPage,
         pageQuery: String
     ) -> ExpandedPocketCardViewProtocol? {
-        let widgetURL = debugWidgetURL(for: card.key, pageQuery: pageQuery)
-
-        return ExpandedPocketCardViewFactory.createView(
+        ExpandedPocketCardViewFactory.createView(
             card: card,
             page: page,
-            contentSource: widgetURL.map(SPAContentSource.directURL) ?? .dotNs,
+            contentSource: sources.cardContent(for: card.key, pageQuery: pageQuery),
             flowState: flowState
         )
-    }
-
-    func debugWidgetURL(for key: PocketCardKey, pageQuery: String) -> URL? {
-        #if DEBUG
-            return DebugPocketCards().widgetURL(for: key, pageQuery: pageQuery)
-        #else
-            return nil
-        #endif
     }
 }

@@ -1,4 +1,5 @@
 import Foundation
+import SDKLogger
 import TrUAPIHost
 
 /// A product the app ships inside itself, run from its files with no dotNS or
@@ -39,6 +40,25 @@ public struct BundledProduct: Hashable, Sendable {
     /// Whether it ships a Worker.
     public func hasWorker(fileManager: FileManager = .default) -> Bool {
         fileManager.fileExists(atPath: directory.appendingPathComponent(workerEntryRelativePath).path)
+    }
+
+    /// The Worker it ships, read the way a published one is: a manifest that
+    /// is missing or rejected costs it the Worker and nothing else.
+    public func worker(
+        screening: PocketCardScreening,
+        logger: SDKLoggerProtocol,
+        fileManager: FileManager = .default
+    ) -> ProductExecutable.Worker? {
+        guard hasWorker(fileManager: fileManager) else { return nil }
+
+        let parser = ProductManifestParser(logger: logger, screening: screening)
+        guard case let .worker(worker) = parser.parseExecutable(
+            workerManifest(fileManager: fileManager),
+            kind: .worker,
+            identifier: id
+        ) else { return nil }
+
+        return worker
     }
 
     /// Whether it ships an App.

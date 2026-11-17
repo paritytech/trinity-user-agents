@@ -9,15 +9,10 @@ import TrUAPIHost
 struct TrUAPIWorkerBuilderTests {
     @Test
     func runsABundledWorkerWithoutOpeningItsContent() async throws {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("bundled-\(UUID().uuidString)", isDirectory: true)
+        let root = try BundledFixture.makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        let script = root.appendingPathComponent("provider.dot/worker/index.js")
-        try FileManager.default.createDirectory(
-            at: script.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try Data("export {}".utf8).write(to: script)
+        try BundledFixture.write(BundledFixture.workerManifest, to: root, "provider.dot/worker-manifest.json")
+        try BundledFixture.write("export {}", to: root, "provider.dot/worker/index.js")
 
         let id = try ProductId("provider.dot")
         let loader = StubProductContentLoader()
@@ -32,6 +27,23 @@ struct TrUAPIWorkerBuilderTests {
         #expect(files.load(for: id, relativePath: "worker/index.js") == Data("export {}".utf8))
         #expect(loader.openedWorkerIds.isEmpty)
         #expect(resolver.resolvedNames.isEmpty)
+    }
+
+    /// A rejected manifest costs a bundled product its worker, as it does a
+    /// published one, and never sends it to dotNS for another.
+    @Test
+    func runsNoWorkerForABundledProductWhoseManifestIsRejected() async throws {
+        let root = try BundledFixture.makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try BundledFixture.write("{\"kind\":\"worker\"}", to: root, "provider.dot/worker-manifest.json")
+        try BundledFixture.write("export {}", to: root, "provider.dot/worker/index.js")
+
+        let id = try ProductId("provider.dot")
+        let loader = StubProductContentLoader()
+        let builder = makeBuilder(loader: loader, resolver: StubDotNsResolver(), bundled: BundledProducts(root: root))
+
+        await #expect(throws: TrUAPIWorkerError.self) { try await builder.workerSource(for: id) }
+        #expect(loader.openedWorkerIds.isEmpty)
     }
 
     @Test
@@ -55,7 +67,7 @@ struct TrUAPIWorkerBuilderTests {
             contentLoader: loader,
             dotNsResolver: resolver,
             productFileProvider: NoChatProductFiles(),
-            bundledProducts: bundled
+            sources: ProductSources(bundledProducts: bundled)
         )
     }
 }

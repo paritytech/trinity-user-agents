@@ -19,7 +19,7 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
     private let contentLoader: any ProductContentLoading
     private let dotNsResolver: any DotNsResolverProtocol
     private let productFileProvider: any ChatProductFileProviding
-    private let bundledProducts: BundledProducts
+    private let sources: ProductSources
     private let logger: LoggerProtocol
 
     init(
@@ -27,14 +27,14 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
         contentLoader: any ProductContentLoading,
         dotNsResolver: any DotNsResolverProtocol,
         productFileProvider: any ChatProductFileProviding,
-        bundledProducts: BundledProducts = .app,
+        sources: ProductSources = .app,
         logger: LoggerProtocol = Logger.shared
     ) {
         self.environment = environment
         self.contentLoader = contentLoader
         self.dotNsResolver = dotNsResolver
         self.productFileProvider = productFileProvider
-        self.bundledProducts = bundledProducts
+        self.sources = sources
         self.logger = logger
     }
 
@@ -62,18 +62,22 @@ struct TrUAPIWorkerBuilder: TrUAPIWorkerBuilding {
         )
     }
 
-    /// The worker the app ships for the product, read from its own files with
-    /// no dotNS lookup, and the files it is served from.
+    /// The product's worker and the files it is served from. A product the
+    /// app ships runs only from its own files, with no dotNS lookup, and has
+    /// no worker when its manifest is missing or rejected.
     func workerSource(
         for productId: ProductId
     ) async throws -> (ProductWorkerSource, any ProductFileProviding) {
-        if let bundled = bundledProducts.product(productId), bundled.hasWorker() {
-            return (.bundled(bundled), DotNsFileProvider(contentURL: bundled.directory))
-        }
+        switch sources.source(of: productId) {
+        case let .bundled(product, worker):
+            guard worker != nil else { throw TrUAPIWorkerError.noWorker(productId) }
 
-        // Its 1 s and 2 s backoffs fit inside the manager's startup window.
-        let resolved = try await contentLoader.openWorker(productId, policy: .attempts(3))
-        return try await (workerSource(for: resolved, productId: productId), productFileProvider)
+            return (.bundled(product), DotNsFileProvider(contentURL: product.directory))
+        case .published:
+            // Its 1 s and 2 s backoffs fit inside the manager's startup window.
+            let resolved = try await contentLoader.openWorker(productId, policy: .attempts(3))
+            return try await (workerSource(for: resolved, productId: productId), productFileProvider)
+        }
     }
 
     /// The product's published worker, or the script installed by hand through
