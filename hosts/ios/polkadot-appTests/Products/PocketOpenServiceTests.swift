@@ -1,4 +1,5 @@
 import Foundation
+import IssueMonitoring
 import StructuredConcurrency
 import StructuredConcurrencyTestSupport
 import Testing
@@ -13,6 +14,28 @@ struct PocketOpenServiceTests {
         #expect(service.handle(url: URL(string: "polkadotapp://pocket/add?product=game.dot&card=loyalty")!))
 
         #expect(try await seen.answer() == .presented(cardId: "loyalty"))
+    }
+
+    /// An open link is the user's tap for its page, so the page is timed from the moment the link reaches
+    /// the handler, before the hops onto the main actor that present it.
+    @Test
+    func anOpenLinkIsTimedFromWhenItArrives() async throws {
+        let (taps, continuation) = AsyncStream<HostOpenTap>.makeStream()
+        let service = PocketOpenService(present: { _, tap in continuation.yield(tap) })
+
+        let before = HostEventClock.monotonicMilliseconds()
+        #expect(service.handle(url: URL(string: "polkadotapp://pocket/open?product=game.dot&card=loyalty")!))
+        let handled = HostEventClock.monotonicMilliseconds()
+
+        let tap = try await withTimeout(.hangGuard) {
+            for await tap in taps {
+                return tap
+            }
+            throw CancellationError()
+        }
+        #expect(tap.source == .deeplink)
+        #expect(tap.openedAtMonotonicMilliseconds >= before)
+        #expect(tap.openedAtMonotonicMilliseconds <= handled)
     }
 
     /// A bare `polkadotapp://pocket` is the host's to answer: it opens the Pocket,
@@ -31,7 +54,7 @@ struct PocketOpenServiceTests {
     /// handler behind us in the chain.
     @Test
     func doesNotClaimAnOrdinaryProductLink() {
-        let service = PocketOpenService(present: { _ in })
+        let service = PocketOpenService(present: { _, _ in })
 
         #expect(!service.handle(url: URL(string: "polkadot://game.dot/some/page")!))
     }
@@ -40,7 +63,7 @@ struct PocketOpenServiceTests {
     /// cheque, which must still reach their own handlers.
     @Test
     func doesNotClaimAnotherAppLink() {
-        let service = PocketOpenService(present: { _ in })
+        let service = PocketOpenService(present: { _, _ in })
         let cheque = "\(DeeplinkTestSchemes.active)://pay/cheque?id=abc"
 
         #expect(!service.handle(url: URL(string: cheque)!))
@@ -95,7 +118,7 @@ private final class Recorder: @unchecked Sendable {
     /// Every callback is wired, so a wrong answer fails naming it rather than timing out.
     func makeService() -> PocketOpenService {
         PocketOpenService(
-            present: { self.record(.presented(cardId: $0.cardId.value)) },
+            present: { link, _ in self.record(.presented(cardId: link.cardId.value)) },
             openCollection: { self.record(.openedCollection) },
             refuse: { _ in self.record(.refused) }
         )

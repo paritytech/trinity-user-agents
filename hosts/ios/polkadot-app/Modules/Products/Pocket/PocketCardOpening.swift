@@ -64,8 +64,8 @@ struct PocketCardOpening {
 
     /// A link may name a card the Pocket does not hold, which is the one case
     /// the user is told about rather than silently taken into the product.
-    func open(link: PocketDeeplink) {
-        let tap = HostOpenTap(source: .deeplink)
+    /// `tap` is read where the link arrived (`PocketOpenService.handle(url:)`).
+    func open(link: PocketDeeplink, tap: HostOpenTap) {
         let key = PocketCardKey(productId: link.productHost, cardId: link.cardId)
 
         Task { @MainActor in

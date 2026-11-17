@@ -12,14 +12,17 @@ import UIKit
 /// `remove_card` does, `pocketCollection` for the bare link, and `reject` for a
 /// Pocket link it cannot make sense of, including an action it does not serve.
 /// All three are the host's to answer. A link to anything else is not ours.
+///
+/// A Pocket link is the user's tap for the page it opens, so its `HostOpenTap` is read here, where the link
+/// arrives, and not after the hops onto the main actor that follow.
 final class PocketOpenService: URLHandlingServiceProtocol {
     private let parser = PocketDeeplinkParser()
-    private let present: @MainActor (PocketDeeplink) -> Void
+    private let present: @MainActor (PocketDeeplink, HostOpenTap) -> Void
     private let openCollection: @MainActor () -> Void
     private let refuse: @MainActor (String) -> Void
 
     init(
-        present: @escaping @MainActor (PocketDeeplink) -> Void,
+        present: @escaping @MainActor (PocketDeeplink, HostOpenTap) -> Void,
         openCollection: @escaping @MainActor () -> Void = {},
         refuse: @escaping @MainActor (String) -> Void = { _ in }
     ) {
@@ -31,7 +34,8 @@ final class PocketOpenService: URLHandlingServiceProtocol {
     func handle(url: URL) -> Bool {
         switch parser.classify(url) {
         case let .pocket(link):
-            Task { @MainActor in present(link) }
+            let tap = HostOpenTap(source: .deeplink)
+            Task { @MainActor in present(link, tap) }
             return true
         case .collection:
             Task { @MainActor in openCollection() }
@@ -54,7 +58,7 @@ extension PocketOpenService {
         moduleNavigator: ModuleNavigating
     ) -> PocketOpenService {
         PocketOpenService(
-            present: { link in
+            present: { link, tap in
                 Task { @MainActor in
                     // A session with no Pocket has nowhere to put the card and
                     // nothing to open. The host claimed the link, so it says so
@@ -84,7 +88,7 @@ extension PocketOpenService {
                             navigator: moduleNavigator,
                             pocket: pocket,
                             hostEventRecorder: IssueMonitoringFactory.createHostEventRecorder()
-                        ).open(link: link)
+                        ).open(link: link, tap: tap)
                     }
                 }
             },
