@@ -101,11 +101,12 @@ impl<T> Roles<T> {
 	}
 }
 
-/// Whether `stack` and `other` agree in every field the CLI reads: `id`, which
-/// is the product namespace, the TLD, `generation`, the `dub` service,
-/// `dotns.popController`, and the genesis hash and full `rpc` list of People,
-/// Asset Hub and Bulletin. The full lists are compared because the Polkadot
-/// fork check contacts every node the reference lists for a chain.
+/// Whether `stack` and `other` agree in every field the CLI or the core reads:
+/// `id`, which is the product namespace, the TLD, `generation`, the `dub`
+/// service, `dotns.popController`, `contracts`, and the genesis hash and full
+/// `rpc` list of People, Asset Hub and Bulletin. The full lists are compared
+/// because the Polkadot fork check contacts every node the reference lists for
+/// a chain.
 pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
 	fn role_chain<'a>(descriptor: &'a Descriptor, role: &str) -> Option<([u8; 32], &'a [String])> {
 		descriptor.chain(role).map(|chain| (chain.genesis(), chain.rpc.as_slice()))
@@ -115,6 +116,7 @@ pub fn reads_same(stack: &Descriptor, other: &Descriptor) -> bool {
 		stack.generation == other.generation &&
 		stack.service("dub") == other.service("dub") &&
 		stack.dotns_address("popController") == other.dotns_address("popController") &&
+		stack.contracts == other.contracts &&
 		ROLE_NAMES.iter().all(|role| role_chain(stack, role) == role_chain(other, role))
 }
 
