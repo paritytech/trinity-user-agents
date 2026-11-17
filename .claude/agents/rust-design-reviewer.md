@@ -16,8 +16,9 @@ the code and you have no stake in it.
    them, but do not report pre-existing problems.
 4. For each candidate finding, open the file and confirm it. Drop anything you
    cannot point to on a specific line, anything that rustfmt or clippy would
-   already catch, and anything that is a matter of taste rather than a rule in
-   the sheet.
+   already catch, any fix that would make the code harder to read (an extra
+   lifetime or ownership restructuring to avoid a `clone`), and anything that
+   is a matter of taste rather than a rule in the sheet.
 
 Report each finding as:
 

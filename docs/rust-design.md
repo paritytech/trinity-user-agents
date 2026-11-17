@@ -1,14 +1,14 @@
 # Rust design rules
 
-These rules adapt the [Google Rust style guide](https://google.github.io/styleguide/rustguide.html)
-to this repository. They cover design only. Formatting belongs to
-`cargo +nightly fmt` and lint-shaped rules belong to clippy, so neither is
-repeated here. Where this sheet and the Google guide disagree, this sheet wins.
-The repo conventions in `AGENTS.md` (module layout, `core::` over `std::`,
+These rules cover design only. Formatting belongs to `cargo +nightly fmt`
+and lint-shaped rules belong to clippy, so neither is repeated here. The repo
+conventions in `AGENTS.md` (module layout, `core::` over `std::`,
 `truapi::latest` imports, no parallel `Native*` types) still apply on top.
 
-The goal is to keep design debt out of the codebase. When a rule here would
-make the code worse, say why in the PR rather than silently breaking it.
+The goal is to keep design debt out of the codebase. Readability comes first:
+this is not systems code, and no rule here justifies making code harder to
+read. When a rule would make the code worse, say why in the PR rather than
+silently breaking it.
 
 ## Library or application
 
@@ -35,9 +35,9 @@ simplest thing that works: `truapi-host-cli`, `truapi-codegen`,
 
 ## Ownership
 
-* Borrow before cloning. A `clone` that only exists to get past the borrow
-  checker is a design smell; restructure first, clone only when that is
-  clearly worse.
+* A `clone` is fine when it keeps the code simple. Borrow when it is just as
+  easy to read, but do not add lifetimes, restructure ownership or contort
+  control flow to save one.
 * Every new `Arc` or `Rc` needs a reason the owner cannot be unique. Shared
   async runtime state is a valid reason; convenience is not.
 
