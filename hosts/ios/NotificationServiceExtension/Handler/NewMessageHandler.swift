@@ -176,7 +176,8 @@ private extension NewMessageHandler {
              .deviceAdded,
              .deviceRemoved,
              .dataChannelClosed,
-             .compactedMessages:
+             .compactedMessages,
+             .seen:
             throw NewMessageHandlerError.unsupportedMessage
         case .none:
             NotificationContentResult(
