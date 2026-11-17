@@ -8,6 +8,7 @@
 
 pub mod chain;
 pub mod denominations;
+pub mod handover;
 pub mod ledger;
 pub mod namespace;
 pub mod operation;
