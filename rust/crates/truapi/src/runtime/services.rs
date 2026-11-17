@@ -613,7 +613,10 @@ impl RuntimeServices {
 	/// call installed it.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn install_coinage_engine(&self, engine: Arc<crate::runtime::CoinageEngine>) -> bool {
-		self.coinage_engine.set(engine).is_ok()
+		let installed = self.coinage_engine.set(engine).is_ok();
+		// Funding sessions waiting on the engine can be followed now.
+		self.funding.wake();
+		installed
 	}
 
 	/// Install the outcome of the coinage layer's start, which
@@ -632,9 +635,12 @@ impl RuntimeServices {
 		outcome.await.unwrap_or_else(|_| Err(CoinageUnavailable::NotStarted { reason: "the start was dropped".into() }))
 	}
 
-	/// Coinage payments, once the layer's start sequence has run.
+	/// Coinage payments, once the layer's start sequence has run; none when
+	/// coinage is off or its start failed. Waits for a start still running,
+	/// so a call made while the layer starts is served, not refused.
 	#[cfg(not(target_arch = "wasm32"))]
-	pub fn coinage_payments(&self) -> Option<Payments> {
+	pub async fn coinage_payments(&self) -> Option<Payments> {
+		self.coinage_layer().await.ok()?;
 		self.coinage_payments.get().cloned()
 	}
 
