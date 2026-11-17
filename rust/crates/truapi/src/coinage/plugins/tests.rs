@@ -14,13 +14,13 @@ use futures::executor::block_on;
 
 use super::*;
 use crate::{
-	chain::extrinsic_service_serving,
+	chain::{EncodedExtrinsic, HashAndNumber, MortalExtrinsic, Mortality, extrinsic_service_serving},
 	coinage::{
-		PrivacyPolicy, PurseId,
+		CoinSecret, PrivacyPolicy, PurseId,
 		ledger::AssetKind,
 		registration::{Admission, Rows},
 		testing::{
-			ENTROPY, FakeChain, FixedSeed, NOW, NoPerson, PEOPLE_METADATA_BYTES, TestWallet, chain_params, coin_read,
+			ENTROPY, FakeChain, FixedSeed, NOW, NoPerson, NoRegistryWriter, PEOPLE_METADATA_BYTES, TestWallet, chain_params, coin_read,
 			register_rows, unbuilt_engine,
 		},
 	},
@@ -38,6 +38,7 @@ fn deps(wallet: &TestWallet, chain: Arc<FakeChain>, running: Running) -> Coinage
 		extrinsics: Arc::new(extrinsic_service_serving(PEOPLE_METADATA_BYTES, 0)),
 		personhood: Arc::new(NoPerson),
 		running,
+		registry: Some(Arc::new(NoRegistryWriter)),
 	}
 }
 
@@ -157,6 +158,84 @@ fn nothing_is_built_before_running_opens() {
 	assert!(block_on(policy.prepare(core::slice::from_ref(&waiting))).unwrap().is_empty());
 	running.open(RunningState { params: chain_params(), check_failed: true, funding: HashMap::new() });
 	assert!(block_on(policy.prepare(&[waiting])).unwrap().is_empty(), "nor while the runtime check fails");
+}
+
+/// Until the installation is in the registry, value placed under it could
+/// be found only through this store, so nothing is built (G3 invariant 4).
+#[test]
+fn nothing_is_built_before_the_installation_is_registered() {
+	let wallet = TestWallet::unregistered(PrivacyPolicy::fastest());
+	let record = transfer(&wallet);
+	let running = Running::new();
+	running.open(RunningState { params: chain_params(), check_failed: false, funding: HashMap::new() });
+	let policy = CoinagePolicy(Arc::new(deps(&wallet, Arc::new(FakeChain::default()), running)));
+	let params = RecordParams { call: Call::Transfer, retry: Retry::ExpiryOnly }.to_params();
+	let waiting =
+		DeferredDurableTx { id: record, domain: coinage_domain(), group: None, plan: SubmissionPlan { params }, attempts: 0 };
+	let answered = || block_on(policy.prepare(core::slice::from_ref(&waiting))).unwrap().contains_key(&record);
+	assert!(!answered());
+	wallet.register_installation();
+	assert!(answered(), "once the registration landed, the record is decided");
+}
+
+/// A host that runs no registry has nothing to wait for, so its wallet is
+/// built at once, as NFT purses are, and stays unrecoverable from the seed.
+#[test]
+fn without_a_registry_nothing_waits_for_a_registration() {
+	let wallet = TestWallet::unregistered(PrivacyPolicy::fastest());
+	let record = transfer(&wallet);
+	let running = Running::new();
+	running.open(RunningState { params: chain_params(), check_failed: false, funding: HashMap::new() });
+	let policy = CoinagePolicy(Arc::new(CoinageDeps { registry: None, ..deps(&wallet, Arc::new(FakeChain::default()), running) }));
+	let params = RecordParams { call: Call::Transfer, retry: Retry::ExpiryOnly }.to_params();
+	let waiting =
+		DeferredDurableTx { id: record, domain: coinage_domain(), group: None, plan: SubmissionPlan { params }, attempts: 0 };
+	assert!(block_on(policy.prepare(&[waiting])).unwrap().contains_key(&record));
+}
+
+/// Captures what the registry policy asks the writer to append.
+#[derive(Default)]
+struct RecordingWriter(parking_lot::Mutex<Vec<(CoinSecret, Vec<u8>)>>);
+
+#[async_trait::async_trait]
+impl RegistryWriter for RecordingWriter {
+	async fn append(&self, datastore: &CoinSecret, record: &[u8]) -> Result<MortalExtrinsic, String> {
+		self.0.lock().push((datastore.clone(), record.to_vec()));
+		let birth = HashAndNumber { hash: H256([1; 32]), number: 1 };
+		Ok(MortalExtrinsic { extrinsic: EncodedExtrinsic::new(b"append".to_vec()), mortality: Mortality::new(birth, 64).unwrap() })
+	}
+}
+
+/// The append the shipped wallets read back: the installation sealed under
+/// the seed's registry key, sent by the `//datastore` account.
+#[test]
+fn the_registration_appends_the_installation_sealed_for_the_registry() {
+	let wallet = TestWallet::unregistered(PrivacyPolicy::fastest());
+	let writer = Arc::new(RecordingWriter::default());
+	let running = Running::new();
+	let policy = RegistryPolicy(Arc::new(CoinageDeps {
+		registry: Some(writer.clone()),
+		..deps(&wallet, Arc::new(FakeChain::default()), running.clone())
+	}));
+	let installation = crate::installation::InstallationId([9; 32]);
+	let waiting = |id, params| DeferredDurableTx {
+		id: DurableTxId(id),
+		domain: registry_domain(),
+		group: None,
+		plan: SubmissionPlan { params },
+		attempts: 0,
+	};
+	let append = RecordParams { call: Call::AppendRegistryRecord(installation), retry: Retry::ExpiryOnly }.to_params();
+	let batch = [waiting(1, append), waiting(2, PolicyParams(vec![0xff]))];
+	assert!(block_on(policy.prepare(&batch)).unwrap().is_empty(), "nothing before the start sequence");
+
+	running.open(RunningState { params: chain_params(), check_failed: false, funding: HashMap::new() });
+	let answers = block_on(policy.prepare(&batch)).unwrap();
+	assert!(matches!(answers.get(&DurableTxId(1)), Some(Preparation::Ready { params: None, .. })));
+	assert!(matches!(answers.get(&DurableTxId(2)), Some(Preparation::GiveUp)));
+	let (datastore, _) = datastore_key(&ENTROPY).unwrap();
+	let sealed = RegistryKey::of(&datastore).unwrap().seal(installation).to_vec();
+	assert_eq!(*writer.0.lock(), vec![(datastore, sealed)]);
 }
 
 /// The chain checks an unload's aliases only at dispatch, where a failure

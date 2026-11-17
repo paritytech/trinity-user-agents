@@ -358,3 +358,55 @@ async fn a_reconstruction_whose_scan_failed_is_resumed_by_the_next_run() {
 }
 
 mod use_cases;
+
+/// The installation a shipped app allocated under, handed over.
+const APP: InstallationId = InstallationId([5; 32]);
+
+fn hand_over(next_coin: u32) -> Handover {
+	Handover {
+		installations: vec![handover::AppInstallation { id: APP, next_coin, next_entry: 0 }],
+		outstanding: vec![handover::OutstandingPayment { id: [8; 32], accounts: vec![[1; 32]] }],
+		incoming: Vec::new(),
+	}
+}
+
+/// The hand-over is recorded with the installation, before any
+/// reconstruction could adopt a sent coin unmarked, and only once.
+#[tokio::test]
+async fn a_hand_over_is_recorded_only_on_a_fresh_store() {
+	let store = crate::store::open_memory_core_db();
+	let started = |handed: Handover| {
+		let store = store.clone();
+		async move {
+			let interfaces = Interfaces { hand_over: Some(handed), ..layer_interfaces(store, Arc::new(TestRuntime::default())) };
+			start(interfaces, chain_config(), SCAN, None, Running::new()).await.expect("the layer starts")
+		}
+	};
+	drop(started(hand_over(4)).await);
+	let view = store.read(ledger::snapshot).await.unwrap();
+	assert!(view.installations().iter().any(|(id, _)| *id == APP));
+	assert_eq!(view.operation(&handover::app_key([8; 32])).map(|export| export.kind), Some(OpKind::Export));
+
+	drop(started(Handover { outstanding: Vec::new(), ..hand_over(9) }).await);
+	assert_eq!(store.read(handover::read).await.unwrap(), Some(hand_over(4)));
+}
+
+/// A received payment's claim starts at start, so a crash after the
+/// hand-over cannot leave it unclaimed, and its secrets are kept no longer
+/// than needed; one that can never be claimed is dropped.
+#[tokio::test]
+async fn the_payments_the_app_received_are_claimed_at_start() {
+	let store = crate::store::open_memory_core_db();
+	let (secret, _) = crate::coinage::namespace::coin_key(&[4; 16], PurseId::MAIN, APP, 0).unwrap();
+	let incoming = vec![
+		handover::IncomingPayment { id: [6; 32], claim_by: u64::MAX, coins: vec![secret] },
+		handover::IncomingPayment { id: [7; 32], claim_by: u64::MAX, coins: vec![CoinSecret([0xff; 64])] },
+	];
+	let handed = Handover { incoming, outstanding: Vec::new(), ..hand_over(0) };
+	let interfaces = Interfaces { hand_over: Some(handed), ..layer_interfaces(store.clone(), Arc::new(TestRuntime::default())) };
+	drop(start(interfaces, chain_config(), SCAN, None, Running::new()).await.expect("the layer starts"));
+	let view = store.read(ledger::snapshot).await.unwrap();
+	let kind = |id| view.operation(&handover::app_key(id)).map(|operation| operation.kind);
+	assert_eq!((kind([6; 32]), kind([7; 32])), (Some(OpKind::Import), None));
+	assert_eq!(store.read(handover::read).await.unwrap().map(|handed| handed.incoming), Some(Vec::new()));
+}

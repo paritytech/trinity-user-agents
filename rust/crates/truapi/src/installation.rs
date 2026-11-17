@@ -9,6 +9,11 @@ use truapi::latest::GenericError;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode)]
 pub struct InstallationId(pub [u8; 32]);
 
+uniffi::custom_type!(InstallationId, Vec<u8>, {
+	lower: |installation| installation.0.to_vec(),
+	try_lift: |bytes| Ok(InstallationId(bytes.as_slice().try_into()?)),
+});
+
 impl TryFrom<Vec<u8>> for InstallationId {
 	type Error = GenericError;
 

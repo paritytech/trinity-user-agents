@@ -1,7 +1,7 @@
 use super::*;
 use crate::coinage::{
 	Exponent,
-	status::{Failure, Progress},
+	status::{CoinOutcome, Failure, Progress},
 };
 
 fn item(status: Status, settled: u64, in_flight: u64) -> StatusItem {
@@ -24,7 +24,10 @@ fn a_deposit_is_done_only_at_layer_ones_done_with_the_expected_amount() {
 		CoinPaymentStatus::Failed { error: CoinPaymentError::BadCoins, cleared: 8, reference: empty() },
 		"a coin worth less than declared fails the deposit"
 	);
-	let sniped = [([1; 32], CoinResult::TakenByOther), ([2; 32], CoinResult::Moved)];
+	let sniped = [
+		CoinOutcome { account: [1; 32], result: CoinResult::TakenByOther },
+		CoinOutcome { account: [2; 32], result: CoinResult::Moved },
+	];
 	assert_eq!(
 		deposit_status(item(Status::PartiallyDone, 1, 0), &sniped, 9, empty()),
 		CoinPaymentStatus::Failed { error: CoinPaymentError::SnipedCoins, cleared: 1, reference: empty() }

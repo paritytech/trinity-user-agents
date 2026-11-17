@@ -58,6 +58,7 @@ fn entry(ring: u32) -> Read {
 		closed: false,
 		expires_at: None,
 		locked_until: None,
+		unloaded: None,
 	}))
 }
 
@@ -182,3 +183,65 @@ fn entries_still_gaining_privacy_are_counted_apart_from_spendable_ones() {
 }
 
 mod use_cases;
+
+/// The score both shipped wallets draw for a ring.
+#[test]
+fn fungibility_is_the_share_of_a_ring_that_unloads_have_not_spent() {
+	let scores = [
+		fungibility(10, 10, 0),
+		fungibility(10, 10, 5),
+		fungibility(10, 5, 0),
+		fungibility(10, 5, 9),
+		fungibility(0, 5, 0),
+		fungibility(10, 0, 0),
+	];
+	assert_eq!(scores, [100, 75, 50, 0, 0, 0]);
+}
+
+fn entry_unloaded(ring: u32, unloaded: Option<u32>) -> Read {
+	match entry(ring) {
+		Read::Entry(Some(on_chain)) => Read::Entry(Some(EntryOnChain { unloaded, ..on_chain })),
+		other => other,
+	}
+}
+
+/// A wallet card draws a row per counted coin and entry next to the balance,
+/// so both come from one snapshot, and a coin this wallet unloaded carries
+/// the ring it left.
+#[test]
+fn holdings_carry_a_row_per_counted_holding_with_what_the_card_draws() {
+	let db = wallet();
+	let params = chain_params();
+	let spare = holding(&db, PurseId::MAIN, AssetKind::Coin, 3, coin(3, 2, None));
+	let locked = holding(&db, PurseId::MAIN, AssetKind::Coin, 2, coin(2, 0, Some(NOW + 60)));
+	let unknown = holding(&db, PurseId::MAIN, AssetKind::Entry, 4, entry_unloaded(1, None));
+	let left = holding(&db, PurseId::MAIN, AssetKind::Entry, 5, entry_unloaded(0, Some(5)));
+	let unloaded = holding(&db, PurseId::MAIN, AssetKind::Coin, 5, coin(5, 1, None));
+	let engine = unbuilt_engine(db.clone());
+	let rows = Rows { inputs: vec![left], outputs: vec![unloaded], tokens: Vec::new() };
+	let unload = register_rows(&engine, &OpKey::own([1; 32]), Admission::Ordinary, vec![rows]).unwrap()[0];
+	set_status(&db, unload, "FINALIZED_SUCCESS", None);
+
+	let view = block_on(db.read(snapshot)).unwrap();
+	let row = |asset, exponent, ready, age, batch_unloaded, fungibility| Holding {
+		asset,
+		exponent: Exponent::new(exponent).unwrap(),
+		ready,
+		age,
+		batch_unloaded,
+		fungibility,
+	};
+	let ring_left = Some(fungibility(params.ring_size(), 10, 5));
+	assert_eq!(
+		holdings(&view, PurseId::MAIN, NOW, &params),
+		Holdings {
+			balance: balance(&view, PurseId::MAIN, NOW, &params),
+			rows: vec![
+				row(spare, 3, true, Some(2), false, None),
+				row(locked, 2, false, Some(0), false, None),
+				row(unloaded, 5, true, Some(1), true, ring_left),
+				row(unknown, 4, true, None, false, None),
+			],
+		}
+	);
+}

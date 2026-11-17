@@ -9,6 +9,28 @@ use core::time::Duration;
 
 use super::ChainParams;
 
+/// The three privacy settings the shipped wallets offer the user.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum PrivacyPreset {
+	/// [`PrivacyPolicy::fastest`].
+	Fastest,
+	/// [`PrivacyPolicy::balanced`].
+	Balanced,
+	/// [`PrivacyPolicy::most_private`].
+	MostPrivate,
+}
+
+impl PrivacyPreset {
+	/// The policy this setting stands for.
+	pub fn policy(self) -> PrivacyPolicy {
+		match self {
+			Self::Fastest => PrivacyPolicy::fastest(),
+			Self::Balanced => PrivacyPolicy::balanced(),
+			Self::MostPrivate => PrivacyPolicy::most_private(),
+		}
+	}
+}
+
 /// The user's privacy choice, as the components read it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrivacyPolicy {

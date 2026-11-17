@@ -32,6 +32,7 @@ fn expiring_entry(expires_at: u64) -> Read {
 		closed: true,
 		expires_at: Some(expires_at),
 		locked_until: None,
+		unloaded: None,
 	}))
 }
 

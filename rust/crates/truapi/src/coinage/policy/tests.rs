@@ -10,8 +10,8 @@ fn params_with_cutoff(maximum_age: u16) -> ChainParams {
 
 #[test]
 fn the_presets_pass_the_check() {
-	for preset in [PrivacyPolicy::fastest(), PrivacyPolicy::balanced(), PrivacyPolicy::most_private()] {
-		assert_eq!(check(&preset), Ok(()));
+	for preset in [PrivacyPreset::Fastest, PrivacyPreset::Balanced, PrivacyPreset::MostPrivate] {
+		assert_eq!(check(&preset.policy()), Ok(()));
 	}
 }
 

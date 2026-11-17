@@ -76,6 +76,7 @@ pub enum Request {
 
 /// A coin an export hands to its payee.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(uniffi::Record)]
 pub struct ExportedCoin {
 	/// The coin's account.
 	pub account: [u8; 32],
