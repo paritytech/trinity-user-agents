@@ -51,8 +51,7 @@ pub struct HostRuntimeConfig {
 	pub coinage: Option<CoinageConfig>,
 }
 
-/// How a native host turns the coinage layer on (coinage native interface,
-/// section 2).
+/// How a native host turns the coinage layer on (V1).
 #[derive(Clone, Debug, uniffi::Record)]
 pub struct CoinageConfig {
 	/// The wallet of the coinage engine the app ran until now, which the

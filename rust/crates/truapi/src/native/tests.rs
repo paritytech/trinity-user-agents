@@ -3500,7 +3500,7 @@ fn the_exported_map_keeps_severity_the_hosts_cannot_see_today() {
 /// stub serves no chain, so the runtime check refuses it.
 #[test]
 fn coinage_reports_how_its_start_ended() {
-	use crate::coinage::layer::CoinageUnavailable;
+	use crate::runtime::CoinageUnavailable;
 
 	let mut descriptor = crate::test_support::test_descriptor("paseo", [0xa2; 32], [0xbb; 32], [0xcc; 32]);
 	descriptor["coinage"] = serde_json::json!({ "chain": "People", "instance": 0 });
