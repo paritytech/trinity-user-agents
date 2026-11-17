@@ -11,6 +11,7 @@ pub mod balance;
 pub mod chain;
 pub mod classification;
 pub mod denominations;
+pub mod handover;
 pub mod layer;
 pub mod ledger;
 pub mod maintenance;

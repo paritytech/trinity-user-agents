@@ -17,11 +17,12 @@ use parking_lot::RwLock;
 use subxt::utils::H256;
 
 use super::{
-	Asset, ChainParams, Snapshot,
+	Asset, ChainParams, CoinSecret, Snapshot,
 	assembly::{self, Build, Context, Funding, Keys, Personhood, Ring, Transaction},
 	chain::{AliasState, ChainCoin, CoinageChain, RingPosition},
 	ledger::{self, Mark, Read, Subject},
-	namespace::{coin_key, entry_seed},
+	namespace::{coin_key, datastore_key, entry_seed},
+	reconstruction::RegistryKey,
 	operation::{OpKey, Retry},
 	planning::Call,
 	registration::{RecordFacts, coinage_domain, registry_domain},
@@ -29,7 +30,7 @@ use super::{
 	tokens::period_of,
 };
 use crate::{
-	chain::{ExtrinsicService, Heads},
+	chain::{ExtrinsicService, Heads, MortalExtrinsic},
 	chain_runtime::RuntimeFailure,
 	durable::{
 		self, CompletionOracle, DeferredDurableTx, DurableRegistry, DurableTxEntry, DurableTxId, DurableTxStatus,
@@ -113,6 +114,16 @@ impl<Source: PersonhoodSource> PersonhoodSource for std::sync::Weak<Source> {
 	}
 }
 
+/// Builds the installation registry's appends (F4 invariant 4).
+#[async_trait::async_trait]
+pub trait RegistryWriter: Send + Sync {
+	/// The signed call that appends `record` to the list of the `//datastore`
+	/// account whose secret is `datastore`. Fails while it cannot be built
+	/// yet, for example before the account can pay for it; the caller asks
+	/// again later.
+	async fn append(&self, datastore: &CoinSecret, record: &[u8]) -> Result<MortalExtrinsic, String>;
+}
+
 /// What the plug-ins run on: only what exists before the layer starts.
 pub struct CoinageDeps {
 	/// The shared store.
@@ -133,6 +144,9 @@ pub struct CoinageDeps {
 	pub personhood: Arc<dyn PersonhoodSource>,
 	/// The handle G1 and G3 share with the plug-ins.
 	pub running: Running,
+	/// Builds the installation registry's appends; none when the host runs
+	/// no registry, and then nothing waits for a registration.
+	pub registry: Option<Arc<dyn RegistryWriter>>,
 }
 
 /// `list` with the layer's two domains: `coinage` on the People chain and
@@ -142,7 +156,7 @@ pub fn with_coinage(list: DurableRegistry, deps: CoinageDeps) -> DurableRegistry
 	let oracle = Arc::new(CoinageOracle(shared.clone()));
 	let policy = Arc::new(CoinagePolicy(shared.clone()));
 	list.with_domain(coinage_domain(), shared.people_genesis, oracle, policy)
-		.with_domain(registry_domain(), shared.asset_hub_genesis, Arc::new(Unobservable), Arc::new(RegistryPolicy))
+		.with_domain(registry_domain(), shared.asset_hub_genesis, Arc::new(Unobservable), Arc::new(RegistryPolicy(shared.clone())))
 }
 
 /// The `coinage` domain's completion oracle.
@@ -151,9 +165,10 @@ struct CoinageOracle(Arc<CoinageDeps>);
 /// The `coinage` domain's rebuild policy.
 struct CoinagePolicy(Arc<CoinageDeps>);
 
-/// The `coinage-registry` domain's rebuild policy, which answers no record
-/// until the registry append can be built (F4).
-struct RegistryPolicy;
+/// The `coinage-registry` domain's rebuild policy: it builds each append of
+/// the current installation's sealed record through the registry writer
+/// (F4 invariant 4), once the start sequence has run.
+struct RegistryPolicy(Arc<CoinageDeps>);
 
 #[async_trait::async_trait]
 impl SubmissionPolicy for RegistryPolicy {
@@ -161,8 +176,26 @@ impl SubmissionPolicy for RegistryPolicy {
 		RecordParams::from_params(params).is_some_and(|params| retries(params, failure))
 	}
 
-	async fn prepare(&self, _: &[DeferredDurableTx]) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
-		Ok(HashMap::new())
+	async fn prepare(&self, batch: &[DeferredDurableTx]) -> Result<HashMap<DurableTxId, Preparation>, PolicyError> {
+		let deps = &self.0;
+		let Some(registry) = &deps.registry else { return Ok(HashMap::new()) };
+		if deps.running.state().is_none() {
+			return Ok(HashMap::new());
+		}
+		let Some(entropy) = deps.seed.entropy() else { return Ok(HashMap::new()) };
+		let (datastore, _) = datastore_key(&entropy).map_err(policy_error)?;
+		let key = RegistryKey::of(&datastore).ok_or_else(|| policy_error("the datastore secret is not a key"))?;
+		let mut answers = HashMap::new();
+		for waiting in batch {
+			let call = RecordParams::from_params(&waiting.plan.params).map(|params| params.call);
+			let Some(Call::AppendRegistryRecord(installation)) = call else {
+				answers.insert(waiting.id, Preparation::GiveUp);
+				continue;
+			};
+			let extrinsic = registry.append(&datastore, &key.seal(installation)).await.map_err(policy_error)?;
+			answers.insert(waiting.id, Preparation::Ready { extrinsic, params: None });
+		}
+		Ok(answers)
 	}
 }
 
@@ -196,13 +229,18 @@ impl SubmissionPolicy for CoinagePolicy {
 			return Ok(HashMap::new());
 		}
 		let Some(entropy) = deps.seed.entropy() else { return Ok(HashMap::new()) };
+		let view = deps.store.read(ledger::snapshot).await.map_err(policy_error)?;
+		let now = (deps.clock)();
+		if deps.registry.is_some() && !view.installation_registered() {
+			return Ok(HashMap::new());
+		}
 		let round = BuildRound {
-			view: deps.store.read(ledger::snapshot).await.map_err(policy_error)?,
+			view,
 			heads: deps.people.heads().await.map_err(policy_error)?,
 			vrf: load_vrf().await.map_err(|error| policy_error(format!("{error:?}")))?,
 			running,
 			entropy,
-			now: (deps.clock)(),
+			now,
 		};
 		let mut answers = HashMap::new();
 		for waiting in batch {
