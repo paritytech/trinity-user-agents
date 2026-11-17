@@ -1165,7 +1165,7 @@ impl SigningHostRuntime {
 	#[cfg(not(target_arch = "wasm32"))]
 	pub async fn coinage_layer(
 		&self,
-	) -> Result<crate::coinage::layer::Layer, crate::coinage::layer::CoinageUnavailable> {
+	) -> Result<crate::coinage::layer::Layer, crate::runtime::CoinageUnavailable> {
 		self.services.coinage_layer().await
 	}
 
@@ -1745,11 +1745,12 @@ fn start_coinage(
 	use crate::coinage::{
 		ChainConfig, PrivacyPolicy,
 		chain::{CoinageStorage, PeopleRuntime},
-		layer::{CoinageUnavailable, Interfaces, SystemRandomness, start},
+		layer::{Interfaces, SystemRandomness, start},
 		payments::flows::{PaymentDeps, PaymentParams, Payments, SystemDraws},
 		reconstruction::{InstallationRegistry, ScanConfig},
 		registry::{ContractRegistry, NoRegistry},
 	};
+	use crate::runtime::CoinageUnavailable;
 
 	if !services.coinage_enabled() {
 		return;
@@ -1827,8 +1828,8 @@ fn start_coinage(
 /// Tells whoever waits for the coinage layer how its start ended.
 #[cfg(not(target_arch = "wasm32"))]
 fn report_coinage_start(
-	started: futures::channel::oneshot::Sender<Result<crate::coinage::layer::Layer, crate::coinage::layer::CoinageUnavailable>>,
-	outcome: Result<crate::coinage::layer::Layer, crate::coinage::layer::CoinageUnavailable>,
+	started: futures::channel::oneshot::Sender<Result<crate::coinage::layer::Layer, crate::runtime::CoinageUnavailable>>,
+	outcome: Result<crate::coinage::layer::Layer, crate::runtime::CoinageUnavailable>,
 ) {
 	if started.send(outcome).is_err() {
 		tracing::debug!("nobody waits for the coinage layer");

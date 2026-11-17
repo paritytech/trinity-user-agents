@@ -127,8 +127,8 @@ pub struct Rfc6Record {
 	pub id: [u8; 32],
 	/// A payment or a top-up.
 	pub kind: Rfc6Kind,
-	/// The amount it asked for, in cents.
-	pub amount: u64,
+	/// The amount it asked for, in the payment asset's units.
+	pub amount: u128,
 	/// For a top-up from an account, the account that pays; the secret of a
 	/// private-key source is never stored.
 	pub source: Option<[u8; 32]>,
@@ -179,7 +179,7 @@ struct StoredOutgoing {
 #[derive(Encode, Decode)]
 struct StoredRfc6 {
 	kind: Rfc6Kind,
-	amount: u64,
+	amount: u128,
 	source: Option<[u8; 32]>,
 	funding: Option<String>,
 	operation: OpKey,
