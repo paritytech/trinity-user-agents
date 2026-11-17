@@ -425,7 +425,7 @@ private extension TrUAPIV2SpecConnectionPoolTests {
     }
 
     func makeThresholdDiagnostic(_ reporter: IssueReporting) -> IssueDiagnostic {
-        ThresholdIssueDiagnostic(flow: "productLoad", kind: "rpcConnectionFailing", threshold: 3, reporter: reporter)
+        ThresholdIssueDiagnostic(flow: "productRuntime", kind: "rpcConnectionFailing", threshold: 3, reporter: reporter)
     }
 
     func register(genesis: Data, in registry: MockChainRegistry) -> ChainModel {

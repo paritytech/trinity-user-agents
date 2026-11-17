@@ -2,8 +2,11 @@ import IssueMonitoring
 
 /// What the host reports when a product's chain connections or worker will not come up, through the
 /// same threshold diagnostics as every other critical flow. Shared, so counts span every execution.
+///
+/// Their own flow, `productRuntime`: `productLoad` is `ProductLoadDiagnostics`' fetching of a product's
+/// content, which neither of these touches.
 enum HostLoadIssueDiagnostics {
-    private static let flow: StaticString = "productLoad"
+    private static let flow: StaticString = "productRuntime"
 
     /// A chain whose connections keep dying before one is up; one dead node is routine, as the next dial
     /// moves to another.
