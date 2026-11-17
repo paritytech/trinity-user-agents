@@ -254,7 +254,10 @@ reads it, is kept. A node that answers with bytes that do not hash to the ID
 ends the fetch, and the material falls back as `Integrity`. A material a saved
 Pocket face draws is never
 evicted, and the others share 4 MiB, oldest out first. At start-up the core
-fetches what the saved faces draw and the database lacks.
+fetches what the saved faces draw and the database lacks. From a material's
+text the core builds the shaders an app compiles: the GLSL ES 3.00 that
+Shaderlab's own compile step writes, for OpenGL ES, and naga's Metal
+translation of it, with where each uniform and texture goes.
 
 Secrets the database must not hold go to the host's `EncryptedStorage`: the
 Keychain on iOS, encrypted preferences on Android, a plaintext file in the CLI.
