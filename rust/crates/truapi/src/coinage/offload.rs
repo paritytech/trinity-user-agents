@@ -20,7 +20,7 @@ use super::{
 	start::{Launcher, Request, StartError, start},
 };
 use crate::{
-	durable::DurableTxStatus,
+	durable::{DurableTxFailureKind, DurableTxStatus},
 	store::{Db, DbError},
 };
 
@@ -52,7 +52,8 @@ pub enum Phase {
 	Wait(Option<u64>),
 	/// The amount is offboarded.
 	Done,
-	/// Nothing in the purse covers the rest.
+	/// Nothing in the purse covers the rest, or a phase's transaction failed
+	/// after reaching the chain (invariant 4).
 	Failed,
 }
 
@@ -82,6 +83,9 @@ pub fn plan(view: &Snapshot, key: &OpKey, offload: &Offload, now: u64, params: &
 	let remaining = offload.amount.saturating_sub(offboarded(view, key));
 	if remaining == 0 {
 		return Phase::Done;
+	}
+	if failed_on_chain(view, key) {
+		return Phase::Failed;
 	}
 	let policy = effective(view.policy(), params);
 	let held_back = match policy.held_back_for(offload.initiator) {
@@ -151,6 +155,14 @@ pub fn plan(view: &Snapshot, key: &OpKey, offload: &Offload, now: u64, params: &
 		}
 	}
 	Phase::Failed
+}
+
+/// Whether a transaction of the offload failed after reaching the chain, so
+/// a failure that repeats does not cost one token per Plan (invariant 4).
+fn failed_on_chain(view: &Snapshot, key: &OpKey) -> bool {
+	view.registrations()
+		.of_operation(key)
+		.any(|facts| matches!(facts.state.status, DurableTxStatus::Failure(DurableTxFailureKind::DispatchFailed)))
 }
 
 /// When a ripening entry becomes ready: the end of the shortest dwell among
