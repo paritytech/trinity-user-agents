@@ -5,7 +5,7 @@ import io.paritytech.polkadotapp.common.data.memory.ComputationalScope
 import io.paritytech.polkadotapp.common.presentation.AppInitializer
 import io.paritytech.polkadotapp.common.presentation.AppLifecycleObserver
 import io.paritytech.polkadotapp.common.presentation.subscribeIsForeground
-import kotlinx.coroutines.Dispatchers
+import io.paritytech.polkadotapp.common.utils.CoroutineDispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -22,19 +22,24 @@ private val SAVE_INTERVAL_MAX = 10.minutes
  * Stores the light client's finalized state while the app is in the foreground: first after
  * [FIRST_SAVE_DELAY], then at an interval doubling up to [SAVE_INTERVAL_MAX], since a snapshot costs
  * a round trip and a multi-megabyte write. Going to the background closes every connection, which
- * stops the chains, so there is nothing left to save then.
+ * stops the chains, so there is nothing left to save then. With the light client off, it removes
+ * what an earlier run stored instead.
  */
 class LightClientStateSaver @Inject constructor(
     private val lightClient: LightClient,
+    private val storage: LightClientStorage,
     private val appLifecycleObserver: AppLifecycleObserver,
+    private val dispatchers: CoroutineDispatchers,
 ) : AppInitializer {
     context(scope: ComputationalScope)
     override fun initialize(): Result<Unit> = runCatching {
-        if (!lightClient.servesAny()) return@runCatching
-
-        scope.launch(Dispatchers.Default) {
-            appLifecycleObserver.subscribeIsForeground().collectLatest { foreground ->
-                if (foreground) saveWhileForeground()
+        scope.launch(dispatchers.computation) {
+            if (lightClient.servesAny()) {
+                appLifecycleObserver.subscribeIsForeground().collectLatest { foreground ->
+                    if (foreground) saveWhileForeground()
+                }
+            } else {
+                storage.clear()
             }
         }
     }

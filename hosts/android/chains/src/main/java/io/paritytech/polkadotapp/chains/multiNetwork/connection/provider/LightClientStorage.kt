@@ -26,5 +26,10 @@ class LightClientStorage @Inject constructor(
         check(written.renameTo(target)) { "could not store the light client state for ${target.name}" }
     }
 
+    /** Removes every chain's stored state, for when the light client is off and will not read it. */
+    suspend fun clear() {
+        withContext(Dispatchers.IO) { directory.deleteRecursively() }
+    }
+
     private fun file(genesisHash: ByteArray) = File(directory, genesisHash.toHexString())
 }
