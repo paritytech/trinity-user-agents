@@ -1301,10 +1301,10 @@ impl SigningHostRuntime {
 		Ok(id)
 	}
 
-	/// The resolved materials of `tree` in `context`, its shaders in
-	/// `language`, filtering 32-bit float images themselves unless
-	/// `float_filterable`. Each node that falls back reaches `failures` once. Until the core
-	/// services start over a core database, every node draws plain.
+	/// The resolved materials of `tree` in `context`, its shaders in `language`, filtering
+	/// 32-bit float images themselves unless `float_filterable`. Each node that
+	/// falls back reaches `failures` once. Until the core services start over
+	/// a core database, every node draws plain.
 	#[cfg(not(target_arch = "wasm32"))]
 	pub fn resolve_materials(
 		&self,
@@ -1844,7 +1844,7 @@ pub struct ConnectionAdapters {
 		Arc<ActionChannel<truapi::versioned::renderer::HostRendererFailureSubscribeItem>>,
 	pub pocket_platform: Option<Arc<dyn PocketPlatform>>,
 	pub game_platform: Option<Arc<dyn GamePlatform>>,
-	/// Control of the card face above this connection's Widget, when the host draws one.
+	/// Control of the card face under this connection's Widget, when the host draws one.
 	pub expanded_card: Option<Arc<dyn ExpandedCardHost>>,
 }
 
