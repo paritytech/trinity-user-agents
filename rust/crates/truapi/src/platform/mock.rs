@@ -1091,6 +1091,7 @@ impl Features for MockPlatform {
 						.iter()
 						.any(|served| served.as_slice() == genesis_hash.as_slice())
 			},
+			// The core answers the materials question, never a platform.
 			latest::HostFeatureSupportedRequest::Materials { .. } => false,
 		};
 		Ok(latest::HostFeatureSupportedResponse {
