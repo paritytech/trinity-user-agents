@@ -8,7 +8,8 @@ use crate::platform::{
 	AuthPresenter, AuthState, ChainProvider, DevicePermissionStatus, ExecutableKind, LocaleHost,
 	PermissionAuthorizationRequest, PermissionAuthorizationStatus, PermissionDecision,
 	PreimageHost, ProductContext, ProductId, ProductStorage, ProviderError, StackFetchRequest,
-	StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost, UserConfirmation, UserConfirmationReview,
+	StackFetchResponse, StackRefreshOutcome, StackStatus, ThemeHost, UserConfirmation,
+	UserConfirmationReview,
 };
 use futures::stream::{BoxStream, StreamExt};
 use parity_scale_codec::Encode;
@@ -1938,7 +1939,9 @@ fn a_record_the_database_refuses_asks_for_no_restart() {
 
 /// A runtime the app builds from `config`, or why it was refused. No local
 /// session, so building it touches only the stack and the database.
-fn build_runtime(config: HostRuntimeConfig) -> Result<Arc<NativeTrUApiHostRuntime>, NativeRuntimeConfigError> {
+fn build_runtime(
+	config: HostRuntimeConfig,
+) -> Result<Arc<NativeTrUApiHostRuntime>, NativeRuntimeConfigError> {
 	NativeTrUApiHostRuntime::with_runtime_config(
 		Arc::new(EventCallbacks::new()),
 		HostRuntimeConfig {

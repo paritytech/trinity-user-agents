@@ -10,8 +10,7 @@ use truapi::latest::GenericError;
 pub trait StackRecords: Send + Sync {
 	/// The record stored for `stack_id`, or `None` when there is none.
 	/// Read once, while the runtime is built.
-	async fn read_stack_record(&self, stack_id: &str)
-	-> Result<Option<Vec<u8>>, GenericError>;
+	async fn read_stack_record(&self, stack_id: &str) -> Result<Option<Vec<u8>>, GenericError>;
 
 	/// Stores `record` for `stack_id`, unless `check` says the record already
 	/// there holds a newer copy. Two runtimes can refresh at once while a host
@@ -90,10 +89,7 @@ impl StackRecords for crate::store::Db {
 
 /// The record stored for `stack_id`, read in the caller's transaction.
 #[cfg(not(target_arch = "wasm32"))]
-fn stored_record(
-	conn: &rusqlite::Connection,
-	stack_id: &str,
-) -> rusqlite::Result<Option<Vec<u8>>> {
+fn stored_record(conn: &rusqlite::Connection, stack_id: &str) -> rusqlite::Result<Option<Vec<u8>>> {
 	use rusqlite::OptionalExtension;
 
 	conn.query_row("SELECT record FROM stack_record WHERE stack_id = ?1", [stack_id], |row| {
